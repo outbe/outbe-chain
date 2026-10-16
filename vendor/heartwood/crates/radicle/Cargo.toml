@@ -62,9 +62,11 @@ unicode-normalization = { version = "0.1" }
 libc = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
+radicle-windows = { workspace = true }
 uds_windows = { workspace = true }
 
 [dev-dependencies]
+blst.workspace = true
 emojis = "0.6"
 jsonschema = { version = "0.30", default-features = false }
 pretty_assertions = { workspace = true }

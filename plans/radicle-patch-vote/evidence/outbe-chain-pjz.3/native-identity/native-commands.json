@@ -1,0 +1,109 @@
+{
+  "scope": "Intermediate P2 direct native identity verification only, not P2 acceptance",
+  "source_sha": "b7ee1e16536e80ab4295ca3017303179b8371d47",
+  "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+  "platform": "macOS-26.7.2-arm64-arm-64bit-Mach-O",
+  "toolchain": {
+    "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+    "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)"
+  },
+  "environment": {
+    "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-standalone",
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_BUILD_JOBS": "4",
+    "CARGO_NET_OFFLINE": "true",
+    "RUSTUP_TOOLCHAIN": "1.96.0"
+  },
+  "commands": [
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--manifest-path",
+        "vendor/heartwood/Cargo.toml",
+        "-p",
+        "radicle",
+        "-p",
+        "radicle-cob",
+        "-p",
+        "radicle-crypto",
+        "-p",
+        "radicle-git-metadata",
+        "-p",
+        "radicle-node",
+        "-p",
+        "radicle-protocol",
+        "--lib",
+        "--",
+        "--nocapture"
+      ],
+      "started_at_utc": "2026-10-15T16:39:23.191916+00:00",
+      "ended_at_utc": "2026-10-15T16:40:01.144433+00:00",
+      "exit_code": 0,
+      "log": "native-tests.log",
+      "sha256": "d8fd2e6be446c438a85d162cc5a8b85a29d98cbf032fe0123a558471dba21338"
+    },
+    {
+      "argv": [
+        "cargo",
+        "clippy",
+        "--offline",
+        "--locked",
+        "--manifest-path",
+        "vendor/heartwood/Cargo.toml",
+        "--workspace",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "started_at_utc": "2026-10-15T16:40:01.146011+00:00",
+      "ended_at_utc": "2026-10-15T16:40:09.138767+00:00",
+      "exit_code": 0,
+      "log": "native-clippy.log",
+      "sha256": "fd166337161d1b930e67364aef398f48e3edbe35857118ab62ceeef5cecda92f"
+    },
+    {
+      "argv": [
+        "cargo",
+        "fmt",
+        "--manifest-path",
+        "vendor/heartwood/Cargo.toml",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "started_at_utc": "2026-10-15T16:40:09.139117+00:00",
+      "ended_at_utc": "2026-10-15T16:40:09.714388+00:00",
+      "exit_code": 0,
+      "log": "native-format.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--manifest-path",
+        "vendor/heartwood/Cargo.toml",
+        "-p",
+        "radicle-cli",
+        "--test",
+        "commands",
+        "commands::cob::rad_cob_log",
+        "--",
+        "--nocapture"
+      ],
+      "started_at_utc": "2026-10-15T16:40:09.714783+00:00",
+      "ended_at_utc": "2026-10-15T16:40:32.265024+00:00",
+      "exit_code": 0,
+      "log": "cli-log-tests.log",
+      "sha256": "23242190f2c92db7a41134bd5b81c336425d1157e742e2302c4ed83fc3aa09ed"
+    }
+  ]
+}

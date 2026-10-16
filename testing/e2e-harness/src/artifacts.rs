@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use crate::env::{Environment, TeeMode};
-use crate::ocomp_evidence::{hash_file, MemberDigestV1};
+use crate::verification_ledger::{hash_file, MemberDigestV1};
 
 const BUILD_MANIFEST_SCHEMA_VERSION: u32 = 1;
 
@@ -275,14 +275,7 @@ pub fn refresh_harness_lane(
     }
     let harness_command = release_build_command(
         &jobs.to_string(),
-        &[
-            "-p",
-            "outbe-e2e-harness",
-            "--features",
-            "ocomp-integration",
-            "--bin",
-            "outbe-e2e",
-        ],
+        &["-p", "outbe-e2e-harness", "--bin", "outbe-e2e"],
     );
     run_cargo(&repo, &harness_command)?;
     ensure!(
@@ -352,14 +345,7 @@ fn build_commands(lane: BuildLane, jobs: usize) -> Vec<Vec<String>> {
     }
     commands.push(release_build_command(
         &jobs,
-        &[
-            "-p",
-            "outbe-e2e-harness",
-            "--features",
-            "ocomp-integration",
-            "--bin",
-            "outbe-e2e",
-        ],
+        &["-p", "outbe-e2e-harness", "--bin", "outbe-e2e"],
     ));
     commands
 }
@@ -435,10 +421,7 @@ fn lane_artifacts(repo: &Path, lane: BuildLane) -> Vec<ArtifactSpec> {
         _ => artifact("outbe_tee_enclave", release.join("outbe-tee-enclave"), true),
     });
     if !matches!(lane, BuildLane::Dcap) {
-        artifacts.extend([
-            artifact("outbe_ocomp", release.join("outbe-ocomp"), true),
-            artifact("outbe_feeder", release.join("outbe-feeder"), true),
-        ]);
+        artifacts.extend([artifact("outbe_feeder", release.join("outbe-feeder"), true)]);
     }
     if matches!(
         lane,
@@ -480,9 +463,6 @@ fn required_artifacts(
         ),
         artifact("genesis_seed", env.seed.clone(), false),
     ];
-    if tagged(feature, scenario, "ocomp") {
-        artifacts.push(artifact("outbe_ocomp", env.ocomp_bin.clone(), true));
-    }
     if tagged(feature, scenario, "price-oracle") {
         artifacts.push(artifact("outbe_feeder", env.feeder_bin.clone(), true));
     }
@@ -663,16 +643,7 @@ fn host_role_build_commands(lane: BuildLane, jobs: &str) -> Vec<Vec<String>> {
     if !matches!(lane, BuildLane::Dcap) {
         commands.push(release_build_command(
             jobs,
-            &[
-                "-p",
-                "outbe-ocomp",
-                "--bin",
-                "outbe-ocomp",
-                "-p",
-                "outbe-feeder",
-                "--bin",
-                "outbe-feeder",
-            ],
+            &["-p", "outbe-feeder", "--bin", "outbe-feeder"],
         ));
     }
     commands.push(release_build_command(

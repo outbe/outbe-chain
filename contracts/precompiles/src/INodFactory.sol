@@ -7,7 +7,7 @@ interface INodFactory {
         uint256 nodId,
         uint256 worldwideDay,
         uint256 leagueId,
-        uint256 floorPriceMinor,
+        uint256 callPriceMinor,
         bytes encryptedGratisAmount,
         uint256 entryPriceMinor,
         uint256 settlementCostMinor
@@ -16,18 +16,6 @@ interface INodFactory {
     event NodExercised(address indexed owner, uint256 nodId, bytes encryptedGratisAmount);
 
     event NodBurned(address indexed owner, uint256 nodId, bytes encryptedGratisAmount);
-
-    event NodMaterializationProgress(
-        uint64 indexed queueSequence,
-        uint32 indexed worldwideDay,
-        uint64 generation,
-        uint32 firstNodOrdinal,
-        uint32 nextNodOrdinal,
-        bool completed,
-        uint64 blockNumber
-    );
-
-    error NodMaterializationRejected(uint8 code);
 
     /// @notice Emitted when a Nod is settled.
     event NodSettled(address indexed owner, uint256 nodId, address asset, uint256 paymentMinor);
@@ -44,26 +32,7 @@ interface INodFactory {
     ///         landing. The forfeit sweep comes back to it at `retryAt`.
     event ExpiryDeferred(bytes32 indexed bucketKey, uint64 retryAt);
 
-    /// @notice Constant-size owner event for one certified OCOMP generation.
-    /// There is deliberately no matching public installation selector.
-    event CertifiedNodGenerationInstalled(
-        bytes32 indexed activationCallId,
-        uint32 indexed worldwideDay,
-        uint64 targetGeneration,
-        bytes32 namespaceRootBefore,
-        uint32 tributeCount,
-        uint32 nodCount,
-        uint32 bucketCount,
-        bytes32 nodRoot,
-        bytes32 bucketRoot,
-        bytes32 outputManifestRoot,
-        uint256 totalSettlementCostMinor,
-        uint256 lysisAllocationMinor,
-        uint64 issuedAt,
-        bytes32 stateEventDigest
-    );
-
-    /// @notice Pay a qualified Nod, or a called one at or before its settlement
+    /// @notice Pay an uncalled Nod, or a called one at or before its settlement
     /// deadline, in ERC20 base units of `asset`. Any caller may pay. The Nod stays
     /// with its owner. Approve NodFactory for the `quoteSettlement` amount first.
     /// The asset must have a reserve vault and report the Nod's reference or
@@ -97,10 +66,4 @@ interface INodFactory {
         external
         returns (bytes memory encryptedBalance);
 
-    /// @notice Materialize the current certified FIFO head from one canonical
-    /// proof-backed encrypted OCOMP batch.
-    function materializeCertifiedNods(bytes calldata canonicalBatch) external;
-
-    /// @notice Return the canonical current FIFO head, or `exists=false` when empty.
-    function materializationHead() external view returns (bool exists, bytes memory canonicalHead);
 }

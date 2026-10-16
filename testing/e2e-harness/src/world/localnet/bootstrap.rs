@@ -16,8 +16,6 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
-#[cfg(not(feature = "ocomp-integration"))]
-use alloy_primitives::hex;
 use eyre::{bail, eyre, Result, WrapErr};
 use outbe_evm::tee_attestation_activation::DcapSeededChainSpecBindingV1;
 use outbe_primitives::chain::{DEVNET_CHAIN_ID, TESTNET_CHAIN_ID};
@@ -44,7 +42,6 @@ const LOCALNET_METADOSIS_LOOKBACK_SECONDS: u64 = 0;
 const LOCALNET_METADOSIS_OFFERING_SECONDS: u64 = 120;
 const LOCALNET_METADOSIS_WAITING_SECONDS: u64 = 30;
 const LOCALNET_METADOSIS_ADVANCE_SECONDS: u64 = 10;
-const LOCALNET_OCOMP_VOTE_WINDOW_BLOCKS: u64 = 120;
 const DEFAULT_EPOCH_LENGTH_BLOCKS: u64 = 300;
 const DEFAULT_DKG_PREPARE_WINDOW_BLOCKS: u64 = 30;
 const DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS: u64 = 30;
@@ -52,8 +49,9 @@ const RADICLE_REGISTRY_ADDRESS: &str = "000000000000000000000000000000000000ee11
 const RADICLE_MAX_REPOSITORIES_SLOT: &str =
     "0x0000000000000000000000000000000000000000000000000000000000000005";
 
-mod ocomp;
 mod profile;
+mod tee;
+mod tribute;
 pub use profile::BootstrapProfile;
 
 impl Localnet {
@@ -233,7 +231,6 @@ impl Localnet {
     /// plus a pre-funded `alloc` of each validator address
     /// (`bootstrap-testnet.sh:133-203`).
     fn write_genesis(&self, profile: &BootstrapProfile) -> Result<()> {
-        let ocomp_vote_window = localnet_ocomp_vote_window_blocks(profile);
         let validator_balance = validator_balance_hex(profile);
         let vjson: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(self.cfg.dir.join("validators.json"))?)?;
@@ -300,9 +297,6 @@ impl Localnet {
                             localnet_metadosis_offering_period_seconds(profile),
                         "waitingPeriodSeconds": LOCALNET_METADOSIS_WAITING_SECONDS,
                         "advanceIntervalSeconds": LOCALNET_METADOSIS_ADVANCE_SECONDS,
-                    },
-                    "ocomp": {
-                        "computeVoteWindowBlocks": ocomp_vote_window,
                     },
                 },
             },
@@ -424,6 +418,24 @@ impl Localnet {
             .ok_or_else(|| eyre!("genesis seed root is not an object"))?;
         if let Some((user, cca)) = profile.credis_accounts {
             prepare_credis_seed(root, user, cca)?;
+        }
+        if profile.governments {
+            use sha2::{Digest as _, Sha256};
+            let registry = root
+                .entry("radicle_registry")
+                .or_insert_with(|| json!({}))
+                .as_object_mut()
+                .ok_or_else(|| eyre!("genesis seed radicle_registry is not an object"))?;
+            let tree =
+                radicle::git::raw::Oid::hash_object(radicle::git::raw::ObjectType::Tree, b"")?;
+            registry.insert(
+                "governments".into(),
+                json!({
+                    "description": "Network governance",
+                    "initial_tree_oid": format!("0x{tree}"),
+                    "initial_content_manifest_sha256": format!("0x{:x}", Sha256::digest(b"[]")),
+                }),
+            );
         }
         // The Hyperlane feature calls `initialize` with the forge deployer key.
         root.entry("hyperlane_controller")
@@ -560,47 +572,6 @@ fn restore_rebootstrap_signing_key(path: &Path, signing_key: Option<&[u8]>) -> R
     Ok(())
 }
 
-#[cfg(not(feature = "ocomp-integration"))]
-fn publish_embedded_ocomp_file(path: &Path, bytes: &[u8], mode: u32) -> Result<()> {
-    match fs::read(path) {
-        Ok(existing) if existing == bytes => {
-            let metadata = fs::symlink_metadata(path)?;
-            if !metadata.file_type().is_file() {
-                bail!(
-                    "existing embedded OCOMP artifact is not a regular file: {}",
-                    path.display()
-                );
-            }
-            #[cfg(unix)]
-            if metadata.permissions().mode() & 0o777 != mode {
-                bail!(
-                    "existing embedded OCOMP artifact has unsafe permissions: {}",
-                    path.display()
-                );
-            }
-            Ok(())
-        }
-        Ok(_) => {
-            bail!(
-                "refusing to replace a different embedded OCOMP artifact at {}",
-                path.display()
-            );
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            let mut options = OpenOptions::new();
-            options.write(true).create_new(true);
-            #[cfg(unix)]
-            options.mode(mode);
-            #[cfg(not(unix))]
-            let _ = mode;
-            let mut file = options.open(path)?;
-            file.write_all(bytes)?;
-            file.sync_all()?;
-            Ok(())
-        }
-        Err(error) => Err(error.into()),
-    }
-}
 fn apply_co_located_sgx_timing(
     genesis: &mut serde_json::Value,
     tee_mode: crate::env::TeeMode,
@@ -647,10 +618,6 @@ fn localnet_metadosis_forming_period_seconds(now: u64, profile: &BootstrapProfil
         Some(period) => Ok(period),
         None => localnet_forming_period_seconds(now),
     }
-}
-
-fn localnet_ocomp_vote_window_blocks(profile: &BootstrapProfile) -> u64 {
-    profile.ocomp_vote_window_blocks
 }
 
 fn validator_balance_hex(profile: &BootstrapProfile) -> String {
@@ -773,10 +740,6 @@ mod tests {
             let parameters =
                 outbe_chain_constants::GenesisProtocolParametersV1::from_genesis(&genesis).unwrap();
             assert_eq!(parameters.governance_voting_window_blocks, blocks);
-            assert_eq!(
-                parameters.ocomp_compute_vote_window_blocks,
-                LOCALNET_OCOMP_VOTE_WINDOW_BLOCKS
-            );
         }
         assert!(BootstrapProfile::default()
             .with_governance_voting_window(0)
@@ -866,92 +829,6 @@ mod tests {
                 .mode()
                 & 0o777,
             0o600
-        );
-    }
-
-    #[cfg(not(feature = "ocomp-integration"))]
-    #[test]
-    fn default_bootstrap_stages_embedded_ocomp_domain_material() {
-        let directory = tempfile::tempdir().unwrap();
-        let env = crate::env::Environment {
-            data_dir: directory.path().to_path_buf(),
-            validators: 2,
-            ..crate::env::Environment::default()
-        };
-        env.ports.start_scenario(env.validators).unwrap();
-        let localnet = Localnet::new(crate::internal::config::Config::for_scenario(&env, 1));
-        fs::create_dir_all(&localnet.cfg.dir).unwrap();
-        fs::write(
-            localnet.cfg.dir.join("protocol-bundle-v1.ocb1"),
-            b"canonical-bundle",
-        )
-        .unwrap();
-        for index in 0..env.validators {
-            let validator_dir = localnet.cfg.validator_dir(index);
-            fs::create_dir_all(&validator_dir).unwrap();
-            fs::write(
-                validator_dir.join("ocomp-key-v1.hex"),
-                format!("{}\n", hex::encode([index as u8 + 1; 32])),
-            )
-            .unwrap();
-        }
-
-        localnet.ensure_embedded_ocomp_domain_material().unwrap();
-        localnet.ensure_embedded_ocomp_domain_material().unwrap();
-
-        let joiner_index = env.validators;
-        let joiner_dir = localnet.cfg.validator_dir(joiner_index);
-        fs::create_dir_all(&joiner_dir).unwrap();
-        fs::write(
-            joiner_dir.join("ocomp-key-v1.hex"),
-            b"joiner-registration-secret\n",
-        )
-        .unwrap();
-        localnet
-            .ensure_embedded_ocomp_validator_domain_material(joiner_index)
-            .unwrap();
-        localnet
-            .ensure_embedded_ocomp_validator_domain_material(joiner_index)
-            .unwrap();
-
-        for index in 0..env.validators {
-            let validator_dir = localnet.cfg.validator_dir(index);
-            let domain = validator_dir.join("ocomp").join("domain-v1");
-            assert_eq!(
-                fs::read(domain.join("protocol-bundle-v1.ocb1")).unwrap(),
-                b"canonical-bundle"
-            );
-            assert_eq!(
-                fs::read(domain.join("ocomp-key-v1.hex")).unwrap(),
-                fs::read(validator_dir.join("ocomp-key-v1.hex")).unwrap()
-            );
-            assert_eq!(
-                fs::read_to_string(domain.join("ocomp-evm-key.hex")).unwrap(),
-                format!("{}\n", hex::encode([index as u8 + 0x71; 32]))
-            );
-            #[cfg(unix)]
-            assert_eq!(
-                fs::metadata(domain.join("ocomp-evm-key.hex"))
-                    .unwrap()
-                    .permissions()
-                    .mode()
-                    & 0o777,
-                0o600
-            );
-        }
-
-        let joiner_domain = joiner_dir.join("ocomp").join("domain-v1");
-        assert_eq!(
-            fs::read(joiner_domain.join("protocol-bundle-v1.ocb1")).unwrap(),
-            b"canonical-bundle"
-        );
-        assert_eq!(
-            fs::read(joiner_domain.join("ocomp-key-v1.hex")).unwrap(),
-            b"joiner-registration-secret\n"
-        );
-        assert_eq!(
-            fs::read_to_string(joiner_domain.join("ocomp-evm-key.hex")).unwrap(),
-            format!("{}\n", hex::encode([joiner_index as u8 + 0x71; 32]))
         );
     }
 
@@ -1080,21 +957,6 @@ mod tests {
     }
 
     #[test]
-    fn ocomp_vote_window_can_be_tuned_only_in_generated_genesis() {
-        let default = BootstrapProfile::default();
-        assert_eq!(
-            localnet_ocomp_vote_window_blocks(&default),
-            LOCALNET_OCOMP_VOTE_WINDOW_BLOCKS
-        );
-        let tuned = BootstrapProfile::from_tuning(&[(
-            "TESTNET_OCOMP_VOTE_WINDOW_BLOCKS",
-            "450".to_owned(),
-        )])
-        .unwrap();
-        assert_eq!(localnet_ocomp_vote_window_blocks(&tuned), 450);
-    }
-
-    #[test]
     fn profile_rejects_invalid_values_before_bootstrap() {
         assert!(BootstrapProfile::default().with_chain_id(0).is_err());
         assert!(BootstrapProfile::default()
@@ -1133,6 +995,91 @@ mod tests {
                 "0".into(),
             )
         );
+    }
+
+    #[test]
+    fn governments_profile_seeds_the_real_genesis_descriptor_without_editing_the_input() {
+        use outbe_primitives::radicle_genesis::GovernmentsDescriptor;
+        let directory = tempfile::tempdir().unwrap();
+        let env = crate::env::Environment {
+            data_dir: directory.path().to_path_buf(),
+            ..crate::env::Environment::default()
+        };
+        env.ports.start_scenario(env.validators).unwrap();
+        let mut cfg = crate::internal::config::Config::for_scenario(&env, 1);
+        cfg.seed = directory.path().join("input-seed.json");
+        fs::create_dir_all(&cfg.dir).unwrap();
+        let original = json!({"radicle_registry": {"max_repositories": 8}});
+        fs::write(&cfg.seed, serde_json::to_vec(&original).unwrap()).unwrap();
+        let localnet = Localnet::new(cfg);
+        let profile = BootstrapProfile::default().with_governments().unwrap();
+        let seed = localnet.prepare_scenario_seed(&profile).unwrap();
+        let genesis = localnet.cfg.dir.join("governments-genesis.json");
+        fs::write(
+            &genesis,
+            serde_json::to_vec(&json!({
+                "config": {"chainId": 2026, "epochLengthBlocks": 300, "dkgPrepareWindowBlocks": 30},
+                "timestamp": "0x6553f100",
+                "alloc": {},
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let output = Command::new("python3")
+            .arg(localnet.cfg.repo.join("scripts/seed_genesis.py"))
+            .arg("--genesis")
+            .arg(&genesis)
+            .arg("--seed")
+            .arg(&seed)
+            .arg("--contracts-dir")
+            .arg(localnet.cfg.repo.join("scripts/contracts"))
+            .arg("--output")
+            .arg(&genesis)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "production genesis seeder failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let genesis: serde_json::Value =
+            serde_json::from_slice(&fs::read(genesis).unwrap()).unwrap();
+        let descriptor = GovernmentsDescriptor::from_bytes(
+            &::hex::decode(
+                genesis["config"]["radicleGovernments"]
+                    .as_str()
+                    .unwrap()
+                    .strip_prefix("0x")
+                    .unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(descriptor.chain_id, 2026);
+        assert_eq!(descriptor.genesis_timestamp, 1_700_000_000);
+        assert_eq!(
+            descriptor.initial_tree_oid.to_string(),
+            "0x4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+        );
+        assert_eq!(
+            format!("{:#x}", descriptor.initial_content_manifest_sha256),
+            "0x4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        );
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&fs::read(&localnet.cfg.seed).unwrap())
+                .unwrap(),
+            original
+        );
+        let legacy = localnet
+            .prepare_scenario_seed(&BootstrapProfile::default())
+            .unwrap();
+        let legacy: serde_json::Value = serde_json::from_slice(&fs::read(legacy).unwrap()).unwrap();
+        assert!(legacy["radicle_registry"].get("governments").is_none());
+        assert!(profile
+            .with_dkg_timing(60, 15, 20)
+            .unwrap()
+            .validate_for_committee(4)
+            .is_err());
     }
 
     #[test]

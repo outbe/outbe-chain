@@ -1,4 +1,4 @@
-//! Real-process storage E2E. These complement (not replace) the network OCOMP lane.
+//! Real-process storage E2E. These complement (not replace) the network storage lane.
 
 use std::{
     path::Path,

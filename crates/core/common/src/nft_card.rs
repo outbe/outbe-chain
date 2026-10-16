@@ -28,10 +28,6 @@ pub const ISSUED: State = State {
     label: "Issued",
     color: "#2563eb",
 };
-pub const QUALIFIED: State = State {
-    label: "Qualified",
-    color: "#16a34a",
-};
 pub const CALLED: State = State {
     label: "Called",
     color: "#f97316",
@@ -284,7 +280,7 @@ mod tests {
         let card = Card {
             title: "GEM",
             subtitle: "0xababab...5454",
-            state: QUALIFIED,
+            state: ISSUED,
             rows: vec![(
                 "Call Price",
                 amount_grouped(U256::from(2_280_000u64), PRICE_PRECISION),
@@ -295,7 +291,7 @@ mod tests {
             "Outbe Gem",
             &card,
             &[
-                Trait::text("State", "Qualified"),
+                Trait::text("State", "Issued"),
                 Trait::amount("Call Price", U256::from(2_280_000u64), PRICE_PRECISION),
                 Trait::integer("Issuance Currency", 840u16),
                 Trait::date("Issued At", 1_700_000_000),
@@ -304,7 +300,7 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(value["name"], "Gem 0xababab...5454");
         assert_eq!(value["description"], "Outbe Gem");
-        assert!(json.contains(r#"{"trait_type":"State","value":"Qualified"}"#));
+        assert!(json.contains(r#"{"trait_type":"State","value":"Issued"}"#));
         assert!(
             json.contains(r#"{"trait_type":"Call Price","value":2.28,"display_type":"number"}"#)
         );
@@ -322,8 +318,8 @@ mod tests {
         let svg = String::from_utf8(STANDARD.decode(image).unwrap()).unwrap();
         assert_eq!(svg, card.svg());
         assert!(svg.contains(">GEM</text>"));
-        assert!(svg.contains(">QUALIFIED</text>"));
-        assert!(svg.contains(r##"fill="#16a34a""##));
+        assert!(svg.contains(">ISSUED</text>"));
+        assert!(svg.contains(r##"fill="#2563eb""##));
         assert!(svg.contains(">2.28</text>"));
     }
 }

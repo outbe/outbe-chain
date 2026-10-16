@@ -14,7 +14,6 @@ e2e-test = ["outbe-evm/e2e-test", "outbe-consensus/e2e-byzantine-preannounce"]
 test-protocol-overrides = [
     "outbe-chain-constants/test-protocol-overrides",
     "outbe-consensus/test-protocol-overrides",
-    "outbe-ocomp/test-protocol-overrides",
 ]
 
 [[bin]]
@@ -28,32 +27,22 @@ outbe-evm.workspace = true
 outbe-rpc.workspace = true
 outbe-node.workspace = true
 outbe-offchain-storage.workspace = true
-outbe-ocomp.workspace = true
-outbe-lysis.workspace = true
-outbe-ocomp-protocol.workspace = true
-outbe-ocompregistry.workspace = true
 outbe-consensus.workspace = true
 outbe-engine.workspace = true
-outbe-metadosis.workspace = true
-outbe-update.workspace = true
-outbe-nod.workspace = true
-outbe-tribute.workspace = true
 outbe-primitives.workspace = true
 outbe-radicle.workspace = true
 outbe-operator.workspace = true
 outbe-tee.workspace = true
 outbe-txpool.workspace = true
-outbe-validatorset.workspace = true
 outbe-zk-backend.workspace = true
 
-reth-ethereum = { workspace = true, features = ["node", "cli", "exex"] }
+reth-ethereum = { workspace = true, features = ["node", "cli"] }
 reth-chainspec.workspace = true
 reth-cli.workspace = true
 reth-cli-runner.workspace = true
 reth-node-builder.workspace = true
 reth-node-core.workspace = true
 reth-provider.workspace = true
-reth-storage-overlay.workspace = true
 reth-rpc-server-types.workspace = true
 
 commonware-runtime.workspace = true
@@ -61,7 +50,6 @@ commonware-macros.workspace = true
 
 alloy-primitives.workspace = true
 alloy-consensus.workspace = true
-alloy-sol-types.workspace = true
 clap.workspace = true
 eyre.workspace = true
 hex.workspace = true
@@ -74,14 +62,11 @@ tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
 futures.workspace = true
-metrics.workspace = true
 tempfile.workspace = true
 tar.workspace = true
 reth-primitives-traits.workspace = true
 
 [dev-dependencies]
-outbe-ocomp-protocol = { workspace = true, features = ["test-utils"] }
-outbe-ocomp = { workspace = true, features = ["test-utils"] }
 outbe-nodfactory = { workspace = true, features = ["test-utils"] }
 outbe-consensus = { workspace = true, features = ["test-utils"] }
 postcard.workspace = true
@@ -89,7 +74,6 @@ reth-provider = { workspace = true, features = ["test-utils"] }
 commonware-consensus.workspace = true
 commonware-storage.workspace = true
 commonware-utils.workspace = true
-outbe-metadosis = { workspace = true, features = ["test-utils"] }
 reqwest.workspace = true
 
 [build-dependencies]

@@ -19,7 +19,6 @@ struct RewardGemFifoHead {
 }
 
 struct QueuedRewardGemBatch {
-    gem_type: GemTypes,
     issuance_currency: u16,
     reference_currency: u16,
     recipients: Vec<(Address, U256)>,
@@ -73,7 +72,7 @@ fn deliver_oldest_reward_gem_batch_inner(
         &ctx.storage,
         outbe_gemfactory::GemIssueParams {
             owner,
-            gem_type: batch.gem_type,
+            gem_type: GemTypes::Validator,
             promis_load: load,
             issuance_currency: batch.issuance_currency,
             reference_currency: batch.reference_currency,
@@ -179,8 +178,6 @@ fn read_queued_reward_gem_batch(
     reward_utc_day: u32,
     recipient_count: u32,
 ) -> Result<QueuedRewardGemBatch> {
-    let gem_type_raw = rewards.reward_gem_type.read(&reward_utc_day)?;
-    let gem_type = reward_gem_type_from_raw(reward_utc_day, gem_type_raw)?;
     let (issuance_currency, reference_currency) =
         read_reward_gem_currencies(rewards, reward_utc_day)?;
     let (recipients, promis_load_amount) =
@@ -196,7 +193,6 @@ fn read_queued_reward_gem_batch(
     }
     let digest = reward_gem_batch_digest(&RewardGemBatchTerms {
         reward_utc_day,
-        gem_type: gem_type_raw,
         issuance_currency,
         reference_currency,
         planned_promis_load_amount: promis_load_amount,
@@ -208,24 +204,10 @@ fn read_queued_reward_gem_batch(
         ));
     }
     Ok(QueuedRewardGemBatch {
-        gem_type,
         issuance_currency,
         reference_currency,
         recipients,
     })
-}
-
-fn reward_gem_type_from_raw(reward_utc_day: u32, gem_type_raw: u8) -> Result<GemTypes> {
-    match gem_type_raw {
-        value if value == GemTypes::Genesis as u8 => Ok(GemTypes::Genesis),
-        value if value == GemTypes::Validator as u8 => Ok(GemTypes::Validator),
-        _ => Err(reward_gem_retryable_error(
-            RewardGemRetryableReason::UnsupportedGemType {
-                reward_utc_day,
-                gem_type_raw,
-            },
-        )),
-    }
 }
 
 fn read_reward_gem_currencies(rewards: &Rewards<'_>, reward_utc_day: u32) -> Result<(u16, u16)> {

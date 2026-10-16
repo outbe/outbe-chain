@@ -95,7 +95,7 @@ fn reconnect_and_probe_offer_key(
     io.probe_offer_key()
         .map_err(|probe| TeeJoinAdmissionError::RecoveryProbeFailed {
             fault: error,
-            probe,
+            probe: Box::new(probe),
         })
 }
 

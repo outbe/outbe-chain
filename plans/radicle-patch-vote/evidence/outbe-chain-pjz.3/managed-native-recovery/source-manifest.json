@@ -1,0 +1,29 @@
+{
+  "base_sha": "6016e74c7dbe801aa4cf2aaa7d88c24c78a58d92",
+  "source_state": "uncommitted working tree; exact final scoped review source v2",
+  "source_sha256": "495e7855588116fe94448d52ce342267ea60e99f8d5348a08452aa4e97eea5d4",
+  "source_files": {
+    "crates/blockchain/radicle/src/integration/bootstrap.rs": "ec1e7aac3bcd27ba5094fa42be3494a89ccf1173f9f43d266cf32c5941ed8846",
+    "crates/blockchain/radicle/src/integration/bootstrap/tests.rs": "8fdde21a8a4fb34c664af6ee59459110408a2521b9ba05ffbca3462570e4db2e",
+    "crates/blockchain/radicle/src/integration/local.rs": "86d507192f737cd7f9ddb80259c15021dfe15029a35b3f82d7edcc90ce18ab32",
+    "crates/blockchain/radicle/src/integration/publication.rs": "9ea4b40c3440b08784bd482ee3f89cf41244cbeaba4efa36d2c0286c63a4cf83",
+    "crates/blockchain/radicle/src/integration/publication/history.rs": "b5f40f2b3d2b2ddec9aa07a228f0c9876cb09081f6ac3e06cc07be81b09490fa",
+    "crates/blockchain/radicle/src/integration/publication/merge.rs": "534f0d6b72779e500f3aaeb9f36ad65d739f7c4bde5f63053f46cd2f18d71d33",
+    "crates/blockchain/radicle/src/integration/publication/policy.rs": "d9cf8bd2ed4b37963e1855f73266ec75a40c916b7c2a5ddc55b78cc50b261aae",
+    "crates/blockchain/radicle/src/integration/publication/review.rs": "a6bf3d28df7a26f707787986badc83ff35f50cff0fbc6a9f4144aca0c6716837",
+    "crates/blockchain/radicle/src/integration/publication/store.rs": "0e704caa213b1ea63a48f693408eb9efd6f6dc8760a2235da8953f175e8ec696",
+    "crates/blockchain/radicle/src/manager/snapshot.rs": "e1f62b6297553060a2f17df75979a99d73b94e806ed46b4f0bbfb4de3bc100ec",
+    "crates/blockchain/radicle/src/manager/types.rs": "7fcff68ddec0095759320f219b4ccb841e4e1dc61230a93d228342704275e65f",
+    "crates/system/radicle/src/collector.rs": "1d66cbe021ade3c5b06522d66e1c75fa754c71c9d3548e19de7e8e4449e3b8fa",
+    "crates/system/radicle/src/collector/review.rs": "d38a863b8f0ce24a6ad8cbfdcb202380421ebb05dfb360504dfabb9db1063031",
+    "vendor/heartwood/crates/radicle-fetch/src/stage.rs": "2e367def57fc08a3230b28011513006df352e637f654c19f8033c39c2936c147",
+    "vendor/heartwood/crates/radicle-fetch/src/state.rs": "37322066b8eddb552a43e6e2602040530d7d855cb22085ebd2d2395affad667a",
+    "vendor/heartwood/crates/radicle-node/src/worker/fetch.rs": "14d9c54a819f361b9729472e6bcc908ae4c31a536de9a2abe9f0a3ffc9d5fe2c",
+    "vendor/heartwood/crates/radicle/src/storage/publication.rs": "ebcd06173f3eeee3848163615b3796f281b5fbe697541700f702f587fb99cf9f",
+    "vendor/heartwood/crates/radicle/src/storage/refs.rs": "f270b5d07a1bbbe88cca01ea4c3cd6ac5cc428dbc459efe60a19330e6ee54943"
+  },
+  "e2e": "explicitly deferred by user; neither added nor run",
+  "platform": "macOS-26.7.2-arm64-arm-64bit-Mach-O",
+  "toolchain": "cargo +1.96.0 (standalone Heartwood override from declared1.98.0)",
+  "created_utc": "2026-10-16T13:00:55.697713+00:00"
+}

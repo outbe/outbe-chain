@@ -1,0 +1,126 @@
+{
+  "source_sha": "d92efe0ceff4644a0b769630f80287448b845749",
+  "base_sha": "c8e34193498a935da014cda6193e70308894bf9e",
+  "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+  "platform": "macOS-26.7.2-arm64-arm-64bit-Mach-O",
+  "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "env": {
+    "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-target",
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_BUILD_JOBS": "4"
+  },
+  "changed_files": [
+    "crates/blockchain/radicle/src/integration/bootstrap/tests/local_review.rs",
+    "crates/blockchain/radicle/src/integration/local/review.rs",
+    "crates/blockchain/radicle/src/integration/publication/store.rs",
+    "crates/blockchain/radicle/src/manager/snapshot.rs",
+    "crates/blockchain/radicle/src/manager/snapshot/approval_tests.rs",
+    "crates/blockchain/radicle/src/manager/types.rs"
+  ],
+  "spec_sha256": {
+    "plans/radicle-patch-vote/design.md": "93be4a659ee70b9ac6fdf12d0447ff948b7aa0f6160e9ccf6428ca493dd20025",
+    "plans/radicle-patch-vote/task-specs.json": "5d26f9ef602867a7ed86ed9954d32f4379ec5fb867fa925208db9aa36a9b0412",
+    "plans/radicle-patch-vote/plan.md": "e077e1f2b577ab5ad7fe1943d32559fdc6ca383bc327c8f38848e7773cbaa10b"
+  },
+  "checks": [
+    {
+      "name": "full-affected-tests",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-radicle",
+        "-p",
+        "outbe-radicle-runtime",
+        "--all-targets",
+        "--",
+        "--nocapture"
+      ],
+      "start_utc": "2026-10-16T07:02:14.600185+00:00",
+      "log": "full-affected-tests.log",
+      "end_utc": "2026-10-16T07:03:05.405264+00:00",
+      "exit_code": 0,
+      "sha256": "63f50e2a4b4b7100bd927a24e8eb39b84460e2962f56b9fa4c0990c91a4f15cc"
+    },
+    {
+      "name": "all-consumers",
+      "command": [
+        "cargo",
+        "check",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-radicle",
+        "-p",
+        "outbe-engine",
+        "-p",
+        "outbe-chain",
+        "-p",
+        "outbe-radicle-runtime",
+        "-p",
+        "outbe-radicle-sidecar",
+        "-p",
+        "outbe-e2e-harness",
+        "-p",
+        "outbe-keygen",
+        "--all-targets"
+      ],
+      "start_utc": "2026-10-16T07:03:05.474494+00:00",
+      "log": "all-consumers.log",
+      "end_utc": "2026-10-16T07:03:23.792013+00:00",
+      "exit_code": 0,
+      "sha256": "e0d47722a1e1fe1d94ad04f7ad9b851f75ea739a6eec00e53bd261031efa26d0"
+    },
+    {
+      "name": "scoped-clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "--offline",
+        "--locked",
+        "--no-deps",
+        "-p",
+        "outbe-radicle",
+        "-p",
+        "outbe-radicle-runtime",
+        "-p",
+        "outbe-chain",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "start_utc": "2026-10-16T07:03:23.820603+00:00",
+      "log": "scoped-clippy.log",
+      "end_utc": "2026-10-16T07:03:38.760884+00:00",
+      "exit_code": 0,
+      "sha256": "a0b590eddc1fd68969f2b5a4a6074dd29e987b7d22f3223435a24cd7b87f913c"
+    },
+    {
+      "name": "rustfmt",
+      "command": [
+        "rustfmt",
+        "--check",
+        "--edition",
+        "2021",
+        "--config",
+        "skip_children=true",
+        "crates/blockchain/radicle/src/integration/bootstrap/tests/local_review.rs",
+        "crates/blockchain/radicle/src/integration/local/review.rs",
+        "crates/blockchain/radicle/src/integration/publication/store.rs",
+        "crates/blockchain/radicle/src/manager/snapshot.rs",
+        "crates/blockchain/radicle/src/manager/snapshot/approval_tests.rs",
+        "crates/blockchain/radicle/src/manager/types.rs"
+      ],
+      "start_utc": "2026-10-16T07:03:38.790276+00:00",
+      "log": "rustfmt.log",
+      "end_utc": "2026-10-16T07:03:38.843914+00:00",
+      "exit_code": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}

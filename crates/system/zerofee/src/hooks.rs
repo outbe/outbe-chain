@@ -1,7 +1,7 @@
 use core::fmt;
 
 use alloy_primitives::Address;
-use outbe_ocomp_protocol::transaction_call::TransactionCallFields;
+use outbe_primitives::transaction_call::TransactionCallFields;
 use outbe_primitives::{error::PrecompileError, storage::StorageHandle};
 
 use outbe_hyperlanecontroller::precompile::IHyperlaneController;
@@ -193,7 +193,6 @@ impl ZeroFeePolicyError {
 #[cfg(test)]
 mod failure_code_tests {
     use super::*;
-    use alloy_primitives::U256;
 
     fn all_variants() -> Vec<ZeroFeePolicyError> {
         vec![
@@ -253,23 +252,6 @@ mod failure_code_tests {
             ZeroFeePolicyError::UnauthorizedSigner.to_string(),
             "zero-fee signer is not authorized for this transaction hook"
         );
-    }
-
-    #[test]
-    fn ocomp_result_vote_selector_is_not_owned_by_zero_fee_policy() {
-        let tx = ZeroFeeTransaction {
-            signer: Address::repeat_byte(0x11),
-            call: TransactionCallFields {
-                to: Some(outbe_ocomp_protocol::abi::METADOSIS_ADDRESS),
-                value: U256::ZERO,
-                input: &outbe_ocomp_protocol::abi::SUBMIT_LYSIS_RESULT_SELECTOR,
-                gas_limit: 30_000,
-                max_fee_per_gas: u128::MAX,
-                max_priority_fee_per_gas: Some(0),
-            },
-        };
-
-        assert_eq!(registry().classify(&tx).unwrap(), None);
     }
 }
 

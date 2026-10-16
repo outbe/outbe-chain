@@ -1,24 +1,23 @@
-@tee @min-validators-4 @ocomp
+@tee @min-validators-4
 Feature: Gem from a parked Intex to Promis and COEN
   # The merchant half of the Gem lifecycle, which nothing else covers: the
-  # protocol's own reward gems are born Qualified and settled, so `Issued`,
-  # the promotion on price, the Call and the two returns to the unallocated
-  # pool have never run outside unit tests.
+  # Call and the two returns to the unallocated pool have never run outside
+  # unit tests.
   #
-  # One chain, and no OCOMP. Gems never leave the committee and the source
+  # One chain, using native storage. Gems never leave the committee and the source
   # Intex is issued straight to the merchant, so this scenario needs neither a
   # second venue, nor a relay, nor a day settled out of Tributes.
   #
   # The source Intex is issued in MYR against a USD reference, and the merchant
-  # issues one gem to each of five owners. Two are paid while qualified and two
+  # issues one gem to each of five owners. Two are paid while issued and two
   # inside the call notice, one by its owner and one by a third party, in each
   # currency; the MYR payments price off a closed pricing window, so the committee
   # steps past the next whole hour before the position is parked, whose validity
   # the step would otherwise spend. The fifth gem is left to forfeit.
   #
   # Time is seeded rather than lived through wherever the protocol allows it.
-  # Qualification and the call count only days a gem held in full, so the gems
-  # are stamped behind the seeded days. The two waits that remain are real: a
+  # The call counts only days a gem held in full, so the gems are stamped
+  # behind the seeded days. The two waits that remain are real: a
   # Call Notice has to lapse before a forfeit, and a position has to outlive its
   # validity, both shortened by the DEV parameter profile this scenario runs
   # against.
@@ -37,13 +36,10 @@ Feature: Gem from a parked Intex to Promis and COEN
     When the merchant issues a gem to each of five owners, leaving capacity unissued
     Then every gem reads Issued and carries its terms
     And every validator reads the same gem and bucket from one finalized EVM state
-    And no gem can be paid before it qualifies
     And no gem can be transferred
-    When the reference rate stands above the gem floor
-    Then every gem qualifies
     And a gem payment is refused for a stale snapshot or a foreign currency
     And an unpaid gem cannot be mined
-    When a qualified gem is paid in USD by a third party and another in MYR by its owner
+    When an issued gem is paid in USD by a third party and another in MYR by its owner
     Then each payment settles exactly its quote into its currency's vault
     When the reference rate holds above the gem call price across the call window
     Then every unpaid gem becomes Called while what was paid stays Settled

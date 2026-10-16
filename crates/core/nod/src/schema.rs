@@ -1,6 +1,5 @@
 use alloy_primitives::{Address, B256, U256};
-use outbe_macros::{contract, storage_schema};
-use outbe_ocomp_protocol::nod_materialization::NodMaterializationHeadV1;
+use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::NOD_ADDRESS;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
@@ -11,15 +10,14 @@ use serde::{Deserialize, Serialize};
 #[repr(u8)]
 pub enum EffectiveState {
     Issued = 0,
-    Qualified = 1,
-    Called = 2,
-    Settled = 3,
-    Forfeited = 4,
+    Called = 1,
+    Settled = 2,
+    Forfeited = 3,
 }
 
 /// Plain calculation inputs. Production issuance stores an authenticated encrypted NOD.
 /// The identity is derived from owner and day; settlement uses the entry price and load.
-/// `issued_at` comes from the block or the certified generation rather than these inputs.
+/// `issued_at` comes from the block rather than these inputs.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NodIssueParams {
     pub owner: Address,
@@ -81,83 +79,27 @@ pub struct CallTerms {
     pub call_notice_period_seconds: u32,
 }
 
-/// Shared bucket body. `bucket_nod_count` tracks unpaid membership.
-/// The body is deleted when both unpaid and settled counts reach zero.
-#[derive(Serialize, Deserialize)]
+/// Shared bucket record. `bucket_nod_count` tracks unpaid membership.
+/// The record is deleted when both unpaid and settled counts reach zero.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[storage_record(exists_field = worldwide_day)]
 pub struct NodBucketState {
+    #[key]
     pub bucket_key: B256,
+    #[attribute(order = 0)]
     pub worldwide_day: WorldwideDay,
+    #[attribute(order = 1)]
     pub entry_price_minor: U256,
 
     /// Denomination of `entry_price_minor`, propagated from the Nods in the
-    /// bucket. Qualification compares the floor against the COEN day price for this
-    /// currency only, and the call index is namespaced by it.
+    /// bucket. The call index is namespaced by it.
+    #[attribute(order = 2)]
     pub reference_currency: u16,
 
     /// Live paid entitlements. The count decreases when one is exercised.
     #[serde(default)]
+    #[attribute(order = 3)]
     pub settled_nods: u64,
-}
-
-impl NodBucketState {
-    /// Calculates the floor that all NODs in this bucket share.
-    pub fn floor_price_minor(&self) -> outbe_primitives::error::Result<U256> {
-        crate::pricing::floor_price_minor(self.entry_price_minor)
-            .ok_or_else(|| crate::errors::NodError::FloorPriceOverflow.into())
-    }
-}
-
-/// Immutable owner projection frozen into one OCOMP activation precondition.
-///
-/// The values describe the per-WWD certified Nod namespace that OCM-18 later
-/// advances atomically. They are active-result state, never a reservation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct NodOcompTargetProjection {
-    pub worldwide_day: WorldwideDay,
-    pub target_generation: u64,
-    pub namespace_root_before: B256,
-}
-
-/// Constant-size public state of one installed certified Nod generation.
-///
-/// Nod bodies and bucket bodies remain in authenticated result chunks. This
-/// projection is the on-chain root authority used to select and prove those
-/// bodies without materializing one storage record per Nod during activation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct NodCertifiedGenerationProjection {
-    pub source_checkpoint: outbe_ocomp_protocol::intent::FinalizedRequestBindingV1,
-    pub worldwide_day: WorldwideDay,
-    pub generation: u64,
-    pub job_id: B256,
-    pub program_semantics_hash: B256,
-    pub protocol_bundle_hash: B256,
-    pub nod_root: B256,
-    pub bucket_root: B256,
-    pub output_manifest_root: B256,
-    pub tribute_count: u32,
-    pub nod_count: u32,
-    pub bucket_count: u32,
-    pub nod_amount_total: U256,
-    pub lysis_allocation_minor: U256,
-    pub nod_gratis_load_max: U256,
-    pub issued_at: u64,
-    pub next_nod_ordinal: u32,
-    pub last_progress_height: u64,
-}
-
-impl NodCertifiedGenerationProjection {
-    /// Packs the owner-specific counts and logical issuance time into one slot.
-    ///
-    /// Layout, from least-significant bits: `issued_at:u64`,
-    /// `tribute_count:u32`, `nod_count:u32`, `bucket_count:u32`. The upper
-    /// 96 bits are reserved and must remain zero.
-    #[must_use]
-    pub fn metadata_word(&self) -> U256 {
-        U256::from(self.issued_at)
-            | (U256::from(self.tribute_count) << 64)
-            | (U256::from(self.nod_count) << 96)
-            | (U256::from(self.bucket_count) << 128)
-    }
 }
 
 /// EVM storage layout for the Nod NFT contract.
@@ -167,10 +109,6 @@ impl NodCertifiedGenerationProjection {
 ///
 /// Uncalled buckets wait in a per-currency bitmap trie by call price, see `state::CallBins`.
 ///
-/// Field offsets are dense in `order` sequence, so this struct occupies slots 0..=63.
-/// Genesis seeds the materialization FIFO counters at slots 13 and 14.
-/// `adr006_tests::nod_contract_slot_layout_is_pinned` checks the base layout.
-/// The profile selector occupies slot 44.
 #[storage_schema]
 #[contract(addr = NOD_ADDRESS)]
 pub struct NodContract {
@@ -181,76 +119,6 @@ pub struct NodContract {
     // Compact reversible WWD prefix for bucket identities parked by bucket_key.
     #[attribute(order = 18)]
     pub bucket_worldwide_day: Map<B256, WorldwideDay>,
-
-    /// Per-WWD certified Nod namespace generation, compare-and-set only through
-    /// certified activation.
-    #[attribute(order = 19)]
-    pub ocomp_target_generation: outbe_primitives::storage::dsl::Map<WorldwideDay, u64>,
-
-    /// Root of the certified Nod namespace at the generation above. Generation
-    /// zero is represented canonically by the zero root.
-    #[attribute(order = 20)]
-    pub ocomp_namespace_root: outbe_primitives::storage::dsl::Map<WorldwideDay, B256>,
-
-    /// Certified bucket root paired with `ocomp_namespace_root`.
-    #[attribute(order = 21)]
-    pub ocomp_bucket_root: outbe_primitives::storage::dsl::Map<WorldwideDay, B256>,
-
-    /// Root of the authenticated result-chunk manifest for this generation.
-    #[attribute(order = 22)]
-    pub ocomp_output_manifest_root: outbe_primitives::storage::dsl::Map<WorldwideDay, B256>,
-
-    /// Packed logical issuance time and exact Tribute/Nod/bucket counts.
-    #[attribute(order = 23)]
-    pub ocomp_generation_metadata: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
-
-    /// Exact certified Nod amount total.
-    #[attribute(order = 24)]
-    pub ocomp_nod_amount_total: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
-
-    /// Exact certified Lysis Allocation carried by the Nod generation.
-    #[attribute(order = 25)]
-    pub ocomp_lysis_allocation_minor: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
-
-    /// Job whose certified result installed the generation.
-    #[attribute(order = 26)]
-    pub ocomp_materialization_job_id: outbe_primitives::storage::dsl::Map<WorldwideDay, B256>,
-
-    /// Exact Lysis program semantics used to produce the certified generation.
-    #[attribute(order = 27)]
-    pub ocomp_materialization_program_semantics_hash:
-        outbe_primitives::storage::dsl::Map<WorldwideDay, B256>,
-
-    /// Next canonical Nod ordinal that has not yet been materialized.
-    #[attribute(order = 28)]
-    pub ocomp_materialization_next_nod_ordinal:
-        outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
-
-    /// Block height of the latest successful materialization progress.
-    #[attribute(order = 29)]
-    pub ocomp_materialization_last_progress_height:
-        outbe_primitives::storage::dsl::Map<WorldwideDay, u64>,
-
-    /// Sequence of the current FIFO head. Genesis initializes it to one.
-    #[attribute(order = 30)]
-    pub ocomp_materialization_head_sequence: outbe_primitives::storage::dsl::Value<u64>,
-
-    /// Next-free FIFO sequence. Genesis initializes it to one. Equality with
-    /// the head denotes an empty FIFO.
-    #[attribute(order = 31)]
-    pub ocomp_materialization_tail_sequence: outbe_primitives::storage::dsl::Value<u64>,
-
-    /// Worldwide day stored at each occupied FIFO sequence.
-    #[attribute(order = 32)]
-    pub ocomp_materialization_queue_wwd: Map<u64, WorldwideDay>,
-
-    /// Block height associated with the shared per-block attempt counter.
-    #[attribute(order = 33)]
-    pub ocomp_materialization_attempt_height: outbe_primitives::storage::dsl::Value<u64>,
-
-    /// Number of materialization attempts observed at the height above.
-    #[attribute(order = 34)]
-    pub ocomp_materialization_attempt_count: outbe_primitives::storage::dsl::Value<u16>,
 
     // --- Bucket member index: lets the forfeit sweep enumerate native Nod records.
     // `WwdEntityId` occupies one storage word; IDs require no reconstruction.
@@ -280,13 +148,6 @@ pub struct NodContract {
     /// Block timestamp the bucket was force-called; `0` until called.
     #[attribute(order = 42)]
     pub bucket_called_at: outbe_primitives::storage::dsl::Map<B256, u64>,
-
-    /// Protocol bundle the certified generation was produced under. Materialization
-    /// reads it here rather than from a runtime job registry, which the node is free
-    /// to forget once every job is terminal.
-    #[attribute(order = 44)]
-    pub ocomp_materialization_protocol_bundle_hash:
-        outbe_primitives::storage::dsl::Map<WorldwideDay, B256>,
 
     // --- Call terms sealed at issuance. The daily scan and the settlement-time
     // deadline check read a bucket's own copy. Thus a retuned constant leaves
@@ -387,7 +248,7 @@ pub struct NodContract {
     pub records:
         outbe_primitives::storage::dsl::Map<WwdEntityId, crate::storage_records::StoredNod>,
     #[attribute(order = 84)]
-    pub buckets: outbe_primitives::storage::dsl::Map<B256, crate::storage_records::StoredNodBucket>,
+    pub buckets: outbe_primitives::storage::dsl::Map<B256, NodBucketState>,
     #[attribute(order = 85)]
     pub all_ids: outbe_primitives::storage::dsl::List<WwdEntityId>,
     #[attribute(order = 86)]
@@ -399,232 +260,4 @@ pub struct NodContract {
     pub global_id_position: outbe_primitives::storage::dsl::Map<WwdEntityId, u32>,
     #[attribute(order = 88)]
     pub owner_id_position: outbe_primitives::storage::dsl::Map<WwdEntityId, u32>,
-
-    /// Finalized request state retained until all Nods have been materialized.
-    #[attribute(order = 89)]
-    pub ocomp_source_block_number: outbe_primitives::storage::dsl::Map<WorldwideDay, u64>,
-    #[attribute(order = 90)]
-    pub ocomp_source_block_hash: outbe_primitives::storage::dsl::Map<WorldwideDay, B256>,
-    #[attribute(order = 91)]
-    pub ocomp_source_state_root: outbe_primitives::storage::dsl::Map<WorldwideDay, B256>,
-
-    /// Per-Nod Gratis cap derived from the certified request's frozen Lysis Limit.
-    #[attribute(order = 92)]
-    pub ocomp_nod_gratis_load_max: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
-}
-
-impl<'storage> NodContract<'storage> {
-    /// Reads the exact certified target state used by JobIntent construction.
-    pub fn ocomp_target_projection(
-        &self,
-        worldwide_day: WorldwideDay,
-    ) -> outbe_primitives::error::Result<NodOcompTargetProjection> {
-        Ok(match self.ocomp_certified_generation(worldwide_day)? {
-            Some(generation) => NodOcompTargetProjection {
-                worldwide_day,
-                target_generation: generation.generation,
-                namespace_root_before: generation.nod_root,
-            },
-            None => NodOcompTargetProjection {
-                worldwide_day,
-                target_generation: 0,
-                namespace_root_before: B256::ZERO,
-            },
-        })
-    }
-
-    /// Reads the constant-size active certified generation used by proof-backed
-    /// Nod and bucket readers.
-    pub fn ocomp_certified_generation(
-        &self,
-        worldwide_day: WorldwideDay,
-    ) -> outbe_primitives::error::Result<Option<NodCertifiedGenerationProjection>> {
-        let generation = self.ocomp_target_generation.read(&worldwide_day)?;
-        let nod_root = self.ocomp_namespace_root.read(&worldwide_day)?;
-        let bucket_root = self.ocomp_bucket_root.read(&worldwide_day)?;
-        let output_manifest_root = self.ocomp_output_manifest_root.read(&worldwide_day)?;
-        let metadata = self.ocomp_generation_metadata.read(&worldwide_day)?;
-        let nod_amount_total = self.ocomp_nod_amount_total.read(&worldwide_day)?;
-        let lysis_allocation_minor = self.ocomp_lysis_allocation_minor.read(&worldwide_day)?;
-        let nod_gratis_load_max = self.ocomp_nod_gratis_load_max.read(&worldwide_day)?;
-        let job_id = self.ocomp_materialization_job_id.read(&worldwide_day)?;
-        let protocol_bundle_hash = self
-            .ocomp_materialization_protocol_bundle_hash
-            .read(&worldwide_day)?;
-        let program_semantics_hash = self
-            .ocomp_materialization_program_semantics_hash
-            .read(&worldwide_day)?;
-        let next_nod_ordinal = self
-            .ocomp_materialization_next_nod_ordinal
-            .read(&worldwide_day)?;
-        let last_progress_height = self
-            .ocomp_materialization_last_progress_height
-            .read(&worldwide_day)?;
-
-        let source_checkpoint = outbe_ocomp_protocol::intent::FinalizedRequestBindingV1 {
-            block_number: self.ocomp_source_block_number.read(&worldwide_day)?,
-            block_hash: self.ocomp_source_block_hash.read(&worldwide_day)?,
-            state_root: self.ocomp_source_state_root.read(&worldwide_day)?,
-        };
-        let roots_and_binding = [
-            nod_root,
-            bucket_root,
-            output_manifest_root,
-            job_id,
-            protocol_bundle_hash,
-            program_semantics_hash,
-            source_checkpoint.block_hash,
-            source_checkpoint.state_root,
-        ];
-        if generation == 0 {
-            let words_clear = roots_and_binding.iter().all(B256::is_zero)
-                && [
-                    metadata,
-                    nod_amount_total,
-                    lysis_allocation_minor,
-                    nod_gratis_load_max,
-                ]
-                .iter()
-                .all(U256::is_zero);
-            if !words_clear
-                || next_nod_ordinal != 0
-                || last_progress_height != 0
-                || source_checkpoint.block_number != 0
-            {
-                return Err(crate::errors::NodError::AbsentOcompGenerationHasResidualState.into());
-            }
-            return Ok(None);
-        }
-
-        if roots_and_binding.iter().any(B256::is_zero) || !(metadata >> 160usize).is_zero() {
-            return Err(crate::errors::NodError::MalformedOcompGeneration {
-                day: worldwide_day.value(),
-                generation,
-                nod_root,
-                bucket_root,
-                output_manifest_root,
-                job_id,
-                protocol_bundle_hash,
-                program_semantics_hash,
-            }
-            .into());
-        }
-        if source_checkpoint.block_number == 0 {
-            return Err(crate::errors::NodError::MalformedOcompGenerationMetadata.into());
-        }
-        let (issued_at, tribute_count, nod_count, bucket_count) =
-            decode_generation_metadata(metadata, next_nod_ordinal, last_progress_height)?;
-
-        Ok(Some(NodCertifiedGenerationProjection {
-            source_checkpoint,
-            worldwide_day,
-            generation,
-            job_id,
-            protocol_bundle_hash,
-            program_semantics_hash,
-            nod_root,
-            bucket_root,
-            output_manifest_root,
-            tribute_count,
-            nod_count,
-            bucket_count,
-            nod_amount_total,
-            lysis_allocation_minor,
-            nod_gratis_load_max,
-            issued_at,
-            next_nod_ordinal,
-            last_progress_height,
-        }))
-    }
-
-    /// Clears the transient proof authority after all certified NODs have been
-    /// materialized into the ordinary ledger.
-    pub fn clear_ocomp_certified_generation(
-        &self,
-        worldwide_day: WorldwideDay,
-    ) -> outbe_primitives::error::Result<()> {
-        self.ocomp_target_generation.write(&worldwide_day, 0)?;
-        self.ocomp_namespace_root
-            .write(&worldwide_day, B256::ZERO)?;
-        self.ocomp_bucket_root.write(&worldwide_day, B256::ZERO)?;
-        self.ocomp_output_manifest_root
-            .write(&worldwide_day, B256::ZERO)?;
-        self.ocomp_generation_metadata
-            .write(&worldwide_day, U256::ZERO)?;
-        self.ocomp_nod_amount_total
-            .write(&worldwide_day, U256::ZERO)?;
-        self.ocomp_lysis_allocation_minor
-            .write(&worldwide_day, U256::ZERO)?;
-        self.ocomp_nod_gratis_load_max
-            .write(&worldwide_day, U256::ZERO)?;
-        self.ocomp_materialization_job_id
-            .write(&worldwide_day, B256::ZERO)?;
-        self.ocomp_materialization_protocol_bundle_hash
-            .write(&worldwide_day, B256::ZERO)?;
-        self.ocomp_materialization_program_semantics_hash
-            .write(&worldwide_day, B256::ZERO)?;
-        self.ocomp_materialization_next_nod_ordinal
-            .write(&worldwide_day, 0)?;
-        self.ocomp_materialization_last_progress_height
-            .write(&worldwide_day, 0)?;
-        self.ocomp_source_block_number.write(&worldwide_day, 0)?;
-        self.ocomp_source_block_hash
-            .write(&worldwide_day, B256::ZERO)?;
-        self.ocomp_source_state_root
-            .write(&worldwide_day, B256::ZERO)
-    }
-
-    /// Reads and validates the current canonical materialization FIFO head.
-    pub fn ocomp_materialization_head(
-        &self,
-    ) -> outbe_primitives::error::Result<Option<NodMaterializationHeadV1>> {
-        let head = self.ocomp_materialization_head_sequence.read()?;
-        let tail = self.ocomp_materialization_tail_sequence.read()?;
-        if head == 0 || tail == 0 || head > tail {
-            return Err(crate::errors::NodError::MalformedMaterializationFifoBounds.into());
-        }
-        if head == tail {
-            return Ok(None);
-        }
-        let worldwide_day = self.ocomp_materialization_queue_wwd.read(&head)?;
-        if worldwide_day.value() == 0 {
-            return Err(crate::errors::NodError::MissingMaterializationFifoHeadEntry.into());
-        }
-        let projection = self
-            .ocomp_certified_generation(worldwide_day)?
-            .ok_or(crate::errors::NodError::MissingMaterializationFifoHeadProjection)?;
-        if projection.next_nod_ordinal >= projection.nod_count {
-            return Err(crate::errors::NodError::CompletedMaterializationFifoHead.into());
-        }
-        Ok(Some(NodMaterializationHeadV1 {
-            queue_sequence: head,
-            job_id: projection.job_id,
-            program_semantics_hash: projection.program_semantics_hash,
-            worldwide_day: worldwide_day.value(),
-            generation: projection.generation,
-            nod_root: projection.nod_root,
-            nod_count: projection.nod_count,
-            next_nod_ordinal: projection.next_nod_ordinal,
-            last_progress_height: projection.last_progress_height,
-        }))
-    }
-}
-
-fn decode_generation_metadata(
-    metadata: U256,
-    next_nod_ordinal: u32,
-    last_progress_height: u64,
-) -> outbe_primitives::error::Result<(u64, u32, u32, u32)> {
-    let issued_at = (metadata & U256::from(u64::MAX)).to::<u64>();
-    let tribute_count = ((metadata >> 64usize) & U256::from(u32::MAX)).to::<u32>();
-    let nod_count = ((metadata >> 96usize) & U256::from(u32::MAX)).to::<u32>();
-    let bucket_count = ((metadata >> 128usize) & U256::from(u32::MAX)).to::<u32>();
-    let counts_consistent = tribute_count != 0
-        && nod_count == tribute_count
-        && bucket_count <= nod_count
-        && next_nod_ordinal <= nod_count;
-    if issued_at == 0 || last_progress_height == 0 || !counts_consistent {
-        return Err(crate::errors::NodError::MalformedOcompGenerationMetadata.into());
-    }
-    Ok((issued_at, tribute_count, nod_count, bucket_count))
 }

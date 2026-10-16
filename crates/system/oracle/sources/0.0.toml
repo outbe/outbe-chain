@@ -1,0 +1,89 @@
+# Feeder sources for the baseline protocol version. Every validator's feeder
+# reads this file from the node. Do not edit it after a release: a change is a
+# new file under the version that introduces it (see `src/sources.rs`).
+#
+# RPC URLs and API keys are not here. Each operator sets them in the local
+# feeder config: `rpc_endpoints` by `chain_id`, and `api_providers`.
+
+[[currency_pairs]]
+base = "COEN"
+quote = "840"
+markets = [
+  { provider = "uniswap" },
+]
+
+# COEN/978 = COEN/840 ÷ 978/840. The markets give dollars per euro.
+[[currency_pairs]]
+base = "COEN"
+quote = "978"
+cross = "840"
+markets = [
+  { provider = "chainlink_eur_usd" },
+  { provider = "pyth" },
+]
+
+[[currency_pairs]]
+base = "COEN"
+quote = "392"
+cross = "840"
+markets = [
+  { provider = "chainlink_jpy_usd" },
+  { provider = "pyth" },
+]
+
+[[currency_pairs]]
+base = "COEN"
+quote = "826"
+cross = "840"
+markets = [
+  { provider = "chainlink_gbp_usd" },
+  { provider = "pyth" },
+]
+
+[[currency_pairs]]
+base = "COEN"
+quote = "156"
+cross = "840"
+markets = [
+  { provider = "chainlink_cny_usd" },
+  { provider = "pyth" },
+]
+
+[[currency_pairs]]
+base = "COEN"
+quote = "344"
+cross = "840"
+markets = [
+  { provider = "pyth" },
+]
+
+[[deviation_thresholds]]
+base = "COEN"
+threshold = "2.0"
+
+[[dex_providers]]
+name = "uniswap"
+chain_id = 1
+base_token = "0x1111111111111111111111111111111111111111"    # COEN token, replace
+quote_token = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"   # USDC
+pool = { protocol = "uniswap_v3", address = "0x2222222222222222222222222222222222222222" }   # replace
+
+[[onchain_providers]]
+name = "chainlink_eur_usd"
+chain_id = 1
+contract = "0xb49f677943BC038e9857d61E7d053CaA2C1734C1"   # Chainlink EUR / USD
+
+[[onchain_providers]]
+name = "chainlink_jpy_usd"
+chain_id = 1
+contract = "0xBcE206caE7f0ec07b545EddE332A47C2F75bbeb3"   # Chainlink JPY / USD
+
+[[onchain_providers]]
+name = "chainlink_gbp_usd"
+chain_id = 1
+contract = "0x5c0Ab2d9b5a7ed9f470386e82BB36A3613cDd4b5"   # Chainlink GBP / USD
+
+[[onchain_providers]]
+name = "chainlink_cny_usd"
+chain_id = 1
+contract = "0xeF8A4aF35cd47424672E3C590aBD37FBB7A7759a"   # Chainlink CNY / USD

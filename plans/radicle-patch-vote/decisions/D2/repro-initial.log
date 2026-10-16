@@ -1,0 +1,45 @@
+   Compiling radicle v0.25.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle)
+   Compiling radicle-managed-publication-atomicity-repro v0.0.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/plans/radicle-patch-vote/decisions/D2/repro)
+    Finished `dev` profile [unoptimized] target(s) in 5.36s
+     Running `/private/tmp/outbe-radicle-p1-standalone/debug/radicle-managed-publication-atomicity-repro`
+{
+  "meaning": "COUNTEREXAMPLE_REPRODUCED_AND_REDUCED_MECHANISM_MODEL_ONLY",
+  "git2_transaction_faults": [
+    {
+      "removed_lock": 0,
+      "error": "failed to rename lockfile to '/private/var/folders/vg/_4gmn7fn30v1z6v8pm1c1ldr0000gn/T/.tmpfgDmjT/refs/heads/first': No such file or directory; class=Os (2)",
+      "old": "58921602396c2dc015cdb8d8cb16c8ec000faf6a",
+      "new": "17e51bf33a5a9471d623c685f3b013818a89b37a",
+      "actual": [
+        "58921602396c2dc015cdb8d8cb16c8ec000faf6a",
+        "58921602396c2dc015cdb8d8cb16c8ec000faf6a"
+      ],
+      "partial": false
+    },
+    {
+      "removed_lock": 1,
+      "error": "failed to rename lockfile to '/private/var/folders/vg/_4gmn7fn30v1z6v8pm1c1ldr0000gn/T/.tmpDssKMR/refs/heads/second': No such file or directory; class=Os (2)",
+      "old": "58921602396c2dc015cdb8d8cb16c8ec000faf6a",
+      "new": "17e51bf33a5a9471d623c685f3b013818a89b37a",
+      "actual": [
+        "17e51bf33a5a9471d623c685f3b013818a89b37a",
+        "58921602396c2dc015cdb8d8cb16c8ec000faf6a"
+      ],
+      "partial": true
+    }
+  ],
+  "journal_model": {
+    "model_only": true,
+    "archive_preserved": true,
+    "physical_partial_detected": [
+      "new",
+      "old"
+    ],
+    "read_export_requires_pending_gate": true,
+    "read_lease_blocks_writer": true,
+    "restart_roll_forward": true,
+    "final_sequence": 2,
+    "real_chain_policy_not_implemented": true
+  },
+  "not_a_vote_bypass_or_full_fetch_exploit": true
+}

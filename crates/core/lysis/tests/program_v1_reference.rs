@@ -1,5 +1,3 @@
-// OCOMP-TEST-ID: OCM-SEM-001
-
 use std::{collections::BTreeMap, path::PathBuf, str::FromStr};
 
 use alloy_primitives::{Address, U256};
@@ -304,14 +302,14 @@ fn source_and_worker_order_are_not_semantic_inputs() {
 }
 
 #[test]
-fn the_nod_floor_follows_the_entry_price_not_the_tribute_price() {
+fn the_nod_entry_price_ignores_the_tribute_price() {
     let case = corpus_cases()
         .into_iter()
         .find(|case| case.case_id == "non840-entry-floor")
         .unwrap();
     let mut input = program_input(&case.input);
     input.tributes[0].entry_price_minor = ObservationValueV1::Value(U256::from(2_000_000u64));
-    let floors = [
+    let entries = [
         U256::ZERO,
         U256::from(2_000_000u64),
         U256::from(3_000_000u64),
@@ -319,10 +317,10 @@ fn the_nod_floor_follows_the_entry_price_not_the_tribute_price() {
     .map(|price| {
         input.tributes[0].tribute.tribute_price_minor = price;
         let result = execute(input.clone()).unwrap();
-        outbe_nod::pricing::floor_price_minor(result.nod_actions[0].entry_price_minor).unwrap()
+        result.nod_actions[0].entry_price_minor
     });
-    assert_eq!(floors[0], U256::from(2_160_000u64));
-    assert!(floors.iter().all(|floor| *floor == floors[0]));
+    assert_eq!(entries[0], U256::from(2_000_000u64));
+    assert!(entries.iter().all(|entry| *entry == entries[0]));
 }
 
 #[test]

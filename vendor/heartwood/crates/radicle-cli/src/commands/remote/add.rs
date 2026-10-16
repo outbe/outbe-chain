@@ -43,7 +43,7 @@ pub fn run(
         fetch,
         repo,
     };
-    checkout::setup_remote(&setup, nid, name, &aliases)?;
+    checkout::setup_remote(&setup, &(*nid).into(), name, &aliases)?;
 
     Ok(())
 }

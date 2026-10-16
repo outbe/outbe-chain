@@ -11,13 +11,30 @@ type BeginInputs = Vec<(
 
 struct Scenario {
     height: u64,
-    active: bool,
     artifacts: OutbeBlockArtifacts,
     body: Vec<Recovered<TransactionSigned>>,
     pending: Option<TeeBootstrapV2>,
     metadata: Option<CertifiedParentAccountingMetadata>,
     parent: B256,
     hint: Option<AccountedParentArtifact>,
+}
+
+#[test]
+fn publication_begin_inputs_match_signed_proposer_and_verifier_after_hooks() {
+    for height in [1, 2] {
+        let mut scenario = Scenario::new(height).with_boundary();
+        scenario.artifacts.radicle_publication_enabled = true;
+        scenario.artifacts.radicle_publication =
+            Some(outbe_primitives::test_utils::sample_radicle_publication_batch(32));
+        let proposer = scenario.resolve().unwrap();
+        let body = scenario.signed_body();
+        assert_signed_begin_body(&scenario, &proposer, &body);
+        assert_eq!(proposer[proposer.len() - 2].0, SystemTxKind::HookEvents);
+        assert_eq!(proposer.last().unwrap().0, SystemTxKind::RadiclePublication);
+        scenario.body = body;
+        let verifier = scenario.resolve().unwrap();
+        assert_eq!(proposer, verifier);
+    }
 }
 
 impl Scenario {
@@ -30,7 +47,6 @@ impl Scenario {
         });
         Self {
             height,
-            active: false,
             artifacts: OutbeBlockArtifacts::default(),
             body: Vec::new(),
             pending: (height == 1).then(|| sample_tee_bootstrap_payload(1)),
@@ -59,21 +75,13 @@ impl Scenario {
         ctx.parent_artifact_hint = self.hint;
         ctx.expected_begin_system_txs = self.body.clone();
         ctx.pending_tee_bootstrap = self.pending.clone();
-        let mut executor = config.create_executor(evm, ctx);
-        executor.ocomp_lifecycle_active = self.active;
+        let executor = config.create_executor(evm, ctx);
         executor.begin_block_system_tx_inputs(self.height, &self.artifacts)
     }
 
     fn signed_body(&self) -> Vec<Recovered<TransactionSigned>> {
         let signer = test_evm_signer();
-        let activation = if self.active {
-            OcompLifecycleActivation::at_block(0)
-        } else {
-            OcompLifecycleActivation::Disabled
-        };
-        let config = OutbeEvmConfig::new(test_chain_spec())
-            .with_evm_signer(signer.clone())
-            .with_ocomp_lifecycle_activation(activation);
+        let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
         config
             .build_begin_system_txs(
                 self.height,
@@ -120,118 +128,57 @@ fn signed_input(
 struct PhaseMatrixCase {
     name: &'static str,
     height: u64,
-    active: bool,
     boundary: bool,
 }
 
-const PHASE_MATRIX_CASES: [PhaseMatrixCase; 16] = [
+const PHASE_MATRIX_CASES: [PhaseMatrixCase; 8] = [
     PhaseMatrixCase {
-        name: "height_0_inactive_ordinary",
+        name: "height_0_ordinary",
         height: 0,
-        active: false,
         boundary: false,
     },
     PhaseMatrixCase {
-        name: "height_0_inactive_boundary",
+        name: "height_0_boundary",
         height: 0,
-        active: false,
         boundary: true,
     },
     PhaseMatrixCase {
-        name: "height_0_active_ordinary",
-        height: 0,
-        active: true,
-        boundary: false,
-    },
-    PhaseMatrixCase {
-        name: "height_0_active_boundary",
-        height: 0,
-        active: true,
-        boundary: true,
-    },
-    PhaseMatrixCase {
-        name: "height_1_inactive_ordinary",
+        name: "height_1_ordinary",
         height: 1,
-        active: false,
         boundary: false,
     },
     PhaseMatrixCase {
-        name: "height_1_inactive_boundary",
+        name: "height_1_boundary",
         height: 1,
-        active: false,
         boundary: true,
     },
     PhaseMatrixCase {
-        name: "height_1_active_ordinary",
-        height: 1,
-        active: true,
-        boundary: false,
-    },
-    PhaseMatrixCase {
-        name: "height_1_active_boundary",
-        height: 1,
-        active: true,
-        boundary: true,
-    },
-    PhaseMatrixCase {
-        name: "height_2_inactive_ordinary",
+        name: "height_2_ordinary",
         height: 2,
-        active: false,
         boundary: false,
     },
     PhaseMatrixCase {
-        name: "height_2_inactive_boundary",
+        name: "height_2_boundary",
         height: 2,
-        active: false,
         boundary: true,
     },
     PhaseMatrixCase {
-        name: "height_2_active_ordinary",
-        height: 2,
-        active: true,
+        name: "height_9_ordinary",
+        height: 9,
         boundary: false,
     },
     PhaseMatrixCase {
-        name: "height_2_active_boundary",
-        height: 2,
-        active: true,
-        boundary: true,
-    },
-    PhaseMatrixCase {
-        name: "height_9_inactive_ordinary",
+        name: "height_9_boundary",
         height: 9,
-        active: false,
-        boundary: false,
-    },
-    PhaseMatrixCase {
-        name: "height_9_inactive_boundary",
-        height: 9,
-        active: false,
-        boundary: true,
-    },
-    PhaseMatrixCase {
-        name: "height_9_active_ordinary",
-        height: 9,
-        active: true,
-        boundary: false,
-    },
-    PhaseMatrixCase {
-        name: "height_9_active_boundary",
-        height: 9,
-        active: true,
         boundary: true,
     },
 ];
 
 fn phase_matrix_scenario(case: PhaseMatrixCase) -> Scenario {
     let PhaseMatrixCase {
-        height,
-        active,
-        boundary,
-        ..
+        height, boundary, ..
     } = case;
     let mut scenario = Scenario::new(height);
-    scenario.active = active;
     if boundary {
         scenario = scenario.with_boundary();
     }
@@ -273,24 +220,19 @@ fn assert_signed_begin_body(
     }
 }
 
-fn assert_begin_phase_order(proposer: &BeginInputs, height: u64, active: bool) {
+fn assert_begin_phase_order(proposer: &BeginInputs, height: u64) {
     if height == 0 {
         assert!(proposer.is_empty());
         return;
     }
     let kinds: Vec<_> = proposer.iter().map(|(kind, _, _)| *kind).collect();
     assert_eq!(kinds.last(), Some(&SystemTxKind::HookEvents));
-    assert!(!kinds.contains(&SystemTxKind::OcompTerminalRequest));
     assert_eq!(kinds.contains(&SystemTxKind::TeeBootstrap), height == 1);
-    assert_eq!(kinds.contains(&SystemTxKind::OcompLifecycleBegin), active);
     let cycle = kinds
         .iter()
         .position(|kind| *kind == SystemTxKind::CycleTick)
         .unwrap();
     assert_eq!(kinds[cycle + 1], SystemTxKind::RewardsGemDelivery);
-    if active {
-        assert_eq!(kinds[cycle - 1], SystemTxKind::OcompLifecycleBegin);
-    }
     if height >= 2 {
         assert_eq!(
             &kinds[..2],
@@ -311,7 +253,7 @@ fn begin_inputs_match_signed_proposer_body_and_verifier_across_phase_matrix() {
         assert_signed_begin_body(&scenario, &proposer, &body);
         scenario.body = body;
         assert_eq!(scenario.resolve().unwrap(), proposer);
-        assert_begin_phase_order(&proposer, case.height, case.active);
+        assert_begin_phase_order(&proposer, case.height);
     }
 }
 
@@ -319,7 +261,6 @@ fn begin_inputs_match_signed_proposer_body_and_verifier_across_phase_matrix() {
 fn verifier_reports_missing_malformed_and_wrong_kind_at_the_first_bad_ordinal() {
     for height in [1, 2] {
         let mut scenario = Scenario::new(height).with_boundary();
-        scenario.active = true;
         let canonical = scenario.signed_body();
         // An empty vector intentionally denotes proposer mode; nonempty prefixes
         // exercise missing verifier inputs without changing that contract.
@@ -361,7 +302,6 @@ fn verifier_reports_missing_malformed_and_wrong_kind_at_the_first_bad_ordinal() 
 #[test]
 fn genesis_ignores_stale_inputs_and_block_one_requires_bootstrap_from_its_active_source() {
     let mut genesis = Scenario::new(0).with_boundary();
-    genesis.active = true;
     genesis.pending = Some(sample_tee_bootstrap_payload(1));
     genesis.body = vec![Recovered::new_unchecked(
         test_regular_tx(),

@@ -61,47 +61,6 @@ fn chain_from(activate: fn(ChainSpecBuilder) -> ChainSpecBuilder) -> Arc<ChainSp
         .into()
 }
 
-fn lifecycle_block(active: bool) -> eyre::Result<SealedBlock<OutbeBlock>> {
-    use outbe_evm::system_tx::SystemTxInputV2;
-    let signer = outbe_evm::OutbeEvmSigner::from_secret_bytes([7u8; 32])?;
-    let mut inputs = vec![
-        SystemTxInputV2::CertifiedParentAccounting {
-            metadata: phase1_metadata(1, B256::ZERO),
-        },
-        SystemTxInputV2::LateFinalizeCredits {
-            artifact: Default::default(),
-        },
-    ];
-    if active {
-        inputs.push(SystemTxInputV2::OcompLifecycleBegin);
-    }
-    inputs.extend([
-        SystemTxInputV2::CycleTick,
-        SystemTxInputV2::RewardsGemDelivery,
-        SystemTxInputV2::OracleSlashWindow,
-        SystemTxInputV2::HookEvents,
-    ]);
-    if active {
-        inputs.push(SystemTxInputV2::OcompTerminalRequest);
-    }
-    let transactions: Vec<_> = inputs
-        .into_iter()
-        .enumerate()
-        .map(|(ordinal, input)| signed_system_tx(&signer, ordinal as u8, 2, input))
-        .collect();
-    let mut header = empty_header(2);
-    header.inner.transactions_root =
-        reth_primitives_traits::proofs::calculate_transaction_root(&transactions);
-    Ok(OutbeBlock {
-        header,
-        body: OutbeBlockBody {
-            transactions,
-            ..Default::default()
-        },
-    }
-    .seal_slow())
-}
-
 #[test]
 fn gas_schedule_skip_is_reversible_and_does_not_skip_timestamp_rules() {
     let strict = OutbeBeaconConsensus::new(test_chain_spec());
@@ -453,65 +412,4 @@ fn postexecution_forwards_access_list_hash_without_skipping_validation() {
         Err(ConsensusError::BlockAccessListHashMismatch(_))
     ));
     check_empty_execution(&consensus, &value, None, Some(B256::repeat_byte(0xAB))).unwrap();
-}
-
-#[test]
-fn lifecycle_activation_is_preserved_by_configuration_and_clone() {
-    let original = OutbeBeaconConsensus::new(test_chain_spec());
-    let configured = original
-        .clone()
-        .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(2));
-    let active = lifecycle_block(true).unwrap();
-    let active_header = SealedHeader::seal_slow(active.header().clone());
-    let cloned = configured.clone();
-    cloned
-        .validate_body_against_header(active.body(), &active_header)
-        .unwrap();
-    cloned.validate_block_pre_execution(&active).unwrap();
-    cloned
-        .validate_block_pre_execution_with_tx_root(
-            &active,
-            Some(active.header().transactions_root()),
-        )
-        .unwrap();
-    assert!(original.validate_block_pre_execution(&active).is_err());
-    let before_activation =
-        configured.with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(3));
-    assert!(before_activation
-        .validate_block_pre_execution(&active)
-        .is_err());
-    before_activation
-        .validate_block_pre_execution(&lifecycle_block(false).unwrap())
-        .unwrap();
-}
-
-#[test]
-fn active_lifecycle_rejects_old_layout_before_stock_root_errors() {
-    let consensus = OutbeBeaconConsensus::new(test_chain_spec())
-        .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(2));
-    let mut block = lifecycle_block(false).unwrap();
-    let mut value = block.header().clone();
-    value.inner.transactions_root = B256::ZERO;
-    block = OutbeBlock {
-        header: value,
-        body: block.body().clone(),
-    }
-    .seal_slow();
-    let error = consensus.validate_block_pre_execution(&block).unwrap_err();
-    assert!(matches!(error, ConsensusError::Other(_)));
-    let sealed = SealedHeader::seal_slow(block.header().clone());
-    assert_eq!(
-        consensus
-            .validate_body_against_header(block.body(), &sealed)
-            .unwrap_err()
-            .to_string(),
-        error.to_string()
-    );
-    assert_eq!(
-        consensus
-            .validate_block_pre_execution_with_tx_root(&block, None)
-            .unwrap_err()
-            .to_string(),
-        error.to_string()
-    );
 }

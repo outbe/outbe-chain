@@ -20,7 +20,6 @@ struct TributeCliOffer<'a> {
 }
 
 impl Rpc {
-    #[cfg(feature = "ocomp-integration")]
     pub(crate) fn private_tribute_read(
         &self,
         index: usize,
@@ -63,7 +62,6 @@ impl Rpc {
             .expect("one authenticated amount pair"))
     }
 
-    #[cfg(feature = "ocomp-integration")]
     pub(crate) fn private_nod_read(
         &self,
         index: usize,
@@ -230,7 +228,6 @@ impl Rpc {
         )
     }
 
-    #[cfg(feature = "ocomp-integration")]
     pub(crate) fn tribute_offer_for_creator(
         &self,
         key: &str,
@@ -325,7 +322,6 @@ impl Rpc {
     /// The offer is ZK-verified: the proof is bound to the caller, this chain,
     /// the day, the issuance currency, the declared amounts and exactly the
     /// draft and SU hash the enclave decrypts.
-    #[cfg(feature = "ocomp-integration")]
     pub fn submit_tribute_offer_with_agent_rewards(
         &self,
         key: &str,
@@ -693,7 +689,6 @@ impl Rpc {
     }
 }
 
-#[cfg(feature = "ocomp-integration")]
 pub(in crate::world::rpc) fn encode_reward_bearing_tribute_plaintext(
     input: RewardBearingTribute<'_>,
 ) -> Result<Vec<u8>> {
@@ -737,7 +732,7 @@ pub(crate) struct TributeProofInput<'a> {
     pub draft_id: B256,
     pub su_hash: B256,
 }
-#[cfg(feature = "ocomp-integration")]
+
 pub(in crate::world::rpc) struct RewardBearingTribute<'a> {
     pub creator: Address,
     pub tribute_draft_id: B256,

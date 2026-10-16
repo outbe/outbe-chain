@@ -15,8 +15,8 @@ use crate::prelude::RepoId;
 use crate::storage::{HasRepoId, ReadRepository, RepositoryError, SignRepository, WriteRepository};
 
 use super::{
-    ByRevision, MergeTarget, NodeId, Patch, PatchCounts, PatchId, PatchMut, Revision, RevisionId,
-    State, Status,
+    ByRevision, MergeTarget, Patch, PatchCounts, PatchId, PatchMut, Revision, RevisionId, State,
+    Status,
 };
 
 /// A set of read-only methods for a [`Patch`] store.
@@ -120,7 +120,7 @@ impl<'a, 'b, Repo, Signer: crypto::Signer, C> Cache<'a, Repo, WriteAs<'b, Signer
         labels: &[Label],
     ) -> Result<PatchMut<'a, 'b, 'g, Repo, Signer, C>, super::Error>
     where
-        Repo: WriteRepository + cob::Store<Namespace = NodeId>,
+        Repo: WriteRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
         C: Update<Patch>,
     {
         self.store.create(
@@ -147,7 +147,7 @@ impl<'a, 'b, Repo, Signer: crypto::Signer, C> Cache<'a, Repo, WriteAs<'b, Signer
         labels: &[Label],
     ) -> Result<PatchMut<'a, 'b, 'g, Repo, Signer, C>, super::Error>
     where
-        Repo: WriteRepository + cob::Store<Namespace = NodeId>,
+        Repo: WriteRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
         C: Update<Patch>,
     {
         self.store.draft(
@@ -165,7 +165,8 @@ impl<'a, 'b, Repo, Signer: crypto::Signer, C> Cache<'a, Repo, WriteAs<'b, Signer
     /// removing the entry from the `cache`.
     pub fn remove(&mut self, id: &PatchId) -> Result<(), super::Error>
     where
-        Repo: ReadRepository + SignRepository + cob::Store<Namespace = NodeId>,
+        Repo:
+            ReadRepository + SignRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
         C: Remove<Patch>,
     {
         self.store.raw.remove(id)?;
@@ -187,7 +188,7 @@ where
     /// writing it to the `cache`.
     pub fn write(&mut self, id: &PatchId) -> Result<(), super::Error>
     where
-        Repo: ReadRepository + cob::Store<Namespace = NodeId>,
+        Repo: ReadRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
         C: Update<Patch>,
     {
         let issue = self
@@ -213,7 +214,7 @@ where
         callback: impl Fn(&Result<(PatchId, Patch), store::Error>, &cache::Progress) -> ControlFlow<()>,
     ) -> Result<(), super::Error>
     where
-        Repo: ReadRepository + cob::Store<Namespace = NodeId>,
+        Repo: ReadRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
         C: Update<Patch> + Remove<Patch>,
     {
         // Start by clearing the cache. This will get rid of patches that are cached but
@@ -254,7 +255,7 @@ impl<'a, Repo, Access> Cache<'a, Repo, Access, StoreWriter> {
 
 impl<'a, 'b, Repo, Signer: crypto::Signer> Cache<'a, Repo, WriteAs<'b, Signer>, StoreWriter>
 where
-    Repo: ReadRepository + cob::Store<Namespace = NodeId>,
+    Repo: ReadRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
 {
     /// Get the [`PatchMut`], identified by `id`, using the
     /// `StoreWriter` for retrieving the `Patch`.
@@ -276,7 +277,7 @@ where
 
 impl<'a, 'b, Repo, Signer: crypto::Signer> Cache<'a, Repo, WriteAs<'b, Signer>, cache::NoCache>
 where
-    Repo: ReadRepository + cob::Store<Namespace = NodeId>,
+    Repo: ReadRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
 {
     /// Get a `Cache` that does no write-through modifications and
     /// uses the [`super::Patches`] store for all reads and writes.
@@ -488,7 +489,7 @@ impl Iterator for NoCacheIter<'_> {
 
 impl<'a, Repo, Access> Patches for Cache<'a, Repo, Access, cache::NoCache>
 where
-    Repo: ReadRepository + cob::Store<Namespace = NodeId>,
+    Repo: ReadRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
     Access: store::access::Access,
 {
     type Error = super::Error;
@@ -538,7 +539,7 @@ where
 
 impl<'a, Repo, Access> Patches for Cache<'a, Repo, Access, StoreWriter>
 where
-    Repo: HasRepoId + cob::Store<Namespace = NodeId>,
+    Repo: HasRepoId + cob::Store<Namespace = crate::crypto::RepositoryKey>,
     Access: store::access::Access,
 {
     type Error = Error;

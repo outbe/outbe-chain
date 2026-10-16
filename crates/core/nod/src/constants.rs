@@ -4,8 +4,8 @@ use outbe_primitives::time::SECONDS_PER_DAY_U32;
 pub const TOKEN_NAME: &str = "Nod";
 pub const TOKEN_SYMBOL: &str = "NOD";
 pub const TOKEN_DESCRIPTION: &str = concat!(
-    "Nod is a mining right on the Outbe network. Once qualified, its owner pays the settlement cost ",
-    "at the fixed entry price, and the settled right is exercised to mine its Gratis load. ",
+    "Nod is a mining right on the Outbe network. Its owner pays the settlement cost at the fixed ",
+    "entry price, and the settled right is exercised to mine its Gratis load. ",
     "A called Nod must be settled by its settlement deadline, otherwise it is forfeited. ",
     "A Nod is never transferable."
 );
@@ -19,9 +19,6 @@ pub const TOKEN_DESCRIPTION: &str = concat!(
 /// (256 => +256%, i.e. 3.56x entry). Same shape as credis' 64 and
 /// gem/intex's 128, one rung up the same ladder.
 pub const CALL_RATE_PCT: u16 = 256;
-
-/// Floor markup percent: `floor = entry x (100 + FLOOR_RATE_PCT) / 100`, the rate gem and intex use.
-pub const FLOOR_RATE_PCT: u16 = 8;
 
 /// Trailing window the daily call scan inspects, in whole UTC days.
 pub const CALL_LOOKBACK_DAYS: u32 = 28;

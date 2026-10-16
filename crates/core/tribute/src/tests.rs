@@ -1,9 +1,6 @@
-use std::collections::BTreeSet;
-
 use alloy_primitives::{address, B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_primitives::addresses::TRIBUTE_ADDRESS;
-use outbe_primitives::entity_codec::encode_tribute_v2;
 use outbe_primitives::error::{PrecompileError, Result as PrecompileResult};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
@@ -17,12 +14,6 @@ fn with_tribute<R>(f: impl FnOnce(&mut TributeContract<'_>) -> R) -> R {
         let _enclave = crate::enclave_client::test_enclave::scope();
         f(&mut TributeContract::new(storage))
     })
-}
-
-fn encrypted_payload_len(tc: &TributeContract<'_>, id: WwdEntityId) -> usize {
-    let record = tc.get_record(id).unwrap().expect("live Tribute record");
-    let encrypted = record.encrypted().expect("encrypted Tribute payload");
-    encode_tribute_v2(encrypted).unwrap().len()
 }
 
 fn with_provider<R>(f: impl FnOnce(&mut HashMapStorageProvider) -> R) -> R {
@@ -121,9 +112,8 @@ fn test_day_bucket_tracks_nominal_and_gratis() {
 }
 
 #[test]
-fn pre_admission_projection_tracks_exact_incremental_tribute_inputs() {
+fn day_totals_track_exact_incremental_tribute_inputs() {
     with_tribute(|tc| {
-        tc.initialize_fresh_ocomp_profile().unwrap();
         let first = sample_tribute();
         let mut second = sample_tribute();
         set_owner(
@@ -137,9 +127,7 @@ fn pre_admission_projection_tracks_exact_incremental_tribute_inputs() {
         tc.issue(&first).unwrap();
         tc.issue(&second).unwrap();
 
-        let projection = tc.pre_admission_projection(first.worldwide_day).unwrap();
-        let expected_body_bytes = encrypted_payload_len(tc, first.tribute_id)
-            + encrypted_payload_len(tc, second.tribute_id);
+        let projection = tc.get_day_totals(first.worldwide_day).unwrap();
 
         assert!(!projection.is_sealed);
         assert_eq!(projection.tribute_count, 2);
@@ -147,19 +135,12 @@ fn pre_admission_projection_tracks_exact_incremental_tribute_inputs() {
             projection.tribute_nominal_total_minor,
             first.nominal_amount_minor + second.nominal_amount_minor
         );
-        assert_eq!(
-            projection.canonical_body_bytes,
-            u64::try_from(expected_body_bytes).unwrap()
-        );
-        assert_eq!(projection.distinct_owner_count, 2);
-        assert_eq!(projection.distinct_reference_currency_count, 2);
     });
 }
 
 #[test]
-fn pre_admission_projection_removes_burned_tribute_contribution() {
+fn day_totals_remove_burned_tribute_contribution() {
     with_tribute(|tc| {
-        tc.initialize_fresh_ocomp_profile().unwrap();
         let first = sample_tribute();
         let mut second = sample_tribute();
         set_owner(
@@ -173,68 +154,19 @@ fn pre_admission_projection_removes_burned_tribute_contribution() {
         tc.issue(&second).unwrap();
         tc.burn(first.tribute_id).unwrap();
 
-        let projection = tc.pre_admission_projection(first.worldwide_day).unwrap();
-        let expected_body_bytes = encrypted_payload_len(tc, second.tribute_id);
+        let projection = tc.get_day_totals(first.worldwide_day).unwrap();
 
         assert_eq!(projection.tribute_count, 1);
         assert_eq!(
             projection.tribute_nominal_total_minor,
             second.nominal_amount_minor
         );
-        assert_eq!(
-            projection.canonical_body_bytes,
-            u64::try_from(expected_body_bytes).unwrap()
-        );
-        assert_eq!(projection.distinct_owner_count, 1);
-        assert_eq!(projection.distinct_reference_currency_count, 1);
     });
 }
 
 #[test]
-fn sealed_pre_admission_projection_is_immutable() {
-    let mut provider = HashMapStorageProvider::new(1);
-    let tribute = sample_tribute();
-
-    StorageHandle::enter(&mut provider, |storage| {
-        let _enclave = crate::enclave_client::test_enclave::scope();
-        let mut contract = TributeContract::new(storage);
-        contract.initialize_fresh_ocomp_profile().unwrap();
-        contract.unseal_day(tribute.worldwide_day).unwrap();
-        contract.issue(&tribute).unwrap();
-        contract.seal_day(tribute.worldwide_day).unwrap();
-    });
-    let sealed = StorageHandle::enter(&mut provider, |storage| {
-        let _enclave = crate::enclave_client::test_enclave::scope();
-        TributeContract::new(storage)
-            .seal_pre_admission(tribute.worldwide_day)
-            .unwrap()
-    });
-
-    assert!(sealed.is_sealed);
-    assert_eq!(sealed.tribute_count, 1);
-    assert_eq!(
-        sealed.tribute_nominal_total_minor,
-        tribute.nominal_amount_minor
-    );
-
-    StorageHandle::enter(&mut provider, |storage| {
-        let _enclave = crate::enclave_client::test_enclave::scope();
-        let mut contract = TributeContract::new(storage);
-        assert!(contract.unseal_day(tribute.worldwide_day).is_err());
-        assert!(contract.seal_pre_admission(tribute.worldwide_day).is_err());
-        assert_eq!(
-            contract
-                .pre_admission_projection(tribute.worldwide_day)
-                .unwrap(),
-            sealed
-        );
-    });
-}
-
-#[test]
-fn incremental_pre_admission_matches_independent_randomized_full_fold() {
+fn incremental_day_totals_match_independent_randomized_full_fold() {
     with_tribute(|tc| {
-        tc.initialize_fresh_ocomp_profile().unwrap();
         let day = 20241220u32.into();
         let mut seed = 0x4f43_4d30_3600_0001_u64;
         let mut entries = Vec::<(TributeData, bool)>::new();
@@ -252,55 +184,20 @@ fn incremental_pre_admission_matches_independent_randomized_full_fold() {
             tribute.nominal_amount_minor = U256::from((seed % 10_000) + 1);
             tc.issue(&tribute).unwrap();
             entries.push((tribute, true));
-            assert_pre_admission_matches_fold(tc, day, &entries);
+            assert_day_totals_match_fold(tc, day, &entries);
         }
 
         for index in (0..entries.len()).step_by(3) {
             tc.burn(entries[index].0.tribute_id).unwrap();
             entries[index].1 = false;
-            assert_pre_admission_matches_fold(tc, day, &entries);
+            assert_day_totals_match_fold(tc, day, &entries);
         }
-    });
-}
-
-#[test]
-fn pre_admission_overflow_rolls_back_the_entire_issue() {
-    with_tribute(|tc| {
-        tc.initialize_fresh_ocomp_profile().unwrap();
-        let tribute = sample_tribute();
-        open_sample_day(tc);
-        tc.day_pre_admission
-            .create(&crate::day_schema::StoredDayPreAdmission {
-                worldwide_day: tribute.worldwide_day,
-                initialized: true,
-                is_sealed: false,
-                sealed_tribute_count: 0,
-                canonical_body_bytes: u64::MAX,
-                distinct_owner_count: 0,
-                distinct_reference_currency_count: 0,
-                source_generation: 0,
-            })
-            .unwrap();
-        let before = tc.pre_admission_projection(tribute.worldwide_day).unwrap();
-
-        assert!(tc.issue(&tribute).is_err());
-
-        assert_eq!(
-            tc.pre_admission_projection(tribute.worldwide_day).unwrap(),
-            before
-        );
-        let totals = tc.get_day_totals(tribute.worldwide_day).unwrap();
-        assert_eq!(totals.tribute_count, 0);
-        assert_eq!(totals.tribute_nominal_total_minor, U256::ZERO);
-        assert_eq!(tc.total_supply().unwrap(), 0);
-        assert!(tc.get_tribute(tribute.tribute_id).unwrap().is_none());
     });
 }
 
 #[test]
 fn tribute_population_crosses_multiple_work_shards_without_a_total_cap() {
     with_tribute(|tc| {
-        tc.initialize_fresh_ocomp_profile().unwrap();
         let day = 20241220u32.into();
         open_sample_day(tc);
 
@@ -313,9 +210,8 @@ fn tribute_population_crosses_multiple_work_shards_without_a_total_cap() {
             tc.issue(&tribute).unwrap();
         }
 
-        let second_shard = tc.pre_admission_projection(day).unwrap();
+        let second_shard = tc.get_day_totals(day).unwrap();
         assert_eq!(second_shard.tribute_count, 257);
-        assert_eq!(second_shard.distinct_owner_count, 257);
         assert_eq!(tc.total_supply().unwrap(), 257);
 
         for seed in 258_u16..=513 {
@@ -327,9 +223,8 @@ fn tribute_population_crosses_multiple_work_shards_without_a_total_cap() {
             tc.issue(&tribute).unwrap();
         }
 
-        let third_shard = tc.pre_admission_projection(day).unwrap();
+        let third_shard = tc.get_day_totals(day).unwrap();
         assert_eq!(third_shard.tribute_count, 513);
-        assert_eq!(third_shard.distinct_owner_count, 513);
         assert_eq!(tc.total_supply().unwrap(), 513);
 
         let last = {
@@ -341,65 +236,29 @@ fn tribute_population_crosses_multiple_work_shards_without_a_total_cap() {
         };
         tc.burn(last.tribute_id).unwrap();
 
-        let after_burn = tc.pre_admission_projection(day).unwrap();
+        let after_burn = tc.get_day_totals(day).unwrap();
         assert_eq!(after_burn.tribute_count, 512);
-        assert_eq!(after_burn.distinct_owner_count, 512);
     });
 }
 
-#[test]
-fn pre_fork_tribute_issue_is_unchanged_and_cannot_backfill_ocomp_lazily() {
-    with_tribute(|tc| {
-        let tribute = sample_tribute();
-        open_sample_day(tc);
-        tc.issue(&tribute).unwrap();
-
-        let projection = tc.pre_admission_projection(tribute.worldwide_day).unwrap();
-        assert!(!projection.profile_ready);
-        assert_eq!(projection.canonical_body_bytes, 0);
-        assert_eq!(projection.distinct_owner_count, 0);
-        assert_eq!(projection.distinct_reference_currency_count, 0);
-        assert_eq!(tc.total_supply().unwrap(), 1);
-        assert!(tc.initialize_fresh_ocomp_profile().is_err());
-        assert!(tc.get_tribute(tribute.tribute_id).unwrap().is_some());
-    });
-}
-
-fn assert_pre_admission_matches_fold(
+fn assert_day_totals_match_fold(
     tc: &TributeContract<'_>,
     day: outbe_primitives::time::WorldwideDay,
     entries: &[(TributeData, bool)],
 ) {
     let mut count = 0_u32;
     let mut nominal = U256::ZERO;
-    let mut canonical_body_bytes = 0_u64;
-    let mut owners = BTreeSet::new();
-    let mut currencies = BTreeSet::new();
     for (tribute, is_live) in entries {
         if !is_live {
             continue;
         }
         count = count.checked_add(1).unwrap();
         nominal = nominal.checked_add(tribute.nominal_amount_minor).unwrap();
-        canonical_body_bytes = canonical_body_bytes
-            .checked_add(u64::try_from(encrypted_payload_len(tc, tribute.tribute_id)).unwrap())
-            .unwrap();
-        owners.insert(tribute.owner);
-        currencies.insert(tribute.reference_currency);
     }
 
-    let projection = tc.pre_admission_projection(day).unwrap();
+    let projection = tc.get_day_totals(day).unwrap();
     assert_eq!(projection.tribute_count, count);
     assert_eq!(projection.tribute_nominal_total_minor, nominal);
-    assert_eq!(projection.canonical_body_bytes, canonical_body_bytes);
-    assert_eq!(
-        projection.distinct_owner_count,
-        u32::try_from(owners.len()).unwrap()
-    );
-    assert_eq!(
-        projection.distinct_reference_currency_count,
-        u16::try_from(currencies.len()).unwrap()
-    );
 }
 
 #[test]
@@ -880,7 +739,6 @@ fn failed_burn_transaction_restores_body_compact_state_and_events() {
 #[test]
 fn encrypted_retirement_preserves_frozen_nominal_after_live_total_is_zero() {
     with_tribute(|tc| {
-        tc.initialize_fresh_ocomp_profile().unwrap();
         let plain = sample_tribute();
         let context = outbe_primitives::tribute_encryption::TributeContextV2 {
             chain_id: 1,
@@ -905,12 +763,8 @@ fn encrypted_retirement_preserves_frozen_nominal_after_live_total_is_zero() {
         tc.unseal_day(plain.worldwide_day).unwrap();
         tc.issue_encrypted(&encrypted).unwrap();
         tc.seal_day(plain.worldwide_day).unwrap();
-        let mut admission = crate::DayPreAdmission::with_key(plain.worldwide_day);
-        admission.initialized = true;
-        admission.is_sealed = true;
-        admission.sealed_tribute_count = 1;
-        admission.sealed_tribute_nominal_total_minor = plain.nominal_amount_minor;
-        tc.store_day_pre_admission(&admission).unwrap();
+        tc.freeze_day_nominal(&tc.get_day_totals(plain.worldwide_day).unwrap())
+            .unwrap();
         let frozen = tc.encrypted_day_nominal(plain.worldwide_day, true).unwrap();
         tc.consume_lysis_partition_inner(plain.worldwide_day, 1, plain.nominal_amount_minor)
             .unwrap();
@@ -921,9 +775,7 @@ fn encrypted_retirement_preserves_frozen_nominal_after_live_total_is_zero() {
             U256::ZERO
         );
         assert_eq!(
-            tc.pre_admission_projection(plain.worldwide_day)
-                .unwrap()
-                .tribute_nominal_total_minor,
+            tc.day_nominal_amount(plain.worldwide_day, true).unwrap(),
             plain.nominal_amount_minor
         );
         assert_eq!(

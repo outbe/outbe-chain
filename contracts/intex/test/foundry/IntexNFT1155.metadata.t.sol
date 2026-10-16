@@ -9,9 +9,6 @@ import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "./helpers/CreateSeriesLib.sol";
 import {MetadataTestLib} from "./helpers/MetadataTestLib.sol";
 import {DateKey} from "@contracts/shared/libs/DateKey.sol";
-import {MockVwapSource} from "@test-mocks/MockVwapSource.sol";
-import {IVwapSource} from "@contracts/shared/interfaces/IVwapSource.sol";
-import {IIntexFactory} from "@precompiles/IIntexFactory.sol";
 
 /// @notice Per-token on-chain metadata: JSON document, attributes, and embedded SVG.
 contract IntexNFT1155MetadataTest is Test {
@@ -22,9 +19,8 @@ contract IntexNFT1155MetadataTest is Test {
     uint32 internal constant CAP = 10_000;
     uint32 internal constant CALL_PERIOD = 14 days;
 
-    // One 840-unit per COEN on the 1e6 wire scale, with the protocol's 1.08x floor and 2.28x call.
+    // One 840-unit per COEN on the 1e6 wire scale, with the protocol's 2.28x call.
     uint64 internal constant ENTRY_PRICE = 1e6;
-    uint64 internal constant FLOOR_PRICE = (ENTRY_PRICE * 108) / 100;
     uint64 internal constant CALL_PRICE = (ENTRY_PRICE * 228) / 100;
     uint128 internal constant PROMIS_LOAD = 100_000e6;
 
@@ -43,7 +39,6 @@ contract IntexNFT1155MetadataTest is Test {
         token.grantRole(settlementRole, bridger);
         IIntexNFT1155.CreateSeriesParams memory params = CreateSeriesLib.params(SERIES_ID_DAY, CAP, CALL_PERIOD);
         params.entryPriceMinor = ENTRY_PRICE;
-        params.floorPriceMinor = FLOOR_PRICE;
         params.callPriceMinor = CALL_PRICE;
         params.promisLoadMinor = PROMIS_LOAD;
         vm.prank(bridger);
@@ -98,7 +93,7 @@ contract IntexNFT1155MetadataTest is Test {
         _assertContains(json, "{\"trait_type\":\"Reference Currency\",\"value\":840,\"display_type\":\"number\"}");
         // Six fraction digits with trailing zeros trimmed, decoded from the 1e6 wire scale.
         _assertContains(json, "{\"trait_type\":\"Entry Price\",\"value\":1,\"display_type\":\"number\"}");
-        _assertContains(json, "{\"trait_type\":\"Floor Price\",\"value\":1.08,\"display_type\":\"number\"}");
+        assertFalse(json.contains("Floor Price"), "no floor price");
         _assertContains(json, "{\"trait_type\":\"Call Price\",\"value\":2.28,\"display_type\":\"number\"}");
         _assertContains(json, "{\"trait_type\":\"Promis Load\",\"value\":100000,\"display_type\":\"number\"}");
         assertFalse(json.contains("\"Called At\""), "no call rows before markCalled");
@@ -112,98 +107,6 @@ contract IntexNFT1155MetadataTest is Test {
         assertFalse(json.contains("Issued At"), "worldwide day carries the date semantics");
         assertFalse(json.contains("Series ID"), "composite id lives in the name");
         assertFalse(json.contains("Cost Amount"), "cost is derived at settlement, not published");
-    }
-
-    /// @dev Prices the series' first full day only, so a read from any other day finds nothing.
-    function _pointAtSource(uint256 price) internal returns (MockVwapSource source) {
-        source = new MockVwapSource();
-        source.set(DateKey.firstFullDay(token.readData(SERIES_ID).issuedAt), price);
-        vm.prank(admin);
-        token.setVwapSource(address(source));
-    }
-
-    function test_uri_Qualified_OnceADayClosesAboveTheFloor() public {
-        _pointAtSource(FLOOR_PRICE + 1);
-        bytes memory json = _json(iTok);
-        _assertContains(json, "{\"trait_type\":\"Series State\",\"value\":\"Qualified\"}");
-        bytes memory svg = json.decodeSvg();
-        assertTrue(svg.contains("QUALIFIED"), "badge text");
-        assertTrue(svg.contains("#16a34a"), "badge color");
-        assertFalse(svg.contains("Floor Price"), "floor price shows only while issued");
-        _assertRowAt(svg, "Call Price", 355);
-    }
-
-    function test_uri_Issued_WhileNoDayClosedAboveTheFloor() public {
-        _pointAtSource(FLOOR_PRICE);
-        _assertContains(_json(iTok), "{\"trait_type\":\"Series State\",\"value\":\"Issued\"}");
-    }
-
-    function test_uri_Issued_WhenTheSourceFailsOrIsUnset() public {
-        string memory issued = "{\"trait_type\":\"Series State\",\"value\":\"Issued\"}";
-        MockVwapSource source = _pointAtSource(FLOOR_PRICE + 1);
-        source.setReverts(true);
-        _assertContains(_json(iTok), issued);
-
-        vm.prank(admin);
-        token.setVwapSource(makeAddr("no code"));
-        _assertContains(_json(iTok), issued);
-
-        vm.prank(admin);
-        token.setVwapSource(address(0));
-        _assertContains(_json(iTok), issued);
-    }
-
-    function test_uri_Called_WhateverTheSourceSays() public {
-        _pointAtSource(FLOOR_PRICE + 1);
-        vm.prank(bridger);
-        token.markCalled(SERIES_ID, uint32(block.timestamp));
-        _assertContains(_json(iTok), "{\"trait_type\":\"Series State\",\"value\":\"Called\"}");
-    }
-
-    function test_isQualified_ReadsTheSameSourceTheCardDoes() public {
-        assertFalse(token.isQualified(SERIES_ID), "no source, no qualification");
-        MockVwapSource source = _pointAtSource(FLOOR_PRICE + 1);
-        assertTrue(token.isQualified(SERIES_ID));
-
-        source.set(DateKey.firstFullDay(token.readData(SERIES_ID).issuedAt), FLOOR_PRICE);
-        assertFalse(token.isQualified(SERIES_ID), "a day at the floor does not qualify");
-
-        source.setReverts(true);
-        assertFalse(token.isQualified(SERIES_ID), "a failing source answers no rather than reverting");
-    }
-
-    function test_readData_DerivesQualifiedAsTheCardDoes() public {
-        MockVwapSource source = _pointAtSource(FLOOR_PRICE + 1);
-        assertEq(uint8(token.readData(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Qualified));
-
-        source.set(DateKey.firstFullDay(token.readData(SERIES_ID).issuedAt), FLOOR_PRICE);
-        assertEq(uint8(token.readData(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Issued), "at the floor");
-
-        source.set(DateKey.firstFullDay(token.readData(SERIES_ID).issuedAt), FLOOR_PRICE + 1);
-        source.setReverts(true);
-        assertEq(uint8(token.readData(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Issued), "failing source");
-
-        source.setReverts(false);
-        vm.prank(bridger);
-        token.markCalled(SERIES_ID, uint32(block.timestamp));
-        assertEq(uint8(token.readData(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Called));
-    }
-
-    function test_TheIntexFactoryAnswersAsAVwapSource() public pure {
-        assertEq(IIntexFactory.maxUtcDayVwapSince.selector, IVwapSource.maxUtcDayVwapSince.selector);
-    }
-
-    function test_setVwapSource_OnlyAdmin() public {
-        address source = makeAddr("source");
-        vm.expectRevert();
-        vm.prank(user);
-        token.setVwapSource(source);
-
-        vm.expectEmit(address(token));
-        emit IIntexNFT1155.VwapSourceSet(source);
-        vm.prank(admin);
-        token.setVwapSource(source);
-        assertEq(token.vwapSource(), source);
     }
 
     function test_uri_Called_AddsCallTimestamps() public {
@@ -231,7 +134,6 @@ contract IntexNFT1155MetadataTest is Test {
         assertTrue(svg.contains("CALLED"), "badge text");
         assertTrue(svg.contains("#f97316"), "badge color");
         // calledAt == 1, deadline == 1 + 14 days == 1970-01-15 00:00:01 UTC.
-        assertFalse(svg.contains("Floor Price"), "floor price shows only while issued");
         _assertRowAt(svg, "Call Price", 355);
         _assertRowAt(svg, "Call Deadline", 400);
         assertTrue(svg.contains("15.01.1970 00:00 UTC"), "deadline date formatting");
@@ -252,7 +154,6 @@ contract IntexNFT1155MetadataTest is Test {
         bytes memory svg = json.decodeSvg();
         assertTrue(svg.contains("EXPIRED"), "badge text");
         assertTrue(svg.contains("#6b7280"), "badge color");
-        assertFalse(svg.contains("Floor Price"), "floor price shows only while issued");
         _assertRowAt(svg, "Call Deadline", 400);
     }
 
@@ -271,7 +172,6 @@ contract IntexNFT1155MetadataTest is Test {
         bytes memory svg = json.decodeSvg();
         assertTrue(svg.contains("SETTLED"), "badge text");
         assertTrue(svg.contains("#a855f7"), "badge color");
-        assertFalse(svg.contains("Floor Price"), "floor price shows only while issued");
     }
 
     function test_uri_SettledToken_RendersBeforeAnySettle() public view {
@@ -316,11 +216,9 @@ contract IntexNFT1155MetadataTest is Test {
         assertTrue(svg.contains(">1</text>"), "entry price");
         assertTrue(svg.contains(">2.28</text>"), "call price");
         assertTrue(svg.contains(">100,000</text>"), "promis load as whole units with separators");
-        assertTrue(svg.contains(">1.08</text>"), "floor price while issued");
         _assertRowAt(svg, "Promis Load", 265);
         _assertRowAt(svg, "Entry Price", 310);
-        _assertRowAt(svg, "Floor Price", 355);
-        _assertRowAt(svg, "Call Price", 400);
+        _assertRowAt(svg, "Call Price", 355);
         assertFalse(svg.contains("Call Deadline"), "no deadline row before call");
     }
 
@@ -329,11 +227,9 @@ contract IntexNFT1155MetadataTest is Test {
         data.worldwideDay = SERIES_ID_DAY;
         data.issuedAt = 1;
         data.entryPriceMinor = 12e6; // whole units render without a decimal point
-        data.floorPriceMinor = 1; // smallest representable six-decimal value
         data.callPriceMinor = 1_234; // 0.001234 on the six-decimal wire
         bytes memory json = MetadataTestLib.decodeJsonDataUri(IntexMetadata.tokenURI(data, false));
         _assertContains(json, "{\"trait_type\":\"Entry Price\",\"value\":12,\"display_type\":\"number\"}");
-        _assertContains(json, "{\"trait_type\":\"Floor Price\",\"value\":0.000001,\"display_type\":\"number\"}");
         _assertContains(json, "{\"trait_type\":\"Call Price\",\"value\":0.001234,\"display_type\":\"number\"}");
 
         data.entryPriceMinor = 0;

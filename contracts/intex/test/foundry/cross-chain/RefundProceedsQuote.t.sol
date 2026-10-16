@@ -33,7 +33,7 @@ contract RefundProceedsQuoteTest is CrossChainTest {
 
         // Freeze the day's snapshot so an addressed refund send passes membership.
         IOriginRouter.AuctionStageStartParams memory sp;
-        sp.prices = ReferenceCurrencyPriceLib.one(840, 1, 2, 3);
+        sp.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
         sp.worldwideDay = DAY;
         sp.dayState = 1;
         vm.prank(desis);

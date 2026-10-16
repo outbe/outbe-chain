@@ -10,7 +10,7 @@ use crate::{
 };
 
 /// Repository namespace.
-type Namespace = crypto::PublicKey;
+type Namespace = crypto::RepositoryKey;
 
 #[derive(Debug, Error)]
 pub enum UrlError {
@@ -25,7 +25,7 @@ pub enum UrlError {
     InvalidRepository(#[source] IdError),
     /// Invalid namespace.
     #[error("namespace: {0}")]
-    InvalidNamespace(#[source] crypto::PublicKeyError),
+    InvalidNamespace(#[source] crypto::repository::Error),
 }
 
 /// A git local transport URL.

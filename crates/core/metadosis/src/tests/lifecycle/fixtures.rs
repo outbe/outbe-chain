@@ -54,30 +54,6 @@ pub(super) fn issue_one_tribute(storage: &StorageHandle, input: FixtureTribute) 
     );
 }
 
-pub(super) fn assert_no_ocomp_job(
-    storage: &StorageHandle,
-    wwd: outbe_primitives::time::WorldwideDay,
-) {
-    let metadosis = MetadosisContract::new(storage.clone());
-    let limits = crate::ocomp::schema::poc_schema_limits();
-    assert!(metadosis.ocomp_scheduler.is_empty().unwrap());
-    assert!(metadosis.ocomp_ready_index.is_empty().unwrap());
-    assert!(metadosis
-        .ocomp_fsm_states
-        .get_bytes(&wwd)
-        .is_empty()
-        .unwrap());
-    assert_eq!(metadosis.terminal_intent_count(wwd).unwrap(), 0);
-    assert!(metadosis
-        .request_limit_receipt(wwd, &limits)
-        .unwrap()
-        .is_none());
-    assert!(metadosis
-        .read_pre_admission_envelope(wwd, &limits)
-        .unwrap()
-        .is_none());
-}
-
 pub(super) fn seed_missed_offering_day(
     provider: &mut HashMapStorageProvider,
     wwd: outbe_primitives::time::WorldwideDay,
@@ -89,7 +65,7 @@ pub(super) fn seed_missed_offering_day(
         outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
     );
     StorageHandle::enter(provider, |storage| {
-        arm_genesis_ocomp(&storage, CHAIN_ID);
+        install_test_enclaves();
         PromisLimitContract::new(storage.clone())
             .checked_add_carry_over(formation_carry_over)
             .unwrap();
@@ -120,6 +96,7 @@ pub(super) fn run_start_command(
     timestamp: u64,
 ) -> outbe_primitives::error::Result<()> {
     provider.set_block_number(block_number);
+    provider.set_timestamp(U256::from(timestamp));
     provider.enable_metadosis_mutation_frame(
         outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
     );

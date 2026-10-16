@@ -1,4 +1,4 @@
-use super::{wait_for_optional_ocomp_parent, ExecutorActor, HeadOrFinalized, MaybeBuild};
+use super::{ExecutorActor, HeadOrFinalized, MaybeBuild};
 
 use crate::digest::Digest;
 use alloy_primitives::B256;
@@ -273,16 +273,10 @@ where
         digest: crate::digest::Digest,
         block: crate::block::ConsensusBlock,
     ) -> eyre::Result<()> {
-        let parent_height = height
+        height
             .get()
             .checked_sub(1)
             .ok_or(crate::errors::ExecutorError::ExecuteGenesisThroughSuccessor(digest))?;
-        let parent_checkpoint = ProjectionCheckpoint {
-            block_number: parent_height,
-            block_hash: block.parent_hash(),
-        };
-        wait_for_optional_ocomp_parent(self.ocomp_readiness.clone(), parent_checkpoint).await?;
-
         let execution_data =
             OutbeExecutionData::new(std::sync::Arc::new(block.clone().into_inner()));
 

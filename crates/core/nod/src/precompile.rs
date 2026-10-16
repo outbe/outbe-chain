@@ -6,11 +6,10 @@ use outbe_primitives::erc::{
     ERC721_METADATA_INTERFACE_ID,
 };
 use outbe_primitives::error::Result;
-use outbe_primitives::time::WorldwideDay;
 
 use crate::api;
 use crate::errors::NodError;
-use crate::schema::{NodBucketState, NodCertifiedGenerationProjection, NodContract, NodItemState};
+use crate::schema::{NodBucketState, NodContract, NodItemState};
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 /// Selectors on this precompile that accept native value. The route table binds
@@ -58,8 +57,7 @@ pub fn dispatch(
             | tokenURI(_)
             | tokenByIndex(_)
             | tokenOfOwnerByIndex(_)
-            | getNod(_)
-            | certifiedGeneration(_)) => dispatch_entity(storage, &nod, call),
+            | getNod(_)) => dispatch_entity(storage, &nod, call),
         }
     })
 }
@@ -97,8 +95,7 @@ fn dispatch_entity(
             let item = api::get_item(&storage, nod_id)?.ok_or(NodError::NodNotFound)?;
             let bucket =
                 api::get_bucket(&storage, item.bucket_key)?.ok_or(NodError::BucketNotFound)?;
-            let qualified = api::is_qualified(&storage, &bucket)?;
-            crate::metadata::token_uri(nod, &item, &bucket, qualified, storage.timestamp()?)
+            crate::metadata::token_uri(nod, &item, &bucket, storage.timestamp()?)
         }),
         tokenByIndex(c) => view(c, |c| {
             let idx = usize::try_from(c.index).map_err(|_| NodError::IndexOutOfBounds)?;
@@ -121,13 +118,6 @@ fn dispatch_entity(
                 api::get_bucket(&storage, item.bucket_key)?.ok_or(NodError::BucketNotFound)?;
             to_abi_data(&storage, &item, &bucket)
         }),
-        certifiedGeneration(c) => view(c, |c| {
-            let worldwide_day = WorldwideDay::new(c.worldwideDay);
-            Ok(to_abi_certified_generation(
-                worldwide_day,
-                nod.ocomp_certified_generation(worldwide_day)?,
-            ))
-        }),
         _ => unreachable!("entity route requires an entity call"),
     }
 }
@@ -145,14 +135,12 @@ fn to_abi_data(
     } else {
         api::settlement_deadline_of(called_at, terms.call_notice_period_seconds)
     };
-    let qualified = api::is_qualified(storage, bucket)?;
-    let state = api::effective_state(item, qualified, called_at, deadline, storage.timestamp()?);
+    let state = api::effective_state(item, called_at, deadline, storage.timestamp()?);
     Ok(INod::NodData {
         nodId: item.nod_id.to_u256(),
         owner: item.owner,
         worldwideDay: item.worldwide_day.into(),
         leagueId: item.league_id,
-        floorPriceMinor: bucket.floor_price_minor()?,
         encryptedGratisAmount: item.encrypted.encrypted_gratis_amount.clone().into(),
         encryptedCreatorPublicKey: item.encrypted.encrypted_creator_public_key.clone().into(),
         encryptionBinding: item.encrypted.encryption_binding,
@@ -162,7 +150,6 @@ fn to_abi_data(
             bucket.entry_price_minor,
             api::calculation_amount(item)?,
         )?,
-        isQualified: qualified,
         issuanceCurrency: item.issuance_currency,
         referenceCurrency: item.reference_currency,
         issuedAt: item.issued_at,
@@ -176,40 +163,4 @@ fn to_abi_data(
         callNoticePeriod: terms.call_notice_period_seconds,
         settlementDeadline: deadline,
     })
-}
-
-fn to_abi_certified_generation(
-    worldwide_day: WorldwideDay,
-    generation: Option<NodCertifiedGenerationProjection>,
-) -> INod::CertifiedGenerationData {
-    match generation {
-        Some(generation) => INod::CertifiedGenerationData {
-            exists: true,
-            worldwideDay: generation.worldwide_day.into(),
-            generation: generation.generation,
-            nodRoot: generation.nod_root,
-            bucketRoot: generation.bucket_root,
-            outputManifestRoot: generation.output_manifest_root,
-            tributeCount: generation.tribute_count,
-            nodCount: generation.nod_count,
-            bucketCount: generation.bucket_count,
-            totalSettlementCostMinor: generation.nod_amount_total,
-            lysisAllocationMinor: generation.lysis_allocation_minor,
-            issuedAt: generation.issued_at,
-        },
-        None => INod::CertifiedGenerationData {
-            exists: false,
-            worldwideDay: worldwide_day.into(),
-            generation: 0,
-            nodRoot: Default::default(),
-            bucketRoot: Default::default(),
-            outputManifestRoot: Default::default(),
-            tributeCount: 0,
-            nodCount: 0,
-            bucketCount: 0,
-            totalSettlementCostMinor: U256::ZERO,
-            lysisAllocationMinor: U256::ZERO,
-            issuedAt: 0,
-        },
-    }
 }

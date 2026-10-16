@@ -29,7 +29,6 @@ interface INod {
         address owner;
         uint32 worldwideDay;
         uint16 leagueId;
-        uint256 floorPriceMinor;
         /// Encrypted Gratis entitlement, readable by the owner and enclave.
         bytes encryptedGratisAmount;
         bytes encryptedCreatorPublicKey;
@@ -40,8 +39,6 @@ interface INod {
         /// floor(entryPriceMinor * gratisLoadMinor / 1,000,000), in referenceCurrency
         /// at six-decimal precision. Payment in an asset is quoted separately.
         uint256 settlementCostMinor;
-        /// Derived from finalized daily VWAPs, never stored.
-        bool isQualified;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
         uint64 issuedAt;
@@ -49,7 +46,7 @@ interface INod {
         /// called. The settlement deadline is this plus the call notice period.
         uint64 calledAt;
         bool isSettled;
-        /// Read-time state: 0 Issued, 1 Qualified, 2 Called, 3 Settled, 4 Forfeited.
+        /// Read-time state: 0 Issued, 1 Called, 2 Settled, 3 Forfeited.
         /// Paid entitlements remain Settled after expiry. Forfeited items stay
         /// in storage until cleanup. Reads of deleted items revert with NodNotFound.
         uint8 effectiveState;
@@ -61,27 +58,6 @@ interface INod {
         uint32 callNoticePeriod; // seconds
         /// Inclusive deadline: 0 when uncalled.
         uint64 settlementDeadline;
-    }
-
-    /// Finalized on-chain commitment to one activated OCOMP Nod generation.
-    ///
-    /// Individual Nod bodies remain in content-addressed storage and are
-    /// accepted only with a Merkle proof against `nodRoot`.
-    struct CertifiedGenerationData {
-        bool exists;
-        uint32 worldwideDay;
-        uint64 generation;
-        bytes32 nodRoot;
-        bytes32 bucketRoot;
-        bytes32 outputManifestRoot;
-        uint32 tributeCount;
-        uint32 nodCount;
-        uint32 bucketCount;
-        /// Sum of the generation's Nod settlementCostMinor.
-        uint256 totalSettlementCostMinor;
-        /// Actual Lysis Allocation: sum of Nod gratisLoadMinor, not the Lysis Limit.
-        uint256 lysisAllocationMinor;
-        uint64 issuedAt;
     }
 
     // ERC-165
@@ -113,5 +89,5 @@ interface INod {
 
     // outbe-specific
     function getNod(uint256 nodId) external view returns (NodData memory);
-    function certifiedGeneration(uint32 worldwideDay) external view returns (CertifiedGenerationData memory);
+
 }

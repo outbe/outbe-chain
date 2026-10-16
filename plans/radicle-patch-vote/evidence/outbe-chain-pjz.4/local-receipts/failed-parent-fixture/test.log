@@ -1,0 +1,25 @@
+   Compiling radicle v0.25.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle)
+   Compiling outbe-radicle v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/radicle)
+    Finished `test` profile [unoptimized] target(s) in 9.10s
+     Running unittests src/lib.rs (/private/tmp/outbe-radicle-p1-target/debug/deps/outbe_radicle-8b2386474264416d)
+
+running 6 tests
+
+thread 'integration::local::tests::actual_local_socket_returns_bound_receipts_without_fallback' (16809409) panicked at crates/blockchain/radicle/src/integration/local/tests.rs:75:69:
+called `Result::unwrap()` on an `Err` value: Untrusted
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'integration::local::tests::malformed_oversized_and_arbitrary_signing_requests_never_reach_reader' (16809412) panicked at crates/blockchain/radicle/src/integration/local/tests.rs:149:69:
+called `Result::unwrap()` on an `Err` value: Untrusted
+
+thread 'integration::local::tests::blocking_state_reads_are_bounded_without_an_unbounded_wait_queue' (16809410) panicked at crates/blockchain/radicle/src/integration/local/tests.rs:225:61:
+called `Result::unwrap()` on an `Err` value: Untrusted
+test integration::local::tests::actual_local_socket_returns_bound_receipts_without_fallback ... FAILED
+test integration::local::tests::malformed_oversized_and_arbitrary_signing_requests_never_reach_reader ... FAILED
+test integration::local::tests::blocking_state_reads_are_bounded_without_an_unbounded_wait_queue ... FAILED
+test integration::local::tests::response_decoder_checks_exact_request_chain_and_receipt_integrity ... ok
+test integration::local::tests::private_permissions_symlinks_live_owners_and_stale_sockets_are_checked ... ok
+error: test failed, to rerun pass `-p outbe-radicle --lib`
+
+Caused by:
+  process didn't exit successfully: `/private/tmp/outbe-radicle-p1-target/debug/deps/outbe_radicle-8b2386474264416d 'integration::local::tests' --nocapture` (signal: 2, SIGINT: terminal interrupt signal)

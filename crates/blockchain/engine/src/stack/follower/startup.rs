@@ -124,7 +124,7 @@ where
     let FollowerTrustAnchor {
         participants,
         epoch_length_blocks,
-        storage_root: ocomp_storage_root,
+        storage_root: consensus_storage_root,
     } = trust;
     let startup = read_startup_chain_state(&node)?;
     let history = HistoryBootstrap {
@@ -144,7 +144,7 @@ where
         history,
         startup,
         services,
-        storage_root: ocomp_storage_root,
+        storage_root: consensus_storage_root,
     }
     .run()
     .await
@@ -622,23 +622,17 @@ struct ConfirmedExecutor<E: FollowerRuntime> {
     mailbox: outbe_consensus::executor::Mailbox,
     finalized_heights: tokio::sync::mpsc::UnboundedReceiver<u64>,
 }
-struct RetentionBootstrap<'a> {
+struct ParentCertificateBootstrap<'a> {
     node: &'a OutbeFullNode,
-    ocomp_storage_root: &'a std::path::Path,
+    consensus_storage_root: &'a std::path::Path,
     recovery_anchor: &'a CertifiedFollowerRecoveryAnchor,
     certificate_scheme_provider: &'a HybridSchemeProvider<MinSig>,
 }
-struct RetentionServices<'a> {
-    retention_selector: &'a Arc<SharedOcompRetentionSelector>,
-}
-struct OcompBootstrap<'a> {
+struct RecoveredExecutionBootstrap<'a> {
     bridge: &'a ConsensusExecutionBridge,
     recovery_anchor: &'a CertifiedFollowerRecoveryAnchor,
     last_consensus_finalized: Height,
     last_execution_height: u64,
-}
-struct FollowerReadiness<'a> {
-    ocomp: &'a Option<ProjectionReadinessHandle>,
 }
 impl<E: FollowerRuntime> ExecutionBootstrap<E> {
     async fn confirmed_executor(&self) -> Result<ConfirmedExecutor<E>> {
@@ -686,8 +680,6 @@ impl<E: FollowerRuntime> ExecutionBootstrap<E> {
             finalized_heights: execution_finalized_height_rx,
         } = self.confirmed_executor().await?;
         let FollowerStackServices {
-            ocomp_readiness,
-            retention_selector,
             finalized_execution_barrier,
             follower_shutdown,
         } = self.services;
@@ -695,33 +687,24 @@ impl<E: FollowerRuntime> ExecutionBootstrap<E> {
         finalized_execution_barrier
             .verify_checkpoint(recovery_anchor.checkpoint)
             .wrap_err("native execution is not durable at the certified follower anchor")?;
-        let finalized_parent_cert_store = RetentionBootstrap {
+        let finalized_parent_cert_store = ParentCertificateBootstrap {
             node: &self.node,
-            ocomp_storage_root: &self.storage_root,
+            consensus_storage_root: &self.storage_root,
             recovery_anchor,
             certificate_scheme_provider: &self.history.certificate_scheme_provider,
         }
-        .install(RetentionServices {
-            retention_selector: &retention_selector,
-        })?;
-        OcompBootstrap {
+        .install()?;
+        RecoveredExecutionBootstrap {
             bridge: &self.bridge,
             recovery_anchor,
             last_consensus_finalized: self.history.last_consensus_finalized,
             last_execution_height: self.startup.last_execution_height,
         }
-        .wait(FollowerReadiness {
-            ocomp: &ocomp_readiness,
-        })
-        .await?;
+        .publish();
         let marshal_mailbox = &self.history.marshal_mailbox;
         let last_consensus_finalized = self.history.last_consensus_finalized;
         let executor_actor =
             executor_actor.with_finalized_execution_barrier(finalized_execution_barrier);
-        let executor_actor = match ocomp_readiness {
-            Some(readiness) => executor_actor.with_ocomp_readiness(readiness),
-            None => executor_actor,
-        };
         let Some(executor_reporter) = follower_shutdown.install(executor_mailbox)? else {
             // Shutdown won the startup race. No execution delivery was accepted.
             return Ok(());
@@ -741,26 +724,22 @@ impl<E: FollowerRuntime> ExecutionBootstrap<E> {
             executor_handle,
             execution_finalized_height_rx,
             follower_shutdown,
-            _retention_selector: retention_selector,
         }
         .run()
         .await
     }
 }
-impl RetentionBootstrap<'_> {
+impl ParentCertificateBootstrap<'_> {
     fn install(
         self,
-        services: RetentionServices<'_>,
     ) -> Result<outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore> {
         let Self {
             node,
-            ocomp_storage_root,
+            consensus_storage_root,
             recovery_anchor,
             certificate_scheme_provider,
         } = self;
-        let RetentionServices { retention_selector } = services;
-        outbe_node::ocomp::fork::require_startup_ocomp_fork_install(node.chain_spec().as_ref())?;
-        let parent_cert_dir = ocomp_storage_root.join("finalized_parent_certs");
+        let parent_cert_dir = consensus_storage_root.join("finalized_parent_certs");
         let finalized_parent_cert_store =
             outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore::open(
                 &parent_cert_dir,
@@ -774,21 +753,6 @@ impl RetentionBootstrap<'_> {
         finalized_parent_cert_store
             .prune_above_height(recovery_anchor.checkpoint.block_number)
             .wrap_err("failed to prune follower parent certificates above recovery anchor")?;
-        let ocomp_proof_source = Arc::new(
-            outbe_node::ocomp::retention::RethFinalizedInputProofSource::new(
-                node.provider.clone(),
-                finalized_parent_cert_store.clone(),
-            ),
-        );
-        let ocomp_retention_coordinator = Arc::new(
-            outbe_node::ocomp::retention::OcompRetentionCoordinator::open(
-                ocomp_storage_root.join("ocomp_retention"),
-                ocomp_proof_source,
-            ),
-        );
-        retention_selector
-            .install(Arc::clone(&ocomp_retention_coordinator))
-            .wrap_err("failed to install follower OCOMP retention selector")?;
         if let Some(finalization) = recovery_anchor.finalization.as_ref() {
             FollowerProofPersistence {
                 node,
@@ -801,20 +765,14 @@ impl RetentionBootstrap<'_> {
         Ok(finalized_parent_cert_store)
     }
 }
-impl OcompBootstrap<'_> {
-    async fn wait(self, readiness: FollowerReadiness<'_>) -> Result<()> {
+impl RecoveredExecutionBootstrap<'_> {
+    fn publish(self) {
         let Self {
             bridge,
             recovery_anchor,
             last_consensus_finalized,
             last_execution_height,
         } = self;
-        let FollowerReadiness {
-            ocomp: ocomp_readiness,
-        } = readiness;
-        if let Some(readiness) = ocomp_readiness.clone() {
-            wait_for_recovered_projection("OCOMP", readiness, recovery_anchor.checkpoint).await?;
-        }
         bridge.set_last_finalized_block_number(recovery_anchor.checkpoint.block_number);
 
         info!(
@@ -824,8 +782,6 @@ impl OcompBootstrap<'_> {
             last_execution_height,
             "certified follower startup recovery barrier completed"
         );
-
-        Ok(())
     }
 }
 struct LiveFollower<E: FollowerRuntime> {
@@ -840,8 +796,6 @@ struct LiveFollower<E: FollowerRuntime> {
     executor_handle: commonware_runtime::Handle<Result<()>>,
     execution_finalized_height_rx: tokio::sync::mpsc::UnboundedReceiver<u64>,
     follower_shutdown: crate::follower_shutdown::FollowerDrain,
-    // The original startup held these owners until execution/proof draining completed.
-    _retention_selector: Arc<SharedOcompRetentionSelector>,
 }
 impl<E: FollowerRuntime> LiveFollower<E> {
     async fn run(self) -> Result<()> {
@@ -856,7 +810,6 @@ impl<E: FollowerRuntime> LiveFollower<E> {
             executor_handle,
             execution_finalized_height_rx,
             follower_shutdown,
-            _retention_selector,
         } = self;
         let RecoveredFollowerHistory {
             marshal_actor,
@@ -872,8 +825,7 @@ impl<E: FollowerRuntime> LiveFollower<E> {
             ..
         } = history;
         // -- 4b. Serve `outbe_getFinalization`. The critical observer below owns
-        // finality publication only after exact parent-proof persistence and OCOMP
-        // retention both succeed. --------------------------------------
+        // finality publication only after exact parent-proof persistence succeeds. --------------------------------------
         spawn_finalization_drainer(
             &ctx,
             marshal_mailbox.clone(),

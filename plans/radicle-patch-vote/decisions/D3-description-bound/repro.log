@@ -1,0 +1,15 @@
+   Compiling radicle v0.25.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle)
+   Compiling outbe-radicle v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/radicle)
+    Finished `test` profile [unoptimized] target(s) in 9.96s
+     Running unittests src/lib.rs (/private/tmp/outbe-radicle-p1-target/debug/deps/outbe_radicle-99bf4ab6ab3c264f)
+
+running 1 test
+description_bytes=0 genesis_accepts=true native_accepts=true native_error=None
+description_bytes=255 genesis_accepts=true native_accepts=true native_error=None
+description_bytes=256 genesis_accepts=true native_accepts=false native_error=Some([Description("description cannot exceed 255 bytes")])
+description_bytes=1024 genesis_accepts=true native_accepts=false native_error=Some([Description("description cannot exceed 255 bytes")])
+description_bytes=1025 genesis_accepts=false native_accepts=false native_error=Some([Description("description cannot exceed 255 bytes")])
+test integration::bootstrap_probe::genesis_description_range_exceeds_native_project_range ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 60 filtered out; finished in 0.00s
+

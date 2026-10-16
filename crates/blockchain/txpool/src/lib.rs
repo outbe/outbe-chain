@@ -6,22 +6,14 @@
 pub mod errors;
 pub mod maintain;
 
-mod ocomp_admission;
+mod state_reader;
 
-use crate::errors::{
-    OutbeOcompSystemCarrierPoolError, OutbeReservedSystemTxPoolError, OutbeZeroFeePoolError,
-};
+use crate::errors::{OutbeReservedSystemTxPoolError, OutbeZeroFeePoolError};
 use alloy_eips::{eip7840::BlobParams, merge::EPOCH_SLOTS};
 use alloy_primitives::{Address, B256, KECCAK256_EMPTY, U256};
-use outbe_ocomp_protocol::system_carrier::{
-    classify_ocomp_system_carrier, OcompSystemCarrierCandidate, OcompSystemCarrierError,
-    OcompSystemCarrierView,
-};
-use outbe_ocomp_protocol::transaction_call::TransactionCallFields;
 use outbe_primitives::{
     addresses::OUTBE_SYSTEM_TX_ADDRESS,
     storage::{readonly::ReadOnlyStorageProvider, StorageHandle},
-    system_tx::OcompLifecycleActivation,
     OutbePrimitives,
 };
 use outbe_zerofee::{BootstrapTransactionView, ZeroFeeHookId, ZeroFeeTransaction};
@@ -53,21 +45,6 @@ where
     T: alloy_consensus::Transaction + ?Sized,
 {
     ZeroFeeTransaction::from_transaction(tx, signer)
-}
-
-fn classify_ocomp_carrier<T>(
-    tx: &T,
-) -> Result<Option<OcompSystemCarrierCandidate>, OcompSystemCarrierError>
-where
-    T: alloy_consensus::Transaction + ?Sized,
-{
-    classify_ocomp_system_carrier(
-        OcompSystemCarrierView {
-            is_eip1559: tx.ty() == alloy_consensus::TxType::Eip1559 as u8,
-            call: TransactionCallFields::from_transaction(tx),
-        },
-        &outbe_ocomp_protocol::profile::poc_schema_limits(),
-    )
 }
 
 /// Returns a reserved priority class for zero-fee hooks that must outrank the
@@ -126,12 +103,6 @@ where
                 .into()
         };
 
-        match classify_ocomp_carrier(transaction) {
-            Ok(Some(_)) => return Priority::Value((2, 0)),
-            Err(_) => return Priority::None,
-            Ok(None) => {}
-        }
-
         match outbe_zerofee::registry().classify(&zero_fee_tx) {
             Ok(Some(candidate)) => zero_fee_priority_class(candidate.hook)
                 .map(|priority_class| Priority::Value((priority_class, 0)))
@@ -144,20 +115,7 @@ where
 
 /// Builds the transaction pool used by Outbe nodes.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct OutbePoolBuilder {
-    ocomp_lifecycle_activation: OcompLifecycleActivation,
-}
-
-impl OutbePoolBuilder {
-    #[must_use]
-    pub const fn with_ocomp_lifecycle_activation(
-        mut self,
-        activation: OcompLifecycleActivation,
-    ) -> Self {
-        self.ocomp_lifecycle_activation = activation;
-        self
-    }
-}
+pub struct OutbePoolBuilder;
 
 impl<Types, Node, Evm> PoolBuilder<Node, Evm> for OutbePoolBuilder
 where
@@ -206,9 +164,7 @@ where
                 .with_additional_tasks(ctx.config().txpool.additional_validation_tasks)
                 .disable_balance_check()
                 .build_with_tasks(ctx.task_executor().clone(), blob_store.clone())
-                .map(|inner| {
-                    OutbeTransactionValidator::new(inner, self.ocomp_lifecycle_activation)
-                });
+                .map(|inner| OutbeTransactionValidator::new(inner));
 
         if validator.validator().inner().eip4844() {
             let kzg_settings = validator.validator().inner().kzg_settings().clone();
@@ -311,18 +267,11 @@ where
 /// Transaction validator that keeps reth's Ethereum checks and adds Outbe policy.
 pub struct OutbeTransactionValidator<Client, Tx, Evm> {
     inner: EthTransactionValidator<Client, Tx, Evm>,
-    ocomp_lifecycle_activation: OcompLifecycleActivation,
 }
 
 impl<Client, Tx, Evm> OutbeTransactionValidator<Client, Tx, Evm> {
-    fn new(
-        inner: EthTransactionValidator<Client, Tx, Evm>,
-        ocomp_lifecycle_activation: OcompLifecycleActivation,
-    ) -> Self {
-        Self {
-            inner,
-            ocomp_lifecycle_activation,
-        }
+    fn new(inner: EthTransactionValidator<Client, Tx, Evm>) -> Self {
+        Self { inner }
     }
 
     fn inner(&self) -> &EthTransactionValidator<Client, Tx, Evm> {
@@ -337,10 +286,6 @@ where
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("OutbeTransactionValidator")
             .field("inner", &self.inner)
-            .field(
-                "ocomp_lifecycle_activation",
-                &self.ocomp_lifecycle_activation,
-            )
             .finish()
     }
 }
@@ -362,20 +307,6 @@ where
         origin: TransactionOrigin,
         transaction: Self::Transaction,
     ) -> TransactionValidationOutcome<Self::Transaction> {
-        match classify_ocomp_carrier(&transaction) {
-            Ok(Some(candidate)) => {
-                return self.validate_ocomp_system_carrier(origin, transaction, candidate)
-            }
-            Err(error) => {
-                return TransactionValidationOutcome::Invalid(
-                    transaction,
-                    InvalidPoolTransactionError::other(
-                        OutbeOcompSystemCarrierPoolError::from_display(error),
-                    ),
-                )
-            }
-            Ok(None) => {}
-        }
         let outcome = self.inner.validate_transaction(origin, transaction).await;
         self.apply_outbe_policy(outcome)
     }
@@ -393,20 +324,6 @@ where
     Tx: EthPoolTransaction + alloy_consensus::Transaction,
     Evm: ConfigureEvm,
 {
-    fn validate_ocomp_system_carrier(
-        &self,
-        origin: TransactionOrigin,
-        transaction: Tx,
-        candidate: OcompSystemCarrierCandidate,
-    ) -> TransactionValidationOutcome<Tx> {
-        ocomp_admission::validate(
-            &self.inner,
-            self.ocomp_lifecycle_activation,
-            transaction,
-            ocomp_admission::CarrierAdmissionContext { origin, candidate },
-        )
-    }
-
     fn apply_outbe_policy(
         &self,
         outcome: TransactionValidationOutcome<Tx>,
@@ -556,7 +473,7 @@ where
             .latest()
             .map_err(OutbeZeroFeePoolError::from_display)?;
 
-        let reader = ocomp_admission::RethStateReader::new(&state);
+        let reader = state_reader::RethStateReader::new(&state);
         let mut provider = ReadOnlyStorageProvider::new(reader);
         let storage = StorageHandle::new(&mut provider);
 

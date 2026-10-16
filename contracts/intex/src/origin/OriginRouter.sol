@@ -37,7 +37,7 @@ contract OriginRouter is
 {
     /// @notice Gates the demand-side sends: auction stages, AUCTION_RESULT, REFUND_INSTRUCTIONS.
     bytes32 public constant DESIS_ROLE = keccak256("DESIS_ROLE");
-    /// @notice Gates the supply-side sends: ISSUANCE_INSTRUCTIONS, MARK_CALLED, DAILY_VWAP.
+    /// @notice Gates the supply-side sends: ISSUANCE_INSTRUCTIONS, MARK_CALLED.
     bytes32 public constant INTEX_FACTORY_ROLE = keccak256("INTEX_FACTORY_ROLE");
 
     /// @custom:storage-location erc7201:outbe.intex.OriginRouter
@@ -389,25 +389,6 @@ contract OriginRouter is
         }
     }
 
-    /// @inheritdoc IOriginRouter
-    /// @dev Goes out over the live target list: a closing price is news to every target.
-    function sendDailyVwap(uint32 utcDay, DailyVwap[] calldata rows)
-        external
-        payable
-        onlyRole(INTEX_FACTORY_ROLE)
-        returns (uint256 legs)
-    {
-        uint32[] memory chains = _os().targetChainIds;
-        bytes memory payload = BridgeMsgCodec.encodeDailyVwap(utcDay, rows);
-        uint256 gasLimit = IntexGas.dailyVwap(rows.length);
-        for (uint256 i = 0; i < chains.length; ++i) {
-            if (chains[i] == block.chainid) continue;
-            bytes32 sendId = _sendOrPark(chains[i], payload, gasLimit);
-            emit DailyVwapSent(sendId, chains[i], utcDay);
-            ++legs;
-        }
-    }
-
     // --- Receive ---
     /// @inheritdoc ERC7786MessengerBase
     /// @dev Guards the authenticated inbound path against re-entry through the Desis recipient.
@@ -585,7 +566,6 @@ contract OriginRouter is
         payload.issuedUnits = p.issuedUnits;
         payload.promisLoadMinor = p.promisLoadMinor;
         payload.entryPriceMinor = p.entryPriceMinor;
-        payload.floorPriceMinor = p.floorPriceMinor;
         payload.callNoticePeriod = p.callNoticePeriod;
         payload.issuanceCurrency = p.issuanceCurrency;
         payload.referenceCurrency = p.referenceCurrency;

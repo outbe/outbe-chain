@@ -1336,9 +1336,7 @@ mod copied_native_dkg_prerequisites {
                     },
                 );
                 let evm = OutbeEvmConfig::new(chain.clone());
-                let pool = OutbePoolBuilder::default()
-                    .build_pool(&ctx, evm.clone())
-                    .await?;
+                let pool = OutbePoolBuilder.build_pool(&ctx, evm.clone()).await?;
                 let network_config = ctx.build_network_config(
                     ctx.network_config_builder()?
                         .disable_discovery()

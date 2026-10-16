@@ -278,7 +278,8 @@ impl FetcherState {
             .entry(from)
             .or_insert(Queue::new(self.config.maximum_queue_size));
         match queue.enqueue(QueuedFetch { rid, refs, config }) {
-            Enqueue::CapacityReached(QueuedFetch { rid, refs, config }) => {
+            Enqueue::CapacityReached(fetch) => {
+                let QueuedFetch { rid, refs, config } = *fetch;
                 event::Fetch::QueueAtCapacity {
                     rid,
                     from,
@@ -432,7 +433,7 @@ impl Default for MaxQueueSize {
 pub(super) enum Enqueue {
     /// The capacity of the queue has been exceeded, and the [`QueuedFetch`] is
     /// returned.
-    CapacityReached(QueuedFetch),
+    CapacityReached(Box<QueuedFetch>),
     /// The [`QueuedFetch`] was successfully queued.
     Queued,
     Merged,
@@ -467,7 +468,7 @@ impl Queue {
         }
 
         if self.max_queue_size.is_exceeded_by(self.queue.len()) {
-            Enqueue::CapacityReached(fetch)
+            Enqueue::CapacityReached(Box::new(fetch))
         } else {
             self.queue.push_back(fetch);
             Enqueue::Queued

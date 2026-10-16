@@ -9,8 +9,9 @@ use localtime::LocalTime;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::crypto::{PublicKey, RepositoryKey};
 use crate::git::Oid;
-use crate::prelude::{Did, PublicKey};
+use crate::prelude::Did;
 
 /// Timestamp used for COB operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -143,7 +144,7 @@ impl Author {
         &self.id
     }
 
-    pub fn public_key(&self) -> &PublicKey {
+    pub fn public_key(&self) -> &RepositoryKey {
         self.id.as_key()
     }
 }
@@ -156,6 +157,12 @@ impl Display for Author {
 
 impl From<PublicKey> for Author {
     fn from(value: PublicKey) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<RepositoryKey> for Author {
+    fn from(value: RepositoryKey) -> Self {
         Self::new(value)
     }
 }

@@ -289,8 +289,8 @@ pub(super) fn run(
     //    won't match the remote we're pushing to.
     // 3. The URL namespace is not set.
     let nid = url.namespace.ok_or(Error::NoKey).and_then(|ns| {
-        (profile.id() == &ns)
-            .then_some(ns)
+        (ns.as_ed25519() == Some(profile.id()))
+            .then_some(*profile.id())
             .ok_or(Error::KeyMismatch(ns.into()))
     })?;
     let signer = profile.signer()?;
@@ -531,7 +531,7 @@ impl<'a, G: GitService> TempPatchRef<'a, G> {
         nid: &NodeId,
         git: &'a G,
     ) -> Self {
-        let reference = git::refs::storage::staging::patch(nid, *head);
+        let reference = git::refs::storage::staging::patch(&(*nid).into(), *head);
         Self {
             stored,
             reference,

@@ -18,10 +18,6 @@ fn run_init_genesis_command(
     })
 }
 
-fn seed_genesis_profile(provider: &mut HashMapStorageProvider) {
-    StorageHandle::enter(provider, |storage| arm_genesis_ocomp(&storage, CHAIN_ID));
-}
-
 fn assert_genesis_created_once(
     provider: &mut HashMapStorageProvider,
     timestamp: u64,
@@ -51,7 +47,7 @@ fn genesis_creation_command_rolls_back_every_mutation_and_retries_exactly_once()
         + 2 * SECONDS_PER_HOUR;
 
     let mut probe = HashMapStorageProvider::new(CHAIN_ID);
-    seed_genesis_profile(&mut probe);
+    install_test_enclaves();
     probe.fail_after_mutation_at(usize::MAX);
     run_init_genesis_command(&mut probe, 1, timestamp).unwrap();
     let mutation_count = probe.clear_mutation_failure();
@@ -67,7 +63,7 @@ fn genesis_creation_command_rolls_back_every_mutation_and_retries_exactly_once()
 
     for operation in 0..mutation_count {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-        seed_genesis_profile(&mut provider);
+        install_test_enclaves();
         let storage_before = provider.storage.clone();
         let events_before = provider.events.clone();
         let ordered_before = provider.get_ordered_events().to_vec();
@@ -144,7 +140,7 @@ fn genesis_day_uses_the_canonical_utc_plus_14_boundary() {
         (utc_midnight + 10 * SECONDS_PER_HOUR, 20260303),
     ] {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-        seed_genesis_profile(&mut provider);
+        install_test_enclaves();
         run_init_genesis_command(&mut provider, 1, timestamp).unwrap();
 
         let created = assert_genesis_created_once(&mut provider, timestamp);

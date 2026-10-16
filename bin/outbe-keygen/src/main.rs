@@ -14,15 +14,8 @@ use commonware_codec::Encode;
 use commonware_cryptography::{bls12381, Signer as _};
 use commonware_math::algebra::Random;
 use eyre::{Result, WrapErr};
-use k256::ecdsa::{signature::hazmat::PrehashSigner as _, Signature, SigningKey};
+use k256::ecdsa::SigningKey;
 use outbe_consensus::bls::{self, KeyBackend};
-use outbe_ocomp_protocol::{
-    committee::{
-        validator_identity_hash_v1, OcompKeyRegistrationCoreV1, OcompKeyRegistrationV1,
-        POC_KEY_EPOCH, RESULT_SIGNATURE_PURPOSE_BITMAP,
-    },
-    profile::poc_schema_limits,
-};
 use outbe_primitives::validators::{validator_registration_message, VALIDATOR_REGISTRATION_DST};
 
 use crate::errors::KeygenError;
@@ -38,16 +31,12 @@ fn exit_process(code: i32) -> ! {
 }
 use rand_core::RngCore as _;
 use std::{
-    fs::{File, OpenOptions},
     io::Write as _,
-    os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _},
+    os::unix::fs::PermissionsExt as _,
     path::{Path, PathBuf},
 };
 use zeroize::Zeroizing;
 
-const OCOMP_KEY_FILENAME: &str = "ocomp-key-v1.hex";
-const OCOMP_REGISTRATION_FILENAME: &str = "ocomp-registration-v1.ocb1";
-const OCOMP_EVM_KEY_FILENAME: &str = "ocomp-evm-key.hex";
 const RETH_P2P_SECRET_FILENAME: &str = "reth-p2p-secret.hex";
 
 /// Key storage backend for BLS key files.
@@ -142,41 +131,15 @@ enum Commands {
         output_dir: PathBuf,
     },
 
-    /// Generate the complete key bundle for one validator. The bundle contains the BLS
-    /// consensus key, validator EVM signer, Reth P2P identity, OCOMP operational signer,
-    /// Radicle identity, and the ValidatorSet registration signature. When
-    /// --genesis-hash is known, the bundle also contains OCOMP result-signing artifacts.
+    /// Generates BLS, EVM, Reth P2P, and Radicle keys with the validator registration signature.
     Validator {
         /// Directory that receives every generated key artifact.
         #[arg(long, default_value = ".")]
         output_dir: PathBuf,
 
-        /// Chain ID bound by the registration signature and OCOMP registration.
+        /// Chain ID bound by the registration signature.
         #[arg(long)]
         chain_id: u64,
-
-        /// Genesis hash for the OCOMP registration. Omit while the genesis is
-        /// not sealed yet. Generate OCOMP artifacts later with
-        /// `outbe-keygen ocomp`.
-        #[arg(long)]
-        genesis_hash: Option<B256>,
-    },
-
-    /// Generate a dedicated OCOMP result-signing key and PoP registration.
-    Ocomp {
-        /// Directory for the immutable secret and public registration artifacts.
-        #[arg(long, default_value = ".")]
-        output_dir: PathBuf,
-        #[arg(long)]
-        chain_id: u64,
-        #[arg(long)]
-        genesis_hash: B256,
-        /// Validator EVM address used by the canonical identity preimage.
-        #[arg(long)]
-        validator_address: Address,
-        /// Exact 48-byte consensus BLS MinPk public key, encoded as hex.
-        #[arg(long, value_parser = parse_consensus_bls_min_pk)]
-        consensus_bls_min_pk: [u8; 48],
     },
 }
 
@@ -208,40 +171,8 @@ fn main() -> Result<()> {
         Commands::Validator {
             output_dir,
             chain_id,
-            genesis_hash,
-        } => cmd_validator(output_dir, chain_id, genesis_hash, &backend),
-        Commands::Ocomp {
-            output_dir,
-            chain_id,
-            genesis_hash,
-            validator_address,
-            consensus_bls_min_pk,
-        } => cmd_ocomp(
-            output_dir,
-            OcompRegistrationArgs {
-                chain_id,
-                genesis_hash,
-                validator_address,
-                consensus_bls_min_pk,
-            },
-        ),
+        } => cmd_validator(output_dir, chain_id, &backend),
     }
-}
-
-#[derive(Clone, Copy)]
-struct OcompRegistrationArgs {
-    chain_id: u64,
-    genesis_hash: B256,
-    validator_address: Address,
-    consensus_bls_min_pk: [u8; 48],
-}
-
-fn parse_consensus_bls_min_pk(value: &str) -> std::result::Result<[u8; 48], KeygenError> {
-    let value = value.strip_prefix("0x").unwrap_or(value);
-    let mut public_key = [0u8; 48];
-    hex::decode_to_slice(value, &mut public_key)
-        .map_err(KeygenError::InvalidConsensusBlsMinPkHex)?;
-    Ok(public_key)
 }
 
 /// Resolve the CLI args into a [`KeyBackend`].
@@ -399,7 +330,7 @@ fn cmd_radicle(output_dir: PathBuf) -> Result<()> {
     Ok(())
 }
 
-/// Everything `validator` generates besides the optional OCOMP result-signing artifacts.
+/// Native keys and registration signature for one validator.
 struct ValidatorBundle {
     bls_key_path: PathBuf,
     bls_public_key: [u8; 48],
@@ -407,8 +338,6 @@ struct ValidatorBundle {
     evm_key_path: PathBuf,
     validator_address: Address,
     reth_p2p_key_path: PathBuf,
-    ocomp_evm_key_path: PathBuf,
-    ocomp_evm_address: Address,
     radicle: RadicleIdentity,
     registration_signature: [u8; 96],
 }
@@ -460,14 +389,12 @@ fn generate_validator_bundle(
     let bls_key_path = output_dir.join("signing-key.hex");
     let evm_key_path = output_dir.join("evm-key.hex");
     let reth_p2p_key_path = output_dir.join(RETH_P2P_SECRET_FILENAME);
-    let ocomp_evm_key_path = output_dir.join(OCOMP_EVM_KEY_FILENAME);
     let radicle_home = output_dir.join("radicle");
     let radicle_key_path = radicle_home.join("keys").join("radicle");
     let preexisting: Vec<String> = [
         &bls_key_path,
         &evm_key_path,
         &reth_p2p_key_path,
-        &ocomp_evm_key_path,
         &radicle_key_path,
     ]
     .into_iter()
@@ -509,22 +436,10 @@ fn generate_validator_bundle(
         )
     })?;
 
-    // 4. Dedicated OCOMP operational signer. It is deliberately distinct from
-    // the validator EVM key and must be delegated before OCOMP submissions.
-    let ocomp_evm_key = generate_distinct_evm_key(&[&evm_signing_key, &reth_p2p_key]);
-    let ocomp_evm_key_hex = Zeroizing::new(hex::encode(ocomp_evm_key.to_bytes()));
-    write_secret_hex_file(&ocomp_evm_key_path, &ocomp_evm_key_hex).wrap_err_with(|| {
-        format!(
-            "failed to write OCOMP EVM key: {}",
-            ocomp_evm_key_path.display()
-        )
-    })?;
-    let ocomp_evm_address = evm_address(&ocomp_evm_key)?;
-
-    // 5. Radicle Ed25519 identity. The registration binds it atomically.
+    // 4. Radicle Ed25519 identity. The registration binds it atomically.
     let radicle = generate_radicle_identity(&radicle_home)?;
 
-    // 6. Registration signature for the ValidatorSet precompile.
+    // 5. Registration signature for the ValidatorSet precompile.
     let sk_bytes = bls_key.encode();
     let blst_sk =
         blst::min_pk::SecretKey::from_bytes(&sk_bytes).map_err(KeygenError::BlstSecretKey)?;
@@ -541,20 +456,13 @@ fn generate_validator_bundle(
         evm_key_path,
         validator_address,
         reth_p2p_key_path,
-        ocomp_evm_key_path,
-        ocomp_evm_address,
         radicle,
         registration_signature,
     })
 }
 
 /// Generate all key material one validator needs, in one pass.
-fn cmd_validator(
-    output_dir: PathBuf,
-    chain_id: u64,
-    genesis_hash: Option<B256>,
-    backend: &KeyBackend,
-) -> Result<()> {
+fn cmd_validator(output_dir: PathBuf, chain_id: u64, backend: &KeyBackend) -> Result<()> {
     let bundle = generate_validator_bundle(&output_dir, chain_id, backend)?;
 
     println!("validator key bundle generated (chain {chain_id})");
@@ -571,15 +479,6 @@ fn cmd_validator(
     println!("Reth P2P identity (secp256k1):");
     println!("  private key:  {}", bundle.reth_p2p_key_path.display());
     println!();
-    println!("OCOMP operational EVM signer (secp256k1):");
-    println!("  private key:  {}", bundle.ocomp_evm_key_path.display());
-    println!("  address:      {}", bundle.ocomp_evm_address);
-    println!("  delegate after validator registration, using the validator EVM key:");
-    println!(
-        "  outbe-cli --private-key <validator-evm-key> validator delegate ocomp {}",
-        bundle.ocomp_evm_address
-    );
-    println!();
     println!("Radicle identity:");
     println!("  private key:  {}", bundle.radicle.key_path.display());
     if let Some(public_path) = &bundle.radicle.public_path {
@@ -592,31 +491,6 @@ fn cmd_validator(
     );
     println!();
 
-    if let Some(genesis_hash) = genesis_hash {
-        cmd_ocomp(
-            output_dir,
-            OcompRegistrationArgs {
-                chain_id,
-                genesis_hash,
-                validator_address: bundle.validator_address,
-                consensus_bls_min_pk: bundle.bls_public_key,
-            },
-        )?;
-    } else {
-        println!("OCOMP result-signing key: SKIPPED (no --genesis-hash)");
-        println!("  generate it once the genesis hash is known:");
-        println!(
-            "  outbe-keygen ocomp --output-dir {} --chain-id {chain_id} \\",
-            output_dir.display()
-        );
-        println!("    --genesis-hash <hash> \\");
-        println!("    --validator-address {} \\", bundle.validator_address);
-        println!(
-            "    --consensus-bls-min-pk {}",
-            hex::encode(bundle.bls_public_key)
-        );
-    }
-    println!();
     println!("registration (fund {} first):", bundle.validator_address);
     println!("  outbe-cli --private-key <evm-key> validator register \\");
     println!("    --pubkey {} \\", hex::encode(bundle.bls_public_key));
@@ -714,123 +588,6 @@ fn cmd_hybrid(output_dir: PathBuf, backend: &KeyBackend) -> Result<()> {
     println!("  use this path with --validator.evm-key");
 
     Ok(())
-}
-
-fn cmd_ocomp(output_dir: PathBuf, args: OcompRegistrationArgs) -> Result<()> {
-    std::fs::create_dir_all(&output_dir)
-        .wrap_err_with(|| format!("failed to create output dir: {}", output_dir.display()))?;
-    let directory_metadata = std::fs::symlink_metadata(&output_dir)
-        .wrap_err_with(|| format!("failed to inspect output dir: {}", output_dir.display()))?;
-    if !directory_metadata.file_type().is_dir() {
-        return Err(KeygenError::OcompOutputNotRegularDir(output_dir).into());
-    }
-    let key_path = output_dir.join(OCOMP_KEY_FILENAME);
-    let registration_path = output_dir.join(OCOMP_REGISTRATION_FILENAME);
-    for path in [&key_path, &registration_path] {
-        match std::fs::symlink_metadata(path) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Ok(_) => {
-                return Err(KeygenError::OcompArtifactAlreadyExists(path.clone()).into());
-            }
-            Err(error) => {
-                return Err(error).wrap_err_with(|| {
-                    format!("failed to inspect OCOMP artifact path: {}", path.display())
-                });
-            }
-        }
-    }
-
-    let signing_key = SigningKey::random(&mut rand_core::OsRng);
-    let public_key = signing_key.verifying_key().to_encoded_point(true);
-    let public_key_sec1: [u8; 33] = public_key
-        .as_bytes()
-        .try_into()
-        .map_err(|_| KeygenError::InvalidOcompPublicKeyLength)?;
-    let core = OcompKeyRegistrationCoreV1 {
-        chain_id: args.chain_id,
-        genesis_hash: args.genesis_hash,
-        validator_identity_hash: validator_identity_hash_v1(
-            args.validator_address,
-            &args.consensus_bls_min_pk,
-        )?,
-        ocomp_public_key_sec1: public_key_sec1,
-        key_epoch: POC_KEY_EPOCH,
-        allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
-    };
-    let limits = poc_schema_limits();
-    let mut registration = OcompKeyRegistrationV1 {
-        core,
-        proof_of_possession: [0; 64],
-    };
-    let pop_digest = registration.proof_of_possession_digest(&limits)?;
-    let proof: Signature = signing_key
-        .sign_prehash(pop_digest.as_slice())
-        .map_err(|_| KeygenError::OcompPopSignFailed)?;
-    let proof = proof.normalize_s().unwrap_or(proof);
-    registration.proof_of_possession = proof.to_bytes().into();
-    registration.validate_proof_of_possession(&limits)?;
-
-    let mut secret = Zeroizing::new(hex::encode(signing_key.to_bytes()));
-    secret.push('\n');
-    let registration_bytes = registration.encode_canonical(&limits)?;
-    write_immutable_file(&registration_path, &registration_bytes, 0o644).wrap_err_with(|| {
-        format!(
-            "failed to install OCOMP public registration: {}",
-            registration_path.display()
-        )
-    })?;
-    if let Err(error) = write_immutable_file(&key_path, secret.as_bytes(), 0o600) {
-        let cleanup = std::fs::remove_file(&registration_path)
-            .and_then(|()| File::open(&output_dir)?.sync_all());
-        if let Err(cleanup_error) = cleanup {
-            return Err(KeygenError::OcompSecretInstallAndCleanupFailed {
-                key_path,
-                error: error.to_string(),
-                registration_path,
-                cleanup_error,
-            }
-            .into());
-        }
-        return Err(error)
-            .wrap_err_with(|| format!("failed to install OCOMP key: {}", key_path.display()));
-    }
-
-    println!("OCOMP result-signing artifacts generated");
-    println!("  private key:  {}", key_path.display());
-    println!("  public key:   {}", hex::encode(public_key_sec1));
-    println!("  key epoch:    {POC_KEY_EPOCH}");
-    println!("  registration: {}", registration_path.display());
-    Ok(())
-}
-
-fn write_immutable_file(path: &Path, contents: &[u8], mode: u32) -> Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| KeygenError::ArtifactPathMissingParent(path.to_path_buf()))?;
-    let file_name = path
-        .file_name()
-        .ok_or_else(|| KeygenError::ArtifactPathMissingFileName(path.to_path_buf()))?
-        .to_string_lossy();
-    let pending_path = parent.join(format!(".{file_name}.pending.{}", std::process::id()));
-
-    let result = (|| -> Result<()> {
-        let mut pending = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(mode)
-            .open(&pending_path)?;
-        pending.write_all(contents)?;
-        pending.sync_all()?;
-        std::fs::hard_link(&pending_path, path)?;
-        File::open(parent)?.sync_all()?;
-        std::fs::remove_file(&pending_path)?;
-        File::open(parent)?.sync_all()?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&pending_path);
-    }
-    result
 }
 
 fn write_secret_hex_file(path: &Path, contents: &str) -> Result<()> {
@@ -1216,98 +973,11 @@ mod tests {
     }
 
     #[test]
-    fn ocm_sig_001_ocomp_command_writes_immutable_key_and_valid_pop_registration() {
-        use std::os::unix::fs::PermissionsExt as _;
-
-        use alloy_primitives::{Address, B256};
-        use outbe_ocomp_protocol::committee::{
-            validator_identity_hash_v1, OcompKeyRegistrationV1, POC_KEY_EPOCH,
-            RESULT_SIGNATURE_PURPOSE_BITMAP,
-        };
-        use outbe_ocomp_protocol::profile::poc_schema_limits;
-
-        let directory = tempfile::tempdir().unwrap();
-        let validator_address = Address::repeat_byte(0x44);
-        let consensus_bls_min_pk = [0x55; 48];
-        let args = OcompRegistrationArgs {
-            chain_id: 42,
-            genesis_hash: B256::repeat_byte(0x11),
-            validator_address,
-            consensus_bls_min_pk,
-        };
-
-        cmd_ocomp(directory.path().to_path_buf(), args).expect("generate OCOMP artifacts");
-        let key_path = directory.path().join(OCOMP_KEY_FILENAME);
-        let registration_path = directory.path().join(OCOMP_REGISTRATION_FILENAME);
-        let secret = std::fs::read(&key_path).expect("read OCOMP secret");
-        assert_eq!(secret.len(), 65);
-        assert_eq!(secret[64], b'\n');
-        assert!(secret[..64]
-            .iter()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte)));
-        assert_eq!(
-            std::fs::metadata(&key_path)
-                .expect("OCOMP key metadata")
-                .permissions()
-                .mode()
-                & 0o777,
-            0o600
-        );
-
-        let registration = OcompKeyRegistrationV1::decode_canonical(
-            &std::fs::read(&registration_path).expect("read registration"),
-            &poc_schema_limits(),
-        )
-        .expect("decode registration");
-        registration
-            .validate_proof_of_possession(&poc_schema_limits())
-            .expect("validate proof of possession");
-        assert_eq!(registration.core.key_epoch, POC_KEY_EPOCH);
-        assert_eq!(
-            registration.core.allowed_purpose_bitmap,
-            RESULT_SIGNATURE_PURPOSE_BITMAP
-        );
-        assert_eq!(
-            registration.core.validator_identity_hash,
-            validator_identity_hash_v1(validator_address, &consensus_bls_min_pk)
-                .expect("validator identity")
-        );
-
-        let original_secret = secret;
-        assert!(cmd_ocomp(directory.path().to_path_buf(), args).is_err());
-        assert_eq!(
-            std::fs::read(&key_path).expect("read unchanged OCOMP secret"),
-            original_secret
-        );
-    }
-
-    #[test]
-    fn validator_subcommand_parses_with_and_without_genesis_hash() {
+    fn validator_subcommand_parses_native_chain_identity() {
         let cli = make_cli(&["validator", "--output-dir", "/tmp/v", "--chain-id", "7"]);
         assert!(matches!(
             cli.command,
-            Commands::Validator {
-                genesis_hash: None,
-                chain_id: 7,
-                ..
-            }
-        ));
-
-        let cli = make_cli(&[
-            "validator",
-            "--output-dir",
-            "/tmp/v",
-            "--chain-id",
-            "7",
-            "--genesis-hash",
-            "0x1111111111111111111111111111111111111111111111111111111111111111",
-        ]);
-        assert!(matches!(
-            cli.command,
-            Commands::Validator {
-                genesis_hash: Some(_),
-                ..
-            }
+            Commands::Validator { chain_id: 7, .. }
         ));
     }
 
@@ -1362,55 +1032,10 @@ mod tests {
     }
 
     #[test]
-    fn validator_command_with_genesis_hash_creates_matching_ocomp_registration() {
-        let dir = tempfile::tempdir().unwrap();
-        let chain_id = 42;
-        let genesis_hash = B256::repeat_byte(0x22);
-        cmd_validator(
-            dir.path().to_path_buf(),
-            chain_id,
-            Some(genesis_hash),
-            &KeyBackend::Plaintext,
-        )
-        .unwrap();
-
-        // Recompute the validator identity from the written key files.
-        let evm_hex = std::fs::read_to_string(dir.path().join("evm-key.hex")).unwrap();
-        let evm_key = SigningKey::from_slice(&hex::decode(evm_hex.trim()).unwrap()).unwrap();
-        let point = evm_key.verifying_key().to_encoded_point(false);
-        let validator_address = Address::from_raw_public_key(&point.as_bytes()[1..]);
-        let bls_key =
-            load_key(&dir.path().join("signing-key.hex"), &KeyBackend::Plaintext).unwrap();
-        let bls_pk: [u8; 48] = bls_key.public_key().encode().as_ref().try_into().unwrap();
-
-        let registration = OcompKeyRegistrationV1::decode_canonical(
-            &std::fs::read(dir.path().join(OCOMP_REGISTRATION_FILENAME)).unwrap(),
-            &poc_schema_limits(),
-        )
-        .unwrap();
-        assert_eq!(registration.core.chain_id, chain_id);
-        assert_eq!(registration.core.genesis_hash, genesis_hash);
-        assert_eq!(
-            registration.core.validator_identity_hash,
-            validator_identity_hash_v1(validator_address, &bls_pk).unwrap()
-        );
-        assert!(dir.path().join(OCOMP_KEY_FILENAME).is_file());
-    }
-
-    #[test]
-    fn validator_command_without_genesis_hash_skips_ocomp() {
-        let dir = tempfile::tempdir().unwrap();
-        cmd_validator(dir.path().to_path_buf(), 1, None, &KeyBackend::Plaintext).unwrap();
-        assert!(dir.path().join("signing-key.hex").is_file());
-        assert!(!dir.path().join(OCOMP_KEY_FILENAME).exists());
-        assert!(!dir.path().join(OCOMP_REGISTRATION_FILENAME).exists());
-    }
-
-    #[test]
     fn validator_command_refuses_existing_artifacts() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("evm-key.hex"), "0011").unwrap();
-        let result = cmd_validator(dir.path().to_path_buf(), 1, None, &KeyBackend::Plaintext);
+        let result = cmd_validator(dir.path().to_path_buf(), 1, &KeyBackend::Plaintext);
         assert!(result.is_err());
         // The command wrote nothing else next to the pre-existing artifact.
         assert!(!dir.path().join("signing-key.hex").exists());

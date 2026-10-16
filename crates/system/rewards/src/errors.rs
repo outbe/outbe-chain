@@ -112,11 +112,6 @@ pub enum RewardGemRetryableReason {
     TotalDisagreesWithPreparation { reward_utc_day: u32 },
     #[error("validator reward Gem UTC day {reward_utc_day} digest disagrees with its preparation")]
     DigestDisagreesWithPreparation { reward_utc_day: u32 },
-    #[error("validator reward Gem UTC day {reward_utc_day} has unsupported type {gem_type_raw}")]
-    UnsupportedGemType {
-        reward_utc_day: u32,
-        gem_type_raw: u8,
-    },
     #[error(
         "validator reward Gem UTC day {reward_utc_day} has invalid currencies {issuance_currency}/{reference_currency}"
     )]

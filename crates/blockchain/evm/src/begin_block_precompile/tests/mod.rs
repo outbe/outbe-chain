@@ -22,7 +22,7 @@ use outbe_primitives::storage::StorageHandle;
 mod fixtures;
 use fixtures::{
     boundary_noop, configured_storage, metadata, provider_from_storage, runtime_ctx, CHAIN_ID,
-    GENESIS_HASH, OWNER, VALIDATOR,
+    OWNER, VALIDATOR,
 };
 
 mod dispatch;
@@ -34,3 +34,4 @@ mod lease_and_boundary;
 mod tee_bootstrap;
 
 mod late_credits;
+mod publication;

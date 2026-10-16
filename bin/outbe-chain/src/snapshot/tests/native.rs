@@ -221,51 +221,11 @@ fn headers_in_native_static_files_are_inspected_without_copying_them_into_mdbx()
 }
 
 #[test]
-fn stopped_stores_preserve_distinct_execution_and_ocomp_progress() {
-    use super::super::native::inspect_stopped_stores;
-    use alloy_primitives::B256;
-    use outbe_ocomp::discovery_spool::ContiguousCheckpointStoreV1;
-    use outbe_primitives::projection::ProjectionCheckpoint;
-    let (root, layout, _, _) = fixture();
-    let genesis_hash = layout.chain.genesis_hash();
-    let baseline = ProjectionCheckpoint {
-        block_number: 0,
-        block_hash: genesis_hash,
-    };
-    let closure_root = layout
-        .ocomp_root
-        .join("exporter-v1/discovery/closure-checkpoint-v1");
-    let closure = ContiguousCheckpointStoreV1::open(&closure_root, baseline).unwrap();
-    let c = ProjectionCheckpoint {
-        block_number: 97,
-        block_hash: B256::repeat_byte(97),
-    };
-    closure.compare_and_advance_to(baseline, c).unwrap();
-    drop(closure);
-    let before = fingerprint(&layout.chain_root);
-    let ocomp_before = fingerprint(&layout.ocomp_root);
-    let closure_before = fs::read(closure_root.join("checkpoint.v1")).unwrap();
-    let result = inspect_stopped_stores(&layout, &root.path().join("audit-scratch")).unwrap();
-    assert_eq!(result.finalized.number, 100);
-    assert_eq!(result.execution.number, 101);
-    assert_eq!(result.ocomp_current.number, 97);
-    assert_eq!(result.ocomp_previous.number, 0);
-    assert_eq!(result.ocomp_baseline.hash, hex::encode(genesis_hash));
-    assert_eq!(fingerprint(&layout.chain_root), before);
-    assert_eq!(fingerprint(&layout.ocomp_root), ocomp_before);
-    assert_eq!(
-        fs::read(closure_root.join("checkpoint.v1")).unwrap(),
-        closure_before
-    );
-}
-
-#[test]
 fn inspection_scratch_cannot_write_inside_any_native_root() {
     let (_root, layout, _, _) = fixture();
     for native in [
         &layout.chain_root,
         &layout.consensus_root,
-        &layout.ocomp_root,
         &layout.static_files_root,
         &layout.execution_rocksdb_root,
     ] {
@@ -277,16 +237,13 @@ fn inspection_scratch_cannot_write_inside_any_native_root() {
 }
 
 #[test]
-fn existing_retention_journal_is_inspected_without_recovery_or_replacement() {
-    let (_root, layout, _, _) = fixture();
-    let retention = layout.consensus_root.join("ocomp_retention");
-    fs::create_dir_all(&retention).unwrap();
-    fs::write(retention.join("pin.v1"), "damaged native journal").unwrap();
-    fs::write(retention.join("pin.v1.tmp"), "pending native journal").unwrap();
-    let before = fingerprint(&retention);
-    let scratch = layout.chain_root.parent().unwrap().join("audit-scratch");
-    let error = super::super::native::inspect_stopped_stores(&layout, &scratch).unwrap_err();
-    assert!(error.to_string().contains("retention"), "{error:#}");
-    assert_eq!(fingerprint(&retention), before);
-    assert!(!scratch.exists());
+fn stopped_stores_preserve_native_execution_progress_without_mutation() {
+    let (root, layout, _, _) = fixture();
+    let before = fingerprint(&layout.chain_root);
+    let result =
+        super::super::native::inspect_stopped_stores(&layout, &root.path().join("audit-scratch"))
+            .unwrap();
+    assert_eq!(result.finalized.number, 100);
+    assert_eq!(result.execution.number, 101);
+    assert_eq!(fingerprint(&layout.chain_root), before);
 }

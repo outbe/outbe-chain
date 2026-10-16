@@ -170,7 +170,7 @@ fn confirm_joiner_after_freeze(world: &mut World) {
 
     let outcome = world
         .rpc
-        .confirm_ready_outcome(&key, joiner_index)
+        .confirm_ready_outcome(&key)
         .expect("submit post-freeze readiness");
     assert!(
         outcome.success,
@@ -385,7 +385,7 @@ fn confirmed_pending_joiner(world: &mut World) {
     world.rpc.stake(&key, 1000).expect("stake joiner");
     let ready = world
         .rpc
-        .confirm_ready_outcome(&key, joiner_index)
+        .confirm_ready_outcome(&key)
         .expect("confirm initial readiness");
     assert!(ready.success, "initial readiness confirmation reverted");
     assert_eq!(

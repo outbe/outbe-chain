@@ -4,9 +4,8 @@ use reth_ethereum::TransactionSigned;
 use super::{
     SystemTxError, SystemTxInputV2, BOUNDARY_OUTCOME_SELECTOR,
     CERTIFIED_PARENT_ACCOUNTING_SELECTOR, CYCLE_TICK_SELECTOR, HOOK_EVENTS_SELECTOR,
-    LATE_FINALIZE_CREDITS_SELECTOR, OCOMP_LIFECYCLE_BEGIN_SELECTOR,
-    OCOMP_TERMINAL_REQUEST_SELECTOR, ORACLE_SLASH_WINDOW_SELECTOR, OUTBE_SYSTEM_TX_ADDRESS,
-    REWARDS_GEM_DELIVERY_SELECTOR, TEE_BOOTSTRAP_SELECTOR,
+    LATE_FINALIZE_CREDITS_SELECTOR, ORACLE_SLASH_WINDOW_SELECTOR, OUTBE_SYSTEM_TX_ADDRESS,
+    RADICLE_PUBLICATION_SELECTOR, REWARDS_GEM_DELIVERY_SELECTOR, TEE_BOOTSTRAP_SELECTOR,
 };
 
 /// Body-zone position of a system tx.
@@ -14,34 +13,6 @@ use super::{
 pub enum BodyZone {
     BeginBlock,
     EndBlock,
-}
-
-/// Consensus activation of the PoC OCOMP system-transaction lifecycle.
-///
-/// The `Default` value is `Disabled`. The production node binary arms the
-/// activation from the required chain-spec OCOMP fork install, at the install's
-/// activation height. Tests can exercise the exact fork boundary: they pass an
-/// explicit activation to layout validation.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum OcompLifecycleActivation {
-    #[default]
-    Disabled,
-    AtBlock(u64),
-}
-
-impl OcompLifecycleActivation {
-    #[must_use]
-    pub const fn at_block(height: u64) -> Self {
-        Self::AtBlock(height)
-    }
-
-    #[must_use]
-    pub const fn is_active_at(self, block_number: u64) -> bool {
-        match self {
-            Self::Disabled => false,
-            Self::AtBlock(height) => block_number >= height,
-        }
-    }
 }
 
 /// begin_block system transaction kinds.
@@ -52,9 +23,6 @@ pub enum SystemTxKind {
     /// late-finalize credits within the `K`-block inclusion window and settles
     /// matured per-block fee escrows. Ordered immediately after Phase 1 (CPA).
     LateFinalizeCredits,
-    /// OCOMP begin-zone lifecycle slot. In the PoC this expires due jobs after
-    /// the reserved no-op barrier and before ordinary user transactions.
-    OcompLifecycleBegin,
     CycleTick,
     /// Mandatory Rewards-owned retryable delivery of one prepared UTC-day Gem batch.
     RewardsGemDelivery,
@@ -66,9 +34,7 @@ pub enum SystemTxKind {
     OracleSlashWindow,
     /// Receipt container for whitelisted pre-exec hook events (`Vote`, `Update`, ...).
     HookEvents,
-    /// Sole end-zone system transaction. The executor seals compressed
-    /// entities before dispatching this terminal request slot.
-    OcompTerminalRequest,
+    RadiclePublication,
 }
 
 impl SystemTxKind {
@@ -76,29 +42,27 @@ impl SystemTxKind {
         match self {
             Self::CertifiedParentAccounting => CERTIFIED_PARENT_ACCOUNTING_SELECTOR,
             Self::LateFinalizeCredits => LATE_FINALIZE_CREDITS_SELECTOR,
-            Self::OcompLifecycleBegin => OCOMP_LIFECYCLE_BEGIN_SELECTOR,
             Self::CycleTick => CYCLE_TICK_SELECTOR,
             Self::RewardsGemDelivery => REWARDS_GEM_DELIVERY_SELECTOR,
             Self::BoundaryOutcome => BOUNDARY_OUTCOME_SELECTOR,
             Self::TeeBootstrap => TEE_BOOTSTRAP_SELECTOR,
             Self::OracleSlashWindow => ORACLE_SLASH_WINDOW_SELECTOR,
             Self::HookEvents => HOOK_EVENTS_SELECTOR,
-            Self::OcompTerminalRequest => OCOMP_TERMINAL_REQUEST_SELECTOR,
+            Self::RadiclePublication => RADICLE_PUBLICATION_SELECTOR,
         }
     }
 
     pub const fn body_zone(self) -> BodyZone {
         match self {
-            Self::OcompTerminalRequest => BodyZone::EndBlock,
             Self::CertifiedParentAccounting
             | Self::LateFinalizeCredits
-            | Self::OcompLifecycleBegin
             | Self::CycleTick
             | Self::RewardsGemDelivery
             | Self::BoundaryOutcome
             | Self::TeeBootstrap
             | Self::OracleSlashWindow
-            | Self::HookEvents => BodyZone::BeginBlock,
+            | Self::HookEvents
+            | Self::RadiclePublication => BodyZone::BeginBlock,
         }
     }
 
@@ -132,11 +96,10 @@ impl SystemTxKind {
         match self {
             Self::CertifiedParentAccounting
             | Self::LateFinalizeCredits
-            | Self::OcompLifecycleBegin
             | Self::CycleTick
             | Self::BoundaryOutcome
             | Self::TeeBootstrap
-            | Self::OcompTerminalRequest => true,
+            | Self::RadiclePublication => true,
             Self::RewardsGemDelivery | Self::OracleSlashWindow | Self::HookEvents => false,
         }
     }
@@ -145,29 +108,27 @@ impl SystemTxKind {
         match self {
             Self::CertifiedParentAccounting => Some(0),
             Self::LateFinalizeCredits => Some(1),
-            Self::OcompLifecycleBegin => Some(2),
-            Self::CycleTick => Some(3),
-            Self::RewardsGemDelivery => Some(4),
-            Self::BoundaryOutcome => Some(5),
-            Self::TeeBootstrap => Some(6),
-            Self::OracleSlashWindow => Some(7),
-            Self::HookEvents => Some(8),
-            Self::OcompTerminalRequest => None,
+            Self::CycleTick => Some(2),
+            Self::RewardsGemDelivery => Some(3),
+            Self::BoundaryOutcome => Some(4),
+            Self::TeeBootstrap => Some(5),
+            Self::OracleSlashWindow => Some(6),
+            Self::HookEvents => Some(7),
+            Self::RadiclePublication => Some(8),
         }
     }
 
     pub const fn end_order(self) -> Option<u8> {
         match self {
-            Self::OcompTerminalRequest => Some(0),
             Self::CertifiedParentAccounting
             | Self::LateFinalizeCredits
-            | Self::OcompLifecycleBegin
             | Self::CycleTick
             | Self::RewardsGemDelivery
             | Self::BoundaryOutcome
             | Self::TeeBootstrap
             | Self::OracleSlashWindow
-            | Self::HookEvents => None,
+            | Self::HookEvents
+            | Self::RadiclePublication => None,
         }
     }
 
@@ -183,14 +144,13 @@ pub fn system_tx_kind_from_selector(selector: [u8; 4]) -> Result<SystemTxKind, S
     match selector {
         CERTIFIED_PARENT_ACCOUNTING_SELECTOR => Ok(SystemTxKind::CertifiedParentAccounting),
         LATE_FINALIZE_CREDITS_SELECTOR => Ok(SystemTxKind::LateFinalizeCredits),
-        OCOMP_LIFECYCLE_BEGIN_SELECTOR => Ok(SystemTxKind::OcompLifecycleBegin),
         CYCLE_TICK_SELECTOR => Ok(SystemTxKind::CycleTick),
         REWARDS_GEM_DELIVERY_SELECTOR => Ok(SystemTxKind::RewardsGemDelivery),
         BOUNDARY_OUTCOME_SELECTOR => Ok(SystemTxKind::BoundaryOutcome),
         TEE_BOOTSTRAP_SELECTOR => Ok(SystemTxKind::TeeBootstrap),
         ORACLE_SLASH_WINDOW_SELECTOR => Ok(SystemTxKind::OracleSlashWindow),
         HOOK_EVENTS_SELECTOR => Ok(SystemTxKind::HookEvents),
-        OCOMP_TERMINAL_REQUEST_SELECTOR => Ok(SystemTxKind::OcompTerminalRequest),
+        RADICLE_PUBLICATION_SELECTOR => Ok(SystemTxKind::RadiclePublication),
         other => Err(SystemTxError::UnknownSelector(other)),
     }
 }

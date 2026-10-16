@@ -17,10 +17,6 @@ use alloy_evm::{
     Database, RecoveredTx,
 };
 use alloy_primitives::{keccak256, map::AddressMap, Address, Bytes, Log, B256, U256};
-use outbe_ocomp_protocol::system_carrier::{
-    classify_ocomp_system_carrier, OcompSystemCarrierCandidate, OcompSystemCarrierView,
-    OCOMP_SYSTEM_CARRIER_INTERNAL_GAS_LIMIT,
-};
 use outbe_primitives::{
     block::{BlockContext, BlockLifecycle, BlockRuntimeContext},
     consensus::{ConsensusExecutionBridge, GenesisValidators},
@@ -52,10 +48,8 @@ use crate::{
     factory::OutbeEvm,
     signer::SharedOutbeEvmSigner,
     system_tx::{
-        build_unsigned_system_tx, build_unsigned_system_tx_with_gas_limit,
-        expected_begin_block_kinds_for_activation, is_reserved_system_tx,
-        validate_phase1_witness_against, OcompLifecycleActivation, SystemTxInputV2, SystemTxKind,
-        SystemTxVisibleGasPlan,
+        build_unsigned_system_tx, build_unsigned_system_tx_with_gas_limit, is_reserved_system_tx,
+        validate_phase1_witness_against, SystemTxInputV2, SystemTxKind, SystemTxVisibleGasPlan,
     },
 };
 use reth_ethereum::chainspec::{ChainSpec, EthereumHardfork, EthereumHardforks};
@@ -109,10 +103,6 @@ use context::{build_block_context, validate_genesis_state};
 use hooks::run_atomic_storage_hooks;
 
 use receipts::{validator_fee_for_gas, SystemFailureReceiptInput};
-
-use system_execution::execute::{
-    is_nod_materialization_soft_revert, is_ocomp_deadline_passed_revert,
-};
 
 use zero_fee::zero_fee_transaction;
 

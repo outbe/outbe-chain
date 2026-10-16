@@ -212,43 +212,6 @@ fn system_cycle_probe_out_of_gas_is_an_evm_halt() {
 }
 
 #[test]
-fn static_result_vote_returns_domain_rejection_without_aborting_caller() {
-    use alloy_sol_types::SolCall;
-    use outbe_primitives::{addresses::METADOSIS_ADDRESS, system_tx::OcompLifecycleActivation};
-    let data = outbe_metadosis::precompile::IMetadosis::submitLysisResultCall {
-        resultVoteV1: Bytes::from(vec![0; 8]),
-    }
-    .abi_encode();
-    let mut db = funded_db();
-    install(&mut db, PROXY, proxy(METADOSIS_ADDRESS, 0xfa, 100_000));
-    let factory = OutbeEvmFactory::default();
-    factory.install_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(1));
-    let mut evm = factory.create_evm(db, env());
-    let tx = TxEnv::builder()
-        .caller(SENDER)
-        .nonce(0)
-        .kind(TxKind::Call(PROXY))
-        .data(data.into())
-        .gas_limit(200_000)
-        .build()
-        .unwrap();
-    let outcome = evm
-        .transact_raw(tx)
-        .expect("a static command must revert inside its frame");
-    let ExecutionResult::Success {
-        output: Output::Call(output),
-        ..
-    } = outcome.result
-    else {
-        panic!("the outer contract must be able to catch the rejection")
-    };
-    assert_eq!(U256::from_be_slice(&output[..32]), U256::ZERO);
-    let mut expected = outbe_ocomp_protocol::abi::OCOMP_RESULT_VOTE_REJECTED_SELECTOR.to_vec();
-    expected.extend_from_slice(&U256::from(3).to_be_bytes::<32>());
-    assert_eq!(&output[32..], expected);
-}
-
-#[test]
 fn former_debug_address_does_not_invoke_a_calldata_selected_contract() {
     let former_debug = alloy_primitives::address!("000000000000000000000000000000000000f999");
     // Check registration first so a regression fails without executing an

@@ -1,4 +1,4 @@
-//! Native semantic check execution (Headers, EVM, and OCOMP).
+//! Native semantic check execution (Headers and EVM).
 
 use super::{
     report::{
@@ -101,36 +101,6 @@ fn verify_and_record_evm(
     Some(state)
 }
 
-fn run_ocomp_check(
-    layout: &crate::snapshot::config::RequestedLayout,
-    view: &crate::snapshot::native::RethReadOnlyView,
-    (verified, headers, scratch): (
-        Option<&super::evm::VerifiedState>,
-        &super::headers::HeaderAudit,
-        Option<&std::path::Path>,
-    ),
-    report: &mut ValidationReport,
-) {
-    use CheckName::*;
-    if report.check(Evm).status != CheckStatus::Passed {
-        block_on(report, Ocomp, Evm);
-        return;
-    }
-    let (Some(state), Some(scratch)) = (verified, scratch) else {
-        return;
-    };
-    let canonical = super::canonical_state::CanonicalState::new(state, view, headers);
-    let result = super::ocomp::verify_ocomp_relations(&canonical, view, layout, scratch, report);
-    match result {
-        Ok(()) => report.record(
-            Ocomp,
-            CheckStatus::Passed,
-            Some("OCOMP relations passed. Private Tribute amounts were not read."),
-        ),
-        Err(error) => record_failure(report, Ocomp, &error),
-    }
-}
-
 pub(super) fn run_native_checks(
     layout: &crate::snapshot::config::RequestedLayout,
     selection: &CheckSelection,
@@ -146,7 +116,7 @@ pub(super) fn run_native_checks(
     let view = match opened {
         Ok(view) => view,
         Err(error) => {
-            fail_selected(report, &[Headers, Evm, Ocomp], &error);
+            fail_selected(report, &[Headers, Evm], &error);
             return;
         }
     };
@@ -158,21 +128,11 @@ pub(super) fn run_native_checks(
     ];
     required.sort_unstable();
     required.dedup();
-    let Some(headers) = verify_and_record_headers(&view, &required, report) else {
-        for check in [Evm, Ocomp] {
-            block_on(report, check, Headers);
-        }
+    let Some(_) = verify_and_record_headers(&view, &required, report) else {
+        block_on(report, Evm, Headers);
         return;
     };
     // Retained structure was verified. Missing anchors remain explicit in the
     // header report. Each independent check requires its own exact header.
-    let verified = verify_and_record_evm(&view, selection, scratch, report);
-    if selection.checks.contains(&Ocomp) {
-        run_ocomp_check(
-            layout,
-            &view,
-            (verified.as_ref(), &headers, scratch),
-            report,
-        );
-    }
+    verify_and_record_evm(&view, selection, scratch, report);
 }

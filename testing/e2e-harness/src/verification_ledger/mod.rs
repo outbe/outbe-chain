@@ -5,6 +5,7 @@
 //! references shared by every domain pack.
 
 mod ledger;
+mod publication;
 mod schema;
 mod verify;
 
@@ -21,3 +22,5 @@ pub use verify::{
     verify_domain_evidence, verify_evidence_set, verify_member_digests, verify_source_checkout,
     DomainEvidenceBundle,
 };
+
+pub use publication::{hash_file, publish_manifest, publish_member, sha256_hex};

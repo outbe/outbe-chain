@@ -69,7 +69,7 @@ contract IntexAuctionClaimsTest is Test {
             IIntexAuction.AuctionParams({
                 promisLoadMinor: BASIS,
                 minIntexBidRate: 1,
-                prices: ReferenceCurrencyPriceLib.onePriced(USD, 1e6, 100, 200),
+                prices: ReferenceCurrencyPriceLib.onePriced(USD, 1e6, 200),
                 callTrigger: IIntexAuction.IntexCallTrigger({callWindow: 0, callThreshold: 0, callNoticePeriod: 0}),
                 minIntexBidQuantity: 1,
                 commitBondMinor: 0

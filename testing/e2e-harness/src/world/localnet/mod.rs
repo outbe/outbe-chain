@@ -27,8 +27,7 @@ mod teardown;
 
 pub use bootstrap::BootstrapProfile;
 pub(crate) use log_audit::{ExpectedTeeFailures, LogAudit};
-pub use probes::OcompRuntimeTraceMarkerV1;
-#[cfg(feature = "ocomp-integration")]
+
 pub(crate) use radicle::RadicleRepositoryFixtureV1;
 #[cfg(test)]
 use teardown::sealed_dirs;
@@ -50,7 +49,7 @@ use crate::internal::shell::Sh;
 
 /// Per-node execution cache for validators co-located by the devnet harness.
 /// The upstream 4 GiB default is a single-node deployment default. Applying it
-/// to every local validator would consume the process budget before OCOMP begins.
+/// to every local validator would consume the process budget before native execution begins.
 const CO_LOCATED_DEVNET_CROSS_BLOCK_CACHE_MIB: u64 = 512;
 
 /// Test-provided knobs for a localnet start. The **enclave mode** is NOT here.
@@ -118,7 +117,7 @@ impl StartOpts {
 
 /// Facts captured from the configured command and this owned launch.
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[cfg(feature = "ocomp-integration")]
+
 pub(crate) struct NodeLaunchObservation {
     pub(crate) index: usize,
     pub(crate) pid: u32,
@@ -130,15 +129,18 @@ pub(crate) struct NodeLaunchObservation {
 }
 
 #[derive(Clone, Debug)]
-#[cfg(feature = "ocomp-integration")]
+
 struct NodeLaunchRecipe {
     observation: NodeLaunchObservation,
     node_dir: PathBuf,
+    #[cfg(test)]
     environment: Vec<(std::ffi::OsString, Option<std::ffi::OsString>)>,
+    #[cfg(test)]
     current_dir: Option<PathBuf>,
 }
-#[cfg(feature = "ocomp-integration")]
+
 impl NodeLaunchRecipe {
+    #[cfg(test)]
     fn command(&self) -> Command {
         let mut command = Command::new(&self.observation.program);
         command.args(&self.observation.argv);
@@ -160,7 +162,7 @@ impl NodeLaunchRecipe {
 }
 
 #[derive(Clone, Debug)]
-#[cfg(feature = "ocomp-integration")]
+
 pub(crate) struct NodeStopObservation {
     pub(crate) launch: NodeLaunchObservation,
     pub(crate) stop_requested_at_millis: u64,
@@ -172,14 +174,15 @@ pub(crate) struct NodeStopObservation {
 /// One stopped owned incarnation, consumed when replaying its own launch.
 /// Private recipe/owner fields prevent constructing a donor recipe for a recipient.
 #[derive(Debug)]
-#[cfg(feature = "ocomp-integration")]
+
 pub(crate) struct StoppedSnapshotNode {
     pub(crate) observation: NodeStopObservation,
+    #[cfg(test)]
     recipe: NodeLaunchRecipe,
+    #[cfg(test)]
     follower_name: Option<String>,
 }
 
-#[cfg(feature = "ocomp-integration")]
 fn process_observed_millis() -> Result<u64> {
     Ok(SystemTime::now()
         .duration_since(UNIX_EPOCH)?
@@ -187,7 +190,6 @@ fn process_observed_millis() -> Result<u64> {
         .try_into()?)
 }
 
-#[cfg(feature = "ocomp-integration")]
 fn checked_node_interrupt(
     child: &mut ChildGuard,
     launch: NodeLaunchObservation,
@@ -227,7 +229,7 @@ pub struct Localnet {
     /// Only the latest common-spawn incarnation for each node index. Callers
     /// supply an independently checked owned PID before using its log evidence.
     node_launch_logs: HashMap<usize, (u32, LaunchLog)>,
-    #[cfg(feature = "ocomp-integration")]
+
     node_launch_recipes: HashMap<usize, NodeLaunchRecipe>,
     /// Operator-owned validator-indexed Radicle sidecars.
     radicle_sidecars: HashMap<usize, ChildGuard>,
@@ -268,7 +270,7 @@ impl Localnet {
             cfg,
             validators: HashMap::new(),
             node_launch_logs: HashMap::new(),
-            #[cfg(feature = "ocomp-integration")]
+
             node_launch_recipes: HashMap::new(),
             radicle_sidecars: HashMap::new(),
             user_radicle: None,
@@ -594,11 +596,11 @@ impl Localnet {
         // A failed replacement must not leave the previous incarnation usable
         // as evidence for this launch attempt. Capture before any child writes.
         self.node_launch_logs.remove(&index);
-        #[cfg(feature = "ocomp-integration")]
+
         self.node_launch_recipes.remove(&index);
         let launch_log = LaunchLog::arm(&node_dir.join("node.log"))
             .wrap_err_with(|| format!("capture node-{index} launch log before spawn"))?;
-        #[cfg(feature = "ocomp-integration")]
+
         let mut recipe = NodeLaunchRecipe {
             observation: NodeLaunchObservation {
                 index,
@@ -617,14 +619,16 @@ impl Localnet {
                 log_start: launch_log.start_offset(),
             },
             node_dir: node_dir.to_path_buf(),
+            #[cfg(test)]
             environment: cmd
                 .get_envs()
                 .map(|(key, value)| (key.to_os_string(), value.map(std::ffi::OsStr::to_os_string)))
                 .collect(),
+            #[cfg(test)]
             current_dir: cmd.get_current_dir().map(Path::to_path_buf),
         };
         let guard = ChildGuard::spawn(label, cmd)?;
-        #[cfg(feature = "ocomp-integration")]
+
         {
             recipe.observation.pid = guard.pid();
             self.node_launch_recipes.insert(index, recipe);
@@ -653,7 +657,6 @@ impl Localnet {
             .wrap_err_with(|| format!("read node-{index} launch log for PID {expected_pid}"))
     }
 
-    #[cfg(feature = "ocomp-integration")]
     fn captured_node_recipe(&self, index: usize, expected_pid: u32) -> Result<NodeLaunchRecipe> {
         let recipe = self
             .node_launch_recipes
@@ -666,7 +669,6 @@ impl Localnet {
         Ok(recipe.clone())
     }
 
-    #[cfg(feature = "ocomp-integration")]
     pub(crate) fn validator_launch_observation(
         &mut self,
         index: usize,
@@ -683,7 +685,6 @@ impl Localnet {
         Ok(self.captured_node_recipe(index, pid)?.observation)
     }
 
-    #[cfg(feature = "ocomp-integration")]
     pub(crate) fn stop_validator_for_snapshot(
         &mut self,
         index: usize,
@@ -694,6 +695,7 @@ impl Localnet {
             observed.pid == expected_pid,
             "validator-{index} stop PID mismatch"
         );
+        #[cfg(test)]
         let recipe = self.captured_node_recipe(index, expected_pid)?;
         let observation = checked_node_interrupt(
             self.validators.get_mut(&index).expect("checked owned node"),
@@ -706,7 +708,9 @@ impl Localnet {
         }
         Ok(StoppedSnapshotNode {
             observation,
+            #[cfg(test)]
             recipe,
+            #[cfg(test)]
             follower_name: None,
         })
     }
@@ -714,7 +718,7 @@ impl Localnet {
     /// Replay this stopped process's actual command. The replay reuses native
     /// stores, keys, enclave, arguments and explicit environment. No provisioning
     /// runs here.
-    #[cfg(feature = "ocomp-integration")]
+    #[cfg(test)]
     pub(crate) fn resume_snapshot_node(
         &mut self,
         stopped: StoppedSnapshotNode,
@@ -822,5 +826,5 @@ pub(crate) fn ymd_utc(secs: u64) -> String {
 #[cfg(test)]
 mod tests;
 
-#[cfg(all(test, feature = "ocomp-integration"))]
+#[cfg(test)]
 mod snapshot_process_tests;

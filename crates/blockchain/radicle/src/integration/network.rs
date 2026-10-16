@@ -1,8 +1,15 @@
 mod evidence;
+pub(crate) mod gossip;
+#[cfg(test)]
+pub(crate) mod material_tests;
 mod receive;
 
 pub use evidence::{EndpointEvidenceHandle, SignedEndpointEvidence};
+pub use gossip::{ReceivedRepositoryMessage, RepositoryGossipMessage};
 
+use super::publication::{review::Error as PublicationError, store::SelectedReviewPublication};
+use super::review::{CheckpointPreparedReview, CheckpointPreparedReviewRefs};
+use super::{material, signing, RepositoryMaterialPublisher};
 use crate::integration::{RadicleStatusHandle, RadicleVotingGate};
 use crate::{
     endpoint::{
@@ -11,15 +18,21 @@ use crate::{
         PeerId, ReceiveOutcome, SignedEndpointResponse, VerifiedEndpoint, HANDLE_DEADLINE,
         MAX_ADDRESSES, MAX_ENDPOINT_TTL_BLOCKS, UNKNOWN_ANCHOR_TIMEOUT_MS,
     },
-    manager::{BoxFuture, EndpointResolver, FinalizedSnapshot, ManagerError, RadicleManagerHandle},
+    manager::{
+        BoxFuture, EndpointResolver, FinalizedSnapshot, ManagerError, RadicleManagerHandle,
+        RepositoryAuthorityReader,
+    },
 };
 use alloy_primitives::Address;
+use commonware_codec::Encode as _;
 use commonware_cryptography::{bls12381, Signer as _};
 use commonware_p2p::{CheckedSender as _, LimitedSender, Receiver, Recipients};
 use commonware_runtime::IoBuf;
+use outbe_primitives::radicle_publication::{PublicationAttestation, PUBLICATION_NAMESPACE};
 use std::{
     collections::BTreeMap,
     future::Future,
+    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{
@@ -115,6 +128,7 @@ pub struct EndpointSigningIdentity {
 pub struct EndpointNetworkService {
     actor: EndpointActor<OsRequestIds>,
     state: EndpointNetworkState,
+    repository_material_publisher: Option<RepositoryMaterialPublisher>,
 }
 
 struct EndpointNetworkState {
@@ -123,6 +137,12 @@ struct EndpointNetworkState {
     commands: mpsc::Receiver<NetworkCommand>,
     evidence: EndpointEvidenceHandle,
     status: RadicleStatusHandle,
+    repository_material: material::RepositoryMaterialHandle,
+    repository_authority: Option<Arc<dyn RepositoryAuthorityReader>>,
+    repository_publication: outbe_primitives::radicle_publication::RepositoryPublicationMailbox,
+    queued_publication: Option<QueuedPublication>,
+    repository_inbox: BTreeMap<(PeerId, u8), RepositoryGossipMessage>,
+    repository_inbox_material: Option<[u8; 32]>,
 }
 
 #[derive(Clone)]
@@ -137,6 +157,43 @@ struct EndpointRefresh<'a> {
 }
 
 enum NetworkCommand {
+    Gossip {
+        message: Box<RepositoryGossipMessage>,
+        result: oneshot::Sender<Result<usize, signing::Error>>,
+    },
+    DrainGossip {
+        result: oneshot::Sender<Result<Vec<ReceivedRepositoryMessage>, signing::Error>>,
+    },
+    QueueBootstrapPublication {
+        publication: Arc<super::publication::store::SelectedBootstrapPublication>,
+        batch: Box<outbe_primitives::radicle_publication::PublicationBatch>,
+        result: oneshot::Sender<Result<(), super::bootstrap::Error>>,
+    },
+    QueueReviewPublication {
+        publication: Arc<SelectedReviewPublication>,
+        batch: Box<outbe_primitives::radicle_publication::PublicationBatch>,
+        result: oneshot::Sender<Result<(), PublicationError>>,
+    },
+    RepositoryBootstrapAttestation {
+        publication: Arc<super::publication::store::SelectedBootstrapPublication>,
+        result: oneshot::Sender<Result<PublicationAttestation, super::bootstrap::Error>>,
+    },
+    RepositoryBootstrapPartial {
+        job: RepositoryBootstrapJob,
+        result: oneshot::Sender<Result<signing::RepositoryPartial, signing::Error>>,
+    },
+    RepositoryReviewAttestation {
+        publication: Arc<SelectedReviewPublication>,
+        result: oneshot::Sender<Result<PublicationAttestation, PublicationError>>,
+    },
+    RepositoryReviewPartial {
+        job: RepositoryReviewJob,
+        result: oneshot::Sender<Result<signing::RepositoryPartial, signing::Error>>,
+    },
+    RepositoryMaterial {
+        owner: radicle::crypto::BlsPublicKey,
+        result: oneshot::Sender<Result<signing::RepositorySigningMaterial, signing::Error>>,
+    },
     Refresh {
         snapshot: FinalizedSnapshot,
         result: oneshot::Sender<Result<Vec<VerifiedEndpoint>, ManagerError>>,
@@ -144,6 +201,24 @@ enum NetworkCommand {
     Shutdown {
         result: oneshot::Sender<Result<(), ManagerError>>,
     },
+}
+
+pub(crate) enum RepositoryBootstrapJob {
+    Document(Arc<super::bootstrap::PreparedBootstrapDocument>),
+    Identity(Arc<super::bootstrap::PreparedBootstrapIdentity>),
+    Refs(Arc<super::bootstrap::PreparedBootstrapRefs>),
+}
+
+enum RepositoryReviewJob {
+    Cob(Arc<CheckpointPreparedReview>),
+    Refs(Arc<CheckpointPreparedReviewRefs>),
+    Merge(Arc<super::merge::CheckpointPreparedMerge>),
+    MergeRefs(Arc<super::merge::CheckpointPreparedMergeRefs>),
+}
+
+enum QueuedPublication {
+    Bootstrap(Arc<super::publication::store::SelectedBootstrapPublication>),
+    Review(Arc<SelectedReviewPublication>),
 }
 
 impl EndpointNetwork {
@@ -160,15 +235,23 @@ impl EndpointNetwork {
         let (actor, handle) = EndpointActor::new(protocol);
         let (commands, receiver) = mpsc::channel(256);
         let evidence = EndpointEvidenceHandle::default();
+        let (repository_material_publisher, repository_material) = material::channel();
         (
             EndpointNetworkService {
                 actor,
+                repository_material_publisher: Some(repository_material_publisher),
                 state: EndpointNetworkState {
                     chain,
                     handle,
                     commands: receiver,
                     evidence: evidence.clone(),
                     status,
+                    repository_material,
+                    repository_authority: None,
+                    repository_publication: Default::default(),
+                    queued_publication: None,
+                    repository_inbox: BTreeMap::new(),
+                    repository_inbox_material: None,
                 },
             },
             EndpointNetworkResolver { commands },
@@ -178,6 +261,196 @@ impl EndpointNetwork {
 }
 
 impl EndpointNetworkResolver {
+    pub async fn gossip_repository_message(
+        &self,
+        message: RepositoryGossipMessage,
+    ) -> Result<usize, signing::Error> {
+        let (result, response) = oneshot::channel();
+        self.commands
+            .try_send(NetworkCommand::Gossip {
+                message: Box::new(message),
+                result,
+            })
+            .map_err(|_| signing::Error::Unavailable)?;
+        tokio::time::timeout(HANDLE_DEADLINE, response)
+            .await
+            .map_err(|_| signing::Error::Unavailable)?
+            .map_err(|_| signing::Error::Unavailable)?
+    }
+    pub async fn take_repository_messages(
+        &self,
+    ) -> Result<Vec<ReceivedRepositoryMessage>, signing::Error> {
+        let (result, response) = oneshot::channel();
+        self.commands
+            .try_send(NetworkCommand::DrainGossip { result })
+            .map_err(|_| signing::Error::Unavailable)?;
+        tokio::time::timeout(HANDLE_DEADLINE, response)
+            .await
+            .map_err(|_| signing::Error::Unavailable)?
+            .map_err(|_| signing::Error::Unavailable)?
+    }
+    pub async fn queue_bootstrap_publication(
+        &self,
+        publication: Arc<super::publication::store::SelectedBootstrapPublication>,
+        batch: outbe_primitives::radicle_publication::PublicationBatch,
+    ) -> Result<(), super::bootstrap::Error> {
+        let (result, response) = oneshot::channel();
+        self.commands
+            .try_send(NetworkCommand::QueueBootstrapPublication {
+                publication,
+                batch: Box::new(batch),
+                result,
+            })
+            .map_err(|_| signing::Error::Unavailable)?;
+        tokio::time::timeout(HANDLE_DEADLINE, response)
+            .await
+            .map_err(|_| signing::Error::Unavailable)?
+            .map_err(|_| signing::Error::Unavailable)?
+    }
+    /// Forward only a durable complete package with freshly verified current attestations.
+    pub async fn queue_review_publication(
+        &self,
+        publication: Arc<SelectedReviewPublication>,
+        batch: outbe_primitives::radicle_publication::PublicationBatch,
+    ) -> Result<(), PublicationError> {
+        let (result, response) = oneshot::channel();
+        self.commands
+            .try_send(NetworkCommand::QueueReviewPublication {
+                publication,
+                batch: Box::new(batch),
+                result,
+            })
+            .map_err(|_| signing::Error::Unavailable)?;
+        tokio::time::timeout(HANDLE_DEADLINE, response)
+            .await
+            .map_err(|_| signing::Error::Unavailable)?
+            .map_err(|_| signing::Error::Unavailable)?
+    }
+
+    /// Rechecks a durably selected local package before signing its fixed publication body.
+    pub async fn attest_review(
+        &self,
+        publication: Arc<SelectedReviewPublication>,
+    ) -> Result<PublicationAttestation, PublicationError> {
+        let (result, response) = oneshot::channel();
+        self.commands
+            .try_send(NetworkCommand::RepositoryReviewAttestation {
+                publication,
+                result,
+            })
+            .map_err(|_| signing::Error::Unavailable)?;
+        tokio::time::timeout(HANDLE_DEADLINE, response)
+            .await
+            .map_err(|_| signing::Error::Unavailable)?
+            .map_err(|_| signing::Error::Unavailable)?
+    }
+
+    pub async fn sign_review(
+        &self,
+        job: Arc<CheckpointPreparedReview>,
+    ) -> Result<signing::RepositoryPartial, signing::Error> {
+        self.review_partial(RepositoryReviewJob::Cob(job)).await
+    }
+    pub async fn sign_review_refs(
+        &self,
+        job: Arc<CheckpointPreparedReviewRefs>,
+    ) -> Result<signing::RepositoryPartial, signing::Error> {
+        self.review_partial(RepositoryReviewJob::Refs(job)).await
+    }
+    pub async fn sign_merge(
+        &self,
+        job: Arc<super::merge::CheckpointPreparedMerge>,
+    ) -> Result<signing::RepositoryPartial, signing::Error> {
+        self.review_partial(RepositoryReviewJob::Merge(job)).await
+    }
+    pub async fn sign_merge_refs(
+        &self,
+        job: Arc<super::merge::CheckpointPreparedMergeRefs>,
+    ) -> Result<signing::RepositoryPartial, signing::Error> {
+        self.review_partial(RepositoryReviewJob::MergeRefs(job))
+            .await
+    }
+    pub async fn attest_bootstrap(
+        &self,
+        publication: Arc<super::publication::store::SelectedBootstrapPublication>,
+    ) -> Result<PublicationAttestation, super::bootstrap::Error> {
+        let (result, response) = oneshot::channel();
+        self.commands
+            .try_send(NetworkCommand::RepositoryBootstrapAttestation {
+                publication,
+                result,
+            })
+            .map_err(|_| signing::Error::Unavailable)?;
+        tokio::time::timeout(HANDLE_DEADLINE, response)
+            .await
+            .map_err(|_| signing::Error::Unavailable)?
+            .map_err(|_| signing::Error::Unavailable)?
+    }
+
+    pub async fn sign_bootstrap_document(
+        &self,
+        job: Arc<super::bootstrap::PreparedBootstrapDocument>,
+    ) -> Result<signing::RepositoryPartial, signing::Error> {
+        self.bootstrap_partial(RepositoryBootstrapJob::Document(job))
+            .await
+    }
+    pub async fn sign_bootstrap_identity(
+        &self,
+        job: Arc<super::bootstrap::PreparedBootstrapIdentity>,
+    ) -> Result<signing::RepositoryPartial, signing::Error> {
+        self.bootstrap_partial(RepositoryBootstrapJob::Identity(job))
+            .await
+    }
+    pub async fn sign_bootstrap_refs(
+        &self,
+        job: Arc<super::bootstrap::PreparedBootstrapRefs>,
+    ) -> Result<signing::RepositoryPartial, signing::Error> {
+        self.bootstrap_partial(RepositoryBootstrapJob::Refs(job))
+            .await
+    }
+    async fn bootstrap_partial(
+        &self,
+        job: RepositoryBootstrapJob,
+    ) -> Result<signing::RepositoryPartial, signing::Error> {
+        let (result, response) = oneshot::channel();
+        self.commands
+            .try_send(NetworkCommand::RepositoryBootstrapPartial { job, result })
+            .map_err(|_| signing::Error::Unavailable)?;
+        tokio::time::timeout(HANDLE_DEADLINE, response)
+            .await
+            .map_err(|_| signing::Error::Unavailable)?
+            .map_err(|_| signing::Error::Unavailable)?
+    }
+
+    async fn review_partial(
+        &self,
+        job: RepositoryReviewJob,
+    ) -> Result<signing::RepositoryPartial, signing::Error> {
+        let (result, response) = oneshot::channel();
+        self.commands
+            .try_send(NetworkCommand::RepositoryReviewPartial { job, result })
+            .map_err(|_| signing::Error::Unavailable)?;
+        tokio::time::timeout(HANDLE_DEADLINE, response)
+            .await
+            .map_err(|_| signing::Error::Unavailable)?
+            .map_err(|_| signing::Error::Unavailable)?
+    }
+
+    /// A local bounded request; the service samples its own current finalized authority.
+    pub async fn repository_signing_material(
+        &self,
+        owner: radicle::crypto::BlsPublicKey,
+    ) -> Result<signing::RepositorySigningMaterial, signing::Error> {
+        let (result, response) = oneshot::channel();
+        self.commands
+            .try_send(NetworkCommand::RepositoryMaterial { owner, result })
+            .map_err(|_| signing::Error::Unavailable)?;
+        tokio::time::timeout(HANDLE_DEADLINE, response)
+            .await
+            .map_err(|_| signing::Error::Unavailable)?
+            .map_err(|_| signing::Error::Unavailable)?
+    }
+
     pub async fn shutdown(&self) -> Result<(), ManagerError> {
         let (result, response) = oneshot::channel();
         tokio::time::timeout(HANDLE_DEADLINE, async {
@@ -222,6 +495,26 @@ impl EndpointResolver for EndpointNetworkResolver {
 }
 
 impl EndpointNetworkService {
+    pub fn with_repository_publication_mailbox(
+        mut self,
+        mailbox: outbe_primitives::radicle_publication::RepositoryPublicationMailbox,
+    ) -> Self {
+        self.state.repository_publication = mailbox;
+        self
+    }
+    pub fn with_repository_authority_reader(
+        mut self,
+        reader: Arc<dyn RepositoryAuthorityReader>,
+    ) -> Self {
+        self.state.repository_authority = Some(reader);
+        self
+    }
+
+    /// Transfer the single public-output publisher to the engine lifecycle owner.
+    pub fn take_repository_material_publisher(&mut self) -> Option<RepositoryMaterialPublisher> {
+        self.repository_material_publisher.take()
+    }
+
     pub async fn run<S, R>(
         self,
         transport: EndpointTransport<S, R>,
@@ -237,6 +530,266 @@ impl EndpointNetworkService {
 }
 
 impl EndpointNetworkState {
+    fn bootstrap_publication_material(
+        &self,
+        publication: &super::publication::store::SelectedBootstrapPublication,
+    ) -> Result<signing::RepositorySigningMaterial, super::bootstrap::Error> {
+        let state = self
+            .repository_authority
+            .as_ref()
+            .ok_or(signing::Error::Unavailable)?
+            .read_current_bootstrap_signing_state()
+            .map_err(signing::Error::from)?;
+        if state.authority().chain_id() != self.chain.chain_id
+            || state.authority().genesis_hash() != self.chain.genesis_hash
+        {
+            return Err(super::bootstrap::Error::Descriptor);
+        }
+        let owner =
+            radicle::crypto::BlsPublicKey::from_bytes(publication.body().owner_bls_public.0)?;
+        let material = self
+            .repository_material
+            .current(state.authority().clone(), owner)?;
+        publication.authorize_current(&state, &material)?;
+        Ok(material)
+    }
+
+    fn queue_bootstrap_publication(
+        &mut self,
+        publication: Arc<super::publication::store::SelectedBootstrapPublication>,
+        batch: outbe_primitives::radicle_publication::PublicationBatch,
+    ) -> Result<(), super::bootstrap::Error> {
+        if batch.body != *publication.body() || batch.to_bytes().is_err() {
+            return Err(signing::Error::Context.into());
+        }
+        let material = self.bootstrap_publication_material(&publication)?;
+        for attestation in &batch.attestations {
+            material.verify_publication_attestation(&batch.body, attestation)?;
+        }
+        self.repository_publication
+            .set_ready(Some(batch))
+            .map_err(|_| signing::Error::Unavailable)?;
+        self.queued_publication = Some(QueuedPublication::Bootstrap(publication));
+        Ok(())
+    }
+
+    fn refresh_publication_queue(&mut self) {
+        let stale = match self.queued_publication.as_ref() {
+            Some(QueuedPublication::Bootstrap(publication)) => {
+                self.bootstrap_publication_material(publication).is_err()
+            }
+            Some(QueuedPublication::Review(publication)) => {
+                self.review_publication_material(publication).is_err()
+            }
+            None => false,
+        };
+        if stale {
+            let _ = self.repository_publication.set_ready(None);
+            self.queued_publication = None;
+        }
+    }
+
+    fn queue_review_publication(
+        &mut self,
+        publication: Arc<SelectedReviewPublication>,
+        batch: outbe_primitives::radicle_publication::PublicationBatch,
+    ) -> Result<(), PublicationError> {
+        if batch.body != *publication.body() || batch.to_bytes().is_err() {
+            return Err(PublicationError::Context);
+        }
+        let material = self.review_publication_material(&publication)?;
+        for attestation in &batch.attestations {
+            material.verify_publication_attestation(&batch.body, attestation)?;
+        }
+        self.repository_publication
+            .set_ready(Some(batch))
+            .map_err(|_| signing::Error::Unavailable)?;
+        self.queued_publication = Some(QueuedPublication::Review(publication));
+        Ok(())
+    }
+
+    fn bootstrap_attestation(
+        &self,
+        publication: &super::publication::store::SelectedBootstrapPublication,
+        identity: &bls12381::PrivateKey,
+        validator: Address,
+    ) -> Result<PublicationAttestation, super::bootstrap::Error> {
+        let material = self.bootstrap_publication_material(publication)?;
+        let index = material.participant_for(validator, identity)?;
+        let signature = identity
+            .sign(PUBLICATION_NAMESPACE, &publication.body().to_bytes())
+            .encode();
+        Ok(PublicationAttestation {
+            participant_index: index.get(),
+            signature: alloy_primitives::FixedBytes::from_slice(signature.as_ref()),
+        })
+    }
+
+    fn review_attestation(
+        &self,
+        publication: &SelectedReviewPublication,
+        identity: &bls12381::PrivateKey,
+        validator: Address,
+    ) -> Result<PublicationAttestation, PublicationError> {
+        let material = self.review_publication_material(publication)?;
+        let index = material.participant_for(validator, identity)?;
+        let signature = identity
+            .sign(PUBLICATION_NAMESPACE, &publication.body().to_bytes())
+            .encode();
+        Ok(PublicationAttestation {
+            participant_index: index.get(),
+            signature: alloy_primitives::FixedBytes::from_slice(signature.as_ref()),
+        })
+    }
+
+    fn review_publication_material(
+        &self,
+        publication: &SelectedReviewPublication,
+    ) -> Result<signing::RepositorySigningMaterial, PublicationError> {
+        if publication.body().action
+            == outbe_primitives::radicle_publication::PublicationAction::BindMaterial
+        {
+            let state = self
+                .repository_authority
+                .as_ref()
+                .ok_or(signing::Error::Unavailable)?
+                .read_current_material_signing_state()
+                .map_err(signing::Error::from)?;
+            if state.authority().chain_id() != self.chain.chain_id
+                || state.authority().genesis_hash() != self.chain.genesis_hash
+            {
+                return Err(PublicationError::Context);
+            }
+            let owner =
+                radicle::crypto::BlsPublicKey::from_bytes(publication.body().owner_bls_public.0)?;
+            let material = self
+                .repository_material
+                .current(state.authority().clone(), owner)?;
+            publication.authorize_material(&state, &material)?;
+            return Ok(material);
+        }
+        let state = self
+            .repository_authority
+            .as_ref()
+            .ok_or(signing::Error::Unavailable)?
+            .read_current_patch_signing_state(publication.body().proposal_id)
+            .map_err(signing::Error::from)?;
+        if state.authority().chain_id() != self.chain.chain_id
+            || state.authority().genesis_hash() != self.chain.genesis_hash
+        {
+            return Err(PublicationError::Context);
+        }
+        let owner =
+            radicle::crypto::BlsPublicKey::from_bytes(publication.body().owner_bls_public.0)?;
+        let material = self
+            .repository_material
+            .current(state.authority().clone(), owner)?;
+        publication.authorize_current(&state, &material)?;
+        Ok(material)
+    }
+
+    fn bootstrap_partial(
+        &self,
+        job: &RepositoryBootstrapJob,
+        signer: &bls12381::PrivateKey,
+        validator: Address,
+    ) -> Result<signing::RepositoryPartial, signing::Error> {
+        let body = match job {
+            RepositoryBootstrapJob::Document(job) => job.body(),
+            RepositoryBootstrapJob::Identity(job) => job.body(),
+            RepositoryBootstrapJob::Refs(job) => job.body(),
+        };
+        let owner = radicle::crypto::BlsPublicKey::from_bytes(body.owner_bls_public.0)?;
+        let state = self
+            .repository_authority
+            .as_ref()
+            .ok_or(signing::Error::Unavailable)?
+            .read_current_bootstrap_signing_state()?;
+        if state.authority().chain_id() != self.chain.chain_id
+            || state.authority().genesis_hash() != self.chain.genesis_hash
+        {
+            return Err(signing::Error::Material);
+        }
+        let material = self
+            .repository_material
+            .current(state.authority().clone(), owner)?;
+        let provider = self.repository_material.local_signer()?;
+        match job {
+            RepositoryBootstrapJob::Document(job) => {
+                material.sign_bootstrap_document(&provider, job, &state, validator, signer)
+            }
+            RepositoryBootstrapJob::Identity(job) => {
+                material.sign_bootstrap_identity(&provider, job, &state, validator, signer)
+            }
+            RepositoryBootstrapJob::Refs(job) => {
+                material.sign_bootstrap_refs(&provider, job, &state, validator, signer)
+            }
+        }
+    }
+
+    fn review_partial(
+        &self,
+        job: &RepositoryReviewJob,
+        signer: &bls12381::PrivateKey,
+        validator: Address,
+    ) -> Result<signing::RepositoryPartial, signing::Error> {
+        let (proposal, owner) = match job {
+            RepositoryReviewJob::Cob(job) => (job.approval().proposal_id, job.owner()),
+            RepositoryReviewJob::Refs(job) => (job.approval().proposal_id, job.owner()),
+            RepositoryReviewJob::Merge(job) => (job.approval().proposal_id, job.owner()),
+            RepositoryReviewJob::MergeRefs(job) => (job.approval().proposal_id, job.owner()),
+        };
+        let owner = match owner {
+            radicle::crypto::RepositoryKey::Bls12381G2(key) => key,
+            _ => return Err(signing::Error::Context),
+        };
+        let state = self
+            .repository_authority
+            .as_ref()
+            .ok_or(signing::Error::Unavailable)?
+            .read_current_patch_signing_state(proposal)?;
+        if state.authority().chain_id() != self.chain.chain_id
+            || state.authority().genesis_hash() != self.chain.genesis_hash
+        {
+            return Err(signing::Error::Material);
+        }
+        let material = self
+            .repository_material
+            .current(state.authority().clone(), owner)?;
+        let provider = self.repository_material.local_signer()?;
+        match job {
+            RepositoryReviewJob::Cob(job) => {
+                material.sign_current_review(&provider, job, &state, validator, signer)
+            }
+            RepositoryReviewJob::Refs(job) => {
+                material.sign_current_review_refs(&provider, job, &state, validator, signer)
+            }
+            RepositoryReviewJob::Merge(job) => {
+                material.sign_current_merge(&provider, job, &state, validator, signer)
+            }
+            RepositoryReviewJob::MergeRefs(job) => {
+                material.sign_current_merge_refs(&provider, job, &state, validator, signer)
+            }
+        }
+    }
+
+    fn current_repository_material(
+        &self,
+        owner: radicle::crypto::BlsPublicKey,
+    ) -> Result<signing::RepositorySigningMaterial, signing::Error> {
+        let authority = self
+            .repository_authority
+            .as_ref()
+            .ok_or(signing::Error::Unavailable)?
+            .read_current_repository_authority()?;
+        if authority.chain_id() != self.chain.chain_id
+            || authority.genesis_hash() != self.chain.genesis_hash
+        {
+            return Err(signing::Error::Material);
+        }
+        self.repository_material.current(authority, owner)
+    }
+
     async fn run<S, R>(
         mut self,
         endpoint_actor: EndpointActor<OsRequestIds>,
@@ -259,8 +812,13 @@ impl EndpointNetworkState {
         let mut current = None;
         let mut queued = BTreeMap::<PeerId, (SignedEndpointResponse, u64)>::new();
         let mut shutdown_ack = None;
+        let mut material_updates = true;
         let outcome = loop {
             tokio::select! {
+                changed = self.repository_material.changed(), if material_updates => {
+                    material_updates = changed.is_ok();
+                    self.refresh_publication_queue();
+                }
                 joined = actor.join_next() => {
                     break Err(match joined {
                         Some(Err(error)) => ManagerError::endpoint_actor_task(error),
@@ -269,7 +827,38 @@ impl EndpointNetworkState {
                 }
                 command = self.commands.recv() => {
                     match command {
+                        Some(NetworkCommand::Gossip {message,result})=>{
+                            let _ = result.send(self.gossip(&mut sender,&signer,&message));
+                        }
+                        Some(NetworkCommand::DrainGossip {result})=>{
+                            let _ = result.send(self.drain_gossip());
+                        }
+                        Some(NetworkCommand::QueueBootstrapPublication {publication,batch,result})=>{
+                            let _ = result.send(self.queue_bootstrap_publication(publication,*batch));
+                        }
+                        Some(NetworkCommand::QueueReviewPublication {publication,batch,result})=>{
+                            let _ = result.send(self.queue_review_publication(publication,*batch));
+                        }
+                        Some(NetworkCommand::RepositoryReviewAttestation {publication,result})=>{
+                            let _=result.send(self.review_attestation(&publication,&signer,local.validator));
+                        }
+                        Some(NetworkCommand::RepositoryBootstrapAttestation {publication,result})=>{
+                            let attestation = self.bootstrap_attestation(&publication,&signer,local.validator);
+                            let _ = result.send(attestation);
+                        }
+                        Some(NetworkCommand::RepositoryBootstrapPartial {job,result})=>{
+                            let partial = self.bootstrap_partial(&job,&signer,local.validator);
+                            let _ = result.send(partial);
+                        }
+                        Some(NetworkCommand::RepositoryReviewPartial {job,result})=>{
+                            let _=result.send(self.review_partial(&job,&signer,local.validator));
+                        }
+                        Some(NetworkCommand::RepositoryMaterial { owner, result }) => {
+                            let material = self.current_repository_material(owner);
+                            let _ = result.send(material);
+                        }
                         Some(NetworkCommand::Refresh { snapshot, result }) => {
+                            self.refresh_publication_queue();
                             let refreshed = self.refresh(
                                 &mut sender,
                                 EndpointRefresh { local_validator: local.validator, snapshot: &snapshot, queued: &mut queued },
@@ -313,6 +902,8 @@ impl EndpointNetworkState {
         outcome: Result<(), ManagerError>,
         shutdown_ack: Option<oneshot::Sender<Result<(), ManagerError>>>,
     ) -> Result<(), ManagerError> {
+        let _ = self.repository_publication.set_ready(None);
+        self.queued_publication = None;
         self.commands.close();
         let cleanup = if actor.is_empty() {
             Ok(())
@@ -506,7 +1097,7 @@ fn now_millis() -> u64 {
 }
 
 #[cfg(test)]
-mod shutdown_tests {
+pub(crate) mod shutdown_tests {
     use super::*;
     use crate::{endpoint::HandleError, integration::RadicleStatusChannel};
     use alloy_primitives::B256;
@@ -515,7 +1106,7 @@ mod shutdown_tests {
     use commonware_runtime::IoBufs;
 
     #[derive(Clone)]
-    struct NoSend;
+    pub(crate) struct NoSend;
 
     impl LimitedSender for NoSend {
         type PublicKey = bls12381::PublicKey;
@@ -542,7 +1133,9 @@ mod shutdown_tests {
     }
 
     #[derive(Debug)]
-    struct TestReceiver(mpsc::UnboundedReceiver<(bls12381::PublicKey, IoBuf)>);
+    pub(crate) struct TestReceiver(
+        pub(crate) mpsc::UnboundedReceiver<(bls12381::PublicKey, IoBuf)>,
+    );
 
     impl Receiver for TestReceiver {
         type PublicKey = bls12381::PublicKey;

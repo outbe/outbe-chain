@@ -1,0 +1,24 @@
+{
+  "argv": [
+    "cargo",
+    "run",
+    "--offline",
+    "--locked",
+    "--manifest-path",
+    "plans/radicle-patch-vote/decisions/D1/repro/Cargo.toml",
+    "--",
+    "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote"
+  ],
+  "environment": {
+    "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-standalone",
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_BUILD_JOBS": "4"
+  },
+  "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+  "start_utc": "2026-10-15T14:42:26.427345+00:00",
+  "end_utc": "2026-10-15T14:42:27.175834+00:00",
+  "exit_code": 0,
+  "log_sha256": "8d7507db04fef7afa4572e9aef15be4cc701587531ae6d3ca1fe6797c778e9f3"
+}

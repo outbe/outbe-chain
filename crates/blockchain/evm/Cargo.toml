@@ -37,8 +37,6 @@ outbe-update.workspace = true
 outbe-agentreward.workspace = true
 outbe-ccaregistry.workspace = true
 outbe-metadosis.workspace = true
-outbe-ocomp-protocol.workspace = true
-outbe-ocompregistry.workspace = true
 outbe-validatorset.workspace = true
 outbe-consensus.workspace = true
 outbe-slashindicator.workspace = true
@@ -49,7 +47,6 @@ outbe-promislimit.workspace = true
 outbe-oracle.workspace = true
 outbe-zerofee.workspace = true
 outbe-cycle.workspace = true
-outbe-accounting.workspace = true
 outbe-zk-backend.workspace = true
 outbe-zk.workspace = true
 

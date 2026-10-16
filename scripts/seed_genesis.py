@@ -31,8 +31,6 @@ from genesis_seed_codec import seed_profile_selector
 from genesis_seed_system import _seed_system_state
 from genesis_seed_economy import _seed_economic_state
 from genesis_inputs import (
-    GenesisTools,
-    OcompPaths,
     SeedInputs,
     SeedOptions,
     StakeSeedTerms,

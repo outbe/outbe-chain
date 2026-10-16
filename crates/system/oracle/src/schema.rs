@@ -130,14 +130,13 @@ pub struct OracleContract {
     // slot 31: mapping(snapshot_idx => mapping(pair_index => volume))
     pub snapshot_volume: Mapping<u64, Mapping<PairIndex, U256>>,
 
-    // === Protected Validators (slots 32-33) ===
-    // slot 32: mapping(validator => is_protected)
-    pub protected_validator: Mapping<Address, bool>,
-    // slot 33: allow protected validators flag
-    pub config_allow_protected: Slot<bool>,
+    // Slots 32 (`protected_validator`) and 33 (`config_allow_protected`) are
+    // retired holes. Do not reuse them.
 
     // === S-Curve Active Entries (slots 34-39) ===
-    // slot 34: number of active S-curve entries
+    // slot 34 - pinned: without this anchor the running slot counter would
+    // slide it down into the retired 32-33 hole.
+    #[slot(34)]
     pub scurve_count: Slot<u32>,
     // slot 35: mapping(entry_idx => pair) for which pair
     pub scurve_pair: Mapping<u32, AddressPair>,
@@ -233,26 +232,6 @@ pub struct OracleContract {
     // Slot 60 held annual policy rates while they were incorrectly coupled to
     // reference-currency membership. It is retired. Do not reuse.
 
-    // === OCOMP PoC pre-admission projection (slots 61, 63-64) ===
-    // These trailing fields are inert until the fresh-devnet fork handler sets
-    // `ocomp_profile_ready`. Existing pre-fork Oracle writes therefore keep
-    // their exact historical state footprint.
-    #[slot(61)]
-    pub ocomp_profile_ready: Slot<bool>,
-    // Slot 62 (`ocomp_day_type_pair_id`) is a retired hole. The day-type pair is
-    // the compile-time `DAY_TYPE_PAIR`, so pinning its ordinal in storage
-    // bought nothing once pairs stopped being identified by ordinal.
-    // Do not reuse.
-    // slot 63: direct O(1) lookup for the single fork-fixed auction-entry pair.
-    // The canonical UTC-day finalizer is its only mutation owner.
-    #[slot(63)]
-    pub ocomp_day_type_vwap_by_utc_day: Mapping<u32, U256>,
-    // Advances for every Oracle mutation visible to OCOMP pre-admission.
-    pub ocomp_state_version: Slot<u64>,
-    // Slots 65-69 held the `quote` half of the five pair columns above, back
-    // when a pair needed two parallel `Address` mappings. They are trailing
-    // retired holes. Do not reuse.
-
     // === Exact WorldwideDay edge aggregates (slots 70-73) ===
     // A WorldwideDay formation window starts at 10:00 UTC on the preceding
     // calendar day and ends at 12:00 UTC on the following calendar day. These
@@ -271,20 +250,14 @@ pub struct OracleContract {
     pub policy_rate_currencies: StorageVec<u16>,
     pub policy_rate: Mapping<u16, U256>,
 
-    // === Bounded reads of the UTC-day VWAP history (slots 76-77) ===
-    // Both are kept by `record_utc_day_vwap`, the only writer of `utc_day_vwap_value`.
-    #[slot(76)]
-    pub(crate) utc_month_vwap_max: Mapping<u32, Mapping<PairIndex, U256>>,
-    pub(crate) utc_day_vwap_first_recorded: Slot<u32>,
-
-    // === Hourly VWAP aggregates (slots 78-80) ===
+    // === Hourly VWAP aggregates (slots 76-78) ===
     // A ring of 24 cells per pair keyed by UTC hour of day. `hourly_vwap_hour`
     // names the hour a cell holds. The cell holds nothing for any other hour.
     pub(crate) hourly_vwap_hour: Mapping<AddressPair, Mapping<u64, u64>>,
     pub(crate) hourly_pv_sum: Mapping<AddressPair, Mapping<u64, U256>>,
     pub(crate) hourly_vol_sum: Mapping<AddressPair, Mapping<u64, U256>>,
 
-    // === Window coverage (slots 81-82) ===
+    // === Window coverage (slots 79-80) ===
     // Snapshots the pair contributed to the cell's hour. It lives with the cell.
     pub(crate) hourly_snapshot_count: Mapping<AddressPair, Mapping<u64, u64>>,
     // First block number seen in each UTC hour (keyed by hour start), written

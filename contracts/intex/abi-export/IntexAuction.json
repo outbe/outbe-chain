@@ -176,11 +176,6 @@
                   "internalType": "uint64"
                 },
                 {
-                  "name": "floorPriceMinor",
-                  "type": "uint64",
-                  "internalType": "uint64"
-                },
-                {
                   "name": "callPriceMinor",
                   "type": "uint64",
                   "internalType": "uint64"
@@ -474,11 +469,6 @@
                       "internalType": "uint64"
                     },
                     {
-                      "name": "floorPriceMinor",
-                      "type": "uint64",
-                      "internalType": "uint64"
-                    },
-                    {
                       "name": "callPriceMinor",
                       "type": "uint64",
                       "internalType": "uint64"
@@ -658,11 +648,6 @@
                     },
                     {
                       "name": "entryPriceMinor",
-                      "type": "uint64",
-                      "internalType": "uint64"
-                    },
-                    {
-                      "name": "floorPriceMinor",
                       "type": "uint64",
                       "internalType": "uint64"
                     },

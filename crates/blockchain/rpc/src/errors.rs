@@ -9,16 +9,6 @@ pub enum RpcError {
     /// A Radicle status counter does not fit in `u64`.
     #[error("Radicle status counter exceeds u64")]
     RadicleCounterOverflow,
-    /// An OCOMP Lysis openings builder returned an error.
-    #[error("{0}")]
-    LysisOpenings(String),
-}
-
-impl RpcError {
-    /// Converts any displayable failure into [`RpcError::LysisOpenings`].
-    pub fn lysis_openings(error: impl std::fmt::Display) -> Self {
-        Self::LysisOpenings(error.to_string())
-    }
 }
 
 /// Errors that occur when a registered validator record is incomplete.
@@ -64,12 +54,6 @@ pub enum RpcInternalError {
     /// A precompile state query failed.
     #[error("precompile error: {0}")]
     Precompile(#[from] PrecompileError),
-    /// OCOMP Lysis openings are not configured on this node.
-    #[error("OCOMP Lysis openings are not configured")]
-    OcompLysisOpeningsNotConfigured,
-    /// The blocking OCOMP Lysis openings worker task failed.
-    #[error("OCOMP openings worker failed: {0}")]
-    OcompOpeningsWorkerFailed(String),
     /// The TEE enclave is not configured on this node.
     #[error("tee enclave not configured")]
     TeeEnclaveNotConfigured,
@@ -191,11 +175,6 @@ impl RpcInternalError {
     /// Creates [`RpcInternalError::LatestStateReadFailed`] from a displayable error.
     pub fn latest_state_read_failed(error: impl std::fmt::Display) -> Self {
         Self::LatestStateReadFailed(error.to_string())
-    }
-
-    /// Creates [`RpcInternalError::OcompOpeningsWorkerFailed`] from a displayable error.
-    pub fn ocomp_openings_worker_failed(error: impl std::fmt::Display) -> Self {
-        Self::OcompOpeningsWorkerFailed(error.to_string())
     }
 
     /// Creates [`RpcInternalError::EnclaveDeriveAccountKeysFailed`] from a displayable error.

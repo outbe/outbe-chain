@@ -62,7 +62,6 @@ fn proposer_and_validator_state_matches_after_a_gem_issue() {
                         .unwrap(),
                         remaining_capacity_minor: U256::from(2_000_000),
                         source_entry_price_minor: U256::from(1_000_000),
-                        source_floor_price_minor: U256::from(50_000),
                         issuance_currency: 840,
                         reference_currency: 840,
                         issued_at: block_ts - 1,
@@ -183,13 +182,6 @@ fn proposer_and_validator_state_matches_after_a_gem_issue() {
     assert_eq!(observations[0], observations[1]);
 }
 
-fn state_with_active_proposer_and_funded_account_without_ocomp(
-    proposer: Address,
-    funded: Address,
-) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
-    state_with_active_proposer_and_funded_account_fixture(proposer, funded, false)
-}
-
 #[test]
 fn pending_rpc_context_skips_consensus_hooks_and_executes_user_transactions() {
     let user_tx = test_regular_tx()
@@ -244,6 +236,8 @@ fn finish_uses_final_extra_data_setter_for_summary_validation() {
         fixtures::executor_inputs_from_ctx(&ctx, None, true),
     );
     let final_extra_data = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
+        radicle_publication_enabled: false,
+        radicle_publication: None,
         execution_summary: Some(ExecutionSummaryArtifact {
             validator_fee_sum: U256::ZERO,
         }),

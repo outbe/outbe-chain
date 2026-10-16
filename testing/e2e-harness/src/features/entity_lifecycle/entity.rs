@@ -43,9 +43,9 @@ impl Entity {
 
 /// The two points of a lifecycle where an entity can be paid for.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Parameter)]
-#[param(name = "phase", regex = "qualified|called")]
+#[param(name = "phase", regex = "issued|called")]
 pub(crate) enum Phase {
-    Qualified,
+    Issued,
     Called,
 }
 
@@ -54,7 +54,7 @@ impl FromStr for Phase {
 
     fn from_str(name: &str) -> Result<Self, Self::Err> {
         match name {
-            "qualified" => Ok(Self::Qualified),
+            "issued" => Ok(Self::Issued),
             "called" => Ok(Self::Called),
             other => Err(format!("unknown payment phase {other:?}")),
         }
@@ -135,8 +135,6 @@ pub(crate) trait Lifecycle: Sync {
     fn recorded_close(&self, _world: &World) -> Option<U256> {
         None
     }
-    /// The floor every entity of the scenario shares.
-    fn floor(&self, world: &World) -> U256;
     /// The call price every entity of the scenario shares.
     fn call_price(&self, world: &World) -> U256;
     /// The terms `item` is priced on, as the holding records them.
@@ -146,7 +144,6 @@ pub(crate) trait Lifecycle: Sync {
         self.terms(world, &target.item)
     }
     fn assert_issued(&self, world: &World);
-    fn qualified(&self, world: &World) -> bool;
     /// The two holdings paid in `phase`, in the order the scenario names their payments.
     fn targets(&self, world: &World, phase: Phase) -> [Target; 2];
     /// Every holding left unpaid reads Called.

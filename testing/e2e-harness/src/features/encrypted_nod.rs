@@ -6,12 +6,7 @@ use alloy_primitives::{Address, U256};
 use base64::Engine as _;
 use cucumber::{then, when};
 
-use outbe_ocomp_protocol::{
-    abi::{
-        decode_protected_materialize_certified_nods_calldata, MATERIALIZE_CERTIFIED_NODS_SELECTOR,
-    },
-    profile::poc_schema_limits,
-};
+use alloy_sol_types::SolEvent as _;
 
 fn owner(world: &World) -> Address {
     eth::address_of(&world.validators.get(0).evm_key().unwrap()).unwrap()
@@ -33,18 +28,13 @@ fn offer_for_owner(world: &mut World) {
     );
 }
 
-#[then("the encrypted NOD matches its protected calldata, canonical body, public views and events")]
+#[then("the encrypted NOD matches its canonical body, public views and native issuance event")]
 fn verify_encrypted_nod(world: &mut World) {
-    let generation = world
+    let completed_at = world
         .state
-        .ocomp_certified_generation
-        .clone()
-        .expect("real certified Lysis generation");
+        .lysis_completion_height
+        .expect("native Lysis completion");
     let port = world.validators.primary_port();
-    let complete = world
-        .rpc
-        .wait_for_completed_nod_materialization(port, &generation, 120)
-        .expect("production encrypted materialization completes");
     let owner = owner(world);
     let public = world
         .rpc
@@ -53,7 +43,7 @@ fn verify_encrypted_nod(world: &mut World) {
     let (_, data) = settlement_read(|| {
         world
             .rpc
-            .materialized_nod_for_owner(port, owner)?
+            .nod_for_owner(port, owner)?
             .ok_or_else(|| "creator NOD is not visible yet".to_owned())
     })
     .expect("creator NOD");
@@ -66,23 +56,15 @@ fn verify_encrypted_nod(world: &mut World) {
     assert_eq!(data.owner, owner);
     world
         .rpc
-        .wait_finalized_checkpoint(
-            &world.validators.committee_ports(),
-            complete.completion_block_number,
-            120,
-        )
+        .wait_finalized_checkpoint(&world.validators.committee_ports(), completed_at, 120)
         .expect("encrypted creation finalized on every validator");
     let mut expected_body = None;
     for (index, peer) in world.validators.committee_ports().into_iter().enumerate() {
-        let body = assert_nod_state(
-            world,
-            (index, peer),
-            &encrypted,
-            complete.completion_block_number,
-        );
+        let body = assert_nod_state(world, (index, peer), &encrypted, completed_at);
         assert_eq!(*expected_body.get_or_insert(body.clone()), body);
     }
-    assert_materialization_carrier(world, &encrypted, complete.completion_block_number);
+    super::oracle_expectations::assert_native_entry_price(world, &encrypted.terms, completed_at);
+    assert_native_issuance(world, &encrypted, completed_at);
 }
 
 fn assert_nod_state(
@@ -165,86 +147,17 @@ fn assert_encrypted_metadata(
     );
 }
 
-fn assert_materialization_carrier(
-    world: &World,
-    encrypted: &outbe_primitives::nod_encryption::EncryptedNodV2,
-    last: u64,
-) {
-    let first = world
-        .state
-        .ocomp_activation
-        .as_ref()
-        .expect("real Lysis activation")
-        .block_number;
-    let url = world.rpc.url(world.validators.primary_port());
-    let mut matches = 0;
-    for height in first..=last {
-        let block = eth::raw_json_result(
-            &url,
-            "eth_getBlockByNumber",
-            serde_json::json!([format!("0x{height:x}"), true]),
-        )
-        .expect("materialization block");
-        for tx in block["transactions"].as_array().expect("transactions") {
-            matches += assert_encrypted_creation(&url, tx, encrypted);
-        }
-    }
-    assert_eq!(matches, 1, "one finalized encrypted creation");
-}
-
-fn assert_encrypted_creation(
-    url: &str,
-    tx: &serde_json::Value,
-    encrypted: &outbe_primitives::nod_encryption::EncryptedNodV2,
-) -> usize {
-    if tx["to"]
-        .as_str()
-        .and_then(|value| value.parse::<Address>().ok())
-        != Some(addresses::NOD_FACTORY_ADDR)
-    {
-        return 0;
-    }
-    let input = hex::decode(tx["input"].as_str().unwrap().trim_start_matches("0x")).unwrap();
-    if input.get(..4) != Some(MATERIALIZE_CERTIFIED_NODS_SELECTOR.as_slice()) {
-        return 0;
-    }
-    let carrier =
-        decode_protected_materialize_certified_nods_calldata(&input, &poc_schema_limits())
-            .expect("public calldata carries encrypted NME2 only");
-    let mut matches = 0;
-    for record in carrier.encrypted_nods {
-        let nod: outbe_primitives::nod_encryption::EncryptedNodV2 =
-            serde_json::from_slice(&record.0).expect("self-contained encrypted NOD record");
-        assert_eq!(serde_json::to_vec(&nod).unwrap(), record.0);
-        if nod.terms.nod_id == encrypted.terms.nod_id {
-            assert_eq!(&nod, encrypted);
-            let receipt = eth::receipt_json(url, tx["hash"].as_str().unwrap())
-                .expect("materialization receipt");
-            let issued = eth::receipt_event::<eth::INodFactory::NodIssued>(
-                &receipt,
-                addresses::NOD_FACTORY_ADDR,
-            );
-            assert_eq!(issued.owner, encrypted.terms.owner);
-            assert_eq!(
-                issued.encryptedGratisAmount.as_ref(),
-                encrypted.encrypted_gratis_amount
-            );
-            matches += 1;
-        }
-    }
-    matches
-}
-
 #[when("the encrypted NOD is paid and exercised through a relayer across restarts")]
 fn exercise(world: &mut World) {
     // A fresh settlement asset/vault is installed through the same public fixture as B12.
     super::settlement::deploy_settlement_fixture(world);
     let day = world
         .state
-        .ocomp_certified_generation
-        .as_ref()
-        .unwrap()
-        .worldwide_day;
+        .wwd
+        .as_deref()
+        .expect("native Lysis day")
+        .parse()
+        .expect("numeric WWD");
     super::settlement::exercise_encrypted_nod(world, day);
 }
 
@@ -266,4 +179,78 @@ fn supply_removed(world: &mut World) {
         )
         .expect("removed Gratis supply getter must produce an EVM revert");
     }
+}
+
+fn assert_native_issuance(
+    world: &World,
+    encrypted: &outbe_primitives::nod_encryption::EncryptedNodV2,
+    height: u64,
+) {
+    let url = world.rpc.url(world.validators.primary_port());
+    let logs = eth::raw_json_result(
+        &url,
+        "eth_getLogs",
+        serde_json::json!([{
+            "address": format!("{:#x}", addresses::NOD_FACTORY_ADDR),
+            "fromBlock": format!("0x{height:x}"), "toBlock": format!("0x{height:x}"),
+            "topics": [format!("{:#x}", eth::INodFactory::NodIssued::SIGNATURE_HASH)]
+        }]),
+    )
+    .expect("native Nod issuance logs");
+    let mut found = 0;
+    for log in logs.as_array().expect("issuance logs array") {
+        let topics = log["topics"]
+            .as_array()
+            .expect("event topics")
+            .iter()
+            .map(|value| value.as_str().unwrap().parse().unwrap())
+            .collect::<Vec<alloy_primitives::B256>>();
+        let data: alloy_primitives::Bytes = log["data"].as_str().unwrap().parse().unwrap();
+        let issued =
+            eth::INodFactory::NodIssued::decode_raw_log(topics, &data).expect("native NodIssued");
+        if issued.nodId == encrypted.terms.nod_id.to_u256() {
+            assert_eq!(issued.owner, encrypted.terms.owner);
+            assert_eq!(
+                issued.encryptedGratisAmount.as_ref(),
+                encrypted.encrypted_gratis_amount
+            );
+            found += 1;
+        }
+    }
+    assert_eq!(found, 1, "one native issuance for this encrypted Nod");
+}
+
+#[then("the FullNode verifies the same encrypted Nod against finalized EVM state")]
+fn verify_full_node_nod(world: &mut World) {
+    let primary = world.validators.primary_port();
+    let follower = world.validators.http_port(14);
+    let height = world
+        .state
+        .lysis_completion_height
+        .expect("native Lysis completion");
+    let checkpoint = world
+        .rpc
+        .wait_finalized_checkpoint(&[primary, follower], height, 120)
+        .expect("FullNode native completion checkpoint");
+    let (id, _) = world
+        .rpc
+        .nod_for_owner(primary, owner(world))
+        .expect("Nod owner read")
+        .expect("created Nod");
+    let id = outbe_primitives::wwd_entity_id::WwdEntityId::from(U256::from_be_slice(&id));
+    let expected = world
+        .rpc
+        .nod_state_at(primary, checkpoint, id)
+        .expect("primary Nod MPT proof")
+        .expect("primary Nod");
+    let actual = world
+        .rpc
+        .nod_state_at(follower, checkpoint, id)
+        .expect("FullNode Nod MPT proof")
+        .expect("FullNode Nod");
+    assert_eq!(
+        outbe_nod::canonical_item(&actual.0),
+        outbe_nod::canonical_item(&expected.0)
+    );
+    assert_eq!(actual.1.bucket_key, expected.1.bucket_key);
 }

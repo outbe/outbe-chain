@@ -15,28 +15,21 @@ pub(super) fn state_with_active_and_registered_candidate_seeded(
     let mut seed_storage =
         HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, chain_spec.genesis_hash());
     let active_key = dummy_pubkey(0xA2);
-    let install = test_ocomp_fork_install(&chain_spec, &[(active, active_key)]);
     StorageHandle::enter(&mut seed_storage, |storage| {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(128).unwrap();
         vs.config_epoch_length_blocks.write(60).unwrap();
         vs.config_is_initialized.write(true).unwrap();
-        register_and_activate_with_ocomp_registration(
-            &mut vs,
-            active,
-            &active_key,
-            &install.founder_registrations[0],
-        );
+        register_and_activate_native(&mut vs, active, &active_key);
         vs.register_validator(OWNER, candidate, &dummy_pubkey(0xB3))
             .unwrap();
         vs.admit_validator_for_boundary_for_test(candidate).unwrap();
         seed_test_committee_snapshot(storage.clone(), &[(active, active_key)]);
-        // Seed the COEN/840 oracle pair + a 1.0 rate so begin-block
-        // NOD/GEM/INTEX floor-price promotion resolves a live rate instead
-        // of soft-skipping the scan. Also push 840 onto the reference currency
-        // list to match genesis. The Nod qualifier reads its ISO from there, not
-        // from a hard-coded constant.
+        // Seed the COEN/840 oracle pair + a 1.0 rate so the begin-block
+        // NOD/GEM/INTEX call scans resolve a live rate instead of soft-skipping.
+        // Also push 840 onto the reference currency list to match genesis. The
+        // scans read their ISO from there, not from a hard-coded constant.
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
         outbe_oracle::schema::OracleContract::new(storage.clone())
@@ -56,7 +49,6 @@ pub(super) fn state_with_active_and_registered_candidate_seeded(
         .unwrap();
         seed_extra(storage);
     });
-    seed_test_ocomp_profile(&mut seed_storage, 0, &install);
 
     let mut db = cache_db_from_storage(seed_storage);
     let marker_code = Bytecode::new_legacy([0xef].into());
@@ -81,14 +73,6 @@ pub(super) fn state_with_active_and_registered_candidate_seeded(
         AccountInfo {
             code_hash: marker_code.hash_slow(),
             code: Some(marker_code.clone()),
-            ..Default::default()
-        },
-    );
-    db.insert_account_info(
-        outbe_primitives::addresses::OCOMP_REGISTRY_ADDRESS,
-        AccountInfo {
-            code_hash: marker_code.hash_slow(),
-            code: Some(marker_code),
             ..Default::default()
         },
     );

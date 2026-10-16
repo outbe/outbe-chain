@@ -1,5 +1,3 @@
-use super::readiness::wait_for_finalized_parent;
-use super::wait_for_optional_ocomp_parent;
 use super::{ExecutorActor, RecoveredForkchoiceAttempt};
 use super::{FinalizedExecutionBarrier, FinalizedExecutionBlock, LastCanonicalized};
 use crate::ancestry_readiness::AncestryReadiness;
@@ -15,13 +13,7 @@ use commonware_runtime::Spawner;
 use commonware_runtime::Supervisor as _;
 use commonware_utils::acknowledgement::Acknowledgement;
 use commonware_utils::acknowledgement::Exact;
-use outbe_primitives::{
-    projection::{
-        projection_readiness, ProjectionCheckpoint, ProjectionFailure, ProjectionFailureClass,
-        ProjectionStatus,
-    },
-    OutbeHeader,
-};
+use outbe_primitives::{projection::ProjectionCheckpoint, OutbeHeader};
 use reth_ethereum::node::api::{BeaconEngineMessage, OnForkChoiceUpdated};
 use reth_ethereum::{primitives::SealedBlock, Block};
 use reth_node_builder::ConsensusEngineHandle;
@@ -37,8 +29,6 @@ mod fixtures;
 use fixtures::executor_test_block;
 
 mod forkchoice;
-
-mod readiness;
 
 mod recovery;
 

@@ -1,0 +1,95 @@
+{
+  "scope": "P2 actual Ed compatibility after native BLS changes; not full P2 acceptance",
+  "source_sha": "b7ee1e16536e80ab4295ca3017303179b8371d47",
+  "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+  "platform": "macOS-26.7.2-arm64-arm-64bit-Mach-O",
+  "environment": {
+    "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-target",
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_BUILD_JOBS": "4",
+    "CARGO_NET_OFFLINE": "true",
+    "RUSTUP_TOOLCHAIN": "1.96.0"
+  },
+  "commands": [
+    {
+      "argv": [
+        "cargo",
+        "build",
+        "--offline",
+        "--locked",
+        "--manifest-path",
+        "vendor/heartwood/Cargo.toml",
+        "-p",
+        "radicle-cli",
+        "-p",
+        "radicle-remote-helper",
+        "--target-dir",
+        "/private/tmp/outbe-radicle-p1-standalone"
+      ],
+      "started_at_utc": "2026-10-15T17:01:38.047779+00:00",
+      "ended_at_utc": "2026-10-15T17:01:47.290066+00:00",
+      "exit_code": 0,
+      "log": "native-cli-build.log",
+      "sha256": "cefcf74758ffc52b79235b71bada2fc78c1ae6a2ba3c811162dd80a4bffee604"
+    },
+    {
+      "argv": [
+        "cargo",
+        "build",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-radicle-sidecar",
+        "--bin",
+        "outbe-radicle"
+      ],
+      "started_at_utc": "2026-10-15T17:01:47.290491+00:00",
+      "ended_at_utc": "2026-10-15T17:01:55.597203+00:00",
+      "exit_code": 0,
+      "log": "sidecar-build.log",
+      "sha256": "2a4cb627f0b8aa578314d69994b758fe34b00761fc787b2fa61052494d435440"
+    },
+    {
+      "argv": [
+        "python3",
+        "plans/radicle-patch-vote/p1-peer-check.py",
+        "--rad",
+        "/private/tmp/outbe-radicle-p1-standalone/debug/rad",
+        "--helper",
+        "/private/tmp/outbe-radicle-p1-standalone/debug/git-remote-rad",
+        "--sidecar",
+        "/private/tmp/outbe-radicle-p1-target/debug/outbe-radicle",
+        "--evidence",
+        "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/plans/radicle-patch-vote/evidence/outbe-chain-pjz.3/identity-ed-compatibility/current-peer"
+      ],
+      "started_at_utc": "2026-10-15T17:01:55.597586+00:00",
+      "ended_at_utc": "2026-10-15T17:01:59.388581+00:00",
+      "exit_code": 0,
+      "log": "current-peer.log",
+      "sha256": "0707b6db4a78dc672fc82344bd7ba2aaa5b78716efc8a8089e53d00147e9b000"
+    },
+    {
+      "argv": [
+        "python3",
+        "plans/radicle-patch-vote/p1-peer-check.py",
+        "--rad",
+        "/private/tmp/outbe-radicle-p1-standalone/debug/rad",
+        "--helper",
+        "/private/tmp/outbe-radicle-p1-standalone/debug/git-remote-rad",
+        "--sidecar",
+        "/private/tmp/outbe-radicle-p1-target/debug/outbe-radicle",
+        "--legacy-dir",
+        "/private/tmp/outbe-radicle-p1-legacy/debug",
+        "--evidence",
+        "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/plans/radicle-patch-vote/evidence/outbe-chain-pjz.3/identity-ed-compatibility/legacy-peer"
+      ],
+      "started_at_utc": "2026-10-15T17:01:59.388950+00:00",
+      "ended_at_utc": "2026-10-15T17:02:00.819049+00:00",
+      "exit_code": 0,
+      "log": "legacy-peer.log",
+      "sha256": "df8430793b2f810a803a39507e910282d77aa3d4f308d2135d85e7b01f899aff"
+    }
+  ]
+}

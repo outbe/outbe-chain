@@ -77,6 +77,14 @@ mod change_graph;
 mod trailers;
 
 pub mod change;
+#[cfg(feature = "git2")]
+pub use backend::git::change::error::Load as GitLoadError;
+#[cfg(feature = "git2")]
+pub use backend::git::change::error::Prepare as GitPrepareError;
+#[cfg(feature = "git2")]
+pub use backend::git::change::prepare_native;
+#[cfg(feature = "git2")]
+pub use backend::git::change::{attach_native, load_native};
 pub use change::Entry;
 pub use change::store::{Contents, Embed, EntryId, Manifest, Version};
 
@@ -90,8 +98,8 @@ pub use type_name::TypeName;
 
 pub mod object;
 pub use object::{
-    CollaborativeObject, Create, Evaluate, ObjectId, Update, Updated, create, get, info, list,
-    remove, update,
+    CollaborativeObject, Create, Evaluate, ObjectId, Update, Updated, create, get, get_at, info,
+    list, remove, update,
 };
 
 #[cfg(test)]
@@ -118,8 +126,8 @@ where
         + change::Storage<
             ObjectId = oid::Oid,
             Parent = oid::Oid,
-            PublicKey = crypto::PublicKey,
-            Signature = crypto::Signature,
+            PublicKey = crypto::RepositoryKey,
+            Signature = change::EntrySignature,
         >,
 {
 }

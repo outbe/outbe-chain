@@ -37,7 +37,15 @@ pub(crate) struct ProgramExecutionV1 {
 }
 
 /// Execute a complete pre-observed logical input.
-pub fn execute(mut input: ProgramInputV1) -> Result<ProgramResultV1, ProgramErrorV1> {
+pub fn execute(input: ProgramInputV1) -> Result<ProgramResultV1, ProgramErrorV1> {
+    execute_with_amounts(input).map(|output| output.0)
+}
+
+/// Returns private loads for encryption inside the enclave.
+/// The caller must not expose these loads across the enclave boundary.
+pub fn execute_with_amounts(
+    mut input: ProgramInputV1,
+) -> Result<(ProgramResultV1, Vec<U256>), ProgramErrorV1> {
     input
         .tributes
         .sort_by_key(|observed| observed.tribute.tribute_id);
@@ -77,8 +85,10 @@ pub fn execute(mut input: ProgramInputV1) -> Result<ProgramResultV1, ProgramErro
         input.lysis_limit_minor,
     )?;
 
+    let mut loads = Vec::with_capacity(input.tributes.len());
     for observed in &input.tributes {
         let pending = execution.quote_next()?;
+        loads.push(pending.gratis_load_minor);
         let ordinal = pending.ordinal;
         let entry_price =
             observed
@@ -103,7 +113,7 @@ pub fn execute(mut input: ProgramInputV1) -> Result<ProgramResultV1, ProgramErro
             observed.nod_target_available,
         )?;
     }
-    execution.finish()
+    Ok((execution.finish()?, loads))
 }
 
 /// Validate canonical input, derive the FI fraction map, and initialize the reducer.
@@ -206,7 +216,7 @@ impl ProgramExecutionV1 {
             entry_price_minor,
         });
 
-        if !outbe_nod::pricing::is_issuable_entry(entry_price_minor) {
+        if !outbe_primitives::nod_rules::is_issuable_entry(entry_price_minor) {
             return Err(
                 crate::errors::LysisArithmeticErrorV1::NodEntryPriceOutOfBounds { ordinal }.into(),
             );
@@ -352,7 +362,7 @@ pub(crate) fn compute_fraction_map_from_groups(
 
     // Six-decimal share rounding can make the real group projection exceed the
     // allocation even when the normalized share-space projection does not. Own
-    // the one real-amount normalization here so sequential and OCOMP consume
+    // the one real-amount normalization here so every Lysis execution consumes
     // exactly the same fraction map.
     let projected = group_nominals.iter().zip(&fractions).try_fold(
         U256::ZERO,
@@ -400,8 +410,9 @@ pub(crate) fn calculate_cost(
     ordinal: usize,
 ) -> Result<U256, ProgramErrorV1> {
     // Use the same minor-unit minimum as Nod reads and settlement.
-    let cost = outbe_nod::api::settlement_cost_minor(entry_price_minor, gratis_load_minor)
-        .map_err(ProgramErrorV1::math)?;
+    let cost =
+        outbe_primitives::nod_rules::settlement_cost_minor(entry_price_minor, gratis_load_minor)
+            .map_err(ProgramErrorV1::math)?;
     if cost.is_zero() {
         return Err(ProgramErrorV1::ZeroCost {
             ordinal,

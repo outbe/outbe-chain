@@ -32,34 +32,6 @@ pub enum KeygenError {
     /// The random number generator returned an all-zero ECDSA key.
     #[error("generated zero ECDSA key - extremely unlikely, try again")]
     ZeroEcdsaKey,
-    /// The OCOMP output path is not a regular directory.
-    #[error("OCOMP output path is not a regular directory: {0}")]
-    OcompOutputNotRegularDir(PathBuf),
-    /// An OCOMP file already exists at the target path.
-    #[error("OCOMP artifact already exists: {0}")]
-    OcompArtifactAlreadyExists(PathBuf),
-    /// The generated OCOMP public key is not a 33-byte compressed SEC1 point.
-    #[error("generated OCOMP public key is not compressed SEC1-33")]
-    InvalidOcompPublicKeyLength,
-    /// The signing key failed to sign the OCOMP proof of possession.
-    #[error("failed to sign OCOMP proof of possession")]
-    OcompPopSignFailed,
-    /// The tool failed to write the OCOMP secret key and failed to remove the public file.
-    #[error(
-        "OCOMP secret installation failed at {key_path}: {error}; cleanup of the new public registration at {registration_path} also failed: {cleanup_error}"
-    )]
-    OcompSecretInstallAndCleanupFailed {
-        key_path: PathBuf,
-        error: String,
-        registration_path: PathBuf,
-        cleanup_error: std::io::Error,
-    },
-    /// The file path has no parent directory.
-    #[error("artifact path has no parent: {0}")]
-    ArtifactPathMissingParent(PathBuf),
-    /// The file path has no file name.
-    #[error("artifact path has no file name: {0}")]
-    ArtifactPathMissingFileName(PathBuf),
     /// The secret key path has no file name.
     #[error("secret key path has no file name: {0}")]
     SecretKeyPathMissingFileName(PathBuf),

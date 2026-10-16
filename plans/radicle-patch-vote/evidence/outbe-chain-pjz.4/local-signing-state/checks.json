@@ -1,0 +1,122 @@
+{
+  "component_base_sha": "f88a7f9c7a1f0822cf5ad247de16bbd759d28662",
+  "source_sha": "d64b9ca9275a77ac02ed863517855342ddacf817",
+  "parent_sha": "f88a7f9c7a1f0822cf5ad247de16bbd759d28662",
+  "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+  "platform": "macOS-26.7.2-arm64-arm-64bit-Mach-O",
+  "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "env": {
+    "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-target",
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_BUILD_JOBS": "4",
+    "PYTHONPATH": "scripts"
+  },
+  "changed_files": [
+    "bin/outbe-chain/src/launch/node/radicle.rs",
+    "crates/blockchain/radicle/src/integration/local.rs",
+    "crates/blockchain/radicle/src/integration/local/state.rs",
+    "crates/blockchain/radicle/src/integration/local/tests.rs"
+  ],
+  "spec_sha256": {
+    "plans/radicle-patch-vote/design.md": "dc9fd94ad85704057e284b374e0da27d7e0398546790ab1a202b2a9270e86df8",
+    "plans/radicle-patch-vote/task-specs.json": "5d26f9ef602867a7ed86ed9954d32f4379ec5fb867fa925208db9aa36a9b0412",
+    "plans/radicle-patch-vote/plan.md": "e077e1f2b577ab5ad7fe1943d32559fdc6ca383bc327c8f38848e7773cbaa10b"
+  },
+  "checks": [
+    {
+      "name": "full-libs",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-radicle",
+        "--lib",
+        "--",
+        "--nocapture"
+      ],
+      "start_utc": "2026-10-16T00:20:54.058253+00:00",
+      "log": "full-libs.log",
+      "exit_code": 0,
+      "end_utc": "2026-10-16T00:21:05.742375+00:00",
+      "sha256": "49bba54ad91c600c306c23e29aa1a858708a79148bd82d28a64f257a31a06cb6"
+    },
+    {
+      "name": "all-consumers",
+      "command": [
+        "cargo",
+        "check",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-radicle",
+        "-p",
+        "outbe-engine",
+        "-p",
+        "outbe-chain",
+        "-p",
+        "outbe-radicle-runtime",
+        "-p",
+        "outbe-radicle-sidecar",
+        "-p",
+        "outbe-e2e-harness",
+        "-p",
+        "outbe-keygen",
+        "--all-targets"
+      ],
+      "start_utc": "2026-10-16T00:21:05.742817+00:00",
+      "log": "all-consumers.log",
+      "exit_code": 0,
+      "end_utc": "2026-10-16T00:21:22.600450+00:00",
+      "sha256": "8f2a1a1fc4eb8975c74320aaeefccf7aae3feb4aa3901c91b22e586ad6d69b0b"
+    },
+    {
+      "name": "scoped-clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "--offline",
+        "--locked",
+        "--no-deps",
+        "-p",
+        "outbe-radicle",
+        "-p",
+        "outbe-chain",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "start_utc": "2026-10-16T00:21:22.600887+00:00",
+      "log": "scoped-clippy.log",
+      "exit_code": 0,
+      "end_utc": "2026-10-16T00:21:36.502314+00:00",
+      "sha256": "4c38d2b43634b4c6b453214af9542395fbd9b492826c4e7ad5b2db4c6827bbfc"
+    },
+    {
+      "name": "rustfmt",
+      "command": [
+        "rustfmt",
+        "--check",
+        "--edition",
+        "2021",
+        "--config",
+        "skip_children=true",
+        "bin/outbe-chain/src/launch/node/radicle.rs",
+        "crates/blockchain/radicle/src/integration/local.rs",
+        "crates/blockchain/radicle/src/integration/local/state.rs",
+        "crates/blockchain/radicle/src/integration/local/tests.rs"
+      ],
+      "start_utc": "2026-10-16T00:21:36.502705+00:00",
+      "log": "rustfmt.log",
+      "exit_code": 0,
+      "end_utc": "2026-10-16T00:21:36.544707+00:00",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "acceptance": "Intermediate P3 only: fixed OCS1 read of current exact proposal signing state over existing protected same-UID UDS; one authority reader snapshot, validated chain/proposal/committee/material/receipts/stage/anchor, actual fresh socket exchange and existing ORL1 compatibility. Max256 committee wire probe uses centralized test DKG fixture, not an interactive DKG or production E2E claim. No public Output delivery, signing RPC, sidecar collector consumption, bootstrap, Merge or task acceptance.",
+  "source_dirty_after_checks": []
+}

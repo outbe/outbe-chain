@@ -38,6 +38,23 @@ impl ApplicationShared {
             },
             clock.child("ancestry"),
         );
+        if let Err(error) = crate::application::publication_anchor::validate_publication_anchor(
+            block,
+            self.chain_id,
+            self.genesis_hash,
+            &ancestry,
+        )
+        .await
+        {
+            if matches!(
+                error,
+                crate::application::publication_anchor::PublicationAnchorError::Unavailable
+            ) {
+                return Err(error.into());
+            }
+            warn!(%error, digest = %payload_digest.0, "invalid repository publication finalized anchor");
+            return Ok(false);
+        }
         if let Err(error) = validate_header_consensus_artifacts_for_activation(
             HeaderArtifactRequest {
                 block,
@@ -48,7 +65,6 @@ impl ApplicationShared {
             },
             HeaderArtifactValidationDeps {
                 chain_id: self.chain_id,
-                ocomp_lifecycle_activation: self.ocomp_lifecycle_activation,
                 certificate_scheme_provider: &self.certificate_scheme_provider,
                 committee_provider: &self.committee_provider,
                 dkg_manager: &self.dkg_manager,

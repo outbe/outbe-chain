@@ -1,0 +1,9 @@
+   Compiling radicle-crypto v0.19.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-crypto)
+   Compiling radicle-cob v0.21.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-cob)
+    Finished `test` profile [unoptimized] target(s) in 4.36s
+     Running unittests src/lib.rs (/private/tmp/outbe-radicle-p1-standalone/debug/deps/radicle_cob-a6b647e8108023c9)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s
+

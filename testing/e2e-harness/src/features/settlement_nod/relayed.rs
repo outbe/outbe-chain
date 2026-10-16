@@ -9,7 +9,7 @@ struct RelayedNod {
     owner: Address,
     payer: Address,
     id: WwdEntityId,
-    qualified: NodSnapshot,
+    issued: NodSnapshot,
     head: u64,
     body: eth::INod::NodData,
     gratis_load: U256,
@@ -82,9 +82,7 @@ fn wait_materialized_nod(
     let materialization_deadline =
         Instant::now() + Duration::from_secs(MATERIALIZED_NOD_TIMEOUT_SECS);
     loop {
-        let observed = stable_live_read(world, port, 0, || {
-            world.rpc.materialized_nod_for_owner(port, owner)
-        });
+        let observed = stable_live_read(world, port, 0, || world.rpc.nod_for_owner(port, owner));
         if let Some(nod) = observed {
             return nod;
         }
@@ -124,20 +122,18 @@ fn prepare_relayed_nod(
     assert_eq!(initial.owner, owner);
     assert!(!initial.isSettled);
     assert!(!initial.settlementCostMinor.is_zero());
-    qualify_public_nod(world, id, owner, initial.floorPriceMinor, initial.issuedAt);
-    let head = world.rpc.head(port).expect("qualified head");
+    let head = world.rpc.head(port).expect("issued head");
     world
         .rpc
         .wait_finalized_checkpoint(&ports, head, 120)
-        .expect("qualification finalized");
-    let qualified = nod_snapshot(world, owner, id, head);
-    let qualified_bodies = nod_bodies(world, id, head);
-    assert_snapshot_bodies(&qualified, &qualified_bodies);
-    let body = qualified.body.as_ref().expect("qualified public Nod");
+        .expect("issuance finalized");
+    let issued = nod_snapshot(world, owner, id, head);
+    let issued_bodies = nod_bodies(world, id, head);
+    assert_snapshot_bodies(&issued, &issued_bodies);
+    let body = issued.body.as_ref().expect("issued public Nod");
     let gratis_load = crate::internal::nod_keys::decrypt(world, body);
-    assert!(body.isQualified);
     assert!(!body.isSettled);
-    let bucket_key = qualified_bodies.1.bucket_key;
+    let bucket_key = issued_bodies.1.bucket_key;
     let vault = eth::read_call(
         &url,
         addresses::VAULT_ROUTER_ADDR,
@@ -177,7 +173,7 @@ fn prepare_relayed_nod(
         owner,
         payer,
         id,
-        qualified,
+        issued,
         head,
         body,
         gratis_load,
@@ -201,7 +197,7 @@ fn settle_nod(world: &mut World, scenario: &RelayedNod) -> PaidNod {
     let before_indexes = nod_snapshot(world, scenario.owner, scenario.id, scenario.head);
     let before = nod_bodies(world, scenario.id, scenario.head);
     assert_snapshot_bodies(&before_indexes, &before);
-    assert_same_snapshot(&scenario.qualified, &before_indexes);
+    assert_same_snapshot(&scenario.issued, &before_indexes);
     let settled = eth::send_call_outcome(
         &scenario.url,
         addresses::NOD_FACTORY_ADDR,

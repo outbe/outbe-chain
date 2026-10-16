@@ -7,8 +7,6 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use alloy_primitives::{Address, FixedBytes, U256};
-use alloy_sol_types::sol;
-use base64::Engine as _;
 
 use crate::internal::{addresses, eth};
 use cucumber::{then, when};
@@ -25,18 +23,6 @@ use crate::world::relay::{Relay, RelayEnd};
 use crate::world::settlement_currency::USD_ISO;
 use crate::world::test_issuance::{self, SeriesSpec};
 use crate::world::{venue_probes, World};
-
-sol! {
-    interface IIntexCard {
-        function issuedTokenId(bytes14 seriesId) external pure returns (uint256);
-        function uri(uint256 tokenId) external view returns (string memory);
-        function vwapSource() external view returns (address);
-    }
-
-    interface IVwapSource {
-        function maxUtcDayVwapSince(uint16 isoCode, uint32 fromUtcDay) external view returns (uint256);
-    }
-}
 
 /// Shared by every series so one sweep pass calls them together, and low enough that the
 /// committee's close clears the call price.
@@ -55,21 +41,18 @@ const TARGET_UNITS: u32 = 6;
 /// where the bridge admits a move only to the owner's own address.
 const TRADABLE_HOP_UNITS: u32 = 2;
 const UNITS: u32 = COMMITTEE_UNITS + TARGET_UNITS;
-/// What is home to pay for while qualified, and what the second hop brings.
-const QUALIFIED_UNITS: u32 = COMMITTEE_UNITS + TRADABLE_HOP_UNITS;
+/// What is home to pay for while issued, and what the second hop brings.
+const ISSUED_UNITS: u32 = COMMITTEE_UNITS + TRADABLE_HOP_UNITS;
 const CALLED_UNITS: u32 = TARGET_UNITS - TRADABLE_HOP_UNITS;
 /// USD (840) as the reference for every series, spelled `U` in the series id.
 const REFERENCE_BYTE: u8 = b'U';
 /// Long enough for the chain to close a one-day gap, which it does per block.
 const CATCH_UP_TIMEOUT_SECS: u64 = 900;
-/// The sender fires every minute in e2e, then the relay carries the day over.
-const VWAP_PUSH_TIMEOUT_SECS: u64 = 600;
-/// `IntexState::Issued` / `Qualified` / `Called`.
+/// `IntexState::Issued` / `Called`.
 const ISSUED: u8 = 0;
-const QUALIFIED: u8 = 1;
-const CALLED: u8 = 2;
+const CALLED: u8 = 1;
 /// Derived against the clock on both chains. Nothing ever writes it.
-const EXPIRED: u8 = 3;
+const EXPIRED: u8 = 2;
 /// Slack past the deadline so the sweep has a block to run in.
 const EXPIRY_MARGIN_SECS: u64 = 30;
 /// The expiry queue buckets deadlines by the hour they fall in.
@@ -282,73 +265,6 @@ fn carry_target_clock(world: &World) {
     let _ = world.target_chain.sync_clock_to(now);
 }
 
-/// The origin's collection reads the IntexFactory. The target's collection reads the
-/// registry the origin pushes to.
-#[then("every series card reads Qualified on both chains")]
-fn cards_read_qualified(world: &mut World) {
-    let chains = [
-        (
-            world.rpc.url(world.validators.primary_port()),
-            intex_nft(world),
-        ),
-        (target_rpc_url(world), target_intex_nft(world)),
-    ];
-    let deadline = Instant::now() + Duration::from_secs(VWAP_PUSH_TIMEOUT_SECS);
-
-    for (url, nft) in &chains {
-        let source = eth::read_call(url, *nft, &IIntexCard::vwapSourceCall {})
-            .expect("the collection names its VWAP source");
-        for series in world.state.lifecycle_series.clone() {
-            while let Some(state) = card_unqualified(url, *nft, series) {
-                let (iso_code, floor, from) = venue_probes::series_floor_terms(url, *nft, series)
-                    .expect("the chain knows the series");
-                let max = eth::read_call(
-                    url,
-                    source,
-                    &IVwapSource::maxUtcDayVwapSinceCall {
-                        isoCode: iso_code,
-                        fromUtcDay: from,
-                    },
-                );
-                assert!(
-                    Instant::now() < deadline,
-                    "the card of {series} on {url} reads {state:?}; its source {source} has {max:?} against floor {floor}"
-                );
-                // The pushed day carries the committee's stamp, which the target
-                // refuses while it lies in the target's future.
-                carry_target_clock(world);
-                sleep(Duration::from_secs(5));
-            }
-        }
-    }
-}
-
-/// The card's state while it does not read Qualified yet.
-fn card_unqualified(url: &str, nft: Address, series: FixedBytes<14>) -> Option<Option<String>> {
-    let state = card_state(url, nft, series);
-    (state.as_deref() != Some("Qualified")).then_some(state)
-}
-
-/// The `Series State` trait of the issued class's card.
-fn card_state(url: &str, nft: alloy_primitives::Address, series: FixedBytes<14>) -> Option<String> {
-    let token = eth::read_call(
-        url,
-        nft,
-        &IIntexCard::issuedTokenIdCall { seriesId: series },
-    )?;
-    let uri = eth::read_call(url, nft, &IIntexCard::uriCall { tokenId: token })?;
-    let json = base64::engine::general_purpose::STANDARD
-        .decode(uri.strip_prefix("data:application/json;base64,")?)
-        .ok()?;
-    let json: serde_json::Value = serde_json::from_slice(&json).ok()?;
-    json["attributes"]
-        .as_array()?
-        .iter()
-        .find(|attribute| attribute["trait_type"] == "Series State")?["value"]
-        .as_str()
-        .map(str::to_owned)
-}
-
 /// Wait for the chain to reach `target` in its own time. It closes the gap per block.
 ///
 /// Reports where it actually got to, and whether it was still moving: a ratchet that
@@ -397,7 +313,7 @@ fn target_rpc_url(world: &World) -> String {
 
 impl Lifecycle for IntexLifecycle {
     /// The pricing window closes at midnight on this localnet, so the committee has
-    /// closed yesterday on its own feed and sent that close to the target chain.
+    /// closed yesterday on its own feed.
     fn recorded_close(&self, world: &World) -> Option<U256> {
         use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
         let yesterday = previous_date_key(timestamp_to_date_key(head_time(world)));
@@ -415,12 +331,8 @@ impl Lifecycle for IntexLifecycle {
         Some(close)
     }
 
-    fn floor(&self, world: &World) -> U256 {
-        U256::from(prices(world, paid_series(world)[0]).1)
-    }
-
     fn call_price(&self, world: &World) -> U256 {
-        U256::from(prices(world, paid_series(world)[0]).2)
+        U256::from(prices(world, paid_series(world)[0]).1)
     }
 
     fn terms(&self, world: &World, item: &Item) -> Terms {
@@ -450,7 +362,6 @@ impl Lifecycle for IntexLifecycle {
                 Some(ISSUED),
                 "series {series} was not born Issued"
             );
-            assert!(!is_qualified(&url, series));
             assert_eq!(
                 prices(world, series),
                 first,
@@ -467,21 +378,14 @@ impl Lifecycle for IntexLifecycle {
         }
     }
 
-    fn qualified(&self, world: &World) -> bool {
-        let url = world.rpc.url(world.validators.primary_port());
-        all_series(world)
-            .into_iter()
-            .all(|series| is_qualified(&url, series) && public_state(&url, series) == QUALIFIED)
-    }
-
-    /// Each paid series is paid in two parts: what is home once it qualifies, and the
+    /// Each paid series is paid in two parts: what is home while it is issued, and the
     /// rest once it is called and brought home.
     fn targets(&self, world: &World, phase: Phase) -> [Target; 2] {
         let [myr, eur] = paid_series(world);
         match phase {
-            Phase::Qualified => [
-                part(eur, EUR_ISO, QUALIFIED_UNITS),
-                part(myr, MYR_ISO, QUALIFIED_UNITS),
+            Phase::Issued => [
+                part(eur, EUR_ISO, ISSUED_UNITS),
+                part(myr, MYR_ISO, ISSUED_UNITS),
             ],
             Phase::Called => [
                 part(myr, MYR_ISO, CALLED_UNITS),
@@ -828,6 +732,9 @@ fn chain_worldwide_day_offset(world: &World, port: u16, offset_secs: i64) -> u32
 
 #[when("the owner brings part of the target-chain units home")]
 fn bridge_part_home(world: &mut World) {
+    // The pricing window moved the committee ahead. The call mark it sends later
+    // carries that clock, which the target refuses as its own future.
+    carry_target_clock(world);
     bring_home(world, TRADABLE_HOP_UNITS);
 }
 
@@ -1103,30 +1010,11 @@ fn owner() -> Address {
     crate::world::origin_venue::deployer_address()
 }
 
-fn prices(world: &World, series: FixedBytes<14>) -> (u64, u64, u64) {
+fn prices(world: &World, series: FixedBytes<14>) -> (u64, u64) {
     venue_probes::series_prices(
         &world.rpc.url(world.validators.primary_port()),
         intex_nft(world),
         series,
     )
     .expect("series prices")
-}
-
-fn public_state(url: &str, series: FixedBytes<14>) -> u8 {
-    eth::read_call(
-        url,
-        addresses::INTEX_ADDR,
-        &eth::IIntex::getIntexSeriesCall { seriesId: series },
-    )
-    .unwrap_or_else(|| panic!("series {series} does not read back"))
-    .state
-}
-
-fn is_qualified(url: &str, series: FixedBytes<14>) -> bool {
-    eth::read_call(
-        url,
-        addresses::INTEX_ADDR,
-        &eth::IIntex::isQualifiedCall { seriesId: series },
-    )
-    .unwrap_or_else(|| panic!("series {series} qualification does not read back"))
 }

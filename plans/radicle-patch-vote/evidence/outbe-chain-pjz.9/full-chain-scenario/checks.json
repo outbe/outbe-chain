@@ -1,0 +1,29 @@
+{
+  "source_aggregate_sha256": "669e29a809e83a9762dd8ebe2bf0917ba43535054f2b9d010e01bbac36b25918",
+  "base_commit": "6016e74c7dbe801aa4cf2aaa7d88c24c78a58d92",
+  "scope": "Full-chain happy-path E2E source, existing joiner lifecycle, native ordinary reader; no production source changes in this increment.",
+  "checks": [
+    {
+      "command": "CARGO_TARGET_DIR=/private/tmp/outbe-radicle-p1-target CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=4 cargo +1.96.0 clippy --offline --locked -p outbe-e2e-harness --features ocomp-integration --all-targets --no-deps -- -D warnings",
+      "exit_code": 0,
+      "log": "clippy.log",
+      "kind": "compile/lint only; no test execution"
+    },
+    {
+      "command": "rustfmt +1.96.0 --edition 2021 --config skip_children=true --check testing/e2e-harness/src/features/radicle.rs testing/e2e-harness/src/features/radicle/governments.rs testing/e2e-harness/src/world/localnet/radicle.rs testing/e2e-harness/src/world/localnet/radicle/governments.rs testing/e2e-harness/src/world/state.rs",
+      "exit_code": 0
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    }
+  ],
+  "not_run": [
+    "E2E runner",
+    "unit/integration tests",
+    "artifact build lane",
+    "full workspace CI"
+  ],
+  "runtime_status": "NOT RUN; user explicitly owns separate E2E execution",
+  "task_status": "P8 and feature acceptance remain open. Source readiness is not runtime acceptance."
+}

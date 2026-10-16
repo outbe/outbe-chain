@@ -1,0 +1,14 @@
+{
+  "outbe-chain-pjz.6.2": {
+    "id": "outbe-chain-pjz.6.2",
+    "status": "closed",
+    "assignee": "/root/p0_review_2",
+    "close_reason": "Full independent P5 R2 PASS all AC, no findings; report reviews/R2.md SHA256 58fa5f8e696c0beeef50de75d810b4b1317b4b0aba7db8b6aedd7edd0f97574a; source91644eb7/spec6989338f. Broad unchanged dependency lint limitation recorded."
+  },
+  "outbe-chain-pjz.6": {
+    "id": "outbe-chain-pjz.6",
+    "status": "in_progress",
+    "assignee": "novunaut",
+    "close_reason": null
+  }
+}

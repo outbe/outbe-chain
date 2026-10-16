@@ -12,7 +12,7 @@ fn missing_sigrefs() {
 
     let result = SignedRefsReader::new(
         mock::rid(99),
-        Tip::Reference(namespace),
+        Tip::Reference(namespace.into()),
         &repo,
         &AlwaysVerify,
     )
@@ -28,7 +28,7 @@ fn find_reference_error() {
 
     let result = SignedRefsReader::new(
         mock::rid(99),
-        Tip::Reference(namespace),
+        Tip::Reference(namespace.into()),
         &repo,
         &AlwaysVerify,
     )
@@ -57,7 +57,7 @@ fn resolve_tip_ok() {
 
     let vc = SignedRefsReader::new(
         mock::rid(99),
-        Tip::Reference(namespace),
+        Tip::Reference(namespace.into()),
         &repo,
         &AlwaysVerify,
     )

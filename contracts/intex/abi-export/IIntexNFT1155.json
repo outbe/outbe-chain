@@ -135,11 +135,6 @@
               "internalType": "uint64"
             },
             {
-              "name": "floorPriceMinor",
-              "type": "uint64",
-              "internalType": "uint64"
-            },
-            {
               "name": "callPriceMinor",
               "type": "uint64",
               "internalType": "uint64"
@@ -278,25 +273,6 @@
           "name": "operator",
           "type": "address",
           "internalType": "address"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "",
-          "type": "bool",
-          "internalType": "bool"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "isQualified",
-      "inputs": [
-        {
-          "name": "seriesId",
-          "type": "bytes14",
-          "internalType": "bytes14"
         }
       ],
       "outputs": [
@@ -455,11 +431,6 @@
             },
             {
               "name": "entryPriceMinor",
-              "type": "uint64",
-              "internalType": "uint64"
-            },
-            {
-              "name": "floorPriceMinor",
               "type": "uint64",
               "internalType": "uint64"
             },
@@ -707,19 +678,6 @@
     },
     {
       "type": "function",
-      "name": "setVwapSource",
-      "inputs": [
-        {
-          "name": "source",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
       "name": "settleIntex",
       "inputs": [
         {
@@ -882,19 +840,6 @@
           "name": "",
           "type": "string",
           "internalType": "string"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "vwapSource",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "",
-          "type": "address",
-          "internalType": "address"
         }
       ],
       "stateMutability": "view"
@@ -1169,19 +1114,6 @@
           "type": "uint256",
           "indexed": true,
           "internalType": "uint256"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "VwapSourceSet",
-      "inputs": [
-        {
-          "name": "source",
-          "type": "address",
-          "indexed": true,
-          "internalType": "address"
         }
       ],
       "anonymous": false

@@ -1,0 +1,42 @@
+   Compiling radicle-git-metadata v0.2.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-git-metadata)
+    Finished `test` profile [unoptimized] target(s) in 0.66s
+     Running unittests src/lib.rs (/private/tmp/outbe-radicle-p1-standalone/debug/deps/radicle_git_metadata-36e6a27afb28e52c)
+
+running 28 tests
+test commit::parse::test::error::invalid_tree ... ok
+test commit::parse::test::error::invalid_author ... ok
+test commit::parse::test::error::invalid_format_continuation_without_preceding_header ... ok
+test commit::parse::test::error::invalid_committer ... ok
+test commit::parse::test::error::invalid_parent ... ok
+test commit::parse::test::error::missing_author ... ok
+test commit::parse::test::error::missing_committer ... ok
+test commit::parse::test::error::missing_header_body_separator ... ok
+test commit::bls::tests::malformed_metadata_and_headers_are_rejected ... ok
+test commit::parse::test::error::missing_tree_empty_header ... ok
+test commit::parse::test::error::missing_tree_wrong_first_line ... ok
+test commit::bls::tests::timestamps_and_identity_are_canonical ... ok
+test commit::parse::test::success::commit_gpgsig_is_preserved_and_strip_removes_it ... ok
+test commit::bls::tests::signature_header_is_single_unfolded_lowercase_and_cannot_coexist_with_gpgsig ... ok
+test commit::parse::test::success::commit_last_paragraph_kept_in_message_when_not_all_trailers ... ok
+test commit::parse::test::success::commit_with_extra_headers ... ok
+test commit::parse::test::success::commit_with_multiline_gpgsig ... ok
+test commit::parse::test::success::commit_with_single_parent ... ok
+test commit::parse::test::success::commit_with_trailers ... ok
+test commit::parse::test::success::merge_commit ... ok
+test commit::parse::test::success::root_commit ... ok
+test commit::parse::test::success::roundtrip ... ok
+test commit::parse::test::unit::body_last_paragraph_not_trailers_stays_in_message ... ok
+test commit::parse::test::unit::body_no_paragraph_separator_means_no_trailers ... ok
+test commit::parse::test::unit::trailers_accepts_empty_input ... ok
+test commit::parse::test::unit::trailers_rejects_invalid_token_chars ... ok
+test commit::parse::test::unit::trailers_rejects_line_without_separator ... ok
+test commit::bls::tests::p0_native_buffer_roundtrip_preserves_metadata_and_trailers ... ok
+
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests radicle_git_metadata
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

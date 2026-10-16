@@ -1,15 +1,18 @@
 use super::{
     decode_retirement, encode_retirement,
-    model::{CapacityForfeitureDetail, TerminalReceiptCommon, WwdTerminalReceipt},
+    model::{
+        CapacityForfeitureDetail, LysisCompletionDetail, TerminalReceiptCommon, WwdTerminalReceipt,
+    },
 };
 use crate::{errors::MetadosisStorageCorruptionError, schema::terminal_outcome};
-use alloy_primitives::U256;
+use alloy_primitives::{B256, U256};
 use outbe_primitives::{error::Result, time::WorldwideDay};
 
 const MAGIC: &[u8; 4] = b"OMTR";
 const VERSION: u16 = 1;
 pub(crate) const COMMON_LEN: usize = 116;
 pub(crate) const CAPACITY_LEN: usize = 176;
+pub(crate) const LYSIS_LEN: usize = COMMON_LEN + 196;
 
 pub(crate) fn encode(receipt: &WwdTerminalReceipt) -> Vec<u8> {
     let common = receipt.common();
@@ -30,6 +33,19 @@ pub(crate) fn encode(receipt: &WwdTerminalReceipt) -> Vec<u8> {
         bytes.extend_from_slice(&detail.forfeited_nominal.to_be_bytes::<32>());
         bytes.extend_from_slice(&detail.source_generation.to_be_bytes());
         bytes.extend_from_slice(&detail.retired_generation.to_be_bytes());
+    }
+    if let WwdTerminalReceipt::LysisCompleted { detail, .. } = receipt {
+        bytes.extend_from_slice(&detail.tribute_count.to_be_bytes());
+        for value in [
+            detail.lysis_limit,
+            detail.used,
+            detail.unused,
+            detail.desis_limit,
+        ] {
+            bytes.extend_from_slice(&value.to_be_bytes::<32>());
+        }
+        bytes.extend_from_slice(detail.inputs_hash.as_slice());
+        bytes.extend_from_slice(detail.result_hash.as_slice());
     }
     bytes
 }
@@ -53,6 +69,18 @@ pub(crate) fn decode(bytes: &[u8], worldwide_day: WorldwideDay) -> Result<WwdTer
         block_number: u64::from_be_bytes(reader.take()?),
     };
     let receipt = match outcome {
+        terminal_outcome::LYSIS_COMPLETED => WwdTerminalReceipt::LysisCompleted {
+            common,
+            detail: LysisCompletionDetail {
+                tribute_count: u32::from_be_bytes(reader.take()?),
+                lysis_limit: U256::from_be_bytes(reader.take::<32>()?),
+                used: U256::from_be_bytes(reader.take::<32>()?),
+                unused: U256::from_be_bytes(reader.take::<32>()?),
+                desis_limit: U256::from_be_bytes(reader.take::<32>()?),
+                inputs_hash: B256::from(reader.take::<32>()?),
+                result_hash: B256::from(reader.take::<32>()?),
+            },
+        },
         terminal_outcome::MISSED_OFFERING => WwdTerminalReceipt::MissedOffering(common),
         terminal_outcome::METADOSIS_FAILURE => WwdTerminalReceipt::MetadosisFailure(common),
         terminal_outcome::CAPACITY_FORFEITURE => WwdTerminalReceipt::CapacityForfeiture {

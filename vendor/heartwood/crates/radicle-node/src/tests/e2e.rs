@@ -5,6 +5,7 @@ use radicle::cob::Title;
 use radicle::cob::store::access::{ReadOnly, WriteAs};
 use radicle::crypto::{Signer as _, SigningKey};
 use radicle::git::fmt::Component;
+use radicle::identity::doc::GetPayload as _;
 use test_log::test;
 
 use radicle::git::raw::ErrorExt as _;
@@ -24,6 +25,8 @@ use protocol::service;
 use radicle::node::config::Limits;
 use radicle::node::{Config, ConnectOptions};
 use radicle::storage::git::transport;
+
+mod native_bls;
 
 mod config {
     use super::*;
@@ -169,6 +172,115 @@ fn test_inventory_sync_star() {
 }
 
 #[test]
+fn public_to_private_to_public_replay() {
+    use radicle::identity::Identity;
+    use radicle::identity::Visibility;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let mut alice = Node::init(tmp.path(), config::relay("alice"), 13);
+    let bob = SigningKey::mock(99);
+
+    assert!(alice.id.to_human() > bob.public_key().to_human());
+
+    let rid = alice.project("acme", "");
+    let repo = alice.storage.repository(rid).unwrap();
+    let public_root = repo.identity_root().unwrap();
+
+    assert_eq!(
+        Identity::load(&repo).unwrap().doc().visibility(),
+        &Visibility::Public
+    );
+
+    let mut identity = Identity::load_mut(&repo, &alice.secret_key).unwrap();
+    let private_doc = repo
+        .identity_doc()
+        .unwrap()
+        .doc
+        .with_edits(|doc| {
+            doc.visibility = Visibility::private([]);
+        })
+        .unwrap();
+    let private_rev = identity
+        .update(Title::new("Private").unwrap(), "", &private_doc)
+        .unwrap();
+    repo.set_identity_head_to(private_rev).unwrap();
+
+    assert_eq!(
+        Identity::load(&repo).unwrap().doc().visibility(),
+        &Visibility::private([])
+    );
+
+    let remote = *bob.public_key();
+    let id_ref = format!("refs/namespaces/{}/refs/rad/id", remote);
+    let root_ref = format!("refs/namespaces/{}/refs/rad/root", remote);
+
+    let public_commit = repo.raw().find_commit(public_root.into()).unwrap();
+    let header = public_commit.raw_header().unwrap_or_default();
+
+    let tree = public_commit.tree().unwrap();
+    let mut signature = String::new();
+    let mut found = false;
+    for line in header.lines().skip(1) {
+        if !found {
+            if line.starts_with("gpgsig ") {
+                found = true;
+                signature.push_str(line.trim_start_matches("gpgsig "));
+                signature.push('\n');
+            }
+            continue;
+        }
+
+        if line.starts_with(' ') {
+            signature.push_str(line.trim_start_matches(' '));
+            signature.push('\n');
+        } else {
+            break;
+        }
+    }
+    assert!(found, "public identity root must include outer gpgsig");
+
+    let time = git::raw::Time::new(1700000000, 0);
+    let author = git::raw::Signature::new("Bob", "bob@example.invalid", &time).unwrap();
+    let wrapper_buffer = repo
+        .raw()
+        .commit_create_buffer(
+            &author.clone(),
+            &author,
+            "Rewrapped historical identity root",
+            &tree,
+            &[],
+        )
+        .unwrap();
+    let wrapper_content = std::str::from_utf8(&wrapper_buffer).unwrap();
+    let wrapper = repo
+        .raw()
+        .commit_signed(wrapper_content, &signature, None)
+        .unwrap();
+    let cob_ref = format!(
+        "refs/namespaces/{}/refs/cobs/{}/{}",
+        remote,
+        *radicle::cob::identity::TYPENAME,
+        wrapper
+    );
+
+    repo.raw().reference(&cob_ref, wrapper, true, "").unwrap();
+
+    repo.raw().reference(&id_ref, wrapper, true, "").unwrap();
+
+    repo.raw().reference(&root_ref, wrapper, true, "").unwrap();
+
+    repo.sign_refs(&bob).unwrap();
+
+    // Recompute and set the identity head, just like `rad id cache` would do.
+    repo.set_identity_head().unwrap();
+
+    assert_eq!(
+        Identity::load(&repo).unwrap().doc().visibility(),
+        &Visibility::private([])
+    );
+}
+
+#[test]
 fn test_replication() {
     let tmp = tempfile::tempdir().unwrap();
     let alice = Node::init(tmp.path(), config::relay("alice"), 13);
@@ -255,7 +367,7 @@ fn test_replication_ref_in_sigrefs() {
     bob.storage
         .repository_mut(acme)
         .unwrap()
-        .reference(&bob.id, &git::fmt::qualified!("refs/heads/master"))
+        .reference(&bob.id.into(), &git::fmt::qualified!("refs/heads/master"))
         .unwrap()
         .delete()
         .unwrap();
@@ -288,7 +400,7 @@ fn test_replication_ref_in_sigrefs() {
             .storage
             .repository(acme)
             .unwrap()
-            .reference(&bob.id, &git::fmt::qualified!("refs/heads/master"))
+            .reference(&bob.id.into(), &git::fmt::qualified!("refs/heads/master"))
             .is_err(),
         "refs/namespaces/{}/refs/heads/master does not exist",
         bob.id
@@ -318,7 +430,7 @@ fn test_replication_invalid() {
         .unwrap();
     repo.raw()
         .reference(
-            &git::refs::storage::id(carol.public_key()),
+            &git::refs::storage::id(&carol.public_key().into()),
             id.into(),
             true,
             &String::default(),
@@ -344,7 +456,7 @@ fn test_replication_invalid() {
     let repo = alice.storage.repository(acme).unwrap();
     let mut remotes = repo.remote_ids().unwrap();
 
-    assert_eq!(remotes.next().unwrap().unwrap(), bob.id);
+    assert_eq!(remotes.next().unwrap().unwrap(), bob.id.into());
     assert!(remotes.next().is_none());
 
     assert!(repo.validate().unwrap().is_empty());
@@ -448,7 +560,7 @@ fn test_fetch_followed_remotes() {
     {
         for i in 0..5 {
             let signer = SigningKey::mock(i);
-            rad::fork_remote(acme, &alice.id, &signer, &alice.storage).unwrap();
+            rad::fork_remote(acme, &alice.id.into(), &signer, &alice.storage).unwrap();
             signers.push(signer);
         }
     }
@@ -490,8 +602,8 @@ fn test_fetch_followed_remotes() {
         .unwrap();
 
     assert_eq!(bob_remotes.len(), followed.len() + 1);
-    assert!(bob_remotes.is_superset(&followed));
-    assert!(bob_remotes.contains(&alice.id));
+    assert!(bob_remotes.is_superset(&followed.iter().map(|id| (*id).into()).collect()));
+    assert!(bob_remotes.contains(&alice.id.into()));
 }
 
 #[test]
@@ -517,7 +629,7 @@ fn test_missing_remote() {
     assert!(result.is_success());
     log::debug!(target: "test", "Fetch complete with {}", bob.id);
 
-    rad::fork_remote(acme, &alice.id, &carol, &bob.storage).unwrap();
+    rad::fork_remote(acme, &alice.id.into(), &carol, &bob.storage).unwrap();
 
     alice.issue(
         acme,
@@ -561,7 +673,7 @@ fn test_fetch_preserve_owned_refs() {
         .storage
         .repository(acme)
         .unwrap()
-        .references_of(&alice.id)
+        .references_of(&alice.id.into())
         .unwrap();
 
     // Fetch shouldn't prune any of our own refs.
@@ -576,7 +688,7 @@ fn test_fetch_preserve_owned_refs() {
         .storage
         .repository(acme)
         .unwrap()
-        .references_of(&alice.id)
+        .references_of(&alice.id.into())
         .unwrap();
 
     assert_eq!(before, after);
@@ -611,7 +723,7 @@ fn test_clone() {
 
     let working = rad::checkout(
         acme,
-        alice.signer.public_key(),
+        &alice.signer.public_key().into(),
         tmp.path().join("clone"),
         &alice.storage,
         false,
@@ -641,6 +753,90 @@ fn test_clone() {
             .identity_head()
             .is_ok()
     );
+}
+
+#[test]
+fn clone_without_founder_namespace() {
+    use radicle::identity::Identity;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let mut amy = Node::init(tmp.path(), config::relay("amy"), 13);
+    let bob = Node::init(tmp.path(), config::relay("bob"), 37);
+    let eve = Node::init(tmp.path(), config::relay("eve"), 42);
+    let rid = amy.project("acme", "");
+
+    // Amy hands over the repository to Bob, making him the sole delegate.
+    let doc = {
+        let repo = amy.storage.repository(rid).unwrap();
+        let mut identity = Identity::load_mut(&repo, &amy.secret_key).unwrap();
+        let doc = identity
+            .doc()
+            .clone()
+            .with_edits(|doc| {
+                doc.delegate(bob.id.into());
+                assert!(doc.rescind(&amy.id.into()).unwrap());
+            })
+            .unwrap();
+        assert_eq!(doc.delegates().len(), 1);
+        let revision = identity
+            .update(Title::new("Hand over to Bob").unwrap(), "", &doc)
+            .unwrap();
+        repo.set_identity_head_to(revision).unwrap();
+
+        doc
+    };
+
+    let amy = amy.spawn();
+    let mut bob = bob.spawn();
+    bob.connect(&amy);
+    bob.handle.seed(rid, Scope::All).unwrap();
+
+    assert_matches!(
+        bob.handle
+            .fetch(rid, amy.id, DEFAULT_TIMEOUT, None)
+            .unwrap(),
+        FetchResult::Success { .. }
+    );
+
+    // Have Bob fork Amy's namespace, so that the default branch remains
+    // well defined.
+    rad::fork_remote(rid, &amy.id.into(), &bob.signer, &bob.storage).unwrap();
+
+    bob.disconnect(&amy);
+
+    let founder = amy.id;
+    drop(amy);
+
+    let repo = bob.storage.repository(rid).unwrap();
+    let identity = Identity::load(&repo).unwrap();
+
+    assert!(!identity.doc().is_delegate(&founder.into()));
+    assert_eq!(identity.doc().delegates().len(), 1);
+    assert!(identity.doc().is_delegate(&bob.id.into()));
+
+    // Bob still has the founder's namespace.
+    assert!(
+        repo.reference_oid(&founder.into(), &git::refs::storage::IDENTITY_ROOT)
+            .is_ok()
+    );
+
+    // Eve has no cached refs/rad/id. Fetching with followed scope must also
+    // include the founder, Amy, even though she is no longer a delegate.
+    let mut eve = eve.spawn();
+    eve.connect(&bob);
+
+    assert!(!eve.storage.contains(&rid).unwrap());
+    eve.handle.seed(rid, Scope::Followed).unwrap();
+
+    assert!(
+        eve.handle
+            .fetch(rid, bob.id, DEFAULT_TIMEOUT, None)
+            .unwrap()
+            .is_success()
+    );
+
+    let cloned = eve.storage.repository(rid).unwrap();
+    assert_eq!(cloned.identity_doc().unwrap().doc, doc);
 }
 
 #[test]
@@ -738,7 +934,7 @@ fn test_large_fetch() {
         .unwrap();
 
     let doc = bob.storage.repository(rid).unwrap().identity_doc().unwrap();
-    let proj = doc.project().unwrap();
+    let proj = doc.project().unwrap().unwrap();
 
     assert_eq!(proj.name(), "acme");
 }
@@ -847,7 +1043,7 @@ fn test_concurrent_fetches() {
             .unwrap()
             .identity_doc()
             .unwrap();
-        let proj = doc.project().unwrap();
+        let proj = doc.project().unwrap().unwrap();
 
         assert!(proj.name().starts_with("bob"));
     }
@@ -858,7 +1054,7 @@ fn test_concurrent_fetches() {
             .unwrap()
             .identity_doc()
             .unwrap();
-        let proj = doc.project().unwrap();
+        let proj = doc.project().unwrap().unwrap();
 
         assert!(proj.name().starts_with("alice"));
     }
@@ -981,11 +1177,12 @@ fn test_non_fast_forward_sigrefs() {
         .storage
         .repository(rid)
         .unwrap()
-        .reference_oid(&bob.id, &radicle::storage::refs::SIGREFS_BRANCH)
+        .reference_oid(&bob.id.into(), &radicle::storage::refs::SIGREFS_BRANCH)
         .unwrap();
     let up = old_bob
         .find_updated(
-            &(*radicle::storage::refs::Special::SignedRefs.namespaced(&bob.id)).to_ref_string(),
+            &(*radicle::storage::refs::Special::SignedRefs.namespaced(&bob.id.into()))
+                .to_ref_string(),
         )
         .unwrap();
     let old_bob = match up {
@@ -1001,7 +1198,7 @@ fn test_non_fast_forward_sigrefs() {
             .storage
             .repository(rid)
             .unwrap()
-            .reference_oid(&bob.id, &radicle::storage::refs::SIGREFS_BRANCH)
+            .reference_oid(&bob.id.into(), &radicle::storage::refs::SIGREFS_BRANCH)
             .unwrap();
         log::debug!(target: "test", "bob's old 'rad/sigrefs': {before}");
     }
@@ -1026,11 +1223,12 @@ fn test_non_fast_forward_sigrefs() {
         .storage
         .repository(rid)
         .unwrap()
-        .reference_oid(&bob.id, &radicle::storage::refs::SIGREFS_BRANCH)
+        .reference_oid(&bob.id.into(), &radicle::storage::refs::SIGREFS_BRANCH)
         .unwrap();
     let up = new_bob
         .find_updated(
-            &(*radicle::storage::refs::Special::SignedRefs.namespaced(&bob.id)).to_ref_string(),
+            &(*radicle::storage::refs::Special::SignedRefs.namespaced(&bob.id.into()))
+                .to_ref_string(),
         )
         .unwrap();
     let new_bob = match up {
@@ -1047,7 +1245,7 @@ fn test_non_fast_forward_sigrefs() {
             .storage
             .repository(rid)
             .unwrap()
-            .reference_oid(&bob.id, &radicle::storage::refs::SIGREFS_BRANCH)
+            .reference_oid(&bob.id.into(), &radicle::storage::refs::SIGREFS_BRANCH)
             .unwrap();
         log::debug!(target: "test", "bob's new 'rad/sigrefs': {after}");
     }
@@ -1101,7 +1299,7 @@ fn test_outdated_sigrefs() {
         .fetch(rid, eve.id, DEFAULT_TIMEOUT, None)
         .unwrap();
     let repo = alice.storage.repository(rid).unwrap();
-    assert!(repo.remote(&eve.id).is_ok());
+    assert!(repo.remote(&eve.id.into()).is_ok());
 
     log::debug!(target: "test", "Bob fetches from Eve..");
     assert_matches!(
@@ -1111,7 +1309,7 @@ fn test_outdated_sigrefs() {
         FetchResult::Success { .. }
     );
     let repo = bob.storage.repository(rid).unwrap();
-    let eve_remote = repo.remote(&eve.id).unwrap();
+    let eve_remote = repo.remote(&eve.id.into()).unwrap();
     let old_refs = eve_remote.refs;
 
     // At this stage, Alice and Bob have Eve's fork and Eve does not
@@ -1123,7 +1321,7 @@ fn test_outdated_sigrefs() {
         "Outdated sigrefs are harshing my vibes",
     );
     let repo = eve.storage.repository(rid).unwrap();
-    let eves_refs = repo.remote(&eve.id).unwrap().refs;
+    let eves_refs = repo.remote(&eve.id.into()).unwrap().refs;
 
     // Get the current state of eve's refs in alice's storage
     log::debug!(target: "test", "Alice fetches from Eve..");
@@ -1140,7 +1338,7 @@ fn test_outdated_sigrefs() {
         issues.get(&issue_id).unwrap().is_some(),
         "Alice did not fetch issue {issue_id}"
     );
-    let eve_remote = repo.remote(&eve.id).unwrap();
+    let eve_remote = repo.remote(&eve.id.into()).unwrap();
     let eves_refs_expected = eve_remote.refs;
     assert_ne!(eves_refs_expected, old_refs);
     assert_eq!(eves_refs_expected, eves_refs);
@@ -1161,7 +1359,7 @@ fn test_outdated_sigrefs() {
 
     // Ensure that Eve's refs have not changed after fetching the old refs from Bob.
     let repo = alice.storage.repository(rid).unwrap();
-    let eve_remote = repo.remote(&eve.id).unwrap();
+    let eve_remote = repo.remote(&eve.id.into()).unwrap();
     let eves_refs = eve_remote.refs;
 
     assert_ne!(eves_refs, old_refs);
@@ -1210,7 +1408,7 @@ fn test_outdated_delegate_sigrefs() {
         .fetch(rid, eve.id, DEFAULT_TIMEOUT, None)
         .unwrap();
     let repo = alice.storage.repository(rid).unwrap();
-    assert!(repo.remote(&eve.id).is_ok());
+    assert!(repo.remote(&eve.id.into()).is_ok());
 
     log::debug!(target: "test", "Bob fetches from Eve..");
     assert_matches!(
@@ -1220,7 +1418,7 @@ fn test_outdated_delegate_sigrefs() {
         FetchResult::Success { .. }
     );
     let repo = bob.storage.repository(rid).unwrap();
-    let alice_remote = repo.remote(&alice.id).unwrap();
+    let alice_remote = repo.remote(&alice.id.into()).unwrap();
     let old_refs = alice_remote.refs;
 
     // At this stage, Alice and Bob have Eve's fork and Eve does not
@@ -1232,7 +1430,7 @@ fn test_outdated_delegate_sigrefs() {
         "Outdated sigrefs are harshing my vibes",
     );
     let repo = alice.storage.repository(rid).unwrap();
-    let alice_refs = repo.remote(&alice.id).unwrap().refs;
+    let alice_refs = repo.remote(&alice.id.into()).unwrap().refs;
 
     // Get the current state of eve's refs in alice's storage
     log::debug!(target: "test", "Alice fetches from Eve..");
@@ -1243,7 +1441,7 @@ fn test_outdated_delegate_sigrefs() {
         FetchResult::Success { .. }
     );
     let repo = eve.storage.repository(rid).unwrap();
-    let alice_remote = repo.remote(&alice.id).unwrap();
+    let alice_remote = repo.remote(&alice.id.into()).unwrap();
     let alice_refs_expected = alice_remote.refs;
     assert_ne!(alice_refs_expected, old_refs);
     assert_eq!(alice_refs_expected, alice_refs);
@@ -1260,7 +1458,7 @@ fn test_outdated_delegate_sigrefs() {
 
     // Ensure that Eve's refs have not changed after fetching the old refs from Bob.
     let repo = eve.storage.repository(rid).unwrap();
-    let alice_remote = repo.remote(&alice.id).unwrap();
+    let alice_remote = repo.remote(&alice.id.into()).unwrap();
     let alice_refs = alice_remote.refs;
 
     assert_ne!(alice_refs, old_refs);
@@ -1374,9 +1572,9 @@ fn missing_delegate_default_branch() {
     // Helper to assert that Bob's default branch is not in storage
     let assert_bobs_default_is_missing = |repo: &Repository| {
         let doc = repo.identity_doc().unwrap();
-        let project = doc.project().unwrap();
+        let project = doc.project().unwrap().unwrap();
         let default_branch = repo.reference(
-            &bob_key,
+            &bob_key.into(),
             &radicle::git::refs::branch(project.default_branch()),
         );
         assert!(matches!(
@@ -1421,7 +1619,7 @@ fn missing_delegate_default_branch() {
     );
     let assert_bobs_issue_exists = |repo: &Repository| {
         let issue_ref = radicle::git::refs::storage::cob(
-            bob.signer.public_key(),
+            &bob.signer.public_key().into(),
             &radicle::cob::issue::TYPENAME,
             &issue,
         );
@@ -1509,9 +1707,9 @@ fn test_background_foreground_fetch() {
         .fetch(rid, eve.id, DEFAULT_TIMEOUT, None)
         .unwrap();
     let repo = alice.storage.repository(rid).unwrap();
-    assert!(repo.remote(&eve.id).is_ok());
+    assert!(repo.remote(&eve.id.into()).is_ok());
     let repo = alice.storage.repository(rid).unwrap();
-    let eve_remote = repo.remote(&eve.id).unwrap();
+    let eve_remote = repo.remote(&eve.id.into()).unwrap();
     let old_refs = eve_remote.refs;
 
     // Eve creates an issue, updating their refs, and we make note of
@@ -1522,7 +1720,7 @@ fn test_background_foreground_fetch() {
         "Outdated sigrefs are harshing my vibes",
     );
     let repo = eve.storage.repository(rid).unwrap();
-    let eves_refs = repo.remote(&eve.id).unwrap().refs;
+    let eves_refs = repo.remote(&eve.id.into()).unwrap().refs;
 
     // Alice follows Bob and they make a new change and announce it,
     // this initiates a background fetch for Alice from Bob
@@ -1535,7 +1733,7 @@ fn test_background_foreground_fetch() {
         Title::new("Concurrent fetches").unwrap(),
         "Concurrent fetches are harshing my vibes",
     );
-    bob.handle.announce_refs_for(rid, [bob.id]).unwrap();
+    bob.handle.announce_refs_for(rid, [bob.id.into()]).unwrap();
     alice_events
         .wait(
             |e| matches!(e, Event::RefsAnnounced { .. }).then_some(()),
@@ -1555,7 +1753,7 @@ fn test_background_foreground_fetch() {
         FetchResult::Success { .. }
     );
     let repo = alice.storage.repository(rid).unwrap();
-    let eve_remote = repo.remote(&eve.id).unwrap();
+    let eve_remote = repo.remote(&eve.id.into()).unwrap();
     let eves_refs_expected = eve_remote.refs;
     assert_ne!(eves_refs_expected, old_refs);
     assert_eq!(eves_refs_expected, eves_refs);
@@ -1587,7 +1785,7 @@ fn test_catchup_on_refs_announcements() {
 
     log::debug!(target: "test", "Bob creating his issue..");
     bob.issue(acme, Title::new("Bob's issue").unwrap(), "[..]");
-    bob.handle.announce_refs_for(acme, [bob.id]).unwrap();
+    bob.handle.announce_refs_for(acme, [bob.id.into()]).unwrap();
 
     log::debug!(target: "test", "Waiting for seed to fetch Bob's refs from Bob..");
     seed.has_remote_of(&acme, &bob.id); // Seed fetches Bob's refs.
@@ -1701,13 +1899,16 @@ fn test_fetch_emits_canonical_ref_update() {
 
     let default_branch: git::fmt::Qualified = {
         let repo = alice.storage.repository(rid).unwrap();
-        let proj = repo.project().unwrap();
+        let proj = repo.identity_doc().unwrap().project().unwrap().unwrap();
         git::fmt::lit::refs_heads(proj.default_branch()).into()
     };
 
     alice.commit_to(rid, &default_branch);
 
-    alice.handle.announce_refs_for(rid, [alice.id]).unwrap();
+    alice
+        .handle
+        .announce_refs_for(rid, [alice.id.into()])
+        .unwrap();
 
     bob_events
         .wait(
@@ -1947,7 +2148,7 @@ fn fetch_does_not_contain_rad_sigrefs_parent() {
         "sigrefs are harshing my vibes",
     );
     let repo = alice.storage.repository(rid).unwrap();
-    let alice_signed_refs = repo.remote(&alice.id).unwrap().refs;
+    let alice_signed_refs = repo.remote(&alice.id.into()).unwrap().refs;
 
     log::debug!(target: "test", "Bob fetches from Alice..");
     assert_matches!(
@@ -1964,7 +2165,7 @@ fn fetch_does_not_contain_rad_sigrefs_parent() {
     );
 
     let repo = bob.storage.repository(rid).unwrap();
-    let alice_remote = repo.remote(&alice.id).unwrap();
+    let alice_remote = repo.remote(&alice.id.into()).unwrap();
 
     assert_eq!(alice_signed_refs.refs(), alice_remote.refs());
     assert!(alice_remote.refs().get(&SIGREFS_PARENT).is_none());
@@ -2002,7 +2203,7 @@ fn test_fetch_emits_canonical_ref_update_partial_glob() {
                 });
 
                 raw.payload.insert(
-                    radicle::identity::doc::PayloadId::canonical_refs(),
+                    radicle::identity::doc::PayloadId::canonical_refs().clone(),
                     radicle::identity::doc::Payload::from(crefs),
                 );
             })
@@ -2025,7 +2226,10 @@ fn test_fetch_emits_canonical_ref_update_partial_glob() {
 
     let target_branch: git::fmt::Qualified = git::fmt::qualified!("refs/heads/main-2026q2");
     alice.commit_to(rid, &target_branch);
-    alice.handle.announce_refs_for(rid, [alice.id]).unwrap();
+    alice
+        .handle
+        .announce_refs_for(rid, [alice.id.into()])
+        .unwrap();
 
     bob_events
         .wait(

@@ -1,0 +1,57 @@
+   Compiling outbe-primitives v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/primitives)
+   Compiling outbe-consensus v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/consensus)
+   Compiling outbe-chain-constants v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/constants)
+   Compiling outbe-validatorset v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/validatorset)
+   Compiling outbe-vote v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/vote)
+   Compiling outbe-radicleregistry v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/radicleregistry)
+error: unused import: `storage::PrecompileStorageProvider as _`
+  --> crates/system/radicleregistry/src/tests/publication.rs:12:5
+   |
+12 |     storage::PrecompileStorageProvider as _,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `-D unused-imports` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(unused_imports)]`
+
+error[E0277]: the trait bound `alloy_primitives::FixedBytes<96>: TryFrom<Vec<u8>>` is not satisfied
+   --> crates/system/radicleregistry/src/tests/publication.rs:159:26
+    |
+159 |                         .try_into()
+    |                          ^^^^^^^^ the trait `From<Vec<u8>>` is not implemented for `alloy_primitives::FixedBytes<96>`
+    |
+    = help: the following other types implement trait `From<T>`:
+              `&alloy_primitives::FixedBytes<N>` implements `From<&[u8; N]>`
+              `&alloy_primitives::FixedBytes<N>` implements `From<&mut [u8; N]>`
+              `&mut alloy_primitives::FixedBytes<N>` implements `From<&mut [u8; N]>`
+              `alloy_primitives::FixedBytes<16>` implements `From<alloy_primitives::Signed<128, 2>>`
+              `alloy_primitives::FixedBytes<16>` implements `From<alloy_primitives::Uint<128, 2>>`
+              `alloy_primitives::FixedBytes<16>` implements `From<i128>`
+              `alloy_primitives::FixedBytes<16>` implements `From<u128>`
+              `alloy_primitives::FixedBytes<1>` implements `From<alloy_primitives::Signed<8, 1>>`
+            and 33 others
+    = note: required for `Vec<u8>` to implement `Into<alloy_primitives::FixedBytes<96>>`
+    = note: required for `alloy_primitives::FixedBytes<96>` to implement `TryFrom<Vec<u8>>`
+    = note: required for `Vec<u8>` to implement `TryInto<alloy_primitives::FixedBytes<96>>`
+
+error[E0277]: the trait bound `alloy_primitives::FixedBytes<96>: TryFrom<Vec<u8>>` is not satisfied
+   --> crates/system/radicleregistry/src/tests/publication.rs:200:10
+    |
+200 |         .try_into()
+    |          ^^^^^^^^ the trait `From<Vec<u8>>` is not implemented for `alloy_primitives::FixedBytes<96>`
+    |
+    = help: the following other types implement trait `From<T>`:
+              `&alloy_primitives::FixedBytes<N>` implements `From<&[u8; N]>`
+              `&alloy_primitives::FixedBytes<N>` implements `From<&mut [u8; N]>`
+              `&mut alloy_primitives::FixedBytes<N>` implements `From<&mut [u8; N]>`
+              `alloy_primitives::FixedBytes<16>` implements `From<alloy_primitives::Signed<128, 2>>`
+              `alloy_primitives::FixedBytes<16>` implements `From<alloy_primitives::Uint<128, 2>>`
+              `alloy_primitives::FixedBytes<16>` implements `From<i128>`
+              `alloy_primitives::FixedBytes<16>` implements `From<u128>`
+              `alloy_primitives::FixedBytes<1>` implements `From<alloy_primitives::Signed<8, 1>>`
+            and 33 others
+    = note: required for `Vec<u8>` to implement `Into<alloy_primitives::FixedBytes<96>>`
+    = note: required for `alloy_primitives::FixedBytes<96>` to implement `TryFrom<Vec<u8>>`
+    = note: required for `Vec<u8>` to implement `TryInto<alloy_primitives::FixedBytes<96>>`
+
+For more information about this error, try `rustc --explain E0277`.
+error: could not compile `outbe-radicleregistry` (lib test) due to 3 previous errors

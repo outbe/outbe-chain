@@ -1,8 +1,5 @@
 //! Read durable native progress without executing or repairing the stopped dataset.
 
-mod history;
-pub(crate) use history::HistoricalStateReader;
-
 use alloy_consensus::Sealable;
 use eyre::WrapErr;
 use outbe_primitives::{OutbeHeader, OutbePrimitives};
@@ -159,7 +156,6 @@ impl RethReadOnlyView {
         protected.0.extend([
             layout.chain_root.clone(),
             layout.consensus_root.clone(),
-            layout.ocomp_root.clone(),
             layout.static_files_root.clone(),
             layout.execution_rocksdb_root.clone(),
         ]);
@@ -176,7 +172,6 @@ impl RethReadOnlyView {
         protected.0.extend([
             layout.chain_root.clone(),
             layout.consensus_root.clone(),
-            layout.ocomp_root.clone(),
             layout.static_files_root.clone(),
             layout.execution_rocksdb_root.clone(),
         ]);
@@ -223,14 +218,12 @@ impl RethReadOnlyView {
     }
 }
 
-/// Observe stopped native execution and OCOMP closure progress.
+/// Observe stopped native execution progress.
 /// The caller supplies a disposable scratch directory outside protected roots.
 pub(crate) fn inspect_stopped_stores(
     layout: &NativeLayout,
     scratch: &std::path::Path,
 ) -> eyre::Result<outbe_snapshot::manifest::NativeProgress> {
-    use outbe_ocomp::discovery_spool::inspect_closure_checkpoint;
-    use outbe_primitives::projection::ProjectionCheckpoint;
     use outbe_snapshot::manifest::NativeProgress;
 
     // A RocksDB secondary writes its own files. Keep all native/config roots
@@ -239,30 +232,11 @@ pub(crate) fn inspect_stopped_stores(
     protected.0.extend([
         layout.chain_root.clone(),
         layout.consensus_root.clone(),
-        layout.ocomp_root.clone(),
         layout.static_files_root.clone(),
         layout.execution_rocksdb_root.clone(),
     ]);
     outbe_snapshot::layout::validate_layout(&[], &protected, &[scratch.to_path_buf()])?;
-    let retention_root = layout.consensus_root.join("ocomp_retention");
-    if retention_root.join("pin.v1").try_exists()? {
-        outbe_node::ocomp::retention::inspect_retention_journal(&retention_root)
-            .wrap_err("inspect existing OCOMP retention journal")?;
-    }
     let reth = inspect_reth(layout)?;
-    let closure = inspect_closure_checkpoint(
-        layout
-            .ocomp_root
-            .join("exporter-v1/discovery/closure-checkpoint-v1"),
-        ProjectionCheckpoint {
-            block_number: 0,
-            block_hash: layout.chain.genesis_hash(),
-        },
-    )?;
-    let block = |checkpoint: ProjectionCheckpoint| BlockIdentity {
-        number: checkpoint.block_number,
-        hash: hex::encode(checkpoint.block_hash),
-    };
     Ok(NativeProgress {
         finalized: reth.finalized,
         execution: reth.execution,
@@ -271,8 +245,5 @@ pub(crate) fn inspect_stopped_stores(
         partial_state_trie: reth.partial_state_trie,
         unwind: reth.unwind,
         storage_version: reth.storage_version,
-        ocomp_baseline: block(closure.baseline),
-        ocomp_previous: block(closure.previous),
-        ocomp_current: block(closure.current),
     })
 }

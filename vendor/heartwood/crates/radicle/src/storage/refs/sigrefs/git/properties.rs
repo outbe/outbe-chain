@@ -94,7 +94,7 @@ fn write_log(
     signer: &SigningKey,
     repo: &git::raw::Repository,
 ) -> Update {
-    SignedRefsWriter::new(refs, rid, namespace, repo, signer)
+    SignedRefsWriter::new(refs, rid, namespace.into(), repo, signer)
         .write(
             mock_committer(),
             "test commit".to_string(),
@@ -112,7 +112,7 @@ fn read_log<Verifier>(
 where
     Verifier: signature::Verifier<crypto::Signature>,
 {
-    SignedRefsReader::new(rid, Tip::Reference(namespace), repo, verifier)
+    SignedRefsReader::new(rid, Tip::Reference(namespace.into()), repo, verifier)
         .read()
         .unwrap()
 }
@@ -139,7 +139,7 @@ fn initial_commit_roundtrip(mut refs: Refs) -> bool {
     let verified_commit = read_log(rid, namespace, &verifier, &repo);
     let head = *verified_commit.commit().oid();
     let parent = verified_commit.commit().parent().copied();
-    let new_refs = verified_commit.into_sigrefs_at(namespace);
+    let new_refs = verified_commit.into_sigrefs_at(namespace.into());
 
     head == head_oid && parent.is_none() && *new_refs == refs
 }
@@ -175,7 +175,7 @@ fn chain_roundtrip(chain: BoundedVec<Refs>) -> TestResult {
         let verified_commit = read_log(rid, namespace, &verifier, &repo);
         let head = *verified_commit.commit().oid();
         let parent = verified_commit.commit().parent().copied();
-        let new_refs = verified_commit.into_sigrefs_at(namespace);
+        let new_refs = verified_commit.into_sigrefs_at(namespace.into());
 
         if refs != *new_refs {
             return TestResult::failed();

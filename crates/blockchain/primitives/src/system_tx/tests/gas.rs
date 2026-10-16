@@ -71,39 +71,6 @@ fn visible_gas_plan_reserves_one_gem_mint_for_reward_delivery() {
 }
 
 #[test]
-fn visible_gas_plan_reserves_ocomp_terminal_ce_before_cycle_remainder() {
-    let ocomp = input_for(SystemTxKind::OcompLifecycleBegin)
-        .encode()
-        .expect("OCOMP lifecycle input encodes");
-    let cycle = input_for(SystemTxKind::CycleTick)
-        .encode()
-        .expect("CycleTick input encodes");
-    let entries = [
-        (SystemTxKind::OcompLifecycleBegin, ocomp.clone()),
-        (SystemTxKind::CycleTick, cycle.clone()),
-    ];
-    let intrinsic_total = system_tx_intrinsic_gas(&ocomp).expect("OCOMP intrinsic gas computes")
-        + system_tx_intrinsic_gas(&cycle).expect("Cycle intrinsic gas computes");
-    let cycle_remainder = 50_000;
-    let block_gas_limit = intrinsic_total + OCOMP_LIFECYCLE_GAS_RESERVE + cycle_remainder;
-
-    let plan = SystemTxVisibleGasPlan::new(block_gas_limit, &entries)
-        .expect("system gas plan fits the block");
-
-    assert_eq!(plan.protocol_precharge(0), Some(0));
-    assert_eq!(
-        plan.execution_gas_limit(0),
-        Some(OCOMP_LIFECYCLE_GAS_RESERVE)
-    );
-    assert_eq!(
-        plan.gas_limit(0),
-        Some(plan.intrinsic_gas(0).unwrap() + OCOMP_LIFECYCLE_GAS_RESERVE)
-    );
-    assert_eq!(plan.execution_gas_limit(1), Some(cycle_remainder));
-    assert_eq!(plan.total_envelope_gas(), block_gas_limit);
-}
-
-#[test]
 fn visible_gas_plan_rejects_system_intrinsic_gas_above_the_block_limit() {
     let cycle = input_for(SystemTxKind::CycleTick)
         .encode()

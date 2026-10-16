@@ -1,0 +1,118 @@
+{
+  "source_sha": "9352d953838866f5a9cdcfebdb7119d933d6601a",
+  "parent_sha": "f538a3309585b4c47124914ecead7932a90d50dd",
+  "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+  "platform": "macOS-26.7.2-arm64-arm-64bit-Mach-O",
+  "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "env": {
+    "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-target",
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_BUILD_JOBS": "4",
+    "PYTHONPATH": "scripts"
+  },
+  "changed_files": [
+    "crates/blockchain/radicle/src/integration/review/tests.rs",
+    "crates/blockchain/radicle/src/integration/signing.rs",
+    "crates/blockchain/radicle/src/integration/signing/witness.rs"
+  ],
+  "spec_sha256": {
+    "plans/radicle-patch-vote/design.md": "dc9fd94ad85704057e284b374e0da27d7e0398546790ab1a202b2a9270e86df8",
+    "plans/radicle-patch-vote/task-specs.json": "5d26f9ef602867a7ed86ed9954d32f4379ec5fb867fa925208db9aa36a9b0412",
+    "plans/radicle-patch-vote/plan.md": "e077e1f2b577ab5ad7fe1943d32559fdc6ca383bc327c8f38848e7773cbaa10b"
+  },
+  "checks": [
+    {
+      "name": "full-libs",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-radicle",
+        "--lib",
+        "--",
+        "--nocapture"
+      ],
+      "start_utc": "2026-10-15T21:59:02.920751+00:00",
+      "log": "full-libs.log",
+      "exit_code": 0,
+      "end_utc": "2026-10-15T21:59:15.209857+00:00",
+      "sha256": "0e076a97e94052ee6507027e563baca18023241ad81df0e938d1e9d0927848c1"
+    },
+    {
+      "name": "all-consumers",
+      "command": [
+        "cargo",
+        "check",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-radicle",
+        "-p",
+        "outbe-engine",
+        "-p",
+        "outbe-chain",
+        "-p",
+        "outbe-radicle-runtime",
+        "-p",
+        "outbe-radicle-sidecar",
+        "-p",
+        "outbe-e2e-harness",
+        "-p",
+        "outbe-keygen",
+        "--all-targets"
+      ],
+      "start_utc": "2026-10-15T21:59:15.210306+00:00",
+      "log": "all-consumers.log",
+      "exit_code": 0,
+      "end_utc": "2026-10-15T21:59:32.469516+00:00",
+      "sha256": "f63ed98813e3d4442f5e73d2c80e361b8a76be734ba228b763ef273be501e288"
+    },
+    {
+      "name": "scoped-clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "--offline",
+        "--locked",
+        "--no-deps",
+        "-p",
+        "outbe-radicle",
+        "--lib",
+        "--tests",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "start_utc": "2026-10-15T21:59:32.469935+00:00",
+      "log": "scoped-clippy.log",
+      "exit_code": 0,
+      "end_utc": "2026-10-15T21:59:38.710061+00:00",
+      "sha256": "5447278528a62f0ff179e2eed52df88167f754499e491af9628704921d945b55"
+    },
+    {
+      "name": "rustfmt",
+      "command": [
+        "rustfmt",
+        "--check",
+        "--edition",
+        "2021",
+        "--config",
+        "skip_children=true",
+        "crates/blockchain/radicle/src/integration/review/tests.rs",
+        "crates/blockchain/radicle/src/integration/signing.rs",
+        "crates/blockchain/radicle/src/integration/signing/witness.rs"
+      ],
+      "start_utc": "2026-10-15T21:59:38.710465+00:00",
+      "log": "rustfmt.log",
+      "exit_code": 0,
+      "end_utc": "2026-10-15T21:59:38.751137+00:00",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "acceptance": "Intermediate P3/P6: separate canonical bounded witness-bundle codec and independent current q-witness verification, outside native manifest. Complete actual native Git package verification, protected UDS, collector/journal/bootstrap/Merge/E2E remain incomplete; no task acceptance claim.",
+  "source_dirty_after_checks": []
+}

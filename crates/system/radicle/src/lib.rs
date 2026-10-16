@@ -1,4 +1,5 @@
 //! Outbe profile wrapper around the native Heartwood runtime.
+mod collector;
 use std::ffi::OsString;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -7,7 +8,7 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use radicle::crypto::ssh::Keystore;
 use radicle::identity::RepoId;
@@ -254,11 +255,22 @@ fn serve_status(
 }
 
 fn handle_status(mut stream: TcpStream, availability: &dyn RepositoryAvailability) {
-    let _ = stream.set_read_timeout(Some(STATUS_DEADLINE));
-    let _ = stream.set_write_timeout(Some(STATUS_DEADLINE));
+    // Accepted sockets inherit the listener's nonblocking mode on some platforms.
+    if stream.set_nonblocking(false).is_err()
+        || stream.set_write_timeout(Some(STATUS_DEADLINE)).is_err()
+    {
+        return;
+    }
+    let deadline = Instant::now() + STATUS_DEADLINE;
     let mut request = [0_u8; MAX_REQUEST_BYTES];
     let mut length = 0;
     loop {
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            return;
+        };
+        if remaining.is_zero() || stream.set_read_timeout(Some(remaining)).is_err() {
+            return;
+        }
         let Ok(read) = stream.read(&mut request[length..]) else {
             return;
         };
@@ -356,11 +368,13 @@ fn respond(mut stream: TcpStream, status: u16, body: &str) -> std::io::Result<()
 pub struct PreparedSidecar {
     runtime: radicle_node::runtime::Runtime,
     status: StatusServer,
+    control_socket: PathBuf,
 }
 
 impl PreparedSidecar {
     pub fn prepare(options: Options, signals: mpsc::Receiver<Signal>) -> Result<Self, Error> {
         let home = Home::load(&options.home)?;
+        let control_socket = options.control_socket.clone();
         protect_control_parent(&options.control_socket)?;
         let secret_path = home.keys().join("radicle");
         let secret = Keystore::from_secret_path(&secret_path)
@@ -375,7 +389,11 @@ impl PreparedSidecar {
             secret,
         )?;
         let status = StatusServer::start(options.status_listen, runtime.storage.clone())?;
-        Ok(Self { runtime, status })
+        Ok(Self {
+            runtime,
+            status,
+            control_socket,
+        })
     }
 
     pub fn node_id(&self) -> NodeId {
@@ -387,8 +405,19 @@ impl PreparedSidecar {
     }
 
     pub fn run(self) -> Result<(), Error> {
-        let Self { runtime, status } = self;
+        let Self {
+            runtime,
+            status,
+            control_socket,
+        } = self;
+        let collector = collector::Worker::start(
+            control_socket,
+            runtime.storage.clone(),
+            runtime.home.node().join("outbe-governments"),
+            runtime.handle.clone(),
+        )?;
         let result = runtime.run().map_err(Error::from);
+        drop(collector);
         drop(status);
         result
     }

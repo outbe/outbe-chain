@@ -1,7 +1,7 @@
 //! Read projections of the validator registry: ABI records, filtered views,
 //! counts, epoch metadata and reverse lookups.
 
-use super::{status, EpochSnapshot, ValidatorParticipation, ValidatorRecord};
+use super::{EpochSnapshot, ValidatorParticipation, ValidatorRecord};
 use crate::errors::ValidatorSetError;
 use crate::schema::ValidatorSet;
 use crate::state_machine::ValidatorLifecycle;
@@ -91,17 +91,7 @@ impl ValidatorSet<'_> {
     /// `Exiting`, and both jailed phases. Boundary activation grants each included
     /// joiner a share while changing it to `Active` atomically.
     pub fn get_reshare_target_set(&self) -> Result<Vec<ValidatorRecord>> {
-        let all = self.get_validators_matching(ValidatorLifecycle::is_reshare_target)?;
-        let mut target = Vec::new();
-        for v in all {
-            if v.status == status::ACTIVE
-                || (v.status == status::PENDING
-                    && self.ocomp_registration(v.validator_address)?.is_some())
-            {
-                target.push(v);
-            }
-        }
-        Ok(target)
+        self.get_validators_matching(ValidatorLifecycle::is_reshare_target)
     }
 
     /// Returns validators with `status == PENDING`. These are staked joiners

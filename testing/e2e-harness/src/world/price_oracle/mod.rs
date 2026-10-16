@@ -23,7 +23,7 @@ mod verify;
 #[cfg(test)]
 use mock_source::mock_response;
 use mock_source::{MockPriceServer, PriceBook, PricePoint};
-#[cfg(feature = "ocomp-integration")]
+
 pub(crate) use verify::verify_price_oracle_evidence;
 #[cfg(test)]
 use verify::verify_publication_cohort;
@@ -344,7 +344,6 @@ impl PriceOracleTopology {
     }
 
     /// Quote COEN in `iso_code` at the scale-6 `rate` on every feeder started from now on.
-    #[cfg(feature = "ocomp-integration")]
     pub(crate) fn add_fixed_pair(
         &mut self,
         iso_code: u16,
@@ -775,7 +774,7 @@ struct FeederConfigInput<'a> {
 
 fn write_feeder_config(path: &Path, input: &FeederConfigInput<'_>) -> Result<()> {
     let mut config = format!(
-        "[chain]\nrpc_endpoint = \"{}\"\nchain_id = {}\ngasless_oracle_votes = true\n\n[account]\nprivate_key = \"{}\"\nvalidator_address = \"{}\"\n\n[oracle]\nvote_period = {}\npoll_interval_secs = 1\n\n[health]\nenabled = false\n",
+        "[chain]\nrpc_endpoint = \"{}\"\nchain_id = {}\ngasless_oracle_votes = true\n\n[account]\nprivate_key = \"{}\"\nvalidator_address = \"{}\"\n\n[oracle]\nvote_period = {}\npoll_interval_secs = 1\nsources = \"local\"\n\n[health]\nenabled = false\n",
         input.rpc_url,
         input.chain_id,
         input.private_key,

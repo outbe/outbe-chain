@@ -112,18 +112,6 @@ fn boundary(
 }
 
 #[test]
-fn included_joiner_without_ocomp_admission_is_rejected() -> Result<()> {
-    assert_rejected_before_writes(
-        |vs| {
-            joining(vs, A)?;
-            vs.val_ocomp_registration.get_bytes(&A).clear()
-        },
-        boundary(&[A], 10),
-        format!("certified active set contains validator {A} without OCOMP admission"),
-    )
-}
-
-#[test]
 fn omitted_active_validator_is_rejected() -> Result<()> {
     assert_rejected_before_writes(
         |vs| active(vs, A),

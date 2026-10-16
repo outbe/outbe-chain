@@ -119,17 +119,9 @@ impl ValidatorSet<'_> {
         freeze_height: u64,
     ) -> Result<ValidatorLifecycle> {
         match before.lifecycle().clone() {
-            ValidatorLifecycle::Joining(joining) => {
-                if self.ocomp_registration(before.address())?.is_none() {
-                    return Err(ValidatorSetError::CertifiedActiveValidatorWithoutOcomp {
-                        address: before.address(),
-                    }
-                    .into());
-                }
-                Ok(ValidatorLifecycle::Active(
-                    state_machine::activate_at_boundary(joining),
-                ))
-            }
+            ValidatorLifecycle::Joining(joining) => Ok(ValidatorLifecycle::Active(
+                state_machine::activate_at_boundary(joining),
+            )),
             ValidatorLifecycle::Active(active) => Ok(ValidatorLifecycle::Active(
                 state_machine::retain_active_at_boundary(active),
             )),

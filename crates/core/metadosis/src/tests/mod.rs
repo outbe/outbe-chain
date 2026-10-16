@@ -33,17 +33,9 @@ fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
     StorageHandle::enter(&mut storage, |storage| f(storage.clone()))
 }
 
-fn arm_genesis_ocomp(storage: &StorageHandle, chain_id: u64) {
-    // Fidelity leagues are enclave-computed. Every test thread that reaches the
-    // OCOMP snapshot path needs the in-process dev enclave (thread-local).
+fn install_test_enclaves() {
     outbe_fidelity::enclave_client::test_enclave::install();
     outbe_tribute::enclave_client::test_enclave::install();
-    crate::fixture_kernel::seed_registry_authority(
-        storage,
-        &crate::fixture_kernel::fixture_authority(chain_id),
-        &crate::ocomp::schema::poc_schema_limits(),
-    )
-    .unwrap();
 }
 
 fn form_due_fixture_day_limits(storage: &StorageHandle, timestamp: u64) {
@@ -53,7 +45,7 @@ fn form_due_fixture_day_limits(storage: &StorageHandle, timestamp: u64) {
         let current = day.status().read().unwrap();
         if current < status::OFFERING
             && timestamp >= day.offering_end().read().unwrap()
-            && metadosis.ocomp_day_limit_formation(wwd).unwrap().is_none()
+            && metadosis.day_limit_formation(wwd).unwrap().is_none()
         {
             metadosis.fixture_seed_day_limit_formation(wwd).unwrap();
         }
@@ -98,18 +90,18 @@ fn run_begin_block_with_chain_id(
     timestamp: u64,
     chain_id: u64,
 ) {
-    arm_genesis_ocomp(&storage, CHAIN_ID);
+    install_test_enclaves();
     arm_reference_price(&storage, timestamp);
     // The direct lifecycle fixture omits Cycle's daily allocation transaction.
     // Before a day can exercise the MissedOffering branch, model that preceding
     // production step by sealing its already-written limit as the immutable
-    // OCOMP day-limit formation.
+    // day-limit formation.
     form_due_fixture_day_limits(&storage, timestamp);
     let ctx = BlockRuntimeContext::new(
         BlockContext::empty_for_tests(block_number, timestamp, chain_id),
         storage,
     );
-    (|| crate::commands::start_metadosis(&ctx))().unwrap();
+    crate::commands::start_metadosis(&ctx).unwrap();
 }
 
 fn run_begin_block(storage: StorageHandle, block_number: u64, timestamp: u64) {
@@ -122,16 +114,9 @@ fn run_begin_block(storage: StorageHandle, block_number: u64, timestamp: u64) {
 }
 
 mod capacity;
-mod league_snapshot;
 mod lifecycle;
 mod lysis_ingress;
-mod nod_issuance_instant;
-mod ocomp_limits;
-mod ocomp_request;
-mod ocomp_semantic_migrations;
-mod ocomp_snapshot_views;
-mod ocomp_storage;
-mod pre_admission;
+mod onchain_lysis;
 mod precompile;
 mod reducer;
 mod state;
@@ -139,6 +124,5 @@ mod wwd_vwap_overflow;
 
 mod tribute_fixture;
 
-mod allocation_ceiling;
 #[cfg(feature = "test-utils")]
 mod api;

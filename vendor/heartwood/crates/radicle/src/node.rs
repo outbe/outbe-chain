@@ -37,7 +37,6 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json as json;
 
-use crate::crypto::PublicKey;
 use crate::git;
 use crate::identity::RepoId;
 use crate::profile;
@@ -861,7 +860,7 @@ impl From<Vec<Seed>> for Seeds {
 pub enum FetchResult {
     Success {
         updated: Vec<RefUpdate>,
-        namespaces: HashSet<NodeId>,
+        namespaces: HashSet<crate::crypto::RepositoryKey>,
         clone: bool,
     },
     // TODO: Create enum for reason.
@@ -875,7 +874,7 @@ impl FetchResult {
         matches!(self, FetchResult::Success { .. })
     }
 
-    pub fn success(self) -> Option<(Vec<RefUpdate>, HashSet<NodeId>)> {
+    pub fn success(self) -> Option<(Vec<RefUpdate>, HashSet<crate::crypto::RepositoryKey>)> {
         match self {
             Self::Success {
                 updated,
@@ -895,8 +894,12 @@ impl FetchResult {
     }
 }
 
-impl<S: ToString> From<Result<(Vec<RefUpdate>, HashSet<NodeId>, bool), S>> for FetchResult {
-    fn from(value: Result<(Vec<RefUpdate>, HashSet<NodeId>, bool), S>) -> Self {
+impl<S: ToString> From<Result<(Vec<RefUpdate>, HashSet<crate::crypto::RepositoryKey>, bool), S>>
+    for FetchResult
+{
+    fn from(
+        value: Result<(Vec<RefUpdate>, HashSet<crate::crypto::RepositoryKey>, bool), S>,
+    ) -> Self {
         match value {
             Ok((updated, namespaces, clone)) => Self::Success {
                 updated,
@@ -936,7 +939,9 @@ impl FetchResults {
     }
 
     /// Iterate over successful fetches.
-    pub fn success(&self) -> impl Iterator<Item = (&NodeId, &[RefUpdate], HashSet<NodeId>)> {
+    pub fn success(
+        &self,
+    ) -> impl Iterator<Item = (&NodeId, &[RefUpdate], HashSet<crate::crypto::RepositoryKey>)> {
         self.0.iter().filter_map(|(nid, r)| {
             if let FetchResult::Success {
                 updated,
@@ -1077,7 +1082,7 @@ pub trait Handle: Clone + Sync + Send {
     /// Look up the seeds of a given repository in the routing table.
     #[deprecated(note = "use `seeds_for` instead")]
     fn seeds(&mut self, id: RepoId) -> Result<Seeds, Self::Error> {
-        self.seeds_for(id, [self.nid()?])
+        self.seeds_for(id, [self.nid()?.into()])
     }
 
     /// Look up the seeds of a given repository in the routing table
@@ -1085,7 +1090,7 @@ pub trait Handle: Clone + Sync + Send {
     fn seeds_for(
         &mut self,
         id: RepoId,
-        namespaces: impl IntoIterator<Item = PublicKey>,
+        namespaces: impl IntoIterator<Item = crate::crypto::RepositoryKey>,
     ) -> Result<Seeds, Self::Error>;
 
     /// Fetch a repository from the network.
@@ -1112,7 +1117,7 @@ pub trait Handle: Clone + Sync + Send {
     /// should be announced over the network.
     #[deprecated(note = "use `announce_refs_for` instead")]
     fn announce_refs(&mut self, id: RepoId) -> Result<RefsAt, Self::Error> {
-        self.announce_refs_for(id, [self.nid()?])
+        self.announce_refs_for(id, [self.nid()?.into()])
     }
 
     /// Notify the service that a repository has been updated, and references
@@ -1120,7 +1125,7 @@ pub trait Handle: Clone + Sync + Send {
     fn announce_refs_for(
         &mut self,
         id: RepoId,
-        namespaces: impl IntoIterator<Item = PublicKey>,
+        namespaces: impl IntoIterator<Item = crate::crypto::RepositoryKey>,
     ) -> Result<RefsAt, Self::Error>;
 
     /// Announce local inventory.
@@ -1230,7 +1235,7 @@ impl Node {
     pub fn announce(
         &mut self,
         rid: RepoId,
-        namespaces: impl IntoIterator<Item = PublicKey>,
+        namespaces: impl IntoIterator<Item = crate::crypto::RepositoryKey>,
         timeout: time::Duration,
         mut announcer: sync::Announcer,
         mut report: impl FnMut(&NodeId, sync::announce::Progress),
@@ -1370,7 +1375,7 @@ impl Handle for Node {
     fn seeds_for(
         &mut self,
         rid: RepoId,
-        namespaces: impl IntoIterator<Item = PublicKey>,
+        namespaces: impl IntoIterator<Item = crate::crypto::RepositoryKey>,
     ) -> Result<Seeds, Error> {
         let seeds = self
             .call::<Seeds>(
@@ -1447,7 +1452,7 @@ impl Handle for Node {
     fn announce_refs_for(
         &mut self,
         rid: RepoId,
-        namespaces: impl IntoIterator<Item = PublicKey>,
+        namespaces: impl IntoIterator<Item = crate::crypto::RepositoryKey>,
     ) -> Result<RefsAt, Error> {
         let refs: RefsAt = self
             .call(

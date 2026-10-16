@@ -2,7 +2,7 @@
 use crate::{BootstrapTransactionView, ZeroFeeTransaction};
 use alloy_consensus::Transaction;
 use alloy_primitives::Address;
-use outbe_ocomp_protocol::transaction_call::TransactionCallFields;
+use outbe_primitives::transaction_call::TransactionCallFields;
 
 impl<'a> ZeroFeeTransaction<'a> {
     /// Adapt an immutable transaction. The caller supplies its recovered signer.

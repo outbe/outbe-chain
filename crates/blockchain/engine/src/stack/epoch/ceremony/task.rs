@@ -75,6 +75,7 @@ where
                 self.dkg_rotation_params,
                 &mut self.state.last_dkg_output,
             );
+            self.publish_repository_material();
         }
         let prev_output = self.state.last_dkg_output.clone();
         let prev_share = self.state.signing_share.clone();

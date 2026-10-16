@@ -57,17 +57,14 @@ impl Rpc {
         Sh::new(&self.cfg)
     }
 
-    #[cfg(feature = "ocomp-integration")]
     pub fn canonical_nonce_on(&self, port: u16, address: Address) -> Option<u64> {
         eth::canonical_nonce(&self.url(port), address)
     }
 
-    #[cfg(feature = "ocomp-integration")]
     pub fn gas_price_on(&self, port: u16) -> Option<u128> {
         eth::gas_price(&self.url(port))
     }
 
-    #[cfg(feature = "ocomp-integration")]
     pub fn send_raw_transaction_on(&self, port: u16, raw_transaction: &[u8]) -> Result<String> {
         eth::send_raw_transaction(&self.url(port), raw_transaction)
     }
@@ -281,7 +278,7 @@ impl Rpc {
         u64::from_str_radix(encoded.trim_start_matches("0x"), 16).ok()
     }
 
-    /// Public JSON-RPC receipt used by OCOMP evidence correlation.
+    /// Public JSON-RPC receipt used by native scenario evidence correlation.
     pub fn transaction_receipt(&self, tx_hash: &str, port: u16) -> Option<serde_json::Value> {
         eth::receipt_json(&self.url(port), tx_hash)
     }
@@ -310,12 +307,6 @@ fn parse_rpc_u256(value: &str) -> Option<U256> {
     U256::from_str_radix(value.trim_start_matches("0x"), 16).ok()
 }
 
-#[cfg(feature = "ocomp-integration")]
-pub(in crate::world::rpc) fn parse_rpc_word(encoded: &str) -> Option<U256> {
-    U256::from_str_radix(encoded.trim_start_matches("0x"), 16).ok()
-}
-
-#[cfg(feature = "ocomp-integration")]
 pub(in crate::world::rpc) fn decode_rpc_data_words(
     log: &serde_json::Value,
     expected: usize,
@@ -334,7 +325,6 @@ pub(in crate::world::rpc) fn decode_rpc_data_words(
     )
 }
 
-#[cfg(feature = "ocomp-integration")]
 pub(in crate::world::rpc) fn rpc_log_block_number(log: &serde_json::Value) -> Option<u64> {
     u64::from_str_radix(
         log.get("blockNumber")?.as_str()?.trim_start_matches("0x"),
@@ -343,7 +333,6 @@ pub(in crate::world::rpc) fn rpc_log_block_number(log: &serde_json::Value) -> Op
     .ok()
 }
 
-#[cfg(feature = "ocomp-integration")]
 pub(in crate::world::rpc) fn canonical_rpc_log_block_hash(
     rpc_url: &str,
     log: &serde_json::Value,

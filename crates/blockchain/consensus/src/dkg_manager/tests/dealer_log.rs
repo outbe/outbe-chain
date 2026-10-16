@@ -394,6 +394,8 @@ fn dealer_log_size_within_extra_data_for_n128() {
 
     let encoded = outbe_primitives::reshare_artifact::encode_outbe_block_artifacts(
         &outbe_primitives::reshare_artifact::OutbeBlockArtifacts {
+            radicle_publication_enabled: false,
+            radicle_publication: None,
             execution_summary: Some(
                 outbe_primitives::reshare_artifact::ExecutionSummaryArtifact {
                     validator_fee_sum: U256::MAX,

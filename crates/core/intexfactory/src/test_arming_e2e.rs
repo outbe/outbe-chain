@@ -93,11 +93,6 @@ fn seed_day_vwaps_for_test(
         }
         day = previous_date_key(day);
     }
-    // The VWAP pusher sends the rewritten days again.
-    let factory = crate::schema::IntexFactoryContract::new(storage.clone());
-    if factory.vwap_sent_day.read()? > day {
-        factory.vwap_sent_day.write(day)?;
-    }
     Ok(())
 }
 

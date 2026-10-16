@@ -32,16 +32,3 @@ class ValidatorSeedTerms:
 class StakeSeedTerms:
     min_stake: int
     validator_stake: int
-
-
-@dataclass(frozen=True)
-class OcompPaths:
-    work_dir: Path
-    seeded_genesis: Path
-    keys_dir: Path
-
-
-@dataclass(frozen=True)
-class GenesisTools:
-    chain_binary: str
-    keygen_binary: str

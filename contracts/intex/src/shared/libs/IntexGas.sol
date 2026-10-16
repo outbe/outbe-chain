@@ -45,11 +45,6 @@ library IntexGas {
     ///      rule leaves the outer frame far too little to send a message of its own.
     uint256 internal constant RELAY_REPORT_GAS = 400_000;
 
-    /// @dev Recording a day into the VWAP registry: 168k at one currency, 476k at six, measured on the
-    ///      first day of a month, when every row opens a new month maximum.
-    uint256 internal constant DAILY_VWAP_BASE = 160_000;
-    uint256 internal constant DAILY_VWAP_PER_ROW = 92_000;
-
     /// @dev WCOEN unwrap plus IntexFactory distribute registration.
     uint256 internal constant PROCEEDS_COMPOSE = 300_000;
 
@@ -70,7 +65,7 @@ library IntexGas {
     uint256 internal constant BIDS_PER_ITEM = 17_700;
 
     /// @dev A chunk creates the series it carries. Winners issue their own units. Measured: 292k for
-    ///      one series, 3.14M for 20, so ~141k base and ~151k a series.
+    ///      one series, 3.13M for 20, so ~143k base and ~149k a series.
     uint256 internal constant ISSUANCE_BASE = 250_000;
     uint256 internal constant ISSUANCE_PER_SERIES = 230_000;
 
@@ -107,10 +102,6 @@ library IntexGas {
 
     function markCalled(uint256 seriesCount) internal pure returns (uint256) {
         return MARK_CALLED_BASE + seriesCount * MARK_CALLED_PER_SERIES;
-    }
-
-    function dailyVwap(uint256 rowCount) internal pure returns (uint256) {
-        return DAILY_VWAP_BASE + rowCount * DAILY_VWAP_PER_ROW;
     }
 
     /// @param winnerCount Winners the chunk carries. Zero for the chunk that only closes a day.

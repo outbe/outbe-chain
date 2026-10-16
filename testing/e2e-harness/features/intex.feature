@@ -1,10 +1,10 @@
-@ocomp @tee @sgx-no-attest @sudo @min-validators-4
+@tee @sgx-no-attest @sudo @min-validators-4
 Feature: Intex from auction to Promis
   # An Intex has two halves of a life, and this feature owns both: the auction
   # that brings a series into existence, and everything the series is for once
-  # it exists - qualifying, being settled by its owner, and burning into Promis.
+  # it exists - being settled by its owner, being called, and burning into Promis.
 
-  # Applying the day's OCOMP result hands Desis its brief, and a later schedule
+  # Completing native Lysis hands Desis its brief, and a later schedule
   # tick dispatches AUCTION_STAGE_START to the origin router, which routes it to
   # every registered target. The committee is registered as its own target, so
   # the whole path runs on one chain: a day whose result lands must end with an
@@ -24,7 +24,7 @@ Feature: Intex from auction to Promis
   # would floor the monetary cost to zero without one.
   @intex-auction
   Scenario: A settled green day runs its auction through to an issued Intex
-    Given a fresh four-validator OCOMP public capacity localnet
+    Given a fresh four-validator native Lysis localnet
     When a local target chain is started
     And the intex venue is deployed on the target chain
     And the intex venue is wired
@@ -34,11 +34,9 @@ Feature: Intex from auction to Promis
     When a relay carries messages between the two chains
     When 33 capacity owners submit one encrypted Tribute each at no more than two per block
     Then all validators observe exactly 33 public Tributes for the capacity day
-    When the committee logical clock reaches the public capacity processing time
+    When the committee logical clock reaches the native Lysis processing time
     And the committee clock settles after the jump
-    Then Metadosis creates one finalized JobIntent from that public Tribute
-    When the production OCOMP domains process that finalized JobIntent
-    Then three matching validator domains atomically apply Lysis and create the Nod
+    Then Metadosis completes confidential Lysis and stores ready Nods on every validator
     And the auction for that day opens on every chain it named
     When two bidders commit their bids on every chain
     When those bidders reveal their bids once the venues are revealing
@@ -51,32 +49,30 @@ Feature: Intex from auction to Promis
   # group of one and the mark batching is not exercised at all.
   #
   # Two series are paid for, one issued in MYR and one in EUR, each in two parts:
-  # what is home once they qualify, and the rest once they are called and brought
+  # what is home while they are issued, and the rest once they are called and brought
   # home. The four payments come from the owner and a third party in both
   # currencies; the MYR ones price off a closed pricing window, so the committee
   # steps through feeder-covered hours once the series are issued. Its first step crosses midnight on this
   # localnet: the committee closes the day on its own feed, and every seeded day repeats that
-  # close, because a target chain records a day's price once. The other two are
+  # close. The other two are
   # left to run out: one is settled in part and one never touched, so the sweep
   # has to return the load of the unrealized units alone from one and the whole
   # tirage from the other.
   #
   # Time is seeded rather than lived through. A worldwide day sits in Forming
   # until its offering window closes, and stepping past that window on a day
-  # OCOMP never formed is a fatal MissedOffering - forming one costs the whole
+  # Metadosis never formed is a fatal MissedOffering - forming one costs the whole
   # tribute path this scenario exists to avoid. So the days the Called sweep
   # reads are filled in and issuance is stamped behind them, exactly as this
   # module's own unit tests do. The sweep still walks its index, checks the
-  # finalized watermark and counts the breach days itself. Qualification reads a
-  # closed day's VWAP as well, so that day is seeded the same way, and every
-  # chain derives it from there.
+  # finalized watermark and counts the breach days itself.
   #
   # The two hops home also take the bridge's two routes: one series at a time
   # first, then both together, which is how an owner of several actually moves
   # them and which carries its own message encoding.
   @intex-lifecycle @myr-issuance
-  Scenario: Four Intex series qualify as one group, two are paid by the owner and a third party in both currencies, two run out, and the paid ones end in COEN
-    Given a fresh four-validator OCOMP public capacity localnet
+  Scenario: Four Intex series, two are paid by the owner and a third party in both currencies, two run out, and the paid ones end in COEN
+    Given a fresh four-validator native Lysis localnet
     When a local target chain is started
     And the intex venue is deployed on the target chain
     And the intex venue is wired
@@ -88,16 +84,12 @@ Feature: Intex from auction to Promis
     When four test Intex series sharing a reference currency are issued to the owner
     Then the owner holds issued units of every series on each chain
     And every Intex series reads Issued and carries its terms
-    And no Intex series can be paid before it qualifies
     And the controlled COEN quotes are finalized through the real price feeder
     And the pricing window closes over those quotes
-    When the reference rate stands above the Intex series floor
-    Then every Intex series qualifies
-    And every series card reads Qualified on both chains
     When the owner brings part of the target-chain units home
     Then an Intex series payment is refused for a stale snapshot or a foreign currency
     And an unpaid Intex series cannot be mined
-    When a qualified Intex series is paid in USD by a third party and another in MYR by its owner
+    When an issued Intex series is paid in USD by a third party and another in MYR by its owner
     Then each payment settles exactly its quote into its currency's vault
     When the reference rate holds above the Intex series call price across the call window
     Then every unpaid Intex series becomes Called while what was paid stays Settled

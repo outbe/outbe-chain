@@ -14,10 +14,11 @@ const PAYER_KEY: &str = "0x77777777777777777777777777777777777777777777777777777
 fn third_party_settles_and_mines(world: &mut World) {
     let day = world
         .state
-        .ocomp_successor_job_request
-        .as_ref()
-        .expect("successor JobIntent")
-        .worldwide_day;
+        .wwd
+        .as_deref()
+        .expect("offering day")
+        .parse::<u32>()
+        .expect("numeric offering day");
     run_relayed_mining(world, 1, day, false);
 }
 
@@ -147,10 +148,6 @@ fn fidelity_storage_at(url: &str, owner: Address, height: u64) -> Vec<U256> {
     }
     words
 }
-
-#[path = "settlement_nod/qualification.rs"]
-mod qualification;
-pub(super) use qualification::qualify_public_nod;
 
 /// The Nod owner is an active voter and may receive delayed native fee credits.
 /// Prove the relayer's exact transaction and gas debit instead of assuming the
@@ -613,10 +610,6 @@ fn assert_snapshot_bodies(snapshot: &NodSnapshot, bodies: &(NodItemBodyV2, NodBu
     );
     assert_eq!(body.leagueId, item.encrypted.terms.league_id);
     assert_eq!(
-        Some(body.floorPriceMinor),
-        outbe_nod::pricing::floor_price_minor(bodies.1.entry_price_minor)
-    );
-    assert_eq!(
         body.encryptedGratisAmount.as_ref(),
         item.encrypted.encrypted_gratis_amount
     );
@@ -636,17 +629,6 @@ fn assert_snapshot_bodies(snapshot: &NodSnapshot, bodies: &(NodItemBodyV2, NodBu
     );
     assert_eq!(body.issuedAt, item.issued_at);
     assert_eq!(body.isSettled, item.is_settled);
-}
-
-fn successor_is_qualified(world: &World, owner: Address, id: WwdEntityId, minimum: u64) -> bool {
-    let snapshot = nod_snapshot(world, owner, id, minimum);
-    let bodies = nod_bodies(world, id, minimum);
-    assert_snapshot_bodies(&snapshot, &bodies);
-    snapshot
-        .body
-        .as_ref()
-        .expect("live Nod body present")
-        .isQualified
 }
 
 fn gratis_at(url: &str, owner: Address, view: &[u8; 32], height: u64) -> U256 {

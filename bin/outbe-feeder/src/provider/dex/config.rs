@@ -11,6 +11,8 @@ use crate::errors::{check, DexError};
 pub(crate) struct DexProviderConfig {
     pub name: String,
     pub chain_id: u64,
+    /// Empty takes the `rpc_endpoints` URL for `chain_id`.
+    #[serde(default)]
     pub rpc_endpoint: String,
     #[serde(default = "poll_interval")]
     pub poll_interval_secs: u64,

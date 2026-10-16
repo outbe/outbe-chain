@@ -8,6 +8,14 @@ use serde::{Deserialize, Serialize};
 use super::readonly::StorageReader;
 use crate::error::{PrecompileError, Result};
 
+/// Identifies the finalized state selected by a verified native proof.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FinalizedStateCheckpoint {
+    pub block_number: u64,
+    pub block_hash: B256,
+    pub state_root: B256,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct StorageSlotProof {
     pub slot: B256,

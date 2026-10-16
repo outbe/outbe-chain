@@ -29,12 +29,10 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     // --- Types ---
 
     /// @notice Series lifecycle state.
-    /// @dev Issued -> Called -> Expired. `Qualified` is derived and never stored. `Expired` is
-    ///      read-only: storage keeps `Called`, so the freezes that compare the stored field keep
-    ///      applying.
+    /// @dev Issued -> Called -> Expired. `Expired` is read-only: storage keeps `Called`, so the
+    ///      freezes that compare the stored field keep applying.
     enum IntexState {
         Issued,
-        Qualified,
         Called,
         Expired
     }
@@ -78,8 +76,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         uint128 promisLoadMinor;
         /// @notice Per-unit entry price in ISO stable-units (1e6).
         uint64 entryPriceMinor;
-        /// @notice Floor price in ISO stable-units (1e6).
-        uint64 floorPriceMinor;
         /// @notice Call price in ISO stable-units (1e6).
         uint64 callPriceMinor;
         /// @notice Forced-call trigger (window/threshold/period).
@@ -135,8 +131,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param owner Owner whose Settled tokens were burned.
     /// @param units Settled units burned.
     event IntexExercised(bytes14 indexed seriesId, address indexed owner, uint256 units);
-
-    event VwapSourceSet(address indexed source);
 
     /// @notice Emitted when Issued Intex are burned on being sent to the Gem Factory.
     /// @param seriesId Series identifier.
@@ -199,7 +193,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         uint32 issuedUnits;
         uint128 promisLoadMinor;
         uint64 entryPriceMinor;
-        uint64 floorPriceMinor;
         uint64 callPriceMinor;
         IntexCallTrigger callTrigger;
     }
@@ -224,8 +217,8 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
 
     /// @notice Burn `units` of `owner`'s Issued Intex and mint the same `units` of Settled Intex to
     ///         `owner`.
-    /// @dev Settlement-contract entry point under SETTLEMENT_ROLE. The caller checks qualification.
-    ///      A Called series settles only until its deadline.
+    /// @dev Settlement-contract entry point under SETTLEMENT_ROLE. A Called series settles only
+    ///      until its deadline.
     /// @param seriesId Series identifier.
     /// @param owner Owner whose Issued tokens are burned and who receives the Settled tokens.
     /// @param units Issued units burned and Settled units minted.
@@ -248,12 +241,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @return The units burned.
     function sendToGemFactory(address owner, bytes14 seriesId, uint256 units) external returns (uint256);
 
-    /// @notice Zero derives no qualification.
-    function setVwapSource(address source) external;
-
     // --- Reads ---
-
-    function vwapSource() external view returns (address);
 
     /// @notice Whether the series has been created here.
     /// @param seriesId Series identifier.
@@ -263,12 +251,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @notice Issued token id for a series (= `uint256(uint112(seriesId))`). Pure helper.
     /// @param seriesId Series identifier.
     /// @return The Issued token id.
-    /// @notice Whether a finalized daily VWAP from the series' first full UTC day on closed above
-    ///         its floor, as the card renders it. A missing or failing source reads as not
-    ///         qualified.
-    /// @param seriesId Series identifier.
-    function isQualified(bytes14 seriesId) external view returns (bool);
-
     function issuedTokenId(bytes14 seriesId) external pure returns (uint256);
 
     /// @notice Settled (soulbound) token id for a series (= the series id with bit 112 set). Pure
@@ -308,8 +290,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @return The token classification.
     function statusOf(uint256 tokenId) external pure returns (IntexStatus);
 
-    /// @notice Read series data by series id. `state` derives Qualified and Expired, as the card
-    ///         renders them.
+    /// @notice Read series data by series id. `state` derives Expired, as the card renders it.
     /// @param seriesId Series identifier.
     /// @return The full series data for the Issued token id.
     function readData(bytes14 seriesId) external view returns (SeriesData memory);

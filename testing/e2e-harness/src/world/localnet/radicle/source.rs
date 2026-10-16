@@ -91,6 +91,8 @@ pub(super) fn source_control_response<T: serde::de::DeserializeOwned + Send + 's
     let socket = socket.to_path_buf();
     block_on(async move {
         use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
+        // Native Fetch closes after JSON; the other control replies end with LF.
+        let eof_reply = matches!(&command, radicle::node::Command::Fetch { .. });
         ensure!(
             Instant::now() < deadline,
             "source control deadline exceeded"
@@ -111,7 +113,7 @@ pub(super) fn source_control_response<T: serde::de::DeserializeOwned + Send + 's
                 .await
                 .wrap_err("read source control response")?;
             ensure!(
-                response.last() == Some(&b'\n'),
+                response.last() == Some(&b'\n') || (eof_reply && !response.is_empty()),
                 "source control response incomplete"
             );
             Ok::<_, eyre::Report>(response)

@@ -1,0 +1,1817 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index faecd6691..98651ed02 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -9591,6 +9591,7 @@ name = "outbe-radicle"
+ version = "0.1.0"
+ dependencies = [
+  "alloy-consensus",
++ "alloy-eips",
+  "alloy-primitives",
+  "bytes",
+  "commonware-actor",
+@@ -9607,11 +9608,13 @@ dependencies = [
+  "outbe-primitives",
+  "outbe-radicleregistry",
+  "outbe-validatorset",
++ "outbe-vote",
+  "parking_lot",
+  "proptest",
+  "rand_core 0.6.4",
+  "reqwest 0.12.28",
+  "reth-chain-state",
++ "reth-chainspec",
+  "reth-provider",
+  "reth-storage-api",
+  "serde",
+@@ -9653,6 +9656,10 @@ dependencies = [
+  "alloy-sol-types",
+  "outbe-macros",
+  "outbe-primitives",
++ "outbe-validatorset",
++ "outbe-vote",
++ "serde",
++ "serde_json",
+  "thiserror 2.0.18",
+ ]
+ 
+diff --git a/contracts/precompiles/abi-export/IRadicleRegistry.json b/contracts/precompiles/abi-export/IRadicleRegistry.json
+index f36a20c10..c9359e94b 100644
+--- a/contracts/precompiles/abi-export/IRadicleRegistry.json
++++ b/contracts/precompiles/abi-export/IRadicleRegistry.json
+@@ -1,4 +1,45 @@
+ [
++  {
++    "type": "function",
++    "name": "getPatchApproval",
++    "inputs": [
++      {
++        "name": "proposalId",
++        "type": "uint256",
++        "internalType": "uint256"
++      }
++    ],
++    "outputs": [
++      {
++        "name": "",
++        "type": "tuple",
++        "internalType": "struct IRadicleRegistry.PatchApprovalInfo",
++        "components": [
++          {
++            "name": "approved",
++            "type": "bool",
++            "internalType": "bool"
++          },
++          {
++            "name": "payload",
++            "type": "string",
++            "internalType": "string"
++          },
++          {
++            "name": "approvedHeight",
++            "type": "uint64",
++            "internalType": "uint64"
++          },
++          {
++            "name": "approvedTimestamp",
++            "type": "uint64",
++            "internalType": "uint64"
++          }
++        ]
++      }
++    ],
++    "stateMutability": "view"
++  },
+   {
+     "type": "function",
+     "name": "maxRepositories",
+@@ -12,6 +53,25 @@
+     ],
+     "stateMutability": "view"
+   },
++  {
++    "type": "function",
++    "name": "patchExecutionStage",
++    "inputs": [
++      {
++        "name": "proposalId",
++        "type": "uint256",
++        "internalType": "uint256"
++      }
++    ],
++    "outputs": [
++      {
++        "name": "",
++        "type": "uint8",
++        "internalType": "uint8"
++      }
++    ],
++    "stateMutability": "view"
++  },
+   {
+     "type": "function",
+     "name": "registerRepository",
+diff --git a/contracts/precompiles/src/IRadicleRegistry.sol b/contracts/precompiles/src/IRadicleRegistry.sol
+index 28f84a755..d7559f066 100644
+--- a/contracts/precompiles/src/IRadicleRegistry.sol
++++ b/contracts/precompiles/src/IRadicleRegistry.sol
+@@ -5,6 +5,14 @@ pragma solidity ^0.8.30;
+ /// @notice Permissionless, append-only registry of public Heartwood repositories.
+ /// @dev maxRepositories() == type(uint32).max denotes an unlimited configured capacity.
+ interface IRadicleRegistry {
++    /// @dev payload is the exact canonical V1 Vote subject; execution and Merge are separate.
++    struct PatchApprovalInfo {
++        bool approved;
++        string payload;
++        uint64 approvedHeight;
++        uint64 approvedTimestamp;
++    }
++
+     event RepositoryRegistered(bytes20 indexed repoId, address indexed registrant, uint32 index, uint64 generation);
+ 
+     function registerRepository(bytes20 repoId) external;
+@@ -13,4 +21,7 @@ interface IRadicleRegistry {
+     function repositoryRegistrant(bytes20 repoId) external view returns (address);
+     function registryGeneration() external view returns (uint64);
+     function maxRepositories() external view returns (uint32);
++    function getPatchApproval(uint256 proposalId) external view returns (PatchApprovalInfo memory);
++    /// @notice 0 = no approved decision; 1 = execution pending. This is not Merge status.
++    function patchExecutionStage(uint256 proposalId) external view returns (uint8);
+ }
+diff --git a/crates/blockchain/evm/src/executor/tests/receipts_and_gas.rs b/crates/blockchain/evm/src/executor/tests/receipts_and_gas.rs
+index 090f1e82e..6fefbe8d4 100644
+--- a/crates/blockchain/evm/src/executor/tests/receipts_and_gas.rs
++++ b/crates/blockchain/evm/src/executor/tests/receipts_and_gas.rs
+@@ -5,6 +5,7 @@ mod expiry;
+ mod factory_approval;
+ mod hook_events;
+ mod native_sinks;
++mod patch_approval;
+ mod support;
+ 
+ use support::*;
+diff --git a/crates/blockchain/evm/src/executor/tests/receipts_and_gas/patch_approval.rs b/crates/blockchain/evm/src/executor/tests/receipts_and_gas/patch_approval.rs
+new file mode 100644
+index 000000000..47950cffa
+--- /dev/null
++++ b/crates/blockchain/evm/src/executor/tests/receipts_and_gas/patch_approval.rs
+@@ -0,0 +1,209 @@
++use super::*;
++use alloy_evm::Evm;
++use outbe_primitives::addresses::RADICLE_REGISTRY_ADDRESS;
++use outbe_radicleregistry::{
++    payload::PatchVotePayloadV1, precompile::IRadicleRegistry, RadicleRegistry, RepoId,
++};
++use outbe_vote::precompile::IVote;
++use revm::{context::TxEnv, DatabaseCommit};
++
++fn call(
++    state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>,
++    height: u64,
++    caller: Address,
++    nonce: u64,
++    target: Address,
++    data: Vec<u8>,
++) -> revm::context::result::ExecutionResult<revm::context::result::HaltReason> {
++    let result = {
++        let config = OutbeEvmConfig::new(test_chain_spec());
++        let mut evm = config.evm_with_env(&mut *state, test_evm_env(height, REWARDS_ADDRESS));
++        evm.transact_raw(
++            TxEnv::builder()
++                .chain_id(Some(CHAIN_ID))
++                .caller(caller)
++                .nonce(nonce)
++                .kind(TxKind::Call(target))
++                .data(Bytes::from(data))
++                .gas_limit(2_000_000)
++                .gas_price(u128::from(MIN_PROTOCOL_BASE_FEE))
++                .build()
++                .unwrap(),
++        )
++        .expect("execute actual EVM precompile transaction")
++    };
++    state.commit(result.state);
++    result.result
++}
++
++#[test]
++fn radicle_patch_approval_runs_through_evm_calls_and_real_begin_block_hooks() {
++    run_patch_vote_case(false);
++    run_patch_vote_case(true);
++}
++
++fn run_patch_vote_case(approve_second: bool) {
++    let validators = [
++        (Address::repeat_byte(0xa1), dummy_pubkey(0xa1)),
++        (Address::repeat_byte(0xa2), dummy_pubkey(0xa2)),
++        (Address::repeat_byte(0xa3), dummy_pubkey(0xa3)),
++    ];
++    let outsider = Address::repeat_byte(0xee);
++    let mut state = state_with_active_validators_seeded_at_block(&validators, 7, |storage| {
++        RadicleRegistry::new(storage)
++            .config_max_repositories
++            .write(4)
++            .unwrap();
++    });
++    let marker = Bytecode::new_legacy([0xef].into());
++    state.database.insert_account_info(
++        RADICLE_REGISTRY_ADDRESS,
++        AccountInfo {
++            code_hash: marker.hash_slow(),
++            code: Some(marker),
++            ..Default::default()
++        },
++    );
++    for caller in validators.iter().map(|v| v.0).chain([outsider]) {
++        state.database.insert_account_info(
++            caller,
++            AccountInfo {
++                balance: U256::from(10u64).pow(U256::from(20u64)),
++                ..Default::default()
++            },
++        );
++    }
++    let repo = RepoId::repeat_byte(0xaa);
++    let register = IRadicleRegistry::registerRepositoryCall { repoId: repo }.abi_encode();
++    assert!(call(
++        &mut state,
++        7,
++        validators[0].0,
++        0,
++        RADICLE_REGISTRY_ADDRESS,
++        register
++    )
++    .is_success());
++    let payload = String::from_utf8(
++        PatchVotePayloadV1::accept(
++            repo,
++            RepoId::repeat_byte(0xbb),
++            RepoId::repeat_byte(0xcc),
++            RepoId::repeat_byte(0xdd),
++        )
++        .encode()
++        .unwrap(),
++    )
++    .unwrap();
++    let create = IVote::createProposalWithVotingWindowCall {
++        targetModule: RADICLE_REGISTRY_ADDRESS,
++        payload: payload.clone(),
++        votingWindowBlocks: 2,
++    }
++    .abi_encode();
++    println!("Patch proposal calldata=0x{}", hex::encode(&create));
++    let created = call(&mut state, 7, validators[0].0, 1, VOTE_ADDRESS, create);
++    assert!(created.is_success(), "{created:?}");
++    assert_eq!(
++        IVote::createProposalWithVotingWindowCall::abi_decode_returns(created.output().unwrap())
++            .unwrap(),
++        U256::ONE
++    );
++    let ballot = IVote::castVoteCall {
++        proposalId: U256::ONE,
++        approve: true,
++    }
++    .abi_encode();
++    assert!(!call(&mut state, 8, outsider, 0, VOTE_ADDRESS, ballot.clone()).is_success());
++    assert!(call(
++        &mut state,
++        8,
++        validators[0].0,
++        2,
++        VOTE_ADDRESS,
++        ballot.clone()
++    )
++    .is_success());
++    let second_ballot = IVote::castVoteCall {
++        proposalId: U256::ONE,
++        approve: approve_second,
++    }
++    .abi_encode();
++    assert!(call(
++        &mut state,
++        8,
++        validators[1].0,
++        0,
++        VOTE_ADDRESS,
++        second_ballot
++    )
++    .is_success());
++    let get = IRadicleRegistry::getPatchApprovalCall {
++        proposalId: U256::ONE,
++    }
++    .abi_encode();
++    let before = call(
++        &mut state,
++        9,
++        outsider,
++        1,
++        RADICLE_REGISTRY_ADDRESS,
++        get.clone(),
++    );
++    assert!(before.is_success());
++    assert!(
++        !IRadicleRegistry::getPatchApprovalCall::abi_decode_returns(before.output().unwrap())
++            .unwrap()
++            .approved
++    );
++
++    let block_context = BlockContext::new(
++        10,
++        1_700_000_010,
++        CHAIN_ID,
++        validators[0].0,
++        validators.iter().map(|v| v.0).collect(),
++    );
++    run_atomic_storage_hooks(&mut state, block_context, |ctx| {
++        run_outbe_pre_execution_hooks(ctx, None)
++    })
++    .expect("actual begin-block hooks finalize patch Vote");
++    let after = call(&mut state, 10, outsider, 2, RADICLE_REGISTRY_ADDRESS, get);
++    assert!(after.is_success(), "{after:?}");
++    let approval =
++        IRadicleRegistry::getPatchApprovalCall::abi_decode_returns(after.output().unwrap())
++            .unwrap();
++    let proposal = call(
++        &mut state,
++        10,
++        outsider,
++        3,
++        VOTE_ADDRESS,
++        IVote::getProposalCall {
++            proposalId: U256::ONE,
++        }
++        .abi_encode(),
++    );
++    assert!(proposal.is_success());
++    let proposal = IVote::getProposalCall::abi_decode_returns(proposal.output().unwrap()).unwrap();
++    assert_eq!(
++        proposal.status,
++        if approve_second {
++            IVote::ProposalStatus::Approved
++        } else {
++            IVote::ProposalStatus::Expired
++        }
++    );
++    assert_eq!(proposal.state.yes, if approve_second { 2 } else { 1 });
++    assert_eq!(proposal.state.no, if approve_second { 0 } else { 1 });
++    assert_eq!(approval.approved, approve_second);
++    if approve_second {
++        assert_eq!(approval.payload, payload);
++        assert_eq!(approval.approvedHeight, 10);
++        assert_eq!(approval.approvedTimestamp, 1_700_000_010);
++    } else {
++        assert!(approval.payload.is_empty());
++        assert_eq!(approval.approvedHeight, 0);
++    }
++    println!("EVM patch Vote proposal=1 yes={} electorate=3 deadline=9 terminal_height=10 approved={} subject={payload}", if approve_second { 2 } else { 1 }, approval.approved);
++}
+diff --git a/crates/blockchain/evm/src/handlers.rs b/crates/blockchain/evm/src/handlers.rs
+index 05f8e6b3c..54579640c 100644
+--- a/crates/blockchain/evm/src/handlers.rs
++++ b/crates/blockchain/evm/src/handlers.rs
+@@ -13,6 +13,7 @@ pub mod vote {
+     use outbe_primitives::stablecoin::decode_canonical_stablecoin_create;
+     use outbe_primitives::stablecoin_fork::STABLECOIN_CREATE_BOND;
+     use outbe_primitives::storage::StorageHandle;
++    use outbe_radicleregistry::vote_target::RadiclePatchVoteTarget;
+     use outbe_stablecoinfactory::{
+         FactoryReservation, StablecoinFactoryApi, ValidatedStablecoinCreate,
+     };
+@@ -25,12 +26,14 @@ pub mod vote {
+     static UPDATE_VOTE_TARGET: UpdateVoteTarget = UpdateVoteTarget;
+     static GOVERNANCE_VOTE_TARGET: GovernanceVoteTarget = GovernanceVoteTarget;
+     static L2_REGISTRY_VOTE_TARGET: L2RegistryVoteTarget = L2RegistryVoteTarget;
++    static RADICLE_PATCH_VOTE_TARGET: RadiclePatchVoteTarget = RadiclePatchVoteTarget;
+     static STABLECOIN_FACTORY_VOTE_TARGET: StablecoinFactoryVoteTarget =
+         StablecoinFactoryVoteTarget;
+     static ACTIVE_VOTE_TARGETS: &[&dyn VoteTarget] = &[
+         &UPDATE_VOTE_TARGET,
+         &GOVERNANCE_VOTE_TARGET,
+         &L2_REGISTRY_VOTE_TARGET,
++        &RADICLE_PATCH_VOTE_TARGET,
+         &STABLECOIN_FACTORY_VOTE_TARGET,
+     ];
+     static REGISTRY: VoteTargetRegistry = VoteTargetRegistry::new(ACTIVE_VOTE_TARGETS);
+diff --git a/crates/blockchain/radicle/Cargo.toml b/crates/blockchain/radicle/Cargo.toml
+index 51e804c6a..9a5840aa5 100644
+--- a/crates/blockchain/radicle/Cargo.toml
++++ b/crates/blockchain/radicle/Cargo.toml
+@@ -34,6 +34,10 @@ tokio.workspace = true
+ metrics.workspace = true
+ 
+ [dev-dependencies]
++outbe-vote.workspace = true
++alloy-eips.workspace = true
++reth-chainspec.workspace = true
++reth-provider = { workspace = true, features = ["test-utils"] }
+ hex.workspace = true
+ outbe-validatorset = { workspace = true, features = ["test-utils"] }
+ proptest.workspace = true
+diff --git a/crates/blockchain/radicle/src/manager/mod.rs b/crates/blockchain/radicle/src/manager/mod.rs
+index 29939729e..0c16a4fc0 100644
+--- a/crates/blockchain/radicle/src/manager/mod.rs
++++ b/crates/blockchain/radicle/src/manager/mod.rs
+@@ -11,7 +11,7 @@ pub use outbe_radicleregistry::RepoId;
+ pub use snapshot::{RethFinalizedFeed, RethSnapshotReader};
+ pub use types::{
+     BoxFuture, ControlSession, DisconnectDisposition, EndpointResolver, FinalizedBlock,
+-    FinalizedFeed, FinalizedSnapshot, FinalizedValidator, HeartwoodControl, ManagerConfig,
+-    ManagerDependencies, ManagerError, ManagerPhase, ManagerStatus, PhaseError, RepositoryStatus,
+-    RetryPolicy, SessionDirection, SnapshotReader,
++    FinalizedFeed, FinalizedPatchApproval, FinalizedSnapshot, FinalizedValidator, HeartwoodControl,
++    ManagerConfig, ManagerDependencies, ManagerError, ManagerPhase, ManagerStatus, PhaseError,
++    RepositoryStatus, RetryPolicy, SessionDirection, SnapshotReader,
+ };
+diff --git a/crates/blockchain/radicle/src/manager/snapshot.rs b/crates/blockchain/radicle/src/manager/snapshot.rs
+index fa97e75f7..d80d51a6d 100644
+--- a/crates/blockchain/radicle/src/manager/snapshot.rs
++++ b/crates/blockchain/radicle/src/manager/snapshot.rs
+@@ -1,6 +1,6 @@
+ use super::types::{
+-    BoxFuture, FinalizedBlock, FinalizedFeed, FinalizedSnapshot, FinalizedValidator, ManagerError,
+-    SnapshotReader,
++    BoxFuture, FinalizedBlock, FinalizedFeed, FinalizedPatchApproval, FinalizedSnapshot,
++    FinalizedValidator, ManagerError, SnapshotReader,
+ };
+ use crate::endpoint::PeerId;
+ use alloy_primitives::{Address, B256, U256};
+@@ -38,6 +38,71 @@ impl<P> RethSnapshotReader<P> {
+     }
+ }
+ 
++impl<P: StateProviderFactory> RethSnapshotReader<P> {
++    /// Reads an exact canonical finalized snapshot, never latest or pending state.
++    pub fn read_patch_approval(
++        &self,
++        block: FinalizedBlock,
++        proposal_id: U256,
++    ) -> Result<Option<FinalizedPatchApproval>, ManagerError> {
++        let finalized = self
++            .provider
++            .finalized_block_num_hash()
++            .map_err(ManagerError::provider)?
++            .ok_or_else(|| ManagerError::Finality("no finalized block".into()))?;
++        if block.number > finalized.number
++            || self
++                .provider
++                .block_hash(block.number)
++                .map_err(ManagerError::provider)?
++                != Some(block.hash)
++            || self
++                .provider
++                .block_hash(finalized.number)
++                .map_err(ManagerError::provider)?
++                != Some(finalized.hash)
++        {
++            return Err(ManagerError::Finality(
++                "patch approval requires a canonical finalized block".into(),
++            ));
++        }
++        let state = self
++            .provider
++            .state_by_block_hash(block.hash)
++            .map_err(ManagerError::provider)?;
++        read_patch_approval_from_storage(
++            RethStateReader {
++                state: state.as_ref(),
++            },
++            self.chain_id,
++            self.genesis_hash,
++            block,
++            proposal_id,
++        )
++    }
++}
++
++fn read_patch_approval_from_storage(
++    reader: impl StorageReader,
++    chain_id: u64,
++    genesis_hash: B256,
++    block: FinalizedBlock,
++    proposal_id: U256,
++) -> Result<Option<FinalizedPatchApproval>, ManagerError> {
++    let mut storage =
++        ReadOnlyStorageProvider::new_with_chain_identity(reader, chain_id, genesis_hash);
++    let approval = RadicleRegistry::new(StorageHandle::new(&mut storage))
++        .patch_approval(proposal_id)
++        .map_err(snapshot_error)?;
++    match approval {
++        Some(approval) if approval.approved_height > block.number => Err(ManagerError::Snapshot(
++            "approval is newer than its source snapshot".into(),
++        )),
++        Some(approval) => Ok(Some(FinalizedPatchApproval { block, approval })),
++        None => Ok(None),
++    }
++}
++
+ impl<P> SnapshotReader for RethSnapshotReader<P>
+ where
+     P: StateProviderFactory + Send + Sync + 'static,
+@@ -141,6 +206,9 @@ fn snapshot_error(error: impl std::fmt::Display) -> ManagerError {
+     ManagerError::Snapshot(error.to_string())
+ }
+ 
++#[cfg(test)]
++mod approval_tests;
++
+ #[derive(Clone)]
+ pub struct RethFinalizedFeed<P> {
+     provider: P,
+diff --git a/crates/blockchain/radicle/src/manager/snapshot/approval_tests.rs b/crates/blockchain/radicle/src/manager/snapshot/approval_tests.rs
+new file mode 100644
+index 000000000..c957d775e
+--- /dev/null
++++ b/crates/blockchain/radicle/src/manager/snapshot/approval_tests.rs
+@@ -0,0 +1,284 @@
++use super::*;
++use alloy_eips::{BlockNumHash, BlockNumberOrTag};
++use outbe_primitives::{
++    addresses::RADICLE_REGISTRY_ADDRESS,
++    block::{BlockContext, BlockRuntimeContext},
++    storage::hashmap::HashMapStorageProvider,
++};
++use outbe_radicleregistry::{
++    payload::PatchVotePayloadV1, vote_target::RadiclePatchVoteTarget, RepoId,
++};
++use reth_chainspec::ChainInfo;
++use reth_provider::{
++    test_utils::{ExtendedAccount, MockEthProvider},
++    BlockHashReader, BlockNumReader, ProviderError, ProviderResult, StateProviderBox,
++};
++use std::{collections::BTreeMap, sync::Mutex};
++
++/// Distinct immutable states per hash; a latest/pending fallback fails the test.
++struct ApprovalProvider {
++    states: BTreeMap<B256, MockEthProvider>,
++    canonical: BTreeMap<u64, B256>,
++    finalized: Option<BlockNumHash>,
++    reads: Mutex<Vec<B256>>,
++}
++
++impl BlockHashReader for ApprovalProvider {
++    fn block_hash(&self, number: u64) -> ProviderResult<Option<B256>> {
++        Ok(self.canonical.get(&number).copied())
++    }
++    fn canonical_hashes_range(&self, start: u64, end: u64) -> ProviderResult<Vec<B256>> {
++        Ok(self
++            .canonical
++            .range(start..end)
++            .map(|(_, hash)| *hash)
++            .collect())
++    }
++}
++impl BlockNumReader for ApprovalProvider {
++    fn chain_info(&self) -> ProviderResult<ChainInfo> {
++        let (&best_number, &best_hash) = self.canonical.last_key_value().unwrap();
++        Ok(ChainInfo {
++            best_hash,
++            best_number,
++        })
++    }
++    fn best_block_number(&self) -> ProviderResult<u64> {
++        Ok(self.chain_info()?.best_number)
++    }
++    fn last_block_number(&self) -> ProviderResult<u64> {
++        self.best_block_number()
++    }
++    fn block_number(&self, hash: B256) -> ProviderResult<Option<u64>> {
++        Ok(self
++            .canonical
++            .iter()
++            .find_map(|(n, h)| (*h == hash).then_some(*n)))
++    }
++}
++impl BlockIdReader for ApprovalProvider {
++    fn pending_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
++        Ok(None)
++    }
++    fn safe_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
++        Ok(None)
++    }
++    fn finalized_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
++        Ok(self.finalized)
++    }
++}
++impl StateProviderFactory for ApprovalProvider {
++    fn latest(&self) -> ProviderResult<StateProviderBox> {
++        panic!("must read exact hash, not latest")
++    }
++    fn state_by_block_number_or_tag(
++        &self,
++        _: BlockNumberOrTag,
++    ) -> ProviderResult<StateProviderBox> {
++        panic!("must read exact hash, not a number/tag")
++    }
++    fn history_by_block_number(&self, _: u64) -> ProviderResult<StateProviderBox> {
++        panic!("must read exact hash")
++    }
++    fn history_by_block_hash(&self, _: B256) -> ProviderResult<StateProviderBox> {
++        panic!("wrong state API")
++    }
++    fn state_by_block_hash(&self, hash: B256) -> ProviderResult<StateProviderBox> {
++        self.reads.lock().unwrap().push(hash);
++        self.states
++            .get(&hash)
++            .ok_or(ProviderError::BestBlockNotFound)?
++            .latest()
++    }
++    fn pending(&self) -> ProviderResult<StateProviderBox> {
++        panic!("must not read pending state")
++    }
++    fn pending_state_by_hash(&self, _: B256) -> ProviderResult<Option<StateProviderBox>> {
++        panic!("must not read pending state")
++    }
++    fn maybe_pending(&self) -> ProviderResult<Option<StateProviderBox>> {
++        panic!("must not read pending state")
++    }
++}
++
++fn snapshot(provider: &HashMapStorageProvider) -> MockEthProvider {
++    let result = MockEthProvider::new();
++    let mut accounts: BTreeMap<Address, Vec<(B256, U256)>> = BTreeMap::new();
++    for ((address, slot), value) in &provider.storage {
++        accounts
++            .entry(*address)
++            .or_default()
++            .push((B256::from(slot.to_be_bytes::<32>()), *value));
++    }
++    for (address, storage) in accounts {
++        result.add_account(
++            address,
++            ExtendedAccount::new(0, U256::ZERO).extend_storage(storage),
++        );
++    }
++    result
++}
++
++fn block(number: u64) -> FinalizedBlock {
++    FinalizedBlock {
++        number,
++        hash: B256::repeat_byte(number as u8),
++    }
++}
++
++fn fixture() -> (RethSnapshotReader<ApprovalProvider>, String) {
++    use outbe_vote::{
++        handlers::{VoteTarget, VoteTargetRegistry},
++        Vote,
++    };
++    static TARGET: RadiclePatchVoteTarget = RadiclePatchVoteTarget;
++    static HANDLERS: &[&dyn VoteTarget] = &[&TARGET];
++    let registry = VoteTargetRegistry::new(HANDLERS);
++    let payload = String::from_utf8(
++        PatchVotePayloadV1::accept(
++            RepoId::repeat_byte(0xaa),
++            RepoId::repeat_byte(0xbb),
++            RepoId::repeat_byte(0xcc),
++            RepoId::repeat_byte(0xdd),
++        )
++        .encode()
++        .unwrap(),
++    )
++    .unwrap();
++    let owner = Address::repeat_byte(0xff);
++    let voters = [
++        Address::repeat_byte(1),
++        Address::repeat_byte(2),
++        Address::repeat_byte(3),
++    ];
++    let mut storage = HashMapStorageProvider::new(1);
++    storage.set_block_number(1);
++    storage.enter(|s| {
++        let mut vs = ValidatorSet::new(s.clone());
++        vs.config_owner.write(owner).unwrap();
++        vs.set_config_max_validators(4).unwrap();
++        for (i, voter) in voters.iter().enumerate() {
++            vs.register_validator(owner, *voter, &[i as u8 + 1; 48])
++                .unwrap();
++            vs.activate_validator(*voter).unwrap();
++        }
++        let mut repos = RadicleRegistry::new(s.clone());
++        repos.config_max_repositories.write(2).unwrap();
++        repos
++            .register_repository(RepoId::repeat_byte(0xaa), owner)
++            .unwrap();
++        let mut vote = Vote::new(s);
++        let id = vote
++            .create_proposal_with_voting_window(
++                outbe_vote::ProposalSubmission::new(
++                    voters[0],
++                    RADICLE_REGISTRY_ADDRESS,
++                    &payload,
++                    1,
++                ),
++                1,
++                &registry,
++            )
++            .unwrap();
++        assert_eq!(id, U256::ONE);
++        for voter in &voters[..2] {
++            vote.cast_vote_approve(id, *voter, true, 2).unwrap();
++        }
++    });
++    let before = snapshot(&storage);
++    storage.set_block_number(3);
++    storage.enter(|s| {
++        let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(3, 1003, 1), s.clone());
++        Vote::new(s).process_begin_block(&ctx, &registry).unwrap();
++    });
++    let accepted = snapshot(&storage);
++    storage.set_block_number(4);
++    storage.enter(|s| {
++        ValidatorSet::new(s).jail_validator(voters[0]).unwrap();
++    });
++    let later = snapshot(&storage);
++    let provider = ApprovalProvider {
++        states: [
++            (block(2).hash, before),
++            (block(3).hash, accepted),
++            (block(4).hash, later),
++        ]
++        .into(),
++        canonical: [(2, block(2).hash), (3, block(3).hash), (4, block(4).hash)].into(),
++        finalized: Some(BlockNumHash::new(3, block(3).hash)),
++        reads: Mutex::new(vec![]),
++    };
++    (RethSnapshotReader::new(provider, 1, B256::ZERO), payload)
++}
++
++#[test]
++fn exact_finalized_state_does_not_leak_latest_approval_or_revoke_accepted_history() {
++    let (mut reader, payload) = fixture();
++    assert!(reader
++        .read_patch_approval(block(2), U256::ONE)
++        .unwrap()
++        .is_none());
++    let accepted = reader
++        .read_patch_approval(block(3), U256::ONE)
++        .unwrap()
++        .unwrap();
++    assert_eq!(accepted.block, block(3));
++    assert_eq!(accepted.approval.payload, payload);
++    assert_eq!(accepted.approval.approved_height, 3);
++    assert_eq!(accepted.approval.approved_timestamp, 1003);
++    assert!(matches!(
++        reader.read_patch_approval(block(4), U256::ONE),
++        Err(ManagerError::Finality(_))
++    ));
++    reader.provider.finalized = Some(BlockNumHash::new(4, block(4).hash));
++    let later = reader
++        .read_patch_approval(block(4), U256::ONE)
++        .unwrap()
++        .unwrap();
++    assert_eq!(
++        later.approval, accepted.approval,
++        "membership changes do not revoke accepted history"
++    );
++    assert_eq!(
++        reader
++            .read_patch_approval(block(3), U256::ONE)
++            .unwrap()
++            .unwrap(),
++        accepted
++    );
++    assert_eq!(
++        *reader.provider.reads.lock().unwrap(),
++        [block(2).hash, block(3).hash, block(4).hash, block(3).hash]
++    );
++}
++
++#[test]
++fn missing_finality_noncanonical_and_unavailable_snapshots_fail_without_fallback() {
++    let (mut reader, _) = fixture();
++    let wrong = FinalizedBlock {
++        number: 3,
++        hash: B256::repeat_byte(99),
++    };
++    assert!(matches!(
++        reader.read_patch_approval(wrong, U256::ONE),
++        Err(ManagerError::Finality(_))
++    ));
++    reader.provider.finalized = None;
++    assert!(matches!(
++        reader.read_patch_approval(block(3), U256::ONE),
++        Err(ManagerError::Finality(_))
++    ));
++    reader.provider.finalized = Some(BlockNumHash::new(3, B256::repeat_byte(99)));
++    assert!(matches!(
++        reader.read_patch_approval(block(3), U256::ONE),
++        Err(ManagerError::Finality(_))
++    ));
++    assert!(reader.provider.reads.lock().unwrap().is_empty());
++    reader.provider.finalized = Some(BlockNumHash::new(3, block(3).hash));
++    reader.provider.states.remove(&block(3).hash);
++    assert!(matches!(
++        reader.read_patch_approval(block(3), U256::ONE),
++        Err(ManagerError::Provider(_))
++    ));
++    assert_eq!(*reader.provider.reads.lock().unwrap(), [block(3).hash]);
++}
+diff --git a/crates/blockchain/radicle/src/manager/types.rs b/crates/blockchain/radicle/src/manager/types.rs
+index fd265b007..ca09912e2 100644
+--- a/crates/blockchain/radicle/src/manager/types.rs
++++ b/crates/blockchain/radicle/src/manager/types.rs
+@@ -14,6 +14,12 @@ pub struct FinalizedBlock {
+     pub hash: B256,
+ }
+ 
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct FinalizedPatchApproval {
++    pub block: FinalizedBlock,
++    pub approval: outbe_radicleregistry::PatchApprovalRecord,
++}
++
+ #[derive(Clone, Debug, PartialEq, Eq)]
+ pub struct FinalizedValidator {
+     pub address: Address,
+diff --git a/crates/system/radicleregistry/Cargo.toml b/crates/system/radicleregistry/Cargo.toml
+index 33b41e650..2ac6456d9 100644
+--- a/crates/system/radicleregistry/Cargo.toml
++++ b/crates/system/radicleregistry/Cargo.toml
+@@ -10,7 +10,13 @@ alloy-primitives.workspace = true
+ alloy-sol-types.workspace = true
+ outbe-macros.workspace = true
+ outbe-primitives = { workspace = true, features = ["test-utils"] }
++outbe-vote.workspace = true
++serde.workspace = true
++serde_json.workspace = true
+ thiserror.workspace = true
+ 
++[dev-dependencies]
++outbe-validatorset = { workspace = true, features = ["test-utils"] }
++
+ [lints]
+ workspace = true
+diff --git a/crates/system/radicleregistry/src/errors.rs b/crates/system/radicleregistry/src/errors.rs
+index f95b96e52..39f6e92e6 100644
+--- a/crates/system/radicleregistry/src/errors.rs
++++ b/crates/system/radicleregistry/src/errors.rs
+@@ -19,6 +19,14 @@ pub enum RadicleRegistryError {
+     NonZeroStorageKeyTail,
+     #[error("Radicle repository index {index} is inconsistent")]
+     InconsistentRepositoryIndex { index: u32 },
++    #[error("invalid or noncanonical Radicle patch Vote payload")]
++    InvalidPatchPayload,
++    #[error("Radicle patch Vote repository is not registered")]
++    UnknownRepository,
++    #[error("Radicle patch approval does not match the stored Vote proposal")]
++    ApprovalProposalMismatch,
++    #[error("Radicle patch approval is immutable")]
++    ImmutableApproval,
+ }
+ 
+ impl From<RadicleRegistryError> for PrecompileError {
+diff --git a/crates/system/radicleregistry/src/lib.rs b/crates/system/radicleregistry/src/lib.rs
+index 639299efe..192947932 100644
+--- a/crates/system/radicleregistry/src/lib.rs
++++ b/crates/system/radicleregistry/src/lib.rs
+@@ -1,12 +1,15 @@
+ //! Bounded, permissionless, append-only registry of public Heartwood repositories.
+ 
+ pub mod errors;
++pub mod payload;
+ pub mod precompile;
+ pub mod schema;
++pub mod vote_target;
+ 
+ mod runtime;
+ 
+ pub use runtime::{repo_id_from_storage_key, repo_id_storage_key, RepoId, RepositoryRegistration};
++pub use schema::PatchApprovalRecord;
+ pub use schema::RadicleRegistry;
+ 
+ #[cfg(test)]
+diff --git a/crates/system/radicleregistry/src/payload.rs b/crates/system/radicleregistry/src/payload.rs
+new file mode 100644
+index 000000000..a4d40d16a
+--- /dev/null
++++ b/crates/system/radicleregistry/src/payload.rs
+@@ -0,0 +1,106 @@
++//! Exact, bounded Vote subject; Git existence and signatures are checked after finality.
++
++use outbe_primitives::error::Result;
++use serde::{Deserialize, Serialize};
++
++use crate::{errors::RadicleRegistryError, RepoId};
++
++pub const MAX_PATCH_VOTE_PAYLOAD_BYTES: usize = 512;
++
++#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase", deny_unknown_fields)]
++pub struct PatchVotePayloadV1 {
++    version: u8,
++    pub repo_id: RepoId,
++    pub patch_id: RepoId,
++    pub revision_id: RepoId,
++    action: String,
++    target_branch: String,
++    pub expected_target_head: RepoId,
++}
++
++impl PatchVotePayloadV1 {
++    pub fn accept(repo: RepoId, patch: RepoId, revision: RepoId, target: RepoId) -> Self {
++        Self {
++            version: 1,
++            repo_id: repo,
++            patch_id: patch,
++            revision_id: revision,
++            action: "accept".into(),
++            target_branch: "main".into(),
++            expected_target_head: target,
++        }
++    }
++
++    pub fn decode(payload: &[u8]) -> Result<Self> {
++        if payload.len() > MAX_PATCH_VOTE_PAYLOAD_BYTES {
++            return Err(RadicleRegistryError::InvalidPatchPayload.into());
++        }
++        let decoded: Self = serde_json::from_slice(payload)
++            .map_err(|_| RadicleRegistryError::InvalidPatchPayload)?;
++        // One byte representation excludes alternate field orders, escapes and OID encodings.
++        if decoded.encode()? != payload {
++            return Err(RadicleRegistryError::InvalidPatchPayload.into());
++        }
++        Ok(decoded)
++    }
++
++    pub fn encode(&self) -> Result<Vec<u8>> {
++        if self.version != 1
++            || self.action != "accept"
++            || self.target_branch != "main"
++            || self.repo_id.is_zero()
++            || self.patch_id.is_zero()
++            || self.revision_id.is_zero()
++            || self.expected_target_head.is_zero()
++        {
++            return Err(RadicleRegistryError::InvalidPatchPayload.into());
++        }
++        serde_json::to_vec(self).map_err(|_| RadicleRegistryError::InvalidPatchPayload.into())
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn exact_subject_roundtrip_and_noncanonical_inputs_are_rejected() {
++        let subject = PatchVotePayloadV1::accept(
++            RepoId::repeat_byte(0xaa),
++            RepoId::repeat_byte(0xbb),
++            RepoId::repeat_byte(0xcc),
++            RepoId::repeat_byte(0xdd),
++        );
++        let encoded = String::from_utf8(subject.encode().unwrap()).unwrap();
++        assert_eq!(encoded, format!(
++            "{{\"version\":1,\"repoId\":\"0x{}\",\"patchId\":\"0x{}\",\"revisionId\":\"0x{}\",\"action\":\"accept\",\"targetBranch\":\"main\",\"expectedTargetHead\":\"0x{}\"}}",
++            "aa".repeat(20), "bb".repeat(20), "cc".repeat(20), "dd".repeat(20)
++        ));
++        assert_eq!(
++            PatchVotePayloadV1::decode(encoded.as_bytes()).unwrap(),
++            subject
++        );
++        for bad in [
++            format!(" {encoded}"),
++            encoded.replace("\"version\":1", "\"version\":1,\"version\":1"),
++            encoded.replace("\"version\":1", "\"version\":2"),
++            encoded.replace("\"version\":1", "\"extra\":0,\"version\":1"),
++            encoded.replace("\"accept\"", "\"merge\""),
++            encoded.replace("\"main\"", "\"other\""),
++            encoded.replace(&"aa".repeat(20), &"AA".repeat(20)),
++            encoded.replace(&"bb".repeat(20), &"00".repeat(20)),
++            encoded.replace("\"version\":1", "\"version\":1.0"),
++            " ".repeat(MAX_PATCH_VOTE_PAYLOAD_BYTES + 1),
++        ] {
++            assert!(PatchVotePayloadV1::decode(bad.as_bytes()).is_err(), "{bad}");
++        }
++        let revised = PatchVotePayloadV1::accept(
++            subject.repo_id,
++            subject.patch_id,
++            RepoId::repeat_byte(0xee),
++            subject.expected_target_head,
++        );
++        assert_ne!(revised.encode().unwrap(), subject.encode().unwrap());
++    }
++}
+diff --git a/crates/system/radicleregistry/src/precompile.rs b/crates/system/radicleregistry/src/precompile.rs
+index e909e0f2f..b18ef2939 100644
+--- a/crates/system/radicleregistry/src/precompile.rs
++++ b/crates/system/radicleregistry/src/precompile.rs
+@@ -41,6 +41,29 @@ pub fn dispatch(
+                 }
+                 registryGeneration(call) => view(call, |_| registry.registry_generation.read()),
+                 maxRepositories(call) => view(call, |_| registry.config_max_repositories.read()),
++                getPatchApproval(call) => view(call, |call| {
++                    let approval = registry.patch_approval(call.proposalId)?;
++                    Ok(match approval {
++                        Some(approval) => IRadicleRegistry::PatchApprovalInfo {
++                            approved: true,
++                            payload: approval.payload,
++                            approvedHeight: approval.approved_height,
++                            approvedTimestamp: approval.approved_timestamp,
++                        },
++                        None => IRadicleRegistry::PatchApprovalInfo {
++                            approved: false,
++                            payload: String::new(),
++                            approvedHeight: 0,
++                            approvedTimestamp: 0,
++                        },
++                    })
++                }),
++                patchExecutionStage(call) => view(call, |call| {
++                    if registry.patch_approval(call.proposalId)?.is_none() {
++                        return Ok(0u8);
++                    }
++                    registry.patch_execution_stage.read(&call.proposalId)
++                }),
+             }
+         },
+     )
+diff --git a/crates/system/radicleregistry/src/runtime.rs b/crates/system/radicleregistry/src/runtime.rs
+index 404ea1551..f7311ab68 100644
+--- a/crates/system/radicleregistry/src/runtime.rs
++++ b/crates/system/radicleregistry/src/runtime.rs
+@@ -1,4 +1,4 @@
+-use alloy_primitives::{Address, FixedBytes, B256};
++use alloy_primitives::{Address, FixedBytes, B256, U256};
+ use outbe_primitives::error::Result;
+ 
+ use crate::{errors::RadicleRegistryError, precompile::IRadicleRegistry, schema::RadicleRegistry};
+@@ -26,6 +26,29 @@ pub fn repo_id_from_storage_key(key: B256) -> Result<RepoId> {
+ }
+ 
+ impl RadicleRegistry<'_> {
++    /// Only a terminal Approved Vote exposes an immutable network permission.
++    /// Consumers must obtain this record from their exact finalized snapshot.
++    pub fn patch_approval(&self, proposal_id: U256) -> Result<Option<crate::PatchApprovalRecord>> {
++        let Some(approval) = self.patch_approvals.get(proposal_id)? else {
++            return Ok(None);
++        };
++        let proposal = outbe_vote::Vote::new(self.storage.clone())
++            .proposals
++            .get(proposal_id)?
++            .ok_or(RadicleRegistryError::ApprovalProposalMismatch)?;
++        if proposal.proposal_status()? != outbe_vote::ProposalStatus::Approved {
++            return Ok(None);
++        }
++        if proposal.target_module != outbe_primitives::addresses::RADICLE_REGISTRY_ADDRESS
++            || proposal.payload != approval.payload
++            || approval.approved_height <= proposal.voting_deadline_height
++        {
++            return Err(RadicleRegistryError::ApprovalProposalMismatch.into());
++        }
++        crate::payload::PatchVotePayloadV1::decode(approval.payload.as_bytes())?;
++        Ok(Some(approval))
++    }
++
+     pub fn register_repository(
+         &mut self,
+         repo_id: RepoId,
+diff --git a/crates/system/radicleregistry/src/schema.rs b/crates/system/radicleregistry/src/schema.rs
+index 097cc74d6..21e6b72ee 100644
+--- a/crates/system/radicleregistry/src/schema.rs
++++ b/crates/system/radicleregistry/src/schema.rs
+@@ -1,7 +1,24 @@
+-use alloy_primitives::{Address, B256};
+-use outbe_macros::{contract, storage_schema};
++use alloy_primitives::{Address, B256, U256};
++use outbe_macros::{contract, storage_record, storage_schema};
+ use outbe_primitives::addresses::RADICLE_REGISTRY_ADDRESS;
+ 
++/// Approved decision awaits its separate offchain execution.
++pub const PATCH_EXECUTION_PENDING: u8 = 1;
++
++/// Immutable decision. Execution and merge progress are stored separately.
++#[derive(Clone, Debug, PartialEq, Eq)]
++#[storage_record(exists_field = approved_height)]
++pub struct PatchApprovalRecord {
++    #[key]
++    pub proposal_id: U256,
++    #[attribute(order = 0)]
++    pub payload: String,
++    #[attribute(order = 1)]
++    pub approved_height: u64,
++    #[attribute(order = 2)]
++    pub approved_timestamp: u64,
++}
++
+ /// Consensus storage layout for the V1 Radicle repository registry.
+ ///
+ /// Slots:
+@@ -11,6 +28,8 @@ use outbe_primitives::addresses::RADICLE_REGISTRY_ADDRESS;
+ /// - 3 repository_registrant
+ /// - 4 registry_generation
+ /// - 5 config_max_repositories
++/// - 6..=8 patch_approvals (immutable canonical payload, height, timestamp)
++/// - 9 patch_execution_stage (separate from immutable approval)
+ #[storage_schema]
+ #[contract(addr = RADICLE_REGISTRY_ADDRESS)]
+ pub struct RadicleRegistry {
+@@ -26,4 +45,8 @@ pub struct RadicleRegistry {
+     pub registry_generation: outbe_primitives::storage::dsl::Value<u64>,
+     #[attribute(order = 5)]
+     pub config_max_repositories: outbe_primitives::storage::dsl::Value<u32>,
++    #[attribute(order = 6)]
++    pub patch_approvals: outbe_primitives::storage::dsl::Map<U256, PatchApprovalRecord>,
++    #[attribute(order = 7)]
++    pub patch_execution_stage: outbe_primitives::storage::dsl::Map<U256, u8>,
+ }
+diff --git a/crates/system/radicleregistry/src/tests.rs b/crates/system/radicleregistry/src/tests.rs
+index 0272fb0ed..95d901054 100644
+--- a/crates/system/radicleregistry/src/tests.rs
++++ b/crates/system/radicleregistry/src/tests.rs
+@@ -13,6 +13,8 @@ use crate::{
+ 
+ const CHAIN_ID: u64 = 1;
+ 
++mod patch_vote;
++
+ fn repo(byte: u8) -> FixedBytes<20> {
+     FixedBytes::repeat_byte(byte)
+ }
+@@ -125,6 +127,8 @@ fn storage_layout_slots_zero_through_five_are_stable() {
+         assert_eq!(registry.repository_registrant.base_slot(), U256::from(3));
+         assert_eq!(registry.registry_generation.slot(), U256::from(4));
+         assert_eq!(registry.config_max_repositories.slot(), U256::from(5));
++        assert_eq!(registry.patch_approvals.base_slot(), U256::from(6));
++        assert_eq!(registry.patch_execution_stage.base_slot(), U256::from(9));
+     });
+ }
+ 
+diff --git a/crates/system/radicleregistry/src/tests/patch_vote.rs b/crates/system/radicleregistry/src/tests/patch_vote.rs
+new file mode 100644
+index 000000000..bdbf2a2d4
+--- /dev/null
++++ b/crates/system/radicleregistry/src/tests/patch_vote.rs
+@@ -0,0 +1,387 @@
++use super::*;
++use outbe_primitives::{
++    addresses::RADICLE_REGISTRY_ADDRESS,
++    block::{BlockContext, BlockRuntimeContext},
++    error::Result,
++    storage::PrecompileStorageProvider,
++};
++use outbe_validatorset::contract::ValidatorSet;
++use outbe_vote::{
++    handlers::{TargetElectorate, VoteTarget, VoteTargetContext, VoteTargetRegistry},
++    precompile::{dispatch_with_handlers, IVote},
++    ProposalStatus, Vote,
++};
++
++use crate::{payload::PatchVotePayloadV1, vote_target::RadiclePatchVoteTarget};
++
++static TARGET: RadiclePatchVoteTarget = RadiclePatchVoteTarget;
++static HANDLERS: &[&dyn VoteTarget] = &[&TARGET];
++static REGISTRY: VoteTargetRegistry = VoteTargetRegistry::new(HANDLERS);
++const OWNER: Address = Address::repeat_byte(0xff);
++const A: Address = Address::repeat_byte(1);
++const B: Address = Address::repeat_byte(2);
++const C: Address = Address::repeat_byte(3);
++const D: Address = Address::repeat_byte(4);
++
++fn setup() -> HashMapStorageProvider {
++    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
++    provider.set_block_number(10);
++    provider.enter(|storage| {
++        let mut validators = ValidatorSet::new(storage.clone());
++        validators.config_owner.write(OWNER).unwrap();
++        validators.set_config_max_validators(10).unwrap();
++        for (i, address) in [A, B, C].into_iter().enumerate() {
++            let mut key = [0; 48];
++            key[0] = i as u8 + 1;
++            validators.register_validator(OWNER, address, &key).unwrap();
++            validators.activate_validator(address).unwrap();
++        }
++        let mut registry = RadicleRegistry::new(storage);
++        registry.config_max_repositories.write(2).unwrap();
++        registry.register_repository(repo(0xaa), A).unwrap();
++    });
++    provider
++}
++
++fn subject() -> String {
++    String::from_utf8(
++        PatchVotePayloadV1::accept(repo(0xaa), repo(0xbb), repo(0xcc), repo(0xdd))
++            .encode()
++            .unwrap(),
++    )
++    .unwrap()
++}
++
++fn create(provider: &mut HashMapStorageProvider, payload: String) -> Result<U256> {
++    let call = IVote::createProposalWithVotingWindowCall {
++        targetModule: RADICLE_REGISTRY_ADDRESS,
++        payload,
++        votingWindowBlocks: 2,
++    };
++    let output = provider.enter(|storage| {
++        dispatch_with_handlers(storage, &call.abi_encode(), A, U256::ZERO, &REGISTRY)
++    })?;
++    Ok(IVote::createProposalWithVotingWindowCall::abi_decode_returns(&output).unwrap())
++}
++
++fn cast(provider: &mut HashMapStorageProvider, id: U256, voter: Address, yes: bool) -> Result<()> {
++    provider.set_block_number(11);
++    let call = IVote::castVoteCall {
++        proposalId: id,
++        approve: yes,
++    };
++    provider
++        .enter(|storage| {
++            dispatch_with_handlers(storage, &call.abi_encode(), voter, U256::ZERO, &REGISTRY)
++        })
++        .map(|_| ())
++}
++
++fn finalize(provider: &mut HashMapStorageProvider, height: u64) -> Result<()> {
++    provider.set_block_number(height);
++    provider.enter(|storage| {
++        let ctx = BlockRuntimeContext::new(
++            BlockContext::empty_for_tests(height, 1_700_000_000 + height, CHAIN_ID),
++            storage.clone(),
++        );
++        Vote::new(storage).process_begin_block(&ctx, &REGISTRY)
++    })
++}
++
++fn approval(
++    provider: &mut HashMapStorageProvider,
++    id: U256,
++) -> IRadicleRegistry::PatchApprovalInfo {
++    let call = IRadicleRegistry::getPatchApprovalCall { proposalId: id };
++    let output = provider
++        .enter(|storage| dispatch(storage, &call.abi_encode(), Address::ZERO, U256::ZERO))
++        .unwrap();
++    IRadicleRegistry::getPatchApprovalCall::abi_decode_returns(&output).unwrap()
++}
++
++#[test]
++fn abi_vote_approves_exact_revision_once_only_after_deadline() {
++    let mut provider = setup();
++    let payload = subject();
++    let id = create(&mut provider, payload.clone()).unwrap();
++    assert_eq!(id, U256::ONE);
++    assert_eq!(TARGET.electorate(), TargetElectorate::ActiveConsensus);
++    assert!(!approval(&mut provider, id).approved);
++    provider.enter(|storage| {
++        assert_eq!(
++            RadicleRegistry::new(storage)
++                .patch_execution_stage
++                .read(&id)
++                .unwrap(),
++            0
++        );
++    });
++    cast(&mut provider, id, A, true).unwrap();
++    assert!(cast(&mut provider, id, A, true).is_err());
++    cast(&mut provider, id, B, true).unwrap();
++    finalize(&mut provider, 12).unwrap();
++    assert!(!approval(&mut provider, id).approved);
++    finalize(&mut provider, 13).unwrap();
++    let approved = approval(&mut provider, id);
++    assert!(approved.approved);
++    assert_eq!(approved.payload, payload);
++    assert_eq!(approved.approvedHeight, 13);
++    assert_eq!(approved.approvedTimestamp, 1_700_000_013);
++    let stage = IRadicleRegistry::patchExecutionStageCall { proposalId: id }.abi_encode();
++    let stage = provider
++        .enter(|storage| dispatch(storage, &stage, Address::ZERO, U256::ZERO))
++        .unwrap();
++    assert_eq!(
++        IRadicleRegistry::patchExecutionStageCall::abi_decode_returns(&stage).unwrap(),
++        crate::schema::PATCH_EXECUTION_PENDING
++    );
++    let decoded = PatchVotePayloadV1::decode(approved.payload.as_bytes()).unwrap();
++    assert_eq!(decoded.patch_id, repo(0xbb));
++    assert_eq!(decoded.revision_id, repo(0xcc));
++    assert_eq!(decoded.expected_target_head, repo(0xdd));
++    finalize(&mut provider, 14).unwrap();
++    assert_eq!(approval(&mut provider, id), approved);
++    assert!(!approval(&mut provider, id + U256::ONE).approved);
++
++    provider.enter(|storage| {
++        let registry = RadicleRegistry::new(storage.clone());
++        let before = registry.patch_approval(id).unwrap().unwrap();
++        let ctx =
++            BlockRuntimeContext::new(BlockContext::empty_for_tests(14, 99, CHAIN_ID), storage);
++        let context = VoteTargetContext {
++            proposer: A,
++            attached_value: U256::ZERO,
++            block_number: 14,
++            chain_id: CHAIN_ID,
++        };
++        TARGET
++            .handle_approved(&ctx, id, payload.as_bytes(), context)
++            .unwrap();
++        let substituted = payload.replace(&"cc".repeat(20), &"ee".repeat(20));
++        assert!(TARGET
++            .handle_approved(&ctx, id, substituted.as_bytes(), context)
++            .is_err());
++        assert_eq!(registry.patch_approval(id).unwrap().unwrap(), before);
++    });
++}
++
++#[test]
++fn outsiders_pending_and_retained_members_cannot_vote_or_inflate_denominator() {
++    let mut provider = setup();
++    provider.enter(|storage| {
++        let mut validators = ValidatorSet::new(storage);
++        validators.register_validator(OWNER, D, &[4; 48]).unwrap();
++        validators.activate_validator(D).unwrap();
++        validators.jail_validator(D).unwrap();
++        assert!(validators.is_consensus_participant(D).unwrap());
++        assert!(!validators
++            .validator_lifecycle(D)
++            .unwrap()
++            .is_active_status());
++        validators
++            .register_validator(OWNER, OWNER, &[5; 48])
++            .unwrap();
++        validators.mark_pending(OWNER).unwrap();
++    });
++    let id = create(&mut provider, subject()).unwrap();
++    for denied in [D, OWNER, Address::ZERO] {
++        assert!(cast(&mut provider, id, denied, true).is_err());
++    }
++    cast(&mut provider, id, A, true).unwrap();
++    cast(&mut provider, id, B, true).unwrap();
++    provider.enter(|storage| {
++        let vote = Vote::new(storage);
++        assert_eq!(vote.eligible_validator_addresses(id).unwrap(), [A, B, C]);
++        assert_eq!(vote.get_proposal(id).unwrap().unwrap().state.yes, 2);
++    });
++    finalize(&mut provider, 13).unwrap();
++    assert!(
++        approval(&mut provider, id).approved,
++        "2/3 active voters suffice despite 4 effective signers"
++    );
++}
++
++#[test]
++fn tally_rechecks_current_membership_and_expired_decision_grants_no_permission() {
++    let mut provider = setup();
++    let id = create(&mut provider, subject()).unwrap();
++    cast(&mut provider, id, A, true).unwrap();
++    cast(&mut provider, id, B, true).unwrap();
++    provider.enter(|storage| {
++        ValidatorSet::new(storage.clone())
++            .jail_validator(B)
++            .unwrap();
++        let vote = Vote::new(storage);
++        assert_eq!(vote.eligible_validator_addresses(id).unwrap(), [A, C]);
++        assert_eq!(vote.get_proposal(id).unwrap().unwrap().state.yes, 1);
++    });
++    finalize(&mut provider, 13).unwrap();
++    assert!(!approval(&mut provider, id).approved);
++    provider.enter(|storage| {
++        assert_eq!(
++            Vote::new(storage.clone())
++                .get_proposal(id)
++                .unwrap()
++                .unwrap()
++                .status,
++            ProposalStatus::Expired
++        );
++        assert!(RadicleRegistry::new(storage)
++            .patch_approvals
++            .get(id)
++            .unwrap()
++            .is_none());
++    });
++}
++
++#[test]
++fn pending_joiner_votes_only_after_activation_and_changes_current_quorum() {
++    for joiner_votes in [false, true] {
++        let mut provider = setup();
++        provider.enter(|storage| {
++            let mut validators = ValidatorSet::new(storage);
++            validators.register_validator(OWNER, D, &[4; 48]).unwrap();
++            validators.mark_pending(D).unwrap();
++        });
++        let id = create(&mut provider, subject()).unwrap();
++        assert!(cast(&mut provider, id, D, true).is_err());
++        cast(&mut provider, id, A, true).unwrap();
++        cast(&mut provider, id, B, true).unwrap();
++        provider.enter(|storage| ValidatorSet::new(storage).activate_validator(D).unwrap());
++        if joiner_votes {
++            cast(&mut provider, id, D, true).unwrap();
++        }
++        provider.enter(|storage| {
++            let vote = Vote::new(storage);
++            assert_eq!(vote.eligible_validator_addresses(id).unwrap(), [A, B, C, D]);
++            assert_eq!(
++                vote.get_proposal(id).unwrap().unwrap().state.yes,
++                if joiner_votes { 3 } else { 2 }
++            );
++        });
++        finalize(&mut provider, 13).unwrap();
++        assert_eq!(approval(&mut provider, id).approved, joiner_votes);
++    }
++}
++
++#[test]
++fn unknown_repository_reservation_rolls_back_proposal_and_electorate() {
++    let mut provider = setup();
++    let unknown = subject().replace(&"aa".repeat(20), &"99".repeat(20));
++    let before = provider.storage.clone();
++    assert!(create(&mut provider, unknown).is_err());
++    assert_eq!(provider.storage, before);
++    let id = create(&mut provider, subject()).unwrap();
++    assert_eq!(id, U256::ONE);
++    provider.enter(|storage| {
++        assert_eq!(Vote::new(storage).proposal_electorate.read(&id).unwrap(), 1);
++    });
++}
++
++#[test]
++fn approval_row_alone_does_not_authorize_pending_expired_or_error_proposals() {
++    let mut provider = setup();
++    let payload = subject();
++    let id = create(&mut provider, payload.clone()).unwrap();
++    provider.enter(|storage| {
++        let registry = RadicleRegistry::new(storage.clone());
++        registry
++            .patch_approvals
++            .create(&crate::PatchApprovalRecord {
++                proposal_id: id,
++                payload,
++                approved_height: 13,
++                approved_timestamp: 1_700_000_013,
++            })
++            .unwrap();
++        let mut vote = Vote::new(storage);
++        for status in [
++            ProposalStatus::Pending,
++            ProposalStatus::Expired,
++            ProposalStatus::Error,
++        ] {
++            vote.set_proposal_status(id, status).unwrap();
++            assert!(registry.patch_approval(id).unwrap().is_none(), "{status:?}");
++        }
++    });
++}
++
++#[test]
++fn every_terminal_mutation_failure_rolls_back_approval_status_and_events() {
++    let mut succeeded = false;
++    for operation in 0..128 {
++        let mut provider = setup();
++        let id = create(&mut provider, subject()).unwrap();
++        cast(&mut provider, id, A, true).unwrap();
++        cast(&mut provider, id, B, true).unwrap();
++        let before = provider.storage.clone();
++        let events = provider.events.clone();
++        provider.fail_after_mutation_at(operation);
++        let result = finalize(&mut provider, 13);
++        provider.clear_mutation_failure();
++        if result.is_ok() {
++            assert!(operation > 0);
++            assert!(approval(&mut provider, id).approved);
++            succeeded = true;
++            break;
++        }
++        assert_eq!(provider.storage, before, "mutation {operation}");
++        assert_eq!(provider.events, events, "events at mutation {operation}");
++        assert!(!approval(&mut provider, id).approved);
++    }
++    assert!(
++        succeeded,
++        "must exercise failures through the last mutation"
++    );
++}
++
++#[test]
++fn approval_execution_has_bounded_storage_gas() {
++    let mut provider = setup();
++    let id = create(&mut provider, subject()).unwrap();
++    cast(&mut provider, id, A, true).unwrap();
++    cast(&mut provider, id, B, true).unwrap();
++    provider.enable_production_storage_gas_metering();
++    provider.set_gas_limit(1_000_000);
++    finalize(&mut provider, 13).unwrap();
++    let used = provider.gas_used();
++    assert!(used > 0 && used < 1_000_000, "gas={used}");
++    assert!(approval(&mut provider, id).approved);
++}
++
++#[test]
++fn maximum_electorate_has_bounded_cast_and_tally_storage_gas() {
++    let mut provider = setup();
++    let mut electorate = vec![A, B, C];
++    provider.enter(|storage| {
++        let mut validators = ValidatorSet::new(storage);
++        validators.set_config_max_validators(256).unwrap();
++        for i in 3u16..256 {
++            let mut address = [0; 20];
++            address[..2].copy_from_slice(&i.to_be_bytes());
++            address[19] = 0x44;
++            let address = Address::from(address);
++            let mut key = [0; 48];
++            key[..2].copy_from_slice(&i.to_be_bytes());
++            key[47] = 0x55;
++            validators.register_validator(OWNER, address, &key).unwrap();
++            validators.activate_validator(address).unwrap();
++            electorate.push(address);
++        }
++    });
++    let id = create(&mut provider, subject()).unwrap();
++    provider.enable_production_storage_gas_metering();
++    let mut maximum_cast_gas = 0;
++    for voter in electorate.into_iter().take(171) {
++        provider.set_gas_limit(2_000_000);
++        cast(&mut provider, id, voter, true).unwrap();
++        maximum_cast_gas = maximum_cast_gas.max(provider.gas_used());
++    }
++    provider.set_gas_limit(5_000_000);
++    finalize(&mut provider, 13).unwrap();
++    let tally_gas = provider.gas_used();
++    assert!(maximum_cast_gas > 0 && maximum_cast_gas < 2_000_000);
++    assert!(tally_gas > 0 && tally_gas < 5_000_000);
++    assert!(approval(&mut provider, id).approved);
++    println!("Patch electorate n=256 yes=171 maximum_cast_storage_gas={maximum_cast_gas} terminal_storage_gas={tally_gas}");
++}
+diff --git a/crates/system/radicleregistry/src/vote_target.rs b/crates/system/radicleregistry/src/vote_target.rs
+new file mode 100644
+index 000000000..7c9946baf
+--- /dev/null
++++ b/crates/system/radicleregistry/src/vote_target.rs
+@@ -0,0 +1,99 @@
++//! Network decisions on exact patch revisions; no Git, signing or network I/O.
++
++use alloy_primitives::{Address, U256};
++use outbe_primitives::{
++    addresses::RADICLE_REGISTRY_ADDRESS, block::BlockRuntimeContext, error::Result,
++    storage::StorageHandle,
++};
++use outbe_vote::{
++    handlers::{TargetElectorate, TargetExecutionOutcome, VoteTarget, VoteTargetContext},
++    schema::{ProposalStatus, Vote},
++};
++
++use crate::{
++    errors::RadicleRegistryError, payload::PatchVotePayloadV1, repo_id_storage_key,
++    PatchApprovalRecord, RadicleRegistry,
++};
++
++pub struct RadiclePatchVoteTarget;
++
++impl VoteTarget for RadiclePatchVoteTarget {
++    fn target_module(&self) -> Address {
++        RADICLE_REGISTRY_ADDRESS
++    }
++
++    fn electorate(&self) -> TargetElectorate {
++        TargetElectorate::ActiveConsensus
++    }
++
++    fn validate(&self, payload: &[u8], _context: VoteTargetContext) -> Result<()> {
++        PatchVotePayloadV1::decode(payload).map(|_| ())
++    }
++
++    fn reserve(
++        &self,
++        storage: StorageHandle<'_>,
++        _proposal_id: U256,
++        payload: &[u8],
++        _context: VoteTargetContext,
++    ) -> Result<()> {
++        let subject = PatchVotePayloadV1::decode(payload)?;
++        if RadicleRegistry::new(storage)
++            .repository_index
++            .read(&repo_id_storage_key(subject.repo_id))?
++            == 0
++        {
++            return Err(RadicleRegistryError::UnknownRepository.into());
++        }
++        Ok(())
++    }
++
++    fn handle_approved(
++        &self,
++        ctx: &BlockRuntimeContext,
++        proposal_id: U256,
++        payload: &[u8],
++        context: VoteTargetContext,
++    ) -> Result<TargetExecutionOutcome> {
++        let subject = PatchVotePayloadV1::decode(payload)?;
++        let proposal = Vote::new(ctx.storage.clone())
++            .proposals
++            .get(proposal_id)?
++            .ok_or(RadicleRegistryError::ApprovalProposalMismatch)?;
++        if proposal.target_module != RADICLE_REGISTRY_ADDRESS
++            || proposal.payload.as_bytes() != payload
++            || proposal.proposer != context.proposer
++            || !matches!(
++                proposal.proposal_status()?,
++                ProposalStatus::Pending | ProposalStatus::Approved
++            )
++            || ctx.block.block_number <= proposal.voting_deadline_height
++        {
++            return Err(RadicleRegistryError::ApprovalProposalMismatch.into());
++        }
++        let registry = RadicleRegistry::new(ctx.storage.clone());
++        if registry
++            .repository_index
++            .read(&repo_id_storage_key(subject.repo_id))?
++            == 0
++        {
++            return Err(RadicleRegistryError::UnknownRepository.into());
++        }
++        if let Some(existing) = registry.patch_approvals.get(proposal_id)? {
++            if existing.payload.as_bytes() != payload {
++                return Err(RadicleRegistryError::ImmutableApproval.into());
++            }
++            return Ok(TargetExecutionOutcome::Applied);
++        }
++        registry.patch_approvals.create(&PatchApprovalRecord {
++            proposal_id,
++            payload: proposal.payload,
++            approved_height: ctx.block.block_number,
++            approved_timestamp: ctx.block.timestamp,
++        })?;
++        registry
++            .patch_execution_stage
++            .write(&proposal_id, crate::schema::PATCH_EXECUTION_PENDING)?;
++        Ok(TargetExecutionOutcome::Applied)
++    }
++}
+diff --git a/crates/system/vote/src/errors.rs b/crates/system/vote/src/errors.rs
+index 7900422bb..b6077d727 100644
+--- a/crates/system/vote/src/errors.rs
++++ b/crates/system/vote/src/errors.rs
+@@ -33,6 +33,8 @@ pub enum VoteError {
+     InvalidProposalStatus,
+     #[error("invalid vote kind")]
+     InvalidVoteKind,
++    #[error("invalid stored proposal electorate")]
++    InvalidElectorate,
+     #[error("invalid proposal bond settlement")]
+     InvalidBondSettlement,
+     #[error("proposal counter is exhausted")]
+diff --git a/crates/system/vote/src/handlers.rs b/crates/system/vote/src/handlers.rs
+index 9342fc32e..69c8f7a81 100644
+--- a/crates/system/vote/src/handlers.rs
++++ b/crates/system/vote/src/handlers.rs
+@@ -18,6 +18,25 @@ pub enum TargetAdmission {
+     PublicBonded { amount: U256 },
+ }
+ 
++/// Electorate selected by the target and persisted with proposal admission.
++/// Zero preserves the ACTIVE-only policy of existing proposals and targets.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++#[repr(u8)]
++pub enum TargetElectorate {
++    Active = 0,
++    ActiveConsensus = 1,
++}
++
++impl TargetElectorate {
++    pub(crate) fn from_stored(value: u8) -> Result<Self> {
++        match value {
++            0 => Ok(Self::Active),
++            1 => Ok(Self::ActiveConsensus),
++            _ => Err(VoteError::InvalidElectorate.into()),
++        }
++    }
++}
++
+ /// Consensus context passed explicitly to target validation and execution.
+ #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+ pub struct VoteTargetContext {
+@@ -59,6 +78,11 @@ pub trait VoteTarget: Send + Sync {
+         TargetAdmission::ActiveValidatorOnly
+     }
+ 
++    /// Controls both cast eligibility and the exact tally denominator.
++    fn electorate(&self) -> TargetElectorate {
++        TargetElectorate::Active
++    }
++
+     /// Fail-fast validation used during proposal creation.
+     fn validate(&self, payload: &[u8], context: VoteTargetContext) -> Result<()>;
+ 
+diff --git a/crates/system/vote/src/runtime.rs b/crates/system/vote/src/runtime.rs
+index f7dd38863..feac18d0f 100644
+--- a/crates/system/vote/src/runtime.rs
++++ b/crates/system/vote/src/runtime.rs
+@@ -17,8 +17,7 @@ use crate::handlers::{
+ use crate::notify::ProposalFinalization;
+ use crate::schema::{BondSettlement, Vote};
+ use crate::state::{
+-    active_validator_addresses, calculate_vote_tally, ProposalBond, ProposalStatus,
+-    ProposalSubmission, VoteKind,
++    calculate_vote_tally, ProposalBond, ProposalStatus, ProposalSubmission, VoteKind,
+ };
+ 
+ /// Returns `Ok(())` when `caller` is a registered validator with `status == ACTIVE`.
+@@ -233,6 +232,8 @@ impl Vote<'_> {
+         storage.with_checkpoint(|| {
+             let proposal_id =
+                 self.write_proposal(&submission, voting_deadline, ProposalStatus::Pending)?;
++            self.proposal_electorate
++                .write(&proposal_id, target.electorate() as u8)?;
+             target.reserve(
+                 storage.clone(),
+                 proposal_id,
+@@ -322,6 +323,12 @@ impl Vote<'_> {
+         if self.read_vote(proposal_id, voter)?.is_some() {
+             return Err(VoteError::AlreadyVoted.into());
+         }
++        if !self
++            .eligible_validator_addresses(proposal_id)?
++            .contains(&voter)
++        {
++            return Err(VoteError::NotValidator.into());
++        }
+ 
+         self.write_vote(
+             proposal_id,
+@@ -398,10 +405,9 @@ impl Vote<'_> {
+             return Ok(());
+         }
+ 
+-        let active = active_validator_addresses(self.storage.clone())?;
++        let active = self.eligible_validator_addresses(proposal_id)?;
+         let tally = calculate_vote_tally(self, &proposal, &active)?;
+-        let vs = ValidatorSet::new(self.storage.clone());
+-        let active_count = vs.active_validator_count()?;
++        let active_count = u32::try_from(active.len()).map_err(|_| VoteError::InvalidElectorate)?;
+         let status = if quorum_reached(tally.yes, active_count) {
+             ProposalStatus::Approved
+         } else {
+diff --git a/crates/system/vote/src/schema.rs b/crates/system/vote/src/schema.rs
+index 75f828ec2..6f448138e 100644
+--- a/crates/system/vote/src/schema.rs
++++ b/crates/system/vote/src/schema.rs
+@@ -177,6 +177,7 @@ impl Storable for VoteRecord {
+ ///   10: proposal_bond_amount: mapping(proposalId => amount)
+ ///   11: proposal_bond_settlement: mapping(proposalId => BondSettlement)
+ ///   12: unsettled_bond_liabilities
++///   13: proposal_electorate: mapping(proposalId => TargetElectorate)
+ #[storage_schema]
+ #[contract(addr = VOTE_ADDRESS)]
+ pub struct Vote {
+@@ -214,4 +215,8 @@ pub struct Vote {
+     /// Aggregate amount of all proposal bonds whose settlement is `Unsettled`.
+     #[attribute(order = 7)]
+     pub unsettled_bond_liabilities: outbe_primitives::storage::dsl::Value<U256>,
++
++    /// Immutable target policy; absent legacy values select ACTIVE-only voting.
++    #[attribute(order = 8)]
++    pub proposal_electorate: outbe_primitives::storage::dsl::Map<U256, u8>,
+ }
+diff --git a/crates/system/vote/src/state.rs b/crates/system/vote/src/state.rs
+index acd30fe77..ad9c1d850 100644
+--- a/crates/system/vote/src/state.rs
++++ b/crates/system/vote/src/state.rs
+@@ -6,6 +6,7 @@ use tracing::warn;
+ 
+ use crate::constants::MAX_PAGE_SIZE;
+ use crate::errors::VoteError;
++use crate::handlers::TargetElectorate;
+ use crate::schema::{decode_stored_u8, BondSettlement, ProposalRecord, Vote, VoteRecord};
+ 
+ pub use crate::schema::ProposalStatus;
+@@ -182,6 +183,20 @@ pub fn calculate_vote_tally(
+ }
+ 
+ impl<'storage> Vote<'storage> {
++    /// Reads one current electorate for cast eligibility, tally and ABI views.
++    pub fn eligible_validator_addresses(&self, proposal_id: U256) -> Result<Vec<Address>> {
++        let policy = TargetElectorate::from_stored(self.proposal_electorate.read(&proposal_id)?)?;
++        if policy == TargetElectorate::Active {
++            return active_validator_addresses(self.storage.clone());
++        }
++        let effective = ValidatorSet::new(self.storage.clone()).get_active_consensus_set()?;
++        Ok(effective
++            .into_iter()
++            .filter(|v| v.status == outbe_validatorset::runtime::status::ACTIVE)
++            .map(|v| v.validator_address)
++            .collect())
++    }
++
+     /// Returns the next proposal id without incrementing the counter.
+     pub fn peek_next_proposal_id(&self) -> Result<U256> {
+         let current = self.proposal_count.read()?;
+@@ -203,7 +218,7 @@ impl<'storage> Vote<'storage> {
+         let Some(record) = self.proposals.get(proposal_id)? else {
+             return Ok(None);
+         };
+-        let active = active_validator_addresses(self.storage.clone())?;
++        let active = self.eligible_validator_addresses(proposal_id)?;
+         let state = calculate_vote_tally(self, &record, &active)?;
+         let status = record.proposal_status()?;
+         let voters_count = self.proposal_voters.list(&proposal_id).len()? as u64;
+diff --git a/crates/system/vote/src/tests/bond.rs b/crates/system/vote/src/tests/bond.rs
+index a8e293d14..3ea8b4b36 100644
+--- a/crates/system/vote/src/tests/bond.rs
++++ b/crates/system/vote/src/tests/bond.rs
+@@ -27,6 +27,7 @@ fn bond_layout_appends_after_the_v0_vote_schema() {
+         assert_eq!(vote.proposal_bond_amount.base_slot(), U256::from(10u64));
+         assert_eq!(vote.proposal_bond_settlement.base_slot(), U256::from(11u64));
+         assert_eq!(vote.unsettled_bond_liabilities.slot(), U256::from(12u64));
++        assert_eq!(vote.proposal_electorate.base_slot(), U256::from(13u64));
+         assert_eq!(<ProposalRecord as StorageRecord>::SLOTS, 6);
+     });
+ }

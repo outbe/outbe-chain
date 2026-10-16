@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 use std::{fmt, ops::Deref, str::FromStr};
 
-use crypto::{PublicKey, Signature};
+use crypto::{RepositoryKey as PublicKey, RepositorySignature as Signature};
 use nonempty::NonEmpty;
 use radicle_cob::{Embed, ObjectId, TypeName};
 use serde::{Deserialize, Serialize};
@@ -12,7 +12,6 @@ use crate::cob::store::access::WriteAs;
 use crate::git;
 use crate::git::Oid;
 use crate::identity::doc::Doc;
-use crate::node::NodeId;
 use crate::storage;
 use crate::{
     cob,
@@ -44,7 +43,7 @@ pub type IdentityStream<'a> = cob::stream::Stream<'a, Action>;
 impl<'a> IdentityStream<'a> {
     pub fn init(identity: ObjectId, store: &'a storage::git::Repository) -> Self {
         let history = cob::stream::CobRange::new(&TYPENAME, &identity);
-        Self::new(&store.backend, history, TYPENAME.clone())
+        Self::new(store, history, TYPENAME.clone())
     }
 }
 
@@ -65,7 +64,6 @@ pub enum Action {
         /// Parent revision that this revision replaces.
         parent: Option<RevisionId>,
         /// Signature over the revision blob.
-        #[serde(with = "signature")]
         signature: Signature,
     },
     RevisionEdit {
@@ -81,7 +79,6 @@ pub enum Action {
     RevisionAccept {
         revision: RevisionId,
         /// Signature over the blob.
-        #[serde(with = "signature")]
         signature: Signature,
     },
     #[serde(rename = "revision.reject")]
@@ -100,6 +97,8 @@ impl CobAction for Action {
 #[non_exhaustive]
 #[derive(Error, Debug)]
 pub enum ApplyError {
+    #[error(transparent)]
+    Publication(#[from] storage::publication::Error),
     /// Causal dependency missing.
     ///
     /// This error indicates that the operations are not being applied
@@ -114,7 +113,7 @@ pub enum ApplyError {
     Init(&'static str),
     /// Invalid signature over document blob.
     #[error("invalid signature from {0} for blob {1}")]
-    InvalidSignature(PublicKey, Oid),
+    InvalidSignature(Box<PublicKey>, Oid),
     /// Unauthorized action.
     #[error("not authorized to perform this action")]
     NotAuthorized,
@@ -133,7 +132,7 @@ pub enum ApplyError {
     #[error("identity document error: {0}")]
     Doc(#[from] DocError),
     #[error("{author} is not a delegate, and only delegates are allowed to {action}")]
-    NonDelegateUnauthorized { author: Did, action: String },
+    NonDelegateUnauthorized { author: Box<Did>, action: String },
 }
 
 impl ApplyError {
@@ -146,7 +145,7 @@ impl ApplyError {
             Action::RevisionRedact { .. } => "redact a revision",
         };
         Self::NonDelegateUnauthorized {
-            author,
+            author: Box::new(author),
             action: action.to_string(),
         }
     }
@@ -198,8 +197,14 @@ impl std::ops::Deref for Identity {
 }
 
 impl Identity {
-    pub fn new(root: Revision) -> Self {
+    fn new(root: Revision) -> Self {
         let root_id = root.id;
+        let founder = *root.author.id();
+
+        debug_assert_eq!(
+            *root.doc.delegates(),
+            crate::identity::doc::Delegates::from(founder)
+        );
 
         Self {
             root: root_id,
@@ -215,7 +220,7 @@ impl Identity {
         signer: &'b Signer,
     ) -> Result<IdentityMut<'a, 'b, Repo, Signer>, cob::store::Error>
     where
-        Repo: WriteRepository + cob::Store<Namespace = NodeId>,
+        Repo: WriteRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
         Signer: crypto::Signer,
     {
         let mut store = cob::store::Store::open(store, WriteAs::new(signer))?;
@@ -260,7 +265,7 @@ impl Identity {
         signer: &'b Signer,
     ) -> Result<IdentityMut<'a, 'b, Repo, Signer>, store::Error>
     where
-        Repo: WriteRepository + cob::Store<Namespace = NodeId>,
+        Repo: WriteRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
         Signer: crypto::Signer,
     {
         let obj = Self::get(id, repo)?;
@@ -285,7 +290,7 @@ impl Identity {
         signer: &'b Signer,
     ) -> Result<IdentityMut<'a, 'b, Repo, Signer>, RepositoryError>
     where
-        Repo: WriteRepository + cob::Store<Namespace = NodeId>,
+        Repo: WriteRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
         Signer: crypto::Signer,
     {
         let oid = repo.identity_root()?;
@@ -435,11 +440,14 @@ impl store::Cob for Identity {
         }
         // Verify signature against root document. Since there is no previous document,
         // we verify it against itself.
+        let context = repo
+            .authorize_entry(**founder, op.id, crypto::SubjectKind::Identity)?
+            .signature_context(&signature);
         if root
-            .verify_signature(founder, &signature, root.blob)
+            .verify_signature(founder, &signature, root.blob, repo.id(), context)
             .is_err()
         {
-            return Err(ApplyError::InvalidSignature(**founder, root.blob));
+            return Err(ApplyError::InvalidSignature(Box::new(**founder), root.blob));
         }
         let revision = Revision::new(
             root.commit,
@@ -503,8 +511,8 @@ impl Identity {
         let did = author.into();
 
         match action {
-            action @ (Action::RevisionAccept { revision: id, .. }
-            | Action::RevisionReject { revision: id }) => {
+            Action::RevisionAccept { revision: id, .. }
+            | Action::RevisionReject { revision: id } => {
                 let noun = match action {
                     Action::RevisionAccept { .. } => "acceptance",
                     Action::RevisionReject { .. } => "rejection",
@@ -549,10 +557,22 @@ impl Identity {
                                     return Ok(());
                                 }
 
+                                let context = repo
+                                    .authorize_entry(author, id, crypto::SubjectKind::Identity)?
+                                    .signature_context(&signature);
                                 parent
-                                    .verify_signature(&author, &signature, revision.blob)
+                                    .verify_signature(
+                                        &author,
+                                        &signature,
+                                        revision.blob,
+                                        repo.id(),
+                                        context,
+                                    )
                                     .map_err(|_source| {
-                                        ApplyError::InvalidSignature(author, revision.blob)
+                                        ApplyError::InvalidSignature(
+                                            Box::new(author),
+                                            revision.blob,
+                                        )
                                     })?;
 
                                 if self
@@ -647,7 +667,7 @@ impl Identity {
 
                 if !parent.is_delegate(&did) {
                     return Err(ApplyError::NonDelegateUnauthorized {
-                        author: author.into(),
+                        author: Box::new(author.into()),
                         action: "create a revision".to_string(),
                     });
                 }
@@ -658,8 +678,14 @@ impl Identity {
                 }
 
                 // Verify signature over new blob, using trusted delegates.
-                if parent.verify_signature(&author, &signature, blob).is_err() {
-                    return Err(ApplyError::InvalidSignature(author, blob));
+                let context = repo
+                    .authorize_entry(author, id, crypto::SubjectKind::Identity)?
+                    .signature_context(&signature);
+                if parent
+                    .verify_signature(&author, &signature, blob, repo.id(), context)
+                    .is_err()
+                {
+                    return Err(ApplyError::InvalidSignature(Box::new(author), blob));
                 }
 
                 // If the parent is already rejected or redacted, this revision is dead on arrival.
@@ -893,7 +919,7 @@ impl<R: ReadRepository> cob::Evaluate<R> for Identity {
 pub enum Verdict {
     /// An accepting verdict must supply the [`Signature`] over the
     /// new proposed [`Doc`].
-    Accept(#[serde(with = "signature")] Signature),
+    Accept(Signature),
     /// Rejecting the proposed [`Doc`].
     Reject,
 }
@@ -1038,7 +1064,7 @@ impl std::ops::Deref for Revision {
 impl Revision {
     pub fn signatures(&self) -> impl Iterator<Item = (&PublicKey, Signature)> {
         self.verdicts().filter_map(|(key, verdict)| match verdict {
-            Verdict::Accept(sig) => Some((key, *sig)),
+            Verdict::Accept(sig) => Some((key, sig.clone())),
             Verdict::Reject => None,
         })
     }
@@ -1066,7 +1092,7 @@ impl Revision {
         })
     }
 
-    pub fn sign(&self, signer: &impl crypto::Signer) -> Result<Signature, DocError> {
+    pub fn sign(&self, signer: &impl crypto::Signer) -> Result<crypto::Signature, DocError> {
         self.doc.signature_of(signer)
     }
 }
@@ -1107,11 +1133,11 @@ impl<R: ReadRepository> store::Transaction<Identity, R> {
     pub fn accept(
         &mut self,
         revision: RevisionId,
-        signature: Signature,
+        signature: impl Into<Signature>,
     ) -> Result<(), store::Error> {
         self.push(Action::RevisionAccept {
             revision,
-            signature,
+            signature: signature.into(),
         })
     }
 
@@ -1164,7 +1190,7 @@ impl<Repo: WriteRepository> store::Transaction<Identity, Repo> {
             description: description.to_string(),
             blob,
             parent,
-            signature,
+            signature: signature.into(),
         })?;
 
         Ok(tx)
@@ -1189,7 +1215,7 @@ impl<Repo, Signer: crypto::Signer> fmt::Debug for IdentityMut<'_, '_, Repo, Sign
 
 impl<Repo, Signer: crypto::Signer> IdentityMut<'_, '_, Repo, Signer>
 where
-    Repo: WriteRepository + cob::Store<Namespace = NodeId>,
+    Repo: WriteRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
 {
     /// Reload the identity data from storage.
     #[cfg(test)]
@@ -1312,53 +1338,6 @@ impl<Repo, Signer: crypto::Signer> Deref for IdentityMut<'_, '_, Repo, Signer> {
     }
 }
 
-/// This module defines functions to serialize and deserialize [`Signature`]
-/// to/from a Unicode string in [multibase format].
-///
-/// Serialization to `base58btc` uses  [`multibase::encode`] with
-/// [`multibase::Base::Base58Btc`] and deserialization uses [`multibase::decode`].
-///
-/// The names of these functions are so that the module can be consumed via
-/// `serde_derive`'s `with`, see <https://serde.rs/field-attrs.html#with>. This
-/// is done in particular for variants of [`Action`] and [`Verdict`] that carry
-/// a [`Signature`].
-///
-/// This module exists because, historically, [`Signature`] was a type that did
-/// implement [`serde::Serialize`] and [`serde::Deserialize`], but it was
-/// changed to refer to `ed25519::Signature` in order to maximize compatibility,
-/// which does not implement these traits.
-/// So, for backwards compatibility, this module fills the gap by providing a
-/// way to (de)serialize [`Signature`].
-///
-/// [multibase format]: https://datatracker.ietf.org/doc/draft-multiformats-multibase/
-mod signature {
-    pub fn serialize<Serializer>(
-        signature: &crypto::Signature,
-        serializer: Serializer,
-    ) -> Result<Serializer::Ok, Serializer::Error>
-    where
-        Serializer: serde::Serializer,
-    {
-        serializer.serialize_str(&multibase::encode(
-            multibase::Base::Base58Btc,
-            signature.to_bytes(),
-        ))
-    }
-
-    pub fn deserialize<'de, Deserializer>(
-        deserializer: Deserializer,
-    ) -> Result<crypto::Signature, Deserializer::Error>
-    where
-        Deserializer: serde::Deserializer<'de>,
-    {
-        use serde::Deserialize;
-
-        let (_, bytes) = multibase::decode(String::deserialize(deserializer)?)
-            .map_err(serde::de::Error::custom)?;
-        crypto::Signature::from_slice(bytes.as_slice()).map_err(serde::de::Error::custom)
-    }
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod test {
@@ -1370,7 +1349,7 @@ mod test {
     use crate::crypto::{PublicKey, Signer as _, SigningKey};
     use crate::identity::Visibility;
     use crate::identity::did::Did;
-    use crate::identity::doc::PayloadId;
+    use crate::identity::doc::{GetPayload as _, PayloadId};
     use crate::rad;
     use crate::storage::ReadStorage as _;
     use crate::storage::git::Storage;
@@ -2578,19 +2557,20 @@ mod test {
             fixtures::project(tempdir.path().join("copy"), &storage, &alice).unwrap();
 
         // Bob and Eve fork the project from Alice.
-        rad::fork_remote(id, alice.public_key(), &bob, &storage).unwrap();
-        rad::fork_remote(id, alice.public_key(), &eve, &storage).unwrap();
+        rad::fork_remote(id, &alice.public_key().into(), &bob, &storage).unwrap();
+        rad::fork_remote(id, &alice.public_key().into(), &eve, &storage).unwrap();
 
         let repo = storage.repository(id).unwrap();
         let mut identity = Identity::load_mut(&repo, &alice).unwrap();
         let doc = identity.doc().clone();
-        let prj = doc.project().unwrap();
+        let prj = doc.project().unwrap().unwrap();
         let mut doc = doc.edit();
 
         // Make a change to the description and sign it.
         let desc = prj.description().to_owned() + "!";
         let prj = prj.update(None, desc, None).unwrap();
-        doc.payload.insert(PayloadId::project(), prj.clone().into());
+        doc.payload
+            .insert(PayloadId::project().clone(), prj.clone().into());
         identity
             .update(
                 cob::Title::new("Update description").unwrap(),
@@ -2628,7 +2608,7 @@ mod test {
         // Update description again with signatures by Eve and Bob.
         let desc = prj.description().to_owned() + "?";
         let prj = prj.update(None, desc, None).unwrap();
-        doc.payload.insert(PayloadId::project(), prj.into());
+        doc.payload.insert(PayloadId::project().clone(), prj.into());
         let revision = bob_identity
             .update(
                 cob::Title::new("Update description again").unwrap(),
@@ -2653,11 +2633,14 @@ mod test {
         assert_eq!(identity.head(), revision);
         assert_eq!(identity.doc(), &*doc);
         assert_eq!(
-            identity.doc().project().unwrap().description(),
+            identity.doc().project().unwrap().unwrap().description(),
             "Acme's repository!?"
         );
 
-        assert_eq!(doc.project().unwrap().description(), "Acme's repository!?");
+        assert_eq!(
+            doc.project().unwrap().unwrap().description(),
+            "Acme's repository!?"
+        );
     }
 
     #[test]

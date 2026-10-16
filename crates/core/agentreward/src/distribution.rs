@@ -1,5 +1,4 @@
 use crate::errors::AgentRewardError;
-pub use crate::errors::DistributionError;
 use crate::precompile::IAgentReward;
 use crate::schema::{AgentRewardContract, RewardPool};
 use alloy_primitives::{Address, U256, U512};
@@ -122,13 +121,13 @@ fn distribute_pool(
     Ok(excess)
 }
 
-fn mul_div(a: U256, b: U256, denominator: U256) -> Result<U256, DistributionError> {
+fn mul_div(a: U256, b: U256, denominator: U256) -> Result<U256, AgentRewardError> {
     // A product of two U256 values fits U512 without truncation.
     let value = (U512::from(a) * U512::from(b))
         .checked_div(U512::from(denominator))
-        .ok_or(DistributionError)?;
+        .ok_or(AgentRewardError::DistributionOverflow)?;
     if value > U512::from(U256::MAX) {
-        return Err(DistributionError);
+        return Err(AgentRewardError::DistributionOverflow);
     }
     // The range check above proves the narrowing conversion is lossless.
     Ok(value.wrapping_to::<U256>())
@@ -150,7 +149,7 @@ pub struct AddressReward {
 pub(crate) fn calculate_proportional_distribution(
     total_pool: U256,
     counts: &[(Address, U256)],
-) -> Result<(Vec<AddressReward>, U256), DistributionError> {
+) -> Result<(Vec<AddressReward>, U256), AgentRewardError> {
     if counts.is_empty() || total_pool.is_zero() {
         return Ok((vec![], total_pool));
     }
@@ -166,14 +165,17 @@ pub(crate) fn calculate_proportional_distribution(
     positive.sort_by_key(|(addr, _)| *addr);
 
     let total_weight = positive.iter().try_fold(U256::ZERO, |sum, (_, weight)| {
-        sum.checked_add(*weight).ok_or(DistributionError)
+        sum.checked_add(*weight)
+            .ok_or(AgentRewardError::DistributionOverflow)
     })?;
 
     let mut rewards = Vec::with_capacity(positive.len());
     let mut distributed = U256::ZERO;
     for (addr, weight) in positive {
         let share = mul_div(total_pool, weight, total_weight)?;
-        distributed = distributed.checked_add(share).ok_or(DistributionError)?;
+        distributed = distributed
+            .checked_add(share)
+            .ok_or(AgentRewardError::DistributionOverflow)?;
         rewards.push(AddressReward {
             address: addr,
             weight,
@@ -182,7 +184,7 @@ pub(crate) fn calculate_proportional_distribution(
     }
     let excess = total_pool
         .checked_sub(distributed)
-        .ok_or(DistributionError)?;
+        .ok_or(AgentRewardError::DistributionOverflow)?;
     Ok((rewards, excess))
 }
 

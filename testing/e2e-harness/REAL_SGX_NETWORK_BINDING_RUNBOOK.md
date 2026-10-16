@@ -30,12 +30,10 @@ exercise the independent `NetworkBindingV1` sealed-state rejection.
 cargo build --release -p outbe-tee-enclave --features production-dcap-release
 cargo build --release \
   -p outbe-chain \
-  -p outbe-ocomp \
   -p outbe-feeder \
   -p outbe-cli \
   -p outbe-keygen
 cargo build --release -p outbe-e2e-harness \
-  --features ocomp-integration \
   --bin outbe-e2e
 cargo build --release -p outbe-e2e-harness \
   --features release-sgx-e2e \
@@ -46,7 +44,6 @@ cargo build --release -p outbe-e2e-harness \
 
 ```sh
 cargo run --release -p outbe-e2e-harness \
-  --features ocomp-integration \
   --bin outbe-e2e -- \
   --tee real \
   --validators 4 \

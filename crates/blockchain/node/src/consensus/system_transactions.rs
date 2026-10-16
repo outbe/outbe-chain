@@ -1,8 +1,5 @@
 //! Stateless system-transaction header and body bindings, in rejection order.
-use super::{
-    consensus_other, ConsensusError, OcompLifecycleActivation, OutbeBlockBody, OutbeHeader,
-    REWARDS_ADDRESS,
-};
+use super::{consensus_other, ConsensusError, OutbeBlockBody, OutbeHeader, REWARDS_ADDRESS};
 use alloy_consensus::{BlockHeader as _, Transaction as _};
 use outbe_primitives::system_tx::binding::{self, ParentAccountingBindingError};
 use outbe_primitives::{reshare_artifact::OutbeBlockArtifacts, system_tx::SystemTxLayout};
@@ -24,10 +21,8 @@ pub(super) fn validate_beneficiary(header: &OutbeHeader) -> Result<(), Consensus
 pub(super) fn validate_layout<'a>(
     body: &'a OutbeBlockBody,
     header: &OutbeHeader,
-    activation: OcompLifecycleActivation,
 ) -> Result<(SystemTxLayout<'a>, OutbeBlockArtifacts), ConsensusError> {
-    binding::validate_system_layout(body, header, activation)
-        .map_err(crate::errors::consensus_display_error)
+    binding::validate_system_layout(body, header).map_err(crate::errors::consensus_display_error)
 }
 
 pub(super) fn validate_parent_accounting(

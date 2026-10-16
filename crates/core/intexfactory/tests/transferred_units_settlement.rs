@@ -6,7 +6,6 @@ use alloy_sol_types::{sol, SolCall, SolEvent};
 use outbe_evm::test_support::{install_code, runtime_code, seed_storage, EvmWorld};
 use outbe_intex::{CreateSeriesParams, IntexCallTrigger, SeriesId};
 use outbe_intexfactory::precompile::IIntexFactory;
-use outbe_oracle::test_support::record_finalized_day_vwap;
 use outbe_primitives::{
     addresses::{INTEX_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS},
     storage::{SubCallOutput, SubCallStatus},
@@ -66,7 +65,7 @@ struct World {
 
 impl World {
     /// Alice holds ten issued units on the real NFT. The Rust series record
-    /// mirrors the contract, and a finalized day above the floor qualifies it.
+    /// mirrors the contract.
     fn new() -> Self {
         let mut db = CacheDB::new(EmptyDB::default());
         let counterparty = runtime_code(include_str!(
@@ -92,13 +91,6 @@ impl World {
                 StablesSource::IntexCostAmount,
             )
             .unwrap();
-            record_finalized_day_vwap(
-                &storage,
-                840,
-                outbe_primitives::time::first_full_day(TIMESTAMP),
-                U256::from(2_160_001),
-            )
-            .unwrap();
             outbe_intex::api::create_series(
                 &storage,
                 CreateSeriesParams {
@@ -107,7 +99,6 @@ impl World {
                     issued_units: ISSUED_UNITS as u32,
                     promis_load_minor: 1_500_000,
                     entry_price_minor: U256::from(2_000_000),
-                    floor_price_minor: U256::from(2_160_000),
                     call_price_minor: U256::from(4_560_000),
                     call_trigger: IntexCallTrigger {
                         call_window_seconds: 1,
@@ -192,7 +183,6 @@ impl World {
                     issuedUnits: ISSUED_UNITS as u32,
                     promisLoadMinor: 1_500_000,
                     entryPriceMinor: 2_000_000,
-                    floorPriceMinor: 2_160_000,
                     callPriceMinor: 4_560_000,
                     callTrigger: IIntexNFT1155::IntexCallTrigger {
                         callWindow: 1,

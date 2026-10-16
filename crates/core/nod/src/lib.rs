@@ -1,5 +1,5 @@
 //! Nod: the terms, profile and data of a Nod. Bodies, buckets, the call bins and the
-//! expiry queue live here, with the read-time state, qualification and settlement cost.
+//! expiry queue live here, with the read-time state and settlement cost.
 //!
 //! NodFactory applies every rule and runs the call and forfeit sweeps through [`api`].
 //! The precompile surface is the Nod NFT and its views.
@@ -25,10 +25,7 @@ pub mod storage_records;
 #[cfg(any(test, feature = "test-enclave"))]
 pub mod test_support;
 
-pub use schema::{
-    NodBucketState, NodCertifiedGenerationProjection, NodContract, NodIssueParams, NodItemState,
-    NodOcompTargetProjection,
-};
+pub use schema::{NodBucketState, NodContract, NodIssueParams, NodItemState};
 
 #[cfg(test)]
 mod tests;

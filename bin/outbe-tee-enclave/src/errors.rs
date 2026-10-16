@@ -12,8 +12,8 @@ use std::fmt;
 
 pub use attestation::{DcapVerifyError, FinalizedAdmissionError, GramineError};
 pub use compute::{
-    ComputeError, FidelityEnclaveError, GratisRejectReason, NodMaterializationRejectReason,
-    NodMineRejectReason, PayloadError, ProcessError, PromisRejectReason, TributeDayRejectReason,
+    ComputeError, FidelityEnclaveError, GratisRejectReason, NodMineRejectReason, PayloadError,
+    ProcessError, PromisRejectReason, TributeDayRejectReason,
 };
 pub use init::{InitError, OnboardingUploadError, RunError, SgxSealingError};
 pub use transport::{
@@ -80,6 +80,9 @@ impl From<DkgSeamOrderError> for TeeError {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum TeeError {
+    #[error("Lysis calculation rejected")]
+    LysisCalculationRejected,
+
     /// The nonce size is not 12 bytes.
     #[error("invalid nonce size: expected 12 bytes, got {0}")]
     InvalidNonce(usize),

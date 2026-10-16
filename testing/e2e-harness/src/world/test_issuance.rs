@@ -2,7 +2,7 @@
 //!
 //! The node exposes `issueForTest` only under its `e2e-test` feature. The entry
 //! makes the two calls the clearing engine makes, so the series is indexed for
-//! the qualify sweep and travels to every chain as real issuance instructions.
+//! the call sweep and travels to every chain as real issuance instructions.
 //! Units reach an owner the way a winner's own `issueIntex` puts them there.
 
 use alloy_primitives::{Address, FixedBytes, U256};
@@ -74,7 +74,6 @@ sol! {
     struct ReferenceCurrencyPrice {
         uint16 isoCode;
         uint64 entryPriceMinor;
-        uint64 floorPriceMinor;
         uint64 callPriceMinor;
     }
 
@@ -268,7 +267,6 @@ pub fn issue_to_owner(
 }
 
 /// A nonce that passes IntexFactory's proof-of-work check.
-#[cfg(feature = "ocomp-integration")]
 pub fn mine_nonce(
     owner: Address,
     promis_amount: U256,
@@ -340,7 +338,6 @@ pub fn open_day(
         prices: vec![ReferenceCurrencyPrice {
             isoCode: reference_currency,
             entryPriceMinor: entry_price_minor,
-            floorPriceMinor: entry_price_minor,
             callPriceMinor: entry_price_minor,
         }],
         callNoticePeriod: 0,

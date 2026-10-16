@@ -1,0 +1,12 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on build directory
+    Finished `test` profile [unoptimized] target(s) in 1.12s
+     Running unittests src/lib.rs (/private/tmp/outbe-radicle-p1-target/debug/deps/outbe_e2e_harness-2b1ccfdc1c6ce9d6)
+
+running 1 test
+test world::localnet::radicle::tests::user_tools_must_match_the_chain_revision ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 474 filtered out; finished in 0.01s
+

@@ -6,8 +6,6 @@ use outbe_primitives::{
 };
 use outbe_tribute::TributeContract;
 
-#[cfg(any(test, feature = "test-utils"))]
-use crate::aggregate::WwdProjection;
 use crate::{
     aggregate::{ValidatedWwdAggregate, WwdDayType, WwdMembership, WwdStatus},
     precompile::IMetadosis,
@@ -15,12 +13,12 @@ use crate::{
         reduce_outer_wwd, OuterWwdEvent, OuterWwdTransition, OuterWwdTransitionKind, WwdAdvanceEdge,
     },
     schema::{MetadosisContract, WorldwideDayEntryExt},
-    state::{DayLimitFormationReceipt, OcompDayLimitFormation},
+    state::{DayLimitFormation, DayLimitFormationReceipt},
 };
 
 /// Non-forgeable, non-cloneable proof owned by exactly one outer-WWD commit.
 /// The constructor is private to this module and the value never crosses into
-/// reducer, runtime, OCOMP, commands, or the semantic test facade.
+/// reducer, runtime, commands, or the semantic test facade.
 pub(crate) struct CommitPermit<'transition> {
     _transition: &'transition mut (),
 }
@@ -37,42 +35,9 @@ fn with_commit_permit<R>(
     effect(&permit)
 }
 
-pub(crate) fn plan_outer_transition(
-    storage: StorageHandle<'_>,
-    worldwide_day: WorldwideDay,
-    event: OuterWwdEvent,
-) -> Result<OuterWwdTransition> {
-    let aggregate = ValidatedWwdAggregate::load_and_validate(storage)?;
-    let current = aggregate.record(worldwide_day).ok_or(
-        crate::errors::MetadosisStorageCorruptionError::OuterTransitionMissingPersistedWwd {
-            worldwide_day,
-        },
-    )?;
-    reduce_outer_wwd(Some(current), event)
-}
-
-#[cfg(any(test, feature = "test-utils"))]
-pub(crate) fn plan_outer_transition_for_test_fixture(
-    metadosis: &MetadosisContract<'_>,
-    worldwide_day: WorldwideDay,
-    event: OuterWwdEvent,
-) -> Result<OuterWwdTransition> {
-    let record = metadosis.worldwide_days.get(worldwide_day)?.ok_or(
-        crate::errors::MetadosisStorageCorruptionError::TestFixtureMissingWwd { worldwide_day },
-    )?;
-    let projection = WwdProjection::from_record(
-        worldwide_day,
-        WwdStatus::try_from(record.status)?,
-        WwdDayType::try_from(record.day_type)?,
-        WwdMembership::Active,
-        &record,
-    );
-    reduce_outer_wwd(Some(&projection), event)
-}
-
 /// The single production mutation seam. The provider grants an exact
 /// purpose-bound lease. Its checkpoint covers state and EVM events. This seam
-/// validates the complete indexed WWD/OCOMP aggregate both before effects and
+/// validates the complete indexed WWD aggregate both before effects and
 /// before commit.
 pub(crate) fn commit_transition<P, R>(
     storage: StorageHandle<'_>,
@@ -220,7 +185,7 @@ pub(crate) fn commit_outer_transition_with_rate(
 /// values, but cannot mutate WWD state directly.
 pub(crate) fn commit_day_limit_formation(
     metadosis: &mut MetadosisContract<'_>,
-    formation: OcompDayLimitFormation,
+    formation: DayLimitFormation,
 ) -> Result<DayLimitFormationReceipt> {
     let aggregate = ValidatedWwdAggregate::load_and_validate(metadosis.storage.clone())?;
     let current = aggregate.record(formation.worldwide_day).ok_or(
@@ -250,7 +215,7 @@ pub(crate) fn commit_day_limit_formation(
             totalAccumulatedMinor: formation.day_limit,
             blockNumber: formation.block_number,
         })?;
-        metadosis.emit(IMetadosis::OcompDayLimitFormed {
+        metadosis.emit(IMetadosis::DayLimitFormed {
             worldwideDay: formation.worldwide_day.value(),
             baseLimitMinor: formation.base_limit,
             promisLimitBeforeMinor: formation.carry_over_before,
@@ -266,7 +231,7 @@ pub(crate) fn commit_day_limit_formation(
         metadosis
             .day_limit_formation_receipt(formation.worldwide_day)?
             .ok_or_else(|| {
-                crate::errors::MetadosisStorageCorruptionError::FormedOcompDayLimitReceiptDisappearedAfterCommit
+                crate::errors::MetadosisStorageCorruptionError::FormedDayLimitReceiptDisappearedAfterCommit
                     .into()
             })
     })
@@ -372,10 +337,7 @@ fn commit_existing_wwd(
             },
         ),
         OuterWwdTransitionKind::EmergencyFail => commit_failed_day(scope, metadosis, source),
-        OuterWwdTransitionKind::ProcessReady(_)
-        | OuterWwdTransitionKind::OcompRequestCommitted
-        | OuterWwdTransitionKind::OcompExpired
-        | OuterWwdTransitionKind::OcompCompleted => {
+        OuterWwdTransitionKind::ProcessReady(_) => {
             commit_execution_status(scope, metadosis, source, transition.target())
         }
     }
@@ -583,11 +545,7 @@ mod tests {
     use super::*;
     use crate::{
         aggregate::{ValidatedWwdAggregate, WwdDayType, WwdStatus},
-        ocomp::schema::{poc_schema_limits, ResponseDeadlineKey},
-        schema::{
-            day_type, status, MetadosisContract, WorldwideDay as WorldwideDayRecord,
-            WorldwideDayEntryExt,
-        },
+        schema::{day_type, status, MetadosisContract, WorldwideDay as WorldwideDayRecord},
     };
 
     fn wwd() -> WorldwideDay {
@@ -616,24 +574,6 @@ mod tests {
                 let contract = MetadosisContract::new(storage);
                 contract.worldwide_days.create(record)?;
                 contract.active_wwd.insert(record.wwd)?;
-                Ok::<_, outbe_primitives::error::PrecompileError>(())
-            })
-            .unwrap();
-    }
-
-    fn assert_ocomp_state_without_profile_is_rejected(
-        inject: impl FnOnce(&mut MetadosisContract<'_>) -> outbe_primitives::error::Result<()>,
-    ) {
-        let mut provider = HashMapStorageProvider::new(1);
-        seed_active(&mut provider, &record(status::READY, day_type::GREEN));
-        provider
-            .enter(|storage| {
-                let mut contract = MetadosisContract::new(storage.clone());
-                inject(&mut contract)?;
-                let error = ValidatedWwdAggregate::load_and_validate(storage).unwrap_err();
-                assert!(error
-                    .to_string()
-                    .contains("OCOMP state exists without an active profile"));
                 Ok::<_, outbe_primitives::error::PrecompileError>(())
             })
             .unwrap();
@@ -707,115 +647,6 @@ mod tests {
             let error = ValidatedWwdAggregate::load_and_validate(storage).unwrap_err();
             assert!(error.to_string().contains("non-monotonic"));
         });
-    }
-
-    #[test]
-    fn aggregate_rejects_ocomp_indexes_without_profile() {
-        assert_ocomp_state_without_profile_is_rejected(|contract| {
-            contract.ocomp_fsm_states.get_bytes(&wwd()).write(&[1])
-        });
-        assert_ocomp_state_without_profile_is_rejected(|contract| {
-            contract.enqueue_ocomp_ready(wwd(), 10)?;
-            contract.ocomp_fsm_states.get_bytes(&wwd()).clear()
-        });
-        assert_ocomp_state_without_profile_is_rejected(|contract| {
-            contract.ocomp_scheduler.write(&[1])
-        });
-        assert_ocomp_state_without_profile_is_rejected(|contract| {
-            contract.write_response_deadline_index(&[ResponseDeadlineKey {
-                deadline_height: 10,
-                job_id: B256::repeat_byte(0x61),
-                intent_id: B256::repeat_byte(0x62),
-            }])
-        });
-    }
-
-    #[test]
-    fn aggregate_requires_exact_response_deadline_equivalence() {
-        let mut missing =
-            crate::fixture_kernel::ActivationScenario::new_voting(100, 1_700_000_000, true);
-        missing
-            .provider
-            .enter(|storage| {
-                ValidatedWwdAggregate::load_and_validate(storage.clone())?;
-                let contract = MetadosisContract::new(storage.clone());
-                contract.ocomp_response_deadline_index.clear()?;
-
-                let error = ValidatedWwdAggregate::load_and_validate(storage).unwrap_err();
-                assert!(error.to_string().contains("no exact response deadline key"));
-                Ok::<_, outbe_primitives::error::PrecompileError>(())
-            })
-            .unwrap();
-
-        let mut stale =
-            crate::fixture_kernel::ActivationScenario::new_voting(100, 1_700_000_000, true);
-        stale
-            .provider
-            .enter(|storage| {
-                ValidatedWwdAggregate::load_and_validate(storage.clone())?;
-                let contract = MetadosisContract::new(storage.clone());
-                let mut index = contract.read_response_deadline_index()?;
-                assert_eq!(index.len(), 1);
-                index[0].deadline_height = index[0]
-                    .deadline_height
-                    .checked_add(1)
-                    .expect("fixture deadline has headroom");
-                contract.write_response_deadline_index(&index)?;
-
-                let error = ValidatedWwdAggregate::load_and_validate(storage).unwrap_err();
-                assert!(error
-                    .to_string()
-                    .contains("response index/job deadline mismatch"));
-                Ok::<_, outbe_primitives::error::PrecompileError>(())
-            })
-            .unwrap();
-    }
-
-    #[test]
-    fn aggregate_rejects_ready_index_without_fsm() {
-        let mut provider = HashMapStorageProvider::new(1);
-        seed_active(&mut provider, &record(status::READY, day_type::GREEN));
-        provider
-            .enter(|storage| {
-                let mut contract = MetadosisContract::new(storage.clone());
-                crate::fixture_kernel::seed_registry_authority(
-                    &storage,
-                    &crate::fixture_kernel::fixture_authority(1),
-                    &poc_schema_limits(),
-                )?;
-                contract.enqueue_ocomp_ready(wwd(), 10)?;
-                contract.ocomp_fsm_states.get_bytes(&wwd()).clear()?;
-
-                let error = ValidatedWwdAggregate::load_and_validate(storage).unwrap_err();
-                assert!(error
-                    .to_string()
-                    .contains("READY index points to a missing FSM"));
-                Ok::<_, outbe_primitives::error::PrecompileError>(())
-            })
-            .unwrap();
-    }
-
-    #[test]
-    fn aggregate_rejects_closed_wwd_with_live_fsm() {
-        let mut provider = HashMapStorageProvider::new(1);
-        seed_active(&mut provider, &record(status::READY, day_type::GREEN));
-        provider
-            .enter(|storage| {
-                let mut contract = MetadosisContract::new(storage.clone());
-                contract.enqueue_ocomp_ready(wwd(), 10)?;
-                contract
-                    .worldwide_days
-                    .entry(wwd())
-                    .status()
-                    .write(status::COMPLETED)?;
-                contract.active_wwd.remove(&wwd())?;
-                contract.closed_wwd.push_back(wwd())?;
-
-                let error = ValidatedWwdAggregate::load_and_validate(storage).unwrap_err();
-                assert!(error.to_string().contains("retains a live OCOMP FSM"));
-                Ok::<_, outbe_primitives::error::PrecompileError>(())
-            })
-            .unwrap();
     }
 
     fn assert_mutation_rejected_before_effect(

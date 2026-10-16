@@ -9,11 +9,11 @@ use std::{process, thread};
 
 use super::Url;
 use crate::git;
-use crate::storage::RemoteId;
+use crate::node::NodeId;
 use crate::storage::git::transport::ChildStream;
 
 /// Nodes registered with the mock transport.
-static NODES: LazyLock<Mutex<HashMap<(ThreadId, RemoteId), PathBuf>>> =
+static NODES: LazyLock<Mutex<HashMap<(ThreadId, NodeId), PathBuf>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// The mock transport.
@@ -85,7 +85,7 @@ impl git::raw::transport::SmartSubtransport for MockTransport {
 }
 
 /// Register a new node with the given storage path.
-pub fn register(node: &RemoteId, path: &Path) {
+pub fn register(node: &NodeId, path: &Path) {
     static REGISTER: Once = Once::new();
 
     REGISTER.call_once(|| unsafe {

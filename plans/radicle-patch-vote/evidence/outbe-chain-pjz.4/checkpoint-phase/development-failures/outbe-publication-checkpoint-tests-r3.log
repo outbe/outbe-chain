@@ -1,0 +1,20 @@
+   Compiling outbe-radicleregistry v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/radicleregistry)
+error[E0599]: no method named `gas_used` found for struct `outbe_primitives::storage::hashmap::HashMapStorageProvider` in the current scope
+   --> crates/system/radicleregistry/src/tests/publication.rs:320:64
+    |
+320 |         max_storage_gas = max_storage_gas.max(fixture.provider.gas_used());
+    |                                                                ^^^^^^^^ private field, not a method
+    |
+   ::: crates/blockchain/primitives/src/storage/mod.rs:327:8
+    |
+327 |     fn gas_used(&self) -> u64;
+    |        -------- the method is available for `outbe_primitives::storage::hashmap::HashMapStorageProvider` here
+    |
+    = help: items from traits can only be used if the trait is in scope
+help: trait `PrecompileStorageProvider` which provides `gas_used` is implemented but not in scope; perhaps you want to import it
+    |
+  1 + use outbe_primitives::storage::PrecompileStorageProvider;
+    |
+
+For more information about this error, try `rustc --explain E0599`.
+error: could not compile `outbe-radicleregistry` (lib test) due to 1 previous error

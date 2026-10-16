@@ -1,0 +1,25 @@
+{
+  "reviewed_sha": "c1783bda67f8f08e0ab93ee6c0d77bd4196fcc0c",
+  "spec_hash_sha256": "0781c0d5b2f2e2f031ee68e2ffc9471a702e82fe7bb65e8ba7181aabcf6eafdc",
+  "scope": "Ordinary BLS reader only; no full P2/P8/feature acceptance",
+  "reviews": [
+    {
+      "report": "R1.md",
+      "sha256": "1990680cf8a0f8d5a975e8ad5b86601a9e72f6fb528f129dcf6ac63b2aae96db",
+      "reviewer": "/root/description_256_r1",
+      "verdict": "PASS all AC1-AC8"
+    },
+    {
+      "report": "R2.md",
+      "sha256": "5da28754f43bfba94a186892cc6ba098e4502761554682a072e00b5a4a9ad3f3",
+      "reviewer": "/root/description_256_r2",
+      "verdict": "PASS all AC1-AC8"
+    },
+    {
+      "report": "R3.md",
+      "sha256": "6a13ec2949ceefda02733f3900619417e737f8fc4d2c3a31e3d56295059f0f65",
+      "reviewer": "/root/d3_review_3",
+      "verdict": "PASS all AC1-AC8"
+    }
+  ]
+}

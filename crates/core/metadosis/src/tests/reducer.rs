@@ -41,76 +41,6 @@ fn plan(status: WwdStatus, block_time: u64) -> WwdTransitionPlan {
 }
 
 #[test]
-fn outer_reducer_accepts_ocomp_request_only_from_ready() {
-    let ready = projection(WwdStatus::Ready);
-    let transition = reduce_outer_wwd(Some(&ready), OuterWwdEvent::OcompRequestCommitted).unwrap();
-    assert_eq!(transition.source(), Some(WwdStatus::Ready));
-    assert_eq!(transition.target(), WwdStatus::OffchainPending);
-    assert_eq!(
-        transition.kind(),
-        &OuterWwdTransitionKind::OcompRequestCommitted
-    );
-
-    for status in [
-        WwdStatus::Forming,
-        WwdStatus::LookbackDelay,
-        WwdStatus::Offering,
-        WwdStatus::Waiting,
-        WwdStatus::OffchainPending,
-        WwdStatus::Completed,
-        WwdStatus::Failed,
-    ] {
-        assert!(
-            reduce_outer_wwd(
-                Some(&projection(status)),
-                OuterWwdEvent::OcompRequestCommitted,
-            )
-            .is_err(),
-            "{status:?} accepted OCOMP request commit"
-        );
-    }
-}
-
-#[test]
-fn outer_reducer_maps_only_typed_ocomp_terminal_signals() {
-    let pending = projection(WwdStatus::OffchainPending);
-    for (event, expected_kind, target) in [
-        (
-            OuterWwdEvent::OcompExpired,
-            OuterWwdTransitionKind::OcompExpired,
-            WwdStatus::Failed,
-        ),
-        (
-            OuterWwdEvent::OcompCompleted,
-            OuterWwdTransitionKind::OcompCompleted,
-            WwdStatus::Completed,
-        ),
-    ] {
-        let transition = reduce_outer_wwd(Some(&pending), event).unwrap();
-        assert_eq!(transition.source(), Some(WwdStatus::OffchainPending));
-        assert_eq!(transition.target(), target);
-        assert_eq!(transition.kind(), &expected_kind);
-    }
-
-    for status in [
-        WwdStatus::Forming,
-        WwdStatus::LookbackDelay,
-        WwdStatus::Offering,
-        WwdStatus::Waiting,
-        WwdStatus::Ready,
-        WwdStatus::Completed,
-        WwdStatus::Failed,
-    ] {
-        for event in [OuterWwdEvent::OcompExpired, OuterWwdEvent::OcompCompleted] {
-            assert!(
-                reduce_outer_wwd(Some(&projection(status)), event).is_err(),
-                "{status:?} accepted {event:?}"
-            );
-        }
-    }
-}
-
-#[test]
 fn outer_reducer_emergency_fail_is_broad_but_terminal_safe() {
     for status in [
         WwdStatus::Forming,
@@ -118,7 +48,6 @@ fn outer_reducer_emergency_fail_is_broad_but_terminal_safe() {
         WwdStatus::Offering,
         WwdStatus::Waiting,
         WwdStatus::Ready,
-        WwdStatus::OffchainPending,
     ] {
         let transition =
             reduce_outer_wwd(Some(&projection(status)), OuterWwdEvent::EmergencyFail).unwrap();
@@ -266,7 +195,8 @@ fn outer_reducer_covers_creation_advance_capacity_and_ready_outcomes() {
     for (disposition, target) in [
         (ReadyDisposition::EmptyTributeDay, WwdStatus::Completed),
         (ReadyDisposition::ZeroGratisAllocation, WwdStatus::Completed),
-        (ReadyDisposition::PrepareOcomp, WwdStatus::Ready),
+        (ReadyDisposition::LysisCompleted, WwdStatus::Completed),
+        (ReadyDisposition::LysisFailed, WwdStatus::Failed),
     ] {
         let transition =
             reduce_outer_wwd(Some(&ready), OuterWwdEvent::ProcessReady(disposition)).unwrap();
@@ -285,11 +215,14 @@ fn outer_reducer_covers_creation_advance_capacity_and_ready_outcomes() {
         );
     }
 
-    assert!(reduce_outer_wwd(
-        Some(&waiting),
-        OuterWwdEvent::ProcessReady(ReadyDisposition::PrepareOcomp),
-    )
-    .is_err());
+    for disposition in [
+        ReadyDisposition::LysisCompleted,
+        ReadyDisposition::LysisFailed,
+    ] {
+        assert!(
+            reduce_outer_wwd(Some(&waiting), OuterWwdEvent::ProcessReady(disposition)).is_err()
+        );
+    }
 }
 
 #[test]
@@ -367,7 +300,6 @@ fn outer_wwd_state_event_matrix_is_exhaustive() {
         WwdStatus::Offering,
         WwdStatus::Waiting,
         WwdStatus::Ready,
-        WwdStatus::OffchainPending,
         WwdStatus::Completed,
         WwdStatus::Failed,
     ];
@@ -381,10 +313,8 @@ fn outer_wwd_state_event_matrix_is_exhaustive() {
         },
         OuterWwdEvent::ProcessReady(ReadyDisposition::EmptyTributeDay),
         OuterWwdEvent::ProcessReady(ReadyDisposition::ZeroGratisAllocation),
-        OuterWwdEvent::ProcessReady(ReadyDisposition::PrepareOcomp),
-        OuterWwdEvent::OcompRequestCommitted,
-        OuterWwdEvent::OcompExpired,
-        OuterWwdEvent::OcompCompleted,
+        OuterWwdEvent::ProcessReady(ReadyDisposition::LysisCompleted),
+        OuterWwdEvent::ProcessReady(ReadyDisposition::LysisFailed),
         OuterWwdEvent::EmergencyFail,
     ];
 
@@ -470,29 +400,18 @@ fn expected_transition_at_process_time(
                 WwdStatus::Ready,
                 OuterWwdTransitionKind::Advance(vec![WwdAdvanceEdge::BecomeReady]),
             ),
-            WwdStatus::Ready
-            | WwdStatus::OffchainPending
-            | WwdStatus::Completed
-            | WwdStatus::Failed => (status, OuterWwdTransitionKind::Noop),
+            WwdStatus::Ready | WwdStatus::Completed | WwdStatus::Failed => {
+                (status, OuterWwdTransitionKind::Noop)
+            }
         },
         OuterWwdEvent::ProcessReady(disposition) if status == WwdStatus::Ready => {
             let target = match disposition {
-                ReadyDisposition::EmptyTributeDay | ReadyDisposition::ZeroGratisAllocation => {
-                    WwdStatus::Completed
-                }
-                ReadyDisposition::PrepareOcomp => WwdStatus::Ready,
+                ReadyDisposition::EmptyTributeDay
+                | ReadyDisposition::ZeroGratisAllocation
+                | ReadyDisposition::LysisCompleted => WwdStatus::Completed,
+                ReadyDisposition::LysisFailed => WwdStatus::Failed,
             };
             (target, OuterWwdTransitionKind::ProcessReady(disposition))
-        }
-        OuterWwdEvent::OcompRequestCommitted if status == WwdStatus::Ready => (
-            WwdStatus::OffchainPending,
-            OuterWwdTransitionKind::OcompRequestCommitted,
-        ),
-        OuterWwdEvent::OcompExpired if status == WwdStatus::OffchainPending => {
-            (WwdStatus::Failed, OuterWwdTransitionKind::OcompExpired)
-        }
-        OuterWwdEvent::OcompCompleted if status == WwdStatus::OffchainPending => {
-            (WwdStatus::Completed, OuterWwdTransitionKind::OcompCompleted)
         }
         OuterWwdEvent::EmergencyFail if !status.is_terminal() => {
             (WwdStatus::Failed, OuterWwdTransitionKind::EmergencyFail)
@@ -500,11 +419,7 @@ fn expected_transition_at_process_time(
         OuterWwdEvent::EmergencyFail if status == WwdStatus::Failed => {
             (WwdStatus::Failed, OuterWwdTransitionKind::Noop)
         }
-        OuterWwdEvent::ProcessReady(_)
-        | OuterWwdEvent::OcompRequestCommitted
-        | OuterWwdEvent::OcompExpired
-        | OuterWwdEvent::OcompCompleted
-        | OuterWwdEvent::EmergencyFail => return None,
+        OuterWwdEvent::ProcessReady(_) | OuterWwdEvent::EmergencyFail => return None,
     };
     let membership = if target.is_terminal() {
         WwdMembership::Closed
@@ -629,7 +544,6 @@ fn reducer_rejects_backward_time_for_every_nonterminal_phase() {
         (WwdStatus::Offering, LOOKBACK_END - 1),
         (WwdStatus::Waiting, OFFERING_END - 1),
         (WwdStatus::Ready, PROCESS_AT - 1),
-        (WwdStatus::OffchainPending, PROCESS_AT - 1),
     ] {
         assert!(
             plan_wwd_advance(&projection(status), before).is_err(),
@@ -710,8 +624,6 @@ fn reducer_state_time_region_table_covers_every_persisted_status() {
         ),
         (WwdStatus::Ready, PROCESS_AT - 1, None),
         (WwdStatus::Ready, PROCESS_AT, Some(Noop)),
-        (WwdStatus::OffchainPending, PROCESS_AT - 1, None),
-        (WwdStatus::OffchainPending, PROCESS_AT, Some(Noop)),
         (WwdStatus::Completed, PROCESS_AT - 1, None),
         (WwdStatus::Completed, PROCESS_AT, Some(Noop)),
         (WwdStatus::Failed, OFFERING_END - 1, None),
@@ -738,7 +650,6 @@ fn reducer_state_time_region_table_covers_every_persisted_status() {
 fn reducer_is_a_noop_for_processing_and_terminal_states_at_valid_time() {
     for (status, valid_time) in [
         (WwdStatus::Ready, PROCESS_AT),
-        (WwdStatus::OffchainPending, PROCESS_AT),
         (WwdStatus::Completed, PROCESS_AT),
         (WwdStatus::Failed, OFFERING_END),
     ] {
@@ -790,7 +701,8 @@ fn reducer_rejects_backward_time_for_terminal_states() {
 
 #[test]
 fn reducer_is_a_noop_for_processing_states_after_the_process_boundary() {
-    for status in [WwdStatus::Ready, WwdStatus::OffchainPending] {
+    {
+        let status = WwdStatus::Ready;
         assert_eq!(
             plan_wwd_advance(&projection(status), PROCESS_AT + 1).unwrap(),
             WwdTransitionPlan::Noop

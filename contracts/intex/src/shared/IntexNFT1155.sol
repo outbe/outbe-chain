@@ -8,8 +8,6 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {IIntexNFT1155} from "./interfaces/IIntexNFT1155.sol";
 import {IERC1155Bridgeable} from "./interfaces/IERC1155Bridgeable.sol";
 import {IntexMetadata} from "./libs/IntexMetadata.sol";
-import {DateKey} from "./libs/DateKey.sol";
-import {IVwapSource} from "./interfaces/IVwapSource.sol";
 
 /**
  * @title IntexNFT1155
@@ -19,8 +17,7 @@ import {IVwapSource} from "./interfaces/IVwapSource.sol";
  * @dev UUPS upgradeable: deployed behind an ERC1967 proxy and configured via `initialize`.
  * @dev One auction produces one series with shared parameters for all winners.
  * @dev State transitions affect the entire series simultaneously (O(1) gas).
- * @dev Series lifecycle: Issued -> Called. Qualification is derived from daily VWAPs and is
- *      never stored.
+ * @dev Series lifecycle: Issued -> Called.
  *      Expiry is not an on-chain state. It is derived from `calledAt + callNoticePeriod`
  *      against the clock (issue/settle/bridge gates, metadata rendering).
  * @dev Each series has two token ids: issued = `uint112(seriesId)`,
@@ -55,8 +52,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         uint256[] allSeries;
         /// @dev Series ids issued per worldwide day.
         mapping(uint32 worldwideDay => bytes14[] seriesIds) seriesOfDay;
-        /// @dev Daily VWAPs the metadata derives qualification from. Zero derives none.
-        address vwapSource;
         /// @dev The series a day's currency pair was created under.
         mapping(
             uint32 worldwideDay
@@ -94,17 +89,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     /// @param newImplementation Address of the implementation the proxy switches to.
     // solhint-disable-next-line no-empty-blocks
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
-
-    /// @inheritdoc IIntexNFT1155
-    function setVwapSource(address source) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _s().vwapSource = source;
-        emit VwapSourceSet(source);
-    }
-
-    /// @inheritdoc IIntexNFT1155
-    function vwapSource() external view returns (address) {
-        return _s().vwapSource;
-    }
 
     /// @inheritdoc IIntexNFT1155
     function worldwideDayOf(bytes14 seriesId) external view returns (uint32) {
@@ -149,7 +133,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             issuedUnits: params.issuedUnits,
             promisLoadMinor: params.promisLoadMinor,
             entryPriceMinor: params.entryPriceMinor,
-            floorPriceMinor: params.floorPriceMinor,
             callPriceMinor: params.callPriceMinor,
             callTrigger: IIntexNFT1155.IntexCallTrigger({
                 callWindow: params.callTrigger.callWindow,
@@ -322,8 +305,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         IIntexNFT1155.SeriesData storage data = $.seriesData[iTok];
         if (data.issuedAt == 0) revert NonexistentToken(iTok);
 
-        // The factory derives qualification before it calls. A called series settles until its
-        // deadline.
+        // A called series settles until its deadline.
         if (data.state == IIntexNFT1155.IntexState.Called) {
             // No new Settled tokens past the call window (mirrors the crosschainBurn/crosschainMint freeze).
             uint256 deadline = _settlementDeadline(data);
@@ -399,15 +381,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function isQualified(bytes14 seriesId) external view returns (bool) {
-        uint256 tokenId = _issuedTokenId(seriesId);
-        IIntexNFT1155.SeriesData memory data = _s().seriesData[tokenId];
-        // slither-disable-next-line incorrect-equality
-        if (data.issuedAt == 0) revert NonexistentToken(tokenId);
-        return _crossedFloor(data);
-    }
-
-    /// @inheritdoc IIntexNFT1155
     function issuedTokenId(bytes14 seriesId) external pure returns (uint256) {
         return _issuedTokenId(seriesId);
     }
@@ -476,9 +449,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         ) {
             return IIntexNFT1155.IntexState.Expired;
         }
-        if (data.state == IIntexNFT1155.IntexState.Issued && _crossedFloor(data)) {
-            return IIntexNFT1155.IntexState.Qualified;
-        }
         return data.state;
     }
 
@@ -511,18 +481,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             data.state = _effectiveState(data);
         }
         return IntexMetadata.tokenURI(data, settled);
-    }
-
-    /// @dev A missing or failing source reads as not qualified, so `uri` never reverts on it.
-    function _crossedFloor(IIntexNFT1155.SeriesData memory data) private view returns (bool) {
-        address source = _s().vwapSource;
-        if (source == address(0)) return false;
-        (bool ok, bytes memory ret) = source.staticcall(
-            abi.encodeCall(
-                IVwapSource.maxUtcDayVwapSince, (data.referenceCurrency, DateKey.firstFullDay(data.issuedAt))
-            )
-        );
-        return ok && ret.length >= 32 && abi.decode(ret, (uint256)) > data.floorPriceMinor;
     }
 
     /// @inheritdoc IIntexNFT1155

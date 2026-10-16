@@ -51,6 +51,8 @@ pub(crate) struct OnchainFeedConfig {
     /// Provider name a `currency_pairs` market names.
     pub name: String,
     pub chain_id: u64,
+    /// Empty takes the `rpc_endpoints` URL for `chain_id`.
+    #[serde(default)]
     pub rpc_endpoint: String,
     /// Feed contract (the vendor's proxy address); it must implement
     /// Chainlink's `AggregatorV3Interface`. The implementation behind a proxy

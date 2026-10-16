@@ -17,31 +17,6 @@ fn public_operator_commands_parse_for_the_dev_lane() {
     }
 }
 
-#[test]
-fn persistent_inventory_rejects_an_external_supervisor_process() {
-    let error = ensure_ocomp_process_inventory(
-        &[OwnedOcompProcessV1 {
-            validator_index: Some(0),
-            role: "supervisor".to_owned(),
-            worker_ordinal: None,
-            pid: 1,
-            process_identity: "test".to_owned(),
-        }],
-        OcompRuntimeCountsV1 {
-            supervisors: 1,
-            snapshot_exporters: 0,
-            workers: 0,
-            registered_workers: 0,
-            connected_workers: 0,
-        },
-    )
-    .unwrap_err();
-
-    assert!(error
-        .to_string()
-        .contains("unexpected persistent LocalNet OCOMP role supervisor"));
-}
-
 #[tokio::test]
 async fn real_sgx_command_is_explicit_and_fail_closed() {
     let error = run_from(
@@ -72,12 +47,6 @@ fn state_is_atomic_and_bound_to_the_exact_owner_process() {
         port_blocks: vec![18545, 18558, 18571, 18584],
         rpc_ports: vec![18545, 18558, 18571, 18584],
         heights: vec![7, 7, 7, 7],
-        ocomp_supervisors: 4,
-        ocomp_snapshot_exporters: 4,
-        ocomp_workers: 4,
-        ocomp_registered_workers: 4,
-        ocomp_connected_workers: 4,
-        ocomp_processes: Vec::new(),
     };
     write_json_atomic(&state_path(dir.path()), &state).unwrap();
     let decoded = read_state(dir.path()).unwrap().unwrap();

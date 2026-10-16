@@ -27,7 +27,7 @@ contract BodyVersionTest is Test {
         assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_BIDS_BATCH, "bidsBatch.msgType");
 
         encoded = BridgeMsgCodec.encodeAuctionStageStart(
-            1, 100, 200, 300, 1e6, 1e6, ReferenceCurrencyPriceLib.one(840, 2e6, 3e6, 4e6), 5, 6, 7, 1, 9e6, 1
+            1, 100, 200, 300, 1e6, 1e6, ReferenceCurrencyPriceLib.one(840, 2e6, 4e6), 5, 6, 7, 1, 9e6, 1
         );
         assertEq(uint8(encoded[0]), BridgeMsgCodec.BODY_VERSION_V1, "stageStart.version");
         assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_AUCTION_STAGE_START, "stageStart.msgType");
@@ -73,7 +73,7 @@ contract BodyVersionTest is Test {
 
     function test_BridgeCodec_AuctionStageStart_RoundTrip() public view {
         bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(
-            42, 100, 200, 300, 1e6, 5e6, ReferenceCurrencyPriceLib.one(10, 7e6, 11e6, 13e6), 5, 6, 7, 3, 17e6, 1
+            42, 100, 200, 300, 1e6, 5e6, ReferenceCurrencyPriceLib.one(10, 7e6, 13e6), 5, 6, 7, 3, 17e6, 1
         );
         (
             uint32 worldwideDay,
@@ -91,7 +91,6 @@ contract BodyVersionTest is Test {
         assertEq(params.promisLoadMinor, 1e6);
         assertEq(params.minIntexBidRate, 5e6);
         assertEq(params.prices[0].entryPriceMinor, 7e6);
-        assertEq(params.prices[0].floorPriceMinor, 11e6);
         assertEq(params.prices[0].callPriceMinor, 13e6);
         assertEq(params.callTrigger.callNoticePeriod, 5);
         assertEq(params.callTrigger.callWindow, 6);
@@ -120,7 +119,7 @@ contract BodyVersionTest is Test {
 
     function test_BridgeCodec_UnknownBodyVersion_AuctionStageStart_Reverts() public {
         bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(
-            1, 100, 200, 300, 1e6, 1e6, ReferenceCurrencyPriceLib.one(840, 2e6, 3e6, 4e6), 5, 6, 7, 1, 9e6, 1
+            1, 100, 200, 300, 1e6, 1e6, ReferenceCurrencyPriceLib.one(840, 2e6, 4e6), 5, 6, 7, 1, 9e6, 1
         );
         packet[0] = 0xFF;
         vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.UnsupportedBodyVersion.selector, 0xFF));

@@ -61,6 +61,9 @@ pub(super) fn terminal_receipt(
             .into());
     };
     match &stored {
+        crate::terminal::model::WwdTerminalReceipt::LysisCompleted { .. } => {
+            metadosis.read_lysis_completion(wwd)?;
+        }
         crate::terminal::model::WwdTerminalReceipt::MissedOffering(_) => {
             metadosis.read_missed_offering_receipt(wwd)?;
         }

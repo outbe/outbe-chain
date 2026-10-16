@@ -17,7 +17,7 @@ fn seed_unformed_missed_offering_day(
         outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
     );
     StorageHandle::enter(provider, |storage| {
-        arm_genesis_ocomp(&storage, CHAIN_ID);
+        install_test_enclaves();
         PromisLimitContract::new(storage.clone())
             .checked_add_carry_over(carry_over)
             .unwrap();
@@ -83,7 +83,6 @@ fn missed_offering_routes_the_formed_limit_once_and_exposes_a_durable_receipt() 
                 .unwrap(),
             carried + formed_limit
         );
-        assert_no_ocomp_job(&storage, wwd);
         assert_eq!(NodContract::new(storage.clone()).total_supply().unwrap(), 0);
         assert_eq!(
             TributeContract::new(storage.clone())
@@ -133,7 +132,7 @@ fn seed_zero_limit_lookback_day_opening_at(
     opening: u64,
 ) {
     StorageHandle::enter(provider, |storage| {
-        arm_genesis_ocomp(&storage, CHAIN_ID);
+        install_test_enclaves();
         let mut metadosis = MetadosisContract::new(storage.clone());
         metadosis
             .create_worldwide_day(

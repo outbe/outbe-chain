@@ -51,8 +51,6 @@ fn execute() -> Result<(), String> {
     for scenario in [
         NodScenario::direct(Profile::Single),
         NodScenario::direct(Profile::Typical),
-        NodScenario::certified(Profile::Single),
-        NodScenario::certified(Profile::Typical),
     ] {
         run_if_selected(&scenario, &arguments.filter, config, &mut reports)?;
     }
@@ -97,7 +95,6 @@ fn execute() -> Result<(), String> {
         run_if_selected(&scenario, &arguments.filter, config, &mut reports)?;
     }
     for scenario in [
-        GemScenario::direct(GemTypes::Genesis),
         GemScenario::direct(GemTypes::Validator),
         GemScenario::direct(GemTypes::Sra),
         GemScenario::direct(GemTypes::Wallet),

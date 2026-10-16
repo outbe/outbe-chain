@@ -1,0 +1,19 @@
+   Compiling radicle v0.25.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle)
+    Finished `test` profile [unoptimized] target(s) in 7.49s
+     Running unittests src/lib.rs (/private/tmp/outbe-radicle-p1-standalone/debug/deps/radicle-fbfbf6dc2135ded4)
+
+running 1 test
+
+thread 'cob::store::native_test::prepare_and_attach_initial_bls_identity_without_ed_owner_or_ref_changes' (8947826) panicked at crates/radicle/src/cob/store/native_test.rs:94:5:
+direct identity lookup accepted tampered BLS COB metadata
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test cob::store::native_test::prepare_and_attach_initial_bls_identity_without_ed_owner_or_ref_changes ... FAILED
+
+failures:
+
+failures:
+    cob::store::native_test::prepare_and_attach_initial_bls_identity_without_ed_owner_or_ref_changes
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 402 filtered out; finished in 0.04s
+
+error: test failed, to rerun pass `-p radicle --lib`

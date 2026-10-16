@@ -54,5 +54,8 @@ pub mod schema;
 pub mod state;
 pub mod triggers;
 
+pub use schema::Accounting;
+pub use state::{read_last_accounted_block_number, record_phase1_progress};
+
 #[cfg(test)]
 mod tests;

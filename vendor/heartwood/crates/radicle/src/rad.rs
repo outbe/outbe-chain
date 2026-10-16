@@ -9,7 +9,7 @@ use crate::cob::ObjectId;
 use crate::git;
 use crate::git::BranchName;
 use crate::identity::doc;
-use crate::identity::doc::{DocError, RepoId, Visibility};
+use crate::identity::doc::{DocError, GetPayload as _, RepoId, Visibility};
 use crate::identity::project::{Project, ProjectName};
 use crate::storage::RepositoryError;
 use crate::storage::git::Repository;
@@ -101,7 +101,12 @@ fn init_configure(
     let pk = signer.public_key();
 
     git::configure_repository(repo)?;
-    git::configure_remote(repo, &REMOTE_NAME, url, &url.clone().with_namespace(*pk))?;
+    git::configure_remote(
+        repo,
+        &REMOTE_NAME,
+        url,
+        &url.clone().with_namespace((*pk).into()),
+    )?;
     let branch = git::fmt::Qualified::from(git::fmt::lit::refs_heads(default_branch));
 
     {
@@ -132,7 +137,7 @@ fn init_configure(
             *REMOTE_COMPONENT, default_branch
         ),
     )?;
-    stored.set_remote_identity_root_to(pk, identity)?;
+    stored.set_remote_identity_root_to(&(*pk).into(), identity)?;
     stored.set_identity_head_to(identity)?;
     stored.set_canonical_symbolic_refs("set-canonical from init (radicle)")?;
     stored.set_default_branch_to_canonical_head()?;
@@ -174,16 +179,17 @@ pub fn fork_remote(
 
     let me = signer.public_key();
     let doc = storage.get(proj)?.ok_or(ForkError::NotFound(proj))?;
-    let project = doc.project()?;
     let repository = storage.repository_mut(proj)?;
 
     let raw = repository.raw();
-    let remote_head = raw.refname_to_id(&git::refs::storage::branch_of(
-        remote,
-        project.default_branch(),
-    ))?;
+
+    #[allow(clippy::unwrap_used)]
+    let default_branch = doc.default_branch().unwrap();
+
+    let remote_head = raw.refname_to_id(default_branch.with_namespace(remote.into()).as_str())?;
+
     raw.reference(
-        &git::refs::storage::branch_of(me, project.default_branch()),
+        &default_branch.with_namespace(me.into()),
         remote_head,
         false,
         &format!("creating default branch for {me}"),
@@ -229,12 +235,12 @@ pub enum CheckoutError {
     },
     #[error("git: {0}")]
     Git(#[from] git::raw::Error),
-    #[error("payload: {0}")]
-    Payload(#[from] doc::PayloadError),
     #[error("repository `{0}` was not found in storage")]
     NotFound(RepoId),
     #[error("repository: {0}")]
     Repository(#[from] RepositoryError),
+    #[error(transparent)]
+    DefaultBranch(#[from] identity::doc::DefaultBranchError),
 }
 
 /// Checkout a project from storage as a working copy.
@@ -249,13 +255,13 @@ pub fn checkout<P: AsRef<Path>, S: storage::ReadStorage>(
     // TODO: Decide on whether we can use `clone_local`
     // TODO: Look into sharing object databases.
     let doc = storage.get(proj)?.ok_or(CheckoutError::NotFound(proj))?;
-    let project = doc.project()?;
 
     let mut opts = git::raw::RepositoryInitOptions::new();
-    opts.no_reinit(true)
-        .external_template(false)
-        .description(project.description())
-        .bare(bare);
+    opts.no_reinit(true).external_template(false).bare(bare);
+
+    if let Some(Ok(project)) = doc.project() {
+        opts.description(project.description());
+    }
 
     let repo = git::raw::Repository::init_opts(path.as_ref(), &opts)?;
     let url = git::Url::from(proj);
@@ -299,26 +305,33 @@ pub fn checkout<P: AsRef<Path>, S: storage::ReadStorage>(
         }
     }
 
-    {
-        // Set up default branch.
-        let remote_head_ref =
-            git::refs::workdir::remote_branch(&REMOTE_NAME, project.default_branch());
+    match doc.default_branch_name() {
+        Ok(branch_name) => {
+            // Set up default branch.
+            let remote_head_ref = git::refs::workdir::remote_branch(&REMOTE_NAME, &branch_name);
 
-        let remote_head_commit = repo.find_reference(&remote_head_ref)?.peel_to_commit()?;
-        let branch = repo
-            .branch(project.default_branch(), &remote_head_commit, true)?
-            .into_reference();
-        let branch_ref = branch
-            .name()
-            .expect("checkout: default branch name is valid UTF-8");
+            let remote_head_commit = repo.find_reference(&remote_head_ref)?.peel_to_commit()?;
+            let branch = repo
+                .branch(&branch_name, &remote_head_commit, true)?
+                .into_reference();
+            let branch_ref = branch
+                .name()
+                .expect("checkout: default branch name is valid UTF-8");
 
-        repo.set_head(branch_ref)?;
-        if !bare {
-            repo.checkout_head(None)?;
+            repo.set_head(branch_ref)?;
+            if !bare {
+                repo.checkout_head(None)?;
+            }
+
+            // Set up remote tracking for default branch.
+            git::set_upstream(&repo, &*REMOTE_NAME, &branch_name, branch_ref)?;
         }
-
-        // Set up remote tracking for default branch.
-        git::set_upstream(&repo, &*REMOTE_NAME, project.default_branch(), branch_ref)?;
+        Err(_) if bare => {
+            // Ignore.
+        }
+        Err(err) => {
+            return Err(CheckoutError::DefaultBranch(err));
+        }
     }
 
     Ok(repo)
@@ -530,7 +543,7 @@ mod tests {
         .unwrap();
 
         let doc = storage.get(proj).unwrap().unwrap();
-        let project = doc.project().unwrap();
+        let project = doc.project().unwrap().unwrap();
         let remotes: HashMap<_, _> = storage
             .repository(proj)
             .unwrap()
@@ -553,7 +566,7 @@ mod tests {
                 .unwrap(),
         );
 
-        assert_eq!(remotes[public_key].refs.refs(), refs.refs());
+        assert_eq!(remotes[&(*public_key).into()].refs.refs(), refs.refs());
         assert_eq!(project.name(), "acme");
         assert_eq!(project.description(), "Acme's repo");
         assert_eq!(project.default_branch(), &git::fmt::refname!("master"));
@@ -566,7 +579,7 @@ mod tests {
         let tempdir = tempfile::tempdir().unwrap();
         let alice = SigningKey::mock(rng.usize(..));
         let bob = SigningKey::mock(rng.usize(..));
-        let bob_id = bob.public_key();
+        let bob_id = &crypto::RepositoryKey::from(bob.public_key());
         let storage = Storage::open(tempdir.path().join("storage"), fixtures::user()).unwrap();
 
         transport::local::register(storage.clone());
@@ -603,7 +616,7 @@ mod tests {
     fn test_checkout() {
         let tempdir = tempfile::tempdir().unwrap();
         let signer = SigningKey::mock(73);
-        let remote_id = signer.public_key();
+        let remote_id = &crypto::RepositoryKey::from(signer.public_key());
         let storage = Storage::open(tempdir.path().join("storage"), fixtures::user()).unwrap();
 
         transport::local::register(storage.clone());

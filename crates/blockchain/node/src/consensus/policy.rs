@@ -1,7 +1,6 @@
 //! Stateless Outbe rules composed by the Reth consensus adapter.
-use super::system_transactions;
+use super::{consensus_other, system_transactions};
 use alloy_consensus::BlockHeader as _;
-use outbe_evm::system_tx::OcompLifecycleActivation;
 use outbe_primitives::consensus::{
     MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS, MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS, OUTBE_MAX_BLOCK_SIZE,
 };
@@ -19,18 +18,63 @@ use std::sync::Arc;
 
 const MILLIS_PER_SECOND: u64 = 1000;
 
+#[cfg(test)]
+mod publication_tests;
+
 #[derive(Debug, Clone)]
 pub(super) struct OutbeConsensusPolicy<ChainSpec> {
     pub(super) chain_spec: Arc<ChainSpec>,
     pub(super) skip_gas_limit_ramp_check: bool,
-    pub(super) ocomp_lifecycle_activation: OcompLifecycleActivation,
 }
 
 impl<ChainSpec> OutbeConsensusPolicy<ChainSpec>
 where
     ChainSpec: EthChainSpec<Header = OutbeHeader> + EthereumHardforks,
 {
+    fn validate_repository_publication_mode(
+        &self,
+        header: &OutbeHeader,
+    ) -> Result<(), ConsensusError> {
+        if header.number() == 0 {
+            return Ok(());
+        }
+        use outbe_primitives::radicle_genesis::{
+            GovernmentsDescriptor, GENESIS_GOVERNMENTS_FIELD, GOVERNMENTS_DESCRIPTOR_HASH_SLOT,
+        };
+        let genesis = self.chain_spec.genesis();
+        let slot = alloy_primitives::B256::from(
+            alloy_primitives::U256::from(GOVERNMENTS_DESCRIPTOR_HASH_SLOT).to_be_bytes::<32>(),
+        );
+        let seeded_hash = genesis
+            .alloc
+            .get(&outbe_primitives::addresses::RADICLE_REGISTRY_ADDRESS)
+            .and_then(|account| account.storage.as_ref())
+            .and_then(|storage| storage.get(&slot))
+            .copied()
+            .unwrap_or_default();
+        let enabled = GovernmentsDescriptor::from_genesis_field(
+            genesis.config.extra_fields.get(GENESIS_GOVERNMENTS_FIELD),
+            self.chain_spec.chain().id(),
+            genesis.timestamp,
+            seeded_hash,
+        )
+        .map_err(|error| consensus_other(error.to_string()))?
+        .is_some();
+        let actual = header.extra_data().starts_with(b"OART\x0c");
+        if actual != enabled {
+            return Err(consensus_other(
+                "OART publication format differs from seeded genesis activation",
+            ));
+        }
+        if enabled {
+            outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(header.extra_data())
+                .map_err(|error| consensus_other(error.to_string()))?;
+        }
+        Ok(())
+    }
+
     pub(super) fn validate_header(&self, header: &OutbeHeader) -> Result<(), ConsensusError> {
+        self.validate_repository_publication_mode(header)?;
         validate_header_timestamp_millis_part(header)?;
         if !self.skip_gas_limit_ramp_check {
             validate_protocol_gas_limit(header)?;
@@ -71,32 +115,28 @@ where
         body: &OutbeBlockBody,
         header: &OutbeHeader,
     ) -> Result<(), ConsensusError> {
+        self.validate_repository_publication_mode(header)?;
         validate_outbe_body_withdrawals(body)?;
-        validate_system_transactions(body, header, self.ocomp_lifecycle_activation)
+        validate_system_transactions(body, header)
     }
 
     pub(super) fn validate_block_pre_execution(
         &self,
         block: &SealedBlock<OutbeBlock>,
     ) -> Result<(), ConsensusError> {
+        self.validate_repository_publication_mode(block.header())?;
         validate_outbe_body_withdrawals(block.body())?;
         validate_block_transport_size(block)?;
-        validate_system_transactions(
-            block.body(),
-            block.header(),
-            self.ocomp_lifecycle_activation,
-        )
+        validate_system_transactions(block.body(), block.header())
     }
 }
 
 pub(super) fn validate_system_transactions(
     body: &OutbeBlockBody,
     header: &OutbeHeader,
-    ocomp_lifecycle_activation: OcompLifecycleActivation,
 ) -> Result<(), ConsensusError> {
     system_transactions::validate_beneficiary(header)?;
-    let (layout, artifacts) =
-        system_transactions::validate_layout(body, header, ocomp_lifecycle_activation)?;
+    let (layout, artifacts) = system_transactions::validate_layout(body, header)?;
     system_transactions::validate_parent_accounting(&layout, header)?;
     system_transactions::validate_boundary_outcome(&layout, &artifacts)?;
     system_transactions::validate_late_credits(&layout, &artifacts)

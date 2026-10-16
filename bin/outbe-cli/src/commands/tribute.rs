@@ -322,7 +322,7 @@ async fn offer(
     // worldwide_day + currency are cleartext ABI args (below) so the node can
     // admit and price the offer without decrypting. The ciphertext carries only
     // what must stay confidential. `referenceCurrency` is a separate axis again
-    // (it drives gem/intex qualification), not the pricing key.
+    // (it denominates the rights' entry and call prices), not the pricing key.
     let payload = serde_json::json!({
         "creator": format!("{creator:?}"),
         "creator_public_key": format!("{creator_public_key:#x}"),

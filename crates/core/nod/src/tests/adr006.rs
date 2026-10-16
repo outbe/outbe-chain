@@ -1,8 +1,6 @@
-use alloy_primitives::{Address, B256, U256};
-use alloy_sol_types::SolCall;
+use alloy_primitives::{Address, U256};
 use outbe_primitives::time::{
-    date_key_to_utc_timestamp, first_full_day, previous_date_key, timestamp_to_date_key,
-    WorldwideDay,
+    date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key, WorldwideDay,
 };
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_primitives::{
@@ -13,10 +11,10 @@ use outbe_primitives::{
 
 use outbe_oracle::api::AddressPair;
 
-use crate::{api, NodCertifiedGenerationProjection, NodContract, NodItemState};
+use crate::{api, NodContract, NodItemState};
 
-/// Default block timestamp for qualification tests. Not UTC midnight, so its
-/// last closed day is the previous calendar day.
+/// Default block timestamp. Not UTC midnight, so its last closed day is the
+/// previous calendar day.
 const NOW: u64 = 1_752_534_000;
 
 fn item(owner: Address) -> NodItemState {
@@ -32,8 +30,7 @@ fn item(owner: Address) -> NodItemState {
             bucket_key: crate::identity::bucket_key(worldwide_day, U256::from(5), 978),
             issuance_currency: 840,
             reference_currency: 978,
-            // Midnight of the last UTC day closed at `NOW`, so a bucket issued in
-            // these fixtures can qualify on that day's VWAP.
+            // Midnight of the last UTC day closed at `NOW`.
             issued_at: date_key_to_utc_timestamp(previous_date_key(timestamp_to_date_key(NOW))),
         },
         U256::from(5),
@@ -161,22 +158,6 @@ fn membership_changes_preserve_bucket_body_and_commitment_until_last_removal() {
     });
 }
 
-#[test]
-fn materialization_fifo_slots_match_the_genesis_seeder() {
-    let mut provider = HashMapStorageProvider::new(1);
-    StorageHandle::enter(&mut provider, |storage| {
-        let nod = NodContract::new(storage);
-        assert_eq!(
-            nod.ocomp_materialization_head_sequence.slot(),
-            U256::from(13)
-        );
-        assert_eq!(
-            nod.ocomp_materialization_tail_sequence.slot(),
-            U256::from(14)
-        );
-    });
-}
-
 /// `openings` and the oracle-opening codec both name the Oracle's slots; both must be the schema's.
 #[test]
 fn entry_price_openings_follow_the_oracle_schema() {
@@ -241,10 +222,6 @@ fn entry_price_openings_follow_the_oracle_schema() {
         assert!(crate::openings::pair_index_slots(&[978]).is_err());
         assert!(crate::openings::pair_index_slots(&[840, 840]).is_err());
         assert!(crate::openings::pair_index_slots(&[0, 840]).is_err());
-        assert!(
-            outbe_ocomp_protocol::registry::ORACLE_OPENING_CODEC_DESCRIPTOR
-                .contains("oracle_utc_day_vwap_slots_v1(pair_index=10,vwap=58,")
-        );
     });
 }
 
@@ -334,605 +311,38 @@ fn nod_contract_slot_layout_is_pinned() {
         let nod = NodContract::new(storage);
         assert_eq!(nod.total_supply.slot(), U256::ZERO);
         assert_eq!(nod.bucket_worldwide_day.base_slot(), U256::from(1));
-        assert_eq!(nod.ocomp_target_generation.base_slot(), U256::from(2));
-        assert_eq!(
-            nod.ocomp_materialization_attempt_count.slot(),
-            U256::from(17)
-        );
-        assert_eq!(nod.bucket_nod_count.base_slot(), U256::from(18));
-        assert_eq!(nod.bucket_nods.base_slot(), U256::from(19));
-        assert_eq!(nod.bucket_nod_index.base_slot(), U256::from(20));
-        assert_eq!(nod.bucket_call_price_minor.base_slot(), U256::from(21));
-        assert_eq!(nod.bucket_currency.base_slot(), U256::from(22));
-        assert_eq!(nod.bucket_called_at.base_slot(), U256::from(23));
-        assert_eq!(
-            nod.ocomp_materialization_protocol_bundle_hash.base_slot(),
-            U256::from(24)
-        );
-        assert_eq!(nod.bucket_call_rate.base_slot(), U256::from(25));
-        assert_eq!(nod.bucket_call_window_seconds.base_slot(), U256::from(26));
+        assert_eq!(nod.bucket_nod_count.base_slot(), U256::from(2));
+        assert_eq!(nod.bucket_nods.base_slot(), U256::from(3));
+        assert_eq!(nod.bucket_nod_index.base_slot(), U256::from(4));
+        assert_eq!(nod.bucket_call_price_minor.base_slot(), U256::from(5));
+        assert_eq!(nod.bucket_currency.base_slot(), U256::from(6));
+        assert_eq!(nod.bucket_called_at.base_slot(), U256::from(7));
+        assert_eq!(nod.bucket_call_rate.base_slot(), U256::from(8));
+        assert_eq!(nod.bucket_call_window_seconds.base_slot(), U256::from(9));
         assert_eq!(
             nod.bucket_call_threshold_seconds.base_slot(),
-            U256::from(27)
+            U256::from(10)
         );
         assert_eq!(
             nod.bucket_call_notice_period_seconds.base_slot(),
-            U256::from(28)
+            U256::from(11)
         );
-        assert_eq!(nod.max_call_window_seconds.base_slot(), U256::from(29));
-        assert_eq!(nod.bucket_issued_at.base_slot(), U256::from(30));
-        assert_eq!(nod.call_sweep_day.slot(), U256::from(31));
-        assert_eq!(nod.call_pending_day.slot(), U256::from(32));
-        assert_eq!(nod.call_bin_tree_root.base_slot(), U256::from(33));
-        assert_eq!(nod.call_bin_tree_mid.base_slot(), U256::from(34));
-        assert_eq!(nod.call_bin_tree_leaf.base_slot(), U256::from(35));
-        assert_eq!(nod.call_bin_count.base_slot(), U256::from(36));
-        assert_eq!(nod.call_bin_buckets.base_slot(), U256::from(37));
-        assert_eq!(nod.call_bucket_slot.base_slot(), U256::from(38));
-        assert_eq!(nod.expiry_tree_root.slot(), U256::from(39));
-        assert_eq!(nod.expiry_tree_leaf.base_slot(), U256::from(41));
-        assert_eq!(nod.call_currency_cursor.slot(), U256::from(42));
-        assert_eq!(nod.call_bin_cursor.base_slot(), U256::from(43));
-        assert_eq!(nod.config_profile.slot(), U256::from(44));
-        assert_eq!(nod.expiry_bucket_len.base_slot(), U256::from(45));
-        assert_eq!(nod.expiry_cursor.slot(), U256::from(51));
+        assert_eq!(nod.max_call_window_seconds.base_slot(), U256::from(12));
+        assert_eq!(nod.bucket_issued_at.base_slot(), U256::from(13));
+        assert_eq!(nod.call_sweep_day.slot(), U256::from(14));
+        assert_eq!(nod.call_pending_day.slot(), U256::from(15));
+        assert_eq!(nod.call_bin_tree_root.base_slot(), U256::from(16));
+        assert_eq!(nod.call_bin_tree_mid.base_slot(), U256::from(17));
+        assert_eq!(nod.call_bin_tree_leaf.base_slot(), U256::from(18));
+        assert_eq!(nod.call_bin_count.base_slot(), U256::from(19));
+        assert_eq!(nod.call_bin_buckets.base_slot(), U256::from(20));
+        assert_eq!(nod.call_bucket_slot.base_slot(), U256::from(21));
+        assert_eq!(nod.expiry_tree_root.slot(), U256::from(22));
+        assert_eq!(nod.expiry_tree_leaf.base_slot(), U256::from(24));
+        assert_eq!(nod.call_currency_cursor.slot(), U256::from(25));
+        assert_eq!(nod.call_bin_cursor.base_slot(), U256::from(26));
+        assert_eq!(nod.config_profile.slot(), U256::from(27));
+        assert_eq!(nod.expiry_bucket_len.base_slot(), U256::from(28));
+        assert_eq!(nod.expiry_cursor.slot(), U256::from(34));
     });
-}
-
-#[test]
-fn certified_generation_is_available_through_the_public_nod_abi() {
-    let worldwide_day = WorldwideDay::new(20_260_726);
-    let generation = NodCertifiedGenerationProjection {
-        source_checkpoint: outbe_ocomp_protocol::intent::FinalizedRequestBindingV1 {
-            block_number: 1,
-            block_hash: B256::repeat_byte(0x71),
-            state_root: B256::repeat_byte(0x72),
-        },
-        worldwide_day,
-        generation: 9,
-        job_id: B256::repeat_byte(0x44),
-        protocol_bundle_hash: B256::repeat_byte(0x5b),
-        program_semantics_hash: B256::repeat_byte(0x55),
-        nod_root: B256::repeat_byte(0x11),
-        bucket_root: B256::repeat_byte(0x22),
-        output_manifest_root: B256::repeat_byte(0x33),
-        tribute_count: 257,
-        nod_count: 257,
-        bucket_count: 13,
-        nod_amount_total: U256::from(50_000),
-        lysis_allocation_minor: U256::from(7_000),
-        nod_gratis_load_max: U256::from(1_000),
-        issued_at: 1_753_488_000,
-        next_nod_ordinal: 129,
-        last_progress_height: 4_096,
-    };
-    let mut provider = HashMapStorageProvider::new(1);
-
-    StorageHandle::enter(&mut provider, |storage| {
-        let nod = NodContract::new(storage.clone());
-        nod.ocomp_target_generation
-            .write(&worldwide_day, generation.generation)
-            .unwrap();
-        nod.ocomp_namespace_root
-            .write(&worldwide_day, generation.nod_root)
-            .unwrap();
-        nod.ocomp_bucket_root
-            .write(&worldwide_day, generation.bucket_root)
-            .unwrap();
-        nod.ocomp_output_manifest_root
-            .write(&worldwide_day, generation.output_manifest_root)
-            .unwrap();
-        nod.ocomp_source_block_number
-            .write(&worldwide_day, generation.source_checkpoint.block_number)
-            .unwrap();
-        nod.ocomp_source_block_hash
-            .write(&worldwide_day, generation.source_checkpoint.block_hash)
-            .unwrap();
-        nod.ocomp_source_state_root
-            .write(&worldwide_day, generation.source_checkpoint.state_root)
-            .unwrap();
-        nod.ocomp_generation_metadata
-            .write(&worldwide_day, generation.metadata_word())
-            .unwrap();
-        nod.ocomp_nod_amount_total
-            .write(&worldwide_day, generation.nod_amount_total)
-            .unwrap();
-        nod.ocomp_lysis_allocation_minor
-            .write(&worldwide_day, generation.lysis_allocation_minor)
-            .unwrap();
-        nod.ocomp_nod_gratis_load_max
-            .write(&worldwide_day, generation.nod_gratis_load_max)
-            .unwrap();
-        nod.ocomp_materialization_job_id
-            .write(&worldwide_day, generation.job_id)
-            .unwrap();
-        nod.ocomp_materialization_protocol_bundle_hash
-            .write(&worldwide_day, generation.protocol_bundle_hash)
-            .unwrap();
-        nod.ocomp_materialization_program_semantics_hash
-            .write(&worldwide_day, generation.program_semantics_hash)
-            .unwrap();
-        nod.ocomp_materialization_next_nod_ordinal
-            .write(&worldwide_day, generation.next_nod_ordinal)
-            .unwrap();
-        nod.ocomp_materialization_last_progress_height
-            .write(&worldwide_day, generation.last_progress_height)
-            .unwrap();
-
-        let call = crate::precompile::INod::certifiedGenerationCall {
-            worldwideDay: worldwide_day.into(),
-        }
-        .abi_encode();
-        let output =
-            crate::precompile::dispatch(storage.clone(), &call, Address::ZERO, U256::ZERO).unwrap();
-        let actual =
-            crate::precompile::INod::certifiedGenerationCall::abi_decode_returns(&output).unwrap();
-
-        assert!(actual.exists);
-        assert_eq!(actual.worldwideDay, worldwide_day.value());
-        assert_eq!(actual.generation, generation.generation);
-        assert_eq!(actual.nodRoot, generation.nod_root);
-        assert_eq!(actual.bucketRoot, generation.bucket_root);
-        assert_eq!(actual.outputManifestRoot, generation.output_manifest_root);
-        assert_eq!(actual.tributeCount, generation.tribute_count);
-        assert_eq!(actual.nodCount, generation.nod_count);
-        assert_eq!(actual.bucketCount, generation.bucket_count);
-        assert_eq!(actual.totalSettlementCostMinor, generation.nod_amount_total);
-        assert_eq!(
-            actual.lysisAllocationMinor,
-            generation.lysis_allocation_minor
-        );
-        assert_eq!(actual.issuedAt, generation.issued_at);
-    });
-}
-
-#[test]
-fn absent_certified_generation_has_an_explicit_public_abi_result() {
-    let worldwide_day = WorldwideDay::new(20_260_727);
-    let mut provider = HashMapStorageProvider::new(1);
-
-    StorageHandle::enter(&mut provider, |storage| {
-        let call = crate::precompile::INod::certifiedGenerationCall {
-            worldwideDay: worldwide_day.into(),
-        }
-        .abi_encode();
-        let output =
-            crate::precompile::dispatch(storage, &call, Address::ZERO, U256::ZERO).unwrap();
-        let actual =
-            crate::precompile::INod::certifiedGenerationCall::abi_decode_returns(&output).unwrap();
-
-        assert!(!actual.exists);
-        assert_eq!(actual.worldwideDay, worldwide_day.value());
-        assert_eq!(actual.generation, 0);
-        assert_eq!(actual.nodRoot, B256::ZERO);
-        assert_eq!(actual.bucketRoot, B256::ZERO);
-        assert_eq!(actual.outputManifestRoot, B256::ZERO);
-        assert_eq!(actual.tributeCount, 0);
-        assert_eq!(actual.nodCount, 0);
-        assert_eq!(actual.bucketCount, 0);
-        assert_eq!(actual.totalSettlementCostMinor, U256::ZERO);
-        assert_eq!(actual.lysisAllocationMinor, U256::ZERO);
-        assert_eq!(actual.issuedAt, 0);
-    });
-}
-
-/// Seeds one unqualified bucket denominated in `iso` and returns its identity.
-fn seed_bucket(storage: &StorageHandle<'_>, owner: Address, iso: u16) -> B256 {
-    seed_bucket_issued(
-        storage,
-        BucketIssuance {
-            owner,
-            reference_currency: iso,
-            issued_at: item(owner).issued_at,
-        },
-    )
-}
-
-struct BucketIssuance {
-    owner: Address,
-    reference_currency: u16,
-    issued_at: u64,
-}
-
-fn seed_bucket_issued(storage: &StorageHandle<'_>, issuance: BucketIssuance) -> B256 {
-    let entry = U256::from(5);
-    let mut body = item(issuance.owner);
-    body.reference_currency = issuance.reference_currency;
-    crate::test_support::set_terms(&mut body);
-    body.issued_at = issuance.issued_at;
-    body.bucket_key =
-        crate::identity::bucket_key(body.worldwide_day, entry, issuance.reference_currency);
-    api::add_nod(
-        storage,
-        &body,
-        entry,
-        crate::test_support::sealed_terms(storage, &body, entry),
-    )
-    .unwrap();
-    body.bucket_key
-}
-
-/// Stores the previous completed UTC-day price and finalization watermark.
-fn publish_day_vwap(storage: &StorageHandle<'_>, index: u32, rate: U256) {
-    let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-    let previous_day = previous_date_key(timestamp_to_date_key(NOW));
-    oracle
-        .record_utc_day_vwap(previous_day, index, rate)
-        .unwrap();
-    oracle
-        .utc_day_vwap_last_finalized
-        .write(previous_day)
-        .unwrap();
-}
-
-fn is_qualified(storage: &StorageHandle<'_>, bucket_id: B256) -> bool {
-    let bucket = api::get_bucket(storage, bucket_id).unwrap().unwrap();
-    api::is_qualified(storage, &bucket).unwrap()
-}
-
-/// A currency whose COEN pair was never registered qualifies nothing, without an error.
-#[test]
-fn an_unregistered_reference_pair_qualifies_nothing() {
-    let mut provider = HashMapStorageProvider::new(1);
-    StorageHandle::enter(&mut provider, |storage| {
-        let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-        oracle.reference_currencies.push(978).unwrap();
-        publish_day_vwap(&storage, 2, U256::from(14));
-        let bucket_id = seed_bucket(&storage, Address::repeat_byte(0x66), 978);
-
-        assert!(!is_qualified(&storage, bucket_id));
-    });
-}
-
-/// A registered pair without a daily VWAP qualifies nothing either.
-#[test]
-fn a_registered_reference_pair_with_no_daily_vwap_qualifies_nothing() {
-    let mut provider = HashMapStorageProvider::new(1);
-    StorageHandle::enter(&mut provider, |storage| {
-        let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-        oracle.reference_currencies.push(978).unwrap();
-        // Registered, but the finalized day has no VWAP for this pair.
-        oracle
-            .pair_to_index
-            .write(&AddressPair::new_coen_to(978), 1)
-            .unwrap();
-        publish_day_vwap(&storage, 2, U256::from(14));
-        let bucket_id = seed_bucket(&storage, Address::repeat_byte(0x66), 978);
-
-        assert!(!is_qualified(&storage, bucket_id));
-    });
-}
-
-/// One unpriced currency does not hold back another.
-#[test]
-fn a_priced_currency_still_qualifies_when_a_sibling_currency_is_unpriced() {
-    let mut provider = HashMapStorageProvider::new(1);
-    StorageHandle::enter(&mut provider, |storage| {
-        let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-        // 978 comes first and is never priced; 840 follows and is.
-        oracle.reference_currencies.push(978).unwrap();
-        oracle.reference_currencies.push(840).unwrap();
-        oracle
-            .pair_to_index
-            .write(&AddressPair::new_coen_to(840), 1)
-            .unwrap();
-        publish_day_vwap(&storage, 1, U256::from(14));
-
-        let unpriced = seed_bucket(&storage, Address::repeat_byte(0x66), 978);
-        let priced = seed_bucket(&storage, Address::repeat_byte(0x77), 840);
-
-        assert!(is_qualified(&storage, priced));
-        assert!(!is_qualified(&storage, unpriced));
-    });
-}
-
-#[test]
-fn qualification_requires_a_finalized_day_above_the_floor_and_stays() {
-    for (daily_rate, finalized, live_rate, qualifies) in [
-        (0, true, 14, false),  // Missing day. No fallback to a live price.
-        (4, true, 14, false),  // A live crossing cannot qualify.
-        (5, true, 14, false),  // Equality is not enough.
-        (6, false, 14, false), // Wait for Oracle finalization.
-        (6, true, 1, true),    // A low live rate cannot prevent qualification.
-    ] {
-        let mut provider = HashMapStorageProvider::new(1);
-        StorageHandle::enter(&mut provider, |storage| {
-            let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-            oracle
-                .pair_to_index
-                .write(&AddressPair::new_coen_to(978), 1)
-                .unwrap();
-            oracle
-                .exchange_rate
-                .write(&1, U256::from(live_rate))
-                .unwrap();
-            oracle.exchange_rate_timestamp.write(&1, NOW).unwrap();
-            let current_day = timestamp_to_date_key(NOW);
-            let previous_day = previous_date_key(current_day);
-            // A day before issuance, an unfinalized day and another currency must
-            // not substitute for the bucket's own closes, even above the floor.
-            for day in [previous_date_key(previous_day), current_day] {
-                oracle.record_utc_day_vwap(day, 1, U256::from(14)).unwrap();
-            }
-            oracle
-                .record_utc_day_vwap(previous_day, 2, U256::from(14))
-                .unwrap();
-            oracle
-                .record_utc_day_vwap(previous_day, 1, U256::from(daily_rate))
-                .unwrap();
-            oracle
-                .utc_day_vwap_last_finalized
-                .write(if finalized {
-                    previous_day
-                } else {
-                    previous_date_key(previous_day)
-                })
-                .unwrap();
-            let bucket_id = seed_bucket(&storage, Address::repeat_byte(0x66), 978);
-            assert_eq!(is_qualified(&storage, bucket_id), qualifies);
-
-            // The next day closes below the floor: a crossing already made
-            // stays, and a day finalized late still counts.
-            oracle
-                .record_utc_day_vwap(current_day, 1, U256::from(1))
-                .unwrap();
-            oracle
-                .utc_day_vwap_last_finalized
-                .write(current_day)
-                .unwrap();
-            assert_eq!(is_qualified(&storage, bucket_id), daily_rate > 5);
-        });
-    }
-}
-
-/// Q027: the issuance UTC day counts for qualification only when the Nod was
-/// issued at midnight. A second later drops that day, so the closed day's
-/// VWAP cannot qualify a bucket that did not hold it in full.
-#[test]
-fn the_issue_day_qualifies_only_for_a_nod_issued_at_midnight() {
-    let closed = previous_date_key(timestamp_to_date_key(NOW));
-    let midnight = date_key_to_utc_timestamp(closed);
-    for (issued_at, expected) in [(midnight, true), (midnight + 1, false)] {
-        let mut provider = HashMapStorageProvider::new(1);
-        StorageHandle::enter(&mut provider, |storage| {
-            let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-            oracle.reference_currencies.push(978).unwrap();
-            oracle
-                .pair_to_index
-                .write(&AddressPair::new_coen_to(978), 1)
-                .unwrap();
-            publish_day_vwap(&storage, 1, U256::from(14));
-            let bucket_id = seed_bucket_issued(
-                &storage,
-                BucketIssuance {
-                    owner: Address::repeat_byte(0x66),
-                    reference_currency: 978,
-                    issued_at,
-                },
-            );
-            assert_eq!(
-                is_qualified(&storage, bucket_id),
-                expected,
-                "issued at {issued_at}"
-            );
-        });
-    }
-}
-
-/// Q027: a delayed materialization must not qualify on a pre-issuance close,
-/// even when that day's VWAP stands above the floor. Issued at `NOW` (not
-/// midnight), the last closed day is two calendar days before
-/// `first_full_day(issued_at)`.
-#[test]
-fn a_delayed_issuance_does_not_qualify_on_pre_issuance_days() {
-    let issued_at = NOW;
-    assert!(
-        previous_date_key(timestamp_to_date_key(NOW)) < first_full_day(issued_at),
-        "the fixture must evaluate a day the bucket has not held in full"
-    );
-    let mut provider = HashMapStorageProvider::new(1);
-    StorageHandle::enter(&mut provider, |storage| {
-        let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-        oracle.reference_currencies.push(978).unwrap();
-        oracle
-            .pair_to_index
-            .write(&AddressPair::new_coen_to(978), 1)
-            .unwrap();
-        publish_day_vwap(&storage, 1, U256::from(14));
-        let bucket_id = seed_bucket_issued(
-            &storage,
-            BucketIssuance {
-                owner: Address::repeat_byte(0x66),
-                reference_currency: 978,
-                issued_at,
-            },
-        );
-        assert!(!is_qualified(&storage, bucket_id));
-    });
-}
-
-/// A close that predates `first_full_day` does not qualify the bucket; the first
-/// close of a day it held in full does.
-#[test]
-fn a_bucket_qualifies_on_its_first_full_day_after_skipping_earlier_closes() {
-    let issued_at = NOW;
-    let full = first_full_day(issued_at);
-    let mut provider = HashMapStorageProvider::new(1);
-    StorageHandle::enter(&mut provider, |storage| {
-        let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-        oracle.reference_currencies.push(978).unwrap();
-        oracle
-            .pair_to_index
-            .write(&AddressPair::new_coen_to(978), 1)
-            .unwrap();
-        publish_day_vwap(&storage, 1, U256::from(14));
-        let bucket_id = seed_bucket_issued(
-            &storage,
-            BucketIssuance {
-                owner: Address::repeat_byte(0x66),
-                reference_currency: 978,
-                issued_at,
-            },
-        );
-        assert!(!is_qualified(&storage, bucket_id));
-
-        publish_vwap_on(&storage, 1, full, U256::from(14));
-        assert!(is_qualified(&storage, bucket_id));
-    });
-}
-
-/// A bucket in a currency without a priced pair is never qualified by another currency's rate.
-#[test]
-fn a_bucket_in_an_unlisted_currency_stays_unqualified_and_intact() {
-    let mut provider = HashMapStorageProvider::new(1);
-    StorageHandle::enter(&mut provider, |storage| {
-        let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-        oracle.reference_currencies.push(840).unwrap();
-        oracle
-            .pair_to_index
-            .write(&AddressPair::new_coen_to(840), 1)
-            .unwrap();
-        publish_day_vwap(&storage, 1, U256::from(14));
-
-        let unlisted = seed_bucket(&storage, Address::repeat_byte(0x66), 978);
-        assert!(!is_qualified(&storage, unlisted));
-        assert!(
-            !NodContract::new(storage.clone())
-                .call_bin_tree_root
-                .read(&978)
-                .unwrap()
-                .is_zero(),
-            "the unlisted currency's bin entry must survive untouched"
-        );
-    });
-}
-
-#[test]
-fn the_certified_bundle_survives_a_read_and_leaves_nothing_behind_when_cleared() {
-    let worldwide_day = WorldwideDay::new(20_260_726);
-    let bundle = B256::repeat_byte(0x5b);
-    let mut provider = HashMapStorageProvider::new(1);
-
-    StorageHandle::enter(&mut provider, |storage| {
-        let nod = NodContract::new(storage.clone());
-        nod.ocomp_target_generation
-            .write(&worldwide_day, 9)
-            .unwrap();
-        nod.ocomp_materialization_job_id
-            .write(&worldwide_day, B256::repeat_byte(0x44))
-            .unwrap();
-        nod.ocomp_materialization_protocol_bundle_hash
-            .write(&worldwide_day, bundle)
-            .unwrap();
-        nod.ocomp_materialization_program_semantics_hash
-            .write(&worldwide_day, B256::repeat_byte(0x55))
-            .unwrap();
-        nod.ocomp_namespace_root
-            .write(&worldwide_day, B256::repeat_byte(0x11))
-            .unwrap();
-        nod.ocomp_bucket_root
-            .write(&worldwide_day, B256::repeat_byte(0x22))
-            .unwrap();
-        nod.ocomp_output_manifest_root
-            .write(&worldwide_day, B256::repeat_byte(0x33))
-            .unwrap();
-        let shape = NodCertifiedGenerationProjection {
-            source_checkpoint: outbe_ocomp_protocol::intent::FinalizedRequestBindingV1 {
-                block_number: 1,
-                block_hash: B256::repeat_byte(0x71),
-                state_root: B256::repeat_byte(0x72),
-            },
-            worldwide_day,
-            generation: 9,
-            job_id: B256::repeat_byte(0x44),
-            protocol_bundle_hash: bundle,
-            program_semantics_hash: B256::repeat_byte(0x55),
-            nod_root: B256::repeat_byte(0x11),
-            bucket_root: B256::repeat_byte(0x22),
-            output_manifest_root: B256::repeat_byte(0x33),
-            tribute_count: 7,
-            nod_count: 7,
-            bucket_count: 2,
-            nod_amount_total: U256::from(50_000),
-            lysis_allocation_minor: U256::from(7_000),
-            nod_gratis_load_max: U256::from(1_000),
-            issued_at: 1_753_488_000,
-            next_nod_ordinal: 0,
-            last_progress_height: 4_096,
-        };
-        nod.ocomp_source_block_number
-            .write(&worldwide_day, shape.source_checkpoint.block_number)
-            .unwrap();
-        nod.ocomp_source_block_hash
-            .write(&worldwide_day, shape.source_checkpoint.block_hash)
-            .unwrap();
-        nod.ocomp_source_state_root
-            .write(&worldwide_day, shape.source_checkpoint.state_root)
-            .unwrap();
-        nod.ocomp_generation_metadata
-            .write(&worldwide_day, shape.metadata_word())
-            .unwrap();
-        nod.ocomp_nod_amount_total
-            .write(&worldwide_day, shape.nod_amount_total)
-            .unwrap();
-        nod.ocomp_lysis_allocation_minor
-            .write(&worldwide_day, shape.lysis_allocation_minor)
-            .unwrap();
-        nod.ocomp_nod_gratis_load_max
-            .write(&worldwide_day, shape.nod_gratis_load_max)
-            .unwrap();
-        nod.ocomp_materialization_last_progress_height
-            .write(&worldwide_day, shape.last_progress_height)
-            .unwrap();
-
-        let read = nod
-            .ocomp_certified_generation(worldwide_day)
-            .unwrap()
-            .expect("a generation with a non-zero number is present");
-        assert_eq!(read.source_checkpoint, shape.source_checkpoint);
-        assert_eq!(
-            read.protocol_bundle_hash, bundle,
-            "materialization reads the bundle from the chain, so it has to come back"
-        );
-        assert_eq!(read.nod_gratis_load_max, shape.nod_gratis_load_max);
-
-        nod.clear_ocomp_certified_generation(worldwide_day).unwrap();
-        assert!(
-            nod.ocomp_certified_generation(worldwide_day)
-                .unwrap()
-                .is_none(),
-            "clearing has to wipe the bundle too, or the day reads as residual state"
-        );
-    });
-}
-
-fn publish_vwap_on(storage: &StorageHandle<'_>, index: u32, day: u32, rate: U256) {
-    let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-    oracle.record_utc_day_vwap(day, index, rate).unwrap();
-    oracle.utc_day_vwap_last_finalized.write(day).unwrap();
-}
-
-#[test]
-fn absent_generation_rejects_residual_source_checkpoint_words() {
-    let day = WorldwideDay::new(20_260_726);
-    for component in 0..3 {
-        let mut provider = HashMapStorageProvider::new(1);
-        StorageHandle::enter(&mut provider, |storage| {
-            let nod = NodContract::new(storage);
-            match component {
-                0 => nod.ocomp_source_block_number.write(&day, 42).unwrap(),
-                1 => nod
-                    .ocomp_source_block_hash
-                    .write(&day, B256::repeat_byte(0x71))
-                    .unwrap(),
-                _ => nod
-                    .ocomp_source_state_root
-                    .write(&day, B256::repeat_byte(0x72))
-                    .unwrap(),
-            }
-            assert!(nod.ocomp_certified_generation(day).is_err());
-            nod.clear_ocomp_certified_generation(day).unwrap();
-            assert!(nod.ocomp_certified_generation(day).unwrap().is_none());
-        });
-    }
 }

@@ -1,8 +1,8 @@
 use radicle::prelude::*;
 
 use crate::git;
+use radicle::crypto::RepositoryKey;
 use radicle::git::fmt::RefStr;
-use radicle::node::NodeId;
 
 /// Set up a repository remote and tracking branch.
 pub struct SetupRemote<'a> {
@@ -21,7 +21,7 @@ impl SetupRemote<'_> {
     pub fn run(
         &self,
         name: impl AsRef<RefStr>,
-        node: NodeId,
+        node: RepositoryKey,
     ) -> anyhow::Result<(git::Remote<'_>, Option<BranchName>)> {
         let remote_url = radicle::git::Url::from(self.rid).with_namespace(node);
         let remote_name = name.as_ref();

@@ -1,6 +1,6 @@
 //! IntexFactory: Intex issuance, settlement (settle / minePromis), the auction proceeds
-//! burn, the target-chain notices and VWAP push, and the call and expiry sweeps over
-//! the data Intex keeps. Qualification is derived from daily VWAPs and is never stored.
+//! burn, the target-chain notices, and the call and expiry sweeps over the data Intex
+//! keeps.
 
 pub mod api;
 pub mod called;
@@ -17,7 +17,6 @@ pub(crate) mod sol_ext;
 pub(crate) mod state;
 #[cfg(feature = "e2e-test")]
 mod test_arming_e2e;
-pub mod vwap_push;
 
 pub use api::issue_intex;
 pub use errors::IntexFactoryError;

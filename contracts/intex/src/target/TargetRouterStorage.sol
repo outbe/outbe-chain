@@ -5,7 +5,6 @@ import {IIntexAuction} from "./interfaces/IIntexAuction.sol";
 import {IIntexNFT1155} from "../shared/interfaces/IIntexNFT1155.sol";
 import {IEscrowAdapter} from "./interfaces/IEscrowAdapter.sol";
 import {IERC7786TokenBridge} from "./interfaces/IERC7786TokenBridge.sol";
-import {IVwapRegistry} from "./interfaces/IVwapRegistry.sol";
 
 /// @notice Progress of a day's bids relay: the span that the first round froze, the next chunk to
 ///         send, and whether the completeness marker has left. Five bytes, so one slot.
@@ -36,9 +35,6 @@ struct TargetRouterStorage {
     IIntexNFT1155 intex;
     /// @dev EscrowAdapter contract that refund instructions are forwarded to for finalization.
     IEscrowAdapter escrowAdapter;
-    /// @dev Registry that records the daily VWAPs from Outbe. A day that arrives while it is
-    ///      unset reverts.
-    IVwapRegistry vwapRegistry;
     /// @dev Composed-transfer token bridge that routes auction proceeds to Outbe.
     IERC7786TokenBridge tokenBridge;
     /// @dev OriginRouter address on Outbe that receives and distributes the proceeds.

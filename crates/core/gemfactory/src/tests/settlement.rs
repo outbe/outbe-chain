@@ -13,7 +13,6 @@ fn settlement_takes_the_rail_the_asset_matched() {
             840,
         )
         .unwrap();
-        seed_qualifying_day(storage, gem_id);
         assert_eq!(admitted_at_quote(storage, gem_id, STABLE).0, 840);
     });
 }
@@ -33,7 +32,6 @@ fn erc20_settle_refuses_a_transfer_that_moves_nothing() {
             840,
         )
         .unwrap();
-        seed_qualifying_day(storage, gem_id);
 
         let call = crate::precompile::IGemFactory::settleGemCall {
             gemId: gem_id,
@@ -59,7 +57,6 @@ fn erc20_settle_rejects_a_foreign_currency_asset_before_paying() {
             840,
         )
         .unwrap();
-        seed_qualifying_day(storage, gem_id);
 
         let res = runtime::settle_gem(
             storage,
@@ -91,7 +88,6 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
             840,
         )
         .unwrap();
-        seed_qualifying_day(storage, gem_id);
         // Paying with the EUR asset picks the issuance rail.
         assert_eq!(
             admitted_at_quote(storage, gem_id, STABLE_EUR),
@@ -108,7 +104,6 @@ fn the_issuance_rail_floors_the_whole_obligation_in_the_payers_favour() {
         seed_day_vwap(storage, 840, U256::from(3_000_000u64));
         let gem_id =
             issue_at_live_rate(storage, ALICE, GemTypes::Wallet, U256::ONE, 978, 840).unwrap();
-        seed_qualifying_day(storage, gem_id);
         assert_eq!(
             runtime::gem_cost_minor(&gem_view(storage, gem_id)).unwrap(),
             U256::from(3u64)
@@ -127,7 +122,6 @@ fn a_wider_asset_keeps_what_the_six_decimal_cost_dropped() {
     with_storage(Some(U256::from(1_500_001u64)), |storage| {
         let gem_id =
             issue_at_live_rate(storage, ALICE, GemTypes::Wallet, U256::ONE, 840, 840).unwrap();
-        seed_qualifying_day(storage, gem_id);
         assert_eq!(
             runtime::gem_cost_minor(&gem_view(storage, gem_id)).unwrap(),
             U256::ONE
@@ -173,7 +167,6 @@ fn a_dust_gem_settles_for_one_minor_unit() {
     with_storage(Some(U256::ONE), |storage| {
         let gem_id =
             issue_at_live_rate(storage, ALICE, GemTypes::Wallet, U256::ONE, 840, 840).unwrap();
-        seed_qualifying_day(storage, gem_id);
         assert_eq!(admitted_at_quote(storage, gem_id, STABLE).1, U256::ONE);
     });
 }
@@ -208,7 +201,6 @@ fn settling_on_an_unregistered_issuance_leg_is_refused() {
             840,
         )
         .unwrap();
-        seed_qualifying_day(storage, gem_id);
         let res = runtime::settle_gem(
             storage,
             crate::schema::GemSettlementParams {
@@ -237,7 +229,6 @@ fn the_reference_currency_settles_without_reading_any_issuance_rate() {
             840,
         )
         .unwrap();
-        seed_qualifying_day(storage, gem_id);
         assert_eq!(
             admitted_at_quote(storage, gem_id, STABLE),
             (840, U256::from(20u64) * six_decimal_unit())
@@ -265,7 +256,6 @@ fn settle_rejects_an_asset_with_no_registered_vault() {
             840,
         )
         .unwrap();
-        seed_qualifying_day(&storage, gem_id);
         let res = runtime::settle_gem(
             &storage,
             crate::schema::GemSettlementParams {
@@ -292,7 +282,6 @@ fn settlement_scales_the_cost_to_the_asset_decimals() {
             840,
         )
         .unwrap();
-        seed_qualifying_day(storage, gem_id);
         assert_eq!(
             admitted_at_quote(storage, gem_id, STABLE_18).1,
             U256::from(20u64) * six_decimal_unit() * U256::from(1_000_000_000_000u64)
@@ -316,7 +305,6 @@ fn an_unassigned_issuance_code_mints_and_settles_on_the_reference_rail() {
             840,
         )
         .unwrap();
-        seed_qualifying_day(storage, gem_id);
         assert_eq!(
             admitted_at_quote(storage, gem_id, STABLE),
             (840, U256::from(20u64) * six_decimal_unit())
@@ -354,7 +342,6 @@ fn sending_rejects_a_series_whose_reference_currency_is_unregistered() {
                 issued_units: SENT_UNITS as u32,
                 promis_load_minor: six_decimal_u128(),
                 entry_price_minor: six_decimal_unit(),
-                floor_price_minor: six_decimal_unit(),
                 call_price_minor: U256::ZERO,
                 call_trigger: outbe_intex::IntexCallTrigger::default(),
                 issued_at: T_NOW as u32,
@@ -385,7 +372,6 @@ fn the_quote_prices_both_rails() {
             840,
         )
         .unwrap();
-        seed_qualifying_day(storage, gem_id);
         let (ref_iso, ref_amount) = admitted_at_quote(storage, gem_id, STABLE);
         let (iss_iso, iss_amount) = admitted_at_quote(storage, gem_id, STABLE_EUR);
         assert_eq!(ref_iso, 840);
@@ -505,7 +491,6 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
             840,
         )
         .unwrap();
-        seed_qualifying_day(&storage, gem_id);
         let (_, amount, quoted) = runtime::quote_settlement(&storage, gem_id, STABLE_EUR).unwrap();
         (gem_id, amount, quoted)
     });
@@ -692,7 +677,6 @@ fn gem_body_cost_inputs(item: &GemItemState) -> (u8, U256) {
         owner: _,
         gem_type,
         promis_load_minor,
-        floor_price_minor: _,
         issuance_currency: _,
         reference_currency: _,
         issued_at: _,

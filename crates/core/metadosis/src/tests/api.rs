@@ -75,15 +75,6 @@ fn offering_query_fails_closed_for_dangling_active_key_and_unknown_status() {
 fn semantic_queries_report_absent_authority_and_receipts_without_inventing_state() {
     with_storage(|storage| {
         let wwd = 20270101.into();
-        assert!(!api::has_active_ocomp_profile(storage.clone()).unwrap());
-        let install = crate::test_support::ForkInstallScenario::final_at(
-            crate::config::OCOMP_POC_FINAL_ACTIVATION_HEIGHT,
-            1,
-            alloy_primitives::B256::repeat_byte(0x91),
-        )
-        .unwrap()
-        .into_install();
-        assert!(!api::is_active_ocomp_fork_install(storage.clone(), &install).unwrap());
         assert!(api::day_limit_formation_receipt(storage.clone(), wwd)
             .unwrap()
             .is_none());
@@ -93,9 +84,5 @@ fn semantic_queries_report_absent_authority_and_receipts_without_inventing_state
         assert!(api::capacity_forfeiture_receipt(storage.clone(), wwd)
             .unwrap()
             .is_none());
-        let admission = api::pre_admission_projection(storage, wwd).unwrap();
-        assert!(!admission.initialized);
-        assert_eq!(admission.state_version, 0);
-        assert_eq!(admission.envelope_hash, alloy_primitives::B256::ZERO);
     });
 }

@@ -98,7 +98,7 @@ enum LocalTerminalOutcome {
     },
 }
 
-pub(crate) fn process_ocomp_ready_candidate(
+pub(crate) fn process_ready_candidate(
     metadosis: &mut MetadosisContract<'_>,
     ctx: &BlockRuntimeContext<'_>,
     current: &WwdProjection,
@@ -145,18 +145,7 @@ pub(crate) fn process_ocomp_ready_candidate(
         );
     }
 
-    let transition = reduce_outer_wwd(
-        Some(current),
-        OuterWwdEvent::ProcessReady(ReadyDisposition::PrepareOcomp),
-    )?;
-    metadosis.initialize_ocomp_pre_admission(wwd)?;
-    // This order is protocol-relevant:
-    // 1. Snapshot while CE is active.
-    // 2. Enqueue the OCOMP FSM.
-    // 3. Commit the outer transition.
-    metadosis.build_fidelity_league_snapshot(wwd, ctx.block.timestamp)?;
-    metadosis.enqueue_ocomp_ready(wwd, ctx.block.block_number)?;
-    commit_outer_transition(metadosis, wwd, &transition, ctx.block.block_number)
+    crate::lysis::execute(metadosis, ctx, current, calculation)
 }
 
 struct LocalSettlement<'effect, 'storage> {

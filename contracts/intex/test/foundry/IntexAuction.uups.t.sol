@@ -32,7 +32,7 @@ contract IntexAuctionUupsTest is Test {
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
             promisLoadMinor: 1000,
             minIntexBidRate: 1,
-            prices: ReferenceCurrencyPriceLib.onePriced(840, 1, 1, 1),
+            prices: ReferenceCurrencyPriceLib.onePriced(840, 1, 1),
             callTrigger: IIntexAuction.IntexCallTrigger({callWindow: 0, callThreshold: 0, callNoticePeriod: 0}),
             minIntexBidQuantity: 1,
             commitBondMinor: 0

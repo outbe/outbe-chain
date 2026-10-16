@@ -1,6 +1,6 @@
 use std::{collections::HashSet, fmt, sync::Arc, time};
 
-use radicle::crypto::PublicKey;
+use radicle::crypto::RepositoryKey as PublicKey;
 use radicle::node::FetchResult;
 use radicle::node::Seeds;
 use radicle::node::policy::Scope;

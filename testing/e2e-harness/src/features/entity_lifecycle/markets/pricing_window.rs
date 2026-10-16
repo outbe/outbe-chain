@@ -77,7 +77,7 @@ pub(super) fn close(world: &mut World, currencies: &[u16]) -> Result<()> {
 
 /// Restart the committee just inside `hour` and return the first finalized height in it.
 fn enter_hour(world: &mut World, hour: u64) -> Result<u64> {
-    let (_, _, _, pending) = crate::features::ocomp::restart_committee_at_logical_time(
+    let (_, pending) = crate::features::common::restart_committee_at_logical_time(
         world,
         hour + WINDOW_CLOSE_MARGIN_SECS,
     );

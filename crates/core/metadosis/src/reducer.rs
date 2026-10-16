@@ -53,7 +53,8 @@ impl WwdTransitionPlan {
 pub enum ReadyDisposition {
     EmptyTributeDay,
     ZeroGratisAllocation,
-    PrepareOcomp,
+    LysisCompleted,
+    LysisFailed,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -67,9 +68,6 @@ pub enum OuterWwdEvent {
         limit_final: bool,
     },
     ProcessReady(ReadyDisposition),
-    OcompRequestCommitted,
-    OcompExpired,
-    OcompCompleted,
     EmergencyFail,
 }
 
@@ -85,9 +83,6 @@ pub enum OuterWwdTransitionKind {
         preceding_edges: Vec<WwdAdvanceEdge>,
     },
     ProcessReady(ReadyDisposition),
-    OcompRequestCommitted,
-    OcompExpired,
-    OcompCompleted,
     EmergencyFail,
 }
 
@@ -153,9 +148,6 @@ pub(crate) fn reduce_outer_wwd(
             },
         ),
         OuterWwdEvent::ProcessReady(disposition) => reduce_ready(current, disposition),
-        event @ (OuterWwdEvent::OcompRequestCommitted
-        | OuterWwdEvent::OcompExpired
-        | OuterWwdEvent::OcompCompleted) => reduce_ocomp(current, event),
         OuterWwdEvent::EmergencyFail => reduce_failure(current),
         event => Err(invalid_event(current, event)),
     }
@@ -260,41 +252,16 @@ fn reduce_ready(
         ));
     }
     let target = match disposition {
-        ReadyDisposition::EmptyTributeDay | ReadyDisposition::ZeroGratisAllocation => {
-            WwdStatus::Completed
-        }
-        ReadyDisposition::PrepareOcomp => WwdStatus::Ready,
+        ReadyDisposition::EmptyTributeDay
+        | ReadyDisposition::ZeroGratisAllocation
+        | ReadyDisposition::LysisCompleted => WwdStatus::Completed,
+        ReadyDisposition::LysisFailed => WwdStatus::Failed,
     };
     Ok(transition(
         Some(current.status),
         target,
         OuterWwdTransitionKind::ProcessReady(disposition),
     ))
-}
-
-fn reduce_ocomp(current: &WwdProjection, event: OuterWwdEvent) -> Result<OuterWwdTransition> {
-    let (source, target, kind) = match event {
-        OuterWwdEvent::OcompRequestCommitted => (
-            WwdStatus::Ready,
-            WwdStatus::OffchainPending,
-            OuterWwdTransitionKind::OcompRequestCommitted,
-        ),
-        OuterWwdEvent::OcompExpired => (
-            WwdStatus::OffchainPending,
-            WwdStatus::Failed,
-            OuterWwdTransitionKind::OcompExpired,
-        ),
-        OuterWwdEvent::OcompCompleted => (
-            WwdStatus::OffchainPending,
-            WwdStatus::Completed,
-            OuterWwdTransitionKind::OcompCompleted,
-        ),
-        event => return Err(invalid_event(current, event)),
-    };
-    if current.status != source {
-        return Err(invalid_event(current, event));
-    }
-    Ok(transition(Some(source), target, kind))
 }
 
 fn reduce_failure(current: &WwdProjection) -> Result<OuterWwdTransition> {
@@ -369,9 +336,7 @@ fn earliest_time(current: &WwdProjection) -> u64 {
         WwdStatus::LookbackDelay => current.forming_end,
         WwdStatus::Offering => current.lookback_end,
         WwdStatus::Waiting | WwdStatus::Failed => current.offering_end,
-        WwdStatus::Ready | WwdStatus::OffchainPending | WwdStatus::Completed => {
-            current.scheduled_process_time
-        }
+        WwdStatus::Ready | WwdStatus::Completed => current.scheduled_process_time,
     }
 }
 

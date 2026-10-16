@@ -121,6 +121,11 @@ interface IOracle {
     /// @notice Returns all active vote target pairs.
     function getVoteTargets() external view returns (address[] memory bases, address[] memory quotes);
 
+    /// @notice Returns the feeder sources TOML for the active protocol version.
+    /// @dev The node binary holds the files. Each file applies from the
+    ///      protocol version that introduces it.
+    function getSources() external view returns (string memory toml);
+
     /// @notice Returns the pending aggregate vote for a validator.
     function getAggregateVote(address validator)
         external

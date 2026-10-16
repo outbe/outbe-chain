@@ -32,6 +32,28 @@ pub(crate) fn issue_nod_at(
     encrypted: &EncryptedNodV2,
     issued_at: u64,
 ) -> Result<WwdEntityId> {
+    issue_nod_with_cost(storage, encrypted, issued_at, None)
+}
+
+pub fn issue_lysis_nod(
+    storage: &StorageHandle<'_>,
+    verified: &outbe_tee::lysis::VerifiedLysisNod,
+) -> Result<WwdEntityId> {
+    storage.require_metadosis_process_ready()?;
+    issue_nod_with_cost(
+        storage,
+        verified.nod(),
+        storage.timestamp()?.to::<u64>(),
+        Some(verified.settlement_cost_minor()),
+    )
+}
+
+fn issue_nod_with_cost(
+    storage: &StorageHandle<'_>,
+    encrypted: &EncryptedNodV2,
+    issued_at: u64,
+    verified_cost: Option<U256>,
+) -> Result<WwdEntityId> {
     let terms = &encrypted.terms;
     if terms.owner.is_zero() {
         return Err(NodFactoryError::InvalidOwner.into());
@@ -41,7 +63,7 @@ pub(crate) fn issue_nod_at(
         || terms.chain_id != storage.chain_id()?
         || !encrypted.has_valid_encoding()
     {
-        return Err(NodFactoryError::InvalidMaterializationProof.into());
+        return Err(NodFactoryError::InvalidEncryptedNod.into());
     }
     if nod_api::get_item(storage, nod_id)?.is_some() {
         return Err(NodFactoryError::NodAlreadyExists.into());
@@ -49,8 +71,6 @@ pub(crate) fn issue_nod_at(
     if !outbe_nod::pricing::is_issuable_entry(terms.entry_price_minor) {
         return Err(NodFactoryError::EntryPriceOutOfBounds.into());
     }
-    let floor_price_minor = outbe_nod::pricing::floor_price_minor(terms.entry_price_minor)
-        .ok_or(NodFactoryError::EntryPriceOutOfBounds)?;
     let item = NodItemState {
         is_settled: false,
         nod_id,
@@ -68,12 +88,19 @@ pub(crate) fn issue_nod_at(
         issued_at,
     };
     // Existing settlement pricing remains public in this privacy stage.
-    let settlement_cost_minor = nod_api::settlement_cost_minor(
-        terms.entry_price_minor,
-        nod_api::calculation_amount(&item)?,
-    )?;
+    let settlement_cost_minor = match verified_cost {
+        Some(cost) => cost,
+        None => nod_api::settlement_cost_minor(
+            terms.entry_price_minor,
+            nod_api::calculation_amount(&item)?,
+        )?,
+    };
     let call_terms = call_terms(storage, terms.entry_price_minor, terms.reference_currency)?;
     nod_api::add_nod(storage, &item, terms.entry_price_minor, call_terms)?;
+    // The bucket's sealed terms, which a Nod joining an existing bucket inherits.
+    let call_price_minor = NodContract::new(storage.clone())
+        .read_call_terms(item.bucket_key)?
+        .call_price_minor;
     emit_event(
         storage,
         INodFactory::NodIssued {
@@ -81,7 +108,7 @@ pub(crate) fn issue_nod_at(
             nodId: nod_id.to_u256(),
             worldwideDay: U256::from(u32::from(terms.worldwide_day)),
             leagueId: U256::from(terms.league_id),
-            floorPriceMinor: floor_price_minor,
+            callPriceMinor: call_price_minor,
             encryptedGratisAmount: encrypted.encrypted_gratis_amount.clone().into(),
             entryPriceMinor: terms.entry_price_minor,
             settlementCostMinor: settlement_cost_minor,
@@ -99,7 +126,7 @@ pub struct MineGratisRequest {
     pub auth: outbe_gratisfactory::api::ModifyAuth,
 }
 
-/// One payment for a qualified or called Nod.
+/// One payment for an uncalled Nod, or a called one before its deadline.
 pub struct SettleNodRequest {
     pub caller: Address,
     pub nod_id: WwdEntityId,
@@ -107,7 +134,7 @@ pub struct SettleNodRequest {
     pub snapshot_id: U256,
 }
 
-/// Pays a qualified or called Nod's known cost in ERC20 base units of `asset`. An
+/// Pays an uncalled or called Nod's known cost in ERC20 base units of `asset`. An
 /// issuance-currency payment must name the VWAP snapshot required at this block.
 pub fn settle_nod(storage: &StorageHandle<'_>, request: SettleNodRequest) -> Result<()> {
     let SettleNodRequest {
@@ -120,16 +147,9 @@ pub fn settle_nod(storage: &StorageHandle<'_>, request: SettleNodRequest) -> Res
     if item.body().is_settled {
         return Err(NodFactoryError::NodAlreadySettled.into());
     }
-    // The call check is one read; the qualification walk goes last.
-    match nod_api::settlement_deadline(storage, item.body().bucket_key)? {
-        0 if !nod_api::is_qualified(storage, bucket.body())? => {
-            return Err(NodFactoryError::NodNotQualified.into());
-        }
-        0 => {}
-        deadline if storage.timestamp()?.to::<u64>() > deadline => {
-            return Err(NodFactoryError::CallDeadlineExpired.into());
-        }
-        _ => {}
+    let deadline = nod_api::settlement_deadline(storage, item.body().bucket_key)?;
+    if deadline != 0 && storage.timestamp()?.to::<u64>() > deadline {
+        return Err(NodFactoryError::CallDeadlineExpired.into());
     }
     let owner = item.body().owner;
     let quote = settlement::quote(
@@ -271,14 +291,8 @@ fn load_nod(
     nod_id: WwdEntityId,
 ) -> Result<(LoadedNodItem, LoadedNodBucket)> {
     let item = nod_api::load_item(storage, nod_id)?.ok_or(NodFactoryError::NodNotFound)?;
-    if NodContract::new(storage.clone())
-        .ocomp_certified_generation(item.body().worldwide_day)?
-        .is_some_and(|generation| generation.next_nod_ordinal < generation.nod_count)
-    {
-        return Err(NodFactoryError::NodGenerationNotMaterialized.into());
-    }
     let bucket = nod_api::load_bucket(storage, item.body().bucket_key)?
-        .ok_or(NodFactoryError::NodNotQualified)?;
+        .ok_or(NodFactoryError::BucketNotFound)?;
     Ok((item, bucket))
 }
 

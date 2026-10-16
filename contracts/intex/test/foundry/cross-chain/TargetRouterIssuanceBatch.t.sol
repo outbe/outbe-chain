@@ -39,7 +39,6 @@ contract TargetRouterIssuanceBatchTest is CrossChainTest {
         payload.issuedUnits = 1_000;
         payload.promisLoadMinor = 1_000;
         payload.entryPriceMinor = 100e6;
-        payload.floorPriceMinor = 40e6;
         payload.issuanceCurrency = 840;
         payload.referenceCurrency = 840;
         payload.callWindow = 30;

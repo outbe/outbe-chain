@@ -1,0 +1,35 @@
+{
+  "source_sha": "c383730c6b5c090beb5b3ad2cbdc229f4e947030",
+  "vendor_tree": "41ecc9e52feebe8e85d620c1f05c8f63e8e872f8",
+  "prior_full_source": "0dbd83c40ace71773a0e358809bd2f1876c18f37",
+  "changed_vendor_since_prior_full": [
+    "vendor/heartwood/UPSTREAM.md",
+    "vendor/heartwood/crates/radicle-cob/src/lib.rs",
+    "vendor/heartwood/crates/radicle-cob/src/object.rs",
+    "vendor/heartwood/crates/radicle-cob/src/object/collaboration.rs",
+    "vendor/heartwood/crates/radicle-cob/src/object/collaboration/get.rs",
+    "vendor/heartwood/crates/radicle-cob/src/tests.rs",
+    "vendor/heartwood/crates/radicle-crypto/src/repository.rs",
+    "vendor/heartwood/crates/radicle-node/src/runtime.rs",
+    "vendor/heartwood/crates/radicle-node/src/test/node.rs",
+    "vendor/heartwood/crates/radicle-node/src/tests/e2e/native_bls.rs",
+    "vendor/heartwood/crates/radicle/src/cob.rs",
+    "vendor/heartwood/crates/radicle/src/lib.rs"
+  ],
+  "changed_vendor_files_sha256": {
+    "vendor/heartwood/UPSTREAM.md": "defbcceec38d7c27203e2d861a01a74e7800974af9357864a0081d4e37efab2c",
+    "vendor/heartwood/crates/radicle-cob/src/lib.rs": "52587ee4e01500715e571e9db9925829c1f4eb33a4e69af5f2562cc4c86f7e0e",
+    "vendor/heartwood/crates/radicle-cob/src/object.rs": "761d4e278e8e60d1f68069317e9140beacf33959aa1979c20e256f05b1a215c1",
+    "vendor/heartwood/crates/radicle-cob/src/object/collaboration.rs": "cc7cb601424fa39c05e78e88f0dad494e04d79df0e95f9a31ac2e47a33eaf925",
+    "vendor/heartwood/crates/radicle-cob/src/object/collaboration/get.rs": "bd1bbf61659b5cc7052aa304f22c403a68faaa8928fafa998d33180dd59ed7a9",
+    "vendor/heartwood/crates/radicle-cob/src/tests.rs": "83c701305c4c1ed9b99584c89857d17d98c497b001b35a6d9d3935274a08d6b2",
+    "vendor/heartwood/crates/radicle-crypto/src/repository.rs": "c5c1e53d65bc8d0434e7eb7cb0c15264461ea50fec380371dceee6a54323ed45",
+    "vendor/heartwood/crates/radicle-node/src/runtime.rs": "d0e3facd958748da25fa5d3857358a329a235b601c04ec81e7fc153e487c9ab0",
+    "vendor/heartwood/crates/radicle-node/src/test/node.rs": "85d632780beb572dbc09cf99f3e8bdd26d8a386661ec180144fb9654817ab86f",
+    "vendor/heartwood/crates/radicle-node/src/tests/e2e/native_bls.rs": "75701471afce50ba25db933f132702d43163b7071fb4a37b67ed347bf8b83523",
+    "vendor/heartwood/crates/radicle/src/cob.rs": "b805f19186f5b2c76221e04a965fc7b327b24e801857f5551d3f9372719a06ad",
+    "vendor/heartwood/crates/radicle/src/lib.rs": "0330f8a0adebed246275c3dc21ec9f6b710529596661084a6f4ad4bcbc35e24c"
+  },
+  "purpose": "Prior complete native regression predates12 changed vendor files; later P3 foundation verification covered a narrower package set. This frozen run closes that current-source verification gap without editing production code.",
+  "scope": "Required P2 affected native libs,whole vendor Clippy/fmt,sidecar runtime and native CLI COB output regressions only. No D2/storage/fetch/cache redesign,source edits,full task acceptance or closure."
+}

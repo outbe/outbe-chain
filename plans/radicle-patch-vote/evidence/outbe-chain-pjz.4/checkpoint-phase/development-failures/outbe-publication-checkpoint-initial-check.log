@@ -1,0 +1,23 @@
+    Checking reth-etl v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking outbe-ocomp-protocol v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/ocomp-protocol)
+    Checking reth-era-utils v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-db-common v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-stages v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-node-events v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-node-builder v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-node-ethereum v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-ethereum v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking outbe-primitives v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/primitives)
+    Checking outbe-consensus v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/consensus)
+    Checking outbe-chain-constants v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/constants)
+    Checking outbe-validatorset v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/validatorset)
+    Checking outbe-vote v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/vote)
+    Checking outbe-radicleregistry v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/radicleregistry)
+error[E0616]: field `epoch_start_block` of struct `outbe_validatorset::schema::ValidatorSet` is private
+   --> crates/system/radicleregistry/src/publication.rs:259:26
+    |
+259 |                         .epoch_start_block
+    |                          ^^^^^^^^^^^^^^^^^ private field
+
+For more information about this error, try `rustc --explain E0616`.
+error: could not compile `outbe-radicleregistry` (lib) due to 1 previous error

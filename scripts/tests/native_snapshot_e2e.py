@@ -161,7 +161,6 @@ class SnapshotNetwork(Network):
         for forbidden in ['tee-node-host-v1','keys','p2p_secret']:
             assert not (data/forbidden).exists(), forbidden
         assert not list(bundle.rglob('dkg_share.hex'))
-        assert not list(bundle.rglob('ocomp-evm-key.hex'))
         # Both the signed archive and the placed native state must agree.
         audit_path = self.directory/'native-audit.json'
         with (self.directory/'snapshot-native-validate.log').open('wb') as log:
@@ -169,7 +168,7 @@ class SnapshotNetwork(Network):
                 '--archive',archive,'--expected-signer',signer,'--checks','all',
                 '--report',audit_path,'--',*start_args])), stdout=log,stderr=subprocess.STDOUT,timeout=600)
         audit = json.loads(audit_path.read_text())
-        for name in ('files','provenance','headers','evm','ce','ocomp'):
+        for name in ('files','provenance','headers','evm'):
             assert audit['checks'][name]['status']=='passed', (name,audit)
         body_status = audit['checks']['bodies']['status']
         if body_status == 'incomplete':

@@ -9,8 +9,7 @@ use super::{SystemTxKind, GENESIS_BOOTSTRAP_BLOCK_NUMBER};
 ///
 /// Invariants:
 /// - On block `1` (genesis bootstrap), cursor starts at
-///   `OcompLifecycleBegin { body_index: 0 }` when the OCOMP lifecycle is active,
-///   and at `CycleTick { body_index: 0 }` when it is not.
+///   `CycleTick { body_index: 0 }`.
 /// - On block `n >= GENESIS_BOOTSTRAP_BLOCK_NUMBER + 1`, cursor starts at
 ///   `Phase1Preexecuted { body_index: 0, tx_hash, receipt_index: 0 }` after
 ///   the executor has pre-built and committed the Phase 1 system tx.
@@ -31,47 +30,45 @@ pub enum SystemTxPhase {
     },
     /// Next expected begin-zone tx is the mandatory (blocks `>= 2`)
     /// `LateFinalizeCredits` phase, ordered immediately after Phase 1.
-    LateFinalizeCredits { body_index: u8 },
-    /// OCOMP expiry/reset phase, present only once the PoC lifecycle fork is
-    /// active and ordered before `CycleTick`.
-    OcompLifecycleBegin { body_index: u8 },
+    LateFinalizeCredits {
+        body_index: u8,
+    },
     /// Next expected begin-zone tx is Phase 2 (`CycleTick`).
-    CycleTick { body_index: u8 },
+    CycleTick {
+        body_index: u8,
+    },
     /// Mandatory Rewards-owned delivery phase immediately after `CycleTick`.
-    RewardsGemDelivery { body_index: u8 },
+    RewardsGemDelivery {
+        body_index: u8,
+    },
     /// Next expected begin-zone tx is the optional Phase 3
     /// (`BoundaryOutcome`). It is emitted only when the header carries a
     /// boundary outcome artifact.
-    BoundaryOutcomeOptional { body_index: u8 },
+    BoundaryOutcomeOptional {
+        body_index: u8,
+    },
     /// Next expected begin-zone tx is the optional Phase 3b
     /// (`TeeBootstrap`). It is present only in the one-time bootstrap block.
-    TeeBootstrapOptional { body_index: u8 },
+    TeeBootstrapOptional {
+        body_index: u8,
+    },
     /// Next expected begin-zone tx is Phase 4 (`OracleSlashWindow`).
-    OracleSlashWindow { body_index: u8 },
+    OracleSlashWindow {
+        body_index: u8,
+    },
     /// Next expected begin-zone tx is the mandatory `HookEvents` receipt carrier.
-    HookEvents { body_index: u8 },
-    /// All begin-zone system txs consumed. User transactions may execute until
-    /// the optional end-zone transaction is consumed.
+    HookEvents {
+        body_index: u8,
+    },
+    RadiclePublication {
+        body_index: u8,
+    },
+    /// All begin-zone system txs are consumed. User transactions may execute.
     UserTxs,
 }
 
 impl SystemTxPhase {
-    /// Initial cursor for `block_number` given the configured genesis
-    /// bootstrap threshold. Block `1` has no Phase 1 (genesis bootstrap),
-    /// so its cursor starts at `CycleTick { body_index: 0 }`. Block `n` with
-    /// `n >= genesis_bootstrap_block_number + 1` starts at
-    /// `Phase1Preexecuted { body_index: 0, .. }` with a zero placeholder
-    /// `tx_hash`. The executor overwrites the placeholder after the Phase 1
-    /// preflight commits.
     pub const fn initial_for_block(block_number: u64, genesis_bootstrap_block_number: u64) -> Self {
-        Self::initial_for_block_with_ocomp(block_number, genesis_bootstrap_block_number, false)
-    }
-
-    pub const fn initial_for_block_with_ocomp(
-        block_number: u64,
-        genesis_bootstrap_block_number: u64,
-        ocomp_lifecycle_active: bool,
-    ) -> Self {
         if block_number > genesis_bootstrap_block_number
             && block_number > GENESIS_BOOTSTRAP_BLOCK_NUMBER
         {
@@ -80,8 +77,6 @@ impl SystemTxPhase {
                 tx_hash: B256::ZERO,
                 receipt_index: 0,
             }
-        } else if block_number > 0 && ocomp_lifecycle_active {
-            Self::OcompLifecycleBegin { body_index: 0 }
         } else {
             Self::CycleTick { body_index: 0 }
         }
@@ -93,13 +88,13 @@ impl SystemTxPhase {
         match self {
             Self::Phase1Preexecuted { .. } => Some(SystemTxKind::CertifiedParentAccounting),
             Self::LateFinalizeCredits { .. } => Some(SystemTxKind::LateFinalizeCredits),
-            Self::OcompLifecycleBegin { .. } => Some(SystemTxKind::OcompLifecycleBegin),
             Self::CycleTick { .. } => Some(SystemTxKind::CycleTick),
             Self::RewardsGemDelivery { .. } => Some(SystemTxKind::RewardsGemDelivery),
             Self::BoundaryOutcomeOptional { .. } => Some(SystemTxKind::BoundaryOutcome),
             Self::TeeBootstrapOptional { .. } => Some(SystemTxKind::TeeBootstrap),
             Self::OracleSlashWindow { .. } => Some(SystemTxKind::OracleSlashWindow),
             Self::HookEvents { .. } => Some(SystemTxKind::HookEvents),
+            Self::RadiclePublication { .. } => Some(SystemTxKind::RadiclePublication),
             Self::UserTxs => None,
         }
     }
@@ -110,64 +105,36 @@ impl SystemTxPhase {
         match self {
             Self::Phase1Preexecuted { body_index, .. }
             | Self::LateFinalizeCredits { body_index }
-            | Self::OcompLifecycleBegin { body_index }
             | Self::CycleTick { body_index }
             | Self::RewardsGemDelivery { body_index }
             | Self::BoundaryOutcomeOptional { body_index }
             | Self::TeeBootstrapOptional { body_index }
             | Self::OracleSlashWindow { body_index }
-            | Self::HookEvents { body_index } => Some(*body_index),
+            | Self::HookEvents { body_index }
+            | Self::RadiclePublication { body_index } => Some(*body_index),
             Self::UserTxs => None,
         }
     }
 
-    /// Advance the cursor after a successful begin-zone system-tx commit.
-    /// Given the cursor's current variant and whether the current block
-    /// carries a boundary-outcome artifact, returns the next cursor
-    /// position. Once HookEvents is consumed, the cursor transitions to
-    /// `UserTxs`.
-    ///
-    /// `has_boundary_outcome` controls whether Phase 3
-    /// (`BoundaryOutcomeOptional`) is interleaved between
-    /// `RewardsGemDelivery` and `OracleSlashWindow`. The flag mirrors the
-    /// block-1 invariant:
-    /// at block 1, V2 always carries a boundary outcome (genesis bootstrap),
-    /// so `has_boundary_outcome = true` is the canonical path there.
-    ///
-    /// `has_tee_bootstrap` interleaves the optional Phase 3b
-    /// (`TeeBootstrapOptional`) after `BoundaryOutcome` (or after
-    /// `RewardsGemDelivery` if no boundary outcome) and before
-    /// `OracleSlashWindow`. It is true only in the one-time bootstrap block.
     pub const fn advance_after_commit(
         self,
         has_boundary_outcome: bool,
         has_tee_bootstrap: bool,
     ) -> Self {
-        self.advance_after_commit_with_ocomp(has_boundary_outcome, has_tee_bootstrap, false)
+        self.advance_after_commit_with_publication(has_boundary_outcome, has_tee_bootstrap, false)
     }
 
-    pub const fn advance_after_commit_with_ocomp(
+    pub const fn advance_after_commit_with_publication(
         self,
         has_boundary_outcome: bool,
         has_tee_bootstrap: bool,
-        ocomp_lifecycle_active: bool,
+        has_publication: bool,
     ) -> Self {
         match self {
             Self::Phase1Preexecuted { body_index, .. } => Self::LateFinalizeCredits {
                 body_index: body_index + 1,
             },
-            Self::LateFinalizeCredits { body_index } => {
-                if ocomp_lifecycle_active {
-                    Self::OcompLifecycleBegin {
-                        body_index: body_index + 1,
-                    }
-                } else {
-                    Self::CycleTick {
-                        body_index: body_index + 1,
-                    }
-                }
-            }
-            Self::OcompLifecycleBegin { body_index } => Self::CycleTick {
+            Self::LateFinalizeCredits { body_index } => Self::CycleTick {
                 body_index: body_index + 1,
             },
             Self::CycleTick { body_index } => Self::RewardsGemDelivery {
@@ -205,7 +172,12 @@ impl SystemTxPhase {
             Self::OracleSlashWindow { body_index } => Self::HookEvents {
                 body_index: body_index + 1,
             },
-            Self::HookEvents { .. } | Self::UserTxs => Self::UserTxs,
+            Self::HookEvents { body_index } if has_publication => Self::RadiclePublication {
+                body_index: body_index + 1,
+            },
+            Self::HookEvents { .. } | Self::RadiclePublication { .. } | Self::UserTxs => {
+                Self::UserTxs
+            }
         }
     }
 }
