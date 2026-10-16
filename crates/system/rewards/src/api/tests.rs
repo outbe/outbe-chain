@@ -611,11 +611,11 @@ fn second_recipient_uses_the_bucket_persisted_by_the_previous_block() {
 
 /// A delivery uses the existing internal budget with production storage charges.
 #[test]
-fn one_delivery_fits_the_internal_budget_and_preserves_the_visible_reserve() {
+fn one_delivery_fits_the_internal_budget_and_takes_no_visible_reserve() {
     use outbe_primitives::storage::StorageHandle;
     use outbe_primitives::system_tx::{
-        SystemTxInputV2, SystemTxKind, SystemTxVisibleGasPlan, REWARD_GEM_DELIVERY_GAS_RESERVE,
-        STEADY_BLOCK_GAS_LIMIT, SYSTEM_TX_ARTIFACT_GAS_LIMIT,
+        SystemTxInputV2, SystemTxKind, SystemTxVisibleGasPlan, STEADY_BLOCK_GAS_LIMIT,
+        SYSTEM_TX_ARTIFACT_GAS_LIMIT,
     };
 
     let visible_plan = SystemTxVisibleGasPlan::new(
@@ -626,10 +626,7 @@ fn one_delivery_fits_the_internal_budget_and_preserves_the_visible_reserve() {
         )],
     )
     .unwrap();
-    assert_eq!(
-        visible_plan.execution_gas_limit(0),
-        Some(REWARD_GEM_DELIVERY_GAS_RESERVE)
-    );
+    assert_eq!(visible_plan.execution_gas_limit(0), Some(0));
 
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.set_block_number(1);
