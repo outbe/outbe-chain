@@ -280,23 +280,6 @@ async fn independent_collectors_prepare_identical_bootstrap_without_promoting_re
         assert_eq!(commit.parent_count(), 0);
         assert_eq!(commit.author().name().unwrap(), "Outbe Network");
         assert_eq!(commit.time().seconds(), 1700000000);
-        let receipt = crate::manager::FinalizedPublicationReceipt {
-            block: crate::manager::FinalizedBlock {
-                number: 15,
-                hash: B256::repeat_byte(15),
-            },
-            receipt: outbe_radicleregistry::publication::PublicationReceipt {
-                accepted_height: 14,
-                receipt_hash: body.receipt_hash(),
-                body: body.clone(),
-            },
-        };
-        let verifier = super::super::signing::accepted::AcceptedPublicationVerifier::from_receipt(
-            receipt.clone(),
-            manifest.clone(),
-            &material.canonical_output(),
-        )
-        .unwrap();
         let witness = super::super::signing::witness::RepositoryWitnessBundle::new(
             material.canonical_output(),
             vec![
@@ -328,17 +311,33 @@ async fn independent_collectors_prepare_identical_bootstrap_without_promoting_re
                 .persist_and_select_bootstrap(&repo, verified, &witness)
                 .unwrap(),
         );
-        assert_eq!(
-            super::super::network::material_tests::bootstrap_attestations(
-                selected,
-                &state,
-                &dkg.output,
-                &keys
-            )
-            .await
-            .len(),
-            4
+        let attestations = super::super::network::material_tests::bootstrap_attestations(
+            selected,
+            &state,
+            &dkg.output,
+            &keys,
+        )
+        .await;
+        assert_eq!(attestations.len(), 4);
+        let accepted = admit_bootstrap(
+            &descriptor,
+            &authority.committee,
+            &body,
+            &attestations[first..first + 3],
         );
+        let receipt = crate::manager::FinalizedPublicationReceipt {
+            block: crate::manager::FinalizedBlock {
+                number: 15,
+                hash: B256::repeat_byte(15),
+            },
+            receipt: accepted,
+        };
+        let verifier = super::super::signing::accepted::AcceptedPublicationVerifier::from_receipt(
+            receipt.clone(),
+            manifest.clone(),
+            &material.canonical_output(),
+        )
+        .unwrap();
         let slot = super::super::publication::store::review_slot_key(&body);
         drop(store);
         let store =
@@ -448,4 +447,91 @@ async fn independent_collectors_prepare_identical_bootstrap_without_promoting_re
     invalid = descriptor;
     invalid.genesis_timestamp = u64::MAX;
     assert!(prepare_bootstrap_document(&invalid, &material).is_err());
+}
+
+fn admit_bootstrap(
+    descriptor: &GovernmentsDescriptor,
+    committee: &outbe_validatorset::state::CommitteeSnapshot,
+    body: &PublicationBody,
+    attestations: &[outbe_primitives::radicle_publication::PublicationAttestation],
+) -> outbe_radicleregistry::publication::PublicationReceipt {
+    use outbe_primitives::{
+        radicle_publication::PublicationBatch, storage::hashmap::HashMapStorageProvider,
+    };
+    use outbe_radicleregistry::RadicleRegistry;
+    use outbe_validatorset::{contract::ValidatorSet, state::write_committee_snapshot};
+    let mut state =
+        HashMapStorageProvider::new_with_chain_identity(body.chain_id, body.genesis_hash);
+    state.set_block_number(1);
+    state.enter(|storage| {
+        let mut validators = ValidatorSet::new(storage.clone());
+        validators
+            .config_owner
+            .write(alloy_primitives::Address::repeat_byte(99))
+            .unwrap();
+        validators.set_config_max_validators(4).unwrap();
+        for member in &committee.committee {
+            validators
+                .test_register_validator_without_pop(member.address, &member.consensus_pubkey)
+                .unwrap();
+            validators
+                .activate_validator_via_boundary_for_test(member.address)
+                .unwrap();
+        }
+        validators.advance_epoch(1001, 1).unwrap();
+        validators.advance_epoch(1002, 2).unwrap();
+        write_committee_snapshot(storage.clone(), 2, committee).unwrap();
+        let registry = RadicleRegistry::new(storage);
+        registry.config_max_repositories.write(8).unwrap();
+        registry
+            .config_descriptor_hash
+            .write(descriptor.hash().unwrap())
+            .unwrap();
+        registry
+            .config_descriptor_bytes
+            .write(&descriptor.to_bytes().unwrap())
+            .unwrap();
+    });
+    state.set_block_number(14);
+    let pending = PublicationBatch {
+        body: body.clone(),
+        attestations: attestations[..2].to_vec(),
+    };
+    let progress = state
+        .enter(|s| RadicleRegistry::new(s).apply_publication_batch(&pending))
+        .unwrap();
+    assert_eq!(progress.attestations, 2);
+    assert!(progress.receipt.is_none());
+    state.enter(|s| {
+        assert!(RadicleRegistry::new(s)
+            .network_repository
+            .read()
+            .unwrap()
+            .is_zero())
+    });
+    let completing = PublicationBatch {
+        body: body.clone(),
+        attestations: attestations[2..].to_vec(),
+    };
+    let accepted = state
+        .enter(|s| RadicleRegistry::new(s).apply_publication_batch(&completing))
+        .unwrap()
+        .receipt
+        .unwrap();
+    assert_eq!(accepted.body, *body);
+    assert_eq!(accepted.receipt_hash, body.receipt_hash());
+    assert_eq!(accepted.accepted_height, 14);
+    state.enter(|s| {
+        let registry = RadicleRegistry::new(s);
+        assert_eq!(
+            outbe_radicleregistry::repo_id_from_storage_key(
+                registry.network_repository.read().unwrap()
+            )
+            .unwrap(),
+            body.repo_id
+        );
+        assert_eq!(registry.publication_sequence.read().unwrap(), 1);
+        assert_eq!(registry.publication_receipt(1).unwrap().unwrap(), accepted);
+    });
+    accepted
 }
