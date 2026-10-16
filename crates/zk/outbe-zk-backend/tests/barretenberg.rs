@@ -69,7 +69,7 @@ fn demo_tribute_prove_verify_round_trip() {
         "valid demo tribute proof must verify"
     );
 
-    // Submit native verification and statistics requests to the same worker concurrently.
+    // Call native verification and statistics concurrently through the same handler.
     let acir = {
         use base64::Engine;
         use outbe_zk::CircuitId;

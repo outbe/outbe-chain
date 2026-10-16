@@ -159,7 +159,7 @@ where
         witness: &C::Witness,
         public: &C::PublicInputs,
     ) -> Result<Self::Proof, Error> {
-        // Pure ACVM solving and decoding stay outside the native worker.
+        // Solve the witness and decode ACIR before acquiring the native API mutex.
         let solved = witness::solved_witness::<C>(witness, public)?;
         let acir = acir_buffer_uncompressed::<C>()?;
         let circuit = CircuitInput {
