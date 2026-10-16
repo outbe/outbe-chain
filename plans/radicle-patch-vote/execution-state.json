@@ -5,7 +5,7 @@
   "last_periodic_report_utc": "2026-10-16T00:12:38Z",
   "next_periodic_report_due_utc": "2026-10-16T00:42:38Z",
   "period_minutes": 30,
-  "stage": "P2/P3 intermediate foundations verified on d64b9ca92: protected current proposal signing-state read. P4 bootstrap remains stopped at pending D3 description-bound decision.",
+  "stage": "P2/P3 intermediate foundations verified on f487b894c: protected exact proposal state + canonical public DKG Output provisioning. P4 bootstrap still stopped at pending D3 decision.",
   "decision_gate": {
     "id": "D3-description-bound",
     "status": "all three independent decision checks complete; user approval pending; dependent bootstrap implementation stopped",
@@ -49,7 +49,7 @@
   },
   "blocked_audit": {
     "consecutive_goal_turns": 0,
-    "reset": "Independent approved P3 implementation and complete component evidence made progress; D3 does not block all work."
+    "reset": "Independent approved P3 implementation and exact-SHA evidence made progress; D3 does not block all work."
   },
   "user_confirmed_contract": {
     "network_repository_owner": "sole network BLS authority; no user delegation feature",
@@ -58,7 +58,7 @@
     "user_confirmation": "да все всерно, goal можно снимать с паузы ?",
     "resume_intent": "explicit; API cannot resume a blocked goal"
   },
-  "source_sha": "d64b9ca9275a77ac02ed863517855342ddacf817",
+  "source_sha": "f487b894c319b0f93d20abc0e308431166676a7f",
   "p5_evidence": "evidence/outbe-chain-pjz.6/candidate",
   "p5_reviews": {
     "R1": "outbe-chain-pjz.6.1",
@@ -77,7 +77,7 @@
     "evidence": "evidence/outbe-chain-pjz.3/policy-baseline",
     "acceptance": "intermediate only; P2 incomplete"
   },
-  "current_source_changes": "d64b9ca92 adds fixed OCS1 current proposal signing-state read to existing protected local socket and node authority-reader wiring. No secret/signing messages, native Heartwood, consensus, genesis bound or spec changes.",
+  "current_source_changes": "f487b894c adds OCM1 protected public Output/current finalized patch context, reusing existing bounded actor resolver. Server/client exact material bindings, per-request/response allocation bounds and node wiring; no secret export/signing message,consensus/native/genesis/spec behavior changes.",
   "p2_evidence": {
     "native_preparation": "evidence/outbe-chain-pjz.3/native-preparation",
     "stream_corrected": "evidence/outbe-chain-pjz.3/native-stream-r2",
@@ -103,10 +103,10 @@
   "authenticated_material_evidence": "evidence/outbe-chain-pjz.4/authenticated-material",
   "publication_carrier_evidence": "evidence/outbe-chain-pjz.4/publication-carrier",
   "latest_verification": {
-    "source_sha": "d64b9ca9275a77ac02ed863517855342ddacf817",
-    "checks": "64 full adapter lib tests/0ignored;7 consumer all-target checks;adapter+node all-target Clippy -D warnings;4 touched Rust-file fmt PASS; source clean.",
-    "scenarios": "Actual current proposal Unix socket exchange; refreshed snapshot/stage; wrong proposal/chain and unavailable source rejection; ordered bounded committee/material/receipt/anchor binding; all truncated prefixes and trailing data; max256 DKG-backed committee codec/257 rejection; unchanged protected receipt tests.",
-    "acceptance": "Intermediate P3 only, not task acceptance. Public Output delivery, signing RPC/sidecar collector, automatic bootstrap, promotion/Merge and production E2E incomplete; no cross-UID/Linux or live full-node lifecycle proof."
+    "source_sha": "f487b894c319b0f93d20abc0e308431166676a7f",
+    "checks": "66 full adapter lib tests/0ignored;7 consumer all-target checks;adapter+node all-target Clippy -D warnings;6 touched Rust-file fmt PASS; source clean.",
+    "scenarios": "Actual Unix socket + existing actor/public publisher with no local signing provider; exact Output/state roundtrip; unavailable Output/wrong proposal/head race/generation checkpoint mismatch/current state missing/withdrawal/publisher Drop/actor shutdown; canonical bounded wire,wrong chain/corruption/truncation/oversized fields/trailing rejection. Prior receipt/current-state tests also pass.",
+    "acceptance": "Intermediate P3 only. Deterministic authority readers and centralized test DKG fixtures; no live current chain/interactive DKG/deployed key provenance or production E2E. Sidecar collector/signing RPC,bootstrap,promotion,Merge/full P0-P8 acceptance remain incomplete."
   },
   "checkpoint_phase_evidence": "evidence/outbe-chain-pjz.4/checkpoint-phase",
   "finalized_anchor_evidence": "evidence/outbe-chain-pjz.4/finalized-anchor",
@@ -116,8 +116,8 @@
   "current_signing_evidence": "evidence/outbe-chain-pjz.4/current-signing",
   "public_witness_evidence": "evidence/outbe-chain-pjz.4/public-witness",
   "witness_bundle_evidence": "evidence/outbe-chain-pjz.4/witness-bundle",
-  "last_goal_turn_classification": "progress: source d64b9ca92 implements trusted current proposal signing-state transport/node wiring; frozen64-test/7-consumer/Clippy/fmt evidence recorded. D3 unchanged and pending explicit answer.",
-  "next_required_work": "Continue approved P3 public DKG Output provisioning and narrow sidecar signer/Review collector bridge, then remaining P0-P8 evidence/reviews. D3 still requires explicit answer before description contract or dependent bootstrap changes. No task acceptance/closure or overall completion.",
+  "last_goal_turn_classification": "progress: source f487b894c implements protected public Output/current proposal provisioning and node wiring;66 tests/7consumers/Clippy/fmt exact-SHA evidence recorded. D3 unchanged and pending explicit answer.",
+  "next_required_work": "Continue approved bounded typed Review signer/control and collector wiring using protected current state/public Output; do not expose arbitrary namespace/message or Share. D3 still needs explicit answer before changing description contract/dependent bootstrap. Then remaining P0-P8 production evidence and mandated acceptance reviews; no task closure or goal completion.",
   "review_package_evidence": "evidence/outbe-chain-pjz.4/review-package",
   "review_attestation_evidence": "evidence/outbe-chain-pjz.4/review-attestation",
   "review_store_evidence": "evidence/outbe-chain-pjz.4/review-store-r2",
@@ -132,5 +132,6 @@
   "accepted_policy_evidence": "evidence/outbe-chain-pjz.4/accepted-policy",
   "initial_dkg_source_evidence": "evidence/outbe-chain-pjz.5/initial-dkg-source",
   "local_receipt_evidence": "evidence/outbe-chain-pjz.4/local-receipts",
-  "local_signing_state_evidence": "evidence/outbe-chain-pjz.4/local-signing-state"
+  "local_signing_state_evidence": "evidence/outbe-chain-pjz.4/local-signing-state",
+  "local_public_material_evidence": "evidence/outbe-chain-pjz.4/local-public-material"
 }
