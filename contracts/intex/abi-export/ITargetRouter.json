@@ -582,6 +582,11 @@
     },
     {
       "type": "error",
+      "name": "EscrowHasLiveLocks",
+      "inputs": []
+    },
+    {
+      "type": "error",
       "name": "NativeBalanceInsufficient",
       "inputs": [
         {

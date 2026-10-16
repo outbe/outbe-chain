@@ -604,15 +604,33 @@ contract EscrowAdapterTest is Test {
         assertEq(address(escrow.paymentToken()), address(rotated));
     }
 
-    function test_Wire_RewireSameTokenStaysAllowedWithLocks() public {
-        // Active locks must not block re-wiring with the same token (e.g. rotating the auction).
+    function test_Wire_RewireSameDependenciesStaysAllowedWithLocks() public {
         vm.prank(auction);
         escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
 
-        address newAuction = address(0xBEEF);
         vm.prank(admin);
-        escrow.wire(newAuction, address(compact), address(paymentToken));
-        assertEq(escrow.intexAuctionContract(), newAuction);
+        escrow.wire(auction, address(compact), address(paymentToken));
+        assertEq(escrow.intexAuctionContract(), auction);
+    }
+
+    /// @dev The previous auction's bidders claim through it, so it stays while anything is left.
+    function test_Wire_TheAuctionChangesOnlyOnceNothingIsLeft() public {
+        uint128 locked = _lockBid(bidder1, CLEARING_RATE, 2);
+        _finalize(_winners(bidder1));
+        assertEq(locked, _paidAtClearing(2), "the win holds no money");
+        assertTrue(escrow.hasOutstandingLocks(), "an open win still counts");
+
+        vm.prank(admin);
+        vm.expectRevert(IEscrowAdapter.LocksOutstanding.selector);
+        escrow.wire(address(0xBEEF), address(compact), address(paymentToken));
+
+        vm.prank(auction);
+        escrow.closeWin(worldwideDay1, bidder1);
+        assertFalse(escrow.hasOutstandingLocks(), "closed");
+
+        vm.prank(admin);
+        escrow.wire(address(0xBEEF), address(compact), address(paymentToken));
+        assertEq(escrow.intexAuctionContract(), address(0xBEEF));
     }
 
     // --- releaseRefund ---

@@ -167,6 +167,12 @@ contract TargetRouter is
         if (_escrowAdapter == address(0)) revert ZeroAddress("escrowAdapter");
 
         TargetRouterStorage storage $ = _ts();
+        IEscrowAdapter current = $.escrowAdapter;
+        // A day in flight finalizes on the escrow that took its locks, so the venue stays until nothing is left.
+        bool changing = _auction != address($.auction) || _escrowAdapter != address(current);
+        if (address(current) != address(0) && changing && current.hasOutstandingLocks()) {
+            revert EscrowHasLiveLocks();
+        }
         $.auction = IIntexAuction(_auction);
         $.intex = IIntexNFT1155(_intex);
         $.escrowAdapter = IEscrowAdapter(_escrowAdapter);

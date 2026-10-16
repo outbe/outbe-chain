@@ -233,6 +233,8 @@ interface IIntexAuction {
     error InvalidCommitHash();
     /// @notice Chain id mismatch between the caller-supplied value and `block.chainid`.
     error WrongChain(uint256 expected, uint256 got);
+    /// @notice The current escrow still holds something its bidders can claim.
+    error EscrowHasLiveLocks();
     /// @notice The collection holds no series for the bid's day and currency pair yet.
     error SeriesNotCreated(uint32 worldwideDay, uint16 issuanceCurrency, uint16 referenceCurrency);
     /// @notice `claimCommitBond` was called before the no-reveal penalty window elapsed.
@@ -243,9 +245,9 @@ interface IIntexAuction {
     // --- Admin ---
 
     /// @notice Wire contract dependencies.
-    /// @dev A lock keeps its money on the escrow that took it and stays claimable there, so a rotation between
-    ///      days costs nothing. Rotating while a day is still taking reveals splits that day's locks over two
-    ///      escrows. That day's refunds only reach the one the target router points at.
+    /// @dev Bidders claim through the auction from the escrow that took their locks, so the escrow
+    ///      changes only once it has nothing left to claim (`hasOutstandingLocks` is false). Every
+    ///      claim is permissionless, so anyone can bring it there.
     /// @param _escrow Escrow contract address.
     function wire(address _escrow) external;
 

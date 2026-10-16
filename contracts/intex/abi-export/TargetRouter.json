@@ -1410,6 +1410,11 @@
     },
     {
       "type": "error",
+      "name": "EscrowHasLiveLocks",
+      "inputs": []
+    },
+    {
+      "type": "error",
       "name": "FailedCall",
       "inputs": []
     },

@@ -211,6 +211,19 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         );
     }
 
+    /// @dev A day in flight finalizes on the escrow that took its locks, so the venue stays put.
+    function test_wire_keepsTheVenueWhileTheEscrowHoldsLocks() public {
+        vm.prank(admin);
+        escrow.lockFunds(WORLDWIDE_DAY, bidder, 1e6, 1_000_000, 1);
+
+        vm.expectRevert(ITargetRouter.EscrowHasLiveLocks.selector);
+        bnbRouter.wire(address(auction), address(intex), makeAddr("escrow2"));
+        vm.expectRevert(ITargetRouter.EscrowHasLiveLocks.selector);
+        bnbRouter.wire(makeAddr("auction2"), address(intex), address(escrow));
+
+        bnbRouter.wire(address(auction), address(intex), address(escrow));
+    }
+
     // --- _handleRefundInstructions: forwarded to EscrowAdapter.finalizeAuction ---
     // The winner's lock flips to Won.
     function test_handleRefundInstructions_finalizesEscrow() public {

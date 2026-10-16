@@ -1089,6 +1089,11 @@
     },
     {
       "type": "error",
+      "name": "EscrowHasLiveLocks",
+      "inputs": []
+    },
+    {
+      "type": "error",
       "name": "InvalidCommitHash",
       "inputs": []
     },

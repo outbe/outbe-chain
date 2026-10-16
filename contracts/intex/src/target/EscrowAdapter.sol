@@ -88,6 +88,8 @@ contract EscrowAdapter is
         uint8 currentAssetVersion;
         /// @dev Clearing terms each day's winners paid at, recorded by its first refund chunk.
         mapping(uint32 worldwideDay => DayClearing) dayClearing;
+        /// @dev Wins the auction has not closed yet, across all days. A win may hold no money.
+        uint256 openWins;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.EscrowAdapter")) - 1)) & ~bytes32(uint256(0xff))
@@ -205,8 +207,9 @@ contract EscrowAdapter is
             }
         }
 
-        // Revoke role from the previous auction if rewiring.
-        if ($.intexAuctionContract != address(0)) {
+        // The bidders of a previous auction claim through it, so it stays until nothing is left.
+        if ($.intexAuctionContract != address(0) && _intexAuction != $.intexAuctionContract) {
+            if (_hasOutstandingLocks()) revert LocksOutstanding();
             _revokeRole(AUCTION_ROLE, $.intexAuctionContract);
         }
 
@@ -412,6 +415,7 @@ contract EscrowAdapter is
             lock.lockedAmount = change;
             totalOwed += change;
             ++settled;
+            ++$.openWins;
         }
 
         if (totalPaid > 0) state.totalLocked -= totalPaid;
@@ -508,6 +512,7 @@ contract EscrowAdapter is
         units = lock.quantity;
         uint128 change = lock.lockedAmount;
         delete $.bidLocks[worldwideDay][bidder];
+        --$.openWins;
         emit WinClosed(worldwideDay, bidder, units);
         if (change > 0) _payOut(worldwideDay, $.auctionEscrowState[worldwideDay], bidder, change);
     }
@@ -572,9 +577,21 @@ contract EscrowAdapter is
 
     /// @inheritdoc IEscrowAdapter
     function hasOutstandingLocks() external view override returns (bool) {
+        return _hasOutstandingLocks();
+    }
+
+    /// @dev Whether any win is open or any asset version still holds money in its Compact.
+    function _hasOutstandingLocks() private view returns (bool) {
         EscrowAdapterStorage storage $ = _s();
-        if ($.lockId == 0) return false;
-        return IERC6909(address($.compact)).balanceOf(address(this), $.lockId) != 0;
+        if ($.openWins != 0) return true;
+        if ($.lockId != 0 && IERC6909(address($.compact)).balanceOf(address(this), $.lockId) != 0) return true;
+        for (uint8 v = 0; v < $.currentAssetVersion; ++v) {
+            AssetVersion storage retired = $.assetVersions[v];
+            if (retired.lockId != 0 && IERC6909(retired.compact).balanceOf(address(this), retired.lockId) != 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /// @inheritdoc IEscrowAdapter

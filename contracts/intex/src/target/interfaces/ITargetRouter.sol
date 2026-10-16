@@ -138,6 +138,8 @@ interface ITargetRouter {
     error NativeBalanceInsufficient(uint256 available, uint256 requested);
     /// @notice An external caller invoked the self-call shim. Only `address(this)` is allowed.
     error NotSelf();
+    /// @notice `wire` would move the venue off an escrow that still holds something to claim.
+    error EscrowHasLiveLocks();
     /// @notice `relayBids` called for a day whose relay never started or has already finished.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     error NoBidsToRelay(uint32 worldwideDay);

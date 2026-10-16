@@ -68,6 +68,16 @@ contract EscrowAdapterAssetVersionTest is Test {
         assertEq(_positionOf(COMPACT, lockIdA), LOCK, "the locked funds stayed where they were");
     }
 
+    function test_MoneyLeftUnderARetiredAssetStillCountsAsOutstanding() public {
+        _lock(DAY_1, alice, tokenA);
+        escrow.wire(admin, COMPACT, address(tokenB));
+        assertEq(escrow.lockId(), 0, "the active asset holds nothing yet");
+
+        assertTrue(escrow.hasOutstandingLocks(), "the retired position still holds the lock");
+        vm.expectRevert(IEscrowAdapter.LocksOutstanding.selector);
+        escrow.wire(makeAddr("auction2"), COMPACT, address(tokenB));
+    }
+
     function test_ADayLockedBeforeARotationIsClaimedInItsOwnAsset() public {
         _lock(DAY_1, alice, tokenA);
         uint256 lockIdA = escrow.lockId();

@@ -483,10 +483,9 @@ contract AuctionTest is Test {
         assertEq(address(auction.intexContract()), address(0xBEEF));
     }
 
-    /// @dev Bidders claim their own locks, so an escrow still holding them is the steady state and
-    ///      must not pin the auction to it. The locks stay where they are. Only new days go to the
-    ///      new escrow.
-    function test_Wire_RotatesWhileLocksOutstanding() public {
+    /// @dev Bidders claim through the auction from the escrow that took their locks, so the escrow
+    ///      stays until nothing is left on it.
+    function test_Wire_RefusesWhileTheEscrowHoldsLocks() public {
         uint256 startTs = block.timestamp;
         uint32 worldwideDay = 20250201;
         _start(worldwideDay, 50, 1);
@@ -497,10 +496,12 @@ contract AuctionTest is Test {
 
         MockAuctionEscrow escrow2 = new MockAuctionEscrow();
         vm.prank(admin);
+        vm.expectRevert(IIntexAuction.EscrowHasLiveLocks.selector);
         auction.wire(address(escrow2));
 
-        assertEq(address(auction.escrowContract()), address(escrow2));
-        assertTrue(escrow.hasOutstandingLocks(), "the old escrow keeps the lock it took");
+        vm.prank(admin);
+        auction.wire(address(escrow));
+        assertEq(address(auction.escrowContract()), address(escrow), "the same escrow rewires");
     }
 
     function test_Wire_SucceedsAfterLocksCleared() public {

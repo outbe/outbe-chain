@@ -236,6 +236,8 @@ interface IEscrowAdapter {
     error ProceedsRecipientNotSet();
     /// @notice A winner's lock holds no change to refund.
     error NothingToRefund();
+    /// @notice The auction cannot change while bidders still have something to claim through it.
+    error LocksOutstanding();
     /// @notice A refund was claimed before the safety window elapsed.
     /// @param claimableAt Earliest unix-seconds timestamp the refund can be claimed at.
     /// @param now_ Current block timestamp.
@@ -253,7 +255,8 @@ interface IEscrowAdapter {
 
     /// @notice Wire contract dependencies.
     /// @dev Rotating `_paymentToken` or `_compact` retires the active asset under its version.
-    ///      Locks and bonds taken under it keep withdrawing from it.
+    ///      Locks and bonds taken under it keep withdrawing from it. The auction changes only once
+    ///      `hasOutstandingLocks` is false: its bidders claim through it.
     /// @param _intexAuction IntexAuction contract address.
     /// @param _compact The Compact contract address.
     /// @param _paymentToken Active payment-token address.
@@ -400,7 +403,8 @@ interface IEscrowAdapter {
         view
         returns (bool hasLocks, bool isFinalized, uint128 totalLocked);
 
-    /// @notice True while any lock is still live in The Compact under the active lock id.
+    /// @notice True while any win is still open or any asset version still holds money in The Compact:
+    ///         a lock, a change or a commit bond someone can still claim.
     function hasOutstandingLocks() external view returns (bool outstanding);
 
     /// @notice Version number of the active asset.

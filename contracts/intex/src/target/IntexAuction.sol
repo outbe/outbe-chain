@@ -153,6 +153,10 @@ contract IntexAuction is
 
         IntexAuctionStorage storage $ = _s();
         IEscrowAdapter current = $.escrowContract;
+        // A day's claims go to the escrow that took its locks, so that escrow stays until nothing is left.
+        if (address(current) != address(0) && _escrow != address(current) && current.hasOutstandingLocks()) {
+            revert EscrowHasLiveLocks();
+        }
         $.escrowContract = IEscrowAdapter(_escrow);
         emit EscrowWired(address(current), _escrow);
     }
