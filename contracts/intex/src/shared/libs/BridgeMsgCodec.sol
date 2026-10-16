@@ -280,18 +280,18 @@ library BridgeMsgCodec {
     }
 
     /// @notice Encodes AUCTION_STAGE_START message.
-    /// @dev encodePacked layout, 70 bytes of head plus 26 per priced currency:
+    /// @dev encodePacked layout, 70 bytes of head plus 18 per priced currency:
     ///      [bodyVersion(1)][msgType(1)][worldwideDay(4)][commitEnd(4)][revealEnd(4)][issuanceEnd(4)]
     ///      [promisLoadMinor(16)][minIntexBidRate(4)][callNoticePeriod(4)][callWindow(4)]
     ///      [callThreshold(4)][minIntexBidQuantity(2)][commitBondMinor(16)][dayState(1)][priceCount(1)]
-    ///      then [isoCode(2)][entryPrice(8)][floorPrice(8)][callPrice(8)] per currency.
+    ///      then [isoCode(2)][entryPrice(8)][callPrice(8)] per currency.
     /// @param _worldwideDay The worldwide day (yyyymmdd).
     /// @param _commitEnd The commit-stage end timestamp.
     /// @param _revealEnd The reveal-stage end timestamp.
     /// @param _issuanceEnd The issuance-stage end timestamp.
     /// @param _promisLoadMinor The Promis load (minor units) for the series.
     /// @param _minIntexBidRate The minimum acceptable intex bid rate (`1e6` fixed-point).
-    /// @param _prices Entry, floor and call price of every currency the day can clear in.
+    /// @param _prices Entry and call price of every currency the day can clear in.
     /// @param _callNoticePeriod The Called->deadline window in seconds (0 = default).
     /// @param _callWindow The call-trigger observation window in seconds.
     /// @param _callThreshold The call-trigger threshold in seconds.
