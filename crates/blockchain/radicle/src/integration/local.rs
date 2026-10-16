@@ -3,6 +3,7 @@
 mod bootstrap;
 mod material;
 mod preparation;
+mod publication;
 mod state;
 
 pub use bootstrap::BootstrapSigningContext;
@@ -39,8 +40,12 @@ use tokio::{
 
 const MAGIC: &[u8; 4] = b"ORL1";
 const RECEIPT_FRAME_LEN: usize = 5 + 8 + 32 + 8 + 32 + PUBLICATION_BODY_LEN;
-const MAX_FRAME: usize = preparation::MAX_FRAME;
-const MAX_REQUEST: usize = preparation::MAX_REQUEST;
+const MAX_REQUEST: usize = publication::MAX_REQUEST;
+const MAX_FRAME: usize = if preparation::MAX_FRAME > MAX_REQUEST {
+    preparation::MAX_FRAME
+} else {
+    MAX_REQUEST
+};
 const MAX_CONNECTIONS: usize = 32;
 const MAX_READERS: usize = 4;
 const DEADLINE: Duration = Duration::from_secs(5);
@@ -262,6 +267,75 @@ impl LocalReceiptClient {
         )
     }
 
+    /// Ask the node to verify, durably select, then attest a complete native bootstrap package.
+    pub async fn attest_bootstrap_publication(
+        &self,
+        context: &BootstrapSigningContext,
+        repo: &radicle::storage::git::Repository,
+        content_manifest: radicle::git::Oid,
+        package: &super::bootstrap::VerifiedBootstrapPublication,
+        witness: &super::signing::witness::RepositoryWitnessBundle,
+    ) -> Result<outbe_primitives::radicle_publication::PublicationAttestation, Error> {
+        use outbe_primitives::radicle_publication::PublicationBatch;
+        if package.body().chain_id != self.chain.chain_id
+            || package.body().genesis_hash != self.chain.genesis_hash
+        {
+            return Err(Error::Protocol);
+        }
+        let request = publication::request(
+            publication::ATTEST,
+            repo,
+            content_manifest,
+            package,
+            witness,
+        )?;
+        let response = self.exchange(&request, publication::ATTEST_FRAME).await?;
+        if response == [publication::ATTEST.as_slice(), &[0]].concat() {
+            return Err(Error::Unavailable);
+        }
+        if response.get(..5) != Some([publication::ATTEST.as_slice(), &[2]].concat().as_slice()) {
+            return Err(Error::Protocol);
+        }
+        let mut batch =
+            PublicationBatch::from_bytes(&response[5..]).map_err(|_| Error::Protocol)?;
+        if batch.body != *package.body() || batch.attestations.len() != 1 {
+            return Err(Error::Protocol);
+        }
+        let attestation = batch.attestations.pop().ok_or(Error::Protocol)?;
+        context
+            .material
+            .verify_publication_attestation(&batch.body, &attestation)
+            .map_err(|_| Error::Protocol)?;
+        Ok(attestation)
+    }
+
+    pub async fn queue_bootstrap_publication(
+        &self,
+        repo: &radicle::storage::git::Repository,
+        content_manifest: radicle::git::Oid,
+        package: &super::bootstrap::VerifiedBootstrapPublication,
+        witness: &super::signing::witness::RepositoryWitnessBundle,
+        batch: &outbe_primitives::radicle_publication::PublicationBatch,
+    ) -> Result<(), Error> {
+        if batch.body != *package.body()
+            || batch.body.chain_id != self.chain.chain_id
+            || batch.body.genesis_hash != self.chain.genesis_hash
+        {
+            return Err(Error::Protocol);
+        }
+        let mut request =
+            publication::request(publication::QUEUE, repo, content_manifest, package, witness)?;
+        request.extend(batch.to_bytes().map_err(|_| Error::Protocol)?);
+        let response = self.exchange(&request, 5).await?;
+        if response == [publication::QUEUE.as_slice(), &[2]].concat() {
+            Ok(())
+        } else if response == [publication::QUEUE.as_slice(), &[0]].concat() {
+            Err(Error::Unavailable)
+        } else {
+            Err(Error::Protocol)
+        }
+    }
+
     /// Ask the node to reconstruct and sign its own current genesis document, never caller bytes.
     pub async fn sign_bootstrap_document(
         &self,
@@ -456,6 +530,8 @@ async fn serve(
     let request = read_frame(&mut stream, MAX_REQUEST).await?;
     let magic = match (request.get(..4), request.len()) {
         (Some(magic), 12) if magic == MAGIC => MAGIC,
+        (Some(magic), length) if magic == publication::ATTEST && length > 4 => publication::ATTEST,
+        (Some(magic), length) if magic == publication::QUEUE && length > 4 => publication::QUEUE,
         (Some(magic), 4) if magic == bootstrap::MAGIC => bootstrap::MAGIC,
         (Some(magic), 36) if magic == bootstrap::SIGN_DOCUMENT => bootstrap::SIGN_DOCUMENT,
         (Some(magic), length) if magic == bootstrap::SIGN_IDENTITY && length > 36 => {
@@ -474,6 +550,13 @@ async fn serve(
         Ok(permit) => permit,
         Err(_) => return write_frame(&mut stream, &[magic.as_slice(), &[0]].concat()).await,
     };
+    if magic == publication::ATTEST || magic == publication::QUEUE {
+        let response =
+            publication::publish(authority, material, publications, readers, permit, request)
+                .await
+                .unwrap_or_else(|_| [magic.as_slice(), &[0]].concat());
+        return write_frame(&mut stream, &response).await;
+    }
     if magic == bootstrap::SIGN_IDENTITY || magic == bootstrap::SIGN_REFS {
         let response = bootstrap::sign_native(authority, material, readers, permit, request)
             .await

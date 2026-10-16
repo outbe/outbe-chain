@@ -137,6 +137,8 @@ struct EndpointNetworkState {
     status: RadicleStatusHandle,
     repository_material: material::RepositoryMaterialHandle,
     repository_authority: Option<Arc<dyn RepositoryAuthorityReader>>,
+    repository_publication: outbe_primitives::radicle_publication::RepositoryPublicationMailbox,
+    queued_bootstrap: Option<Arc<super::publication::store::SelectedBootstrapPublication>>,
 }
 
 #[derive(Clone)]
@@ -151,6 +153,11 @@ struct EndpointRefresh<'a> {
 }
 
 enum NetworkCommand {
+    QueueBootstrapPublication {
+        publication: Arc<super::publication::store::SelectedBootstrapPublication>,
+        batch: Box<outbe_primitives::radicle_publication::PublicationBatch>,
+        result: oneshot::Sender<Result<(), super::bootstrap::Error>>,
+    },
     RepositoryBootstrapAttestation {
         publication: Arc<super::publication::store::SelectedBootstrapPublication>,
         result: oneshot::Sender<Result<PublicationAttestation, super::bootstrap::Error>>,
@@ -218,6 +225,8 @@ impl EndpointNetwork {
                     status,
                     repository_material,
                     repository_authority: None,
+                    repository_publication: Default::default(),
+                    queued_bootstrap: None,
                 },
             },
             EndpointNetworkResolver { commands },
@@ -227,6 +236,24 @@ impl EndpointNetwork {
 }
 
 impl EndpointNetworkResolver {
+    pub async fn queue_bootstrap_publication(
+        &self,
+        publication: Arc<super::publication::store::SelectedBootstrapPublication>,
+        batch: outbe_primitives::radicle_publication::PublicationBatch,
+    ) -> Result<(), super::bootstrap::Error> {
+        let (result, response) = oneshot::channel();
+        self.commands
+            .try_send(NetworkCommand::QueueBootstrapPublication {
+                publication,
+                batch: Box::new(batch),
+                result,
+            })
+            .map_err(|_| signing::Error::Unavailable)?;
+        tokio::time::timeout(HANDLE_DEADLINE, response)
+            .await
+            .map_err(|_| signing::Error::Unavailable)?
+            .map_err(|_| signing::Error::Unavailable)?
+    }
     /// Rechecks a durably selected local package before signing its fixed publication body.
     pub async fn attest_review(
         &self,
@@ -376,6 +403,13 @@ impl EndpointResolver for EndpointNetworkResolver {
 }
 
 impl EndpointNetworkService {
+    pub fn with_repository_publication_mailbox(
+        mut self,
+        mailbox: outbe_primitives::radicle_publication::RepositoryPublicationMailbox,
+    ) -> Self {
+        self.state.repository_publication = mailbox;
+        self
+    }
     pub fn with_repository_authority_reader(
         mut self,
         reader: Arc<dyn RepositoryAuthorityReader>,
@@ -404,12 +438,10 @@ impl EndpointNetworkService {
 }
 
 impl EndpointNetworkState {
-    fn bootstrap_attestation(
+    fn bootstrap_publication_material(
         &self,
         publication: &super::publication::store::SelectedBootstrapPublication,
-        identity: &bls12381::PrivateKey,
-        validator: Address,
-    ) -> Result<PublicationAttestation, super::bootstrap::Error> {
+    ) -> Result<signing::RepositorySigningMaterial, super::bootstrap::Error> {
         let state = self
             .repository_authority
             .as_ref()
@@ -427,6 +459,46 @@ impl EndpointNetworkState {
             .repository_material
             .current(state.authority().clone(), owner)?;
         publication.authorize_current(&state, &material)?;
+        Ok(material)
+    }
+
+    fn queue_bootstrap_publication(
+        &mut self,
+        publication: Arc<super::publication::store::SelectedBootstrapPublication>,
+        batch: outbe_primitives::radicle_publication::PublicationBatch,
+    ) -> Result<(), super::bootstrap::Error> {
+        if batch.body != *publication.body() || batch.to_bytes().is_err() {
+            return Err(signing::Error::Context.into());
+        }
+        let material = self.bootstrap_publication_material(&publication)?;
+        for attestation in &batch.attestations {
+            material.verify_publication_attestation(&batch.body, attestation)?;
+        }
+        self.repository_publication
+            .set_ready(Some(batch))
+            .map_err(|_| signing::Error::Unavailable)?;
+        self.queued_bootstrap = Some(publication);
+        Ok(())
+    }
+
+    fn refresh_bootstrap_queue(&mut self) {
+        if self
+            .queued_bootstrap
+            .as_ref()
+            .is_some_and(|publication| self.bootstrap_publication_material(publication).is_err())
+        {
+            let _ = self.repository_publication.set_ready(None);
+            self.queued_bootstrap = None;
+        }
+    }
+
+    fn bootstrap_attestation(
+        &self,
+        publication: &super::publication::store::SelectedBootstrapPublication,
+        identity: &bls12381::PrivateKey,
+        validator: Address,
+    ) -> Result<PublicationAttestation, super::bootstrap::Error> {
+        let material = self.bootstrap_publication_material(publication)?;
         let index = material.participant_for(validator, identity)?;
         let signature = identity
             .sign(PUBLICATION_NAMESPACE, &publication.body().to_bytes())
@@ -586,8 +658,13 @@ impl EndpointNetworkState {
         let mut current = None;
         let mut queued = BTreeMap::<PeerId, (SignedEndpointResponse, u64)>::new();
         let mut shutdown_ack = None;
+        let mut material_updates = true;
         let outcome = loop {
             tokio::select! {
+                changed = self.repository_material.changed(), if material_updates => {
+                    material_updates = changed.is_ok();
+                    self.refresh_bootstrap_queue();
+                }
                 joined = actor.join_next() => {
                     break Err(match joined {
                         Some(Err(error)) => ManagerError::Task(format!("endpoint actor: {error}")),
@@ -596,6 +673,9 @@ impl EndpointNetworkState {
                 }
                 command = self.commands.recv() => {
                     match command {
+                        Some(NetworkCommand::QueueBootstrapPublication {publication,batch,result})=>{
+                            let _ = result.send(self.queue_bootstrap_publication(publication,*batch));
+                        }
                         Some(NetworkCommand::RepositoryReviewAttestation {publication,result})=>{
                             let _=result.send(self.review_attestation(&publication,&signer,local.validator));
                         }
@@ -615,6 +695,7 @@ impl EndpointNetworkState {
                             let _ = result.send(material);
                         }
                         Some(NetworkCommand::Refresh { snapshot, result }) => {
+                            self.refresh_bootstrap_queue();
                             let refreshed = self.refresh(
                                 &mut sender,
                                 EndpointRefresh { local_validator: local.validator, snapshot: &snapshot, queued: &mut queued },
@@ -658,6 +739,8 @@ impl EndpointNetworkState {
         outcome: Result<(), ManagerError>,
         shutdown_ack: Option<oneshot::Sender<Result<(), ManagerError>>>,
     ) -> Result<(), ManagerError> {
+        let _ = self.repository_publication.set_ready(None);
+        self.queued_bootstrap = None;
         self.commands.close();
         let cleanup = if actor.is_empty() {
             Ok(())

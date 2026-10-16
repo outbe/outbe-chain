@@ -656,7 +656,10 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
     });
     let (_, status) = RadicleStatusChannel::enabled(validator, [1; 32]);
     let (service, resolver, _) = EndpointNetwork::build(chain(), status);
-    let mut service = service.with_repository_authority_reader(reader.clone());
+    let mailbox = outbe_primitives::radicle_publication::RepositoryPublicationMailbox::default();
+    let mut service = service
+        .with_repository_authority_reader(reader.clone())
+        .with_repository_publication_mailbox(mailbox.clone());
     let publisher = service.take_repository_material_publisher().unwrap();
     let (_, local) = LocalEndpointIdentityChannel::create(LocalEndpointIdentity {
         validator,
@@ -677,7 +680,11 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
     let server = LocalReceiptServer::bind(&control, Arc::new(Reader::default()))
         .unwrap()
         .with_authority_reader(reader.clone())
-        .with_material_resolver(resolver.clone());
+        .with_material_resolver(resolver.clone())
+        .with_publication_store(
+            ReviewPackageStore::open(directory.path().join("packages")).unwrap(),
+        );
+    let publications = server.publications.as_ref().unwrap().clone();
     let (stop, stopping) = oneshot::channel();
     let task = tokio::spawn(server.run(async {
         let _ = stopping.await;
@@ -759,6 +766,10 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
                 .unwrap(),
         ));
     }
+    let document_frames = contributions
+        .iter()
+        .map(|(_, frame)| frame.clone())
+        .collect::<Vec<_>>();
     let signature = bootstrap
         .material
         .recover_bootstrap_document(&verifier, &document, &bootstrap.state, &contributions)
@@ -831,6 +842,10 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
                 .unwrap(),
         ));
     }
+    let identity_frames = contributions
+        .iter()
+        .map(|(_, frame)| frame.clone())
+        .collect::<Vec<_>>();
     let signature = bootstrap
         .material
         .recover_bootstrap_identity(&verifier, &identity, &bootstrap.state, &contributions)
@@ -857,6 +872,10 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
                 .unwrap(),
         ));
     }
+    let refs_frames = contributions
+        .iter()
+        .map(|(_, frame)| frame.clone())
+        .collect::<Vec<_>>();
     let signature = bootstrap
         .material
         .recover_bootstrap_refs(&verifier, &refs, &bootstrap.state, &contributions)
@@ -872,9 +891,184 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
         .sign_bootstrap_refs(&bootstrap, &refs, &repo, manifest)
         .await
         .is_err());
-    refs.attach(&repo, &signature).unwrap();
+    let (body, package_manifest) = refs.attach(&repo, &signature).unwrap();
     assert_eq!(repo.raw().references().unwrap().count(), 0);
     *reader.state.lock().unwrap() = Some(original.clone());
+
+    use crate::integration::{
+        bootstrap::verify_bootstrap_publication, signing::witness::RepositoryWitnessBundle,
+    };
+    use outbe_primitives::radicle_publication::{
+        PublicationAttestation, PublicationBatch, PUBLICATION_BODY_LEN, PUBLICATION_NAMESPACE,
+    };
+    let witness = RepositoryWitnessBundle::new(
+        bootstrap.material.canonical_output(),
+        vec![
+            document_frames.clone(),
+            identity_frames.clone(),
+            refs_frames.clone(),
+        ],
+    )
+    .unwrap();
+    let package = verify_bootstrap_publication(
+        &repo,
+        &bootstrap.state,
+        &bootstrap.material,
+        b"[]",
+        &body,
+        &package_manifest,
+        &witness,
+    )
+    .unwrap();
+    let short = RepositoryWitnessBundle::new(
+        bootstrap.material.canonical_output(),
+        vec![document_frames[..2].to_vec(), identity_frames, refs_frames],
+    )
+    .unwrap();
+    assert!(client
+        .attest_bootstrap_publication(&bootstrap, &repo, manifest, &package, &short)
+        .await
+        .is_err());
+    assert!(client
+        .attest_bootstrap_publication(&bootstrap, &repo, wrong_manifest, &package, &witness)
+        .await
+        .is_err());
+    let slot = crate::integration::publication::store::review_slot_key(&body);
+    assert!(publications
+        .lock()
+        .unwrap()
+        .load_selected(slot, &repo)
+        .unwrap()
+        .is_none());
+    assert!(mailbox.ready_prefix(usize::MAX).is_none());
+    let mut batch = PublicationBatch {
+        body: body.clone(),
+        attestations: vec![PublicationAttestation {
+            participant_index: 0,
+            signature: alloy_primitives::FixedBytes::from_slice(
+                keys[0]
+                    .sign(PUBLICATION_NAMESPACE, &body.to_bytes())
+                    .encode()
+                    .as_ref(),
+            ),
+        }],
+    };
+    for (i, key) in keys.iter().enumerate().take(3).skip(1) {
+        batch.attestations.push(PublicationAttestation {
+            participant_index: i as u32,
+            signature: alloy_primitives::FixedBytes::from_slice(
+                key.sign(PUBLICATION_NAMESPACE, &body.to_bytes())
+                    .encode()
+                    .as_ref(),
+            ),
+        });
+    }
+    let mut corrupt_batch = batch.clone();
+    corrupt_batch.attestations[2].signature[0] ^= 1;
+    assert!(client
+        .queue_bootstrap_publication(&repo, manifest, &package, &witness, &corrupt_batch)
+        .await
+        .is_err());
+    assert!(mailbox.ready_prefix(usize::MAX).is_none());
+    assert!(publications
+        .lock()
+        .unwrap()
+        .load_selected(slot, &repo)
+        .unwrap()
+        .is_none());
+    let request =
+        publication::request(publication::ATTEST, &repo, manifest, &package, &witness).unwrap();
+    for malformed in [
+        request[..5].to_vec(),
+        request[..request.len() - 1].to_vec(),
+        [request.clone(), vec![0]].concat(),
+    ] {
+        assert_eq!(
+            client
+                .exchange(&malformed, publication::ATTEST_FRAME)
+                .await
+                .unwrap(),
+            [publication::ATTEST.as_slice(), &[0]].concat()
+        );
+    }
+    let attestation = client
+        .attest_bootstrap_publication(&bootstrap, &repo, manifest, &package, &witness)
+        .await
+        .unwrap();
+    assert_eq!(attestation.participant_index, 0);
+    assert_eq!(attestation, batch.attestations[0]);
+    let mut wrong_index = attestation.clone();
+    wrong_index.participant_index = 4;
+    assert!(bootstrap
+        .material
+        .verify_publication_attestation(&body, &wrong_index)
+        .is_err());
+    let mut wrong_generation = body.clone();
+    wrong_generation.material_version += 1;
+    assert!(bootstrap
+        .material
+        .verify_publication_attestation(&wrong_generation, &attestation)
+        .is_err());
+    let mut other_domain = attestation.clone();
+    other_domain.signature = alloy_primitives::FixedBytes::from_slice(
+        keys[0].sign(b"other", &body.to_bytes()).encode().as_ref(),
+    );
+    assert!(bootstrap
+        .material
+        .verify_publication_attestation(&body, &other_domain)
+        .is_err());
+    let selected = publications
+        .lock()
+        .unwrap()
+        .load_selected(slot, &repo)
+        .unwrap()
+        .unwrap();
+    assert_eq!(selected.body, body);
+    assert_eq!(selected.manifest, package_manifest);
+    let repeated = client
+        .attest_bootstrap_publication(&bootstrap, &repo, manifest, &package, &witness)
+        .await
+        .unwrap();
+    assert_eq!(repeated, attestation);
+    client
+        .queue_bootstrap_publication(&repo, manifest, &package, &witness, &batch)
+        .await
+        .unwrap();
+    assert_eq!(mailbox.ready_prefix(usize::MAX), Some(batch.clone()));
+    assert_eq!(
+        mailbox
+            .ready_prefix(PUBLICATION_BODY_LEN + 1 + 2 * 100)
+            .unwrap()
+            .attestations
+            .len(),
+        2
+    );
+    assert_eq!(repo.raw().references().unwrap().count(), 0);
+    *reader.state.lock().unwrap() = None;
+    assert!(client
+        .attest_bootstrap_publication(&bootstrap, &repo, manifest, &package, &witness)
+        .await
+        .is_err());
+    assert!(client
+        .queue_bootstrap_publication(&repo, manifest, &package, &witness, &batch)
+        .await
+        .is_err());
+    use crate::manager::EndpointResolver as _;
+    resolver
+        .refresh(&crate::manager::FinalizedSnapshot {
+            block: original.authority.block,
+            validators: vec![],
+            registry_generation: 1,
+            repositories: vec![],
+        })
+        .await
+        .unwrap();
+    assert!(mailbox.ready_prefix(usize::MAX).is_none());
+    *reader.state.lock().unwrap() = Some(original.clone());
+    client
+        .queue_bootstrap_publication(&repo, manifest, &package, &witness, &batch)
+        .await
+        .unwrap();
 
     let (state, material) = client.read_patch_signing_context(proposal).await.unwrap();
     assert_eq!(state, original);
@@ -913,13 +1107,20 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
     *reader.authority.lock().unwrap() = Some(next.authority.clone());
     *reader.state.lock().unwrap() = Some(next.clone());
     publisher.publish(6, 7, Some(&output));
+    wait_for_empty_mailbox(&mailbox).await;
     assert!(matches!(
         client.read_patch_signing_context(proposal).await,
         Err(Error::Unavailable)
     ));
     *reader.authority.lock().unwrap() = Some(original.authority.clone());
     *reader.state.lock().unwrap() = Some(original.clone());
+    publisher.publish(5, 6, Some(&output));
+    client
+        .queue_bootstrap_publication(&repo, manifest, &package, &witness, &batch)
+        .await
+        .unwrap();
     publisher.publish(5, 6, None);
+    wait_for_empty_mailbox(&mailbox).await;
     assert!(client.sign_bootstrap_document(&bootstrap).await.is_err());
     assert!(client.read_bootstrap_signing_context().await.is_err());
     assert!(matches!(
@@ -928,6 +1129,10 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
     ));
     publisher.publish(5, 6, Some(&output));
     assert!(client.read_patch_signing_context(proposal).await.is_ok());
+    client
+        .queue_bootstrap_publication(&repo, manifest, &package, &witness, &batch)
+        .await
+        .unwrap();
     *reader.state.lock().unwrap() = None;
     assert!(matches!(
         client.read_patch_signing_context(proposal).await,
@@ -935,6 +1140,7 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
     ));
     *reader.state.lock().unwrap() = Some(original);
     drop(publisher);
+    wait_for_empty_mailbox(&mailbox).await;
     assert!(client.sign_bootstrap_document(&bootstrap).await.is_err());
     assert!(client.read_bootstrap_signing_context().await.is_err());
     assert!(matches!(
@@ -949,6 +1155,18 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
     ));
     stop.send(()).unwrap();
     task.await.unwrap().unwrap();
+}
+
+async fn wait_for_empty_mailbox(
+    mailbox: &outbe_primitives::radicle_publication::RepositoryPublicationMailbox,
+) {
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while mailbox.ready_prefix(usize::MAX).is_some() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
 }
 
 #[test]

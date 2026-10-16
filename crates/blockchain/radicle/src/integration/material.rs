@@ -72,6 +72,9 @@ impl Drop for RepositoryMaterialPublisher {
 }
 
 impl RepositoryMaterialHandle {
+    pub(crate) async fn changed(&mut self) -> Result<(), watch::error::RecvError> {
+        self.output.changed().await
+    }
     pub(crate) fn local_signer(&self) -> Result<VrfMaterialProvider<MinSig>, Error> {
         self.local_signer.borrow().clone().ok_or(Error::Unavailable)
     }

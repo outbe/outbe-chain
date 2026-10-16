@@ -36,7 +36,7 @@ pub(super) async fn read(
     encode(&context.state, &context.material)
 }
 
-async fn current(
+pub(super) async fn current(
     authority: Option<Arc<dyn RepositoryAuthorityReader>>,
     resolver: Option<EndpointNetworkResolver>,
     permit: OwnedSemaphorePermit,

@@ -20,7 +20,6 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 pub(super) const CACHE: &[u8; 4] = b"OCW1";
 pub(super) const MAGIC: &[u8; 4] = b"OCP1";
-pub(super) const MAX_REQUEST: usize = 4 + 8 + 32 + MAX_MANIFEST_BYTES;
 pub(super) const MAX_FRAME: usize = 5 + 4 + material::MAX_FRAME + 4 + MAX_MANIFEST_BYTES + 20;
 
 pub fn publication_store_path(control: &Path) -> PathBuf {

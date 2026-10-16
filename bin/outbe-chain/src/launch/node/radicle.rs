@@ -64,6 +64,7 @@ pub(super) fn start(
     ),
     radicle_shutdown_token: tokio_util::sync::CancellationToken,
     shutdown: outbe_node::shutdown::NodeShutdown,
+    publication_mailbox: outbe_primitives::radicle_publication::RepositoryPublicationMailbox,
 ) -> eyre::Result<RadicleLaunch> {
     let proof_chain_id = node.chain_spec().chain().id();
     let genesis_hash = node.chain_spec().genesis_hash();
@@ -123,7 +124,9 @@ pub(super) fn start(
             },
             radicle_status.clone(),
         );
-        let endpoint = endpoint.with_repository_authority_reader(repository_snapshots.clone());
+        let endpoint = endpoint
+            .with_repository_authority_reader(repository_snapshots.clone())
+            .with_repository_publication_mailbox(publication_mailbox);
         let local_receipts = if node
             .chain_spec()
             .genesis

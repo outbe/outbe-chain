@@ -136,6 +136,39 @@ impl RepositorySigningMaterial {
         Ok(())
     }
 
+    /// Verify a current participant's endorsement; package permission is checked separately.
+    pub fn verify_publication_attestation(
+        &self,
+        body: &outbe_primitives::radicle_publication::PublicationBody,
+        attestation: &outbe_primitives::radicle_publication::PublicationAttestation,
+    ) -> Result<(), Error> {
+        use outbe_primitives::radicle_publication::PUBLICATION_NAMESPACE;
+        if body.chain_id != self.authority.chain_id()
+            || body.genesis_hash != self.authority.genesis_hash()
+            || body.epoch != self.authority.epoch()
+            || body.material_version != self.authority.committee().vrf_material_version
+            || body.owner_bls_public.as_slice() != self.owner.as_bytes()
+            || body.material_hash.0 != self.material_hash
+            || body.players_commitment.0 != self.players_commitment
+        {
+            return Err(Error::Context);
+        }
+        let member = self
+            .authority
+            .committee()
+            .committee
+            .get(attestation.participant_index as usize)
+            .ok_or(Error::Participant)?;
+        let key = bls12381::PublicKey::decode(member.consensus_pubkey.as_slice())
+            .map_err(|_| Error::Participant)?;
+        let signature = bls12381::Signature::decode(attestation.signature.as_slice())
+            .map_err(|_| Error::Partial)?;
+        if !key.verify(PUBLICATION_NAMESPACE, &body.to_bytes(), &signature) {
+            return Err(Error::Partial);
+        }
+        Ok(())
+    }
+
     pub fn sign_bootstrap_document(
         &self,
         provider: &VrfMaterialProvider<MinSig>,
