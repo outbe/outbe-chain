@@ -64,8 +64,10 @@ pub fn evaluate_entry_prices(
     let pair_indices = ordered_slots
         .iter()
         .take(isos.len())
-        .map(|(_, value)| u32::try_from(*value).map_err(|_| NodError::InvalidEntryPriceOpening))
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+        .map(|(_, value)| {
+            u32::try_from(*value).map_err(|_| NodError::InvalidEntryPriceOpening.into())
+        })
+        .collect::<Result<Vec<_>>>()?;
     let slots = entry_price_slots(day, isos, &pair_indices)?;
     if ordered_slots.len() != slots.len()
         || ordered_slots.iter().map(|(slot, _)| slot).ne(slots.iter())

@@ -7,7 +7,7 @@ export const seriesArg = z
   .describe('series id, e.g. "20260212-TRY-U"')
   .transform((v) => toSeriesId(v));
 export const worldwideDayArg = z.number().int().describe("auction worldwide day (yyyymmdd)");
-export const bidUnitsArg = z.number().int().min(1).max(65_535).describe("bid units (uint16)");
+export const bidQuantityArg = z.number().int().min(1).max(65_535).describe("bid quantity (uint16)");
 export const rateArg = z
   .string()
   .describe('bid rate as a fraction of strike, 0..1 (e.g. "0.8" = 80% of strike; min from auction_info)');
