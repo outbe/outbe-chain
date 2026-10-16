@@ -2,10 +2,10 @@
   "feature": "outbe-chain-pjz",
   "goal_status": "active",
   "scope": "approved plan.md + task-specs.json + design.md only",
-  "last_periodic_report_utc": "2026-10-16T00:12:38Z",
-  "next_periodic_report_due_utc": "2026-10-16T00:42:38Z",
+  "last_periodic_report_utc": "2026-10-16T00:38:14Z",
+  "next_periodic_report_due_utc": "2026-10-16T01:08:14Z",
   "period_minutes": 30,
-  "stage": "P2/P3 intermediate foundations verified on f487b894c: protected exact proposal state + canonical public DKG Output provisioning. P4 bootstrap still stopped at pending D3 decision.",
+  "stage": "P2/P3 intermediate: protected current patch/public Output transport verified f487b894c; actual interactive DKG and membership reshare repository signer proof b4bfc6f6f. P4 bootstrap remains stopped at pending D3 decision.",
   "decision_gate": {
     "id": "D3-description-bound",
     "status": "all three independent decision checks complete; user approval pending; dependent bootstrap implementation stopped",
@@ -41,15 +41,15 @@
   },
   "acceptance": "P0/P1/P5 closed; P2/P3 in_progress and incomplete; P4/P6/P7/P8 open; P4 descriptor prerequisite implemented under P3 activation only",
   "last_periodic_report": {
-    "completed": "Protected receipt UDS/node wiring301b4763a verified; D3 accepted-input mismatch diagnostic a0c104079 plus3 independent source/behavior/scope/risk decision checks complete and concrete255-byte proposal ready.",
-    "proof": "301b4763a:60 adapter tests/7 consumer all-target checks/adapter+nodeClippy/fmt PASS(.4/local-receipts). a0c104079 diagnostic and3 independent Rust/Python repeats confirm256/1024 genesis/native mismatch; decisions/D3-description-bound snapshot/reviews/proposal hashes recorded.",
-    "tasks": "No new closures;P0/P1/P5 closed;P2/P3 in_progress;P4/P6/P7/P8 open. Changed P0 contract will require new evidence and3 fullACreviews after explicit approval.",
-    "limitations": "D3 user approval pending; dependent bootstrap implementation stopped; no production/spec limit changed. Full collector/signing control/bootstrap/Merge/production E2E incomplete.",
-    "next": "Present concrete1024→255 UTF-8-byte description proposal and wait explicit answer; preserve full P0-P8 scope and required acceptance gates."
+    "completed": "Protected current proposal state d64b9ca92 and public Output f487b894c implemented/verified; required interactive DKG->membership reshare->native signer behavioral proof b4bfc6f6f added, fresh public-only native verifier PASS.",
+    "proof": "Source b4bfc6f6f:513consensus+66adapter tests,all-target scoped Clippy,fmt and standalone native verifier PASS; .4/local-signing-state,.4/local-public-material,.4/interactive-repository-signing.",
+    "tasks": "Authoritative statuses rechecked00:38UTC:no new closures;P0/P1/P5 closed;P2/P3 in_progress;P4/P6/P7/P8 open.",
+    "limitations": "D3 explicit approval pending; dependent bootstrap unchanged. Signer/control/sidecar distributed collector/Merge/production E2E and complete acceptance still incomplete. New DKG proof uses mock transport/injected canonical logs, not live chain.",
+    "next": "Implement approved narrow typed Review signer/control and collector, preserving node revalidation/no arbitrary signing bytes; wait explicit D3 answer before description/bootstrap change."
   },
   "blocked_audit": {
     "consecutive_goal_turns": 0,
-    "reset": "Independent approved P3 implementation and exact-SHA evidence made progress; D3 does not block all work."
+    "reset": "Required independent P3 proof added and verified; remaining approved implementation work available."
   },
   "user_confirmed_contract": {
     "network_repository_owner": "sole network BLS authority; no user delegation feature",
@@ -58,7 +58,7 @@
     "user_confirmation": "да все всерно, goal можно снимать с паузы ?",
     "resume_intent": "explicit; API cannot resume a blocked goal"
   },
-  "source_sha": "f487b894c319b0f93d20abc0e308431166676a7f",
+  "source_sha": "b4bfc6f6f3acc7664254daf204757888bd1866b7",
   "p5_evidence": "evidence/outbe-chain-pjz.6/candidate",
   "p5_reviews": {
     "R1": "outbe-chain-pjz.6.1",
@@ -77,7 +77,7 @@
     "evidence": "evidence/outbe-chain-pjz.3/policy-baseline",
     "acceptance": "intermediate only; P2 incomplete"
   },
-  "current_source_changes": "f487b894c adds OCM1 protected public Output/current finalized patch context, reusing existing bounded actor resolver. Server/client exact material bindings, per-request/response allocation bounds and node wiring; no secret export/signing message,consensus/native/genesis/spec behavior changes.",
+  "current_source_changes": "b4bfc6f6f adds only behavioral consensus actor tests using existing interactive DKG/reshare/provider/native verifier. No production changes. Existing f487b894c public material transport remains latest production source.",
   "p2_evidence": {
     "native_preparation": "evidence/outbe-chain-pjz.3/native-preparation",
     "stream_corrected": "evidence/outbe-chain-pjz.3/native-stream-r2",
@@ -103,10 +103,10 @@
   "authenticated_material_evidence": "evidence/outbe-chain-pjz.4/authenticated-material",
   "publication_carrier_evidence": "evidence/outbe-chain-pjz.4/publication-carrier",
   "latest_verification": {
-    "source_sha": "f487b894c319b0f93d20abc0e308431166676a7f",
-    "checks": "66 full adapter lib tests/0ignored;7 consumer all-target checks;adapter+node all-target Clippy -D warnings;6 touched Rust-file fmt PASS; source clean.",
-    "scenarios": "Actual Unix socket + existing actor/public publisher with no local signing provider; exact Output/state roundtrip; unavailable Output/wrong proposal/head race/generation checkpoint mismatch/current state missing/withdrawal/publisher Drop/actor shutdown; canonical bounded wire,wrong chain/corruption/truncation/oversized fields/trailing rejection. Prior receipt/current-state tests also pass.",
-    "acceptance": "Intermediate P3 only. Deterministic authority readers and centralized test DKG fixtures; no live current chain/interactive DKG/deployed key provenance or production E2E. Sidecar collector/signing RPC,bootstrap,promotion,Merge/full P0-P8 acceptance remain incomplete."
+    "source_sha": "b4bfc6f6f3acc7664254daf204757888bd1866b7",
+    "checks": "513 full consensus+66 full adapter lib tests/0ignored;consensus+adapter all-target Clippy -D warnings;2 touched Rust-file fmt;separate public-only native verifier compile/run PASS.",
+    "scenarios": "Interactive4-actor initial DKG;actual removed-dealer/new-player reshare;matching Outputs/no revealed player shares;stable owner/new polynomial;twoq subsets same signature,q-1/old/mixed partial rejection,old version disabled,removed provider MissingShare;history survives;fresh native process verifies exported public envelopes and rejects changed context/payload/signature.",
+    "acceptance": "Intermediate P3 only. Mock P2P transport and injected canonical dealer logs;no chain finality/live node/real Git package in new core fixture. No production source changes. Narrow signer/control,sidecar collector/bootstrap/Merge/production E2E/full acceptance remain incomplete."
   },
   "checkpoint_phase_evidence": "evidence/outbe-chain-pjz.4/checkpoint-phase",
   "finalized_anchor_evidence": "evidence/outbe-chain-pjz.4/finalized-anchor",
@@ -116,7 +116,7 @@
   "current_signing_evidence": "evidence/outbe-chain-pjz.4/current-signing",
   "public_witness_evidence": "evidence/outbe-chain-pjz.4/public-witness",
   "witness_bundle_evidence": "evidence/outbe-chain-pjz.4/witness-bundle",
-  "last_goal_turn_classification": "progress: source f487b894c implements protected public Output/current proposal provisioning and node wiring;66 tests/7consumers/Clippy/fmt exact-SHA evidence recorded. D3 unchanged and pending explicit answer.",
+  "last_goal_turn_classification": "progress: required P3 evidence now uses real interactive initial DKG and membership reshare rather than centralized material fixture; b4bfc6f6f plus579 tests/scoped lint/fmt/fresh native verifier recorded. No production change or task closure.",
   "next_required_work": "Continue approved bounded typed Review signer/control and collector wiring using protected current state/public Output; do not expose arbitrary namespace/message or Share. D3 still needs explicit answer before changing description contract/dependent bootstrap. Then remaining P0-P8 production evidence and mandated acceptance reviews; no task closure or goal completion.",
   "review_package_evidence": "evidence/outbe-chain-pjz.4/review-package",
   "review_attestation_evidence": "evidence/outbe-chain-pjz.4/review-attestation",
@@ -133,5 +133,6 @@
   "initial_dkg_source_evidence": "evidence/outbe-chain-pjz.5/initial-dkg-source",
   "local_receipt_evidence": "evidence/outbe-chain-pjz.4/local-receipts",
   "local_signing_state_evidence": "evidence/outbe-chain-pjz.4/local-signing-state",
-  "local_public_material_evidence": "evidence/outbe-chain-pjz.4/local-public-material"
+  "local_public_material_evidence": "evidence/outbe-chain-pjz.4/local-public-material",
+  "interactive_repository_signing_evidence": "evidence/outbe-chain-pjz.4/interactive-repository-signing"
 }
