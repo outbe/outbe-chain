@@ -67,6 +67,15 @@ pub enum TeeClientVerificationError {
     BadTagLength(usize),
     #[error("signature invalid: {0}")]
     SignatureInvalid(ed25519_dalek::SignatureError),
+    #[error("{0:?}")]
+    NoiseParams(#[from] snow::Error),
+    #[error("quote parse: {0}")]
+    QuoteParse(#[from] super::QuoteParseError),
+    #[error("{reason}: {detail}")]
+    ReconnectIdentityMismatch {
+        reason: &'static str,
+        detail: String,
+    },
 }
 
 impl From<TeeClientVerificationError> for TransportError {
@@ -89,6 +98,11 @@ impl From<TeeClientVerificationError> for TransportError {
             TeeClientVerificationError::SystemTimePrecedesUnixEpoch => {
                 Self::Handshake(error.to_string())
             }
+            TeeClientVerificationError::NoiseParams(_) => Self::Noise(error.to_string()),
+            TeeClientVerificationError::QuoteParse(_) => Self::Attestation(error.to_string()),
+            TeeClientVerificationError::ReconnectIdentityMismatch { .. } => {
+                Self::IdentityMismatch(error.to_string())
+            }
             _ => Self::DcapVerification(error.to_string()),
         }
     }
@@ -101,6 +115,8 @@ pub enum NodeHostRecordError {
     NotOwnerOnlyBoundedRegularFile { label: &'static str },
     #[error("NodeHost {label} read limit overflow")]
     ReadLimitOverflow { label: &'static str },
+    #[error("NodeHost {label} length overflow")]
+    LengthOverflow { label: &'static str },
     #[error("NodeHost {label} grew beyond its byte bound while being read")]
     GrewBeyondByteBound { label: &'static str },
     #[error("durable NodeHost {label} conflicts with the requested value")]
