@@ -55,7 +55,7 @@ fn a_direct_settlement_through_a_leg_the_window_never_priced_is_refused_without_
             gem_id,
             SettlementPayment {
                 payer: ALICE,
-                asset: STABLE,
+                asset: SETTLEMENT_ASSET,
                 snapshot_id: required,
             },
         )

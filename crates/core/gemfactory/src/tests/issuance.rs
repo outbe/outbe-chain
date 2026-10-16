@@ -43,7 +43,7 @@ fn a_genesis_gem_is_payable_once_its_first_day_closes() {
         let load = U256::from(10u64) * six_decimal_unit();
         let gem_id = issue_at_live_rate(storage, ALICE, GemTypes::Genesis, load, 840, 840).unwrap();
         seed_qualifying_day(storage, gem_id);
-        admitted_at_quote(storage, gem_id, STABLE);
+        admitted_at_quote(storage, gem_id, SETTLEMENT_ASSET);
     });
 }
 

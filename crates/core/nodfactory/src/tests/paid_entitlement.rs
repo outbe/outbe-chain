@@ -306,7 +306,7 @@ fn erc20_settlement_enforces_eligibility_before_payment_and_accepts_zero_cost() 
     let mut input = params(Address::repeat_byte(0x91));
     input.entry_price_minor = U256::ZERO;
     let nod_id = world.issue(&input);
-    world.register_reference_currency_asset(PAYMENT_ASSET);
+    world.register_reference_currency_asset(SETTLEMENT_ASSET);
     let settle = |world: &mut World, caller, asset| {
         world.enter(|storage| {
             api::settle_nod(
@@ -322,7 +322,7 @@ fn erc20_settlement_enforces_eligibility_before_payment_and_accepts_zero_cost() 
     };
     let stranger = Address::repeat_byte(0x92);
     assert_eq!(
-        settle(&mut world, stranger, PAYMENT_ASSET)
+        settle(&mut world, stranger, SETTLEMENT_ASSET)
             .unwrap_err()
             .to_string(),
         PrecompileError::from(NodFactoryError::NodNotQualified).to_string()
@@ -344,9 +344,9 @@ fn erc20_settlement_enforces_eligibility_before_payment_and_accepts_zero_cost() 
     );
 
     // No token transfer stubs: zero cost must require neither funds nor approvals.
-    settle(&mut world, stranger, PAYMENT_ASSET).unwrap();
+    settle(&mut world, stranger, SETTLEMENT_ASSET).unwrap();
     assert_eq!(
-        settle(&mut world, input.owner, PAYMENT_ASSET)
+        settle(&mut world, input.owner, SETTLEMENT_ASSET)
             .unwrap_err()
             .to_string(),
         PrecompileError::from(NodFactoryError::NodAlreadySettled).to_string()
@@ -368,7 +368,7 @@ fn settlement_over_a_broken_member_index_reverts() {
     let mut input = params(Address::repeat_byte(0x93));
     input.entry_price_minor = U256::ZERO;
     let nod_id = world.issue(&input);
-    world.register_reference_currency_asset(PAYMENT_ASSET);
+    world.register_reference_currency_asset(SETTLEMENT_ASSET);
     world.qualify(nod_id);
     world.enter(|storage| {
         NodContract::new(storage)
@@ -383,7 +383,7 @@ fn settlement_over_a_broken_member_index_reverts() {
                 nod_id,
                 SettlementPayment {
                     payer: input.owner,
-                    asset: PAYMENT_ASSET,
+                    asset: SETTLEMENT_ASSET,
                     snapshot_id: U256::ZERO,
                 },
             )
@@ -400,7 +400,7 @@ fn erc20_settlement_uses_the_existing_inclusive_deadline() {
     let input = params(Address::repeat_byte(0x93));
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
-    world.register_reference_currency_asset(PAYMENT_ASSET);
+    world.register_reference_currency_asset(SETTLEMENT_ASSET);
     let called_at = 1_700_000_000;
     world.mark_called(nod_id, called_at);
     let deadline = called_at + u64::from(CALL_NOTICE_PERIOD);
@@ -443,7 +443,7 @@ fn any_asset_registered_for_the_reference_currency_pays_the_nod() {
     // The registry lists interchangeable assets for the currency; the payer
     // picks which one to pay in, and it need not be the first.
     let second_asset = Address::repeat_byte(0x6b);
-    world.register_reference_currency_assets(vec![PAYMENT_ASSET, second_asset]);
+    world.register_reference_currency_assets(vec![SETTLEMENT_ASSET, second_asset]);
     world
         .enter(|storage| {
             api::settle_nod(

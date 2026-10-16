@@ -227,7 +227,7 @@ fn repayments_return_collateral_to_the_source_and_interest_only_returns_nothing(
 fn false_token_return_rolls_back_credis_and_pledged_collateral() {
     let mut provider = env();
     provider.stub_sub_call_at_selector(
-        asset(),
+        settlement_asset(),
         crate::sol_ext::IERC20::transferFromCall::SELECTOR,
         Bytes::from(vec![0; 32]),
     );

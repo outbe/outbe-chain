@@ -172,12 +172,12 @@ fn with_payment_token<R>(
         word(vaults),
     );
     storage.stub_sub_call_at_selector(
-        payment_token(),
+        settlement_asset(),
         IReferenceCurrency::isoCodeCall::SELECTOR,
         word(iso),
     );
     storage.stub_sub_call_at_selector(
-        payment_token(),
+        settlement_asset(),
         IERC20::decimalsCall::SELECTOR,
         word(decimals),
     );
@@ -198,7 +198,7 @@ fn settlement_quote_prices_an_accepted_token() {
     ] {
         with_payment_token(1, 840, decimals, |s| {
             let (_, cost, _) =
-                runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap();
+                runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE).unwrap();
             assert_eq!(cost, expected, "payment token decimals {decimals}");
         });
     }
@@ -207,7 +207,7 @@ fn settlement_quote_prices_an_accepted_token() {
 #[test]
 fn settlement_quote_rejects_an_unregistered_token() {
     with_payment_token(0, 840, 18, |s| {
-        let err = runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap_err();
+        let err = runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE).unwrap_err();
         assert!(err.to_string().contains("no registered vault"), "{err}");
     });
 }
@@ -215,7 +215,7 @@ fn settlement_quote_rejects_an_unregistered_token() {
 #[test]
 fn settlement_quote_rejects_a_foreign_currency() {
     with_payment_token(1, 978, 18, |s| {
-        let err = runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap_err();
+        let err = runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE).unwrap_err();
         assert!(err.to_string().contains("does not match"), "{err}");
     });
 }
@@ -223,7 +223,7 @@ fn settlement_quote_rejects_a_foreign_currency() {
 #[test]
 fn settlement_quote_rejects_missing_series() {
     with_factory(|s| {
-        assert!(runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).is_err());
+        assert!(runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE).is_err());
     });
 }
 
@@ -234,7 +234,7 @@ fn settlement_quote_dispatch() {
             s.clone(),
             &IIntexFactory::quoteSettlementCall {
                 seriesId: sid(7).into(),
-                asset: payment_token(),
+                asset: settlement_asset(),
                 units: U256::from(2u64),
             }
             .abi_encode(),
@@ -271,14 +271,14 @@ fn with_erc20_series<R>(
         IVaultRouter::assetVaultsCountCall::SELECTOR,
         word(1),
     );
-    storage.stub_sub_call_at(payment_token(), transfer_ret);
+    storage.stub_sub_call_at(settlement_asset(), transfer_ret);
     storage.stub_sub_call_at_selector(
-        payment_token(),
+        settlement_asset(),
         IReferenceCurrency::isoCodeCall::SELECTOR,
         word(840),
     );
-    storage.stub_sub_call_at_selector(payment_token(), IERC20::decimalsCall::SELECTOR, word(6));
-    storage.stub_sub_call_at_selector(payment_token(), IERC20::balanceOfCall::SELECTOR, word(0));
+    storage.stub_sub_call_at_selector(settlement_asset(), IERC20::decimalsCall::SELECTOR, word(6));
+    storage.stub_sub_call_at_selector(settlement_asset(), IERC20::balanceOfCall::SELECTOR, word(0));
 
     StorageHandle::enter(&mut storage, |s| {
         runtime::issue_intex(&s, sample(7)).unwrap();
@@ -297,7 +297,7 @@ fn erc20_settle_refuses_a_transfer_that_moves_nothing_and_books_no_units() {
             U256::from(2),
             SettlementPayment {
                 payer: owner(),
-                asset: payment_token(),
+                asset: settlement_asset(),
                 snapshot_id: U256::ZERO,
             },
         )
@@ -317,7 +317,7 @@ fn erc20_settle_refuses_a_token_answering_false() {
             U256::from(2),
             SettlementPayment {
                 payer: owner(),
-                asset: payment_token(),
+                asset: settlement_asset(),
                 snapshot_id: U256::ZERO,
             },
         )
@@ -361,7 +361,7 @@ fn settle_rejects_zero_amount() {
             U256::ZERO,
             SettlementPayment {
                 payer: owner(),
-                asset: payment_token(),
+                asset: settlement_asset(),
                 snapshot_id: U256::ZERO
             }
         )
@@ -379,7 +379,7 @@ fn settle_rejects_missing_series() {
             U256::from(1),
             SettlementPayment {
                 payer: owner(),
-                asset: payment_token(),
+                asset: settlement_asset(),
                 snapshot_id: U256::ZERO
             }
         )
@@ -406,7 +406,7 @@ fn settle_rejects_an_unqualified_series() {
             U256::from(1),
             SettlementPayment {
                 payer: owner(),
-                asset: payment_token(),
+                asset: settlement_asset(),
                 snapshot_id: U256::ZERO,
             },
         )
@@ -441,7 +441,7 @@ fn settle_rejects_expired_deadline() {
             U256::from(1),
             SettlementPayment {
                 payer: owner(),
-                asset: payment_token(),
+                asset: settlement_asset(),
                 snapshot_id: U256::ZERO,
             },
         )
@@ -471,7 +471,7 @@ fn a_qualified_series_called_past_its_deadline_stays_closed() {
             U256::from(1),
             SettlementPayment {
                 payer: owner(),
-                asset: payment_token(),
+                asset: settlement_asset(),
                 snapshot_id: U256::ZERO,
             },
         )

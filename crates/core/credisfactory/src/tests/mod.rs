@@ -66,7 +66,7 @@ pub fn bob() -> Address {
     address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB")
 }
 
-pub fn asset() -> Address {
+pub fn settlement_asset() -> Address {
     address!("0x0000000000000000000000000000000000000888")
 }
 
@@ -164,7 +164,7 @@ pub fn seed_reservation(
         .reservations
         .create(&LiquidityReservation {
             id,
-            asset: asset(),
+            asset: settlement_asset(),
             amount,
             credis_owner,
             cca: cca(),
@@ -452,14 +452,14 @@ pub fn env() -> HashMapStorageProvider {
     storage.set_block_number(BLOCK_NUMBER);
     storage.enable_sub_call_stub();
     storage.stub_sub_call_at(VAULT_ROUTER_ADDRESS, zero_word());
-    storage.stub_sub_call_at(asset(), iso_word(ISSUANCE_ISO));
+    storage.stub_sub_call_at(settlement_asset(), iso_word(ISSUANCE_ISO));
     storage.stub_sub_call_at_selector(
-        asset(),
+        settlement_asset(),
         crate::sol_ext::IERC20::transferFromCall::SELECTOR,
         iso_word(1),
     );
     storage.stub_sub_call_at_selector(
-        asset(),
+        settlement_asset(),
         crate::sol_ext::IERC20::approveCall::SELECTOR,
         iso_word(1),
     );
@@ -469,7 +469,7 @@ pub fn env() -> HashMapStorageProvider {
         Bytes::from(pledge_stables().to_be_bytes::<32>().to_vec()),
     );
     storage.stub_sub_call_at_selector(
-        asset(),
+        settlement_asset(),
         crate::sol_ext::IERC20::decimalsCall::SELECTOR,
         iso_word(6),
     );

@@ -38,7 +38,7 @@ fn a_direct_settlement_in_a_currency_the_window_never_priced_is_refused_without_
             U256::ONE,
             SettlementPayment {
                 payer: owner(),
-                asset: payment_token(),
+                asset: settlement_asset(),
                 snapshot_id: required,
             },
         )

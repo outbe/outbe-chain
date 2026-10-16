@@ -64,7 +64,7 @@ fn cross_currency_settlement_rejects_a_leg_the_window_never_priced() {
             gem_id,
             SettlementPayment {
                 payer: ALICE,
-                asset: STABLE,
+                asset: SETTLEMENT_ASSET,
                 snapshot_id: U256::ZERO,
             },
         )
@@ -99,7 +99,7 @@ fn settle_rejects_wrong_settlement_currency() {
             gem_id,
             SettlementPayment {
                 payer: ALICE,
-                asset: STABLE_EUR,
+                asset: SETTLEMENT_ASSET_EUR,
                 snapshot_id: U256::ZERO,
             },
         );
@@ -126,7 +126,7 @@ fn settle_rejects_non_qualified_state() {
             gem_id,
             SettlementPayment {
                 payer: ALICE,
-                asset: STABLE,
+                asset: SETTLEMENT_ASSET,
                 snapshot_id: U256::ZERO,
             },
         );

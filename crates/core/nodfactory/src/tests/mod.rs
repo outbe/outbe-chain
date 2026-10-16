@@ -191,14 +191,14 @@ impl World {
 
     /// Settles by ERC20 in the reference currency; a free Nod moves no tokens.
     fn settle(&mut self, nod_id: WwdEntityId, caller: Address) -> Result<(), PrecompileError> {
-        self.register_reference_currency_asset(PAYMENT_ASSET);
+        self.register_reference_currency_asset(SETTLEMENT_ASSET);
         self.enter(|storage| {
             api::settle_nod(
                 &storage,
                 nod_id,
                 SettlementPayment {
                     payer: caller,
-                    asset: PAYMENT_ASSET,
+                    asset: SETTLEMENT_ASSET,
                     snapshot_id: U256::ZERO,
                 },
             )
@@ -328,8 +328,8 @@ impl World {
 
 const CHAIN_ID: u64 = 1;
 
-const PAYMENT_ASSET: Address = Address::new([0x71; 20]);
-const EUR_ASSET: Address = Address::new([0x72; 20]);
+const SETTLEMENT_ASSET: Address = Address::new([0x71; 20]);
+const SETTLEMENT_ASSET_EUR: Address = Address::new([0x72; 20]);
 
 mod materialization;
 

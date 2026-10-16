@@ -29,12 +29,12 @@ const ALICE: Address = address!("0x1111111111111111111111111111111111111111");
 const BOB: Address = address!("0x2222222222222222222222222222222222222222");
 /// Mock settlement stablecoin passed to `settle_gem` in tests. Its `isoCode()` is
 /// stubbed to 840 (USD), matching the default test currency.
-const STABLE: Address = address!("0x00000000000000000000000000000000000000AA");
+const SETTLEMENT_ASSET: Address = address!("0x00000000000000000000000000000000000000AA");
 /// Mock stablecoin whose `isoCode()` is 978 (EUR): a currency mismatch for a
 /// USD-denominated gem.
-const STABLE_EUR: Address = address!("0x00000000000000000000000000000000000000BB");
+const SETTLEMENT_ASSET_EUR: Address = address!("0x00000000000000000000000000000000000000BB");
 /// Mock USD stablecoin carrying eighteen decimals instead of six.
-const STABLE_18: Address = address!("0x00000000000000000000000000000000000000CC");
+const SETTLEMENT_ASSET_18: Address = address!("0x00000000000000000000000000000000000000CC");
 
 /// A no-op authorization for mine paths that reject before reaching the (enclave)
 /// Promis mint (ownership/state/PoW failures).
@@ -72,8 +72,8 @@ fn word(value: u64) -> alloy_primitives::Bytes {
     alloy_primitives::Bytes::from(U256::from(value).to_be_bytes::<32>().to_vec())
 }
 
-/// Stubs one settlement stablecoin's `isoCode()` and `decimals()`.
-fn stub_stablecoin(
+/// Stubs one settlement asset's `isoCode()` and `decimals()`.
+fn stub_settlement_asset(
     storage: &mut HashMapStorageProvider,
     asset: Address,
     iso_code: u64,
@@ -101,9 +101,9 @@ fn test_storage(rate: Option<U256>) -> HashMapStorageProvider {
         alloy_primitives::Bytes::from(U256::from(SENT_UNITS).to_be_bytes::<32>().to_vec()),
     );
     // Answered per selector, so the settlement path can tell USD from EUR.
-    stub_stablecoin(&mut storage, STABLE, 840, 6);
-    stub_stablecoin(&mut storage, STABLE_EUR, 978, 6);
-    stub_stablecoin(&mut storage, STABLE_18, 840, 18);
+    stub_settlement_asset(&mut storage, SETTLEMENT_ASSET, 840, 6);
+    stub_settlement_asset(&mut storage, SETTLEMENT_ASSET_EUR, 978, 6);
+    stub_settlement_asset(&mut storage, SETTLEMENT_ASSET_18, 840, 18);
     // Every asset the tests pass in has a registered vault.
     storage.stub_sub_call_at_selector(
         outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
