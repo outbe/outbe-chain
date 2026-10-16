@@ -192,18 +192,18 @@ pub fn settle_credis(
         let before = credis.get_credis(credis_id)?;
         let now = u64::try_from(storage.timestamp()?)
             .map_err(|_| CredisFactoryError::TimestampOverflow)?;
-        let settlement = rules::settle(&mut credis, credis_id, amount, now)?;
+        let repayment = rules::settle(&mut credis, credis_id, amount, now)?;
         let after = credis.get_credis(credis_id)?;
         let released = before
             .outstanding_gratis_minor
             .checked_sub(after.outstanding_gratis_minor)
             .ok_or(CredisFactoryError::CollateralIncreased)?;
-        if released != settlement.gratis_returned_minor {
+        if released != repayment.gratis_returned_minor {
             return Err(CredisFactoryError::CollateralReleaseMismatch.into());
         }
-        let paid = settlement.total_paid;
+        let paid = repayment.total_paid;
         if !paid.is_zero() {
-            collect_payment(&storage, settlement.asset, caller, paid)?;
+            collect_payment(&storage, repayment.asset, caller, paid)?;
         }
         if credis.get_credis(credis_id)? != after {
             return Err(CredisFactoryError::CredisChangedDuringPayment.into());
@@ -211,7 +211,7 @@ pub fn settle_credis(
         if !released.is_zero() {
             pledges::return_from_credis(&storage, credis_id, released)?;
         }
-        Ok((settlement.principal_paid, settlement.interest))
+        Ok((repayment.principal_paid, repayment.interest))
     })
 }
 
