@@ -109,7 +109,6 @@ async fn independent_collectors_prepare_identical_bootstrap_without_promoting_re
             .unwrap(),
         initial_content_manifest_sha256: Sha256::hash(&[b"[]"]).0.into(),
     };
-    let public_recovery = VrfMaterialProvider::new(7, dkg.polynomial.clone(), None);
     let contributions = |frames: &[super::super::signing::RepositoryPartial]| {
         frames
             .iter()
@@ -140,6 +139,15 @@ async fn independent_collectors_prepare_identical_bootstrap_without_promoting_re
         )
         .unwrap();
         let document = prepare_bootstrap_document(&descriptor, &material).unwrap();
+        let pending = Arc::new(
+            super::super::publication::policy::AcceptedRepositoryPolicy::pending_bootstrap(
+                &document,
+            )
+            .unwrap(),
+        );
+        storage
+            .manage_repository(document.repository_id(), owner.into(), pending)
+            .unwrap();
         let repo = storage.create(document.repository_id()).unwrap();
         let tree = repo.raw().treebuilder(None).unwrap().write().unwrap();
         assert_eq!(tree.as_bytes(), descriptor.initial_tree_oid.as_slice());
@@ -166,20 +174,10 @@ async fn independent_collectors_prepare_identical_bootstrap_without_promoting_re
         let document = Arc::try_unwrap(document).ok().unwrap();
         let document_contributions = contributions(&document_frames);
         assert!(material
-            .recover_bootstrap_document(
-                &public_recovery,
-                &document,
-                &state,
-                &document_contributions[..2]
-            )
+            .recover_bootstrap_document(&document, &state, &document_contributions[..2])
             .is_err());
         let document_signature = material
-            .recover_bootstrap_document(
-                &public_recovery,
-                &document,
-                &state,
-                &document_contributions,
-            )
+            .recover_bootstrap_document(&document, &state, &document_contributions)
             .unwrap();
         assert_eq!(document_signature, sign(document.subject(), first));
         let mut wrong = state.clone();
@@ -226,12 +224,7 @@ async fn independent_collectors_prepare_identical_bootstrap_without_promoting_re
         let identity_frames = actual[first..first + 3].to_vec();
         let identity = Arc::try_unwrap(identity).ok().unwrap();
         let identity_signature = material
-            .recover_bootstrap_identity(
-                &public_recovery,
-                &identity,
-                &state,
-                &contributions(&identity_frames),
-            )
+            .recover_bootstrap_identity(&identity, &state, &contributions(&identity_frames))
             .unwrap();
         assert_eq!(identity_signature, sign(identity.subject(), first));
         let refs = identity.attach(&repo, &identity_signature).unwrap();
@@ -247,12 +240,7 @@ async fn independent_collectors_prepare_identical_bootstrap_without_promoting_re
         let refs_frames = actual[first..first + 3].to_vec();
         let refs = Arc::try_unwrap(refs).ok().unwrap();
         let refs_signature = material
-            .recover_bootstrap_refs(
-                &public_recovery,
-                &refs,
-                &state,
-                &contributions(&refs_frames),
-            )
+            .recover_bootstrap_refs(&refs, &state, &contributions(&refs_frames))
             .unwrap();
         assert_eq!(refs_signature, sign(refs.subject(), first));
         let (body, manifest) = refs.attach(&repo, &refs_signature).unwrap();
@@ -261,6 +249,8 @@ async fn independent_collectors_prepare_identical_bootstrap_without_promoting_re
         assert_eq!(body.finalized_anchor_height, 0);
         assert_eq!(body.finalized_anchor_hash, authority.genesis_hash());
         assert_eq!(manifest.subjects().len(), 3);
+        let pending_identity = manifest.owner_refs().unwrap().get(&IDENTITY_ROOT).unwrap();
+        assert!(repo.identity_doc_at(pending_identity).is_err());
         for object in manifest.objects() {
             let oid: git::Oid = object.oid.parse().unwrap();
             let odb = repo.raw().odb().unwrap();
@@ -409,6 +399,23 @@ async fn independent_collectors_prepare_identical_bootstrap_without_promoting_re
             descriptor.description
         );
         assert_eq!(repo.raw().references().unwrap().count(), 0);
+        let main_ref = git::fmt::qualified!("refs/heads/main")
+            .with_namespace((&RepositoryKey::from(owner)).into())
+            .to_string();
+        repo.raw()
+            .reference(&main_ref, identity.into(), false, "conflicting target")
+            .unwrap();
+        assert!(matches!(proof.install(&repo), Err(Error::RefConflict)));
+        assert_eq!(repo.raw().references().unwrap().count(), 1);
+        assert_eq!(
+            repo.raw().refname_to_id(&main_ref).unwrap(),
+            identity.into()
+        );
+        repo.raw()
+            .find_reference(&main_ref)
+            .unwrap()
+            .delete()
+            .unwrap();
         radicle::cob::object::Storage::update(
             &repo,
             &RepositoryKey::from(owner),
@@ -417,6 +424,14 @@ async fn independent_collectors_prepare_identical_bootstrap_without_promoting_re
             &identity,
         )
         .unwrap();
+        proof.install(&repo).unwrap();
+        proof.install(&repo).unwrap();
+        assert_eq!(
+            repo.raw()
+                .refname_to_id(git::refs::storage::sigrefs(&owner.into()).as_str())
+                .unwrap(),
+            snapshot.sigrefs().into()
+        );
         assert_eq!(
             radicle::cob::identity::Identity::get(&identity.into(), &repo)
                 .unwrap()

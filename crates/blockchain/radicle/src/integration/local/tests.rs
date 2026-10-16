@@ -773,6 +773,13 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
         let _ = stopping.await;
     }));
     let client = LocalReceiptClient::new(&control, chain());
+    assert_eq!(
+        LocalReceiptClient::connect(&control)
+            .await
+            .unwrap()
+            .chain_identity(),
+        chain()
+    );
     assert!(matches!(
         client.read_patch_signing_context(proposal).await,
         Err(Error::Unavailable)
@@ -853,7 +860,6 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
         .iter()
         .map(|share| VrfMaterialProvider::new(6, output.public().clone(), Some(share.clone())))
         .collect();
-    let verifier = VrfMaterialProvider::new(6, output.public().clone(), None);
     let document = crate::integration::bootstrap::prepare_bootstrap_document(
         bootstrap.state.descriptor(),
         &bootstrap.material,
@@ -888,7 +894,7 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
         .collect::<Vec<_>>();
     let signature = bootstrap
         .material
-        .recover_bootstrap_document(&verifier, &document, &bootstrap.state, &contributions)
+        .recover_bootstrap_document(&document, &bootstrap.state, &contributions)
         .unwrap();
     let peer_message = RepositoryGossipMessage::Partial {
         ordinal: 0,
@@ -1012,7 +1018,7 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
         .collect::<Vec<_>>();
     let signature = bootstrap
         .material
-        .recover_bootstrap_identity(&verifier, &identity, &bootstrap.state, &contributions)
+        .recover_bootstrap_identity(&identity, &bootstrap.state, &contributions)
         .unwrap();
     let refs = identity.attach(&repo, &signature).unwrap();
     let partial = client
@@ -1042,7 +1048,7 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
         .collect::<Vec<_>>();
     let signature = bootstrap
         .material
-        .recover_bootstrap_refs(&verifier, &refs, &bootstrap.state, &contributions)
+        .recover_bootstrap_refs(&refs, &bootstrap.state, &contributions)
         .unwrap();
     assert!(client
         .sign_bootstrap_refs(&changed, &refs, &repo, manifest)

@@ -265,37 +265,42 @@ impl RepositorySigningMaterial {
             .map(|_| ())
     }
 
+    fn public_verifier(&self) -> VrfMaterialProvider<MinSig> {
+        VrfMaterialProvider::new(
+            self.authority.committee().vrf_material_version,
+            self.output.public().clone(),
+            None,
+        )
+    }
+
     pub fn recover_bootstrap_document(
         &self,
-        provider: &VrfMaterialProvider<MinSig>,
         job: &super::bootstrap::PreparedBootstrapDocument,
         state: &crate::manager::FinalizedBootstrapSigningState,
         contributions: &[(bls12381::PublicKey, RepositoryPartial)],
     ) -> Result<BlsEnvelope, Error> {
         self.authorize_bootstrap(state, job.body())?;
-        self.recover_subject(provider, job.subject(), contributions)
+        self.recover_subject(&self.public_verifier(), job.subject(), contributions)
     }
 
     pub fn recover_bootstrap_identity(
         &self,
-        provider: &VrfMaterialProvider<MinSig>,
         job: &super::bootstrap::PreparedBootstrapIdentity,
         state: &crate::manager::FinalizedBootstrapSigningState,
         contributions: &[(bls12381::PublicKey, RepositoryPartial)],
     ) -> Result<BlsEnvelope, Error> {
         self.authorize_bootstrap(state, job.body())?;
-        self.recover_subject(provider, job.subject(), contributions)
+        self.recover_subject(&self.public_verifier(), job.subject(), contributions)
     }
 
     pub fn recover_bootstrap_refs(
         &self,
-        provider: &VrfMaterialProvider<MinSig>,
         job: &super::bootstrap::PreparedBootstrapRefs,
         state: &crate::manager::FinalizedBootstrapSigningState,
         contributions: &[(bls12381::PublicKey, RepositoryPartial)],
     ) -> Result<BlsEnvelope, Error> {
         self.authorize_bootstrap(state, job.body())?;
-        self.recover_subject(provider, job.subject(), contributions)
+        self.recover_subject(&self.public_verifier(), job.subject(), contributions)
     }
 
     pub fn sign_current_review(

@@ -41,6 +41,7 @@ use tokio::{
 };
 
 const MAGIC: &[u8; 4] = b"ORL1";
+const SCOPE: &[u8; 4] = b"OCN1";
 const RECEIPT_FRAME_LEN: usize = 5 + 8 + 32 + 8 + 32 + PUBLICATION_BODY_LEN;
 const MAX_REQUEST: usize = publication::MAX_REQUEST;
 const MAX_FRAME: usize = if preparation::MAX_FRAME > MAX_REQUEST {
@@ -253,6 +254,37 @@ pub struct LocalReceiptClient {
 }
 
 impl LocalReceiptClient {
+    /// The authenticated private node socket supplies its pinned chain, never a public peer.
+    pub async fn connect(control_socket: &Path) -> Result<Self, Error> {
+        let mut client = Self::new(
+            control_socket,
+            ChainIdentity {
+                chain_id: 0,
+                genesis_hash: B256::ZERO,
+            },
+        );
+        let bytes = client.exchange(SCOPE, 45).await?;
+        if bytes == [SCOPE.as_slice(), &[0]].concat() {
+            return Err(Error::Unavailable);
+        }
+        if bytes.len() != 45 || bytes[..5] != [SCOPE.as_slice(), &[2]].concat() {
+            return Err(Error::Protocol);
+        }
+        let chain_id = u64::from_be_bytes(bytes[5..13].try_into().map_err(|_| Error::Protocol)?);
+        let genesis_hash = B256::from_slice(&bytes[13..]);
+        if chain_id == 0 || genesis_hash.is_zero() {
+            return Err(Error::Protocol);
+        }
+        client.chain = ChainIdentity {
+            chain_id,
+            genesis_hash,
+        };
+        Ok(client)
+    }
+
+    pub fn chain_identity(&self) -> ChainIdentity {
+        self.chain
+    }
     pub fn new(control_socket: &Path, chain: ChainIdentity) -> Self {
         Self {
             socket: receipt_socket(control_socket),
@@ -531,6 +563,7 @@ async fn serve(
 ) -> Result<(), Error> {
     let request = read_frame(&mut stream, MAX_REQUEST).await?;
     let magic = match (request.get(..4), request.len()) {
+        (Some(magic), 4) if magic == SCOPE => SCOPE,
         (Some(magic), length) if magic == progress::MAGIC && length == 4 + PUBLICATION_BODY_LEN => {
             progress::MAGIC
         }
@@ -628,7 +661,19 @@ async fn serve(
     }
     let result = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        if magic == state::MAGIC {
+        if magic == SCOPE {
+            let authority = authority
+                .ok_or(Error::Unavailable)?
+                .read_current_repository_authority()
+                .map_err(|_| Error::Unavailable)?;
+            Ok([
+                SCOPE.as_slice(),
+                &[2],
+                &authority.chain_id().to_be_bytes(),
+                authority.genesis_hash().as_slice(),
+            ]
+            .concat())
+        } else if magic == state::MAGIC {
             let proposal_id = U256::from_be_slice(&request[4..]);
             let current = authority
                 .ok_or(Error::Unavailable)?

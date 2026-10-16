@@ -59,6 +59,15 @@ pub struct AcceptedRepositoryPolicy {
 }
 
 impl AcceptedRepositoryPolicy {
+    /// Pin the derived network owner before bootstrap; no native entry is authorized yet.
+    pub fn pending_bootstrap(
+        job: &crate::integration::bootstrap::PreparedBootstrapDocument,
+    ) -> Result<Self, Error> {
+        Ok(Self {
+            scope: Scope::from_body(job.body())?,
+            accepted: RwLock::new(AcceptedEntries::default()),
+        })
+    }
     /// Pin the managed repository before any native owner entry is authorized.
     pub fn new(checkpoint: &CheckpointOwnerSnapshot) -> Result<Self, Error> {
         let receipt = checkpoint.checkpoint();

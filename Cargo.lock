@@ -9634,13 +9634,32 @@ dependencies = [
 name = "outbe-radicle-runtime"
 version = "0.1.0"
 dependencies = [
+ "alloy-eips",
+ "alloy-primitives",
+ "bytes",
+ "commonware-actor",
+ "commonware-codec",
+ "commonware-cryptography",
+ "commonware-p2p",
+ "commonware-runtime",
+ "commonware-utils",
+ "hex",
  "lexopt",
  "log",
+ "outbe-consensus",
+ "outbe-primitives",
+ "outbe-radicle",
+ "outbe-radicleregistry",
+ "outbe-validatorset",
  "radicle",
  "radicle-node",
  "radicle-signals",
+ "reth-chainspec",
+ "reth-provider",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]

@@ -1,4 +1,5 @@
 //! Outbe profile wrapper around the native Heartwood runtime.
+mod collector;
 use std::ffi::OsString;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -384,11 +385,13 @@ fn respond(mut stream: TcpStream, status: u16, body: &str) -> std::io::Result<()
 pub struct PreparedSidecar {
     runtime: radicle_node::runtime::Runtime,
     status: StatusServer,
+    control_socket: PathBuf,
 }
 
 impl PreparedSidecar {
     pub fn prepare(options: Options, signals: mpsc::Receiver<Signal>) -> Result<Self, Error> {
         let home = Home::load(&options.home)?;
+        let control_socket = options.control_socket.clone();
         protect_control_parent(&options.control_socket)?;
         let secret_path = home.keys().join("radicle");
         let secret = Keystore::from_secret_path(&secret_path)
@@ -403,7 +406,11 @@ impl PreparedSidecar {
             secret,
         )?;
         let status = StatusServer::start(options.status_listen, runtime.storage.clone())?;
-        Ok(Self { runtime, status })
+        Ok(Self {
+            runtime,
+            status,
+            control_socket,
+        })
     }
 
     pub fn node_id(&self) -> NodeId {
@@ -415,8 +422,19 @@ impl PreparedSidecar {
     }
 
     pub fn run(self) -> Result<(), Error> {
-        let Self { runtime, status } = self;
+        let Self {
+            runtime,
+            status,
+            control_socket,
+        } = self;
+        let collector = collector::Worker::start(
+            control_socket,
+            runtime.storage.clone(),
+            runtime.home.node().join("outbe-governments"),
+            runtime.handle.clone(),
+        )?;
         let result = runtime.run().map_err(Error::from);
+        drop(collector);
         drop(status);
         result
     }

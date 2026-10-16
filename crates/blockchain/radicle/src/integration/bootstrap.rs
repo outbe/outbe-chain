@@ -40,6 +40,10 @@ pub enum Error {
     #[error(transparent)]
     Git(#[from] git::raw::Error),
     #[error(transparent)]
+    Repository(#[from] radicle::storage::RepositoryError),
+    #[error("bootstrap owner reference conflicts with the accepted package")]
+    RefConflict,
+    #[error(transparent)]
     Doc(#[from] radicle::identity::doc::DocError),
     #[error(transparent)]
     Native(#[from] radicle::crypto::repository::Error),
@@ -502,6 +506,60 @@ pub struct AcceptedBootstrapPublication {
 }
 
 impl AcceptedBootstrapPublication {
+    /// All objects/signatures have been reconstructed against an exact accepted chain receipt.
+    /// Lock the entire owner snapshot before CAS; already-new refs recover an interrupted install.
+    pub fn install(&self, repo: &Repository) -> Result<(), Error> {
+        let body = &self.receipt.receipt().body;
+        if repo.id().into_sha1() != Some(body.repo_id.0) {
+            return Err(Error::Descriptor);
+        }
+        let owner: RepositoryKey = BlsPublicKey::from_bytes(body.owner_bls_public.0)?.into();
+        let mut updates = Vec::new();
+        for update in self.manifest.refs() {
+            let name = git::fmt::RefString::try_from(update.name.clone())
+                .map_err(|_| Error::Descriptor)?;
+            let name = git::fmt::Qualified::from_refstr(&name)
+                .ok_or(Error::Descriptor)?
+                .with_namespace((&owner).into())
+                .to_string();
+            let old: git::Oid = update.old.parse().map_err(|_| Error::Descriptor)?;
+            let new: git::Oid = update.new.parse().map_err(|_| Error::Descriptor)?;
+            if new.is_zero() {
+                return Err(Error::Descriptor);
+            }
+            updates.push((name, old, new));
+        }
+        updates.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut transaction = repo.raw().transaction()?;
+        for (name, _, _) in &updates {
+            transaction.lock_ref(name)?;
+        }
+        for (name, old, new) in &updates {
+            let current = match repo.raw().find_reference(name) {
+                Ok(reference) => Some(reference.target().ok_or(Error::RefConflict)?.into()),
+                Err(error) if error.code() == git::raw::ErrorCode::NotFound => None,
+                Err(error) => return Err(error.into()),
+            };
+            if current == Some(*new) {
+                continue;
+            }
+            if current != (!old.is_zero()).then_some(*old) {
+                return Err(Error::RefConflict);
+            }
+            transaction.set_target(name, (*new).into(), None, "Outbe accepted bootstrap")?;
+        }
+        transaction.commit()?;
+        let identity = self
+            .manifest
+            .owner_refs()?
+            .get(&IDENTITY_ROOT)
+            .ok_or(Error::Descriptor)?;
+        repo.set_identity_head_to(identity)?;
+        repo.set_default_branch_to_canonical_head()?;
+        repo.raw().set_head("refs/heads/main")?;
+        Ok(())
+    }
+
     pub fn receipt(&self) -> &crate::manager::FinalizedPublicationReceipt {
         &self.receipt
     }
