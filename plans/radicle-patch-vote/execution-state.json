@@ -2,10 +2,10 @@
   "feature": "outbe-chain-pjz",
   "goal_status": "active",
   "scope": "approved plan.md + task-specs.json + design.md only",
-  "last_periodic_report_utc": "2026-10-16T05:40:31.946844+00:00",
-  "next_periodic_report_due_utc": "2026-10-16T06:10:31.946844+00:00",
+  "last_periodic_report_utc": "2026-10-16T06:10:29.466993+00:00",
+  "next_periodic_report_due_utc": "2026-10-16T06:40:29.466993+00:00",
   "period_minutes": 30,
-  "stage": "P2/P3 incomplete. Native bootstrap signing, complete local publication->mailbox, bounded public contribution relay and own-finalized pending-index/accepted-receipt progress API implemented/verified. Automatic sidecar collector/journal/install/recovery remains incomplete.",
+  "stage": "P2/P3/P4 incomplete. Automatic sidecar bootstrap/journal/accepted install/announce and restart now verified across three real sidecars with one offline committee member; fixture DKG/finality/Commonware transport, not production E2E.",
   "decision_gate": {
     "id": "D3-description-bound",
     "status": "Resolved by explicit user decision: maximum256 UTF-8 bytes; implemented8f3008ae2. No approval pending.",
@@ -42,11 +42,11 @@
   },
   "acceptance": "P0 administratively reopened during limit correction, not reclosed; P1/P5 historical closed; P2/P3 incomplete; P4/P6/P7/P8 open. No new task/feature acceptance asserted.",
   "last_periodic_report": {
-    "completed": "eef60c359: own-finalized exact-body publication delivery observations; current generation pending indices from existing registry slots, accepted history before current-set check, sealed Reth result and protected bounded OCL1 API. Shared OPG1 bytes/admission behavior preserved.",
-    "proof": "eef60c359:77adapter+29registry,seven consumers,adapter/registry/node Clippy/fmt PASS; exact evidence .4/finalized-publication-progress.",
-    "tasks": "No new closures. P0 correction administratively reopened; P1/P5 historical closed; P2/P3 incomplete; P4/P6/P7/P8 open.",
-    "limitations": "Automatic collector/runtime/bootstrap/recovery/install, Review/Merge and production E2E remain incomplete. No pending decision.",
-    "next": "Implement actual automatic sidecar bootstrap collector/journal and invoke existing trusted local signing/relay/progress/mailbox interfaces; resume exact accepted publication on restart."
+    "completed": "Uncommitted automatic bootstrap worker/journal, pending/accepted policy and exact accepted native ref installation. Multi-node test uses three actual sidecars/SDK services in a four-member committee; fourth offline; pre-quorum and accepted restart, native Noise connection/fetch passed.",
+    "proof": "Provisional working-tree runs: runtime journal3, SDK bootstrap1, existing runtime sidecar10 and automatic governments1 PASS. DKG/finality/Commonware transport fixtures; no production E2E claim. Current Clippy running; exact source SHA/evidence not frozen yet.",
+    "tasks": "No new closures. P1/P5 historical closed; P0 administratively reopened; P2/P3 incomplete; P4/P6/P7/P8 open.",
+    "limitations": "Accepted package catch-up for a collector without local selected package, Review/Merge and production E2E remain incomplete. No pending decision.",
+    "next": "Complete scoped checks; freeze source/evidence. Continue missing accepted-package catch-up and approved Review/Merge wiring."
   },
   "blocked_audit": {
     "consecutive_goal_turns": 3,
@@ -66,7 +66,7 @@
     "user_confirmation": "да все всерно, goal можно снимать с паузы ?",
     "resume_intent": "explicit; goal API active confirmed2026-10-16"
   },
-  "source_sha": "eef60c359756ed88e723d5294790cf29714f5fac",
+  "source_sha": "3181fe773e85710412e7927a3ab82692d673f315",
   "p5_evidence": "evidence/outbe-chain-pjz.6/candidate",
   "p5_reviews": {
     "R1": "outbe-chain-pjz.6.1",
@@ -85,7 +85,7 @@
     "evidence": "evidence/outbe-chain-pjz.3/policy-baseline",
     "acceptance": "intermediate only; P2 incomplete"
   },
-  "current_source_changes": "eef60c359: own-finalized exact-body publication delivery observations; current generation pending indices from existing registry slots, accepted history before current-set check, sealed Reth result and protected bounded OCL1 API. Shared OPG1 bytes/admission behavior preserved.",
+  "current_source_changes": "3181fe773: automatic bootstrap worker and durable partial journal, protected local chain discovery, public-only threshold recovery, pending/accepted native policy, exact accepted refs install and normal native announcement.",
   "p2_evidence": {
     "native_preparation": "evidence/outbe-chain-pjz.3/native-preparation",
     "stream_corrected": "evidence/outbe-chain-pjz.3/native-stream-r2",
@@ -111,9 +111,9 @@
   "authenticated_material_evidence": "evidence/outbe-chain-pjz.4/authenticated-material",
   "publication_carrier_evidence": "evidence/outbe-chain-pjz.4/publication-carrier",
   "latest_verification": {
-    "source_sha": "eef60c359756ed88e723d5294790cf29714f5fac",
-    "checks": "77 adapter +29 registry full lib tests/zeroignored; seven consumers all-target builds; adapter/registry/node all-target Clippy -Dwarnings; nine touched files fmt PASS.",
-    "scenarios": "Real registry n49 first32 retry then next participant reaches q33; own-finalized Reth exact-hash read q2 pending/q3 accepted survives rotation; actual UDS max256-index codec/negatives; full n256/q171 six-batch regression passes. Fixture DKG/provider/finality, not live production E2E."
+    "source_sha": "3181fe773e85710412e7927a3ab82692d673f315",
+    "checks": "156 affected SDK/runtime tests, zero ignored; seven consumers all-target check; SDK/runtime/node all-target Clippy -Dwarnings; eleven touched Rust files fmt PASS. Frozen source unchanged.",
+    "scenarios": "Actual three-sidecar/four-member bootstrap: two shares produce no batch; third signer reaches q3 with fourth offline; collector restarts before quorum and after acceptance; equal heads/live availability; native Noise connection and BLS namespace fetch. Journal ownership/chain/symlink/size/conflict negatives. DKG/finality/Commonware transport remain fixtures."
   },
   "checkpoint_phase_evidence": "evidence/outbe-chain-pjz.4/checkpoint-phase",
   "finalized_anchor_evidence": "evidence/outbe-chain-pjz.4/finalized-anchor",
@@ -123,8 +123,8 @@
   "current_signing_evidence": "evidence/outbe-chain-pjz.4/current-signing",
   "public_witness_evidence": "evidence/outbe-chain-pjz.4/public-witness",
   "witness_bundle_evidence": "evidence/outbe-chain-pjz.4/witness-bundle",
-  "last_goal_turn_classification": "no progress: third consecutive verified same overall D3 impasse, explicit approval still absent; no production/spec changes or live job to await. Blocked goal status required by threshold.",
-  "next_required_work": "Connect actual bootstrap attestations to registry checkpoint admission and sidecar/native signing bridge/distributed collector; complete automatic runtime/recovery/normal native promotion and full approved P0-P8 acceptance.",
+  "last_goal_turn_classification": "progress:3181fe773 source committed and full affected exact-SHA tests/build/lint/fmt PASS; automatic multi-node bootstrap no longer an untested claim. Goal remains active; no acceptance closure.",
+  "next_required_work": "Run automatic bootstrap integration with actual sidecars and actual protected SDK services across validators; verify accepted install/announcement/restart, complete accepted-package catch-up and remaining Review/Merge/E2E requirements of the approved plan.",
   "review_package_evidence": "evidence/outbe-chain-pjz.4/review-package",
   "review_attestation_evidence": "evidence/outbe-chain-pjz.4/review-attestation",
   "review_store_evidence": "evidence/outbe-chain-pjz.4/review-store-r2",
@@ -170,10 +170,11 @@
   "local_bootstrap_native_evidence": "evidence/outbe-chain-pjz.4/local-bootstrap-native",
   "local_bootstrap_publication_evidence": "evidence/outbe-chain-pjz.4/local-bootstrap-publication",
   "progress_audit": {
-    "previous_turn": "progress:409bbe381 and645ebf4d4 plus exact evidence committed; no live process remained at turn end.",
-    "current_turn": "progress:eef60c359 implements own-finalized delivery progress and full scoped evidence changes next action from missing observability to actual automatic collector integration.",
-    "next_action": "Implement actual automatic sidecar bootstrap collector/journal and invoke existing trusted local signing/relay/progress/mailbox interfaces; resume exact accepted publication on restart."
+    "previous_turn": "progress: runtime worker/journal implemented, targeted journal/bootstrap/sidecar checks passed.",
+    "current_turn": "progress: actual three-sidecar bootstrap/restart/native fetch test implemented and passed; exact source3181fe773 with156 tests and all consumers/lint/fmt verified.",
+    "next_action": "Continue approved native Review local signing/publication wiring and collector execution; complete accepted package fresh-node catch-up, BindMaterial, Merge, production E2E and full acceptance."
   },
   "public_contribution_relay_evidence": "evidence/outbe-chain-pjz.4/public-contribution-relay",
-  "finalized_publication_progress_evidence": "evidence/outbe-chain-pjz.4/finalized-publication-progress"
+  "finalized_publication_progress_evidence": "evidence/outbe-chain-pjz.4/finalized-publication-progress",
+  "automatic_bootstrap_evidence": "evidence/outbe-chain-pjz.4/automatic-bootstrap"
 }
