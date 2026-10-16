@@ -287,6 +287,16 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @return The series ids of that day.
     function seriesIdsByWorldwideDay(uint32 worldwideDay) external view returns (bytes14[] memory);
 
+    /// @notice Series a day's currency pair was created under.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param issuanceCurrency Issuance currency (ISO numeric).
+    /// @param referenceCurrency Reference currency (ISO numeric).
+    /// @return The series id, or zero if the pair has no series that day.
+    function seriesIdOf(uint32 worldwideDay, uint16 issuanceCurrency, uint16 referenceCurrency)
+        external
+        view
+        returns (bytes14);
+
     /// @notice Both token ids for a series in one call.
     /// @param seriesId Series identifier.
     /// @return issued The Issued token id.

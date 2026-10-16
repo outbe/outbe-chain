@@ -56,6 +56,11 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         mapping(uint32 worldwideDay => bytes14[] seriesIds) seriesOfDay;
         /// @dev Daily VWAPs the metadata derives qualification from. Zero derives none.
         address vwapSource;
+        /// @dev The series a day's currency pair was created under.
+        mapping(
+            uint32 worldwideDay
+                => mapping(uint16 issuanceCurrency => mapping(uint16 referenceCurrency => bytes14 seriesId))
+        ) seriesOfPair;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.IntexNFT1155")) - 1)) & ~bytes32(uint256(0xff))
@@ -111,6 +116,15 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
+    function seriesIdOf(uint32 worldwideDay, uint16 issuanceCurrency, uint16 referenceCurrency)
+        external
+        view
+        returns (bytes14)
+    {
+        return _s().seriesOfPair[worldwideDay][issuanceCurrency][referenceCurrency];
+    }
+
+    /// @inheritdoc IIntexNFT1155
     function createSeries(IIntexNFT1155.CreateSeriesParams calldata params) external onlyRole(RELAYER_ROLE) {
         IntexNFT1155Storage storage $ = _s();
         uint256 iTok = _issuedTokenId(params.seriesId);
@@ -155,6 +169,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // enumerated. Clients derive the Settled id via `settledTokenId(seriesId)`.
         $.allSeries.push(iTok);
         $.seriesOfDay[params.worldwideDay].push(params.seriesId);
+        $.seriesOfPair[params.worldwideDay][params.issuanceCurrency][params.referenceCurrency] = params.seriesId;
 
         emit MetadataUpdate(iTok);
     }
