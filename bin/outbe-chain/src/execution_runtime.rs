@@ -57,13 +57,10 @@ mod tests {
     use std::{panic::AssertUnwindSafe, sync::mpsc, time::Duration};
 
     #[test]
-    fn cli_waits_for_blocking_offchain_storage_drop() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("offchain");
-        let storage = outbe_offchain_storage::RocksDbStorage::open(&path).unwrap();
+    fn cli_waits_for_blocking_task_completion() {
         let (started, task_started) = mpsc::channel();
         let (release, released) = mpsc::channel();
-        let (closed, storage_closed) = mpsc::channel();
+        let (closed, task_closed) = mpsc::channel();
         let (returned, cli_returned) = mpsc::channel();
 
         let launcher = std::thread::spawn(move || {
@@ -71,7 +68,6 @@ mod tests {
                 runner.runtime().handle().spawn_blocking(move || {
                     started.send(()).unwrap();
                     released.recv().unwrap();
-                    drop(storage);
                     closed.send(()).unwrap();
                 });
                 Ok(())
@@ -81,22 +77,19 @@ mod tests {
 
         task_started.recv_timeout(Duration::from_secs(5)).unwrap();
         // The old five-second shutdown_timeout returns while this task still
-        // owns the DB, allowing process exit to destroy RocksDB's C++ mutexes.
+        // owns its resources, allowing process exit to destroy native mutexes.
         let early_result = cli_returned.recv_timeout(Duration::from_millis(5_500)).ok();
         let returned_before_close = early_result.is_some();
         release.send(()).unwrap();
-        storage_closed
-            .recv_timeout(Duration::from_secs(10))
-            .unwrap();
+        task_closed.recv_timeout(Duration::from_secs(10)).unwrap();
         let result = early_result
             .unwrap_or_else(|| cli_returned.recv_timeout(Duration::from_secs(10)).unwrap());
         launcher.join().unwrap();
         result.unwrap();
         assert!(
             !returned_before_close,
-            "CLI returned before offchain DB closed"
+            "CLI returned before the blocking task finished"
         );
-        drop(outbe_offchain_storage::RocksDbStorage::open(&path).unwrap());
     }
 
     #[test]

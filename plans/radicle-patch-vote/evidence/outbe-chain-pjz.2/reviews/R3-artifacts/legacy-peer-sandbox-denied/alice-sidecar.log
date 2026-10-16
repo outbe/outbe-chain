@@ -1,6 +1,0 @@
-2026-10-15T15:38:17.169+04:00 INFO  node     Opening policy database..
-2026-10-15T15:38:17.175+04:00 INFO  node     Default seeding policy set to 'block (all)'
-2026-10-15T15:38:17.176+04:00 INFO  node     Initializing service (Outbe)..
-2026-10-15T15:38:17.177+04:00 INFO  node     Opening node database..
-2026-10-15T15:38:17.183+04:00 INFO  service  Empty refs database, populating from storage..
-outbe-radicle: failed to initialize Heartwood: i/o error: Operation not permitted (os error 1)
