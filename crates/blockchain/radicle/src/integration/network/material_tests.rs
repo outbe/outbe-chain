@@ -211,6 +211,8 @@ async fn request(
     match job {
         RepositoryReviewJob::Cob(job) => resolver.sign_review(job.clone()).await,
         RepositoryReviewJob::Refs(job) => resolver.sign_review_refs(job.clone()).await,
+        RepositoryReviewJob::Merge(job) => resolver.sign_merge(job.clone()).await,
+        RepositoryReviewJob::MergeRefs(job) => resolver.sign_merge_refs(job.clone()).await,
     }
 }
 

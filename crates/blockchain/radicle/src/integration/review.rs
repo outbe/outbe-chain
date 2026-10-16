@@ -296,10 +296,21 @@ pub struct ReviewSigningContext {
 }
 
 impl ReviewSigningContext {
+    #[cfg(test)]
     fn policy_context(
         &self,
         decision: &PatchVotePayloadV1,
         approval: &FinalizedPatchApproval,
+        ordinal: u8,
+    ) -> [u8; 32] {
+        self.policy_context_for(decision, approval, 2, ordinal)
+    }
+
+    fn policy_context_for(
+        &self,
+        decision: &PatchVotePayloadV1,
+        approval: &FinalizedPatchApproval,
+        action: u8,
         ordinal: u8,
     ) -> [u8; 32] {
         Sha256::hash(&[
@@ -311,7 +322,7 @@ impl ReviewSigningContext {
             decision.patch_id.as_slice(),
             decision.revision_id.as_slice(),
             decision.expected_target_head.as_slice(),
-            &[2],
+            &[action],
             &[ordinal],
             &self.epoch.to_be_bytes(),
             &self.material_version.to_be_bytes(),
@@ -330,6 +341,36 @@ pub fn prepare_patch_review(
     identity: git::Oid,
     previous_owner_tip: Option<git::Oid>,
     context: &ReviewSigningContext,
+) -> Result<PreparedPatchReview, Error> {
+    prepare_patch_action(repo, approval, identity, previous_owner_tip, context, None)
+}
+
+pub(crate) fn prepare_patch_merge(
+    repo: &Repository,
+    approval: &FinalizedPatchApproval,
+    identity: git::Oid,
+    previous_owner_tip: Option<git::Oid>,
+    context: &ReviewSigningContext,
+    accepted_review: git::Oid,
+    result: git::Oid,
+) -> Result<PreparedPatchReview, Error> {
+    prepare_patch_action(
+        repo,
+        approval,
+        identity,
+        previous_owner_tip,
+        context,
+        Some((accepted_review, result)),
+    )
+}
+
+fn prepare_patch_action(
+    repo: &Repository,
+    approval: &FinalizedPatchApproval,
+    identity: git::Oid,
+    previous_owner_tip: Option<git::Oid>,
+    context: &ReviewSigningContext,
+    merge: Option<(git::Oid, git::Oid)>,
 ) -> Result<PreparedPatchReview, Error> {
     let decision = PatchVotePayloadV1::decode(approval.approval.payload.as_bytes())
         .map_err(|_| Error::Approval)?;
@@ -352,7 +393,7 @@ pub fn prepare_patch_review(
     }
     let patch: patch::PatchId = git::Oid::from_sha1(decision.patch_id.0).into();
     let revision: patch::RevisionId = git::Oid::from_sha1(decision.revision_id.0).into();
-    let mut tips = vec![*revision];
+    let mut tips = vec![merge.map_or(*revision, |(review, _)| review)];
     tips.extend(previous_owner_tip);
     tips.sort_unstable();
     tips.dedup();
@@ -379,6 +420,12 @@ pub fn prepare_patch_review(
         _ => return Err(Error::Target),
     }
     let revision_state = object.object.revision(&revision).ok_or(Error::Revision)?;
+    if merge.is_some()
+        && revision_state.review_by(&owner).and_then(|r| r.verdict())
+            != Some(patch::Verdict::Accept)
+    {
+        return Err(Error::Revision);
+    }
     let content = [
         *revision_state.base(),
         revision_state.head(),
@@ -390,10 +437,19 @@ pub fn prepare_patch_review(
     let mut dependencies = tips.clone();
     dependencies.push(identity);
     dependencies.extend(content);
+    if let Some((_, result)) = merge {
+        dependencies.push(result);
+    }
     dependencies.sort_unstable();
     dependencies.dedup();
     let mut transaction = Transaction::<patch::Patch, Repository>::default();
-    transaction.review(revision, Some(patch::Verdict::Accept), None, vec![])?;
+    let action = if let Some((_, result)) = merge {
+        transaction.merge(revision, result)?;
+        3
+    } else {
+        transaction.review(revision, Some(patch::Verdict::Accept), None, vec![])?;
+        2
+    };
     let metadata = Author {
         name: "Outbe Network".into(),
         email: "network@outbe.invalid".into(),
@@ -403,7 +459,12 @@ pub fn prepare_patch_review(
         repo,
         Some(identity),
         tips,
-        "Accept patch\n".into(),
+        if merge.is_some() {
+            "Merge patch\n"
+        } else {
+            "Accept patch\n"
+        }
+        .into(),
         metadata.clone(),
     )?;
     Ok(PreparedPatchReview {
@@ -412,12 +473,12 @@ pub fn prepare_patch_review(
         owner,
         subject: RepositorySubject::cob(
             decision.repo_id.0,
-            context.policy_context(&decision, approval, 0),
+            context.policy_context_for(&decision, approval, action, 0),
             commit.tree(),
             commit.as_bytes(),
         ),
-        signed_refs_context: context.policy_context(&decision, approval, 1),
-        context: context.policy_context(&decision, approval, 0),
+        signed_refs_context: context.policy_context_for(&decision, approval, action, 1),
+        context: context.policy_context_for(&decision, approval, action, 0),
         metadata,
         previous_owner_tip,
         signing: context.clone(),

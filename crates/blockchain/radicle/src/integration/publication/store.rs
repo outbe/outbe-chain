@@ -62,22 +62,50 @@ pub struct ReviewPackageStore {
 
 /// This token proves persistence/selection, not current permission; the actor rechecks that.
 pub struct SelectedReviewPublication {
-    publication: Arc<VerifiedReviewPublication>,
+    publication: SelectedPatch,
+}
+
+enum SelectedPatch {
+    Review(Arc<VerifiedReviewPublication>),
+    Merge(Arc<super::merge::VerifiedMergePublication>),
+    Material(Arc<super::binding::VerifiedMaterialPublication>),
 }
 
 impl SelectedReviewPublication {
     pub fn body(&self) -> &PublicationBody {
-        self.publication.body()
+        match &self.publication {
+            SelectedPatch::Review(p) => p.body(),
+            SelectedPatch::Merge(p) => p.body(),
+            SelectedPatch::Material(p) => p.body(),
+        }
     }
     pub fn manifest(&self) -> &PublicationManifest {
-        self.publication.manifest()
+        match &self.publication {
+            SelectedPatch::Review(p) => p.manifest(),
+            SelectedPatch::Merge(p) => p.manifest(),
+            SelectedPatch::Material(p) => p.manifest(),
+        }
     }
     pub fn authorize_current(
         &self,
         state: &FinalizedPatchSigningState,
         material: &RepositorySigningMaterial,
     ) -> Result<(), super::review::Error> {
-        self.publication.authorize_current(state, material)
+        match &self.publication {
+            SelectedPatch::Review(p) => p.authorize_current(state, material),
+            SelectedPatch::Merge(p) => p.authorize_current(state, material),
+            SelectedPatch::Material(_) => Err(super::review::Error::Context),
+        }
+    }
+    pub fn authorize_material(
+        &self,
+        state: &crate::manager::FinalizedMaterialSigningState,
+        material: &RepositorySigningMaterial,
+    ) -> Result<(), super::review::Error> {
+        match &self.publication {
+            SelectedPatch::Material(p) => p.authorize_current(state, material),
+            _ => Err(super::review::Error::Context),
+        }
     }
 }
 
@@ -240,7 +268,28 @@ impl ReviewPackageStore {
             witness,
             None,
         )?;
-        Ok(SelectedReviewPublication { publication })
+        Ok(SelectedReviewPublication {
+            publication: SelectedPatch::Review(publication),
+        })
+    }
+
+    pub fn persist_and_select_merge(
+        &mut self,
+        repo: &Repository,
+        publication: Arc<super::merge::VerifiedMergePublication>,
+        witness: &RepositoryWitnessBundle,
+    ) -> Result<SelectedReviewPublication, Error> {
+        self.persist(
+            repo,
+            publication.body(),
+            publication.manifest(),
+            publication.witness_hash(),
+            witness,
+            None,
+        )?;
+        Ok(SelectedReviewPublication {
+            publication: SelectedPatch::Merge(publication),
+        })
     }
 
     pub fn persist_and_select_bootstrap(
@@ -258,6 +307,25 @@ impl ReviewPackageStore {
             Some((publication.descriptor(), publication.content_manifest())),
         )?;
         Ok(SelectedBootstrapPublication { publication })
+    }
+
+    pub fn persist_and_select_material(
+        &mut self,
+        repo: &Repository,
+        publication: Arc<super::binding::VerifiedMaterialPublication>,
+        witness: &RepositoryWitnessBundle,
+    ) -> Result<SelectedReviewPublication, Error> {
+        self.persist(
+            repo,
+            publication.body(),
+            publication.manifest(),
+            publication.witness_hash(),
+            witness,
+            None,
+        )?;
+        Ok(SelectedReviewPublication {
+            publication: SelectedPatch::Material(publication),
+        })
     }
 
     fn persist(
@@ -434,6 +502,36 @@ impl ReviewPackageStore {
                     .map_err(|_| Error::Corrupt)?;
                     policy.accept_review(&proof).map_err(|_| Error::Corrupt)?;
                 }
+                PublicationAction::Merge => {
+                    let approval = reader
+                        .read_current_patch_approval(package.body.proposal_id)?
+                        .ok_or(Error::Corrupt)?;
+                    let review = self.load_accepted_review(
+                        reader,
+                        &repo,
+                        package.body.proposal_id,
+                        snapshot.checkpoint(),
+                    )?;
+                    let proof = super::merge::verify_accepted_merge_publication(
+                        &repo,
+                        &approval,
+                        &snapshot,
+                        &review,
+                        &verifier,
+                        &package.witness,
+                    )
+                    .map_err(|_| Error::Corrupt)?;
+                    policy.accept_merge(&proof).map_err(|_| Error::Corrupt)?;
+                }
+                PublicationAction::BindMaterial => {
+                    let proof = super::binding::verify_accepted_material_publication(
+                        &snapshot,
+                        &verifier,
+                        &package.witness,
+                    )
+                    .map_err(|_| Error::Corrupt)?;
+                    policy.accept_material(&proof).map_err(|_| Error::Corrupt)?;
+                }
                 _ => return Err(Error::Corrupt),
             }
             snapshot.advance(checkpoint, &package.manifest)?;
@@ -442,6 +540,53 @@ impl ReviewPackageStore {
             return Err(Error::Corrupt);
         }
         Ok(repo)
+    }
+
+    pub fn load_accepted_review(
+        &self,
+        reader: &dyn RepositoryReceiptReader,
+        repo: &Repository,
+        proposal: alloy_primitives::U256,
+        through: &FinalizedPublicationReceipt,
+    ) -> Result<super::review::AcceptedReviewPublication, Error> {
+        for sequence in (2..=through.receipt().body.sequence).rev() {
+            let receipt = reader
+                .read_current_publication_receipt(sequence)?
+                .ok_or(Error::MissingCheckpoint(sequence))?;
+            if receipt.receipt().body.action != PublicationAction::Review
+                || receipt.receipt().body.proposal_id != proposal
+            {
+                continue;
+            }
+            let before = reader
+                .read_current_publication_receipt(sequence - 1)?
+                .ok_or(Error::MissingCheckpoint(sequence - 1))?;
+            let snapshot = self.replay_checkpoint_snapshot(reader, &before)?;
+            let package = self
+                .load_selected(review_slot_key(&receipt.receipt().body), repo)?
+                .ok_or(Error::Corrupt)?;
+            if package.body != receipt.receipt().body {
+                return Err(Error::Corrupt);
+            }
+            let approval = reader
+                .read_current_patch_approval(proposal)?
+                .ok_or(Error::Corrupt)?;
+            let verifier =
+                super::super::signing::accepted::AcceptedPublicationVerifier::from_receipt(
+                    receipt,
+                    package.manifest,
+                    package.witness.public_output(),
+                )?;
+            return super::review::verify_accepted_review_publication(
+                repo,
+                &approval,
+                &snapshot,
+                &verifier,
+                &package.witness,
+            )
+            .map_err(|_| Error::Corrupt);
+        }
+        Err(Error::Corrupt)
     }
 
     pub fn load_selected(

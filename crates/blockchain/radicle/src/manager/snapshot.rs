@@ -22,6 +22,7 @@ use reth_storage_api::StateProvider;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
+mod material;
 mod vote;
 
 #[derive(Clone)]
@@ -45,6 +46,11 @@ impl<P> RethSnapshotReader<P> {
 impl<P: StateProviderFactory + Send + Sync> super::RepositoryAuthorityReader
     for RethSnapshotReader<P>
 {
+    fn read_current_material_signing_state(
+        &self,
+    ) -> Result<super::FinalizedMaterialSigningState, ManagerError> {
+        RethSnapshotReader::read_current_material_signing_state(self)
+    }
     fn read_current_bootstrap_signing_state(
         &self,
     ) -> Result<FinalizedBootstrapSigningState, ManagerError> {

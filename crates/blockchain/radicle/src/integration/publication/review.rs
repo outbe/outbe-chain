@@ -26,6 +26,8 @@ use radicle::{
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error(transparent)]
+    Merge(#[from] crate::integration::merge::Error),
     #[error("Review package does not match current finalized permission or checkpoint")]
     Context,
     #[error("Review package differs from the reconstructed native objects and refs")]
@@ -150,10 +152,31 @@ fn review_body(
     approval: &PatchApprovalRecord,
     material: &RepositorySigningMaterial,
 ) -> Result<PublicationBody, Error> {
+    patch_body(
+        state,
+        previous,
+        approval,
+        material,
+        PublicationAction::Review,
+    )
+}
+
+pub(super) fn patch_body(
+    state: &FinalizedPatchSigningState,
+    previous: &FinalizedPublicationReceipt,
+    approval: &PatchApprovalRecord,
+    material: &RepositorySigningMaterial,
+    action: PublicationAction,
+) -> Result<PublicationBody, Error> {
+    let stage = match action {
+        PublicationAction::Review => outbe_radicleregistry::schema::PATCH_EXECUTION_PENDING,
+        PublicationAction::Merge => outbe_radicleregistry::schema::PATCH_EXECUTION_REVIEWED,
+        _ => return Err(Error::Context),
+    };
     let context = material.review_context(previous.receipt().receipt_hash.0);
     if state.authority() != material.authority()
         || &state.approval().approval != approval
-        || state.stage() != outbe_radicleregistry::schema::PATCH_EXECUTION_PENDING
+        || state.stage() != stage
         || state.checkpoint().receipt() != previous.receipt()
         || context.chain_id != state.authority().chain_id()
         || context.genesis_hash != state.authority().genesis_hash().0
@@ -176,7 +199,7 @@ fn review_body(
     }
     body.sequence = body.sequence.checked_add(1).ok_or(Error::Context)?;
     body.previous_receipt_hash = previous.receipt().receipt_hash;
-    body.action = PublicationAction::Review;
+    body.action = action;
     body.proposal_id = approval.proposal_id;
     body.patch_id = decision.patch_id;
     body.revision_id = decision.revision_id;

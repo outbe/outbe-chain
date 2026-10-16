@@ -1,5 +1,7 @@
 //! Trusted local finalized context and fixed native jobs. Secret shares never cross this socket.
 
+mod approval;
+mod binding;
 mod bootstrap;
 mod gossip;
 mod material;
@@ -10,6 +12,7 @@ mod review;
 mod state;
 mod vote;
 
+pub use binding::MaterialSigningContext;
 pub use bootstrap::BootstrapSigningContext;
 pub use preparation::{publication_store_path, PatchPreparationContext};
 
@@ -589,9 +592,11 @@ async fn serve(
         (Some(magic), length) if magic == gossip::SEND && length > 4 => gossip::SEND,
         (Some(magic), 12) if magic == MAGIC => MAGIC,
         (Some(magic), 16) if magic == vote::MAGIC => vote::MAGIC,
+        (Some(magic), 36) if magic == approval::MAGIC => approval::MAGIC,
         (Some(magic), length) if magic == publication::ATTEST && length > 4 => publication::ATTEST,
         (Some(magic), length) if magic == publication::QUEUE && length > 4 => publication::QUEUE,
         (Some(magic), 4) if magic == bootstrap::MAGIC => bootstrap::MAGIC,
+        (Some(magic), 4) if magic == binding::MAGIC => binding::MAGIC,
         (Some(magic), 36) if magic == bootstrap::SIGN_DOCUMENT => bootstrap::SIGN_DOCUMENT,
         (Some(magic), length) if magic == bootstrap::SIGN_IDENTITY && length > 36 => {
             bootstrap::SIGN_IDENTITY
@@ -599,11 +604,25 @@ async fn serve(
         (Some(magic), length) if magic == bootstrap::SIGN_REFS && length > 36 => {
             bootstrap::SIGN_REFS
         }
-        (Some(magic), length) if magic == review::COB && length >= review::MIN_REQUEST => {
-            review::COB
+        (Some(magic), length)
+            if (magic == review::COB || magic == review::MERGE_COB)
+                && length >= review::MIN_REQUEST =>
+        {
+            if magic == review::COB {
+                review::COB
+            } else {
+                review::MERGE_COB
+            }
         }
-        (Some(magic), length) if magic == review::REFS && length >= review::MIN_REQUEST + 269 => {
-            review::REFS
+        (Some(magic), length)
+            if (magic == review::REFS || magic == review::MERGE_REFS)
+                && length >= review::MIN_REQUEST + 269 =>
+        {
+            if magic == review::REFS {
+                review::REFS
+            } else {
+                review::MERGE_REFS
+            }
         }
         (Some(magic), 36) if magic == state::MAGIC => state::MAGIC,
         (Some(magic), 36) if magic == material::MAGIC => material::MAGIC,
@@ -623,7 +642,26 @@ async fn serve(
             .unwrap_or_else(|_| [magic.as_slice(), &[0]].concat());
         return write_frame(&mut stream, &response).await;
     }
-    if magic == review::COB || magic == review::REFS {
+    if magic == approval::MAGIC {
+        let response = approval::read(reader, permit, U256::from_be_slice(&request[4..]))
+            .await
+            .unwrap_or_else(|_| [magic.as_slice(), &[0]].concat());
+        return write_frame(&mut stream, &response).await;
+    }
+    if magic == binding::MAGIC {
+        let response = binding::read(authority, material, permit)
+            .await
+            .unwrap_or_else(|_| [magic.as_slice(), &[0]].concat());
+        return write_frame(&mut stream, &response).await;
+    }
+    if [
+        review::COB,
+        review::REFS,
+        review::MERGE_COB,
+        review::MERGE_REFS,
+    ]
+    .contains(&magic)
+    {
         let result = async {
             let request = review::Request::parse(&request, native_node)?;
             review::sign(
@@ -669,7 +707,8 @@ async fn serve(
                     )
                     .await
                 }
-                outbe_primitives::radicle_publication::PublicationAction::Review => {
+                outbe_primitives::radicle_publication::PublicationAction::Review
+                | outbe_primitives::radicle_publication::PublicationAction::Merge => {
                     review::publish(
                         reader,
                         authority,
@@ -681,7 +720,18 @@ async fn serve(
                     )
                     .await
                 }
-                _ => Err(Error::Protocol),
+                outbe_primitives::radicle_publication::PublicationAction::BindMaterial => {
+                    binding::publish(
+                        reader,
+                        authority,
+                        material,
+                        publications,
+                        readers,
+                        permit,
+                        request,
+                    )
+                    .await
+                }
             }
         }
         .await;

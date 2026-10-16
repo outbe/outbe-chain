@@ -2,6 +2,7 @@ pub mod bootstrap;
 mod lifecycle;
 pub mod local;
 mod material;
+pub mod merge;
 mod metrics;
 mod network;
 pub mod publication;

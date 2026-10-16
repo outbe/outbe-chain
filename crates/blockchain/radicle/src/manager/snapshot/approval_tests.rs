@@ -751,6 +751,12 @@ fn fixture() -> (RethSnapshotReader<ApprovalProvider>, String) {
         repos
             .register_repository(RepoId::repeat_byte(0xaa), owner)
             .unwrap();
+        repos
+            .network_repository
+            .write(outbe_radicleregistry::repo_id_storage_key(
+                RepoId::repeat_byte(0xaa),
+            ))
+            .unwrap();
         let mut vote = Vote::new(s);
         let id = vote
             .create_proposal_with_voting_window(
@@ -964,6 +970,110 @@ fn archive_reader_uses_current_finality_without_revoking_an_accepted_vote() {
         reader.read_current_patch_approval(U256::ONE),
         Err(ManagerError::Finality(_))
     ));
+}
+
+#[test]
+fn finalized_vote_pages_select_only_the_network_repository() {
+    use outbe_vote::{
+        handlers::{VoteTarget, VoteTargetRegistry},
+        Vote,
+    };
+    static TARGET: RadiclePatchVoteTarget = RadiclePatchVoteTarget;
+    static HANDLERS: &[&dyn VoteTarget] = &[&TARGET];
+    let handlers = VoteTargetRegistry::new(HANDLERS);
+    let voters = [
+        Address::repeat_byte(1),
+        Address::repeat_byte(2),
+        Address::repeat_byte(3),
+    ];
+    for selected in [None, Some(1u8), Some(2)] {
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_block_number(1);
+        storage.enter(|s| {
+            let mut validators = ValidatorSet::new(s.clone());
+            validators.config_owner.write(voters[0]).unwrap();
+            validators.set_config_max_validators(4).unwrap();
+            for (index, voter) in voters.iter().enumerate() {
+                validators
+                    .register_validator(voters[0], *voter, &[index as u8 + 1; 48])
+                    .unwrap();
+                validators.activate_validator(*voter).unwrap();
+            }
+            let mut registry = RadicleRegistry::new(s.clone());
+            registry.config_max_repositories.write(4).unwrap();
+            if let Some(repo) = selected {
+                registry
+                    .network_repository
+                    .write(outbe_radicleregistry::repo_id_storage_key(
+                        RepoId::repeat_byte(repo),
+                    ))
+                    .unwrap();
+            }
+            for repo in [1u8, 2] {
+                registry
+                    .register_repository(RepoId::repeat_byte(repo), voters[0])
+                    .unwrap();
+                let payload = String::from_utf8(
+                    PatchVotePayloadV1::accept(
+                        RepoId::repeat_byte(repo),
+                        RepoId::repeat_byte(3),
+                        RepoId::repeat_byte(4),
+                        RepoId::repeat_byte(5),
+                    )
+                    .encode()
+                    .unwrap(),
+                )
+                .unwrap();
+                let mut vote = Vote::new(s.clone());
+                let id = vote
+                    .create_proposal_with_voting_window(
+                        outbe_vote::ProposalSubmission::new(
+                            voters[usize::from(repo) - 1],
+                            RADICLE_REGISTRY_ADDRESS,
+                            &payload,
+                            1,
+                        ),
+                        1,
+                        &handlers,
+                    )
+                    .unwrap();
+                for voter in voters {
+                    vote.cast_vote_approve(id, voter, true, 2).unwrap();
+                }
+            }
+        });
+        storage.set_block_number(3);
+        storage.enter(|s| {
+            let ctx =
+                BlockRuntimeContext::new(BlockContext::empty_for_tests(3, 1003, 1), s.clone());
+            Vote::new(s).process_begin_block(&ctx, &handlers).unwrap();
+        });
+        let state = snapshot(&storage);
+        state.add_receipts(
+            3,
+            vec![alloy_consensus::EthereumReceipt {
+                tx_type: alloy_consensus::TxType::Legacy,
+                success: true,
+                cumulative_gas_used: 1,
+                logs: storage.get_ordered_events().to_vec(),
+            }],
+        );
+        let reader = RethSnapshotReader::new(
+            ApprovalProvider {
+                states: [(block(3).hash, state)].into(),
+                canonical: [(3, block(3).hash)].into(),
+                finalized: Some(BlockNumHash::new(3, block(3).hash)),
+                reads: Mutex::new(vec![]),
+            },
+            1,
+            B256::ZERO,
+        );
+        let page = reader.read_finalized_vote_page(3, 0).unwrap().unwrap();
+        assert_eq!(
+            page.proposals,
+            selected.into_iter().map(U256::from).collect::<Vec<_>>()
+        );
+    }
 }
 
 #[test]

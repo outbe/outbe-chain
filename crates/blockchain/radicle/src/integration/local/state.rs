@@ -279,7 +279,7 @@ impl<'a> Input<'a> {
         Ok(u64::from_be_bytes(self.array()?))
     }
 
-    fn receipt(
+    pub(super) fn receipt(
         &mut self,
         block: FinalizedBlock,
         chain: ChainIdentity,

@@ -1,5 +1,7 @@
 //! Canonical publication commitments. Native objects and partial witnesses are verified separately.
 
+pub mod binding;
+pub mod merge;
 pub mod policy;
 pub mod review;
 pub mod store;
@@ -117,6 +119,65 @@ pub(crate) fn install_owner_refs(
             return Err(Error::RefConflict);
         }
         transaction.set_target(&name, new.into(), None, "Outbe accepted publication")?;
+    }
+    transaction.commit()?;
+    Ok(())
+}
+
+/// The policy has verified every native owner entry and fenced the accepted sequence.
+fn install_snapshot_refs(
+    repo: &radicle::storage::git::Repository,
+    snapshot: &CheckpointOwnerSnapshot,
+) -> Result<(), Error> {
+    use radicle::{
+        crypto::{BlsPublicKey, RepositoryKey},
+        storage::{ReadRepository as _, WriteRepository as _},
+    };
+    use std::collections::BTreeSet;
+    let body = &snapshot.checkpoint().receipt().body;
+    if repo.id().into_sha1() != Some(body.repo_id.0) {
+        return Err(Error::Receipt);
+    }
+    let owner = RepositoryKey::from(
+        BlsPublicKey::from_bytes(body.owner_bls_public.0).map_err(|_| Error::Manifest)?,
+    );
+    let actual = repo.references_of(&owner)?;
+    let mut desired = snapshot.owner_refs().clone();
+    desired.insert(
+        radicle::storage::refs::SIGREFS_BRANCH.to_ref_string(),
+        snapshot.sigrefs(),
+    );
+    let names: BTreeSet<_> = actual
+        .iter()
+        .chain(desired.iter())
+        .map(|(name, _)| name.clone())
+        .collect();
+    let qualified = |name: &git::fmt::RefString| -> Result<String, Error> {
+        Ok(git::fmt::Qualified::from_refstr(name)
+            .ok_or(Error::Manifest)?
+            .with_namespace((&owner).into())
+            .to_string())
+    };
+    let mut transaction = repo.raw().transaction()?;
+    for name in &names {
+        transaction.lock_ref(&qualified(name)?)?;
+    }
+    if repo.references_of(&owner)? != actual {
+        return Err(Error::RefConflict);
+    }
+    for name in names {
+        let reference = git::fmt::Qualified::from_refstr(&name).ok_or(Error::Manifest)?;
+        let target = desired.get(&reference);
+        if target == actual.get(&reference) {
+            continue;
+        }
+        let name = qualified(&name)?;
+        match target {
+            Some(target) => {
+                transaction.set_target(&name, target.into(), None, "Outbe accepted snapshot")?
+            }
+            None => transaction.remove(&name)?,
+        }
     }
     transaction.commit()?;
     Ok(())

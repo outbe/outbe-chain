@@ -118,7 +118,10 @@ impl Request {
         };
         match body.action {
             PublicationAction::Bootstrap => {}
-            PublicationAction::Review if content_manifest.is_zero() && node.is_some() => {}
+            PublicationAction::Review
+            | PublicationAction::Merge
+            | PublicationAction::BindMaterial
+                if content_manifest.is_zero() && node.is_some() => {}
             _ => return Err(Error::Protocol),
         }
         Ok(Self {

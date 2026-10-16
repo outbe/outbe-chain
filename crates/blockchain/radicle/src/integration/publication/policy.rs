@@ -59,6 +59,42 @@ pub struct AcceptedRepositoryPolicy {
 }
 
 impl AcceptedRepositoryPolicy {
+    /// Install the complete latest verified snapshot, including on a lagging local replica.
+    pub fn install_snapshot(
+        &self,
+        repo: &radicle::storage::git::Repository,
+        snapshot: &CheckpointOwnerSnapshot,
+    ) -> Result<(), super::Error> {
+        let checkpoint = snapshot.checkpoint().receipt();
+        let accepted = self.accepted.read().map_err(|_| super::Error::Receipt)?;
+        if self.scope != Scope::from_body(&checkpoint.body).map_err(|_| super::Error::Receipt)?
+            || accepted.receipts.last_key_value()
+                != Some((&checkpoint.body.sequence, &checkpoint.receipt_hash))
+            || !accepted
+                .entries
+                .contains_key(&(snapshot.sigrefs(), SubjectKind::SignedRefs as u8))
+        {
+            return Err(super::Error::Receipt);
+        }
+        let identity = snapshot
+            .owner_refs()
+            .get(&radicle::storage::refs::IDENTITY_ROOT)
+            .ok_or(super::Error::Snapshot)?;
+        if !accepted
+            .entries
+            .contains_key(&(identity, SubjectKind::Identity as u8))
+            || snapshot.owner_refs().iter().any(|(name, oid)| {
+                name.as_str().starts_with("refs/cobs/")
+                    && !accepted
+                        .entries
+                        .contains_key(&(*oid, SubjectKind::Cob as u8))
+            })
+        {
+            return Err(super::Error::Receipt);
+        }
+        super::install_snapshot_refs(repo, snapshot)
+    }
+
     /// Pin the derived network owner before bootstrap; no native entry is authorized yet.
     pub fn pending_bootstrap(
         job: &crate::integration::bootstrap::PreparedBootstrapDocument,
@@ -88,15 +124,41 @@ impl AcceptedRepositoryPolicy {
 
     /// Only full native reconstruction plus the chain receipt can create these grants.
     pub fn accept_review(&self, proof: &AcceptedReviewPublication) -> Result<(), Error> {
-        let receipt = proof.receipt();
+        self.accept_patch(proof.receipt(), proof.manifest())
+    }
+
+    pub fn accept_merge(
+        &self,
+        proof: &super::merge::AcceptedMergePublication,
+    ) -> Result<(), Error> {
+        self.accept_patch(proof.receipt(), proof.manifest())
+    }
+
+    pub fn accept_material(
+        &self,
+        proof: &super::binding::AcceptedMaterialPublication,
+    ) -> Result<(), Error> {
+        if self.scope != Scope::from_body(&proof.receipt().receipt().body)? {
+            return Err(Error::Configuration);
+        }
+        self.insert(proof.receipt(), vec![])
+    }
+
+    fn accept_patch(
+        &self,
+        receipt: &crate::manager::FinalizedPublicationReceipt,
+        manifest: &super::PublicationManifest,
+    ) -> Result<(), Error> {
         let body = &receipt.receipt().body;
         if self.scope != Scope::from_body(body)? {
             return Err(Error::Configuration);
         }
-        let grants = proof
-            .manifest()
+        let grants = manifest
             .refs()
             .iter()
+            .filter(|update| {
+                update.name == SIGREFS_BRANCH.as_str() || update.name.starts_with("refs/cobs/")
+            })
             .map(|update| {
                 let (kind, ordinal) = if update.name == SIGREFS_BRANCH.as_str() {
                     (SubjectKind::SignedRefs, 1)

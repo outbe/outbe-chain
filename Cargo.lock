@@ -9635,8 +9635,10 @@ dependencies = [
 name = "outbe-radicle-runtime"
 version = "0.1.0"
 dependencies = [
+ "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
+ "alloy-sol-types",
  "bytes",
  "commonware-actor",
  "commonware-codec",
@@ -9652,6 +9654,7 @@ dependencies = [
  "outbe-radicle",
  "outbe-radicleregistry",
  "outbe-validatorset",
+ "outbe-vote",
  "radicle",
  "radicle-node",
  "radicle-signals",

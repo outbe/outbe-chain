@@ -212,6 +212,8 @@ pub(crate) enum RepositoryBootstrapJob {
 enum RepositoryReviewJob {
     Cob(Arc<CheckpointPreparedReview>),
     Refs(Arc<CheckpointPreparedReviewRefs>),
+    Merge(Arc<super::merge::CheckpointPreparedMerge>),
+    MergeRefs(Arc<super::merge::CheckpointPreparedMergeRefs>),
 }
 
 enum QueuedPublication {
@@ -354,6 +356,19 @@ impl EndpointNetworkResolver {
         job: Arc<CheckpointPreparedReviewRefs>,
     ) -> Result<signing::RepositoryPartial, signing::Error> {
         self.review_partial(RepositoryReviewJob::Refs(job)).await
+    }
+    pub async fn sign_merge(
+        &self,
+        job: Arc<super::merge::CheckpointPreparedMerge>,
+    ) -> Result<signing::RepositoryPartial, signing::Error> {
+        self.review_partial(RepositoryReviewJob::Merge(job)).await
+    }
+    pub async fn sign_merge_refs(
+        &self,
+        job: Arc<super::merge::CheckpointPreparedMergeRefs>,
+    ) -> Result<signing::RepositoryPartial, signing::Error> {
+        self.review_partial(RepositoryReviewJob::MergeRefs(job))
+            .await
     }
     pub async fn attest_bootstrap(
         &self,
@@ -625,6 +640,28 @@ impl EndpointNetworkState {
         &self,
         publication: &SelectedReviewPublication,
     ) -> Result<signing::RepositorySigningMaterial, PublicationError> {
+        if publication.body().action
+            == outbe_primitives::radicle_publication::PublicationAction::BindMaterial
+        {
+            let state = self
+                .repository_authority
+                .as_ref()
+                .ok_or(signing::Error::Unavailable)?
+                .read_current_material_signing_state()
+                .map_err(signing::Error::from)?;
+            if state.authority().chain_id() != self.chain.chain_id
+                || state.authority().genesis_hash() != self.chain.genesis_hash
+            {
+                return Err(PublicationError::Context);
+            }
+            let owner =
+                radicle::crypto::BlsPublicKey::from_bytes(publication.body().owner_bls_public.0)?;
+            let material = self
+                .repository_material
+                .current(state.authority().clone(), owner)?;
+            publication.authorize_material(&state, &material)?;
+            return Ok(material);
+        }
         let state = self
             .repository_authority
             .as_ref()
@@ -693,6 +730,8 @@ impl EndpointNetworkState {
         let (proposal, owner) = match job {
             RepositoryReviewJob::Cob(job) => (job.approval().proposal_id, job.owner()),
             RepositoryReviewJob::Refs(job) => (job.approval().proposal_id, job.owner()),
+            RepositoryReviewJob::Merge(job) => (job.approval().proposal_id, job.owner()),
+            RepositoryReviewJob::MergeRefs(job) => (job.approval().proposal_id, job.owner()),
         };
         let owner = match owner {
             radicle::crypto::RepositoryKey::Bls12381G2(key) => key,
@@ -718,6 +757,12 @@ impl EndpointNetworkState {
             }
             RepositoryReviewJob::Refs(job) => {
                 material.sign_current_review_refs(&provider, job, &state, validator, signer)
+            }
+            RepositoryReviewJob::Merge(job) => {
+                material.sign_current_merge(&provider, job, &state, validator, signer)
+            }
+            RepositoryReviewJob::MergeRefs(job) => {
+                material.sign_current_merge_refs(&provider, job, &state, validator, signer)
             }
         }
     }

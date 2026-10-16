@@ -132,6 +132,28 @@ pub struct FinalizedPatchSigningState {
     pub(crate) anchor: FinalizedBlock,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FinalizedMaterialSigningState {
+    pub(crate) authority: FinalizedRepositoryAuthority,
+    pub(crate) checkpoint: FinalizedPublicationReceipt,
+    pub(crate) material: FinalizedPublicationReceipt,
+    pub(crate) anchor: FinalizedBlock,
+}
+impl FinalizedMaterialSigningState {
+    pub fn authority(&self) -> &FinalizedRepositoryAuthority {
+        &self.authority
+    }
+    pub fn checkpoint(&self) -> &FinalizedPublicationReceipt {
+        &self.checkpoint
+    }
+    pub fn material(&self) -> &FinalizedPublicationReceipt {
+        &self.material
+    }
+    pub fn anchor(&self) -> FinalizedBlock {
+        self.anchor
+    }
+}
+
 impl FinalizedPatchSigningState {
     pub fn authority(&self) -> &FinalizedRepositoryAuthority {
         &self.authority
@@ -183,6 +205,13 @@ impl FinalizedRepositoryAuthority {
 
 /// Samples this node's current finalized authority; callers cannot choose a historic set.
 pub trait RepositoryAuthorityReader: Send + Sync {
+    fn read_current_material_signing_state(
+        &self,
+    ) -> Result<FinalizedMaterialSigningState, ManagerError> {
+        Err(ManagerError::Snapshot(
+            "material binding state unavailable".into(),
+        ))
+    }
     fn read_current_bootstrap_signing_state(
         &self,
     ) -> Result<FinalizedBootstrapSigningState, ManagerError> {

@@ -3,17 +3,19 @@
 #[path = "governments/support.rs"]
 mod support;
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{Address, B256, U256};
+use alloy_sol_types::SolCall as _;
 use commonware_codec::Encode as _;
 use commonware_cryptography::{bls12381, Signer as _};
 use commonware_utils::TryCollect as _;
 use outbe_consensus::{bls::bootstrap_dkg_for_participants, hybrid::VrfMaterialProvider};
 use outbe_primitives::{
     addresses::RADICLE_REGISTRY_ADDRESS,
+    block::{BlockContext, BlockRuntimeContext},
     radicle_publication::{
         PublicationBody, RepositoryPublicationMailbox, MAX_PUBLICATION_BATCH_LEN,
     },
-    storage::hashmap::HashMapStorageProvider,
+    storage::{hashmap::HashMapStorageProvider, PrecompileStorageProvider as _},
 };
 use outbe_radicle::{
     endpoint::{ChainIdentity, EndpointAddress, HANDLE_DEADLINE},
@@ -26,17 +28,30 @@ use outbe_radicle::{
     manager::{RepositoryReceiptReader as _, RethSnapshotReader},
 };
 use outbe_radicle_runtime::{Options, PreparedSidecar};
-use outbe_radicleregistry::RadicleRegistry;
+use outbe_radicleregistry::{
+    payload::PatchVotePayloadV1, vote_target::RadiclePatchVoteTarget, RadicleRegistry,
+};
 use outbe_validatorset::{
     contract::ValidatorSet,
     state::{write_committee_snapshot, CommitteeEntry, CommitteeSnapshot},
 };
+use outbe_vote::{
+    handlers::{VoteTarget, VoteTargetRegistry},
+    precompile::{dispatch_with_handlers, IVote},
+    Vote,
+};
 use radicle::{
-    crypto::{ssh::Keystore, Seed},
+    cob::{
+        self,
+        patch::{self, Patches},
+        store::access::WriteAs,
+    },
+    crypto::{ssh::Keystore, Seed, Signer as _, SigningKey},
     git,
     identity::RepoId,
     node::{Handle as _, Node, NodeId},
     profile::Home,
+    storage::{SignRepository as _, WriteRepository as _},
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -50,6 +65,19 @@ use std::{
 };
 use support::{FinalizedProvider, RoutedReceiver, RoutedSender};
 use tokio::sync::{mpsc as async_mpsc, oneshot};
+
+struct TestLogger;
+impl log::Log for TestLogger {
+    fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+        metadata.target() == "outbe-radicle" || metadata.level() <= log::Level::Warn
+    }
+    fn log(&self, record: &log::Record<'_>) {
+        if self.enabled(record.metadata()) {
+            eprintln!("{} {}: {}", record.level(), record.target(), record.args());
+        }
+    }
+    fn flush(&self) {}
+}
 
 struct Sidecar {
     home: Home,
@@ -142,8 +170,409 @@ impl Drop for Sidecar {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MergeCase {
+    FastForward,
+    Clean,
+    Conflict,
+}
+
+async fn exercise_patch_vote(
+    sidecars: &mut [Sidecar],
+    reader: &RethSnapshotReader<FinalizedProvider>,
+    provider: &FinalizedProvider,
+    state: &mut HashMapStorageProvider,
+    mailboxes: &[RepositoryPublicationMailbox],
+    height: &mut u64,
+    case: MergeCase,
+) {
+    let root = reader.read_current_publication_receipt(1).unwrap().unwrap();
+    let rid = RepoId::from(git::Oid::from_sha1(root.receipt().body.repo_id.0));
+    let sequence = state
+        .enter(|s| RadicleRegistry::new(s).publication_sequence.read())
+        .unwrap();
+    let previous = reader
+        .read_current_publication_receipt(sequence)
+        .unwrap()
+        .unwrap();
+    let review_sequence = sequence + 1;
+    let final_sequence = sequence + if case == MergeCase::Conflict { 1 } else { 2 };
+    let author = SigningKey::from_seed(Seed::new([42; 32]));
+    sidecars[1].stop();
+    let (patch_id, revision, target, head) = {
+        let store = ReviewPackageStore::open(sidecars[1].journal().join("packages")).unwrap();
+        let repo = store
+            .open_checkpoint_repository(
+                reader,
+                &previous,
+                &sidecars[1].home.storage().join(rid.canonical()),
+                git::UserInfo {
+                    alias: radicle::node::Alias::new("Author"),
+                    key: *author.public_key(),
+                },
+            )
+            .unwrap();
+        let target = git::Oid::from(repo.raw().head().unwrap().target().unwrap());
+        let base = if case == MergeCase::FastForward {
+            target
+        } else {
+            store
+                .load_checkpoint_manifest(&root)
+                .unwrap()
+                .owner_refs()
+                .unwrap()
+                .head(git::fmt::refname!("main"))
+                .unwrap()
+        };
+        let content: &[u8] = if case == MergeCase::Conflict {
+            b"Conflicting patch\n"
+        } else {
+            b"Governments patch\n"
+        };
+        let blob = repo.raw().blob(content).unwrap();
+        let parent = repo.raw().find_commit(base.into()).unwrap();
+        let mut tree = repo
+            .raw()
+            .treebuilder(Some(&parent.tree().unwrap()))
+            .unwrap();
+        let file = if case == MergeCase::Clean {
+            "second.txt"
+        } else {
+            "proposal.txt"
+        };
+        tree.insert(file, blob, 0o100644).unwrap();
+        let tree = repo.raw().find_tree(tree.write().unwrap()).unwrap();
+        let metadata = git::raw::Signature::new(
+            "Author",
+            "author@example.test",
+            &git::raw::Time::new(1_700_000_010, 0),
+        )
+        .unwrap();
+        let head: git::Oid = repo
+            .raw()
+            .commit(
+                None,
+                &metadata,
+                &metadata,
+                "Proposed change\n",
+                &tree,
+                &[&parent],
+            )
+            .unwrap()
+            .into();
+        let mut patches = Patches::open(&repo, WriteAs::new(&author)).unwrap();
+        let mut cache = cob::cache::NoCache;
+        let patch = patches
+            .create(
+                cob::Title::new("Network proposal").unwrap(),
+                "Exact revision",
+                patch::MergeTarget::default(),
+                base,
+                head,
+                &[],
+                &mut cache,
+            )
+            .unwrap();
+        let id = *patch.id();
+        let revision = patch.latest().0;
+        repo.sign_refs(&author).unwrap();
+        (id, revision, target, head)
+    };
+    for sidecar in sidecars.iter_mut() {
+        if sidecar.running.is_none() {
+            sidecar.start();
+        }
+    }
+    let deadline = Instant::now() + HANDLE_DEADLINE * 4;
+    while !sidecars[1].available(rid) {
+        assert!(
+            Instant::now() < deadline,
+            "author source did not restore accepted policy"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let source = sidecars[1].node_id;
+    let address: radicle::node::Address = sidecars[1].node.listen_addrs().unwrap()[0].into();
+    for (index, sidecar) in sidecars.iter_mut().enumerate() {
+        if index == 1 {
+            continue;
+        }
+        sidecar
+            .node
+            .connect(
+                source,
+                address.clone(),
+                radicle::node::ConnectOptions {
+                    persistent: false,
+                    timeout: HANDLE_DEADLINE,
+                },
+            )
+            .unwrap();
+        let deadline = Instant::now() + HANDLE_DEADLINE * 4;
+        let fetch = loop {
+            let fetch = sidecar
+                .node
+                .fetch(rid, source, HANDLE_DEADLINE, None)
+                .unwrap();
+            if fetch.is_success() {
+                break fetch;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "pre-Vote Ed author patch fetch: {fetch:?}"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        };
+        assert!(fetch
+            .success()
+            .unwrap()
+            .1
+            .contains(&(*author.public_key()).into()));
+    }
+    assert!(reader
+        .read_current_publication_receipt(review_sequence)
+        .unwrap()
+        .is_none());
+    static TARGET: RadiclePatchVoteTarget = RadiclePatchVoteTarget;
+    static HANDLERS: &[&dyn VoteTarget] = &[&TARGET];
+    static REGISTRY: VoteTargetRegistry = VoteTargetRegistry::new(HANDLERS);
+    *height += 1;
+    state.set_block_number(*height);
+    let create = IVote::createProposalWithVotingWindowCall {
+        targetModule: RADICLE_REGISTRY_ADDRESS,
+        payload: String::from_utf8(
+            PatchVotePayloadV1::accept(
+                rid.into_sha1().unwrap().into(),
+                (*patch_id).into_sha1().unwrap().into(),
+                revision.into_inner().into_sha1().unwrap().into(),
+                target.into_sha1().unwrap().into(),
+            )
+            .encode()
+            .unwrap(),
+        )
+        .unwrap(),
+        votingWindowBlocks: 2,
+    };
+    let result = state
+        .enter(|s| {
+            dispatch_with_handlers(
+                s,
+                &create.abi_encode(),
+                Address::repeat_byte(1),
+                U256::ZERO,
+                &REGISTRY,
+            )
+        })
+        .unwrap();
+    let proposal = IVote::createProposalWithVotingWindowCall::abi_decode_returns(&result).unwrap();
+    provider.finalize(*height, state);
+    *height += 1;
+    state.set_block_number(*height);
+    for address in 1..=3 {
+        let cast = IVote::castVoteCall {
+            proposalId: proposal,
+            approve: true,
+        };
+        state
+            .enter(|s| {
+                dispatch_with_handlers(
+                    s,
+                    &cast.abi_encode(),
+                    Address::repeat_byte(address),
+                    U256::ZERO,
+                    &REGISTRY,
+                )
+            })
+            .unwrap();
+    }
+    provider.finalize(*height, state);
+    let chain_id = state.chain_id();
+    for _ in 0..2 {
+        *height += 1;
+        state.set_block_number(*height);
+        state
+            .enter(|s| {
+                let ctx = BlockRuntimeContext::new(
+                    BlockContext::empty_for_tests(*height, 1_700_000_000 + *height, chain_id),
+                    s.clone(),
+                );
+                Vote::new(s).process_begin_block(&ctx, &REGISTRY)
+            })
+            .unwrap();
+        provider.finalize(*height, state);
+    }
+    let page = reader
+        .read_finalized_vote_page(*height, 0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        page.proposals,
+        [proposal],
+        "worker consumes real finalized Vote event"
+    );
+    let approval_height = *height;
+    let deadline = Instant::now() + HANDLE_DEADLINE * 16;
+    let mut accounted = BTreeSet::new();
+    loop {
+        for mailbox in mailboxes {
+            let Some(batch) = mailbox.ready_prefix(MAX_PUBLICATION_BATCH_LEN) else {
+                continue;
+            };
+            if batch.body.proposal_id != proposal
+                || batch
+                    .attestations
+                    .iter()
+                    .all(|a| accounted.contains(&(batch.body.receipt_hash(), a.participant_index)))
+            {
+                continue;
+            }
+            *height += 1;
+            state.set_block_number(*height);
+            state
+                .enter(|s| RadicleRegistry::new(s).apply_publication_batch(&batch))
+                .unwrap();
+            accounted.extend(
+                batch
+                    .attestations
+                    .iter()
+                    .map(|a| (batch.body.receipt_hash(), a.participant_index)),
+            );
+            provider.finalize(*height, state);
+        }
+        let merged = reader
+            .read_current_publication_receipt(final_sequence)
+            .unwrap();
+        if let Some(merged) = merged {
+            assert_eq!(
+                merged.receipt().body.action,
+                if case == MergeCase::Conflict {
+                    outbe_primitives::radicle_publication::PublicationAction::Review
+                } else {
+                    outbe_primitives::radicle_publication::PublicationAction::Merge
+                }
+            );
+            assert_eq!(merged.receipt().body.proposal_id, proposal);
+            if sidecars.iter().all(|s| {
+                std::fs::read(s.journal().join("latest-installed")).is_ok_and(|bytes| {
+                    bytes.get(..8) == Some(final_sequence.to_be_bytes().as_slice())
+                })
+            }) && (case != MergeCase::Conflict
+                || sidecars.iter().all(|s| {
+                    s.journal()
+                        .join("approved-unmerged")
+                        .join(format!("{approval_height:020}-{proposal:064x}"))
+                        .is_file()
+                }))
+            {
+                break;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "automatic Vote → Review → Merge did not complete; reviewed={:?}, merged={:?}",
+            reader
+                .read_current_publication_receipt(review_sequence)
+                .unwrap(),
+            reader
+                .read_current_publication_receipt(final_sequence)
+                .unwrap()
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let review = reader
+        .read_current_publication_receipt(review_sequence)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        review.receipt().body.action,
+        outbe_primitives::radicle_publication::PublicationAction::Review
+    );
+    let source = sidecars[1].node_id;
+    let fetched = sidecars[0]
+        .node
+        .fetch(rid, source, HANDLE_DEADLINE, None)
+        .unwrap();
+    assert!(
+        fetched.is_success(),
+        "native accepted-Merge fetch: {fetched:?}"
+    );
+    for sidecar in sidecars.iter_mut() {
+        sidecar.stop();
+    }
+    for sidecar in sidecars.iter() {
+        let store = ReviewPackageStore::open(sidecar.journal().join("packages")).unwrap();
+        let checkpoint = reader
+            .read_current_publication_receipt(final_sequence)
+            .unwrap()
+            .unwrap();
+        let repo = store
+            .open_checkpoint_repository(
+                reader,
+                &checkpoint,
+                &sidecar.home.storage().join(rid.canonical()),
+                git::UserInfo {
+                    alias: radicle::node::Alias::new("Verifier"),
+                    key: *author.public_key(),
+                },
+            )
+            .unwrap();
+        let actual = git::Oid::from(repo.raw().head().unwrap().target().unwrap());
+        match case {
+            MergeCase::FastForward => assert_eq!(actual, head),
+            MergeCase::Conflict => {
+                assert_eq!(actual, target);
+                assert_eq!(
+                    std::fs::read(
+                        sidecar
+                            .journal()
+                            .join("approved-unmerged")
+                            .join(format!("{approval_height:020}-{proposal:064x}"))
+                    )
+                    .unwrap(),
+                    b"Conflict"
+                );
+            }
+            MergeCase::Clean => {
+                let commit = repo.raw().find_commit(actual.into()).unwrap();
+                assert_eq!(
+                    commit.parent_ids().collect::<Vec<_>>(),
+                    [target.into(), head.into()]
+                );
+                let tree = commit.tree().unwrap();
+                for name in ["proposal.txt", "second.txt"] {
+                    let entry = tree.get_name(name).unwrap();
+                    assert_eq!(
+                        repo.raw().find_blob(entry.id()).unwrap().content(),
+                        b"Governments patch\n"
+                    );
+                }
+            }
+        }
+        let patches = Patches::open(&repo, WriteAs::new(&author)).unwrap();
+        let merged = patches.get(&patch_id).unwrap().unwrap();
+        assert_eq!(merged.is_merged(), case != MergeCase::Conflict);
+        if case == MergeCase::Conflict {
+            assert!(merged.is_open());
+        }
+        let owner =
+            radicle::crypto::BlsPublicKey::from_bytes(root.receipt().body.owner_bls_public.0)
+                .unwrap();
+        assert_eq!(
+            merged
+                .revision(&revision)
+                .unwrap()
+                .review_by(&owner.into())
+                .unwrap()
+                .verdict(),
+            Some(patch::Verdict::Accept)
+        );
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn automatic_bootstrap_reaches_quorum_with_one_offline_member_and_restarts() {
+async fn automatic_bootstrap_vote_review_and_merge_with_one_offline_member_and_restarts() {
+    let _ = log::set_logger(&TestLogger);
+    log::set_max_level(log::LevelFilter::Debug);
     let chain = ChainIdentity {
         chain_id: 2026,
         genesis_hash: B256::repeat_byte(7),
@@ -201,7 +630,9 @@ async fn automatic_bootstrap_reaches_quorum_with_one_offline_member_and_restarts
         );
     }
     let provider = FinalizedProvider::default();
-    provider.finalize(3, &state);
+    provider.finalize(1, &mut state);
+    provider.finalize(2, &mut state);
+    provider.finalize(3, &mut state);
     let reader = Arc::new(RethSnapshotReader::new(
         provider.clone(),
         chain.chain_id,
@@ -265,6 +696,7 @@ async fn automatic_bootstrap_reaches_quorum_with_one_offline_member_and_restarts
             .unwrap();
         let server = LocalReceiptServer::bind(&sidecars[index].control, reader.clone())
             .unwrap()
+            .with_native_node_id(node_id)
             .with_authority_reader(reader.clone())
             .with_material_resolver(resolver.clone())
             .with_publication_store(store);
@@ -319,7 +751,7 @@ async fn automatic_bootstrap_reaches_quorum_with_one_offline_member_and_restarts
                     .enter(|s| RadicleRegistry::new(s).apply_publication_batch(&batch))
                     .unwrap();
                 accounted.extend(batch.attestations.iter().map(|a| a.participant_index));
-                provider.finalize(height, &state);
+                provider.finalize(height, &mut state);
                 if let Some(receipt) = result.receipt {
                     accepted = Some(receipt);
                     break;
@@ -401,6 +833,67 @@ async fn automatic_bootstrap_reaches_quorum_with_one_offline_member_and_restarts
         .await
         .unwrap();
     assert_eq!(client.read(1).await.unwrap().unwrap().receipt(), &accepted);
+    for case in [
+        MergeCase::FastForward,
+        MergeCase::Clean,
+        MergeCase::Conflict,
+    ] {
+        exercise_patch_vote(
+            &mut sidecars,
+            &reader,
+            &provider,
+            &mut state,
+            &mailboxes,
+            &mut height,
+            case,
+        )
+        .await;
+    }
+    // Accepted history must reopen even when the local current DKG output is unavailable.
+    services[0].1.publish(2, 7, None);
+    sidecars[0].start();
+    let deadline = Instant::now() + HANDLE_DEADLINE * 4;
+    while !sidecars[0].available(rid) {
+        assert!(
+            Instant::now() < deadline,
+            "accepted Merge was not restored without current material"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(
+        std::fs::read(sidecars[0].journal().join("latest-installed")).unwrap()[..8],
+        6u64.to_be_bytes(),
+    );
+    sidecars[1].start();
+    let source = sidecars[1].node_id;
+    let address = sidecars[1].node.listen_addrs().unwrap()[0].into();
+    sidecars[0]
+        .node
+        .connect(
+            source,
+            address,
+            radicle::node::ConnectOptions {
+                persistent: false,
+                timeout: HANDLE_DEADLINE,
+            },
+        )
+        .unwrap();
+    let deadline = Instant::now() + HANDLE_DEADLINE * 4;
+    loop {
+        let fetch = sidecars[0]
+            .node
+            .fetch(rid, source, HANDLE_DEADLINE, None)
+            .unwrap();
+        if fetch.is_success() {
+            assert!(fetch.success().unwrap().1.contains(&owner));
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "accepted history fetch requires no current material: {fetch:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
     for sidecar in &mut sidecars {
         sidecar.stop();
     }

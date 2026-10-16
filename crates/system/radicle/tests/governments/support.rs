@@ -22,6 +22,7 @@ use tokio::sync::mpsc;
 struct FinalizedStates {
     states: BTreeMap<B256, MockEthProvider>,
     canonical: BTreeMap<u64, B256>,
+    log_cursor: usize,
 }
 
 /// Fixture finality; production snapshot reader still resolves the exact canonical hash.
@@ -29,7 +30,11 @@ struct FinalizedStates {
 pub struct FinalizedProvider(Arc<RwLock<FinalizedStates>>);
 
 impl FinalizedProvider {
-    pub fn finalize(&self, number: u64, storage: &HashMapStorageProvider) {
+    pub fn finalize(&self, number: u64, storage: &mut HashMapStorageProvider) {
+        let mut bytes = [0; 32];
+        bytes[24..].copy_from_slice(&number.to_be_bytes());
+        let hash = B256::from(bytes);
+        storage.set_canonical_block_hash(number, hash);
         let state = MockEthProvider::new();
         let mut accounts: BTreeMap<Address, Vec<(B256, U256)>> = BTreeMap::new();
         for ((address, slot), value) in &storage.storage {
@@ -44,10 +49,18 @@ impl FinalizedProvider {
                 ExtendedAccount::new(0, U256::ZERO).extend_storage(slots),
             );
         }
-        let mut bytes = [0; 32];
-        bytes[24..].copy_from_slice(&number.to_be_bytes());
-        let hash = B256::from(bytes);
         let mut states = self.0.write().unwrap();
+        let logs = storage.get_ordered_events();
+        state.add_receipts(
+            number,
+            vec![alloy_consensus::EthereumReceipt {
+                tx_type: alloy_consensus::TxType::Legacy,
+                success: true,
+                cumulative_gas_used: 1,
+                logs: logs[states.log_cursor..].to_vec(),
+            }],
+        );
+        states.log_cursor = logs.len();
         assert!(states.states.insert(hash, state).is_none());
         assert!(states.canonical.insert(number, hash).is_none());
     }

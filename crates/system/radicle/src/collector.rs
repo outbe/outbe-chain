@@ -1,5 +1,7 @@
 //! Automatic post-finality network bootstrap. Only public contributions leave the node provider.
+mod binding;
 mod journal;
+mod review;
 
 use commonware_codec::DecodeExt as _;
 use commonware_cryptography::{bls12381, Hasher as _, Sha256};
@@ -15,15 +17,16 @@ use outbe_radicle::{
         bootstrap::{
             self, PreparedBootstrapDocument, PreparedBootstrapIdentity, PreparedBootstrapRefs,
         },
-        local::{BootstrapSigningContext, LocalReceiptClient},
+        local::{BootstrapSigningContext, LocalReceiptClient, PatchPreparationContext},
         publication::{
             policy::AcceptedRepositoryPolicy,
             store::{review_slot_key, ReviewPackageStore},
             CheckpointOwnerSnapshot, MAX_MANIFEST_BYTES,
         },
+        review::{CheckpointPreparedReview, CheckpointPreparedReviewRefs},
         signing::{
             accepted::AcceptedPublicationVerifier, witness::RepositoryWitnessBundle,
-            RepositoryPartial,
+            RepositoryPartial, RepositorySigningMaterial,
         },
         ReceivedRepositoryMessage, RepositoryGossipMessage,
     },
@@ -56,91 +59,152 @@ enum Outcome {
     PublicationPending,
     AwaitingAcceptedPackage,
     Announced,
+    CatchingUp,
+    WaitingForWindow {
+        proposal: alloy_primitives::U256,
+    },
+    ApprovedUnmerged {
+        proposal: alloy_primitives::U256,
+        reason: &'static str,
+    },
+}
+
+#[derive(Clone, Copy)]
+enum SigningContext<'a> {
+    Bootstrap(&'a BootstrapSigningContext),
+    Review(&'a PatchPreparationContext),
+}
+impl SigningContext<'_> {
+    fn material(&self) -> &RepositorySigningMaterial {
+        match self {
+            Self::Bootstrap(c) => &c.material,
+            Self::Review(c) => &c.material,
+        }
+    }
 }
 
 enum Job<'a> {
     Document(&'a PreparedBootstrapDocument),
     Identity(&'a PreparedBootstrapIdentity),
     Refs(&'a PreparedBootstrapRefs),
+    Review(&'a CheckpointPreparedReview),
+    ReviewRefs(&'a CheckpointPreparedReviewRefs, &'a BlsEnvelope),
+    Merge(&'a outbe_radicle::integration::merge::CheckpointPreparedMerge),
+    MergeRefs(
+        &'a outbe_radicle::integration::merge::CheckpointPreparedMergeRefs,
+        &'a BlsEnvelope,
+    ),
 }
 impl Job<'_> {
     fn ordinal(&self) -> u8 {
         match self {
-            Self::Document(_) => 0,
-            Self::Identity(_) => 1,
+            Self::Document(_) | Self::Review(_) | Self::Merge(_) => 0,
+            Self::Identity(_) | Self::ReviewRefs(..) | Self::MergeRefs(..) => 1,
             Self::Refs(_) => 2,
         }
     }
     fn verify(
         &self,
-        context: &BootstrapSigningContext,
+        context: SigningContext<'_>,
         sender: &bls12381::PublicKey,
         frame: &RepositoryPartial,
     ) -> Result<()> {
-        match self {
-            Self::Document(job) => context.material.verify_bootstrap_document_partial(
-                job,
-                &context.state,
-                sender,
-                frame,
-            )?,
-            Self::Identity(job) => context.material.verify_bootstrap_identity_partial(
-                job,
-                &context.state,
-                sender,
-                frame,
-            )?,
-            Self::Refs(job) => context.material.verify_bootstrap_refs_partial(
-                job,
-                &context.state,
-                sender,
-                frame,
-            )?,
+        match (self, context) {
+            (Self::Document(job), SigningContext::Bootstrap(c)) => c
+                .material
+                .verify_bootstrap_document_partial(job, &c.state, sender, frame)?,
+            (Self::Identity(job), SigningContext::Bootstrap(c)) => c
+                .material
+                .verify_bootstrap_identity_partial(job, &c.state, sender, frame)?,
+            (Self::Refs(job), SigningContext::Bootstrap(c)) => c
+                .material
+                .verify_bootstrap_refs_partial(job, &c.state, sender, frame)?,
+            (Self::Review(job), SigningContext::Review(c)) => c
+                .material
+                .verify_current_review_partial(job, &c.state, sender, frame)?,
+            (Self::ReviewRefs(job, _), SigningContext::Review(c)) => c
+                .material
+                .verify_current_review_refs_partial(job, &c.state, sender, frame)?,
+            (Self::Merge(job), SigningContext::Review(c)) => c
+                .material
+                .verify_current_merge_partial(job, &c.state, sender, frame)?,
+            (Self::MergeRefs(job, _), SigningContext::Review(c)) => c
+                .material
+                .verify_current_merge_refs_partial(job, &c.state, sender, frame)?,
+            _ => return Err("collector job/context mismatch".into()),
         }
         Ok(())
     }
-    fn recover(
-        &self,
-        context: &BootstrapSigningContext,
-        frames: &Contributions,
-    ) -> Result<BlsEnvelope> {
-        Ok(match self {
-            Self::Document(job) => {
-                context
-                    .material
-                    .recover_bootstrap_document(job, &context.state, frames)?
+    fn recover(&self, context: SigningContext<'_>, frames: &Contributions) -> Result<BlsEnvelope> {
+        Ok(match (self, context) {
+            (Self::Document(job), SigningContext::Bootstrap(c)) => c
+                .material
+                .recover_bootstrap_document(job, &c.state, frames)?,
+            (Self::Identity(job), SigningContext::Bootstrap(c)) => c
+                .material
+                .recover_bootstrap_identity(job, &c.state, frames)?,
+            (Self::Refs(job), SigningContext::Bootstrap(c)) => {
+                c.material.recover_bootstrap_refs(job, &c.state, frames)?
             }
-            Self::Identity(job) => {
-                context
-                    .material
-                    .recover_bootstrap_identity(job, &context.state, frames)?
+            (Self::Review(job), SigningContext::Review(c)) => {
+                c.material.recover_current_review(job, &c.state, frames)?
             }
-            Self::Refs(job) => {
-                context
-                    .material
-                    .recover_bootstrap_refs(job, &context.state, frames)?
+            (Self::ReviewRefs(job, _), SigningContext::Review(c)) => c
+                .material
+                .recover_current_review_refs(job, &c.state, frames)?,
+            (Self::Merge(job), SigningContext::Review(c)) => {
+                c.material.recover_current_merge(job, &c.state, frames)?
             }
+            (Self::MergeRefs(job, _), SigningContext::Review(c)) => c
+                .material
+                .recover_current_merge_refs(job, &c.state, frames)?,
+            _ => return Err("collector job/context mismatch".into()),
         })
     }
     async fn sign(
         &self,
         client: &LocalReceiptClient,
-        context: &BootstrapSigningContext,
+        context: SigningContext<'_>,
         repo: &Repository,
-        artifact: git::Oid,
+        artifact: Option<git::Oid>,
     ) -> Result<RepositoryPartial> {
-        Ok(match self {
-            Self::Document(_) => client.sign_bootstrap_document(context).await?,
-            Self::Identity(job) => {
+        Ok(match (self, context) {
+            (Self::Document(_), SigningContext::Bootstrap(c)) => {
+                client.sign_bootstrap_document(c).await?
+            }
+            (Self::Identity(job), SigningContext::Bootstrap(c)) => {
                 client
-                    .sign_bootstrap_identity(context, job, repo, artifact)
+                    .sign_bootstrap_identity(
+                        c,
+                        job,
+                        repo,
+                        artifact.ok_or("bootstrap artifact missing")?,
+                    )
                     .await?
             }
-            Self::Refs(job) => {
+            (Self::Refs(job), SigningContext::Bootstrap(c)) => {
                 client
-                    .sign_bootstrap_refs(context, job, repo, artifact)
+                    .sign_bootstrap_refs(
+                        c,
+                        job,
+                        repo,
+                        artifact.ok_or("bootstrap artifact missing")?,
+                    )
                     .await?
             }
+            (Self::Review(job), SigningContext::Review(c)) => {
+                client.sign_review(c, repo, job).await?
+            }
+            (Self::ReviewRefs(job, signature), SigningContext::Review(c)) => {
+                client.sign_review_refs(c, repo, job, signature).await?
+            }
+            (Self::Merge(job), SigningContext::Review(c)) => {
+                client.sign_merge(c, repo, job).await?
+            }
+            (Self::MergeRefs(job, signature), SigningContext::Review(c)) => {
+                client.sign_merge_refs(c, repo, job, signature).await?
+            }
+            _ => return Err("collector job/context mismatch".into()),
         })
     }
 }
@@ -153,6 +217,7 @@ struct Collector {
     active: Option<[u8; 32]>,
     own: [Option<RepositoryPartial>; 3],
     announced: Option<[u8; 32]>,
+    snapshot: Option<CheckpointOwnerSnapshot>,
 }
 
 impl Collector {
@@ -170,6 +235,7 @@ impl Collector {
             active: None,
             own: [None, None, None],
             announced: None,
+            snapshot: None,
         })
     }
 
@@ -186,7 +252,11 @@ impl Collector {
             return Err("collector node changed chain identity".into());
         }
         if let Some(receipt) = client.read(1).await? {
-            return self.install(client, receipt).await;
+            let result = self.install(client, receipt).await?;
+            return match result {
+                Outcome::Announced | Outcome::CatchingUp => self.review_step(client).await,
+                other => Ok(other),
+            };
         }
         let context = client.read_bootstrap_signing_context().await?;
         let document =
@@ -229,7 +299,12 @@ impl Collector {
         let documents = self
             .collect(
                 &Job::Document(&document),
-                (&context, client, &repo, artifact),
+                (
+                    SigningContext::Bootstrap(&context),
+                    client,
+                    &repo,
+                    Some(artifact),
+                ),
                 &directory,
                 &incoming,
             )
@@ -241,12 +316,18 @@ impl Collector {
                 required,
             });
         }
-        let signature = Job::Document(&document).recover(&context, &documents)?;
+        let signature =
+            Job::Document(&document).recover(SigningContext::Bootstrap(&context), &documents)?;
         let identity = document.attach(&repo, &signature, &content)?;
         let identities = self
             .collect(
                 &Job::Identity(&identity),
-                (&context, client, &repo, artifact),
+                (
+                    SigningContext::Bootstrap(&context),
+                    client,
+                    &repo,
+                    Some(artifact),
+                ),
                 &directory,
                 &incoming,
             )
@@ -258,12 +339,18 @@ impl Collector {
                 required,
             });
         }
-        let signature = Job::Identity(&identity).recover(&context, &identities)?;
+        let signature =
+            Job::Identity(&identity).recover(SigningContext::Bootstrap(&context), &identities)?;
         let refs = identity.attach(&repo, &signature)?;
         let references = self
             .collect(
                 &Job::Refs(&refs),
-                (&context, client, &repo, artifact),
+                (
+                    SigningContext::Bootstrap(&context),
+                    client,
+                    &repo,
+                    Some(artifact),
+                ),
                 &directory,
                 &incoming,
             )
@@ -275,7 +362,8 @@ impl Collector {
                 required,
             });
         }
-        let signature = Job::Refs(&refs).recover(&context, &references)?;
+        let signature =
+            Job::Refs(&refs).recover(SigningContext::Bootstrap(&context), &references)?;
         let (body, manifest) = refs.attach(&repo, &signature)?;
         let witness = RepositoryWitnessBundle::new(
             context.material.canonical_output(),
@@ -306,41 +394,8 @@ impl Collector {
         let _ = client
             .gossip_repository_message(&context.material, &own_message)
             .await;
-        let mut attestations = BTreeMap::new();
-        for index in 0..n {
-            if let Some(bytes) = read(&directory.join(format!("attestation-{index}")), 578)? {
-                let batch = PublicationBatch::from_bytes(&bytes)?;
-                if batch.body != body
-                    || batch.attestations.len() != 1
-                    || batch.attestations[0].participant_index as usize != index
-                {
-                    return Err("corrupt collector attestation".into());
-                }
-                context
-                    .material
-                    .verify_publication_attestation(&body, &batch.attestations[0])?;
-                attestations.insert(index as u32, batch.attestations[0].clone());
-            }
-        }
-        for received in &incoming {
-            if let RepositoryGossipMessage::Attestation {
-                body: candidate,
-                attestation,
-            } = &received.message
-            {
-                if candidate == &body
-                    && context
-                        .material
-                        .verify_publication_attestation(&body, attestation)
-                        .is_ok()
-                {
-                    self.record_attestation(&directory, &body, attestation)?;
-                    attestations.insert(attestation.participant_index, attestation.clone());
-                }
-            }
-        }
-        self.record_attestation(&directory, &body, &own)?;
-        attestations.insert(own.participant_index, own);
+        let attestations =
+            self.collect_attestations(&context.material, &directory, &body, &incoming, &own)?;
         let progress = client.read_publication_progress(&body).await?;
         if let Some(receipt) = progress.receipt() {
             return self.install(client, receipt.clone()).await;
@@ -372,17 +427,17 @@ impl Collector {
         &mut self,
         job: &Job<'_>,
         inputs: (
-            &BootstrapSigningContext,
+            SigningContext<'_>,
             &LocalReceiptClient,
             &Repository,
-            git::Oid,
+            Option<git::Oid>,
         ),
         directory: &Path,
         incoming: &[ReceivedRepositoryMessage],
     ) -> Result<Contributions> {
         let (context, client, repo, artifact) = inputs;
         let ordinal = job.ordinal();
-        let n = context.state.authority().committee().committee.len();
+        let n = context.material().authority().committee().committee.len();
         let mut frames = BTreeMap::new();
         for index in 0..n {
             if let Some(bytes) = read(&directory.join(format!("partial-{ordinal}-{index}")), 268)? {
@@ -390,7 +445,7 @@ impl Collector {
                 if frame.participant_index() as usize != index {
                     return Err("corrupt collector participant index".into());
                 }
-                let sender = participant(context, index)?;
+                let sender = participant(context.material(), index)?;
                 job.verify(context, &sender, &frame)?;
                 frames.insert(index as u32, frame);
             }
@@ -415,7 +470,7 @@ impl Collector {
             if let Ok(frame) = job.sign(client, context, repo, artifact).await {
                 job.verify(
                     context,
-                    &participant(context, frame.participant_index() as usize)?,
+                    &participant(context.material(), frame.participant_index() as usize)?,
                     &frame,
                 )?;
                 put(
@@ -429,7 +484,7 @@ impl Collector {
         if let Some(frame) = &self.own[ordinal as usize] {
             let _ = client
                 .gossip_repository_message(
-                    &context.material,
+                    context.material(),
                     &RepositoryGossipMessage::Partial {
                         ordinal,
                         frame: frame.clone(),
@@ -440,7 +495,7 @@ impl Collector {
         }
         frames
             .into_iter()
-            .map(|(index, frame)| Ok((participant(context, index as usize)?, frame)))
+            .map(|(index, frame)| Ok((participant(context.material(), index as usize)?, frame)))
             .collect()
     }
 
@@ -461,12 +516,55 @@ impl Collector {
         )
     }
 
+    fn collect_attestations(
+        &self,
+        material: &RepositorySigningMaterial,
+        directory: &Path,
+        body: &PublicationBody,
+        incoming: &[ReceivedRepositoryMessage],
+        own: &PublicationAttestation,
+    ) -> Result<BTreeMap<u32, PublicationAttestation>> {
+        material.verify_publication_attestation(body, own)?;
+        self.record_attestation(directory, body, own)?;
+        let mut attestations = BTreeMap::new();
+        for index in 0..material.authority().committee().committee.len() {
+            if let Some(bytes) = read(&directory.join(format!("attestation-{index}")), 578)? {
+                let batch = PublicationBatch::from_bytes(&bytes)?;
+                if batch.body != *body
+                    || batch.attestations.len() != 1
+                    || batch.attestations[0].participant_index as usize != index
+                {
+                    return Err("corrupt publication attestation".into());
+                }
+                material.verify_publication_attestation(body, &batch.attestations[0])?;
+                attestations.insert(index as u32, batch.attestations[0].clone());
+            }
+        }
+        for message in incoming {
+            if let RepositoryGossipMessage::Attestation {
+                body: candidate,
+                attestation,
+            } = &message.message
+            {
+                if candidate == body
+                    && material
+                        .verify_publication_attestation(body, attestation)
+                        .is_ok()
+                {
+                    self.record_attestation(directory, body, attestation)?;
+                    attestations.insert(attestation.participant_index, attestation.clone());
+                }
+            }
+        }
+        Ok(attestations)
+    }
+
     async fn install(
         &mut self,
         client: &LocalReceiptClient,
         receipt: FinalizedPublicationReceipt,
     ) -> Result<Outcome> {
-        if self.announced == Some(receipt.receipt().receipt_hash.0) {
+        if self.snapshot.is_some() {
             return Ok(Outcome::Announced);
         }
         let id = git::Oid::from_sha1(receipt.receipt().body.repo_id.0).into();
@@ -507,6 +605,10 @@ impl Collector {
         client
             .cache_checkpoint_manifest(&receipt, &package.manifest)
             .await?;
+        self.snapshot = Some(snapshot);
+        if client.read(2).await?.is_some() {
+            return Ok(Outcome::CatchingUp);
+        }
         proof.install(&repo)?;
         put(
             &self.journal.root.join("installed"),
@@ -527,10 +629,9 @@ impl Collector {
     }
 }
 
-fn participant(context: &BootstrapSigningContext, index: usize) -> Result<bls12381::PublicKey> {
+fn participant(material: &RepositorySigningMaterial, index: usize) -> Result<bls12381::PublicKey> {
     Ok(bls12381::PublicKey::decode(
-        context
-            .state
+        material
             .authority()
             .committee()
             .committee

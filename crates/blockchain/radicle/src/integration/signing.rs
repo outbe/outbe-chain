@@ -98,10 +98,29 @@ impl RepositorySigningMaterial {
         context: &ReviewSigningContext,
         owner: RepositoryKey,
     ) -> Result<(), Error> {
+        self.authorize_current_patch(
+            state,
+            approval,
+            snapshot,
+            context,
+            owner,
+            outbe_radicleregistry::schema::PATCH_EXECUTION_PENDING,
+        )
+    }
+
+    fn authorize_current_patch(
+        &self,
+        state: &FinalizedPatchSigningState,
+        approval: &outbe_radicleregistry::PatchApprovalRecord,
+        snapshot: &CheckpointOwnerSnapshot,
+        context: &ReviewSigningContext,
+        owner: RepositoryKey,
+        stage: u8,
+    ) -> Result<(), Error> {
         self.check_context(owner, context)?;
         if state.authority() != &self.authority
             || &state.approval().approval != approval
-            || state.stage() != outbe_radicleregistry::schema::PATCH_EXECUTION_PENDING
+            || state.stage() != stage
             || snapshot.checkpoint().receipt() != state.checkpoint().receipt()
             || context.previous_receipt_hash != state.checkpoint().receipt().receipt_hash.0
             || self.material_hash != state.material().receipt().body.material_hash.0
@@ -110,6 +129,149 @@ impl RepositorySigningMaterial {
             return Err(Error::Context);
         }
         Ok(())
+    }
+
+    fn authorize_current_merge(
+        &self,
+        state: &FinalizedPatchSigningState,
+        approval: &outbe_radicleregistry::PatchApprovalRecord,
+        snapshot: &CheckpointOwnerSnapshot,
+        context: &ReviewSigningContext,
+        owner: RepositoryKey,
+        review: &crate::manager::FinalizedPublicationReceipt,
+    ) -> Result<(), Error> {
+        let decision =
+            outbe_radicleregistry::payload::PatchVotePayloadV1::decode(approval.payload.as_bytes())
+                .map_err(|_| Error::Context)?;
+        let body = &review.receipt().body;
+        if body.action != outbe_primitives::radicle_publication::PublicationAction::Review
+            || body.proposal_id != approval.proposal_id
+            || body.repo_id != decision.repo_id
+            || body.patch_id != decision.patch_id
+            || body.revision_id != decision.revision_id
+            || body.expected_target_head != decision.expected_target_head
+            || body.sequence > snapshot.checkpoint().receipt().body.sequence
+        {
+            return Err(Error::Context);
+        }
+        self.authorize_current_patch(
+            state,
+            approval,
+            snapshot,
+            context,
+            owner,
+            outbe_radicleregistry::schema::PATCH_EXECUTION_REVIEWED,
+        )
+    }
+
+    pub fn sign_current_merge(
+        &self,
+        provider: &VrfMaterialProvider<MinSig>,
+        job: &super::merge::CheckpointPreparedMerge,
+        state: &FinalizedPatchSigningState,
+        validator: Address,
+        identity: &bls12381::PrivateKey,
+    ) -> Result<RepositoryPartial, Error> {
+        self.authorize_current_merge(
+            state,
+            job.approval(),
+            job.snapshot(),
+            job.signing_context(),
+            job.owner(),
+            job.review(),
+        )?;
+        self.sign_review(provider, job, validator, identity)
+    }
+
+    pub fn sign_current_merge_refs(
+        &self,
+        provider: &VrfMaterialProvider<MinSig>,
+        job: &super::merge::CheckpointPreparedMergeRefs,
+        state: &FinalizedPatchSigningState,
+        validator: Address,
+        identity: &bls12381::PrivateKey,
+    ) -> Result<RepositoryPartial, Error> {
+        self.authorize_current_merge(
+            state,
+            job.approval(),
+            job.snapshot(),
+            job.signing_context(),
+            job.owner(),
+            job.review(),
+        )?;
+        self.sign_review_refs(provider, job, validator, identity)
+    }
+
+    pub fn verify_current_merge_partial(
+        &self,
+        job: &super::merge::CheckpointPreparedMerge,
+        state: &FinalizedPatchSigningState,
+        sender: &bls12381::PublicKey,
+        frame: &RepositoryPartial,
+    ) -> Result<(), Error> {
+        self.authorize_current_merge(
+            state,
+            job.approval(),
+            job.snapshot(),
+            job.signing_context(),
+            job.owner(),
+            job.review(),
+        )?;
+        self.verify_partial(&self.public_verifier(), job, sender, frame)
+            .map(|_| ())
+    }
+
+    pub fn verify_current_merge_refs_partial(
+        &self,
+        job: &super::merge::CheckpointPreparedMergeRefs,
+        state: &FinalizedPatchSigningState,
+        sender: &bls12381::PublicKey,
+        frame: &RepositoryPartial,
+    ) -> Result<(), Error> {
+        self.authorize_current_merge(
+            state,
+            job.approval(),
+            job.snapshot(),
+            job.signing_context(),
+            job.owner(),
+            job.review(),
+        )?;
+        self.verify_review_refs_partial(&self.public_verifier(), job, sender, frame)
+            .map(|_| ())
+    }
+
+    pub fn recover_current_merge(
+        &self,
+        job: &super::merge::CheckpointPreparedMerge,
+        state: &FinalizedPatchSigningState,
+        frames: &[(bls12381::PublicKey, RepositoryPartial)],
+    ) -> Result<BlsEnvelope, Error> {
+        self.authorize_current_merge(
+            state,
+            job.approval(),
+            job.snapshot(),
+            job.signing_context(),
+            job.owner(),
+            job.review(),
+        )?;
+        self.recover_review(&self.public_verifier(), job, frames)
+    }
+
+    pub fn recover_current_merge_refs(
+        &self,
+        job: &super::merge::CheckpointPreparedMergeRefs,
+        state: &FinalizedPatchSigningState,
+        frames: &[(bls12381::PublicKey, RepositoryPartial)],
+    ) -> Result<BlsEnvelope, Error> {
+        self.authorize_current_merge(
+            state,
+            job.approval(),
+            job.snapshot(),
+            job.signing_context(),
+            job.owner(),
+            job.review(),
+        )?;
+        self.recover_review_refs(&self.public_verifier(), job, frames)
     }
 
     fn authorize_bootstrap(
@@ -339,6 +501,38 @@ impl RepositorySigningMaterial {
             .map(|_| ())
     }
 
+    pub fn recover_current_review(
+        &self,
+        job: &CheckpointPreparedReview,
+        state: &FinalizedPatchSigningState,
+        contributions: &[(bls12381::PublicKey, RepositoryPartial)],
+    ) -> Result<BlsEnvelope, Error> {
+        self.authorize_current_review(
+            state,
+            job.approval(),
+            job.snapshot(),
+            job.signing_context(),
+            job.owner(),
+        )?;
+        self.recover_review(&self.public_verifier(), job, contributions)
+    }
+
+    pub fn recover_current_review_refs(
+        &self,
+        job: &CheckpointPreparedReviewRefs,
+        state: &FinalizedPatchSigningState,
+        contributions: &[(bls12381::PublicKey, RepositoryPartial)],
+    ) -> Result<BlsEnvelope, Error> {
+        self.authorize_current_review(
+            state,
+            job.approval(),
+            job.snapshot(),
+            job.signing_context(),
+            job.owner(),
+        )?;
+        self.recover_review_refs(&self.public_verifier(), job, contributions)
+    }
+
     pub fn verify_current_review_refs_partial(
         &self,
         job: &CheckpointPreparedReviewRefs,
@@ -423,7 +617,7 @@ impl RepositorySigningMaterial {
         })
     }
 
-    pub(crate) fn authority(&self) -> &FinalizedRepositoryAuthority {
+    pub fn authority(&self) -> &FinalizedRepositoryAuthority {
         &self.authority
     }
 
