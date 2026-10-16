@@ -18,6 +18,19 @@ pub(crate) enum ConfigError {
         /// The pairs file path.
         pairs: String,
     },
+    /// The local config sets a section that the node supplies in `chain` sources mode.
+    #[error(
+        "remove `{0}` from the local config: the node supplies it when `oracle.sources` is `chain`"
+    )]
+    SharedSectionInLocalConfig(&'static str),
+    /// A DEX or on-chain feed entry has no RPC URL.
+    #[error("`{name}` has no `rpc_endpoint`, and `rpc_endpoints` has no URL for chain {chain_id}")]
+    MissingRpcEndpoint {
+        /// The entry name.
+        name: String,
+        /// The entry's EVM chain id.
+        chain_id: u64,
+    },
     /// A cross pair does not have a COEN or token base, an ISO quote and an ISO cross.
     #[error("cross pair {base}/{quote} with cross '{cross}' needs a COEN or token base, an ISO quote and an ISO cross")]
     InvalidCrossPair {

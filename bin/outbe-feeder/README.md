@@ -18,18 +18,30 @@ cargo build --release -p outbe-feeder
 
 ## Configuration
 
-Two TOML files:
+### Sources mode
 
-- `feeder.toml`: settings of one validator. Chain RPC, signing key, provider
-  connections, API keys and RPC endpoints.
-- `pairs.toml`: the pairs and their markets. Every validator uses the same file.
+`[oracle] sources` in `feeder.toml` selects where the pairs and their markets
+come from:
 
-`feeder.toml`:
+| Value | Where | Use for |
+|---|---|---|
+| `chain` (default) | The node: `IOracle.getSources()` | mainnet |
+| `local` | `feeder.toml`, or the file that `pairs` names | localnet, testnet, e2e |
+
+In `chain` mode `feeder.toml` must not set `currency_pairs`,
+`deviation_thresholds`, `dex_providers` or `onchain_providers`.
+
+The node files are in `crates/system/oracle/sources/<version>.toml`. The node
+serves the file with the highest version that is not above the active
+protocol version. To change the sources, add a new file and add it to
+`SOURCES` in `crates/system/oracle/src/sources.rs`. Do not edit a released file.
+
+The node file has no RPC URLs and no API keys. Set them in `feeder.toml`:
+`[rpc_endpoints]` by `chain_id`, and `[[api_providers]]`.
+
+### `feeder.toml`, `chain` mode
 
 ```toml
-# Pairs and their markets
-pairs = "pairs.toml"
-
 [chain]
 rpc_endpoint = "http://localhost:8545"
 chain_id = 31337
@@ -47,13 +59,11 @@ poll_interval_secs = 2
 enabled = true
 bind_address = "0.0.0.0:9002"
 
-# Exchanges and gateways: connection settings only. Omit `rest` or
-# `websocket` for the provider default. An exchange with no settings to
-# change needs no entry.
-[[api_providers]]
-name = "binance"
-websocket = "wss://stream.binance.com:9443/ws"
+# JSON-RPC of each external EVM network, by chain id.
+[rpc_endpoints]
+1 = "https://ethereum-rpc.example.invalid"
 
+# Connection settings only. Omit `rest` or `websocket` for the default.
 [[api_providers]]
 name = "pyth"
 api_key = "REPLACE_WITH_PYTH_API_KEY"
@@ -62,24 +72,18 @@ api_key = "REPLACE_WITH_PYTH_API_KEY"
 [[api_providers]]
 name = "redstone"
 api_key = "REPLACE_WITH_REDSTONE_API_KEY"   # one per validator
-
-# DEX: one entry is one pool. See "DEX providers".
-[[dex_providers]]
-name = "uniswap"
-chain_id = 1
-rpc_endpoint = "https://ethereum-rpc.example.invalid"
-base_token = "0x1111111111111111111111111111111111111111"    # COEN token, replace
-quote_token = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"   # USDC
-pool = { protocol = "uniswap_v3", address = "0x2222222222222222222222222222222222222222" }   # replace
-
-# Feed contract (Chainlink AggregatorV3 interface): one entry is one feed.
-# See "On-chain feeds".
-[[onchain_providers]]
-name = "chainlink_eur_usd"
-chain_id = 1
-rpc_endpoint = "https://ethereum-rpc.example.invalid"
-contract = "0x4444444444444444444444444444444444444444"   # Chainlink EUR / USD, replace
 ```
+
+### `local` mode
+
+Add to the `[oracle]` section above:
+
+```toml
+sources = "local"
+```
+
+Put the sources in `feeder.toml`, or in a second file with a top-level
+`pairs = "pairs.toml"`.
 
 `pairs.toml`:
 
@@ -107,16 +111,37 @@ markets = [
   { provider = "redstone", quote = "840" },
 ]
 
+[[currency_pairs]]
+base = "392"
+quote = "840"
+markets = [
+  { provider = "chainlink_eur_usd", quote = "840" },
+  { provider = "pyth", quote = "840" },
+  { provider = "redstone", quote = "840" },
+]
+
 [[deviation_thresholds]]
 base = "COEN"
 threshold = "2.0"
+
+[[dex_providers]]
+name = "uniswap"
+chain_id = 1
+base_token = "0x1111111111111111111111111111111111111111"    # COEN token, replace
+quote_token = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"   # USDC
+pool = { protocol = "uniswap_v3", address = "0x2222222222222222222222222222222222222222" }   # replace
+
+[[onchain_providers]]
+name = "chainlink_eur_usd"
+chain_id = 1
+contract = "0x4444444444444444444444444444444444444444"   # Chainlink EUR / USD, replace
 ```
 
 ### Config Fields
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `pairs` | no | Path of the pairs file, relative to this file. Its sections join the config |
+| `pairs` | no | Local sources only. Path of the pairs file, relative to this file. Its sections join the config |
 | `chain.rpc_endpoint` | yes | JSON-RPC HTTP endpoint |
 | `chain.chain_id` | yes | Chain ID for transaction signing |
 | `chain.gasless_oracle_votes` | no | Submit oracle votes through the system `zerofee` hook registry (default: false) |
@@ -124,6 +149,8 @@ threshold = "2.0"
 | `account.validator_address` | yes | Validator this feeder acts for |
 | `oracle.vote_period` | yes | Blocks per vote window (must match on-chain) |
 | `oracle.poll_interval_secs` | no | Block polling interval (default: 2s) |
+| `oracle.sources` | no | `chain` (default): sources from the node. `local`: sources from the local config |
+| `rpc_endpoints.<chain_id>` | for each external network in the sources | JSON-RPC URL of that EVM network |
 | `health.enabled` | no | Enables health/status HTTP server (default: true) |
 | `health.bind_address` | no | Health server bind address (default: `0.0.0.0:9002`) |
 | `currency_pairs[].base` | yes | On-chain base asset: `COEN`, an ISO 4217 numeric code, or a `0x` token address |
@@ -138,7 +165,8 @@ threshold = "2.0"
 | `api_providers[].api_key` | `pyth`: yes, `redstone`: no | Gateway key, one per validator. `pyth` needs one. Without one `redstone` reads its public gateway |
 | `dex_providers[]` | only DEX markets | One entry is one pool; see [DEX providers](#dex-providers) |
 | `onchain_providers[].name` | only on-chain feeds | Provider name the operator chooses; one entry is one feed, see [On-chain feeds](#on-chain-feeds) |
-| `onchain_providers[].chain_id`, `rpc_endpoint` | with the entry | EVM network and JSON-RPC of the feed contract |
+| `onchain_providers[].chain_id` | with the entry | EVM network of the feed contract |
+| `onchain_providers[].rpc_endpoint` | no | JSON-RPC of the feed contract. Omitted takes `rpc_endpoints.<chain_id>` |
 | `onchain_providers[].contract` | with the entry | Feed contract, the vendor's proxy address |
 | `deviation_thresholds[].base` | no | Asset to apply threshold to |
 | `deviation_thresholds[].threshold` | no | Max sigma deviation as an exact decimal string (default: `"2.0"`) |
@@ -284,7 +312,7 @@ Each `[[dex_providers]]` contains:
 | Field | Meaning |
 |---|---|
 | `name`, `chain_id` | `uniswap`, `1` (Ethereum), or `pancakeswap`, `56` (BNB Chain) |
-| `rpc_endpoint` | HTTP(S) JSON-RPC; separate from the destination `[chain]` RPC |
+| `rpc_endpoint` | HTTP(S) JSON-RPC, separate from the destination `[chain]` RPC. Omitted takes `rpc_endpoints.<chain_id>` |
 | `poll_interval_secs` | Poll/retry delay, default 2 seconds, allowed 1–10 |
 | `log_chunk_blocks` | Maximum blocks per log request, default 2000, allowed 1–10000; errors reduce the range down to one block |
 | `confirmations` | Blocks behind `latest` to read from, default 3, allowed 0–1000; zero reads the head |
