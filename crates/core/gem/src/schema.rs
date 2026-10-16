@@ -267,21 +267,21 @@ pub struct GemContract {
     /// With the widest window it bounds the call prices the scan visits.
     #[attribute(order = 35)]
     pub min_call_threshold_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
-    #[attribute(order = 37)]
+    #[attribute(order = 36)]
     pub records:
         outbe_primitives::storage::dsl::Map<WwdEntityId, crate::storage_records::StoredGem>,
-    #[attribute(order = 38)]
+    #[attribute(order = 37)]
     pub buckets: outbe_primitives::storage::dsl::Map<B256, crate::storage_records::StoredGemBucket>,
-    #[attribute(order = 39)]
+    #[attribute(order = 38)]
     pub all_ids: outbe_primitives::storage::dsl::List<WwdEntityId>,
-    #[attribute(order = 40)]
+    #[attribute(order = 39)]
     pub owner_ids: outbe_primitives::storage::dsl::Map<
         Address,
         outbe_primitives::storage::dsl::List<WwdEntityId>,
     >,
-    #[attribute(order = 41)]
+    #[attribute(order = 40)]
     pub global_id_position: outbe_primitives::storage::dsl::Map<WwdEntityId, u32>,
-    #[attribute(order = 42)]
+    #[attribute(order = 41)]
     pub owner_id_position: outbe_primitives::storage::dsl::Map<WwdEntityId, u32>,
 }
 
