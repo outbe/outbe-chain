@@ -1,10 +1,10 @@
 use alloy_primitives::B256;
-use outbe_compressed_entities::WwdEntityId;
 use outbe_ocomp_protocol::list::{
     leaf_hash, node_hash, ordered_list_root, pad_hash, root_hash, OrderedListLimits,
 };
 use outbe_ocomp_protocol::registry::ListKind;
 use outbe_ocomp_protocol::{CanonicalReader, CanonicalWriter, SchemaLimits};
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 use super::{
     validate_shard_size, LysisArtifactErrorV1, RawCoverageCarrierV1, COVERAGE_RECORD_BYTES,

@@ -8,7 +8,6 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
 use outbe_lysis::program_v1::artifacts::{
     decode_amount_run, decode_enumerated_run, decode_finalized_output_run,
     decode_fixed_reduce_output, decode_gratis_prefix_down_output, decode_gratis_segment_summary,
@@ -76,7 +75,9 @@ use outbe_ocomp_protocol::{
     ordered_list_root, CasObjectRefV1, ListKind, ObjectKind, OrderedListLimits, RunUnitV1,
     SchemaLimits, UnitFinishedStatus, UnitFinishedV1,
 };
+use outbe_primitives::entity_codec::{encode_tribute_v1, TributeBodyV1};
 use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::wwd_entity_id::derive_poseidon_entity_id;
 use support::tempdir;
 
 struct RunningWorker {
@@ -272,12 +273,8 @@ fn real_worker_processes_execute_through_output_finalize() {
                     finalized_block_number: 90,
                     finalized_block_hash: B256::repeat_byte(0x53),
                     finalized_state_root,
-                    finalized_ce_root: B256::repeat_byte(0x58),
-                    ce_schema_version: 1,
                 },
                 wwd: day.value(),
-                sealed_tribute_collection_key: B256::repeat_byte(0x59),
-                sealed_tribute_collection_root: B256::repeat_byte(0x5a),
             },
             canonical_tributes: vec![
                 encode_tribute_v1(&tribute).expect("canonical fixture Tribute")
@@ -1525,9 +1522,6 @@ fn real_worker_processes_execute_through_output_finalize() {
         pending_nonce: 0,
         attempt: 0,
         protocol_bundle_hash,
-        ce_sealed_root: manifest.checkpoint.finalized_ce_root,
-        sealed_tribute_collection_key: manifest.sealed_tribute_collection_key,
-        sealed_tribute_collection_root: manifest.sealed_tribute_collection_root,
         authenticated_day_count: manifest.tribute_count,
         authenticated_day_nominal: manifest.tribute_nominal_total,
         pre_admission_envelope_hash: B256::repeat_byte(0x43),
@@ -1549,8 +1543,6 @@ fn real_worker_processes_execute_through_output_finalize() {
             tribute: TributeInputBindingV1 {
                 wwd: day.value(),
                 source_generation: 1,
-                collection_key: manifest.sealed_tribute_collection_key,
-                sealed_collection_root: manifest.sealed_tribute_collection_root,
                 exact_count: manifest.tribute_count,
                 exact_nominal_total: manifest.tribute_nominal_total,
             },
@@ -1762,12 +1754,8 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
             finalized_block_number: 101,
             finalized_block_hash: B256::repeat_byte(0x72),
             finalized_state_root: B256::repeat_byte(0x73),
-            finalized_ce_root: B256::repeat_byte(0x74),
-            ce_schema_version: 1,
         },
         wwd: day.value(),
-        sealed_tribute_collection_key: B256::repeat_byte(0x75),
-        sealed_tribute_collection_root: B256::repeat_byte(0x76),
         tribute_count,
         tribute_nominal_total,
         input_chunk_count: 2,

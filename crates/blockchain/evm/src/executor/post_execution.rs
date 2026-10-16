@@ -17,7 +17,7 @@ where
     /// writes. The active OCOMP lifecycle requires a stricter order than the
     /// upstream executor exposes:
     ///
-    /// `Ethereum post-execution -> CE preview -> OSR2 -> final CE seal`.
+    /// `Ethereum post-execution -> OSR2`.
     ///
     /// The resulting EIP-7685 requests are retained for [`BlockExecutor::finish`],
     /// which assembles the result without invoking the upstream phase again.

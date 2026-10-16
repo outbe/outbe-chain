@@ -1,7 +1,7 @@
 use alloy_primitives::{B256, U256};
-use outbe_compressed_entities::{derive_poseidon_entity_id, WwdEntityId};
 use outbe_ocomp_protocol::{CanonicalReader, CanonicalWriter, SchemaLimits};
 use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::wwd_entity_id::{derive_poseidon_entity_id, WwdEntityId};
 
 use super::coverage::raw_coverage_root;
 use super::{

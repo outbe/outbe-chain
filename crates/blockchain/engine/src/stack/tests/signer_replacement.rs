@@ -190,7 +190,6 @@ fn test_recovered_boundary_evm_signer_authorization_survives_latest_state_remova
         radicle_status_address: None,
         upstream: None,
         upstream_nocertify: false,
-        projection_storage_config: Some("/tmp/offchain-storage.toml".into()),
     };
 
     let address = validate_validator_evm_signer(

@@ -31,19 +31,6 @@ pub enum PrecompileError {
     #[error("body read corruption: {0}")]
     BodyReadCorruption(String),
 
-    /// The finalized compressed-entity tree is unavailable on this node.
-    /// This state reflects local readiness, not an invalid block.
-    #[error("compressed-entity tree unavailable: {0}")]
-    TreeUnavailable(String),
-
-    /// One transaction exceeds the configured compressed-entity work budget.
-    #[error("transaction exceeds the compressed-entity work limit")]
-    TransactionCeWorkLimitExceeded,
-
-    /// This payload exhausted its deterministic compressed-entity work budget.
-    #[error("block compressed-entity work capacity exhausted")]
-    BlockCeWorkCapacityExhausted,
-
     /// The caller attempted a state write during a static call.
     #[error("write protection: cannot modify state during static call")]
     WriteProtection,
@@ -311,9 +298,6 @@ impl PrecompileError {
             error @ (Self::Storage(_)
             | Self::BodyReadUnavailable(_)
             | Self::BodyReadRequestDeadline
-            | Self::TreeUnavailable(_)
-            | Self::TransactionCeWorkLimitExceeded
-            | Self::BlockCeWorkCapacityExhausted
             | Self::Fatal(_)
             | Self::EnclaveUnavailable(_)) => {
                 Err(revm::precompile::PrecompileError::Fatal(error.to_string()))
@@ -340,13 +324,10 @@ impl PrecompileError {
             Self::Storage(_)
             | Self::BodyReadUnavailable(_)
             | Self::BodyReadRequestDeadline
-            | Self::TreeUnavailable(_)
             | Self::EnclaveUnavailable(_)
             | Self::SubCall(SubCallError::DatabaseError(_)) => true,
             Self::OutOfGas
             | Self::BodyReadCorruption(_)
-            | Self::TransactionCeWorkLimitExceeded
-            | Self::BlockCeWorkCapacityExhausted
             | Self::WriteProtection
             | Self::Revert(_)
             | Self::RevertBytes(_)
@@ -360,15 +341,12 @@ impl PrecompileError {
     pub fn sweep_failure(&self) -> SweepFailure {
         match self {
             error if error.is_node_local() => SweepFailure::Propagate,
-            Self::TransactionCeWorkLimitExceeded | Self::BlockCeWorkCapacityExhausted => {
-                SweepFailure::Propagate
-            }
             Self::OutOfGas => SweepFailure::Stop,
             _ => SweepFailure::Skip,
         }
     }
 
-    /// As [`Self::sweep_failure`], for a sweep over compressed bodies. The right's own
+    /// As [`Self::sweep_failure`], for a sweep over stored records. The right's own
     /// index checks revert, so a body corruption reaching the sweep is this node's store.
     pub fn body_sweep_failure(&self) -> SweepFailure {
         match self {
@@ -430,21 +408,6 @@ mod tests {
                 PrecompileError::BodyReadCorruption("x".into()),
                 false,
                 SweepFailure::Skip,
-            ),
-            (
-                PrecompileError::TreeUnavailable("x".into()),
-                true,
-                SweepFailure::Propagate,
-            ),
-            (
-                PrecompileError::TransactionCeWorkLimitExceeded,
-                false,
-                SweepFailure::Propagate,
-            ),
-            (
-                PrecompileError::BlockCeWorkCapacityExhausted,
-                false,
-                SweepFailure::Propagate,
             ),
             (PrecompileError::WriteProtection, false, SweepFailure::Skip),
             (

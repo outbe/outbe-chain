@@ -58,8 +58,6 @@ pub mod origin_venue;
 mod p2p_admission;
 pub mod price_oracle;
 #[cfg(feature = "ocomp-integration")]
-mod projection_write_fault;
-#[cfg(feature = "ocomp-integration")]
 pub mod radicle;
 pub mod restart;
 #[cfg(feature = "ocomp-integration")]

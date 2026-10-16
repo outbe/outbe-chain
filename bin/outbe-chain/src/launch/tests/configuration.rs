@@ -50,7 +50,7 @@ fn adr005_accepts_validators_and_certified_followers_only() {
     super::validate_adr005_node_mode(false, true).expect("certified follower path is parent-gated");
 
     let error = super::validate_adr005_node_mode(false, false)
-        .expect_err("plain EL sync has no finalized-parent projection barrier");
+        .expect_err("plain EL sync has no finalized-parent verification");
     assert!(error.to_string().contains("--upstream"));
 }
 

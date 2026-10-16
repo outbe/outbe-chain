@@ -222,7 +222,7 @@ class Network:
         binary = self.args.new_node if candidate else self.args.transition_node
         argv = [binary if new else self.args.old_node, "node", "--validator",
             "--chain", self.network / "genesis.json", "--datadir", directory / "data",
-            "--projection.storage-config", directory / "offchain-storage.toml", "--engine.persistence-threshold", "0",
+            "--engine.persistence-threshold", "0",
             "--engine.memory-block-buffer-target", "0", "--http", "--http.addr", "127.0.0.1",
             "--http.port", self.port("rpc", i), "--http.api", "eth,net,web3,outbe", "--disable-discovery",
             "--addr", "127.0.0.1", "--trusted-only",

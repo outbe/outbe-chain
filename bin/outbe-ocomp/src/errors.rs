@@ -5,7 +5,6 @@ use thiserror::Error;
 
 pub use crate::{
     embedded_runtime::EmbeddedOcompRuntimeErrorV1,
-    exporter::FinalizedTributeError,
     input_artifacts::InputArtifactError,
     opening_stage::OpeningStageError,
     public_rpc::PublicRpcError,
@@ -98,12 +97,6 @@ impl EmbeddedComputeAttemptError {
 
 pub fn transport_enclave_error(error: impl std::fmt::Display) -> outbe_tee::TransportError {
     outbe_tee::TransportError::EnclaveError(error.to_string())
-}
-
-impl FinalizedTributeError {
-    pub fn ce(error: impl std::fmt::Display) -> Self {
-        Self::Ce(error.to_string())
-    }
 }
 
 impl PublicRpcError {

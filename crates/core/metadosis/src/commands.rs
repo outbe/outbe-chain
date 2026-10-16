@@ -1,5 +1,4 @@
 use alloy_primitives::{Bytes, U256};
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::Result,
@@ -27,21 +26,17 @@ pub fn init_genesis_day(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
     })
 }
 
-pub fn start_metadosis(
-    ctx: &BlockRuntimeContext<'_>,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-) -> Result<()> {
+pub fn start_metadosis(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
     let binding = metadosis_process_ready_binding(
         ctx.block.chain_id,
         ctx.block.block_number,
         ctx.block.timestamp,
     );
-    with_ce_checkpoint(scope, || {
+    {
         commit_transition::<MetadosisCycleLifecycle, _>(ctx.storage.clone(), binding, |_| {
-            crate::runtime::start_metadosis(ctx, scope, parent)
+            crate::runtime::start_metadosis(ctx)
         })
-    })
+    }
 }
 
 /// Purpose-bound terminal-sink adapter used by the Cycle-owned daily
@@ -60,30 +55,16 @@ pub fn apply_late_settlement_headroom(ctx: &BlockRuntimeContext<'_>, amount: U25
     crate::emission_sink::apply_late_settlement_headroom(ctx, amount)
 }
 
-pub fn advance_active_worldwide_days(
-    ctx: &BlockRuntimeContext<'_>,
-    scope: &ExecutionScope,
-) -> Result<()> {
+pub fn advance_active_worldwide_days(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
     let binding = metadosis_advance_due_binding(
         ctx.block.chain_id,
         ctx.block.block_number,
         ctx.block.timestamp,
     );
-    with_ce_checkpoint(scope, || {
+    {
         commit_transition::<MetadosisCycleLifecycle, _>(ctx.storage.clone(), binding, |_| {
-            crate::runtime::advance_active_worldwide_days(ctx, scope)
+            crate::runtime::advance_active_worldwide_days(ctx)
         })
-    })
-}
-
-fn with_ce_checkpoint<R>(scope: &ExecutionScope, effect: impl FnOnce() -> Result<R>) -> Result<R> {
-    let checkpoint = scope.ce_work_checkpoint()?;
-    match effect() {
-        Ok(result) => Ok(result),
-        Err(error) => {
-            scope.restore_ce_work_checkpoint(checkpoint)?;
-            Err(error)
-        }
     }
 }
 
@@ -140,20 +121,17 @@ pub fn install_fork_profile(
     })
 }
 
-pub fn run_ocomp_lifecycle_begin_with_scope(
-    ctx: &BlockRuntimeContext<'_>,
-    scope: &ExecutionScope,
-) -> Result<()> {
+pub fn run_ocomp_lifecycle_begin_with_scope(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
     let binding = metadosis_ocomp_lifecycle_begin_binding(
         ctx.block.chain_id,
         ctx.block.block_number,
         ctx.block.timestamp,
     );
-    let metrics = with_ce_checkpoint(scope, || {
+    let metrics = {
         commit_transition::<MetadosisOcompLifecycle, _>(ctx.storage.clone(), binding, |_| {
-            crate::ocomp::expiry::run_lifecycle_begin_with_scope(ctx, scope)
+            crate::ocomp::expiry::run_lifecycle_begin_with_scope(ctx)
         })
-    })?;
+    }?;
     metrics.record();
     Ok(())
 }
@@ -161,7 +139,6 @@ pub fn run_ocomp_lifecycle_begin_with_scope(
 #[cfg(test)]
 pub(crate) fn fail_worldwide_day_for_test(
     ctx: &BlockRuntimeContext<'_>,
-    scope: &ExecutionScope,
     worldwide_day: outbe_primitives::time::WorldwideDay,
 ) -> Result<()> {
     let binding = metadosis_ocomp_lifecycle_begin_binding(
@@ -169,41 +146,34 @@ pub(crate) fn fail_worldwide_day_for_test(
         ctx.block.block_number,
         ctx.block.timestamp,
     );
-    with_ce_checkpoint(scope, || {
+    {
         commit_transition::<MetadosisOcompLifecycle, _>(ctx.storage.clone(), binding, |_| {
             crate::terminal::fail_worldwide_day(
                 ctx.storage.clone(),
                 ctx.block.block_number,
-                scope,
                 worldwide_day,
             )
         })
-    })
+    }
 }
 
-pub fn run_ocomp_terminal_request(
-    ctx: &BlockRuntimeContext<'_>,
-    scope: &ExecutionScope,
-) -> Result<()> {
-    run_ocomp_terminal_request_with(ctx, scope, crate::ocomp::request::run_terminal_request)
+pub fn run_ocomp_terminal_request(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+    run_ocomp_terminal_request_with(ctx, crate::ocomp::request::run_terminal_request)
 }
 
 #[cfg(test)]
 pub(crate) fn run_ocomp_terminal_request_with_completed_fixture(
     ctx: &BlockRuntimeContext<'_>,
-    scope: &ExecutionScope,
 ) -> Result<()> {
     run_ocomp_terminal_request_with(
         ctx,
-        scope,
         crate::ocomp::request::run_terminal_request_with_completed_fixture,
     )
 }
 
 fn run_ocomp_terminal_request_with(
     ctx: &BlockRuntimeContext<'_>,
-    scope: &ExecutionScope,
-    request: impl FnOnce(&BlockRuntimeContext<'_>, &ExecutionScope) -> Result<()>,
+    request: impl FnOnce(&BlockRuntimeContext<'_>) -> Result<()>,
 ) -> Result<()> {
     let binding = metadosis_ocomp_terminal_request_binding(
         ctx.block.chain_id,
@@ -211,57 +181,51 @@ fn run_ocomp_terminal_request_with(
         ctx.block.timestamp,
     );
     let due_worldwide_day = crate::ocomp::request::due_ready_worldwide_day(ctx)?;
-    with_ce_checkpoint(scope, || {
+    {
         commit_transition::<MetadosisOcompLifecycle, _>(ctx.storage.clone(), binding, |_| {
-            let attempted_work = scope.ce_work_checkpoint()?;
-            let attempted = ctx.storage.clone().with_checkpoint(|| request(ctx, scope));
+            let attempted = ctx.storage.clone().with_checkpoint(|| request(ctx));
             match attempted {
                 Ok(()) => Ok(()),
                 Err(error)
                     if due_worldwide_day.is_some()
                         && crate::errors::is_business_failure(&error) =>
                 {
-                    scope.restore_ce_work_checkpoint(attempted_work)?;
                     crate::terminal::fail_worldwide_day(
                         ctx.storage.clone(),
                         ctx.block.block_number,
-                        scope,
                         due_worldwide_day.expect("guarded exact WWD"),
                     )
                 }
                 Err(error) => Err(error),
             }
         })
-    })
+    }
 }
 
 pub fn submit_verified_result_vote(
     storage: StorageHandle<'_>,
-    scope: &ExecutionScope,
     data: &[u8],
     value: U256,
     is_static: bool,
 ) -> Result<Bytes> {
     let binding = metadosis_verified_vote_binding(data);
-    with_ce_checkpoint(scope, || {
+    {
         commit_transition::<MetadosisVerifiedResultVote, _>(storage.clone(), binding, |_| {
             storage.clone().with_checkpoint(|| {
                 crate::ocomp::vote::dispatch_public_result_vote(
                     storage.clone(),
-                    scope,
                     data,
                     value,
                     is_static,
                 )
             })
         })
-    })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{keccak256, Address, B256, U256};
-    use outbe_compressed_entities::{begin_block, mint, BodyInput, TributeBodyV1, WwdEntityId};
     use outbe_primitives::time::WorldwideDay;
     use outbe_primitives::{
         block::{BlockContext, BlockRuntimeContext},
@@ -512,47 +476,42 @@ mod tests {
     }
 
     #[test]
-    fn command_ce_checkpoint_covers_post_effect_aggregate_validation() {
+    fn command_checkpoint_covers_native_records_and_post_effect_aggregate_validation() {
         let mut provider = HashMapStorageProvider::new(1);
-        let scope = ExecutionScope::default();
-        StorageHandle::enter(&mut provider, |storage| {
-            crate::fixture_kernel::seed_ce_genesis(&storage).unwrap();
-            begin_block(storage, &scope).unwrap();
-        });
         let storage_before = provider.storage.clone();
         let events_before = provider.events.clone();
-        let ce_before = scope.ce_work_checkpoint().unwrap();
         provider.set_block_number(1);
         provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
 
         let wwd = WorldwideDay::new(2026_0817);
         let result = StorageHandle::enter(&mut provider, |storage| {
-            with_ce_checkpoint(&scope, || {
-                commit_transition::<MetadosisCycleLifecycle, _>(
-                    storage,
-                    B256::repeat_byte(0x83),
-                    |effect_storage| {
-                        mint(
-                            effect_storage.clone(),
-                            &scope,
-                            BodyInput::Tribute(&TributeBodyV1 {
-                                tribute_id: WwdEntityId::from_day_and_digest(wwd, [0x84; 32]),
-                                owner: Address::repeat_byte(0x85),
-                                worldwide_day: wwd,
-                                issuance_amount_minor: U256::from(1),
-                                issuance_currency: 840,
-                                nominal_amount_minor: U256::from(1),
-                                reference_currency: 840,
-                                tribute_price_minor: U256::from(1),
-                            }),
-                        )?;
-                        crate::fixture_kernel::FixtureKernelExt::add_active_wwd(
-                            &mut MetadosisContract::new(effect_storage),
+            commit_transition::<MetadosisCycleLifecycle, _>(
+                storage,
+                B256::repeat_byte(0x83),
+                |effect_storage| {
+                    let _enclave = outbe_tribute::enclave_client::test_enclave::scope();
+                    let mut tribute = outbe_tribute::TributeContract::new(effect_storage.clone());
+                    tribute.unseal_day(wwd)?;
+                    tribute.issue(&outbe_tribute::TributeData {
+                        tribute_id: outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(
+                            Address::repeat_byte(0x85),
                             wwd,
                         )
-                    },
-                )
-            })
+                        .expect("fixture Tribute ID"),
+                        owner: Address::repeat_byte(0x85),
+                        worldwide_day: wwd,
+                        issuance_amount_minor: U256::ONE,
+                        issuance_currency: 840,
+                        nominal_amount_minor: U256::ONE,
+                        reference_currency: 840,
+                        tribute_price_minor: U256::ONE,
+                    })?;
+                    crate::fixture_kernel::FixtureKernelExt::add_active_wwd(
+                        &mut MetadosisContract::new(effect_storage),
+                        wwd,
+                    )
+                },
+            )
         });
 
         assert!(
@@ -561,6 +520,5 @@ mod tests {
         );
         assert_eq!(provider.storage, storage_before);
         assert_eq!(provider.events, events_before);
-        assert_eq!(scope.ce_work_checkpoint().unwrap(), ce_before);
     }
 }

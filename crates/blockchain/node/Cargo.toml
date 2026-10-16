@@ -12,17 +12,14 @@ test-utils = ["outbe-ocomp-protocol/test-utils"]
 [dependencies]
 # Internal
 outbe-evm.workspace = true
-outbe-compressed-entities.workspace = true
 outbe-primitives.workspace = true
 outbe-txpool.workspace = true
-outbe-offchain-data.workspace = true
 outbe-offchain-storage.workspace = true
 outbe-consensus.workspace = true
 outbe-metadosis.workspace = true
 outbe-ocomp-protocol.workspace = true
 outbe-oracle.workspace = true
 outbe-nod.workspace = true
-outbe-tribute.workspace = true
 outbe-tee.workspace = true
 outbe-teeregistry.workspace = true
 outbe-validatorset.workspace = true
@@ -72,7 +69,6 @@ k256.workspace = true
 
 [dev-dependencies]
 outbe-offchain-storage = { workspace = true, features = ["test-utils"] }
-outbe-compressed-entities = { workspace = true, features = ["test-utils"] }
 outbe-ocomp-protocol = { workspace = true, features = ["test-utils"] }
 reth-engine-tree = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.6.0" }
 reth-stages-api = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.6.0" }
@@ -84,7 +80,6 @@ outbe-tee-enclave = { workspace = true, features = ["mock"] }
 alloy-provider.workspace = true
 alloy-trie.workspace = true
 ed25519-dalek.workspace = true
-mongodb.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
 reth-e2e-test-utils.workspace = true
 reth-node-api.workspace = true

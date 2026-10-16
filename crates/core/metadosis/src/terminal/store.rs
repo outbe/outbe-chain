@@ -165,7 +165,6 @@ impl MetadosisContract<'_> {
             detail: CapacityForfeitureDetail {
                 max_retained_wwds: receipt.max_retained_wwds,
                 retained_count_before: receipt.retained_count_before,
-                sealed_collection_root: receipt.sealed_collection_root,
                 forfeited_count: receipt.forfeited_count,
                 forfeited_nominal: receipt.forfeited_nominal,
                 source_generation: receipt.source_generation,
@@ -191,7 +190,6 @@ impl MetadosisContract<'_> {
                     value_routed: common.value_routed,
                     carry_over_before: common.carry_over_before,
                     carry_over_after: common.carry_over_after,
-                    sealed_collection_root: detail.sealed_collection_root,
                     forfeited_count: detail.forfeited_count,
                     forfeited_nominal: detail.forfeited_nominal,
                     source_generation: detail.source_generation,

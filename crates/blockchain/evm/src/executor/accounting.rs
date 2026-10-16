@@ -413,21 +413,6 @@ where
             canonical_vrf_proof_hash: self.verified_phase1_vrf_proof_hash.unwrap_or(B256::ZERO),
         };
 
-        // Execute Phase 1 precompile. Only explicit CE charges inside this
-        // system-call boundary are added to the public envelope gas.
-        let gas_window = self
-            .compressed_entities_scope
-            .begin_explicit_gas_window(0)
-            .map_err(|error| {
-                if error.is_node_local() || matches!(error, PrecompileError::Fatal(_)) {
-                    BlockExecutionError::other(error)
-                } else {
-                    BlockValidationError::msg(format!(
-                        "Phase 1 commit pre-exec: open CE gas window: {error}"
-                    ))
-                    .into()
-                }
-            })?;
         let transact_outcome = with_preloaded_system_tx_context(phase_context, || {
             self.inner.evm.transact_system_call(
                 outbe_primitives::addresses::SYSTEM_ADDRESS,
@@ -444,17 +429,6 @@ where
             }
             BlockExecutionError::other(error)
         })?;
-        let compressed_entities_gas = gas_window.gas_used().map_err(|error| {
-            if error.is_node_local() || matches!(error, PrecompileError::Fatal(_)) {
-                BlockExecutionError::other(error)
-            } else {
-                BlockValidationError::msg(format!(
-                    "Phase 1 commit pre-exec: read CE gas window: {error}"
-                ))
-                .into()
-            }
-        })?;
-        drop(gas_window);
         if !result.result.is_success() {
             // Phase 1 (CertifiedParentAccounting) is consensus-critical
             // (`SystemTxKind::revert_fails_block()` is true for it). A revert here is
@@ -477,12 +451,7 @@ where
             blob_gas_used: 0,
             tx_type: alloy_consensus::TxType::Legacy,
         };
-        self.commit_system_transaction(
-            output,
-            signed_gas_limit,
-            compressed_entities_gas,
-            signed_gas_limit,
-        )?;
+        self.commit_system_transaction(output, signed_gas_limit, 0, signed_gas_limit)?;
 
         // Update the cursor with the cached witness hash. The
         // `execute_transaction_with_commit_condition` intercept reads

@@ -6,9 +6,7 @@ use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap};
 use alloy_primitives::{Address, B256};
 use core::fmt::Debug;
 use dispatch::{outbe_ctx_dispatch, OutbeDispatchRuntime};
-use outbe_compressed_entities::ExecutionScope;
 use outbe_metadosis::{api::OcompFinalizedIntentAuthority, config::OcompForkInstallV1};
-use outbe_offchain_data::RuntimeBodyReaders;
 use revm::{primitives::hardfork::SpecId, Database};
 use std::sync::Arc;
 
@@ -71,23 +69,18 @@ impl OutbePrecompileExecutionContext {
 #[derive(Clone)]
 pub struct OutbePrecompileRuntime {
     pub(crate) abort_bridge: ExecutionAbortBridge,
-    runtime_body_readers: Option<RuntimeBodyReaders>,
-    execution_scope: Arc<ExecutionScope>,
+
     ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
     ocomp_lifecycle_active: bool,
 }
 
 impl OutbePrecompileRuntime {
     pub fn new(
-        runtime_body_readers: Option<RuntimeBodyReaders>,
-        execution_scope: Arc<ExecutionScope>,
         ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
         ocomp_lifecycle_active: bool,
     ) -> Self {
         Self {
             abort_bridge: ExecutionAbortBridge::default(),
-            runtime_body_readers,
-            execution_scope,
             ocomp_finality_authority,
             ocomp_lifecycle_active,
         }
@@ -110,7 +103,7 @@ impl OutbePrecompileRuntime {
 ///
 /// A sub-call from a precompile body reaches `sub_call::run` through the provider's
 /// `sub_call` method.
-/// Registers Outbe precompiles with an executor-owned compressed-entity scope.
+/// Registers Outbe precompiles with the executor-owned EVM context.
 pub fn extend_outbe_precompiles<DB>(
     precompiles: &mut PrecompilesMap,
     execution_context: OutbePrecompileExecutionContext,
@@ -127,8 +120,6 @@ pub fn extend_outbe_precompiles<DB>(
     } = execution_context;
     let OutbePrecompileRuntime {
         abort_bridge,
-        runtime_body_readers,
-        execution_scope,
         ocomp_finality_authority,
         ocomp_lifecycle_active,
     } = runtime;
@@ -155,8 +146,7 @@ pub fn extend_outbe_precompiles<DB>(
                     spec,
                     genesis_hash,
                     tee_attestation_v1: &tee_attestation_v1,
-                    runtime_body_readers: runtime_body_readers.as_ref(),
-                    execution_scope: &execution_scope,
+
                     ocomp_finality_authority: ocomp_finality_authority.clone(),
                     ocomp_activation_block_meter: ocomp_activation_block_meter.clone(),
                     ocomp_lifecycle_active,

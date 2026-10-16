@@ -380,27 +380,3 @@ pub(in crate::stack) fn reconcile_recovered_execution_head(
         Some(recovered.round),
     ))
 }
-
-/// Reconcile the derived CE tree only after startup has selected an exact
-/// finality anchor backed by both the marshal archive and durable Reth state.
-///
-/// Marshal's processed height is an acknowledgement floor. It can lag the
-/// archive by one block. This happens when the process stops after the CE commit
-/// but before the ACK is durably recorded. It is therefore diagnostic context,
-/// not the recovery authority.
-pub(in crate::stack) fn recover_ce_at_reconciled_anchor(
-    ce_startup_recovery: &dyn CeStartupRecovery,
-    marshal_processed_height: u64,
-    recovery_anchor_height: u64,
-) -> Result<outbe_compressed_entities::FinalizedMarker> {
-    let recovered = ce_startup_recovery
-        .recover_before_participation(recovery_anchor_height)
-        .wrap_err("compressed-tree startup recovery failed before validator participation")?;
-    info!(
-        marshal_processed_height,
-        recovery_anchor_height,
-        ce_marker_height = recovered.height,
-        "marshal archive and compressed-tree recovery reconciled"
-    );
-    Ok(recovered)
-}

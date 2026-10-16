@@ -189,7 +189,6 @@ pub(crate) fn is_state_unavailable(error: &PrecompileError) -> bool {
         PrecompileError::Storage(_)
             | PrecompileError::BodyReadUnavailable(_)
             | PrecompileError::BodyReadRequestDeadline
-            | PrecompileError::TreeUnavailable(_)
     )
 }
 

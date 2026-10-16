@@ -1,6 +1,5 @@
 use super::*;
 use super::{
-    validate_compressed_entities_root_after_seal, validate_compressed_entities_root_scheme,
     AccountedParentArtifact, AccountedParentArtifactProvider, OutbeBlockExecutor,
     SystemFailureReceiptInput,
 };
@@ -22,8 +21,8 @@ use alloy_sol_types::{SolCall, SolEvent};
 use fixtures::{
     begin_system_txs_for_test, block_one_execution_ctx, boundary_with, boundary_with_epoch,
     cache_db_from_storage, dummy_pubkey, execution_ctx, execution_ctx_with_tee_bootstrap,
-    metadata_with, numbered_test_address, persistent_test_tree, persistent_test_tree_with_marker,
-    post_state_root, register_and_activate_with_ocomp_registration, sample_tee_bootstrap_payload,
+    metadata_with, numbered_test_address, post_state_root,
+    register_and_activate_with_ocomp_registration, sample_tee_bootstrap_payload,
     sample_tee_bootstrap_payload_at, sample_tee_bootstrap_payload_for, seed_cycle_tick_genesis,
     seed_previous_day_vwap, seed_registered_active_validator, seed_test_committee_snapshot,
     seed_test_ocomp_profile, signer_balance, state_with_active_proposer,
@@ -38,15 +37,7 @@ use fixtures::{
     TEST_BLOCK_TIMESTAMP_BASE,
 };
 use k256::ecdsa::signature::hazmat::PrehashSigner as _;
-use outbe_compressed_entities::test_support::seed_compressed_entities_genesis;
-use outbe_compressed_entities::{
-    CandidateCacheLimits, CeMdbx, CeWorkConfig, CompressedTreeService, EnvironmentIdentity,
-    ExactParentIdentity, ExecutionScope, FinalizedMarker, ACTIVE_COMMITMENT_SCHEME,
-    LOCAL_STORAGE_SCHEMA_VERSION,
-};
-use outbe_nod::{precompile::INod, NodBucketState, NodContract, NodItemState};
-use outbe_offchain_data::RuntimeBodyReaders;
-use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle, StorageWriterHandle};
+use outbe_nod::{precompile::INod, NodContract, NodItemState};
 use outbe_primitives::addresses::{
     CYCLE_ADDRESS, NOD_ADDRESS, ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS, REWARDS_ADDRESS,
     SLASH_INDICATOR_ADDRESS, STABLECOIN_FACTORY_ADDRESS, STABLECOIN_POLICY_REGISTRY_ADDRESS,
@@ -57,8 +48,8 @@ use outbe_primitives::consensus::{ConsensusExecutionBridge, GenesisValidator, Ge
 use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
 use outbe_primitives::hook_events::partition_hook_events;
 use outbe_primitives::reshare_artifact::{
-    encode_outbe_block_artifacts, CompressedEntitiesRootArtifact, ConsensusHeaderArtifact,
-    ExecutionSummaryArtifact, OutbeBlockArtifacts,
+    encode_outbe_block_artifacts, ConsensusHeaderArtifact, ExecutionSummaryArtifact,
+    OutbeBlockArtifacts,
 };
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_primitives::tee_genesis_v1::GRAMINE_DIRECT_DEV_CHAIN_ID;
@@ -70,7 +61,7 @@ use outbe_primitives::{
 };
 use outbe_stablecoin::StablecoinContract;
 use outbe_stablecoinfactory::{precompile::IStablecoinFactory, StablecoinFactoryContract};
-use outbe_tribute::{TributeContract, TributeData, TributeRepositoryReader};
+use outbe_tribute::{TributeContract, TributeData};
 use outbe_validatorset::{HistoryCounters, ValidatorHistory, ValidatorLifecycle};
 use outbe_vote::{
     constants::VOTING_WINDOW_BLOCKS,
@@ -96,7 +87,6 @@ mod accounting;
 mod begin_layout;
 mod block_artifacts;
 mod boundary;
-mod construction;
 mod fixtures;
 pub(super) mod harness;
 mod receipts_and_gas;

@@ -552,13 +552,13 @@ fn open_day_preserves_an_already_delivered_validator_batch_without_reminting() {
         ));
         let gem = outbe_gem::GemContract::new(ctx.storage.clone());
         let load_before = std::cell::Cell::new(U256::ZERO);
-        with_gem_execution_scope(&ctx, |scope, parent| {
-            outbe_rewards::api::deliver_oldest_reward_gem_batch(&ctx, scope, parent)?;
-            let owned = outbe_gem::api::list_by_owner(&ctx.storage, scope, parent, voter)?;
+        (|| {
+            outbe_rewards::api::deliver_oldest_reward_gem_batch(&ctx)?;
+            let owned = outbe_gem::api::list_by_owner(&ctx.storage, voter)?;
             assert_eq!(owned.len(), 1);
             load_before.set(owned[0].promis_load_minor);
-            Ok(())
-        })
+            Ok::<_, outbe_primitives::error::PrecompileError>(())
+        })()
         .unwrap();
         assert_eq!(gem.total_supply().unwrap(), 1);
 
@@ -693,11 +693,9 @@ fn metadosis_semantic_receipt_without_settled_cycle_marker_is_fatal_before_effec
 
     assert_storage_unchanged(&mut storage, |handle| {
         let ctx = BlockRuntimeContext::new(block_ctx(2, GENESIS_TS + SECONDS_PER_DAY + 60), handle);
-        let parent_storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
-        let parent = TributeRepositoryReader::new(parent_storage);
-        let scope = ExecutionScope::default();
+
         assert!(matches!(
-            crate::handler::run_emission_limit_daily(&ctx, &scope, &parent),
+            crate::handler::run_emission_limit_daily(&ctx),
             Err(outbe_primitives::error::PrecompileError::Revert(_))
         ));
     });

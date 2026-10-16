@@ -5,17 +5,6 @@ use super::{
 use crate::ocomp::retention::*;
 
 #[cfg(test)]
-pub(crate) struct RetainedGcCycleTestReport {
-    pub global_deferred: bool,
-    pub pending: usize,
-    pub deferred: usize,
-    pub completed: u64,
-    pub pages: u64,
-    pub item_failures: usize,
-    pub retry_entries: usize,
-}
-
-#[cfg(test)]
 pub(crate) const fn retention_pressure_watermark_for_test() -> usize {
     JOURNAL_RECORD_PRESSURE_WATERMARK
 }
@@ -64,22 +53,6 @@ pub(crate) fn seed_retention_journal_for_test(
 
 impl OcompRetentionCoordinator {
     #[cfg(test)]
-    pub(crate) fn open_with_retained_tributes_and_durability(
-        root: impl Into<PathBuf>,
-        source: Arc<dyn FinalizedInputProofSource>,
-        retained_tributes: Arc<RetainedTributeWriter>,
-        durability: Arc<dyn JournalDurability>,
-    ) -> Self {
-        Self::open_inner(
-            root.into(),
-            source,
-            durability,
-            Some(retained_tributes),
-            Some(Arc::new(ProjectionRetentionFence::default())),
-        )
-    }
-
-    #[cfg(test)]
     pub(crate) fn set_closure_checkpoint_for_test(&self, height: u64) {
         atomic_max(&self.closure_checkpoint, height);
     }
@@ -103,56 +76,6 @@ impl OcompRetentionCoordinator {
             _ => Err(RetentionError::InvalidTransition(
                 "attestation requires the exact exported Job",
             )),
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn run_gc_cycle_with_retry_for_test(
-        &self,
-        finalized_height: u64,
-        now: Instant,
-        retry_schedule: &mut RetainedGcRetrySchedule,
-    ) -> Result<crate::ocomp::retention::RetainedGcCycleTestReport, RetentionError> {
-        self.run_gc_cycle_with_retry_clock_for_test(finalized_height, now, now, retry_schedule)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn run_gc_cycle_with_retry_clock_for_test(
-        &self,
-        finalized_height: u64,
-        eligibility_now: Instant,
-        retry_now: Instant,
-        retry_schedule: &mut RetainedGcRetrySchedule,
-    ) -> Result<crate::ocomp::retention::RetainedGcCycleTestReport, RetentionError> {
-        match self
-            .run_scheduled_gc_cycle(
-                finalized_height,
-                retry_schedule,
-                gc::RetainedGcClock {
-                    eligibility_now,
-                    current_time: || retry_now,
-                },
-            )
-            .map_err(|failure| failure.error)?
-        {
-            RetainedGcScheduledCycle::DeferredGlobal(_) => Ok(RetainedGcCycleTestReport {
-                global_deferred: true,
-                pending: 0,
-                deferred: 0,
-                completed: 0,
-                pages: 0,
-                item_failures: 0,
-                retry_entries: retry_schedule.deadlines.len(),
-            }),
-            RetainedGcScheduledCycle::Ran(report) => Ok(RetainedGcCycleTestReport {
-                global_deferred: false,
-                pending: report.pending,
-                deferred: report.deferred,
-                completed: report.completed,
-                pages: report.pages,
-                item_failures: report.failures.len(),
-                retry_entries: retry_schedule.deadlines.len(),
-            }),
         }
     }
 }

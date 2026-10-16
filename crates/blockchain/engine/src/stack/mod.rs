@@ -59,7 +59,6 @@ use std::time::{Duration, SystemTime};
 use tracing::{debug, info, warn};
 
 use crate::args::ConsensusArgs;
-use crate::ce_recovery::CeStartupRecovery;
 use crate::validators;
 use outbe_consensus::{
     ancestry_readiness::AncestryReadiness,
@@ -74,7 +73,7 @@ use outbe_consensus::{
     digest::Digest,
     dkg_actor,
     dkg_manager::{self, Mailbox as DkgManagerMailbox},
-    executor::actor::{ExecutorActor, FinalizedCeCommitter, RecoveredForkchoiceAttempt},
+    executor::actor::{ExecutorActor, FinalizedExecutionBarrier, RecoveredForkchoiceAttempt},
     finalization::{
         actor::{FinalizationActor, FinalizationActorDeps},
         block_cache::BlockCache,
@@ -87,10 +86,7 @@ use outbe_consensus::{
     reporter::{OutbeReporter, ReporterContinuity},
     vrf_safety::VrfSafetyGate,
 };
-use outbe_node::{
-    ocomp::retention::{RetainedTributeWriter, SharedOcompRetentionSelector},
-    projection::ProjectionRetentionFence,
-};
+use outbe_node::ocomp::retention::SharedOcompRetentionSelector;
 use outbe_radicle::integration::{RadicleVotingGate, RadicleVotingGateError};
 
 use outbe_node::OutbeFullNode;
@@ -184,10 +180,10 @@ use follower::{run_follow_stack, spawn_finalization_drainer};
 
 use recovery::anchor::{
     certified_follower_replay_suffix_bounds, durable_recovery_anchor_height,
-    reconcile_recovered_execution_head, recover_ce_at_reconciled_anchor,
-    select_certified_follower_recovery_height, unfinalized_head_lead_is_recoverable,
-    validate_ancestor_follower_recovery_record, CertifiedFollowerRecoveryAnchor,
-    CertifiedFollowerRecoveryFloors, RecoveredApplicationFinalization,
+    reconcile_recovered_execution_head, select_certified_follower_recovery_height,
+    unfinalized_head_lead_is_recoverable, validate_ancestor_follower_recovery_record,
+    CertifiedFollowerRecoveryAnchor, CertifiedFollowerRecoveryFloors,
+    RecoveredApplicationFinalization,
 };
 
 use recovery::forkchoice::{

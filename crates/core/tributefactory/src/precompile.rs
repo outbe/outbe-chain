@@ -1,6 +1,5 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolInterface};
-use outbe_compressed_entities::{ExecutionReaders, ParentBodySource};
 use outbe_primitives::dispatch::{dispatch_call, mutate};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
@@ -34,12 +33,10 @@ pub fn base_gas(input: &[u8]) -> u64 {
 /// Dispatch for the tribute factory precompile.
 pub fn dispatch(
     storage: outbe_primitives::storage::StorageHandle,
-    readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
     data: &[u8],
     caller: Address,
     value: U256,
 ) -> Result<Bytes> {
-    let ExecutionReaders { scope, parent } = readers;
     outbe_primitives::dispatch::reject_value(&value)?;
     dispatch_call(
         data,
@@ -50,24 +47,20 @@ pub fn dispatch(
                 offerTribute(c) => mutate(&storage, c, caller, |sender, c| {
                     let mut factory = TributeFactoryContract::new(storage.clone());
                     factory
-                        .offer_tribute(
-                            scope,
-                            parent,
-                            OfferTributeInput {
-                                caller: sender,
-                                cipher_text: c.cipherText,
-                                nonce: c.nonce,
-                                ephemeral_pubkey: c.ephemeralPubkey,
-                                worldwide_day: c.worldwideDay.into(),
-                                tribute_currency: c.tributeCurrency,
-                                reference_currency: c.referenceCurrency,
-                                zk_proof: c.zkProof,
-                                l2_chain_id: c.chainId,
-                                circuit_version: c.version,
-                                zk_merkle_root: c.zkMerkleRoot,
-                                signature: c.signature,
-                            },
-                        )
+                        .offer_tribute(OfferTributeInput {
+                            caller: sender,
+                            cipher_text: c.cipherText,
+                            nonce: c.nonce,
+                            ephemeral_pubkey: c.ephemeralPubkey,
+                            worldwide_day: c.worldwideDay.into(),
+                            tribute_currency: c.tributeCurrency,
+                            reference_currency: c.referenceCurrency,
+                            zk_proof: c.zkProof,
+                            l2_chain_id: c.chainId,
+                            circuit_version: c.version,
+                            zk_merkle_root: c.zkMerkleRoot,
+                            signature: c.signature,
+                        })
                         .map(|id| id.to_u256())
                 }),
             }

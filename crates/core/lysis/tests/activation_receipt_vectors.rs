@@ -286,12 +286,12 @@ fn receipt_verifier_rejects_owner_projection_and_request_mutations() {
     )
     .is_err());
 
-    let mut wrong_tribute_root = receipts.clone();
-    wrong_tribute_root.tribute.sealed_collection_root = hash(214);
+    let mut wrong_tribute_job = receipts.clone();
+    wrong_tribute_job.tribute.binding.job_id = hash(214);
     assert!(verify_receipts(
         &plan,
         &fixture.request_receipt,
-        &wrong_tribute_root,
+        &wrong_tribute_job,
         &fixture.limits
     )
     .is_err());
@@ -394,7 +394,6 @@ fn owner_receipts(
     let tribute_projection = TributeStateEventProjectionV1 {
         wwd: plan.tribute().input_binding().wwd,
         source_generation: plan.tribute().input_binding().source_generation,
-        sealed_collection_root: plan.tribute().input_binding().sealed_collection_root,
         consumed_count: plan.tribute().consumed_count(),
         consumed_nominal_total: plan.tribute().consumed_nominal_total(),
         retired_generation: plan.tribute().retired_generation(),
@@ -419,7 +418,6 @@ fn owner_receipts(
         tribute: TributeReceiptV1 {
             binding: binding.clone(),
             tribute_input_binding: plan.tribute().input_binding().clone(),
-            sealed_collection_root: plan.tribute().input_binding().sealed_collection_root,
             consumed_count: plan.tribute().consumed_count(),
             consumed_nominal_total: plan.tribute().consumed_nominal_total(),
             retired_generation: plan.tribute().retired_generation(),

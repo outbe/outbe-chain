@@ -54,19 +54,19 @@ fn walk(
 /// breaches off its own `COEN/<iso>` VWAP window.
 #[test]
 fn call_scan_reads_each_gem_own_pair_window() {
-    with_storage(|storage, world| {
-        let usd_id = mature_gem(storage, world);
+    with_storage(|storage| {
+        let usd_id = mature_gem(storage);
         let mut p = sample_params(BOB);
         p.reference_currency = EUR;
         p.issued_at = T_NOW - 100 * SECONDS_PER_DAY;
-        let eur_id = add(storage, world, p);
+        let eur_id = add(storage, p);
 
         let rate = U256::from(600_000u64);
         seed_currency(storage, USD, Some(rate));
         let eur_pair = seed_currency(storage, EUR, Some(rate));
 
         // Only the EUR pair breaches: the USD pair has no published VWAPs.
-        let breach = view(storage, world, eur_id).terms.call_price_minor + U256::from(1u64);
+        let breach = view(storage, eur_id).terms.call_price_minor + U256::from(1u64);
         let oracle = OracleContract::new(storage.clone());
         let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW));
         let mut day = last_closed_day;
@@ -80,17 +80,17 @@ fn call_scan_reads_each_gem_own_pair_window() {
             .unwrap();
 
         assert_eq!(scan_and_call(&block_ctx(storage)).unwrap(), 1);
-        assert_eq!(gem_state(storage, world, eur_id), GemState::Called as u8);
-        assert_eq!(gem_state(storage, world, usd_id), GemState::Issued as u8);
+        assert_eq!(gem_state(storage, eur_id), GemState::Called as u8);
+        assert_eq!(gem_state(storage, usd_id), GemState::Issued as u8);
     });
 }
 
 #[test]
 fn the_call_pass_resumes_from_its_bin_cursor() {
-    with_storage(|storage, world| {
+    with_storage(|storage| {
         let issued_at = T_NOW - 100 * SECONDS_PER_DAY;
-        let low_id = callable_gem_of(storage, world, USD, 0, issued_at, U256::from(100_000u64));
-        let high_id = callable_gem_of(storage, world, USD, 1, issued_at, U256::from(120_000u64));
+        let low_id = callable_gem_of(storage, USD, 0, issued_at, U256::from(100_000u64));
+        let high_id = callable_gem_of(storage, USD, 1, issued_at, U256::from(120_000u64));
 
         // Every day of the window sits above both call prices.
         let pair = seed_currency(storage, USD, Some(U256::from(600_000u64)));
@@ -99,11 +99,11 @@ fn the_call_pass_resumes_from_its_bin_cursor() {
 
         // A budget of one takes the lower bin and persists the cursor above it.
         assert_eq!(walk(storage, &window, 1), (1, false));
-        assert_eq!(gem_state(storage, world, low_id), GemState::Called as u8);
-        assert_eq!(gem_state(storage, world, high_id), GemState::Issued as u8);
+        assert_eq!(gem_state(storage, low_id), GemState::Called as u8);
+        assert_eq!(gem_state(storage, high_id), GemState::Issued as u8);
 
         assert_eq!(walk(storage, &window, 8), (1, true));
-        assert_eq!(gem_state(storage, world, high_id), GemState::Called as u8);
+        assert_eq!(gem_state(storage, high_id), GemState::Called as u8);
     });
 }
 
@@ -111,39 +111,37 @@ fn the_call_pass_resumes_from_its_bin_cursor() {
 /// With no sweep open, a block costs nothing and calls nobody.
 #[test]
 fn a_finished_sweep_closes_itself_and_idle_blocks_do_nothing() {
-    with_storage(|storage, world| {
+    with_storage(|storage| {
         let issued_at = T_NOW - 100 * SECONDS_PER_DAY;
-        let first_id = callable_gem_of(storage, world, USD, 0, issued_at, U256::from(100_000u64));
+        let first_id = callable_gem_of(storage, USD, 0, issued_at, U256::from(100_000u64));
         let pair = seed_currency(storage, USD, Some(U256::from(600_000u64)));
         window_at(storage, pair, U256::from(300_000u64));
 
         let ctx = block_ctx(storage);
         scan_and_call(&ctx).unwrap();
         let gem = GemContract::new(storage.clone());
-        assert_eq!(gem_state(storage, world, first_id), GemState::Called as u8);
+        assert_eq!(gem_state(storage, first_id), GemState::Called as u8);
         assert_eq!(gem.call_sweep_day.read().unwrap(), 0);
 
         // A gem that breaches just as hard is left alone: no sweep is open.
-        let second_id = callable_gem_of(storage, world, USD, 1, issued_at, U256::from(100_000u64));
+        let second_id = callable_gem_of(storage, USD, 1, issued_at, U256::from(100_000u64));
         assert_eq!(run_call_slice(&ctx).unwrap(), 0);
-        assert_eq!(gem_state(storage, world, second_id), GemState::Issued as u8);
+        assert_eq!(gem_state(storage, second_id), GemState::Issued as u8);
     });
 }
 
 /// A bin holding more buckets than the budget resumes inside itself on the next slice.
 #[test]
 fn a_bin_wider_than_the_budget_resumes_inside_it() {
-    with_storage(|storage, world| {
+    with_storage(|storage| {
         let issued_at = T_NOW - 100 * SECONDS_PER_DAY;
         let ids = [
-            callable_gem_of(storage, world, USD, 0, issued_at, U256::from(100_000u64)),
-            callable_gem_of(storage, world, USD, 1, issued_at, U256::from(100_000u64)),
+            callable_gem_of(storage, USD, 0, issued_at, U256::from(100_000u64)),
+            callable_gem_of(storage, USD, 1, issued_at, U256::from(100_000u64)),
         ];
         let bin = |id: U256| {
-            outbe_primitives::call_bins::price_to_bin(
-                view(storage, world, id).terms.call_price_minor,
-            )
-            .unwrap()
+            outbe_primitives::call_bins::price_to_bin(view(storage, id).terms.call_price_minor)
+                .unwrap()
         };
         assert_eq!(bin(ids[0]), bin(ids[1]), "one bin, two buckets");
         let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW));
@@ -152,7 +150,7 @@ fn a_bin_wider_than_the_budget_resumes_inside_it() {
         assert_eq!(walk(storage, &window, 1), (1, false));
         let called = ids
             .iter()
-            .filter(|id| gem_state(storage, world, **id) == GemState::Called as u8)
+            .filter(|id| gem_state(storage, **id) == GemState::Called as u8)
             .count();
         assert_eq!(called, 1);
         assert_eq!(
@@ -165,16 +163,16 @@ fn a_bin_wider_than_the_budget_resumes_inside_it() {
 
         assert_eq!(walk(storage, &window, 8), (1, true));
         for id in ids {
-            assert_eq!(gem_state(storage, world, id), GemState::Called as u8);
+            assert_eq!(gem_state(storage, id), GemState::Called as u8);
         }
     });
 }
 
 #[test]
 fn call_then_forfeit_lifecycle() {
-    with_storage(|storage, world| {
-        let gem_id = mature_gem(storage, world);
-        let threshold = view(storage, world, gem_id).terms.call_price_minor;
+    with_storage(|storage| {
+        let gem_id = mature_gem(storage);
+        let threshold = view(storage, gem_id).terms.call_price_minor;
         let breach_days = (outbe_gem::constants::CALL_THRESHOLD / SECONDS_PER_DAY_U32) as usize;
         let window = breach_window(T_NOW, threshold + U256::from(1u64), breach_days);
 
@@ -182,24 +180,23 @@ fn call_then_forfeit_lifecycle() {
         assert!(crate::called::call_if_breached(
             &mut gem,
             &window,
-            bucket_of(storage, world, gem_id),
+            bucket_of(storage, gem_id),
             T_NOW
         )
         .unwrap());
-        let called = view(storage, world, gem_id);
+        let called = view(storage, gem_id);
         assert_eq!(called.effective_state(T_NOW), GemState::Called as u8);
         assert_eq!(called.called_at(), T_NOW);
 
         // Within the 7-day notice period: no forfeit.
-        begin_block_at(storage, world, T_NOW + 6 * SECONDS_PER_DAY);
-        assert!(item(storage, world, gem_id).is_some());
+        begin_block_at(storage, T_NOW + 6 * SECONDS_PER_DAY);
+        assert!(item(storage, gem_id).is_some());
         // Past the deadline: forfeit-burned.
         begin_block_at(
             storage,
-            world,
             GemContract::hour_end(GemContract::deadline_hour(T_NOW + 7 * SECONDS_PER_DAY)),
         );
-        assert!(item(storage, world, gem_id).is_none());
+        assert!(item(storage, gem_id).is_none());
     });
 }
 
@@ -215,12 +212,12 @@ fn the_issue_day_counts_only_for_a_gem_issued_at_midnight() {
 
     // A second past midnight loses the day and falls one breach short.
     for (issued_at, expected) in [(midnight, true), (midnight + 1, false)] {
-        with_storage(|storage, world| {
+        with_storage(|storage| {
             set_profile(storage, outbe_gem::config::PROFILE_PROD);
             let mut p = sample_params(ALICE);
             p.issued_at = issued_at;
-            let gem_id = add(storage, world, p);
-            let threshold = view(storage, world, gem_id).terms.call_price_minor;
+            let gem_id = add(storage, p);
+            let threshold = view(storage, gem_id).terms.call_price_minor;
             let window = breach_window(T_NOW, threshold + U256::from(1u64), threshold_days);
 
             let mut gem = GemContract::new(storage.clone());
@@ -228,7 +225,7 @@ fn the_issue_day_counts_only_for_a_gem_issued_at_midnight() {
                 crate::called::call_if_breached(
                     &mut gem,
                     &window,
-                    bucket_of(storage, world, gem_id),
+                    bucket_of(storage, gem_id),
                     T_NOW
                 )
                 .unwrap(),
@@ -249,41 +246,33 @@ fn second_member_with_a_different_issued_at_joins_the_first_members_bucket() {
         oldest_breach = previous_date_key(oldest_breach);
     }
     let midnight = date_key_to_utc_timestamp(oldest_breach);
-    with_storage(|storage, world| {
+    with_storage(|storage| {
         set_profile(storage, outbe_gem::config::PROFILE_PROD);
         let mut first = sample_params(ALICE);
         first.issued_at = midnight;
-        let first = add(storage, world, first);
+        let first = add(storage, first);
         let mut second = sample_params(BOB);
         second.issued_at = midnight + 3_600;
-        let second = add(storage, world, second);
-        assert_eq!(
-            bucket_of(storage, world, first),
-            bucket_of(storage, world, second)
-        );
+        let second = add(storage, second);
+        assert_eq!(bucket_of(storage, first), bucket_of(storage, second));
 
-        let threshold = view(storage, world, first).terms.call_price_minor;
+        let threshold = view(storage, first).terms.call_price_minor;
         let window = breach_window(T_NOW, threshold + U256::from(1u64), threshold_days);
         let mut gem = GemContract::new(storage.clone());
         assert!(
-            crate::called::call_if_breached(
-                &mut gem,
-                &window,
-                bucket_of(storage, world, first),
-                T_NOW
-            )
-            .unwrap(),
+            crate::called::call_if_breached(&mut gem, &window, bucket_of(storage, first), T_NOW)
+                .unwrap(),
             "the bucket counts from its first member's midnight"
         );
-        assert_eq!(gem_state(storage, world, second), GemState::Called as u8);
+        assert_eq!(gem_state(storage, second), GemState::Called as u8);
     });
 }
 
 #[test]
 fn call_skips_below_threshold() {
-    with_storage(|storage, world| {
-        let gem_id = mature_gem(storage, world);
-        let threshold = view(storage, world, gem_id).terms.call_price_minor;
+    with_storage(|storage| {
+        let gem_id = mature_gem(storage);
+        let threshold = view(storage, gem_id).terms.call_price_minor;
         // One below the threshold: not enough breach-days to force a call.
         let breach_days = (outbe_gem::constants::CALL_THRESHOLD / SECONDS_PER_DAY_U32) as usize - 1;
         let window = breach_window(T_NOW, threshold + U256::from(1u64), breach_days);
@@ -292,11 +281,11 @@ fn call_skips_below_threshold() {
         assert!(!crate::called::call_if_breached(
             &mut gem,
             &window,
-            bucket_of(storage, world, gem_id),
+            bucket_of(storage, gem_id),
             T_NOW
         )
         .unwrap());
-        assert_eq!(gem_state(storage, world, gem_id), GemState::Issued as u8);
+        assert_eq!(gem_state(storage, gem_id), GemState::Issued as u8);
     });
 }
 
@@ -323,12 +312,12 @@ fn a_registry_edit_does_not_move_the_cursor_onto_another_currency() {
 
 #[test]
 fn a_wider_window_than_the_live_profile_widens_the_span_the_scan_collects() {
-    with_storage(|storage, world| {
+    with_storage(|storage| {
         let gem = GemContract::new(storage.clone());
         let iso = sample_params(ALICE).reference_currency;
 
         set_profile(storage, outbe_gem::config::PROFILE_DEV);
-        add(storage, world, sample_params(ALICE));
+        add(storage, sample_params(ALICE));
         assert_eq!(
             gem.max_call_window_seconds.read(&iso).unwrap(),
             GemParams::DEV.call_window_seconds
@@ -338,7 +327,7 @@ fn a_wider_window_than_the_live_profile_widens_the_span_the_scan_collects() {
         set_profile(storage, outbe_gem::config::PROFILE_PROD);
         let mut other = sample_params(BOB);
         other.entry_price_minor = U256::from(600_000u64);
-        add(storage, world, other);
+        add(storage, other);
         assert_eq!(
             gem.max_call_window_seconds.read(&iso).unwrap(),
             GemParams::PROD.call_window_seconds,
@@ -349,7 +338,7 @@ fn a_wider_window_than_the_live_profile_widens_the_span_the_scan_collects() {
         let mut third = sample_params(ALICE);
         third.entry_price_minor = U256::from(700_000u64);
         third.promis_load_minor = U256::from(2_000_000u64);
-        add(storage, world, third);
+        add(storage, third);
         assert_eq!(
             gem.max_call_window_seconds.read(&iso).unwrap(),
             GemParams::PROD.call_window_seconds,
@@ -360,9 +349,9 @@ fn a_wider_window_than_the_live_profile_widens_the_span_the_scan_collects() {
 
 #[test]
 fn an_unindexable_price_skips_its_currency_for_the_day_and_says_so() {
-    let (mut provider, world) = provider_at(T_NOW);
+    let mut provider = provider_at(T_NOW);
     let pinned_day = StorageHandle::enter(&mut provider, |storage| {
-        let gem_id = mature_gem(&storage, &world);
+        let gem_id = mature_gem(&storage);
         // A price no bin can hold, on enough days to be the window's ceiling. A
         // begin-block error would fail the whole block.
         let pair = seed_currency(&storage, USD, Some(U256::from(600_000u64)));
@@ -381,7 +370,7 @@ fn an_unindexable_price_skips_its_currency_for_the_day_and_says_so() {
         let ctx = block_ctx(&storage);
         assert_eq!(scan_and_call(&ctx).unwrap(), 0);
         assert_eq!(
-            gem_state(&storage, &world, gem_id),
+            gem_state(&storage, gem_id),
             GemState::Issued as u8,
             "the gem is untouched, not lost"
         );
@@ -414,14 +403,13 @@ fn an_unindexable_price_skips_its_currency_for_the_day_and_says_so() {
 /// buckets it called.
 #[test]
 fn a_call_slice_refreshes_all_metadata_once() {
-    let (mut provider, world) = provider_at(T_NOW);
+    let mut provider = provider_at(T_NOW);
     StorageHandle::enter(&mut provider, |storage| {
         set_profile(&storage, outbe_gem::config::PROFILE_PROD);
         let pair = seed_currency(&storage, USD, Some(U256::from(600_000u64)));
         for nonce in 0..3 {
             callable_gem_of(
                 &storage,
-                &world,
                 USD,
                 nonce,
                 T_NOW - 100 * SECONDS_PER_DAY,
@@ -449,24 +437,17 @@ fn a_call_slice_refreshes_all_metadata_once() {
 /// the walk, so the day in flight still reaches every bin against its own prices.
 #[test]
 fn a_trigger_during_a_running_call_sweep_queues_its_day() {
-    with_storage(|storage, world| {
+    with_storage(|storage| {
         let gem = GemContract::new(storage.clone());
         set_profile(storage, outbe_gem::config::PROFILE_PROD);
         let pair = seed_currency(storage, USD, Some(U256::from(600_000u64)));
         let issued_at = T_NOW - 100 * SECONDS_PER_DAY;
         // A bin whose calls spend the whole write budget, and one gem priced above it.
         for nonce in 0..u64::from(SWEEP_WRITES_PER_BLOCK) {
-            callable_gem_of(
-                storage,
-                world,
-                USD,
-                nonce,
-                issued_at,
-                U256::from(100_000u64),
-            );
+            callable_gem_of(storage, USD, nonce, issued_at, U256::from(100_000u64));
         }
         // Priced above the bin that spends the budget, still under the window's ceiling.
-        let above = callable_gem_of(storage, world, USD, 999, issued_at, U256::from(120_000u64));
+        let above = callable_gem_of(storage, USD, 999, issued_at, U256::from(120_000u64));
 
         let day = window_at(storage, pair, U256::from(300_000u64));
         scan_and_call(&block_ctx_at(storage, T_NOW)).unwrap();
@@ -488,7 +469,7 @@ fn a_trigger_during_a_running_call_sweep_queues_its_day() {
 
         // The next slice finishes the old day and hands the sweep to the queued one.
         run_call_slice(&next).unwrap();
-        assert_eq!(gem_state(storage, world, above), GemState::Called as u8);
+        assert_eq!(gem_state(storage, above), GemState::Called as u8);
         assert_eq!(gem.call_sweep_day.read().unwrap(), next_day);
         assert_eq!(gem.call_pending_day.read().unwrap(), 0);
     });
@@ -498,14 +479,13 @@ fn a_trigger_during_a_running_call_sweep_queues_its_day() {
 /// never be walked is named.
 #[test]
 fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
-    let (mut provider, world) = provider_at(T_NOW);
+    let mut provider = provider_at(T_NOW);
     let (in_flight, skipped) = StorageHandle::enter(&mut provider, |storage| {
         set_profile(&storage, outbe_gem::config::PROFILE_PROD);
         let pair = seed_currency(&storage, USD, Some(U256::from(600_000u64)));
         for nonce in 0..=u64::from(SWEEP_VISITS_PER_BLOCK) {
             callable_gem_of(
                 &storage,
-                &world,
                 USD,
                 nonce,
                 T_NOW - 100 * SECONDS_PER_DAY,
@@ -550,7 +530,7 @@ fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
 /// behind the cursor again, these two would keep the sweep open for good.
 #[test]
 fn a_call_sweep_over_several_currencies_always_ends() {
-    with_storage(|storage, world| {
+    with_storage(|storage| {
         let gem = GemContract::new(storage.clone());
         set_profile(storage, outbe_gem::config::PROFILE_PROD);
         let day = previous_date_key(timestamp_to_date_key(T_NOW));
@@ -561,7 +541,6 @@ fn a_call_sweep_over_several_currencies_always_ends() {
             for nonce in 0..=u64::from(SWEEP_VISITS_PER_BLOCK) {
                 callable_gem_of(
                     storage,
-                    world,
                     iso,
                     nonce,
                     T_NOW - 5 * SECONDS_PER_DAY,
@@ -581,10 +560,9 @@ fn a_call_sweep_over_several_currencies_always_ends() {
 
 #[test]
 fn an_unpriced_currency_does_not_prevent_calling_the_next_currency() {
-    with_storage(|storage, world| {
+    with_storage(|storage| {
         let unpriced = callable_gem_of(
             storage,
-            world,
             EUR,
             0,
             T_NOW - 100 * SECONDS_PER_DAY,
@@ -593,7 +571,6 @@ fn an_unpriced_currency_does_not_prevent_calling_the_next_currency() {
         seed_currency(storage, EUR, None);
         let priced = callable_gem_of(
             storage,
-            world,
             USD,
             1,
             T_NOW - 100 * SECONDS_PER_DAY,
@@ -603,8 +580,8 @@ fn an_unpriced_currency_does_not_prevent_calling_the_next_currency() {
         window_at(storage, pair, U256::from(300_000));
 
         assert_eq!(scan_and_call(&block_ctx_at(storage, T_NOW)).unwrap(), 1);
-        assert_eq!(gem_state(storage, world, unpriced), GemState::Issued as u8);
-        assert_eq!(gem_state(storage, world, priced), GemState::Called as u8);
+        assert_eq!(gem_state(storage, unpriced), GemState::Issued as u8);
+        assert_eq!(gem_state(storage, priced), GemState::Called as u8);
         assert_eq!(
             GemContract::new(storage.clone())
                 .call_sweep_day
@@ -617,11 +594,10 @@ fn an_unpriced_currency_does_not_prevent_calling_the_next_currency() {
 
 #[test]
 fn only_a_slice_that_calls_buckets_emits_a_batch_metadata_update() {
-    let (mut provider, world) = provider_at(T_NOW);
+    let mut provider = provider_at(T_NOW);
     StorageHandle::enter(&mut provider, |storage| {
         callable_gem_of(
             &storage,
-            &world,
             USD,
             0,
             T_NOW - 100 * SECONDS_PER_DAY,
@@ -648,9 +624,9 @@ fn only_a_slice_that_calls_buckets_emits_a_batch_metadata_update() {
 /// Idle daily scans read the oracle and write nothing to the body store.
 #[test]
 fn idle_daily_scans_do_not_write_bodies() {
-    let (mut provider, world) = provider_at(T_NOW);
+    let mut provider = provider_at(T_NOW);
     StorageHandle::enter(&mut provider, |storage| {
-        mature_gem(&storage, &world);
+        mature_gem(&storage);
         seed_currency(&storage, USD, Some(U256::from(600_000u64)));
     });
     let before = provider.get_events(GEM_ADDRESS).len();

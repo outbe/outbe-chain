@@ -1,14 +1,8 @@
-//! Shared harness: a block-scoped compressed-entity world over an in-memory body
-//! store, plus the gem and oracle helpers the read tests build on. GemFactory decides
+//! Shared native state and Oracle helpers for the Gem read tests. GemFactory decides
 //! issuance, calls and settlement; these helpers write the records it would.
-
-use std::sync::Arc;
 
 use alloy_primitives::{address, Address, B256, U256};
 use alloy_sol_types::SolCall;
-use outbe_compressed_entities::test_support::seed_compressed_entities_genesis;
-use outbe_compressed_entities::{begin_block, ExecutionReaders, ExecutionScope};
-use outbe_offchain_storage::MemoryStorage;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::error::Result;
@@ -20,7 +14,6 @@ use outbe_primitives::time::{first_full_day, previous_date_key, timestamp_to_dat
 use crate::api;
 use crate::precompile::{dispatch, IGem};
 use crate::schema::{CallTerms, GemAddParams, GemContract, GemItemState, GemView};
-use crate::GemRepositoryReader;
 
 mod qualification;
 mod views;
@@ -34,40 +27,16 @@ pub(crate) const EUR: u16 = 978;
 /// Two days after the sample gems were issued: the day before it they held in full.
 pub(crate) const QUALIFY_TS: u64 = T_NOW + 2 * SECONDS_PER_DAY;
 
-/// One block's worth of compressed-entity authority: the executor scope and the
-/// finalized parent bodies. Tests never cross a block, so the overlay is the truth.
-pub(crate) struct World {
-    pub(crate) scope: ExecutionScope,
-    pub(crate) parent: GemRepositoryReader,
-}
-
-impl World {
-    pub(crate) fn readers(&self) -> ExecutionReaders<'_, '_, GemRepositoryReader> {
-        ExecutionReaders {
-            scope: &self.scope,
-            parent: &self.parent,
-        }
-    }
-}
-
-/// A provider at `T_NOW` whose compressed-entity lifecycle is open for the block.
-pub(crate) fn provider_at(timestamp: u64) -> (HashMapStorageProvider, World) {
+/// Construct native contract state at the requested timestamp.
+pub(crate) fn provider_at(timestamp: u64) -> HashMapStorageProvider {
     let mut provider = HashMapStorageProvider::new(1);
     provider.set_timestamp(U256::from(timestamp));
-    let world = World {
-        scope: ExecutionScope::default(),
-        parent: crate::gem_reader(Arc::new(MemoryStorage::new())),
-    };
-    StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
-        begin_block(storage, &world.scope).expect("open the CE block");
-    });
-    (provider, world)
+    provider
 }
 
-pub(crate) fn with_storage<R>(f: impl FnOnce(&StorageHandle, &World) -> R) -> R {
-    let (mut provider, world) = provider_at(T_NOW);
-    StorageHandle::enter(&mut provider, |handle| f(&handle, &world))
+pub(crate) fn with_storage<R>(f: impl FnOnce(&StorageHandle) -> R) -> R {
+    let mut provider = provider_at(T_NOW);
+    StorageHandle::enter(&mut provider, |handle| f(&handle))
 }
 
 pub(crate) fn sample_params(owner: Address) -> GemAddParams {
@@ -85,7 +54,7 @@ pub(crate) fn sample_params(owner: Address) -> GemAddParams {
 }
 
 /// Records a gem whose bucket seals the live profile's call terms.
-pub(crate) fn add(storage: &StorageHandle, world: &World, mut params: GemAddParams) -> U256 {
+pub(crate) fn add(storage: &StorageHandle, mut params: GemAddParams) -> U256 {
     let profile = crate::config::read(storage).unwrap();
     params.call_terms = Some(CallTerms {
         call_price_minor: outbe_primitives::markup::marked_up(
@@ -99,26 +68,24 @@ pub(crate) fn add(storage: &StorageHandle, world: &World, mut params: GemAddPara
         call_threshold_seconds: profile.call_threshold_seconds,
         call_notice_period_seconds: profile.call_notice_period_seconds,
     });
-    api::add_gem(storage, &world.scope, &world.parent, params).unwrap()
+    api::add_gem(storage, params).unwrap()
 }
 
-pub(crate) fn item(storage: &StorageHandle, world: &World, gem_id: U256) -> Option<GemItemState> {
-    api::get_item(storage, &world.scope, &world.parent, gem_id).unwrap()
+pub(crate) fn item(storage: &StorageHandle, gem_id: U256) -> Option<GemItemState> {
+    api::get_item(storage, gem_id).unwrap()
 }
 
-pub(crate) fn view(storage: &StorageHandle, world: &World, gem_id: U256) -> GemView {
-    api::get_view(storage, &world.scope, &world.parent, gem_id)
-        .unwrap()
-        .unwrap()
+pub(crate) fn view(storage: &StorageHandle, gem_id: U256) -> GemView {
+    api::get_view(storage, gem_id).unwrap().unwrap()
 }
 
-pub(crate) fn bucket_of(storage: &StorageHandle, world: &World, gem_id: U256) -> B256 {
-    item(storage, world, gem_id).unwrap().bucket_key
+pub(crate) fn bucket_of(storage: &StorageHandle, gem_id: U256) -> B256 {
+    item(storage, gem_id).unwrap().bucket_key
 }
 
 /// Calls the gem's whole bucket at `at`.
-pub(crate) fn call_gem(storage: &StorageHandle, world: &World, gem_id: U256, at: u64) {
-    let bucket = bucket_of(storage, world, gem_id);
+pub(crate) fn call_gem(storage: &StorageHandle, gem_id: U256, at: u64) {
+    let bucket = bucket_of(storage, gem_id);
     let mut gem = GemContract::new(storage.clone());
     let notice = gem
         .read_call_terms(bucket)
@@ -129,35 +96,31 @@ pub(crate) fn call_gem(storage: &StorageHandle, world: &World, gem_id: U256, at:
 }
 
 /// Records a gem settled, as GemFactory does once payment is accepted.
-pub(crate) fn settle(storage: &StorageHandle, world: &World, gem_id: U256) {
-    let (item, bucket) = api::load_pair(storage, &world.scope, &world.parent, gem_id)
-        .unwrap()
-        .unwrap();
-    api::record_settled(storage, &world.scope, item, bucket).unwrap();
+pub(crate) fn settle(storage: &StorageHandle, gem_id: U256) {
+    let (item, bucket) = api::load_pair(storage, gem_id).unwrap().unwrap();
+    api::record_settled(storage, item, bucket).unwrap();
 }
 
 /// Qualifies then settles an uncalled gem.
-pub(crate) fn qualify_and_settle(storage: &StorageHandle, world: &World, gem_id: U256) {
-    let gem = item(storage, world, gem_id).unwrap();
+pub(crate) fn qualify_and_settle(storage: &StorageHandle, gem_id: U256) {
+    let gem = item(storage, gem_id).unwrap();
     close_day_above(
         storage,
         gem.reference_currency,
         gem.floor_price_minor,
         first_full_day(gem.issued_at),
     );
-    settle(storage, world, gem_id);
+    settle(storage, gem_id);
 }
 
-pub(crate) fn burn_settled(storage: &StorageHandle, world: &World, gem_id: U256) {
-    let (item, bucket) = api::load_pair(storage, &world.scope, &world.parent, gem_id)
-        .unwrap()
-        .unwrap();
-    api::remove_gem(storage, &world.scope, item, bucket).unwrap();
+pub(crate) fn burn_settled(storage: &StorageHandle, gem_id: U256) {
+    let (item, bucket) = api::load_pair(storage, gem_id).unwrap().unwrap();
+    api::remove_gem(storage, item, bucket).unwrap();
 }
 
 /// Whether the gem has qualified, as settlement and the view read it.
-pub(crate) fn is_qualified(storage: &StorageHandle, world: &World, gem_id: U256) -> bool {
-    api::is_qualified(storage, &item(storage, world, gem_id).unwrap()).unwrap()
+pub(crate) fn is_qualified(storage: &StorageHandle, gem_id: U256) -> bool {
+    api::is_qualified(storage, &item(storage, gem_id).unwrap()).unwrap()
 }
 
 pub(crate) fn set_profile(storage: &StorageHandle, profile: u8) {
@@ -227,26 +190,11 @@ pub(crate) fn seed_currency(storage: &StorageHandle, iso_code: u16, rate: Option
 
 // --- Precompile -----------------------------------------------------------------
 
-pub(crate) fn call(
-    storage: &StorageHandle,
-    world: &World,
-    data: Vec<u8>,
-) -> Result<alloy_primitives::Bytes> {
-    dispatch(
-        storage.clone(),
-        world.readers(),
-        &data,
-        Address::ZERO,
-        U256::ZERO,
-    )
+pub(crate) fn call(storage: &StorageHandle, data: Vec<u8>) -> Result<alloy_primitives::Bytes> {
+    dispatch(storage.clone(), &data, Address::ZERO, U256::ZERO)
 }
 
-pub(crate) fn status(storage: &StorageHandle, world: &World, gem_id: U256) -> IGem::GemData {
-    let out = call(
-        storage,
-        world,
-        IGem::getGemCall { gemId: gem_id }.abi_encode(),
-    )
-    .unwrap();
+pub(crate) fn status(storage: &StorageHandle, gem_id: U256) -> IGem::GemData {
+    let out = call(storage, IGem::getGemCall { gemId: gem_id }.abi_encode()).unwrap();
     IGem::getGemCall::abi_decode_returns(&out).unwrap()
 }

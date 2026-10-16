@@ -1,7 +1,6 @@
 use super::super::recovery::copied_native;
 use super::*;
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::TributeBodyV1;
 use outbe_lysis::program_v1::planner::{LysisPlanTopologyV1, PlannedUnitPositionV1};
 use outbe_ocomp::nod_materialization::build_nod_materialization_batch_with_references;
 use outbe_ocomp::{
@@ -27,6 +26,7 @@ use outbe_ocomp_protocol::{
     nod_materialization::NodMaterializationHeadV1, profile::ProtocolBundleV1, CasObjectRefV1,
     StreamingOrderedListRoot,
 };
+use outbe_primitives::entity_codec::TributeBodyV1;
 use outbe_primitives::time::WorldwideDay;
 use std::{
     fs,
@@ -52,9 +52,14 @@ struct Fixture {
 }
 impl Fixture {
     fn seed_pending_head(&self, storage: &outbe_primitives::storage::StorageHandle<'_>) {
-        self.protected_sources.seed_source_root(storage).unwrap();
+        self.protected_sources.seed_sources(storage).unwrap();
         let nod = outbe_nod::schema::NodContract::new(storage.clone());
         let p = outbe_nod::schema::NodCertifiedGenerationProjection {
+            source_checkpoint: outbe_ocomp_protocol::intent::FinalizedRequestBindingV1 {
+                block_number: self.protected_sources.subject.checkpoint.block_number,
+                block_hash: self.protected_sources.subject.checkpoint.block_hash,
+                state_root: self.protected_sources.subject.checkpoint.state_root,
+            },
             worldwide_day: self.day,
             generation: 1,
             job_id: self.job_id,
@@ -76,6 +81,15 @@ impl Fixture {
         nod.ocomp_materialization_tail_sequence.write(2).unwrap();
         nod.ocomp_materialization_queue_wwd
             .write(&1, self.day)
+            .unwrap();
+        nod.ocomp_source_block_number
+            .write(&self.day, p.source_checkpoint.block_number)
+            .unwrap();
+        nod.ocomp_source_block_hash
+            .write(&self.day, p.source_checkpoint.block_hash)
+            .unwrap();
+        nod.ocomp_source_state_root
+            .write(&self.day, p.source_checkpoint.state_root)
             .unwrap();
         nod.ocomp_target_generation.write(&self.day, 1).unwrap();
         nod.ocomp_namespace_root
@@ -232,11 +246,11 @@ fn protected_batch(
     head.next_nod_ordinal = batch.first_nod_ordinal;
     f.protected_sources
         .protect(
-            &outbe_tee::nod_materialization::NodMaterializationAuthorityV2 {
-                chain_id: copied_native::chain().chain().id(),
+            &outbe_tee::nod_state_materialization::StateNodAuthority {
+                source: f.protected_sources.subject,
                 head: head.encode_canonical(&poc_schema_limits()).unwrap(),
                 subtree_height: 3,
-                sealed_tribute_root: f.protected_sources.source_root(),
+                source_bindings: vec![],
             },
             batch,
         )

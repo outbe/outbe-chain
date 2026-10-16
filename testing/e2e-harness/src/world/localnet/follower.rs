@@ -243,7 +243,7 @@ impl Localnet {
     #[cfg(feature = "ocomp-integration")]
     pub(crate) fn prepare_snapshot_full_node(&mut self, index: usize) -> Result<()> {
         self.provision_full_node_node_host(index)?;
-        crate::world::projection::ensure_node_config(&self.cfg, index)?;
+
         Ok(())
     }
 
@@ -636,7 +636,6 @@ mod tests {
             "node".to_owned(),
             "--datadir".to_owned(),
             "/srv/outbe/validator-3/data".to_owned(),
-            "--projection.storage-config=/srv/outbe/validator-3/offchain-storage.toml".to_owned(),
             "--upstream".to_owned(),
             "http://validator-0:8545".to_owned(),
             "--tee-enclave-socket".to_owned(),
@@ -680,7 +679,6 @@ mod tests {
             "/srv/outbe/genesis.json".to_owned(),
             "--datadir".to_owned(),
             "/srv/outbe/validator-3/data".to_owned(),
-            "--projection.storage-config=/srv/outbe/validator-3/offchain-storage.toml".to_owned(),
             "--bootnodes=enode://canonical".to_owned(),
             "--validator".to_owned(),
             "--consensus.signing-key".to_owned(),
@@ -717,8 +715,8 @@ mod tests {
             exact_restore, original,
             "validator restart must retain byte-for-byte original argv"
         );
-        assert!(follower.contains(
-            &"--projection.storage-config=/srv/outbe/validator-3/offchain-storage.toml".to_owned()
-        ));
+        assert!(!follower
+            .iter()
+            .any(|arg| arg.starts_with("--projection.storage-config")));
     }
 }

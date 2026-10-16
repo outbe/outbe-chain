@@ -1,5 +1,4 @@
 use alloy_primitives::{Address, U256};
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_gemfactory::GemTypes;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
@@ -25,23 +24,19 @@ struct QueuedRewardGemBatch {
     recipients: Vec<(Address, U256)>,
 }
 
-/// Delivers the next recipient of the FIFO head batch: one compressed Gem body per
-/// block, the amount of compressed-entity gas the system envelope reserves. The head
+/// Delivers the next recipient of the FIFO head batch as one Gem in EVM state.
+/// The existing system envelope reserves the work for one recipient. The head
 /// retires once every recipient was served. Missing or stale price data is a
 /// successful no-op. A mint failure leaves atomic rollback to this checkpoint and to
 /// the enclosing system transaction.
 pub fn deliver_oldest_reward_gem_batch(
     ctx: &BlockRuntimeContext,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
 ) -> Result<RewardGemDeliveryOutcome> {
-    ctx.with_checkpoint(|| deliver_oldest_reward_gem_batch_inner(ctx, scope, parent))
+    ctx.with_checkpoint(|| deliver_oldest_reward_gem_batch_inner(ctx))
 }
 
 fn deliver_oldest_reward_gem_batch_inner(
     ctx: &BlockRuntimeContext,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
 ) -> Result<RewardGemDeliveryOutcome> {
     let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
     let Some(head) = read_reward_gem_fifo_head(&rewards)? else {
@@ -73,8 +68,6 @@ fn deliver_oldest_reward_gem_batch_inner(
         })?;
     outbe_gemfactory::api::issue_gem(
         &ctx.storage,
-        scope,
-        parent,
         outbe_gemfactory::GemIssueParams {
             owner,
             gem_type: batch.gem_type,

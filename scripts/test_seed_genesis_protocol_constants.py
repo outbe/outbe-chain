@@ -130,7 +130,7 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
                 self.assertNotIn(
                     "gems",
                     seed,
-                    "Gem bodies are compressed entities and cannot be genesis-seeded",
+                    "The network seed does not issue Gems",
                 )
                 if filename.startswith("seed-testnet"):
                     # A network profile seeds no worldwide day. The runtime

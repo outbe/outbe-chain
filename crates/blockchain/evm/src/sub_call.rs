@@ -22,8 +22,6 @@ use crate::precompiles::{
 use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Address, B256, U256};
 use core::fmt::Debug;
-use outbe_compressed_entities::ExecutionScope;
-use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::storage::{SubCallError, SubCallInput, SubCallOutput, SubCallStatus};
 use revm::{
     context::{Evm, LocalContextTr},
@@ -51,11 +49,9 @@ pub struct SubCallEnvironment {
     pub self_address: Address,
     pub outer_is_static: bool,
     pub spec: SpecId,
-    pub runtime_body_readers: Option<RuntimeBodyReaders>,
-    pub execution_scope: Arc<ExecutionScope>,
 }
 
-/// Runs a sub-call with the executor-owned compressed-entity lifecycle scope.
+/// Runs a sub-call through the executor-owned EVM context.
 ///
 /// `environment.outer_is_static = true` forces the child to STATICCALL regardless of the
 /// caller's `input.is_static` field (outer STATIC propagates inward).
@@ -72,8 +68,6 @@ where
         self_address,
         outer_is_static,
         spec,
-        runtime_body_readers,
-        execution_scope,
     } = environment;
     run_with_ocomp_context(
         ctx,
@@ -81,12 +75,7 @@ where
             self_address,
             outer_is_static,
             execution: OutbePrecompileExecutionContext::new(spec, B256::ZERO),
-            runtime: OutbePrecompileRuntime::new(
-                runtime_body_readers,
-                execution_scope,
-                None,
-                false,
-            ),
+            runtime: OutbePrecompileRuntime::new(None, false),
             activation_meter: Arc::new(OcompActivationBlockMeter),
         },
         input,

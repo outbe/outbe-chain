@@ -42,8 +42,8 @@ pub enum ComputeError {
     AmountOverflow,
 }
 
-impl From<outbe_compressed_entities::CommitmentError> for ComputeError {
-    fn from(err: outbe_compressed_entities::CommitmentError) -> Self {
+impl From<outbe_primitives::wwd_entity_id::EntityIdDerivationError> for ComputeError {
+    fn from(err: outbe_primitives::wwd_entity_id::EntityIdDerivationError) -> Self {
         Self::PoseidonDigest(err.to_string())
     }
 }

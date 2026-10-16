@@ -101,25 +101,6 @@ fn unwrap_single_generic_type(ty: &Type) -> Option<Type> {
     }
 }
 
-fn is_scalar_like_type(ty: &Type) -> bool {
-    matches!(
-        last_type_ident(ty).as_deref(),
-        Some("u8")
-            | Some("u16")
-            | Some("u32")
-            | Some("u64")
-            | Some("bool")
-            | Some("U256")
-            | Some("Address")
-            | Some("B256")
-            | Some("WorldwideDay")
-            | Some("WwdEntityId")
-            | Some("Optional")
-            | Some("Option")
-            | Some("Deprecated")
-    )
-}
-
 #[proc_macro_attribute]
 pub fn storage_schema(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item

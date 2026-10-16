@@ -14,28 +14,6 @@ interface INod {
     /// The range is the ids of that day, whose top four bytes are the day.
     event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
 
-    event NodBodyStored(
-        uint256 nodId,
-        uint32 commitmentSchemeVersion,
-        uint32 schemaVersion,
-        bytes32 previousCommitment,
-        bytes32 newCommitment,
-        bytes canonicalPayload
-    );
-
-    event NodBodyDeleted(uint256 nodId, bytes32 previousCommitment);
-
-    event NodBucketBodyStored(
-        uint256 bucketId,
-        uint32 commitmentSchemeVersion,
-        uint32 schemaVersion,
-        bytes32 previousCommitment,
-        bytes32 newCommitment,
-        bytes canonicalPayload
-    );
-
-    event NodBucketBodyDeleted(uint256 bucketId, bytes32 previousCommitment);
-
     /// Bucket force-called by the daily Call scan: the reference price
     /// exceeded the bucket's call price on enough of the trailing window. Every
     /// Nod in the bucket must be settled by `settlementDeadline`. Otherwise the

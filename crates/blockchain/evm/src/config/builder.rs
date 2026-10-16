@@ -1,9 +1,7 @@
 use crate::{signer::SharedOutbeEvmSigner, system_tx::OcompLifecycleActivation};
 
-use outbe_compressed_entities::CompressedTreeService;
 use outbe_metadosis::api::OcompFinalizedIntentAuthority;
 use outbe_metadosis::config::OcompForkInstallV1;
-use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::{consensus::ConsensusExecutionBridge, OutbeHeader, OutbePrimitives};
 use reth_ethereum::{
     chainspec::ChainSpec,
@@ -31,10 +29,6 @@ pub struct OutbeExecutorBuilder {
     pub bridge: Option<ConsensusExecutionBridge>,
     /// Optional validator EVM signer, injected by the node binary in validator mode.
     pub evm_signer: Option<SharedOutbeEvmSigner>,
-    /// Required read-only Tribute and Nod body authority for live execution.
-    pub runtime_body_readers: Option<RuntimeBodyReaders>,
-    /// Explicit CE tree owner. It is mandatory for live execution.
-    pub compressed_tree_service: Option<Arc<CompressedTreeService>>,
     /// Inert until the canonical OCM-26 devnet schedule is supplied.
     pub ocomp_lifecycle_activation: OcompLifecycleActivation,
     /// Complete immutable authority installed at the activation height.
@@ -50,11 +44,6 @@ impl std::fmt::Debug for OutbeExecutorBuilder {
             .field(
                 "evm_signer",
                 &self.evm_signer.as_ref().map(|signer| signer.address()),
-            )
-            .field("runtime_body_readers", &self.runtime_body_readers.is_some())
-            .field(
-                "compressed_tree_service",
-                &self.compressed_tree_service.is_some(),
             )
             .field(
                 "ocomp_lifecycle_activation",
@@ -75,8 +64,7 @@ impl OutbeExecutorBuilder {
         Self {
             bridge: Some(bridge),
             evm_signer: None,
-            runtime_body_readers: None,
-            compressed_tree_service: None,
+
             ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
             ocomp_fork_install: None,
             ocomp_finality_authority: None,
@@ -85,17 +73,6 @@ impl OutbeExecutorBuilder {
 
     pub fn with_evm_signer(mut self, signer: SharedOutbeEvmSigner) -> Self {
         self.evm_signer = Some(signer);
-        self
-    }
-
-    /// Installs the mandatory read-only Tribute and Nod body bundle.
-    pub fn with_runtime_body_readers(mut self, readers: RuntimeBodyReaders) -> Self {
-        self.runtime_body_readers = Some(readers);
-        self
-    }
-
-    pub fn with_compressed_tree_service(mut self, service: Arc<CompressedTreeService>) -> Self {
-        self.compressed_tree_service = Some(service);
         self
     }
 
@@ -160,12 +137,6 @@ where
                 );
             }
         }
-        let runtime_body_readers = self
-            .runtime_body_readers
-            .ok_or(crate::errors::OutbeEvmBuilderError::MissingRuntimeBodyReaders)?;
-        let compressed_tree_service = self
-            .compressed_tree_service
-            .ok_or(crate::errors::OutbeEvmBuilderError::MissingCompressedTreeService)?;
         // always install a provider-backed
         // `AccountedParentArtifactProvider` so the executor can resolve the
         // parent artifact in both bridge mode (cache + provider) and full-node
@@ -180,22 +151,18 @@ where
                         ctx.provider().clone(),
                         Some(summary_cache),
                     )),
-                    runtime_body_readers,
                 )
             }
-            None => OutbeEvmConfig::new_with_provider_and_runtime_body_readers(
+            None => OutbeEvmConfig::new_with_provider_only(
                 ctx.chain_spec(),
                 Arc::new(RethAccountedParentArtifactProvider::new(
                     ctx.provider().clone(),
                     None,
                 )),
-                runtime_body_readers,
             ),
         };
 
-        let mut config = config
-            .with_compressed_tree_service(compressed_tree_service)
-            .with_ocomp_lifecycle_activation(self.ocomp_lifecycle_activation);
+        let mut config = config.with_ocomp_lifecycle_activation(self.ocomp_lifecycle_activation);
         if let Some(install) = self.ocomp_fork_install {
             config = config.with_ocomp_fork_install(install);
         }

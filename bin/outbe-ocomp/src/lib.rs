@@ -12,7 +12,6 @@ pub mod embedded_runtime;
 pub mod errors;
 pub mod export_binding;
 pub mod export_receipt;
-pub mod exporter;
 pub mod inbox;
 pub mod input_artifacts;
 pub mod input_inventory;

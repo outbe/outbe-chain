@@ -6,8 +6,6 @@ mod sponsored_gem;
 #[path = "settlement_nod.rs"]
 mod erc20_nod;
 
-pub(crate) use erc20_nod::compressed_body;
-
 pub(crate) fn exercise_encrypted_nod(world: &mut crate::world::World, day: u32) {
     erc20_nod::run_relayed_mining(world, 0, day, true);
 }
@@ -489,7 +487,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
     let (nod_id, initial) = wait_for_materialized_nod(world, port, owner);
     erc20_nod::qualify_public_nod(
         world,
-        outbe_compressed_entities::WwdEntityId::try_from(nod_id.as_slice())
+        outbe_primitives::wwd_entity_id::WwdEntityId::try_from(nod_id.as_slice())
             .expect("original public Nod identity"),
         owner,
         initial.floorPriceMinor,

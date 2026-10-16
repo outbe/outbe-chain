@@ -124,9 +124,6 @@ fn block_1_begin_block_rejects_missing_genesis_ocomp_profile_without_partial_sta
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
     storage.enter(|handle| {
-        outbe_compressed_entities::test_support::seed_compressed_entities_genesis_after_marker(
-            &handle,
-        );
         genesis_block(handle, GENESIS_TS + 60);
     });
 

@@ -20,19 +20,15 @@ pub(crate) enum CheckName {
     Provenance,
     Headers,
     Evm,
-    Ce,
-    Bodies,
     Ocomp,
 }
 
 impl CheckName {
-    pub(crate) const ALL: [Self; 7] = [
+    pub(crate) const ALL: [Self; 5] = [
         Self::Files,
         Self::Provenance,
         Self::Headers,
         Self::Evm,
-        Self::Ce,
-        Self::Bodies,
         Self::Ocomp,
     ];
 }
@@ -59,8 +55,6 @@ pub(crate) struct CheckReport {
 pub(crate) struct ObservedFrontiers {
     pub(crate) h: Option<BlockIdentity>,
     pub(crate) e: Option<BlockIdentity>,
-    pub(crate) q: Option<BlockIdentity>,
-    pub(crate) p: Option<BlockIdentity>,
     pub(crate) c_baseline: Option<BlockIdentity>,
     pub(crate) c_previous: Option<BlockIdentity>,
     pub(crate) c_current: Option<BlockIdentity>,
@@ -109,17 +103,8 @@ pub(crate) struct ActiveOcompObservation {
     pub(crate) worldwide_day: u32,
     pub(crate) canonical_status: String,
     pub(crate) pin_stage: String,
-    pub(crate) projection_before_request: Option<bool>,
     pub(crate) source_verified: bool,
     pub(crate) export_verified: bool,
-}
-
-/// A completed primary/index and retained-body structural audit at P.
-/// This does not establish equality to the CE leaf stream at Q.
-#[derive(Debug, Serialize)]
-pub(crate) struct BodyStructureObservation {
-    pub(crate) checkpoint: BlockIdentity,
-    pub(crate) status: CheckStatus,
 }
 
 #[derive(Debug, Serialize)]
@@ -135,8 +120,6 @@ pub(crate) struct ValidationReport {
     pub(crate) inventory_bounds: Vec<InventoryBounds>,
     pub(crate) provenance: ProvenanceObservation,
     pub(crate) active_ocomp: Vec<ActiveOcompObservation>,
-    /// None means no completed structural claim, including unselected/blocked checks.
-    pub(crate) body_structure: Option<BodyStructureObservation>,
 }
 
 impl ValidationReport {
@@ -170,7 +153,6 @@ impl ValidationReport {
             inventory_bounds: Vec::new(),
             provenance: ProvenanceObservation::default(),
             active_ocomp: Vec::new(),
-            body_structure: None,
         }
     }
 

@@ -10,27 +10,46 @@ use outbe_ocomp_protocol::{
     nod_materialization::ProtectedNodMaterializationV2, profile::poc_schema_limits,
 };
 use outbe_primitives::nod_encryption::EncryptedNodV2;
+use outbe_tee::nod_state_materialization::{PrepareStateNodsRequest, StateNodAuthority};
 use outbe_tee::{
-    nod_materialization::{self, NodMaterializationAuthorityV2, PrepareEncryptedNodsRequestV2},
+    nod_materialization,
     nod_mine::{self, MineEncryptedNodRequestV2},
     protocol::EnclaveResponse,
 };
-pub(super) fn prepare(
+
+pub(super) fn prepare_state(
     keys: &EnclaveKeys,
     offer: &SharedTributeOfferKey,
     chain: B256,
-    request: &PrepareEncryptedNodsRequestV2,
+    request: &PrepareStateNodsRequest,
 ) -> EnclaveResponse {
     response((|| -> EnclaveResult<EnclaveResponse> {
         let key = offer
             .get()
             .ok_or(TransportDispatchError::NoResidentNetworkKey)?;
-        if request.authority.chain_id != resident_chain_id(chain)? {
+        if request.authority.source.chain_id != resident_chain_id(chain)? {
             return Err(TransportDispatchError::NodMaterializationChainMismatch.into());
         }
-        let inputs = nod_materialization::hash(b"outbe/nod/prepare-inputs/v2", request)
+        let inputs = nod_materialization::hash(b"outbe/nod/state-prepare-inputs", request)
             .map_err(|_| TransportDispatchError::InvalidNodPrepareInputs)?;
-        let carrier = match crate::nod_materialization::prepare(key.secret(), request) {
+        if request.sources.is_empty() {
+            let lookup = match crate::nod_state_materialization::request_sources(request) {
+                Ok(lookup) => lookup,
+                Err(error) => return materialization_failure(keys, inputs, error),
+            };
+            let preimage = nod_materialization::attestation(
+                b"outbe/nod/state-source-request",
+                inputs,
+                &lookup,
+            )
+            .map_err(|_| TransportDispatchError::InvalidNodPrepareResult)?;
+            return Ok(EnclaveResponse::TributeSourcesRequested {
+                lookup,
+                inputs_canonical_hash: inputs,
+                attestation_tag: keys.sign_attestation(&preimage).to_vec(),
+            });
+        }
+        let carrier = match crate::nod_state_materialization::prepare(key.secret(), request) {
             Ok(carrier) => carrier,
             Err(error) => return materialization_failure(keys, inputs, error),
         };
@@ -49,9 +68,8 @@ pub(super) fn prepare(
             }
             Err(_) => return Err(TransportDispatchError::InvalidProtectedNodCarrier.into()),
         };
-
         let preimage =
-            nod_materialization::attestation(b"outbe/nod/prepare-result/v2", inputs, &carrier)
+            nod_materialization::attestation(b"outbe/nod/state-prepare-result", inputs, &carrier)
                 .map_err(|_| TransportDispatchError::InvalidNodPrepareResult)?;
         Ok(EnclaveResponse::EncryptedNodsPreparedV2 {
             carrier,
@@ -60,40 +78,42 @@ pub(super) fn prepare(
         })
     })())
 }
-pub(super) fn open(
+
+pub(super) fn open_state(
     keys: &EnclaveKeys,
     offer: &SharedTributeOfferKey,
     chain: B256,
-    authority: &NodMaterializationAuthorityV2,
+    authority: &StateNodAuthority,
     carrier: &[u8],
 ) -> EnclaveResponse {
     response((|| -> EnclaveResult<EnclaveResponse> {
         let key = offer
             .get()
             .ok_or(TransportDispatchError::NoResidentNetworkKey)?;
-        if authority.chain_id != resident_chain_id(chain)? {
+        if authority.source.chain_id != resident_chain_id(chain)? {
             return Err(TransportDispatchError::NodMaterializationChainMismatch.into());
         }
-        let inputs = nod_materialization::hash(b"outbe/nod/open-inputs/v2", &(authority, carrier))
-            .map_err(|_| TransportDispatchError::InvalidNodOpenInputs)?;
+        let inputs =
+            nod_materialization::hash(b"outbe/nod/state-open-inputs", &(authority, carrier))
+                .map_err(|_| TransportDispatchError::InvalidNodOpenInputs)?;
         let decoded =
             match ProtectedNodMaterializationV2::decode_canonical(carrier, &poc_schema_limits()) {
-                Ok(decoded) => decoded,
+                Ok(carrier) => carrier,
                 Err(error) => {
                     return materialization_failure(
                         keys,
                         inputs,
                         TeeError::tribute_offer_reject(error),
-                    );
+                    )
                 }
             };
-        let nods = match crate::nod_materialization::open(key.secret(), authority, &decoded) {
+        let nods = match crate::nod_state_materialization::open(key.secret(), authority, &decoded) {
             Ok(nods) => nods,
             Err(error) => return materialization_failure(keys, inputs, error),
         };
-
-        let preimage = nod_materialization::attestation(b"outbe/nod/open-result/v2", inputs, &nods)
-            .map_err(|_| TransportDispatchError::InvalidNodOpenResult)?;
+        let preimage =
+            nod_materialization::attestation(b"outbe/nod/state-open-result", inputs, &nods)
+                .map_err(|_| TransportDispatchError::InvalidNodOpenResult)?;
         Ok(EnclaveResponse::EncryptedNodsOpenedV2 {
             nods,
             inputs_canonical_hash: inputs,
@@ -101,6 +121,7 @@ pub(super) fn open(
         })
     })())
 }
+
 pub(super) fn mine(
     keys: &EnclaveKeys,
     offer: &SharedTributeOfferKey,
@@ -303,26 +324,35 @@ mod tests {
     fn malformed_proof_is_signed_rejection_but_missing_key_is_local_fault() {
         let keys = EnclaveKeys::new([0x43; 32], None).unwrap();
         let offer: SharedTributeOfferKey = Arc::new(OnceLock::new());
-        let authority = NodMaterializationAuthorityV2 {
-            chain_id: 1,
+        let authority = StateNodAuthority {
+            source: outbe_tee::tribute_source::TributeSourceSubject {
+                checkpoint: outbe_tee::tribute_source::TributeSourceCheckpoint {
+                    block_number: 1,
+                    block_hash: B256::repeat_byte(2),
+                    state_root: B256::repeat_byte(3),
+                },
+                chain_id: 1,
+                worldwide_day: outbe_primitives::time::WorldwideDay::new(20261016),
+                tribute_count: 1,
+            },
             head: vec![],
             subtree_height: 3,
-            sealed_tribute_root: B256::repeat_byte(4),
+            source_bindings: vec![],
         };
         let chain = B256::from(alloy_primitives::U256::ONE);
         assert!(matches!(
-            open(&keys, &offer, chain, &authority, b"invalid"),
+            open_state(&keys, &offer, chain, &authority, b"invalid"),
             EnclaveResponse::Error { .. }
         ));
         assert!(offer
             .set(DerivedTributeOfferKey::for_test([7; 32], vec![9; 48], 0, 0))
             .is_ok());
         let expected = nod_materialization::hash(
-            b"outbe/nod/open-inputs/v2",
+            b"outbe/nod/state-open-inputs",
             &(&authority, b"invalid".as_slice()),
         )
         .unwrap();
-        match open(&keys, &offer, chain, &authority, b"invalid") {
+        match open_state(&keys, &offer, chain, &authority, b"invalid") {
             EnclaveResponse::EncryptedNodsRejectedV2 {
                 reason,
                 inputs_canonical_hash,

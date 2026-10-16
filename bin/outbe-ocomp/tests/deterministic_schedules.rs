@@ -9,7 +9,6 @@ use std::process::{Child, Command, Stdio};
 
 use alloy_primitives::{Address, B256, U256};
 use finality_fixture::{finalized_intent_proof_fixture, fixture_league};
-use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
 use outbe_lysis::program_v1::planner::{
     LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1,
 };
@@ -55,7 +54,9 @@ use outbe_ocomp_protocol::{
     UnitFinishedV1,
 };
 use outbe_primitives::addresses::{METADOSIS_ADDRESS, NOD_ADDRESS};
+use outbe_primitives::entity_codec::{encode_tribute_v1, TributeBodyV1};
 use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::wwd_entity_id::derive_poseidon_entity_id;
 use support::tempdir;
 
 const CHILD_MODE: &str = "OUTBE_OCOMP_DET_WORKER_CHILD";
@@ -219,12 +220,8 @@ fn run_schedule(worker_count: usize, seed: u64) -> ScheduleOutcome {
                     finalized_block_number: proof_fixture.block.number(),
                     finalized_block_hash: proof_fixture.header_hash,
                     finalized_state_root: proof_fixture.state_root,
-                    finalized_ce_root: intent.ce_sealed_root,
-                    ce_schema_version: 1,
                 },
                 wwd: day.value(),
-                sealed_tribute_collection_key: intent.sealed_tribute_collection_key,
-                sealed_tribute_collection_root: intent.sealed_tribute_collection_root,
             },
             canonical_tributes: tributes
                 .iter()
@@ -706,8 +703,6 @@ fn raw_oracle_opening(day: WorldwideDay, finalized_state_root: B256) -> RawContr
 }
 
 fn job_intent(day: WorldwideDay, protocol_bundle_hash: B256, nominal_total: U256) -> JobIntentV1 {
-    let collection_key = B256::repeat_byte(0x51);
-    let collection_root = B256::repeat_byte(0x52);
     JobIntentV1 {
         chain_id: 41,
         genesis_hash: B256::repeat_byte(0x41),
@@ -716,9 +711,6 @@ fn job_intent(day: WorldwideDay, protocol_bundle_hash: B256, nominal_total: U256
         pending_nonce: 0,
         attempt: 0,
         protocol_bundle_hash,
-        ce_sealed_root: B256::repeat_byte(0x50),
-        sealed_tribute_collection_key: collection_key,
-        sealed_tribute_collection_root: collection_root,
         authenticated_day_count: TRIBUTE_COUNT,
         authenticated_day_nominal: nominal_total,
         pre_admission_envelope_hash: B256::repeat_byte(0x53),
@@ -740,8 +732,7 @@ fn job_intent(day: WorldwideDay, protocol_bundle_hash: B256, nominal_total: U256
             tribute: TributeInputBindingV1 {
                 wwd: day.value(),
                 source_generation: 1,
-                collection_key,
-                sealed_collection_root: collection_root,
+
                 exact_count: TRIBUTE_COUNT,
                 exact_nominal_total: nominal_total,
             },

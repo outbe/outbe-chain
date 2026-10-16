@@ -1,4 +1,3 @@
-use crate::snapshot::tests::projection_fixture::PartitionFixtureStore as RocksDbStorage;
 use alloy_primitives::U256;
 use outbe_intex::schema::SeriesId;
 use outbe_primitives::time::WorldwideDay;
@@ -37,22 +36,17 @@ use super::super::{
 };
 use crate::OutbeHeader;
 use alloy_consensus::Sealable;
-use alloy_primitives::{keccak256, Address, B256};
+use alloy_primitives::B256;
 use outbe_intex::schema::{IntexContract, SeriesRecord};
 use outbe_nod::schema::{NodCertifiedGenerationProjection, NodContract};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, types::Storable, StorageHandle};
-use reth_ethereum::{
-    provider::db::{
-        database::Database,
-        init_db,
-        mdbx::DatabaseArguments,
-        tables,
-        transaction::{DbTx, DbTxMut},
-    },
-    trie::root::{state_root_unhashed, storage_root_unhashed},
+use reth_ethereum::provider::db::{
+    database::Database,
+    init_db,
+    mdbx::DatabaseArguments,
+    tables,
+    transaction::{DbTx, DbTxMut},
 };
-use reth_primitives_traits::{Account, StorageEntry};
-use std::collections::BTreeMap;
 const DAY: WorldwideDay = WorldwideDay::new(20_200_101);
 fn with_owner_storage(
     version: u32,
@@ -78,68 +72,60 @@ fn with_prepared_owner_storage_setup(
     prepare: impl FnOnce(&OutbeHeader) -> HashMapStorageProvider,
     check: impl FnOnce(&CanonicalState<'_>, &RethReadOnlyView),
 ) {
+    use crate::snapshot::tests::native_state;
     let (_source, layout, _) = super::evm::state_fixture(version);
     setup(&layout);
     let db = init_db(layout.chain_root.join("db"), DatabaseArguments::test()).unwrap();
-    let tx = db.tx_mut().unwrap();
+    let tx = db.tx().unwrap();
     let request = tx
         .get::<tables::Headers<OutbeHeader>>(100)
         .unwrap()
         .unwrap();
-    let owner = prepare(&request);
-    tx.clear::<tables::PlainAccountState>().unwrap();
-    tx.clear::<tables::PlainStorageState>().unwrap();
-    tx.clear::<tables::HashedAccounts>().unwrap();
-    tx.clear::<tables::HashedStorages>().unwrap();
-    let mut accounts: BTreeMap<Address, Vec<(B256, U256)>> = BTreeMap::new();
-    for ((address, slot), value) in owner.storage {
-        if !value.is_zero() {
-            accounts
-                .entry(address)
-                .or_default()
-                .push((B256::from(slot.to_be_bytes::<32>()), value));
-        }
-    }
-    let root = state_root_unhashed(accounts.iter().map(|(address, words)| {
-        (
-            *address,
-            Account::default().into_trie_account(storage_root_unhashed(words.iter().copied())),
-        )
-    }));
-    for (address, words) in accounts {
-        if version == 1 {
-            tx.put::<tables::PlainAccountState>(address, Account::default())
-                .unwrap();
-            for (key, value) in words {
-                tx.put::<tables::PlainStorageState>(address, StorageEntry { key, value })
-                    .unwrap();
-            }
-        } else {
-            tx.put::<tables::HashedAccounts>(keccak256(address), Account::default())
-                .unwrap();
-            for (key, value) in words {
-                tx.put::<tables::HashedStorages>(
-                    keccak256(address),
-                    StorageEntry {
-                        key: keccak256(key),
-                        value,
-                    },
-                )
-                .unwrap();
-            }
-        }
-    }
-    let mut header = tx
+    let before = native_state::read_plain(&tx);
+    let mut template = tx
         .get::<tables::Headers<OutbeHeader>>(101)
         .unwrap()
         .unwrap();
-    header.inner.state_root = root;
-    header.inner.timestamp = 1_010;
-    header.inner.number = execution_height;
-    tx.put::<tables::CanonicalHeaders>(execution_height, header.hash_slow())
-        .unwrap();
-    tx.put::<tables::Headers<OutbeHeader>>(execution_height, header)
-        .unwrap();
+    drop(tx);
+    drop(db);
+    let owner = prepare(&request);
+    let mut current = before.clone();
+    native_state::merge_owner(&mut current, &owner);
+    native_state::persist(
+        &layout,
+        version,
+        &before,
+        &current,
+        if execution_height > 101 { 102 } else { 101 },
+    );
+    let db = init_db(layout.chain_root.join("db"), DatabaseArguments::test()).unwrap();
+    let tx = db.tx_mut().unwrap();
+    for header in [
+        layout.chain.genesis_header().clone(),
+        request.clone(),
+        template.clone(),
+    ] {
+        tx.put::<tables::HeaderNumbers>(header.hash_slow(), header.inner.number)
+            .unwrap();
+    }
+    let mut parent = if execution_height == 101 {
+        request.hash_slow()
+    } else {
+        template.hash_slow()
+    };
+    template.inner.timestamp = 1_010;
+    for number in (if execution_height == 101 { 101 } else { 102 })..=execution_height {
+        let mut header = template.clone();
+        header.inner.parent_hash = parent;
+        header.inner.state_root = native_state::root(&current);
+        header.inner.number = number;
+        let hash = header.hash_slow();
+        tx.put::<tables::CanonicalHeaders>(number, hash).unwrap();
+        tx.put::<tables::HeaderNumbers>(hash, number).unwrap();
+        tx.put::<tables::Headers<OutbeHeader>>(number, header)
+            .unwrap();
+        parent = hash;
+    }
     for stage in ["Execution", "Finish"] {
         let mut checkpoint = tx
             .get::<tables::StageCheckpoints>(stage.into())
@@ -149,11 +135,9 @@ fn with_prepared_owner_storage_setup(
         tx.put::<tables::StageCheckpoints>(stage.into(), checkpoint)
             .unwrap();
     }
-    tx.clear::<tables::AccountChangeSets>().unwrap();
-    tx.clear::<tables::StorageChangeSets>().unwrap();
     tx.commit().unwrap();
     drop(db);
-    let before = super::headers::fingerprint(_source.path());
+    let before_files = super::headers::fingerprint(_source.path());
     let scratch = tempfile::tempdir().unwrap();
     let source = RethReadOnlyView::open(&layout).unwrap();
     let verified = verify_current_evm(&source, scratch.path()).unwrap();
@@ -161,7 +145,7 @@ fn with_prepared_owner_storage_setup(
     assert_eq!(headers.required_missing, vec![99]);
     let state = CanonicalState::new(&verified, &source, &headers);
     check(&state, &source);
-    assert_eq!(super::headers::fingerprint(_source.path()), before);
+    assert_eq!(super::headers::fingerprint(_source.path()), before_files);
 }
 
 fn seed_nod_generation(
@@ -170,6 +154,11 @@ fn seed_nod_generation(
     sequence: u64,
 ) -> NodCertifiedGenerationProjection {
     let generation = NodCertifiedGenerationProjection {
+        source_checkpoint: outbe_ocomp_protocol::intent::FinalizedRequestBindingV1 {
+            block_number: 1,
+            block_hash: B256::repeat_byte(0x71),
+            state_root: B256::repeat_byte(0x72),
+        },
         worldwide_day: day,
         generation: sequence,
         job_id: B256::repeat_byte(1),
@@ -188,6 +177,15 @@ fn seed_nod_generation(
         last_progress_height: 90,
     };
     let nod = NodContract::new(storage);
+    nod.ocomp_source_block_number
+        .write(&day, generation.source_checkpoint.block_number)
+        .unwrap();
+    nod.ocomp_source_block_hash
+        .write(&day, generation.source_checkpoint.block_hash)
+        .unwrap();
+    nod.ocomp_source_state_root
+        .write(&day, generation.source_checkpoint.state_root)
+        .unwrap();
     nod.ocomp_target_generation
         .write(&day, generation.generation)
         .unwrap();
@@ -460,10 +458,8 @@ fn with_canonical_frontiers(
         &std::path::Path,
     ),
 ) {
-    use crate::snapshot::config::{ProjectionLocation, RequestedLayout};
     use outbe_ocomp::discovery_spool::ContiguousCheckpointStoreV1;
-    use outbe_offchain_data::{ProjectionCheckpoint, ProjectionState, STORAGE_SCHEMA_VERSION};
-    use outbe_offchain_storage::{Key, Namespace, StorageWriter, Value};
+    use outbe_primitives::projection::ProjectionCheckpoint;
     use reth_ethereum::provider::db::models::StoredBlockBodyIndices;
     use std::cell::RefCell;
     let requested = RefCell::new(None);
@@ -471,69 +467,44 @@ fn with_canonical_frontiers(
         version,
         400,
         |native| {
-            let layout = RequestedLayout {
-                chain: native.chain.clone(),
-                chain_root: native.chain_root.clone(),
-                consensus_root: native.consensus_root.clone(),
-                ocomp_root: native.ocomp_root.clone(),
-                static_files_root: native.static_files_root.clone(),
-                execution_rocksdb_root: native.execution_rocksdb_root.clone(),
-                projection: Some(ProjectionLocation {
-                    root: native.offchain_root.clone(),
-                    start_block: native.projection_start_block,
-                }),
-                protected: native.protected.clone(),
-            };
+            let layout = native.clone();
+            {
+                let db = init_db(native.chain_root.join("db"), DatabaseArguments::test()).unwrap();
+                let tx = db.tx_mut().unwrap();
+                tx.put::<tables::BlockBodyIndices>(
+                    100,
+                    StoredBlockBodyIndices {
+                        first_tx_num: 0,
+                        tx_count: 0,
+                    },
+                )
+                .unwrap();
+                tx.commit().unwrap();
+            }
+            setup_public(&layout);
             let db = init_db(native.chain_root.join("db"), DatabaseArguments::test()).unwrap();
-            let tx = db.tx_mut().unwrap();
+            let tx = db.tx().unwrap();
             let header = tx
                 .get::<tables::Headers<OutbeHeader>>(100)
                 .unwrap()
                 .unwrap();
-            // Empty native frame: canonical active authority is read at E.
-            // This tests availability, not reconstructed execution history.
-            tx.put::<tables::BlockBodyIndices>(
-                100,
-                StoredBlockBodyIndices {
-                    first_tx_num: 0,
-                    tx_count: 0,
-                },
-            )
-            .unwrap();
-            tx.commit().unwrap();
+            drop(tx);
             drop(db);
             let point = ProjectionCheckpoint {
                 block_number: 100,
                 block_hash: header.hash_slow(),
             };
-            let location = layout.projection.as_ref().unwrap();
-            let projection = RocksDbStorage::open(&location.root).unwrap();
-            let saved = ProjectionState {
-                chain_id: layout.chain.chain().id(),
-                genesis_hash: layout.chain.genesis_hash(),
-                storage_schema_version: STORAGE_SCHEMA_VERSION,
-                start_block: location.start_block,
-                checkpoint: Some(point),
-            };
-            projection
-                .put(
-                    Namespace::new("projection_state").unwrap(),
-                    &Key::new(b"offchain_data".to_vec()).unwrap(),
-                    &Value::new(postcard::to_stdvec(&saved).unwrap()).unwrap(),
-                )
-                .unwrap();
-            drop(projection);
             let baseline = ProjectionCheckpoint {
                 block_number: 0,
                 block_hash: layout.chain.genesis_hash(),
             };
-            let root = layout
+            let path = layout
                 .ocomp_root
                 .join("exporter-v1/discovery/closure-checkpoint-v1");
-            let closure = ContiguousCheckpointStoreV1::open(&root, baseline).unwrap();
-            closure.compare_and_advance_to(baseline, point).unwrap();
-            drop(closure);
-            setup_public(&layout);
+            if !path.exists() {
+                let closure = ContiguousCheckpointStoreV1::open(&path, baseline).unwrap();
+                closure.compare_and_advance_to(baseline, point).unwrap();
+            }
             *requested.borrow_mut() = Some(layout);
         },
         prepare,

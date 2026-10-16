@@ -103,7 +103,6 @@ impl VerificationWork {
         &mut self,
         parent: PendingParent,
         finalized: (Height, Digest),
-        readiness: outbe_primitives::projection::ProjectionReadinessHandle,
     ) -> Option<(Height, Digest)> {
         if !self.accepts_parent(&parent) {
             return None;
@@ -125,7 +124,7 @@ impl VerificationWork {
             block.digest() == parent.digest && block.number() == parent.height.get()
         })?;
         let id = self.allocate_id();
-        let mut walk = Walk::new(
+        let walk = Walk::new(
             id,
             VerificationRequest {
                 round: parent.round,
@@ -134,15 +133,6 @@ impl VerificationWork {
                 epoch_fence: parent.epoch_fence,
                 execution_read_budget: ExecutionReadBudget::new(),
             },
-        );
-        let checkpoint = outbe_primitives::projection::ProjectionCheckpoint {
-            block_number: parent.height.get(),
-            block_hash: parent.digest.0,
-        };
-        walk.step = Step::Projection(
-            readiness
-                .wait_for(checkpoint, std::future::pending())
-                .boxed(),
         );
         self.convergence = Some(walk);
         // Until the new parent has a VALID delivery and proven ancestry, HEAD

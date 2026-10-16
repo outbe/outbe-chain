@@ -1,6 +1,6 @@
 use alloy_primitives::{B256, U256};
-use outbe_compressed_entities::WwdEntityId;
 use outbe_ocomp_protocol::{CanonicalReader, CanonicalWriter, SchemaLimits};
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 use super::coverage::{
     decode_raw_coverage_carrier, encode_raw_coverage_carrier, raw_coverage_root,

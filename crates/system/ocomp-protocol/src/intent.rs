@@ -33,7 +33,6 @@ wire_struct! {
         pub genesis_hash: B256,
         pub fork_id: B256,
         pub wwd: u32,
-        pub sealed_tribute_collection_root: B256,
         pub sealed_tribute_count: u32,
         pub sealed_tribute_canonical_body_bytes: u64,
         pub distinct_owner_count: u32,
@@ -75,8 +74,6 @@ wire_struct! {
     pub struct TributeInputBindingV1 {
         pub wwd: u32,
         pub source_generation: u64,
-        pub collection_key: B256,
-        pub sealed_collection_root: B256,
         pub exact_count: u32,
         pub exact_nominal_total: U256,
     }
@@ -118,9 +115,6 @@ wire_struct! {
         pub pending_nonce: u64,
         pub attempt: u32,
         pub protocol_bundle_hash: B256,
-        pub ce_sealed_root: B256,
-        pub sealed_tribute_collection_key: B256,
-        pub sealed_tribute_collection_root: B256,
         pub authenticated_day_count: u32,
         pub authenticated_day_nominal: U256,
         pub pre_admission_envelope_hash: B256,
@@ -192,19 +186,12 @@ impl ActivationPreconditionsV1 {
             && self.tribute.exact_nominal_total == intent.authenticated_day_nominal
     }
 
-    fn source_commitment_matches_intent(&self, intent: &JobIntentV1) -> bool {
-        self.tribute.collection_key == intent.sealed_tribute_collection_key
-            && self.tribute.sealed_collection_root == intent.sealed_tribute_collection_root
-    }
-
     fn target_bounds_match_tribute(&self) -> bool {
         self.nod.max_nod_count == self.tribute.exact_count
     }
 
     fn source_bounds_match_intent(&self, intent: &JobIntentV1) -> bool {
-        self.source_counts_match_intent(intent)
-            && self.source_commitment_matches_intent(intent)
-            && self.target_bounds_match_tribute()
+        self.source_counts_match_intent(intent) && self.target_bounds_match_tribute()
     }
 
     pub fn validate_for_intent(&self, intent: &JobIntentV1) -> Result<(), ProtocolError> {
@@ -236,9 +223,6 @@ impl JobIntentV1 {
         preimage.extend_from_slice(self.fork_id.as_slice());
         preimage.extend_from_slice(&self.wwd.to_be_bytes());
         preimage.extend_from_slice(self.protocol_bundle_hash.as_slice());
-        preimage.extend_from_slice(self.ce_sealed_root.as_slice());
-        preimage.extend_from_slice(self.sealed_tribute_collection_key.as_slice());
-        preimage.extend_from_slice(self.sealed_tribute_collection_root.as_slice());
         preimage.extend_from_slice(&self.authenticated_day_count.to_be_bytes());
         preimage.extend_from_slice(&self.authenticated_day_nominal.to_be_bytes::<32>());
         preimage.extend_from_slice(self.source_availability_policy_id.as_slice());

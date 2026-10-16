@@ -6,7 +6,6 @@ mod day_databases;
 mod day_directory;
 pub mod errors;
 mod memory;
-mod mongo;
 pub mod partitioned;
 mod pending;
 mod provider;
@@ -23,7 +22,6 @@ pub use config::{RocksDbConfig, StorageBackend, StorageConfig};
 pub use day_databases::DayDatabases;
 pub use day_directory::DayDirectory;
 pub use memory::MemoryStorage;
-pub use mongo::{MongoStorage, MongoStorageConfig, MongoWriterLease};
 pub use partitioned::{
     OwnerModuloPartition, PartitionContext, PartitionDataSource, PartitionId, PartitionReadSource,
     PartitionRouting, PartitionStrategy, PartitionedBatch, PartitionedStorage, ReadLocation,
@@ -115,9 +113,7 @@ pub trait StorageWriter: Send + Sync {
 
     /// Clears the given namespaces and applies the batch atomically. The default
     /// implementation rejects a non-empty namespace list. The in-memory adapter
-    /// deletes a whole keyspace without a row walk. The MongoDB adapter deletes
-    /// every document in the namespace (`delete_many`), so its cost grows with
-    /// the row count.
+    /// deletes a whole keyspace without a row walk.
     fn apply_atomic_clearing(
         &self,
         batch: &AtomicWriteBatch,

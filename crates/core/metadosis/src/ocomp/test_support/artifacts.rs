@@ -4,11 +4,6 @@ pub(super) fn hash(byte: u8) -> B256 {
     B256::repeat_byte(byte)
 }
 
-pub(super) fn tribute_collection_key() -> B256 {
-    let (_, key) = partition_collection_key(PartitionRef::TributeWwd(TEST_WWD)).unwrap();
-    B256::from(*key.as_bytes())
-}
-
 pub(super) fn capacity_profile() -> CapacityProfileV1 {
     CapacityProfileV1 {
         profile_id: hash(13),
@@ -172,9 +167,6 @@ pub(super) fn intent(
         pending_nonce: 0,
         attempt: 0,
         protocol_bundle_hash: bundle_hash,
-        ce_sealed_root: hash(42),
-        sealed_tribute_collection_key: tribute_collection_key(),
-        sealed_tribute_collection_root: hash(31),
         authenticated_day_count: 2,
         authenticated_day_nominal: U256::from(1_000),
         pre_admission_envelope_hash: hash(43),
@@ -196,8 +188,6 @@ pub(super) fn intent(
             tribute: TributeInputBindingV1 {
                 wwd: TEST_WWD.value(),
                 source_generation: 0,
-                collection_key: tribute_collection_key(),
-                sealed_collection_root: hash(31),
                 exact_count: 2,
                 exact_nominal_total: U256::from(1_000),
             },

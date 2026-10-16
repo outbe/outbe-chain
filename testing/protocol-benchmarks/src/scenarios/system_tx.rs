@@ -117,9 +117,9 @@ impl BenchmarkScenario for SystemTxScenario {
         let gas_limit = plan
             .gas_limit(0)
             .ok_or("system tx visible gas plan omitted entry 0 gas limit")?;
-        let ce_gas_limit = plan
-            .ce_gas_limit(0)
-            .ok_or("system tx visible gas plan omitted entry 0 CE budget")?;
+        let execution_gas_limit = plan
+            .execution_gas_limit(0)
+            .ok_or("system tx visible gas plan omitted entry 0 execution gas limit")?;
 
         let mut observation = Observation::new(
             [
@@ -182,7 +182,10 @@ impl BenchmarkScenario for SystemTxScenario {
         )
         .with_postcondition("system_tx.internal_result_is_production_total", "false")
         .with_artifact("visible.gas_limit", gas_limit.to_string())
-        .with_artifact("visible.ce_gas_limit", ce_gas_limit.to_string())
+        .with_artifact(
+            "visible.execution_gas_limit",
+            execution_gas_limit.to_string(),
+        )
         .with_artifact(
             "visible.block_gas_limit",
             protocol_block_gas_limit(prepared.block_number).to_string(),

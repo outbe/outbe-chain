@@ -629,18 +629,15 @@ struct RetentionBootstrap<'a> {
     certificate_scheme_provider: &'a HybridSchemeProvider<MinSig>,
 }
 struct RetentionServices<'a> {
-    retained_tribute_writer: Arc<RetainedTributeWriter>,
-    projection_retention_fence: Arc<ProjectionRetentionFence>,
     retention_selector: &'a Arc<SharedOcompRetentionSelector>,
 }
-struct ProjectionBootstrap<'a> {
+struct OcompBootstrap<'a> {
     bridge: &'a ConsensusExecutionBridge,
     recovery_anchor: &'a CertifiedFollowerRecoveryAnchor,
     last_consensus_finalized: Height,
     last_execution_height: u64,
 }
 struct FollowerReadiness<'a> {
-    projection: &'a ProjectionReadinessHandle,
     ocomp: &'a Option<ProjectionReadinessHandle>,
 }
 impl<E: FollowerRuntime> ExecutionBootstrap<E> {
@@ -649,7 +646,6 @@ impl<E: FollowerRuntime> ExecutionBootstrap<E> {
         let node = &self.node;
         let genesis_hash = self.startup.genesis_hash;
         let recovery_anchor = &self.history.recovery_anchor;
-        let projection_readiness = &self.services.projection_readiness;
         let engine_handle: EngineHandle = node.add_ons_handle.beacon_engine_handle.clone();
         let (execution_finalized_height_tx, execution_finalized_height_rx) =
             tokio::sync::mpsc::unbounded_channel::<u64>();
@@ -661,7 +657,6 @@ impl<E: FollowerRuntime> ExecutionBootstrap<E> {
                 last_finalized_height: recovery_anchor.checkpoint.block_number,
                 last_finalized_hash: recovery_anchor.checkpoint.block_hash,
             },
-            projection_readiness.clone(),
             Some(execution_finalized_height_tx),
         );
         let fcu_provider_node = node.clone();
@@ -691,19 +686,15 @@ impl<E: FollowerRuntime> ExecutionBootstrap<E> {
             finalized_heights: execution_finalized_height_rx,
         } = self.confirmed_executor().await?;
         let FollowerStackServices {
-            projection_readiness,
             ocomp_readiness,
-            retained_tribute_writer,
-            projection_retention_fence,
             retention_selector,
-            finalized_ce_committer,
-            ce_startup_recovery,
+            finalized_execution_barrier,
             follower_shutdown,
         } = self.services;
         let recovery_anchor = &self.history.recovery_anchor;
-        let recovered_ce_marker = ce_startup_recovery
-            .recover_before_participation(recovery_anchor.checkpoint.block_number)
-            .wrap_err("compressed-tree startup recovery failed before follower participation")?;
+        finalized_execution_barrier
+            .verify_checkpoint(recovery_anchor.checkpoint)
+            .wrap_err("native execution is not durable at the certified follower anchor")?;
         let finalized_parent_cert_store = RetentionBootstrap {
             node: &self.node,
             ocomp_storage_root: &self.storage_root,
@@ -711,27 +702,22 @@ impl<E: FollowerRuntime> ExecutionBootstrap<E> {
             certificate_scheme_provider: &self.history.certificate_scheme_provider,
         }
         .install(RetentionServices {
-            retained_tribute_writer,
-            projection_retention_fence,
             retention_selector: &retention_selector,
         })?;
-        ProjectionBootstrap {
+        OcompBootstrap {
             bridge: &self.bridge,
             recovery_anchor,
             last_consensus_finalized: self.history.last_consensus_finalized,
             last_execution_height: self.startup.last_execution_height,
         }
-        .wait(
-            FollowerReadiness {
-                projection: &projection_readiness,
-                ocomp: &ocomp_readiness,
-            },
-            recovered_ce_marker.height,
-        )
+        .wait(FollowerReadiness {
+            ocomp: &ocomp_readiness,
+        })
         .await?;
         let marshal_mailbox = &self.history.marshal_mailbox;
         let last_consensus_finalized = self.history.last_consensus_finalized;
-        let executor_actor = executor_actor.with_finalized_ce_committer(finalized_ce_committer);
+        let executor_actor =
+            executor_actor.with_finalized_execution_barrier(finalized_execution_barrier);
         let executor_actor = match ocomp_readiness {
             Some(readiness) => executor_actor.with_ocomp_readiness(readiness),
             None => executor_actor,
@@ -755,9 +741,7 @@ impl<E: FollowerRuntime> ExecutionBootstrap<E> {
             executor_handle,
             execution_finalized_height_rx,
             follower_shutdown,
-            _projection_readiness: projection_readiness,
             _retention_selector: retention_selector,
-            _ce_startup_recovery: ce_startup_recovery,
         }
         .run()
         .await
@@ -774,11 +758,7 @@ impl RetentionBootstrap<'_> {
             recovery_anchor,
             certificate_scheme_provider,
         } = self;
-        let RetentionServices {
-            retained_tribute_writer,
-            projection_retention_fence,
-            retention_selector,
-        } = services;
+        let RetentionServices { retention_selector } = services;
         outbe_node::ocomp::fork::require_startup_ocomp_fork_install(node.chain_spec().as_ref())?;
         let parent_cert_dir = ocomp_storage_root.join("finalized_parent_certs");
         let finalized_parent_cert_store =
@@ -801,13 +781,11 @@ impl RetentionBootstrap<'_> {
             ),
         );
         let ocomp_retention_coordinator = Arc::new(
-        outbe_node::ocomp::retention::OcompRetentionCoordinator::open_with_retained_tributes_and_fence(
-            ocomp_storage_root.join("ocomp_retention"),
-            ocomp_proof_source,
-            retained_tribute_writer,
-            projection_retention_fence,
-        ),
-    );
+            outbe_node::ocomp::retention::OcompRetentionCoordinator::open(
+                ocomp_storage_root.join("ocomp_retention"),
+                ocomp_proof_source,
+            ),
+        );
         retention_selector
             .install(Arc::clone(&ocomp_retention_coordinator))
             .wrap_err("failed to install follower OCOMP retention selector")?;
@@ -823,8 +801,8 @@ impl RetentionBootstrap<'_> {
         Ok(finalized_parent_cert_store)
     }
 }
-impl ProjectionBootstrap<'_> {
-    async fn wait(self, readiness: FollowerReadiness<'_>, ce_marker_height: u64) -> Result<()> {
+impl OcompBootstrap<'_> {
+    async fn wait(self, readiness: FollowerReadiness<'_>) -> Result<()> {
         let Self {
             bridge,
             recovery_anchor,
@@ -832,15 +810,8 @@ impl ProjectionBootstrap<'_> {
             last_execution_height,
         } = self;
         let FollowerReadiness {
-            projection: projection_readiness,
             ocomp: ocomp_readiness,
         } = readiness;
-        wait_for_recovered_projection(
-            "offchain-data",
-            projection_readiness.clone(),
-            recovery_anchor.checkpoint,
-        )
-        .await?;
         if let Some(readiness) = ocomp_readiness.clone() {
             wait_for_recovered_projection("OCOMP", readiness, recovery_anchor.checkpoint).await?;
         }
@@ -850,7 +821,6 @@ impl ProjectionBootstrap<'_> {
             marshal_processed = last_consensus_finalized.get(),
             recovery_height = recovery_anchor.checkpoint.block_number,
             recovery_hash = %recovery_anchor.checkpoint.block_hash,
-            ce_marker_height,
             last_execution_height,
             "certified follower startup recovery barrier completed"
         );
@@ -871,9 +841,7 @@ struct LiveFollower<E: FollowerRuntime> {
     execution_finalized_height_rx: tokio::sync::mpsc::UnboundedReceiver<u64>,
     follower_shutdown: crate::follower_shutdown::FollowerDrain,
     // The original startup held these owners until execution/proof draining completed.
-    _projection_readiness: ProjectionReadinessHandle,
     _retention_selector: Arc<SharedOcompRetentionSelector>,
-    _ce_startup_recovery: Arc<dyn CeStartupRecovery>,
 }
 impl<E: FollowerRuntime> LiveFollower<E> {
     async fn run(self) -> Result<()> {
@@ -888,9 +856,7 @@ impl<E: FollowerRuntime> LiveFollower<E> {
             executor_handle,
             execution_finalized_height_rx,
             follower_shutdown,
-            _projection_readiness,
             _retention_selector,
-            _ce_startup_recovery,
         } = self;
         let RecoveredFollowerHistory {
             marshal_actor,

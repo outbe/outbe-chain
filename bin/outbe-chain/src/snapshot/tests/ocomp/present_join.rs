@@ -22,7 +22,7 @@ fn empty_native_join_preserves_independent_frontiers_and_creates_no_job_stores()
                 let before = crate::snapshot::tests::headers::fingerprint(&layout.ocomp_root);
                 let mut report = ValidationReport::new([CheckName::Ocomp]);
                 verify_ocomp_relations(state, source, layout, scratch, &mut report).unwrap();
-                assert_eq!(report.observed.p.as_ref().unwrap().number, 100);
+
                 assert_eq!(report.observed.c_current.as_ref().unwrap().number, 100);
                 assert!(report.required_missing.is_empty());
                 assert!(report.active_ocomp.is_empty());
@@ -111,7 +111,6 @@ fn every_present_population_is_enumerated_even_without_live_canonical_jobs() {
                     error.downcast_ref::<Incomplete>().is_none(),
                     "{prefix}: {error:#}"
                 );
-                assert_eq!(report.observed.p.as_ref().unwrap().number, 100);
             },
         );
     }

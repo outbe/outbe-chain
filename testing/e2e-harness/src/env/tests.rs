@@ -23,7 +23,7 @@ fn offchain_storage_network_scenario_is_registered_for_rocksdb() {
 }
 
 #[test]
-fn projection_backend_is_explicit_and_external_mongo_uri_is_rejected() {
+fn removed_projection_backend_options_are_rejected() {
     use clap::Parser;
 
     #[derive(Parser)]
@@ -31,17 +31,9 @@ fn projection_backend_is_explicit_and_external_mongo_uri_is_rejected() {
         #[command(flatten)]
         env: EnvCli,
     }
-    assert_eq!(
-        Cli::try_parse_from(["e2e", "--projection-backend", "mongodb"])
-            .unwrap()
-            .env
-            .projection_backend,
-        ProjectionBackend::Mongodb
-    );
-    assert_eq!(
-        Cli::try_parse_from(["e2e"]).unwrap().env.projection_backend,
-        ProjectionBackend::Rocksdb
-    );
+    for backend in ["rocksdb", "mongodb"] {
+        assert!(Cli::try_parse_from(["e2e", "--projection-backend", backend]).is_err());
+    }
     assert!(
         Cli::try_parse_from(["e2e", "--projection-mongodb-uri", "mongodb://127.0.0.1"]).is_err()
     );

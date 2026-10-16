@@ -3,7 +3,10 @@
 use std::ops::Deref;
 
 use alloy_primitives::{Address, U256};
-use outbe_compressed_entities::{CanonicalBodyError, StoredBody, WwdEntityId};
+use outbe_primitives::{
+    entity_codec::{CanonicalBodyError, StoredBody},
+    wwd_entity_id::WwdEntityId,
+};
 use outbe_primitives::{time::WorldwideDay, tribute_encryption::EncryptedTributeV2};
 
 use crate::TributeData;
@@ -72,20 +75,20 @@ pub fn from_legacy(body: TributeData) -> TributeRecord {
 
 pub fn decode_payload(schema: u32, payload: &[u8]) -> Result<TributeRecord, CanonicalBodyError> {
     match schema {
-        outbe_compressed_entities::BODY_SCHEMA_V1 => {
-            outbe_compressed_entities::decode_tribute_v1(payload)
+        outbe_primitives::entity_codec::BODY_SCHEMA_V1 => {
+            outbe_primitives::entity_codec::decode_tribute_v1(payload)
                 .map(crate::from_canonical_body)
                 .map(from_legacy)
         }
-        outbe_compressed_entities::TRIBUTE_BODY_SCHEMA_V2 => {
-            outbe_compressed_entities::decode_tribute_v2(payload).map(from_encrypted)
+        outbe_primitives::entity_codec::TRIBUTE_BODY_SCHEMA_V2 => {
+            outbe_primitives::entity_codec::decode_tribute_v2(payload).map(from_encrypted)
         }
         actual => Err(CanonicalBodyError::UnsupportedSchema { actual }),
     }
 }
 
 pub fn decode_stored(bytes: &[u8]) -> Result<TributeRecord, CanonicalBodyError> {
-    let stored = outbe_compressed_entities::decode_stored_body(bytes)?;
+    let stored = outbe_primitives::entity_codec::decode_stored_body(bytes)?;
     decode_payload(stored.schema_version(), stored.payload())
 }
 
@@ -93,21 +96,21 @@ pub fn decode_stored(bytes: &[u8]) -> Result<TributeRecord, CanonicalBodyError> 
 /// is 32 bytes, while the V2 packed amount ciphertext is 88 bytes. This
 /// preserves the original OCOMP chunk bytes and their authenticated digest.
 pub fn decode_canonical(payload: &[u8]) -> Result<TributeRecord, CanonicalBodyError> {
-    outbe_compressed_entities::decode_tribute_v2(payload)
+    outbe_primitives::entity_codec::decode_tribute_v2(payload)
         .map(from_encrypted)
-        .or_else(|_| decode_payload(outbe_compressed_entities::BODY_SCHEMA_V1, payload))
+        .or_else(|_| decode_payload(outbe_primitives::entity_codec::BODY_SCHEMA_V1, payload))
 }
 
 impl TributeRecord {
     pub fn stored_body(&self) -> Result<StoredBody, CanonicalBodyError> {
         match &self.body {
             Body::Legacy(body) => StoredBody::new(
-                outbe_compressed_entities::BODY_SCHEMA_V1,
-                outbe_compressed_entities::encode_tribute_v1(&crate::canonical_body(body))?,
+                outbe_primitives::entity_codec::BODY_SCHEMA_V1,
+                outbe_primitives::entity_codec::encode_tribute_v1(&crate::canonical_body(body))?,
             ),
             Body::Encrypted(body) => StoredBody::new(
-                outbe_compressed_entities::TRIBUTE_BODY_SCHEMA_V2,
-                outbe_compressed_entities::encode_tribute_v2(body)?,
+                outbe_primitives::entity_codec::TRIBUTE_BODY_SCHEMA_V2,
+                outbe_primitives::entity_codec::encode_tribute_v2(body)?,
             ),
         }
     }
@@ -144,8 +147,8 @@ impl TributeRecord {
     }
 
     #[must_use]
-    pub fn public_body_v1(&self) -> outbe_compressed_entities::TributeBodyV1 {
-        outbe_compressed_entities::TributeBodyV1 {
+    pub fn public_body_v1(&self) -> outbe_primitives::entity_codec::TributeBodyV1 {
+        outbe_primitives::entity_codec::TributeBodyV1 {
             tribute_id: self.tribute_id,
             owner: self.owner,
             worldwide_day: self.worldwide_day,

@@ -15,7 +15,7 @@ pub mod marker_addresses {
     use alloy_primitives::Address;
     use outbe_primitives::addresses::*;
 
-    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 38] = [
+    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 37] = [
         GRATIS_ADDRESS,
         GRATIS_FACTORY_ADDRESS,
         CREDIS_ADDRESS,
@@ -74,8 +74,6 @@ pub mod marker_addresses {
         OCOMP_REGISTRY_ADDRESS,
         UPDATE_ADDRESS,
         VOTE_ADDRESS,
-        // System-only compressed-entity commitment state (no public dispatch).
-        COMPRESSED_ENTITIES_ADDRESS,
     ];
 }
 

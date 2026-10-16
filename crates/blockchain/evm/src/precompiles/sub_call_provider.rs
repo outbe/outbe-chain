@@ -7,9 +7,7 @@ use crate::tee_attestation_activation::TeeAttestationChainSpecStateV1;
 use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Address, B256};
 use core::{fmt::Debug, marker::PhantomData};
-use outbe_compressed_entities::ExecutionScope;
 use outbe_metadosis::api::OcompFinalizedIntentAuthority;
-use outbe_offchain_data::RuntimeBodyReaders;
 use revm::{
     handler::{EthPrecompiles, PrecompileProvider},
     interpreter::{CallInputs, InterpreterResult},
@@ -38,9 +36,9 @@ pub(crate) struct OutbeSubCallPrecompiles<DB> {
     spec: SpecId,
     genesis_hash: B256,
     tee_attestation_v1: TeeAttestationChainSpecStateV1,
-    runtime_body_readers: Option<RuntimeBodyReaders>,
+
     abort_bridge: super::ExecutionAbortBridge,
-    execution_scope: Arc<ExecutionScope>,
+
     ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
     ocomp_activation_block_meter: Arc<OcompActivationBlockMeter>,
     ocomp_lifecycle_active: bool,
@@ -60,8 +58,6 @@ impl<DB> OutbeSubCallPrecompiles<DB> {
         } = execution_context;
         let OutbePrecompileRuntime {
             abort_bridge,
-            runtime_body_readers,
-            execution_scope,
             ocomp_finality_authority,
             ocomp_lifecycle_active,
         } = runtime;
@@ -70,9 +66,7 @@ impl<DB> OutbeSubCallPrecompiles<DB> {
             spec,
             genesis_hash,
             tee_attestation_v1,
-            runtime_body_readers,
             abort_bridge,
-            execution_scope,
             ocomp_finality_authority,
             ocomp_activation_block_meter,
             ocomp_lifecycle_active,
@@ -112,8 +106,7 @@ where
                 spec: self.spec,
                 genesis_hash: self.genesis_hash,
                 tee_attestation_v1: &self.tee_attestation_v1,
-                runtime_body_readers: self.runtime_body_readers.as_ref(),
-                execution_scope: &self.execution_scope,
+
                 ocomp_finality_authority: self.ocomp_finality_authority.clone(),
                 ocomp_activation_block_meter: self.ocomp_activation_block_meter.clone(),
                 ocomp_lifecycle_active: self.ocomp_lifecycle_active,

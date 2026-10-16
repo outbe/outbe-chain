@@ -2,7 +2,6 @@
 //! including late finalize credit settlement.
 
 use super::*;
-use outbe_offchain_data::runtime_body_readers;
 
 #[test]
 fn active_lifecycle_proposer_and_replay_match_receipts_roots_and_header_artifacts() {
@@ -17,13 +16,10 @@ fn active_lifecycle_proposer_and_replay_match_receipts_roots_and_header_artifact
             state_with_active_proposer_and_funded_account_without_ocomp(proposer, user_sender);
         let chain_spec = test_chain_spec();
         let install = test_ocomp_fork_install(&chain_spec, &[(proposer, dummy_pubkey(0xA2))]);
-        let config = OutbeEvmConfig::new_with_runtime_body_readers(
-            chain_spec.clone(),
-            runtime_body_readers(Arc::new(MemoryStorage::new())),
-        )
-        .with_evm_signer(signer)
-        .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(1))
-        .with_ocomp_fork_install(install.clone());
+        let config = OutbeEvmConfig::new(chain_spec.clone())
+            .with_evm_signer(signer)
+            .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(1))
+            .with_ocomp_fork_install(install.clone());
         let begin = begin_system_txs_for_test(
             &config,
             BeginBlockFixture {
@@ -58,15 +54,11 @@ fn active_lifecycle_proposer_and_replay_match_receipts_roots_and_header_artifact
         }
         executor
             .execute_transaction(user)
-            .expect("ordinary tx executes before CE sealing");
+            .expect("ordinary tx executes before terminal artifact preparation");
         executor
             .execute_transaction(end.into_iter().next().unwrap())
             .expect("terminal request executes after ordinary txs");
 
-        let ce_root = executor
-            .compressed_entities_seal_output()
-            .expect("terminal request seals compressed entities")
-            .new_root;
         executor
             .prepare_final_header_artifacts(0)
             .expect("final header artifacts encode");
@@ -80,7 +72,6 @@ fn active_lifecycle_proposer_and_replay_match_receipts_roots_and_header_artifact
         (
             result.receipts,
             result.gas_used,
-            ce_root,
             final_extra_data,
             state_root,
         )
@@ -492,7 +483,6 @@ fn signed_late_credit_artifact(
                 aggregate_signature,
             }],
         }),
-        compressed_entities_root: None,
     };
 
     Ok(artifact)

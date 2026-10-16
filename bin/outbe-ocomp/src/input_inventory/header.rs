@@ -15,10 +15,8 @@ pub(super) fn encode_header(header: &InventoryHeaderV1) -> Vec<u8> {
     );
     encoded.extend_from_slice(header.subject.checkpoint.finalized_block_hash.as_slice());
     encoded.extend_from_slice(header.subject.checkpoint.finalized_state_root.as_slice());
-    encoded.extend_from_slice(header.subject.checkpoint.finalized_ce_root.as_slice());
-    encoded.extend_from_slice(&header.subject.checkpoint.ce_schema_version.to_be_bytes());
+    encoded.extend_from_slice(&header.subject.chain_id.to_be_bytes());
     encoded.extend_from_slice(&header.subject.worldwide_day.value().to_be_bytes());
-    encoded.extend_from_slice(header.subject.sealed_tribute_collection_root.as_slice());
     encoded.extend_from_slice(&header.subject.expected_tribute_count.to_be_bytes());
     encoded.extend_from_slice(&header.subject.expected_nominal_total.to_be_bytes::<32>());
     encoded.extend_from_slice(&header.unique_owner_count.to_be_bytes());
@@ -46,13 +44,11 @@ pub(super) fn decode_header(encoded: &[u8]) -> Result<InventoryHeaderV1, Tribute
         finalized_block_number: u64::from_be_bytes(take(8).try_into().expect("fixed header slice")),
         finalized_block_hash: B256::from_slice(take(32)),
         finalized_state_root: B256::from_slice(take(32)),
-        finalized_ce_root: B256::from_slice(take(32)),
-        ce_schema_version: u16::from_be_bytes(take(2).try_into().expect("fixed header slice")),
     };
+    let chain_id = u64::from_be_bytes(take(8).try_into().expect("fixed header slice"));
     let worldwide_day = WorldwideDay::new(u32::from_be_bytes(
         take(4).try_into().expect("fixed header slice"),
     ));
-    let sealed_tribute_collection_root = B256::from_slice(take(32));
     let expected_tribute_count =
         u32::from_be_bytes(take(4).try_into().expect("fixed header slice"));
     let expected_nominal_total = U256::from_be_slice(take(32));
@@ -67,8 +63,8 @@ pub(super) fn decode_header(encoded: &[u8]) -> Result<InventoryHeaderV1, Tribute
             job_id,
             attempt,
             checkpoint,
+            chain_id,
             worldwide_day,
-            sealed_tribute_collection_root,
             expected_tribute_count,
             expected_nominal_total,
         },
@@ -85,5 +81,5 @@ pub(super) fn decode_header(encoded: &[u8]) -> Result<InventoryHeaderV1, Tribute
 }
 
 pub(super) const fn header_len() -> usize {
-    8 + 32 + 32 + 4 + 8 + 32 + 32 + 32 + 2 + 4 + 32 + 4 + 32 + 8 + 32 + 32 + 32 + 8
+    8 + 32 + 32 + 4 + 8 + 32 + 32 + 8 + 4 + 4 + 32 + 8 + 32 + 32 + 32 + 8
 }

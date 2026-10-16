@@ -1,8 +1,8 @@
 //! Record dispatch and slot duplication checks, independent of envelope framing.
 use super::{
     consensus, fields, late_finalize, Bytes, ConsensusHeaderArtifact, OutbeBlockArtifacts,
-    PrecompileError, Result, BOUNDARY_TAG, COMMITTEE_PREANNOUNCE_TAG, COMPRESSED_ENTITIES_ROOT_TAG,
-    DEALER_LOG_TAG, EXECUTION_SUMMARY_TAG, LATE_FINALIZE_CREDITS_TAG, TIMESTAMP_MILLIS_PART_TAG,
+    PrecompileError, Result, BOUNDARY_TAG, COMMITTEE_PREANNOUNCE_TAG, DEALER_LOG_TAG,
+    EXECUTION_SUMMARY_TAG, LATE_FINALIZE_CREDITS_TAG, TIMESTAMP_MILLIS_PART_TAG,
 };
 
 pub(super) fn decode_into(
@@ -47,13 +47,7 @@ pub(super) fn decode_into(
                 || late_finalize::decode_payload(payload),
             )?;
         }
-        COMPRESSED_ENTITIES_ROOT_TAG => {
-            decode_unique_slot(
-                &mut artifacts.compressed_entities_root,
-                "duplicate compressed-entities root artifact",
-                || fields::decode_root(payload),
-            )?;
-        }
+
         _ => {
             return Err(PrecompileError::revert(format!(
                 "unsupported block artifact tag: {tag}"

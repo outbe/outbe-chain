@@ -10,9 +10,7 @@ use reth_chainspec::{ChainSpec, EthChainSpec};
 use reth_evm::{execute::BlockBuilder, NextBlockEnvAttributes};
 use reth_payload_primitives::PayloadBuilderError;
 use reth_primitives_traits::{AlloyBlockHeader as _, Recovered, SealedHeader};
-use tracing::{debug, warn};
-
-use super::ce_local_readiness_error;
+use tracing::warn;
 
 /// Immutable identity and attributes shared by the preparation stages.
 pub(super) struct PayloadContext<'a> {
@@ -143,15 +141,6 @@ pub(super) fn apply_pre_execution_changes(
     builder: &mut impl BlockBuilder,
 ) -> Result<(), PayloadBuilderError> {
     if let Err(err) = builder.apply_pre_execution_changes() {
-        if ce_local_readiness_error(&err) {
-            // This attempt raced finalization and cannot use the in-place
-            // materialization for its old parent. Report a retryable build
-            // failure. Reth reserves `BuildOutcome::Cancelled` for futures
-            // whose supplied cancel signal actually fired. Reth treats any
-            // other use as an unreachable invariant violation.
-            debug!(target: "payload_builder", %err, "payload exact-parent data is no longer locally available; retrying on the next build tick");
-            return Err(PayloadBuilderError::Internal(err.into()));
-        }
         warn!(target: "payload_builder", %err, "failed to apply pre-execution changes");
         return Err(PayloadBuilderError::Internal(err.into()));
     }

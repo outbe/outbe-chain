@@ -578,7 +578,7 @@ fn validate_namespace(value: &str) -> Result<(), StorageError> {
         ));
     }
     if value.starts_with("system.") {
-        Err(StorageError::invalid_argument("reserved MongoDB namespace"))
+        Err(StorageError::invalid_argument("reserved storage namespace"))
     } else {
         Ok(())
     }

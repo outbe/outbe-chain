@@ -11,7 +11,6 @@
 //! boundary, subject to that participation gate, and owns contiguous-day
 //! settlement and missed-day forfeiture.
 
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource, ParentBodySourceRef};
 use outbe_primitives::{
     block::{BlockLifecycle, BlockRuntimeContext},
     error::Result,
@@ -21,24 +20,17 @@ use outbe_primitives::{
 pub struct CycleLifecycle;
 
 /// Explicit body authorities required by the Cycle block boundary.
-pub struct CycleLifecycleContext<'a, 'storage> {
+pub struct CycleLifecycleContext<'storage> {
     pub runtime: BlockRuntimeContext<'storage>,
-    pub scope: &'a ExecutionScope,
-    parent: ParentBodySourceRef<'a>,
+
     metadosis_genesis_activation_height: u64,
 }
 
-impl<'a, 'storage> CycleLifecycleContext<'a, 'storage> {
+impl<'storage> CycleLifecycleContext<'storage> {
     #[must_use]
-    pub fn new(
-        runtime: BlockRuntimeContext<'storage>,
-        scope: &'a ExecutionScope,
-        parent: &'a dyn ParentBodySource,
-    ) -> Self {
+    pub fn new(runtime: BlockRuntimeContext<'storage>) -> Self {
         Self {
             runtime,
-            scope,
-            parent: ParentBodySourceRef::new(parent),
             metadosis_genesis_activation_height: 1,
         }
     }
@@ -56,7 +48,7 @@ impl<'a, 'storage> CycleLifecycleContext<'a, 'storage> {
 }
 
 impl BlockLifecycle for CycleLifecycle {
-    type Context<'a, 'storage> = CycleLifecycleContext<'a, 'storage>;
+    type Context<'a, 'storage> = CycleLifecycleContext<'storage>;
     type EndBlockResult = ();
 
     fn begin_block(ctx: &Self::Context<'_, '_>) -> Result<()> {
@@ -65,12 +57,12 @@ impl BlockLifecycle for CycleLifecycle {
         }
         // What fell due is settled first, so its returns reach the ProtocolCycle
         // that forms the day.
-        outbe_nodfactory::hooks::sweep_forfeits(&ctx.runtime, ctx.scope, &ctx.parent)?;
-        outbe_gemfactory::hooks::sweep_forfeits(&ctx.runtime, ctx.scope, &ctx.parent)?;
+        outbe_nodfactory::hooks::sweep_forfeits(&ctx.runtime)?;
+        outbe_gemfactory::hooks::sweep_forfeits(&ctx.runtime)?;
         outbe_intexfactory::hooks::sweep_proceeds(&ctx.runtime)?;
         outbe_intexfactory::hooks::sweep_forfeits(&ctx.runtime)?;
         outbe_credisfactory::hooks::sweep_forfeits(&ctx.runtime)?;
-        crate::runtime::dispatch_triggers(&ctx.runtime, ctx.scope, &ctx.parent)?;
+        crate::runtime::dispatch_triggers(&ctx.runtime)?;
         // The daily triggers only schedule. Each right walks one slice of its pinned day.
         outbe_nodfactory::called::run_call_slice(&ctx.runtime)?;
         outbe_gemfactory::called::run_call_slice(&ctx.runtime)?;

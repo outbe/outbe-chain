@@ -1,9 +1,7 @@
 use alloy_evm::{block::BlockExecutor, Evm, RecoveredTx};
 use outbe_primitives::{
     consensus::ConsensusExecutionBridge,
-    reshare_artifact::{
-        decode_outbe_block_artifacts, encode_outbe_block_artifacts, CompressedEntitiesRootArtifact,
-    },
+    reshare_artifact::{decode_outbe_block_artifacts, encode_outbe_block_artifacts},
     OutbeHeader, OutbePrimitives,
 };
 use reth_ethereum::evm::revm::primitives::hardfork::SpecId;
@@ -30,16 +28,11 @@ pub(crate) fn encode_final_header_artifacts(
     prefinal_extra_data: &[u8],
     execution_summary: outbe_primitives::reshare_artifact::ExecutionSummaryArtifact,
     timestamp_millis_part: u64,
-    compressed_root: alloy_primitives::B256,
 ) -> Result<alloy_primitives::Bytes, BlockExecutionError> {
     let mut artifacts = decode_outbe_block_artifacts(prefinal_extra_data)
         .map_err(|err| -> BlockExecutionError { BlockValidationError::msg(err).into() })?;
     artifacts.execution_summary = Some(execution_summary);
     artifacts.timestamp_millis_part = timestamp_millis_part;
-    artifacts.compressed_entities_root = Some(CompressedEntitiesRootArtifact {
-        commitment_scheme_version: outbe_compressed_entities::ACTIVE_COMMITMENT_SCHEME,
-        r_sealed: compressed_root,
-    });
     encode_outbe_block_artifacts(&artifacts).map_err(|err| BlockValidationError::msg(err).into())
 }
 
@@ -76,20 +69,13 @@ where
         }
     }
 
-    /// Encodes all execution-produced header artifacts from the single stored
-    /// CE seal. Payload building calls this before either state-root path. The
-    /// final `finish` call repeats it idempotently as a defensive invariant.
+    /// Encodes execution-produced header fields before state-root calculation.
+    /// The final finish call repeats the same encoding.
     pub fn finalize_header_artifacts(&mut self) -> Result<(), BlockExecutionError> {
-        let compressed_seal_output = self.executor.compressed_entities_seal_output().ok_or_else(
-            || -> BlockExecutionError {
-                BlockValidationError::msg("missing compressed-entities SealOutput").into()
-            },
-        )?;
         self.ctx.inner.extra_data = encode_final_header_artifacts(
             self.ctx.inner.extra_data.as_ref(),
             self.executor.current_execution_summary(),
             self.ctx.timestamp_millis_part,
-            compressed_seal_output.new_root,
         )?;
         self.executor
             .set_final_extra_data(self.ctx.inner.extra_data.clone());
@@ -144,13 +130,10 @@ where
         state: impl StateProvider,
         state_root_precomputed: Option<(alloy_primitives::B256, TrieUpdates)>,
     ) -> Result<BlockBuilderOutcome<OutbePrimitives>, BlockExecutionError> {
-        // Seal CE exactly once before encoding any execution-produced header
-        // fields. This must happen while the parallel state hook is attached.
-        self.executor.finalize_compressed_entities()?;
         // finalized-parent metadata travels through payload
         // attributes into the begin-zone Phase 1 system transaction body.
         // Header `extra_data` here carries the execution summary, timestamp
-        // millis, the compressed-entities root, and the artifacts kept from
+        // millis and the artifacts kept from
         // the pre-final bytes (DKG/header artifacts and late-finalize credits).
         // The proposer path does not produce the legacy header attestation tag.
         let execution_summary = self.executor.current_execution_summary();
@@ -160,18 +143,6 @@ where
         // value is the canonical source for this block. This code overwrites
         // whatever the proposer placed in `extra_data` earlier.
         self.finalize_header_artifacts()?;
-        let compressed_seal_output = self.executor.compressed_entities_seal_output().ok_or_else(
-            || -> BlockExecutionError {
-                BlockValidationError::msg("missing compressed-entities SealOutput").into()
-            },
-        )?;
-
-        // Proposer execution does not know the block hash until assembly. Seal
-        // first, retain the immutable provisional batch across assembly, then
-        // publish it under the exact computed hash. Validator execution uses
-        // the known hash path in `OutbeBlockExecutor::finish`.
-        let compressed_tree_service = self.executor.compressed_tree_service();
-
         let (evm, result) = self.executor.finish()?;
         let (db, evm_env) = evm.finish();
 
@@ -209,15 +180,7 @@ where
         ))?;
 
         let block = RecoveredBlock::new_unhashed(block, senders);
-        if let Some(service) = compressed_tree_service {
-            service
-                .publish_candidate(block.hash(), compressed_seal_output.staged_tree_batch)
-                .map_err(|err| {
-                    BlockExecutionError::other(
-                        outbe_primitives::error::PrecompileError::TreeUnavailable(err.to_string()),
-                    )
-                })?;
-        }
+
         if let Some(bridge) = &self.bridge {
             bridge.record_execution_summary_with_state_root(
                 block.header().inner.number,
@@ -256,17 +219,13 @@ mod tests {
 
     use alloy_evm::{block::CommitChanges, RecoveredTx};
     use alloy_primitives::{address, Address, Bytes, StorageKey, StorageValue, B256, U256};
-    use outbe_compressed_entities::{
-        CandidateCacheLimits, CeMdbx, CompressedTreeService, EnvironmentIdentity, FinalizedMarker,
-        ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
-    };
     use outbe_primitives::addresses::REWARDS_ADDRESS;
     use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
     use outbe_primitives::consensus::ConsensusExecutionBridge;
     use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
     use outbe_primitives::reshare_artifact::{
-        decode_outbe_block_artifacts, encode_outbe_block_artifacts, CompressedEntitiesRootArtifact,
-        ConsensusHeaderArtifact, ExecutionSummaryArtifact, OutbeBlockArtifacts,
+        decode_outbe_block_artifacts, encode_outbe_block_artifacts, ConsensusHeaderArtifact,
+        ExecutionSummaryArtifact, OutbeBlockArtifacts,
     };
     use outbe_primitives::storage::{
         direct::DirectStorageProvider, hashmap::HashMapStorageProvider,
@@ -309,7 +268,7 @@ mod tests {
     const TEST_BLOCK_ONE_TIMESTAMP: u64 = 1_700_000_001;
 
     #[test]
-    fn final_artifact_adapter_overwrites_untrusted_root_and_preserves_consensus_fields() {
+    fn final_artifact_adapter_binds_execution_summary_and_preserves_consensus_fields() {
         let prefinal = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
             execution_summary: Some(ExecutionSummaryArtifact {
                 validator_fee_sum: U256::from(999),
@@ -318,21 +277,15 @@ mod tests {
                 Bytes::from_static(b"dealer"),
             )),
             timestamp_millis_part: 999,
-            compressed_entities_root: Some(CompressedEntitiesRootArtifact {
-                commitment_scheme_version: 77,
-                r_sealed: B256::repeat_byte(0xDD),
-            }),
             ..Default::default()
         })
         .unwrap();
-        let local_root = B256::repeat_byte(0xAB);
         let encoded = super::encode_final_header_artifacts(
             &prefinal,
             ExecutionSummaryArtifact {
                 validator_fee_sum: U256::from(7),
             },
             321,
-            local_root,
         )
         .unwrap();
         let decoded = decode_outbe_block_artifacts(&encoded).unwrap();
@@ -347,21 +300,12 @@ mod tests {
             U256::from(7)
         );
         assert_eq!(decoded.timestamp_millis_part, 321);
-        assert_eq!(
-            decoded.compressed_entities_root,
-            Some(CompressedEntitiesRootArtifact {
-                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-                r_sealed: local_root,
-            })
-        );
-
         let other = super::encode_final_header_artifacts(
             &prefinal,
             ExecutionSummaryArtifact {
-                validator_fee_sum: U256::from(7),
+                validator_fee_sum: U256::from(8),
             },
             321,
-            B256::repeat_byte(0xAC),
         )
         .unwrap();
         let first = SealedHeader::seal_slow(OutbeHeader::new(Header {
@@ -575,42 +519,6 @@ mod tests {
             .with_evm_signer(test_evm_signer())
     }
 
-    fn test_tree_service(parent_hash: B256) -> (tempfile::TempDir, Arc<CompressedTreeService>) {
-        // This fixture isolates validator non-publication after Reth root
-        // rejection while retaining the final ADR-010 empty authority.
-        let directory = tempfile::tempdir().expect("CE test directory must be created");
-        let db = CeMdbx::open(
-            directory.path(),
-            EnvironmentIdentity {
-                local_storage_schema_version: LOCAL_STORAGE_SCHEMA_VERSION,
-                chain_id: GRAMINE_DIRECT_DEV_CHAIN_ID,
-                genesis_hash: parent_hash,
-                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-                topology: outbe_compressed_entities::CeTopologyV1.encode(),
-                tree_format: "ckb-smt-v0.6.1-poseidon2-catalog-v3".to_owned(),
-                vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
-            },
-            FinalizedMarker {
-                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-                height: 0,
-                block_hash: parent_hash,
-                parent_block_hash: B256::ZERO,
-                parent_root: B256::ZERO,
-                new_root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
-            },
-        )
-        .expect("CE test MDBX must open");
-        let service = CompressedTreeService::new(
-            db,
-            CandidateCacheLimits {
-                max_candidates: 4,
-                max_encoded_bytes: 1_000_000,
-            },
-        )
-        .expect("CE test service must open");
-        (directory, Arc::new(service))
-    }
-
     fn test_chain_spec() -> Arc<ChainSpec<OutbeHeader>> {
         use outbe_primitives::tee_test_utils::{
             gramine_direct_policy_v1, tee_attestation_v1_extra_field,
@@ -695,21 +603,6 @@ mod tests {
         );
         metadosis_genesis.set_block_number(1);
         metadosis_genesis.enter(|storage| {
-            let root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
-            storage
-                .sstore(
-                    outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
-                    U256::ZERO,
-                    U256::from(4),
-                )
-                .unwrap();
-            storage
-                .sstore(
-                    outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
-                    U256::from(1),
-                    U256::from_be_slice(root.as_slice()),
-                )
-                .unwrap();
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(Address::ZERO).unwrap();
             vs.set_config_max_validators(128).unwrap();
@@ -762,14 +655,6 @@ mod tests {
         );
         db.insert_account_info(
             outbe_primitives::addresses::ORACLE_ADDRESS,
-            AccountInfo {
-                code_hash: marker_code.hash_slow(),
-                code: Some(marker_code.clone()),
-                ..Default::default()
-            },
-        );
-        db.insert_account_info(
-            outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
             AccountInfo {
                 code_hash: marker_code.hash_slow(),
                 code: Some(marker_code.clone()),
@@ -1205,17 +1090,15 @@ mod tests {
         );
 
         // Reth validates receipt and state roots only after `execute_one`
-        // returns. Validator execution must therefore retain no CE candidate,
+        // returns. Validator execution must therefore publish no speculative execution artifacts,
         // even when execution itself succeeds for a header that the following
         // post-execution check rejects.
         let mut wrong_receipt_block = built_block.clone().into_block();
         wrong_receipt_block.header.inner.receipts_root = B256::repeat_byte(0x71);
         let wrong_receipt_block =
             RecoveredBlock::new_unhashed(wrong_receipt_block, built_block.senders().to_vec());
-        let (_receipt_directory, receipt_service) = test_tree_service(parent.hash());
-        let receipt_config = config
-            .clone()
-            .with_compressed_tree_service(receipt_service.clone());
+
+        let receipt_config = config.clone();
         let mut receipt_db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
         seed_active_validators(&mut receipt_db, &active_set);
         let receipt_state = State::builder()
@@ -1240,25 +1123,13 @@ mod tests {
             .is_err(),
             "the fixture must reach Reth's receipt-root rejection seam",
         );
-        assert!(
-            receipt_service
-                .candidate(
-                    wrong_receipt_block.header().inner.number,
-                    wrong_receipt_block.hash(),
-                )
-                .unwrap()
-                .is_none(),
-            "receipt-invalid validator execution must not publish a CE candidate",
-        );
 
         let mut wrong_state_block = built_block.clone().into_block();
         wrong_state_block.header.inner.state_root = B256::repeat_byte(0x72);
         let wrong_state_block =
             RecoveredBlock::new_unhashed(wrong_state_block, built_block.senders().to_vec());
-        let (_state_directory, state_service) = test_tree_service(parent.hash());
-        let state_config = config
-            .clone()
-            .with_compressed_tree_service(state_service.clone());
+
+        let state_config = config.clone();
         let mut state_db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
         seed_active_validators(&mut state_db, &active_set);
         let state = State::builder()
@@ -1278,16 +1149,6 @@ mod tests {
             wrong_state_block.header().inner.state_root,
             actual_state_root,
             "the fixture must reach Reth's state-root rejection seam",
-        );
-        assert!(
-            state_service
-                .candidate(
-                    wrong_state_block.header().inner.number,
-                    wrong_state_block.hash(),
-                )
-                .unwrap()
-                .is_none(),
-            "state-root-invalid validator execution must not publish a CE candidate",
         );
     }
 }

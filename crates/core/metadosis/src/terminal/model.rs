@@ -1,6 +1,6 @@
-use alloy_primitives::{B256, U256};
-use outbe_compressed_entities::RetirementOutcome;
+use alloy_primitives::U256;
 use outbe_primitives::{error::Result, time::WorldwideDay};
+use outbe_tribute::runtime::RetirementOutcome;
 
 use super::TerminalReceiptValidationContext;
 use crate::{
@@ -23,7 +23,6 @@ pub(crate) struct TerminalReceiptCommon {
 pub(crate) struct CapacityForfeitureDetail {
     pub max_retained_wwds: u32,
     pub retained_count_before: u32,
-    pub sealed_collection_root: B256,
     pub forfeited_count: u32,
     pub forfeited_nominal: U256,
     pub source_generation: u64,
@@ -108,11 +107,9 @@ impl CapacityForfeitureDetail {
     fn valid_retirement(&self, retirement: RetirementOutcome) -> bool {
         match retirement {
             RetirementOutcome::NotPresent => {
-                self.sealed_collection_root.is_zero()
-                    && self.forfeited_count == 0
-                    && self.forfeited_nominal.is_zero()
+                self.forfeited_count == 0 && self.forfeited_nominal.is_zero()
             }
-            RetirementOutcome::Requested => !self.sealed_collection_root.is_zero(),
+            RetirementOutcome::Requested => true,
         }
     }
 }
@@ -134,7 +131,6 @@ mod tests {
             detail: CapacityForfeitureDetail {
                 max_retained_wwds: MAX_RETAINED_WWDS as u32,
                 retained_count_before: MAX_RETAINED_WWDS as u32,
-                sealed_collection_root: B256::ZERO,
                 forfeited_count: 0,
                 forfeited_nominal: U256::ZERO,
                 source_generation: 0,
@@ -173,7 +169,7 @@ mod tests {
 
     #[test]
     fn capacity_checks_exact_cap_generations_and_retirement_evidence() {
-        for field in 0..7 {
+        for field in 0..6 {
             let mut corrupt = receipt();
             let WwdTerminalReceipt::CapacityForfeiture { detail, .. } = &mut corrupt else {
                 unreachable!()
@@ -183,19 +179,17 @@ mod tests {
                 1 => detail.retained_count_before += 1,
                 2 => detail.source_generation = 1,
                 3 => detail.retired_generation = 2,
-                4 => detail.sealed_collection_root = B256::repeat_byte(1),
-                5 => detail.forfeited_count = 1,
+                4 => detail.forfeited_count = 1,
                 _ => detail.forfeited_nominal = U256::from(1),
             }
             assert!(corrupt.validate(context()).is_err());
         }
         let mut requested = receipt();
         requested.common_mut().retirement = RetirementOutcome::Requested;
-        assert!(requested.validate(context()).is_err());
+        assert!(requested.validate(context()).is_ok());
         let WwdTerminalReceipt::CapacityForfeiture { detail, .. } = &mut requested else {
             unreachable!()
         };
-        detail.sealed_collection_root = B256::repeat_byte(1);
         detail.forfeited_count = u32::MAX;
         detail.forfeited_nominal = U256::MAX;
         assert!(requested.validate(context()).is_ok());

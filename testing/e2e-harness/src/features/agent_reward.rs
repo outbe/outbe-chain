@@ -475,7 +475,7 @@ fn claim_gem_and_assert_gas_only_cost(
             let gem = eth::read_call_result(
                 &world.rpc.url(port),
                 addresses::GEM_ADDR,
-                &eth::IGem::getGemStatusCall {
+                &eth::IGem::getGemCall {
                     gemId: issued.gemId,
                 },
             )?;
@@ -545,9 +545,9 @@ fn observe_gem_projection<T>(
     port: u16,
     mut read: impl FnMut() -> Result<Option<T>, String>,
 ) -> T {
-    use crate::internal::live_ce_read::{observe_projection, ProjectionSample};
+    use crate::internal::state_observation::{observe_state, StateSample};
     let deadline = Instant::now() + Duration::from_secs(120);
-    observe_projection(
+    observe_state(
         deadline,
         || {
             let before = world
@@ -559,7 +559,7 @@ fn observe_gem_projection<T>(
                 .rpc
                 .head(port)
                 .ok_or_else(|| eyre::eyre!("head after Gem read"))?;
-            Ok(ProjectionSample {
+            Ok(StateSample {
                 before,
                 observation,
                 after,

@@ -199,6 +199,11 @@ fn seed_nod_generation(
     sequence: u64,
 ) -> NodCertifiedGenerationProjection {
     let generation = NodCertifiedGenerationProjection {
+        source_checkpoint: outbe_ocomp_protocol::intent::FinalizedRequestBindingV1 {
+            block_number: 1,
+            block_hash: B256::repeat_byte(0x71),
+            state_root: B256::repeat_byte(0x72),
+        },
         worldwide_day: day,
         generation: sequence,
         job_id: B256::repeat_byte(1),
@@ -217,6 +222,15 @@ fn seed_nod_generation(
         last_progress_height: 90,
     };
     let nod = NodContract::new(storage);
+    nod.ocomp_source_block_number
+        .write(&day, generation.source_checkpoint.block_number)
+        .unwrap();
+    nod.ocomp_source_block_hash
+        .write(&day, generation.source_checkpoint.block_hash)
+        .unwrap();
+    nod.ocomp_source_state_root
+        .write(&day, generation.source_checkpoint.state_root)
+        .unwrap();
     nod.ocomp_target_generation
         .write(&day, generation.generation)
         .unwrap();
@@ -465,9 +479,6 @@ fn canonical_job(request: &OutbeHeader, completed: bool) -> OcompJobRecordV1 {
         pending_nonce: 0,
         attempt: 0,
         protocol_bundle_hash: hash,
-        ce_sealed_root: hash,
-        sealed_tribute_collection_key: hash,
-        sealed_tribute_collection_root: hash,
         authenticated_day_count: 1,
         authenticated_day_nominal: U256::from(10),
         pre_admission_envelope_hash: hash,
@@ -489,8 +500,7 @@ fn canonical_job(request: &OutbeHeader, completed: bool) -> OcompJobRecordV1 {
             tribute: TributeInputBindingV1 {
                 wwd: DAY.value(),
                 source_generation: 0,
-                collection_key: hash,
-                sealed_collection_root: hash,
+
                 exact_count: 1,
                 exact_nominal_total: U256::from(10),
             },

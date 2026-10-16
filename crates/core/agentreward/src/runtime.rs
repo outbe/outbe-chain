@@ -2,7 +2,6 @@ use crate::errors::AgentRewardError;
 use crate::precompile::IAgentReward;
 use crate::schema::{AgentRewardContract, RewardPool};
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{ExecutionReaders, ParentBodySource};
 use outbe_gemfactory::schema::GemTypes;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::dsl::Map;
@@ -111,7 +110,7 @@ impl AgentRewardContract<'_> {
     /// waits for the next day, which brings a new VWAP with it.
     pub fn claim_reward(
         &mut self,
-        readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
+
         pool: RewardPool,
         address: Address,
         amount: U256,
@@ -145,13 +144,8 @@ impl AgentRewardContract<'_> {
                 RewardPool::Sra => GemTypes::Sra,
                 RewardPool::Cca => GemTypes::Cca,
             };
-            let gem_id = issue_reward_gem(
-                &self.storage,
-                readers,
-                (address, gem_load),
-                gem_type,
-                currencies,
-            )?;
+            let gem_id =
+                issue_reward_gem(&self.storage, (address, gem_load), gem_type, currencies)?;
             self.storage
                 .decrease_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, burned)?;
             self.write_pool_claimable_reward(pool, address, balance - burned)?;
@@ -247,12 +241,11 @@ fn read_tribute_counts(
 /// Shared issuance economics and claim-day pricing for WAA, SRA and CCA rewards.
 pub(crate) fn issue_reward_gem(
     storage: &StorageHandle<'_>,
-    readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
+
     recipient: (Address, U256),
     gem_type: GemTypes,
     (issuance_currency, reference_currency): (u16, u16),
 ) -> Result<U256> {
-    let ExecutionReaders { scope, parent } = readers;
     let (owner, load) = recipient;
     outbe_oracle::api::check_reference_currency_with_storage(storage.clone(), reference_currency)?;
     let entry_price = resolve_gem_entry_price(storage, reference_currency)?.ok_or(
@@ -260,8 +253,6 @@ pub(crate) fn issue_reward_gem(
     )?;
     outbe_gemfactory::api::issue_gem(
         storage,
-        scope,
-        parent,
         outbe_gemfactory::GemIssueParams {
             owner,
             gem_type,

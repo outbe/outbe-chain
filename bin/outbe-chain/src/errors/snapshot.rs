@@ -11,18 +11,12 @@ pub(crate) enum SnapshotError {
     #[cfg(all(test, feature = "snapshot-integration"))]
     #[error("Lysis terminal receipt intent or job binding differs")]
     LysisTerminalReceiptMismatch,
-    /// Projection configuration is missing.
-    #[error("missing required projection configuration")]
-    MissingProjectionConfig,
     /// Native CLI inputs do not describe a node.
     #[error("snapshot native inputs must describe a node")]
     InputsNotNode,
     /// The node data directory has no parent for OCOMP.
     #[error("node data directory has no OCOMP parent")]
     MissingOcompParent,
-    /// Offchain storage does not use RocksDB.
-    #[error("filesystem snapshots require RocksDB offchain storage")]
-    RequiresRocksDbStorage,
     /// The snapshot output path already exists.
     #[error("snapshot output already exists: {path}")]
     OutputAlreadyExists {
@@ -86,9 +80,6 @@ pub(crate) enum SnapshotError {
     /// The execution stage checkpoint is missing.
     #[error("missing execution stage checkpoint")]
     MissingExecutionCheckpoint,
-    /// The offchain projection checkpoint is missing.
-    #[error("missing initialized offchain projection checkpoint")]
-    MissingOffchainProjectionCheckpoint,
     /// The artifact path has no file name.
     #[error("artifact path has no filename")]
     ArtifactPathHasNoFilename,
@@ -402,30 +393,6 @@ pub(crate) enum SnapshotError {
     /// Verified header count calculation overflowed.
     #[error("verified header count overflow")]
     VerifiedHeaderCountOverflow,
-    /// The header CE commitment scheme is unsupported.
-    #[error("unsupported header CE commitment scheme")]
-    UnsupportedHeaderCeScheme,
-    /// The CE marker commitment scheme is unsupported.
-    #[error("unsupported CE marker scheme")]
-    UnsupportedCeMarkerScheme,
-    /// The CE marker height disagrees with the header.
-    #[error("CE marker/header height mismatch")]
-    CeMarkerHeightMismatch,
-    /// The CE marker block hash disagrees with the header.
-    #[error("CE marker/header block hash mismatch")]
-    CeMarkerBlockHashMismatch,
-    /// The CE marker parent hash disagrees with the header.
-    #[error("CE marker/header parent hash mismatch")]
-    CeMarkerParentHashMismatch,
-    /// A header CE commitment is missing at a height.
-    #[error("missing header CE commitment at {height}")]
-    MissingHeaderCeCommitment {
-        /// Block height.
-        height: u64,
-    },
-    /// The CE marker root disagrees with the header root.
-    #[error("CE marker/header root mismatch")]
-    CeMarkerRootMismatch,
     /// A selected native source has the wrong file kind.
     #[error("selected native source has wrong file kind: {path}")]
     SourceWrongFileKind {

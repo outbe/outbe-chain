@@ -16,10 +16,6 @@ use std::{
 
 use alloy_primitives::{keccak256, Address, Bytes, Log, B256, U256};
 use k256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey};
-use outbe_compressed_entities::{
-    begin_block, partition_collection_key, AuthenticatedParentTree, CeWorkCheckpoint, CeWorkConfig,
-    EntityRef, ExecutionScope, FinalLeafMutation, PartitionRef, ProvisionalTreeBatch,
-};
 #[cfg(test)]
 use outbe_lysis::activation_v1::LysisOwnerReceiptsV1;
 use outbe_nod::schema::NodContract;
@@ -60,7 +56,7 @@ use outbe_ocomp_protocol::{
 use outbe_primitives::addresses::STAKING_ADDRESS;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
-    addresses::{COMPRESSED_ENTITIES_ADDRESS, METADOSIS_ADDRESS},
+    addresses::METADOSIS_ADDRESS,
     error::{PrecompileError, Result as PrecompileResult},
     storage::{hashmap::HashMapStorageProvider, MetadosisMutationPurposeTag, StorageHandle},
 };
@@ -131,8 +127,6 @@ mod activation;
 mod artifacts;
 #[path = "test_support/committee.rs"]
 mod committee;
-#[path = "test_support/parent_tree.rs"]
-mod parent_tree;
 #[path = "test_support/wwd.rs"]
 mod wwd;
 
@@ -148,24 +142,4 @@ pub use artifacts::{
 pub use committee::signed_result_vote_for_intent;
 pub(crate) use committee::{founder_registrations_for_validators, seed_validator_snapshot};
 use committee::{ocomp_key_hash, sign, signing_key};
-use parent_tree::begin_activation_scope;
 pub(crate) use wwd::FixtureKernelExt;
-
-/// Installs the persisted CE predecessor owned by the fixture kernel.
-#[cfg(test)]
-pub(crate) fn seed_ce_parent(storage: &StorageHandle<'_>, root: B256) -> PrecompileResult<()> {
-    for (slot, value) in [
-        (U256::ZERO, U256::from(4)),
-        (U256::from(1), U256::from_be_slice(root.as_slice())),
-    ] {
-        storage.sstore(COMPRESSED_ENTITIES_ADDRESS, slot, value)?;
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-pub(crate) fn seed_ce_genesis(storage: &StorageHandle<'_>) -> PrecompileResult<()> {
-    let root = outbe_compressed_entities::sealed_root(B256::ZERO)
-        .map_err(|error| PrecompileError::Fatal(format!("fixture CE genesis root: {error}")))?;
-    seed_ce_parent(storage, root)
-}

@@ -5,9 +5,9 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 
 use alloy_primitives::U256;
-use outbe_compressed_entities::derive_poseidon_entity_id;
 use outbe_primitives::math::scaled_math::checked_mul_div_floor;
 use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::wwd_entity_id::derive_poseidon_entity_id;
 
 use crate::algorithm::{calc_fraction_distribution_fp, SCALE};
 

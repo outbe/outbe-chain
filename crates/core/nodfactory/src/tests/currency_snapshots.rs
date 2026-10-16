@@ -11,11 +11,10 @@ fn quote_prices_both_rails() {
     world.publish_coen_rate(840, U256::from(2 * SCALE_1E6_U64));
     world.publish_coen_rate(978, U256::from(SCALE_1E6_U64));
 
-    let (ref_iso, ref_amount, iss_iso, iss_amount) = world.enter(|storage, scope, parent| {
+    let (ref_iso, ref_amount, iss_iso, iss_amount) = world.enter(|storage| {
         let (ref_iso, ref_amount, _) =
-            api::quote_settlement(&storage, scope, parent, nod_id, PAYMENT_ASSET).unwrap();
-        let (iss_iso, iss_amount, _) =
-            api::quote_settlement(&storage, scope, parent, nod_id, EUR_ASSET).unwrap();
+            api::quote_settlement(&storage, nod_id, PAYMENT_ASSET).unwrap();
+        let (iss_iso, iss_amount, _) = api::quote_settlement(&storage, nod_id, EUR_ASSET).unwrap();
         (ref_iso, ref_amount, iss_iso, iss_amount)
     });
     assert_eq!(ref_iso, 840);
@@ -33,7 +32,7 @@ fn the_issuance_rail_converts_at_the_trailing_window_not_the_closed_day() {
     world.publish_coen_rate(840, U256::from(2 * SCALE_1E6_U64));
     world.publish_coen_rate(978, U256::from(SCALE_1E6_U64));
 
-    let quoted = world.enter(|storage, scope, parent| {
+    let quoted = world.enter(|storage| {
         use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
         let day = previous_date_key(timestamp_to_date_key(
             storage.timestamp().unwrap().to::<u64>(),
@@ -44,7 +43,7 @@ fn the_issuance_rail_converts_at_the_trailing_window_not_the_closed_day() {
         outbe_oracle::schema::OracleContract::new(storage.clone())
             .record_utc_day_vwap(day, index, U256::from(4 * SCALE_1E6_U64))
             .unwrap();
-        api::quote_settlement(&storage, scope, parent, nod_id, EUR_ASSET)
+        api::quote_settlement(&storage, nod_id, EUR_ASSET)
             .unwrap()
             .1
     });
@@ -63,9 +62,7 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
     world.publish_coen_rate(978, U256::from(SCALE_1E6_U64));
     let quote = |world: &mut World| {
         world
-            .enter(|storage, scope, parent| {
-                api::quote_settlement(&storage, scope, parent, nod_id, EUR_ASSET)
-            })
+            .enter(|storage| api::quote_settlement(&storage, nod_id, EUR_ASSET))
             .unwrap()
     };
     let (_, amount, quoted) = quote(&mut world);
@@ -105,9 +102,7 @@ fn the_hourly_rollover_at_the_settlement_deadline_grants_no_grace() {
     world.publish_coen_rate(978, U256::from(SCALE_1E6_U64));
     let quote = |world: &mut World| {
         world
-            .enter(|storage, scope, parent| {
-                api::quote_settlement(&storage, scope, parent, nod_id, EUR_ASSET)
-            })
+            .enter(|storage| api::quote_settlement(&storage, nod_id, EUR_ASSET))
             .unwrap()
     };
     let (_, _, quoted) = quote(&mut world);
@@ -148,9 +143,7 @@ fn a_snapshot_of_another_policy_is_rejected() {
     world.publish_coen_rate(840, U256::from(2 * SCALE_1E6_U64));
     world.publish_coen_rate(978, U256::from(SCALE_1E6_U64));
     let (_, _, quoted) = world
-        .enter(|storage, scope, parent| {
-            api::quote_settlement(&storage, scope, parent, nod_id, EUR_ASSET)
-        })
+        .enter(|storage| api::quote_settlement(&storage, nod_id, EUR_ASSET))
         .unwrap();
     let cutoff = outbe_oracle::api::VwapSnapshotId::from_u256(quoted)
         .unwrap()
@@ -204,9 +197,7 @@ fn issuance_erc20_admission_uses_the_quoted_converted_cost() {
     );
 
     let quoted = world
-        .enter(|storage, scope, parent| {
-            api::quote_settlement(&storage, scope, parent, nod_id, EUR_ASSET)
-        })
+        .enter(|storage| api::quote_settlement(&storage, nod_id, EUR_ASSET))
         .unwrap();
     assert_eq!(quoted.0, 978);
     assert_eq!(quoted.1, U256::from(cost_of(&input) / 2));
@@ -220,11 +211,9 @@ fn issuance_erc20_admission_uses_the_quoted_converted_cost() {
             .map(|balance| Bytes::from(IERC20::balanceOfCall::abi_encode_returns(&balance))),
     );
     world
-        .enter(|storage, scope, parent| {
+        .enter(|storage| {
             api::settle_nod(
                 &storage,
-                scope,
-                parent,
                 api::SettleNodRequest {
                     caller: input.owner,
                     nod_id,
@@ -255,11 +244,9 @@ fn settle_rejects_an_asset_with_no_registered_vault() {
         )),
     );
     let erc20_error = world
-        .enter(|storage, scope, parent| {
+        .enter(|storage| {
             api::settle_nod(
                 &storage,
-                scope,
-                parent,
                 api::SettleNodRequest {
                     caller: input.owner,
                     nod_id,
@@ -298,8 +285,8 @@ fn issuance_rail_rejects_a_leg_the_window_never_priced() {
     assert!(!is_settled(&mut world, nod_id));
 
     world.publish_coen_rate(978, U256::from(SCALE_1E6_U64));
-    let live = world.enter(|storage, scope, parent| {
-        api::quote_settlement(&storage, scope, parent, nod_id, EUR_ASSET)
+    let live = world.enter(|storage| {
+        api::quote_settlement(&storage, nod_id, EUR_ASSET)
             .unwrap()
             .2
     });
@@ -338,10 +325,9 @@ fn quote_settlement_dispatch() {
     world.publish_coen_rate(978, U256::from(SCALE_1E6_U64));
 
     let out = world
-        .enter(|storage, scope, parent| {
+        .enter(|storage| {
             crate::precompile::dispatch(
                 storage,
-                ExecutionReaders { scope, parent },
                 &INodFactory::quoteSettlementCall {
                     nodId: nod_id.to_u256(),
                     asset: EUR_ASSET,
@@ -387,7 +373,7 @@ fn issuance_rail_rejects_a_window_whose_prices_fail_coverage() {
     // Eight hours of 1,800 blocks at a vote period of eight: 225 rounds each.
     // One observation in the first hour.
     let hour = 3_600;
-    let snapshot = world.enter(|storage, _, _| {
+    let snapshot = world.enter(|storage| {
         let snapshot = outbe_oracle::api::current_vwap_snapshot(storage.clone()).unwrap();
         let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
         oracle.config_vote_period.write(8).unwrap();
@@ -421,7 +407,7 @@ fn issuance_rail_rejects_a_window_whose_prices_fail_coverage() {
     assert!(!is_settled(&mut world, nod_id));
 
     // 180 of 225 rounds in every hour: above two thirds, the window prices.
-    world.enter(|storage, _, _| {
+    world.enter(|storage| {
         let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
         let mut timestamp = snapshot.start() + 20;
         while timestamp < snapshot.cutoff() {
@@ -430,9 +416,7 @@ fn issuance_rail_rejects_a_window_whose_prices_fail_coverage() {
         }
     });
     let quoted = world
-        .enter(|storage, scope, parent| {
-            api::quote_settlement(&storage, scope, parent, nod_id, EUR_ASSET)
-        })
+        .enter(|storage| api::quote_settlement(&storage, nod_id, EUR_ASSET))
         .unwrap();
     assert_eq!(quoted.1, U256::from(cost_of(&input) / 2));
 }

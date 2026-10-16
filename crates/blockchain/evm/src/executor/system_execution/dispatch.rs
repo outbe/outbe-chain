@@ -18,8 +18,7 @@ struct ReservedSystemReceiptContext {
     block_number: u64,
     visible_base_gas: u64,
     visible_gas_limit: u64,
-    ce_gas_limit: u64,
-    compressed_entities_gas: u64,
+    available_visible_gas: u64,
     has_boundary_outcome: bool,
     has_tee_bootstrap: bool,
 }
@@ -97,12 +96,8 @@ where
         // path. Body-parity validation above (decode / phase / calldata / signature /
         // signer) also remains fatal: those are validator-side checks that the proposer
         // never produces for itself.
-        let (ce_gas_limit, gas_window) = open_reserved_gas_window(
-            &self.compressed_entities_scope,
-            body_index,
-            expected_phase,
-            (visible_base_gas, visible_gas_limit),
-        )?;
+        let available_visible_gas =
+            reserved_visible_headroom(body_index, (visible_base_gas, visible_gas_limit))?;
         let transact_outcome = with_preloaded_system_tx_context(phase_context, || {
             self.inner.evm.transact_system_call(
                 outbe_primitives::addresses::SYSTEM_ADDRESS,
@@ -130,25 +125,13 @@ where
             }
             BlockExecutionError::other(error)
         })?;
-        let compressed_entities_gas = gas_window.gas_used().map_err(|error| {
-            if error.is_node_local() || matches!(error, PrecompileError::Fatal(_)) {
-                BlockExecutionError::other(error)
-            } else {
-                BlockValidationError::msg(format!(
-                    "read CE gas window for {expected_phase:?} at body_index={body_index}: {error}"
-                ))
-                .into()
-            }
-        })?;
-        drop(gas_window);
         let receipt_context = ReservedSystemReceiptContext {
             body_index,
             expected_phase,
             block_number,
             visible_base_gas,
             visible_gas_limit,
-            ce_gas_limit,
-            compressed_entities_gas,
+            available_visible_gas,
             has_boundary_outcome,
             has_tee_bootstrap,
         };
@@ -200,7 +183,6 @@ where
     {
         let ReservedSystemReceiptContext {
             visible_base_gas,
-            compressed_entities_gas,
             visible_gas_limit,
             has_boundary_outcome,
             has_tee_bootstrap,
@@ -212,12 +194,7 @@ where
             return Ok(None);
         }
         let commit_outcome = self
-            .commit_system_transaction(
-                output,
-                visible_base_gas,
-                compressed_entities_gas,
-                visible_gas_limit,
-            )
+            .commit_system_transaction(output, visible_base_gas, 0, visible_gas_limit)
             .map(Some);
         if commit_outcome.is_ok() {
             self.system_tx_phase_cursor =
@@ -242,8 +219,7 @@ where
             block_number,
             visible_base_gas,
             visible_gas_limit,
-            ce_gas_limit,
-            compressed_entities_gas,
+            available_visible_gas,
             has_boundary_outcome,
             has_tee_bootstrap,
         } = context;
@@ -285,16 +261,16 @@ where
             result
         );
         let tx_type = tx.tx_type();
-        let receipt_ce_gas = if matches!(
+        let additional_visible_gas = if matches!(
             result,
             ExecutionResult::Halt {
                 reason: HaltReason::OutOfGas(_),
                 ..
             }
         ) {
-            ce_gas_limit
+            available_visible_gas
         } else {
-            compressed_entities_gas
+            0
         };
         let gas_output = self.push_system_failure_receipt(SystemFailureReceiptInput {
             tx_type,
@@ -302,7 +278,7 @@ where
             code,
             reason,
             visible_base_gas,
-            compressed_entities_gas: receipt_ce_gas,
+            additional_visible_gas,
             signed_gas_limit: visible_gas_limit,
             internal_gas_used: result.tx_gas_used(),
         })?;
@@ -599,34 +575,14 @@ fn validate_reserved_system_input(
     Ok(())
 }
 
-fn open_reserved_gas_window(
-    scope: &ExecutionScope,
+fn reserved_visible_headroom(
     body_index: usize,
-    expected_phase: SystemTxKind,
     visible_gas: (u64, u64),
-) -> Result<(u64, outbe_compressed_entities::ExplicitGasWindow<'_>), BlockExecutionError> {
+) -> Result<u64, BlockExecutionError> {
     let (visible_base_gas, visible_gas_limit) = visible_gas;
-    let ce_gas_limit =
-        visible_gas_limit
-            .checked_sub(visible_base_gas)
-            .ok_or_else(|| -> BlockExecutionError {
-                BlockValidationError::msg(format!(
-                    "system tx signed gas below visible base at body_index={body_index}: \
-             signed={visible_gas_limit}, visible_base={visible_base_gas}"
-                ))
-                .into()
-            })?;
-    let gas_window = scope
-        .begin_explicit_gas_window(ce_gas_limit)
-        .map_err(|error| {
-            if error.is_node_local() || matches!(error, PrecompileError::Fatal(_)) {
-                BlockExecutionError::other(error)
-            } else {
-                BlockValidationError::msg(format!(
-                    "open CE gas window for {expected_phase:?} at body_index={body_index}: {error}"
-                ))
-                .into()
-            }
-        })?;
-    Ok((ce_gas_limit, gas_window))
+    visible_gas_limit.checked_sub(visible_base_gas).ok_or_else(|| {
+        BlockValidationError::msg(format!(
+            "system tx signed gas below visible base at body_index={body_index}: signed={visible_gas_limit}, visible_base={visible_base_gas}"
+        )).into()
+    })
 }

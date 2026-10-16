@@ -136,12 +136,12 @@ fn dispatch_request(
         Err(_) => return Err(TransportDispatchError::NodTransferRequestEncoding.into()),
     };
     match request {
-        EnclaveRequest::PrepareEncryptedNodsV2 { request } => {
-            Ok(super::nod::prepare(keys, offer, chain, &request))
+        EnclaveRequest::PrepareStateNods { request } => {
+            Ok(super::nod::prepare_state(keys, offer, chain, &request))
         }
-        EnclaveRequest::OpenEncryptedNodsV2 { authority, carrier } => {
-            Ok(super::nod::open(keys, offer, chain, &authority, &carrier))
-        }
+        EnclaveRequest::OpenStateNods { authority, carrier } => Ok(super::nod::open_state(
+            keys, offer, chain, &authority, &carrier,
+        )),
         _ => Err(TransportDispatchError::NodTransferCommandNotPermitted.into()),
     }
 }
@@ -172,9 +172,7 @@ pub(super) fn discard(id: B256) -> EnclaveResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use outbe_tee::nod_materialization::{
-        NodMaterializationAuthorityV2, PrepareEncryptedNodsRequestV2,
-    };
+    use outbe_tee::nod_state_materialization::{PrepareStateNodsRequest, StateNodAuthority};
     use std::sync::Arc;
 
     #[test]
@@ -212,13 +210,22 @@ mod tests {
             append(invalid, 100_000, 0, &vec![1; TRANSFER_CHUNK_BYTES + 1]),
             EnclaveResponse::Error { .. }
         ));
-        let request = EnclaveRequest::PrepareEncryptedNodsV2 {
-            request: Box::new(PrepareEncryptedNodsRequestV2 {
-                authority: NodMaterializationAuthorityV2 {
-                    chain_id: 1,
+        let request = EnclaveRequest::PrepareStateNods {
+            request: Box::new(PrepareStateNodsRequest {
+                authority: StateNodAuthority {
+                    source: outbe_tee::tribute_source::TributeSourceSubject {
+                        checkpoint: outbe_tee::tribute_source::TributeSourceCheckpoint {
+                            block_number: 1,
+                            block_hash: B256::repeat_byte(2),
+                            state_root: B256::repeat_byte(3),
+                        },
+                        chain_id: 1,
+                        worldwide_day: outbe_primitives::time::WorldwideDay::new(20261016),
+                        tribute_count: 1,
+                    },
                     head: vec![255; 70_000],
                     subtree_height: 3,
-                    sealed_tribute_root: B256::ZERO,
+                    source_bindings: vec![],
                 },
                 batch: vec![],
                 sources: vec![],

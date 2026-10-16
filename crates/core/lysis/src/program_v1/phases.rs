@@ -3,9 +3,9 @@
 use std::collections::BTreeMap;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{derive_poseidon_entity_id, WwdEntityId};
 use outbe_ocomp_protocol::result::NodActionV1 as CertifiedNodActionV1;
 use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::wwd_entity_id::{derive_poseidon_entity_id, WwdEntityId};
 
 use super::{
     execute::{calculate_cost, calculate_gratis_load, compute_fraction_map_from_groups},

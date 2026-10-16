@@ -1,44 +1,11 @@
 use alloy_primitives::{B256, U256};
 use outbe_node::ocomp::retention::RetentionError;
 use outbe_ocomp_protocol::input::{CheckpointIdentityV1, Compression, InputManifestV1};
-use outbe_offchain_data::ProjectionState;
-use outbe_primitives::projection::ProjectionCheckpoint;
 
 use super::{
-    committed_pin_generation, is_lysis_opening_capacity_error, require_projection_checkpoint,
-    require_replayed_input_authority, ExpectedInputAuthorityV1,
+    committed_pin_generation, is_lysis_opening_capacity_error, require_replayed_input_authority,
+    ExpectedInputAuthorityV1,
 };
-
-#[test]
-fn reader_only_projection_checkpoint_must_cover_the_finalized_request() {
-    let request = super::FinalizedRequestBindingV1 {
-        block_number: 42,
-        block_hash: B256::repeat_byte(0x42),
-        state_root: B256::repeat_byte(0x24),
-    };
-    let state = |block_number, block_hash| ProjectionState {
-        chain_id: 7,
-        genesis_hash: B256::repeat_byte(0x77),
-        storage_schema_version: 1,
-        start_block: 1,
-        checkpoint: Some(ProjectionCheckpoint {
-            block_number,
-            block_hash,
-        }),
-    };
-
-    assert!(require_projection_checkpoint(None, &request).is_err());
-    assert!(
-        require_projection_checkpoint(Some(&state(41, B256::repeat_byte(0x41))), &request).is_err()
-    );
-    assert!(
-        require_projection_checkpoint(Some(&state(42, B256::repeat_byte(0x99))), &request).is_err()
-    );
-    assert!(require_projection_checkpoint(Some(&state(42, request.block_hash)), &request).is_ok());
-    assert!(
-        require_projection_checkpoint(Some(&state(43, B256::repeat_byte(0x43))), &request).is_ok()
-    );
-}
 
 #[test]
 fn committed_generation_is_the_offer_generation_successor() {
@@ -82,12 +49,6 @@ fn replayed_manifest_requires_every_finalized_authority_field() {
     changed.wwd += 1;
     substitutions.push(changed);
     let mut changed = manifest.clone();
-    changed.sealed_tribute_collection_key = B256::repeat_byte(24);
-    substitutions.push(changed);
-    let mut changed = manifest.clone();
-    changed.sealed_tribute_collection_root = B256::repeat_byte(25);
-    substitutions.push(changed);
-    let mut changed = manifest.clone();
     changed.tribute_count += 1;
     substitutions.push(changed);
     let mut changed = manifest.clone();
@@ -126,12 +87,8 @@ fn expected_input_authority() -> ExpectedInputAuthorityV1 {
             finalized_block_number: 4,
             finalized_block_hash: B256::repeat_byte(5),
             finalized_state_root: B256::repeat_byte(6),
-            finalized_ce_root: B256::repeat_byte(7),
-            ce_schema_version: 8,
         },
         wwd: 20_260_901,
-        sealed_tribute_collection_key: B256::repeat_byte(9),
-        sealed_tribute_collection_root: B256::repeat_byte(10),
         tribute_count: 11,
         tribute_nominal_total: U256::from(12),
         body_codec_id: B256::repeat_byte(13),
@@ -146,8 +103,6 @@ fn matching_manifest(expected: &ExpectedInputAuthorityV1) -> InputManifestV1 {
         attempt: expected.attempt,
         checkpoint: expected.checkpoint.clone(),
         wwd: expected.wwd,
-        sealed_tribute_collection_key: expected.sealed_tribute_collection_key,
-        sealed_tribute_collection_root: expected.sealed_tribute_collection_root,
         tribute_count: expected.tribute_count,
         tribute_nominal_total: expected.tribute_nominal_total,
         input_chunk_count: 1,

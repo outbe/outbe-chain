@@ -20,10 +20,6 @@ fn mixed_artifacts(consensus: ConsensusHeaderArtifact) -> OutbeBlockArtifacts {
                 aggregate_signature: [0x33; 96],
             }],
         }),
-        compressed_entities_root: Some(CompressedEntitiesRootArtifact {
-            commitment_scheme_version: 0x01020304,
-            r_sealed: B256::repeat_byte(0x44),
-        }),
     }
 }
 
@@ -73,25 +69,25 @@ fn assert_fatal(bytes: &[u8], expected: &str) {
 
 #[test]
 fn mixed_record_wire_vectors_are_pinned() {
-    // Captured from the pre-refactor encoder. The hashes bind every field, length,
-    // endian convention, version and record order without duplicating the codec.
+    // Pinned wire vectors omit the retired entity-root record. The hashes bind
+    // every remaining field, length, endian convention, version and record order.
     let expected = [
         (
-            613,
+            574,
             alloy_primitives::b256!(
-                "5243cd6624127a9fdf8332f75c74dac235dda705acf5da281ce4b7ab1e9aac98"
+                "cb595ee6387dd0b75d38410db3db3b10b495cfd1d7206942dc6dc675066bfd2a"
             ),
         ),
         (
-            301,
+            262,
             alloy_primitives::b256!(
-                "18f30aab3b466960cc6e31fdc651c76798310ddcf0101cce5cabab04319f7e98"
+                "4a2b3f4b4f303d89fa0a83e083b3ea6604509f670674b0284247b051b537428b"
             ),
         ),
         (
-            314,
+            275,
             alloy_primitives::b256!(
-                "5ac4c2d8589782c0d27e515d0b4b46fa5ee90dc0f5c3652296589cfb2da79c4d"
+                "f9f592c45221f43567e88325054b80ed62699cf501995c87fb368a0281be4824"
             ),
         ),
     ];
@@ -122,11 +118,6 @@ fn duplicate_checks_precede_record_payload_validation() {
             "duplicate timestamp_millis_part",
         ),
         (6, vec![0, 0], "duplicate late finalize credits artifact"),
-        (
-            8,
-            vec![0; 36],
-            "duplicate compressed-entities root artifact",
-        ),
     ] {
         assert_fatal(&envelope(&[(tag, &payload), (tag, &[])]), message);
     }
@@ -162,10 +153,7 @@ fn malformed_record_lengths_and_unknown_tags_keep_exact_errors() {
         (5, "timestamp_millis_part payload length: 0 (expected 8)"),
         (6, "late finalize credits payload too short"),
         (7, "committee pre-announce payload too short for epoch"),
-        (
-            8,
-            "compressed-entities root payload length: 0 (expected 36)",
-        ),
+        (8, "unsupported block artifact tag: 8"),
         (255, "unsupported block artifact tag: 255"),
     ] {
         assert_fatal(&envelope(&[(tag, &[])]), message);

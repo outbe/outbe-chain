@@ -48,8 +48,7 @@ use crate::{
         NodMaterializationSubmissionOutcomeV1, NodMaterializationSubmitterV1,
     },
     protected_nod_materialization::{
-        materialization_sources, prepare_protected_materialization,
-        PreparedNodMaterializationStoreV2,
+        prepare_state_protected_materialization, PreparedNodMaterializationStoreV2,
     },
     result_attestation::LocalResultVoteAttesterV1,
     result_signer::OcompSigner,
@@ -431,7 +430,7 @@ impl EmbeddedOcompDomainV1 {
             batch_subtree_height,
         };
         #[cfg(any(test, feature = "test-utils"))]
-        let enclave_context = outbe_tee::nod_materialization::test_support::capture();
+        let enclave_context = outbe_tee::nod_state_materialization::test_support::capture();
         #[cfg(any(test, feature = "test-utils"))]
         let tribute_context = outbe_tribute::enclave_client::test_enclave::capture();
         thread::Builder::new()

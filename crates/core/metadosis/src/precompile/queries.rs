@@ -103,7 +103,6 @@ pub(super) fn capacity_forfeiture_receipt(
             U256::ZERO,
             U256::ZERO,
             U256::ZERO,
-            alloy_primitives::B256::ZERO,
             0_u32,
             U256::ZERO,
             0_u64,
@@ -114,10 +113,8 @@ pub(super) fn capacity_forfeiture_receipt(
             .into());
     };
     let retirement = match receipt.retirement {
-        outbe_compressed_entities::RetirementOutcome::NotPresent => {
-            terminal_retirement::NOT_PRESENT
-        }
-        outbe_compressed_entities::RetirementOutcome::Requested => terminal_retirement::REQUESTED,
+        outbe_tribute::runtime::RetirementOutcome::NotPresent => terminal_retirement::NOT_PRESENT,
+        outbe_tribute::runtime::RetirementOutcome::Requested => terminal_retirement::REQUESTED,
     };
     Ok((
         terminal_outcome::CAPACITY_FORFEITURE,
@@ -126,7 +123,6 @@ pub(super) fn capacity_forfeiture_receipt(
         receipt.value_routed,
         receipt.carry_over_before,
         receipt.carry_over_after,
-        receipt.sealed_collection_root,
         receipt.forfeited_count,
         receipt.forfeited_nominal,
         receipt.source_generation,

@@ -1,7 +1,4 @@
 use alloy_primitives::B256;
-use outbe_compressed_entities::{
-    partition_collection_key, ExecutionScope, PartitionRef, SealedCollectionRoot,
-};
 use outbe_nod::NodContract;
 use outbe_ocomp_protocol::{
     intent::{
@@ -49,37 +46,18 @@ struct TerminalRequestContext<'a, 'storage> {
     wwd: WorldwideDay,
     pending_nonce: u64,
     outer_transition: &'a OuterWwdTransition,
-    roots: TerminalRequestRoots,
 }
 
-#[derive(Clone, Copy)]
-struct TerminalRequestRoots {
-    sealed_root: B256,
-    tribute: SealedCollectionRoot,
+/// Executes the bounded request transition after active-phase inputs are frozen.
+pub fn run_terminal_request(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+    run_terminal_request_inner(ctx).map(|_| ())
 }
 
-#[derive(Clone, Copy)]
-enum TerminalRootSource {
-    Provisional,
-    #[cfg(test)]
-    CompletedFixture,
-}
-
-/// Executes the bounded end-zone request transition against the executor-owned
-/// provisional CE seal while the scope remains active for failure retirement.
-pub fn run_terminal_request(ctx: &BlockRuntimeContext<'_>, scope: &ExecutionScope) -> Result<()> {
-    run_terminal_request_inner(ctx, scope, TerminalRootSource::Provisional).map(|_| ())
-}
-
-/// Compatibility adapter for old unit fixtures that model a previously sealed
-/// parent. Production and production-ordering tests must use
-/// [`run_terminal_request`].
 #[cfg(test)]
 pub(crate) fn run_terminal_request_with_completed_fixture(
     ctx: &BlockRuntimeContext<'_>,
-    scope: &ExecutionScope,
 ) -> Result<()> {
-    run_terminal_request_inner(ctx, scope, TerminalRootSource::CompletedFixture).map(|_| ())
+    run_terminal_request_inner(ctx).map(|_| ())
 }
 
 pub(crate) fn due_ready_worldwide_day(
@@ -99,11 +77,7 @@ pub(crate) fn due_ready_worldwide_day(
         .then_some(projection.worldwide_day))
 }
 
-fn run_terminal_request_inner(
-    ctx: &BlockRuntimeContext<'_>,
-    scope: &ExecutionScope,
-    root_source: TerminalRootSource,
-) -> Result<TerminalRequestOutcome> {
+fn run_terminal_request_inner(ctx: &BlockRuntimeContext<'_>) -> Result<TerminalRequestOutcome> {
     let schema_limits = poc_schema_limits();
     let mut metadosis = MetadosisContract::new(ctx.storage.clone());
     let Some(profile) = metadosis.read_ocomp_request_profile(&schema_limits)? else {
@@ -128,7 +102,6 @@ fn run_terminal_request_inner(
         projection.worldwide_day,
         OuterWwdEvent::OcompRequestCommitted,
     )?;
-    let roots = terminal_request_roots(scope, projection.worldwide_day, root_source)?;
 
     let request = TerminalRequestContext {
         ctx,
@@ -136,7 +109,6 @@ fn run_terminal_request_inner(
         wwd: projection.worldwide_day,
         pending_nonce: projection.pending_nonce,
         outer_transition: &outer_transition,
-        roots,
     };
 
     build_and_commit_request(&mut metadosis, &request)
@@ -190,17 +162,11 @@ fn inspect_request_candidate(
     request: &TerminalRequestContext<'_, '_>,
 ) -> Result<Option<RequestCandidate>> {
     let TerminalRequestContext {
-        ctx,
-        profile,
-        wwd,
-        roots,
-        ..
+        ctx, profile, wwd, ..
     } = *request;
-    let exact_collection = roots.tribute;
     let tribute = TributeContract::new(ctx.storage.clone());
     let stored_tribute_projection = tribute.pre_admission_projection(wwd)?;
-    let candidate_tribute_projection =
-        candidate_tribute_projection(stored_tribute_projection, exact_collection)?;
+    let candidate_tribute_projection = candidate_tribute_projection(stored_tribute_projection);
     let current_vwap = metadosis.worldwide_days.entry(wwd).current_vwap().read()?;
     let oracle = outbe_oracle::api::ocomp_pre_admission_projection(ctx.storage.clone())?;
     // The active-phase prepare step (`build_fidelity_league_snapshot`) committed
@@ -247,9 +213,7 @@ fn seal_request_admission(
     request: &TerminalRequestContext<'_, '_>,
     candidate: RequestCandidate,
 ) -> Result<AdmittedRequest> {
-    let TerminalRequestContext {
-        ctx, wwd, roots, ..
-    } = *request;
+    let TerminalRequestContext { ctx, wwd, .. } = *request;
     let RequestCandidate {
         stored_tribute_projection,
         current_vwap,
@@ -257,14 +221,13 @@ fn seal_request_admission(
         pre_admission_context,
         candidate_envelope,
     } = candidate;
-    let exact_collection = roots.tribute;
     let mut tribute = TributeContract::new(ctx.storage.clone());
     let nod_target = NodContract::new(ctx.storage.clone()).ocomp_target_projection(wwd)?;
 
     let sealed_tribute_projection = if stored_tribute_projection.is_sealed {
         stored_tribute_projection
     } else {
-        tribute.seal_pre_admission(wwd, exact_collection)?
+        tribute.seal_pre_admission(wwd)?
     };
     let sealed_decision = evaluate_pre_admission(
         &pre_admission_context,
@@ -379,7 +342,6 @@ fn freeze_request_limits(
 fn request_activation_preconditions(
     request: &TerminalRequestContext<'_, '_>,
     admitted: &AdmittedRequest,
-    collection_key: &outbe_compressed_entities::CollectionKey,
 ) -> ActivationPreconditionsV1 {
     let wwd = request.wwd;
     let pending_nonce = request.pending_nonce;
@@ -390,8 +352,6 @@ fn request_activation_preconditions(
         tribute: TributeInputBindingV1 {
             wwd: wwd.value(),
             source_generation: sealed_tribute_projection.source_generation,
-            collection_key: B256::from_slice(collection_key.as_bytes()),
-            sealed_collection_root: sealed_tribute_projection.sealed_collection_root,
             exact_count: sealed_tribute_projection.tribute_count,
             exact_nominal_total: sealed_tribute_projection.tribute_nominal_total_minor,
         },
@@ -422,7 +382,6 @@ fn build_request_intent(
         profile,
         wwd,
         pending_nonce,
-        roots,
         ..
     } = *request;
     let sealed_tribute_projection = admitted.tribute;
@@ -433,13 +392,9 @@ fn build_request_intent(
     let receipt = &frozen.receipt;
     let receipt_hash = frozen.receipt_hash;
     let lysis_limit_minor = calculation.lysis_limit_minor;
-    let ce_sealed_root = roots.sealed_root;
     let attempt = u32::try_from(pending_nonce)
         .map_err(|_| storage_corruption_message("OCOMP pending nonce exceeds u32"))?;
-    let (_, collection_key) = partition_collection_key(PartitionRef::TributeWwd(wwd))
-        .map_err(storage_corruption_message)?;
-    let activation_preconditions =
-        request_activation_preconditions(request, admitted, &collection_key);
+    let activation_preconditions = request_activation_preconditions(request, admitted);
     let previous_vwap = metadosis.worldwide_days.entry(wwd).previous_vwap().read()?;
     let result_snapshot = current_ocomp_attempt_snapshot(ctx.storage.clone())?;
     let intent = JobIntentV1 {
@@ -450,9 +405,6 @@ fn build_request_intent(
         pending_nonce,
         attempt,
         protocol_bundle_hash: profile.protocol_bundle_hash,
-        ce_sealed_root,
-        sealed_tribute_collection_key: B256::from_slice(collection_key.as_bytes()),
-        sealed_tribute_collection_root: sealed_tribute_projection.sealed_collection_root,
         authenticated_day_count: sealed_tribute_projection.tribute_count,
         authenticated_day_nominal: sealed_tribute_projection.tribute_nominal_total_minor,
         pre_admission_envelope_hash: envelope_hash,
@@ -527,28 +479,9 @@ fn commit_and_emit_request(
 
 fn candidate_tribute_projection(
     mut projection: TributePreAdmissionProjection,
-    exact_collection: SealedCollectionRoot,
-) -> Result<TributePreAdmissionProjection> {
-    if projection.worldwide_day
-        != match exact_collection.partition() {
-            PartitionRef::TributeWwd(day) => day,
-        }
-    {
-        return Err(storage_corruption_message(
-            "OCOMP Tribute projection/partition day mismatch",
-        ));
-    }
-    if projection.is_sealed {
-        if projection.sealed_collection_root != exact_collection.root() {
-            return Err(storage_corruption_message(
-                "stored OCOMP Tribute root differs from provisional CE seal",
-            ));
-        }
-        return Ok(projection);
-    }
+) -> TributePreAdmissionProjection {
     projection.is_sealed = true;
-    projection.sealed_collection_root = exact_collection.root();
-    Ok(projection)
+    projection
 }
 
 fn apply_or_validate_limit_effect(
@@ -588,24 +521,5 @@ fn protocol_day_type(value: WwdDayType) -> Result<DayType> {
         WwdDayType::Unknown => Err(storage_corruption_message(
             "OCOMP request requires a resolved day type",
         )),
-    }
-}
-
-fn terminal_request_roots(
-    scope: &ExecutionScope,
-    worldwide_day: WorldwideDay,
-    source: TerminalRootSource,
-) -> Result<TerminalRequestRoots> {
-    let partition = PartitionRef::TributeWwd(worldwide_day);
-    match source {
-        TerminalRootSource::Provisional => Ok(TerminalRequestRoots {
-            sealed_root: scope.provisional_sealed_root()?,
-            tribute: scope.provisional_partition_root(partition)?,
-        }),
-        #[cfg(test)]
-        TerminalRootSource::CompletedFixture => Ok(TerminalRequestRoots {
-            sealed_root: scope.completed_sealed_root()?,
-            tribute: scope.completed_partition_root(partition)?,
-        }),
     }
 }

@@ -1,13 +1,9 @@
 //! A Solidity view reads the IntexFactory precompile as its daily VWAP source,
 //! as the origin's IntexNFT1155 does.
-use outbe_offchain_data::runtime_body_readers;
-use std::sync::Arc;
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall};
-use outbe_compressed_entities::ExecutionScope;
 use outbe_evm::sub_call;
-use outbe_offchain_storage::MemoryStorage;
 use outbe_oracle::{api::AddressPair, schema::OracleContract};
 use outbe_primitives::{
     addresses::INTEX_FACTORY_ADDRESS,
@@ -72,8 +68,7 @@ fn a_solidity_view_reads_the_factory_as_its_vwap_source() {
         .with_db(db)
         .modify_cfg_chained(|cfg| cfg.chain_id = CHAIN_ID)
         .modify_block_chained(|block| block.timestamp = U256::from(TIMESTAMP));
-    let readers = runtime_body_readers(Arc::new(MemoryStorage::new()));
-    let scope = Arc::new(ExecutionScope::default());
+
     let mut read = |iso_code: u16, from_utc_day: u32| {
         let out = sub_call::run(
             &mut ctx,
@@ -81,8 +76,6 @@ fn a_solidity_view_reads_the_factory_as_its_vwap_source() {
                 self_address: CALLER,
                 outer_is_static: false,
                 spec: SpecId::PRAGUE,
-                runtime_body_readers: Some(readers.clone()),
-                execution_scope: scope.clone(),
             },
             SubCallInput {
                 target: READER,

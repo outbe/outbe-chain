@@ -4,7 +4,6 @@ use super::*;
 pub struct RollbackSnapshot {
     storage: HashMap<(Address, U256), U256>,
     events: Vec<Log>,
-    ce_work: CeWorkCheckpoint,
 }
 
 #[cfg(test)]
@@ -32,7 +31,7 @@ pub struct ActivationMetadata {
 
 pub struct ActivationFixture {
     pub provider: HashMapStorageProvider,
-    pub scope: ExecutionScope,
+
     pub result: LysisResultV1,
     pub finality: FixedFinality,
     pub intent_id: B256,
@@ -191,7 +190,6 @@ impl ActivationFixture {
         StorageHandle::enter(&mut self.provider, |storage| {
             crate::commands::submit_verified_result_vote(
                 storage,
-                &self.scope,
                 calldata.as_ref(),
                 U256::ZERO,
                 false,
@@ -238,7 +236,6 @@ impl ActivationFixture {
         RollbackSnapshot {
             storage: self.provider.storage.clone(),
             events: self.provider.get_ordered_events().to_vec(),
-            ce_work: self.scope.ce_work_checkpoint().unwrap(),
         }
     }
 
@@ -410,7 +407,6 @@ fn seed_owner_targets(storage: StorageHandle<'_>, seed_targets: bool) {
         let mut admission = DayPreAdmission::with_key(TEST_WWD);
         admission.initialized = true;
         admission.is_sealed = true;
-        admission.sealed_collection_root = hash(31);
         admission.sealed_tribute_count = 2;
         admission.sealed_tribute_nominal_total_minor = U256::from(1_000);
         admission.source_generation = 0;
@@ -507,7 +503,6 @@ fn seed_requested_job(
 }
 fn seed_initial_votes(
     storage: StorageHandle<'_>,
-    scope: &ExecutionScope,
     seed: &ActivationSeed,
     config: &ActivationFixtureConfig,
     finalized: &outbe_ocomp_protocol::state::OcompFinalizedJobV1,
@@ -519,7 +514,6 @@ fn seed_initial_votes(
             .record_ocomp_result_vote(
                 &vote,
                 finalized.open_height + u64::from(index),
-                scope,
                 &seed.limits,
             )
             .unwrap();
@@ -597,16 +591,15 @@ impl ActivationScenario {
         let seed = prepare_activation_seed(&mut provider, &config);
         provider.set_block_number(config.current_height);
         provider.set_timestamp(U256::from(config.current_time));
-        let scope = begin_activation_scope(&mut provider);
         StorageHandle::enter(&mut provider, |storage| {
             seed_owner_targets(storage.clone(), config.seed_targets);
             let finalized = seed_requested_job(storage.clone(), &seed, config.seed_targets);
-            seed_initial_votes(storage, &scope, &seed, &config, &finalized);
+            seed_initial_votes(storage, &seed, &config, &finalized);
         });
         provider.clear_events(METADOSIS_ADDRESS);
         ActivationFixture {
             provider,
-            scope,
+
             result: seed.result,
             finality: seed.finality,
             intent_id: seed.intent_id,

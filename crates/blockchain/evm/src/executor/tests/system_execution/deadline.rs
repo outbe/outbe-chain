@@ -58,7 +58,6 @@ fn deadline_context(
 
 fn execute_and_finalize_block(
     state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>,
-    tree: &Arc<CompressedTreeService>,
     input: DeadlineBlockInput<'_>,
 ) -> (B256, Vec<Receipt>) {
     let DeadlineBlockInput {
@@ -69,9 +68,7 @@ fn execute_and_finalize_block(
     } = input;
     let proposer = signer.address();
     let chain_spec = test_chain_spec();
-    let config = OutbeEvmConfig::new(chain_spec)
-        .with_evm_signer(signer)
-        .with_compressed_tree_service(tree.clone());
+    let config = OutbeEvmConfig::new(chain_spec).with_evm_signer(signer);
     let parent_metadata = parent_metadata(committee, number, parent_hash);
     let system_txs = begin_system_txs_for_test(
         &config,
@@ -106,19 +103,9 @@ fn execute_and_finalize_block(
             .expect("deadline block system transaction must execute");
     }
     executor
-        .finalize_compressed_entities()
-        .expect("deadline block CE lifecycle must seal");
-    executor
         .prepare_final_header_artifacts(0)
         .expect("deadline block artifacts must encode");
-    let sealed = executor
-        .compressed_entities_seal_output()
-        .expect("deadline block must produce a CE candidate");
     let block_hash = keccak256(number.to_be_bytes());
-    tree.publish_candidate(block_hash, sealed.staged_tree_batch)
-        .expect("deadline block CE candidate must publish");
-    tree.apply_finalized(number, block_hash, sealed.new_root)
-        .expect("deadline block CE candidate must finalize");
     let (evm, result) = executor.finish().expect("full block execution must finish");
     drop(evm);
     assert!(result.receipts.iter().all(|receipt| receipt.success));
@@ -277,23 +264,9 @@ pub(super) fn run() {
         .map(|(validator, _)| *validator)
         .collect::<Vec<_>>();
     let mut state = prepare_deadline_state(&validators, &committee);
-    let empty_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
     let parent_hash = B256::repeat_byte(0x90);
-    let (_tree_directory, tree) = persistent_test_tree_with_marker(
-        test_chain_spec().genesis_hash(),
-        FinalizedMarker {
-            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-            height: DEADLINE - 1,
-            block_hash: parent_hash,
-            parent_block_hash: B256::repeat_byte(0x8f),
-            parent_root: empty_root,
-            new_root: empty_root,
-        },
-    );
-
     let (deadline_hash, deadline_receipts) = execute_and_finalize_block(
         &mut state,
-        &tree,
         DeadlineBlockInput {
             signer: first_signer,
             committee: &committee,
@@ -305,7 +278,6 @@ pub(super) fn run() {
     assert_retained_committee(&mut state, &committee);
     let (_successor_hash, successor_receipts) = execute_and_finalize_block(
         &mut state,
-        &tree,
         DeadlineBlockInput {
             signer: second_signer,
             committee: &committee,

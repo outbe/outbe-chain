@@ -7,19 +7,10 @@ cd "$ROOT_DIR"
 ACTION=${1:-start}
 STORAGE_TEMPLATE=${2:-}
 STACK_DIR=$(realpath -m "${LOCALNET_STACK_DIR:-/tmp/outbe-localnet-stack}")
-MONGO_NAME=${LOCALNET_STACK_MONGO_NAME:-outbe-localnet-stack-mongodb}
-MONGO_VOLUME="${MONGO_NAME}-data"
-MONGO_PORT=${LOCALNET_STACK_MONGO_PORT:-27027}
 PORT_OFFSET=${LOCALNET_STACK_PORT_OFFSET:-1000}
 RPC_PORT=$((18545 + PORT_OFFSET))
 RPC_URL="http://127.0.0.1:${RPC_PORT}"
-MONGO_URI="mongodb://127.0.0.1:${MONGO_PORT}/?replicaSet=rs0&directConnection=true"
 
-# The MongoDB replica-set lifecycle lives in one shared script (also used by the
-# plain `localnet-*` mise tasks); point it at this stack's dedicated container.
-export OUTBE_LOCALNET_MONGO_NAME="$MONGO_NAME"
-export OUTBE_LOCALNET_MONGO_PORT="$MONGO_PORT"
-export OUTBE_LOCALNET_MONGO_VOLUME="$MONGO_VOLUME"
 
 case "$STACK_DIR" in
   /tmp/outbe-?*) ;;
@@ -28,19 +19,6 @@ case "$STACK_DIR" in
     exit 2
     ;;
 esac
-
-uses_managed_mongo() {
-  python3 - "$STACK_DIR" "$MONGO_URI" <<'PYCODE'
-from pathlib import Path
-import sys, tomllib
-for path in Path(sys.argv[1]).glob("validator-*/offchain-storage.toml"):
-    with path.open("rb") as stream:
-        storage = tomllib.load(stream)
-    if storage["backend"] == "mongodb" and storage["mongodb"]["uri"] == sys.argv[2]:
-        sys.exit(0)
-sys.exit(1)
-PYCODE
-}
 
 network_env() {
   export PORT_OFFSET
@@ -59,12 +37,10 @@ stop_stack() {
   if [[ -d "$STACK_DIR" ]]; then
     ./scripts/run-testnet.sh stop "$STACK_DIR" || true
   fi
-  if uses_managed_mongo; then ./scripts/localnet-mongo.sh stop; fi
 }
 
 remove_stack() {
   stop_stack
-  if uses_managed_mongo; then ./scripts/localnet-mongo.sh clean; fi
 }
 
 print_connection_info() {
@@ -74,7 +50,6 @@ Localnet stack is ready.
 
 Primary RPC:    $RPC_URL
 Validator RPCs: $RPC_URL, http://127.0.0.1:$((RPC_PORT + 1)), http://127.0.0.1:$((RPC_PORT + 2)), http://127.0.0.1:$((RPC_PORT + 3))
-Storage config: $STACK_DIR/validator-N/offchain-storage.toml
 Data dir:       $STACK_DIR
 
 Useful environment for manual flows:
@@ -108,7 +83,6 @@ case "$ACTION" in
       echo "Storage template applies only to a new stack; edit existing per-node TOML files." >&2
       exit 2
     fi
-    if uses_managed_mongo; then ./scripts/localnet-mongo.sh start; fi
     ./scripts/run-testnet.sh start "$STACK_DIR"
 
     rpc_ready=0

@@ -33,11 +33,9 @@ members = [
     "crates/system/radicle",
     "crates/system/update",
     "crates/system/vote",
-    "crates/system/offchain-data",
     "crates/system/ocomp-protocol",
     "crates/system/ocompregistry",
     "crates/system/hyperlanecontroller",
-    "crates/core/compressed-entities",
     # core outbe
     "crates/core/gratis",
     "crates/core/promis",
@@ -143,7 +141,6 @@ outbe-hyperlanecontroller = { path = "crates/system/hyperlanecontroller" }
 outbe-radicleregistry = { path = "crates/system/radicleregistry" }
 outbe-update = { path = "crates/system/update" }
 outbe-vote = { path = "crates/system/vote" }
-outbe-offchain-data = { path = "crates/system/offchain-data" }
 outbe-ocomp-protocol = { path = "crates/system/ocomp-protocol" }
 outbe-ocompregistry = { path = "crates/system/ocompregistry" }
 outbe-ocomp = { path = "bin/outbe-ocomp" }
@@ -153,7 +150,6 @@ radicle-crypto = { path = "vendor/heartwood/crates/radicle-crypto" }
 radicle-log = { path = "vendor/heartwood/crates/radicle-log" }
 radicle-node = { path = "vendor/heartwood/crates/radicle-node", default-features = false, features = ["socket2"] }
 radicle-signals = { path = "vendor/heartwood/crates/radicle-signals" }
-outbe-compressed-entities = { path = "crates/core/compressed-entities" }
 # Core - outbe
 outbe-gratis = { path = "crates/core/gratis" }
 outbe-promis = { path = "crates/core/promis" }
@@ -299,7 +295,6 @@ postcard = { version = "1", features = ["use-std"] }
 # CLI / IO
 clap = { version = "4", features = ["derive"] }
 jsonrpsee = { version = "0.26", features = ["server", "macros"] }
-mongodb = { version = "3.6.0", features = ["sync"] }
 rocksdb = { version = "0.24.0", default-features = false, features = ["lz4", "bindgen-runtime"] }
 reqwest = { version = "0.12", features = ["json"] }
 

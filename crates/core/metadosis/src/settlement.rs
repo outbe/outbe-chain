@@ -1,7 +1,6 @@
 //! Private READY classification and local settlement paths.
 
 use alloy_primitives::U256;
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 use outbe_promislimit::PromisLimitContract;
@@ -101,18 +100,11 @@ enum LocalTerminalOutcome {
     },
 }
 
-pub(crate) struct ReadyOwners<'owners, P> {
-    pub(crate) scope: &'owners ExecutionScope,
-    pub(crate) parent: &'owners P,
-}
-
 pub(crate) fn process_ocomp_ready_candidate(
     metadosis: &mut MetadosisContract<'_>,
     ctx: &BlockRuntimeContext<'_>,
     current: &WwdProjection,
-    owners: ReadyOwners<'_, impl ParentBodySource>,
 ) -> Result<()> {
-    let ReadyOwners { scope, parent } = owners;
     let wwd = current.worldwide_day;
     let limit_amount = current.metadosis_limit_minor;
     let day_type = current.day_type;
@@ -120,7 +112,6 @@ pub(crate) fn process_ocomp_ready_candidate(
         return crate::terminal::fail_worldwide_day(
             ctx.storage.clone(),
             ctx.block.block_number,
-            scope,
             wwd,
         );
     }
@@ -130,7 +121,6 @@ pub(crate) fn process_ocomp_ready_candidate(
         return process_local_terminal_outcome(
             metadosis,
             ctx,
-            scope,
             current,
             LocalTerminalOutcome::EmptyTributeDay {
                 day_type,
@@ -148,7 +138,6 @@ pub(crate) fn process_ocomp_ready_candidate(
         return process_local_terminal_outcome(
             metadosis,
             ctx,
-            scope,
             current,
             LocalTerminalOutcome::ZeroGratisAllocation {
                 day_type,
@@ -172,14 +161,14 @@ pub(crate) fn process_ocomp_ready_candidate(
         wwd,
         current.scheduled_process_time,
     )?;
-    metadosis.build_fidelity_league_snapshot(scope, parent, wwd, ctx.block.timestamp)?;
+    metadosis.build_fidelity_league_snapshot(wwd, ctx.block.timestamp)?;
     metadosis.enqueue_ocomp_ready(wwd, ctx.block.block_number)?;
     commit_outer_transition(metadosis, wwd, &transition, ctx.block.block_number)
 }
 
 struct LocalSettlement<'effect, 'storage> {
     ctx: &'effect BlockRuntimeContext<'storage>,
-    scope: &'effect ExecutionScope,
+
     current: &'effect WwdProjection,
     transition: &'effect crate::reducer::OuterWwdTransition,
 }
@@ -187,7 +176,6 @@ struct LocalSettlement<'effect, 'storage> {
 fn process_local_terminal_outcome(
     metadosis: &mut MetadosisContract,
     ctx: &BlockRuntimeContext,
-    scope: &ExecutionScope,
     current: &WwdProjection,
     outcome: LocalTerminalOutcome,
 ) -> Result<()> {
@@ -198,7 +186,6 @@ fn process_local_terminal_outcome(
     let transition = reduce_outer_wwd(Some(current), OuterWwdEvent::ProcessReady(disposition))?;
     let settlement = LocalSettlement {
         ctx,
-        scope,
         current,
         transition: &transition,
     };
@@ -231,7 +218,6 @@ fn settle_empty_day(
 ) -> Result<()> {
     let LocalSettlement {
         ctx,
-        scope,
         current,
         transition,
     } = settlement;
@@ -243,7 +229,7 @@ fn settle_empty_day(
         .checked_add(day_limit)
         .ok_or_else(|| crate::errors::storage_corruption("Metadosis day limit return overflow"))?;
     commit_outer_transition(metadosis, wwd, transition, ctx.block.block_number)?;
-    TributeContract::new(metadosis.storage.clone()).retire_completed_partition(scope, wwd)?;
+    TributeContract::new(metadosis.storage.clone()).retire_completed_partition(wwd)?;
     metadosis.emit(IMetadosis::MetadosisWorldwideDayProcessed {
         worldwideDay: wwd.into(),
         metadosisLimitMinor: day_limit,
@@ -268,7 +254,6 @@ fn settle_zero_allocation(
 ) -> Result<()> {
     let LocalSettlement {
         ctx,
-        scope,
         current,
         transition,
     } = settlement;
@@ -304,7 +289,7 @@ fn settle_zero_allocation(
     promis_limit.add_to_total_unallocated(returned)?;
     commit_outer_transition(metadosis, wwd, transition, ctx.block.block_number)?;
     // No Lysis allocation consumes these tributes, so this path forfeits the sealed partition.
-    TributeContract::new(metadosis.storage.clone()).forfeit_sealed_partition(scope, wwd)?;
+    TributeContract::new(metadosis.storage.clone()).forfeit_sealed_partition(wwd)?;
     metadosis.emit(IMetadosis::MetadosisExecuted {
         worldwideDay: wwd.into(),
         tributeNominalTotalMinor: tribute_nominal_total,

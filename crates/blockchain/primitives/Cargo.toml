@@ -25,6 +25,7 @@ reth-node-builder.workspace = true
 reth-payload-primitives.workspace = true
 reth-primitives-traits.workspace = true
 reth-rpc-traits.workspace = true
+reth-trie.workspace = true
 revm.workspace = true
 ring.workspace = true
 # Validator-set data types (ValidatorSet / ValidatorP2pAddress) live here so

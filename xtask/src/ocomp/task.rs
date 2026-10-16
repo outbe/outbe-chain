@@ -306,8 +306,6 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "test",
                     "--locked",
                     "-p",
-                    "outbe-compressed-entities",
-                    "-p",
                     "outbe-tribute",
                     "-p",
                     "outbe-fidelity",
@@ -332,8 +330,6 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                 &[
                     "clippy",
                     "--locked",
-                    "-p",
-                    "outbe-compressed-entities",
                     "-p",
                     "outbe-tribute",
                     "-p",
@@ -492,10 +488,6 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
             )?;
             cargo(
                 repository_root,
-                &["test", "--locked", "-p", "outbe-compressed-entities"],
-            )?;
-            cargo(
-                repository_root,
                 &["test", "--locked", "-p", "outbe-metadosis"],
             )?;
             cargo(
@@ -518,8 +510,6 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                 &[
                     "clippy",
                     "--locked",
-                    "-p",
-                    "outbe-compressed-entities",
                     "-p",
                     "outbe-metadosis",
                     "-p",
@@ -561,10 +551,6 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
             )?;
             cargo(
                 repository_root,
-                &["test", "--locked", "-p", "outbe-compressed-entities"],
-            )?;
-            cargo(
-                repository_root,
                 &["test", "--locked", "-p", "outbe-metadosis"],
             )?;
             cargo(
@@ -596,8 +582,6 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                 &[
                     "clippy",
                     "--locked",
-                    "-p",
-                    "outbe-compressed-entities",
                     "-p",
                     "outbe-metadosis",
                     "-p",
@@ -649,15 +633,11 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "test",
                     "--locked",
                     "-p",
-                    "outbe-compressed-entities",
-                    "-p",
                     "outbe-tribute",
                     "-p",
                     "outbe-fidelity",
                     "-p",
                     "outbe-oracle",
-                    "-p",
-                    "outbe-offchain-data",
                 ],
             )?;
             cargo(
@@ -673,8 +653,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "outbe-e2e-harness",
                     "--features",
                     "ocomp-integration",
-                    "--test",
-                    "ocomp_checkpoint_handoff",
+                    "--lib",
                 ],
             )?;
             cargo(
@@ -683,15 +662,11 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "clippy",
                     "--locked",
                     "-p",
-                    "outbe-compressed-entities",
-                    "-p",
                     "outbe-tribute",
                     "-p",
                     "outbe-fidelity",
                     "-p",
                     "outbe-oracle",
-                    "-p",
-                    "outbe-offchain-data",
                     "-p",
                     "outbe-node",
                     "-p",
@@ -1374,24 +1349,11 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "test",
                     "--locked",
                     "-p",
-                    "outbe-compressed-entities",
-                    "--",
-                    "--test-threads=1",
-                ],
-            )?;
-            cargo(
-                repository_root,
-                &[
-                    "test",
-                    "--locked",
-                    "-p",
                     "outbe-ocomp-protocol",
                     "-p",
                     "outbe-primitives",
                     "-p",
                     "outbe-tribute",
-                    "-p",
-                    "outbe-offchain-data",
                     "-p",
                     "outbe-metadosis",
                     "-p",
@@ -1412,11 +1374,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "-p",
                     "outbe-primitives",
                     "-p",
-                    "outbe-compressed-entities",
-                    "-p",
                     "outbe-tribute",
-                    "-p",
-                    "outbe-offchain-data",
                     "-p",
                     "outbe-metadosis",
                     "-p",

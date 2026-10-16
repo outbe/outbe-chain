@@ -9,10 +9,8 @@ use crate::{
     payload_builder::OutbePayloadBuilder,
     shutdown::{NodeShutdown, OutbePayloadServiceBuilder},
 };
-use outbe_compressed_entities::CompressedTreeService;
 use outbe_evm::{OutbeExecutorBuilder, SharedOutbeEvmSigner};
 use outbe_metadosis::config::OcompForkInstallV1;
-use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::{
     consensus::ConsensusExecutionBridge, system_tx::OcompLifecycleActivation, OutbeHeader,
     OutbePayloadTypes, OutbePrimitives, OutbeTxEnvelope,
@@ -51,10 +49,6 @@ pub struct OutbeNode {
     pub bridge: Option<ConsensusExecutionBridge>,
     /// Optional validator EVM signer for proposer-side system tx artifacts.
     pub evm_signer: Option<SharedOutbeEvmSigner>,
-    /// Mandatory typed read-only body capabilities for execution.
-    pub runtime_body_readers: RuntimeBodyReaders,
-    /// Explicit CE tree owner shared with execution and finalized persistence.
-    pub compressed_tree_service: std::sync::Arc<CompressedTreeService>,
     /// Immutable consensus binding loaded from the selected chain manifest.
     pub ocomp_fork_install: Option<std::sync::Arc<OcompForkInstallV1>>,
 }
@@ -67,8 +61,6 @@ impl std::fmt::Debug for OutbeNode {
                 "evm_signer",
                 &self.evm_signer.as_ref().map(|signer| signer.address()),
             )
-            .field("runtime_body_readers", &"configured")
-            .field("compressed_tree_service", &"configured")
             .field(
                 "ocomp_fork_activation_height",
                 &self
@@ -82,17 +74,11 @@ impl std::fmt::Debug for OutbeNode {
 
 impl OutbeNode {
     /// Creates a new node with a consensus bridge.
-    pub fn with_bridge(
-        bridge: ConsensusExecutionBridge,
-        runtime_body_readers: RuntimeBodyReaders,
-        compressed_tree_service: std::sync::Arc<CompressedTreeService>,
-    ) -> Self {
+    pub fn with_bridge(bridge: ConsensusExecutionBridge) -> Self {
         Self {
             shutdown: NodeShutdown::default(),
             bridge: Some(bridge),
             evm_signer: None,
-            runtime_body_readers,
-            compressed_tree_service,
             ocomp_fork_install: None,
         }
     }
@@ -100,15 +86,11 @@ impl OutbeNode {
     pub fn with_bridge_and_evm_signer(
         bridge: ConsensusExecutionBridge,
         evm_signer: SharedOutbeEvmSigner,
-        runtime_body_readers: RuntimeBodyReaders,
-        compressed_tree_service: std::sync::Arc<CompressedTreeService>,
     ) -> Self {
         Self {
             shutdown: NodeShutdown::default(),
             bridge: Some(bridge),
             evm_signer: Some(evm_signer),
-            runtime_body_readers,
-            compressed_tree_service,
             ocomp_fork_install: None,
         }
     }
@@ -170,8 +152,6 @@ where
             None => executor,
         };
         let executor = executor
-            .with_runtime_body_readers(self.runtime_body_readers.clone())
-            .with_compressed_tree_service(self.compressed_tree_service.clone())
             .with_ocomp_lifecycle_activation(ocomp_activation)
             .with_ocomp_finality_authority(std::sync::Arc::new(
                 crate::ocomp::finality::ProductionOcompFinalizedIntentAuthority,

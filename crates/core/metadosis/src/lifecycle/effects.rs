@@ -8,14 +8,13 @@ use crate::{
     terminal::{CapacityForfeitureReceipt, MissedOfferingReceipt},
 };
 use alloy_primitives::U256;
-use outbe_compressed_entities::ExecutionScope;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result, time::WorldwideDay};
 use outbe_promislimit::PromisLimitContract;
 use outbe_tribute::TributeContract;
 
 pub(super) struct WwdEffect<'a, 'storage> {
     pub ctx: &'a BlockRuntimeContext<'storage>,
-    pub scope: &'a ExecutionScope,
+
     pub current: &'a WwdProjection,
     pub transition: &'a OuterWwdTransition,
     pub rate_resolution: Option<WwdRateResolution>,
@@ -124,7 +123,7 @@ fn forfeit_and_credit_capacity(
     (max_retained_wwds, retained_count_before): (u32, u32),
 ) -> Result<CapacityForfeitureReceipt> {
     let tribute = TributeContract::new(storage.clone())
-        .forfeit_sealed_partition(effect.scope, effect.current.worldwide_day)?;
+        .forfeit_sealed_partition(effect.current.worldwide_day)?;
     let credit = PromisLimitContract::new(storage.clone())
         .checked_add_carry_over(effect.current.metadosis_limit_minor)?;
     Ok(CapacityForfeitureReceipt {
@@ -134,7 +133,6 @@ fn forfeit_and_credit_capacity(
         value_routed: credit.credited,
         carry_over_before: credit.before,
         carry_over_after: credit.after,
-        sealed_collection_root: tribute.sealed_root,
         forfeited_count: tribute.forfeited_count,
         forfeited_nominal: tribute.forfeited_nominal,
         source_generation: tribute.source_generation,
@@ -154,7 +152,6 @@ fn capacity_forfeiture_event(
         promisLimitReturnedMinor: receipt.value_routed,
         promisLimitBeforeMinor: receipt.carry_over_before,
         promisLimitAfterMinor: receipt.carry_over_after,
-        sealedCollectionRoot: receipt.sealed_collection_root,
         forfeitedTributeCount: receipt.forfeited_count,
         forfeitedTributeNominalMinor: receipt.forfeited_nominal,
         sourceGeneration: receipt.source_generation,
@@ -170,7 +167,6 @@ pub(super) fn apply_missed_offering(
 ) -> Result<()> {
     let WwdEffect {
         ctx,
-        scope,
         current,
         transition,
         rate_resolution,
@@ -191,7 +187,7 @@ pub(super) fn apply_missed_offering(
         let credit = PromisLimitContract::new(storage.clone())
             .checked_add_carry_over(current.metadosis_limit_minor)?;
         let retirement = TributeContract::new(storage.clone())
-            .retire_empty_missed_offering_partition(scope, current.worldwide_day)?;
+            .retire_empty_missed_offering_partition(current.worldwide_day)?;
         let receipt = MissedOfferingReceipt {
             worldwide_day: current.worldwide_day,
             value_routed: credit.credited,
@@ -214,8 +210,8 @@ pub(super) fn apply_missed_offering(
             promisLimitBeforeMinor: receipt.carry_over_before,
             promisLimitAfterMinor: receipt.carry_over_after,
             retirementOutcome: match retirement {
-                outbe_compressed_entities::RetirementOutcome::NotPresent => 1,
-                outbe_compressed_entities::RetirementOutcome::Requested => 2,
+                outbe_tribute::runtime::RetirementOutcome::NotPresent => 1,
+                outbe_tribute::runtime::RetirementOutcome::Requested => 2,
             },
             blockNumber: receipt.block_number,
         })?;

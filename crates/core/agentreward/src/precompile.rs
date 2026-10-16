@@ -1,6 +1,4 @@
-use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::SolCall;
-use outbe_compressed_entities::{ExecutionReaders, ParentBodySource};
+use alloy_primitives::{Address, U256};
 #[allow(unused_imports)]
 use outbe_macros::{contract_dispatch, contract_public, contract_view};
 use outbe_primitives::error::Result;
@@ -17,45 +15,9 @@ alloy_sol_types::sol!(
 /// without flipping the route fails the build.
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
 
-alloy_sol_types::sol! {
-    /// The one selector whose handler mints a Gem body and therefore needs the
-    /// block's compressed-entity readers. Same signature as the macro surface below.
-    #[sol(alloy_sol_types = alloy_sol_types)]
-    interface IAgentRewardClaim {
-        function claimReward(uint8 pool, uint256 amount, uint16 issuanceCurrency, uint16 referenceCurrency) external returns (uint256);
-    }
-}
-
-/// Dispatches AgentReward calls. `claimReward` issues a Gem, so it routes through the
-/// block-scoped compressed-body lifecycle; every other selector is the generated
-/// storage-only dispatcher.
-pub fn dispatch_with_readers(
-    storage: outbe_primitives::storage::StorageHandle,
-    readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
-    data: &[u8],
-    caller: Address,
-    value: U256,
-) -> Result<Bytes> {
-    if let Ok(call) = IAgentRewardClaim::claimRewardCall::abi_decode(data) {
-        outbe_primitives::dispatch::reject_value(&value)?;
-        outbe_primitives::dispatch::ensure_mutation_allowed(&storage)?;
-        let mut contract = AgentRewardContract::new(storage.clone());
-        let claimed = contract.abi_claim_reward(
-            readers,
-            caller,
-            call.pool,
-            call.amount,
-            (call.issuanceCurrency, call.referenceCurrency),
-        )?;
-        return Ok(IAgentRewardClaim::claimRewardCall::abi_encode_returns(&claimed).into());
-    }
-    dispatch(storage, data, caller, value)
-}
-
 impl AgentRewardContract<'_> {
     fn abi_claim_reward(
         &mut self,
-        readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
         sender: Address,
         pool: u8,
         amount: U256,
@@ -71,7 +33,7 @@ impl AgentRewardContract<'_> {
         {
             return Ok(U256::ZERO);
         }
-        self.claim_reward(readers, pool, sender, amount, currencies)
+        self.claim_reward(pool, sender, amount, currencies)
     }
 }
 
@@ -80,8 +42,7 @@ impl AgentRewardContract<'_> {
 /// Each method is annotated with `#[contract_public("<Solidity signature>")]`.
 /// `#[contract_dispatch]` collects them, emits a private `sol!` interface,
 /// and synthesizes `pub fn dispatch(storage, data, caller, value) -> Result<Bytes>`.
-/// `claimReward` stays declared here so the ABI export is complete; its live route is
-/// [`dispatch_with_readers`], which handles it before this dispatcher sees it.
+/// The dispatcher reads and writes the Gem through EVM state.
 #[contract_dispatch]
 impl AgentRewardContract<'_> {
     #[contract_public("getClaimableBalance(address) view returns (uint256)")]
@@ -99,12 +60,17 @@ impl AgentRewardContract<'_> {
     #[contract_public("claimReward(uint8,uint256,uint16,uint16) returns (uint256)")]
     fn _abi_claim_reward(
         &mut self,
-        _sender: Address,
-        _pool: u8,
-        _amount: U256,
-        _issuance_currency: u16,
-        _reference_currency: u16,
+        sender: Address,
+        pool: u8,
+        amount: U256,
+        issuance_currency: u16,
+        reference_currency: u16,
     ) -> Result<U256> {
-        Err(crate::errors::AgentRewardFatalError::ClaimRewardRequiresReaders.into())
+        self.abi_claim_reward(
+            sender,
+            pool,
+            amount,
+            (issuance_currency, reference_currency),
+        )
     }
 }

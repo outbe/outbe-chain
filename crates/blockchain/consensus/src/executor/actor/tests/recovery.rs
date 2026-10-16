@@ -10,7 +10,6 @@ fn recovered_forkchoice_attempt_sends_exact_finalized_identity_without_attribute
         };
         let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
         let engine = ConsensusEngineHandle::new(engine_tx);
-        let (_projection_publisher, projection_readiness) = ready_projection(genesis, recovered);
         let (actor, _mailbox) = super::ExecutorActor::new(
             context.child("test"),
             engine,
@@ -19,7 +18,6 @@ fn recovered_forkchoice_attempt_sends_exact_finalized_identity_without_attribute
                 last_finalized_height: recovered.block_number,
                 last_finalized_hash: recovered.block_hash,
             },
-            projection_readiness,
             None,
         );
 
@@ -66,7 +64,6 @@ fn recovered_forkchoice_attempt_rejects_anchor_mismatch_before_engine_io() {
         };
         let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
         let engine = ConsensusEngineHandle::new(engine_tx);
-        let (_projection_publisher, projection_readiness) = ready_projection(genesis, recovered);
         let (actor, _mailbox) = super::ExecutorActor::new(
             context,
             engine,
@@ -75,7 +72,6 @@ fn recovered_forkchoice_attempt_rejects_anchor_mismatch_before_engine_io() {
                 last_finalized_height: recovered.block_number,
                 last_finalized_hash: recovered.block_hash,
             },
-            projection_readiness,
             None,
         );
 
@@ -100,7 +96,6 @@ fn recovered_forkchoice_attempt_repeats_identical_state_after_syncing() {
         };
         let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
         let engine = ConsensusEngineHandle::new(engine_tx);
-        let (_projection_publisher, projection_readiness) = ready_projection(genesis, recovered);
         let (actor, _mailbox) = super::ExecutorActor::new(
             context.child("test"),
             engine,
@@ -109,7 +104,6 @@ fn recovered_forkchoice_attempt_repeats_identical_state_after_syncing() {
                 last_finalized_height: recovered.block_number,
                 last_finalized_hash: recovered.block_hash,
             },
-            projection_readiness,
             None,
         );
 
@@ -159,7 +153,6 @@ fn recovered_forkchoice_attempt_distinguishes_payload_invalid_from_hard_error() 
         };
         let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
         let engine = ConsensusEngineHandle::new(engine_tx);
-        let (_projection_publisher, projection_readiness) = ready_projection(genesis, recovered);
         let (actor, _mailbox) = super::ExecutorActor::new(
             context.child("test"),
             engine,
@@ -168,7 +161,6 @@ fn recovered_forkchoice_attempt_distinguishes_payload_invalid_from_hard_error() 
                 last_finalized_height: recovered.block_number,
                 last_finalized_hash: recovered.block_hash,
             },
-            projection_readiness,
             None,
         );
 
@@ -216,7 +208,6 @@ fn recovered_forkchoice_attempt_can_repeat_after_lost_response() {
         };
         let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
         let engine = ConsensusEngineHandle::new(engine_tx);
-        let (_projection_publisher, projection_readiness) = ready_projection(genesis, recovered);
         let (actor, _mailbox) = super::ExecutorActor::new(
             context.child("test"),
             engine,
@@ -225,7 +216,6 @@ fn recovered_forkchoice_attempt_can_repeat_after_lost_response() {
                 last_finalized_height: recovered.block_number,
                 last_finalized_hash: recovered.block_hash,
             },
-            projection_readiness,
             None,
         );
 

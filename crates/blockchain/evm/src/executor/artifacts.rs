@@ -31,18 +31,6 @@ pub(in crate::executor) fn validate_finish_artifacts(
 ) -> Result<outbe_primitives::reshare_artifact::OutbeBlockArtifacts, BlockExecutionError> {
     let block_artifacts = decode_outbe_block_artifacts(executor.final_extra_data().as_ref())
         .map_err(|err| BlockExecutionError::Validation(BlockValidationError::msg(err)))?;
-    if block_number > 0 {
-        let seal_output = executor
-            .compressed_entities_seal_output
-            .as_ref()
-            .ok_or_else(|| -> BlockExecutionError {
-                BlockValidationError::msg("missing compressed-entities SealOutput").into()
-            })?;
-        validate_compressed_entities_root_after_seal(
-            block_artifacts.compressed_entities_root,
-            seal_output.new_root,
-        )?;
-    }
     validate_execution_summary_artifact(
         executor.validate_execution_summary,
         block_number,

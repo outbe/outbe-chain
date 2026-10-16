@@ -26,7 +26,6 @@ impl OcompRetentionCoordinator {
             || proof.parent_accounting.finalized_block_hash != candidate.block_hash
             || intent.wwd != candidate.wwd;
         if finalized_request_mismatch
-            || intent.ce_sealed_root != candidate.ce_sealed_root
             || intent.input_lease_id().map_err(RetentionError::source)? != candidate.input_lease_id
         {
             return Err(RetentionError::Source(

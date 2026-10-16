@@ -4,7 +4,6 @@ mod fixture_support;
 mod support;
 
 use alloy_primitives::{B256, U256};
-use outbe_compressed_entities::{encode_tribute_v1, TributeBodyV1};
 use outbe_lysis::program_v1::planner::{LysisPlanTopologyV1, PlannedUnitPositionV1};
 use outbe_ocomp::{
     admission_catalog::{AdmissionPositionV1, VerifiedAdmissionCatalog},
@@ -34,6 +33,7 @@ use outbe_ocomp_protocol::{
     unit::{UnitArtifactV1, UnitPhase, UnitSpecV1, WorkOutputHeaderV1},
     CasObjectRefV1, ListKind, StreamingOrderedListRoot,
 };
+use outbe_primitives::entity_codec::{encode_tribute_v1, TributeBodyV1};
 use outbe_primitives::time::WorldwideDay;
 
 const CAS_LIMITS: CasLimits = CasLimits {

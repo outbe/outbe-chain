@@ -2,9 +2,7 @@ use crate::*;
 mod consensus;
 mod ocomp;
 mod radicle;
-mod storage;
 mod tee;
-use storage::StorageExitGuard;
 type LaunchConfig = reth_node_builder::NodeConfig<ChainSpec<OutbeHeader>>;
 
 /// Run the main node (Reth execution + Commonware consensus).
@@ -92,8 +90,6 @@ pub(crate) fn run_node() -> eyre::Result<()> {
     // This owner outlives cancellation of the launcher and Reth runtime teardown.
     let process_shutdown = outbe_node::shutdown::NodeShutdown::default();
     let launcher_shutdown = process_shutdown.clone();
-    let offchain_close = StorageExitGuard::default();
-    let offchain_close_registration = offchain_close.observer();
     let runtime_config = runtime_config_for_command(&cli.command);
     let command_result = execution_runtime::run_with_execution_runtime(runtime_config, |runner| {
     cli.with_runner_and_components::<OutbeNode>(runner, components, async move |builder, args| {
@@ -137,76 +133,14 @@ pub(crate) fn run_node() -> eyre::Result<()> {
         let (evm_signer, local_tee_identity, tee_admission_anchor) =
             tee::prepare(builder.config(), &args, node_data_dir.clone(), &initial_tee_policy).await?;
 
-        let offchain_data = args.offchain_data()?;
         validate_adr005_node_mode(args.is_validator, args.upstream.is_some())?;
-        let projection_config = OffchainDataProjectionConfig {
-            chain_id: builder.config().chain.chain().id(),
-            genesis_hash: builder.config().chain.genesis_hash(),
-            storage: outbe_offchain_storage::StorageConfig::load(offchain_data.storage_config)?,
-        };
-        let projection_retention_selector = Arc::clone(&retention_selector);
-        let prepared_projection = tokio::task::spawn_blocking(move || {
-            prepare_offchain_data_projection_with_retention(
-                projection_config,
-                projection_retention_selector,
-                offchain_close_registration,
-            )
-        })
-        .await
-        .wrap_err("offchain-data startup validation worker failed")??;
-        let runtime_body_readers = prepared_projection.runtime_body_readers();
-        let proof_body_readers = runtime_body_readers.clone();
         let proof_chain_id = builder.config().chain.chain().id();
-        let projection_readiness = prepared_projection.readiness();
-        let retained_tribute_writer = prepared_projection.retained_tribute_writer();
-        let projection_retention_fence = prepared_projection.retention_fence();
-        let ce_data_dir = builder
-            .config()
-            .datadir
-            .clone()
-            .resolve_datadir(reth_ethereum::chainspec::EthChainSpec::chain(
-                builder.config().chain.as_ref(),
-            ))
-            .data_dir()
-            .to_path_buf();
         let genesis_hash = builder.config().chain.genesis_hash();
-        let ce_identity = EnvironmentIdentity {
-            local_storage_schema_version: LOCAL_STORAGE_SCHEMA_VERSION,
-            chain_id: builder.config().chain.chain().id(),
-            genesis_hash,
-            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-            topology: outbe_compressed_entities::CeTopologyV1.encode(),
-            tree_format: "ckb-smt-v0.6.1-poseidon2-catalog-v3".to_owned(),
-            vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
-        };
-        let genesis_marker = FinalizedMarker {
-            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-            height: 0,
-            block_hash: genesis_hash,
-            parent_block_hash: Default::default(),
-            parent_root: Default::default(),
-            new_root: outbe_compressed_entities::sealed_root(Default::default())?,
-        };
-        let ce_db = CeMdbx::open(&ce_data_dir, ce_identity, genesis_marker)
-            .wrap_err("failed to open and validate compressed-entity MDBX")?;
-        // ADR-009 fixes only the provisional sharded topology. Production CE
-        // work/cache coefficients remain deliberately open until ADR-017.
-        let compressed_tree_service = Arc::new(CompressedTreeService::new(
-            ce_db,
-            CandidateCacheLimits {
-                max_candidates: usize::MAX,
-                max_encoded_bytes: usize::MAX,
-            },
-        )?);
-        compressed_tree_service.discard_speculative_candidates()?;
         let outbe_node = build_outbe_node(
             bridge.clone(),
             evm_signer,
-            runtime_body_readers,
-            compressed_tree_service.clone(),
             (ocomp_fork_install, shutdown.clone()),
         );
-        let projection_readiness_for_rpc = projection_readiness.clone();
         let radicle_status_for_rpc = radicle_status.clone();
         // Canary-fed enclave health. The tee-canary worker (spawned after node launch)
         // publishes it, and `outbe_consensusStatus.enclave` reads it.
@@ -219,22 +153,12 @@ pub(crate) fn run_node() -> eyre::Result<()> {
         } = builder
             .node(outbe_node)
             .install_exex("outbe-finalized", move |ctx| {
-                let projection_provider = ctx.provider().clone();
                 let config = ocomp_exex_config.clone();
                 let readiness = ocomp_readiness_publisher.clone();
                 let exit = ocomp_exit_tx.clone();
                 async move {
-                    let ready_projection = tokio::task::spawn_blocking(move || {
-                        validate_offchain_data_checkpoint(
-                            prepared_projection,
-                            &projection_provider,
-                        )
-                    })
-                    .await
-                    .wrap_err("offchain-data checkpoint validation worker failed")??;
                     Ok(ocomp_exex::run_ocomp_exex(
                         ctx,
-                        ready_projection,
                         config,
                         readiness,
                         exit,
@@ -257,9 +181,6 @@ pub(crate) fn run_node() -> eyre::Result<()> {
                 let bridge = bridge.clone();
                 let is_validator = args.is_validator;
                 let is_follower = args.upstream.is_some();
-                let projection_readiness = projection_readiness_for_rpc.clone();
-                let compressed_tree_service = compressed_tree_service.clone();
-                let proof_body_readers = proof_body_readers.clone();
                 let radicle_status = radicle_status_for_rpc.clone();
                 let tee_enclave_health = tee_canary_status_for_rpc.clone();
                 move |ctx| {
@@ -277,15 +198,9 @@ pub(crate) fn run_node() -> eyre::Result<()> {
                     let outbe_api = create_outbe_rpc_handler(
                         Arc::clone(&provider),
                         bridge,
-                        projection_readiness.clone(),
                         (is_validator, is_follower),
                     )
                     .with_chain_identity(proof_chain_id, genesis_hash)
-                    .with_point_reads(
-                        compressed_tree_service.clone(),
-                        proof_body_readers.clone(),
-                        proof_chain_id,
-                    )
                     .with_tee_renewal_schedule(
                         dkg_prepare_window_blocks,
                         minimum_block_time_millis,
@@ -339,16 +254,10 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             },
         )));
 
-        let durable_ce_adapter = Arc::new(RethDurableCeState::new(node.provider.clone()));
-        let durable_ce_state: Arc<dyn DurableCeState> = durable_ce_adapter.clone();
-        let canonical_ce_replay: Arc<dyn CanonicalCeReplaySource> = durable_ce_adapter;
-        let finalized_ce_tree: Arc<dyn FinalizedCeTree> = compressed_tree_service.clone();
-        let finalized_ce_committer: Arc<dyn FinalizedCeCommitter> =
-            Arc::new(RethCeFinalizer::new(durable_ce_state, finalized_ce_tree));
-        let startup_ce_tree: Arc<dyn StartupCeTree> = compressed_tree_service.clone();
-        let ce_startup_recovery: Arc<dyn CeStartupRecovery> = Arc::new(
-            CeStartupRecoveryCoordinator::new(canonical_ce_replay, startup_ce_tree),
-        );
+        let finalized_execution_barrier: Arc<dyn FinalizedExecutionBarrier> =
+            Arc::new(RethFinalizationBarrier::new(Arc::new(
+                RethDurableExecutionState::new(node.provider.clone()),
+            )));
 
         outbe_engine::validators::check_binary_version_compatibility(
             &node.provider,
@@ -364,13 +273,9 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             let _ = node_tx.send((
                 node,
                 args,
-                projection_readiness,
                 ocomp_readiness_for_consensus,
-                retained_tribute_writer,
-                projection_retention_fence,
                 retention_selector,
-                finalized_ce_committer,
-                ce_startup_recovery,
+                finalized_execution_barrier,
                 radicle_consensus,
                 radicle_drained,
             ));
@@ -419,9 +324,6 @@ pub(crate) fn run_node() -> eyre::Result<()> {
     })
     .wrap_err("execution node failed");
 
-    // Reth's engine OS thread can release the last offchain DB owner only after
-    // its graceful termination acknowledgement and the Tokio runtime drain.
-    drop(offchain_close);
     process_shutdown.finish(command_result)
 }
 
@@ -448,21 +350,14 @@ fn runtime_config_for_command(
 fn build_outbe_node(
     bridge: ConsensusExecutionBridge,
     evm_signer: Option<Arc<OutbeEvmSigner>>,
-    runtime_body_readers: outbe_offchain_data::RuntimeBodyReaders,
-    compressed_tree_service: Arc<CompressedTreeService>,
     (ocomp_fork_install, shutdown): (
         Arc<outbe_metadosis::config::OcompForkInstallV1>,
         outbe_node::shutdown::NodeShutdown,
     ),
 ) -> OutbeNode {
     let outbe_node = match evm_signer {
-        Some(signer) => OutbeNode::with_bridge_and_evm_signer(
-            bridge,
-            signer,
-            runtime_body_readers,
-            compressed_tree_service,
-        ),
-        None => OutbeNode::with_bridge(bridge, runtime_body_readers, compressed_tree_service),
+        Some(signer) => OutbeNode::with_bridge_and_evm_signer(bridge, signer),
+        None => OutbeNode::with_bridge(bridge),
     };
     outbe_node
         .with_ocomp_fork_install(ocomp_fork_install)
@@ -472,15 +367,14 @@ fn build_outbe_node(
 fn create_outbe_rpc_handler<P>(
     provider: Arc<P>,
     bridge: ConsensusExecutionBridge,
-    projection_readiness: ProjectionReadinessHandle,
     (is_validator, is_follower): (bool, bool),
 ) -> outbe_rpc::OutbeApiHandler<P> {
     if is_validator {
-        outbe_rpc::OutbeApiHandler::with_bridge(provider, bridge, projection_readiness)
+        outbe_rpc::OutbeApiHandler::with_bridge(provider, bridge)
     } else if is_follower {
-        outbe_rpc::OutbeApiHandler::with_follower_bridge(provider, bridge, projection_readiness)
+        outbe_rpc::OutbeApiHandler::with_follower_bridge(provider, bridge)
     } else {
-        outbe_rpc::OutbeApiHandler::new(provider, projection_readiness)
+        outbe_rpc::OutbeApiHandler::new(provider)
     }
 }
 

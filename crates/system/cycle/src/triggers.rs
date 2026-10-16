@@ -6,7 +6,6 @@
 //! [`crate::runtime`] iterates this slice on every block. It fires each
 //! trigger that has reached its next slot.
 
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
 /// Stable on-chain identifier for each trigger. The numeric values
@@ -85,14 +84,9 @@ pub enum TriggerHandler {
 }
 
 impl TriggerHandler {
-    pub(crate) fn run(
-        self,
-        ctx: &BlockRuntimeContext,
-        scope: &ExecutionScope,
-        parent: &impl ParentBodySource,
-    ) -> Result<()> {
+    pub(crate) fn run(self, ctx: &BlockRuntimeContext) -> Result<()> {
         match self {
-            Self::ProtocolCycle => crate::handler::run_protocol_cycle(ctx, scope, parent),
+            Self::ProtocolCycle => crate::handler::run_protocol_cycle(ctx),
             Self::IntexCallDaily => outbe_intexfactory::called::run_daily(ctx),
             Self::AuctionAdvance => outbe_desis::tick_schedule(ctx),
             Self::GemCallDaily => outbe_gemfactory::called::run_daily(ctx),

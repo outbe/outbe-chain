@@ -531,7 +531,7 @@ pub(in crate::features::ocomp) fn quorum_applies_lysis_and_creates_nod_for_reque
                     block_commitments
                         .iter()
                         .all(|observed| observed == canonical_commitment),
-                    "validators imported different q-forming block/state/CE commitments: \
+                    "validators imported different q-forming block hash and native state root commitments: \
                      {block_commitments:?}"
                 );
                 let receipt_hash = format!("{:#x}", q_forming.transaction_hash);
@@ -581,7 +581,6 @@ pub(in crate::features::ocomp) fn quorum_applies_lysis_and_creates_nod_for_reque
                         q_forming_receipt_sha256,
                         q_forming_validator_receipt_sha256,
                         q_forming_state_root: canonical_commitment.state_root,
-                        q_forming_ce_root: canonical_commitment.ce_root,
                         q_forming_validator_commitments: block_commitments.clone(),
                         canonical_import_validator_count: u8::try_from(
                             block_commitments.len(),

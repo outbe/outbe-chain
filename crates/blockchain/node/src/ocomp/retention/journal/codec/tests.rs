@@ -7,7 +7,6 @@ fn candidate() -> CandidatePinV1 {
         state_root: B256::repeat_byte(2),
         intent_id: B256::repeat_byte(3),
         wwd: 7,
-        ce_sealed_root: B256::repeat_byte(4),
         protocol_bundle_hash: B256::repeat_byte(5),
         input_lease_id: B256::repeat_byte(6),
     }

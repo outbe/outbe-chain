@@ -8,7 +8,6 @@
 use std::collections::BTreeSet;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::derive_poseidon_entity_id;
 use outbe_lysis::program_v1::planner::{
     LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1, PlannedProducerV1,
     PlannedUnitPositionV1, PlannerErrorV1,
@@ -24,6 +23,7 @@ use outbe_ocomp_protocol::{
     CasObjectRefV1, ListKind, ObjectKind, ProtocolError, SchemaLimits, StreamingOrderedListRoot,
 };
 use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::wwd_entity_id::derive_poseidon_entity_id;
 use thiserror::Error;
 
 use crate::{
@@ -498,7 +498,7 @@ pub enum ExactLysisPlanError {
     #[error(transparent)]
     InputArtifact(#[from] InputArtifactError),
     #[error(transparent)]
-    TributeBody(#[from] outbe_compressed_entities::CanonicalBodyError),
+    TributeBody(#[from] outbe_primitives::entity_codec::CanonicalBodyError),
     #[error(transparent)]
     Cas(#[from] CasError),
     #[error(transparent)]

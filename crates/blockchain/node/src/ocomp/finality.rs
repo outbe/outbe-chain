@@ -269,9 +269,6 @@ pub fn authenticate_snapshot_handoff(
     {
         return Err(SnapshotHandoffVerificationError::Checkpoint);
     }
-    if verified.intent.ce_sealed_root != handoff.checkpoint.finalized_ce_root {
-        return Err(SnapshotHandoffVerificationError::CeRoot);
-    }
     Ok(verified)
 }
 
@@ -289,8 +286,6 @@ pub enum SnapshotHandoffVerificationError {
     InputLeaseId,
     #[error("verified request identity differs from the snapshot checkpoint")]
     Checkpoint,
-    #[error("verified JobIntent CE root differs from the snapshot checkpoint")]
-    CeRoot,
 }
 
 #[derive(Debug, thiserror::Error)]

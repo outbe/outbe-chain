@@ -11,8 +11,8 @@ use std::{
 
 #[derive(clap::Args)]
 pub(crate) struct ValidateArgs {
-    /// Checks to run: all, or comma-separated files,provenance,headers,evm,ce,bodies,ocomp.
-    /// The OCOMP check verifies body commitments and canonical relations.
+    /// Checks to run: all, or comma-separated files,provenance,headers,evm,ocomp.
+    /// The OCOMP check verifies native source proofs and canonical relations.
     /// It does not read private Tribute amounts.
     #[arg(long, default_value = "all")]
     pub checks: String,

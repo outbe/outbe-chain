@@ -3,13 +3,13 @@ use super::{
     model::{CapacityForfeitureDetail, TerminalReceiptCommon, WwdTerminalReceipt},
 };
 use crate::{errors::storage_corruption_message, schema::terminal_outcome};
-use alloy_primitives::{B256, U256};
+use alloy_primitives::U256;
 use outbe_primitives::{error::Result, time::WorldwideDay};
 
 const MAGIC: &[u8; 4] = b"OMTR";
 const VERSION: u16 = 1;
 pub(crate) const COMMON_LEN: usize = 116;
-pub(crate) const CAPACITY_LEN: usize = 208;
+pub(crate) const CAPACITY_LEN: usize = 176;
 
 pub(crate) fn encode(receipt: &WwdTerminalReceipt) -> Vec<u8> {
     let common = receipt.common();
@@ -26,7 +26,6 @@ pub(crate) fn encode(receipt: &WwdTerminalReceipt) -> Vec<u8> {
     if let WwdTerminalReceipt::CapacityForfeiture { detail, .. } = receipt {
         bytes.extend_from_slice(&detail.max_retained_wwds.to_be_bytes());
         bytes.extend_from_slice(&detail.retained_count_before.to_be_bytes());
-        bytes.extend_from_slice(detail.sealed_collection_root.as_slice());
         bytes.extend_from_slice(&detail.forfeited_count.to_be_bytes());
         bytes.extend_from_slice(&detail.forfeited_nominal.to_be_bytes::<32>());
         bytes.extend_from_slice(&detail.source_generation.to_be_bytes());
@@ -65,7 +64,6 @@ pub(crate) fn decode(bytes: &[u8], worldwide_day: WorldwideDay) -> Result<WwdTer
             detail: CapacityForfeitureDetail {
                 max_retained_wwds: u32::from_be_bytes(reader.take()?),
                 retained_count_before: u32::from_be_bytes(reader.take()?),
-                sealed_collection_root: B256::from(reader.take::<32>()?),
                 forfeited_count: u32::from_be_bytes(reader.take()?),
                 forfeited_nominal: U256::from_be_bytes(reader.take::<32>()?),
                 source_generation: u64::from_be_bytes(reader.take()?),
@@ -107,7 +105,7 @@ impl Reader<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use outbe_compressed_entities::RetirementOutcome;
+    use outbe_tribute::runtime::RetirementOutcome;
 
     fn common() -> TerminalReceiptCommon {
         TerminalReceiptCommon {
@@ -151,7 +149,6 @@ mod tests {
             detail: CapacityForfeitureDetail {
                 max_retained_wwds: 2,
                 retained_count_before: 2,
-                sealed_collection_root: B256::repeat_byte(3),
                 forfeited_count: 4,
                 forfeited_nominal: U256::from(5),
                 source_generation: 0,
@@ -159,12 +156,11 @@ mod tests {
             },
         };
         let encoded = encode(&receipt);
-        assert_eq!(encoded.len(), 208);
+        assert_eq!(encoded.len(), 176);
         assert_eq!(&encoded[116..124], &[0, 0, 0, 2, 0, 0, 0, 2]);
-        assert_eq!(&encoded[124..156], &[3; 32]);
-        assert_eq!(encoded[159], 4);
-        assert_eq!(encoded[191], 5);
-        assert_eq!(encoded[207], 1);
+        assert_eq!(encoded[127], 4);
+        assert_eq!(encoded[159], 5);
+        assert_eq!(encoded[175], 1);
         assert_eq!(decode(&encoded, WorldwideDay::new(42)).unwrap(), receipt);
         for length in 0..encoded.len() {
             assert!(decode(&encoded[..length], WorldwideDay::new(42)).is_err());

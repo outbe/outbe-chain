@@ -8,7 +8,6 @@ publish.workspace = true
 [dependencies]
 outbe-chain-constants.workspace = true
 outbe-macros.workspace = true
-outbe-compressed-entities.workspace = true
 outbe-consensus.workspace = true
 outbe-ocomp-protocol.workspace = true
 outbe-ocompregistry.workspace = true
@@ -33,7 +32,6 @@ k256 = { workspace = true, optional = true }
 outbe-ocomp-protocol = { workspace = true, features = ["test-utils"] }
 outbe-nod = { workspace = true, features = ["test-enclave"] }
 outbe-tribute = { workspace = true, features = ["test-enclave"] }
-outbe-compressed-entities = { workspace = true, features = ["test-utils"] }
 k256.workspace = true
 num-bigint.workspace = true
 outbe-offchain-storage.workspace = true

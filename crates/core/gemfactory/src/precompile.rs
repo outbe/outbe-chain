@@ -1,6 +1,5 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolInterface;
-use outbe_compressed_entities::{ExecutionReaders, ParentBodySource};
 use outbe_intex::SeriesId;
 use outbe_primitives::dispatch::{dispatch_call, metadata, mutate, mutate_void, view};
 use outbe_primitives::error::Result;
@@ -24,18 +23,16 @@ mod abi {
 }
 pub use abi::IGemFactory;
 
-/// Dispatches Gem Factory calls through the block-scoped compressed-body lifecycle.
+/// Dispatches GemFactory calls against EVM state.
 pub fn dispatch(
     storage: outbe_primitives::storage::StorageHandle,
-    readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
     data: &[u8],
     caller: Address,
     value: U256,
 ) -> Result<Bytes> {
     outbe_primitives::dispatch::reject_value(&value)?;
-    let ExecutionReaders { scope, parent } = readers;
     #[cfg(feature = "e2e-test")]
-    if let Some(answer) = crate::test_arming_e2e::dispatch(&storage, scope, parent, data) {
+    if let Some(answer) = crate::test_arming_e2e::dispatch(&storage, data) {
         return answer;
     }
     dispatch_call(data, IGemFactory::IGemFactoryCalls::abi_decode, |call| {
@@ -52,8 +49,6 @@ pub fn dispatch(
             issueGem(c) => mutate(&storage, c, caller, |sender, c| {
                 runtime::issue_merchant_gem(
                     &storage,
-                    scope,
-                    parent,
                     crate::schema::MerchantGemIssueParams {
                         caller: sender,
                         position_id: c.positionId,
@@ -65,8 +60,6 @@ pub fn dispatch(
             settleGem(c) => mutate_void(&storage, c, caller, |sender, c| {
                 runtime::settle_gem(
                     &storage,
-                    scope,
-                    parent,
                     crate::schema::GemSettlementParams {
                         caller: sender,
                         gem_id: c.gemId,
@@ -82,8 +75,6 @@ pub fn dispatch(
                 };
                 runtime::mine_promis(
                     &storage,
-                    scope,
-                    parent,
                     crate::schema::GemMiningProof {
                         gem_id: c.gemId,
                         nonce: c.nonce,
@@ -101,7 +92,7 @@ pub fn dispatch(
 
             quoteSettlement(c) => metadata::<IGemFactory::quoteSettlementCall>(|| {
                 let (settlement_currency, amount, snapshot_id) =
-                    runtime::quote_settlement(&storage, scope, parent, c.gemId, c.asset)?;
+                    runtime::quote_settlement(&storage, c.gemId, c.asset)?;
                 Ok(IGemFactory::quoteSettlementReturn {
                     settlementCurrency: settlement_currency,
                     paymentMinor: amount,

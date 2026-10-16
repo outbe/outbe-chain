@@ -23,8 +23,8 @@ Feature: Off-chain computation and Metadosis
     When a user of the registered L2 submits an encrypted Tribute with ZKP and WAA and SRA beneficiaries
     Then the tribute transaction succeeds and supply becomes one
     And the WAA and SRA beneficiaries have no reward before their execution UTC day settles
-    And every validator projects the same tribute and indexes
-    And every validator serves the same independently verified compressed tribute
+    And every validator stores the same Tribute and indexes in EVM state
+    And every validator verifies the same Tribute against finalized EVM state
     And the submitted Nod input bodies are independently authenticated before processing
     When a fifth node syncs as a non-voting FullNode
     Then the fifth node has canonical state parity without OCOMP vote capability
@@ -96,7 +96,7 @@ Feature: Off-chain computation and Metadosis
     And five deterministic capacity owners enumerate ordinary NODs with matching getNod
     When all validator nodes and OCOMP node-facing processes restart with preserved data
     Then the completed materialization cursor and ordinary NOD set remain unchanged
-    And validator 0 reconstructs that certified generation from canonical history
+    And validator 0 preserves that certified generation and native state across restart
 
   @ocomp-int-024
   Scenario: A worker failure is isolated from consensus
@@ -114,7 +114,7 @@ Feature: Off-chain computation and Metadosis
     When validator 3 OCOMP worker is stopped before the job
     And an operator submits one encrypted tribute offer
     Then the tribute transaction succeeds and supply becomes one
-    And every validator projects the same tribute and indexes
+    And every validator stores the same Tribute and indexes in EVM state
     Then Metadosis creates one finalized JobIntent from that public Tribute
     When the production OCOMP domains process that finalized JobIntent
     Then validators 0, 1 and 2 finalize the result quorum while validator 3 remains computing
@@ -129,7 +129,7 @@ Feature: Off-chain computation and Metadosis
     When the keyless FullNode compute roles stop before the job
     And an operator submits one encrypted tribute offer
     Then the tribute transaction succeeds and supply becomes one
-    And every validator projects the same tribute and indexes
+    And every validator stores the same Tribute and indexes in EVM state
     Then Metadosis creates one finalized JobIntent from that public Tribute
     When the production OCOMP domains process that finalized JobIntent
     Then three matching validator domains atomically apply Lysis and create the Nod
@@ -147,7 +147,7 @@ Feature: Off-chain computation and Metadosis
     When the keyless FullNode arms one valid local-result mismatch
     And an operator submits one encrypted tribute offer
     Then the tribute transaction succeeds and supply becomes one
-    And every validator projects the same tribute and indexes
+    And every validator stores the same Tribute and indexes in EVM state
     Then Metadosis creates one finalized JobIntent from that public Tribute
     When the production OCOMP domains process that finalized JobIntent
     Then three matching validator domains atomically apply Lysis and create the Nod
@@ -163,7 +163,7 @@ Feature: Off-chain computation and Metadosis
     When validators 2 and 3 OCOMP workers are stopped before the job
     And an operator submits one encrypted tribute offer
     Then the tribute transaction succeeds and supply becomes one
-    And every validator projects the same tribute and indexes
+    And every validator stores the same Tribute and indexes in EVM state
     Then Metadosis creates one finalized JobIntent from that public Tribute
     When the production OCOMP domains process that finalized JobIntent
     And validator 2 prepares one valid vote without broadcasting it
@@ -178,7 +178,7 @@ Feature: Off-chain computation and Metadosis
     When validators 2 and 3 OCOMP workers are stopped before the job
     And an operator submits one encrypted tribute offer
     Then the tribute transaction succeeds and supply becomes one
-    And every validator projects the same tribute and indexes
+    And every validator stores the same Tribute and indexes in EVM state
     Then Metadosis creates one finalized JobIntent from that public Tribute
     When the production OCOMP domains process that finalized JobIntent
     And validator 2 prepares one valid vote without broadcasting it
@@ -195,7 +195,7 @@ Feature: Off-chain computation and Metadosis
     When all four OCOMP snapshot exporters are stopped before the job
     And an operator submits one encrypted tribute offer
     Then the tribute transaction succeeds and supply becomes one
-    And every validator projects the same tribute and indexes
+    And every validator stores the same Tribute and indexes in EVM state
     Then Metadosis creates one finalized JobIntent from that public Tribute
     When the production OCOMP domains process that finalized JobIntent
     Then the unexported zero-vote job expires and reaches Released without an ACK
@@ -211,7 +211,7 @@ Feature: Off-chain computation and Metadosis
     Then the controlled COEN USD quote is finalized through the real price feeder
     When an operator submits one encrypted tribute offer
     Then the tribute transaction succeeds and supply becomes one
-    And every validator projects the same tribute and indexes
+    And every validator stores the same Tribute and indexes in EVM state
     When all four OCOMP workers stop before voting opens and exporters independently materialize the public JobIntent
     Then the exported zero-vote job expires at its exclusive deadline and finality continues
     When all stopped OCOMP workers restart after canonical expiry
@@ -228,7 +228,7 @@ Feature: Off-chain computation and Metadosis
     When validators 1, 2 and 3 OCOMP workers are stopped before the job
     And an operator submits one encrypted tribute offer
     Then the tribute transaction succeeds and supply becomes one
-    And every validator projects the same tribute and indexes
+    And every validator stores the same Tribute and indexes in EVM state
     Then Metadosis creates one finalized JobIntent from that public Tribute
     When the production OCOMP domains process that finalized JobIntent
     And one valid vote is finalized and a changed-binding vote is submitted
@@ -245,7 +245,7 @@ Feature: Off-chain computation and Metadosis
     When validators 1, 2 and 3 OCOMP workers are stopped before the job
     And an operator submits one encrypted tribute offer
     Then the tribute transaction succeeds and supply becomes one
-    And every validator projects the same tribute and indexes
+    And every validator stores the same Tribute and indexes in EVM state
     Then Metadosis creates one finalized JobIntent from that public Tribute
     When the production OCOMP domains process that finalized JobIntent
     And the first validator submits a second correctly signed vote with the same binding and a different result

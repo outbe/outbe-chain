@@ -29,7 +29,6 @@ use commonware_cryptography::bls12381::primitives::variant::MinSig;
 
 use futures::StreamExt;
 use outbe_primitives::projection::ExecutionReadBudget;
-use outbe_primitives::projection::ProjectionReadinessHandle;
 use outbe_primitives::system_tx::OcompLifecycleActivation;
 use outbe_primitives::OutbePayloadTypes;
 
@@ -128,10 +127,6 @@ pub(crate) struct ApplicationShared {
     /// replays durable consensus blocks into Reth.
     ancestry_readiness: AncestryReadiness,
 
-    /// Exact durable Mongo projection checkpoint used to gate every execution
-    /// read of a consensus parent.
-    projection_readiness: ProjectionReadinessHandle,
-
     /// Time to give the payload builder to execute transactions before resolving.
     payload_resolve_time: std::time::Duration,
 
@@ -205,7 +200,6 @@ pub struct ApplicationDeps {
     pub vrf_safety: VrfSafetyGate,
     pub epoch_fence: ApplicationEpochFence,
     pub ancestry_readiness: AncestryReadiness,
-    pub projection_readiness: ProjectionReadinessHandle,
     pub finalization_view: FinalizationViewHandle,
     pub block_cache: BlockCache,
     pub finalization_selector: crate::finalization::selection::ParentProofSelector,
@@ -246,7 +240,6 @@ impl ApplicationHandler {
             vrf_safety,
             epoch_fence,
             ancestry_readiness,
-            projection_readiness,
             finalization_view,
             block_cache,
             finalization_selector,
@@ -276,7 +269,6 @@ impl ApplicationHandler {
                 vrf_safety,
                 epoch_fence,
                 ancestry_readiness,
-                projection_readiness,
                 payload_resolve_time,
                 min_block_time,
                 proposer_evm_address,
@@ -417,9 +409,7 @@ mod test_support;
 use test_support::validate_header_consensus_artifacts;
 
 mod timing;
-use timing::{
-    pace_and_send, proposal_timestamp_millis, wait_for_projected_parent, ParentProjectionGate,
-};
+use timing::{pace_and_send, proposal_timestamp_millis};
 pub use timing::{OffsetUnixTimeSource, SystemUnixTimeSource, UnixTimeSource};
 pub(crate) use timing::{
     GENESIS_ANCHOR_POLL_INTERVAL, GENESIS_ANCHOR_WAIT_TIMEOUT, PROPOSAL_FAILURE_LOG_WINDOW,

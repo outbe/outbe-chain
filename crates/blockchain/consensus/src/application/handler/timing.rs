@@ -5,10 +5,6 @@ use crate::errors::ApplicationError;
 
 use commonware_utils::channel::oneshot;
 
-use outbe_primitives::projection::ProjectionCheckpoint;
-use outbe_primitives::projection::ProjectionReadinessHandle;
-use outbe_primitives::projection::WaitOutcome;
-
 use std::time::Duration;
 use tracing::debug;
 
@@ -132,33 +128,6 @@ pub(super) fn proposal_timestamp_millis(
         band_millis,
         min_advance_millis,
     )
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ParentProjectionGate {
-    Ready,
-    Withhold,
-}
-
-pub(super) async fn wait_for_projected_parent<F>(
-    readiness: ProjectionReadinessHandle,
-    required: ProjectionCheckpoint,
-    budget_expired: F,
-) -> eyre::Result<ParentProjectionGate>
-where
-    F: std::future::Future<Output = ()>,
-{
-    match readiness.wait_for(required, budget_expired).await {
-        WaitOutcome::Ready => Ok(ParentProjectionGate::Ready),
-        WaitOutcome::BudgetExpired | WaitOutcome::ProjectionAhead => {
-            Ok(ParentProjectionGate::Withhold)
-        }
-        WaitOutcome::Fatal(failure) => Err(ApplicationError::ProjectionReadiness {
-            class: failure.class,
-            message: failure.message,
-        }
-        .into()),
-    }
 }
 
 /// Pure min-block-time floor arithmetic: remaining pad = `min - elapsed`

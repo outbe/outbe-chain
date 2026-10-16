@@ -4,7 +4,7 @@ use alloy_primitives::{Address, B256};
 use commonware_consensus::types::{Epoch, Height, Round};
 use outbe_primitives::{
     error::PrecompileError,
-    projection::{ProjectionFailure, ProjectionFailureClass},
+    projection::ProjectionFailureClass,
     system_tx::{
         binding::{BoundaryBindingError, LayoutBindingError, ParentAccountingBindingError},
         SystemTxError, SystemTxKind,
@@ -419,8 +419,6 @@ pub enum ExecutorError {
         "executor backfill: marshal missing finalized block at height {height} (<= reported finalized height {consensus_height}); cannot reconstruct contiguous execution state"
     )]
     BackfillMissingBlock { height: u64, consensus_height: u64 },
-    #[error("projection failed: {0:?}")]
-    ProjectionFailed(ProjectionFailure),
     #[error("FCU failed: {0}")]
     FcuFailed(String),
     #[error("FCU returned invalid: {0}")]

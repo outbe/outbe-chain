@@ -78,9 +78,6 @@ pub(crate) enum SnapshotOcompError {
     /// The protocol bundle changed size during reading.
     #[error("protocol bundle changed size")]
     ProtocolBundleChangedSize,
-    /// The OCOMP projection checkpoint differs from the retained header.
-    #[error("OCOMP projection checkpoint differs from retained canonical header")]
-    ProjectionCheckpointHeaderMismatch,
     /// Multiple retained pins bind the same canonical intent.
     #[error("multiple retained pins bind the same canonical intent")]
     MultipleRetainedPinsForIntent,
@@ -184,10 +181,7 @@ pub(crate) enum SnapshotOcompError {
     },
     /// The closure checkpoint conflicts with durable projection.
     #[error("closure checkpoint is ahead of or conflicts with durable projection")]
-    ClosureAheadOrConflictsWithProjection,
-    /// A nonzero closure checkpoint exists without durable projection.
-    #[error("nonzero closure checkpoint exists without durable projection")]
-    NonzeroClosureWithoutProjection,
+    ClosureAheadOrConflictsWithExecution,
     /// A replay header differs from canonical identity.
     #[error("replay header differs from canonical identity at {height}")]
     ReplayHeaderIdentityMismatch {
@@ -326,9 +320,6 @@ pub(crate) enum SnapshotOcompError {
     /// A retained pin finality window differs from canonical finality.
     #[error("retained pin finality window differs from canonical finality")]
     RetainedPinFinalityWindowMismatch,
-    /// Tribute visit count calculation overflowed.
-    #[error("Tribute visit count overflow")]
-    TributeVisitCountOverflow,
     /// A surviving discovery ACK differs from receipt commitment.
     #[error("surviving discovery ACK differs from receipt commitment")]
     SurvivingAckReceiptCommitmentMismatch,

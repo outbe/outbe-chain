@@ -1,7 +1,6 @@
 use std::{collections::BTreeSet, path::Path};
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::CanonicalBodyError;
 use outbe_lysis::program_v1::planner::PRIMARY_WORK_SHARD_SIZE;
 use outbe_ocomp_protocol::{
     control::CasObjectRefV1,
@@ -14,6 +13,7 @@ use outbe_ocomp_protocol::{
     profile::ProtocolBundleV1,
     ListKind, ObjectKind, OrderedListLimits, ProtocolError, SchemaLimits, StreamingOrderedListRoot,
 };
+use outbe_primitives::entity_codec::CanonicalBodyError;
 use thiserror::Error;
 
 use crate::{
@@ -42,8 +42,6 @@ pub struct InputArtifactIdentity {
     pub attempt: u32,
     pub checkpoint: CheckpointIdentityV1,
     pub wwd: u32,
-    pub sealed_tribute_collection_key: B256,
-    pub sealed_tribute_collection_root: B256,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -561,8 +559,6 @@ impl<'a> DurableInputArtifactPublisher<'a> {
             attempt: self.identity.attempt,
             checkpoint: self.identity.checkpoint,
             wwd: self.identity.wwd,
-            sealed_tribute_collection_key: self.identity.sealed_tribute_collection_key,
-            sealed_tribute_collection_root: self.identity.sealed_tribute_collection_root,
             tribute_count: self.tribute_count,
             tribute_nominal_total: expected_tribute_nominal_total,
             input_chunk_count: summary.input_chunk_count,

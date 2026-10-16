@@ -9,7 +9,6 @@
 use alloy_primitives::U256;
 
 use outbe_agentreward::distribution::{distribute_daily, PoolKind};
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_emissionlimit::{
     allocation::{allocate_emission, EmissionSinkId},
     block::dispatch_terminal_remainder_at,
@@ -406,11 +405,7 @@ fn dispatch_terminal_remainder(
 /// - create the current WWD.
 /// - advance every active WWD.
 /// - process at most one READY WWD.
-pub fn run_protocol_cycle(
-    ctx: &BlockRuntimeContext,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-) -> Result<()> {
+pub fn run_protocol_cycle(ctx: &BlockRuntimeContext) -> Result<()> {
     let block_utc_day = timestamp_to_date_key(ctx.block.timestamp);
     let cycle: crate::schema::Cycle<'_> = ctx.storage.contract::<crate::schema::Cycle<'_>>();
     let active_utc_day = cycle.active_utc_day.read()?;
@@ -440,7 +435,7 @@ pub fn run_protocol_cycle(
 
     wrap(
         "start_metadosis",
-        outbe_metadosis::commands::start_metadosis(ctx, scope, parent),
+        outbe_metadosis::commands::start_metadosis(ctx),
     )?;
 
     tracing::info!(
@@ -456,16 +451,12 @@ pub fn run_protocol_cycle(
 }
 
 #[cfg(test)]
-pub(crate) fn run_emission_limit_daily(
-    ctx: &BlockRuntimeContext,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-) -> Result<()> {
+pub(crate) fn run_emission_limit_daily(ctx: &BlockRuntimeContext) -> Result<()> {
     settle_emission_day(
         ctx,
         outbe_primitives::time::previous_date_key(timestamp_to_date_key(ctx.block.timestamp)),
     )?;
-    outbe_metadosis::commands::start_metadosis(ctx, scope, parent)
+    outbe_metadosis::commands::start_metadosis(ctx)
 }
 
 #[cfg(test)]

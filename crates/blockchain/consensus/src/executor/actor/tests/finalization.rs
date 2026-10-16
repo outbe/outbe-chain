@@ -1,14 +1,14 @@
 use super::*;
 
-struct GatedCeCommitter {
-    called: Mutex<Option<tokio::sync::oneshot::Sender<FinalizedCeBlock>>>,
+struct GatedExecutionBarrier {
+    called: Mutex<Option<tokio::sync::oneshot::Sender<FinalizedExecutionBlock>>>,
     release: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
 }
 
-impl FinalizedCeCommitter for GatedCeCommitter {
+impl FinalizedExecutionBarrier for GatedExecutionBarrier {
     fn commit_finalized(
         &self,
-        block: FinalizedCeBlock,
+        block: FinalizedExecutionBlock,
     ) -> futures::future::BoxFuture<'static, eyre::Result<()>> {
         self.called
             .lock()
@@ -30,6 +30,9 @@ impl FinalizedCeCommitter for GatedCeCommitter {
             Ok(())
         })
     }
+    fn verify_checkpoint(&self, _checkpoint: ProjectionCheckpoint) -> eyre::Result<()> {
+        Ok(())
+    }
 }
 
 #[test]
@@ -40,8 +43,7 @@ fn finalized_syncing_delivery_acks_and_heartbeat_repeats_fcu() {
         let finalized_hash = block.block_hash();
         let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
         let engine = ConsensusEngineHandle::new(engine_tx);
-        let (_projection_publisher, projection_readiness) =
-            ready_projection_for_block(genesis, &block);
+
         let (mut actor, _mailbox) = super::ExecutorActor::new(
             context.child("test"),
             engine,
@@ -50,7 +52,6 @@ fn finalized_syncing_delivery_acks_and_heartbeat_repeats_fcu() {
                 last_finalized_height: 0,
                 last_finalized_hash: genesis,
             },
-            projection_readiness,
             None,
         );
 
@@ -125,13 +126,7 @@ fn canonical_genesis_anchor_is_acknowledged_without_execution() {
         let genesis = block.block_hash();
         let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
         let engine = ConsensusEngineHandle::new(engine_tx);
-        let (_projection_publisher, projection_readiness) = ready_projection(
-            genesis,
-            ProjectionCheckpoint {
-                block_number: 0,
-                block_hash: genesis,
-            },
-        );
+
         let (mut actor, _mailbox) = super::ExecutorActor::new(
             context.child("test"),
             engine,
@@ -140,7 +135,6 @@ fn canonical_genesis_anchor_is_acknowledged_without_execution() {
                 last_finalized_height: 0,
                 last_finalized_hash: genesis,
             },
-            projection_readiness,
             None,
         );
 
@@ -170,16 +164,8 @@ fn recovered_canonical_block_is_acknowledged_without_reexecution() {
         let recovered_hash = block.block_hash();
         let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
         let engine = ConsensusEngineHandle::new(engine_tx);
-        // The durable projection already consumed the recovered EL head.
-        // Re-executing the same marshal delivery would ask it to regress to
-        // parent 27 and fail with ProjectionAhead.
-        let (_projection_publisher, projection_readiness) = ready_projection(
-            genesis,
-            ProjectionCheckpoint {
-                block_number: 28,
-                block_hash: recovered_hash,
-            },
-        );
+        // The recovered native execution head must be acknowledged without reexecution.
+
         let (mut actor, _mailbox) = super::ExecutorActor::new(
             context.child("test"),
             engine,
@@ -188,7 +174,6 @@ fn recovered_canonical_block_is_acknowledged_without_reexecution() {
                 last_finalized_height: 28,
                 last_finalized_hash: recovered_hash,
             },
-            projection_readiness,
             None,
         );
 
@@ -218,13 +203,7 @@ fn recovered_height_with_conflicting_hash_still_fails_closed() {
         assert_ne!(canonical.block_hash(), conflicting.block_hash());
         let (engine_tx, _engine_rx) = tokio::sync::mpsc::unbounded_channel();
         let engine = ConsensusEngineHandle::new(engine_tx);
-        let (_projection_publisher, projection_readiness) = ready_projection(
-            genesis,
-            ProjectionCheckpoint {
-                block_number: 28,
-                block_hash: canonical.block_hash(),
-            },
-        );
+
         let (mut actor, _mailbox) = super::ExecutorActor::new(
             context.child("test"),
             engine,
@@ -233,7 +212,6 @@ fn recovered_height_with_conflicting_hash_still_fails_closed() {
                 last_finalized_height: 28,
                 last_finalized_hash: canonical.block_hash(),
             },
-            projection_readiness,
             None,
         );
 
@@ -262,13 +240,7 @@ fn conflicting_genesis_anchor_fails_without_acknowledging_marshal() {
         assert_ne!(conflicting.block_hash(), canonical_genesis);
         let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
         let engine = ConsensusEngineHandle::new(engine_tx);
-        let (_projection_publisher, projection_readiness) = ready_projection(
-            canonical_genesis,
-            ProjectionCheckpoint {
-                block_number: 0,
-                block_hash: canonical_genesis,
-            },
-        );
+
         let (mut actor, _mailbox) = super::ExecutorActor::new(
             context.child("test"),
             engine,
@@ -277,7 +249,6 @@ fn conflicting_genesis_anchor_fails_without_acknowledging_marshal() {
                 last_finalized_height: 0,
                 last_finalized_hash: canonical_genesis,
             },
-            projection_readiness,
             None,
         );
 
@@ -304,24 +275,23 @@ fn conflicting_genesis_anchor_fails_without_acknowledging_marshal() {
 }
 
 #[test]
-fn marshal_ack_waits_for_compressed_storage_commit_barrier() {
+fn marshal_ack_waits_for_native_execution_commit_barrier() {
     commonware_runtime::deterministic::Runner::default().start(|context| async move {
         use futures::FutureExt as _;
 
         let genesis = B256::repeat_byte(0x01);
         let block = executor_test_block(7, 0x78);
-        let expected = FinalizedCeBlock {
+        let expected = FinalizedExecutionBlock {
             height: block.number(),
             block_hash: block.block_hash(),
             parent_block_hash: block.parent_hash(),
         };
         let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
         let engine = ConsensusEngineHandle::new(engine_tx);
-        let (_projection_publisher, projection_readiness) =
-            ready_projection_for_block(genesis, &block);
+
         let (called_tx, called_rx) = tokio::sync::oneshot::channel();
         let (release_tx, release_rx) = tokio::sync::oneshot::channel();
-        let committer = Arc::new(GatedCeCommitter {
+        let committer = Arc::new(GatedExecutionBarrier {
             called: Mutex::new(Some(called_tx)),
             release: Mutex::new(Some(release_rx)),
         });
@@ -333,10 +303,9 @@ fn marshal_ack_waits_for_compressed_storage_commit_barrier() {
                 last_finalized_height: 0,
                 last_finalized_hash: genesis,
             },
-            projection_readiness,
             None,
         );
-        let mut actor = actor.with_finalized_ce_committer(committer);
+        let mut actor = actor.with_finalized_execution_barrier(committer);
 
         let engine_task = context.child("engine_task").spawn(move |_ctx| async move {
             match engine_rx.recv().await.expect("new payload message") {
@@ -366,16 +335,16 @@ fn marshal_ack_waits_for_compressed_storage_commit_barrier() {
         assert_eq!(called_rx.await.expect("commit barrier call"), expected);
         assert!(
             waiter.as_mut().now_or_never().is_none(),
-            "Marshal must remain unacknowledged while CE persistence is blocked"
+            "Marshal must remain unacknowledged while native persistence is blocked"
         );
         release_tx.send(()).expect("release commit barrier");
         actor_task
             .await
             .expect("actor task must complete")
-            .expect("finalized delivery must succeed after CE commit");
+            .expect("finalized delivery must succeed after native persistence");
         waiter
             .await
-            .expect("Marshal must be acknowledged after CE commit");
+            .expect("Marshal must be acknowledged after native persistence");
         engine_task.await.expect("engine task must complete");
     });
 }
@@ -392,8 +361,7 @@ fn rejected_finalized_block_fails_fast_without_acknowledging_marshal() {
         let block = executor_test_block(7, 0x77);
         let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
         let engine = ConsensusEngineHandle::new(engine_tx);
-        let (_projection_publisher, projection_readiness) =
-            ready_projection_for_block(genesis, &block);
+
         let (mut actor, _mailbox) = super::ExecutorActor::new(
             context.child("test"),
             engine,
@@ -402,7 +370,6 @@ fn rejected_finalized_block_fails_fast_without_acknowledging_marshal() {
                 last_finalized_height: 0,
                 last_finalized_hash: genesis,
             },
-            projection_readiness,
             None,
         );
 

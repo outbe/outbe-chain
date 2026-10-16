@@ -3,9 +3,9 @@ pub(crate) mod model;
 mod store;
 
 use crate::schema::terminal_retirement;
-use alloy_primitives::{B256, U256};
-use outbe_compressed_entities::RetirementOutcome;
+use alloy_primitives::U256;
 use outbe_primitives::{error::Result, time::WorldwideDay};
+use outbe_tribute::runtime::RetirementOutcome;
 mod failure;
 pub(crate) use failure::{
     fail_expired_ocomp_day, fail_worldwide_day, ExpiredFailure, FailureSettlement,
@@ -53,7 +53,6 @@ pub struct CapacityForfeitureReceipt {
     pub value_routed: U256,
     pub carry_over_before: U256,
     pub carry_over_after: U256,
-    pub sealed_collection_root: B256,
     pub forfeited_count: u32,
     pub forfeited_nominal: U256,
     pub source_generation: u64,

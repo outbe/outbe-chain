@@ -13,9 +13,8 @@
 pub mod application_shutdown;
 pub mod args;
 pub mod bridge;
-pub mod ce_finalizer;
-pub mod ce_recovery;
 pub mod errors;
+pub mod finalization;
 pub(crate) mod follow_transport;
 pub mod follower_shutdown;
 pub(crate) mod marshal_update_reporter;

@@ -5,13 +5,10 @@
 
 use alloy_primitives::{address, Address, Log, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
-use outbe_offchain_data::runtime_body_readers;
 
-use outbe_compressed_entities::{begin_block, end_block, ExecutionScope};
-use outbe_evm::executor::run_outbe_pre_execution_hooks_with_readers;
+use outbe_evm::executor::run_outbe_pre_execution_hooks;
 use outbe_evm::handlers;
-use outbe_offchain_storage::MemoryStorage;
-use outbe_primitives::addresses::{COMPRESSED_ENTITIES_ADDRESS, UPDATE_ADDRESS};
+use outbe_primitives::addresses::UPDATE_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::chain::DEVNET_CHAIN_ID;
 use outbe_primitives::error::PrecompileError;
@@ -95,20 +92,6 @@ fn seed_oracle_for_pre_exec(storage: StorageHandle) {
     );
 }
 
-fn seed_compressed_entities_genesis(storage: StorageHandle) {
-    let root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
-    storage
-        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
-        .unwrap();
-    storage
-        .sstore(
-            COMPRESSED_ENTITIES_ADDRESS,
-            U256::from(1),
-            U256::from_be_slice(root.as_slice()),
-        )
-        .unwrap();
-}
-
 fn with_runtime_at<F: FnOnce(StorageHandle, u64)>(current: u64, f: F) {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.set_block_number(current);
@@ -165,12 +148,7 @@ fn run_pre_execution_hooks(storage: StorageHandle, block_number: u64) {
         .set_block_timestamp(U256::from(block_number))
         .expect("set block timestamp");
     let ctx = block_ctx(storage, block_number);
-    let readers = runtime_body_readers(std::sync::Arc::new(MemoryStorage::new()));
-    let scope = ExecutionScope::default();
-    begin_block(ctx.storage.clone(), &scope).expect("body lifecycle should begin cleanly");
-    run_outbe_pre_execution_hooks_with_readers(&ctx, None, &readers, &scope)
-        .expect("pre-exec hooks should succeed");
-    end_block(ctx.storage.clone(), &scope).expect("body lifecycle should clean up");
+    run_outbe_pre_execution_hooks(&ctx, None).expect("pre-exec hooks should succeed");
 }
 
 fn dispatch_get_active_version_u32(storage: StorageHandle) -> u32 {
@@ -576,7 +554,7 @@ fn executor_runs_vote_before_update() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.set_block_number(100_000);
     let storage = StorageHandle::new(&mut provider);
-    seed_compressed_entities_genesis(storage.clone());
+
     setup_four_validators(storage.clone());
     seed_oracle_for_pre_exec(storage.clone());
 

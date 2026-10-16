@@ -1,15 +1,10 @@
 //! Issued Intex units change hands on the real `IntexNFT1155` bytecode (`fixtures/*.hex`: forge
 //! `deployedBytecode`, `IntexMetadata` linked at [`METADATA_LIB`]) and settle for their holder.
-use outbe_offchain_data::runtime_body_readers;
-use std::sync::Arc;
 
 use alloy_primitives::{keccak256, Address, Bytes, FixedBytes, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
-use outbe_compressed_entities::ExecutionScope;
 use outbe_intex::{CreateSeriesParams, IntexCallTrigger, SeriesId};
 use outbe_intexfactory::precompile::IIntexFactory;
-use outbe_offchain_data::RuntimeBodyReaders;
-use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::{
     addresses::{INTEX_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS},
     block::BlockContext,
@@ -85,8 +80,7 @@ fn runtime_code(hex: &str) -> Bytecode {
 
 struct World {
     ctx: EvmCtx,
-    scope: Arc<ExecutionScope>,
-    readers: RuntimeBodyReaders,
+
     cost: U256,
 }
 
@@ -123,8 +117,7 @@ impl World {
                 },
             );
         }
-        let readers = runtime_body_readers(Arc::new(MemoryStorage::new()));
-        let scope = Arc::new(ExecutionScope::default());
+
         let block = BlockContext::new(1, TIMESTAMP, CHAIN_ID, ALICE, vec![ALICE]);
         let mut provider = DirectStorageProvider::new(&mut db, block);
         StorageHandle::enter(&mut provider, |storage| {
@@ -190,8 +183,7 @@ impl World {
             .modify_block_chained(|block| block.timestamp = U256::from(TIMESTAMP));
         let mut world = Self {
             ctx,
-            scope,
-            readers,
+
             cost: U256::ZERO,
         };
         world.install_nft();
@@ -288,12 +280,8 @@ impl World {
         calldata: Bytes,
         is_static: bool,
     ) -> SubCallOutput {
-        intex_sub_call::IntexSubCall {
-            ctx: &mut self.ctx,
-            scope: &self.scope,
-            readers: &self.readers,
-        }
-        .call(caller, target, calldata, is_static)
+        intex_sub_call::IntexSubCall { ctx: &mut self.ctx }
+            .call(caller, target, calldata, is_static)
     }
 
     fn ok<C: SolCall>(&mut self, caller: Address, target: Address, call: C) -> C::Return {

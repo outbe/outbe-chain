@@ -1,6 +1,6 @@
 use crate::executor::{
-    BlockExecutionDependencies, BlockExecutionIdentity, BlockExecutionRuntime, BlockExecutorInputs,
-    BlockSystemPlan, ParentAccountingInputs,
+    BlockExecutionDependencies, BlockExecutionIdentity, BlockExecutorInputs, BlockSystemPlan,
+    ParentAccountingInputs,
 };
 use crate::{executor::OutbeBlockExecutor, factory::OutbeEvmFactory};
 use alloy_evm::{
@@ -73,7 +73,7 @@ impl BlockExecutorFactory for OutbeEvmConfig {
         let prebuilt_phase1_tx = ctx.prebuilt_phase1_tx.clone();
         let parent_artifact_hint = ctx.parent_artifact_hint;
         let block_number = evm.block().number.saturating_to::<u64>();
-        let mut system_plan = BlockSystemPlan {
+        let system_plan = BlockSystemPlan {
             expected_begin_system_txs,
             expected_end_system_txs,
             system_layout_error,
@@ -83,18 +83,6 @@ impl BlockExecutorFactory for OutbeEvmConfig {
             pending_tee_bootstrap: ctx.pending_tee_bootstrap.clone(),
             ocomp_lifecycle_active: self.ocomp_lifecycle_active_at(block_number),
         };
-        let runtime_body_readers = evm.runtime_scope().body_readers().cloned();
-        let compressed_entities_scope = evm.runtime_scope().execution_scope().clone();
-        if let Err(error) = self.configure_compressed_entities_scope(
-            &compressed_entities_scope,
-            block_number,
-            parent_hash,
-        ) {
-            system_plan.system_layout_error.get_or_insert_with(|| {
-                format!("compressed-entity exact-parent scope configuration failed: {error}")
-            });
-        }
-        let execution_read_budget = ctx.execution_read_budget.clone();
 
         {
             let inner = EthBlockExecutor::new(
@@ -125,12 +113,6 @@ impl BlockExecutorFactory for OutbeEvmConfig {
                         parent_artifact_hint,
                     },
                     dependencies: BlockExecutionDependencies { bridge, evm_signer },
-                    runtime: BlockExecutionRuntime {
-                        compressed_entities_scope,
-                        compressed_tree_service: self.compressed_tree_service.clone(),
-                        runtime_body_readers,
-                        execution_read_budget,
-                    },
                 },
             )
         }

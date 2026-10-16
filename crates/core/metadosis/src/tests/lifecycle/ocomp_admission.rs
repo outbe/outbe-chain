@@ -4,14 +4,14 @@ use outbe_primitives::time::SECONDS_PER_DAY;
 fn seed_positive_ocomp_admission_fixture(
     provider: &mut HashMapStorageProvider,
     wwd: outbe_primitives::time::WorldwideDay,
-) -> (ExecutionScope, TestParent, u64) {
+) -> u64 {
     let day_limit = U256::from(5_000u64) * U256::from(10u64).pow(U256::from(18u64));
     let nominal = U256::from(1_000u64) * U256::from(10u64).pow(U256::from(18u64));
     let scheduled = StorageHandle::enter(provider, |storage| {
         arm_genesis_ocomp(&storage, CHAIN_ID);
         create_waiting_day(&storage, wwd, day_type::GREEN, day_limit)
     });
-    let (scope, parent) = begin_persistent_active_scope(provider);
+
     StorageHandle::enter(provider, |storage| {
         let oracle = OracleContract::new(storage.clone());
         let pair = outbe_oracle::api::DAY_TYPE_PAIR;
@@ -27,10 +27,8 @@ fn seed_positive_ocomp_admission_fixture(
             .exchange_rate
             .write(&index, U256::from(900_000))
             .unwrap();
-        issue_one_tribute_in_scope(
+        issue_one_tribute(
             &storage,
-            &scope,
-            &parent,
             FixtureTribute {
                 owner: address!("7400000000000000000000000000000000000074"),
                 wwd,
@@ -38,7 +36,7 @@ fn seed_positive_ocomp_admission_fixture(
             },
         );
     });
-    (scope, parent, scheduled)
+    scheduled
 }
 
 /// A block that runs late must still price the day from its scheduled processing.
@@ -46,7 +44,7 @@ fn seed_positive_ocomp_admission_fixture(
 fn a_late_processing_block_prices_the_day_from_its_schedule() {
     let wwd = outbe_primitives::time::WorldwideDay::new(2026_0819);
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    let (scope, parent, scheduled) = seed_positive_ocomp_admission_fixture(&mut provider, wwd);
+    let scheduled = seed_positive_ocomp_admission_fixture(&mut provider, wwd);
     let late = scheduled + 2 * SECONDS_PER_DAY;
     StorageHandle::enter(&mut provider, |storage| {
         let oracle = OracleContract::new(storage.clone());
@@ -61,7 +59,7 @@ fn a_late_processing_block_prices_the_day_from_its_schedule() {
             .unwrap();
     });
 
-    run_start_command(&mut provider, &scope, &parent, 2, late).unwrap();
+    run_start_command(&mut provider, 2, late).unwrap();
 
     StorageHandle::enter(&mut provider, |storage| {
         assert_eq!(
@@ -73,7 +71,6 @@ fn a_late_processing_block_prices_the_day_from_its_schedule() {
             "the block clock must not choose the priced day"
         );
     });
-    end_persistent_active_scope(&mut provider, &scope);
 }
 
 #[test]
@@ -82,17 +79,9 @@ fn positive_ocomp_admission_rolls_back_every_mutation_and_retries_exactly() {
     let block_number = 2;
 
     let mut control = HashMapStorageProvider::new(CHAIN_ID);
-    let (control_scope, control_parent, scheduled) =
-        seed_positive_ocomp_admission_fixture(&mut control, wwd);
+    let scheduled = seed_positive_ocomp_admission_fixture(&mut control, wwd);
     control.fail_after_mutation_at(usize::MAX);
-    run_start_command(
-        &mut control,
-        &control_scope,
-        &control_parent,
-        block_number,
-        scheduled,
-    )
-    .unwrap();
+    run_start_command(&mut control, block_number, scheduled).unwrap();
     let mutation_count = control.clear_mutation_failure();
     StorageHandle::enter(&mut control, |storage| {
         assert_eq!(
@@ -110,20 +99,18 @@ fn positive_ocomp_admission_rolls_back_every_mutation_and_retries_exactly() {
     let clean_storage = control.storage.clone();
     let clean_events = control.events.clone();
     let clean_ordered_events = control.get_ordered_events().to_vec();
-    let clean_ce_work = control_scope.ce_work_checkpoint().unwrap();
-    end_persistent_active_scope(&mut control, &control_scope);
 
     for operation in 0..mutation_count {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-        let (scope, parent, scheduled) = seed_positive_ocomp_admission_fixture(&mut provider, wwd);
+        let scheduled = seed_positive_ocomp_admission_fixture(&mut provider, wwd);
         let storage_before = provider.storage.clone();
         let events_before = provider.events.clone();
         let ordered_events_before = provider.get_ordered_events().to_vec();
-        let ce_before = scope.ce_work_checkpoint().unwrap();
+
         provider.fail_after_mutation_at(operation);
 
         assert!(matches!(
-            run_start_command(&mut provider, &scope, &parent, block_number, scheduled,),
+            run_start_command(&mut provider, block_number, scheduled,),
             Err(outbe_primitives::error::PrecompileError::Storage(_))
         ));
         assert_eq!(provider.clear_mutation_failure(), operation + 1);
@@ -134,9 +121,8 @@ fn positive_ocomp_admission_rolls_back_every_mutation_and_retries_exactly() {
             ordered_events_before.as_slice(),
             "ordered events at {operation}"
         );
-        assert_eq!(scope.ce_work_checkpoint().unwrap(), ce_before);
 
-        run_start_command(&mut provider, &scope, &parent, block_number, scheduled).unwrap();
+        run_start_command(&mut provider, block_number, scheduled).unwrap();
         assert_eq!(
             provider.storage, clean_storage,
             "storage retry at {operation}"
@@ -147,8 +133,6 @@ fn positive_ocomp_admission_rolls_back_every_mutation_and_retries_exactly() {
             clean_ordered_events.as_slice(),
             "ordered events retry at {operation}"
         );
-        assert_eq!(scope.ce_work_checkpoint().unwrap(), clean_ce_work);
-        end_persistent_active_scope(&mut provider, &scope);
     }
 }
 
@@ -175,10 +159,9 @@ fn absent_profile_rejects_the_offering_edge_before_any_effect() {
             .read()
             .unwrap()
     });
-    let (scope, _parent) = begin_persistent_active_scope(&mut provider);
+
     let storage_before = provider.storage.clone();
     let events_before = provider.events.clone();
-    let ce_before = scope.ce_work_checkpoint().unwrap();
 
     provider.enable_metadosis_mutation_frame(
         outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
@@ -188,7 +171,7 @@ fn absent_profile_rejects_the_offering_edge_before_any_effect() {
             BlockContext::empty_for_tests(2, offering_entry, CHAIN_ID),
             storage,
         );
-        crate::commands::advance_active_worldwide_days(&ctx, &scope)
+        crate::commands::advance_active_worldwide_days(&ctx)
     })
     .unwrap_err();
     assert!(matches!(
@@ -197,14 +180,13 @@ fn absent_profile_rejects_the_offering_edge_before_any_effect() {
     ));
     assert_eq!(provider.storage, storage_before);
     assert_eq!(provider.events, events_before);
-    assert_eq!(scope.ce_work_checkpoint().unwrap(), ce_before);
+
     StorageHandle::enter(&mut provider, |storage| {
         assert_eq!(
             MetadosisContract::new(storage).get_wwd_status(wwd).unwrap(),
             status::FORMING
         );
     });
-    end_persistent_active_scope(&mut provider, &scope);
 }
 
 #[test]
@@ -219,12 +201,10 @@ fn absent_profile_rejects_populated_ready_before_failed_state_or_lysis_effects()
             .unwrap();
         scheduled
     });
-    let (scope, parent) = begin_persistent_active_scope(&mut provider);
+
     StorageHandle::enter(&mut provider, |storage| {
-        issue_one_tribute_in_scope(
+        issue_one_tribute(
             &storage,
-            &scope,
-            &parent,
             FixtureTribute {
                 owner: address!("7700000000000000000000000000000000000077"),
                 wwd,
@@ -234,7 +214,6 @@ fn absent_profile_rejects_populated_ready_before_failed_state_or_lysis_effects()
     });
     let storage_before = provider.storage.clone();
     let events_before = provider.events.clone();
-    let ce_before = scope.ce_work_checkpoint().unwrap();
 
     provider.enable_metadosis_mutation_frame(
         outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
@@ -244,7 +223,7 @@ fn absent_profile_rejects_populated_ready_before_failed_state_or_lysis_effects()
             BlockContext::empty_for_tests(2, scheduled, CHAIN_ID),
             storage,
         );
-        crate::commands::start_metadosis(&ctx, &scope, &parent)
+        crate::commands::start_metadosis(&ctx)
     })
     .unwrap_err();
     assert!(matches!(
@@ -253,7 +232,7 @@ fn absent_profile_rejects_populated_ready_before_failed_state_or_lysis_effects()
     ));
     assert_eq!(provider.storage, storage_before);
     assert_eq!(provider.events, events_before);
-    assert_eq!(scope.ce_work_checkpoint().unwrap(), ce_before);
+
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::READY);
@@ -261,7 +240,6 @@ fn absent_profile_rejects_populated_ready_before_failed_state_or_lysis_effects()
         assert_eq!(NodContract::new(storage.clone()).total_supply().unwrap(), 0);
         assert_eq!(TributeContract::new(storage).total_supply().unwrap(), 1);
     });
-    end_persistent_active_scope(&mut provider, &scope);
 }
 
 #[test]
@@ -277,21 +255,17 @@ fn active_ocomp_profile_discovers_later_ready_day_after_first_was_indexed() {
         let timestamp = first_scheduled.max(second_scheduled) + SECONDS_PER_HOUR;
         arm_genesis_ocomp(&storage, CHAIN_ID);
 
-        with_active_scope(storage.clone(), |scope, parent| {
-            issue_one_tribute_in_scope(
+        (|| {
+            issue_one_tribute(
                 &storage,
-                scope,
-                parent,
                 FixtureTribute {
                     owner: address!("7400000000000000000000000000000000000074"),
                     wwd: first_wwd,
                     nominal,
                 },
             );
-            issue_one_tribute_in_scope(
+            issue_one_tribute(
                 &storage,
-                scope,
-                parent,
                 FixtureTribute {
                     owner: address!("7500000000000000000000000000000000000075"),
                     wwd: second_wwd,
@@ -303,7 +277,7 @@ fn active_ocomp_profile_discovers_later_ready_day_after_first_was_indexed() {
                 BlockContext::empty_for_tests(10, timestamp, CHAIN_ID),
                 storage.clone(),
             );
-            crate::commands::start_metadosis(&first_ctx, scope, parent).unwrap();
+            crate::commands::start_metadosis(&first_ctx).unwrap();
 
             let after_first = MetadosisContract::new(storage.clone());
             assert!(!after_first
@@ -321,8 +295,8 @@ fn active_ocomp_profile_discovers_later_ready_day_after_first_was_indexed() {
                 BlockContext::empty_for_tests(11, timestamp + 1, CHAIN_ID),
                 storage.clone(),
             );
-            crate::commands::start_metadosis(&second_ctx, scope, parent).unwrap();
-        });
+            crate::commands::start_metadosis(&second_ctx).unwrap();
+        })();
 
         let metadosis = MetadosisContract::new(storage);
         let schema_limits = crate::ocomp::schema::poc_schema_limits();
@@ -352,11 +326,9 @@ fn populated_positive_gratis_day_enqueues_ocomp_without_synchronous_lysis() {
         let scheduled = create_waiting_day(&storage, wwd, day_type::GREEN, day_limit);
         arm_genesis_ocomp(&storage, CHAIN_ID);
 
-        with_active_scope(storage.clone(), |scope, parent| {
-            issue_one_tribute_in_scope(
+        (|| {
+            issue_one_tribute(
                 &storage,
-                scope,
-                parent,
                 FixtureTribute {
                     owner,
                     wwd,
@@ -368,8 +340,6 @@ fn populated_positive_gratis_day_enqueues_ocomp_without_synchronous_lysis() {
             // would have attempted to issue. OCOMP admission must not touch it.
             outbe_nodfactory::api::issue_nod(
                 &storage,
-                scope,
-                parent,
                 &outbe_nod::test_support::encrypted_fixture(
                     &outbe_nod::NodIssueParams {
                         owner,
@@ -393,8 +363,8 @@ fn populated_positive_gratis_day_enqueues_ocomp_without_synchronous_lysis() {
                 ),
                 storage.clone(),
             );
-            crate::commands::start_metadosis(&ctx, scope, parent).unwrap();
-        });
+            crate::commands::start_metadosis(&ctx).unwrap();
+        })();
 
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::READY);

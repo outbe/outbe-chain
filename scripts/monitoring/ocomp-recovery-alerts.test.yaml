@@ -62,7 +62,7 @@ tests:
                 retained-storage failure has remained active, for ten minutes.
                 Healthy jobs may still be advancing, so the aggregate stalled
                 alert can remain green. Inspect retry failure_class metrics,
-                MongoDB health, disk capacity, and the node logs.
+                RocksDB health, disk capacity, and the node logs.
 
   - name: retained GC global outage is critical after ten minutes
     interval: 1m
@@ -85,7 +85,7 @@ tests:
                 retained-storage failure has remained active, for ten minutes.
                 Healthy jobs may still be advancing, so the aggregate stalled
                 alert can remain green. Inspect retry failure_class metrics,
-                MongoDB health, disk capacity, and the node logs.
+                RocksDB health, disk capacity, and the node logs.
 
   - name: sustained worker unit failures become critical within the response window
     interval: 1m
@@ -111,5 +111,5 @@ tests:
                 window for ten minutes. Local retries remain bound to the same
                 canonical JobId and deadline; they cannot establish an on-chain
                 Failed state or extend the response window. Inspect Worker and
-                SnapshotExporter logs, retained input, disk capacity, and MongoDB
+                SnapshotExporter logs, retained input, disk capacity, and RocksDB
                 before the canonical job expires.

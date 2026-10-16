@@ -634,8 +634,7 @@ mod tests {
                 BlockContext::empty_for_tests(deadline, 1_011, 1),
                 storage,
             );
-            crate::commands::run_ocomp_lifecycle_begin_with_scope(&context, &fixture.scope)
-                .unwrap();
+            crate::commands::run_ocomp_lifecycle_begin_with_scope(&context).unwrap();
         });
 
         let before = fixture.rollback_snapshot();

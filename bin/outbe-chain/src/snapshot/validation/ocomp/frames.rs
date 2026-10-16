@@ -38,7 +38,6 @@ pub(crate) struct ClosureAudit {
 pub(crate) fn verify_closure(
     view: &crate::snapshot::native::RethReadOnlyView,
     root: &Path,
-    projection: Option<outbe_primitives::projection::ProjectionCheckpoint>,
     maximum_transactions: Option<u64>,
 ) -> eyre::Result<ClosureAudit> {
     use alloy_consensus::Sealable;
@@ -86,22 +85,10 @@ pub(crate) fn verify_closure(
             },
         )?;
     }
-    match projection {
-        Some(projected) => {
-            require(
-                projected.block_number > checkpoint.current.block_number
-                    || (projected.block_number == checkpoint.current.block_number
-                        && projected.block_hash == checkpoint.current.block_hash),
-                SnapshotOcompError::ClosureAheadOrConflictsWithProjection,
-            )?;
-        }
-        None => {
-            require(
-                checkpoint.current.block_number == 0,
-                SnapshotOcompError::NonzeroClosureWithoutProjection,
-            )?;
-        }
-    }
+    require(
+        checkpoint.current.block_number <= view.progress.execution.number,
+        SnapshotOcompError::ClosureAheadOrConflictsWithExecution,
+    )?;
     let replay = if checkpoint.current.block_number < view.progress.finalized.number {
         // The strict comparison proves addition cannot overflow, even at MAX.
         verify_retained_frames(

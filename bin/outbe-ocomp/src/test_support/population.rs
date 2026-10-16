@@ -1,6 +1,7 @@
 use alloy_primitives::{Address, U256};
-use outbe_compressed_entities::{derive_poseidon_entity_id, TributeBodyV1};
+use outbe_primitives::entity_codec::TributeBodyV1;
 use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::wwd_entity_id::derive_poseidon_entity_id;
 
 pub fn tribute_population(day: WorldwideDay, tribute_count: u32) -> Vec<TributeBodyV1> {
     let mut tributes = (0..tribute_count)

@@ -1,8 +1,8 @@
 use alloy_primitives::Bytes;
 
 use super::{
-    SystemTxError, SystemTxInputV2, SystemTxKind, OCOMP_LIFECYCLE_CE_GAS_RESERVE,
-    REWARD_GEM_DELIVERY_CE_GAS_RESERVE, SYSTEM_TX_NON_ZERO_BYTE_GAS, SYSTEM_TX_VISIBLE_GAS_FLOOR,
+    SystemTxError, SystemTxInputV2, SystemTxKind, OCOMP_LIFECYCLE_GAS_RESERVE,
+    REWARD_GEM_DELIVERY_GAS_RESERVE, SYSTEM_TX_NON_ZERO_BYTE_GAS, SYSTEM_TX_VISIBLE_GAS_FLOOR,
     SYSTEM_TX_ZERO_BYTE_GAS,
 };
 
@@ -44,7 +44,7 @@ struct SystemTxVisibleGasEntry {
 /// Deterministic visible-gas allocation for the complete begin-system zone.
 ///
 /// System envelopes reserve intrinsic gas plus any schedule-hashed protocol
-/// precharge and phase-specific compressed-entity budget. `CycleTick` receives
+/// precharge and phase-specific execution budget. `CycleTick` receives
 /// the remaining block gas while preserving every mandatory phase reserve.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemTxVisibleGasPlan {
@@ -75,10 +75,10 @@ impl SystemTxVisibleGasPlan {
             }
             let intrinsic_gas = system_tx_intrinsic_gas(calldata)?;
             let protocol_precharge = system_tx_protocol_precharge(&decoded)?;
-            let ce_gas_reserve = system_tx_ce_gas_reserve(*kind);
+            let execution_gas_reserve = system_tx_execution_gas_reserve(*kind);
             let gas_limit = intrinsic_gas
                 .checked_add(protocol_precharge)
-                .and_then(|gas| gas.checked_add(ce_gas_reserve))
+                .and_then(|gas| gas.checked_add(execution_gas_reserve))
                 .ok_or(SystemTxError::VisibleGasPlanExceedsBlock {
                     required_gas: u64::MAX,
                     block_gas_limit,
@@ -141,7 +141,7 @@ impl SystemTxVisibleGasPlan {
     }
 
     #[must_use]
-    pub fn ce_gas_limit(&self, ordinal: usize) -> Option<u64> {
+    pub fn execution_gas_limit(&self, ordinal: usize) -> Option<u64> {
         self.entries
             .get(ordinal)
             .map(|entry| entry.gas_limit - entry.intrinsic_gas - entry.protocol_precharge)
@@ -153,10 +153,10 @@ impl SystemTxVisibleGasPlan {
     }
 }
 
-const fn system_tx_ce_gas_reserve(kind: SystemTxKind) -> u64 {
+const fn system_tx_execution_gas_reserve(kind: SystemTxKind) -> u64 {
     match kind {
-        SystemTxKind::OcompLifecycleBegin => OCOMP_LIFECYCLE_CE_GAS_RESERVE,
-        SystemTxKind::RewardsGemDelivery => REWARD_GEM_DELIVERY_CE_GAS_RESERVE,
+        SystemTxKind::OcompLifecycleBegin => OCOMP_LIFECYCLE_GAS_RESERVE,
+        SystemTxKind::RewardsGemDelivery => REWARD_GEM_DELIVERY_GAS_RESERVE,
         _ => 0,
     }
 }

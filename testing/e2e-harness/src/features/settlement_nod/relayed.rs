@@ -13,7 +13,7 @@ struct RelayedNod {
     head: u64,
     body: eth::INod::NodData,
     gratis_load: U256,
-    bucket_id: WwdEntityId,
+    bucket_key: B256,
     vault: Address,
     asset: Address,
     owner_keys: eth::ConfidentialAccountKeys,
@@ -137,7 +137,7 @@ fn prepare_relayed_nod(
     let gratis_load = crate::internal::nod_keys::decrypt(world, body);
     assert!(body.isQualified);
     assert!(!body.isSettled);
-    let bucket_id = qualified_bodies.1.entity_id();
+    let bucket_key = qualified_bodies.1.bucket_key;
     let vault = eth::read_call(
         &url,
         addresses::VAULT_ROUTER_ADDR,
@@ -181,7 +181,7 @@ fn prepare_relayed_nod(
         head,
         body,
         gratis_load,
-        bucket_id,
+        bucket_key,
         vault,
         asset,
         owner_keys,
@@ -196,7 +196,7 @@ fn settle_nod(world: &mut World, scenario: &RelayedNod) -> PaidNod {
         asset: scenario.asset,
         snapshotId: U256::ZERO,
     };
-    // Capture compressed-entity prestate before submitting the mutation. These
+    // Capture native prestate before submitting the mutation. These
     // live observations are finalized checkpoints, not historical eth_call reads.
     let before_indexes = nod_snapshot(world, scenario.owner, scenario.id, scenario.head);
     let before = nod_bodies(world, scenario.id, scenario.head);
@@ -738,14 +738,36 @@ fn assert_mined_ledgers(
             native_balance_at(&peer_url, scenario.payer, minted.minted_height - 1)
         );
         assert!(
-            compressed_body(world, peer, 2, scenario.id, minted.minted_height).is_none(),
+            world
+                .rpc
+                .nod_state_at(
+                    peer,
+                    world
+                        .rpc
+                        .checkpoint_at(scenario.port, minted.minted_height)
+                        .expect("mined Nod checkpoint"),
+                    scenario.id
+                )
+                .expect("mined Nod state")
+                .is_none(),
             "mined Nod must have authenticated absence"
         );
-        // The V2 fixture issued a singleton bucket. Mining its one paid right
+        // The fixture issued a singleton bucket. Mining its one paid right
         // must remove the bucket instead of leaving an orphan settled counter.
         assert_eq!(payment.paid.1.settled_nods, 1);
         assert!(
-            compressed_body(world, peer, 3, scenario.bucket_id, minted.minted_height).is_none(),
+            world
+                .rpc
+                .nod_bucket_state_at(
+                    peer,
+                    world
+                        .rpc
+                        .checkpoint_at(scenario.port, minted.minted_height)
+                        .expect("mined bucket checkpoint"),
+                    scenario.bucket_key
+                )
+                .expect("mined bucket state")
+                .is_none(),
             "empty paid bucket must be deleted"
         );
     }

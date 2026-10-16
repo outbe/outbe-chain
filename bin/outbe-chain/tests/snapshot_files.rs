@@ -7,17 +7,11 @@ use std::{
     os::unix::fs::{MetadataExt, PermissionsExt},
     path::{Path, PathBuf},
     process::Command,
-    sync::Arc,
 };
 
 use alloy_consensus::{Header, Sealable};
 use alloy_primitives::B256;
-use outbe_compressed_entities::{CeMdbxReadOnly, EnvironmentIdentity, ACTIVE_COMMITMENT_SCHEME};
 use outbe_ocomp::discovery_spool::inspect_closure_checkpoint;
-use outbe_offchain_storage::{
-    partitioned::adapters::RocksPartitionReadView, PartitionedStorage, StorageBackend,
-    StorageConfig,
-};
 use outbe_primitives::{projection::ProjectionCheckpoint, OutbeHeader, OutbePrimitives};
 use outbe_snapshot::{
     archive::read_archive_index,
@@ -60,9 +54,7 @@ fn conventional_transfer_preserves_native_files_and_opens_without_donor_or_sidec
         .args(["--", "--chain"])
         .arg(&fixture.genesis)
         .arg("--datadir")
-        .arg(&fixture.chain)
-        .arg("--projection.storage-config")
-        .arg(&fixture.projection_config));
+        .arg(&fixture.chain));
     assert!(created.status.success(), "{}", transcript(&created));
     assert_eq!(fingerprint(&fixture.donor), before);
 
@@ -331,11 +323,8 @@ struct RecipientRoots {
     chain: PathBuf,
     consensus: PathBuf,
     ocomp: PathBuf,
-    offchain: PathBuf,
     static_files: PathBuf,
     execution: PathBuf,
-    projection_config: PathBuf,
-    scratch: PathBuf,
 }
 
 impl RecipientRoots {
@@ -345,17 +334,13 @@ impl RecipientRoots {
             consensus: base.join("consensus-b/data"),
             // Ordinary embedded OCOMP is derived from the chain directory's parent.
             ocomp: base.join("network-a/ocomp/domain-v1"),
-            offchain: base.join("projection-c/data"),
             static_files: base.join("headers-d/data"),
             execution: base.join("evm-e/data"),
-            projection_config: base.join("operator/offchain.toml"),
-            scratch: base.join("inspection-scratch"),
         };
         for kind in [
             NativeRoot::Chain,
             NativeRoot::Consensus,
             NativeRoot::Ocomp,
-            NativeRoot::Offchain,
             NativeRoot::StaticFiles,
             NativeRoot::ExecutionRocksDb,
         ] {
@@ -369,7 +354,6 @@ impl RecipientRoots {
             NativeRoot::Chain => &self.chain,
             NativeRoot::Consensus => &self.consensus,
             NativeRoot::Ocomp => &self.ocomp,
-            NativeRoot::Offchain => &self.offchain,
             NativeRoot::StaticFiles => &self.static_files,
             NativeRoot::ExecutionRocksDb => &self.execution,
         }
@@ -401,18 +385,6 @@ fn provision_recipient(roots: &RecipientRoots) -> BTreeMap<PathBuf, (Vec<u8>, u3
         fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
         protected.insert(path, (bytes, 0o600));
     }
-    fs::create_dir_all(roots.projection_config.parent().unwrap()).unwrap();
-    let config = format!(
-        "version = 1\nbackend = 'rocksdb'\nstart_block = 17\n[rocksdb]\npath = {}\nsecondary_path = {}\n",
-        serde_json::to_string(&roots.offchain).unwrap(),
-        serde_json::to_string(&roots.scratch).unwrap()
-    );
-    fs::write(&roots.projection_config, config.as_bytes()).unwrap();
-    fs::set_permissions(&roots.projection_config, fs::Permissions::from_mode(0o600)).unwrap();
-    protected.insert(
-        roots.projection_config.clone(),
-        (config.into_bytes(), 0o600),
-    );
     protected
 }
 
@@ -526,45 +498,6 @@ fn open_native_stores(roots: &RecipientRoots, fixture: &StoppedFixture) {
     );
     drop(execution);
 
-    let ce = CeMdbxReadOnly::open(
-        &roots.chain,
-        EnvironmentIdentity {
-            local_storage_schema_version: outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION,
-            chain_id: 54322345,
-            genesis_hash: fixture.genesis_hash,
-            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-            topology: outbe_compressed_entities::CeTopologyV1.encode(),
-            tree_format: "ckb-smt-v0.6.1-poseidon2-catalog-v3".to_owned(),
-            vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
-        },
-    )
-    .unwrap();
-    let marker = ce.marker().unwrap();
-    assert_eq!(marker.height, 100);
-    assert_eq!(marker.block_hash, fixture.finalized_hash);
-    drop(ce);
-    let config = StorageConfig::load(&roots.projection_config).unwrap();
-    let StorageBackend::RocksDb(rocks) = config.backend else {
-        panic!("fixture uses RocksDB")
-    };
-    assert_eq!(rocks.path, roots.offchain);
-    let projection = outbe_offchain_data::read_projection_state(
-        outbe_offchain_data::ProjectionConfig {
-            chain_id: 54322345,
-            genesis_hash: fixture.genesis_hash,
-            start_block: config.start_block,
-        },
-        Arc::new(PartitionedStorage::read_only(
-            Arc::new(RocksPartitionReadView::open(&rocks.path, &rocks.secondary_path).unwrap()),
-            outbe_offchain_data::entity_partition_routing().unwrap(),
-        )),
-    )
-    .unwrap()
-    .unwrap()
-    .checkpoint
-    .unwrap();
-    assert_eq!(projection.block_number, 98);
-    assert_eq!(projection.block_hash, B256::repeat_byte(98));
     let closure = inspect_closure_checkpoint(
         roots
             .ocomp

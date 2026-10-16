@@ -1,6 +1,5 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
-use outbe_compressed_entities::{ExecutionReaders, ParentBodySource};
 use outbe_primitives::dispatch::{dispatch_call, metadata, view};
 use outbe_primitives::erc::{
     ERC165_INTERFACE_ID, ERC4906_INTERFACE_ID, ERC721_INTERFACE_ID, ERC721_METADATA_INTERFACE_ID,
@@ -29,10 +28,9 @@ sol!(
     "../../../contracts/precompiles/src/IGem.sol"
 );
 
-/// Dispatches Gem calls through the block-scoped compressed-body lifecycle.
+/// Dispatches Gem calls against EVM state.
 pub fn dispatch(
     storage: outbe_primitives::storage::StorageHandle,
-    readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
     data: &[u8],
     _caller: Address,
     value: U256,
@@ -56,7 +54,7 @@ pub fn dispatch(
             | tokenURI(_)
             | tokenOfOwnerByIndex(_)
             | getGem(_)
-            | isQualified(_)) => dispatch_entity(&storage, readers, call),
+            | isQualified(_)) => dispatch_entity(&storage, call),
         }
     })
 }
@@ -81,38 +79,34 @@ fn dispatch_metadata(
 
 fn dispatch_entity(
     storage: &outbe_primitives::storage::StorageHandle<'_>,
-    readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
     call: IGem::IGemCalls,
 ) -> Result<Bytes> {
-    let ExecutionReaders { scope, parent } = readers;
     use IGem::IGemCalls::*;
     match call {
         balanceOf(c) => view(c, |c| {
-            let count = api::list_by_owner(storage, scope, parent, c.owner)?.len();
+            let count = api::list_by_owner(storage, c.owner)?.len();
             Ok(U256::from(count))
         }),
         ownerOf(c) => view(c, |c| {
-            Ok(api::get_item(storage, scope, parent, c.gemId)?
+            Ok(api::get_item(storage, c.gemId)?
                 .ok_or(GemError::GemNotFound)?
                 .owner)
         }),
         tokenURI(c) => view(c, |c| {
-            let gem =
-                api::get_view(storage, scope, parent, c.gemId)?.ok_or(GemError::GemNotFound)?;
+            let gem = api::get_view(storage, c.gemId)?.ok_or(GemError::GemNotFound)?;
             let qualified = !gem.item.is_settled() && api::is_qualified(storage, &gem.item)?;
             let now = storage.timestamp()?.to::<u64>();
             Ok(crate::metadata::token_uri(&gem, qualified, now))
         }),
         tokenOfOwnerByIndex(c) => view(c, |c| {
             let idx = usize::try_from(c.index).map_err(|_| GemError::IndexOutOfBounds)?;
-            api::list_by_owner(storage, scope, parent, c.owner)?
+            api::list_by_owner(storage, c.owner)?
                 .get(idx)
                 .map(|item| item.gem_id.to_u256())
                 .ok_or_else(|| GemError::IndexOutOfBounds.into())
         }),
         getGem(c) => view(c, |c| {
-            let gem =
-                api::get_view(storage, scope, parent, c.gemId)?.ok_or(GemError::GemNotFound)?;
+            let gem = api::get_view(storage, c.gemId)?.ok_or(GemError::GemNotFound)?;
             let mut data = to_abi_data(&gem, storage.timestamp()?.to::<u64>());
             if data.state == GemState::Issued as u8 && api::is_qualified(storage, &gem.item)? {
                 data.state = 1;
@@ -120,8 +114,7 @@ fn dispatch_entity(
             Ok(data)
         }),
         isQualified(c) => view(c, |c| {
-            let item =
-                api::get_item(storage, scope, parent, c.gemId)?.ok_or(GemError::GemNotFound)?;
+            let item = api::get_item(storage, c.gemId)?.ok_or(GemError::GemNotFound)?;
             api::is_qualified(storage, &item)
         }),
         _ => Err(crate::errors::GemFatalError::EntityRouteMetadataCall.into()),

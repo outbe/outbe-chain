@@ -1,16 +1,11 @@
 //! Real Intex/Gem factory and router execution with stateful ERC20, vault and NFT counterparties.
-use outbe_offchain_data::runtime_body_readers;
-use std::sync::Arc;
 
 use alloy_primitives::{Address, Bytes, FixedBytes, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
-use outbe_compressed_entities::ExecutionScope;
 use outbe_gem::{precompile::IGem, GemAddParams};
 use outbe_gemfactory::precompile::IGemFactory;
 use outbe_intex::{CreateSeriesParams, IntexCallTrigger, SeriesId};
 use outbe_intexfactory::precompile::IIntexFactory;
-use outbe_offchain_data::RuntimeBodyReaders;
-use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::{
     addresses::{
         GEM_ADDRESS, GEM_FACTORY_ADDRESS, INTEX_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS,
@@ -106,8 +101,7 @@ impl Factory {
 
 struct World {
     ctx: EvmCtx,
-    scope: Arc<ExecutionScope>,
-    readers: RuntimeBodyReaders,
+
     factory: Factory,
     payer: Address,
     cost: U256,
@@ -165,17 +159,10 @@ impl World {
                 },
             );
         }
-        let adapter = Arc::new(MemoryStorage::new());
-        let readers = runtime_body_readers(adapter.clone());
-        let gem_parent = outbe_gem::gem_reader(adapter);
-        let scope = Arc::new(ExecutionScope::default());
+
         let block = BlockContext::new(1, TIMESTAMP, CHAIN_ID, OWNER, vec![OWNER]);
         let mut provider = DirectStorageProvider::new(&mut db, block);
         let (gem_id, deadline) = StorageHandle::enter(&mut provider, |storage| {
-            // Gems are compressed bodies: open the block's scope before any mint.
-            outbe_compressed_entities::test_support::seed_compressed_entities_genesis(&storage)
-                .unwrap();
-            outbe_compressed_entities::begin_block(storage.clone(), &scope).unwrap();
             let router = VaultRouterContract::new(storage.clone());
             router.assets.insert(ASSET).unwrap();
             router.asset_vault_set(ASSET).insert(VAULT).unwrap();
@@ -240,8 +227,6 @@ impl World {
                     let entry_price = U256::from(2_000_000);
                     let gem_id = outbe_gem::api::add_gem(
                         &storage,
-                        &scope,
-                        &gem_parent,
                         GemAddParams {
                             owner: OWNER,
                             gem_type: outbe_gemfactory::schema::GemTypes::Wallet as u8,
@@ -268,18 +253,15 @@ impl World {
                     .unwrap();
                     let mut deadline = 0;
                     if let Some(called_at) = gem_called_at {
-                        let bucket =
-                            outbe_gem::api::get_item(&storage, &scope, &gem_parent, gem_id)
-                                .unwrap()
-                                .unwrap()
-                                .bucket_key;
+                        let bucket = outbe_gem::api::get_item(&storage, gem_id)
+                            .unwrap()
+                            .unwrap()
+                            .bucket_key;
                         outbe_gem::GemContract::new(storage.clone())
                             .bucket_called_at
                             .write(&bucket, called_at)
                             .unwrap();
-                        let gem = outbe_gem::api::get_view(&storage, &scope, &gem_parent, gem_id)
-                            .unwrap()
-                            .unwrap();
+                        let gem = outbe_gem::api::get_view(&storage, gem_id).unwrap().unwrap();
                         assert_eq!(
                             gem.effective_state(TIMESTAMP),
                             outbe_gem::GemState::Called as u8
@@ -297,8 +279,7 @@ impl World {
             .modify_block_chained(|block| block.timestamp = U256::from(TIMESTAMP));
         let mut world = Self {
             ctx,
-            scope,
-            readers,
+
             factory,
             payer,
             cost: U256::ZERO,
@@ -371,12 +352,8 @@ impl World {
         calldata: Bytes,
         is_static: bool,
     ) -> SubCallOutput {
-        intex_sub_call::IntexSubCall {
-            ctx: &mut self.ctx,
-            scope: &self.scope,
-            readers: &self.readers,
-        }
-        .call(caller, target, calldata, is_static)
+        intex_sub_call::IntexSubCall { ctx: &mut self.ctx }
+            .call(caller, target, calldata, is_static)
     }
 
     fn ok<C: SolCall>(&mut self, caller: Address, target: Address, call: C) -> C::Return {

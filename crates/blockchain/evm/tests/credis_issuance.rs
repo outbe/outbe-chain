@@ -1,7 +1,6 @@
 //! Real issuance against a direct Gratis pledge with stateful ERC-20/vault calls.
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
-use outbe_compressed_entities::ExecutionScope;
 use outbe_credisfactory::precompile::ICredisFactory;
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_gratis::precompile::IGratis;
@@ -30,7 +29,6 @@ use revm::{
     state::{AccountInfo, Bytecode},
     Context,
 };
-use std::sync::Arc;
 
 sol! {
     interface IFixture {
@@ -57,8 +55,6 @@ macro_rules! call {
                 self_address: $caller,
                 outer_is_static: false,
                 spec: SpecId::PRAGUE,
-                runtime_body_readers: None,
-                execution_scope: $evm.scope.clone(),
             },
             SubCallInput {
                 target: $target,
@@ -73,7 +69,6 @@ macro_rules! call {
 
 struct IssuanceEvm {
     ctx: alloy_evm::eth::EthEvmContext<CacheDB<EmptyDB>>,
-    scope: Arc<ExecutionScope>,
 }
 struct PaymentObservation {
     credis_id: U256,
@@ -103,10 +98,7 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
             .with_db(db)
             .modify_cfg_chained(|cfg| cfg.chain_id = CHAIN_ID)
             .modify_block_chained(|block| block.timestamp = U256::from(NOW));
-        let mut evm = IssuanceEvm {
-            ctx,
-            scope: Arc::new(ExecutionScope::default()),
-        };
+        let mut evm = IssuanceEvm { ctx };
         prepare_issuance_counterparties(&mut evm, failure)
             .expect("prepare issuance counterparties fixture succeeds");
         if failure != 5 {

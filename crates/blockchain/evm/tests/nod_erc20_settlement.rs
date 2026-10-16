@@ -1,24 +1,17 @@
 //! Real NOD/router execution with stateful ERC20 and reserve-vault counterparties.
-use outbe_offchain_data::runtime_body_readers;
 #[path = "common/nod_qualification.rs"]
 mod qualify_fixture;
 use qualify_fixture::qualify;
 
-use std::sync::Arc;
-
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
-use outbe_compressed_entities::{begin_block, ExecutionScope, WwdEntityId};
 use outbe_evm::sub_call;
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_nod::{precompile::INod, NodIssueParams};
 use outbe_nodfactory::precompile::INodFactory;
-use outbe_offchain_data::RuntimeBodyReaders;
-use outbe_offchain_storage::MemoryStorage;
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_primitives::{
-    addresses::{
-        COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS, NOD_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS,
-    },
+    addresses::{NOD_ADDRESS, NOD_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS},
     block::BlockContext,
     chain::CHAIN_ID,
     storage::{
@@ -68,8 +61,7 @@ type EvmCtx = revm::Context<
 
 struct World {
     ctx: EvmCtx,
-    scope: Arc<ExecutionScope>,
-    readers: RuntimeBodyReaders,
+
     owner: Address,
     nod: WwdEntityId,
     cost: U256,
@@ -132,17 +124,12 @@ impl World {
                 },
             );
         }
-        let adapter = Arc::new(MemoryStorage::new());
-        let readers = runtime_body_readers(adapter.clone());
-        let parent = outbe_nod::nod_reader(adapter);
-        let scope = Arc::new(ExecutionScope::default());
+
         let block = BlockContext::new(1, TIMESTAMP, CHAIN_ID, OWNER, vec![OWNER]);
         let mut provider = DirectStorageProvider::new(&mut db, block);
         let nod = StorageHandle::enter(&mut provider, |storage| {
             seed_settlement_nod(
                 &storage,
-                &scope,
-                &parent,
                 NodSettlementSeed {
                     owner,
                     cost,
@@ -158,8 +145,7 @@ impl World {
             .modify_block_chained(|block| block.timestamp = U256::from(TIMESTAMP));
         Self {
             ctx,
-            scope,
-            readers,
+
             owner,
             nod,
             cost,
@@ -228,8 +214,6 @@ impl World {
                 self_address: caller,
                 outer_is_static: false,
                 spec: SpecId::PRAGUE,
-                runtime_body_readers: Some(self.readers.clone()),
-                execution_scope: self.scope.clone(),
             },
             SubCallInput {
                 target,
@@ -629,33 +613,13 @@ struct NodSettlementSeed {
     registered: bool,
     issuance_currency: u16,
 }
-fn seed_settlement_nod(
-    storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
-    parent: &impl outbe_compressed_entities::ParentBodySource,
-    seed: NodSettlementSeed,
-) -> WwdEntityId {
+fn seed_settlement_nod(storage: &StorageHandle<'_>, seed: NodSettlementSeed) -> WwdEntityId {
     let NodSettlementSeed {
         owner,
         cost,
         registered,
         issuance_currency,
     } = seed;
-    storage
-        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
-        .unwrap();
-    storage
-        .sstore(
-            COMPRESSED_ENTITIES_ADDRESS,
-            U256::ONE,
-            U256::from_be_slice(
-                outbe_compressed_entities::sealed_root(B256::ZERO)
-                    .unwrap()
-                    .as_slice(),
-            ),
-        )
-        .unwrap();
-    begin_block(storage.clone(), scope).unwrap();
     seed_settlement_router(storage, registered, issuance_currency);
     let params = NodIssueParams {
         owner,
@@ -668,8 +632,6 @@ fn seed_settlement_nod(
     };
     let nod = outbe_nodfactory::api::issue_nod(
         storage,
-        scope,
-        parent,
         &outbe_nod::test_support::encrypted_fixture(&params, CHAIN_ID),
     )
     .unwrap();

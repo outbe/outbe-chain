@@ -16,65 +16,17 @@ use reth_provider::{
     providers::StaticFileProvider, BlockHashReader, HeaderProvider, StorageSettings,
 };
 
-pub(super) struct NativeOffchainProgress {
-    pub(super) ce: SnapshotBlock,
-    pub(super) projection: SnapshotBlock,
+pub(super) struct NativeOcompProgress {
     pub(super) ocomp_baseline: SnapshotBlock,
     pub(super) ocomp_previous: SnapshotBlock,
     pub(super) ocomp_current: SnapshotBlock,
-    pub(super) _secondary: tempfile::TempDir,
 }
 
-pub(super) fn observe_offchain_progress(
+fn observe_ocomp_progress(
     node: &std::path::Path,
-    rocks: &outbe_offchain_storage::RocksDbConfig,
-    start_block: u64,
-    chain_id: u64,
     genesis_hash: alloy_primitives::B256,
-) -> eyre::Result<NativeOffchainProgress> {
-    use outbe_compressed_entities::{
-        CeMdbxReadOnly, CeTopologyV1, EnvironmentIdentity, ACTIVE_COMMITMENT_SCHEME,
-        LOCAL_STORAGE_SCHEMA_VERSION,
-    };
-    use outbe_offchain_data::{read_projection_state, ProjectionConfig};
-    use outbe_offchain_storage::partitioned::adapters::RocksPartitionReadView;
+) -> eyre::Result<NativeOcompProgress> {
     use outbe_primitives::projection::ProjectionCheckpoint;
-    use std::sync::Arc;
-    let chain = node.join("data");
-    let ce = CeMdbxReadOnly::open(
-        &chain,
-        EnvironmentIdentity {
-            local_storage_schema_version: LOCAL_STORAGE_SCHEMA_VERSION,
-            chain_id,
-            genesis_hash,
-            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-            topology: CeTopologyV1.encode(),
-            tree_format: "ckb-smt-v0.6.1-poseidon2-catalog-v3".into(),
-            vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".into(),
-        },
-    )?
-    .marker()?;
-    // Never share the live exporter's secondary directory or write deployment data.
-    let secondary = tempfile::tempdir()?;
-    let scratch = secondary.path().canonicalize()?;
-    eyre::ensure!(
-        !scratch.starts_with(node) && !node.starts_with(&scratch),
-        "native inspection scratch overlaps the node directory"
-    );
-    let source = RocksPartitionReadView::open(&rocks.path, secondary.path())?;
-    let projection_marker = read_projection_state(
-        ProjectionConfig {
-            chain_id,
-            genesis_hash,
-            start_block,
-        },
-        Arc::new(outbe_offchain_storage::PartitionedStorage::read_only(
-            Arc::new(source),
-            outbe_offchain_data::entity_partition_routing()?,
-        )),
-    )?
-    .and_then(|state| state.checkpoint)
-    .ok_or_else(|| eyre::eyre!("missing placed projection checkpoint"))?;
     let closure = outbe_ocomp::discovery_spool::inspect_closure_checkpoint(
         node.join("ocomp/domain-v1/exporter-v1/discovery/closure-checkpoint-v1"),
         ProjectionCheckpoint {
@@ -86,56 +38,34 @@ pub(super) fn observe_offchain_progress(
         number: value.block_number,
         hash: hex::encode(value.block_hash),
     };
-    Ok(NativeOffchainProgress {
-        ce: SnapshotBlock {
-            number: ce.height,
-            hash: hex::encode(ce.block_hash),
-        },
-        projection: block(projection_marker),
+    Ok(NativeOcompProgress {
         ocomp_baseline: block(closure.baseline),
         ocomp_previous: block(closure.previous),
         ocomp_current: block(closure.current),
-        _secondary: secondary,
     })
 }
 
 pub(super) fn observe_stopped_native(
     node_dir: &std::path::Path,
-    projection_config_path: &std::path::Path,
-    chain_id: u64,
     genesis_hash: alloy_primitives::B256,
 ) -> eyre::Result<crate::world::state::SnapshotNativeObservation> {
-    use outbe_offchain_storage::StorageBackend;
-
-    // These paths come from the harness's ordinary node and projection config,
+    // These paths come from the harness's ordinary node layout,
     // independently of the received manifest's donor paths and expected values.
     let node = node_dir.canonicalize()?;
     let chain = node.join("data");
     let static_path = chain.join("static_files");
     let closure_path = node.join("ocomp/domain-v1/exporter-v1/discovery/closure-checkpoint-v1");
-    let projection = outbe_offchain_storage::StorageConfig::load(projection_config_path)?;
-    let StorageBackend::RocksDb(rocks) = &projection.backend else {
-        eyre::bail!("snapshot E2E requires its configured RocksDB projection");
-    };
-    eyre::ensure!(
-        projection.start_block == 1
-            && rocks.path == node.join("data/offchain")
-            && rocks.secondary_path == node.join("ocomp/rocksdb-secondary"),
-        "recipient projection config differs from its ordinary storage identity"
-    );
     eyre::ensure!(static_path.is_dir(), "missing placed static files");
     let native = read_native_execution_progress(&chain, &static_path, genesis_hash)?;
 
-    let offchain =
-        observe_offchain_progress(&node, rocks, projection.start_block, chain_id, genesis_hash)?;
+    let offchain = observe_ocomp_progress(&node, genesis_hash)?;
     let progress = native_progress(native, &offchain);
     Ok(SnapshotNativeObservation {
         progress,
         sources: vec![
             chain.join("db"),
             static_path,
-            chain.join("compressed_entities/smt"),
-            rocks.path.clone(),
+            chain.join("rocksdb"),
             closure_path,
         ],
         observed: std::time::SystemTime::now()
@@ -232,7 +162,7 @@ fn read_native_execution_progress(
 
 fn native_progress(
     native: NativeExecutionProgress,
-    offchain: &NativeOffchainProgress,
+    offchain: &NativeOcompProgress,
 ) -> SnapshotNativeProgress {
     SnapshotNativeProgress {
         finalized: native.finalized,
@@ -246,8 +176,6 @@ fn native_progress(
             .and_then(|value| value.partial_state_trie),
         unwind: native.unwind,
         storage_version: native.storage_version,
-        ce: offchain.ce.clone(),
-        projection: offchain.projection.clone(),
         ocomp_baseline: offchain.ocomp_baseline.clone(),
         ocomp_previous: offchain.ocomp_previous.clone(),
         ocomp_current: offchain.ocomp_current.clone(),

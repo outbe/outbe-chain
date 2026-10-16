@@ -1,16 +1,11 @@
 //! An idle call scan reads and never writes: a CycleTick with nothing in flight
 //! issues no SSTORE.
 
-use std::sync::Arc;
-
-use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{begin_block, ExecutionScope};
-use outbe_nod::{api, NodContract, NodItemState, NodRepositoryReader};
+use alloy_primitives::{Address, U256};
+use outbe_nod::{api, NodContract, NodItemState};
 use outbe_nodfactory::{called, hooks};
-use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
-    addresses::COMPRESSED_ENTITIES_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
@@ -34,34 +29,13 @@ fn item(owner: Address, day: WorldwideDay) -> NodItemState {
     )
 }
 
-fn active_world() -> (HashMapStorageProvider, ExecutionScope, NodRepositoryReader) {
-    let storage = Arc::new(MemoryStorage::new());
-    let reader: StorageReaderHandle = storage;
-    let mut provider = HashMapStorageProvider::new(1);
-    let scope = ExecutionScope::default();
-    StorageHandle::enter(&mut provider, |storage| {
-        storage
-            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
-            .unwrap();
-        storage
-            .sstore(
-                COMPRESSED_ENTITIES_ADDRESS,
-                U256::from(1),
-                U256::from_be_slice(
-                    outbe_compressed_entities::sealed_root(B256::ZERO)
-                        .unwrap()
-                        .as_slice(),
-                ),
-            )
-            .unwrap();
-        begin_block(storage, &scope).unwrap();
-    });
-    (provider, scope, outbe_nod::nod_reader(reader))
+fn provider() -> HashMapStorageProvider {
+    HashMapStorageProvider::new(1)
 }
 
 #[test]
 fn idle_daily_scans_do_not_write_storage() {
-    let (mut provider, scope, parent) = active_world();
+    let mut provider = provider();
     let midnight = outbe_primitives::time::date_key_to_utc_timestamp(20260716);
     StorageHandle::enter(&mut provider, |storage| {
         let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
@@ -79,10 +53,6 @@ fn idle_daily_scans_do_not_write_storage() {
             outbe_nod::test_support::set_entry_price(&mut body, entry);
             api::add_nod(
                 &storage,
-                outbe_compressed_entities::ExecutionReaders {
-                    scope: &scope,
-                    parent: &parent,
-                },
                 &body,
                 entry,
                 outbe_nod::test_support::sealed_terms(&storage, &body, entry),
@@ -94,7 +64,7 @@ fn idle_daily_scans_do_not_write_storage() {
             storage.clone(),
         );
         called::run_daily(&ctx).unwrap();
-        hooks::sweep_forfeits(&ctx, &scope, &parent).unwrap();
+        hooks::sweep_forfeits(&ctx).unwrap();
         called::run_call_slice(&ctx).unwrap();
         assert_eq!(
             NodContract::new(storage).call_sweep_day.read().unwrap(),
@@ -106,7 +76,7 @@ fn idle_daily_scans_do_not_write_storage() {
     provider.enable_production_storage_gas_metering();
     StorageHandle::enter(&mut provider, |storage| {
         let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, midnight, 1), storage);
-        hooks::sweep_forfeits(&ctx, &scope, &parent).unwrap();
+        hooks::sweep_forfeits(&ctx).unwrap();
         called::run_call_slice(&ctx).unwrap();
     });
     let (reads, writes) = provider.metered_storage_operations();

@@ -14,7 +14,7 @@
 //! - [`joiner`] - a validator that joins a running localnet (index = committee size).
 //! - [`follower`] - full-execution follower nodes (`--upstream`).
 //! - [`log_audit`] - runtime-log normalization, policy, and evidence.
-//! - [`probes`] - datadir, compressed-entity, and timing observations.
+//! - [`probes`] - datadir and timing observations.
 
 mod bootstrap;
 mod committee;
@@ -26,7 +26,7 @@ mod radicle;
 
 pub use bootstrap::BootstrapProfile;
 pub(crate) use log_audit::{ExpectedTeeFailures, LogAudit};
-pub use probes::{CeStartupReplayObservationV1, OcompRuntimeTraceMarkerV1};
+pub use probes::OcompRuntimeTraceMarkerV1;
 #[cfg(feature = "ocomp-integration")]
 pub(crate) use radicle::RadicleRepositoryFixtureV1;
 
@@ -578,7 +578,7 @@ impl Localnet {
         } else {
             cmd.env_remove("OUTBE_TEST_BYZANTINE_PREANNOUNCE");
         }
-        crate::world::projection::configure_node_command(&self.cfg, index, &mut cmd)?;
+
         if self.cfg.debug {
             let prog = cmd.get_program().to_string_lossy().into_owned();
             let rest: Vec<String> = cmd
@@ -1715,7 +1715,7 @@ mod snapshot_process_tests {
                     .iter()
                     .filter(|a| *a == "--projection.storage-config")
                     .count(),
-                1
+                0
             );
             assert!(before
                 .argv

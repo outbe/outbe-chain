@@ -45,12 +45,6 @@ impl TeeSessionMode {
     }
 }
 
-/// Path to the shared offchain-storage TOML, loaded by the node at startup.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OffchainDataArgs {
-    pub storage_config: PathBuf,
-}
-
 /// CLI arguments for the Outbe consensus layer.
 #[derive(Clone, clap::Args)]
 pub struct ConsensusArgs {
@@ -243,10 +237,6 @@ pub struct ConsensusArgs {
         requires = "upstream"
     )]
     pub upstream_nocertify: bool,
-
-    /// Shared offchain-storage TOML for this node and its snapshot exporter.
-    #[arg(long = "projection.storage-config", value_name = "PATH")]
-    pub projection_storage_config: Option<PathBuf>,
 }
 
 impl fmt::Debug for ConsensusArgs {
@@ -275,11 +265,6 @@ impl fmt::Debug for ConsensusArgs {
                 &self.radicle_status_address.is_some(),
             )
             .field("upstream_configured", &self.upstream.is_some())
-            .field(
-                "offchain_data_configured",
-                &self.projection_storage_config.is_some(),
-            )
-            .field("projection_storage_config", &self.projection_storage_config)
             .finish_non_exhaustive()
     }
 }
@@ -291,7 +276,6 @@ impl ConsensusArgs {
     /// - `--consensus.signing-key` without `--validator` -> warning (ignored key)
     /// - `--bls-key-backend encrypted` without `--bls-passphrase` -> error
     pub fn validate(&self) -> eyre::Result<()> {
-        self.offchain_data()?;
         self.validate_role_and_transport()?;
         self.warn_ignored_signers();
         self.validate_key_material()
@@ -372,20 +356,6 @@ impl ConsensusArgs {
             return Err(crate::errors::ArgsError::EncryptedBackendRequiresPassphraseArg.into());
         }
         Ok(())
-    }
-
-    /// Returns the required configuration path. The node loads the document once at startup.
-    pub fn offchain_data(&self) -> eyre::Result<OffchainDataArgs> {
-        let path = self
-            .projection_storage_config
-            .as_ref()
-            .ok_or(crate::errors::ArgsError::OffchainStorageRequired)?;
-        if path.as_os_str().is_empty() {
-            return Err(crate::errors::ArgsError::ProjectionStorageConfigEmpty.into());
-        }
-        Ok(OffchainDataArgs {
-            storage_config: path.clone(),
-        })
     }
 
     /// Effective validator EVM-key path.
@@ -475,7 +445,6 @@ mod tests {
             txpool_pending_staleness_secs: 600,
             upstream: None,
             upstream_nocertify: false,
-            projection_storage_config: Some("/tmp/offchain-storage.toml".into()),
             radicle_control_socket: None,
             radicle_status_address: None,
         }
@@ -520,43 +489,9 @@ mod tests {
     }
 
     #[test]
-    fn validator_and_full_node_require_storage_configuration_path() {
-        for is_validator in [false, true] {
-            let mut args = default_args();
-            args.is_validator = is_validator;
-            args.projection_storage_config = None;
-            assert!(args
-                .validate()
-                .unwrap_err()
-                .to_string()
-                .contains("required"));
-            args.projection_storage_config = Some("".into());
-            assert!(args
-                .offchain_data()
-                .unwrap_err()
-                .to_string()
-                .contains("empty"));
-            args.projection_storage_config = Some("/node/offchain-storage.toml".into());
-            assert_eq!(
-                args.offchain_data().unwrap().storage_config,
-                std::path::Path::new("/node/offchain-storage.toml")
-            );
-        }
-    }
-
-    #[test]
-    fn cli_parses_only_file_based_projection_configuration() {
-        let cli = TestConsensusCli::try_parse_from([
-            "test",
-            "--projection.storage-config",
-            "/node/offchain-storage.toml",
-        ])
-        .unwrap();
-        assert_eq!(
-            cli.consensus.offchain_data().unwrap().storage_config,
-            std::path::Path::new("/node/offchain-storage.toml")
-        );
+    fn cli_rejects_removed_projection_configuration() {
         for (flag, value) in [
+            ("--projection.storage-config", "/node/offchain-storage.toml"),
             ("--projection.mongodb-uri", "mongodb://mongo:27017"),
             ("--projection.mongodb-database", "projection"),
             ("--projection.start-block", "1"),
@@ -587,17 +522,12 @@ mod tests {
         let mut args = default_args();
         args.bls_passphrase = Some("bls-secret-value".to_owned());
         args.upstream = Some("https://user:upstream-secret@example.test".to_owned());
-        args.projection_storage_config = Some("/node/offchain-storage.toml".into());
 
         let args_debug = format!("{args:?}");
-        let config_debug = format!("{:?}", args.offchain_data().unwrap());
 
         for secret in ["bls-secret-value", "upstream-secret", "mongo-secret"] {
             assert!(!args_debug.contains(secret));
-            assert!(!config_debug.contains(secret));
         }
-        assert!(args_debug.contains("offchain_data_configured: true"));
-        assert!(config_debug.contains("storage_config"));
     }
 
     #[test]

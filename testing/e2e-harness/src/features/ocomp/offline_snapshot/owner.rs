@@ -70,10 +70,8 @@ pub(super) fn snapshot_fullnode_preserves_copied_result_checked(
     Ok(())
 }
 
-#[cfg(test)]
-use crate::internal::live_ce_read::ce_projection_not_ready as snapshot_forward_ce_mismatch;
-use crate::internal::live_ce_read::{
-    observe_projection as snapshot_observe_owner, ProjectionSample as SnapshotOwnerSample,
+use crate::internal::state_observation::{
+    observe_state as snapshot_observe_owner, StateSample as SnapshotOwnerSample,
 };
 
 pub(super) fn snapshot_materialized_owner(
@@ -188,15 +186,13 @@ pub(super) fn snapshot_public_nod_proofs(
 }
 
 #[cfg(test)]
-mod snapshot_owner_observation_tests {
+mod tests {
     use super::*;
     use std::{
         cell::Cell,
         collections::VecDeque,
         time::{Duration, Instant},
     };
-
-    const CE_RACE: &str = "eth_call failed: server returned an error response: error code -32603: Revm error: fatal: compressed-entity tree unavailable: exact parent mismatch: required ExactParentIdentity { commitment_scheme_version: 2, block_number: 521, block_hash: 0x4fd296af75fedd29d86ad983617c3614614f91b8bdb82001d00057e7cc1aacd7, root: 0x29f48a2e5bae541721b10af1233671747e7e955e794641a604aa9fc380a239e0 }, marker FinalizedMarker { commitment_scheme_version: 2, height: 522, block_hash: 0xb0d63f8c96229446dec5685a47eb1bd04a1299e86ca4ff11abc192fc7b445bb9, parent_block_hash: 0x4fd296af75fedd29d86ad983617c3614614f91b8bdb82001d00057e7cc1aacd7, parent_root: 0x29f48a2e5bae541721b10af1233671747e7e955e794641a604aa9fc380a239e0, new_root: 0x29f48a2e5bae541721b10af1233671747e7e955e794641a604aa9fc380a239e0 }";
 
     fn sample(
         before: u64,
@@ -228,62 +224,6 @@ mod snapshot_owner_observation_tests {
     }
 
     #[test]
-    fn typed_dependency_wrapper_preserves_exact_parent_retry_checks() {
-        let error = CE_RACE.replace(
-            "fatal: compressed-entity tree unavailable:",
-            "execution stopped on a node-local dependency failure:",
-        );
-        assert!(snapshot_forward_ce_mismatch(&error, 521, 522));
-        assert!(!snapshot_forward_ce_mismatch(&error, 521, 521));
-        assert!(!snapshot_forward_ce_mismatch(&error, 600, 601));
-        assert!(!snapshot_forward_ce_mismatch(
-            &error.replace("height: 522", "height: 521"),
-            521,
-            522,
-        ));
-        let wrong_root = format!("0x{}", "11".repeat(32));
-        assert!(!snapshot_forward_ce_mismatch(
-            &error.replace(
-                "new_root: 0x29f48a2e5bae541721b10af1233671747e7e955e794641a604aa9fc380a239e0",
-                &format!("new_root: {wrong_root}"),
-            ),
-            521,
-            522,
-        ));
-        assert!(!snapshot_forward_ce_mismatch(
-            &CE_RACE.replace("tree unavailable:", "tree corruption:"),
-            521,
-            522,
-        ));
-    }
-
-    #[test]
-    fn crossed_forward_ce_race_restarts_the_whole_owner_observation() {
-        let (result, calls) = observe(
-            vec![
-                sample(521, Err(CE_RACE.to_owned()), 522),
-                sample(522, Ok(Some(7)), 522),
-            ],
-            5,
-        );
-        assert_eq!(result.unwrap(), 7);
-        assert_eq!(calls, 2);
-    }
-
-    #[test]
-    fn stable_rpc_head_with_adjacent_ce_race_restarts_the_whole_owner_observation() {
-        let (result, calls) = observe(
-            vec![
-                sample(522, Err(CE_RACE.to_owned()), 522),
-                sample(522, Ok(Some(7)), 522),
-            ],
-            5,
-        );
-        assert_eq!(result.unwrap(), 7);
-        assert_eq!(calls, 2);
-    }
-
-    #[test]
     fn crossed_forward_success_is_discarded_before_accepting_a_stable_tuple() {
         let (result, calls) = observe(
             vec![
@@ -297,32 +237,6 @@ mod snapshot_owner_observation_tests {
     }
 
     #[test]
-    fn stale_or_regressing_head_ce_mismatch_is_an_error() {
-        for (before, after) in [(521, 521), (522, 521)] {
-            let (result, calls) = observe(vec![sample(before, Err(CE_RACE.to_owned()), after)], 5);
-            assert!(result.unwrap_err().to_string().contains(CE_RACE));
-            assert_eq!(calls, 1);
-        }
-        let (result, calls) = observe(vec![sample(522, Ok(Some(7)), 521)], 5);
-        assert!(result.unwrap_err().to_string().contains("regressed"));
-        assert_eq!(calls, 1);
-    }
-
-    #[test]
-    fn unrelated_head_movement_does_not_authorize_retry_of_an_old_ce_error() {
-        let (result, calls) = observe(vec![sample(600, Err(CE_RACE.to_owned()), 601)], 5);
-        assert!(result.unwrap_err().to_string().contains(CE_RACE));
-        assert_eq!(calls, 1);
-    }
-
-    #[test]
-    fn ce_marker_behind_observed_head_does_not_authorize_retry() {
-        let (result, calls) = observe(vec![sample(522, Err(CE_RACE.to_owned()), 523)], 5);
-        assert!(result.unwrap_err().to_string().contains(CE_RACE));
-        assert_eq!(calls, 1);
-    }
-
-    #[test]
     fn generic_rpc_decode_and_uniqueness_errors_fail_even_during_progress() {
         for error in [
             "eth_call failed: connection reset",
@@ -330,7 +244,6 @@ mod snapshot_owner_observation_tests {
             "balanceOf returned 2, expected exactly one",
             "owner has more than one materialized NOD",
             "execution reverted: index out of bounds",
-            "compressed-entity tree unavailable: exact parent mismatch",
         ] {
             let (result, calls) = observe(vec![sample(521, Err(error.to_owned()), 522)], 5);
             assert!(result.unwrap_err().to_string().contains(error));
@@ -360,85 +273,10 @@ mod snapshot_owner_observation_tests {
         assert_eq!(calls, 2);
     }
 
-    fn projection_lag_error() -> String {
-        CE_RACE
-            .replace("tree unavailable:", "tree corruption:")
-            .replace("Revm error: fatal:", "Revm error: fatal: fatal:")
-            .replace("block_number: 521", "block_number: 522")
-            .replacen(
-                "block_hash: 0x4fd296af75fedd29d86ad983617c3614614f91b8bdb82001d00057e7cc1aacd7",
-                "block_hash: 0xb0d63f8c96229446dec5685a47eb1bd04a1299e86ca4ff11abc192fc7b445bb9",
-                1,
-            )
-            .replacen(
-                "root: 0x29f48a2e5bae541721b10af1233671747e7e955e794641a604aa9fc380a239e0",
-                &format!("root: 0x{}", "11".repeat(32)),
-                1,
-            )
-    }
-
     #[test]
-    fn lagging_projection_retries_the_complete_observation() {
-        let error = projection_lag_error();
-        assert!(!snapshot_forward_ce_mismatch(&error, 522, 522));
-        let (result, calls) = observe(
-            vec![sample(523, Err(error), 523), sample(523, Ok(Some(7)), 523)],
-            5,
-        );
-        assert_eq!(result.unwrap(), 7);
-        assert_eq!(calls, 2);
-    }
-
-    #[test]
-    fn persistent_projection_lag_exhausts_the_deadline_with_its_error() {
-        let error = projection_lag_error();
-        let (result, calls) = observe(
-            vec![
-                sample(523, Err(error.clone()), 523),
-                sample(523, Err(error.clone()), 523),
-            ],
-            2,
-        );
-        let failure = result.unwrap_err().to_string();
-        assert!(failure.contains("deadline exhausted"));
-        assert!(failure.contains(&error));
-        assert_eq!(calls, 2);
-    }
-
-    #[test]
-    fn unrelated_or_malformed_ce_identities_are_not_retried() {
-        let bad_hash = format!("0x{}", "11".repeat(32));
-        let errors = [
-            CE_RACE.replace("commitment_scheme_version: 2", "commitment_scheme_version: 1"),
-            CE_RACE.replace("height: 522", "height: 521"),
-            CE_RACE.replace("height: 522", "height: 523"),
-            CE_RACE.replace("height: 522", "height: 520"),
-            CE_RACE.replace("FinalizedMarker { commitment_scheme_version: 2", "FinalizedMarker { commitment_scheme_version: 1"),
-            CE_RACE.replace("parent_block_hash: 0x4fd296af75fedd29d86ad983617c3614614f91b8bdb82001d00057e7cc1aacd7", &format!("parent_block_hash: {bad_hash}")),
-            CE_RACE.replace("parent_root: 0x29f48a2e5bae541721b10af1233671747e7e955e794641a604aa9fc380a239e0", &format!("parent_root: {bad_hash}")),
-            CE_RACE.replace("new_root: 0x29f48a2e5bae541721b10af1233671747e7e955e794641a604aa9fc380a239e0", &format!("new_root: {bad_hash}")),
-            CE_RACE.replace("height: 522", "height: broken"),
-        ];
-        for error in errors {
-            let (result, calls) = observe(vec![sample(521, Err(error.clone()), 522)], 5);
-            assert!(result.unwrap_err().to_string().contains(&error));
-            assert_eq!(calls, 1);
-        }
-    }
-
-    #[test]
-    fn repeated_forward_errors_exhaust_one_deadline_with_last_heads_and_error() {
-        let (result, calls) = observe(
-            vec![
-                sample(521, Err(CE_RACE.to_owned()), 522),
-                sample(521, Err(CE_RACE.to_owned()), 522),
-            ],
-            2,
-        );
-        let error = result.unwrap_err().to_string();
-        assert!(error.contains("deadline exhausted"));
-        assert!(error.contains("before=521 after=522"));
-        assert!(error.contains(CE_RACE));
-        assert_eq!(calls, 2);
+    fn a_regressing_head_rejects_an_otherwise_complete_body() {
+        let (result, calls) = observe(vec![sample(522, Ok(Some(7)), 521)], 5);
+        assert!(result.unwrap_err().to_string().contains("regressed"));
+        assert_eq!(calls, 1);
     }
 }

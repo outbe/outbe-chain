@@ -1,19 +1,9 @@
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
-};
-
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_compressed_entities::{
-    begin_block, EntityRef, ExecutionScope, IdPage, IdPageRequest, ParentBodySource,
-    ParentBodySourceError, QueryRef, StoredBody, WwdEntityId,
-};
-use outbe_nod::{api, precompile::INod, NodItemState, NodRepositoryReader};
-use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
+use outbe_nod::{api, precompile::INod, NodItemState};
 use outbe_primitives::time::{first_full_day, WorldwideDay};
 use outbe_primitives::{
-    addresses::{COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS},
+    addresses::NOD_ADDRESS,
     block::{BlockContext, BlockLifecycle, BlockRuntimeContext},
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
@@ -37,64 +27,36 @@ fn item(owner: Address, day: WorldwideDay) -> NodItemState {
     )
 }
 
-fn active_world() -> (HashMapStorageProvider, ExecutionScope, NodRepositoryReader) {
-    let storage = Arc::new(MemoryStorage::new());
-    let reader: StorageReaderHandle = storage;
-    let mut provider = HashMapStorageProvider::new(1);
-    let scope = ExecutionScope::default();
-    StorageHandle::enter(&mut provider, |storage| {
-        storage
-            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
-            .unwrap();
-        storage
-            .sstore(
-                COMPRESSED_ENTITIES_ADDRESS,
-                U256::from(1),
-                U256::from_be_slice(
-                    outbe_compressed_entities::sealed_root(B256::ZERO)
-                        .unwrap()
-                        .as_slice(),
-                ),
-            )
-            .unwrap();
-        begin_block(storage, &scope).unwrap();
-    });
-    (provider, scope, outbe_nod::nod_reader(reader))
+fn provider() -> HashMapStorageProvider {
+    HashMapStorageProvider::new(1)
 }
 
 #[test]
 fn same_block_issue_is_visible_to_point_and_list_reads() {
-    let (mut provider, scope, parent) = active_world();
+    let mut provider = provider();
     let body = item(Address::repeat_byte(0x21), WorldwideDay::new(20_260_716));
 
     StorageHandle::enter(&mut provider, |storage| {
         api::add_nod(
             &storage,
-            outbe_compressed_entities::ExecutionReaders {
-                scope: &scope,
-                parent: &parent,
-            },
             &body,
             U256::from(5),
             outbe_nod::test_support::sealed_terms(&storage, &body, U256::from(5)),
         )
         .unwrap();
         assert_eq!(
-            api::get_item(&storage, &scope, &parent, body.nod_id)
-                .unwrap()
-                .unwrap()
-                .owner,
+            api::get_item(&storage, body.nod_id).unwrap().unwrap().owner,
             body.owner
         );
         assert_eq!(
-            api::list_by_owner(&storage, &scope, &parent, body.owner)
+            api::list_by_owner(&storage, body.owner)
                 .unwrap()
                 .into_iter()
                 .map(|item| item.nod_id)
                 .collect::<Vec<_>>(),
             [body.nod_id]
         );
-        assert_eq!(api::list_all(&storage, &scope, &parent).unwrap().len(), 1);
+        assert_eq!(api::list_all(&storage).unwrap().len(), 1);
     });
 
     let signatures: Vec<_> = provider
@@ -102,27 +64,16 @@ fn same_block_issue_is_visible_to_point_and_list_reads() {
         .iter()
         .map(|event| event.topics()[0])
         .collect();
-    assert_eq!(
-        signatures,
-        [
-            INod::NodBodyStored::SIGNATURE_HASH,
-            INod::NodBucketBodyStored::SIGNATURE_HASH,
-            INod::Transfer::SIGNATURE_HASH,
-        ]
-    );
+    assert_eq!(signatures, [INod::Transfer::SIGNATURE_HASH]);
 }
 
 #[test]
 fn qualification_reads_the_finalized_day_and_writes_nothing() {
-    let (mut provider, scope, parent) = active_world();
+    let mut provider = provider();
     let body = item(Address::repeat_byte(0x31), WorldwideDay::new(20_260_716));
     StorageHandle::enter(&mut provider, |storage| {
         api::add_nod(
             &storage,
-            outbe_compressed_entities::ExecutionReaders {
-                scope: &scope,
-                parent: &parent,
-            },
             &body,
             U256::from(5),
             outbe_nod::test_support::sealed_terms(&storage, &body, U256::from(5)),
@@ -152,12 +103,8 @@ fn qualification_reads_the_finalized_day_and_writes_nothing() {
                 .write_snapshot(timestamp, &[(pair, U256::from(rate), U256::from(volume))])
                 .unwrap();
         }
-        let bucket_id = WwdEntityId::from_day_and_digest(body.worldwide_day, body.bucket_key.0);
-        let bucket = || {
-            api::get_bucket(&storage, &scope, &parent, bucket_id)
-                .unwrap()
-                .unwrap()
-        };
+        let bucket_id = body.bucket_key;
+        let bucket = || api::get_bucket(&storage, bucket_id).unwrap().unwrap();
         assert!(!api::is_qualified(&storage, &bucket()).unwrap());
         outbe_oracle::lifecycle::OracleLifecycle::begin_block(&context).unwrap();
         assert_eq!(
@@ -174,19 +121,12 @@ fn qualification_reads_the_finalized_day_and_writes_nothing() {
         .iter()
         .map(|event| event.topics()[0])
         .collect();
-    assert_eq!(
-        signatures,
-        [
-            INod::NodBodyStored::SIGNATURE_HASH,
-            INod::NodBucketBodyStored::SIGNATURE_HASH,
-            INod::Transfer::SIGNATURE_HASH,
-        ]
-    );
+    assert_eq!(signatures, [INod::Transfer::SIGNATURE_HASH]);
 }
 
 #[test]
 fn qualification_takes_only_own_currency_buckets_strictly_below_the_rate() {
-    let (mut provider, scope, parent) = active_world();
+    let mut provider = provider();
     let day = WorldwideDay::new(20_260_716);
     // (owner byte, reference currency, entry price) for floors 1000, 1200, 1250, 1300, 1300, 1299.
     let specs = [
@@ -203,7 +143,7 @@ fn qualification_takes_only_own_currency_buckets_strictly_below_the_rate() {
     let expected = [true, false, true, false, false, false];
 
     StorageHandle::enter(&mut provider, |storage| {
-        let bucket_ids: Vec<WwdEntityId> = specs
+        let bucket_ids: Vec<B256> = specs
             .iter()
             .map(|&(owner_byte, currency, entry)| {
                 let entry = U256::from(entry);
@@ -214,16 +154,12 @@ fn qualification_takes_only_own_currency_buckets_strictly_below_the_rate() {
                 body.bucket_key = outbe_nod::identity::bucket_key(day, entry, currency);
                 api::add_nod(
                     &storage,
-                    outbe_compressed_entities::ExecutionReaders {
-                        scope: &scope,
-                        parent: &parent,
-                    },
                     &body,
                     entry,
                     outbe_nod::test_support::sealed_terms(&storage, &body, entry),
                 )
                 .unwrap();
-                WwdEntityId::from_day_and_digest(day, body.bucket_key.0)
+                body.bucket_key
             })
             .collect();
 
@@ -240,9 +176,7 @@ fn qualification_takes_only_own_currency_buckets_strictly_below_the_rate() {
         let qualified: Vec<bool> = bucket_ids
             .iter()
             .map(|&bucket_id| {
-                let bucket = api::get_bucket(&storage, &scope, &parent, bucket_id)
-                    .unwrap()
-                    .unwrap();
+                let bucket = api::get_bucket(&storage, bucket_id).unwrap().unwrap();
                 api::is_qualified(&storage, &bucket).unwrap()
             })
             .collect();
@@ -250,58 +184,24 @@ fn qualification_takes_only_own_currency_buckets_strictly_below_the_rate() {
     });
 }
 
-struct CountingParent {
-    inner: NodRepositoryReader,
-    gets: AtomicUsize,
-}
-
-impl ParentBodySource for CountingParent {
-    fn get(&self, entity: EntityRef) -> Result<Option<StoredBody>, ParentBodySourceError> {
-        self.gets.fetch_add(1, Ordering::SeqCst);
-        ParentBodySource::get(&self.inner, entity)
-    }
-
-    fn list(
-        &self,
-        query: QueryRef,
-        request: IdPageRequest,
-    ) -> Result<IdPage, ParentBodySourceError> {
-        ParentBodySource::list(&self.inner, query, request)
-    }
-}
-
 #[test]
-fn removal_consumes_loaded_capabilities_without_a_second_parent_read() {
-    let (mut provider, scope, reader) = active_world();
-    let parent = CountingParent {
-        inner: reader,
-        gets: AtomicUsize::new(0),
-    };
+fn removal_checks_loaded_state() {
+    let mut provider = provider();
     let body = item(Address::repeat_byte(0x41), WorldwideDay::new(20_260_716));
     StorageHandle::enter(&mut provider, |storage| {
         api::add_nod(
             &storage,
-            outbe_compressed_entities::ExecutionReaders {
-                scope: &scope,
-                parent: &parent,
-            },
             &body,
             U256::from(5),
             outbe_nod::test_support::sealed_terms(&storage, &body, U256::from(5)),
         )
         .unwrap();
-        let loaded_item = api::load_item(&storage, &scope, &parent, body.nod_id)
-            .unwrap()
-            .unwrap();
-        let bucket_id = WwdEntityId::from_day_and_digest(body.worldwide_day, body.bucket_key.0);
-        let loaded_bucket = api::load_bucket(&storage, &scope, &parent, bucket_id)
-            .unwrap()
-            .unwrap();
-        let reads_before_remove = parent.gets.load(Ordering::SeqCst);
-        api::remove_nod(&storage, &scope, loaded_item, loaded_bucket).unwrap();
-        assert_eq!(parent.gets.load(Ordering::SeqCst), reads_before_remove);
-        assert!(api::get_item(&storage, &scope, &parent, body.nod_id)
-            .unwrap()
-            .is_none());
+        let loaded_item = api::load_item(&storage, body.nod_id).unwrap().unwrap();
+        let bucket_id = body.bucket_key;
+        let loaded_bucket = api::load_bucket(&storage, bucket_id).unwrap().unwrap();
+
+        api::remove_nod(&storage, loaded_item, loaded_bucket).unwrap();
+
+        assert!(api::get_item(&storage, body.nod_id).unwrap().is_none());
     });
 }

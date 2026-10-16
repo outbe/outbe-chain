@@ -2,11 +2,8 @@
 
 use alloy_primitives::{Address, U256};
 use cucumber::then;
-use outbe_compressed_entities::{
-    verify_point_read_v1, PointReadRequestV1, PointReadResultV1, SelectedHeaderV1, TributeBodyV1,
-    VerifiedPointReadV1,
-};
 use outbe_ocomp_protocol::league_snapshot::league_snapshot_slot;
+use outbe_primitives::entity_codec::TributeBodyV1;
 
 use crate::internal::{eth, nod_reference};
 use crate::world::ocomp::{OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE, OCOMP_PUBLIC_TRIBUTE_AMOUNT_MICRO};
@@ -94,56 +91,21 @@ fn verified_input(
     assert_eq!(body.issuance_currency, 840);
     assert_eq!(body.reference_currency, 840);
     assert_eq!(body.worldwide_day.value(), day);
-    let request = PointReadRequestV1 {
-        domain_id: 1,
-        raw_id: body.tribute_id,
-    };
     let ports = world.validators.committee_ports();
-    for &port in &ports {
-        let package = world
-            .rpc
-            .compressed_entity_ready(port, request)
-            .expect("finalized public input proof");
-        let height = package.header.block_number;
-        world
-            .rpc
-            .wait_finalized_checkpoint(&ports, height, 120)
-            .expect("input proof height finalized on the complete committee");
-        // Do not trust the proof server's supplied extraData. Obtain the exact
-        // header commitment independently on every committee port.
-        let canonical = eth::block_commitment(&world.rpc.url(ports[0]), height)
-            .expect("canonical input header");
-        for &peer in &ports {
-            assert_eq!(
-                eth::block_commitment(&world.rpc.url(peer), height).expect("peer input header"),
-                canonical,
-                "input header parity on {peer}"
-            );
-        }
-        assert_eq!(package.header.block_hash, canonical.0);
-        let trusted = SelectedHeaderV1 {
-            block_number: height,
-            block_hash: canonical.0,
-            extra_data: canonical.2.to_vec(),
-        };
-        let chain_id = world.rpc.chain_id(port).expect("input proof chain ID");
+    let checkpoint = world
+        .rpc
+        .wait_finalized_checkpoint(&ports, height, 120)
+        .expect("input checkpoint finalized on every validator");
+    let expected = outbe_primitives::entity_codec::decode_stored_tribute_v2(&projected.stored_body)
+        .expect("encrypted Tribute input");
+    for port in ports {
         assert_eq!(
-            verify_point_read_v1(chain_id, request, &trusted, &package.result)
-                .expect("verify public input proof"),
-            VerifiedPointReadV1::Present,
-            "input proof on {port}"
-        );
-        let PointReadResultV1::Present { body_bytes, .. } = package.result else {
-            panic!("verified input must be present")
-        };
-        assert_eq!(
-            body_bytes.as_ref(),
-            projected.stored_body,
+            world
+                .rpc
+                .authenticated_tribute_at(port, checkpoint, body.tribute_id)
+                .expect("verify Tribute MPT input proof"),
+            expected,
             "input body on {port}"
-        );
-        assert_eq!(
-            eth::block_commitment(&world.rpc.url(port), height).expect("recheck input header"),
-            canonical
         );
     }
     body

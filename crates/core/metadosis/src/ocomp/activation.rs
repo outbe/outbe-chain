@@ -1,5 +1,4 @@
 use alloy_primitives::{Bytes, B256, U256};
-use outbe_compressed_entities::ExecutionScope;
 use outbe_lysis::activation_v1::{self, LysisApplyPlanV1, LysisOwnerReceiptsV1};
 use outbe_nod::schema::NodContract;
 use outbe_nodfactory::certified::{install_certified_generation, CertifiedNodGenerationV1};
@@ -72,7 +71,7 @@ pub enum OcompFinalityAuthorityError {
 #[derive(Clone, Copy)]
 pub(crate) struct QuorumApplyContext<'a, 'storage> {
     storage: &'a StorageHandle<'storage>,
-    scope: &'a ExecutionScope,
+
     completed_transition: &'a OuterWwdTransition,
     current_height: u64,
     current_time: u64,
@@ -88,7 +87,6 @@ pub(crate) struct QuorumExecution<'limits> {
 impl<'a, 'storage> QuorumApplyContext<'a, 'storage> {
     pub(crate) const fn new(
         storage: &'a StorageHandle<'storage>,
-        scope: &'a ExecutionScope,
         completed_transition: &'a OuterWwdTransition,
         execution: QuorumExecution<'a>,
     ) -> Self {
@@ -99,7 +97,6 @@ impl<'a, 'storage> QuorumApplyContext<'a, 'storage> {
         } = execution;
         Self {
             storage,
-            scope,
             completed_transition,
             current_height,
             current_time,
@@ -109,6 +106,7 @@ impl<'a, 'storage> QuorumApplyContext<'a, 'storage> {
 }
 
 struct CertifiedResultInput<'a> {
+    source_checkpoint: outbe_ocomp_protocol::intent::FinalizedRequestBindingV1,
     result: &'a outbe_ocomp_protocol::result::LysisResultV1,
     bundle: &'a ProtocolBundleV1,
     plan: &'a LysisApplyPlanV1,
@@ -151,7 +149,12 @@ pub(crate) fn apply_quorum_result(
     metadosis: &mut MetadosisContract<'_>,
     input: QuorumResultInput<'_>,
 ) -> PrecompileResult<Bytes> {
-    validate_quorum_job(input.record)?;
+    let finalized = validate_quorum_job(input.record)?;
+    let source_checkpoint = outbe_ocomp_protocol::intent::FinalizedRequestBindingV1 {
+        block_number: input.record.intent_height,
+        block_hash: finalized.finalized_request_block_hash,
+        state_root: finalized.finalized_request_state_root,
+    };
     validate_quorum_binding(context, metadosis, &input)?;
     let (plan, result_evidence_hash) = verify_quorum_structure(context, &input)?;
     let QuorumResultInput {
@@ -165,6 +168,7 @@ pub(crate) fn apply_quorum_result(
         return Err(reject(ACTIVATION_PRECONDITIONS_CHANGED));
     }
     let certified = CertifiedResultInput {
+        source_checkpoint,
         result,
         bundle: &authority.bundle,
         plan: &plan,
@@ -334,12 +338,10 @@ fn target_preconditions_changed(
     let tribute_ready = tribute.profile_ready && tribute.is_sealed;
     let tribute_matches = (
         tribute.source_generation,
-        tribute.sealed_collection_root,
         tribute.tribute_count,
         tribute.tribute_nominal_total_minor,
     ) == (
         expected.tribute.source_generation,
-        expected.tribute.sealed_collection_root,
         expected.tribute.exact_count,
         expected.tribute.exact_nominal_total,
     );
@@ -379,12 +381,12 @@ fn apply_certified_result(
     certified: CertifiedResultInput<'_>,
 ) -> PrecompileResult<Bytes> {
     let storage = context.storage;
-    let scope = context.scope;
     let outer_transition = context.completed_transition;
     let current_height = context.current_height;
     let current_time = context.current_time;
     let limits = context.limits;
     let CertifiedResultInput {
+        source_checkpoint,
         result,
         bundle,
         plan,
@@ -409,6 +411,7 @@ fn apply_certified_result(
         availability_certificate_hash: None,
     };
     let nod_input = CertifiedNodGenerationV1 {
+        source_checkpoint,
         binding: binding.clone(),
         program_semantics_hash: bundle.lysis_program_semantics_hash,
         precondition: plan.nod().precondition().clone(),
@@ -476,10 +479,10 @@ fn apply_certified_result(
         verified_receipts
             .validate_terminal_capability(capability)
             .map_err(|_| crate::errors::business_failure("Lysis terminal permit mismatch"))?;
-        // Tribute retirement is the final compressed-entity mutation. This code
+        // Tribute retirement is the final Tribute state mutation. This code
         // establishes every receipt and terminal-capability gate before it makes
         // the WWD's source partition terminal.
-        retire_prepared_certified_partition(storage, scope, capability, prepared_tribute)
+        retire_prepared_certified_partition(storage, capability, prepared_tribute)
             .map_err(owner_apply_error)?;
         let permit = verified_receipts
             .terminal_permit(capability)

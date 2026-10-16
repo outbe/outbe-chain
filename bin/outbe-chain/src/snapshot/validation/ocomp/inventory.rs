@@ -219,7 +219,6 @@ impl<'a, 'b> CanonicalInventory<'a, 'b> {
                         worldwide_day: job.intent.wwd,
                         canonical_status: format!("{:?}", job.status),
                         pin_stage: "NotInspected".into(),
-                        projection_before_request: None,
                         source_verified: false,
                         export_verified: false,
                     },

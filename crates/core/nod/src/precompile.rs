@@ -1,6 +1,5 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
-use outbe_compressed_entities::{ExecutionReaders, ParentBodySource, WwdEntityId};
 use outbe_primitives::dispatch::{dispatch_call, metadata, view};
 use outbe_primitives::erc::{
     ERC165_INTERFACE_ID, ERC4906_INTERFACE_ID, ERC721_ENUMERABLE_INTERFACE_ID, ERC721_INTERFACE_ID,
@@ -12,6 +11,7 @@ use outbe_primitives::time::WorldwideDay;
 use crate::api;
 use crate::errors::NodError;
 use crate::schema::{NodBucketState, NodCertifiedGenerationProjection, NodContract, NodItemState};
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
@@ -31,10 +31,9 @@ sol!(
     "../../../contracts/precompiles/src/INod.sol"
 );
 
-/// Dispatches Nod calls through the block-scoped compressed-body lifecycle.
+/// Dispatches Nod calls against EVM state.
 pub fn dispatch(
     storage: outbe_primitives::storage::StorageHandle,
-    readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
     data: &[u8],
     _caller: Address,
     value: U256,
@@ -60,7 +59,7 @@ pub fn dispatch(
             | tokenByIndex(_)
             | tokenOfOwnerByIndex(_)
             | getNod(_)
-            | certifiedGeneration(_)) => dispatch_entity(storage, readers, &nod, call),
+            | certifiedGeneration(_)) => dispatch_entity(storage, &nod, call),
         }
     })
 }
@@ -78,54 +77,48 @@ fn dispatch_metadata(nod: &NodContract<'_>, call: INod::INodCalls) -> Result<Byt
 
 fn dispatch_entity(
     storage: outbe_primitives::storage::StorageHandle<'_>,
-    readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
     nod: &NodContract<'_>,
     call: INod::INodCalls,
 ) -> Result<Bytes> {
-    let ExecutionReaders { scope, parent } = readers;
     use INod::INodCalls::*;
     match call {
         balanceOf(c) => view(c, |c| {
-            let count = api::list_by_owner(&storage, scope, parent, c.owner)?.len();
+            let count = api::list_by_owner(&storage, c.owner)?.len();
             Ok(U256::from(count))
         }),
         ownerOf(c) => view(c, |c| {
             let nod_id = WwdEntityId::from(c.nodId);
-            Ok(api::get_item(&storage, scope, parent, nod_id)?
+            Ok(api::get_item(&storage, nod_id)?
                 .ok_or(NodError::NodNotFound)?
                 .owner)
         }),
         tokenURI(c) => view(c, |c| {
             let nod_id = WwdEntityId::from(c.nodId);
-            let item =
-                api::get_item(&storage, scope, parent, nod_id)?.ok_or(NodError::NodNotFound)?;
-            let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
-            let bucket = api::get_bucket(&storage, scope, parent, bucket_id)?
-                .ok_or(NodError::BucketNotFound)?;
+            let item = api::get_item(&storage, nod_id)?.ok_or(NodError::NodNotFound)?;
+            let bucket =
+                api::get_bucket(&storage, item.bucket_key)?.ok_or(NodError::BucketNotFound)?;
             let qualified = api::is_qualified(&storage, &bucket)?;
             crate::metadata::token_uri(nod, &item, &bucket, qualified, storage.timestamp()?)
         }),
         tokenByIndex(c) => view(c, |c| {
             let idx = usize::try_from(c.index).map_err(|_| NodError::IndexOutOfBounds)?;
-            api::list_all(&storage, scope, parent)?
+            api::list_all(&storage)?
                 .get(idx)
                 .map(|item| item.nod_id.to_u256())
                 .ok_or_else(|| NodError::IndexOutOfBounds.into())
         }),
         tokenOfOwnerByIndex(c) => view(c, |c| {
             let idx = usize::try_from(c.index).map_err(|_| NodError::IndexOutOfBounds)?;
-            api::list_by_owner(&storage, scope, parent, c.owner)?
+            api::list_by_owner(&storage, c.owner)?
                 .get(idx)
                 .map(|item| item.nod_id.to_u256())
                 .ok_or_else(|| NodError::IndexOutOfBounds.into())
         }),
         getNod(c) => view(c, |c| {
             let nod_id = WwdEntityId::from(c.nodId);
-            let item =
-                api::get_item(&storage, scope, parent, nod_id)?.ok_or(NodError::NodNotFound)?;
-            let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
-            let bucket = api::get_bucket(&storage, scope, parent, bucket_id)?
-                .ok_or(NodError::BucketNotFound)?;
+            let item = api::get_item(&storage, nod_id)?.ok_or(NodError::NodNotFound)?;
+            let bucket =
+                api::get_bucket(&storage, item.bucket_key)?.ok_or(NodError::BucketNotFound)?;
             to_abi_data(&storage, &item, &bucket)
         }),
         certifiedGeneration(c) => view(c, |c| {

@@ -252,7 +252,6 @@ impl ApplicationShared {
                     // at 0 here.
                     timestamp_millis_part: 0,
                     late_finalize_credits,
-                    compressed_entities_root: None,
                 })?
             };
 

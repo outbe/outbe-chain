@@ -3,13 +3,9 @@ use super::*;
 pub(super) type ConsensusLaunch = (
     OutbeFullNode,
     ConsensusArgs,
-    ProjectionReadinessHandle,
     Option<ProjectionReadinessHandle>,
-    Arc<RetainedTributeWriter>,
-    Arc<ProjectionRetentionFence>,
     Arc<SharedOcompRetentionSelector>,
-    Arc<dyn FinalizedCeCommitter>,
-    Arc<dyn CeStartupRecovery>,
+    Arc<dyn FinalizedExecutionBarrier>,
     Option<(
         outbe_radicle::integration::EndpointNetworkService,
         outbe_radicle::integration::LocalEndpointIdentityHandle,
@@ -29,13 +25,9 @@ pub(super) fn run(
     let (
         node,
         mut args,
-        projection_readiness,
         ocomp_readiness,
-        retained_tribute_writer,
-        projection_retention_fence,
         retention_selector,
-        finalized_ce_committer,
-        ce_startup_recovery,
+        finalized_execution_barrier,
         radicle,
         radicle_drained,
     ) = match node_rx.blocking_recv() {
@@ -144,13 +136,9 @@ pub(super) fn run(
                         bridge_for_consensus,
                         outbe_engine::ConsensusStackServices::new(
                             outbe_engine::ConsensusExecutionServices {
-                                projection_readiness,
                                 ocomp_readiness,
-                                retained_tribute_writer,
-                                projection_retention_fence,
                                 retention_selector,
-                                finalized_ce_committer,
-                                ce_startup_recovery,
+                                finalized_execution_barrier,
                             },
                             outbe_engine::ConsensusShutdownServices {
                                 application_drain: stack_application_drain,

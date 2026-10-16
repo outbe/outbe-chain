@@ -364,7 +364,6 @@ pub async fn run() {
                     &expected_failed_slots,
                     &world.state.expected_dkg_expiry_exits,
                 );
-                let projection_cleanup = world.projection.teardown_fault_mount();
                 let audit = world.localnet.audit_unexpected_logs(
                     world
                         .state
@@ -394,13 +393,9 @@ pub async fn run() {
                         panic!("E2E log-safety audit could not run: {error:#}");
                     }
                 };
-                for error in [
-                    ocomp_cleanup.err(),
-                    node_cleanup.err(),
-                    projection_cleanup.err(),
-                ]
-                .into_iter()
-                .flatten()
+                for error in [ocomp_cleanup.err(), node_cleanup.err()]
+                    .into_iter()
+                    .flatten()
                 {
                     audit.record_cleanup_failure(error);
                 }

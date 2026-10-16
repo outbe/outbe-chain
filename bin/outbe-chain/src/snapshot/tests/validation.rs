@@ -48,13 +48,7 @@ fn unselected_corruption_remains_not_requested_and_does_not_change_success() {
     let mut report = ValidationReport::new([CheckName::Headers, CheckName::Evm]);
     report.record(CheckName::Headers, CheckStatus::Passed, None);
     report.record(CheckName::Evm, CheckStatus::Passed, None);
-    for check in [
-        CheckName::Files,
-        CheckName::Provenance,
-        CheckName::Ce,
-        CheckName::Bodies,
-        CheckName::Ocomp,
-    ] {
+    for check in [CheckName::Files, CheckName::Provenance, CheckName::Ocomp] {
         report.record(
             check,
             CheckStatus::Failed,
@@ -65,7 +59,7 @@ fn unselected_corruption_remains_not_requested_and_does_not_change_success() {
     }
     assert!(report.success());
     let encoded = serde_json::to_value(&report).unwrap();
-    assert_eq!(encoded["checks"].as_object().unwrap().len(), 7);
+    assert_eq!(encoded["checks"].as_object().unwrap().len(), 5);
     assert_eq!(encoded["checks"]["ocomp"]["status"], "not_requested");
 }
 
@@ -77,12 +71,7 @@ fn artifact_success_cannot_override_missing_or_failed_native_checks() {
     report.provenance.signature_valid = Some(true);
     report.provenance.expected_signer_match = Some(true);
     assert!(!report.success());
-    for check in [
-        CheckName::Headers,
-        CheckName::Evm,
-        CheckName::Ce,
-        CheckName::Bodies,
-    ] {
+    for check in [CheckName::Headers, CheckName::Evm] {
         report.record(check, CheckStatus::Passed, None);
     }
     report.record(
@@ -103,15 +92,14 @@ fn artifact_success_cannot_override_missing_or_failed_native_checks() {
 
 #[test]
 fn report_serializes_distinct_frontiers_ranges_bounds_and_provenance() {
-    let mut report = ValidationReport::new([CheckName::Bodies, CheckName::Provenance]);
+    let mut report = ValidationReport::new([CheckName::Evm, CheckName::Provenance]);
     let block = |number: u64, byte: u8| BlockIdentity {
         number,
         hash: format!("{byte:02x}").repeat(32),
     };
     report.observed.h = Some(block(10, 1));
     report.observed.e = Some(block(14, 2));
-    report.observed.q = Some(block(8, 3));
-    report.observed.p = Some(block(9, 4));
+
     report.observed.c_baseline = Some(block(0, 5));
     report.observed.c_previous = Some(block(2, 6));
     report.observed.c_current = Some(block(7, 7));
@@ -134,9 +122,9 @@ fn report_serializes_distinct_frontiers_ranges_bounds_and_provenance() {
     report.provenance.signer = Some("02".to_owned() + &"ab".repeat(32));
     report.provenance.expected_signer_match = Some(false);
     report.record(
-        CheckName::Bodies,
+        CheckName::Evm,
         CheckStatus::Incomplete,
-        Some("Q differs from P"),
+        Some("EVM state is unavailable"),
     );
     report.record(
         CheckName::Provenance,
@@ -147,8 +135,6 @@ fn report_serializes_distinct_frontiers_ranges_bounds_and_provenance() {
     for (name, number) in [
         ("h", 10),
         ("e", 14),
-        ("q", 8),
-        ("p", 9),
         ("c_baseline", 0),
         ("c_previous", 2),
         ("c_current", 7),
@@ -173,7 +159,7 @@ fn report_serializes_distinct_frontiers_ranges_bounds_and_provenance() {
         encoded["provenance"]["signer"],
         "02".to_owned() + &"ab".repeat(32)
     );
-    assert_eq!(encoded["checks"]["bodies"]["status"], "incomplete");
+    assert_eq!(encoded["checks"]["evm"]["status"], "incomplete");
     assert_eq!(encoded["checks"]["provenance"]["status"], "failed");
     assert!(!report.success());
 
@@ -215,13 +201,11 @@ mod selection {
     #[test]
     fn native_selection_opens_only_actual_prerequisites() {
         use CheckName::*;
-        for (requested, expected, projection) in [
-            ("headers", vec![Headers], false),
-            ("evm", vec![Headers, Evm], false),
-            ("ce", vec![Headers, Ce], false),
-            ("bodies", vec![Headers, Ce, Bodies], true),
-            ("ocomp", vec![Headers, Evm, Ocomp], true),
-            ("evm,headers,evm", vec![Headers, Evm], false),
+        for (requested, expected) in [
+            ("headers", vec![Headers]),
+            ("evm", vec![Headers, Evm]),
+            ("ocomp", vec![Headers, Evm, Ocomp]),
+            ("evm,headers,evm", vec![Headers, Evm]),
         ] {
             let selection = CheckSelection::resolve(requested, false, false).unwrap();
             assert_eq!(
@@ -229,7 +213,6 @@ mod selection {
                 expected.into_iter().collect::<BTreeSet<_>>(),
                 "{requested}"
             );
-            assert_eq!(selection.needs_projection(), projection, "{requested}");
         }
     }
 
@@ -238,7 +221,7 @@ mod selection {
         use CheckName::*;
         assert_eq!(
             CheckSelection::resolve("all", false, false).unwrap().checks,
-            [Headers, Evm, Ce, Bodies, Ocomp].into_iter().collect()
+            [Headers, Evm, Ocomp].into_iter().collect()
         );
         assert_eq!(
             CheckSelection::resolve("all", true, false).unwrap().checks,
@@ -260,9 +243,7 @@ mod selection {
                 .checks,
             [Files, Provenance].into_iter().collect()
         );
-        assert!(CheckSelection::resolve("files", false, false)
-            .unwrap()
-            .needs_projection());
+
         assert_eq!(
             CheckSelection::resolve("provenance", false, false)
                 .unwrap()
@@ -314,7 +295,7 @@ mod artifact {
             "created_at_unix":1789940000_u64,"creator":null,"source":null,
             "progress":{"finalized":block(100),"execution":block(101),"execution_stage":101,
                 "finish_stage":101,"partial_state_trie":null,"unwind":null,"storage_version":2,
-                "ce":block(100),"projection":block(98),"ocomp_baseline":block(0),
+                "ocomp_baseline":block(0),
                 "ocomp_previous":block(90),"ocomp_current":block(97)},
             "domains":[{"id":"native","kind":"execution-db","native_root":"chain",
                 "native_path":"db","mode":448,"entries":[{"path":"data","kind":"file",
@@ -623,7 +604,7 @@ mod native_files {
     };
 
     // Structural native-file fixture only: these bytes are deliberately not
-    // semantic MDBX/CE/projection/OCOMP data. The existing writer signs inventory.
+    // semantic native MDBX/RocksDB/OCOMP data. The existing writer signs inventory.
     fn fixture() -> (tempfile::TempDir, NativeLayout, SnapshotManifestV1) {
         let root = tempfile::tempdir().unwrap();
         let inputs =
@@ -631,8 +612,8 @@ mod native_files {
         let layout = resolve_layout(&inputs).unwrap();
         for path in [
             layout.chain_root.join("db/mdbx.dat"),
-            layout.chain_root.join("compressed_entities/smt/mdbx.dat"),
-            layout.offchain_root.join("CURRENT"),
+            layout.static_files_root.join("fixture-native-file"),
+            layout.execution_rocksdb_root.join("CURRENT"),
             layout
                 .ocomp_root
                 .join("exporter-v1/discovery/closure-checkpoint-v1/checkpoint.v1"),
@@ -933,8 +914,6 @@ mod orchestration {
             root.join("genesis.json").into_os_string(),
             "--datadir".into(),
             root.join("chain").into_os_string(),
-            "--projection.storage-config".into(),
-            root.join("configuration/offchain.toml").into_os_string(),
         ]
     }
 
@@ -963,13 +942,7 @@ mod orchestration {
     fn native_status(report: &ValidationReport, evm: CheckStatus) {
         assert_eq!(report.check(CheckName::Headers).status, CheckStatus::Passed);
         assert_eq!(report.check(CheckName::Evm).status, evm);
-        for check in [
-            CheckName::Files,
-            CheckName::Provenance,
-            CheckName::Ce,
-            CheckName::Bodies,
-            CheckName::Ocomp,
-        ] {
+        for check in [CheckName::Files, CheckName::Provenance, CheckName::Ocomp] {
             assert_eq!(
                 report.check(check).status,
                 CheckStatus::NotRequested,
@@ -988,8 +961,7 @@ mod orchestration {
             native_status(&report, CheckStatus::Passed);
             assert_eq!(report.observed.e.as_ref().unwrap().number, 101);
             assert_eq!(report.observed.h.as_ref().unwrap().number, 100);
-            assert!(report.observed.q.is_none());
-            assert!(report.observed.p.is_none());
+
             let ranges = report
                 .retained_ranges
                 .iter()
@@ -999,73 +971,8 @@ mod orchestration {
             assert_eq!(ranges, vec![(0, 0), (100, 101)]);
             assert!(report.required_missing.is_empty());
             assert!(!layout.ocomp_root.exists());
-            assert!(!layout.offchain_root.exists());
-            assert!(!root.path().join("secondary").exists());
-        }
-    }
 
-    #[test]
-    fn missing_historical_ce_header_does_not_block_current_evm() {
-        use outbe_compressed_entities::{
-            sealed_root, AuthenticatedParentTree, CeMdbx, ExactParentIdentity, FinalizedMarker,
-            MdbxAuthenticatedTree, ACTIVE_COMMITMENT_SCHEME,
-        };
-        use std::sync::Arc;
-        for version in [1, 2] {
-            let (root, layout, _) = state_fixture(version);
-            let genesis = FinalizedMarker {
-                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-                height: 0,
-                block_hash: layout.chain.genesis_hash(),
-                parent_block_hash: B256::ZERO,
-                parent_root: B256::ZERO,
-                new_root: sealed_root(B256::ZERO).unwrap(),
-            };
-            drop(
-                reth_ethereum::provider::db::create_db(
-                    layout.chain_root.join("compressed_entities/smt"),
-                    DatabaseArguments::test(),
-                )
-                .unwrap(),
-            );
-            let ce = Arc::new(
-                CeMdbx::open(
-                    &layout.chain_root,
-                    crate::snapshot::native::ce_identity(&layout),
-                    genesis,
-                )
-                .unwrap(),
-            );
-            let parent = MdbxAuthenticatedTree::open(
-                ce.clone(),
-                ExactParentIdentity {
-                    commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-                    block_number: 0,
-                    block_hash: genesis.block_hash,
-                    root: genesis.new_root,
-                },
-            )
-            .unwrap();
-            let prepared = parent.prepare_seal(1, &[], &[]).unwrap();
-            ce.apply_finalized(&prepared.freeze(B256::repeat_byte(0x99)))
-                .unwrap();
-            drop(parent);
-            drop(ce);
-            // Retained execution headers are 0, 100, 101. CE's historical Q=1
-            // is unavailable, while all current E=101 state remains present.
-            let report = run(root.path(), &inputs("evm,ce"));
-            assert_eq!(
-                report.check(CheckName::Headers).status,
-                CheckStatus::Incomplete
-            );
-            assert_eq!(report.check(CheckName::Ce).status, CheckStatus::Incomplete);
-            assert_eq!(report.check(CheckName::Evm).status, CheckStatus::Passed);
-            assert_eq!(report.observed.q.as_ref().unwrap().number, 1);
-            assert!(report
-                .required_missing
-                .iter()
-                .any(|missing| missing.height == 1));
-            assert!(!report.success());
+            assert!(!root.path().join("secondary").exists());
         }
     }
 
@@ -1083,7 +990,6 @@ mod orchestration {
         }
         let report = run(root.path(), &inputs("evm"));
         native_status(&report, CheckStatus::Passed);
-        assert!(!layout.offchain_root.exists());
     }
 
     #[test]
@@ -1228,7 +1134,7 @@ mod orchestration {
                 CheckStatus::NotRequested
             );
             assert!(!missing.exists());
-            assert!(!layout.offchain_root.exists());
+
             assert!(!layout.ocomp_root.exists());
         }
     }
@@ -1263,13 +1169,7 @@ mod orchestration {
                 }
                 assert_ne!(report.provenance.signature_valid, Some(true));
                 assert_ne!(report.provenance.expected_signer_match, Some(true));
-                for check in [
-                    CheckName::Headers,
-                    CheckName::Evm,
-                    CheckName::Ce,
-                    CheckName::Bodies,
-                    CheckName::Ocomp,
-                ] {
+                for check in [CheckName::Headers, CheckName::Evm, CheckName::Ocomp] {
                     assert_eq!(report.check(check).status, CheckStatus::NotRequested);
                 }
             }
@@ -1295,12 +1195,7 @@ mod orchestration {
             CheckStatus::Incomplete | CheckStatus::Failed
         ));
         assert_ne!(report.provenance.expected_signer_match, Some(true));
-        for check in [
-            CheckName::Files,
-            CheckName::Ce,
-            CheckName::Bodies,
-            CheckName::Ocomp,
-        ] {
+        for check in [CheckName::Files, CheckName::Ocomp] {
             assert_eq!(report.check(check).status, CheckStatus::NotRequested);
         }
     }
@@ -1314,8 +1209,8 @@ mod orchestration {
             // Only execution is semantically selected. Other required file
             // populations are structural and must never be opened as databases.
             for path in [
-                layout.chain_root.join("compressed_entities/smt/mdbx.dat"),
-                layout.offchain_root.join("CURRENT"),
+                layout.static_files_root.join("fixture-native-file"),
+                layout.execution_rocksdb_root.join("CURRENT"),
                 layout
                     .ocomp_root
                     .join("exporter-v1/discovery/closure-checkpoint-v1/checkpoint.v1"),
@@ -1398,12 +1293,11 @@ mod orchestration {
                     "{check:?}: {report:?}"
                 );
             }
-            for check in [CheckName::Ce, CheckName::Bodies, CheckName::Ocomp] {
+            for check in [CheckName::Ocomp] {
                 assert_eq!(report.check(check).status, CheckStatus::NotRequested);
             }
             assert_eq!(report.provenance.signature_valid, Some(true));
-            assert!(report.observed.q.is_none());
-            assert!(report.observed.p.is_none());
+
             assert!(report.success());
             // Do not require portable lock-byte mutation. The real reader may
             // update reader slots; Files must have completed before it opens.
@@ -1474,28 +1368,9 @@ mod orchestration {
             CheckName::Files,
             CheckName::Headers,
             CheckName::Evm,
-            CheckName::Ce,
-            CheckName::Bodies,
             CheckName::Ocomp,
         ] {
             assert_eq!(report.check(check).status, CheckStatus::NotRequested);
         }
-    }
-
-    #[test]
-    fn failed_projection_configuration_keeps_known_native_paths_for_report_output() {
-        let (root, layout, _) = state_fixture(2);
-        let configuration = root.path().join("configuration/offchain.toml");
-        fs::write(&configuration, b"not valid TOML [").unwrap();
-        let report = run(root.path(), &inputs("ocomp"));
-        assert!(!report.success());
-        assert_eq!(report.check(CheckName::Ocomp).status, CheckStatus::Failed);
-        assert_eq!(report.check(CheckName::Evm).status, CheckStatus::Passed);
-        assert!(report.protected_paths.0.contains(&layout.chain_root));
-        assert!(report.protected_paths.0.contains(&layout.consensus_root));
-        assert!(report.protected_paths.0.contains(&configuration));
-        assert!(report.observed.p.is_none());
-        let json = serde_json::to_value(&report).unwrap();
-        assert!(json.get("protected_paths").is_none());
     }
 }

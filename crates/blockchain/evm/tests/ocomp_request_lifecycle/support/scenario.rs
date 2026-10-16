@@ -9,22 +9,19 @@ pub(in crate::lifecycle) struct VotingOpenScenario {
 pub(in crate::lifecycle) struct OcompSuccessorEnvironment {
     pub(in crate::lifecycle) chain_spec: Arc<ChainSpec<OutbeHeader>>,
     pub(in crate::lifecycle) signer: Arc<OutbeEvmSigner>,
-    pub(in crate::lifecycle) runtime_body_readers: RuntimeBodyReaders,
+
     pub(in crate::lifecycle) fork_install: Arc<outbe_metadosis::config::OcompForkInstallV1>,
     pub(in crate::lifecycle) dkg: Dkg,
     pub(in crate::lifecycle) snapshot: CommitteeSnapshot,
 }
 
 impl OcompSuccessorEnvironment {
-    pub(in crate::lifecycle) fn fixture<'a>(
-        &'a self,
-        tree_service: &'a Arc<CompressedTreeService>,
-    ) -> OcompSuccessorFixture<'a> {
+    pub(in crate::lifecycle) fn fixture<'a>(&'a self) -> OcompSuccessorFixture<'a> {
         OcompSuccessorFixture {
             chain_spec: &self.chain_spec,
-            tree_service,
+
             signer: &self.signer,
-            runtime_body_readers: &self.runtime_body_readers,
+
             fork_install: &self.fork_install,
             dkg: &self.dkg,
             snapshot: &self.snapshot,

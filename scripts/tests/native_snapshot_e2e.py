@@ -17,8 +17,7 @@ from enclave_upgrade_e2e import Network, ROOT
 class SnapshotNetwork(Network):
     def exported_args(self, i):
         directory = self.node_dir(i)
-        return ['--chain', self.network/'genesis.json', '--datadir', directory/'data',
-                '--projection.storage-config', directory/'offchain-storage.toml']
+        return ['--chain', self.network/'genesis.json', '--datadir', directory/'data']
 
     def wait_recipient(self, target, label, i=4, process='snapshot-fullnode'):
         end = time.monotonic()+180
@@ -55,8 +54,6 @@ class SnapshotNetwork(Network):
         i = 5
         bundle = self.node_dir(i)
         bundle.mkdir(parents=True, mode=0o700)
-        (bundle/'offchain-storage.toml').write_text(
-            (self.node_dir(0)/'offchain-storage.toml').read_text())
         (bundle/'node-args.json').write_text(json.dumps(list(map(str,self.exported_args(i)))))
         key = bundle/'reth-p2p-secret.hex'
         key.write_text(secrets.token_hex(32)); key.chmod(0o600)

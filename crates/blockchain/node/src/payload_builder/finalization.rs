@@ -13,16 +13,13 @@ use reth_payload_primitives::{BuiltPayloadExecutedBlock, PayloadBuilderError};
 use reth_revm::db::State;
 use std::sync::Arc;
 
-use super::{
-    discard_failed_payload_candidate, execution::PayloadBuildState, preparation::PayloadContext,
-};
+use super::{execution::PayloadBuildState, preparation::PayloadContext};
 
 pub(super) fn into_payload<DB: Database>(
     outcome: BlockBuilderOutcome<OutbePrimitives>,
     db: &mut State<DB>,
     state: PayloadBuildState,
     context: &PayloadContext<'_>,
-    compressed_tree_service: Option<&Arc<outbe_compressed_entities::CompressedTreeService>>,
 ) -> Result<OutbeBuiltPayload, PayloadBuilderError> {
     let PayloadBuildState {
         total_fees,
@@ -68,11 +65,6 @@ pub(super) fn into_payload<DB: Database>(
     let sealed_block = Arc::new(recovered_block.sealed_block().clone());
 
     if is_osaka && sealed_block.rlp_length() > MAX_RLP_BLOCK_SIZE {
-        discard_failed_payload_candidate(
-            compressed_tree_service,
-            recovered_block.header().inner.number,
-            recovered_block.hash(),
-        )?;
         return Err(PayloadBuilderError::other(ConsensusError::BlockTooLarge {
             rlp_length: sealed_block.rlp_length(),
             max_rlp_length: MAX_RLP_BLOCK_SIZE,
@@ -83,11 +75,6 @@ pub(super) fn into_payload<DB: Database>(
     // consensus P2P message. This check is the final guard in case the per-tx
     // estimate undershot (e.g. system txs / extra_data added after selection).
     if sealed_block.rlp_length() > OUTBE_MAX_BLOCK_SIZE {
-        discard_failed_payload_candidate(
-            compressed_tree_service,
-            recovered_block.header().inner.number,
-            recovered_block.hash(),
-        )?;
         return Err(PayloadBuilderError::other(ConsensusError::BlockTooLarge {
             rlp_length: sealed_block.rlp_length(),
             max_rlp_length: OUTBE_MAX_BLOCK_SIZE,

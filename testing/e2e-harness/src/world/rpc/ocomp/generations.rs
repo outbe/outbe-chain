@@ -45,6 +45,13 @@ impl Rpc {
             return None;
         }
         let nod = NodCertifiedGenerationProjection {
+            // This ABI reader joins result roots only. Source checkpoint is private
+            // materialization authority and is not exposed by this ABI call.
+            source_checkpoint: outbe_ocomp_protocol::intent::FinalizedRequestBindingV1 {
+                block_number: 0,
+                block_hash: B256::ZERO,
+                state_root: B256::ZERO,
+            },
             worldwide_day: WorldwideDay::new(nod.worldwideDay),
             generation: nod.generation,
             job_id: active.job_id,

@@ -7,14 +7,14 @@ Feature: Tribute admission, projection, and proofs
   @pfs-001-01 @pfs-001-02 @pfs-001-03 @pfs-001-05 @ocomp
   Scenario: One public Tribute has complete projection and duplicate protection
     Given a fresh localnet with cross-currency Tribute pricing and a 6-block voting window
-    Then every validator proves an unknown tribute collection absent
-    And no validator projects a tribute
+    Then every validator reads an unknown Tribute day absent from EVM state
+    And no validator stores a Tribute
     When an operator submits one encrypted cross-currency tribute offer
     Then the tribute transaction succeeds and supply becomes one
-    And every validator projects the same tribute and indexes
+    And every validator stores the same Tribute and indexes in EVM state
     And the projected Tribute has the TRY to EUR golden nominal and effective reference price
-    And every validator serves the same independently verified compressed tribute
-    And every validator proves an unknown tribute absent from the existing collection
+    And every validator verifies the same Tribute against finalized EVM state
+    And every validator reads an unknown Tribute absent from the existing day state
     When the operator submits a duplicate logical tribute offer with different parameters for the same day
     Then the duplicate is rejected without changing tribute state or projections
 
@@ -45,5 +45,5 @@ Feature: Tribute admission, projection, and proofs
     Given a fresh localnet with a bounded Tribute offering and a 6-block voting window
     When a user without an L2 registration rejects a wrong network signature then offers through the registered network
     Then the tribute transaction succeeds and supply becomes one
-    And every validator projects the same tribute and indexes
+    And every validator stores the same Tribute and indexes in EVM state
     And the Tribute belongs to the independent user on every validator while the L2 administrator owns none
