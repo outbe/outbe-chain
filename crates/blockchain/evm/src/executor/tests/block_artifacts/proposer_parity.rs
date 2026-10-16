@@ -423,7 +423,7 @@ fn seed_late_credit_escrow(
     seed_ctx
         .storage
         .increase_balance(REWARDS_ADDRESS, settle_fee)?;
-    outbe_accounting::record_phase1_progress(&seed_ctx, progress_marker)?;
+    outbe_cycle::record_phase1_progress(&seed_ctx, progress_marker)?;
 
     Ok(())
 }

@@ -12,14 +12,14 @@ fn metadata_for_parent(parent_number: u64, parent_hash: B256) -> CertifiedParent
 fn read_progress(provider: &mut HashMapStorageProvider) -> u64 {
     provider.enter(|storage| {
         let ctx = runtime_ctx(storage);
-        outbe_accounting::read_last_accounted_block_number(&ctx).unwrap()
+        outbe_cycle::read_last_accounted_block_number(&ctx).unwrap()
     })
 }
 
 fn record_progress(provider: &mut HashMapStorageProvider, block_number: u64) {
     provider.enter(|storage| {
         let ctx = runtime_ctx(storage);
-        outbe_accounting::record_phase1_progress(&ctx, block_number).unwrap();
+        outbe_cycle::record_phase1_progress(&ctx, block_number).unwrap();
     });
 }
 
@@ -167,4 +167,32 @@ fn finalization_rejects_non_parent_metadata_before_summary_use() {
             .to_string()
             .contains("CertifiedParentAccounting metadata must target immediate parent"));
     });
+}
+
+#[test]
+fn accounting_progress_address_is_ee04_and_user_calls_do_not_dispatch() {
+    use outbe_primitives::addresses::ACCOUNTING_PROGRESS_ADDRESS;
+    let expected: Address = "0x000000000000000000000000000000000000EE04"
+        .parse()
+        .expect("valid 0xEE04 address literal");
+    assert_eq!(
+        ACCOUNTING_PROGRESS_ADDRESS, expected,
+        "INV1: ACCOUNTING_PROGRESS_ADDRESS must be exactly 0x...EE04",
+    );
+    assert!(
+        !crate::precompiles::outbe_precompile_addresses().contains(&ACCOUNTING_PROGRESS_ADDRESS),
+        "ACCOUNTING_PROGRESS_ADDRESS must NOT be a registered dispatching precompile \
+         (outbe_precompile_addresses) - it is a system-only marker; user CALLs must not dispatch",
+    );
+}
+
+#[test]
+fn accounting_progress_address_is_eip161_preserved() {
+    use outbe_primitives::addresses::ACCOUNTING_PROGRESS_ADDRESS;
+    assert!(
+        crate::executor::marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES
+            .contains(&ACCOUNTING_PROGRESS_ADDRESS),
+        "INV3: ACCOUNTING_PROGRESS_ADDRESS must be in the executor's EIP-161 marker \
+         allowlist (OUTBE_RUNTIME_MARKER_ADDRESSES) so slot 0 survives state-root cleanup",
+    );
 }

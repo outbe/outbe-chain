@@ -92,7 +92,7 @@ def seed_accounting_progress(storage: StorageBuilder):
 
     Genesis V2 requires this slot to be explicitly written so the resulting
     storage map contains the canonical zero word, matching the Rust schema
-    `outbe_accounting::schema::Accounting::last_accounted_block_number`.
+    `outbe_cycle::schema::Accounting::last_accounted_block_number`.
     """
     storage.set_slot(0, 0)
 

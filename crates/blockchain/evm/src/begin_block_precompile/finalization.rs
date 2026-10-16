@@ -55,7 +55,7 @@ pub(crate) fn run_finalization_and_slashing(
         .map(|context| context.canonical_vrf_proof_hash)
         .unwrap_or(B256::ZERO);
 
-    let last_accounted = outbe_accounting::read_last_accounted_block_number(ctx)?;
+    let last_accounted = outbe_cycle::read_last_accounted_block_number(ctx)?;
     match outbe_rewards::runtime::check_and_record_metadata_fingerprint(
         ctx,
         metadata,
@@ -141,7 +141,7 @@ pub(crate) fn run_finalization_and_slashing(
         metadata.finalized_block_hash,
     )?;
 
-    outbe_accounting::record_phase1_progress(ctx, expected_parent_number)?;
+    outbe_cycle::record_phase1_progress(ctx, expected_parent_number)?;
 
     Ok(())
 }

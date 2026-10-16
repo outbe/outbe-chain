@@ -49,7 +49,6 @@ outbe-promislimit.workspace = true
 outbe-oracle.workspace = true
 outbe-zerofee.workspace = true
 outbe-cycle.workspace = true
-outbe-accounting.workspace = true
 outbe-zk-backend.workspace = true
 outbe-zk.workspace = true
 
