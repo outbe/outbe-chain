@@ -7,10 +7,8 @@ use std::time::{Duration, Instant};
 
 use alloy_primitives::{Address, U256};
 use cucumber::{then, when};
-use outbe_primitives::{
-    entity_codec::{GemBodyV1, GemBucketBodyV1},
-    wwd_entity_id::WwdEntityId,
-};
+use outbe_gem::{GemBucketState, GemItemState};
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 use crate::features::entity_lifecycle::chain::{
     assert_single_event, finalized_checkpoint, head_time, poll_until,
@@ -651,7 +649,7 @@ fn issuance_baseline_height(world: &World) -> u64 {
 }
 
 /// Reads the exact Gem and bucket state on every validator at one checkpoint.
-fn gem_bodies(world: &World, id: U256, minimum: u64) -> (GemBodyV1, GemBucketBodyV1) {
+fn gem_bodies(world: &World, id: U256, minimum: u64) -> (GemItemState, GemBucketState) {
     let checkpoint = finalized_checkpoint(world);
     assert!(checkpoint.height >= minimum);
     let mut expected = None;
@@ -661,10 +659,7 @@ fn gem_bodies(world: &World, id: U256, minimum: u64) -> (GemBodyV1, GemBucketBod
             .gem_state_at(port, checkpoint, WwdEntityId::from(id))
             .expect("Gem EVM state")
             .expect("Gem is present");
-        let bodies = (
-            outbe_gem::canonical_item(&item),
-            outbe_gem::canonical_bucket(&bucket),
-        );
+        let bodies = (item, bucket);
         assert_eq!(
             *expected.get_or_insert(bodies.clone()),
             bodies,

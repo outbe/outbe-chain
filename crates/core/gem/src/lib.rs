@@ -5,7 +5,6 @@
 //! The precompile surface is the Gem NFT and its views.
 
 pub mod api;
-pub mod codec;
 pub mod config;
 pub mod constants;
 pub mod errors;
@@ -28,10 +27,3 @@ pub use state::{CallBins, ExpiryHours};
 
 #[cfg(test)]
 mod tests;
-
-pub use codec::{
-    canonical_bucket, canonical_bucket_id, canonical_item, from_canonical_bucket,
-    from_canonical_item,
-};
-
-pub use codec::GemCodecError;

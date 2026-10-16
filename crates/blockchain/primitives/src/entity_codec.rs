@@ -4,12 +4,6 @@ use thiserror::Error;
 
 use crate::wwd_entity_id::WwdEntityId;
 
-mod gem;
-pub use gem::{
-    decode_gem_bucket_v1, decode_gem_v1, decode_stored_gem_bucket_v1, decode_stored_gem_v1,
-    encode_gem_bucket_v1, encode_gem_v1, GemBodyV1, GemBucketBodyV1,
-};
-
 mod nod_v2;
 pub use nod_v2::{
     decode_nod_item_v2, decode_stored_nod_item_v2, encode_nod_item_v2, NodItemBodyV2,
