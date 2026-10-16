@@ -1581,14 +1581,12 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
         crate::integration::signing::accepted::AcceptedPublicationVerifier::from_receipt(
             checkpoint.clone(),
             review_manifest.clone(),
-            &material.canonical_output(),
         )
         .unwrap();
     for encoded in &bundles {
         let witness = RepositoryWitnessBundle::from_bytes(encoded).unwrap();
-        witness
-            .verify_accepted(&accepted_verifier, &actual)
-            .unwrap();
+        witness.verify(&material, &actual).unwrap();
+        accepted_verifier.verify_native(&actual).unwrap();
         let insufficient = RepositoryWitnessBundle::new(
             material.canonical_output(),
             vec![
@@ -1603,9 +1601,7 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
             ],
         )
         .unwrap();
-        assert!(insufficient
-            .verify_accepted(&accepted_verifier, &actual)
-            .is_err());
+        assert!(insufficient.verify(&material, &actual).is_err());
         for future in [false, true] {
             let mut invalid = checkpoint.clone();
             if future {
@@ -1616,31 +1612,16 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
             assert!(
                 crate::integration::signing::accepted::AcceptedPublicationVerifier::from_receipt(
                     invalid,
-                    review_manifest.clone(),
-                    &material.canonical_output(),
+                    review_manifest.clone()
                 )
                 .is_err()
             );
         }
-        assert!(witness
-            .verify_accepted(&accepted_verifier, &actual[..1])
-            .is_err());
+        assert!(accepted_verifier.verify_native(&actual[..1]).is_err());
         let mut reordered = actual.clone();
         reordered.swap(0, 1);
-        assert!(witness
-            .verify_accepted(&accepted_verifier, &reordered)
-            .is_err());
+        assert!(accepted_verifier.verify_native(&reordered).is_err());
     }
-    let mut changed_output = material.canonical_output();
-    changed_output[0] ^= 1;
-    assert!(
-        crate::integration::signing::accepted::AcceptedPublicationVerifier::from_receipt(
-            checkpoint.clone(),
-            review_manifest.clone(),
-            &changed_output,
-        )
-        .is_err()
-    );
     let fake_subject = RepositorySubject::cob(
         rid.into_sha1().unwrap(),
         context,
@@ -1651,9 +1632,7 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
     let mut fake_actual = actual.clone();
     fake_actual[0] = (fake_subject, fake_signature);
     assert!(matches!(
-        RepositoryWitnessBundle::from_bytes(&bundles[0])
-            .unwrap()
-            .verify_accepted(&accepted_verifier, &fake_actual),
+        accepted_verifier.verify_native(&fake_actual),
         Err(crate::integration::signing::Error::Accepted)
     ));
     let mut wrong_updates = review_manifest.refs().to_vec();
@@ -1672,8 +1651,7 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
     assert!(
         crate::integration::signing::accepted::AcceptedPublicationVerifier::from_receipt(
             checkpoint.clone(),
-            wrong_manifest.clone(),
-            &material.canonical_output(),
+            wrong_manifest.clone()
         )
         .is_err()
     );
@@ -1867,16 +1845,14 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
     let review_name = git::refs::storage::cob(&owner, &patch::TYPENAME, &patch_id);
     for encoded in &bundles {
         let witness = RepositoryWitnessBundle::from_bytes(encoded).unwrap();
-        witness
-            .verify_accepted(&accepted_verifier, &actual)
-            .unwrap();
+        witness.verify(&material, &actual).unwrap();
+        accepted_verifier.verify_native(&actual).unwrap();
         let historical =
             crate::integration::publication::review::verify_accepted_review_publication(
                 &receiver,
                 current_state.approval(),
                 &accepted_predecessor,
                 &accepted_verifier,
-                &witness,
             )
             .unwrap();
         assert_eq!(historical.manifest(), &review_manifest);
@@ -1997,8 +1973,7 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
                 &receiver,
                 current_state.approval(),
                 &snapshot,
-                &accepted_verifier,
-                &witness,
+                &accepted_verifier
             )
             .is_err()
         );
@@ -2009,8 +1984,7 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
                 &receiver,
                 &changed,
                 &accepted_predecessor,
-                &accepted_verifier,
-                &witness,
+                &accepted_verifier
             )
             .is_err()
         );
@@ -2054,13 +2028,13 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
     assert!(radicle::storage::refs::SignedRefs::load_at(signed_refs, owner, &policy_repo).is_err());
     for encoded in &bundles {
         let witness = RepositoryWitnessBundle::from_bytes(encoded).unwrap();
+        witness.verify(&material, &actual).unwrap();
         let historical =
             crate::integration::publication::review::verify_accepted_review_publication(
                 &receiver,
                 current_state.approval(),
                 &accepted_predecessor,
                 &accepted_verifier,
-                &witness,
             )
             .unwrap();
         accepted_policy.accept_review(&historical).unwrap();
@@ -2109,7 +2083,6 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
                 crate::integration::signing::accepted::AcceptedPublicationVerifier::from_receipt(
                     conflicting,
                     review_manifest.clone(),
-                    &material.canonical_output(),
                 )
                 .unwrap();
             let conflicting =
@@ -2118,7 +2091,6 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
                     current_state.approval(),
                     &accepted_predecessor,
                     &conflicting_verifier,
-                    &witness,
                 )
                 .unwrap();
             assert!(accepted_policy.accept_review(&conflicting).is_err());

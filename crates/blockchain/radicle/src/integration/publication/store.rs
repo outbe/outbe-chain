@@ -136,6 +136,12 @@ pub struct StoredReviewPackage {
     pub witness: RepositoryWitnessBundle,
 }
 
+/// Receipt-bound history has no signing witness or local attestation selection.
+pub struct StoredAcceptedPackage {
+    pub body: PublicationBody,
+    pub manifest: PublicationManifest,
+}
+
 /// Local slot isolation includes the chain/repo and the canonical bound material.
 /// Interchangeable witnesses and candidate-specific fields do not create another slot.
 pub fn review_slot_key(body: &PublicationBody) -> B256 {
@@ -416,7 +422,7 @@ impl ReviewPackageStore {
         Ok((descriptor, content))
     }
 
-    /// Rebuild read grants through the requested accepted checkpoint from own receipts/q-proofs.
+    /// Rebuild read grants through the requested accepted checkpoint from own receipts and native bytes.
     /// Historical grants do not promote refs or authorize a new operation.
     pub fn open_checkpoint_repository(
         &self,
@@ -438,25 +444,19 @@ impl ReviewPackageStore {
             return Err(Error::Corrupt);
         }
         let package = self
-            .load_selected(review_slot_key(body), &repo)?
+            .load_accepted(&checkpoint, &repo)?
             .ok_or(Error::Corrupt)?;
         if package.body != *body {
             return Err(Error::Corrupt);
         }
-        let (descriptor, content) = self.load_bootstrap_inputs(&checkpoint)?;
+        let descriptor = self.load_accepted_descriptor(&checkpoint)?;
         let verifier = super::super::signing::accepted::AcceptedPublicationVerifier::from_receipt(
             checkpoint.clone(),
             package.manifest.clone(),
-            package.witness.public_output(),
         )?;
-        let proof = crate::integration::bootstrap::verify_accepted_bootstrap(
-            &repo,
-            &descriptor,
-            &content,
-            &verifier,
-            &package.witness,
-        )
-        .map_err(|_| Error::Corrupt)?;
+        let proof =
+            crate::integration::bootstrap::verify_accepted_bootstrap(&repo, &descriptor, &verifier)
+                .map_err(|_| Error::Corrupt)?;
         let mut snapshot =
             CheckpointOwnerSnapshot::bootstrap(checkpoint.clone(), &package.manifest)?;
         let policy = Arc::new(
@@ -476,7 +476,7 @@ impl ReviewPackageStore {
                 .read_current_publication_receipt(sequence)?
                 .ok_or(Error::MissingCheckpoint(sequence))?;
             let package = self
-                .load_selected(review_slot_key(&checkpoint.receipt().body), &repo)?
+                .load_accepted(&checkpoint, &repo)?
                 .ok_or(Error::Corrupt)?;
             if package.body != checkpoint.receipt().body || package.body.sequence != sequence {
                 return Err(Error::Corrupt);
@@ -485,7 +485,6 @@ impl ReviewPackageStore {
                 super::super::signing::accepted::AcceptedPublicationVerifier::from_receipt(
                     checkpoint.clone(),
                     package.manifest.clone(),
-                    package.witness.public_output(),
                 )?;
             match package.body.action {
                 PublicationAction::Review => {
@@ -493,11 +492,7 @@ impl ReviewPackageStore {
                         .read_current_patch_approval(package.body.proposal_id)?
                         .ok_or(Error::Corrupt)?;
                     let proof = super::review::verify_accepted_review_publication(
-                        &repo,
-                        &approval,
-                        &snapshot,
-                        &verifier,
-                        &package.witness,
+                        &repo, &approval, &snapshot, &verifier,
                     )
                     .map_err(|_| Error::Corrupt)?;
                     policy.accept_review(&proof).map_err(|_| Error::Corrupt)?;
@@ -513,23 +508,15 @@ impl ReviewPackageStore {
                         snapshot.checkpoint(),
                     )?;
                     let proof = super::merge::verify_accepted_merge_publication(
-                        &repo,
-                        &approval,
-                        &snapshot,
-                        &review,
-                        &verifier,
-                        &package.witness,
+                        &repo, &approval, &snapshot, &review, &verifier,
                     )
                     .map_err(|_| Error::Corrupt)?;
                     policy.accept_merge(&proof).map_err(|_| Error::Corrupt)?;
                 }
                 PublicationAction::BindMaterial => {
-                    let proof = super::binding::verify_accepted_material_publication(
-                        &snapshot,
-                        &verifier,
-                        &package.witness,
-                    )
-                    .map_err(|_| Error::Corrupt)?;
+                    let proof =
+                        super::binding::verify_accepted_material_publication(&snapshot, &verifier)
+                            .map_err(|_| Error::Corrupt)?;
                     policy.accept_material(&proof).map_err(|_| Error::Corrupt)?;
                 }
                 _ => return Err(Error::Corrupt),
@@ -562,9 +549,7 @@ impl ReviewPackageStore {
                 .read_current_publication_receipt(sequence - 1)?
                 .ok_or(Error::MissingCheckpoint(sequence - 1))?;
             let snapshot = self.replay_checkpoint_snapshot(reader, &before)?;
-            let package = self
-                .load_selected(review_slot_key(&receipt.receipt().body), repo)?
-                .ok_or(Error::Corrupt)?;
+            let package = self.load_accepted(&receipt, repo)?.ok_or(Error::Corrupt)?;
             if package.body != receipt.receipt().body {
                 return Err(Error::Corrupt);
             }
@@ -575,18 +560,75 @@ impl ReviewPackageStore {
                 super::super::signing::accepted::AcceptedPublicationVerifier::from_receipt(
                     receipt,
                     package.manifest,
-                    package.witness.public_output(),
                 )?;
             return super::review::verify_accepted_review_publication(
-                repo,
-                &approval,
-                &snapshot,
-                &verifier,
-                &package.witness,
+                repo, &approval, &snapshot, &verifier,
             )
             .map_err(|_| Error::Corrupt);
         }
         Err(Error::Corrupt)
+    }
+
+    /// Read exact accepted history independently of this node's participation in signing.
+    pub fn load_accepted(
+        &self,
+        checkpoint: &FinalizedPublicationReceipt,
+        repo: &Repository,
+    ) -> Result<Option<StoredAcceptedPackage>, Error> {
+        let directory = self.package_dir(checkpoint.receipt().receipt_hash);
+        reject_symlink(&directory)?;
+        if !directory.exists() {
+            return Ok(None);
+        }
+        let manifest = self.load_checkpoint_manifest(checkpoint)?;
+        let odb = repo.raw().odb()?;
+        for row in manifest.objects() {
+            let oid: git::Oid = row.oid.parse().map_err(|_| Error::Corrupt)?;
+            let kind = object_type(row.kind);
+            let bytes = match odb.read_header(oid.into()) {
+                Ok((size, actual_kind)) => {
+                    if size > MAX_OBJECT_BYTES || actual_kind != kind {
+                        return Err(Error::Corrupt);
+                    }
+                    odb.read(oid.into())?.data().to_vec()
+                }
+                Err(error) if error.code() == git::raw::ErrorCode::NotFound => read(
+                    &directory.join("objects").join(&row.sha256),
+                    MAX_OBJECT_BYTES,
+                )?,
+                Err(error) => return Err(error.into()),
+            };
+            if hex::encode(Sha256::hash(&[&bytes]).0) != row.sha256
+                || git::raw::Oid::hash_object(kind, &bytes)? != oid.into()
+                || odb.write(kind, &bytes)? != oid.into()
+            {
+                return Err(Error::Corrupt);
+            }
+        }
+        Ok(Some(StoredAcceptedPackage {
+            body: checkpoint.receipt().body.clone(),
+            manifest,
+        }))
+    }
+
+    /// The descriptor is committed by genesis and the accepted root; creation artifacts are not read.
+    pub fn load_accepted_descriptor(
+        &self,
+        checkpoint: &FinalizedPublicationReceipt,
+    ) -> Result<GovernmentsDescriptor, Error> {
+        let body = &checkpoint.receipt().body;
+        let directory = self.package_dir(checkpoint.receipt().receipt_hash);
+        let descriptor = GovernmentsDescriptor::from_bytes(&read(
+            &directory.join("descriptor"),
+            MAX_GOVERNMENTS_DESCRIPTOR_BYTES,
+        )?)
+        .map_err(|_| Error::Corrupt)?;
+        if body.action != PublicationAction::Bootstrap
+            || descriptor.hash().map_err(|_| Error::Corrupt)? != body.descriptor_hash
+        {
+            return Err(Error::Corrupt);
+        }
+        Ok(descriptor)
     }
 
     pub fn load_selected(

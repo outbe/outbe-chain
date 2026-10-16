@@ -133,7 +133,6 @@ impl AcceptedMaterialPublication {
 pub fn verify_accepted_material_publication(
     previous: &CheckpointOwnerSnapshot,
     verifier: &AcceptedPublicationVerifier,
-    witness: &RepositoryWitnessBundle,
 ) -> Result<AcceptedMaterialPublication, Error> {
     let receipt = verifier.receipt();
     let body = &receipt.receipt().body;
@@ -155,7 +154,7 @@ pub fn verify_accepted_material_publication(
     {
         return Err(Error::Context);
     }
-    witness.verify_accepted(verifier, &[])?;
+    verifier.verify_native(&[])?;
     Ok(AcceptedMaterialPublication {
         receipt: receipt.clone(),
     })
@@ -221,13 +220,10 @@ mod tests {
                 body: package.body.clone(),
             },
         };
-        let verifier = AcceptedPublicationVerifier::from_receipt(
-            receipt.clone(),
-            package.manifest.clone(),
-            witness.public_output(),
-        )
-        .unwrap();
-        let proof = verify_accepted_material_publication(&snapshot, &verifier, &witness).unwrap();
+        let verifier =
+            AcceptedPublicationVerifier::from_receipt(receipt.clone(), package.manifest.clone())
+                .unwrap();
+        let proof = verify_accepted_material_publication(&snapshot, &verifier).unwrap();
         assert_eq!(proof.receipt().receipt(), receipt.receipt());
         let mut after = snapshot.clone();
         after.advance(receipt.clone(), &package.manifest).unwrap();
@@ -251,9 +247,7 @@ mod tests {
         let mut wrong = receipt;
         wrong.receipt.body.package_manifest_hash = changed.hash().unwrap();
         wrong.receipt.receipt_hash = wrong.receipt.body.receipt_hash();
-        let wrong =
-            AcceptedPublicationVerifier::from_receipt(wrong, changed, witness.public_output())
-                .unwrap();
-        assert!(verify_accepted_material_publication(&snapshot, &wrong, &witness).is_err());
+        let wrong = AcceptedPublicationVerifier::from_receipt(wrong, changed).unwrap();
+        assert!(verify_accepted_material_publication(&snapshot, &wrong).is_err());
     }
 }

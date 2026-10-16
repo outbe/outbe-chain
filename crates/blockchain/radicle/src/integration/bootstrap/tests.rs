@@ -326,7 +326,6 @@ async fn independent_collectors_prepare_identical_bootstrap_without_promoting_re
         let verifier = super::super::signing::accepted::AcceptedPublicationVerifier::from_receipt(
             receipt.clone(),
             manifest.clone(),
-            &material.canonical_output(),
         )
         .unwrap();
         let slot = super::super::publication::store::review_slot_key(&body);
@@ -380,12 +379,33 @@ async fn independent_collectors_prepare_identical_bootstrap_without_promoting_re
         )
         .unwrap();
         assert_eq!(replay_repo.raw().references().unwrap().count(), 0);
-        assert!(verify_accepted_bootstrap(&repo, &descriptor, b"[]", &verifier, &short).is_err());
-        assert!(
-            verify_accepted_bootstrap(&repo, &descriptor, b"[]\n", &verifier, &witness).is_err()
+        assert!(verify_bootstrap_publication(
+            &repo, &state, &material, b"[]", &body, &manifest, &short,
+        )
+        .is_err());
+        assert!(verify_bootstrap_publication(
+            &repo, &state, &material, b"[]\n", &body, &manifest, &witness,
+        )
+        .is_err());
+        // An accepted history reader needs neither the old q transcript nor creation artifact.
+        std::fs::remove_dir_all(package_directory.join("witnesses")).unwrap();
+        std::fs::remove_dir_all(package_directory.join("ready")).unwrap();
+        for slot in std::fs::read_dir(store_path.join("slots")).unwrap() {
+            std::fs::remove_file(slot.unwrap().path()).unwrap();
+        }
+        std::fs::remove_file(&archived_content_path).unwrap();
+        assert!(store.load_selected(slot, &replay_repo).unwrap().is_none());
+        let accepted = store
+            .load_accepted(&receipt, &replay_repo)
+            .unwrap()
+            .unwrap();
+        assert_eq!(accepted.body, body);
+        assert_eq!(accepted.manifest, manifest);
+        assert_eq!(
+            store.load_accepted_descriptor(&receipt).unwrap(),
+            descriptor
         );
-        let proof =
-            verify_accepted_bootstrap(&repo, &descriptor, b"[]", &verifier, &witness).unwrap();
+        let proof = verify_accepted_bootstrap(&repo, &descriptor, &verifier).unwrap();
         let snapshot =
             super::super::publication::CheckpointOwnerSnapshot::bootstrap(receipt, &manifest)
                 .unwrap();

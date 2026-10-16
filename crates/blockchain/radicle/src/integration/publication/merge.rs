@@ -248,7 +248,6 @@ pub fn verify_accepted_merge_publication(
     previous: &CheckpointOwnerSnapshot,
     accepted_review: &AcceptedReviewPublication,
     verifier: &AcceptedPublicationVerifier,
-    witness: &RepositoryWitnessBundle,
 ) -> Result<AcceptedMergePublication, Error> {
     let receipt = verifier.receipt();
     let body = &receipt.receipt().body;
@@ -289,7 +288,7 @@ pub fn verify_accepted_merge_publication(
         accepted_review,
         &verifier.review_context(),
         [&signatures[0], &signatures[1]],
-        |actual| witness.verify_accepted(verifier, actual),
+        |actual| verifier.verify_native(actual),
     )?;
     if expected != *verifier.manifest() {
         return Err(Error::Package);

@@ -19,9 +19,8 @@ use outbe_radicle::{
         },
         local::{BootstrapSigningContext, LocalReceiptClient, PatchPreparationContext},
         publication::{
-            policy::AcceptedRepositoryPolicy,
-            store::{review_slot_key, ReviewPackageStore},
-            CheckpointOwnerSnapshot, MAX_MANIFEST_BYTES,
+            policy::AcceptedRepositoryPolicy, store::ReviewPackageStore, CheckpointOwnerSnapshot,
+            MAX_MANIFEST_BYTES,
         },
         review::{CheckpointPreparedReview, CheckpointPreparedReviewRefs},
         signing::{
@@ -579,29 +578,16 @@ impl Collector {
         self.storage.manage_repository(id, owner, policy.clone())?;
         self.policy = Some((id, policy.clone()));
         let repo = self.repository(id)?;
-        let Some(package) = self
-            .journal
-            .packages
-            .load_selected(review_slot_key(&receipt.receipt().body), &repo)?
-        else {
+        let Some(package) = self.journal.packages.load_accepted(&receipt, &repo)? else {
             return Ok(Outcome::AwaitingAcceptedPackage);
         };
         if package.body != receipt.receipt().body {
             return Err("accepted bootstrap differs from persisted selection".into());
         }
-        let (descriptor, content) = self.journal.packages.load_bootstrap_inputs(&receipt)?;
-        let verifier = AcceptedPublicationVerifier::from_receipt(
-            receipt.clone(),
-            package.manifest.clone(),
-            package.witness.public_output(),
-        )?;
-        let proof = bootstrap::verify_accepted_bootstrap(
-            &repo,
-            &descriptor,
-            &content,
-            &verifier,
-            &package.witness,
-        )?;
+        let descriptor = self.journal.packages.load_accepted_descriptor(&receipt)?;
+        let verifier =
+            AcceptedPublicationVerifier::from_receipt(receipt.clone(), package.manifest.clone())?;
+        let proof = bootstrap::verify_accepted_bootstrap(&repo, &descriptor, &verifier)?;
         let snapshot = CheckpointOwnerSnapshot::bootstrap(receipt.clone(), &package.manifest)?;
         policy.accept_bootstrap(&proof)?;
         client

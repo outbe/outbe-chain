@@ -1032,7 +1032,22 @@ async fn automatic_bootstrap_vote_review_and_merge_with_one_offline_member_and_r
             .await;
         }
     }
-    // Accepted history must reopen even when the local current DKG output is unavailable.
+    // History survives material rotation without either old signing transcripts or local selection.
+    let archive = sidecars[0].journal().join("packages");
+    std::fs::remove_dir_all(archive.join("slots")).unwrap();
+    for package in std::fs::read_dir(archive.join("packages")).unwrap() {
+        let package = package.unwrap().path();
+        for name in ["witnesses", "ready"] {
+            let path = package.join(name);
+            if path.exists() {
+                std::fs::remove_dir_all(path).unwrap();
+            }
+        }
+        let content = package.join("initial-content.manifest");
+        if content.exists() {
+            std::fs::remove_file(content).unwrap();
+        }
+    }
     services[0].1.publish(2, 8, None);
     sidecars[0].start();
     let deadline = Instant::now() + HANDLE_DEADLINE * 4;

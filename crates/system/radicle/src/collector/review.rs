@@ -360,11 +360,7 @@ impl Collector {
             };
             let repo =
                 self.repository(git::Oid::from_sha1(receipt.receipt().body.repo_id.0).into())?;
-            let Some(package) = self
-                .journal
-                .packages
-                .load_selected(review_slot_key(&receipt.receipt().body), &repo)?
-            else {
+            let Some(package) = self.journal.packages.load_accepted(&receipt, &repo)? else {
                 return Ok(Some(Outcome::AwaitingAcceptedPackage));
             };
             if package.body != receipt.receipt().body {
@@ -385,7 +381,6 @@ impl Collector {
             let verifier = AcceptedPublicationVerifier::from_receipt(
                 receipt.clone(),
                 package.manifest.clone(),
-                package.witness.public_output(),
             )?;
             let policy = &self.policy.as_ref().ok_or("accepted policy missing")?.1;
             match package.body.action {
@@ -395,7 +390,6 @@ impl Collector {
                         approval.as_ref().ok_or("patch approval missing")?,
                         &snapshot,
                         &verifier,
-                        &package.witness,
                     )?;
                     policy.accept_review(&proof)?;
                 }
@@ -408,11 +402,11 @@ impl Collector {
                             snapshot.checkpoint().receipt().body.sequence,
                         )
                         .await?;
-                    let proof = outbe_radicle::integration::publication::merge::verify_accepted_merge_publication(&repo, approval.as_ref().ok_or("patch approval missing")?, &snapshot, &review, &verifier, &package.witness)?;
+                    let proof = outbe_radicle::integration::publication::merge::verify_accepted_merge_publication(&repo, approval.as_ref().ok_or("patch approval missing")?, &snapshot, &review, &verifier)?;
                     policy.accept_merge(&proof)?;
                 }
                 outbe_primitives::radicle_publication::PublicationAction::BindMaterial => {
-                    let proof = outbe_radicle::integration::publication::binding::verify_accepted_material_publication(&snapshot, &verifier, &package.witness)?;
+                    let proof = outbe_radicle::integration::publication::binding::verify_accepted_material_publication(&snapshot, &verifier)?;
                     policy.accept_material(&proof)?;
                 }
                 _ => return Err("unsupported accepted patch action".into()),
@@ -438,7 +432,7 @@ impl Collector {
         let package = self
             .journal
             .packages
-            .load_selected(review_slot_key(&root.receipt().body), repo)?
+            .load_accepted(&root, repo)?
             .ok_or("bootstrap package missing")?;
         let mut snapshot = CheckpointOwnerSnapshot::bootstrap(root, &package.manifest)?;
         for sequence in 2..=through {
@@ -449,7 +443,7 @@ impl Collector {
             let package = self
                 .journal
                 .packages
-                .load_selected(review_slot_key(&receipt.receipt().body), repo)?
+                .load_accepted(&receipt, repo)?
                 .ok_or("accepted package missing")?;
             if package.body != receipt.receipt().body {
                 return Err("accepted archive mismatch".into());
@@ -462,17 +456,10 @@ impl Collector {
                     .read_patch_approval(proposal)
                     .await?
                     .ok_or("accepted approval missing")?;
-                let verifier = AcceptedPublicationVerifier::from_receipt(
-                    receipt,
-                    package.manifest,
-                    package.witness.public_output(),
-                )?;
+                let verifier =
+                    AcceptedPublicationVerifier::from_receipt(receipt, package.manifest)?;
                 return Ok(verify_accepted_review_publication(
-                    repo,
-                    &approval,
-                    &snapshot,
-                    &verifier,
-                    &package.witness,
+                    repo, &approval, &snapshot, &verifier,
                 )?);
             }
             snapshot.advance(receipt, &package.manifest)?;

@@ -183,10 +183,19 @@ impl PreparedBootstrapDocument {
         signature: &BlsEnvelope,
         content_manifest: &[u8],
     ) -> Result<PreparedBootstrapIdentity, Error> {
-        if repo.id() != self.repository_id()
-            || Sha256::hash(&[content_manifest]).0
-                != self.descriptor.initial_content_manifest_sha256.0
+        if Sha256::hash(&[content_manifest]).0 != self.descriptor.initial_content_manifest_sha256.0
         {
+            return Err(Error::Descriptor);
+        }
+        self.attach_native(repo, signature)
+    }
+
+    fn attach_native(
+        self,
+        repo: &Repository,
+        signature: &BlsEnvelope,
+    ) -> Result<PreparedBootstrapIdentity, Error> {
+        if repo.id() != self.repository_id() {
             return Err(Error::Descriptor);
         }
         signature.verify(
@@ -448,7 +457,7 @@ pub fn prepare_bootstrap_publication(
     }
     let job = prepare_bootstrap_document(state.descriptor(), material)?;
     let (body, manifest) =
-        reconstruct_bootstrap(repo, job, content_manifest, signatures, |actual| {
+        reconstruct_bootstrap(repo, job, Some(content_manifest), signatures, |actual| {
             witness.verify(material, actual)
         })?;
     Ok(VerifiedBootstrapPublication {
@@ -496,12 +505,15 @@ pub fn verify_bootstrap_publication(
 fn reconstruct_bootstrap(
     repo: &Repository,
     job: PreparedBootstrapDocument,
-    content_manifest: &[u8],
+    content_manifest: Option<&[u8]>,
     signatures: [&BlsEnvelope; 3],
     verify: impl FnOnce(&[(RepositorySubject, BlsEnvelope)]) -> Result<(), super::signing::Error>,
 ) -> Result<(PublicationBody, PublicationManifest), Error> {
     let mut actual = vec![(job.subject().clone(), signatures[0].clone())];
-    let identity = job.attach(repo, signatures[0], content_manifest)?;
+    let identity = match content_manifest {
+        Some(content) => job.attach(repo, signatures[0], content)?,
+        None => job.attach_native(repo, signatures[0])?,
+    };
     actual.push((identity.subject().clone(), signatures[1].clone()));
     let refs = identity.attach(repo, signatures[1])?;
     actual.push((refs.subject().clone(), signatures[2].clone()));
@@ -549,14 +561,12 @@ impl AcceptedBootstrapPublication {
     }
 }
 
-/// Reconstruct all native objects and verify public q-witnesses against a trusted receipt.
+/// Reconstruct all native objects and signatures against an exact trusted receipt.
 /// This is historical verification; current material rotation does not revoke the package.
 pub fn verify_accepted_bootstrap(
     repo: &Repository,
     descriptor: &GovernmentsDescriptor,
-    content_manifest: &[u8],
     verifier: &super::signing::accepted::AcceptedPublicationVerifier,
-    witness: &super::signing::witness::RepositoryWitnessBundle,
 ) -> Result<AcceptedBootstrapPublication, Error> {
     let receipt = verifier.receipt();
     let body = &receipt.receipt().body;
@@ -601,6 +611,7 @@ pub fn verify_accepted_bootstrap(
         subject,
         metadata,
     };
+
     let signatures = verifier
         .manifest()
         .subjects()
@@ -610,9 +621,9 @@ pub fn verify_accepted_bootstrap(
     let (expected, manifest) = reconstruct_bootstrap(
         repo,
         job,
-        content_manifest,
+        None,
         [&signatures[0], &signatures[1], &signatures[2]],
-        |actual| witness.verify_accepted(verifier, actual),
+        |actual| verifier.verify_native(actual),
     )?;
     if expected != *body || manifest != *verifier.manifest() {
         return Err(Error::Descriptor);
