@@ -449,6 +449,7 @@ fn issue(world: &mut World) {
             asset: f.currency.asset,
             principalMinor: PRINCIPAL,
             gratisMinor: f.gratis_minor,
+            callPriceMinor: U256::from(1_312_000),
         },
     );
     assert_receipt_event(

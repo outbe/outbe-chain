@@ -91,6 +91,10 @@ pub(crate) fn issue_nod_at(
         terms.entry_price_minor,
         call_terms,
     )?;
+    // The bucket's sealed terms, which a Nod joining an existing bucket inherits.
+    let call_price_minor = NodContract::new(storage.clone())
+        .read_call_terms(item.bucket_key)?
+        .call_price_minor;
     emit_event(
         storage,
         INodFactory::NodIssued {
@@ -98,6 +102,7 @@ pub(crate) fn issue_nod_at(
             nodId: nod_id.to_u256(),
             worldwideDay: U256::from(u32::from(terms.worldwide_day)),
             leagueId: U256::from(terms.league_id),
+            callPriceMinor: call_price_minor,
             encryptedGratisAmount: encrypted.encrypted_gratis_amount.clone().into(),
             entryPriceMinor: terms.entry_price_minor,
             settlementCostMinor: settlement_cost_minor,

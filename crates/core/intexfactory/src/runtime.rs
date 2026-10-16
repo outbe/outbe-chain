@@ -110,6 +110,7 @@ pub fn issue_intex(
             seriesId: params.series_id.into(),
             issuedUnits: params.issued_units,
             entryPriceMinor: params.entry_price_minor,
+            callPriceMinor: call_price_minor,
         },
     )?;
 

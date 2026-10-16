@@ -7,6 +7,7 @@ interface INodFactory {
         uint256 nodId,
         uint256 worldwideDay,
         uint256 leagueId,
+        uint256 callPriceMinor,
         bytes encryptedGratisAmount,
         uint256 entryPriceMinor,
         uint256 settlementCostMinor

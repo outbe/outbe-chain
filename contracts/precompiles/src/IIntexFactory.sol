@@ -74,7 +74,9 @@ interface IIntexFactory {
     function ownerBalances(bytes14 seriesId, address owner) external view returns (OwnerBalances memory);
 
     /// @notice A new series was created from a cleared auction.
-    event IntexSeriesIssued(bytes14 indexed seriesId, uint32 issuedUnits, uint256 entryPriceMinor);
+    event IntexSeriesIssued(
+        bytes14 indexed seriesId, uint32 issuedUnits, uint256 entryPriceMinor, uint256 callPriceMinor
+    );
 
     /// @notice `units` Issued Intexes of `seriesId` were settled.
     event IntexSettled(bytes14 indexed seriesId, address indexed owner, uint256 units);

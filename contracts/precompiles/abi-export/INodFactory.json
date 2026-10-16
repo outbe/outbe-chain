@@ -329,6 +329,12 @@
         "internalType": "uint256"
       },
       {
+        "name": "callPriceMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
         "name": "encryptedGratisAmount",
         "type": "bytes",
         "indexed": false,
