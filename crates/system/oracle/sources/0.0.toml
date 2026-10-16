@@ -22,6 +22,41 @@ markets = [
   { provider = "pyth" },
 ]
 
+[[currency_pairs]]
+base = "COEN"
+quote = "392"
+cross = "840"
+markets = [
+  { provider = "chainlink_jpy_usd" },
+  { provider = "pyth" },
+]
+
+[[currency_pairs]]
+base = "COEN"
+quote = "826"
+cross = "840"
+markets = [
+  { provider = "chainlink_gbp_usd" },
+  { provider = "pyth" },
+]
+
+[[currency_pairs]]
+base = "COEN"
+quote = "156"
+cross = "840"
+markets = [
+  { provider = "chainlink_cny_usd" },
+  { provider = "pyth" },
+]
+
+[[currency_pairs]]
+base = "COEN"
+quote = "344"
+cross = "840"
+markets = [
+  { provider = "pyth" },
+]
+
 [[deviation_thresholds]]
 base = "COEN"
 threshold = "2.0"
@@ -37,3 +72,18 @@ pool = { protocol = "uniswap_v3", address = "0x222222222222222222222222222222222
 name = "chainlink_eur_usd"
 chain_id = 1
 contract = "0xb49f677943BC038e9857d61E7d053CaA2C1734C1"   # Chainlink EUR / USD
+
+[[onchain_providers]]
+name = "chainlink_jpy_usd"
+chain_id = 1
+contract = "0xBcE206caE7f0ec07b545EddE332A47C2F75bbeb3"   # Chainlink JPY / USD
+
+[[onchain_providers]]
+name = "chainlink_gbp_usd"
+chain_id = 1
+contract = "0x5c0Ab2d9b5a7ed9f470386e82BB36A3613cDd4b5"   # Chainlink GBP / USD
+
+[[onchain_providers]]
+name = "chainlink_cny_usd"
+chain_id = 1
+contract = "0xeF8A4aF35cd47424672E3C590aBD37FBB7A7759a"   # Chainlink CNY / USD
