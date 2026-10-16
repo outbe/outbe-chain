@@ -4,22 +4,26 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum MetadosisBusinessError {
-    #[error("Lysis owner apply rejected: {error}")]
+    #[error("Metadosis business failure: Lysis owner apply rejected: {error}")]
     LysisOwnerApplyRejected { error: PrecompileError },
 
-    #[error("day allocation overflow")]
+    #[error("Metadosis business failure: day allocation overflow")]
     DayAllocationOverflow,
 
-    #[error("day allocation exceeds the nominal its tributes retired")]
+    #[error(
+        "Metadosis business failure: day allocation exceeds the nominal its tributes retired"
+    )]
     DayAllocationExceedsTributeNominal,
 
-    #[error("Lysis owner receipt mismatch")]
+    #[error("Metadosis business failure: Lysis owner receipt mismatch")]
     LysisOwnerReceiptMismatch,
 
-    #[error("Lysis terminal permit mismatch")]
+    #[error("Metadosis business failure: Lysis terminal permit mismatch")]
     LysisTerminalPermitMismatch,
 
-    #[error("Lysis allocation and unused limit do not add up to the request limit")]
+    #[error(
+        "Metadosis business failure: Lysis allocation and unused limit do not add up to the request limit"
+    )]
     LysisAllocationAndUnusedLimitMismatch,
 }
 
@@ -36,6 +40,6 @@ impl MetadosisBusinessError {
 
 impl From<MetadosisBusinessError> for PrecompileError {
     fn from(value: MetadosisBusinessError) -> Self {
-        PrecompileError::Revert(format!("Metadosis business failure: {value}"))
+        PrecompileError::Revert(value.to_string())
     }
 }

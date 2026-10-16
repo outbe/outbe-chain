@@ -105,8 +105,8 @@ impl TransportError {
     }
 
     /// Construct a [`Self::Noise`] error from a debug-formatted value.
-    pub fn noise_debug(error: impl fmt::Debug) -> Self {
-        Self::Noise(format!("{error:?}"))
+    pub fn noise_debug(error: snow::Error) -> Self {
+        super::TeeClientVerificationError::NoiseParams(error).into()
     }
 
     /// Construct a [`Self::Handshake`] error from a displayable value.
@@ -120,8 +120,8 @@ impl TransportError {
     }
 
     /// Construct a quote-parse [`Self::Attestation`] error.
-    pub fn quote_parse(error: impl fmt::Display) -> Self {
-        Self::Attestation(format!("quote parse: {error}"))
+    pub fn quote_parse(error: super::QuoteParseError) -> Self {
+        super::TeeClientVerificationError::QuoteParse(error).into()
     }
 
     /// Construct a [`Self::TributeOfferAttestation`] error from a displayable value.
@@ -141,17 +141,21 @@ impl TransportError {
 
     /// Construct a [`Self::Unavailable`] error when a panic poisons the snapshot lock.
     pub fn snapshot_lock_poisoned<T>(_: T) -> Self {
-        Self::Unavailable("enclave snapshot lock poisoned".into())
+        Self::Unavailable(super::CallContextError::SnapshotLockPoisoned.to_string())
     }
 
     /// Construct a [`Self::Codec`] error when a NodeHost file length overflows.
     pub fn node_host_length_overflow<T>(label: &'static str) -> impl FnOnce(T) -> Self {
-        move |_| Self::Codec(format!("NodeHost {label} length overflow"))
+        move |_| super::NodeHostRecordError::LengthOverflow { label }.into()
     }
 
     /// Construct a [`Self::IdentityMismatch`] error from a reason and detail.
     pub fn identity_mismatch(reason: &'static str, detail: impl fmt::Display) -> Self {
-        Self::IdentityMismatch(format!("{reason}: {detail}"))
+        super::TeeClientVerificationError::ReconnectIdentityMismatch {
+            reason,
+            detail: detail.to_string(),
+        }
+        .into()
     }
 
     /// Return true when the connection is broken or desynchronized.

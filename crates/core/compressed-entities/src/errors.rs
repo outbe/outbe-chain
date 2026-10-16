@@ -551,6 +551,18 @@ pub enum CompressedEntitiesBodyCorruptionError {
     /// Empty parent page cannot advertise a continuation.
     #[error("empty parent page cannot advertise a continuation")]
     EmptyParentPageWithContinuation,
+    /// Body-read corruption enriched with parent scope diagnostics.
+    #[error(
+        "{message}; [CE_BODY_DIAGNOSTIC] evm_block={evm_block:?} evm_ce_root={parent_root} parent_root={scope_parent_root:?} {diagnostic_binding} thread={thread:?}"
+    )]
+    DiagnosticEnriched {
+        message: String,
+        evm_block: Result<u64>,
+        parent_root: B256,
+        scope_parent_root: Result<B256>,
+        diagnostic_binding: String,
+        thread: std::thread::ThreadId,
+    },
 }
 
 impl From<CompressedEntitiesBodyCorruptionError> for PrecompileError {
@@ -605,12 +617,17 @@ pub(crate) fn enrich_body_read_corruption(
     diagnostic_binding: &str,
 ) -> PrecompileError {
     match error {
-        PrecompileError::BodyReadCorruption(message) => PrecompileError::BodyReadCorruption(
-            format!(
-                "{message}; [CE_BODY_DIAGNOSTIC] evm_block={evm_block:?} evm_ce_root={parent_root} parent_root={scope_parent_root:?} {diagnostic_binding} thread={:?}",
-                std::thread::current().id(),
-            ),
-        ),
+        PrecompileError::BodyReadCorruption(message) => {
+            CompressedEntitiesBodyCorruptionError::DiagnosticEnriched {
+                message,
+                evm_block,
+                parent_root,
+                scope_parent_root,
+                diagnostic_binding: diagnostic_binding.to_owned(),
+                thread: std::thread::current().id(),
+            }
+            .into()
+        }
         other => other,
     }
 }
