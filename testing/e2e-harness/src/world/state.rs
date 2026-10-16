@@ -203,7 +203,6 @@ pub struct OcompPublicCapacityObservationV1 {
     pub q_forming_receipt_sha256: String,
     pub q_forming_validator_receipt_sha256: Vec<String>,
     pub q_forming_state_root: alloy_primitives::B256,
-    pub q_forming_ce_root: alloy_primitives::B256,
     pub q_forming_validator_commitments: Vec<crate::world::rpc::BlockCommitmentV1>,
     pub canonical_import_validator_count: u8,
     pub canonical_import_verified: bool,
@@ -218,11 +217,17 @@ pub struct OcompPublicCapacityObservationV1 {
     pub internal_work: u64,
 }
 
-/// Public outcome recovered after one validator discards only its derived CE
-/// database and rebuilds it from preserved canonical Reth history.
+/// Exact native state and business results retained across one owned restart.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct OcompHistoricalReplayObservationV1 {
-    pub recovery: crate::world::localnet::CeStartupReplayObservationV1,
+pub struct OcompNativeRestartObservationV1 {
+    pub validator_index: u8,
+    pub previous_pid: u32,
+    pub restarted_pid: u32,
+    pub anchor_height: u64,
+    pub anchor_hash: alloy_primitives::B256,
+    pub anchor_state_root: alloy_primitives::B256,
+    pub finalized_after_restart: u64,
+    pub elapsed_micros: u64,
     pub recovered_result_digest: alloy_primitives::B256,
     pub recovered_generation: crate::world::rpc::OcompCertifiedGenerationV1,
 }
@@ -357,7 +362,7 @@ pub struct OcompPublicScenarioEvidenceV1 {
     pub late_vote_inclusion_height: Option<u64>,
     pub capacity_resources: Option<crate::ocomp_capacity::OcompCapacityResourceObservationV1>,
     pub capacity_public_path: Option<OcompPublicCapacityObservationV1>,
-    pub capacity_historical_replay: Option<OcompHistoricalReplayObservationV1>,
+    pub capacity_native_restart: Option<OcompNativeRestartObservationV1>,
     pub metadosis_fresh_lifecycle: Option<MetadosisFreshLifecycleObservationV1>,
     pub execution_trace: Option<OcompExecutionTraceObservationV1>,
     pub restart_replay_verified: Option<bool>,
@@ -490,7 +495,7 @@ pub struct FixtureState {
     pub ocomp_job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
     /// Independently authenticated OFFERING inputs, retained before processing
     /// retires their current Tribute projection and point-read domain.
-    pub ocomp_nod_input_bodies: Option<Vec<outbe_compressed_entities::TributeBodyV1>>,
+    pub ocomp_nod_input_bodies: Option<Vec<outbe_primitives::entity_codec::TributeBodyV1>>,
     /// Successor activation evidence captured while a V1 job remains live.
     pub ocomp_successor_bundle_hash: Option<alloy_primitives::B256>,
     pub ocomp_successor_activation_height: Option<u64>,
@@ -548,7 +553,7 @@ pub struct FixtureState {
     pub ocomp_late_vote_reverted: Option<bool>,
     pub ocomp_late_vote_inclusion_height: Option<u64>,
     pub ocomp_capacity_observation: Option<OcompPublicCapacityObservationV1>,
-    pub ocomp_historical_replay_observation: Option<OcompHistoricalReplayObservationV1>,
+    pub ocomp_native_restart_observation: Option<OcompNativeRestartObservationV1>,
     pub metadosis_fresh_lifecycle_observation: Option<MetadosisFreshLifecycleObservationV1>,
     pub metadosis_fresh_initial_timestamp: Option<u64>,
     pub metadosis_fresh_initial_unix_time_offset_secs: Option<i64>,
@@ -797,7 +802,7 @@ impl Default for FixtureState {
             metadosis_inactive_lysis_vote_block: None,
             metadosis_inactive_lysis_reject_code: None,
             ocomp_capacity_observation: None,
-            ocomp_historical_replay_observation: None,
+            ocomp_native_restart_observation: None,
             metadosis_fresh_lifecycle_observation: None,
             metadosis_fresh_initial_timestamp: None,
             metadosis_fresh_initial_unix_time_offset_secs: None,
@@ -886,7 +891,7 @@ impl FixtureState {
             late_vote_inclusion_height: self.ocomp_late_vote_inclusion_height,
             capacity_resources: None,
             capacity_public_path: self.ocomp_capacity_observation.clone(),
-            capacity_historical_replay: self.ocomp_historical_replay_observation.clone(),
+            capacity_native_restart: self.ocomp_native_restart_observation.clone(),
             metadosis_fresh_lifecycle: self.metadosis_fresh_lifecycle_observation.clone(),
             execution_trace: self.ocomp_execution_trace_observation.clone(),
             restart_replay_verified: self.ocomp_restart_replay_verified,
@@ -931,8 +936,6 @@ mod snapshot {
         pub partial_state_trie: Option<u64>,
         pub unwind: Option<SnapshotUnwind>,
         pub storage_version: u32,
-        pub ce: SnapshotBlock,
-        pub projection: SnapshotBlock,
         pub ocomp_baseline: SnapshotBlock,
         pub ocomp_previous: SnapshotBlock,
         pub ocomp_current: SnapshotBlock,
@@ -1005,7 +1008,6 @@ mod snapshot {
         /// Parsed from the existing certified follower startup recovery barrier record.
         pub marshal_processed: u64,
         pub anchor: SnapshotBlock,
-        pub ce_marker_height: u64,
         /// provider.last_block_number(), NOT the exact Execution-stage frontier.
         pub last_execution_height: u64,
         /// Independent canonical upstream identity at the emitted anchor height.

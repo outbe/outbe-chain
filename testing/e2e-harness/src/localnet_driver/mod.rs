@@ -202,7 +202,6 @@ impl LocalnetCli {
 
     fn environment(&self, persisted_blocks: Option<&[u16]>) -> Result<Environment> {
         let cli = EnvCli {
-            projection_backend: crate::env::ProjectionBackend::Rocksdb,
             validators: self.validators,
             no_resolve_ports: persisted_blocks.is_some(),
             no_cleanup: true,

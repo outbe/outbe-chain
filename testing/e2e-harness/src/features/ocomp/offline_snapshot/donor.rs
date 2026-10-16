@@ -21,7 +21,7 @@ pub(super) fn create_snapshot_archive(
     let archive = evidence_dir.join("created.tar");
     // Native MDBX files reserve large sparse ranges. Snapshot tar stores those
     // ranges as bytes, so creating it on the validators' disk can stall their
-    // projection while consensus is still live. Stage in memory, then copy
+    // native persistence while consensus is still live. Stage in memory, then copy
     // the finished tar back with holes in its all-zero ranges.
     let scratch_root = std::path::Path::new("/dev/shm");
     let scratch_free = rustix::fs::statvfs(scratch_root)
@@ -164,9 +164,7 @@ pub(super) fn create_stopped_snapshot_result(world: &mut crate::world::World) ->
         node,
         evidence_dir,
         launch,
-        projection,
         genesis,
-        chain_id,
     } = snapshot_donor_context(world)?;
     let price_publication = crate::features::price_oracle::stop_before_clock_restart(world);
     let clients = world
@@ -181,8 +179,7 @@ pub(super) fn create_stopped_snapshot_result(world: &mut crate::world::World) ->
     let stopped = world
         .localnet
         .stop_validator_for_snapshot(index, launch.pid)?;
-    let native =
-        observe_stopped_native(&node, std::path::Path::new(&projection), chain_id, genesis)?;
+    let native = observe_stopped_native(&node, genesis)?;
     let generation = world
         .state
         .ocomp_certified_generation
@@ -303,9 +300,7 @@ struct SnapshotDonorContext {
     node: std::path::PathBuf,
     evidence_dir: std::path::PathBuf,
     launch: crate::world::localnet::NodeLaunchObservation,
-    projection: String,
     genesis: alloy_primitives::B256,
-    chain_id: u64,
 }
 
 fn snapshot_donor_context(world: &mut crate::world::World) -> eyre::Result<SnapshotDonorContext> {
@@ -332,7 +327,6 @@ fn snapshot_donor_context(world: &mut crate::world::World) -> eyre::Result<Snaps
         launch.argv.first().map(String::as_str) == Some("node"),
         "unexpected ordinary command"
     );
-    let projection = snapshot_option(&launch.argv, "--projection.storage-config")?;
     let genesis = canonical_snapshot_block(world, 0)?
         .hash
         .parse::<alloy_primitives::B256>()?;
@@ -349,8 +343,6 @@ fn snapshot_donor_context(world: &mut crate::world::World) -> eyre::Result<Snaps
         node,
         evidence_dir,
         launch,
-        projection,
         genesis,
-        chain_id,
     })
 }

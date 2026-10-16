@@ -107,7 +107,6 @@ fn encode_candidate(encoded: &mut Vec<u8>, candidate: CandidatePinV1) {
     encoded.extend_from_slice(candidate.state_root.as_slice());
     encoded.extend_from_slice(candidate.intent_id.as_slice());
     encoded.extend_from_slice(&candidate.wwd.to_be_bytes());
-    encoded.extend_from_slice(candidate.ce_sealed_root.as_slice());
     encoded.extend_from_slice(candidate.protocol_bundle_hash.as_slice());
     encoded.extend_from_slice(candidate.input_lease_id.as_slice());
 }
@@ -157,7 +156,6 @@ fn decode_candidate(reader: &mut JournalReader<'_>) -> Result<CandidatePinV1, Re
         state_root: B256::new(reader.take::<32>()?),
         intent_id: B256::new(reader.take::<32>()?),
         wwd: u32::from_be_bytes(reader.take::<4>()?),
-        ce_sealed_root: B256::new(reader.take::<32>()?),
         protocol_bundle_hash: B256::new(reader.take::<32>()?),
         input_lease_id: B256::new(reader.take::<32>()?),
     })

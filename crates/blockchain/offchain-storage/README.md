@@ -23,44 +23,20 @@ uses `secondary_path/<protocol_bundle_hash>` and exclusively owns that directory
 The node receives `--projection.storage-config /path/to/offchain-storage.toml`.
 The exporter receives `OUTBE_OCOMP_STORAGE_CONFIG=/path/to/offchain-storage.toml`.
 Both load configuration at startup. There is no environment fallback for backend
-settings. The previous `projection.mongodb-*`, `projection.start-block`, and
-`OUTBE_*PROJECTION_MONGODB_*` runtime settings have been removed.
-
-To use MongoDB, replace the document with:
-
-```toml
-version = 1
-backend = "mongodb"
-start_block = 1
-
-[mongodb]
-uri = "mongodb://127.0.0.1:27017/?replicaSet=rs0"
-database = "outbe_validator_0"
-```
-
-MongoDB requires a transaction-capable replica set or sharded cluster. Every node
-needs its own database. The adapter retains primary/majority reads and the single
-writer lease. Keep credential-bearing TOML files private. Changing backend does
-not migrate existing data; this implementation does not include a migration tool.
+settings. RocksDB is the only supported persistent backend.
 
 ## Launch generators
 
-- `create_genesis.py`: optional `offchain_storage` section in the network YAML,
-  with the same fields as the TOML. Without it, generate RocksDB defaults. Selecting
-  MongoDB generates a local replica-set setup script; an overridden external URI
-  remains operator-managed. A custom `mongodb.database` is a prefix; the generator
-  appends `_validator_N`. Review each generated TOML before launch.
-- `prepare_network.py --storage-template template.toml`: copy a validated template
-  per node. For MongoDB, append `_validator_N` to the template's database name.
-  Without a template, generate relative RocksDB paths.
-- `bootstrap-testnet.sh 4 OUT_DIR SEED_FILE [STORAGE_TEMPLATE]`: forwards that
-  template to the network preparer. Re-bootstrap deliberately replaces a network;
-  use `run-testnet.sh start OUT_DIR` to resume existing data.
+- `create_genesis.py`: the optional `offchain_storage` section in network YAML
+  has the same fields as the TOML. Defaults use local RocksDB paths.
+- `prepare_network.py --storage-template template.toml`: copy a validated RocksDB
+  template per node. Without a template, generate relative RocksDB paths.
+- `bootstrap-testnet.sh 4 OUT_DIR SEED_FILE [STORAGE_TEMPLATE]`: forward the
+  template to the network preparer. Use `run-testnet.sh start OUT_DIR` to resume.
 - `localnet-stack.sh start [STORAGE_TEMPLATE]`: initialize or resume a stack.
-  The template applies only to a new stack. Mongo service management is enabled
-  only when the selected URI matches the stack's dedicated local Mongo endpoint.
-- Generated `run-node.sh` and `run-ocomp-exporter.sh` reference the same TOML.
-  `run-storage.sh` starts Mongo only when the TOML selects the managed local URI.
+  The template applies only to a new stack.
+- Generated node and exporter scripts reference the same TOML. `run-storage.sh`
+  validates that file. The node opens the RocksDB primary.
 
 ## Storage contract
 
@@ -103,33 +79,15 @@ cargo test -p outbe-offchain-storage --test rocks_process_e2e
 
 The exporter integration target compares the canonical current/retained union and
 the exact published CAS chunk and manifest bytes. RocksDB reads through a reopened
-primary and an independent secondary. Both providers load the shared TOML. The
-Mongo lane requires an isolated replica set and compares directly against RocksDB:
+primary and an independent secondary. Both providers load the shared TOML.
 
 ```sh
 cargo test -p outbe-ocomp --test exporter_storage
-OUTBE_TEST_MONGODB_URI='mongodb://127.0.0.1:27017/?replicaSet=rs0' \
-  cargo test -p outbe-ocomp --test exporter_storage -- --ignored
 ```
 
 This test supplies fixed chain-opening proof fixtures; it does not verify a live
 chain's proofs or execute the final OCOMP result. Those require the network suite.
 
-The separate Linux network matrix is `mise run e2e-offchain-storage`. It builds
-the GramineDirect binaries and runs `features/offchain_storage.feature` once per
-backend, covering public Tribute, real OCOMP, FullNode proof reads, exporter crash
-replay and committee restart. It requires a working Linux Docker/Gramine runtime.
-
-Network E2E uses `outbe-e2e --projection-backend rocksdb` (default), or
-`--projection-backend mongodb` for the Mongo regression lane. The Mongo URI option
-belongs to fixture generation; it is not passed to runtime nodes as an environment
-setting. `@mongodb` outage scenarios run only in that backend lane. Generic
-projection checks compare namespace/key/value/metadata records, not BSON layout.
-Process integration tests do not substitute for the full OCOMP network E2E run.
-
-For a host without Gramine, `mise run e2e-offchain-storage-native` builds an exact
-`mock-native` artifact manifest and runs four validators with RocksDB through
-public Tribute, Lysis/Nod, exporter crash replay and committee restart. Only the
-enclave is mocked; storage, node and OCOMP processes are real. This separate
-scenario omits fifth-node onboarding and SGX verification, which remain covered
-by the full network profile above.
+Network scenarios use `--projection-backend rocksdb` (the default). Generic
+projection checks compare namespace, key, value and metadata records. Process
+integration tests do not replace the full release SGX acceptance suite.

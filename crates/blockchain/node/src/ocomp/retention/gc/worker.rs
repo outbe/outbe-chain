@@ -127,10 +127,9 @@ fn run_cycle(
             metrics::counter!("outbe_ocomp_retained_gc_worker_cycles_total", "result" => "success")
                 .increment(1);
             record_retained_gc_report(&report);
-            let made_progress = report.completed != 0 || report.pages != 0;
+            let made_progress = report.completed != 0;
             CycleWait::Release(crate::ocomp::retention::retained_gc_next_wake_delay(
                 made_progress,
-                report.next_retry_delay,
             ))
         }
         Err(failure) => {

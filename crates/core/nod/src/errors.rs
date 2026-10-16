@@ -1,11 +1,9 @@
 //! Domain error types for the Nod crate.
 
 use alloy_primitives::B256;
-use outbe_compressed_entities::WwdEntityId;
 use outbe_primitives::error::PrecompileError;
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 use thiserror::Error;
-
-use crate::NodRepositoryError;
 
 /// Represents domain errors in the Nod precompile and runtime.
 #[derive(Debug, Error)]
@@ -139,12 +137,6 @@ pub enum NodError {
     #[error("Nod bucket {bucket_key} member slot {slot} is empty during removal")]
     EmptyBucketMemberSlotDuringRemoval { bucket_key: B256, slot: u32 },
 
-    #[error("compressed-entity read returned a non-Nod-item payload")]
-    NonNodItemPayload,
-
-    #[error("compressed-entity read returned a non-Nod-bucket payload")]
-    NonNodBucketPayload,
-
     #[error("NOD amount read failed: {0}")]
     AmountReadFailed(#[source] outbe_tee::TransportError),
 }
@@ -172,22 +164,4 @@ impl From<NodError> for PrecompileError {
 #[cfg(any(test, feature = "test-enclave"))]
 pub(crate) fn enclave_transport_error(error: impl std::fmt::Display) -> outbe_tee::TransportError {
     outbe_tee::TransportError::EnclaveError(error.to_string())
-}
-
-impl From<NodRepositoryError> for PrecompileError {
-    fn from(value: NodRepositoryError) -> Self {
-        use outbe_offchain_storage::StorageErrorKind;
-
-        match value {
-            NodRepositoryError::Storage(error)
-                if error.kind() == StorageErrorKind::RequestDeadline =>
-            {
-                PrecompileError::BodyReadRequestDeadline
-            }
-            NodRepositoryError::Storage(error) if error.kind() == StorageErrorKind::Unavailable => {
-                PrecompileError::BodyReadUnavailable(error.to_string())
-            }
-            other => PrecompileError::BodyReadCorruption(other.to_string()),
-        }
-    }
 }

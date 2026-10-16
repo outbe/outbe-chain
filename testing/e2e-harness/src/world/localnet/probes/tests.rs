@@ -5,10 +5,7 @@ use std::time::{Duration, Instant};
 use crate::env::Environment;
 use crate::internal::{config::Config, proc::ChildGuard};
 
-use super::{
-    has_required_signing_share, parse_ce_startup_replay, read_required_node_log,
-    validator_slot_node_log_path, CeStartupReplayObservationV1, RethLogTail,
-};
+use super::{has_required_signing_share, read_required_node_log, validator_slot_node_log_path};
 
 #[test]
 fn canonical_header_capture_preserves_both_streams_and_nonzero_exit() {
@@ -281,87 +278,4 @@ fn missing_owned_follower_trace_log_is_an_error() {
     assert!(error
         .to_string()
         .contains("read OCOMP runtime trace for follower from owned log"));
-}
-
-#[test]
-fn completed_ce_startup_replay_record_decodes_the_exact_span() {
-    let target_hash = "0x2a6edf48ac3c8fb19ff4e9daeca617c06c61ced8ec8889a59fafbc00093d4bb7"
-        .parse()
-        .unwrap();
-    let record = "2026-07-27T10:44:12.172399Z INFO outbe_engine::ce_recovery: \
-        compressed-entity startup replay completed first_missing=1 target_height=166 \
-        target_hash=0x2a6edf48ac3c8fb19ff4e9daeca617c06c61ced8ec8889a59fafbc00093d4bb7 \
-        replayed_blocks=166 elapsed_micros=912345";
-
-    assert_eq!(
-        parse_ce_startup_replay(record, 0).unwrap(),
-        Some(CeStartupReplayObservationV1 {
-            validator_index: 0,
-            first_missing_block_number: 1,
-            target_block_number: 166,
-            target_block_hash: target_hash,
-            replayed_block_count: 166,
-            elapsed_micros: 912_345,
-        })
-    );
-}
-
-#[test]
-fn reth_log_tail_is_incremental_and_keeps_rotated_files_open() {
-    use std::io::Write as _;
-
-    let root = tempfile::tempdir().unwrap();
-    let log_dir = root.path().join("chain");
-    std::fs::create_dir_all(&log_dir).unwrap();
-    let current = log_dir.join("reth.log");
-    std::fs::write(&current, "old record\n").unwrap();
-    let mut tail = RethLogTail::at_end(root.path()).unwrap();
-
-    let mut writer = std::fs::OpenOptions::new()
-        .append(true)
-        .open(&current)
-        .unwrap();
-    writeln!(writer, "replay record one").unwrap();
-    writer.flush().unwrap();
-    assert_eq!(
-        tail.read_new_complete_lines().unwrap(),
-        "replay record one\n"
-    );
-    assert!(tail.read_new_complete_lines().unwrap().is_empty());
-
-    std::fs::rename(&current, log_dir.join("reth.log.1")).unwrap();
-    std::fs::write(&current, "replay record two\n").unwrap();
-    assert_eq!(
-        tail.read_new_complete_lines().unwrap(),
-        "replay record two\n"
-    );
-    assert!(tail.read_new_complete_lines().unwrap().is_empty());
-
-    std::fs::write(
-        &current,
-        "replay record after copy-truncate and rapid refill\n",
-    )
-    .unwrap();
-    assert_eq!(
-        tail.read_new_complete_lines().unwrap(),
-        "replay record after copy-truncate and rapid refill\n"
-    );
-
-    std::fs::write(&current, "partial").unwrap();
-    assert!(tail.read_new_complete_lines().unwrap().is_empty());
-    let mut writer = std::fs::OpenOptions::new()
-        .append(true)
-        .open(&current)
-        .unwrap();
-    writeln!(writer, " record").unwrap();
-    writer.flush().unwrap();
-    assert_eq!(tail.read_new_complete_lines().unwrap(), "partial record\n");
-
-    let discovered = super::reth_log_paths(root.path()).unwrap();
-    assert!(
-        discovered
-            .iter()
-            .any(|path| path.file_name().unwrap() == "reth.log.1"),
-        "already-rotated Reth logs must remain discoverable"
-    );
 }

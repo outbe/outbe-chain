@@ -1,4 +1,3 @@
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_primitives::time::WorldwideDay;
 #[cfg(test)]
 use outbe_primitives::time::{
@@ -9,10 +8,9 @@ use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
 use crate::schema::MetadosisContract;
 use crate::{
-    aggregate::ValidatedWwdAggregate,
-    lifecycle,
+    aggregate::ValidatedWwdAggregate, lifecycle,
     ocomp::schema::require_active_ocomp_profile as load_active_ocomp_profile,
-    settlement::{process_ocomp_ready_candidate, ReadyOwners},
+    settlement::process_ocomp_ready_candidate,
 };
 
 /// Converts a unix timestamp to a yyyymmdd date key (UTC).
@@ -45,11 +43,7 @@ pub fn date_key_to_timestamp(date_key: u32) -> u64 {
 /// legitimate caller is the hourly ProtocolCycle handler. The follow-up
 /// cleanup deleted the `MetadosisLifecycle` wrapper. Tests that drive the WWD
 /// state machine sub-day call this function directly.
-pub fn start_metadosis(
-    ctx: &BlockRuntimeContext,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-) -> Result<()> {
+pub fn start_metadosis(ctx: &BlockRuntimeContext) -> Result<()> {
     let mut metadosis = MetadosisContract::new(ctx.storage.clone());
     let timestamp = ctx.block.timestamp;
     lifecycle::validate_metadosis_timestamp(timestamp)?;
@@ -61,7 +55,7 @@ pub fn start_metadosis(
 
     lifecycle::create_worldwide_day_if_needed(&mut metadosis, ctx, timestamp)?;
 
-    lifecycle::advance_active_worldwide_days(ctx, scope)?;
+    lifecycle::advance_active_worldwide_days(ctx)?;
 
     let aggregate = ValidatedWwdAggregate::load_and_validate(ctx.storage.clone())?;
     let schema_limits = crate::ocomp::schema::poc_schema_limits();
@@ -72,7 +66,7 @@ pub fn start_metadosis(
             metadosis.ocomp_fsm_state(wwd, &schema_limits)?;
             continue;
         }
-        process_ocomp_ready_candidate(&mut metadosis, ctx, current, ReadyOwners { scope, parent })?;
+        process_ocomp_ready_candidate(&mut metadosis, ctx, current)?;
         break;
     }
 
@@ -89,11 +83,8 @@ pub(crate) fn require_active_ocomp_profile(
     load_active_ocomp_profile(metadosis)
 }
 
-pub fn advance_active_worldwide_days(
-    ctx: &BlockRuntimeContext,
-    scope: &ExecutionScope,
-) -> Result<()> {
-    lifecycle::advance_active_worldwide_days(ctx, scope)
+pub fn advance_active_worldwide_days(ctx: &BlockRuntimeContext) -> Result<()> {
+    lifecycle::advance_active_worldwide_days(ctx)
 }
 
 /// Genesis-block (block 1) metadosis bootstrap: engage the testnet/devnet

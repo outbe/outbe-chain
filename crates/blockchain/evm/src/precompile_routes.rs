@@ -4,10 +4,7 @@
 //! dispatch adapter and base-gas function. Activation, persistence, warming,
 //! sponsorship and future address classes intentionally remain outside this table.
 
-use crate::begin_block_precompile::BeginBlockReaders;
 use alloy_primitives::{Address, Bytes, B256, U256};
-use outbe_compressed_entities::ExecutionScope;
-use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::{
     addresses::*,
     error::Result,
@@ -15,27 +12,7 @@ use outbe_primitives::{
 };
 
 pub(crate) type DispatchFn = fn(StorageHandle, &[u8], Address, U256) -> Result<Bytes>;
-type ReaderDispatchFn =
-    fn(StorageHandle, BeginBlockReaders<'_, '_>, &[u8], Address, U256) -> Result<Bytes>;
 pub(crate) type BaseGasFn = fn(&[u8]) -> u64;
-
-#[cfg(test)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ReaderMode {
-    None,
-    Required,
-    Optional,
-}
-
-#[derive(Clone, Copy)]
-enum DispatchAdapter {
-    Basic(DispatchFn),
-    ReadersRequired(ReaderDispatchFn),
-    ReadersOptional {
-        without_readers: DispatchFn,
-        with_readers: ReaderDispatchFn,
-    },
-}
 
 /// Whether a route's dispatch may receive credited native value. It is declared on
 /// the same line as the dispatch function, alongside the module's own
@@ -64,7 +41,7 @@ const fn policy_is_payable(policy: ValuePolicy) -> bool {
 
 #[derive(Clone, Copy)]
 pub(crate) struct ExactRoute {
-    dispatch: DispatchAdapter,
+    dispatch: DispatchFn,
     base_gas: BaseGasFn,
     value_policy: ValuePolicy,
     payable_selectors: &'static [[u8; 4]],
@@ -114,15 +91,9 @@ impl Route {
         }
     }
 
-    pub(crate) fn dispatch(
-        self,
-        storage: StorageHandle,
-        execution_scope: &ExecutionScope,
-        readers: Option<&RuntimeBodyReaders>,
-        call: RouteCall<'_>,
-    ) -> Result<Bytes> {
+    pub(crate) fn dispatch(self, storage: StorageHandle, call: RouteCall<'_>) -> Result<Bytes> {
         match self {
-            Self::Exact(route) => route.dispatch(storage, execution_scope, readers, call),
+            Self::Exact(route) => route.dispatch(storage, call),
             Self::StablecoinClass => stablecoin_class_dispatch(storage, call),
         }
     }
@@ -133,22 +104,7 @@ impl ExactRoute {
         (self.base_gas)(input)
     }
 
-    #[cfg(test)]
-    pub(crate) const fn reader_mode(self) -> ReaderMode {
-        match self.dispatch {
-            DispatchAdapter::Basic(_) => ReaderMode::None,
-            DispatchAdapter::ReadersRequired(_) => ReaderMode::Required,
-            DispatchAdapter::ReadersOptional { .. } => ReaderMode::Optional,
-        }
-    }
-
-    pub(crate) fn dispatch(
-        self,
-        storage: StorageHandle,
-        execution_scope: &ExecutionScope,
-        readers: Option<&RuntimeBodyReaders>,
-        call: RouteCall<'_>,
-    ) -> Result<Bytes> {
+    pub(crate) fn dispatch(self, storage: StorageHandle, call: RouteCall<'_>) -> Result<Bytes> {
         let RouteCall {
             data,
             caller,
@@ -165,32 +121,7 @@ impl ExactRoute {
             self.payable_selectors,
             &value,
         )?;
-        match (self.dispatch, readers) {
-            (DispatchAdapter::Basic(dispatch), _) => dispatch(storage, data, caller, value),
-            (
-                DispatchAdapter::ReadersRequired(with_readers)
-                | DispatchAdapter::ReadersOptional { with_readers, .. },
-                Some(readers),
-            ) => with_readers(
-                storage,
-                BeginBlockReaders {
-                    scope: execution_scope,
-                    parent: readers,
-                },
-                data,
-                caller,
-                value,
-            ),
-            (DispatchAdapter::ReadersRequired(_), None) => {
-                Err(crate::errors::PrecompileRouteError::MissingBodyReadAuthority.into())
-            }
-            (
-                DispatchAdapter::ReadersOptional {
-                    without_readers, ..
-                },
-                None,
-            ) => without_readers(storage, data, caller, value),
-        }
+        (self.dispatch)(storage, data, caller, value)
     }
 }
 
@@ -371,53 +302,45 @@ macro_rules! define_exact_routes {
 // warnings. The const validator below independently rejects duplicates and Ethereum
 // precompile overlap during compilation.
 define_exact_routes! {
-    GRATIS_ADDRESS => (DispatchAdapter::Basic(outbe_gratis::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_gratis::precompile::PAYABLE_SELECTORS),
-    GRATIS_FACTORY_ADDRESS => (DispatchAdapter::Basic(outbe_gratisfactory::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_gratisfactory::precompile::PAYABLE_SELECTORS),
-    PROMIS_ADDRESS => (DispatchAdapter::Basic(outbe_promis::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_promis::precompile::PAYABLE_SELECTORS),
-    PROMIS_FACTORY_ADDRESS => (DispatchAdapter::Basic(outbe_promisfactory::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_promisfactory::precompile::PAYABLE_SELECTORS),
-    TRIBUTE_ADDRESS => (DispatchAdapter::ReadersRequired(outbe_tribute::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_tribute::precompile::PAYABLE_SELECTORS),
-    NOD_ADDRESS => (DispatchAdapter::ReadersRequired(outbe_nod::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_nod::precompile::PAYABLE_SELECTORS),
-    NOD_FACTORY_ADDRESS => (DispatchAdapter::ReadersRequired(outbe_nodfactory::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_nodfactory::precompile::PAYABLE_SELECTORS),
-    GEM_ADDRESS => (DispatchAdapter::ReadersRequired(outbe_gem::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_gem::precompile::PAYABLE_SELECTORS),
-    GEM_FACTORY_ADDRESS => (DispatchAdapter::ReadersRequired(outbe_gemfactory::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_gemfactory::precompile::PAYABLE_SELECTORS),
-    INTEX_ADDRESS => (DispatchAdapter::Basic(outbe_intex::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_intex::precompile::PAYABLE_SELECTORS),
-    INTEX_FACTORY_ADDRESS => (DispatchAdapter::Basic(outbe_intexfactory::precompile::dispatch), default_base_gas, ValuePolicy::Payable, outbe_intexfactory::precompile::PAYABLE_SELECTORS),
-    DESIS_ADDRESS => (DispatchAdapter::Basic(outbe_desis::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_desis::precompile::PAYABLE_SELECTORS),
-    VAULT_ROUTER_ADDRESS => (DispatchAdapter::Basic(outbe_vaultrouter::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_vaultrouter::precompile::PAYABLE_SELECTORS),
-    CREDIS_ADDRESS => (DispatchAdapter::Basic(outbe_credis::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_credis::precompile::PAYABLE_SELECTORS),
-    CREDIS_FACTORY_ADDRESS => (DispatchAdapter::Basic(outbe_credisfactory::precompile::dispatch), default_base_gas, ValuePolicy::Payable, outbe_credisfactory::precompile::PAYABLE_SELECTORS),
-    CCA_REGISTRY_ADDRESS => (DispatchAdapter::Basic(outbe_ccaregistry::precompile::dispatch), default_base_gas, ValuePolicy::Payable, outbe_ccaregistry::precompile::PAYABLE_SELECTORS),
-    TRIBUTE_FACTORY_ADDRESS => (DispatchAdapter::ReadersRequired(outbe_tributefactory::precompile::dispatch), outbe_tributefactory::precompile::base_gas, ValuePolicy::Reject, outbe_tributefactory::precompile::PAYABLE_SELECTORS),
-    VALIDATOR_SET_ADDRESS => (DispatchAdapter::Basic(outbe_validatorset::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_validatorset::precompile::PAYABLE_SELECTORS),
-    SLASH_INDICATOR_ADDRESS => (DispatchAdapter::Basic(outbe_slashindicator::precompile::dispatch), outbe_slashindicator::precompile::base_gas, ValuePolicy::Reject, outbe_slashindicator::precompile::PAYABLE_SELECTORS),
-    STAKING_ADDRESS => (DispatchAdapter::Basic(outbe_staking::precompile::dispatch), default_base_gas, ValuePolicy::Payable, outbe_staking::precompile::PAYABLE_SELECTORS),
-    REWARDS_ADDRESS => (DispatchAdapter::Basic(outbe_rewards::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_rewards::precompile::PAYABLE_SELECTORS),
-    // Queries need no bodies; only `claimReward` mints a Gem, and it fails closed
-    // without the readers route.
-    AGENT_REWARD_ADDRESS => (DispatchAdapter::ReadersOptional {
-        without_readers: outbe_agentreward::precompile::dispatch,
-        with_readers: outbe_agentreward::precompile::dispatch_with_readers,
-    }, default_base_gas, ValuePolicy::Reject, outbe_agentreward::precompile::PAYABLE_SELECTORS),
-    METADOSIS_ADDRESS => (DispatchAdapter::Basic(outbe_metadosis::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_metadosis::precompile::PAYABLE_SELECTORS),
-    FIDELITY_ADDRESS => (DispatchAdapter::Basic(outbe_fidelity::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_fidelity::precompile::PAYABLE_SELECTORS),
-    PROMIS_LIMIT_ADDRESS => (DispatchAdapter::Basic(outbe_promislimit::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_promislimit::precompile::PAYABLE_SELECTORS),
-    ORACLE_ADDRESS => (DispatchAdapter::Basic(outbe_oracle::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_oracle::precompile::PAYABLE_SELECTORS),
-    ZEROFEE_ADDRESS => (DispatchAdapter::Basic(outbe_zerofee::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_zerofee::precompile::PAYABLE_SELECTORS),
-    OUTBE_SYSTEM_TX_ADDRESS => (DispatchAdapter::ReadersOptional {
-        without_readers: crate::begin_block_precompile::dispatch,
-        with_readers: crate::begin_block_precompile::dispatch_with_readers,
-    }, default_base_gas, ValuePolicy::Reject, crate::begin_block_precompile::PAYABLE_SELECTORS),
-    ZKPROOF_GROTH16_ADDRESS => (DispatchAdapter::Basic(crate::zk::dispatch_groth16), crate::zk::groth16_base_gas, ValuePolicy::Reject, crate::zk::GROTH16_PAYABLE_SELECTORS),
-    TEE_REGISTRY_ADDRESS => (DispatchAdapter::Basic(outbe_teeregistry::v1_precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_teeregistry::v1_precompile::PAYABLE_SELECTORS),
-    L2_REGISTRY_ADDRESS => (DispatchAdapter::Basic(outbe_l2registry::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_l2registry::precompile::PAYABLE_SELECTORS),
-    HYPERLANE_CONTROLLER_ADDRESS => (DispatchAdapter::Basic(outbe_hyperlanecontroller::precompile::dispatch), default_base_gas, ValuePolicy::Payable, outbe_hyperlanecontroller::precompile::PAYABLE_SELECTORS),
-    STABLECOIN_FACTORY_ADDRESS => (DispatchAdapter::Basic(stablecoin_factory_dispatch), default_base_gas, ValuePolicy::Reject, outbe_stablecoinfactory::precompile::PAYABLE_SELECTORS),
-    STABLECOIN_POLICY_REGISTRY_ADDRESS => (DispatchAdapter::Basic(stablecoin_policy_dispatch), default_base_gas, ValuePolicy::Reject, outbe_stablecoinpolicy::precompile::PAYABLE_SELECTORS),
-    RADICLE_REGISTRY_ADDRESS => (DispatchAdapter::Basic(outbe_radicleregistry::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_radicleregistry::precompile::PAYABLE_SELECTORS),
-    OCOMP_REGISTRY_ADDRESS => (DispatchAdapter::Basic(outbe_ocompregistry::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_ocompregistry::precompile::PAYABLE_SELECTORS),
-    GOVERNANCE_ADDRESS => (DispatchAdapter::Basic(outbe_governance::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_governance::precompile::PAYABLE_SELECTORS),
-    VOTE_ADDRESS => (DispatchAdapter::Basic(vote_dispatch), default_base_gas, ValuePolicy::Payable, outbe_vote::precompile::PAYABLE_SELECTORS),
-    UPDATE_ADDRESS => (DispatchAdapter::Basic(outbe_update::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_update::precompile::PAYABLE_SELECTORS),
+    GRATIS_ADDRESS => (outbe_gratis::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_gratis::precompile::PAYABLE_SELECTORS),
+    GRATIS_FACTORY_ADDRESS => (outbe_gratisfactory::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_gratisfactory::precompile::PAYABLE_SELECTORS),
+    PROMIS_ADDRESS => (outbe_promis::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_promis::precompile::PAYABLE_SELECTORS),
+    PROMIS_FACTORY_ADDRESS => (outbe_promisfactory::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_promisfactory::precompile::PAYABLE_SELECTORS),
+    TRIBUTE_ADDRESS => (outbe_tribute::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_tribute::precompile::PAYABLE_SELECTORS),
+    NOD_ADDRESS => (outbe_nod::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_nod::precompile::PAYABLE_SELECTORS),
+    NOD_FACTORY_ADDRESS => (outbe_nodfactory::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_nodfactory::precompile::PAYABLE_SELECTORS),
+    GEM_ADDRESS => (outbe_gem::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_gem::precompile::PAYABLE_SELECTORS),
+    GEM_FACTORY_ADDRESS => (outbe_gemfactory::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_gemfactory::precompile::PAYABLE_SELECTORS),
+    INTEX_ADDRESS => (outbe_intex::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_intex::precompile::PAYABLE_SELECTORS),
+    INTEX_FACTORY_ADDRESS => (outbe_intexfactory::precompile::dispatch, default_base_gas, ValuePolicy::Payable, outbe_intexfactory::precompile::PAYABLE_SELECTORS),
+    DESIS_ADDRESS => (outbe_desis::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_desis::precompile::PAYABLE_SELECTORS),
+    VAULT_ROUTER_ADDRESS => (outbe_vaultrouter::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_vaultrouter::precompile::PAYABLE_SELECTORS),
+    CREDIS_ADDRESS => (outbe_credis::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_credis::precompile::PAYABLE_SELECTORS),
+    CREDIS_FACTORY_ADDRESS => (outbe_credisfactory::precompile::dispatch, default_base_gas, ValuePolicy::Payable, outbe_credisfactory::precompile::PAYABLE_SELECTORS),
+    CCA_REGISTRY_ADDRESS => (outbe_ccaregistry::precompile::dispatch, default_base_gas, ValuePolicy::Payable, outbe_ccaregistry::precompile::PAYABLE_SELECTORS),
+    TRIBUTE_FACTORY_ADDRESS => (outbe_tributefactory::precompile::dispatch, outbe_tributefactory::precompile::base_gas, ValuePolicy::Reject, outbe_tributefactory::precompile::PAYABLE_SELECTORS),
+    VALIDATOR_SET_ADDRESS => (outbe_validatorset::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_validatorset::precompile::PAYABLE_SELECTORS),
+    SLASH_INDICATOR_ADDRESS => (outbe_slashindicator::precompile::dispatch, outbe_slashindicator::precompile::base_gas, ValuePolicy::Reject, outbe_slashindicator::precompile::PAYABLE_SELECTORS),
+    STAKING_ADDRESS => (outbe_staking::precompile::dispatch, default_base_gas, ValuePolicy::Payable, outbe_staking::precompile::PAYABLE_SELECTORS),
+    REWARDS_ADDRESS => (outbe_rewards::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_rewards::precompile::PAYABLE_SELECTORS),
+    AGENT_REWARD_ADDRESS => (outbe_agentreward::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_agentreward::precompile::PAYABLE_SELECTORS),
+    METADOSIS_ADDRESS => (outbe_metadosis::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_metadosis::precompile::PAYABLE_SELECTORS),
+    FIDELITY_ADDRESS => (outbe_fidelity::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_fidelity::precompile::PAYABLE_SELECTORS),
+    PROMIS_LIMIT_ADDRESS => (outbe_promislimit::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_promislimit::precompile::PAYABLE_SELECTORS),
+    ORACLE_ADDRESS => (outbe_oracle::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_oracle::precompile::PAYABLE_SELECTORS),
+    ZEROFEE_ADDRESS => (outbe_zerofee::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_zerofee::precompile::PAYABLE_SELECTORS),
+    OUTBE_SYSTEM_TX_ADDRESS => (crate::begin_block_precompile::dispatch, default_base_gas, ValuePolicy::Reject, crate::begin_block_precompile::PAYABLE_SELECTORS),
+    ZKPROOF_GROTH16_ADDRESS => (crate::zk::dispatch_groth16, crate::zk::groth16_base_gas, ValuePolicy::Reject, crate::zk::GROTH16_PAYABLE_SELECTORS),
+    TEE_REGISTRY_ADDRESS => (outbe_teeregistry::v1_precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_teeregistry::v1_precompile::PAYABLE_SELECTORS),
+    L2_REGISTRY_ADDRESS => (outbe_l2registry::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_l2registry::precompile::PAYABLE_SELECTORS),
+    HYPERLANE_CONTROLLER_ADDRESS => (outbe_hyperlanecontroller::precompile::dispatch, default_base_gas, ValuePolicy::Payable, outbe_hyperlanecontroller::precompile::PAYABLE_SELECTORS),
+    STABLECOIN_FACTORY_ADDRESS => (stablecoin_factory_dispatch, default_base_gas, ValuePolicy::Reject, outbe_stablecoinfactory::precompile::PAYABLE_SELECTORS),
+    STABLECOIN_POLICY_REGISTRY_ADDRESS => (stablecoin_policy_dispatch, default_base_gas, ValuePolicy::Reject, outbe_stablecoinpolicy::precompile::PAYABLE_SELECTORS),
+    RADICLE_REGISTRY_ADDRESS => (outbe_radicleregistry::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_radicleregistry::precompile::PAYABLE_SELECTORS),
+    OCOMP_REGISTRY_ADDRESS => (outbe_ocompregistry::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_ocompregistry::precompile::PAYABLE_SELECTORS),
+    GOVERNANCE_ADDRESS => (outbe_governance::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_governance::precompile::PAYABLE_SELECTORS),
+    VOTE_ADDRESS => (vote_dispatch, default_base_gas, ValuePolicy::Payable, outbe_vote::precompile::PAYABLE_SELECTORS),
+    UPDATE_ADDRESS => (outbe_update::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_update::precompile::PAYABLE_SELECTORS),
 }
 
 pub(crate) fn resolve(address: &Address) -> Option<Route> {
@@ -534,54 +457,25 @@ mod tests {
     }
 
     #[test]
-    fn required_reader_route_fails_before_module_dispatch_when_authority_is_absent() {
+    fn tribute_state_read_does_not_require_body_readers() {
         let mut provider = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(1);
-        let storage = StorageHandle::new(&mut provider);
-        let error = lookup(&TRIBUTE_ADDRESS)
+        let call = outbe_tribute::precompile::ITribute::totalSupplyCall {};
+        let output = lookup(&TRIBUTE_ADDRESS)
             .unwrap()
             .dispatch(
-                storage,
-                &ExecutionScope::default(),
-                None,
+                StorageHandle::new(&mut provider),
                 RouteCall {
                     callee: TRIBUTE_ADDRESS,
-                    data: &[],
+                    data: &call.abi_encode(),
                     caller: Address::ZERO,
                     value: U256::ZERO,
                 },
             )
-            .unwrap_err();
-        assert!(matches!(
-            error,
-            PrecompileError::BodyReadUnavailable(message)
-                if message == "execution body read authority was not supplied"
-        ));
-    }
-
-    #[test]
-    fn reader_modes_match_existing_execution_requirements() {
-        for address in [
-            TRIBUTE_ADDRESS,
-            TRIBUTE_FACTORY_ADDRESS,
-            NOD_ADDRESS,
-            NOD_FACTORY_ADDRESS,
-        ] {
-            assert_eq!(
-                lookup(&address).unwrap().reader_mode(),
-                ReaderMode::Required
-            );
-        }
+            .unwrap();
         assert_eq!(
-            lookup(&OUTBE_SYSTEM_TX_ADDRESS).unwrap().reader_mode(),
-            ReaderMode::Optional
-        );
-        assert_eq!(
-            lookup(&VOTE_ADDRESS).unwrap().reader_mode(),
-            ReaderMode::None
-        );
-        assert_eq!(
-            lookup(&RADICLE_REGISTRY_ADDRESS).unwrap().reader_mode(),
-            ReaderMode::None
+            outbe_tribute::precompile::ITribute::totalSupplyCall::abi_decode_returns(&output)
+                .unwrap(),
+            U256::ZERO
         );
     }
 
@@ -609,8 +503,6 @@ mod tests {
         let output = route
             .dispatch(
                 StorageHandle::new(&mut provider),
-                &ExecutionScope::default(),
-                None,
                 RouteCall {
                     callee: TEE_REGISTRY_ADDRESS,
                     data: &v1,
@@ -634,8 +526,6 @@ mod tests {
         assert!(route
             .dispatch(
                 StorageHandle::new(&mut provider),
-                &ExecutionScope::default(),
-                None,
                 RouteCall {
                     callee: TEE_REGISTRY_ADDRESS,
                     data: &legacy,
@@ -659,8 +549,6 @@ mod tests {
         let output = route
             .dispatch(
                 storage,
-                &ExecutionScope::default(),
-                None,
                 RouteCall {
                     callee: STABLECOIN_POLICY_REGISTRY_ADDRESS,
                     data: &data,
@@ -682,8 +570,6 @@ mod tests {
         let output = route
             .dispatch(
                 storage,
-                &ExecutionScope::default(),
-                None,
                 RouteCall {
                     callee: STABLECOIN_FACTORY_ADDRESS,
                     data: &data,
@@ -774,8 +660,6 @@ mod tests {
         assert!(matches!(
             route.dispatch(
                 storage,
-                &ExecutionScope::default(),
-                None,
                 RouteCall {
                     value: U256::from(1u64),
                     ..class_call(token, &[])
@@ -798,8 +682,6 @@ mod tests {
             route
                 .dispatch(
                     storage.clone(),
-                    &ExecutionScope::default(),
-                    None,
                     RouteCall {
                         value: U256::from(1u64),
                         ..class_call(token, &[])
@@ -811,8 +693,6 @@ mod tests {
         assert!(matches!(
             route.dispatch(
                 storage,
-                &ExecutionScope::default(),
-                None,
                 class_call(token, &[]),
             ),
             Err(PrecompileError::Revert(message)) if message == "unregistered stablecoin address"
@@ -829,8 +709,6 @@ mod tests {
         assert!(matches!(
             route.dispatch(
                 storage.clone(),
-                &ExecutionScope::default(),
-                None,
                 class_call(token, &[]),
             ),
             Err(PrecompileError::Revert(message)) if message.contains("marker code mismatch")
@@ -843,12 +721,7 @@ mod tests {
             )
             .unwrap();
         assert!(matches!(
-            route.dispatch(
-                storage.clone(),
-                &ExecutionScope::default(),
-                None,
-                class_call(token, &[]),
-            ),
+            route.dispatch(storage.clone(), class_call(token, &[]),),
             Err(PrecompileError::Revert(_))
         ));
     }
@@ -861,12 +734,7 @@ mod tests {
         let call = outbe_stablecoin::precompile::IStablecoin::symbolCall {};
         let output = resolve(&token)
             .unwrap()
-            .dispatch(
-                storage.clone(),
-                &ExecutionScope::default(),
-                None,
-                class_call(token, &call.abi_encode()),
-            )
+            .dispatch(storage.clone(), class_call(token, &call.abi_encode()))
             .unwrap();
         assert_eq!(
             outbe_stablecoin::precompile::IStablecoin::symbolCall::abi_decode_returns(&output)
@@ -880,8 +748,6 @@ mod tests {
         assert!(matches!(
             resolve(&token).unwrap().dispatch(
                 storage,
-                &ExecutionScope::default(),
-                None,
                 class_call(token, &call.abi_encode()),
             ),
             Err(PrecompileError::Revert(message)) if message.contains("identity does not match")

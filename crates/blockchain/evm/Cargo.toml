@@ -8,8 +8,6 @@ publish.workspace = true
 [dependencies]
 # Internal
 outbe-primitives.workspace = true
-outbe-compressed-entities.workspace = true
-outbe-offchain-data.workspace = true
 outbe-gratis.workspace = true
 outbe-gratisfactory.workspace = true
 outbe-promis.workspace = true
@@ -93,7 +91,7 @@ parking_lot.workspace = true
 outbe-evm = { path = ".", features = ["test-utils"] }
 outbe-tribute = { workspace = true, features = ["test-enclave"] }
 outbe-chain-constants.workspace = true
-outbe-compressed-entities = { workspace = true, features = ["test-utils"] }
+outbe-node.workspace = true
 outbe-metadosis = { workspace = true, features = ["test-utils"] }
 outbe-nod = { workspace = true, features = ["test-utils", "test-enclave"] }
 outbe-gem = { workspace = true, features = ["test-utils"] }

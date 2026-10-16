@@ -23,7 +23,7 @@ pub(crate) fn run() {
             ..
         },
     ) = super::request::open_voting().into_successor_parts();
-    let fixture = environment.fixture(&prepared.tree_service);
+    let fixture = environment.fixture();
     // Together the transactions exceed the transport cap.
     let transactions = (0..TRANSACTION_COUNT)
         .map(|nonce| {

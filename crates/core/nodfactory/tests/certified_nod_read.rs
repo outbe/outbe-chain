@@ -26,6 +26,11 @@ fn active_generation() -> ActiveGenerationV1 {
 
 fn nod_projection() -> NodCertifiedGenerationProjection {
     NodCertifiedGenerationProjection {
+        source_checkpoint: outbe_ocomp_protocol::intent::FinalizedRequestBindingV1 {
+            block_number: 1,
+            block_hash: B256::repeat_byte(0x71),
+            state_root: B256::repeat_byte(0x72),
+        },
         worldwide_day: WorldwideDay::new(WWD),
         generation: 9,
         job_id: B256::with_last_byte(1),

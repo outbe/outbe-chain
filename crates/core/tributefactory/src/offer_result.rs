@@ -40,7 +40,7 @@ pub(crate) fn legacy_fixture(
         return Err(crate::errors::TributeFactoryError::InvalidCanonicalIdentity.into());
     }
     let body = outbe_tribute::TributeData {
-        tribute_id: outbe_compressed_entities::WwdEntityId::from_day_and_digest(
+        tribute_id: outbe_primitives::wwd_entity_id::WwdEntityId::from_day_and_digest(
             offer.worldwide_day,
             result.token_id,
         ),

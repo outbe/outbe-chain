@@ -3,7 +3,7 @@
 //! This builder is deliberately observational: it cannot create a JobIntent,
 //! snapshot, manifest, result or state. It only closes a record after the
 //! harness has retained a successful public receipt/finality reference and one
-//! independently observed RocksDB/CE source package per pinned validator.
+//! independently observed EVM state source package per pinned validator.
 
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -26,7 +26,7 @@ pub struct PublicTributeCorrelationV1 {
     pub stored_body_sha256: String,
 }
 
-/// One validator's independently read and verified projection/CE package.
+/// One validator's independently read and verified EVM state package.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ValidatorSourceCorrelationV1 {
@@ -35,11 +35,11 @@ pub struct ValidatorSourceCorrelationV1 {
     pub finalized_block_hash: String,
     pub raw_entity_id: String,
     pub stored_body_sha256: String,
-    pub primary_projection_sha256: String,
+    pub state_record_sha256: String,
     pub owner_index_sha256: String,
     pub worldwide_day_index_sha256: String,
-    pub ce_root: String,
-    pub ce_proof_sha256: String,
+    pub state_root: String,
+    pub state_proof_sha256: String,
 }
 
 /// Production-observed JobIntent/snapshot/manifest bindings.
@@ -230,9 +230,9 @@ impl TributeCorrelationBuilder {
         if let Some(first) = self.validator_sources.values().next() {
             for (field, actual, expected) in [
                 (
-                    "primary_projection_sha256",
-                    &evidence.primary_projection_sha256,
-                    &first.primary_projection_sha256,
+                    "state_record_sha256",
+                    &evidence.state_record_sha256,
+                    &first.state_record_sha256,
                 ),
                 (
                     "owner_index_sha256",
@@ -244,7 +244,7 @@ impl TributeCorrelationBuilder {
                     &evidence.worldwide_day_index_sha256,
                     &first.worldwide_day_index_sha256,
                 ),
-                ("ce_root", &evidence.ce_root, &first.ce_root),
+                ("state_root", &evidence.state_root, &first.state_root),
             ] {
                 require_equal(evidence.validator_index, field, actual, expected)?;
             }
@@ -336,17 +336,14 @@ fn require_source_fields(evidence: &ValidatorSourceCorrelationV1) -> Result<(), 
         ),
         ("raw_entity_id", evidence.raw_entity_id.as_str()),
         ("stored_body_sha256", evidence.stored_body_sha256.as_str()),
-        (
-            "primary_projection_sha256",
-            evidence.primary_projection_sha256.as_str(),
-        ),
+        ("state_record_sha256", evidence.state_record_sha256.as_str()),
         ("owner_index_sha256", evidence.owner_index_sha256.as_str()),
         (
             "worldwide_day_index_sha256",
             evidence.worldwide_day_index_sha256.as_str(),
         ),
-        ("ce_root", evidence.ce_root.as_str()),
-        ("ce_proof_sha256", evidence.ce_proof_sha256.as_str()),
+        ("state_root", evidence.state_root.as_str()),
+        ("state_proof_sha256", evidence.state_proof_sha256.as_str()),
     ] {
         require_nonempty(field, value)?;
     }
@@ -421,11 +418,11 @@ mod tests {
             finalized_block_hash: "0xfinal".to_owned(),
             raw_entity_id: "entity".to_owned(),
             stored_body_sha256: "body".to_owned(),
-            primary_projection_sha256: "primary".to_owned(),
+            state_record_sha256: "primary".to_owned(),
             owner_index_sha256: "owner-index".to_owned(),
             worldwide_day_index_sha256: "day-index".to_owned(),
-            ce_root: "ce-root".to_owned(),
-            ce_proof_sha256: format!("ce-proof-{validator_index}"),
+            state_root: "state-root".to_owned(),
+            state_proof_sha256: format!("state-proof-{validator_index}"),
         }
     }
 
@@ -475,13 +472,13 @@ mod tests {
         builder.record_public_tribute(public()).unwrap();
         builder.record_validator_source(source(0)).unwrap();
         let mut changed = source(1);
-        changed.primary_projection_sha256 = "changed".to_owned();
+        changed.state_record_sha256 = "changed".to_owned();
 
         assert_eq!(
             builder.record_validator_source(changed),
             Err(CorrelationError::SourceIdentityMismatch {
                 validator_index: 1,
-                field: "primary_projection_sha256",
+                field: "state_record_sha256",
             })
         );
         assert_eq!(builder.missing_validator_sources(), vec![1, 2, 3]);

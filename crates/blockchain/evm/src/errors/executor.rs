@@ -8,7 +8,7 @@ use outbe_primitives::{
     error::PrecompileError, reshare_artifact::ExecutionSummaryArtifact, system_tx::SystemTxKind,
 };
 
-/// Node-local storage, body-read, and tree-availability errors in the block executor and builder.
+/// Node-local storage and body-read errors in the block executor and builder.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ExecutorStorageError {
@@ -18,8 +18,6 @@ pub enum ExecutorStorageError {
         "missing execution summary artifact for accounted-parent block {block_number} ({block_hash})"
     )]
     MissingAccountedParentExecutionSummary { block_number: u64, block_hash: B256 },
-    #[error("{0}")]
-    PublishCandidateTree(String),
     #[error("outbe hook flush: {0}")]
     HookFlush(String),
     #[error("load precompile account {address}: {reason}")]
@@ -82,9 +80,6 @@ impl From<ExecutorStorageError> for PrecompileError {
             ExecutorStorageError::ReadAccountedParentArtifact(_)
             | ExecutorStorageError::MissingAccountedParentExecutionSummary { .. } => {
                 Self::BodyReadUnavailable(error.to_string())
-            }
-            ExecutorStorageError::PublishCandidateTree(_) => {
-                Self::TreeUnavailable(error.to_string())
             }
             ExecutorStorageError::HookFlush(_)
             | ExecutorStorageError::LoadPrecompileAccount { .. }
@@ -227,8 +222,6 @@ impl From<SystemTxBuildError> for BlockExecutionError {
 pub enum ExecutorValidationError {
     #[error("{0}")]
     BlockArtifacts(String),
-    #[error("missing compressed-entities SealOutput")]
-    MissingCompressedEntitiesSealOutput,
     #[error("reserved system transaction cannot execute without commit")]
     ReservedSystemTxWithoutCommit,
     #[error("transaction follows the terminal OCOMP system transaction")]
@@ -254,22 +247,8 @@ pub enum ExecutorValidationError {
     InvalidNonGenesisBeneficiary { expected: Address, actual: Address },
     #[error("invalid system tx layout: {0}")]
     InvalidSystemTxLayout(String),
-    #[error("compressed-entity begin_block emitted an unexpected event")]
-    CompressedEntitiesBeginBlockUnexpectedEvent,
     #[error("standard Ethereum post-execution changes already applied")]
     PostExecutionAlreadyApplied,
-    #[error("missing compressed-entities root artifact in block extra_data")]
-    MissingCompressedEntitiesRootArtifact,
-    #[error("compressed-entities root artifact scheme mismatch: header={header}, active={active}")]
-    CompressedEntitiesRootSchemeMismatch { header: u32, active: u32 },
-    #[error("compressed-entities header/SealOutput root mismatch: header={header}, seal={seal}")]
-    CompressedEntitiesHeaderSealRootMismatch { header: B256, seal: B256 },
-    #[error("compressed-entity end_block emitted an unexpected event")]
-    CompressedEntitiesEndBlockUnexpectedEvent,
-    #[error("compressed-entity preview requested outside active lifecycle")]
-    CompressedEntitiesPreviewOutsideActiveLifecycle,
-    #[error("compressed-entity preview unexpectedly mutated EVM state")]
-    CompressedEntitiesPreviewMutatedEvmState,
     #[error("missing proposer EVM address for begin-zone system txs")]
     MissingBeginZoneProposerAddress,
     #[error("validate proposer identity: {0}")]
@@ -278,27 +257,27 @@ pub enum ExecutorValidationError {
     ProposerNotActiveConsensusParticipant { proposer: Address },
     #[error("HookEvents visible gas overflow")]
     HookEventsVisibleGasOverflow,
-    #[error("system tx visible gas overflow after compressed-entity charge")]
-    SystemTxVisibleGasOverflowAfterCeCharge,
+    #[error("system tx visible gas overflow after additional charge")]
+    SystemTxVisibleGasOverflowAfterAdditionalCharge,
     #[error(
-        "system tx receipt gas exceeds signed gas limit: visible={visible}, signed_limit={signed_limit}, visible_base={visible_base}, compressed_entities={compressed_entities}"
+        "system tx receipt gas exceeds signed gas limit: visible={visible}, signed_limit={signed_limit}, visible_base={visible_base}, additional={additional}"
     )]
     SystemTxReceiptGasExceedsSignedLimit {
         visible: u64,
         signed_limit: u64,
         visible_base: u64,
-        compressed_entities: u64,
+        additional: u64,
     },
     #[error("system tx cumulative visible gas overflow")]
     SystemTxCumulativeVisibleGasOverflow,
     #[error(
-        "system tx visible gas exceeds block gas limit: cumulative={cumulative}, block_limit={block_limit}, visible_base={visible_base}, compressed_entities={compressed_entities}"
+        "system tx visible gas exceeds block gas limit: cumulative={cumulative}, block_limit={block_limit}, visible_base={visible_base}, additional={additional}"
     )]
     SystemTxVisibleGasExceedsBlockLimit {
         cumulative: u64,
         block_limit: u64,
         visible_base: u64,
-        compressed_entities: u64,
+        additional: u64,
     },
     #[error("system tx failure visible gas overflow")]
     SystemTxFailureVisibleGasOverflow,
@@ -397,10 +376,6 @@ pub enum ExecutorValidationError {
     Phase1CommitUnexpectedKind { kind: SystemTxKind },
     #[error("Phase 1 commit pre-exec: encode SystemTxInputV2: {0}")]
     Phase1CommitEncodeInput(String),
-    #[error("Phase 1 commit pre-exec: open CE gas window: {0}")]
-    Phase1CommitOpenCeGasWindow(String),
-    #[error("Phase 1 commit pre-exec: read CE gas window: {0}")]
-    Phase1CommitReadCeGasWindow(String),
     #[error(
         "critical system tx CertifiedParentAccounting did not succeed (revert/halt) in Phase 1 pre-exec commit: {result}"
     )]
@@ -474,12 +449,6 @@ pub enum ExecutorValidationError {
         expected_kind: SystemTxKind,
         resolved_kind: SystemTxKind,
     },
-    #[error("read CE gas window for {expected_phase:?} at body_index={body_index}: {reason}")]
-    ReadCeGasWindow {
-        expected_phase: SystemTxKind,
-        body_index: usize,
-        reason: String,
-    },
     #[error(
         "critical system tx {expected_phase:?} did not succeed (revert/halt) at body_index={body_index}, block_number={block_number}, failure_code={code}: {result}"
     )]
@@ -542,12 +511,6 @@ pub enum ExecutorValidationError {
         body_index: usize,
         signed: u64,
         visible_base: u64,
-    },
-    #[error("open CE gas window for {expected_phase:?} at body_index={body_index}: {reason}")]
-    OpenCeGasWindow {
-        expected_phase: SystemTxKind,
-        body_index: usize,
-        reason: String,
     },
     #[error("terminal system tx ordinal {ordinal} exceeds u8 range")]
     TerminalSystemTxOrdinalExceedsU8 { ordinal: usize },
@@ -657,14 +620,6 @@ impl ExecutorValidationError {
         Self::Phase1CommitEncodeInput(error.to_string())
     }
 
-    pub(crate) fn phase1_commit_open_ce_gas_window(error: impl Display) -> Self {
-        Self::Phase1CommitOpenCeGasWindow(error.to_string())
-    }
-
-    pub(crate) fn phase1_commit_read_ce_gas_window(error: impl Display) -> Self {
-        Self::Phase1CommitReadCeGasWindow(error.to_string())
-    }
-
     pub(crate) fn phase1_commit_did_not_succeed(result: impl Debug) -> Self {
         Self::Phase1CommitDidNotSucceed {
             result: format!("{result:?}"),
@@ -703,18 +658,6 @@ impl ExecutorValidationError {
 
     pub(crate) fn plan_visible_system_tx_gas(error: impl Display) -> Self {
         Self::PlanVisibleSystemTxGas(error.to_string())
-    }
-
-    pub(crate) fn read_ce_gas_window(
-        expected_phase: SystemTxKind,
-        body_index: usize,
-        error: impl Display,
-    ) -> Self {
-        Self::ReadCeGasWindow {
-            expected_phase,
-            body_index,
-            reason: error.to_string(),
-        }
     }
 
     pub(crate) fn critical_system_tx_did_not_succeed(
@@ -756,18 +699,6 @@ impl ExecutorValidationError {
 
     pub(crate) fn decode_system_tx_at_body_index(body_index: usize, error: impl Display) -> Self {
         Self::DecodeSystemTxAtBodyIndex {
-            body_index,
-            reason: error.to_string(),
-        }
-    }
-
-    pub(crate) fn open_ce_gas_window(
-        expected_phase: SystemTxKind,
-        body_index: usize,
-        error: impl Display,
-    ) -> Self {
-        Self::OpenCeGasWindow {
-            expected_phase,
             body_index,
             reason: error.to_string(),
         }

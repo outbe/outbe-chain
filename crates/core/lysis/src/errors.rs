@@ -142,7 +142,9 @@ impl From<LysisArithmeticErrorV1> for ProgramErrorV1 {
 
 impl ProgramErrorV1 {
     /// Creates an entity-ID derivation arithmetic error.
-    pub fn entity_id_derivation(err: outbe_compressed_entities::CommitmentError) -> Self {
+    pub fn entity_id_derivation(
+        err: outbe_primitives::wwd_entity_id::EntityIdDerivationError,
+    ) -> Self {
         Self::Arithmetic {
             reason: LysisArithmeticErrorV1::EntityIdDerivation(err.to_string()),
         }

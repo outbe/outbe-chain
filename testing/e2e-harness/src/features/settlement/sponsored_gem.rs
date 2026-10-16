@@ -176,7 +176,7 @@ fn prepare(world: &mut World) -> SponsoredGem {
             .rpc
             .latest_block_timestamp(world.validators.primary_port())
             .expect("committee head timestamp");
-        eth::send_call(
+        let backdated = eth::send_call_outcome(
             &url,
             addresses::GEM_FACTORY_ADDR,
             DEPLOYER_KEY,
@@ -187,6 +187,7 @@ fn prepare(world: &mut World) -> SponsoredGem {
             None,
         )
         .expect("backdate the reward Gem's issuance stamp");
+        assert_mined_success(&backdated, "backdate the reward Gem's issuance stamp");
         test_issuance::seed_day_vwaps(
             &url,
             DEPLOYER_KEY,

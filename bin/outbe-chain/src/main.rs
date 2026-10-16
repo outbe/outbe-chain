@@ -8,29 +8,14 @@
 use clap::Parser;
 use commonware_runtime::{Runner as _, Spawner as _, Supervisor as _};
 use eyre::WrapErr as _;
-use outbe_compressed_entities::{
-    CandidateCacheLimits, CeMdbx, CompressedTreeService, EnvironmentIdentity, FinalizedMarker,
-    ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
-};
-use outbe_consensus::executor::actor::FinalizedCeCommitter;
+use outbe_consensus::executor::actor::FinalizedExecutionBarrier;
 use outbe_engine::args::ConsensusArgs;
 use outbe_engine::bridge::ConsensusExecutionBridge;
-use outbe_engine::ce_finalizer::{
-    DurableCeState, FinalizedCeTree, RethCeFinalizer, RethDurableCeState,
-};
-use outbe_engine::ce_recovery::{
-    CanonicalCeReplaySource, CeStartupRecovery, CeStartupRecoveryCoordinator, StartupCeTree,
-};
+use outbe_engine::finalization::{RethDurableExecutionState, RethFinalizationBarrier};
 use outbe_evm::OutbeEvmSigner;
 use outbe_node::{
-    compressed_storage::{
-        validate_compressed_storage_runtime_config, CompressedStorageRuntimeConfig,
-    },
-    ocomp::retention::{RetainedTributeWriter, SharedOcompRetentionSelector},
-    projection::{
-        prepare_offchain_data_projection_with_retention, validate_offchain_data_checkpoint,
-        OffchainDataProjectionConfig, ProjectionRetentionFence,
-    },
+    ocomp::retention::SharedOcompRetentionSelector,
+    state_persistence::{validate_state_persistence_runtime_config, StatePersistenceRuntimeConfig},
     OutbeBeaconConsensus, OutbeFullNode, OutbeNode,
 };
 use outbe_operator::tee::{

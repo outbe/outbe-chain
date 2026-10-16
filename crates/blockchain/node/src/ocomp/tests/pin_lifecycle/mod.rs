@@ -6,17 +6,16 @@ use std::{
     fs::{self, File},
     io,
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, Ordering},
         Arc, Mutex,
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{b256, keccak256, Address, Bytes, Log, B256, U256};
 use alloy_sol_types::SolEvent as _;
 use k256::ecdsa::{signature::hazmat::PrehashSigner as _, Signature, SigningKey};
-use outbe_compressed_entities::WwdEntityId;
 use outbe_consensus::{
     block::ConsensusBlock, finalization::parent_cert_store::FinalizedParentCertStore,
 };
@@ -29,7 +28,6 @@ use outbe_ocomp_protocol::{
         POC_KEY_EPOCH, RESULT_SIGNATURE_PURPOSE_BITMAP,
     },
     common::{BoundedBytes, ProofBytes},
-    generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1,
     intent::{
         intent_storage_key, job_id_from_intent_id, ActivationPreconditionsV1,
         CertifiedParentAccountingMetadataV2, DayType, FinalizedIntentProofV1,
@@ -38,17 +36,10 @@ use outbe_ocomp_protocol::{
     },
     state::{OcompFinalizedJobV1, OcompJobRecordV1, OcompJobStatus},
 };
-use outbe_offchain_data::TributeRetentionSelector;
-use outbe_offchain_storage::{AtomicWriteBatch, MemoryStorage, StorageError, StorageWriter};
-use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::{METADOSIS_ADDRESS, VALIDATOR_SET_ADDRESS},
     storage::{hashmap::HashMapStorageProvider, types::StorageKey as _, StorageHandle},
     OutbeHeader, OutbePrimitives,
-};
-use outbe_tribute::{
-    RetainedTributePin, RetainedTributeReader, RetainedTributeWriter, TributeData,
-    TributeRepositoryWriter,
 };
 use reth_chainspec::{ChainSpec, ChainSpecBuilder};
 use reth_ethereum::{primitives::SealedBlock, Block, Receipt, TxType};
@@ -66,8 +57,8 @@ use crate::ocomp::retention::{
     retention_pressure_watermark_for_test, retention_terminal_height_for_status,
     seed_retention_journal_for_test, CandidatePinV1, ExportAuthorityV1, FinalizedInputProofSource,
     FinalizedJobPinV1, FinalizedRequestObservationV1, JournalDurability, OcompRetentionCoordinator,
-    OcompSnapshotEligibilityV1, PinRecordV1, PinStateV1, RetainedGcRetrySchedule, RetentionError,
-    RetentionStatus, RethFinalizedInputProofSource, SharedOcompRetentionSelector,
+    OcompSnapshotEligibilityV1, PinRecordV1, PinStateV1, RetentionError, RetentionStatus,
+    RethFinalizedInputProofSource, SharedOcompRetentionSelector,
 };
 
 mod fixtures;

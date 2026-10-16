@@ -858,7 +858,6 @@ class LaunchBundleTests(unittest.TestCase):
             for index in range(4):
                 directory = output_dir / f"validator-{index}"
                 for name in (
-                    "run-storage.sh",
                     "run-enclave.sh",
                     "run-radicle.sh",
                     "run-node.sh",
@@ -917,85 +916,23 @@ class LaunchBundleTests(unittest.TestCase):
                 ):
                     self.assertIn(var, script, f"{role} script is missing {var}")
 
-    def test_storage_launcher_obeys_current_toml_and_never_starts_mongo_for_rocks(self):
-        import subprocess
+    def test_bundle_uses_evm_state_without_entity_datasource_configuration(self):
+        import tarfile
 
         with tempfile.TemporaryDirectory() as tmp:
             _, _, output_dir = self.render(tmp)
-            directory = output_dir / "validator-0"
-            self.assertFalse((directory / "run-mongodb.sh").exists())
-            # A stale script from an older Mongo deployment must not activate the service.
-            mongo = directory / "run-mongodb.sh"
-            mongo.write_text("#!/bin/sh\ntouch mongo-started\n")
-            mongo.chmod(0o700)
-            subprocess.run(
-                ["bash", str(directory / "run-storage.sh")],
-                check=True,
-                capture_output=True,
-            )
-            self.assertFalse((directory / "mongo-started").exists())
-            config = directory / "offchain-storage.toml"
-            source = 'version=1\nbackend="mongodb"\n[mongodb]\nuri="mongodb://remote:27017/?replicaSet=rs0"\ndatabase="operator"\n'
-            config.write_text(source)
-            subprocess.run(
-                ["bash", str(directory / "run-storage.sh")],
-                check=True,
-                capture_output=True,
-            )
-            self.assertFalse((directory / "mongo-started").exists())
-            config.write_text(source.replace("remote:27017", "127.0.0.1:27017"))
-            subprocess.run(
-                ["bash", str(directory / "run-storage.sh")],
-                check=True,
-                capture_output=True,
-            )
-            self.assertTrue((directory / "mongo-started").exists())
-
-    def test_mongo_bundle_selects_distinct_databases_and_packages_storage_helper(self):
-        import tarfile
-        import tomllib
-
-        with tempfile.TemporaryDirectory() as tmp:
-            _, _, output_dir = self.render(
-                tmp,
-                {
-                    "offchain_storage": {
-                        "backend": "mongodb",
-                        "mongodb": {"database": "network"},
-                    }
-                },
-            )
-            databases = set()
             for index in range(4):
                 directory = output_dir / f"validator-{index}"
-                document = tomllib.loads(
-                    (directory / "offchain-storage.toml").read_text()
-                )
-                databases.add(document["mongodb"]["database"])
-                self.assertTrue((directory / "run-mongodb.sh").exists())
-                with tarfile.open(
-                    output_dir / "dist" / f"validator-{index}.tgz"
-                ) as archive:
-                    self.assertIn("offchain_storage.py", archive.getnames())
-                    self.assertIn(
-                        f"validator-{index}/offchain-storage.toml", archive.getnames()
-                    )
-            self.assertEqual(len(databases), 4)
-
-    def test_exporter_uses_node_projection(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            _, _, output_dir = self.render(tmp)
-            exporter = (
-                output_dir / "validator-0" / "run-ocomp-exporter.sh"
-            ).read_text()
-            self.assertIn(
-                "/validator-0/offchain-storage.toml",
-                exporter,
-            )
-            self.assertNotIn("OUTBE_OCOMP_PROJECTION_MONGODB", exporter)
-            node = (output_dir / "validator-0" / "run-node.sh").read_text()
-            self.assertIn("/validator-0/offchain-storage.toml", node)
-            self.assertNotIn("--projection.start-block", node)
+                for old in ["offchain-storage.toml", "run-storage.sh", "run-mongodb.sh"]:
+                    self.assertFalse((directory / old).exists())
+                node = (directory / "run-node.sh").read_text()
+                exporter = (directory / "run-ocomp-exporter.sh").read_text()
+                self.assertNotIn("--projection.", node)
+                self.assertNotIn("OUTBE_OCOMP_STORAGE_CONFIG", exporter)
+                with tarfile.open(output_dir / "dist" / f"validator-{index}.tgz") as archive:
+                    names = archive.getnames()
+                    self.assertNotIn("offchain_storage.py", names)
+                    self.assertNotIn(f"validator-{index}/offchain-storage.toml", names)
 
     def test_successor_bundle_catalog_and_dormant_worker_are_release_ready(self):
         with tempfile.TemporaryDirectory() as tmp:

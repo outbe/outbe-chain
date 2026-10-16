@@ -2,14 +2,10 @@
 #[path = "../../../../testing/support/factory_erc20_settlement.rs"]
 mod settlement;
 
-use std::sync::Arc;
-
 use alloy_primitives::{Address, Bytes, FixedBytes, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
-use outbe_compressed_entities::ExecutionScope;
 use outbe_intex::{CreateSeriesParams, IntexCallTrigger, SeriesId};
 use outbe_intexfactory::precompile::IIntexFactory;
-use outbe_offchain_storage::MemoryStorage;
 use outbe_oracle::test_support::record_finalized_day_vwap;
 use outbe_primitives::{
     addresses::{INTEX_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS},
@@ -37,13 +33,7 @@ impl Rail for Intex {
     const SOURCE: StablesSource = StablesSource::IntexCostAmount;
     const EXTRA_COUNTERPARTIES: &'static [Address] = &[INTEX_NFT1155_ADDRESS];
 
-    fn seed(
-        self,
-        storage: &StorageHandle<'_>,
-        _scope: &ExecutionScope,
-        _store: &Arc<MemoryStorage>,
-        issuance_currency: u16,
-    ) -> (U256, u64) {
+    fn seed(self, storage: &StorageHandle<'_>, issuance_currency: u16) -> (U256, u64) {
         // A finalized day above the floor qualifies the series.
         record_finalized_day_vwap(
             storage,

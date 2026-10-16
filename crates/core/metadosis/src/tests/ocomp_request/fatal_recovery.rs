@@ -1,15 +1,8 @@
-use std::sync::Arc;
-
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolCall;
-use outbe_compressed_entities::{
-    begin_block, end_block, preview_end_block, AuthenticatedParentTree,
-    AuthenticatedParentTreeFactory, Commitment, EntityRef, ExactParentIdentity, ExecutionScope,
-    FinalLeafMutation, PartitionRef, ProvisionalTreeBatch, ACTIVE_COMMITMENT_SCHEME,
-};
 use outbe_ocomp_protocol::state::{OcompJobRecordV1, OcompJobStatus, OcompTerminalOutcome};
 use outbe_primitives::{
-    addresses::{COMPRESSED_ENTITIES_ADDRESS, PROMIS_LIMIT_ADDRESS},
+    addresses::PROMIS_LIMIT_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
     chain,
     error::{PrecompileError, Result},
@@ -27,91 +20,6 @@ mod commands {
         run_ocomp_lifecycle_begin_with_scope,
         run_ocomp_terminal_request_with_completed_fixture as run_ocomp_terminal_request,
     };
-}
-
-#[derive(Debug)]
-struct OneTributePartitionTree {
-    parent_root: B256,
-    parent_catalog_root: B256,
-    parent_block_hash: B256,
-    partition_roots: Vec<(outbe_primitives::time::WorldwideDay, B256)>,
-}
-
-impl AuthenticatedParentTree for OneTributePartitionTree {
-    fn parent_block_hash(&self) -> B256 {
-        self.parent_block_hash
-    }
-
-    fn parent_root(&self) -> B256 {
-        self.parent_root
-    }
-
-    fn read_leaf_verified(
-        &self,
-        _entity: EntityRef,
-        expected_parent_root: B256,
-    ) -> Result<Option<Commitment>> {
-        assert_eq!(expected_parent_root, self.parent_root);
-        Ok(None)
-    }
-
-    fn partition_present_verified(
-        &self,
-        partition: PartitionRef,
-        expected_parent_root: B256,
-    ) -> Result<bool> {
-        Ok(self
-            .partition_root_verified(partition, expected_parent_root)?
-            .is_some())
-    }
-
-    fn partition_root_verified(
-        &self,
-        partition: PartitionRef,
-        expected_parent_root: B256,
-    ) -> Result<Option<B256>> {
-        assert_eq!(expected_parent_root, self.parent_root);
-        let PartitionRef::TributeWwd(worldwide_day) = partition;
-        Ok(self
-            .partition_roots
-            .iter()
-            .find_map(|(candidate, root)| (*candidate == worldwide_day).then_some(*root)))
-    }
-
-    fn prepare_seal(
-        &self,
-        block_number: u64,
-        _mutations: &[FinalLeafMutation],
-        _retirements: &[PartitionRef],
-    ) -> Result<ProvisionalTreeBatch> {
-        ProvisionalTreeBatch::new_identity(
-            block_number,
-            self.parent_block_hash,
-            self.parent_catalog_root,
-        )
-        .map_err(|error| PrecompileError::Fatal(error.to_string()))
-    }
-}
-
-#[derive(Debug)]
-struct OneTributePartitionFactory {
-    parent_root: B256,
-    parent_catalog_root: B256,
-    parent_block_hash: B256,
-    partition_roots: Vec<(outbe_primitives::time::WorldwideDay, B256)>,
-}
-
-impl AuthenticatedParentTreeFactory for OneTributePartitionFactory {
-    fn open_parent(&self, parent: ExactParentIdentity) -> Result<Arc<dyn AuthenticatedParentTree>> {
-        assert_eq!(parent.root, self.parent_root);
-        assert_eq!(parent.block_hash, self.parent_block_hash);
-        Ok(Arc::new(OneTributePartitionTree {
-            parent_root: self.parent_root,
-            parent_catalog_root: self.parent_catalog_root,
-            parent_block_hash: self.parent_block_hash,
-            partition_roots: self.partition_roots.clone(),
-        }))
-    }
 }
 
 fn run_terminal_request(
@@ -137,7 +45,7 @@ fn try_terminal_request(
             ),
             storage,
         );
-        commands::run_ocomp_terminal_request(&ctx, &fixture.scope)
+        commands::run_ocomp_terminal_request(&ctx)
     })
 }
 
@@ -164,84 +72,8 @@ fn live_intent(
     })
 }
 
-pub(super) fn begin_recovery_scope(
-    provider: &mut HashMapStorageProvider,
-    fixture: &super::PreparedRequestFixture,
-    block_number: u64,
-) -> ExecutionScope {
-    begin_recovery_scope_for_wwd(provider, &fixture.scope, fixture.wwd, block_number)
-}
-
-pub(super) fn begin_recovery_scope_for_wwd(
-    provider: &mut HashMapStorageProvider,
-    completed_scope: &ExecutionScope,
-    wwd: outbe_primitives::time::WorldwideDay,
-    block_number: u64,
-) -> ExecutionScope {
-    provider.set_block_number(block_number);
-    StorageHandle::enter(provider, |storage| {
-        begin_recovery_scope_from_storage(storage, completed_scope, wwd, block_number)
-    })
-}
-
-pub(super) fn begin_recovery_scope_from_storage(
-    storage: StorageHandle<'_>,
-    completed_scope: &ExecutionScope,
-    wwd: outbe_primitives::time::WorldwideDay,
-    block_number: u64,
-) -> ExecutionScope {
-    begin_recovery_scope_for_wwds_from_storage(storage, completed_scope, &[wwd], block_number)
-}
-
-pub(super) fn begin_recovery_scope_for_wwds_from_storage(
-    storage: StorageHandle<'_>,
-    completed_scope: &ExecutionScope,
-    worldwide_days: &[outbe_primitives::time::WorldwideDay],
-    block_number: u64,
-) -> ExecutionScope {
-    let parent_root = completed_scope.completed_sealed_root().unwrap();
-    let parent_catalog_root = completed_scope.completed_catalog_root().unwrap();
-    let partition_roots = worldwide_days
-        .iter()
-        .map(|wwd| {
-            (
-                *wwd,
-                completed_scope
-                    .completed_partition_root(PartitionRef::TributeWwd(*wwd))
-                    .unwrap()
-                    .root(),
-            )
-        })
-        .collect();
-    let parent_block_hash = B256::repeat_byte(0x91);
-    storage
-        .sstore(
-            COMPRESSED_ENTITIES_ADDRESS,
-            U256::from(1),
-            U256::from_be_slice(parent_root.as_slice()),
-        )
-        .unwrap();
-    let scope = ExecutionScope::default();
-    scope
-        .configure_parent_tree_factory(
-            Arc::new(OneTributePartitionFactory {
-                parent_root,
-                parent_catalog_root,
-                parent_block_hash,
-                partition_roots,
-            }),
-            ACTIVE_COMMITMENT_SCHEME,
-            block_number - 1,
-            parent_block_hash,
-        )
-        .unwrap();
-    begin_block(storage, &scope).unwrap();
-    scope
-}
-
 fn run_lifecycle_begin(
     provider: &mut HashMapStorageProvider,
-    scope: &ExecutionScope,
     block_number: u64,
     timestamp: u64,
 ) -> Result<()> {
@@ -253,13 +85,12 @@ fn run_lifecycle_begin(
             BlockContext::empty_for_tests(block_number, timestamp, chain::CHAIN_ID),
             storage,
         );
-        commands::run_ocomp_lifecycle_begin_with_scope(&ctx, scope)
+        commands::run_ocomp_lifecycle_begin_with_scope(&ctx)
     })
 }
 
 fn run_direct_failed_day_recovery(
     provider: &mut HashMapStorageProvider,
-    scope: &ExecutionScope,
     wwd: outbe_primitives::time::WorldwideDay,
     block_number: u64,
     timestamp: u64,
@@ -272,7 +103,7 @@ fn run_direct_failed_day_recovery(
             BlockContext::empty_for_tests(block_number, timestamp, chain::CHAIN_ID),
             storage,
         );
-        commands::fail_worldwide_day_for_test(&ctx, scope, wwd)
+        commands::fail_worldwide_day_for_test(&ctx, wwd)
     })
 }
 
@@ -337,7 +168,6 @@ fn assert_expired_job(provider: &mut HashMapStorageProvider, intent_id: B256) ->
 fn prepare_skipped_finality_recovery() -> (
     HashMapStorageProvider,
     super::PreparedRequestFixture,
-    ExecutionScope,
     u64,
     B256,
 ) {
@@ -346,8 +176,9 @@ fn prepare_skipped_finality_recovery() -> (
     run_terminal_request(&mut provider, &fixture);
     let intent_id = live_intent(&mut provider, fixture.wwd).0;
     let recovery_height = fixture.block_number + 65;
-    let scope = begin_recovery_scope(&mut provider, &fixture, recovery_height);
-    (provider, fixture, scope, recovery_height, intent_id)
+
+    provider.set_block_number(recovery_height);
+    (provider, fixture, recovery_height, intent_id)
 }
 
 #[test]
@@ -355,11 +186,11 @@ fn failure_before_request_split_returns_the_full_formed_day_limit() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
     let fixture = prepare_request_fixture(&mut provider, true);
     let recovery_height = fixture.block_number + 1;
-    let scope = begin_recovery_scope(&mut provider, &fixture, recovery_height);
+
+    provider.set_block_number(recovery_height);
 
     run_direct_failed_day_recovery(
         &mut provider,
-        &scope,
         fixture.wwd,
         recovery_height,
         fixture.block_time + 1,
@@ -378,7 +209,7 @@ fn failure_before_request_split_returns_the_full_formed_day_limit() {
 }
 
 #[test]
-fn terminal_business_failure_fails_day_before_the_single_final_seal() {
+fn terminal_business_failure_fails_the_day_atomically() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
     let fixture = super::prepare_request_fixture_with_day_type(
         &mut provider,
@@ -386,10 +217,8 @@ fn terminal_business_failure_fails_day_before_the_single_final_seal() {
         crate::WwdDayType::Unknown,
     );
     let block_number = fixture.block_number + 1;
-    let scope = begin_recovery_scope(&mut provider, &fixture, block_number);
-    StorageHandle::enter(&mut provider, |storage| {
-        preview_end_block(storage, &scope).unwrap()
-    });
+
+    provider.set_block_number(block_number);
 
     provider.set_block_number(block_number);
     provider.set_timestamp(U256::from(fixture.block_time + 1));
@@ -399,12 +228,10 @@ fn terminal_business_failure_fails_day_before_the_single_final_seal() {
             BlockContext::empty_for_tests(block_number, fixture.block_time + 1, chain::CHAIN_ID),
             storage.clone(),
         );
-        crate::commands::run_ocomp_terminal_request(&ctx, &scope).unwrap();
-        end_block(storage, &scope).unwrap();
+        crate::commands::run_ocomp_terminal_request(&ctx).unwrap();
     });
 
     assert_failed_day_recovery(&mut provider, &fixture, U256::from(100));
-    assert!(scope.completed_sealed_root().is_ok());
 }
 
 #[test]
@@ -437,24 +264,19 @@ fn delayed_voting_open_preserves_the_single_job_until_its_deadline() {
         .finalized
         .expect("certified finality");
     let recovery_height = finalized.open_height + 1;
-    let scope = begin_recovery_scope(&mut provider, &fixture, recovery_height);
 
-    run_lifecycle_begin(
-        &mut provider,
-        &scope,
-        recovery_height,
-        fixture.block_time + 2,
-    )
-    .expect("a delayed lifecycle tick opens the existing job");
+    provider.set_block_number(recovery_height);
+
+    run_lifecycle_begin(&mut provider, recovery_height, fixture.block_time + 2)
+        .expect("a delayed lifecycle tick opens the existing job");
 
     let (_, opened) = live_intent(&mut provider, fixture.wwd);
     assert_eq!(opened.status, OcompJobStatus::VotingOpen);
     assert!(opened.terminal.is_none());
 
-    let expiry_scope = begin_recovery_scope(&mut provider, &fixture, finalized.deadline_height);
+    provider.set_block_number(finalized.deadline_height);
     run_lifecycle_begin(
         &mut provider,
-        &expiry_scope,
         finalized.deadline_height,
         fixture.block_time + 3,
     )
@@ -478,15 +300,11 @@ fn skipped_awaiting_finality_deadline_expires_the_single_job() {
             .unwrap();
     });
     let recovery_height = fixture.block_number + 65;
-    let scope = begin_recovery_scope(&mut provider, &fixture, recovery_height);
 
-    run_lifecycle_begin(
-        &mut provider,
-        &scope,
-        recovery_height,
-        fixture.block_time + 65,
-    )
-    .expect("missed finality deadline expires the single job");
+    provider.set_block_number(recovery_height);
+
+    run_lifecycle_begin(&mut provider, recovery_height, fixture.block_time + 65)
+        .expect("missed finality deadline expires the single job");
 
     assert_failed_day_recovery(
         &mut provider,
@@ -500,13 +318,8 @@ fn skipped_awaiting_finality_deadline_expires_the_single_job() {
             .get_total_unallocated()
             .unwrap()
     });
-    run_lifecycle_begin(
-        &mut provider,
-        &scope,
-        recovery_height + 1,
-        fixture.block_time + 66,
-    )
-    .expect("closed failed WWD replay is a no-op");
+    run_lifecycle_begin(&mut provider, recovery_height + 1, fixture.block_time + 66)
+        .expect("closed failed WWD replay is a no-op");
     StorageHandle::enter(&mut provider, |storage| {
         assert_eq!(
             PromisLimitContract::new(storage)
@@ -547,24 +360,16 @@ fn skipped_response_deadline_expires_job_and_retains_closed_vote_accountability(
         .1
         .finalized
         .expect("certified finality");
-    let open_scope = begin_recovery_scope(&mut provider, &fixture, finalized.open_height);
-    run_lifecycle_begin(
-        &mut provider,
-        &open_scope,
-        finalized.open_height,
-        fixture.block_time + 2,
-    )
-    .expect("voting opens at the exact height");
+
+    provider.set_block_number(finalized.open_height);
+    run_lifecycle_begin(&mut provider, finalized.open_height, fixture.block_time + 2)
+        .expect("voting opens at the exact height");
 
     let recovery_height = finalized.deadline_height + 1;
-    let recovery_scope = begin_recovery_scope(&mut provider, &fixture, recovery_height);
-    run_lifecycle_begin(
-        &mut provider,
-        &recovery_scope,
-        recovery_height,
-        fixture.block_time + 3,
-    )
-    .expect("missed response deadline expires the single job");
+
+    provider.set_block_number(recovery_height);
+    run_lifecycle_begin(&mut provider, recovery_height, fixture.block_time + 3)
+        .expect("missed response deadline expires the single job");
 
     assert_failed_day_recovery(&mut provider, &fixture, retained_lysis_limit_minor);
     let expired = assert_expired_job(&mut provider, intent_id);
@@ -580,9 +385,9 @@ fn skipped_response_deadline_expires_job_and_retains_closed_vote_accountability(
 
 #[test]
 fn every_expired_day_recovery_mutation_is_atomic_and_retryable() {
-    let (mut probe, fixture, scope, recovery_height, _) = prepare_skipped_finality_recovery();
+    let (mut probe, fixture, recovery_height, _) = prepare_skipped_finality_recovery();
     probe.fail_after_mutation_at(usize::MAX);
-    run_lifecycle_begin(&mut probe, &scope, recovery_height, fixture.block_time + 65)
+    run_lifecycle_begin(&mut probe, recovery_height, fixture.block_time + 65)
         .expect("clean failed-day recovery");
     let mutation_count = probe.clear_mutation_failure();
     assert!(
@@ -592,24 +397,18 @@ fn every_expired_day_recovery_mutation_is_atomic_and_retryable() {
     let clean_storage = probe.storage.clone();
     let clean_events = probe.events.clone();
     let clean_ordered_events = probe.get_ordered_events().to_vec();
-    let clean_ce_work = scope.ce_work_checkpoint().unwrap();
 
     for operation in 0..mutation_count {
-        let (mut provider, fixture, scope, recovery_height, intent_id) =
+        let (mut provider, fixture, recovery_height, intent_id) =
             prepare_skipped_finality_recovery();
         let storage_before = provider.storage.clone();
         let events_before = provider.events.clone();
         let ordered_events_before = provider.get_ordered_events().to_vec();
-        let ce_before = scope.ce_work_checkpoint().unwrap();
+
         provider.fail_after_mutation_at(operation);
 
-        let error = run_lifecycle_begin(
-            &mut provider,
-            &scope,
-            recovery_height,
-            fixture.block_time + 65,
-        )
-        .expect_err("injected recovery mutation must propagate");
+        let error = run_lifecycle_begin(&mut provider, recovery_height, fixture.block_time + 65)
+            .expect_err("injected recovery mutation must propagate");
         assert!(matches!(error, PrecompileError::Storage(_)));
         assert_eq!(provider.clear_mutation_failure(), operation + 1);
         assert_eq!(provider.storage, storage_before, "storage at {operation}");
@@ -619,19 +418,9 @@ fn every_expired_day_recovery_mutation_is_atomic_and_retryable() {
             ordered_events_before.as_slice(),
             "ordered events at {operation}"
         );
-        assert_eq!(
-            scope.ce_work_checkpoint().unwrap(),
-            ce_before,
-            "CE work at {operation}"
-        );
 
-        run_lifecycle_begin(
-            &mut provider,
-            &scope,
-            recovery_height,
-            fixture.block_time + 65,
-        )
-        .expect("exact recovery retry");
+        run_lifecycle_begin(&mut provider, recovery_height, fixture.block_time + 65)
+            .expect("exact recovery retry");
         assert_eq!(
             provider.storage, clean_storage,
             "retry storage at {operation}"
@@ -642,11 +431,7 @@ fn every_expired_day_recovery_mutation_is_atomic_and_retryable() {
             clean_ordered_events.as_slice(),
             "retry ordered events at {operation}"
         );
-        assert_eq!(
-            scope.ce_work_checkpoint().unwrap(),
-            clean_ce_work,
-            "retry CE work at {operation}"
-        );
+
         assert_expired_job(&mut provider, intent_id);
     }
 }
@@ -667,7 +452,7 @@ fn expired_day_recovery_does_not_mutate_an_independent_live_worldwide_day() {
                 BlockContext::empty_for_tests(block_number, block_time, chain::CHAIN_ID),
                 storage,
             );
-            commands::run_ocomp_terminal_request(&ctx, &fixture.scope)
+            commands::run_ocomp_terminal_request(&ctx)
         })
         .expect("independent live request");
     }
@@ -690,19 +475,10 @@ fn expired_day_recovery_does_not_mutate_an_independent_live_worldwide_day() {
                 .unwrap();
             (failed, survivor, fixture.block_number + 65)
         });
-    let scope = begin_recovery_scope_for_wwd(
-        &mut provider,
-        &fixture.scope,
-        fixture.first_wwd,
-        recovery_height,
-    );
-    run_lifecycle_begin(
-        &mut provider,
-        &scope,
-        recovery_height,
-        fixture.block_time + 65,
-    )
-    .expect("only the first missed WWD fails");
+
+    provider.set_block_number(recovery_height);
+    run_lifecycle_begin(&mut provider, recovery_height, fixture.block_time + 65)
+        .expect("only the first missed WWD fails");
 
     assert_expired_job(&mut provider, failed_intent);
     StorageHandle::enter(&mut provider, |storage| {
@@ -731,13 +507,13 @@ fn emergency_failure_cannot_construct_the_reserved_failed_job_state() {
     run_terminal_request(&mut provider, &fixture);
     let (intent_id, before_record) = live_intent(&mut provider, fixture.wwd);
     let recovery_height = fixture.block_number + 1;
-    let scope = begin_recovery_scope(&mut provider, &fixture, recovery_height);
+
+    provider.set_block_number(recovery_height);
     let storage_before = provider.storage.clone();
     let events_before = provider.events.clone();
 
     let error = run_direct_failed_day_recovery(
         &mut provider,
-        &scope,
         fixture.wwd,
         recovery_height,
         fixture.block_time + 1,
@@ -854,14 +630,10 @@ fn an_expired_green_day_returns_its_lysis_and_desis_limits_once() {
     );
 
     let recovery_height = fixture.block_number + 65;
-    let scope = begin_recovery_scope(&mut provider, &fixture, recovery_height);
-    run_lifecycle_begin(
-        &mut provider,
-        &scope,
-        recovery_height,
-        fixture.block_time + 65,
-    )
-    .expect("missed finality deadline expires the day");
+
+    provider.set_block_number(recovery_height);
+    run_lifecycle_begin(&mut provider, recovery_height, fixture.block_time + 65)
+        .expect("missed finality deadline expires the day");
 
     let retained = receipt.lysis_limit_minor + receipt.desis_limit_minor;
     assert_failed_day_recovery(&mut provider, &fixture, carried + U256::from(100));
@@ -870,16 +642,10 @@ fn an_expired_green_day_returns_its_lysis_and_desis_limits_once() {
         (retained, reserved, reserved + retained)
     );
 
-    run_lifecycle_begin(
-        &mut provider,
-        &scope,
-        recovery_height + 1,
-        fixture.block_time + 66,
-    )
-    .expect("closed failed WWD replay is a no-op");
+    run_lifecycle_begin(&mut provider, recovery_height + 1, fixture.block_time + 66)
+        .expect("closed failed WWD replay is a no-op");
     run_direct_failed_day_recovery(
         &mut provider,
-        &scope,
         fixture.wwd,
         recovery_height + 2,
         fixture.block_time + 67,
@@ -894,7 +660,7 @@ fn an_expired_green_day_returns_its_lysis_and_desis_limits_once() {
             BlockContext::empty_for_tests(request_height, fixture.block_time + 68, chain::CHAIN_ID),
             storage,
         );
-        commands::run_ocomp_terminal_request(&ctx, &scope)
+        commands::run_ocomp_terminal_request(&ctx)
     })
     .expect("a FAILED day is not requested again");
 
@@ -924,14 +690,10 @@ fn a_red_day_reserves_nothing_and_its_expiry_returns_only_lysis() {
     assert_eq!(promis_total(&mut provider), credited);
 
     let recovery_height = fixture.block_number + 65;
-    let scope = begin_recovery_scope(&mut provider, &fixture, recovery_height);
-    run_lifecycle_begin(
-        &mut provider,
-        &scope,
-        recovery_height,
-        fixture.block_time + 65,
-    )
-    .expect("missed finality deadline expires the day");
+
+    provider.set_block_number(recovery_height);
+    run_lifecycle_begin(&mut provider, recovery_height, fixture.block_time + 65)
+        .expect("missed finality deadline expires the day");
 
     assert_failed_day_recovery(&mut provider, &fixture, carried + U256::from(100));
     assert_eq!(
@@ -962,7 +724,7 @@ fn overlapping_requests_size_desis_from_what_earlier_requests_reserved() {
                 BlockContext::empty_for_tests(block_number, block_time, chain::CHAIN_ID),
                 storage,
             );
-            commands::run_ocomp_terminal_request(&ctx, &fixture.scope)
+            commands::run_ocomp_terminal_request(&ctx)
         })
         .expect("overlapping request");
     }
@@ -981,19 +743,10 @@ fn overlapping_requests_size_desis_from_what_earlier_requests_reserved() {
     assert_eq!(promis_total(&mut provider), U256::ZERO);
 
     let recovery_height = fixture.block_number + 65;
-    let scope = begin_recovery_scope_for_wwd(
-        &mut provider,
-        &fixture.scope,
-        fixture.first_wwd,
-        recovery_height,
-    );
-    run_lifecycle_begin(
-        &mut provider,
-        &scope,
-        recovery_height,
-        fixture.block_time + 65,
-    )
-    .expect("only the first missed WWD fails");
+
+    provider.set_block_number(recovery_height);
+    run_lifecycle_begin(&mut provider, recovery_height, fixture.block_time + 65)
+        .expect("only the first missed WWD fails");
 
     let returned = first.lysis_limit_minor + first.desis_limit_minor;
     assert_eq!(
@@ -1059,7 +812,7 @@ fn a_failure_after_the_carry_over_credit_rolls_back_the_credit_and_the_desis_res
         let (mut provider, fixture) = prepare_carried_request(carried);
         let storage_before = provider.storage.clone();
         let events_before = provider.get_ordered_events().to_vec();
-        let ce_before = fixture.scope.ce_work_checkpoint().unwrap();
+
         provider.fail_after_mutation_at(operation);
 
         let error = try_terminal_request(&mut provider, &fixture)
@@ -1072,7 +825,7 @@ fn a_failure_after_the_carry_over_credit_rolls_back_the_credit_and_the_desis_res
             events_before.as_slice(),
             "events at {operation}"
         );
-        assert_eq!(fixture.scope.ce_work_checkpoint().unwrap(), ce_before);
+
         assert_eq!(promis_total(&mut provider), carried);
 
         run_terminal_request(&mut provider, &fixture);
@@ -1084,12 +837,11 @@ fn a_failure_after_the_carry_over_credit_rolls_back_the_credit_and_the_desis_res
 fn replay_closed_day(
     provider: &mut HashMapStorageProvider,
     fixture: &super::PreparedRequestFixture,
-    scope: &ExecutionScope,
     height: u64,
     time: u64,
 ) {
-    run_lifecycle_begin(provider, scope, height, time).expect("a closed day replays as a no-op");
-    run_direct_failed_day_recovery(provider, scope, fixture.wwd, height + 1, time + 1)
+    run_lifecycle_begin(provider, height, time).expect("a closed day replays as a no-op");
+    run_direct_failed_day_recovery(provider, fixture.wwd, height + 1, time + 1)
         .expect("failing a FAILED day again is a no-op");
     provider.set_block_number(height + 2);
     provider.set_timestamp(U256::from(time + 2));
@@ -1099,7 +851,7 @@ fn replay_closed_day(
             BlockContext::empty_for_tests(height + 2, time + 2, chain::CHAIN_ID),
             storage,
         );
-        commands::run_ocomp_terminal_request(&ctx, scope)
+        commands::run_ocomp_terminal_request(&ctx)
     })
     .expect("a FAILED day is not requested again");
 }
@@ -1116,10 +868,8 @@ fn an_unresolved_day_fails_before_its_request_and_returns_its_whole_limit_once()
     let day_limit = U256::from(100);
     seed_carry_over(&mut provider, carried);
     let height = fixture.block_number + 1;
-    let scope = begin_recovery_scope(&mut provider, &fixture, height);
-    StorageHandle::enter(&mut provider, |storage| {
-        preview_end_block(storage, &scope).unwrap()
-    });
+
+    provider.set_block_number(height);
     provider.set_block_number(height);
     provider.set_timestamp(U256::from(fixture.block_time + 1));
     provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::OcompLifecycle);
@@ -1128,7 +878,7 @@ fn an_unresolved_day_fails_before_its_request_and_returns_its_whole_limit_once()
             BlockContext::empty_for_tests(height, fixture.block_time + 1, chain::CHAIN_ID),
             storage,
         );
-        crate::commands::run_ocomp_terminal_request(&ctx, &scope)
+        crate::commands::run_ocomp_terminal_request(&ctx)
     })
     .expect("the business failure fails the day");
 
@@ -1136,13 +886,7 @@ fn an_unresolved_day_fails_before_its_request_and_returns_its_whole_limit_once()
     assert_failed_day_recovery(&mut provider, &fixture, carried + day_limit);
     assert_eq!(failure_view(&mut provider, fixture.wwd), routed);
 
-    replay_closed_day(
-        &mut provider,
-        &fixture,
-        &scope,
-        height + 1,
-        fixture.block_time + 2,
-    );
+    replay_closed_day(&mut provider, &fixture, height + 1, fixture.block_time + 2);
 
     assert_failed_day_recovery(&mut provider, &fixture, carried + day_limit);
     assert_eq!(failure_view(&mut provider, fixture.wwd), routed);
@@ -1181,14 +925,10 @@ fn an_overflowed_day_is_requested_red_and_returns_its_whole_limit_once() {
     assert_eq!(promis_total(&mut provider), credited);
 
     let recovery_height = fixture.block_number + 65;
-    let scope = begin_recovery_scope(&mut provider, &fixture, recovery_height);
-    run_lifecycle_begin(
-        &mut provider,
-        &scope,
-        recovery_height,
-        fixture.block_time + 65,
-    )
-    .expect("missed finality deadline expires the day");
+
+    provider.set_block_number(recovery_height);
+    run_lifecycle_begin(&mut provider, recovery_height, fixture.block_time + 65)
+        .expect("missed finality deadline expires the day");
 
     let routed = (
         receipt.lysis_limit_minor,
@@ -1201,7 +941,6 @@ fn an_overflowed_day_is_requested_red_and_returns_its_whole_limit_once() {
     replay_closed_day(
         &mut provider,
         &fixture,
-        &scope,
         recovery_height + 1,
         fixture.block_time + 66,
     );

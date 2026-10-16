@@ -385,7 +385,7 @@ fn mine_succeeds_after_materialization_completion(world: &mut World) {
 }
 
 #[then("the completed materialization cursor and ordinary NOD set remain unchanged")]
-fn completed_materialization_survives_restart(world: &mut World) {
+pub(super) fn completed_materialization_survives_restart(world: &mut World) {
     let before = world
         .state
         .ocomp_nod_materialization

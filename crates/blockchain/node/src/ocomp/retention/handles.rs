@@ -1,6 +1,6 @@
 use crate::ocomp::retention::*;
 
-/// Process-local retention selector that can be shared with projection before
+/// Process-local OCOMP journal handle that can be shared before
 /// the provider-backed coordinator is available.
 ///
 /// Installation is one-way: every clone of the surrounding `Arc` observes the
@@ -162,64 +162,5 @@ impl SharedOcompRetentionSelector {
     /// journal tombstones. This is an atomic update plus a worker wakeup.
     pub fn notify_closure_checkpoint(&self, height: u64) {
         self.gc_signal.publish_closure(height);
-    }
-}
-
-impl TributeRetentionSelector for OcompRetentionCoordinator {
-    fn active_pin_for(
-        &self,
-        worldwide_day: WorldwideDay,
-    ) -> Result<Option<RetainedTributePin>, outbe_offchain_data::RetentionSelectorError> {
-        if self.retained_tributes.is_none() {
-            return Err(RetentionError::RetainedTributeStorageUnavailable.into_selector_error());
-        }
-        let inner = self.lock().map_err(RetentionError::into_selector_error)?;
-        if let Some(error) = retention_status_error(&inner.status) {
-            return Err(error.into_selector_error());
-        }
-        let mut selected = BTreeSet::new();
-        for record in inner
-            .registry
-            .as_ref()
-            .into_iter()
-            .flat_map(|registry| registry.records.values())
-        {
-            match record.state {
-                PinStateV1::AwaitingJobFinalization { candidate }
-                    if candidate.wwd == worldwide_day.value() =>
-                {
-                    selected.insert(candidate.input_lease_id);
-                }
-                PinStateV1::Finalized { candidate, .. }
-                | PinStateV1::Exported { candidate, .. }
-                | PinStateV1::Terminal { candidate, .. }
-                    if candidate.wwd == worldwide_day.value() =>
-                {
-                    selected.insert(candidate.input_lease_id);
-                }
-                PinStateV1::GcPending { .. } => {}
-                _ => {}
-            }
-        }
-        match selected.len() {
-            0 => Ok(None),
-            1 => Ok(Some(RetainedTributePin {
-                input_lease_id: *selected.first().expect("one selected retention key"),
-                worldwide_day,
-            })),
-            _ => Err(RetentionError::MultipleInputRetentionIdentities.into_selector_error()),
-        }
-    }
-}
-
-impl TributeRetentionSelector for SharedOcompRetentionSelector {
-    fn active_pin_for(
-        &self,
-        worldwide_day: WorldwideDay,
-    ) -> Result<Option<RetainedTributePin>, outbe_offchain_data::RetentionSelectorError> {
-        self.coordinator
-            .get()
-            .ok_or_else(|| RetentionError::RetentionCoordinatorNotInstalled.into_selector_error())?
-            .active_pin_for(worldwide_day)
     }
 }

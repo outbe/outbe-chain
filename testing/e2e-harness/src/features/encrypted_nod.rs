@@ -5,10 +5,7 @@ use crate::world::World;
 use alloy_primitives::{Address, U256};
 use base64::Engine as _;
 use cucumber::{then, when};
-use outbe_compressed_entities::{
-    decode_stored_nod_item_v2, verify_point_read_v1, PointReadRequestV1, PointReadResultV1,
-    SelectedHeaderV1, VerifiedPointReadV1,
-};
+
 use outbe_ocomp_protocol::{
     abi::{
         decode_protected_materialize_certified_nods_calldata, MATERIALIZE_CERTIFIED_NODS_SELECTOR,
@@ -77,7 +74,7 @@ fn verify_encrypted_nod(world: &mut World) {
         .expect("encrypted creation finalized on every validator");
     let mut expected_body = None;
     for (index, peer) in world.validators.committee_ports().into_iter().enumerate() {
-        let body = assert_nod_projection(
+        let body = assert_nod_state(
             world,
             (index, peer),
             &encrypted,
@@ -88,7 +85,7 @@ fn verify_encrypted_nod(world: &mut World) {
     assert_materialization_carrier(world, &encrypted, complete.completion_block_number);
 }
 
-fn assert_nod_projection(
+fn assert_nod_state(
     world: &World,
     validator: (usize, u16),
     encrypted: &outbe_primitives::nod_encryption::EncryptedNodV2,
@@ -97,40 +94,19 @@ fn assert_nod_projection(
     let (index, peer) = validator;
     let url = world.rpc.url(peer);
     let id = encrypted.terms.nod_id;
-    let request = PointReadRequestV1 {
-        domain_id: 2,
-        raw_id: id,
-    };
-    let response = world
+    let checkpoint = world
         .rpc
-        .compressed_entity_ready(peer, request)
-        .expect("canonical NOD proof");
-    assert!(response.header.block_number >= completed_at);
-    // Read the trust anchor independently from the canonical EVM header.
-    let commitment =
-        eth::block_commitment(&url, response.header.block_number).expect("canonical EVM header");
-    assert_eq!(response.header.block_hash, commitment.0);
-    let trusted = SelectedHeaderV1 {
-        block_number: response.header.block_number,
-        block_hash: commitment.0,
-        extra_data: commitment.2.to_vec(),
-    };
-    assert_eq!(
-        verify_point_read_v1(
-            encrypted.terms.chain_id,
-            request,
-            &trusted,
-            &response.result
-        )
-        .unwrap(),
-        VerifiedPointReadV1::Present
-    );
-    let PointReadResultV1::Present { body_bytes, .. } = response.result else {
-        panic!("encrypted NOD absent")
-    };
-    let canonical =
-        decode_stored_nod_item_v2(body_bytes.as_ref()).expect("fresh-genesis encrypted NOD schema");
-    assert_eq!(&canonical.encrypted, encrypted);
+        .wait_finalized_checkpoint(&world.validators.committee_ports(), completed_at, 120)
+        .expect("encrypted Nod finalized checkpoint");
+    let (item, _) = world
+        .rpc
+        .nod_state_at(peer, checkpoint, id)
+        .expect("encrypted Nod EVM state")
+        .expect("encrypted Nod is present");
+    assert_eq!(&item.encrypted, encrypted);
+    let body_bytes =
+        outbe_primitives::entity_codec::encode_nod_item_v2(&outbe_nod::canonical_item(&item))
+            .expect("canonical encrypted Nod");
     let view = settlement_read(|| world.rpc.nod_data_on(peer, id.as_slice()))
         .expect("encrypted NOD public view");
     assert_eq!(&nod_keys::encrypted(&view), encrypted);
@@ -142,7 +118,7 @@ fn assert_nod_projection(
         nod_keys::decrypt(world, &view)
     );
     assert_encrypted_metadata(&url, encrypted);
-    body_bytes.to_vec()
+    body_bytes
 }
 
 fn assert_encrypted_metadata(

@@ -1,32 +1,11 @@
 use super::*;
 
-#[derive(Debug)]
-struct RecordingCeStartupRecovery {
-    requested_height: AtomicU64,
-    marker: outbe_compressed_entities::FinalizedMarker,
-}
-
-impl CeStartupRecovery for RecordingCeStartupRecovery {
-    fn recover_before_participation(
-        &self,
-        consensus_finalized_height: u64,
-    ) -> std::result::Result<
-        outbe_compressed_entities::FinalizedMarker,
-        crate::ce_recovery::CeStartupRecoveryError,
-    > {
-        self.requested_height
-            .store(consensus_finalized_height, Ordering::SeqCst);
-        Ok(self.marker)
-    }
-}
-
 #[test]
-fn ce_recovery_uses_exact_archive_backed_head_when_ack_floor_lags() {
+fn native_recovery_uses_certified_archive_identity_when_ack_floor_lags() {
     let archive_height = 302;
-    let marshal_processed_height = 301;
     let archive_hash = B256::repeat_byte(0x42);
     let round = Round::new(Epoch::new(3), View::new(17));
-    let (recovery_anchor_height, _, _) = reconcile_recovered_execution_head(
+    let (height, hash, recovered_round) = reconcile_recovered_execution_head(
         archive_height,
         archive_hash,
         Some(RecoveredApplicationFinalization {
@@ -35,31 +14,13 @@ fn ce_recovery_uses_exact_archive_backed_head_when_ack_floor_lags() {
         }),
     )
     .unwrap();
-    let marker = outbe_compressed_entities::FinalizedMarker {
-        commitment_scheme_version: outbe_compressed_entities::ACTIVE_COMMITMENT_SCHEME,
-        height: archive_height,
-        block_hash: archive_hash,
-        parent_block_hash: B256::repeat_byte(0x41),
-        parent_root: B256::repeat_byte(0x51),
-        new_root: B256::repeat_byte(0x52),
-    };
-    let recovery = RecordingCeStartupRecovery {
-        requested_height: AtomicU64::new(u64::MAX),
-        marker,
-    };
-
-    let recovered = recover_ce_at_reconciled_anchor(
-        &recovery,
-        marshal_processed_height,
-        recovery_anchor_height,
-    )
-    .unwrap();
-
-    assert_eq!(recovered, marker);
     assert_eq!(
-        recovery.requested_height.load(Ordering::SeqCst),
-        archive_height,
-        "CE recovery must use exact archived finality, not the lagging ACK floor"
+        (height, hash, recovered_round),
+        (302, archive_hash, Some(round))
+    );
+    assert_ne!(
+        height, 301,
+        "the lagging ACK floor does not replace archive finality"
     );
 }
 

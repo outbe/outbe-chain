@@ -5,9 +5,6 @@ use alloy_primitives::U256;
 use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::{SolError, SolEvent};
 use outbe_chain_constants::NodMaterializationProfileV1;
-#[cfg(any(test, feature = "test-utils"))]
-use outbe_compressed_entities::{ExecutionReaders, WwdEntityId};
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_nod::NodContract;
 #[cfg(any(test, feature = "test-utils"))]
 use outbe_nod::NodIssueParams;
@@ -22,6 +19,8 @@ use outbe_ocomp_protocol::{
     SchemaLimits,
 };
 use outbe_primitives::time::WorldwideDay;
+#[cfg(any(test, feature = "test-utils"))]
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_primitives::{
     addresses::NOD_FACTORY_ADDRESS,
     error::{PrecompileError, Result},
@@ -153,20 +152,18 @@ pub struct CertifiedMaterializationRequest<'a> {
 #[cfg(any(test, feature = "test-utils"))]
 pub fn materialize_certified_nods_authorized(
     storage: &StorageHandle<'_>,
-    readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
     request: CertifiedMaterializationRequest<'_>,
     profile: NodMaterializationProfileV1,
 ) -> Result<NodMaterializationOutcomeV1> {
     storage.clone().with_checkpoint(|| {
         consume_materialization_attempt(storage, profile)?;
-        materialize_after_attempt(storage, readers, request, profile)
+        materialize_after_attempt(storage, request, profile)
     })
 }
 
 #[cfg(any(test, feature = "test-utils"))]
 pub(crate) fn materialize_after_attempt(
     storage: &StorageHandle<'_>,
-    readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
     request: CertifiedMaterializationRequest<'_>,
     profile: NodMaterializationProfileV1,
 ) -> Result<NodMaterializationOutcomeV1> {
@@ -175,7 +172,6 @@ pub(crate) fn materialize_after_attempt(
         loads,
         limits,
     } = request;
-    let ExecutionReaders { scope, parent } = readers;
     let nod = NodContract::new(storage.clone());
     let head = nod
         .ocomp_materialization_head()?
@@ -212,7 +208,7 @@ pub(crate) fn materialize_after_attempt(
             reference_currency: action.reference_currency,
         };
         let encrypted = outbe_nod::test_support::encrypted_fixture(&params, storage.chain_id()?);
-        runtime::issue_nod_at(storage, scope, parent, &encrypted, issued_at)
+        runtime::issue_nod_at(storage, &encrypted, issued_at)
             .map_err(duplicate_materialized_nod)?;
     }
 
@@ -227,8 +223,6 @@ pub(crate) struct MaterializationRules<'a> {
 /// Verifies the private witness against authority read from this node's chain state.
 pub(crate) fn materialize_protected_after_attempt(
     storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
     carrier: &ProtectedNodMaterializationV2,
     rules: MaterializationRules<'_>,
 ) -> Result<NodMaterializationOutcomeV1> {
@@ -237,18 +231,28 @@ pub(crate) fn materialize_protected_after_attempt(
         .ocomp_materialization_head()?
         .ok_or(NodFactoryError::StaleMaterializationQueue)?;
     validate_carrier_cursor(carrier, &head)?;
-    let authority = current_materialization_authority(storage, &head, &rules)?;
+    let authority = state_materialization_authority(
+        storage,
+        &head,
+        carrier,
+        rules.profile.batch_subtree_height,
+        rules.limits,
+    )?;
     let _context = outbe_tee::call_context::ContextScope::from_storage(storage)?;
-    let encrypted = outbe_tee::nod_materialization::open_encrypted_nods(&authority, carrier)
+    let encrypted = outbe_tee::nod_state_materialization::open_state_nods(&authority, carrier)
         .map_err(materialization_enclave_error)?;
-    validate_encrypted_materialization(&encrypted, carrier, &authority, head.worldwide_day)?;
+    validate_encrypted_materialization(
+        &encrypted,
+        carrier,
+        authority.source.chain_id,
+        head.worldwide_day,
+    )?;
     let issued_at = nod
         .ocomp_certified_generation(WorldwideDay::new(head.worldwide_day))?
         .ok_or(NodFactoryError::MaterializationHeadProjectionMissing)?
         .issued_at;
     for body in &encrypted {
-        runtime::issue_nod_at(storage, scope, parent, body, issued_at)
-            .map_err(duplicate_materialized_nod)?;
+        runtime::issue_nod_at(storage, body, issued_at).map_err(duplicate_materialized_nod)?;
     }
     finish_materialization(storage, &head, encrypted.len())
 }
@@ -266,30 +270,76 @@ fn validate_carrier_cursor(
     Ok(())
 }
 
-fn current_materialization_authority(
+/// Reconstructs state-source semantics from retained local records. Public
+/// ciphertext terms select lookups only; enclave open must still authenticate
+/// the complete carrier against this authority before any Nod can be issued.
+pub fn state_materialization_authority(
     storage: &StorageHandle<'_>,
     head: &NodMaterializationHeadV1,
-    rules: &MaterializationRules<'_>,
-) -> Result<outbe_tee::nod_materialization::NodMaterializationAuthorityV2> {
+    carrier: &ProtectedNodMaterializationV2,
+    subtree_height: u8,
+    limits: &SchemaLimits,
+) -> Result<outbe_tee::nod_state_materialization::StateNodAuthority> {
+    use outbe_tee::{
+        nod_state_materialization::StateNodAuthority,
+        tribute_source::{TributeSourceCheckpoint, TributeSourceSubject},
+    };
+    let invalid = || PrecompileError::from(NodFactoryError::InvalidMaterializationProof);
     let generation = NodContract::new(storage.clone())
         .ocomp_certified_generation(WorldwideDay::new(head.worldwide_day))?
-        .ok_or(NodFactoryError::InvalidMaterializationProof)?;
-    let source = outbe_tribute::TributeContract::new(storage.clone())
-        .pre_admission_projection(WorldwideDay::new(head.worldwide_day))?;
-    if !source.is_sealed || source.sealed_collection_root.is_zero() {
-        return Err(NodFactoryError::InvalidMaterializationProof.into());
+        .ok_or_else(invalid)?;
+    if carrier.encrypted_nods.is_empty()
+        || carrier.encrypted_nods.len()
+            > outbe_ocomp_protocol::nod_materialization::MAX_NOD_MATERIALIZATION_ACTIONS
+        || carrier.encrypted_nods.len()
+            > head.nod_count.saturating_sub(head.next_nod_ordinal) as usize
+    {
+        return Err(invalid());
     }
-    Ok(
-        outbe_tee::nod_materialization::NodMaterializationAuthorityV2 {
-            chain_id: storage.chain_id()?,
-            head: head
-                .encode_canonical(rules.limits)
-                .map_err(|_| PrecompileError::from(NodFactoryError::InvalidMaterializationProof))?,
-            subtree_height: rules.profile.batch_subtree_height,
-            sealed_tribute_root: source.sealed_collection_root,
-            nod_gratis_load_max: generation.nod_gratis_load_max,
+    let checkpoint = generation.source_checkpoint;
+    let source = TributeSourceSubject {
+        checkpoint: TributeSourceCheckpoint {
+            block_number: checkpoint.block_number,
+            block_hash: checkpoint.block_hash,
+            state_root: checkpoint.state_root,
         },
-    )
+        chain_id: storage.chain_id()?,
+        worldwide_day: generation.worldwide_day,
+        tribute_count: generation.tribute_count,
+    };
+    let subject = outbe_tribute::state_proof::TributeStateProofSubject::from(source);
+    let mut source_bindings = Vec::with_capacity(carrier.encrypted_nods.len());
+    let mut seen = std::collections::BTreeSet::new();
+    for encoded in &carrier.encrypted_nods {
+        if encoded.0.len() > limits.max_bounded_bytes {
+            return Err(invalid());
+        }
+        let body: outbe_primitives::nod_encryption::EncryptedNodV2 =
+            serde_json::from_slice(&encoded.0).map_err(|_| invalid())?;
+        let terms = &body.terms;
+        let id = outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(
+            terms.owner,
+            source.worldwide_day,
+        )
+        .map_err(|_| invalid())?;
+        if terms.chain_id != source.chain_id
+            || terms.worldwide_day != source.worldwide_day
+            || terms.nod_id != id
+            || !seen.insert(id)
+        {
+            return Err(invalid());
+        }
+        source_bindings.push(outbe_tribute::state_proof::retained_source_binding(
+            storage, &subject, id,
+        )?);
+    }
+    Ok(StateNodAuthority {
+        source,
+        head: head.encode_canonical(limits).map_err(|_| invalid())?,
+        subtree_height,
+        source_bindings,
+        nod_gratis_load_max: generation.nod_gratis_load_max,
+    })
 }
 
 fn materialization_enclave_error(error: outbe_tee::TransportError) -> PrecompileError {
@@ -304,14 +354,14 @@ fn materialization_enclave_error(error: outbe_tee::TransportError) -> Precompile
 fn validate_encrypted_materialization(
     encrypted: &[outbe_primitives::nod_encryption::EncryptedNodV2],
     carrier: &ProtectedNodMaterializationV2,
-    authority: &outbe_tee::nod_materialization::NodMaterializationAuthorityV2,
+    chain_id: u64,
     day: u32,
 ) -> Result<()> {
     let valid = !encrypted.is_empty()
         && encrypted.len() == carrier.encrypted_nods.len()
         && encrypted.iter().all(|body| {
             let terms = &body.terms;
-            (terms.chain_id, terms.worldwide_day.value()) == (authority.chain_id, day)
+            (terms.chain_id, terms.worldwide_day.value()) == (chain_id, day)
                 && !terms.owner.is_zero()
                 && outbe_nod::pricing::is_issuable_entry(terms.entry_price_minor)
         });

@@ -2,7 +2,6 @@ mod support {
     include!("../support/mod.rs");
 }
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
 use outbe_ocomp::{
     cas::{CasLimits, CasWriterRole, FilesystemCas, FilesystemCasReader},
     control::poc_schema_limits,
@@ -25,7 +24,9 @@ use outbe_ocomp_protocol::{
     CasObjectRefV1, ListKind, ObjectKind, OrderedListLimits, SchemaLimits,
     SnapshotExportCommittedV1,
 };
+use outbe_primitives::entity_codec::{encode_tribute_v1, TributeBodyV1};
 use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::wwd_entity_id::derive_poseidon_entity_id;
 use std::{
     collections::BTreeMap,
     fs,
@@ -73,12 +74,8 @@ fn fixture(seed: u8) -> Fixture {
             finalized_block_number: spec.summary.cursor,
             finalized_block_hash: spec.summary.finalized_block_hash,
             finalized_state_root: spec.summary.finalized_state_root,
-            finalized_ce_root: intent.ce_sealed_root,
-            ce_schema_version: 1,
         },
         wwd: intent.wwd,
-        sealed_tribute_collection_key: intent.sealed_tribute_collection_key,
-        sealed_tribute_collection_root: intent.sealed_tribute_collection_root,
         tribute_count: intent.authenticated_day_count,
         tribute_nominal_total: intent.authenticated_day_nominal,
         input_chunk_count: 1,

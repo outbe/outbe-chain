@@ -300,8 +300,7 @@ fn verify_tribute_receipt(
 ) -> Result<(), ProtocolError> {
     ensure(receipt.binding == *plan.binding(), "Lysis Tribute binding")?;
     let expected = plan.tribute();
-    let input_matches = receipt.tribute_input_binding == *expected.input_binding()
-        && receipt.sealed_collection_root == expected.input_binding().sealed_collection_root;
+    let input_matches = receipt.tribute_input_binding == *expected.input_binding();
     let consumption_matches = receipt.consumed_count == expected.consumed_count()
         && receipt.consumed_nominal_total == expected.consumed_nominal_total()
         && receipt.retired_generation == expected.retired_generation();
@@ -312,7 +311,6 @@ fn verify_tribute_receipt(
     let projection = TributeStateEventProjectionV1 {
         wwd: expected.input_binding().wwd,
         source_generation: expected.input_binding().source_generation,
-        sealed_collection_root: expected.input_binding().sealed_collection_root,
         consumed_count: expected.consumed_count(),
         consumed_nominal_total: expected.consumed_nominal_total(),
         retired_generation: expected.retired_generation(),

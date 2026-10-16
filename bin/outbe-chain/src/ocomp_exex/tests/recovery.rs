@@ -29,104 +29,40 @@ fn drain_fatal_cannot_be_overwritten_by_an_inflight_reader_tick() {
 }
 
 #[tokio::test]
-async fn real_reth_restart_stream_never_reexecutes_an_older_closure_against_ce() {
+async fn real_reth_restart_stream_does_not_execute_history_before_the_closure() {
     if !crate::test_utils::in_isolated_process(
-        "ocomp_exex::tests::recovery::real_reth_restart_stream_never_reexecutes_an_older_closure_against_ce",
+        "ocomp_exex::tests::recovery::real_reth_restart_stream_does_not_execute_history_before_the_closure",
     ) {
         return;
     }
-    use outbe_compressed_entities::{
-        CandidateCacheLimits, CeMdbx, CeTopologyV1, Commitment, CompressedTreeService, EntityRef,
-        EnvironmentIdentity, ExactParentIdentity, FinalLeafMutation, FinalizedMarker, WwdEntityId,
-        ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
-    };
     use outbe_primitives::{OutbeHeader, OutbePrimitives};
     use reth_chainspec::ChainSpecBuilder;
     use reth_ethereum::exex::{ExExHead, ExExNotification, ExExNotifications, Wal};
     use reth_provider::{test_utils::MockEthProvider, Chain};
 
-    for changed_root in [false, true] {
+    for closure_height in [0, 1] {
         let root = tempfile::tempdir().unwrap();
         let parent_hash = B256::repeat_byte(0x38);
         let head_hash = B256::repeat_byte(0x39);
-        let parent_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
-        let db = CeMdbx::open(
-            &root.path().join("ce"),
-            EnvironmentIdentity {
-                local_storage_schema_version: LOCAL_STORAGE_SCHEMA_VERSION,
-                chain_id: outbe_primitives::chain::MAINNET_CHAIN_ID,
-                genesis_hash: parent_hash,
-                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-                topology: CeTopologyV1.encode(),
-                tree_format: "ckb-smt-v0.6.1-poseidon2-catalog-v3".to_owned(),
-                vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
-            },
-            FinalizedMarker {
-                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-                height: 0,
-                block_hash: parent_hash,
-                parent_block_hash: B256::ZERO,
-                parent_root: B256::ZERO,
-                new_root: parent_root,
-            },
-        )
-        .unwrap();
-        let ce = Arc::new(
-            CompressedTreeService::new(
-                db,
-                CandidateCacheLimits {
-                    max_candidates: 4,
-                    max_encoded_bytes: 1_000_000,
-                },
-            )
-            .unwrap(),
-        );
-        let parent = ExactParentIdentity {
-            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-            block_number: 0,
-            block_hash: parent_hash,
-            root: parent_root,
-        };
-        let mut id = [7_u8; 32];
-        id[..4].copy_from_slice(&1_u32.to_be_bytes());
-        let mutations = if changed_root {
-            vec![FinalLeafMutation {
-                entity: EntityRef::Tribute(WwdEntityId::try_from(id.as_slice()).unwrap()),
-                final_leaf: Some(Commitment::try_from([3_u8; 32]).unwrap()),
-            }]
-        } else {
-            Vec::new()
-        };
-        let batch = ce
-            .open_parent(parent)
-            .unwrap()
-            .prepare_seal(1, &mutations, &[])
-            .unwrap();
-        let head_root = batch.new_root();
-        ce.publish_candidate(head_hash, batch).unwrap();
-        ce.apply_finalized(1, head_hash, head_root).unwrap();
-        assert_eq!(head_root != parent_root, changed_root);
-        assert!(
-            ce.open_parent(parent).is_err(),
-            "historical CE parent must remain rejected"
-        );
-        let marker = ce.finalized_marker().unwrap();
-
         let spec = Arc::new(
             ChainSpecBuilder::mainnet()
                 .chain(outbe_primitives::chain::MAINNET_CHAIN_ID.into())
                 .build()
                 .map_header(OutbeHeader::new),
         );
-        let evm = outbe_evm::OutbeEvmConfig::new(spec).with_compressed_tree_service(ce.clone());
-        // Deliberately no historical bodies: accidental execution backfill
-        // cannot silently pass by executing an empty block fixture.
+        let evm = outbe_evm::OutbeEvmConfig::new(spec);
+        // No historical bodies exist. Accidental execution backfill must fail.
         let provider = MockEthProvider::<OutbePrimitives>::new();
         let (sender, receiver) = tokio::sync::mpsc::channel(1);
         let wal = Wal::<OutbePrimitives>::new(root.path().join("wal")).unwrap();
+        let closure_hash = if closure_height == 0 {
+            parent_hash
+        } else {
+            head_hash
+        };
         let stream =
             ExExNotifications::new((1, head_hash).into(), provider, evm, receiver, wal.handle())
-                .with_head(ExExHead::new((0, parent_hash).into()));
+                .with_head(ExExHead::new((closure_height, closure_hash).into()));
         let mut stream = without_execution_backfill(stream);
         sender
             .send(ExExNotification::ChainCommitted {
@@ -140,7 +76,6 @@ async fn real_reth_restart_stream_never_reexecutes_an_older_closure_against_ce()
             .expect("notification stream closed")
             .expect("historical execution was attempted");
         assert!(matches!(live, ExExNotification::ChainCommitted { .. }));
-        assert_eq!(ce.finalized_marker().unwrap(), marker);
     }
 }
 
@@ -164,15 +99,15 @@ fn deterministic_retention_conflicts_are_not_retried_as_storage_outages() {
             ),
             RetentionReconciliationDispositionV1::RetryFrame(_)
         ),
-        "replay pressure must allow the independent GC worker to reclaim closed history"
+        "replay pressure must allow the independent release worker to release closed journal entries"
     );
 }
 
 #[tokio::test]
-async fn live_drain_does_not_wait_for_blocked_projection_or_provider_work() {
+async fn live_drain_does_not_wait_for_blocked_finalized_reader_work() {
     let (mut sender, receiver) = futures::channel::mpsc::channel::<eyre::Result<u64>>(1);
     let drain = tokio::spawn(drain_exex_notifications(receiver));
-    // No consumer/projection progress is supplied. More live notifications
+    // No finalized-reader progress is supplied. More live notifications
     // than channel capacity must still be delivered without accumulating.
     tokio::time::timeout(Duration::from_secs(2), async {
         for height in 1..=128 {
@@ -310,30 +245,6 @@ fn retention_unavailability_and_quarantine_retry_without_a_fatal_node_exit() {
     )));
 }
 
-#[test]
-fn cleared_or_replaced_outage_generation_cannot_trigger_an_old_deadline() {
-    let since = tokio::time::Instant::now() - PROJECTION_RECOVERY_DEADLINE;
-    let std_since = since.into_std();
-    let (sender, receiver) = tokio::sync::watch::channel(Some(RuntimeBodyFailure::Unavailable {
-        generation: 7,
-        since: std_since,
-    }));
-    assert!(consume_projection_runtime_deadline(&receiver, &mut Some((7, since)),).is_some());
-
-    sender.send_replace(None);
-    let mut cleared_state = Some((7, since));
-    assert!(consume_projection_runtime_deadline(&receiver, &mut cleared_state).is_none());
-    assert!(cleared_state.is_none());
-
-    sender.send_replace(Some(RuntimeBodyFailure::Unavailable {
-        generation: 8,
-        since: std_since,
-    }));
-    let mut replaced_state = Some((7, since));
-    assert!(consume_projection_runtime_deadline(&receiver, &mut replaced_state).is_none());
-    assert!(replaced_state.is_none());
-}
-
 #[tokio::test]
 async fn fatal_handoff_keeps_exex_alive_until_node_teardown() {
     assert!(
@@ -360,13 +271,6 @@ async fn notification_drain_reports_failure_and_closed_receiver() {
     assert!(format!("{error:#}").contains("injected stream error"));
     let error = drain_exex_notifications(futures::stream::iter([Ok(())])).await;
     assert!(error.to_string().contains("stream closed"));
-}
-
-#[test]
-fn deterministic_projection_task_error_is_not_reported_as_mongo_timeout() {
-    let failure = projection_task_failure(eyre::eyre!("malformed finalized frame"));
-    assert_eq!(failure.class, ProjectionFailureClass::Other);
-    assert!(failure.message.contains("malformed finalized frame"));
 }
 
 #[test]

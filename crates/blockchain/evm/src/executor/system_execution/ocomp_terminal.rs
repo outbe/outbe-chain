@@ -63,13 +63,9 @@ where
         let intrinsic_gas = crate::system_tx::system_tx_intrinsic_gas(tx.input().as_ref())
             .map_err(ExecutorValidationError::terminal_system_tx_intrinsic_gas)?;
 
-        // All ordinary and Ethereum post-execution changes are complete. The
-        // terminal request consumes exact provisional roots while CE remains
-        // active. Thus its failure path can retire the WWD Tribute partition as
-        // the last CE mutation. The sole committed seal follows the terminal
-        // decision.
+        // Complete ordinary state changes before the terminal request freezes
+        // the day inputs. The finalized block state root authenticates them.
         self.apply_outbe_ethereum_post_execution()?;
-        self.preview_compressed_entities()?;
 
         let phase_context = PreloadedSystemTxContext {
             proposer,
@@ -104,7 +100,6 @@ where
             return Err(ExecutorValidationError::TerminalSystemTxWithoutCommit.into());
         }
         let gas = self.commit_system_transaction(output, intrinsic_gas, 0, signed_gas_limit)?;
-        self.finalize_compressed_entities()?;
         self.ocomp_terminal_request_consumed = true;
         let execution_origin = if self.block_hash.is_some() {
             "canonical"

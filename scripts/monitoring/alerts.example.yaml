@@ -510,7 +510,7 @@ groups:
           summary: "OCOMP retained-input garbage collection is retrying"
           description: |
             GC could not collect at least one durable retained-input lease.
-            Finalized processing continues. Inspect MongoDB health and storage
+            Finalized processing continues. Inspect RocksDB health and storage
             capacity before the backlog grows.
 
       - alert: OutbeOcompRetainedGcStalled
@@ -539,7 +539,7 @@ groups:
             retained-storage failure remains active, for ten minutes.
             Healthy jobs may still be advancing, so the aggregate stalled
             alert can remain green. Inspect retry failure_class metrics,
-            MongoDB health, disk capacity, and the node logs.
+            RocksDB health, disk capacity, and the node logs.
 
       - alert: OutbeOcompFinalizedLoopErrors
         expr: increase(outbe_ocomp_finalized_loop_errors_total[5m]) > 0
@@ -621,7 +621,7 @@ groups:
             window for ten minutes. Local retries remain bound to the same
             canonical JobId and deadline. They cannot establish an on-chain
             Failed state or extend the response window. Inspect Worker and
-            SnapshotExporter logs, retained input, disk capacity, and MongoDB
+            SnapshotExporter logs, retained input, disk capacity, and RocksDB
             before the canonical job expires.
 
       - alert: OutbeOcompVoteSubmissionFailures

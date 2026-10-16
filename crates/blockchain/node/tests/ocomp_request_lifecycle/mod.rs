@@ -28,11 +28,6 @@ use commonware_cryptography::{
     Signer,
 };
 use commonware_utils::Participant;
-use outbe_compressed_entities::{
-    begin_block, end_block, CandidateCacheLimits, CeMdbx, CeTopologyV1, CeWorkConfig,
-    CompressedTreeService, EnvironmentIdentity, ExactParentIdentity, FinalizedMarker,
-    ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
-};
 use outbe_consensus::{
     hybrid::HybridScheme,
     proof::{
@@ -66,8 +61,6 @@ use outbe_ocomp_protocol::{
     state::{ActiveGenerationV1, OcompJobRecordV1, OcompJobStatus, OcompTerminalOutcome},
     vote::OcompVoteAccountabilityV1,
 };
-use outbe_offchain_data::RuntimeBodyReaders;
-use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
@@ -78,8 +71,8 @@ use outbe_primitives::{
     consensus_metadata::{CertifiedParentAccountingMetadata, ParentParticipationProof},
     projection::ExecutionReadBudget,
     reshare_artifact::{
-        decode_outbe_block_artifacts, encode_outbe_block_artifacts, CompressedEntitiesRootArtifact,
-        ExecutionSummaryArtifact, OutbeBlockArtifacts,
+        decode_outbe_block_artifacts, encode_outbe_block_artifacts, ExecutionSummaryArtifact,
+        OutbeBlockArtifacts,
     },
     storage::{
         direct::DirectStorageProvider, hashmap::HashMapStorageProvider,

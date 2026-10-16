@@ -50,9 +50,8 @@ pub struct ExecutorActor<E> {
     // with no timer/spawn dependency. It is runtime-agnostic, so it does not pull
     // the tokio reactor onto the executor's deterministic-capable path.
     execution_finalized_height_tx: Option<tokio::sync::mpsc::UnboundedSender<u64>>,
-    projection_readiness: ProjectionReadinessHandle,
     ocomp_readiness: Option<ProjectionReadinessHandle>,
-    finalized_ce_committer: Option<Arc<dyn FinalizedCeCommitter>>,
+    finalized_execution_barrier: Option<Arc<dyn FinalizedExecutionBarrier>>,
     ancestry_readiness: Option<AncestryReadiness>,
     fcu_heartbeat_interval: Duration,
     next_fcu_heartbeat_deadline: SystemTime,
@@ -71,7 +70,6 @@ where
         context: E,
         engine: EngineHandle,
         recovered: RecoveredFinalizedState,
-        projection_readiness: ProjectionReadinessHandle,
         execution_finalized_height_tx: Option<tokio::sync::mpsc::UnboundedSender<u64>>,
     ) -> (Self, Mailbox) {
         let RecoveredFinalizedState {
@@ -96,9 +94,8 @@ where
             state,
             mailbox_rx: rx,
             execution_finalized_height_tx,
-            projection_readiness,
             ocomp_readiness: None,
-            finalized_ce_committer: None,
+            finalized_execution_barrier: None,
             ancestry_readiness: None,
             fcu_heartbeat_interval,
             next_fcu_heartbeat_deadline,
@@ -142,10 +139,13 @@ where
         self
     }
 
-    /// Installs the mandatory compressed-storage barrier for live node wiring.
+    /// Installs the mandatory native execution persistence barrier for live node wiring.
     #[must_use]
-    pub fn with_finalized_ce_committer(mut self, committer: Arc<dyn FinalizedCeCommitter>) -> Self {
-        self.finalized_ce_committer = Some(committer);
+    pub fn with_finalized_execution_barrier(
+        mut self,
+        committer: Arc<dyn FinalizedExecutionBarrier>,
+    ) -> Self {
+        self.finalized_execution_barrier = Some(committer);
         self
     }
 
@@ -289,9 +289,6 @@ where
 
     async fn handle_message(&mut self, msg: Message) -> eyre::Result<()> {
         match msg {
-            Message::ProjectionFailed(failure) => {
-                Err(crate::errors::ExecutorError::ProjectionFailed(failure).into())
-            }
             Message::PendingParent(parent) => self.follow_consensus_parent(parent).await,
             Message::VerifyBlock(request) => {
                 self.verification.get_mut().queue(request);
@@ -354,12 +351,12 @@ mod forkchoice;
 use forkchoice::{next_deadline, LastCanonicalized, MaybeBuild};
 
 mod readiness;
-use readiness::{wait_for_finalized_parent, wait_for_optional_ocomp_parent, HeadOrFinalized};
+use readiness::{wait_for_optional_ocomp_parent, HeadOrFinalized};
 
 mod recovery;
 pub use recovery::RecoveredForkchoiceAttempt;
 
 mod finalization;
-pub use finalization::{FinalizedCeBlock, FinalizedCeCommitter};
+pub use finalization::{FinalizedExecutionBarrier, FinalizedExecutionBlock};
 
 mod verification;

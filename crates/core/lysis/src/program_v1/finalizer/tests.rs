@@ -4,7 +4,6 @@ use super::{
 };
 use crate::program_v1::planner::PRIMARY_WORK_SHARD_SIZE;
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_compressed_entities::derive_poseidon_entity_id;
 use outbe_ocomp_protocol::{
     local_control::poc_schema_limits,
     result::{NodActionV1, OutputManifestEntryV1, ResultChunkV1},
@@ -12,6 +11,7 @@ use outbe_ocomp_protocol::{
     CasObjectRefV1, ObjectKind,
 };
 use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::wwd_entity_id::derive_poseidon_entity_id;
 
 #[test]
 fn a_result_chunk_with_an_entry_beyond_the_call_price_bound_is_not_finalized() {

@@ -550,12 +550,7 @@ fn validate_snapshot_handoff(
     let finalized_request_identity = handoff.checkpoint.finalized_block_number != 0
         && !handoff.checkpoint.finalized_block_hash.is_zero()
         && !handoff.checkpoint.finalized_state_root.is_zero();
-    let sealed_ce_identity = !handoff.checkpoint.finalized_ce_root.is_zero()
-        && handoff.checkpoint.ce_schema_version != 0;
-    require(
-        finalized_request_identity && sealed_ce_identity,
-        "snapshot checkpoint identity",
-    )
+    require(finalized_request_identity, "snapshot checkpoint identity")
 }
 
 fn validate_get_snapshot_handoff(

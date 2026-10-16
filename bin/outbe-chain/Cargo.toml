@@ -25,11 +25,9 @@ path = "src/main.rs"
 outbe-chain-constants.workspace = true
 outbe-snapshot.workspace = true
 outbe-evm.workspace = true
-outbe-compressed-entities.workspace = true
 outbe-rpc.workspace = true
 outbe-node.workspace = true
 outbe-offchain-storage.workspace = true
-outbe-offchain-data.workspace = true
 outbe-ocomp.workspace = true
 outbe-lysis.workspace = true
 outbe-ocomp-protocol.workspace = true
@@ -39,7 +37,6 @@ outbe-engine.workspace = true
 outbe-metadosis.workspace = true
 outbe-update.workspace = true
 outbe-nod.workspace = true
-outbe-gem.workspace = true
 outbe-tribute.workspace = true
 outbe-primitives.workspace = true
 outbe-radicle.workspace = true
@@ -56,6 +53,7 @@ reth-cli-runner.workspace = true
 reth-node-builder.workspace = true
 reth-node-core.workspace = true
 reth-provider.workspace = true
+reth-storage-overlay.workspace = true
 reth-rpc-server-types.workspace = true
 
 commonware-runtime.workspace = true
@@ -87,7 +85,6 @@ outbe-ocomp = { workspace = true, features = ["test-utils"] }
 outbe-nodfactory = { workspace = true, features = ["test-utils"] }
 outbe-consensus = { workspace = true, features = ["test-utils"] }
 postcard.workspace = true
-outbe-compressed-entities = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 commonware-consensus.workspace = true
 commonware-storage.workspace = true

@@ -13,8 +13,8 @@ Feature: Off-chain storage through Lysis with the native mock enclave
     Then the same fresh capacity day advances through LOOKBACK to OFFERING
     When a user of the registered L2 submits an encrypted Tribute with ZKP and WAA and SRA beneficiaries
     Then the tribute transaction succeeds and supply becomes one
-    And every validator projects the same tribute and indexes
-    And every validator serves the same independently verified compressed tribute
+    And every validator stores the same Tribute and indexes in EVM state
+    And every validator verifies the same Tribute against finalized EVM state
     # Hold workers during processing until all four current nodes have accepted
     # their exact exports and dispatched computation, then release them together.
     When the committee logical clock reaches the fresh capacity processing time

@@ -9,9 +9,7 @@ fn config_resolves_paths_from_file_and_roundtrips() {
     let config = StorageConfig::from_toml(ROCKS, Path::new("/node/offchain-storage.toml")).unwrap();
     assert_eq!(config.start_block, 1);
     assert_eq!(config.backend_name(), "rocksdb");
-    let StorageBackend::RocksDb(paths) = &config.backend else {
-        panic!("wrong backend")
-    };
+    let StorageBackend::RocksDb(paths) = &config.backend;
     assert_eq!(paths.path, Path::new("/node/data/offchain"));
     assert_eq!(paths.secondary_path, Path::new("/node/ocomp/secondary"));
     assert_eq!(
@@ -20,22 +18,6 @@ fn config_resolves_paths_from_file_and_roundtrips() {
             Path::new("/elsewhere/config.toml")
         )
         .unwrap(),
-        config
-    );
-}
-
-#[test]
-fn mongodb_config_preserves_settings_and_redacts_diagnostics() {
-    let source = "version=1\nbackend='mongodb'\nstart_block=12\n[mongodb]\nuri='mongodb://user:supersecret@localhost/'\ndatabase='projection'";
-    let config = StorageConfig::from_toml(source, Path::new("/node/config.toml")).unwrap();
-    assert_eq!(config.start_block, 12);
-    assert!(!format!("{config:?}").contains("supersecret"));
-    let malformed = source.replace("uri='mongodb", "uri=['mongodb");
-    let error = StorageConfig::from_toml(&malformed, Path::new("/node/config.toml")).unwrap_err();
-    assert!(!format!("{error:?}").contains("supersecret"));
-    assert_eq!(
-        StorageConfig::from_toml(&config.to_toml().unwrap(), Path::new("/node/config.toml"))
-            .unwrap(),
         config
     );
 }

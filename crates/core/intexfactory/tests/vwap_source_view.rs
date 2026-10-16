@@ -1,12 +1,9 @@
 //! A Solidity view reads the IntexFactory precompile as its daily VWAP source,
 //! as the origin's IntexNFT1155 does.
-use outbe_offchain_data::runtime_body_readers;
-use std::sync::Arc;
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::sol;
 use outbe_evm::test_support::{install_code, runtime_code, seed_storage, EvmWorld};
-use outbe_offchain_storage::MemoryStorage;
 use outbe_oracle::test_support::record_finalized_day_vwap;
 use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 use revm::database::{CacheDB, EmptyDB};
@@ -36,9 +33,7 @@ fn a_solidity_view_reads_the_factory_as_its_vwap_source() {
         }
     });
 
-    let mut world = EvmWorld::new(db)
-        .at(TIMESTAMP)
-        .with_readers(runtime_body_readers(Arc::new(MemoryStorage::new())));
+    let mut world = EvmWorld::new(db).at(TIMESTAMP);
     let mut read = |iso_code: u16, from_utc_day: u32| {
         let read = world.view(
             CALLER,

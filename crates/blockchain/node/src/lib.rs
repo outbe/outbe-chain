@@ -3,7 +3,6 @@
 //! Defines `OutbeNode` (node type configuration) and `OutbeFullNode` (launched node type alias).
 //! Re-exports components needed to build the Outbe node binary.
 
-pub mod compressed_storage;
 pub mod consensus;
 pub mod engine;
 pub mod errors;
@@ -11,8 +10,8 @@ pub mod finalized_frame;
 pub mod node;
 pub mod ocomp;
 pub mod payload_builder;
-pub mod projection;
 pub mod shutdown;
+pub mod state_persistence;
 pub mod tee_call_context;
 pub mod tee_canary;
 

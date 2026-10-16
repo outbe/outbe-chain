@@ -3,9 +3,6 @@ use alloy_primitives::B256;
 use eyre::Context as _;
 use futures::StreamExt as _;
 
-use outbe_node::projection::RuntimeBodyFailure;
-use outbe_node::projection::PROJECTION_RECOVERY_DEADLINE;
-
 use outbe_ocomp::discovery_spool::ContiguousCheckpointStoreV1;
 
 use outbe_ocomp::embedded::EmbeddedJobStateV1;

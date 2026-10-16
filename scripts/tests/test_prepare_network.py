@@ -556,20 +556,15 @@ class PrepareNetworkTests(unittest.TestCase):
                 self.assertNotIn("--consensus.signing-share", node)
                 self.assertNotIn("--consensus.public-polynomial", node)
                 self.assertNotIn("--consensus.dkg-output", node)
-                self.assertIn("--projection.storage-config", node)
+                self.assertNotIn("--projection.storage-config", node)
                 self.assertNotIn("--projection.mongodb", node)
-                storage = tomllib.loads((validator_dir / "offchain-storage.toml").read_text())
-                self.assertEqual(storage["backend"], "rocksdb")
+                self.assertFalse((validator_dir / "offchain-storage.toml").exists())
                 self.assertIn("--engine.persistence-threshold 0", node)
                 self.assertIn("--engine.memory-block-buffer-target 0", node)
                 self.assertNotIn("--node-evm-key", node)
                 self.assertNotIn("--tee-renewal.", node)
                 self.assertNotIn("--private-key", node)
                 self.assertIn('export RUST_MIN_STACK="${RUST_MIN_STACK:-16777216}"', node)
-                self.assertIn(
-                    f"validator-{index}/offchain-storage.toml'",
-                    node,
-                )
                 self.assertTrue(node.startswith("#!/usr/bin/env bash\nset -euo pipefail\n"))
                 self.assertIn("/usr/local/bin/outbe-chain node", node)
                 self.assertIn(

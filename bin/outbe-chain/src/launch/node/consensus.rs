@@ -3,13 +3,9 @@ use super::*;
 pub(super) type ConsensusLaunch = (
     OutbeFullNode,
     ConsensusArgs,
-    ProjectionReadinessHandle,
     Option<ProjectionReadinessHandle>,
-    Arc<RetainedTributeWriter>,
-    Arc<ProjectionRetentionFence>,
     Arc<SharedOcompRetentionSelector>,
-    Arc<dyn FinalizedCeCommitter>,
-    Arc<dyn CeStartupRecovery>,
+    Arc<dyn FinalizedExecutionBarrier>,
     Option<(
         outbe_radicle::integration::EndpointNetworkService,
         outbe_radicle::integration::LocalEndpointIdentityHandle,
@@ -29,13 +25,9 @@ pub(super) fn run(
     let (
         node,
         mut args,
-        projection_readiness,
         ocomp_readiness,
-        retained_tribute_writer,
-        projection_retention_fence,
         retention_selector,
-        finalized_ce_committer,
-        ce_startup_recovery,
+        finalized_execution_barrier,
         radicle,
         radicle_drained,
     ) = match node_rx.blocking_recv() {
@@ -127,95 +119,88 @@ pub(super) fn run(
 
     let ret: eyre::Result<()> = run_with_lifetime_pin(node_lifetime_pin, || {
         runner.start(async move |ctx| {
-            let graceful_shutdown = ctx.child("shutdown");
-            let application_shutdown = radicle_shutdown_for_consensus;
-            let application_drain =
-                outbe_engine::application_shutdown::ApplicationDrain::new(async move {
+                let graceful_shutdown = ctx.child("shutdown");
+                let application_shutdown = radicle_shutdown_for_consensus;
+                let application_drain = outbe_engine::application_shutdown::ApplicationDrain::new(async move {
                     application_shutdown.cancel();
                     await_radicle_drain(radicle_drained, RADICLE_DRAIN_DEADLINE).await
                 });
-            let stack_application_drain = application_drain.clone();
-            let (follower_drain, follower_shutdown) =
-                outbe_engine::follower_shutdown::follower_drain_pair();
-            let mut stack_handle = ctx.child("consensus_stack").spawn(move |stack_ctx| {
-                outbe_engine::run_consensus_stack(
-                    stack_ctx,
-                    args,
-                    node,
-                    bridge_for_consensus,
-                    outbe_engine::ConsensusStackServices::new(
-                        outbe_engine::ConsensusExecutionServices {
-                            projection_readiness,
-                            ocomp_readiness,
-                            retained_tribute_writer,
-                            projection_retention_fence,
-                            retention_selector,
-                            finalized_ce_committer,
-                            ce_startup_recovery,
-                        },
-                        outbe_engine::ConsensusShutdownServices {
-                            application_drain: stack_application_drain,
-                            follower_shutdown: Some(follower_shutdown),
-                        },
-                        radicle.map(|(endpoint, local_identity, status, task_owner)| {
-                            outbe_engine::ConsensusRadicleServices {
-                                status,
-                                endpoint,
-                                local_identity,
-                                task_owner,
-                            }
-                        }),
-                    ),
-                )
-            });
-            commonware_macros::select! {
-                _ = shutdown_token_clone.cancelled() => {
-                    info!("consensus stack shutting down");
-                    // The manager may still be using endpoint discovery. Keep
-                    // Commonware transport alive until both owners have drained.
-                    let radicle_result = application_drain.drain().await;
-                    if let Err(error) = &radicle_result {
-                        tracing::error!(%error, "Radicle drain failed before transport shutdown");
-                    }
-                    // Close follower delivery ingress and persist all accepted
-                    // proofs while Marshal can still answer certificate reads.
-                    let follower_result = follower_drain.drain(Duration::from_secs(5)).await;
-                    if let Err(error) = &follower_result {
-                        tracing::error!(%error, "follower drain failed before Marshal shutdown");
-                    }
-                    let stop_result = graceful_shutdown
-                        .stop(0, Some(Duration::from_secs(5)))
-                        .await;
-                    let stack_result = await_consensus_stack_shutdown(
-                        &mut stack_handle, Duration::from_secs(5),
-                    ).await;
-                    if let Err(error) = &stack_result {
-                        tracing::error!(%error, "consensus stack failed during shutdown");
-                    }
-                    let stack_result = match (stack_result, follower_result) {
-                        (Err(error), Err(drain)) => Err(error.wrap_err(
-                            crate::errors::LaunchError::follower_drain_also_failed(&drain),
-                        )),
-                        (Err(error), _) | (_, Err(error)) => Err(error),
-                        (Ok(()), Ok(())) => Ok(()),
-                    };
-                    outbe_engine::application_shutdown::combine(
-                        consensus_shutdown_result(stop_result, stack_result), radicle_result,
+                let stack_application_drain = application_drain.clone();
+                let (follower_drain, follower_shutdown) =
+                    outbe_engine::follower_shutdown::follower_drain_pair();
+                let mut stack_handle = ctx.child("consensus_stack").spawn(move |stack_ctx| {
+                    outbe_engine::run_consensus_stack(
+                        stack_ctx,
+                        args,
+                        node,
+                        bridge_for_consensus,
+                        outbe_engine::ConsensusStackServices::new(
+                            outbe_engine::ConsensusExecutionServices {
+                                ocomp_readiness,
+                                retention_selector,
+                                finalized_execution_barrier,
+                            },
+                            outbe_engine::ConsensusShutdownServices {
+                                application_drain: stack_application_drain,
+                                follower_shutdown: Some(follower_shutdown),
+                            },
+                            radicle.map(|(endpoint, local_identity, status, task_owner)| {
+                                outbe_engine::ConsensusRadicleServices {
+                                    status,
+                                    endpoint,
+                                    local_identity,
+                                    task_owner,
+                                }
+                            }),
+                        ),
                     )
-                },
-                result = &mut stack_handle => {
-                    let result = result.map_err(|error| {
-                        crate::errors::LaunchError::ConsensusStackTaskFailed {
-                            details: format!("{error:?}"),
+                });
+                commonware_macros::select! {
+                    _ = shutdown_token_clone.cancelled() => {
+                        info!("consensus stack shutting down");
+                        // The manager may still be using endpoint discovery. Keep
+                        // Commonware transport alive until both owners have drained.
+                        let radicle_result = application_drain.drain().await;
+                        if let Err(error) = &radicle_result {
+                            tracing::error!(%error, "Radicle drain failed before transport shutdown");
                         }
-                    })?;
-                    if let Err(e) = &result {
-                        tracing::error!(%e, "consensus stack failed");
-                    }
-                    result
-                },
-            }
-        })
+                        // Close follower delivery ingress and persist all accepted
+                        // proofs while Marshal can still answer certificate reads.
+                        let follower_result = follower_drain.drain(Duration::from_secs(5)).await;
+                        if let Err(error) = &follower_result {
+                            tracing::error!(%error, "follower drain failed before Marshal shutdown");
+                        }
+                        let stop_result = graceful_shutdown
+                            .stop(0, Some(Duration::from_secs(5)))
+                            .await;
+                        let stack_result = await_consensus_stack_shutdown(
+                            &mut stack_handle, Duration::from_secs(5),
+                        ).await;
+                        if let Err(error) = &stack_result {
+                            tracing::error!(%error, "consensus stack failed during shutdown");
+                        }
+                        let stack_result = match (stack_result, follower_result) {
+                            (Err(error), Err(drain)) => Err(error.wrap_err(crate::errors::LaunchError::follower_drain_also_failed(&drain))),
+                            (Err(error), _) | (_, Err(error)) => Err(error),
+                            (Ok(()), Ok(())) => Ok(()),
+                        };
+                        outbe_engine::application_shutdown::combine(
+                            consensus_shutdown_result(stop_result, stack_result), radicle_result,
+                        )
+                    },
+                    result = &mut stack_handle => {
+                        let result = result.map_err(|error| {
+                            crate::errors::LaunchError::ConsensusStackTaskFailed {
+                                details: format!("{error:?}"),
+                            }
+                        })?;
+                        if let Err(e) = &result {
+                            tracing::error!(%e, "consensus stack failed");
+                        }
+                        result
+                    },
+                }
+            })
     });
 
     let _ = consensus_dead_tx.send(());

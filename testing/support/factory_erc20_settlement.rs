@@ -1,15 +1,11 @@
 //! ERC-20 settlement scenarios that every factory passes on the VaultRouter rail.
 #![allow(dead_code)]
 
-use std::{fmt::Debug, sync::Arc};
+use std::fmt::Debug;
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::sol;
-use outbe_compressed_entities::ExecutionScope;
-use outbe_compressed_entities::{begin_block, test_support::seed_compressed_entities_genesis};
 use outbe_evm::test_support::{install_code, runtime_code, seed_storage, EvmWorld};
-use outbe_offchain_data::runtime_body_readers;
-use outbe_offchain_storage::MemoryStorage;
 use outbe_oracle::test_support::seed_trailing_vwap_window;
 use outbe_primitives::{
     addresses::VAULT_ROUTER_ADDRESS,
@@ -59,13 +55,7 @@ pub trait Rail: Copy + Debug + Sized {
     const EXTRA_COUNTERPARTIES: &'static [Address] = &[];
 
     /// Issues and qualifies the entity `OWNER` settles. Returns its id and settlement deadline.
-    fn seed(
-        self,
-        storage: &StorageHandle<'_>,
-        scope: &ExecutionScope,
-        store: &Arc<MemoryStorage>,
-        issuance_currency: u16,
-    ) -> (U256, u64);
+    fn seed(self, storage: &StorageHandle<'_>, issuance_currency: u16) -> (U256, u64);
 
     /// Funds the entity's own counterparties once the EVM runs.
     fn prepare(self, _world: &mut World<Self>) {}
@@ -118,17 +108,12 @@ impl<R: Rail> World<R> {
         for addr in R::EXTRA_COUNTERPARTIES {
             install_code(&mut db, *addr, &code);
         }
-        let store = Arc::new(MemoryStorage::new());
-        let readers = runtime_body_readers(store.clone());
-        let scope = Arc::new(ExecutionScope::default());
         let (id, deadline) = seed_storage(&mut db, TIMESTAMP, OWNER, |storage| {
-            seed_compressed_entities_genesis(&storage).unwrap();
-            begin_block(storage.clone(), &scope).unwrap();
             register_vault(&storage, ASSET, VAULT, issuance_currency).unwrap();
             if registered {
                 register_source(&storage, R::FACTORY, R::SOURCE).unwrap();
             }
-            let seeded = rail.seed(&storage, &scope, &store, issuance_currency);
+            let seeded = rail.seed(&storage, issuance_currency);
             if issuance_currency != 840 {
                 seed_trailing_vwap_window(
                     &storage,
@@ -141,10 +126,7 @@ impl<R: Rail> World<R> {
             seeded
         });
         let mut world = Self {
-            evm: EvmWorld::new(db)
-                .at(TIMESTAMP)
-                .with_scope(scope)
-                .with_readers(readers),
+            evm: EvmWorld::new(db).at(TIMESTAMP),
             rail,
             payer,
             cost: U256::ZERO,

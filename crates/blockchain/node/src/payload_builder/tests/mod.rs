@@ -1,4 +1,3 @@
-use outbe_offchain_data::runtime_body_readers;
 mod carrier_admission;
 mod size_budget;
 mod stages;
@@ -12,11 +11,8 @@ use std::{
 use super::*;
 use alloy_consensus::{SignableTransaction as _, Transaction as _, TxEip1559};
 use alloy_eips::eip2718::Encodable2718;
-use alloy_primitives::{address, keccak256, Bytes, Signature, TxKind, U256};
+use alloy_primitives::{address, keccak256, Bytes, Signature, TxKind, B256, U256};
 use alloy_rpc_types_engine::PayloadId;
-use outbe_compressed_entities::{
-    CandidateCacheLimits, CompressedTreeService, ExactParentIdentity, ACTIVE_COMMITMENT_SCHEME,
-};
 use outbe_primitives::runtime_audit_v1::{
     BODY_READ_REQUEST_DEADLINE, OTHER_PAYLOAD_EXECUTION_FAILURE,
 };
@@ -26,9 +22,8 @@ use outbe_evm::{
     OutbeEvmSigner,
 };
 use outbe_metadosis::test_support::ForkInstallScenario;
-use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
 use outbe_primitives::{
-    addresses::{COMPRESSED_ENTITIES_ADDRESS, REWARDS_ADDRESS},
+    addresses::REWARDS_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
     consensus::{ConsensusExecutionBridge, DkgBoundaryArtifact, ReshareResult},
     projection::ExecutionReadBudget,
@@ -159,7 +154,6 @@ fn genesis_boundary_artifacts(proposer: alloy_primitives::Address) -> (Bytes, B2
         )),
         timestamp_millis_part: 0,
         late_finalize_credits: None,
-        compressed_entities_root: None,
     })
     .expect("genesis boundary artifacts encode");
     (artifacts, committee_snapshot_hash)
@@ -202,19 +196,6 @@ fn active_ocomp_provider(
     seed.set_block_number(1);
     seed.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::ForkProfile);
     StorageHandle::enter(&mut seed, |storage| {
-        let root = outbe_compressed_entities::sealed_root(B256::ZERO)
-            .expect("CE genesis root is deterministic");
-        storage
-            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
-            .expect("CE schema version seed succeeds");
-        storage
-            .sstore(
-                COMPRESSED_ENTITIES_ADDRESS,
-                U256::from(1),
-                U256::from_be_slice(root.as_slice()),
-            )
-            .expect("CE genesis root seed succeeds");
-
         let mut validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         validators
             .config_owner
@@ -345,13 +326,8 @@ fn build_active_payload_case(
         committee_snapshot_hash,
     );
     bridge.set_pending_tee_bootstrap(bootstrap.clone());
-    let body_storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
-    let evm_config = OutbeEvmConfig::new_with_bridge_and_runtime_body_readers(
-        chain_spec.clone(),
-        bridge,
-        runtime_body_readers(body_storage),
-    )
-    .with_evm_signer(signer);
+    let evm_config =
+        OutbeEvmConfig::new_with_bridge(chain_spec.clone(), bridge).with_evm_signer(signer);
     let parent = Arc::new(SealedHeader::seal_slow(OutbeHeader::new(
         alloy_consensus::Header {
             number: 0,
@@ -564,74 +540,4 @@ fn bootstrap_payload_survives_repeated_block_one_proposal_attempts() {
             SystemTxKind::HookEvents,
         ]
     );
-}
-
-fn tree_service() -> (tempfile::TempDir, Arc<CompressedTreeService>) {
-    let directory = tempfile::tempdir().unwrap();
-    let genesis_hash = B256::repeat_byte(0x11);
-    let db = outbe_compressed_entities::test_support::open_empty_ce_database(
-        directory.path(),
-        genesis_hash,
-    )
-    .unwrap();
-    let service = CompressedTreeService::new(
-        db,
-        CandidateCacheLimits {
-            max_candidates: 4,
-            max_encoded_bytes: 1_000_000,
-        },
-    )
-    .unwrap();
-    (directory, Arc::new(service))
-}
-
-#[test]
-fn typed_ce_capacity_errors_survive_the_executor_boundary() {
-    for expected in [
-        PrecompileError::BlockCeWorkCapacityExhausted,
-        PrecompileError::TransactionCeWorkLimitExceeded,
-    ] {
-        let expected_message = expected.to_string();
-        let error = BlockExecutionError::other(expected);
-        assert_eq!(
-            ce_work_admission_error(&error).map(ToString::to_string),
-            Some(expected_message)
-        );
-    }
-    assert!(ce_work_admission_error(&BlockExecutionError::msg("other")).is_none());
-}
-
-#[test]
-fn exact_parent_readiness_remains_typed_for_retry_without_an_alarm() {
-    let readiness = BlockExecutionError::other(PrecompileError::TreeUnavailable(
-        "finalized marker advanced past the payload parent".to_owned(),
-    ));
-    assert!(ce_local_readiness_error(&readiness));
-    assert!(!ce_local_readiness_error(&BlockExecutionError::other(
-        PrecompileError::Fatal("same-height parent hash mismatch".to_owned()),
-    )));
-}
-
-#[test]
-fn late_payload_rejection_removes_its_published_candidate() {
-    let (_directory, service) = tree_service();
-    let genesis_hash = B256::repeat_byte(0x11);
-    let block_hash = B256::repeat_byte(0x22);
-    let genesis_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
-    let provisional = service
-        .open_parent(ExactParentIdentity {
-            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-            block_number: 0,
-            block_hash: genesis_hash,
-            root: genesis_root,
-        })
-        .unwrap()
-        .prepare_seal(1, &[], &[])
-        .unwrap();
-    service.publish_candidate(block_hash, provisional).unwrap();
-
-    discard_failed_payload_candidate(Some(&service), 1, block_hash).unwrap();
-
-    assert!(service.candidate(1, block_hash).unwrap().is_none());
-    assert_eq!(service.finalized_marker().unwrap().height, 0);
 }

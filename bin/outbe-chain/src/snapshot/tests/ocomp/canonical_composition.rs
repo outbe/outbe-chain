@@ -18,7 +18,6 @@ fn empty_canonical_composition_needs_no_job_or_cas_directories() {
                         None,
                     )
                     .unwrap();
-                    assert_eq!(audit.projection.block_number, 100);
                     assert_eq!(audit.closure.checkpoint.current.block_number, 100);
                     assert_eq!(audit.closure.replay.blocks, 0);
                     assert_eq!(audit.bounds.active_intents, 0);
@@ -45,12 +44,10 @@ fn empty_canonical_composition_needs_no_job_or_cas_directories() {
 }
 
 #[test]
-fn canonical_inventory_failure_precedes_missing_projection_and_local_population() {
+fn canonical_inventory_failure_precedes_local_population_inspection() {
     with_canonical_frontiers(
         2,
-        |layout| {
-            std::fs::remove_dir_all(&layout.projection.as_ref().unwrap().root).unwrap();
-        },
+        |_| {},
         |_| {
             let mut owner = queued_owner(0);
             // Exact corruption already exercised by active_inventory.

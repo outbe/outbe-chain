@@ -1,50 +1,47 @@
-use crate::snapshot::tests::projection_fixture::PartitionFixtureReader as RocksDbReader;
-use crate::snapshot::tests::projection_fixture::PartitionFixtureStore as RocksDbStorage;
 use crate::snapshot::{
-    tests::headers::fingerprint,
+    native::{HistoricalStateReader, RethReadOnlyView},
+    tests::{headers::fingerprint, native_state},
     validation::{ocomp::verify_lease_inputs, Incomplete},
 };
+use alloy_consensus::Sealable;
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{
-    body_commitment, derive_poseidon_entity_id, encode_tribute_v1, partition_collection_key,
-    tribute_partition_root_from_leaves, PartitionRef, StoredBody, ACTIVE_COMMITMENT_SCHEME,
-    BODY_SCHEMA_V1,
-};
 use outbe_ocomp::control::poc_schema_limits;
-use outbe_ocomp_protocol::intent::{
-    ActivationPreconditionsV1, DayType, FrozenMetadosisValuesV1, JobIntentV1,
-    MetadosisAttemptPreconditionV1, MetadosisExpectedStatus, NodTargetPreconditionV1,
-    TributeInputBindingV1,
+use outbe_ocomp_protocol::{
+    intent::{
+        ActivationPreconditionsV1, DayType, FrozenMetadosisValuesV1, JobIntentV1,
+        MetadosisAttemptPreconditionV1, MetadosisExpectedStatus, NodTargetPreconditionV1,
+        TributeInputBindingV1,
+    },
+    state::{OcompFinalizedJobV1, OcompJobRecordV1, OcompJobStatus},
 };
-use outbe_offchain_storage::{
-    AtomicWriteBatch, AtomicWriteOperation, Key, Namespace, StorageReaderHandle,
-    StorageWriterHandle, Value,
+use outbe_primitives::{
+    addresses::TRIBUTE_ADDRESS,
+    storage::{hashmap::HashMapStorageProvider, StorageHandle},
+    time::WorldwideDay,
+    tribute_encryption::TributeContextV2,
+    wwd_entity_id::derive_poseidon_entity_id,
+    OutbeHeader,
 };
-use outbe_primitives::time::WorldwideDay;
-use outbe_snapshot::layout::ProtectedPaths;
 use outbe_tribute::{
-    canonical_body, RetainedTributePin, RetainedTributeReader, TributeData,
-    TributeRepositoryReader, TributeRepositoryWriter, OCOMP_RETAINED_TRIBUTES_NAMESPACE,
+    storage_records::{StoredTribute, StoredTributeEntryExt},
+    TributeContract,
 };
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    sync::Arc,
+use reth_ethereum::provider::db::{
+    database::Database,
+    init_db,
+    mdbx::DatabaseArguments,
+    tables,
+    transaction::{DbTx, DbTxMut},
 };
+use reth_primitives_traits::StorageEntry;
 
 const DAY: WorldwideDay = WorldwideDay::new(20_260_901);
 fn hash(byte: u8) -> B256 {
     B256::repeat_byte(byte)
 }
 
-fn intent(collection_root: B256, count: u32, nominal: U256) -> JobIntentV1 {
+fn intent(count: u32, nominal: U256) -> JobIntentV1 {
     let day = DAY.value();
-    let collection_key = B256::from(
-        *partition_collection_key(PartitionRef::TributeWwd(DAY))
-            .unwrap()
-            .1
-            .as_bytes(),
-    );
     let intent = JobIntentV1 {
         chain_id: 54322345,
         genesis_hash: hash(1),
@@ -53,9 +50,6 @@ fn intent(collection_root: B256, count: u32, nominal: U256) -> JobIntentV1 {
         pending_nonce: 0,
         attempt: 0,
         protocol_bundle_hash: hash(3),
-        ce_sealed_root: hash(5),
-        sealed_tribute_collection_key: collection_key,
-        sealed_tribute_collection_root: collection_root,
         authenticated_day_count: count,
         authenticated_day_nominal: nominal,
         pre_admission_envelope_hash: hash(6),
@@ -77,8 +71,6 @@ fn intent(collection_root: B256, count: u32, nominal: U256) -> JobIntentV1 {
             tribute: TributeInputBindingV1 {
                 wwd: day,
                 source_generation: 1,
-                collection_key,
-                sealed_collection_root: collection_root,
                 exact_count: count,
                 exact_nominal_total: nominal,
             },
@@ -106,304 +98,266 @@ fn intent(collection_root: B256, count: u32, nominal: U256) -> JobIntentV1 {
     intent
 }
 
-fn body(index: u8, day: WorldwideDay) -> TributeData {
-    let owner = Address::repeat_byte(index);
-    TributeData {
-        tribute_id: derive_poseidon_entity_id(owner, day).unwrap(),
-        owner,
-        worldwide_day: day,
-        issuance_amount_minor: U256::from(1000),
-        issuance_currency: 840,
-        nominal_amount_minor: U256::from(700),
-        reference_currency: 840,
-        tribute_price_minor: U256::from(2),
-    }
-}
-
-#[derive(Clone, Copy)]
-enum Placement {
-    Live,
-    Retained,
-    Union,
-    Absent,
-    OtherLease,
-    OtherDay,
-}
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum Fault {
     None,
-    MissingBody,
-    CorruptBody,
-    CrossDayBody,
+    MissingRecord,
+    DuplicateIndex,
+    WrongOwner,
+    MissingHistory,
+    WrongHistory,
 }
 
 struct Fixture {
-    reader: StorageReaderHandle,
     root: tempfile::TempDir,
-    source: PathBuf,
-    scratch: PathBuf,
-    intent: JobIntentV1,
+    layout: crate::snapshot::config::NativeLayout,
+    job: OcompJobRecordV1,
 }
 
 impl Fixture {
-    fn new(placement: Placement, fault: Fault) -> Self {
-        let root = tempfile::tempdir().unwrap();
-        let source = root.path().join("primary");
-        let scratch = root.path().join("scratch");
-        fs::create_dir(&scratch).unwrap();
-        let bodies: Vec<_> = (1..=5).map(|index| body(index, DAY)).collect();
-        let leaves: Vec<_> = bodies
-            .iter()
-            .map(|body| {
-                let bytes = encode_tribute_v1(&canonical_body(body)).unwrap();
-                (
-                    body.tribute_id,
-                    body_commitment(
-                        ACTIVE_COMMITMENT_SCHEME,
-                        BODY_SCHEMA_V1,
-                        body.tribute_id,
-                        &bytes,
-                    )
-                    .unwrap(),
-                )
-            })
-            .collect();
-        let collection_root = tribute_partition_root_from_leaves(DAY, leaves).unwrap();
-        let intent = intent(collection_root, 5, U256::from(3500));
-        {
-            let storage = Arc::new(RocksDbStorage::open(&source).unwrap());
-            let reader: StorageReaderHandle = storage.clone();
-            let writer: StorageWriterHandle = storage.clone();
-            let current = TributeRepositoryReader::new(reader.clone());
-            let repository = TributeRepositoryWriter::new(reader.clone(), writer.clone());
-            let retained = RetainedTributeReader::new(reader);
-            let pin = RetainedTributePin {
-                input_lease_id: if matches!(placement, Placement::OtherLease) {
-                    hash(0xee)
-                } else {
-                    intent.input_lease_id().unwrap()
-                },
-                worldwide_day: DAY,
-            };
-            for (index, data) in bodies.iter().enumerate() {
-                if matches!(placement, Placement::Absent) {
-                    continue;
-                }
-                if matches!(placement, Placement::OtherDay) {
-                    repository
-                        .put(&body(index as u8 + 1, WorldwideDay::new(20_260_902)))
+    fn new(version: u32, fault: Fault) -> Self {
+        let (root, layout, _) = crate::snapshot::tests::evm::state_fixture(version);
+        let mut owner = HashMapStorageProvider::new(layout.chain.chain().id());
+        let (record_slot, first_id, owner_slot, second_index_slot) =
+            StorageHandle::enter(&mut owner, |storage| {
+                let contract = TributeContract::new(storage);
+                let mut first = None;
+                // The physical day index is deliberately not sorted by owner.
+                for index in [5u8, 1, 4, 2, 3] {
+                    let address = Address::repeat_byte(index);
+                    let body = native_state::encrypted(TributeContextV2 {
+                        chain_id: layout.chain.chain().id(),
+                        tribute_id: derive_poseidon_entity_id(address, DAY).unwrap(),
+                        owner: address,
+                        worldwide_day: DAY,
+                        issuance_currency: 840,
+                        reference_currency: 840,
+                        tribute_price_minor: U256::from(2),
+                        offer_input_hash: hash(index),
+                    });
+                    contract
+                        .insert_state_record(&StoredTribute::from(&body))
                         .unwrap();
-                    continue;
-                }
-                repository.put(data).unwrap();
-                let retain = matches!(placement, Placement::Retained | Placement::OtherLease)
-                    || matches!(placement, Placement::Union) && index <= 2;
-                if retain {
-                    let retained_batch =
-                        retained.plan_retain_current(pin, data.tribute_id).unwrap();
-                    let mut batch = AtomicWriteBatch::new();
-                    batch.extend(retained_batch.operations().iter().cloned());
-                    if !matches!(placement, Placement::Union) || index < 2 {
-                        batch.extend(
-                            current
-                                .projection_session(&[data.tribute_id])
-                                .unwrap()
-                                .delete(data.tribute_id)
-                                .unwrap()
-                                .operations()
-                                .iter()
-                                .cloned(),
-                        );
-                    }
-                    writer.apply_atomic(&batch).unwrap();
-                    if index == 0 && matches!(fault, Fault::MissingBody) {
-                        // Remove only the native body put, leaving its real retained index.
-                        for operation in retained_batch.operations() {
-                            if let AtomicWriteOperation::Put { namespace, key, .. } = operation {
-                                if namespace.as_str() == OCOMP_RETAINED_TRIBUTES_NAMESPACE {
-                                    writer.delete(namespace.clone(), key).unwrap();
-                                }
-                            }
-                        }
-                    }
-                } else if index == 0 {
-                    let namespace = Namespace::new("tributes").unwrap();
-                    let key = Key::new(data.tribute_id.to_vec()).unwrap();
-                    match fault {
-                        Fault::None => {}
-                        Fault::MissingBody => writer.delete(namespace, &key).unwrap(),
-                        Fault::CorruptBody => writer
-                            .put(
-                                namespace,
-                                &key,
-                                &Value::new(b"invalid stored body".to_vec()).unwrap(),
-                            )
-                            .unwrap(),
-                        Fault::CrossDayBody => {
-                            // A valid foreign-day body under the selected native primary key.
-                            let bytes = encode_tribute_v1(&canonical_body(&body(
-                                1,
-                                WorldwideDay::new(20_260_902),
-                            )))
-                            .unwrap();
-                            let value = Value::new(
-                                StoredBody::new(outbe_compressed_entities::BODY_SCHEMA_V1, bytes)
-                                    .unwrap()
-                                    .encode(),
-                            )
-                            .unwrap();
-                            writer.put(namespace, &key, &value).unwrap();
-                        }
+                    if first.is_none() {
+                        first = Some(body);
                     }
                 }
+                let first = first.unwrap();
+                let entry = contract.records.entry(first.context.tribute_id);
+                let record_slot = entry
+                    .encrypted_amounts()
+                    .encoded_words(&first.encrypted_amounts)
+                    .last()
+                    .unwrap()
+                    .0;
+                (
+                    record_slot,
+                    first.context.tribute_id,
+                    entry.owner().slot(),
+                    contract.day_ids.list(&DAY).data_slot(1),
+                )
+            });
+        match fault {
+            Fault::MissingRecord => {
+                owner.storage.remove(&(TRIBUTE_ADDRESS, owner_slot));
             }
+            Fault::DuplicateIndex => {
+                owner.storage.insert(
+                    (TRIBUTE_ADDRESS, second_index_slot),
+                    U256::from_be_slice(first_id.as_slice()),
+                );
+            }
+            Fault::WrongOwner => {
+                owner
+                    .storage
+                    .insert((TRIBUTE_ADDRESS, owner_slot), U256::from(0x99));
+            }
+            _ => {}
         }
-        // The primary writer is stopped. Session creation may write secondary
-        // metadata, so open it before the measured read-only adapter call.
-        let reader: StorageReaderHandle =
-            Arc::new(RocksDbReader::open(&source, &root.path().join("secondary")).unwrap());
-        Self {
-            reader,
-            root,
-            source,
-            scratch,
-            intent,
+        let before = native_state::from_owner(&owner);
+        let mut after = before.clone();
+        let key = B256::from(record_slot.to_be_bytes::<32>());
+        let old = after
+            .get_mut(&TRIBUTE_ADDRESS)
+            .unwrap()
+            .1
+            .get_mut(&key)
+            .unwrap();
+        *old ^= U256::ONE;
+        native_state::persist(&layout, version, &before, &after, 101);
+        let db = init_db(layout.chain_root.join("db"), DatabaseArguments::test()).unwrap();
+        let tx = db.tx_mut().unwrap();
+        let mut request = tx
+            .get::<tables::Headers<OutbeHeader>>(100)
+            .unwrap()
+            .unwrap();
+        request.inner.state_root = native_state::root(&before);
+        let mut execution = tx
+            .get::<tables::Headers<OutbeHeader>>(101)
+            .unwrap()
+            .unwrap();
+        execution.inner.parent_hash = request.hash_slow();
+        execution.inner.state_root = native_state::root(&after);
+        for header in [request, execution] {
+            tx.put::<tables::CanonicalHeaders>(header.inner.number, header.hash_slow())
+                .unwrap();
+            tx.put::<tables::HeaderNumbers>(header.hash_slow(), header.inner.number)
+                .unwrap();
+            tx.put::<tables::Headers<OutbeHeader>>(header.inner.number, header)
+                .unwrap();
         }
+        match fault {
+            Fault::MissingHistory => {
+                tx.delete::<tables::StorageChangeSets>((101, TRIBUTE_ADDRESS).into(), None)
+                    .unwrap();
+            }
+            Fault::WrongHistory => {
+                tx.delete::<tables::StorageChangeSets>((101, TRIBUTE_ADDRESS).into(), None)
+                    .unwrap();
+                tx.put::<tables::StorageChangeSets>(
+                    (101, TRIBUTE_ADDRESS).into(),
+                    StorageEntry {
+                        key,
+                        value: U256::ONE,
+                    },
+                )
+                .unwrap();
+            }
+            _ => {}
+        }
+        tx.commit().unwrap();
+        drop(db);
+        native_state::publish_history(&layout);
+        let job = OcompJobRecordV1 {
+            intent: intent(5, U256::from(3500)),
+            intent_height: 100,
+            status: OcompJobStatus::AwaitingFinality,
+            finalized: None,
+            terminal: None,
+        };
+        Self { root, layout, job }
     }
 
-    fn check(&self, authority: &JobIntentV1, maximum: Option<u64>) -> eyre::Result<()> {
-        self.check_at(authority, &self.scratch, maximum)
-    }
-
-    fn check_at(
-        &self,
-        authority: &JobIntentV1,
-        scratch: &Path,
-        maximum: Option<u64>,
-    ) -> eyre::Result<()> {
-        let before = fingerprint(&self.source);
-        let scratch_before = fingerprint(scratch);
-        let result = verify_lease_inputs(
-            self.reader.clone(),
-            authority,
-            scratch,
-            &ProtectedPaths(vec![self.source.clone()]),
-            maximum,
-        );
-        assert_eq!(fingerprint(&self.source), before);
-        assert_eq!(
-            fingerprint(scratch),
-            scratch_before,
-            "temporary verification files must be cleaned on every exit"
-        );
+    fn check(&self, job: &OcompJobRecordV1, maximum: Option<u64>) -> eyre::Result<()> {
+        let before = fingerprint(self.root.path());
+        let scratch = tempfile::tempdir().unwrap();
+        let result = (|| {
+            let view = RethReadOnlyView::open(&self.layout)?;
+            let history = HistoricalStateReader::open(&self.layout, &view, scratch.path())?;
+            verify_lease_inputs(&history, &view, job, maximum)
+        })();
+        assert_eq!(fingerprint(self.root.path()), before);
+        assert_eq!(std::fs::read_dir(scratch.path()).unwrap().count(), 0);
         result
     }
 }
 
 #[test]
-fn live_retained_and_deduplicated_union_close_actual_native_root() {
-    for placement in [Placement::Live, Placement::Retained, Placement::Union] {
-        let fixture = Fixture::new(placement, Fault::None);
-        fixture.check(&fixture.intent, Some(5)).unwrap();
+fn complete_native_request_population_uses_history_instead_of_current_ciphertext() {
+    for version in [1, 2] {
+        let fixture = Fixture::new(version, Fault::None);
+        fixture.check(&fixture.job, Some(5)).unwrap();
     }
 }
 
 #[test]
-fn absent_required_partition_and_missing_selected_live_or_retained_body_are_incomplete() {
-    for (placement, fault) in [
-        (Placement::Absent, Fault::None),
-        (Placement::Live, Fault::MissingBody),
-        (Placement::Retained, Fault::MissingBody),
-    ] {
-        let fixture = Fixture::new(placement, fault);
-        let error = fixture.check(&fixture.intent, None).unwrap_err();
-        assert!(error.downcast_ref::<Incomplete>().is_some(), "{error:#}");
+fn missing_record_duplicate_index_or_wrong_identity_cannot_close_native_coverage() {
+    for version in [1, 2] {
+        for fault in [
+            Fault::MissingRecord,
+            Fault::DuplicateIndex,
+            Fault::WrongOwner,
+        ] {
+            let fixture = Fixture::new(version, fault);
+            assert!(
+                fixture.check(&fixture.job, None).is_err(),
+                "{version}: {fault:?}"
+            );
+        }
     }
 }
 
 #[test]
-fn bodies_under_other_lease_or_day_do_not_substitute_required_partition() {
-    for placement in [Placement::OtherLease, Placement::OtherDay] {
-        let fixture = Fixture::new(placement, Fault::None);
-        let error = fixture.check(&fixture.intent, None).unwrap_err();
-        assert!(error.downcast_ref::<Incomplete>().is_some(), "{error:#}");
+fn missing_or_tampered_before_values_cannot_substitute_current_state() {
+    for version in [1, 2] {
+        for fault in [Fault::MissingHistory, Fault::WrongHistory] {
+            let fixture = Fixture::new(version, fault);
+            assert!(
+                fixture.check(&fixture.job, None).is_err(),
+                "{version}: {fault:?}"
+            );
+        }
     }
 }
 
 #[test]
-fn corrupt_or_foreign_day_body_under_selected_key_is_failed() {
-    for fault in [Fault::CorruptBody, Fault::CrossDayBody] {
-        let fixture = Fixture::new(Placement::Live, fault);
-        let error = fixture.check(&fixture.intent, None).unwrap_err();
-        assert!(error.downcast_ref::<Incomplete>().is_none(), "{error:#}");
+fn native_day_count_and_checkpoint_bind_exactly() {
+    for version in [1, 2] {
+        let fixture = Fixture::new(version, Fault::None);
+        for count in [4, 6] {
+            let mut job = fixture.job.clone();
+            job.intent = intent(count, U256::from(3500));
+            assert!(fixture.check(&job, None).is_err());
+        }
+        let request = RethReadOnlyView::open(&fixture.layout)
+            .unwrap()
+            .header(100)
+            .unwrap()
+            .unwrap();
+        for wrong_hash in [false, true] {
+            let mut job = fixture.job.clone();
+            job.finalized = Some(OcompFinalizedJobV1 {
+                job_id: hash(0x81),
+                finalized_request_block_hash: if wrong_hash {
+                    hash(0x82)
+                } else {
+                    request.hash_slow()
+                },
+                finalized_request_state_root: if wrong_hash {
+                    request.inner.state_root
+                } else {
+                    hash(0x84)
+                },
+                finality_recorded_height: 101,
+                open_height: 105,
+                deadline_height: 200,
+                quorum: None,
+            });
+            assert!(fixture.check(&job, None).is_err());
+        }
     }
 }
 
 #[test]
-fn full_count_wrong_root_and_count_overrun_are_failed() {
-    let fixture = Fixture::new(Placement::Live, Fault::None);
-    for authority in [
-        intent(hash(0x99), 5, U256::from(3500)),
-        intent(
-            fixture.intent.sealed_tribute_collection_root,
-            4,
-            U256::from(3500),
-        ),
-    ] {
-        let error = fixture.check(&authority, None).unwrap_err();
-        assert!(error.downcast_ref::<Incomplete>().is_none(), "{error:#}");
-    }
-    let incomplete = intent(
-        fixture.intent.sealed_tribute_collection_root,
-        6,
-        U256::from(4200),
-    );
-    let error = fixture.check(&incomplete, None).unwrap_err();
-    assert!(error.downcast_ref::<Incomplete>().is_some(), "{error:#}");
-}
-
-#[test]
-fn body_integrity_check_does_not_open_private_nominal() {
-    let fixture = Fixture::new(Placement::Live, Fault::None);
-    for nominal in [3499_u64, 3501] {
-        let authority = intent(
-            fixture.intent.sealed_tribute_collection_root,
-            5,
-            U256::from(nominal),
-        );
-        fixture.check(&authority, None).unwrap();
+fn source_integrity_does_not_decrypt_or_sum_private_amounts() {
+    let fixture = Fixture::new(2, Fault::None);
+    for nominal in [3499u64, 3501] {
+        let mut job = fixture.job.clone();
+        job.intent = intent(5, U256::from(nominal));
+        fixture.check(&job, None).unwrap();
     }
 }
 
 #[test]
-fn resource_limit_reports_incomplete_and_exact_budget_can_finish() {
-    let fixture = Fixture::new(Placement::Union, Fault::None);
+fn native_scan_budget_is_bounded_and_exact_budget_finishes() {
+    let fixture = Fixture::new(2, Fault::None);
     for maximum in [0, 1, 4] {
-        let error = fixture.check(&fixture.intent, Some(maximum)).unwrap_err();
+        let error = fixture.check(&fixture.job, Some(maximum)).unwrap_err();
         assert!(error.downcast_ref::<Incomplete>().is_some(), "{error:#}");
     }
-    fixture.check(&fixture.intent, Some(5)).unwrap();
+    fixture.check(&fixture.job, Some(5)).unwrap();
 }
 
 #[test]
-fn overlapping_scratch_is_rejected_before_source_mutation() {
-    let fixture = Fixture::new(Placement::Union, Fault::None);
-    let error = fixture
-        .check_at(&fixture.intent, &fixture.source, None)
-        .unwrap_err();
-    assert!(error.downcast_ref::<Incomplete>().is_none(), "{error:#}");
-    let missing = fixture.source.join("new-scratch");
-    let before = fingerprint(&fixture.source);
-    let error = verify_lease_inputs(
-        fixture.reader.clone(),
-        &fixture.intent,
-        &missing,
-        &ProtectedPaths(vec![fixture.source.clone()]),
-        None,
+fn overlapping_history_scratch_is_rejected_without_source_mutation() {
+    let fixture = Fixture::new(2, Fault::None);
+    let view = RethReadOnlyView::open(&fixture.layout).unwrap();
+    let before = fingerprint(fixture.root.path());
+    assert!(HistoricalStateReader::open(
+        &fixture.layout,
+        &view,
+        &fixture.layout.chain_root.join("db")
     )
-    .unwrap_err();
-    assert!(error.downcast_ref::<Incomplete>().is_none(), "{error:#}");
-    assert!(!missing.exists());
-    assert_eq!(fingerprint(&fixture.source), before);
-    assert!(fixture.root.path().is_dir());
+    .is_err());
+    assert_eq!(fingerprint(fixture.root.path()), before);
 }

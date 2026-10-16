@@ -130,21 +130,6 @@ impl ApplicationShared {
             return Ok(Some(ProposeOutcome::EpochStale));
         }
 
-        let required_parent = ProjectionCheckpoint {
-            block_number: parent_height.get(),
-            block_hash: parent_digest.0,
-        };
-        if wait_for_projected_parent(
-            self.projection_readiness.clone(),
-            required_parent,
-            std::future::pending(),
-        )
-        .await?
-            == ParentProjectionGate::Withhold
-        {
-            return Ok(Some(ProposeOutcome::ProjectionUnavailable));
-        }
-
         Ok(None)
     }
     pub(super) async fn import_proposal_parent(

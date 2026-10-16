@@ -59,7 +59,6 @@ fn seeded_hash(seed: u8, offset: u8) -> B256 {
 fn single_tribute_intent(identity: &FixtureJobIdentity, bundle: &ProtocolBundleV1) -> JobIntentV1 {
     let day = 20_260_901;
     let nominal = U256::ONE;
-    let collection = (seeded_hash(identity.seed, 2), seeded_hash(identity.seed, 3));
     JobIntentV1 {
         chain_id: identity.chain_id,
         genesis_hash: identity.genesis_hash,
@@ -68,9 +67,6 @@ fn single_tribute_intent(identity: &FixtureJobIdentity, bundle: &ProtocolBundleV
         pending_nonce: 0,
         attempt: 0,
         protocol_bundle_hash: bundle.protocol_bundle_hash(&poc_schema_limits()).unwrap(),
-        ce_sealed_root: seeded_hash(identity.seed, 5),
-        sealed_tribute_collection_key: collection.0,
-        sealed_tribute_collection_root: collection.1,
         authenticated_day_count: 1,
         authenticated_day_nominal: nominal,
         pre_admission_envelope_hash: seeded_hash(identity.seed, 6),
@@ -81,7 +77,6 @@ fn single_tribute_intent(identity: &FixtureJobIdentity, bundle: &ProtocolBundleV
         activation_preconditions: single_tribute_preconditions(
             day,
             nominal,
-            collection,
             seeded_hash(identity.seed, 9),
         ),
         result_validator_set_epoch: 1,
@@ -110,22 +105,19 @@ fn frozen_values(nominal: U256, receipt_hash: B256) -> FrozenMetadosisValuesV1 {
 fn single_tribute_preconditions(
     day: u32,
     nominal: U256,
-    collection: (B256, B256),
     nod_root: B256,
 ) -> ActivationPreconditionsV1 {
     ActivationPreconditionsV1 {
-        tribute: tribute_binding(day, nominal, collection),
+        tribute: tribute_binding(day, nominal),
         nod: nod_precondition(day, nod_root),
         metadosis: pending_metadosis_precondition(day),
     }
 }
 
-fn tribute_binding(day: u32, nominal: U256, collection: (B256, B256)) -> TributeInputBindingV1 {
+fn tribute_binding(day: u32, nominal: U256) -> TributeInputBindingV1 {
     TributeInputBindingV1 {
         wwd: day,
         source_generation: 1,
-        collection_key: collection.0,
-        sealed_collection_root: collection.1,
         exact_count: 1,
         exact_nominal_total: nominal,
     }

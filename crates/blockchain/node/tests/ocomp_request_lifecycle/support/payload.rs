@@ -16,9 +16,9 @@ pub(in crate::lifecycle) struct CanonicalOcompSuccessor {
 pub(in crate::lifecycle) struct CanonicalEvmConfigInput {
     pub(in crate::lifecycle) chain_spec: Arc<ChainSpec<OutbeHeader>>,
     pub(in crate::lifecycle) accounted_parent: InnerTestProvider,
-    pub(in crate::lifecycle) runtime_body_readers: RuntimeBodyReaders,
+
     pub(in crate::lifecycle) signer: Arc<OutbeEvmSigner>,
-    pub(in crate::lifecycle) tree_service: Arc<CompressedTreeService>,
+
     pub(in crate::lifecycle) fork_install: Arc<outbe_metadosis::config::OcompForkInstallV1>,
 }
 
@@ -26,21 +26,19 @@ pub(in crate::lifecycle) fn canonical_evm_config(input: CanonicalEvmConfigInput)
     let CanonicalEvmConfigInput {
         chain_spec,
         accounted_parent,
-        runtime_body_readers,
+
         signer,
-        tree_service,
+
         fork_install,
     } = input;
-    OutbeEvmConfig::new_with_provider_and_runtime_body_readers(
+    OutbeEvmConfig::new_with_provider_only(
         chain_spec,
         Arc::new(RethAccountedParentArtifactProvider::new(
             accounted_parent,
             None,
         )),
-        runtime_body_readers,
     )
     .with_evm_signer(signer)
-    .with_compressed_tree_service(tree_service)
     .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(PARENT_HEIGHT))
     .with_ocomp_fork_install(fork_install)
 }
@@ -48,9 +46,9 @@ pub(in crate::lifecycle) fn canonical_evm_config(input: CanonicalEvmConfigInput)
 #[derive(Clone, Copy)]
 pub(in crate::lifecycle) struct OcompSuccessorFixture<'a> {
     pub(in crate::lifecycle) chain_spec: &'a Arc<ChainSpec<OutbeHeader>>,
-    pub(in crate::lifecycle) tree_service: &'a Arc<CompressedTreeService>,
+
     pub(in crate::lifecycle) signer: &'a Arc<OutbeEvmSigner>,
-    pub(in crate::lifecycle) runtime_body_readers: &'a RuntimeBodyReaders,
+
     pub(in crate::lifecycle) fork_install: &'a Arc<outbe_metadosis::config::OcompForkInstallV1>,
     pub(in crate::lifecycle) dkg: &'a Dkg,
     pub(in crate::lifecycle) snapshot: &'a CommitteeSnapshot,
@@ -102,9 +100,9 @@ pub(in crate::lifecycle) fn try_build_canonical_ocomp_successor(
     let evm_config = canonical_evm_config(CanonicalEvmConfigInput {
         chain_spec: fixture.chain_spec.clone(),
         accounted_parent: provider.inner.clone(),
-        runtime_body_readers: fixture.runtime_body_readers.clone(),
+
         signer: fixture.signer.clone(),
-        tree_service: fixture.tree_service.clone(),
+
         fork_install: fixture.fork_install.clone(),
     });
     let metadata =
@@ -255,15 +253,6 @@ pub(in crate::lifecycle) fn try_build_canonical_ocomp_successor(
         .filter_map(|log| IMetadosis::OffchainJobRequested::decode_log(log).ok())
         .map(|event| event.data.intentId)
         .collect::<Vec<_>>();
-    let artifacts =
-        decode_outbe_block_artifacts(payload.block().header().extra_data().as_ref()).unwrap();
-    let ce = artifacts
-        .compressed_entities_root
-        .expect("canonical OCOMP model block carries its completed CE seal");
-    fixture
-        .tree_service
-        .apply_finalized(height, payload.block().hash(), ce.r_sealed)
-        .expect("canonical OCOMP model CE candidate finalizes before its child");
     let sealed_block = payload.block().clone();
     Ok(CanonicalOcompSuccessor {
         sealed_block,

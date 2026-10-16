@@ -4,7 +4,6 @@ use crate::snapshot::{
     validation::{ocomp::verify_export_inputs, Incomplete},
 };
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
 use outbe_node::ocomp::retention::ExportAuthorityV1;
 use outbe_ocomp::{
     cas::{CasLimits, CasWriterRole, FilesystemCas, FilesystemCasReader},
@@ -31,7 +30,9 @@ use outbe_ocomp_protocol::{
     state::{OcompFinalizedJobV1, OcompJobRecordV1, OcompJobStatus},
     CasObjectRefV1, ListKind, ObjectKind, OrderedListLimits, SnapshotExportCommittedV1,
 };
+use outbe_primitives::entity_codec::{encode_tribute_v1, TributeBodyV1};
 use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::wwd_entity_id::derive_poseidon_entity_id;
 use std::{fs, path::PathBuf};
 const CAS_LIMITS: CasLimits = CasLimits {
     max_object_bytes: 1_048_576,
@@ -41,7 +42,10 @@ fn hash(byte: u8) -> B256 {
     B256::repeat_byte(if byte == 0 { 0xff } else { byte })
 }
 fn protocol_bundle() -> ProtocolBundleV1 {
-    outbe_ocomp_protocol::test_utils::minimal_protocol_bundle()
+    let mut bundle = outbe_ocomp_protocol::test_utils::minimal_protocol_bundle();
+    bundle.lysis_program_semantics_hash =
+        outbe_ocomp_protocol::profile::supported_lysis_v1_semantics_hash().unwrap();
+    bundle
 }
 
 fn finalized_job_spec(
@@ -54,8 +58,6 @@ fn finalized_job_spec(
     let day = 20_260_901_u32;
     let bundle = protocol_bundle();
     let protocol_bundle_hash = bundle.protocol_bundle_hash(&limits).unwrap();
-    let collection_key = hash(seed.wrapping_add(2));
-    let collection_root = hash(seed.wrapping_add(3));
     let nominal = U256::from(1);
     let intent = JobIntentV1 {
         chain_id,
@@ -65,9 +67,6 @@ fn finalized_job_spec(
         pending_nonce: 0,
         attempt: 0,
         protocol_bundle_hash,
-        ce_sealed_root: hash(seed.wrapping_add(5)),
-        sealed_tribute_collection_key: collection_key,
-        sealed_tribute_collection_root: collection_root,
         authenticated_day_count: 1,
         authenticated_day_nominal: nominal,
         pre_admission_envelope_hash: hash(seed.wrapping_add(6)),
@@ -89,8 +88,7 @@ fn finalized_job_spec(
             tribute: TributeInputBindingV1 {
                 wwd: day,
                 source_generation: 1,
-                collection_key,
-                sealed_collection_root: collection_root,
+
                 exact_count: 1,
                 exact_nominal_total: nominal,
             },
@@ -235,16 +233,8 @@ fn fixture(seed: u8, damage: Option<&str>) -> Fixture {
                 + u64::from(damage == Some("checkpoint_height")),
             finalized_block_hash: spec.summary.finalized_block_hash,
             finalized_state_root: spec.summary.finalized_state_root,
-            finalized_ce_root: intent.ce_sealed_root,
-            ce_schema_version: u16::try_from(
-                outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION,
-            )
-            .unwrap()
-                + u16::from(damage == Some("checkpoint_schema")),
         },
         wwd: intent.wwd,
-        sealed_tribute_collection_key: intent.sealed_tribute_collection_key,
-        sealed_tribute_collection_root: intent.sealed_tribute_collection_root,
         tribute_count: intent.authenticated_day_count,
         tribute_nominal_total: intent.authenticated_day_nominal,
         input_chunk_count: 1,
@@ -502,17 +492,11 @@ fn changed_cas_bytes_are_failed_and_never_missing_input() {
 }
 
 #[test]
-fn native_consistent_checkpoint_height_and_schema_still_bind_to_canonical_request() {
-    for damage in ["checkpoint_height", "checkpoint_schema"] {
-        // Native writers accept internally consistent checkpoint descriptors.
-        // The local composition must compare height/schema with B/native CE.
-        let f = fixture(20, Some(damage));
-        let error = f.check(None).unwrap_err();
-        assert!(
-            error.downcast_ref::<Incomplete>().is_none(),
-            "{damage}: {error:#}"
-        );
-    }
+fn native_consistent_checkpoint_height_still_binds_to_canonical_request() {
+    // The native writer binds the hash. Composition also checks the request height.
+    let f = fixture(20, Some("checkpoint_height"));
+    let error = f.check(None).unwrap_err();
+    assert!(error.downcast_ref::<Incomplete>().is_none(), "{error:#}");
 }
 
 #[test]

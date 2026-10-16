@@ -17,7 +17,7 @@ impl CheckSelection {
         use CheckName::*;
         let mut checks = BTreeSet::new();
         if requested == "all" {
-            checks.extend([Headers, Evm, Ce, Bodies, Ocomp]);
+            checks.extend([Headers, Evm, Ocomp]);
             if has_artifact_metadata {
                 checks.extend([Files, Provenance]);
             }
@@ -28,8 +28,6 @@ impl CheckSelection {
                     "provenance" => Provenance,
                     "headers" => Headers,
                     "evm" => Evm,
-                    "ce" => Ce,
-                    "bodies" => Bodies,
                     "ocomp" => Ocomp,
                     _ => {
                         return Err(crate::errors::SnapshotError::UnknownSnapshotCheck {
@@ -43,22 +41,13 @@ impl CheckSelection {
         if has_expected_signer || checks.contains(&Files) {
             checks.insert(Provenance);
         }
-        if checks.contains(&Bodies) {
-            checks.insert(Ce);
-        }
         if checks.contains(&Ocomp) {
             checks.insert(Evm);
         }
-        if checks.contains(&Evm) || checks.contains(&Ce) {
+        if checks.contains(&Evm) {
             checks.insert(Headers);
         }
         Ok(Self { checks })
-    }
-
-    pub(crate) fn needs_projection(&self) -> bool {
-        [CheckName::Files, CheckName::Bodies, CheckName::Ocomp]
-            .iter()
-            .any(|check| self.checks.contains(check))
     }
 }
 
@@ -118,46 +107,24 @@ fn run_artifact_phase(
 
 fn resolve_validation_layout(
     node: &crate::snapshot::config::NodeInputs,
-    selection: &CheckSelection,
+    _selection: &CheckSelection,
     report: &mut super::report::ValidationReport,
-) -> Option<(
-    crate::snapshot::config::RequestedLayout,
-    Option<eyre::Report>,
-)> {
+) -> Option<crate::snapshot::config::RequestedLayout> {
     use super::report::CheckName::*;
-    use crate::snapshot::config::{resolve_requested_layout, NativeReadSelection};
-    // A bad/missing unneeded projection config cannot poison execution-only work.
-    let mut layout = match resolve_requested_layout(node, NativeReadSelection { projection: false })
-    {
-        Ok(layout) => layout,
+    use crate::snapshot::config::resolve_requested_layout;
+    match resolve_requested_layout(node) {
+        Ok(layout) => {
+            report
+                .protected_paths
+                .0
+                .extend(validation_protected(&layout).0);
+            Some(layout)
+        }
         Err(error) => {
-            fail_selected(report, &[Files, Headers, Evm, Ce, Bodies, Ocomp], &error);
-            return None;
+            fail_selected(report, &[Files, Headers, Evm, Ocomp], &error);
+            None
         }
-    };
-    report
-        .protected_paths
-        .0
-        .extend(validation_protected(&layout).0);
-    let projection_error = if selection.needs_projection() {
-        match resolve_requested_layout(node, NativeReadSelection { projection: true }) {
-            Ok(full) => {
-                layout = full;
-                report
-                    .protected_paths
-                    .0
-                    .extend(validation_protected(&layout).0);
-                None
-            }
-            Err(error) => Some(error),
-        }
-    } else {
-        None
-    };
-    if let Some(error) = &projection_error {
-        fail_selected(report, &[Files, Bodies, Ocomp], error);
     }
-    Some((layout, projection_error))
 }
 
 fn create_validation_scratch(
@@ -185,7 +152,7 @@ fn create_validation_scratch(
     match result {
         Ok(scratch) => Some(scratch),
         Err(error) => {
-            fail_selected(report, &[Evm, Ce, Bodies, Ocomp], &error);
+            fail_selected(report, &[Evm, Ocomp], &error);
             None
         }
     }
@@ -212,7 +179,7 @@ pub(crate) fn validate_snapshot_with_node(
             .chain(&inputs.archive)
             .cloned(),
     );
-    let native_requested = [Headers, Evm, Ce, Bodies, Ocomp]
+    let native_requested = [Headers, Evm, Ocomp]
         .iter()
         .any(|name| selection.checks.contains(name));
     let (metadata, files_ready) = run_artifact_phase(inputs, &selection, &mut report);
@@ -223,22 +190,16 @@ pub(crate) fn validate_snapshot_with_node(
     let node = match parse_node() {
         Ok(node) => node,
         Err(error) => {
-            fail_selected(
-                &mut report,
-                &[Files, Headers, Evm, Ce, Bodies, Ocomp],
-                &error,
-            );
+            fail_selected(&mut report, &[Files, Headers, Evm, Ocomp], &error);
             return Ok(report);
         }
     };
-    let Some((layout, projection_error)) =
-        resolve_validation_layout(&node, &selection, &mut report)
-    else {
+    let Some(layout) = resolve_validation_layout(&node, &selection, &mut report) else {
         return Ok(report);
     };
     // CRITICAL: exact file hashes include native MDBX lock bookkeeping.
-    // Do this before any native DB open or progress inspection, including CE.
-    if files_ready && projection_error.is_none() {
+    // Do this before any native DB open or progress inspection, including native execution.
+    if files_ready {
         let result = (|| -> eyre::Result<()> {
             let manifest = metadata
                 .as_ref()
@@ -254,7 +215,7 @@ pub(crate) fn validate_snapshot_with_node(
         return Ok(report);
     }
 
-    let needs_work = [Evm, Ce, Bodies, Ocomp]
+    let needs_work = [Evm, Ocomp]
         .iter()
         .any(|name| selection.checks.contains(name));
     let scratch = needs_work
@@ -264,14 +225,13 @@ pub(crate) fn validate_snapshot_with_node(
     run_native_checks(
         &layout,
         &selection,
-        projection_error.as_ref(),
         scratch.as_ref().map(|s| s.path()),
         &mut report,
     );
     if let Some(scratch) = scratch {
         if let Err(source) = scratch.close() {
             let error = crate::errors::SnapshotError::RemoveValidationScratch { source }.into();
-            fail_selected(&mut report, &[Evm, Ce, Bodies, Ocomp], &error);
+            fail_selected(&mut report, &[Evm, Ocomp], &error);
         }
     }
     // No unused selected check is silently promoted. Pending means Incomplete.
@@ -312,29 +272,12 @@ fn validation_protected(
         layout.execution_rocksdb_root.clone(),
     ]);
     protected
-        .0
-        .extend(layout.projection.as_ref().map(|p| p.root.clone()));
-    protected
 }
 
 fn files_layout(
     layout: &crate::snapshot::config::RequestedLayout,
 ) -> eyre::Result<crate::snapshot::config::NativeLayout> {
-    let projection = layout
-        .projection
-        .as_ref()
-        .ok_or_else(|| super::Incomplete("missing selected projection configuration".into()))?;
-    Ok(crate::snapshot::config::NativeLayout {
-        chain: layout.chain.clone(),
-        chain_root: layout.chain_root.clone(),
-        consensus_root: layout.consensus_root.clone(),
-        ocomp_root: layout.ocomp_root.clone(),
-        offchain_root: projection.root.clone(),
-        static_files_root: layout.static_files_root.clone(),
-        execution_rocksdb_root: layout.execution_rocksdb_root.clone(),
-        projection_start_block: projection.start_block,
-        protected: layout.protected.clone(),
-    })
+    Ok(layout.clone())
 }
 
 pub(super) use super::report::{block_on, fail_selected, record_failure, record_outcome};
@@ -342,9 +285,8 @@ pub(super) use super::report::{block_on, fail_selected, record_failure, record_o
 fn run_native_checks(
     layout: &crate::snapshot::config::RequestedLayout,
     selection: &CheckSelection,
-    projection_error: Option<&eyre::Report>,
     scratch: Option<&std::path::Path>,
     report: &mut super::report::ValidationReport,
 ) {
-    super::native_checks::run_native_checks(layout, selection, projection_error, scratch, report);
+    super::native_checks::run_native_checks(layout, selection, scratch, report);
 }

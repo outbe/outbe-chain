@@ -1,6 +1,5 @@
 //! Creates and finalizes a request through the real block lifecycle.
 use super::*;
-use outbe_offchain_data::runtime_body_readers;
 
 pub(super) fn open_voting() -> VotingOpenScenario {
     open_voting_with_pre_open_state().0
@@ -73,13 +72,12 @@ fn open_voting_with_randao_checks(
         metadata.committee_set_hash,
     );
     assert_provider_activated_ocomp_inputs(&provider, prepared.wwd, prepared.nominal);
-    let body_storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
-    let runtime_body_readers = runtime_body_readers(body_storage);
+
     let fixture = OcompSuccessorFixture {
         chain_spec: &chain_spec,
-        tree_service: &prepared.tree_service,
+
         signer: &signer,
-        runtime_body_readers: &runtime_body_readers,
+
         fork_install: &fork_install,
         dkg: &dkg,
         snapshot: &snapshot,
@@ -87,9 +85,9 @@ fn open_voting_with_randao_checks(
     let evm_config = canonical_evm_config(CanonicalEvmConfigInput {
         chain_spec: chain_spec.clone(),
         accounted_parent: provider.inner.clone(),
-        runtime_body_readers: runtime_body_readers.clone(),
+
         signer: signer.clone(),
-        tree_service: prepared.tree_service.clone(),
+
         fork_install: fork_install.clone(),
     });
     let phase1 = evm_config
@@ -229,15 +227,8 @@ fn open_voting_with_randao_checks(
         "proposer and validator must agree on receipts, requests and post-state"
     );
 
-    let artifacts = decode_outbe_block_artifacts(payload.block().header().extra_data().as_ref())
+    decode_outbe_block_artifacts(payload.block().header().extra_data().as_ref())
         .expect("request header artifacts decode");
-    let ce_artifact = artifacts
-        .compressed_entities_root
-        .expect("request header carries the completed CE seal");
-    assert_eq!(
-        ce_artifact.commitment_scheme_version,
-        ACTIVE_COMMITMENT_SCHEME
-    );
     let exact_post_state = provider
         .hashed_post_state(&executed.execution_output.state)
         .unwrap();
@@ -257,15 +248,6 @@ fn open_voting_with_randao_checks(
         prepared.parent.header().state_root(),
         "request execution must produce an observable state-root transition"
     );
-    prepared
-        .tree_service
-        .apply_finalized(REQUEST_HEIGHT, payload.block().hash(), ce_artifact.r_sealed)
-        .expect("production CE finalizer applies the exact built candidate");
-    assert_eq!(
-        prepared.tree_service.finalized_marker().unwrap().new_root,
-        ce_artifact.r_sealed
-    );
-
     let mut post_state = HashMapStorageProvider::new(CHAIN_ID);
     post_state.storage = prepared.parent_storage.clone();
     apply_bundle(&mut post_state, executed.execution_output.state.state());
@@ -307,7 +289,6 @@ fn open_voting_with_randao_checks(
         assert_eq!(record.intent.pending_nonce, 0);
         assert_eq!(record.intent.authenticated_day_count, 1);
         assert_eq!(record.intent.authenticated_day_nominal, prepared.nominal);
-        assert_eq!(record.intent.ce_sealed_root, ce_artifact.r_sealed);
         assert_eq!(
             record
                 .intent
@@ -464,20 +445,6 @@ fn open_voting_with_randao_checks(
     });
     let finalized = finalized_record.finalized.as_ref().unwrap();
     let open_height = finalized.open_height;
-    let successor_artifacts =
-        decode_outbe_block_artifacts(successor.block().header().extra_data().as_ref()).unwrap();
-    let successor_ce = successor_artifacts
-        .compressed_entities_root
-        .expect("certified successor carries its completed CE seal");
-    prepared
-        .tree_service
-        .apply_finalized(
-            REQUEST_HEIGHT + 1,
-            successor.block().hash(),
-            successor_ce.r_sealed,
-        )
-        .expect("certified successor CE candidate finalizes before its child");
-
     let mut canonical_parent = Arc::new(SealedHeader::new(
         successor.block().header().clone(),
         successor.block().hash(),
@@ -551,7 +518,7 @@ fn open_voting_with_randao_checks(
             environment: OcompSuccessorEnvironment {
                 chain_spec,
                 signer,
-                runtime_body_readers,
+
                 fork_install,
                 dkg,
                 snapshot,

@@ -18,7 +18,7 @@ pub(crate) fn run() {
             voting_open,
         },
     ) = super::request::open_voting().into_successor_parts();
-    let fixture = environment.fixture(&prepared.tree_service);
+    let fixture = environment.fixture();
     let voting = ResultVotingScenario::for_intent(
         &voting_open.record.intent,
         finalized_record.finalized.as_ref().unwrap().job_id,

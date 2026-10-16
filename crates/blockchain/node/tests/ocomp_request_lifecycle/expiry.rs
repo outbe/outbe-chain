@@ -12,7 +12,7 @@ pub(crate) fn run() {
             voting_open,
         },
     ) = super::request::open_voting().into_successor_parts();
-    let fixture = environment.fixture(&prepared.tree_service);
+    let fixture = environment.fixture();
     let initial_deadline = voting_open
         .record
         .finalized

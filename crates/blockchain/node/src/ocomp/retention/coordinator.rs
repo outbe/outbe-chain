@@ -5,34 +5,6 @@ pub(in crate::ocomp::retention) const JOURNAL_RECORD_PRESSURE_WATERMARK: usize =
 
 pub(in crate::ocomp::retention) const RETAINED_EVIDENCE_WINDOW_BLOCKS: u64 = 64;
 
-pub(in crate::ocomp::retention) fn gc_ack_metadata_advanced(
-    previous: PinRecordV1,
-    current: PinRecordV1,
-) -> bool {
-    let mut expected = previous;
-    let PinStateV1::GcPending {
-        source_generation,
-        export: Some(export),
-        ..
-    } = current.state
-    else {
-        return false;
-    };
-    if current.generation <= previous.generation || export.source_generation != source_generation {
-        return false;
-    }
-    let PinStateV1::GcPending {
-        export: slot @ None,
-        ..
-    } = &mut expected.state
-    else {
-        return false;
-    };
-    *slot = Some(export);
-    expected.generation = current.generation;
-    expected == current
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::ocomp::retention) struct JobRegistryV1 {
     pub(in crate::ocomp::retention) generation: u64,
@@ -132,8 +104,6 @@ pub struct OcompRetentionCoordinator {
     pub(in crate::ocomp::retention) store: JournalStore,
     pub(in crate::ocomp::retention) inner: Mutex<CoordinatorInner>,
     pub(in crate::ocomp::retention) source: Arc<dyn FinalizedInputProofSource>,
-    pub(in crate::ocomp::retention) retained_tributes: Option<Arc<RetainedTributeWriter>>,
-    pub(in crate::ocomp::retention) projection_fence: Option<Arc<ProjectionRetentionFence>>,
     pub(in crate::ocomp::retention) closure_checkpoint: AtomicU64,
 }
 
@@ -145,48 +115,18 @@ impl OcompRetentionCoordinator {
         Self::open_with_durability(root, source, Arc::new(OsJournalDurability))
     }
 
-    pub fn open_with_retained_tributes(
-        root: impl Into<PathBuf>,
-        source: Arc<dyn FinalizedInputProofSource>,
-        retained_tributes: Arc<RetainedTributeWriter>,
-    ) -> Self {
-        Self::open_with_retained_tributes_and_fence(
-            root,
-            source,
-            retained_tributes,
-            Arc::new(ProjectionRetentionFence::default()),
-        )
-    }
-
-    pub fn open_with_retained_tributes_and_fence(
-        root: impl Into<PathBuf>,
-        source: Arc<dyn FinalizedInputProofSource>,
-        retained_tributes: Arc<RetainedTributeWriter>,
-        projection_fence: Arc<ProjectionRetentionFence>,
-    ) -> Self {
-        Self::open_inner(
-            root.into(),
-            source,
-            Arc::new(OsJournalDurability),
-            Some(retained_tributes),
-            Some(projection_fence),
-        )
-    }
-
     pub(crate) fn open_with_durability(
         root: impl Into<PathBuf>,
         source: Arc<dyn FinalizedInputProofSource>,
         durability: Arc<dyn JournalDurability>,
     ) -> Self {
-        Self::open_inner(root.into(), source, durability, None, None)
+        Self::open_inner(root.into(), source, durability)
     }
 
     pub(in crate::ocomp::retention) fn open_inner(
         root: PathBuf,
         source: Arc<dyn FinalizedInputProofSource>,
         durability: Arc<dyn JournalDurability>,
-        retained_tributes: Option<Arc<RetainedTributeWriter>>,
-        projection_fence: Option<Arc<ProjectionRetentionFence>>,
     ) -> Self {
         let store = JournalStore::new(root, durability);
         let (status, registry) = match store.initialize() {
@@ -207,8 +147,6 @@ impl OcompRetentionCoordinator {
             store,
             inner: Mutex::new(CoordinatorInner { status, registry }),
             source,
-            retained_tributes,
-            projection_fence,
             closure_checkpoint: AtomicU64::new(0),
         }
     }
@@ -403,20 +341,6 @@ pub(in crate::ocomp::retention) fn record_for_job(
         .ok_or(RetentionError::InvalidTransition(
             "JobId has no exact Job Registry entry",
         ))
-}
-
-pub(in crate::ocomp::retention) fn lease_has_other_references(
-    inner: &CoordinatorInner,
-    excluded_key: B256,
-    input_lease_id: B256,
-) -> bool {
-    inner.registry.as_ref().is_some_and(|registry| {
-        registry.records.iter().any(|(key, record)| {
-            *key != excluded_key
-                && record_candidate(*record).input_lease_id == input_lease_id
-                && !matches!(record.state, PinStateV1::Released { .. })
-        })
-    })
 }
 
 pub(in crate::ocomp::retention) const fn record_candidate(record: PinRecordV1) -> CandidatePinV1 {

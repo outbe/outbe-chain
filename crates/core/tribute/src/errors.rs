@@ -1,10 +1,8 @@
 //! Domain error types for the Tribute crate.
 
-use outbe_compressed_entities::WwdEntityId;
 use outbe_primitives::error::PrecompileError;
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 use thiserror::Error;
-
-use crate::TributeRepositoryError;
 
 /// Represents domain errors in the Tribute precompile and runtime.
 #[derive(Debug, Error)]
@@ -28,9 +26,6 @@ pub enum TributeError {
     #[error("tribute pre-admission inputs are sealed")]
     PreAdmissionSealed,
 
-    #[error("sealed Tribute collection root must be non-zero")]
-    InvalidSealedCollectionRoot,
-
     #[error("Tribute OCOMP profile is not initialized")]
     OcompProfileNotReady,
 
@@ -40,16 +35,13 @@ pub enum TributeError {
     #[error("tribute query exceeds the runtime result limit")]
     QueryLimitExceeded,
 
-    #[error("certified Tribute collection key mismatch")]
-    CertifiedCollectionKeyMismatch,
-
     #[error("certified Tribute input differs from the sealed generation")]
     CertifiedInputDiffersFromSealedGeneration,
 
     #[error("certified Tribute generation is already retired")]
     CertifiedGenerationAlreadyRetired,
 
-    #[error("sealed Tribute projection contradicts the authenticated CE generation")]
+    #[error("sealed Tribute state contradicts the authenticated generation")]
     SealedProjectionContradictsAuthenticatedCeGeneration,
 
     #[error("certified Tribute pre-admission record is absent")]
@@ -139,9 +131,6 @@ pub enum TributeError {
     #[error("Tribute day count overflow or underflow")]
     DayCountOverflowOrUnderflow,
 
-    #[error("compressed-entity read returned a non-Tribute payload")]
-    NonTributePayload,
-
     #[error("Tribute private amount read failed: {0}")]
     PrivateAmountReadFailed(String),
 
@@ -173,7 +162,7 @@ pub enum TributeError {
     SealedPreAdmissionDiffersFromAuthenticatedAggregate,
 
     #[error(transparent)]
-    CanonicalBody(#[from] outbe_compressed_entities::CanonicalBodyError),
+    CanonicalBody(#[from] outbe_primitives::entity_codec::CanonicalBodyError),
 
     #[error(transparent)]
     DayAmountCodec(#[from] postcard::Error),
@@ -193,16 +182,6 @@ impl TributeError {
     /// Converts an entity-ID derivation failure into a precompile error.
     pub(crate) fn entity_id_derivation(error: impl std::fmt::Display) -> PrecompileError {
         Self::EntityIdDerivation(error.to_string()).into()
-    }
-
-    /// Converts a calculation-view failure into a precompile error.
-    pub(crate) fn calculation_view_fatal(error: outbe_tee::TransportError) -> PrecompileError {
-        let message = Self::CalculationView(error.to_string()).to_string();
-        if error.is_node_local() {
-            PrecompileError::EnclaveUnavailable(message)
-        } else {
-            PrecompileError::Revert(message)
-        }
     }
 
     /// Converts a private amount read failure into a precompile error.
@@ -239,7 +218,6 @@ impl From<TributeError> for PrecompileError {
             | TributeError::ReferenceCurrencyRefcountUnderflow
             | TributeError::DistinctReferenceCurrencyCountUnderflow
             | TributeError::DayCountOverflowOrUnderflow
-            | TributeError::NonTributePayload
             | TributeError::TotalSupplyUnderflowDuringCapacityForfeiture
             | TributeError::RetirementOutcomeContradictsAuthenticatedRoot
             | TributeError::SourceGenerationOverflowDuringCapacityForfeiture
@@ -260,54 +238,9 @@ pub(crate) fn enclave_transport_error(error: impl std::fmt::Display) -> outbe_te
     outbe_tee::TransportError::EnclaveError(error.to_string())
 }
 
-impl From<TributeRepositoryError> for PrecompileError {
-    fn from(value: TributeRepositoryError) -> Self {
-        use outbe_offchain_storage::StorageErrorKind;
-
-        let message = value.to_string();
-        match &value {
-            TributeRepositoryError::Storage(error)
-                if error.kind() == StorageErrorKind::RequestDeadline =>
-            {
-                PrecompileError::BodyReadRequestDeadline
-            }
-            TributeRepositoryError::Storage(error)
-                if error.kind() == StorageErrorKind::Unavailable =>
-            {
-                PrecompileError::BodyReadUnavailable(message)
-            }
-            TributeRepositoryError::Storage(_)
-            | TributeRepositoryError::CanonicalBody(_)
-            | TributeRepositoryError::InvalidPageLimit { .. }
-            | TributeRepositoryError::MalformedPrimaryKey
-            | TributeRepositoryError::MalformedIndexKey { .. }
-            | TributeRepositoryError::NonEmptyIndexValue { .. }
-            | TributeRepositoryError::IndexMetadata { .. }
-            | TributeRepositoryError::DanglingIndex { .. }
-            | TributeRepositoryError::PrimaryKeyBodyMismatch { .. }
-            | TributeRepositoryError::IndexedOwnerMismatch { .. }
-            | TributeRepositoryError::IndexedDayMismatch { .. }
-            | TributeRepositoryError::InvalidDayCursor { .. }
-            | TributeRepositoryError::NonAscendingIdPage { .. }
-            | TributeRepositoryError::InvalidPageContinuation { .. }
-            | TributeRepositoryError::UntrackedProjectionIdentity { .. }
-            | TributeRepositoryError::MissingCurrentBodyForRetention { .. }
-            | TributeRepositoryError::RetainedDayMismatch { .. }
-            | TributeRepositoryError::RetainedIdentity(_)
-            | TributeRepositoryError::RetainedCommitment(_)
-            | TributeRepositoryError::ConflictingRetainedBody { .. }
-            | TributeRepositoryError::RetainedCommitmentMismatch { .. }
-            | TributeRepositoryError::RetainedMetadata { .. }
-            | TributeRepositoryError::DanglingRetainedIndex { .. }
-            | TributeRepositoryError::MissingRetainedIndex { .. }
-            | TributeRepositoryError::NonAscendingRetainedPage { .. }
-            | TributeRepositoryError::InvalidRetainedCursor { .. }
-            | TributeRepositoryError::InvalidRetainedContinuation { .. }
-            | TributeRepositoryError::RetainedNamespaceMismatch { .. } => {
-                PrecompileError::BodyReadCorruption(message)
-            }
-        }
-    }
-}
-
 pub type TributeResult<T> = std::result::Result<T, TributeError>;
+
+#[cfg(any(test, feature = "test-enclave"))]
+pub(crate) fn body_read_corruption(error: impl std::fmt::Display) -> PrecompileError {
+    PrecompileError::BodyReadCorruption(error.to_string())
+}

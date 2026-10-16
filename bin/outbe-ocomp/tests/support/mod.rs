@@ -1,3 +1,6 @@
+#[allow(dead_code)]
+pub mod state_tributes;
+
 mod job {
     include!("../../src/test_support/job.rs");
 }

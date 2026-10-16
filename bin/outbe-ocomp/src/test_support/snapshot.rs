@@ -8,13 +8,13 @@ use crate::{
     input_ref_catalog::VerifiedInputChunkRefCatalog,
 };
 use alloy_primitives::B256;
-use outbe_compressed_entities::{encode_tribute_v1, TributeBodyV1};
 use outbe_ocomp_protocol::{
     input::{CheckpointIdentityV1, InputChunkKind, InputManifestV1},
     profile::ProtocolBundleV1,
     unit::PlanCommitmentV1,
     CasObjectRefV1,
 };
+use outbe_primitives::entity_codec::{encode_tribute_v1, TributeBodyV1};
 use outbe_primitives::time::WorldwideDay;
 
 pub struct FixturePlanInputs<'a> {
@@ -61,12 +61,8 @@ pub fn publish_fixture_plan(
                     finalized_block_number: 90,
                     finalized_block_hash: B256::repeat_byte(0x31),
                     finalized_state_root: B256::repeat_byte(0x32),
-                    finalized_ce_root: B256::repeat_byte(0x33),
-                    ce_schema_version: 1,
                 },
                 wwd: day.value(),
-                sealed_tribute_collection_key: B256::repeat_byte(0x34),
-                sealed_tribute_collection_root: B256::repeat_byte(0x35),
             },
             canonical_tributes: tributes
                 .iter()

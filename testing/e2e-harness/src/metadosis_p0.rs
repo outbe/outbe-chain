@@ -157,7 +157,6 @@ pub struct MetadosisP0ConsensusObservationV1 {
     pub q_forming_receipt_sha256: String,
     pub q_forming_validator_receipt_sha256: Vec<String>,
     pub q_forming_state_root: B256,
-    pub q_forming_ce_root: B256,
     pub q_forming_validator_commitments: Vec<BlockCommitmentV1>,
     pub canonical_import_validator_count: u8,
     pub canonical_import_verified: bool,
@@ -566,14 +565,12 @@ fn validate_observation(
             .iter()
             .all(|commitment| commitment == canonical)
             && canonical.block_hash == observation.q_forming_block_hash
-            && canonical.state_root == observation.q_forming_state_root
-            && canonical.ce_root == observation.q_forming_ce_root,
+            && canonical.state_root == observation.q_forming_state_root,
         "{label} validator commitments do not match the retained canonical tuple"
     );
     ensure!(
-        observation.q_forming_state_root != B256::ZERO
-            && observation.q_forming_ce_root != B256::ZERO,
-        "{label} retained an empty state or CE root"
+        observation.q_forming_state_root != B256::ZERO,
+        "{label} retained an empty native state root"
     );
     ensure!(
         observation.tribute_count == 257
@@ -715,7 +712,6 @@ mod tests {
         let commitment = json!({
             "block_hash": B256::repeat_byte(4),
             "state_root": B256::repeat_byte(5),
-            "ce_root": B256::repeat_byte(6)
         });
         json!({
             "job_id": B256::repeat_byte(1),
@@ -730,7 +726,6 @@ mod tests {
                 sha256_hex(b"receipt"), sha256_hex(b"receipt")
             ],
             "q_forming_state_root": B256::repeat_byte(5),
-            "q_forming_ce_root": B256::repeat_byte(6),
             "q_forming_validator_commitments": [
                 commitment.clone(), commitment.clone(), commitment.clone(), commitment
             ],

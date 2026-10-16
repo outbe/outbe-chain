@@ -1,6 +1,6 @@
-//! Exact rejection evidence for real CLI-produced encrypted offers. CE state is
+//! Exact rejection evidence for real CLI-produced encrypted offers. EVM state is
 //! replayed at the receipt block and observed live. An unavailable historical
-//! CE context is a failure, never replaced by the later live observation.
+//! state context is a failure, never replaced by the later live observation.
 
 use std::time::{Duration, Instant};
 
@@ -258,7 +258,9 @@ pub(super) fn assert_rejection(world: &World, tx_hash: &str, key: &str, rejectio
                 gas_limit: gas,
             },
         )
-        .expect("receipt-pinned guard reason; unavailable historical CE is not a passing negative");
+        .expect(
+            "receipt-pinned guard reason; unavailable historical state is not a passing negative",
+        );
         assert_eq!(
             at_receipt.as_ref(),
             expected,
@@ -294,7 +296,7 @@ pub(super) fn assert_rejection(world: &World, tx_hash: &str, key: &str, rejectio
                     gas_limit: gas,
                 },
             )
-            .expect("live EVM guard observation; RPC/TEE/CE failures are not expected reverts");
+            .expect("live EVM guard observation; RPC/TEE/state failures are not expected reverts");
             let after = latest_header(world, port);
             if before != after {
                 unstable += 1;

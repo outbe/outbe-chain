@@ -245,6 +245,11 @@ fn binding(call: u8) -> EffectBindingV1 {
 
 fn input(wwd: u32, call: u8) -> CertifiedNodGenerationV1 {
     CertifiedNodGenerationV1 {
+        source_checkpoint: outbe_ocomp_protocol::intent::FinalizedRequestBindingV1 {
+            block_number: 1,
+            block_hash: B256::repeat_byte(0x71),
+            state_root: B256::repeat_byte(0x72),
+        },
         binding: binding(call),
         program_semantics_hash: B256::repeat_byte(7),
         precondition: NodTargetPreconditionV1 {
@@ -281,6 +286,7 @@ fn valid_capability_installs_exact_generation_receipt_and_event() {
     assert_eq!(
         provider.generation(WorldwideDay::new(input.precondition.wwd)),
         Some(NodCertifiedGenerationProjection {
+            source_checkpoint: input.source_checkpoint,
             worldwide_day: WorldwideDay::new(input.precondition.wwd),
             generation: 1,
             job_id: input.binding.job_id,
@@ -442,6 +448,16 @@ fn invalid_roots_counts_binding_and_time_never_mutate_state() {
     value.issued_at = 0;
     invalid.push(value);
 
+    let mut value = base.clone();
+    value.source_checkpoint.block_number = 0;
+    invalid.push(value);
+    let mut value = base.clone();
+    value.source_checkpoint.block_hash = B256::ZERO;
+    invalid.push(value);
+    let mut value = base.clone();
+    value.source_checkpoint.state_root = B256::ZERO;
+    invalid.push(value);
+
     let mut value = base;
     value.binding.activation_call_id = B256::repeat_byte(99);
     invalid.push(value);
@@ -585,4 +601,24 @@ fn receipt_hash_is_stable_across_activation_block_times() {
         receipt_hash,
         second_receipt.receipt_hash(&poc_schema_limits()).unwrap()
     );
+}
+
+#[test]
+fn replay_cannot_replace_the_finalized_source_checkpoint() {
+    let mut provider = ActivationTestProvider::new();
+    let first = input(20_260_736, 33);
+    provider.run(&first).unwrap();
+    let before = provider.inner.storage.clone();
+    let events = provider.inner.get_ordered_events().to_vec();
+    for component in 0..3 {
+        let mut changed = first.clone();
+        match component {
+            0 => changed.source_checkpoint.block_number += 1,
+            1 => changed.source_checkpoint.block_hash = B256::repeat_byte(0x81),
+            _ => changed.source_checkpoint.state_root = B256::repeat_byte(0x82),
+        }
+        assert!(provider.run(&changed).is_err());
+        assert_eq!(provider.inner.storage, before);
+        assert_eq!(provider.inner.get_ordered_events(), events);
+    }
 }

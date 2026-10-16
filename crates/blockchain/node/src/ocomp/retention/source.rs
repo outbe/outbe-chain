@@ -102,7 +102,6 @@ where
             state_root,
             intent_id: observation.intent_id,
             wwd: record.intent.wwd,
-            ce_sealed_root: record.intent.ce_sealed_root,
             protocol_bundle_hash: record.intent.protocol_bundle_hash,
             input_lease_id: record
                 .intent
@@ -431,7 +430,6 @@ pub(in crate::ocomp::retention) fn canonical_finalized_pin(
         record.intent_height != candidate.block_number || intent_id != candidate.intent_id;
     let intent_mismatch = request_identity_mismatch
         || record.intent.wwd != candidate.wwd
-        || record.intent.ce_sealed_root != candidate.ce_sealed_root
         || record.intent.protocol_bundle_hash != candidate.protocol_bundle_hash;
     if intent_mismatch
         || input_lease_id != candidate.input_lease_id

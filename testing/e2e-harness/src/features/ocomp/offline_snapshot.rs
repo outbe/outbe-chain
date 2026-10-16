@@ -30,8 +30,6 @@ pub(crate) struct SnapshotCheckReport {
 pub(crate) struct SnapshotObservedFrontiers {
     pub h: Option<SnapshotBlock>,
     pub e: Option<SnapshotBlock>,
-    pub q: Option<SnapshotBlock>,
-    pub p: Option<SnapshotBlock>,
     pub c_baseline: Option<SnapshotBlock>,
     pub c_previous: Option<SnapshotBlock>,
     pub c_current: Option<SnapshotBlock>,
@@ -48,15 +46,7 @@ pub(crate) fn parse_snapshot_validation_report(
     bytes: &[u8],
 ) -> eyre::Result<SnapshotValidationReport> {
     let report: SnapshotValidationReport = serde_json::from_slice(bytes)?;
-    for name in [
-        "files",
-        "provenance",
-        "headers",
-        "evm",
-        "ce",
-        "bodies",
-        "ocomp",
-    ] {
+    for name in ["files", "provenance", "headers", "evm", "ocomp"] {
         let check = report
             .checks
             .get(name)
@@ -66,65 +56,23 @@ pub(crate) fn parse_snapshot_validation_report(
             "selection/status mismatch for {name}"
         );
     }
-    ensure!(report.checks.len() == 7, "unexpected check names");
-    if report.checks["bodies"].status == SnapshotCheckStatus::Passed {
-        let q = report
-            .observed
-            .q
-            .as_ref()
-            .ok_or_else(|| eyre!("passed bodies without Q"))?;
-        let p = report
-            .observed
-            .p
-            .as_ref()
-            .ok_or_else(|| eyre!("passed bodies without P"))?;
-        ensure!(q == p, "body equality claimed for different Q/P identities");
-    }
+    ensure!(report.checks.len() == 5, "unexpected check names");
     // Incomplete is intentionally preserved. Parsing is not validation success.
     Ok(report)
 }
 
-/// The stopped donor may be cut while projection trails CE by one block.
-/// Preserve that audit as incomplete, but require every other selected check
-/// to pass and the bodies diagnostic to identify this exact frontier gap.
+/// Full native validation requires every selected native check to pass.
 pub(crate) fn snapshot_full_validation_complete(
     report: &SnapshotValidationReport,
 ) -> eyre::Result<bool> {
-    for name in ["files", "provenance", "headers", "evm", "ce", "ocomp"] {
+    for name in ["files", "provenance", "headers", "evm", "ocomp"] {
         let check = &report.checks[name];
         ensure!(
             check.selected && check.status == SnapshotCheckStatus::Passed,
             "snapshot {name} check did not pass"
         );
     }
-    let bodies = &report.checks["bodies"];
-    ensure!(bodies.selected, "snapshot bodies check was not selected");
-    match bodies.status {
-        SnapshotCheckStatus::Passed => Ok(true),
-        SnapshotCheckStatus::Incomplete => {
-            let q = report
-                .observed
-                .q
-                .as_ref()
-                .ok_or_else(|| eyre!("incomplete bodies without CE frontier"))?;
-            let p = report
-                .observed
-                .p
-                .as_ref()
-                .ok_or_else(|| eyre!("incomplete bodies without projection frontier"))?;
-            ensure!(
-                q.number.checked_sub(1) == Some(p.number)
-                    && bodies.diagnostic.as_deref().is_some_and(|diagnostic| {
-                        diagnostic.starts_with(
-                            "live body equality requires the same CE and projection identity:",
-                        )
-                    }),
-                "bodies incomplete for a reason other than one-block projection lag"
-            );
-            Ok(false)
-        }
-        _ => Err(eyre!("snapshot bodies check did not pass")),
-    }
+    Ok(true)
 }
 
 fn is_hash(value: &str) -> bool {

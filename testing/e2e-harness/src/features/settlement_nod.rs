@@ -1,10 +1,9 @@
 //! A third party pays the successor public Nod by ERC20. Its owner paid the original.
 use super::*;
 use alloy_sol_types::{SolCall as _, SolError as _, SolValue as _};
-use outbe_compressed_entities::{
-    decode_stored_nod_bucket_v1, decode_stored_nod_item_v2, verify_point_read_v1, NodBucketBodyV1,
-    NodItemBodyV2, PointReadRequestV1, PointReadResultV1, SelectedHeaderV1, VerifiedPointReadV1,
-    WwdEntityId,
+use outbe_primitives::{
+    entity_codec::{NodBucketBodyV1, NodItemBodyV2},
+    wwd_entity_id::WwdEntityId,
 };
 
 const NOD_CALL_GAS_LIMIT: u64 = 10_000_000;
@@ -254,8 +253,8 @@ struct NodSnapshot {
     body: Option<eth::INod::NodData>,
 }
 
-/// Read live CE views without mixing blocks.
-/// Retry successful reads across head changes and corresponding CE parent races.
+/// Read native owner views without mixing blocks.
+/// Retry successful reads when the observed checkpoint changes.
 /// Retry other read failures twice. Stop the scenario if all three attempts fail.
 fn stable_live_read<T>(
     world: &World,
@@ -276,7 +275,7 @@ fn stable_live_read<T>(
             }
             let result = read();
             let after = live_checkpoint(world, port);
-            crate::internal::live_ce_read::resolve_live_ce_read(result, before != after)
+            crate::internal::state_observation::resolve_live_state_read(result, before != after)
                 .map(|value| value.map(|value| (before, value)))
         });
         let Some((before, value)) = observation.expect("live Nod observation failed") else {
@@ -303,7 +302,7 @@ fn stable_live_read<T>(
 }
 
 /// A Nod rejection uses the same strict receipt and ABI evidence as the shared
-/// negative helper, with live CE replay both before and after the mined receipt.
+/// negative helper, with live state observations both before and after the mined receipt.
 fn assert_live_nod_revert<C: alloy_sol_types::SolCall>(
     world: &World,
     call: &C,
@@ -665,91 +664,28 @@ fn gratis_at(url: &str, owner: Address, view: &[u8; 32], height: u64) -> U256 {
 }
 
 fn nod_bodies(world: &World, id: WwdEntityId, minimum: u64) -> (NodItemBodyV2, NodBucketBodyV1) {
+    let checkpoint = world
+        .rpc
+        .wait_finalized_checkpoint(&world.validators.committee_ports(), minimum, 120)
+        .expect("Nod state checkpoint finalized on every validator");
     let mut expected = None;
     for port in world.validators.committee_ports() {
-        let item = decode_stored_nod_item_v2(
-            &compressed_body(world, port, 2, id, minimum).expect("Nod body present"),
-        )
-        .expect("canonical Nod body");
-        let bucket_id =
-            WwdEntityId::from_day_and_digest(item.encrypted.terms.worldwide_day, item.bucket_key);
-        let bucket = decode_stored_nod_bucket_v1(
-            &compressed_body(world, port, 3, bucket_id, minimum).expect("bucket present"),
-        )
-        .expect("canonical bucket body");
-        let bodies = (item, bucket);
+        let (item, bucket) = world
+            .rpc
+            .nod_state_at(port, checkpoint, id)
+            .expect("Nod EVM state")
+            .expect("Nod is present");
+        let bodies = (
+            outbe_nod::canonical_item(&item),
+            outbe_nod::canonical_bucket(&bucket),
+        );
         assert_eq!(
             *expected.get_or_insert(bodies.clone()),
             bodies,
-            "all-validator paid body/counter parity"
+            "all-validator Nod body/counter parity"
         );
     }
     expected.expect("nonempty validator cohort")
-}
-
-/// One finalized compressed-entity body from `port`, after proving the selected header
-/// is the same finalized header on every committee port. `None` is a verified absence.
-pub(crate) fn compressed_body(
-    world: &World,
-    port: u16,
-    domain_id: u16,
-    id: WwdEntityId,
-    minimum: u64,
-) -> Option<Vec<u8>> {
-    let request = PointReadRequestV1 {
-        domain_id,
-        raw_id: id,
-    };
-    let package = world
-        .rpc
-        .compressed_entity_ready(port, request)
-        .expect("finalized compressed-entity proof");
-    assert!(
-        package.header.block_number >= minimum,
-        "proof predates finalized transaction"
-    );
-    let height = package.header.block_number;
-    world
-        .rpc
-        .wait_finalized_checkpoint(&world.validators.committee_ports(), height, 120)
-        .expect("proof header finalized");
-    let primary = world.validators.primary_port();
-    let canonical = eth::block_commitment_result(&world.rpc.url(primary), height)
-        .unwrap_or_else(|error| {
-            panic!("canonical proof header primary={primary} selected={port} height={height} domain={domain_id} hash={:#x}: {error:#}", package.header.block_hash)
-        });
-    for peer in world.validators.committee_ports() {
-        assert_eq!(
-            eth::block_commitment_result(&world.rpc.url(peer), height).unwrap_or_else(|error| {
-                panic!("peer proof header peer={peer} selected={port} height={height} domain={domain_id} hash={:#x}: {error:#}", package.header.block_hash)
-            }),
-            canonical
-        );
-    }
-    assert_eq!(package.header.block_hash, canonical.0);
-    let trusted = SelectedHeaderV1 {
-        block_number: height,
-        block_hash: canonical.0,
-        extra_data: canonical.2.to_vec(),
-    };
-    let verified = verify_point_read_v1(
-        world.rpc.chain_id(port).expect("proof chain"),
-        request,
-        &trusted,
-        &package.result,
-    )
-    .expect("independent compressed-entity proof verification");
-    match package.result {
-        PointReadResultV1::Present { body_bytes, .. } => {
-            assert_eq!(verified, VerifiedPointReadV1::Present);
-            Some(body_bytes.to_vec())
-        }
-        PointReadResultV1::Absent { .. } => {
-            assert!(matches!(verified, VerifiedPointReadV1::Absent));
-            None
-        }
-        PointReadResultV1::Unavailable => panic!("compressed-entity proof unavailable"),
-    }
 }
 
 #[cfg(test)]

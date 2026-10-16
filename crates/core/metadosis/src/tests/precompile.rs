@@ -29,7 +29,6 @@ fn missing_receipts_have_canonical_empty_abi_returns() {
         assert_eq!(capacity.maxRetainedWorldwideDays, 0);
         assert_eq!(capacity.retainedCountBefore, 0);
         assert_eq!(capacity.promisLimitReturnedMinor, U256::ZERO);
-        assert_eq!(capacity.sealedCollectionRoot, B256::ZERO);
         assert_eq!(capacity.forfeitedTributeCount, 0);
         assert_eq!(capacity.forfeitedTributeNominalMinor, U256::ZERO);
         assert_eq!(capacity.sourceGeneration, 0);

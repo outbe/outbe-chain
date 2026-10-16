@@ -4,7 +4,6 @@ use std::{
 };
 
 use alloy_primitives::{keccak256, B256};
-use outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION;
 use outbe_ocomp_protocol::{
     control::{FinalizedJobSpecV1, SnapshotExportCommittedV1},
     input::CheckpointIdentityV1,
@@ -375,15 +374,10 @@ impl DiscoverySpoolV1 {
         receipt
             .manifest()
             .validate_against_bundle(bundle, &self.limits)?;
-        let Some(ce_schema_version) = u16::try_from(LOCAL_STORAGE_SCHEMA_VERSION).ok() else {
-            return Ok(false);
-        };
         let expected_checkpoint = CheckpointIdentityV1 {
             finalized_block_number: summary.cursor,
             finalized_block_hash: summary.finalized_block_hash,
             finalized_state_root: summary.finalized_state_root,
-            finalized_ce_root: intent.ce_sealed_root,
-            ce_schema_version,
         };
         let manifest = receipt.manifest();
         let intent_matches = (
@@ -413,8 +407,6 @@ impl DiscoverySpoolV1 {
             manifest.attempt,
             &manifest.checkpoint,
             manifest.wwd,
-            manifest.sealed_tribute_collection_key,
-            manifest.sealed_tribute_collection_root,
             manifest.tribute_count,
             manifest.tribute_nominal_total,
             manifest.body_codec_id,
@@ -425,8 +417,6 @@ impl DiscoverySpoolV1 {
             intent.attempt,
             &expected_checkpoint,
             intent.wwd,
-            intent.sealed_tribute_collection_key,
-            intent.sealed_tribute_collection_root,
             intent.authenticated_day_count,
             intent.authenticated_day_nominal,
             bundle.tribute_body_codec_id,

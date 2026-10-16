@@ -427,12 +427,9 @@ fn claim_gem_and_assert_gas_only_cost(
     let beneficiary = beneficiary_address(world, key);
     let primary = world.validators.primary_port();
     let before = native_balance(world, primary, beneficiary);
-    let inventory_before = gem_inventory_at(
-        world,
-        primary,
-        beneficiary,
-        world.rpc.head(primary).expect("pre-claim head"),
-    );
+    let inventory_before = observe_gem_projection(world, primary, || {
+        gem_inventory(world, primary, beneficiary).map(Some)
+    });
     let receipt = world
         .rpc
         .claim_agent_reward_gem(key, pool, issuance_currency, reference_currency)
@@ -461,26 +458,29 @@ fn claim_gem_and_assert_gas_only_cost(
         .rpc
         .block_timestamp(primary, height)
         .expect("claim timestamp");
+    let issued =
+        eth::receipt_event::<eth::IGemFactory::GemIssued>(&receipt, addresses::GEM_FACTORY_ADDR);
     let mut expected_body = None;
     for port in ports {
-        // Gem bodies are compressed entities: a view answers from the finalized body
-        // projection, which has no history and trails finality by a moment. The
-        // pre-claim inventory was captured live before the claim; the post-claim one is
-        // polled until the projection shows the mint.
-        let deadline = Instant::now() + Duration::from_secs(120);
-        let after = loop {
-            let after = gem_inventory_at(world, port, beneficiary, height);
-            if after.len() == inventory_before.len() + 1 {
-                break after;
+        let (after, gem) = observe_gem_projection(world, port, || {
+            let after = gem_inventory(world, port, beneficiary)?;
+            if after.len() < inventory_before.len() + 1 {
+                return Ok(None);
             }
-            assert!(
-                Instant::now() < deadline,
-                "claim must mint exactly one beneficiary Gem on port {port}: before={} after={}",
-                inventory_before.len(),
-                after.len()
-            );
-            sleep(Duration::from_millis(500));
-        };
+            if after.len() != inventory_before.len() + 1 || !after.contains(&issued.gemId) {
+                return Err(
+                    "claim must mint exactly its receipt Gem and preserve inventory".to_owned(),
+                );
+            }
+            let gem = eth::read_call_result(
+                &world.rpc.url(port),
+                addresses::GEM_ADDR,
+                &eth::IGem::getGemCall {
+                    gemId: issued.gemId,
+                },
+            )?;
+            Ok(Some((after, gem)))
+        });
         let added: Vec<_> = after
             .iter()
             .filter(|id| !inventory_before.contains(id))
@@ -491,13 +491,6 @@ fn claim_gem_and_assert_gas_only_cost(
             assert!(after.contains(id));
         }
         let url = world.rpc.url(port);
-        let gem = eth::read_call_at_result(
-            &url,
-            addresses::GEM_ADDR,
-            &eth::IGem::getGemCall { gemId: added[0] },
-            height,
-        )
-        .expect("finalized claim Gem");
         // The price and profile must be stable across the claim block. This
         // makes the independent pre-state expectation valid at execution time.
         let terms = claim_gem_terms_at(&url, height - 1, reference_currency);
@@ -508,11 +501,6 @@ fn claim_gem_and_assert_gas_only_cost(
         );
         let expected_load = claimable / U256::from(1_000_000_000_000u64);
         assert!(!expected_load.is_zero());
-        // Window, threshold and bucket are not on the gem view.
-        let issued = eth::receipt_event::<eth::IGemFactory::GemIssued>(
-            &receipt,
-            addresses::GEM_FACTORY_ADDR,
-        );
         assert!(!issued.bucketKey.is_zero());
         let expected = eth::IGemFactory::GemIssued {
             gemId: added[0],
@@ -552,40 +540,71 @@ fn claim_gem_and_assert_gas_only_cost(
     height
 }
 
-fn gem_inventory_at(world: &World, port: u16, owner: Address, height: u64) -> Vec<U256> {
+fn observe_gem_projection<T>(
+    world: &World,
+    port: u16,
+    mut read: impl FnMut() -> Result<Option<T>, String>,
+) -> T {
+    use crate::internal::state_observation::{observe_state, StateSample};
+    let deadline = Instant::now() + Duration::from_secs(120);
+    observe_state(
+        deadline,
+        || {
+            let before = world
+                .rpc
+                .head(port)
+                .ok_or_else(|| eyre::eyre!("head before Gem read"))?;
+            let observation = read();
+            let after = world
+                .rpc
+                .head(port)
+                .ok_or_else(|| eyre::eyre!("head after Gem read"))?;
+            Ok(StateSample {
+                before,
+                observation,
+                after,
+            })
+        },
+        Instant::now,
+        || sleep(Duration::from_secs(2).min(deadline.saturating_duration_since(Instant::now()))),
+    )
+    .unwrap_or_else(|error| panic!("Gem projection on port {port}: {error:#}"))
+}
+
+fn gem_inventory(world: &World, port: u16, owner: Address) -> Result<Vec<U256>, String> {
     let url = world.rpc.url(port);
-    let count: usize = eth::read_call_at_result(
+    let count: usize = eth::read_call_result(
         &url,
         addresses::GEM_ADDR,
         &eth::IGem::balanceOfCall { owner },
-        height,
-    )
-    .expect("Gem inventory size")
+    )?
     .try_into()
-    .expect("bounded Gem inventory");
-    assert!(count <= 32, "bounded beneficiary Gem inventory");
+    .map_err(|_| "Gem inventory size overflow".to_owned())?;
+    if count > 32 {
+        return Err("unbounded beneficiary Gem inventory".to_owned());
+    }
     let ids: Vec<_> = (0..count)
         .map(|index| {
-            eth::read_call_at_result(
+            eth::read_call_result(
                 &url,
                 addresses::GEM_ADDR,
                 &eth::IGem::tokenOfOwnerByIndexCall {
                     owner,
                     index: U256::from(index),
                 },
-                height,
             )
-            .expect("Gem owner index")
         })
-        .collect();
-    assert_eq!(
-        ids.iter()
-            .copied()
-            .collect::<std::collections::BTreeSet<_>>()
-            .len(),
-        ids.len()
-    );
-    ids
+        .collect::<Result<_, _>>()?;
+    if ids
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>()
+        .len()
+        != ids.len()
+    {
+        return Err("duplicate beneficiary Gem inventory entry".to_owned());
+    }
+    Ok(ids)
 }
 
 /// Read inputs, not Gem output: Oracle's closed-day watermark and the genesis

@@ -5,7 +5,6 @@ use alloy_primitives::{B256, U256};
 use outbe_primitives::time::WorldwideDay;
 
 use super::Incomplete;
-use crate::snapshot::projection_store::projection_database;
 
 use super::canonical_state::CanonicalState;
 use outbe_nod::schema::NodCertifiedGenerationProjection;
@@ -81,9 +80,6 @@ mod present_results;
 use present_results::{
     verify_present_input_catalog, verify_present_reference_membership, PresentAdmissionsVerify,
 };
-
-mod projection;
-use projection::verify_present_projection_structure;
 
 #[cfg(all(test, feature = "snapshot-integration"))]
 pub(crate) use admissions::verify_local_result;

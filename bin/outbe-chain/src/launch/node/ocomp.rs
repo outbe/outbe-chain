@@ -4,7 +4,7 @@ use crate::errors::{LaunchError, LysisOpeningsError};
 pub(super) struct OcompBootstrap {
     pub config: ocomp_exex::OcompExExConfigV1,
     pub retention_selector: Arc<SharedOcompRetentionSelector>,
-    pub readiness_publisher: outbe_offchain_data::ProjectionReadinessPublisher,
+    pub readiness_publisher: outbe_primitives::projection::ProjectionReadinessPublisher,
     pub readiness: ProjectionReadinessHandle,
 }
 pub(super) fn prepare(
@@ -166,7 +166,6 @@ where
         state_root: finalized.finalized_request_state_root,
         intent_id,
         wwd: record.intent.wwd,
-        ce_sealed_root: record.intent.ce_sealed_root,
         protocol_bundle_hash: record.intent.protocol_bundle_hash,
         input_lease_id: record.intent.input_lease_id().map_err(|error| {
             LysisOpeningsError::DeriveInputLease {
@@ -259,7 +258,7 @@ pub(super) fn validate_startup_authority_and_pruning(
         "validated genesis-active immutable OCOMP chain-manifest install"
     );
     let prune_config = config.pruning.prune_config(config.chain.as_ref());
-    validate_compressed_storage_runtime_config(CompressedStorageRuntimeConfig {
+    validate_state_persistence_runtime_config(StatePersistenceRuntimeConfig {
         persistence_threshold: config.engine.persistence_threshold,
         memory_block_buffer_target: config.engine.memory_block_buffer_target(),
         max_pending_acks: outbe_consensus::config::MAX_PENDING_ACKS,

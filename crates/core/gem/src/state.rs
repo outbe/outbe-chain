@@ -1,18 +1,13 @@
-use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_compressed_entities::{
-    delete, list, mint, read, update, BodyInput, EntityRef, ExecutionReaders, ExecutionScope,
-    IdPageRequest, ParentBodySource, QueryRef, VerifiedBody, WwdEntityId, MAX_ID_PAGE_LIMIT,
-};
+use alloy_primitives::{keccak256, B256, U256};
+
 use outbe_primitives::call_bins;
 use outbe_primitives::error::Result;
 use outbe_primitives::expiry_queue;
 
 use crate::{
-    api::{LoadedGem, LoadedGemBucket},
     constants::{TOKEN_NAME, TOKEN_SYMBOL},
     errors::{GemError, GemFatalError},
-    precompile::IGem,
-    schema::{CallTerms, GemBucketState, GemContract, GemItemState, GemState},
+    schema::{CallTerms, GemContract},
 };
 
 impl GemContract<'_> {
@@ -36,222 +31,6 @@ impl GemContract<'_> {
 
     pub fn total_supply(&self) -> Result<u64> {
         self.total_supply.read()
-    }
-
-    // --- Compressed body reads -------------------------------------------------
-
-    pub(crate) fn get_item_verified(
-        &self,
-        scope: &ExecutionScope,
-        parent: &impl ParentBodySource,
-        gem_id: WwdEntityId,
-    ) -> Result<Option<VerifiedBody>> {
-        read(self.storage.clone(), scope, parent, EntityRef::Gem(gem_id))
-    }
-
-    pub(crate) fn get_bucket_verified(
-        &self,
-        scope: &ExecutionScope,
-        parent: &impl ParentBodySource,
-        bucket_id: WwdEntityId,
-    ) -> Result<Option<VerifiedBody>> {
-        read(
-            self.storage.clone(),
-            scope,
-            parent,
-            EntityRef::GemBucket(bucket_id),
-        )
-    }
-
-    /// Every gem of `owner`, with the block's own mutations folded in.
-    pub(crate) fn read_all_by_owner(
-        &self,
-        scope: &ExecutionScope,
-        parent: &impl ParentBodySource,
-        owner: Address,
-    ) -> Result<Vec<GemItemState>> {
-        let mut records = Vec::new();
-        let mut after = None;
-        loop {
-            let page = list(
-                self.storage.clone(),
-                scope,
-                parent,
-                QueryRef::GemByOwner(owner),
-                IdPageRequest {
-                    after,
-                    limit: MAX_ID_PAGE_LIMIT,
-                },
-            )?;
-            let next_after = page.next_after();
-            for body in page.into_bodies() {
-                records.push(gem_item_from_verified(&body)?);
-            }
-            let Some(next) = next_after else {
-                return Ok(records);
-            };
-            after = Some(next);
-        }
-    }
-
-    // --- Lifecycle --------------------------------------------------------------
-
-    /// Records compact issuance state and delegates both bodies to the generic lifecycle.
-    pub(crate) fn record_gem_issued(
-        &mut self,
-        readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
-        item: &GemItemState,
-        entry_price_minor: U256,
-        call_terms: Option<CallTerms>,
-    ) -> Result<()> {
-        let ExecutionReaders { scope, parent } = readers;
-        if self
-            .get_item_verified(scope, parent, item.gem_id)?
-            .is_some()
-        {
-            return Err(GemError::AlreadyExists.into());
-        }
-        let bucket_key = item.bucket_key;
-        let bucket_id = item.bucket_id();
-        let current_bucket = self.get_bucket_verified(scope, parent, bucket_id)?;
-        let member_count = self.bucket_gem_count.read(&bucket_key)?;
-        let settled_count = current_bucket
-            .as_ref()
-            .map(gem_bucket_from_verified)
-            .transpose()?
-            .map_or(0, |bucket| bucket.settled_gems);
-        if current_bucket.is_some() != (member_count > 0 || settled_count > 0) {
-            return Err(GemError::BucketExistenceMismatch {
-                bucket_id,
-                member_count,
-            }
-            .into());
-        }
-        let new_bucket = match current_bucket {
-            Some(_) => None,
-            None => {
-                self.bucket_issued_at.write(&bucket_key, item.issued_at)?;
-                if let Some(terms) = call_terms {
-                    self.seal_bucket_call_terms(bucket_key, terms)?;
-                    self.insert_call_bin(bucket_key)?;
-                }
-                Some(GemBucketState {
-                    bucket_key,
-                    worldwide_day: item.worldwide_day(),
-                    entry_price_minor,
-                    reference_currency: item.reference_currency,
-                    settled_gems: 0,
-                })
-            }
-        };
-
-        let supply = self
-            .total_supply
-            .read()?
-            .checked_add(1)
-            .ok_or(GemError::TotalSupplyOverflow)?;
-        self.total_supply.write(supply)?;
-        self.insert_bucket_member(bucket_key, item.gem_id.to_u256())?;
-        let canonical_item = crate::repository::canonical_item(item);
-        mint(self.storage.clone(), scope, BodyInput::Gem(&canonical_item))?;
-        if let Some(bucket) = new_bucket {
-            let canonical_bucket = crate::repository::canonical_bucket(&bucket);
-            mint(
-                self.storage.clone(),
-                scope,
-                BodyInput::GemBucket(&canonical_bucket),
-            )?;
-        }
-        self.emit(IGem::Transfer {
-            from: Address::ZERO,
-            to: item.owner,
-            tokenId: item.gem_id.to_u256(),
-        })
-    }
-
-    /// Moves one unpaid member into the paid count. The gem keeps its owner and the
-    /// bucket's `called_at`, so its deadline survives the bucket.
-    pub(crate) fn record_gem_settled(
-        &mut self,
-        scope: &ExecutionScope,
-        item: LoadedGem,
-        bucket: LoadedGemBucket,
-    ) -> Result<()> {
-        let (mut item, current_item) = item.into_parts();
-        let (mut bucket, current_bucket) = bucket.into_parts();
-        check_loaded_bucket(&item, &current_bucket)?;
-        if item.is_settled() {
-            return Err(GemError::InvalidState.into());
-        }
-        bucket.settled_gems = bucket
-            .settled_gems
-            .checked_add(1)
-            .ok_or(GemError::SettledCountOverflow)?;
-        self.remove_bucket_member(item.bucket_key, item.gem_id.to_u256())?;
-        item.called_at = self.bucket_called_at.read(&item.bucket_key)?;
-        item.settled_at = self.storage.timestamp()?.to::<u64>();
-        item.state = GemState::Settled as u8;
-        update(
-            self.storage.clone(),
-            scope,
-            current_item,
-            BodyInput::Gem(&crate::repository::canonical_item(&item)),
-        )?;
-        update(
-            self.storage.clone(),
-            scope,
-            current_bucket,
-            BodyInput::GemBucket(&crate::repository::canonical_bucket(&bucket)),
-        )?;
-        self.emit(IGem::MetadataUpdate {
-            _tokenId: item.gem_id.to_u256(),
-        })
-    }
-
-    /// Deletes the gem body. An unpaid gem leaves the membership; a paid one lowers the
-    /// paid count. The bucket goes only once both reach zero.
-    pub(crate) fn record_gem_removed(
-        &mut self,
-        scope: &ExecutionScope,
-        item: LoadedGem,
-        bucket: LoadedGemBucket,
-    ) -> Result<()> {
-        let (item, current_item) = item.into_parts();
-        let (mut bucket, current_bucket) = bucket.into_parts();
-        check_loaded_bucket(&item, &current_bucket)?;
-        let bucket_id = current_bucket.entity_id();
-        let supply = self
-            .total_supply
-            .read()?
-            .checked_sub(1)
-            .ok_or(GemError::TotalSupplyUnderflow)?;
-        self.total_supply.write(supply)?;
-        let remaining = if item.is_settled() {
-            bucket.settled_gems = bucket
-                .settled_gems
-                .checked_sub(1)
-                .ok_or(GemError::SettledCountUnderflow { bucket_id })?;
-            self.bucket_gem_count.read(&item.bucket_key)?
-        } else {
-            self.remove_bucket_member(item.bucket_key, item.gem_id.to_u256())?
-        };
-        delete(self.storage.clone(), scope, current_item)?;
-        if remaining == 0 && bucket.settled_gems == 0 {
-            self.close_bucket(item.bucket_key)?;
-            delete(self.storage.clone(), scope, current_bucket)?;
-        } else if item.is_settled() {
-            update(
-                self.storage.clone(),
-                scope,
-                current_bucket,
-                BodyInput::GemBucket(&crate::repository::canonical_bucket(&bucket)),
-            )?;
-        }
-        self.emit(IGem::Transfer {
-            from: item.owner,
-            to: Address::ZERO,
-            tokenId: item.gem_id.to_u256(),
-        })
     }
 
     // --- Bucket member index ----------------------------------------------------
@@ -365,7 +144,7 @@ impl GemContract<'_> {
 
     /// Forgets a bucket nothing refers to any more: its terms, its place in the call
     /// trie and the expiry queue, its day and its call.
-    fn close_bucket(&mut self, bucket: B256) -> Result<()> {
+    pub(crate) fn close_bucket(&mut self, bucket: B256) -> Result<()> {
         self.remove_call_bin(bucket)?;
         self.remove_called(bucket)?;
         self.bucket_call_price_minor.clear(&bucket)?;
@@ -414,7 +193,7 @@ impl GemContract<'_> {
 
     /// Parks a bucket in the bin of its sealed call price. No-op for a bucket without
     /// a call price.
-    fn insert_call_bin(&mut self, bucket: B256) -> Result<()> {
+    pub(crate) fn insert_call_bin(&mut self, bucket: B256) -> Result<()> {
         let price = self.bucket_call_price_minor.read(&bucket)?;
         if price.is_zero() {
             return Ok(());
@@ -430,36 +209,6 @@ impl GemContract<'_> {
         call_bins::remove(&CallBins(self, iso), bucket)?;
         Ok(())
     }
-}
-
-fn check_loaded_bucket(item: &GemItemState, current: &VerifiedBody) -> Result<()> {
-    let expected = item.bucket_id();
-    if current.entity_id() != expected {
-        return Err(GemError::LoadedBucketMismatch {
-            actual: current.entity_id(),
-            expected,
-        }
-        .into());
-    }
-    Ok(())
-}
-
-pub(crate) fn gem_item_from_verified(body: &VerifiedBody) -> Result<GemItemState> {
-    let payload = body
-        .payload()
-        .as_gem()
-        .ok_or(GemFatalError::NonGemPayload)?;
-    crate::repository::from_canonical_item(payload.clone())
-        .map_err(|error| GemFatalError::CorruptGemBody(error).into())
-}
-
-pub(crate) fn gem_bucket_from_verified(body: &VerifiedBody) -> Result<GemBucketState> {
-    let payload = body
-        .payload()
-        .as_gem_bucket()
-        .ok_or(GemFatalError::NonGemBucketPayload)?;
-    crate::repository::from_canonical_bucket(payload.clone())
-        .map_err(|error| GemFatalError::CorruptGemBucketBody(error).into())
 }
 
 /// Called buckets, queued by the hour their notice period closes in.

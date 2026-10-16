@@ -227,9 +227,13 @@ fn emit_record(description: &RecordDescription) -> TokenStream2 {
     }
     let exists_expr = exists_expr.expect("exists field validated during record analysis");
     let record_impl = quote! {
+        impl ::outbe_primitives::storage::types::StorableType for #name {
+            const SLOTS: usize = #total_slots as usize;
+        }
+
         impl ::outbe_primitives::storage::dsl::StorageRecord for #name {
             type Key = #key_ty;
-            const SLOTS: u64 = #total_slots;
+            const SLOTS: u64 = <Self as ::outbe_primitives::storage::types::StorableType>::SLOTS as u64;
 
             fn key(&self) -> Self::Key {
                 self.#key_name.clone()

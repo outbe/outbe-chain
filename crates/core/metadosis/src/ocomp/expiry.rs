@@ -1,5 +1,4 @@
 use alloy_primitives::B256;
-use outbe_compressed_entities::ExecutionScope;
 use outbe_ocomp_protocol::state::OcompJobStatus;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
@@ -76,7 +75,6 @@ pub fn record_certified_parent_finality(
 /// This path scans live jobs and validates the bounded WorldwideDay aggregate.
 pub fn run_lifecycle_begin_with_scope(
     ctx: &BlockRuntimeContext<'_>,
-    scope: &ExecutionScope,
 ) -> Result<OcompPenaltyMetrics> {
     if let Some(before) = missed_lifecycle_boundary(ctx)? {
         let aggregate = ValidatedWwdAggregate::load_and_validate(ctx.storage.clone())?;
@@ -87,19 +85,15 @@ pub fn run_lifecycle_begin_with_scope(
         expire_exact(
             &mut MetadosisContract::new(ctx.storage.clone()),
             ctx,
-            scope,
             before,
             &outer_transition,
         )?;
         return Ok(OcompPenaltyMetrics::default());
     }
-    run_lifecycle_begin_exact(ctx, scope)
+    run_lifecycle_begin_exact(ctx)
 }
 
-fn run_lifecycle_begin_exact(
-    ctx: &BlockRuntimeContext<'_>,
-    scope: &ExecutionScope,
-) -> Result<OcompPenaltyMetrics> {
+fn run_lifecycle_begin_exact(ctx: &BlockRuntimeContext<'_>) -> Result<OcompPenaltyMetrics> {
     let schema_limits = poc_schema_limits();
     let mut metadosis = MetadosisContract::new(ctx.storage.clone());
     let Some(_profile) = metadosis.read_ocomp_request_profile(&schema_limits)? else {
@@ -110,7 +104,7 @@ fn run_lifecycle_begin_exact(
     let response =
         metadosis.close_due_ocomp_response_window(ctx.block.block_number, &schema_limits)?;
     let metrics = response.metrics;
-    close_response_attempt(&mut metadosis, ctx, scope, &aggregate, response.close)?;
+    close_response_attempt(&mut metadosis, ctx, &aggregate, response.close)?;
     let Some(before) = due_unfinalized_attempt(&metadosis, ctx.block.block_number)? else {
         return Ok(metrics);
     };
@@ -118,14 +112,13 @@ fn run_lifecycle_begin_exact(
         .record(before.worldwide_day)
         .ok_or(MetadosisStorageCorruptionError::AwaitingFinalityExpiryMissingPersistedOuterWwd)?;
     let outer_transition = reduce_outer_wwd(Some(current), OuterWwdEvent::OcompExpired)?;
-    expire_exact(&mut metadosis, ctx, scope, before, &outer_transition)?;
+    expire_exact(&mut metadosis, ctx, before, &outer_transition)?;
     Ok(metrics)
 }
 
 fn close_response_attempt(
     metadosis: &mut MetadosisContract<'_>,
     ctx: &BlockRuntimeContext<'_>,
-    scope: &ExecutionScope,
     aggregate: &ValidatedWwdAggregate,
     close: ResponseWindowCloseV1,
 ) -> Result<()> {
@@ -151,7 +144,7 @@ fn close_response_attempt(
                 MetadosisStorageCorruptionError::NoQuorumOcompCloseMissingPersistedOuterWwd,
             )?;
             let outer_transition = reduce_outer_wwd(Some(current), OuterWwdEvent::OcompExpired)?;
-            expire_exact(metadosis, ctx, scope, before, &outer_transition)
+            expire_exact(metadosis, ctx, before, &outer_transition)
         }
     }
 }
@@ -228,7 +221,6 @@ fn missed_lifecycle_boundary(ctx: &BlockRuntimeContext<'_>) -> Result<Option<Job
 fn expire_exact(
     metadosis: &mut MetadosisContract<'_>,
     ctx: &BlockRuntimeContext<'_>,
-    scope: &ExecutionScope,
     before: JobFsmProjection,
     outer_transition: &OuterWwdTransition,
 ) -> Result<()> {
@@ -263,7 +255,6 @@ fn expire_exact(
         crate::terminal::ExpiredFailure {
             settlement: crate::terminal::FailureSettlement {
                 block_number: ctx.block.block_number,
-                scope,
                 worldwide_day: before.worldwide_day,
                 unused_limit: value_routed,
             },

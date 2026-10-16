@@ -72,54 +72,17 @@ pub(in crate::ocomp::retention) fn spawn_retained_gc_worker(
         .map_err(RetentionError::RetainedTributeGcWorkerSpawn)
 }
 
-pub(crate) fn retained_gc_next_wake_delay(
-    made_page_progress: bool,
-    next_retry_delay: Option<Duration>,
-) -> Duration {
-    let progress_delay = made_page_progress.then_some(RETAINED_GC_PROGRESS_POLL);
-    progress_delay
-        .into_iter()
-        .chain(next_retry_delay)
-        .min()
-        .unwrap_or(RETAINED_GC_IDLE_POLL)
-        .min(RETAINED_GC_IDLE_POLL)
+pub(crate) fn retained_gc_next_wake_delay(made_progress: bool) -> Duration {
+    if made_progress {
+        RETAINED_GC_PROGRESS_POLL
+    } else {
+        RETAINED_GC_IDLE_POLL
+    }
 }
 
 fn record_retained_gc_report(report: &RetainedGcCycleReport) {
     metrics::gauge!("outbe_ocomp_retained_gc_pending_jobs").set(report.pending as f64);
-    metrics::gauge!("outbe_ocomp_retained_gc_deferred_jobs").set(report.deferred as f64);
-    metrics::gauge!("outbe_ocomp_retained_gc_retry_next_delay_seconds").set(
-        report
-            .next_retry_delay
-            .map_or(0.0, |delay| delay.as_secs_f64()),
-    );
-    metrics::counter!("outbe_ocomp_retained_gc_page_attempts_total")
-        .increment(report.completed + report.pages + report.failures.len() as u64);
     metrics::counter!("outbe_ocomp_retained_gc_completed_total").increment(report.completed);
-    metrics::counter!("outbe_ocomp_retained_gc_pages_total").increment(report.pages);
-    for failure in &report.failures {
-        metrics::counter!("outbe_ocomp_retained_gc_errors_total").increment(1);
-        metrics::counter!(
-            "outbe_ocomp_retained_gc_retry_attempts_total",
-            "scope" => "item",
-            "failure_class" => failure.class.as_str()
-        )
-        .increment(1);
-        metrics::counter!(
-            "outbe_ocomp_retained_gc_failures_total",
-            "scope" => "item",
-            "failure_class" => failure.class.as_str()
-        )
-        .increment(1);
-        tracing::warn!(
-            candidate_block_hash = %failure.work.key,
-            generation = failure.work.generation,
-            failure_class = failure.class.as_str(),
-            error = %failure.error,
-            retry_delay_seconds = RETAINED_GC_RETRY_BACKOFF.as_secs(),
-            "OCOMP retained-input GC failed for one lease; other leases continue"
-        );
-    }
 }
 
 fn wait_for_gc_signal(signal: &RetainedGcSignal, observed_epoch: &mut u64, delay: Duration) {
@@ -147,8 +110,6 @@ impl OcompRetentionCoordinator {
     fn run_gc_cycle(
         &self,
         finalized_height: u64,
-        retry_schedule: &mut RetainedGcRetrySchedule,
-        clock: &mut RetainedGcClock<impl FnMut() -> Instant>,
     ) -> Result<RetainedGcCycleReport, RetainedGcCycleFailure> {
         let work_items =
             self.gc_candidate_work(finalized_height)
@@ -157,39 +118,17 @@ impl OcompRetentionCoordinator {
                     error,
                     report: None,
                 })?;
-        retry_schedule.retain_pending(&work_items);
         let mut report = RetainedGcCycleReport {
             pending: work_items.len(),
-            deferred: 0,
             completed: 0,
-            pages: 0,
-            failures: Vec::new(),
-            next_retry_delay: None,
         };
         for work in work_items {
-            if !retry_schedule.is_eligible(work, clock.eligibility_now) {
-                report.deferred = report.deferred.saturating_add(1);
-                continue;
-            }
             match self.release_due_work(work, finalized_height) {
                 Ok(RetainedGcAttemptOutcome::Completed(_)) => {
-                    retry_schedule.clear(work);
                     report.completed = report.completed.saturating_add(1);
                 }
-                Ok(RetainedGcAttemptOutcome::PageProgress) => {
-                    retry_schedule.clear(work);
-                    report.pages = report.pages.saturating_add(1);
-                }
-                Ok(RetainedGcAttemptOutcome::NoLongerPending) => {
-                    retry_schedule.clear(work);
-                }
-                Err(RetainedGcAttemptFailure::Item(failure)) => {
-                    retry_schedule.defer(failure.work, (clock.current_time)());
-                    report.deferred = report.deferred.saturating_add(1);
-                    report.failures.push(failure);
-                }
+                Ok(RetainedGcAttemptOutcome::NoLongerPending) => {}
                 Err(RetainedGcAttemptFailure::Global { class, error }) => {
-                    report.next_retry_delay = retry_schedule.next_delay((clock.current_time)());
                     return Err(RetainedGcCycleFailure {
                         class,
                         error,
@@ -198,7 +137,6 @@ impl OcompRetentionCoordinator {
                 }
             }
         }
-        report.next_retry_delay = retry_schedule.next_delay((clock.current_time)());
         Ok(report)
     }
 
@@ -211,7 +149,7 @@ impl OcompRetentionCoordinator {
         if let Some(delay) = retry_schedule.global_delay(clock.eligibility_now) {
             return Ok(RetainedGcScheduledCycle::DeferredGlobal(delay));
         }
-        match self.run_gc_cycle(finalized_height, retry_schedule, &mut clock) {
+        match self.run_gc_cycle(finalized_height) {
             Ok(report) => {
                 retry_schedule.clear_global();
                 Ok(RetainedGcScheduledCycle::Ran(report))

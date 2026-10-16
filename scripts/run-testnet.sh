@@ -413,13 +413,11 @@ do_start() {
         #     )
         # fi
 
-        python3 "$SCRIPT_DIR/offchain_storage.py" ensure "$validator_dir/offchain-storage.toml"
         local -a cmd=(
             "$OUTBE_CHAIN_BINARY" node
             --validator
             --chain "$OUTPUT_DIR/genesis.json"
             --datadir "$validator_dir/data"
-            --projection.storage-config "$validator_dir/offchain-storage.toml"
             --engine.persistence-threshold 0
             --engine.memory-block-buffer-target 0
             --http --http.addr 0.0.0.0 --http.port $((base_rpc + i))

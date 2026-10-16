@@ -33,15 +33,13 @@ fn issue_is_immediately_readable_and_keeps_product_event_order() {
     let input = params(address!("1111111111111111111111111111111111111111"));
     let nod_id = world.issue(&input);
     let item = world
-        .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
+        .enter(|storage| nod_api::get_item(&storage, nod_id))
         .unwrap()
         .unwrap();
     assert_eq!(item.owner, input.owner);
     assert_eq!(
         world
-            .enter(|storage, scope, parent| {
-                nod_api::list_by_owner(&storage, scope, parent, input.owner)
-            })
+            .enter(|storage| { nod_api::list_by_owner(&storage, input.owner) })
             .unwrap()
             .len(),
         1
@@ -57,8 +55,6 @@ fn issue_is_immediately_readable_and_keeps_product_event_order() {
     assert_eq!(
         events,
         [
-            (NOD_ADDRESS, INod::NodBodyStored::SIGNATURE_HASH),
-            (NOD_ADDRESS, INod::NodBucketBodyStored::SIGNATURE_HASH),
             (NOD_ADDRESS, INod::Transfer::SIGNATURE_HASH),
             (NOD_FACTORY_ADDRESS, INodFactory::NodIssued::SIGNATURE_HASH),
         ]
@@ -79,35 +75,21 @@ fn second_same_block_issue_reuses_the_pending_bucket_without_parent_projection()
         first.entry_price_minor,
         first.reference_currency,
     );
-    let bucket_id = WwdEntityId::from_day_and_digest(first.worldwide_day, bucket_key.0);
+    let bucket_id = bucket_key;
     let bucket = world
-        .enter(|storage, scope, parent| nod_api::get_bucket(&storage, scope, parent, bucket_id))
+        .enter(|storage| nod_api::get_bucket(&storage, bucket_id))
         .unwrap()
         .unwrap();
     assert_eq!(bucket.entry_price_minor, first.entry_price_minor);
     assert_eq!(
         world
-            .enter(|storage, _, _| NodContract::new(storage).bucket_nod_count.read(&bucket_key))
+            .enter(|storage| NodContract::new(storage).bucket_nod_count.read(&bucket_key))
             .unwrap(),
         2
     );
     assert_eq!(
         world
-            .provider
-            .get_ordered_events()
-            .iter()
-            .filter(|event| {
-                event.address == NOD_ADDRESS
-                    && event.data.topics().first()
-                        == Some(&INod::NodBucketBodyStored::SIGNATURE_HASH)
-            })
-            .count(),
-        1,
-        "only the first member creates the bucket body"
-    );
-    assert_eq!(
-        world
-            .enter(|storage, scope, parent| nod_api::list_all(&storage, scope, parent))
+            .enter(|storage| nod_api::list_all(&storage))
             .unwrap()
             .len(),
         2
@@ -119,11 +101,9 @@ fn invalid_and_duplicate_issuance_leave_one_canonical_item() {
     let mut world = World::new();
     let mut invalid = params(Address::ZERO);
     let error = world
-        .enter(|storage, scope, parent| {
+        .enter(|storage| {
             api::issue_nod(
                 &storage,
-                scope,
-                parent,
                 &outbe_nod::test_support::encrypted_fixture(&invalid, CHAIN_ID),
             )
         })
@@ -137,15 +117,13 @@ fn invalid_and_duplicate_issuance_leave_one_canonical_item() {
     invalid.owner = Address::repeat_byte(0x22);
     let nod_id = world.issue(&invalid);
     assert!(world
-        .enter(|storage, scope, parent| api::issue_nod(
+        .enter(|storage| api::issue_nod(
             &storage,
-            scope,
-            parent,
             &outbe_nod::test_support::encrypted_fixture(&invalid, CHAIN_ID)
         ))
         .is_err());
     assert!(world
-        .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
+        .enter(|storage| nod_api::get_item(&storage, nod_id))
         .unwrap()
         .is_some());
 }
@@ -162,11 +140,9 @@ fn direct_issuance_beyond_the_issuable_entry_writes_nothing() {
     let events_before = world.provider.get_ordered_events().len();
 
     let error = world
-        .enter(|storage, scope, parent| {
+        .enter(|storage| {
             api::issue_nod(
                 &storage,
-                scope,
-                parent,
                 &outbe_nod::test_support::encrypted_fixture(&input, CHAIN_ID),
             )
         })
@@ -181,7 +157,7 @@ fn direct_issuance_beyond_the_issuable_entry_writes_nothing() {
     assert_eq!(world.provider.get_ordered_events().len(), events_before);
     let nod_id = outbe_nod::identity::generate_nod_id(input.owner, input.worldwide_day).unwrap();
     assert!(world
-        .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
+        .enter(|storage| nod_api::get_item(&storage, nod_id))
         .unwrap()
         .is_none());
 }
@@ -195,11 +171,9 @@ fn failed_authorization_preserves_the_loaded_nod() {
     world.settle(nod_id, input.owner).unwrap();
     let nonce = world.pow_nonce(nod_id);
     world
-        .enter(|storage, scope, parent| {
+        .enter(|storage| {
             api::mine_gratis(
                 &storage,
-                scope,
-                parent,
                 api::MineGratisRequest {
                     caller: Address::repeat_byte(0x44),
                     nod_id,
@@ -211,7 +185,7 @@ fn failed_authorization_preserves_the_loaded_nod() {
         .unwrap_err();
     // Dummy MAC is rejected regardless of who submits; the paid Nod remains.
     assert!(world
-        .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
+        .enter(|storage| nod_api::get_item(&storage, nod_id))
         .unwrap()
         .is_some());
 }
@@ -226,11 +200,9 @@ fn invalid_gratis_mac_rolls_back_the_nod_burn() {
     let nonce = world.pow_nonce(nod_id);
 
     world
-        .enter(|storage, scope, parent| {
+        .enter(|storage| {
             api::mine_gratis(
                 &storage,
-                scope,
-                parent,
                 api::MineGratisRequest {
                     caller: input.owner,
                     nod_id,
@@ -241,7 +213,7 @@ fn invalid_gratis_mac_rolls_back_the_nod_burn() {
         })
         .unwrap_err();
     assert!(world
-        .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
+        .enter(|storage| nod_api::get_item(&storage, nod_id))
         .unwrap()
         .is_some());
 }
@@ -266,7 +238,7 @@ fn qualified_mine_deletes_item_and_last_bucket_then_emits_burn() {
         .unwrap();
     assert_eq!(minted, input.gratis_load_minor);
     assert!(world
-        .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
+        .enter(|storage| nod_api::get_item(&storage, nod_id))
         .unwrap()
         .is_none());
     let bucket_key = outbe_nod::identity::bucket_key(
@@ -274,9 +246,9 @@ fn qualified_mine_deletes_item_and_last_bucket_then_emits_burn() {
         input.entry_price_minor,
         input.reference_currency,
     );
-    let bucket_id = WwdEntityId::from_day_and_digest(input.worldwide_day, bucket_key.0);
+    let bucket_id = bucket_key;
     assert!(world
-        .enter(|storage, scope, parent| { nod_api::get_bucket(&storage, scope, parent, bucket_id) })
+        .enter(|storage| { nod_api::get_bucket(&storage, bucket_id) })
         .unwrap()
         .is_none());
 
@@ -290,12 +262,8 @@ fn qualified_mine_deletes_item_and_last_bucket_then_emits_burn() {
     assert_eq!(
         signatures,
         [
-            (NOD_ADDRESS, INod::NodBodyStored::SIGNATURE_HASH),
-            (NOD_ADDRESS, INod::NodBucketBodyStored::SIGNATURE_HASH),
             (NOD_ADDRESS, INod::MetadataUpdate::SIGNATURE_HASH),
             (NOD_FACTORY_ADDRESS, INodFactory::NodSettled::SIGNATURE_HASH),
-            (NOD_ADDRESS, INod::NodBodyDeleted::SIGNATURE_HASH),
-            (NOD_ADDRESS, INod::NodBucketBodyDeleted::SIGNATURE_HASH),
             (NOD_ADDRESS, INod::Transfer::SIGNATURE_HASH),
             (
                 NOD_FACTORY_ADDRESS,
@@ -328,7 +296,7 @@ fn a_nod_qualifying_after_issuance_still_mines() {
         .unwrap();
     assert_eq!(minted, input.gratis_load_minor);
     assert!(world
-        .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
+        .enter(|storage| nod_api::get_item(&storage, nod_id))
         .unwrap()
         .is_none());
 }
@@ -370,11 +338,9 @@ fn a_stranger_can_mine_with_the_owners_auth() {
     let stranger = Address::repeat_byte(0x6b);
 
     let minted = world
-        .enter(|storage, scope, parent| {
+        .enter(|storage| {
             api::mine_gratis(
                 &storage,
-                scope,
-                parent,
                 api::MineGratisRequest {
                     caller: stranger,
                     nod_id,
@@ -389,7 +355,7 @@ fn a_stranger_can_mine_with_the_owners_auth() {
         input.gratis_load_minor
     );
     assert!(world
-        .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
+        .enter(|storage| nod_api::get_item(&storage, nod_id))
         .unwrap()
         .is_none());
     let exercised = world
@@ -411,14 +377,8 @@ fn certified_generation_has_no_public_installation_selector() {
     let storage_before = world.provider.storage.clone();
     let events_before = world.provider.get_ordered_events().to_vec();
 
-    let result = world.enter(|storage, scope, parent| {
-        crate::precompile::dispatch(
-            storage,
-            ExecutionReaders { scope, parent },
-            &calldata,
-            Address::repeat_byte(0x91),
-            U256::ZERO,
-        )
+    let result = world.enter(|storage| {
+        crate::precompile::dispatch(storage, &calldata, Address::repeat_byte(0x91), U256::ZERO)
     });
 
     assert!(result.is_err());

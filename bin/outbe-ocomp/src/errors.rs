@@ -3,9 +3,9 @@
 use std::path::PathBuf;
 
 use alloy_primitives::{B256, U256};
-use outbe_compressed_entities::CanonicalBodyError;
 use outbe_lysis::program_v1::planner::PlannerErrorV1;
 use outbe_ocomp_protocol::ProtocolError;
+use outbe_primitives::entity_codec::CanonicalBodyError;
 use thiserror::Error;
 
 use crate::{
@@ -14,7 +14,6 @@ use crate::{
 };
 pub use crate::{
     embedded_runtime::EmbeddedOcompRuntimeErrorV1,
-    exporter::FinalizedTributeError,
     opening_stage::OpeningStageError,
     result_attestation::LocalResultAttestationErrorV1,
     rpc_input_exporter::RpcInputExporterErrorV1,
@@ -227,8 +226,6 @@ pub enum TributeInventoryError {
     BodyOutsideBound { limit: usize, actual: usize },
     #[error("Tribute inventory integer overflow")]
     IntegerOverflow,
-    #[error(transparent)]
-    Partition(#[from] outbe_compressed_entities::TributePartitionReconstructionError),
     #[error("Tribute inventory I/O failed during {operation} at {path}: {source}")]
     Io {
         operation: &'static str,
@@ -419,12 +416,6 @@ pub enum PublicVoteRpcErrorV1 {
 
 pub fn transport_enclave_error(error: impl std::fmt::Display) -> outbe_tee::TransportError {
     outbe_tee::TransportError::EnclaveError(error.to_string())
-}
-
-impl FinalizedTributeError {
-    pub fn ce(error: impl std::fmt::Display) -> Self {
-        Self::Ce(error.to_string())
-    }
 }
 
 impl PublicRpcError {

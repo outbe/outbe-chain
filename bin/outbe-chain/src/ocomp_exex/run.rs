@@ -1,11 +1,7 @@
 use super::classify_retention_reconciliation;
-use super::consume_projection_runtime_deadline;
 use super::drain_exex_notifications;
 use super::finished_height_consumer_closed_during_shutdown;
 use super::load_persisted_fatal_evidence;
-use super::projection_runtime_failure;
-use super::projection_runtime_watch_closed_failure;
-use super::projection_task_failure;
 use super::publish_finalized_reader_metrics;
 use super::publish_finished_height;
 use super::record_discovery_retirement_report;
@@ -30,13 +26,6 @@ use outbe_node::finalized_frame::read_bounded_finalized_frames;
 
 use outbe_node::finalized_frame::RethFinalizedFrameSource;
 use outbe_node::ocomp::retention::observe_finalized_request;
-
-use outbe_node::projection::FinalizedProjectionSink;
-use outbe_node::projection::FinalizedTargetReconciliationV1;
-
-use outbe_node::projection::ReadyOffchainDataProjection;
-
-use outbe_node::projection::PROJECTION_RECOVERY_DEADLINE;
 
 use outbe_ocomp::discovery_spool::ContiguousCheckpointStoreV1;
 use outbe_ocomp::discovery_spool::DiscoverySpoolV1;
@@ -73,7 +62,6 @@ use std::collections::BTreeSet;
 
 use std::sync::mpsc;
 use std::sync::Arc;
-use std::time::Duration;
 
 use tracing::warn;
 
@@ -84,7 +72,6 @@ pub(super) async fn wait_for_node_teardown() -> ! {
 
 pub async fn run_ocomp_exex<Node>(
     ctx: ExExContext<Node>,
-    ready_projection: ReadyOffchainDataProjection,
     config: OcompExExConfigV1,
     readiness: ProjectionReadinessPublisher,
     exit: tokio::sync::mpsc::UnboundedSender<OcompExExExitV1>,
@@ -188,33 +175,6 @@ where
     readiness.publish(ProjectionStatus::CatchingUp {
         checkpoint: Some(closed),
     });
-    let projection_sink = Arc::new(std::sync::Mutex::new(FinalizedProjectionSink::new(
-        ready_projection,
-    )));
-    let (mut projection_runtime_failures, projection_runtime_recovery) = {
-        let sink = projection_sink
-            .lock()
-            .map_err(|_| OcompExExError::UnifiedProjectionSinkLockPoisoned)?;
-        (
-            sink.runtime_failure_receiver()?,
-            sink.runtime_recovery_handle()?,
-        )
-    };
-    {
-        let sink = projection_sink
-            .lock()
-            .map_err(|_| OcompExExError::UnifiedProjectionSinkLockPoisoned)?;
-        if let Some(projected) = sink.durable_checkpoint() {
-            if projected.block_number < closed.block_number
-                || (projected.block_number == closed.block_number
-                    && projected.block_hash != closed.block_hash)
-            {
-                return Err(OcompExExError::UnifiedClosureCheckpointAheadOfProjection.into());
-            }
-        } else if closed.block_number != 0 {
-            return Err(OcompExExError::UnifiedClosureExistsBeforeDurableProjection.into());
-        }
-    }
     let mut startup_retirements = RetirementReportV1::default();
     for spool in discovery_spools.values() {
         let report = spool.complete_retirements_through(closed.block_number)?;
@@ -268,66 +228,13 @@ where
 
     let mut poll = tokio::time::interval(POLL_INTERVAL);
     poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    let mut projection_health = tokio::time::interval(Duration::from_millis(250));
-    projection_health.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    let mut projection_unavailable_since = None;
-    let mut projection_runtime_recovery_task = None;
+    let mut provider_recovery_floor = Some(closed);
     // Keep one sampled target throughout catch-up. Historical voting state
     // never authorizes effects. Mandatory Completed verification uses this target.
     let mut recovery_target = None;
     let mut initial_finished_height_published = false;
     loop {
-        let projection_runtime_deadline =
-            projection_unavailable_since.map(|(_, since)| since + PROJECTION_RECOVERY_DEADLINE);
         tokio::select! {
-            _ = wait_for_optional_deadline(projection_runtime_deadline) => {
-                if let Some(failure) = consume_projection_runtime_deadline(
-                    &projection_runtime_failures,
-                    &mut projection_unavailable_since,
-                ) {
-                    projection_sink
-                        .lock()
-                        .map_err(|_| OcompExExError::UnifiedProjectionSinkLockPoisoned)?
-                        .publish_failure(failure.clone());
-                    runtime.latch_external_failure(failure);
-                    wait_for_node_teardown().await;
-                }
-            }
-            _ = projection_health.tick() => {
-                if let Some(failure) = projection_runtime_failure(
-                    &projection_runtime_failures,
-                    &mut projection_unavailable_since,
-                    &projection_runtime_recovery,
-                    &mut projection_runtime_recovery_task,
-                ).await {
-                    projection_sink
-                        .lock()
-                        .map_err(|_| OcompExExError::UnifiedProjectionSinkLockPoisoned)?
-                        .publish_failure(failure.clone());
-                    runtime.latch_external_failure(failure);
-                    wait_for_node_teardown().await;
-                }
-            }
-            changed = projection_runtime_failures.changed() => {
-                let failure = if changed.is_err() {
-                    Some(projection_runtime_watch_closed_failure())
-                } else {
-                    projection_runtime_failure(
-                        &projection_runtime_failures,
-                        &mut projection_unavailable_since,
-                        &projection_runtime_recovery,
-                        &mut projection_runtime_recovery_task,
-                    ).await
-                };
-                if let Some(failure) = failure {
-                    projection_sink
-                        .lock()
-                        .map_err(|_| OcompExExError::UnifiedProjectionSinkLockPoisoned)?
-                        .publish_failure(failure.clone());
-                    runtime.latch_external_failure(failure);
-                    wait_for_node_teardown().await;
-                }
-            }
             result = notification_drain.join_next() => {
                 runtime.latch_external_failure(ProjectionFailure::new(
                     ProjectionFailureClass::Other,
@@ -363,45 +270,33 @@ where
                     .provider
                     .finalized_block_num_hash()
                     .wrap_err("sample unified finalized head")?;
-                let reconciliation = projection_sink
-                    .lock()
-                    .map_err(|_| OcompExExError::UnifiedProjectionSinkLockPoisoned)?
-                    .reconcile_finalized_target(finalized_target.as_ref().map(|target| {
-                        ProjectionCheckpoint {
-                            block_number: target.number,
-                            block_hash: target.hash,
+                // Restore the existing durable OCOMP closure floor before processing
+                // finalized history. Native state replaces the deleted CE projection.
+                let floor = runtime.closure_checkpoint.current()?;
+                let finalized_target = match finalized_target {
+                    None => { provider_recovery_floor = Some(floor); None },
+                    Some(target) if target.number < floor.block_number => {
+                        provider_recovery_floor = Some(floor);
+                        None
+                    },
+                    Some(target) => {
+                        if target.number == floor.block_number && target.hash != floor.block_hash {
+                            return Err(OcompExExError::RecoveredClosureFloorChanged {
+                                block_number:floor.block_number,expected:floor.block_hash,actual:target.hash,
+                            }.into());
                         }
-                    }))?;
-                let finalized_target = match reconciliation {
-                    FinalizedTargetReconciliationV1::AwaitingProviderRecovery => None,
-                    FinalizedTargetReconciliationV1::Process {
-                        target,
-                        recovered_floor,
-                    } => {
-                        let sampled = finalized_target
-                            .ok_or(OcompExExError::ProjectionAcceptedAbsentFinalizedTarget)?;
-                        if sampled.number != target.block_number || sampled.hash != target.block_hash {
-                            return Err(OcompExExError::ProjectionReconciledDifferentTargetIdentity.into());
-                        }
-                        if let Some(floor) = recovered_floor {
-                            let canonical = runtime
-                                .provider
-                                .block_hash(floor.block_number)
-                                .wrap_err("revalidate recovered durable projection floor")?
-                                .ok_or(OcompExExError::RecoveredProjectionFloorUnavailable {
-                                    block_number: floor.block_number,
-                                    block_hash: floor.block_hash,
+                        if let Some(recovered) = provider_recovery_floor.take() {
+                            let canonical = runtime.provider.block_hash(recovered.block_number)?
+                                .ok_or(OcompExExError::RecoveredClosureFloorUnavailable {
+                                    block_number:recovered.block_number,block_hash:recovered.block_hash,
                                 })?;
-                            if canonical != floor.block_hash {
-                                return Err(OcompExExError::RecoveredProjectionFloorChanged {
-                                    block_number: floor.block_number,
-                                    expected: floor.block_hash,
-                                    actual: canonical,
-                                }
-                                .into());
+                            if canonical != recovered.block_hash {
+                                return Err(OcompExExError::RecoveredClosureFloorChanged {
+                                    block_number:recovered.block_number,expected:recovered.block_hash,actual:canonical,
+                                }.into());
                             }
                         }
-                        Some(*recovery_target.get_or_insert(sampled))
+                        Some(*recovery_target.get_or_insert(target))
                     }
                 };
                 if let Some(target) = finalized_target {
@@ -473,80 +368,6 @@ where
                                 }
                             }
                             runtime.record_request_observation(frame, request_observation)?;
-                            let sink = Arc::clone(&projection_sink);
-                            let projected_frame = frame.clone();
-                            let projection_deadline =
-                                tokio::time::Instant::now() + PROJECTION_RECOVERY_DEADLINE;
-                            let projection_write_deadline = projection_deadline.into_std();
-                            let mut projection_task = tokio::task::spawn_blocking(move || {
-                                sink.lock()
-                                    .map_err(|_| OcompExExError::UnifiedProjectionSinkLockPoisoned)?
-                                    .project_frame_until(&projected_frame, projection_write_deadline)
-                            });
-                            let projection_result = loop {
-                                let runtime_recovery_deadline = projection_unavailable_since
-                                    .map(|(_, since)| since + PROJECTION_RECOVERY_DEADLINE);
-                                tokio::select! {
-                                    biased;
-                                    _ = tokio::time::sleep_until(projection_deadline) => {
-                                        let failure = ProjectionFailure::new(
-                                            ProjectionFailureClass::MongoReconnectDeadline,
-                                            "unified durable projection exceeded the recovery deadline",
-                                        );
-                                        runtime.latch_external_failure(failure);
-                                        wait_for_node_teardown().await;
-                                    }
-                                    _ = wait_for_optional_deadline(runtime_recovery_deadline) => {
-                                        if let Some(failure) = consume_projection_runtime_deadline(
-                                            &projection_runtime_failures,
-                                            &mut projection_unavailable_since,
-                                        ) {
-                                            runtime.latch_external_failure(failure);
-                                            wait_for_node_teardown().await;
-                                        }
-                                    }
-                                    result = &mut projection_task => break result,
-                                    _ = projection_health.tick() => {
-                                        if let Some(failure) = projection_runtime_failure(
-                                            &projection_runtime_failures,
-                                            &mut projection_unavailable_since,
-                                            &projection_runtime_recovery,
-                                            &mut projection_runtime_recovery_task,
-                                        ).await {
-                                            runtime.latch_external_failure(failure);
-                                            wait_for_node_teardown().await;
-                                        }
-                                    }
-                                    changed = projection_runtime_failures.changed() => {
-                                        let failure = if changed.is_err() {
-                                            Some(projection_runtime_watch_closed_failure())
-                                        } else {
-                                            projection_runtime_failure(
-                                                &projection_runtime_failures,
-                                                &mut projection_unavailable_since,
-                                                &projection_runtime_recovery,
-                                                &mut projection_runtime_recovery_task,
-                                            ).await
-                                        };
-                                        if let Some(failure) = failure {
-                                            runtime.latch_external_failure(failure);
-                                            wait_for_node_teardown().await;
-                                        }
-                                    }
-                                }
-                            };
-                            if let Err(error) = projection_result
-                                .wrap_err("unified projection worker failed")
-                                .and_then(|result| result)
-                            {
-                                let failure = projection_task_failure(error);
-                                projection_sink
-                                    .lock()
-                                    .map_err(|_| OcompExExError::UnifiedProjectionSinkLockPoisoned)?
-                                    .publish_failure(failure.clone());
-                                runtime.latch_external_failure(failure);
-                                wait_for_node_teardown().await;
-                            }
                             runtime.record_scanned_frame(frame)?;
                             // Reconcile against the sampled target as history arrives.
                             // Suppress old voting/offer effects, but preserve mandatory
@@ -564,13 +385,6 @@ where
                             }
                         }
                     }
-                    projection_sink
-                        .lock()
-                        .map_err(|_| OcompExExError::UnifiedProjectionSinkLockPoisoned)?
-                        .publish_progress(ProjectionCheckpoint {
-                            block_number: target.number,
-                            block_hash: target.hash,
-                        })?;
                     runtime
                         .retention_selector
                         .notify_finalized_height(target.number);
@@ -617,12 +431,5 @@ where
                 }
             }
         }
-    }
-}
-
-async fn wait_for_optional_deadline(deadline: Option<tokio::time::Instant>) {
-    match deadline {
-        Some(deadline) => tokio::time::sleep_until(deadline).await,
-        None => std::future::pending().await,
     }
 }

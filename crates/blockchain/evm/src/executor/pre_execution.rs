@@ -21,11 +21,7 @@ where
 
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
         let beneficiary = self.inner.evm.block().beneficiary();
-        if self.block_hash.is_some() && block_number > 0 {
-            let artifacts = decode_outbe_block_artifacts(self.block_extra_data.as_ref())
-                .map_err(ExecutorValidationError::block_artifacts)?;
-            validate_compressed_entities_root_scheme(artifacts.compressed_entities_root)?;
-        }
+
         // Initialise the begin-zone phase cursor for this block
         // BEFORE any pre-exec mutation that could affect routing. Block 1
         // (genesis bootstrap) skips Phase 1. It starts at OcompLifecycleBegin
@@ -59,19 +55,7 @@ where
         //    State::commit notifies reth's parallel state root task.
         self.preserve_runtime_markers()?;
 
-        // 3. Open the block-scoped compressed-body overlay before any user or
-        // system transaction can perform a body read or mutation. This also
-        // applies to Reth's local pending-block construction. That path executes
-        // txpool transactions against an isolated State. It therefore needs a
-        // complete CE begin/end lifecycle, even though consensus-only Outbe
-        // hooks remain disabled. The provisional tree batch is not published
-        // without a final block hash.
-        self.begin_compressed_entities(block_number)?;
-
-        // Pending-block RPC has no proposer certificate or consensus system
-        // transactions. Its isolated CE scope is active now, so user
-        // transactions can be simulated faithfully. Skip only the
-        // consensus-specific hooks below.
+        // Pending-block RPC executes against its isolated EVM state.
         if !self.execute_outbe_block_hooks {
             return Ok(());
         }
@@ -147,19 +131,7 @@ where
                         block_number,
                     )?;
                 }
-                let result = match self.runtime_body_readers.as_ref() {
-                    Some(readers) => run_outbe_pre_execution_hooks_with_readers(
-                        hook_ctx,
-                        genesis_validators.as_ref(),
-                        readers,
-                        self.compressed_entities_scope.as_ref(),
-                    ),
-                    None => run_outbe_pre_execution_hooks(hook_ctx, genesis_validators.as_ref()),
-                };
-                if let (Some(readers), Err(error)) = (self.runtime_body_readers.as_ref(), &result) {
-                    readers.report_precompile_error(error);
-                }
-                result
+                run_outbe_pre_execution_hooks(hook_ctx, genesis_validators.as_ref())
             })?
         };
         // Provider dropped here - mutable DB borrow released.
@@ -219,45 +191,6 @@ where
         if !marker_state.is_empty() {
             self.inner.evm.db_mut().commit(marker_state);
         }
-        Ok(())
-    }
-
-    fn begin_compressed_entities(&mut self, block_number: u64) -> Result<(), BlockExecutionError> {
-        let timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
-        let chain_id = self.inner.evm.chain_id();
-        let proposer = self.inner.evm.block().beneficiary();
-        let scope = self.compressed_entities_scope.clone();
-        let (_changes, events) = {
-            let db = self.inner.evm.db_mut();
-            let ctx = build_block_context(
-                db,
-                BlockContext {
-                    block_number,
-                    timestamp,
-                    chain_id,
-                    genesis_hash: self.genesis_hash,
-                    proposer,
-                    validators: Vec::new(),
-                },
-            )?;
-            run_atomic_storage_hooks(db, ctx, |hook_ctx| {
-                let lifecycle = outbe_compressed_entities::CompressedEntitiesLifecycleContext::new(
-                    hook_ctx.clone(),
-                    scope.as_ref(),
-                );
-                <outbe_compressed_entities::CompressedEntitiesLifecycle as BlockLifecycle>::begin_block(
-                    &lifecycle,
-                )
-            })?
-        };
-        if !events.is_empty() {
-            return Err(
-                crate::errors::ExecutorValidationError::CompressedEntitiesBeginBlockUnexpectedEvent
-                    .into(),
-            );
-        }
-
-        self.compressed_entities_started = true;
         Ok(())
     }
 }

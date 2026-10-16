@@ -3,7 +3,6 @@
 use std::{ffi::OsString, path::PathBuf, sync::Arc};
 
 use clap::{CommandFactory, FromArgMatches};
-use outbe_offchain_storage::{StorageBackend, StorageConfig};
 use outbe_snapshot::layout::ProtectedPaths;
 use reth_chainspec::ChainSpec;
 use reth_cli::chainspec::ChainSpecParser as _;
@@ -18,40 +17,18 @@ pub(crate) struct NodeInputs {
     chain_source: Option<PathBuf>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct NativeLayout {
     pub chain: Arc<ChainSpec<OutbeHeader>>,
     pub chain_root: PathBuf,
     pub consensus_root: PathBuf,
     pub ocomp_root: PathBuf,
-    pub offchain_root: PathBuf,
     pub static_files_root: PathBuf,
     pub execution_rocksdb_root: PathBuf,
-    pub projection_start_block: u64,
     pub protected: ProtectedPaths,
 }
 
-/// Configuration prerequisites. Other native roots come directly from ordinary
-/// node arguments. Only projection inspection needs the separate storage TOML.
-pub(crate) struct NativeReadSelection {
-    pub projection: bool,
-}
-
-pub(crate) struct ProjectionLocation {
-    pub root: PathBuf,
-    pub start_block: u64,
-}
-
-pub(crate) struct RequestedLayout {
-    pub chain: Arc<ChainSpec<OutbeHeader>>,
-    pub chain_root: PathBuf,
-    pub consensus_root: PathBuf,
-    pub ocomp_root: PathBuf,
-    pub static_files_root: PathBuf,
-    pub execution_rocksdb_root: PathBuf,
-    pub projection: Option<ProjectionLocation>,
-    pub protected: ProtectedPaths,
-}
+pub(crate) type RequestedLayout = NativeLayout;
 
 /// Parse trailing ordinary node options. Never run or configure the parsed command.
 pub(crate) fn parse_node_inputs(
@@ -81,41 +58,15 @@ pub(crate) fn parse_node_inputs(
 }
 
 pub(crate) fn resolve_layout(inputs: &NodeInputs) -> eyre::Result<NativeLayout> {
-    let layout = resolve_requested_layout(inputs, NativeReadSelection { projection: true })?;
-    let projection = layout
-        .projection
-        .ok_or(crate::errors::SnapshotError::MissingProjectionConfig)?;
-    Ok(NativeLayout {
-        chain: layout.chain,
-        chain_root: layout.chain_root,
-        consensus_root: layout.consensus_root,
-        ocomp_root: layout.ocomp_root,
-        offchain_root: projection.root,
-        static_files_root: layout.static_files_root,
-        execution_rocksdb_root: layout.execution_rocksdb_root,
-        projection_start_block: projection.start_block,
-        protected: layout.protected,
-    })
+    resolve_requested_layout(inputs)
 }
 
-/// Resolve every explicitly configured root before publishing an audit report.
-/// This is output isolation, independent of which semantic checks were selected.
+/// Protect ordinary node configuration and identity files during offline work.
 pub(crate) fn resolve_report_layout(inputs: &NodeInputs) -> eyre::Result<RequestedLayout> {
-    let Commands::Node(node) = &inputs.cli.command else {
-        return Err(crate::errors::SnapshotError::InputsNotNode.into());
-    };
-    resolve_requested_layout(
-        inputs,
-        NativeReadSelection {
-            projection: node.ext.projection_storage_config.is_some(),
-        },
-    )
+    resolve_requested_layout(inputs)
 }
 
-pub(crate) fn resolve_requested_layout(
-    inputs: &NodeInputs,
-    selection: NativeReadSelection,
-) -> eyre::Result<RequestedLayout> {
+pub(crate) fn resolve_requested_layout(inputs: &NodeInputs) -> eyre::Result<RequestedLayout> {
     let Commands::Node(node) = &inputs.cli.command else {
         return Err(crate::errors::SnapshotError::InputsNotNode.into());
     };
@@ -130,18 +81,6 @@ pub(crate) fn resolve_requested_layout(
         .parent()
         .ok_or(crate::errors::SnapshotError::MissingOcompParent)?
         .join("ocomp/domain-v1");
-    let projection = if selection.projection {
-        let storage = StorageConfig::load(&args.offchain_data()?.storage_config)?;
-        let StorageBackend::RocksDb(rocks) = storage.backend else {
-            return Err(crate::errors::SnapshotError::RequiresRocksDbStorage.into());
-        };
-        Some(ProjectionLocation {
-            root: rocks.path,
-            start_block: storage.start_block,
-        })
-    } else {
-        None
-    };
     let mut protected = vec![
         chain_root.join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1),
         args.keys_dir
@@ -157,7 +96,6 @@ pub(crate) fn resolve_requested_layout(
             .clone()
             .unwrap_or_else(|| datadir.jwt()),
     ];
-    protected.extend(args.projection_storage_config.clone());
     protected.extend(inputs.chain_source.clone());
     protected.extend(
         [
@@ -178,7 +116,6 @@ pub(crate) fn resolve_requested_layout(
         ocomp_root,
         static_files_root: datadir.static_files(),
         execution_rocksdb_root: datadir.rocksdb(),
-        projection,
         protected: ProtectedPaths(protected),
     })
 }

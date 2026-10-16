@@ -2,14 +2,10 @@
 #[path = "../../../../testing/support/factory_erc20_settlement.rs"]
 mod settlement;
 
-use std::sync::Arc;
-
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{SolCall, SolEvent};
-use outbe_compressed_entities::ExecutionScope;
 use outbe_gem::{precompile::IGem, GemAddParams};
 use outbe_gemfactory::precompile::IGemFactory;
-use outbe_offchain_storage::MemoryStorage;
 use outbe_oracle::test_support::record_finalized_day_vwap;
 use outbe_primitives::{
     addresses::{GEM_ADDRESS, GEM_FACTORY_ADDRESS},
@@ -31,13 +27,7 @@ impl Rail for Gem {
     const FACTORY: Address = GEM_FACTORY_ADDRESS;
     const SOURCE: StablesSource = StablesSource::GemCostAmount;
 
-    fn seed(
-        self,
-        storage: &StorageHandle<'_>,
-        scope: &ExecutionScope,
-        store: &Arc<MemoryStorage>,
-        issuance_currency: u16,
-    ) -> (U256, u64) {
+    fn seed(self, storage: &StorageHandle<'_>, issuance_currency: u16) -> (U256, u64) {
         // A finalized day above the floor qualifies the Gem.
         record_finalized_day_vwap(
             storage,
@@ -46,13 +36,10 @@ impl Rail for Gem {
             U256::from(2_160_001),
         )
         .unwrap();
-        let parent = outbe_gem::gem_reader(store.clone());
         let profile = outbe_gem::config::read(storage).unwrap();
         let entry_price = U256::from(2_000_000);
         let gem_id = outbe_gem::api::add_gem(
             storage,
-            scope,
-            &parent,
             GemAddParams {
                 owner: OWNER,
                 gem_type: outbe_gemfactory::schema::GemTypes::Wallet as u8,
@@ -80,7 +67,7 @@ impl Rail for Gem {
         let Some(called_at) = self.called_at else {
             return (gem_id, 0);
         };
-        let bucket = outbe_gem::api::get_item(storage, scope, &parent, gem_id)
+        let bucket = outbe_gem::api::get_item(storage, gem_id)
             .unwrap()
             .unwrap()
             .bucket_key;
@@ -88,9 +75,7 @@ impl Rail for Gem {
             .bucket_called_at
             .write(&bucket, called_at)
             .unwrap();
-        let gem = outbe_gem::api::get_view(storage, scope, &parent, gem_id)
-            .unwrap()
-            .unwrap();
+        let gem = outbe_gem::api::get_view(storage, gem_id).unwrap().unwrap();
         assert_eq!(
             gem.effective_state(TIMESTAMP),
             outbe_gem::GemState::Called as u8

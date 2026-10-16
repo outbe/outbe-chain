@@ -59,9 +59,86 @@ pub struct DynamicExists {
     pub bytes: Vec<u8>,
 }
 
+#[contract(addr = ADDRESS)]
+pub struct NestedMaps {
+    pub values:
+        outbe_primitives::storage::dsl::Map<u32, outbe_primitives::storage::dsl::Map<u16, u64>>,
+    pub lists: outbe_primitives::storage::dsl::Map<
+        u32,
+        outbe_primitives::storage::dsl::Map<u16, outbe_primitives::storage::dsl::List<u64>>,
+    >,
+    pub tail: outbe_primitives::storage::dsl::Value<u64>,
+}
+
+#[contract(addr = ADDRESS)]
+pub struct ByteMaps {
+    pub blobs: outbe_primitives::storage::dsl::Map<u32, outbe_primitives::storage::dsl::Bytes>,
+    pub tail: outbe_primitives::storage::dsl::Value<u64>,
+}
+
+#[test]
+fn mapped_bytes_isolate_dynamic_tails_and_clear_previous_chunks() {
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        let contract = ByteMaps::new(storage);
+        assert_eq!(contract.tail.slot(), U256::from(1));
+        let first = contract.blobs.bytes(&7);
+        let second = contract.blobs.bytes(&8);
+        first.write(&[0xa5; 88]).unwrap();
+        second.write(&[0x5a; 56]).unwrap();
+        assert_eq!(first.read().unwrap(), vec![0xa5; 88]);
+        first.write(&[1]).unwrap();
+        assert_eq!(first.read().unwrap(), vec![1]);
+        assert_eq!(second.read().unwrap(), vec![0x5a; 56]);
+        first.clear().unwrap();
+        assert!(first.read().unwrap().is_empty());
+        assert_eq!(second.read().unwrap(), vec![0x5a; 56]);
+    });
+}
+
+#[test]
+fn nested_maps_preserve_slots_and_isolate_keys_and_dynamic_lists() {
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        let contract = NestedMaps::new(storage);
+        assert_eq!(contract.values.base_slot(), U256::ZERO);
+        assert_eq!(contract.lists.base_slot(), U256::from(1));
+        assert_eq!(contract.tail.slot(), U256::from(2));
+        contract.values.map(&7).write(&840, 11).unwrap();
+        contract.values.map(&8).write(&840, 22).unwrap();
+        contract.values.map(&7).write(&978, 33).unwrap();
+        assert_eq!(contract.values.map(&7).read(&840).unwrap(), 11);
+        assert_eq!(contract.values.map(&8).read(&840).unwrap(), 22);
+        assert_eq!(contract.values.map(&7).read(&978).unwrap(), 33);
+        assert_eq!(
+            contract.values.map(&7).slot(&840).slot(),
+            840u16.mapping_slot(7u32.mapping_slot(U256::ZERO)),
+        );
+        contract.values.map(&7).clear(&840).unwrap();
+        assert_eq!(contract.values.map(&7).read(&840).unwrap(), 0);
+        assert_eq!(contract.values.map(&8).read(&840).unwrap(), 22);
+        contract.lists.map(&7).list(&840).push(44).unwrap();
+        contract.lists.map(&8).list(&840).push(55).unwrap();
+        assert_eq!(
+            contract.lists.map(&7).list(&840).read_all().unwrap(),
+            vec![44]
+        );
+        assert_eq!(
+            contract.lists.map(&8).list(&840).read_all().unwrap(),
+            vec![55]
+        );
+        contract.tail.write(66).unwrap();
+        assert_eq!(contract.tail.read().unwrap(), 66);
+    });
+}
+
 #[test]
 fn contract_order_is_stable_and_reserves_collection_and_record_widths() {
     assert_eq!(MixedRecord::SLOTS, 5);
+    assert_eq!(
+        <MixedRecord as outbe_primitives::storage::types::StorableType>::SLOTS,
+        <MixedRecord as StorageRecord>::SLOTS as usize,
+    );
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         let c = Ordered::new(storage.clone());
@@ -155,5 +232,101 @@ fn existence_uses_optional_presence_and_dynamic_length() {
         assert!(dynamic.exists().unwrap());
         dynamic.delete().unwrap();
         assert!(!dynamic.exists().unwrap());
+    });
+}
+
+mod scalar {
+    use super::*;
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub struct StoredWord(pub u64);
+
+    impl outbe_primitives::storage::types::StorableType for StoredWord {
+        const SLOTS: usize = 1;
+    }
+
+    impl outbe_primitives::storage::types::Storable for StoredWord {
+        fn from_word(word: U256) -> Self {
+            Self(word.to::<u64>())
+        }
+
+        fn to_word(&self) -> U256 {
+            U256::from(self.0)
+        }
+    }
+
+    pub type WorldwideDay = StoredWord;
+}
+
+#[storage_record(exists_field = present)]
+pub struct WorldwideDay {
+    #[key]
+    pub id: u32,
+    pub present: bool,
+    pub reserved_1: u64,
+    pub forming_start: u64,
+    pub reserved_3: u64,
+    pub reserved_4: u64,
+    pub reserved_5: u64,
+    pub reserved_6: u64,
+    pub reserved_7: u64,
+    pub reserved_8: u64,
+    pub reserved_9: u64,
+}
+
+#[contract(addr = ADDRESS)]
+pub struct DayRecords {
+    pub head: outbe_primitives::storage::dsl::Value<u64>,
+    pub records: outbe_primitives::storage::dsl::Map<u32, WorldwideDay>,
+    pub active: StorageSet<u32>,
+    pub scalar_values: outbe_primitives::storage::dsl::Map<u32, scalar::StoredWord>,
+    pub aliased_values: outbe_primitives::storage::dsl::Map<u32, scalar::WorldwideDay>,
+    pub tail: outbe_primitives::storage::dsl::Value<u64>,
+}
+
+#[test]
+fn record_and_scalar_alias_with_same_name_keep_independent_storage() {
+    assert_eq!(<WorldwideDay as StorageRecord>::SLOTS, 10);
+    assert_eq!(
+        <WorldwideDay as outbe_primitives::storage::types::StorableType>::SLOTS,
+        10,
+    );
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        let contract = DayRecords::new(storage);
+        assert_eq!(contract.records.base_slot(), U256::from(1));
+        assert_eq!(contract.scalar_values.base_slot(), U256::from(13));
+        assert_eq!(contract.aliased_values.base_slot(), U256::from(14));
+        assert_eq!(contract.tail.slot(), U256::from(15));
+
+        let mut record = WorldwideDay::with_key(20260109);
+        record.present = true;
+        record.forming_start = 1_700_000_000;
+        let entry = contract.records.entry(record.id);
+        entry.create(&record).unwrap();
+        assert!(contract.active.insert(record.id).unwrap());
+        assert_eq!(contract.active.read_all().unwrap(), vec![record.id]);
+        assert_eq!(entry.forming_start().read().unwrap(), record.forming_start);
+
+        contract
+            .scalar_values
+            .write(&record.id, scalar::StoredWord(42))
+            .unwrap();
+        contract
+            .aliased_values
+            .write(&record.id, scalar::StoredWord(99))
+            .unwrap();
+        contract.tail.write(7).unwrap();
+        assert_eq!(
+            contract.scalar_values.read(&record.id).unwrap(),
+            scalar::StoredWord(42),
+        );
+        assert_eq!(
+            contract.aliased_values.read(&record.id).unwrap(),
+            scalar::StoredWord(99),
+        );
+        assert_eq!(contract.tail.read().unwrap(), 7);
+        assert_eq!(entry.forming_start().read().unwrap(), record.forming_start);
+        assert_eq!(contract.active.read_all().unwrap(), vec![record.id]);
     });
 }

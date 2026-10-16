@@ -1,8 +1,6 @@
 use super::super::*;
 
 pub(in crate::lifecycle) struct PreparedParent {
-    pub(in crate::lifecycle) _tree_directory: tempfile::TempDir,
-    pub(in crate::lifecycle) tree_service: Arc<CompressedTreeService>,
     pub(in crate::lifecycle) parent: Arc<SealedHeader<OutbeHeader>>,
     pub(in crate::lifecycle) parent_storage: HashMap<(Address, U256), U256>,
     pub(in crate::lifecycle) wwd: WorldwideDay,
@@ -16,51 +14,6 @@ pub(in crate::lifecycle) fn prepare_parent(
     fork_install: &outbe_metadosis::config::OcompForkInstallV1,
 ) -> PreparedParent {
     outbe_tribute::enclave_client::test_enclave::install();
-    let directory = tempfile::tempdir().unwrap();
-    let db = CeMdbx::open(
-        directory.path(),
-        EnvironmentIdentity {
-            local_storage_schema_version: LOCAL_STORAGE_SCHEMA_VERSION,
-            chain_id: CHAIN_ID,
-            genesis_hash,
-            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-            topology: CeTopologyV1.encode(),
-            tree_format: "ckb-smt-v0.6.1-poseidon2-catalog-v3".to_owned(),
-            vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
-        },
-        FinalizedMarker {
-            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-            height: 0,
-            block_hash: genesis_hash,
-            parent_block_hash: B256::ZERO,
-            parent_root: B256::ZERO,
-            new_root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
-        },
-    )
-    .unwrap();
-    let tree_service = Arc::new(
-        CompressedTreeService::new(
-            db,
-            CandidateCacheLimits {
-                max_candidates: 4,
-                max_encoded_bytes: 1_000_000,
-            },
-        )
-        .unwrap(),
-    );
-    let marker = tree_service.finalized_marker().unwrap();
-    let parent_tree = tree_service
-        .open_parent(ExactParentIdentity {
-            commitment_scheme_version: marker.commitment_scheme_version,
-            block_number: marker.height,
-            block_hash: marker.block_hash,
-            root: marker.new_root,
-        })
-        .unwrap();
-    let scope = outbe_compressed_entities::execution_scope::with_parent_tree(
-        parent_tree,
-        CeWorkConfig::new(0, 0, u64::MAX),
-    );
     let mut seed = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, genesis_hash);
     seed.set_block_number(PARENT_HEIGHT);
     seed.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::ForkProfile);
@@ -73,9 +26,7 @@ pub(in crate::lifecycle) fn prepare_parent(
         + WAITING_PERIOD_HOURS * SECONDS_PER_HOUR;
     let nominal = U256::from(1_000);
     let owner = address!("7300000000000000000000000000000000000073");
-    let seal = StorageHandle::enter(&mut seed, |storage| {
-        seed_ce_genesis(&storage);
-        begin_block(storage.clone(), &scope).unwrap();
+    StorageHandle::enter(&mut seed, |storage| {
         let nod = NodContract::new(storage.clone());
         nod.ocomp_materialization_head_sequence.write(1).unwrap();
         nod.ocomp_materialization_tail_sequence.write(1).unwrap();
@@ -144,20 +95,16 @@ pub(in crate::lifecycle) fn prepare_parent(
         let mut tribute = TributeContract::new(storage.clone());
         tribute.unseal_day(wwd).unwrap();
         tribute
-            .issue(
-                &scope,
-                &EmptyParent,
-                &TributeData {
-                    tribute_id: outbe_nod::identity::generate_nod_id(owner, wwd).unwrap(),
-                    owner,
-                    worldwide_day: wwd,
-                    issuance_amount_minor: nominal,
-                    issuance_currency: 840,
-                    nominal_amount_minor: nominal,
-                    reference_currency: 840,
-                    tribute_price_minor: U256::from(2),
-                },
-            )
+            .issue(&TributeData {
+                tribute_id: outbe_nod::identity::generate_nod_id(owner, wwd).unwrap(),
+                owner,
+                worldwide_day: wwd,
+                issuance_amount_minor: nominal,
+                issuance_currency: 840,
+                nominal_amount_minor: nominal,
+                reference_currency: 840,
+                tribute_price_minor: U256::from(2),
+            })
             .unwrap();
         tribute.seal_day(wwd).unwrap();
 
@@ -170,7 +117,7 @@ pub(in crate::lifecycle) fn prepare_parent(
             .active_utc_day
             .write(outbe_primitives::time::timestamp_to_date_key(parent_time))
             .unwrap();
-        outbe_cycle::runtime::dispatch_triggers(&parent_ctx, &scope, &EmptyParent).unwrap();
+        outbe_cycle::runtime::dispatch_triggers(&parent_ctx).unwrap();
         // This focused fixture jumps directly from the seeded WWD start to its
         // processing time. Model the intervening canonical daily advances so
         // the request block exercises a contiguous settlement, not SkipMissed.
@@ -180,7 +127,6 @@ pub(in crate::lifecycle) fn prepare_parent(
                 outbe_primitives::time::timestamp_to_date_key(request_time),
             ))
             .unwrap();
-        end_block(storage, &scope).unwrap()
     });
 
     let parent_extra_data = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
@@ -190,10 +136,6 @@ pub(in crate::lifecycle) fn prepare_parent(
         consensus_header_artifact: None,
         timestamp_millis_part: 0,
         late_finalize_credits: None,
-        compressed_entities_root: Some(CompressedEntitiesRootArtifact {
-            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-            r_sealed: seal.new_root,
-        }),
     })
     .unwrap();
     let parent_state_root = state_root_prehashed(hashed_marker_state(&seed.storage));
@@ -208,48 +150,12 @@ pub(in crate::lifecycle) fn prepare_parent(
         extra_data: parent_extra_data,
         ..Default::default()
     })));
-    tree_service
-        .publish_candidate(parent.hash(), seal.staged_tree_batch)
-        .unwrap();
-    tree_service
-        .apply_finalized(PARENT_HEIGHT, parent.hash(), seal.new_root)
-        .unwrap();
-
     PreparedParent {
-        _tree_directory: directory,
-        tree_service,
         parent,
         parent_storage: seed.storage,
         wwd,
         nominal,
         request_time,
-    }
-}
-
-#[derive(Debug)]
-pub(in crate::lifecycle) struct EmptyParent;
-
-impl outbe_compressed_entities::ParentBodySource for EmptyParent {
-    fn get(
-        &self,
-        _entity: outbe_compressed_entities::EntityRef,
-    ) -> Result<
-        Option<outbe_compressed_entities::StoredBody>,
-        outbe_compressed_entities::ParentBodySourceError,
-    > {
-        Ok(None)
-    }
-
-    fn list(
-        &self,
-        _query: outbe_compressed_entities::QueryRef,
-        _request: outbe_compressed_entities::IdPageRequest,
-    ) -> Result<outbe_compressed_entities::IdPage, outbe_compressed_entities::ParentBodySourceError>
-    {
-        Ok(outbe_compressed_entities::IdPage {
-            ids: Vec::new(),
-            next_after: None,
-        })
     }
 }
 
@@ -330,8 +236,4 @@ pub(in crate::lifecycle) fn assert_provider_activated_ocomp_inputs(
     let totals = TributeContract::new(storage).get_day_totals(wwd).unwrap();
     assert_eq!(totals.tribute_count, 1);
     assert_eq!(totals.tribute_nominal_total_minor, expected_nominal);
-}
-
-pub(in crate::lifecycle) fn seed_ce_genesis(storage: &StorageHandle<'_>) {
-    outbe_compressed_entities::test_support::seed_compressed_entities_genesis_after_marker(storage);
 }

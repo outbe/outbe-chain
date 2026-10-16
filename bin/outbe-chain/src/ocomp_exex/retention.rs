@@ -168,7 +168,6 @@ where
             locator.state_root,
             locator.intent_id,
             locator.wwd,
-            record.intent.ce_sealed_root,
             record.intent.protocol_bundle_hash,
             input_lease_id,
         );
@@ -179,7 +178,6 @@ where
             released.candidate.state_root,
             released.candidate.intent_id,
             released.candidate.wwd,
-            released.candidate.ce_sealed_root,
             released.candidate.protocol_bundle_hash,
             released.candidate.input_lease_id,
         );

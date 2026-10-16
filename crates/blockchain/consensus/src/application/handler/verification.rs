@@ -19,10 +19,7 @@ use alloy_primitives::Address;
 use commonware_consensus::types::Round;
 use commonware_cryptography::bls12381::{primitives::variant::MinSig, PublicKey};
 use commonware_utils::channel::oneshot;
-use outbe_primitives::{
-    projection::{ExecutionReadBudget, ProjectionCheckpoint},
-    system_tx::OcompLifecycleActivation,
-};
+use outbe_primitives::{projection::ExecutionReadBudget, system_tx::OcompLifecycleActivation};
 use tracing::warn;
 
 mod execution;
@@ -230,9 +227,6 @@ impl ApplicationShared {
         {
             return Ok(VerificationOutcome::Invalid);
         }
-        if !self.verification_parent_ready(request, &resolved).await? {
-            return Ok(VerificationOutcome::Unavailable);
-        }
         let outcome = self
             .verify_block_execution(request, &resolved, execution_read_budget)
             .await?;
@@ -247,32 +241,5 @@ impl ApplicationShared {
                 VerificationOutcome::Unavailable
             },
         )
-    }
-    async fn verification_parent_ready(
-        &self,
-        request: &VerifyRequest,
-        resolved: &ResolvedVerifyBlocks,
-    ) -> eyre::Result<bool> {
-        let required_parent = ProjectionCheckpoint {
-            block_number: resolved
-                .parent_block
-                .as_ref()
-                .map_or(0, ConsensusBlock::number),
-            block_hash: request.parent_digest().0,
-        };
-        match self
-            .projection_readiness
-            .clone()
-            .wait_for(required_parent, std::future::pending())
-            .await
-        {
-            outbe_primitives::projection::WaitOutcome::Ready => {}
-            outbe_primitives::projection::WaitOutcome::Fatal(failure) => {
-                self.executor_mailbox.projection_failed(failure)?;
-                return Ok(false);
-            }
-            _ => return Ok(false),
-        }
-        Ok(true)
     }
 }

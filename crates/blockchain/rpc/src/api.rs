@@ -62,8 +62,6 @@ pub struct ConsensusStatusInfo {
     pub is_validator: bool,
     /// Phase-1 finalized-parent certificate verification policy for this node.
     pub phase1_verification_mode: Phase1VerificationMode,
-    /// Local Mongo materialization and business-readiness state.
-    pub projection: ProjectionStatusInfo,
     /// Local TEE-enclave health that the canary observes. This is local health,
     /// not consensus data. The value is `disabled` when the canary worker is off.
     pub enclave: EnclaveHealthInfo,
@@ -71,7 +69,7 @@ pub struct ConsensusStatusInfo {
 
 /// Operator-visible local TEE-enclave health. The node's periodic canary
 /// decrypt (`--tee-canary.*`) supplies it. It has the same role as
-/// [`ProjectionStatusInfo`]: local observability only, never a consensus input.
+/// local runtime status. It is never a consensus input.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EnclaveHealthInfo {
@@ -119,32 +117,6 @@ impl Default for EnclaveHealthInfo {
             health_probe_supported: None,
         }
     }
-}
-
-/// Operator-visible local projection state. This is local health, not consensus data.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProjectionStatusInfo {
-    pub state: ProjectionHealth,
-    pub checkpoint_number: Option<u64>,
-    pub checkpoint_hash: Option<B256>,
-    pub reth_finalized_number: Option<u64>,
-    pub reth_finalized_hash: Option<B256>,
-    pub lag_blocks: Option<u64>,
-    pub ready: bool,
-    pub unavailable_for_millis: Option<u64>,
-    pub last_failure_class: Option<String>,
-}
-
-/// Stable JSON projection-health vocabulary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum ProjectionHealth {
-    Starting,
-    CatchingUp,
-    Ready,
-    MongoUnavailable,
-    Fatal,
 }
 
 /// Operator-visible Phase-1 finalized-parent verification boundary.
@@ -337,6 +309,22 @@ pub struct GratisKeysSealed {
 /// Enable with `--http.api outbe`.
 #[rpc(server, namespace = "outbe")]
 pub trait OutbeApi {
+    /// Returns an encrypted Tribute and exact storage proof at the requested checkpoint.
+    #[method(name = "getTributeStateSource")]
+    async fn get_tribute_state_source(
+        &self,
+        subject: outbe_tee::tribute_source::TributeSourceSubject,
+        tribute_id: outbe_primitives::wwd_entity_id::WwdEntityId,
+    ) -> jsonrpsee::core::RpcResult<outbe_tee::tribute_source::TributeStateSource>;
+
+    /// Proves day length and optionally one physical day index at a fixed finalized state.
+    #[method(name = "getTributeDayStateProof")]
+    async fn get_tribute_day_state_proof(
+        &self,
+        subject: outbe_tee::tribute_source::TributeSourceSubject,
+        day_index: Option<u32>,
+    ) -> jsonrpsee::core::RpcResult<outbe_tribute::state_proof::TributeDayStateProof>;
+
     /// Export the network key only for a finalized upgrade candidate.
     #[method(name = "upgradeKeyV1")]
     async fn upgrade_key_v1(
@@ -345,14 +333,6 @@ pub trait OutbeApi {
         proof: outbe_tee::upgrade_transfer::UpgradeKeyProofV1,
         legacy_direct_dev_source: bool,
     ) -> jsonrpsee::core::RpcResult<Bytes>;
-    /// Returns one independently verifiable latest-finalized compressed-entity
-    /// point package. V1 deliberately has no caller-selected block.
-    #[method(name = "getCompressedEntity")]
-    async fn get_compressed_entity(
-        &self,
-        request: outbe_compressed_entities::PointReadRequestV1,
-    ) -> jsonrpsee::core::RpcResult<outbe_compressed_entities::PointReadResultV1>;
-
     /// Builds the exact Fidelity/Oracle openings for one finalized OCOMP
     /// `JobIntent`. The event supplies only `intent_id`. The node resolves the
     /// authoritative finalized record and exact request state locally.
@@ -531,20 +511,6 @@ mod tests {
         assert_eq!(json["state"], "pending");
     }
 
-    fn ready_projection() -> ProjectionStatusInfo {
-        ProjectionStatusInfo {
-            state: ProjectionHealth::Ready,
-            checkpoint_number: Some(41),
-            checkpoint_hash: Some(B256::repeat_byte(0x41)),
-            reth_finalized_number: Some(41),
-            reth_finalized_hash: Some(B256::repeat_byte(0x41)),
-            lag_blocks: Some(0),
-            ready: true,
-            unavailable_for_millis: None,
-            last_failure_class: None,
-        }
-    }
-
     #[test]
     fn test_consensus_status_info_serialization_camel_case() {
         let info = ConsensusStatusInfo {
@@ -561,7 +527,6 @@ mod tests {
             vrf_expiry_height: 21621,
             is_validator: true,
             phase1_verification_mode: Phase1VerificationMode::ValidatorEnforced,
-            projection: ready_projection(),
             enclave: EnclaveHealthInfo::default(),
         };
 
@@ -643,7 +608,6 @@ mod tests {
             vrf_expiry_height: 21700,
             is_validator: false,
             phase1_verification_mode: Phase1VerificationMode::TrustedFinality,
-            projection: ready_projection(),
             enclave: EnclaveHealthInfo::default(),
         };
 
@@ -666,8 +630,6 @@ mod tests {
             deserialized.phase1_verification_mode,
             Phase1VerificationMode::TrustedFinality
         );
-        assert!(deserialized.projection.ready);
-        assert_eq!(deserialized.projection.checkpoint_number, Some(41));
     }
 
     #[test]

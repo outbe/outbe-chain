@@ -4,13 +4,7 @@ use super::*;
 pub(super) fn provision_snapshot_recipient(world: &mut crate::world::World) {
     let index = world.validators.joiner_index();
     let data = world.validators.data_dir(index);
-    for relative in [
-        "db",
-        "static_files",
-        "compressed_entities",
-        "offchain",
-        "consensus",
-    ] {
+    for relative in ["db", "rocksdb", "static_files", "consensus"] {
         assert!(
             !data.join(relative).exists(),
             "recipient already has native chain history"
@@ -139,7 +133,6 @@ pub(crate) fn place_snapshot_payload(
             "chain" => data.clone(),
             "consensus" => data.join("consensus"),
             "ocomp" => node.join("ocomp/domain-v1"),
-            "offchain" => data.join("offchain"),
             "static-files" => data.join("static_files"),
             "execution-rocks-db" => data.join("rocksdb"),
             root => return Err(eyre!("unknown native root {root}")),
@@ -214,7 +207,7 @@ pub(super) fn observe_snapshot_launch(
             .follower_launch_observation("snapshot-recipient", launch.index)?;
         std::thread::sleep(std::time::Duration::from_millis(100));
     };
-    let (marshal_processed, anchor, ce_marker_height, last_execution_height) = fields;
+    let (marshal_processed, anchor, last_execution_height) = fields;
     assert_local_committee_anchor(&text, anchor.number)?;
     let canonical = canonical_snapshot_block(world, anchor.number)?;
     let metadata = std::fs::metadata(&launch.log_path)?;
@@ -241,7 +234,6 @@ pub(super) fn observe_snapshot_launch(
             log,
             marshal_processed,
             anchor,
-            ce_marker_height,
             last_execution_height,
             canonical,
         },
@@ -252,14 +244,12 @@ pub(super) fn observe_snapshot_launch(
 
 pub(super) fn start_snapshot_recipient(
     world: &mut crate::world::World,
-    chain_id: u64,
     genesis: alloy_primitives::B256,
 ) -> eyre::Result<crate::world::state::SnapshotLaunchObservation> {
     let slot = world.validators.joiner_index();
     let data = world.validators.data_dir(slot);
     let node = data.parent().unwrap();
-    let before =
-        observe_stopped_native(node, &node.join("offchain-storage.toml"), chain_id, genesis)?;
+    let before = observe_stopped_native(node, genesis)?;
     world
         .localnet
         .launch_dcap_full_node("snapshot-recipient", slot, 0)?;
@@ -300,7 +290,6 @@ pub(super) struct SnapshotPlacement {
     pub(super) signature_path: std::path::PathBuf,
     pub(super) donor_launch: crate::world::localnet::NodeLaunchObservation,
     pub(super) chain: String,
-    pub(super) chain_id: u64,
     pub(super) genesis: alloy_primitives::B256,
     pub(super) identity: BTreeMap<std::path::PathBuf, crate::world::state::SnapshotFingerprint>,
     pub(super) initial_data_members: std::collections::BTreeSet<std::ffi::OsString>,
@@ -354,14 +343,13 @@ impl SnapshotPlacement {
             received,
             manifest_path,
             signature_path,
-            chain_id,
             genesis,
             identity,
             tee_root,
             tee_before,
             ..
         } = self;
-        let (slot, chain_id, genesis) = (*slot, *chain_id, *genesis);
+        let (slot, genesis) = (*slot, *genesis);
 
         let phase_dir = root.join(if validate {
             "validated-placement"
@@ -403,8 +391,7 @@ impl SnapshotPlacement {
         }
         std::fs::write(manifest_path, &manifest_bytes)?;
         std::fs::write(signature_path, signature_bytes)?;
-        let placed =
-            observe_stopped_native(node, &node.join("offchain-storage.toml"), chain_id, genesis)?;
+        let placed = observe_stopped_native(node, genesis)?;
         let placement = SnapshotPlacementObservation {
             completed: snapshot_now_millis()?,
             native: placed,
@@ -429,7 +416,7 @@ impl SnapshotPlacement {
                 bundle,
             )?);
         }
-        let started = start_snapshot_recipient(world, chain_id, genesis)?;
+        let started = start_snapshot_recipient(world, genesis)?;
         ensure!(
             started.before_launch.progress == placement.native.progress,
             "startup did not open placed native state"
@@ -486,9 +473,7 @@ impl SnapshotPlacement {
             .arg("--datadir")
             .arg(data)
             .arg("--consensus.storage-dir")
-            .arg(data.join("consensus"))
-            .arg("--projection.storage-config")
-            .arg(node.join("offchain-storage.toml"));
+            .arg(data.join("consensus"));
         let observation =
             run_snapshot_command(command, phase_dir, "validate", Duration::from_secs(900))?;
         let report = parse_snapshot_validation_report(&observation.stdout)?;
@@ -578,10 +563,6 @@ pub(super) fn place_and_start_snapshot_recipient_result(
     let signature_path = root.join("signature.json");
     let donor_launch = world.localnet.validator_launch_observation(3)?;
     let chain = snapshot_option(&donor_launch.argv, "--chain")?;
-    let chain_id = world
-        .rpc
-        .chain_id(world.validators.primary_port())
-        .ok_or_else(|| eyre!("chain id"))?;
     let genesis = canonical_snapshot_block(world, 0)?.hash.parse()?;
     let identity = recipient_identity(world)?;
     let initial_data_members = std::fs::read_dir(&data)?
@@ -617,7 +598,6 @@ pub(super) fn place_and_start_snapshot_recipient_result(
         signature_path,
         donor_launch,
         chain,
-        chain_id,
         genesis,
         identity,
         initial_data_members,

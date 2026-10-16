@@ -2,19 +2,10 @@
 //! recovery/promotion scenarios.
 
 use std::fs;
-#[cfg(any(test, feature = "ocomp-integration"))]
-use std::fs::File;
-#[cfg(any(test, feature = "ocomp-integration"))]
-use std::io::{Read as _, Seek as _, SeekFrom};
-#[cfg(any(test, feature = "ocomp-integration"))]
-use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Output};
-#[cfg(feature = "ocomp-integration")]
-use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use alloy_primitives::B256;
 use eyre::{ensure, Result, WrapErr};
 use serde::Serialize;
 
@@ -68,17 +59,6 @@ fn has_required_signing_share(node_dir: &Path) -> Result<bool> {
     Ok(found)
 }
 
-/// One successful testnet startup-recovery span observed from a validator.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct CeStartupReplayObservationV1 {
-    pub validator_index: u8,
-    pub first_missing_block_number: u64,
-    pub target_block_number: u64,
-    pub target_block_hash: B256,
-    pub replayed_block_count: u64,
-    pub elapsed_micros: u64,
-}
-
 /// One structured OCOMP execution-boundary marker parsed from a node's real
 /// runtime log. The producer emits only consensus-observational fields. This
 /// probe never infers behavior from source code or mutates node state.
@@ -90,165 +70,6 @@ pub struct OcompRuntimeTraceMarkerV1 {
     pub block_number: u64,
 }
 
-#[cfg(any(test, feature = "ocomp-integration"))]
-struct TrackedRethLog {
-    file: File,
-    offset: u64,
-    anchor: Vec<u8>,
-    pending_line: Vec<u8>,
-}
-
-#[cfg(any(test, feature = "ocomp-integration"))]
-const RETH_LOG_ANCHOR_BYTES: u64 = 64;
-#[cfg(any(test, feature = "ocomp-integration"))]
-const MAX_RETH_LOG_LINE_BYTES: usize = 256 * 1024;
-#[cfg(any(test, feature = "ocomp-integration"))]
-const MAX_RETH_LOG_POLL_BYTES: usize = 4 * 1024 * 1024;
-#[cfg(any(test, feature = "ocomp-integration"))]
-const MAX_TRACKED_RETH_LOG_FILES: usize = 16;
-
-#[cfg(any(test, feature = "ocomp-integration"))]
-struct RethLogTail {
-    root: PathBuf,
-    files: std::collections::BTreeMap<(u64, u64), TrackedRethLog>,
-}
-
-#[cfg(any(test, feature = "ocomp-integration"))]
-impl RethLogTail {
-    fn at_end(root: &Path) -> Result<Self> {
-        let mut tail = Self {
-            root: root.to_path_buf(),
-            files: std::collections::BTreeMap::new(),
-        };
-        tail.refresh(true)?;
-        Ok(tail)
-    }
-
-    fn read_new_complete_lines(&mut self) -> Result<String> {
-        self.refresh(false)?;
-        let mut output = String::new();
-        for tracked in self.files.values_mut() {
-            let length = tracked
-                .file
-                .metadata()
-                .wrap_err("inspect tracked Reth runtime log")?
-                .len();
-            let reset = if length < tracked.offset {
-                true
-            } else {
-                read_reth_log_anchor(&mut tracked.file, tracked.offset)? != tracked.anchor
-            };
-            if reset {
-                tracked.offset = 0;
-                tracked.anchor.clear();
-                tracked.pending_line.clear();
-            }
-            tracked
-                .file
-                .seek(SeekFrom::Start(tracked.offset))
-                .wrap_err("seek tracked Reth runtime log")?;
-            let mut bytes = Vec::new();
-            (&mut tracked.file)
-                .take(
-                    u64::try_from(MAX_RETH_LOG_POLL_BYTES + 1)
-                        .expect("fixed Reth log poll cap fits u64"),
-                )
-                .read_to_end(&mut bytes)
-                .wrap_err("read tracked Reth runtime log")?;
-            ensure!(
-                bytes.len() <= MAX_RETH_LOG_POLL_BYTES,
-                "Reth runtime log grew by more than {MAX_RETH_LOG_POLL_BYTES} bytes in one poll"
-            );
-            tracked.offset = tracked
-                .offset
-                .checked_add(
-                    u64::try_from(bytes.len()).wrap_err("Reth log suffix length exceeds u64")?,
-                )
-                .ok_or_else(|| eyre::eyre!("Reth log cursor overflow"))?;
-            tracked.anchor = read_reth_log_anchor(&mut tracked.file, tracked.offset)?;
-            tracked.pending_line.extend_from_slice(&bytes);
-            let Some(complete_len) = tracked
-                .pending_line
-                .iter()
-                .rposition(|byte| *byte == b'\n')
-                .map(|index| index + 1)
-            else {
-                ensure!(
-                    tracked.pending_line.len() <= MAX_RETH_LOG_LINE_BYTES,
-                    "Reth runtime log contains an over-cap incomplete line"
-                );
-                continue;
-            };
-            ensure!(
-                complete_len <= MAX_RETH_LOG_POLL_BYTES
-                    && tracked.pending_line.len() - complete_len <= MAX_RETH_LOG_LINE_BYTES,
-                "Reth runtime log poll or incomplete line exceeds its bounded evidence cap"
-            );
-            ensure!(
-                output
-                    .len()
-                    .checked_add(complete_len)
-                    .is_some_and(|length| length <= MAX_RETH_LOG_POLL_BYTES),
-                "combined Reth runtime log poll exceeds its bounded evidence cap"
-            );
-            output.push_str(
-                std::str::from_utf8(&tracked.pending_line[..complete_len])
-                    .wrap_err("Reth runtime log suffix is not UTF-8")?,
-            );
-            tracked.pending_line.drain(..complete_len);
-        }
-        Ok(output)
-    }
-
-    fn refresh(&mut self, seed_at_end: bool) -> Result<()> {
-        let paths = reth_log_paths(&self.root)?;
-        ensure!(
-            paths.len() <= MAX_TRACKED_RETH_LOG_FILES,
-            "Reth runtime log file count exceeds {MAX_TRACKED_RETH_LOG_FILES}"
-        );
-        for path in paths {
-            let file = File::open(&path)
-                .wrap_err_with(|| format!("open validator runtime log {}", path.display()))?;
-            let metadata = file
-                .metadata()
-                .wrap_err_with(|| format!("inspect validator runtime log {}", path.display()))?;
-            let identity = (metadata.dev(), metadata.ino());
-            if let std::collections::btree_map::Entry::Vacant(entry) = self.files.entry(identity) {
-                let offset = if seed_at_end { metadata.len() } else { 0 };
-                entry.insert(TrackedRethLog {
-                    anchor: read_reth_log_anchor_from_file(&file, offset)?,
-                    file,
-                    offset,
-                    pending_line: Vec::new(),
-                });
-            }
-        }
-        ensure!(
-            self.files.len() <= MAX_TRACKED_RETH_LOG_FILES,
-            "tracked Reth runtime log file count exceeds {MAX_TRACKED_RETH_LOG_FILES}"
-        );
-        Ok(())
-    }
-}
-
-#[cfg(any(test, feature = "ocomp-integration"))]
-fn read_reth_log_anchor(file: &mut File, offset: u64) -> Result<Vec<u8>> {
-    let start = offset.saturating_sub(RETH_LOG_ANCHOR_BYTES);
-    file.seek(SeekFrom::Start(start))
-        .wrap_err("seek Reth runtime log anchor")?;
-    let length = usize::try_from(offset - start).expect("fixed Reth log anchor fits usize");
-    let mut anchor = vec![0_u8; length];
-    file.read_exact(&mut anchor)
-        .wrap_err("read Reth runtime log anchor")?;
-    Ok(anchor)
-}
-
-#[cfg(any(test, feature = "ocomp-integration"))]
-fn read_reth_log_anchor_from_file(file: &File, offset: u64) -> Result<Vec<u8>> {
-    let mut file = file.try_clone().wrap_err("clone Reth runtime log handle")?;
-    read_reth_log_anchor(&mut file, offset)
-}
-
 impl Localnet {
     pub(crate) fn scenario_id(&self) -> usize {
         self.cfg.scenario
@@ -256,49 +77,6 @@ impl Localnet {
 
     pub(crate) fn scenario_dir(&self) -> &Path {
         &self.cfg.dir
-    }
-
-    /// Forces one validator to reconstruct CE from preserved canonical Reth
-    /// history and returns the exact successful replay span emitted by the
-    /// testnet startup gate.
-    #[cfg(feature = "ocomp-integration")]
-    pub fn reconstruct_validator_ce_from_canonical_history(
-        &mut self,
-        validator_index: usize,
-    ) -> Result<CeStartupReplayObservationV1> {
-        ensure!(
-            validator_index < self.committee_size(),
-            "validator index {validator_index} is outside the committee"
-        );
-        let root = self.cfg.validator_dir(validator_index).join("logs");
-        let mut tail = RethLogTail::at_end(&root)?;
-        self.restart_validator_after_ce_reset(validator_index)?;
-
-        let deadline = Instant::now() + Duration::from_secs(120);
-        loop {
-            let content = tail.read_new_complete_lines()?;
-            let validator_index_u8 =
-                u8::try_from(validator_index).wrap_err("validator index exceeds u8")?;
-            let mut observed = None;
-            for line in content.lines() {
-                let Some(observation) = parse_ce_startup_replay(line, validator_index_u8)? else {
-                    continue;
-                };
-                ensure!(
-                    observed.replace(observation).is_none(),
-                    "validator {validator_index} emitted multiple successful CE startup replay spans"
-                );
-            }
-            if let Some(observation) = observed {
-                return Ok(observation);
-            }
-            ensure!(
-                Instant::now() < deadline,
-                "validator {validator_index} emitted no successful CE startup replay span after \
-                 reconstructing its test-owned CE database"
-            );
-            sleep(Duration::from_millis(100));
-        }
     }
 
     fn node_log(&self, node: &str) -> Result<String> {
@@ -535,93 +313,6 @@ impl Localnet {
     pub(crate) fn has_share_file_result(&self, index: usize) -> Result<bool> {
         has_required_signing_share(&self.cfg.validator_dir(index))
     }
-}
-
-#[cfg(any(test, feature = "ocomp-integration"))]
-fn reth_log_paths(root: &Path) -> Result<Vec<PathBuf>> {
-    let mut logs = Vec::new();
-    collect_reth_logs(root, &mut logs)?;
-    logs.sort();
-    logs.dedup();
-    ensure!(
-        !logs.is_empty(),
-        "no Reth runtime log found under {}",
-        root.display()
-    );
-    Ok(logs)
-}
-
-#[cfg(any(test, feature = "ocomp-integration"))]
-fn collect_reth_logs(dir: &Path, logs: &mut Vec<PathBuf>) -> Result<()> {
-    if !dir.exists() {
-        return Ok(());
-    }
-    for entry in fs::read_dir(dir).wrap_err_with(|| format!("scan {}", dir.display()))? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            collect_reth_logs(&path, logs)?;
-        } else if path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name == "reth.log" || name.starts_with("reth.log."))
-        {
-            logs.push(path);
-        }
-    }
-    Ok(())
-}
-
-#[cfg(any(test, feature = "ocomp-integration"))]
-fn parse_ce_startup_replay(
-    line: &str,
-    validator_index: u8,
-) -> Result<Option<CeStartupReplayObservationV1>> {
-    if !line.contains("compressed-entity startup replay completed") {
-        return Ok(None);
-    }
-    let first_missing_block_number = required_u64_field(line, "first_missing")?;
-    let target_block_number = required_u64_field(line, "target_height")?;
-    let replayed_block_count = required_u64_field(line, "replayed_blocks")?;
-    let elapsed_micros = required_u64_field(line, "elapsed_micros")?;
-    let target_block_hash = structured_field(line, "target_hash")
-        .ok_or_else(|| eyre::eyre!("CE startup replay record has no target_hash"))?
-        .parse::<B256>()
-        .wrap_err("CE startup replay target_hash is not B256")?;
-    let expected_count = target_block_number
-        .checked_sub(first_missing_block_number)
-        .and_then(|span| span.checked_add(1))
-        .ok_or_else(|| eyre::eyre!("CE startup replay span is inverted or overflows"))?;
-    ensure!(
-        first_missing_block_number > 0
-            && target_block_hash != B256::ZERO
-            && replayed_block_count == expected_count
-            && elapsed_micros > 0,
-        "CE startup replay record is not a complete positive canonical span"
-    );
-    Ok(Some(CeStartupReplayObservationV1 {
-        validator_index,
-        first_missing_block_number,
-        target_block_number,
-        target_block_hash,
-        replayed_block_count,
-        elapsed_micros,
-    }))
-}
-
-#[cfg(any(test, feature = "ocomp-integration"))]
-fn required_u64_field(line: &str, name: &str) -> Result<u64> {
-    structured_field(line, name)
-        .ok_or_else(|| eyre::eyre!("CE startup replay record has no {name}"))?
-        .parse::<u64>()
-        .wrap_err_with(|| format!("CE startup replay {name} is not u64"))
-}
-
-#[cfg(any(test, feature = "ocomp-integration"))]
-fn structured_field<'a>(line: &'a str, name: &str) -> Option<&'a str> {
-    line.split_ascii_whitespace()
-        .filter_map(|token| token.split_once('='))
-        .find_map(|(field, value)| (field == name).then_some(value))
 }
 
 #[cfg(test)]

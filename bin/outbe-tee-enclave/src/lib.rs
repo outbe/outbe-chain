@@ -37,8 +37,8 @@ pub mod keys;
 #[cfg(feature = "local-e2e")]
 pub mod local_e2e;
 pub mod nod_encryption;
-pub mod nod_materialization;
 pub mod nod_mine;
+pub mod nod_state_materialization;
 mod onboarding_upload;
 pub mod payload;
 pub mod process;

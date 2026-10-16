@@ -266,6 +266,5 @@ pub(super) fn validator_signer_args(
         radicle_status_address: None,
         upstream: None,
         upstream_nocertify: false,
-        projection_storage_config: Some("/tmp/offchain-storage.toml".into()),
     }
 }

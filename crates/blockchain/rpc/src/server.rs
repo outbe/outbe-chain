@@ -5,20 +5,15 @@
 //! This would provide light-client-grade trust: verify that 2/3+1 validators
 //! signed each block using the group public key from the ValidatorSet contract.
 
-mod point_reads;
 mod tee;
-
-use point_reads::PointReadRuntime;
+mod tribute_sources;
 
 use alloy_primitives::{Address, Bytes, B256, U256};
 use jsonrpsee::core::RpcResult;
-use outbe_compressed_entities::{CompressedTreeService, PointReadRequestV1, PointReadResultV1};
-use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::header::OutbeHeader;
 use outbe_primitives::tee_operator_v1::TeeRenewalScheduleV1;
 use outbe_primitives::{
     consensus::ConsensusExecutionBridge,
-    projection::{ProjectionReadinessHandle, ProjectionStatus},
     storage::{
         readonly::{ReadOnlyStorageProvider, StorageReader},
         StorageHandle,
@@ -33,10 +28,9 @@ use std::sync::Arc;
 
 use crate::api::{
     ConsensusStatusInfo, EmissionInfo, EpochInfo, FinalizationProof, GratisKeysSealed,
-    OutbeApiServer, ParticipationInfo, Phase1VerificationMode, ProjectionHealth,
-    ProjectionStatusInfo, RadiclePeerInfo, RadiclePhaseErrorInfo, RadiclePhaseInfo,
-    RadicleRepositoryInfo, RadicleRepositoryStateInfo, RadicleStatusInfo, SlashConfig, SlashInfo,
-    SyncStatusInfo, ValidatorDetailInfo, ValidatorInfo,
+    OutbeApiServer, ParticipationInfo, Phase1VerificationMode, RadiclePeerInfo,
+    RadiclePhaseErrorInfo, RadiclePhaseInfo, RadicleRepositoryInfo, RadicleRepositoryStateInfo,
+    RadicleStatusInfo, SlashConfig, SlashInfo, SyncStatusInfo, ValidatorDetailInfo, ValidatorInfo,
 };
 use outbe_radicle::integration::{
     RadicleRepositoryState, RadicleStatusHandle, RadicleStatusSnapshot, RadicleVotingGate,
@@ -83,8 +77,6 @@ pub struct OutbeApiHandler<P> {
     /// TrustedFinality node. This flag, NOT `bridge.is_some()`, drives
     /// validator-status fields.
     is_validator: bool,
-    projection_readiness: ProjectionReadinessHandle,
-    point_reads: Option<PointReadRuntime>,
     tee_renewal_schedule: Option<TeeRenewalScheduleConfigV1>,
     ocomp_lysis_openings: Option<OcompLysisOpeningsRuntimeV1>,
     radicle_status: RadicleStatusHandle,
@@ -123,7 +115,6 @@ impl<P> std::fmt::Debug for OutbeApiHandler<P> {
         formatter
             .debug_struct("OutbeApiHandler")
             .field("is_validator", &self.is_validator)
-            .field("point_reads", &self.point_reads)
             .finish_non_exhaustive()
     }
 }
@@ -131,14 +122,12 @@ impl<P> std::fmt::Debug for OutbeApiHandler<P> {
 impl<P> OutbeApiHandler<P> {
     /// Create a new handler backed by the given state provider factory (no
     /// bridge, plain EL full node).
-    pub fn new(provider: Arc<P>, projection_readiness: ProjectionReadinessHandle) -> Self {
+    pub fn new(provider: Arc<P>) -> Self {
         Self {
             provider,
             chain_identity: None,
             bridge: None,
             is_validator: false,
-            projection_readiness,
-            point_reads: None,
             tee_renewal_schedule: None,
             ocomp_lysis_openings: None,
             radicle_status: outbe_radicle::integration::RadicleStatusChannel::disabled(),
@@ -147,12 +136,8 @@ impl<P> OutbeApiHandler<P> {
     }
 
     /// Create a validator handler with full access to the consensus bridge.
-    pub fn with_bridge(
-        provider: Arc<P>,
-        bridge: ConsensusExecutionBridge,
-        projection_readiness: ProjectionReadinessHandle,
-    ) -> Self {
-        let mut handler = Self::new(provider, projection_readiness);
+    pub fn with_bridge(provider: Arc<P>, bridge: ConsensusExecutionBridge) -> Self {
+        let mut handler = Self::new(provider);
         handler.bridge = Some(bridge);
         handler.is_validator = true;
         handler
@@ -161,12 +146,8 @@ impl<P> OutbeApiHandler<P> {
     /// Create a `--upstream` follower handler. It holds the bridge so it can
     /// serve `outbe_getFinalization` (chaining followers). But it reports itself
     /// as a non-validator (TrustedFinality) node, not a validator.
-    pub fn with_follower_bridge(
-        provider: Arc<P>,
-        bridge: ConsensusExecutionBridge,
-        projection_readiness: ProjectionReadinessHandle,
-    ) -> Self {
-        let mut handler = Self::new(provider, projection_readiness);
+    pub fn with_follower_bridge(provider: Arc<P>, bridge: ConsensusExecutionBridge) -> Self {
+        let mut handler = Self::new(provider);
         handler.bridge = Some(bridge);
         handler.is_validator = false;
         handler
@@ -175,21 +156,6 @@ impl<P> OutbeApiHandler<P> {
     #[must_use]
     pub fn with_chain_identity(mut self, chain_id: u64, genesis_hash: B256) -> Self {
         self.chain_identity = Some((chain_id, genesis_hash));
-        self
-    }
-
-    #[must_use]
-    pub fn with_point_reads(
-        mut self,
-        tree: Arc<CompressedTreeService>,
-        bodies: RuntimeBodyReaders,
-        chain_id: u64,
-    ) -> Self {
-        self.point_reads = Some(PointReadRuntime {
-            tree,
-            bodies,
-            chain_id,
-        });
         self
     }
 
@@ -406,11 +372,32 @@ where
         + Sync
         + 'static,
 {
-    async fn get_compressed_entity(
+    async fn get_tribute_state_source(
         &self,
-        request: PointReadRequestV1,
-    ) -> RpcResult<PointReadResultV1> {
-        point_reads::serve(&self.provider, self.point_reads.clone(), request).await
+        subject: outbe_tee::tribute_source::TributeSourceSubject,
+        tribute_id: outbe_primitives::wwd_entity_id::WwdEntityId,
+    ) -> RpcResult<outbe_tee::tribute_source::TributeStateSource> {
+        let provider = Arc::clone(&self.provider);
+        let chain_identity = self.chain_identity;
+        tokio::task::spawn_blocking(move || {
+            tribute_sources::serve(&*provider, chain_identity, subject, tribute_id)
+        })
+        .await
+        .map_err(|error| internal_err(format!("Tribute source worker failed: {error}")))?
+    }
+
+    async fn get_tribute_day_state_proof(
+        &self,
+        subject: outbe_tee::tribute_source::TributeSourceSubject,
+        day_index: Option<u32>,
+    ) -> RpcResult<outbe_tribute::state_proof::TributeDayStateProof> {
+        let provider = Arc::clone(&self.provider);
+        let chain_identity = self.chain_identity;
+        tokio::task::spawn_blocking(move || {
+            tribute_sources::serve_day(&*provider, chain_identity, subject, day_index)
+        })
+        .await
+        .map_err(|error| internal_err(format!("Tribute day proof worker failed: {error}")))?
     }
 
     async fn get_ocomp_lysis_openings_v1(
@@ -633,14 +620,6 @@ where
             .as_ref()
             .map(ConsensusExecutionBridge::consensus_status_with_threshold_shares)
             .unwrap_or_default();
-        let projection = projection_status_info(
-            self.projection_readiness.current(),
-            self.provider
-                .finalized_block_num_hash()
-                .ok()
-                .flatten()
-                .map(|block| (block.number, block.hash)),
-        );
 
         Ok(ConsensusStatusInfo {
             current_view: status.current_view,
@@ -660,7 +639,6 @@ where
             } else {
                 Phase1VerificationMode::TrustedFinality
             },
-            projection,
             enclave: enclave_health_info(
                 &self.tee_enclave_health.snapshot(),
                 std::time::SystemTime::now()
@@ -854,55 +832,6 @@ where
     }
 }
 
-fn projection_status_info(
-    status: ProjectionStatus,
-    reth_finalized: Option<(u64, B256)>,
-) -> ProjectionStatusInfo {
-    let (state, checkpoint, ready, unavailable_for_millis, last_failure_class) = match status {
-        ProjectionStatus::Starting => (ProjectionHealth::Starting, None, false, None, None),
-        ProjectionStatus::CatchingUp { checkpoint } => {
-            (ProjectionHealth::CatchingUp, checkpoint, false, None, None)
-        }
-        ProjectionStatus::Ready { checkpoint } => {
-            (ProjectionHealth::Ready, Some(checkpoint), true, None, None)
-        }
-        ProjectionStatus::MongoUnavailable { checkpoint, since } => (
-            ProjectionHealth::MongoUnavailable,
-            checkpoint,
-            false,
-            Some(u64::try_from(since.elapsed().as_millis()).unwrap_or(u64::MAX)),
-            Some("Unavailable".to_owned()),
-        ),
-        ProjectionStatus::Fatal { checkpoint, error } => (
-            ProjectionHealth::Fatal,
-            checkpoint,
-            false,
-            None,
-            Some(format!("{:?}", error.class)),
-        ),
-    };
-    let checkpoint_number = checkpoint.map(|value| value.block_number);
-    let checkpoint_hash = checkpoint.map(|value| value.block_hash);
-    let reth_finalized_number = reth_finalized.map(|value| value.0);
-    let reth_finalized_hash = reth_finalized.map(|value| value.1);
-    let lag_blocks = checkpoint_number.zip(reth_finalized_number).map(
-        |(checkpoint_number, reth_finalized_number)| {
-            reth_finalized_number.saturating_sub(checkpoint_number)
-        },
-    );
-    ProjectionStatusInfo {
-        state,
-        checkpoint_number,
-        checkpoint_hash,
-        reth_finalized_number,
-        reth_finalized_hash,
-        lag_blocks,
-        ready,
-        unavailable_for_millis,
-        last_failure_class,
-    }
-}
-
 /// Create an internal JSON-RPC error.
 fn internal_err(msg: impl std::fmt::Display) -> jsonrpsee::types::ErrorObject<'static> {
     jsonrpsee::types::ErrorObject::owned(
@@ -946,27 +875,13 @@ mod tests {
 
     #[test]
     fn a_follower_bridge_does_not_make_the_handler_a_validator() {
-        use outbe_primitives::{
-            consensus::ConsensusExecutionBridge,
-            projection::{projection_readiness, ProjectionCheckpoint, ProjectionStatus},
-        };
-        let checkpoint = ProjectionCheckpoint {
-            block_number: 0,
-            block_hash: B256::ZERO,
-        };
-        let (_publisher, readiness) = projection_readiness(checkpoint, ProjectionStatus::Starting);
+        use outbe_primitives::consensus::ConsensusExecutionBridge;
         let provider = std::sync::Arc::new(());
-        let plain = super::OutbeApiHandler::new(provider.clone(), readiness.clone());
-        let validator = super::OutbeApiHandler::with_bridge(
-            provider.clone(),
-            ConsensusExecutionBridge::new(),
-            readiness.clone(),
-        );
-        let follower = super::OutbeApiHandler::with_follower_bridge(
-            provider,
-            ConsensusExecutionBridge::new(),
-            readiness,
-        );
+        let plain = super::OutbeApiHandler::new(provider.clone());
+        let validator =
+            super::OutbeApiHandler::with_bridge(provider.clone(), ConsensusExecutionBridge::new());
+        let follower =
+            super::OutbeApiHandler::with_follower_bridge(provider, ConsensusExecutionBridge::new());
         assert!(!plain.is_validator && plain.bridge.is_none());
         assert!(validator.is_validator && validator.bridge.is_some());
         assert!(!follower.is_validator && follower.bridge.is_some());

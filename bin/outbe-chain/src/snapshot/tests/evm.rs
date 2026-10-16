@@ -140,7 +140,6 @@ fn complete_current_evm_tail_uses_authoritative_v1_and_v2_without_history() {
                 .balance,
             U256::from(900)
         );
-        assert!(!layout.offchain_root.exists());
         assert!(!layout.ocomp_root.exists());
         assert!(!layout.chain_root.join("rocksdb-secondary-tmp").exists());
     }
@@ -394,42 +393,6 @@ fn read_only_inspection_does_not_initialize_a_missing_static_directory() {
 }
 
 #[test]
-fn execution_selection_does_not_require_projection_configuration_or_ocomp() {
-    use super::super::config::{resolve_requested_layout, NativeReadSelection};
-    let (source, layout, expected) = state_fixture(2);
-    std::fs::remove_file(source.path().join("configuration/offchain.toml")).unwrap();
-    for config in [
-        None,
-        Some(source.path().join("configuration/offchain.toml")),
-    ] {
-        let mut arguments = vec![
-            "--chain".into(),
-            source.path().join("genesis.json").into_os_string(),
-            "--datadir".into(),
-            layout.chain_root.clone().into_os_string(),
-        ];
-        if let Some(path) = config {
-            arguments.extend(["--projection.storage-config".into(), path.into_os_string()]);
-        }
-        let inputs = parse_node_inputs(arguments).unwrap();
-        assert!(resolve_layout(&inputs).is_err());
-        let requested =
-            resolve_requested_layout(&inputs, NativeReadSelection { projection: false }).unwrap();
-        assert!(requested.projection.is_none());
-        let view = RethReadOnlyView::open_requested(&requested).unwrap();
-        let scratch = tempfile::tempdir().unwrap();
-        assert_eq!(
-            verify_current_evm(&view, scratch.path())
-                .unwrap()
-                .state_root,
-            expected
-        );
-        assert!(!layout.offchain_root.exists());
-        assert!(!layout.ocomp_root.exists());
-    }
-}
-
-#[test]
 fn orphan_and_duplicate_storage_are_not_silently_ignored() {
     for (version, duplicate) in [1, 2]
         .into_iter()
@@ -607,4 +570,30 @@ fn stopped_audit_transaction_survives_the_normal_reader_timeout() {
             .balance,
         U256::from(900)
     );
+}
+
+#[test]
+fn execution_selection_requires_only_the_native_layout() {
+    use super::super::config::resolve_requested_layout;
+    for version in [1, 2] {
+        let (source, layout, expected) = state_fixture(version);
+        let arguments = vec![
+            "--chain".into(),
+            source.path().join("genesis.json").into_os_string(),
+            "--datadir".into(),
+            layout.chain_root.clone().into_os_string(),
+        ];
+        let inputs = parse_node_inputs(arguments).unwrap();
+        let requested = resolve_requested_layout(&inputs).unwrap();
+        let view = RethReadOnlyView::open_requested(&requested).unwrap();
+        let scratch = tempfile::tempdir().unwrap();
+        assert_eq!(
+            verify_current_evm(&view, scratch.path())
+                .unwrap()
+                .state_root,
+            expected
+        );
+        assert!(!layout.ocomp_root.exists());
+        assert!(!source.path().join("configuration/offchain.toml").exists());
+    }
 }

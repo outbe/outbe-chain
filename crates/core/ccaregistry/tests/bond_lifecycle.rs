@@ -93,25 +93,17 @@ fn with_storage<R>(db: &mut CacheDB<EmptyDB>, f: impl FnOnce(StorageHandle<'_>) 
     result
 }
 
-/// A reward claim mints a compressed Gem body, so it runs through the readers route
-/// under the block's open scope rather than through a reader-less raw transaction.
+/// Dispatches a reward claim with the EVM storage provider.
 /// Returns the ABI output and the logs the claim emitted, or the revert reason.
-fn claim_with_readers(
+fn claim_reward(
     db: &mut CacheDB<EmptyDB>,
-    world: &outbe_gem::test_support::GemWorld,
     data: Vec<u8>,
     now: u64,
 ) -> Result<(Bytes, Vec<alloy_primitives::Log>), String> {
     let mut provider = DirectStorageProvider::new(db, BlockContext::empty_for_tests(1, now, 1));
     let result = StorageHandle::enter(&mut provider, |storage| {
-        outbe_agentreward::precompile::dispatch_with_readers(
-            storage,
-            world.readers(),
-            &data,
-            CCA,
-            U256::ZERO,
-        )
-        .map_err(|error| error.to_string())
+        outbe_agentreward::precompile::dispatch(storage, &data, CCA, U256::ZERO)
+            .map_err(|error| error.to_string())
     });
     let logs = provider.take_events();
     provider.flush().unwrap();
@@ -264,9 +256,6 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         }
         .abi_encode()
     };
-    let world = with_storage(&mut db, |storage| {
-        outbe_gem::test_support::GemWorld::open(&storage)
-    });
     let before = snapshot(&mut db);
     // Both spot and an older daily VWAP are available. Neither may replace yesterday.
     with_storage(&mut db, |storage| {
@@ -278,7 +267,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         );
     });
     for amount in [U256::ZERO, reward + U256::ONE, U256::ONE] {
-        assert!(claim_with_readers(&mut db, &world, claim(amount), NOW).is_err());
+        assert!(claim_reward(&mut db, claim(amount), NOW).is_err());
         assert_eq!(snapshot(&mut db), before);
     }
     // Retry tomorrow against today's finalized VWAP, with a price distinct from spot.
@@ -297,7 +286,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         if target == AGENT_REWARD_ADDRESS {
             // The readers route is the live AgentReward entry; an unknown selector is
             // refused there as well.
-            assert!(claim_with_readers(&mut db, &world, data, claim_time).is_err());
+            assert!(claim_reward(&mut db, data, claim_time).is_err());
         } else {
             let removed = tx_to(&mut db, target, U256::ZERO, data, claim_time);
             assert!(!removed.is_success());
@@ -314,7 +303,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
             .unwrap();
     });
     let before_failure = snapshot(&mut db);
-    assert!(claim_with_readers(&mut db, &world, claim(U256::ZERO), claim_time).is_err());
+    assert!(claim_reward(&mut db, claim(U256::ZERO), claim_time).is_err());
     assert_eq!(snapshot(&mut db), before_failure);
     with_storage(&mut db, |storage| {
         outbe_gemfactory::schema::GemFactoryContract::new(storage)
@@ -330,7 +319,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
             .unwrap();
     });
     let before_failure = snapshot(&mut db);
-    let failed = claim_with_readers(&mut db, &world, claim(U256::ZERO), claim_time).unwrap_err();
+    let failed = claim_reward(&mut db, claim(U256::ZERO), claim_time).unwrap_err();
     assert!(failed.contains("insufficient balance for burn"), "{failed}");
     assert_eq!(snapshot(&mut db), before_failure);
     with_storage(&mut db, |storage| {
@@ -353,8 +342,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         ),
         (220, U256::ZERO),
     ] {
-        let (output, logs) =
-            claim_with_readers(&mut db, &world, claim(requested), claim_time).unwrap();
+        let (output, logs) = claim_reward(&mut db, claim(requested), claim_time).unwrap();
         let gem_id = IAgentReward::claimRewardCall::abi_decode_returns(&output).unwrap();
         let claimed = logs
             .iter()
@@ -376,15 +364,8 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
             .unwrap()
             .data;
         assert_eq!(issued.gemId, gem_id);
-        assert!(
-            logs.iter()
-                .any(|log| outbe_gem::precompile::IGem::GemBodyStored::decode_log(log).is_ok()),
-            "the claim publishes the Gem body"
-        );
         with_storage(&mut db, |storage| {
-            let gem = outbe_gem::api::get_view(&storage, &world.scope, &world.parent, gem_id)
-                .unwrap()
-                .unwrap();
+            let gem = outbe_gem::api::get_view(&storage, gem_id).unwrap().unwrap();
             assert_eq!(gem.item.owner, CCA);
             assert_eq!(
                 gem.item.gem_type,
@@ -413,7 +394,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
             U256::from(7)
         )
     });
-    assert!(claim_with_readers(&mut db, &world, claim(U256::ZERO), claim_time).is_err());
+    assert!(claim_reward(&mut db, claim(U256::ZERO), claim_time).is_err());
     assert_eq!(
         db.cache.accounts[&CCA_REGISTRY_ADDRESS].info.balance,
         BOND_REQUIREMENT

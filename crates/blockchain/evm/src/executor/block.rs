@@ -50,7 +50,7 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     pub(super) expected_end_system_txs: Vec<Recovered<TransactionSigned>>,
     pub(super) ocomp_lifecycle_active: bool,
     pub(super) ocomp_terminal_request_consumed: bool,
-    /// Standard Ethereum post-execution output captured before CE seal and
+    /// Standard Ethereum post-execution output captured before
     /// OSR2. Active OCOMP blocks must not call the inner executor's `finish`
     /// afterward because that would create semantic writes after OSR2.
     pub(super) ethereum_post_execution_requests: Option<Requests>,
@@ -102,15 +102,6 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     /// fresh per block, so this resets per block. It is identical on the
     /// proposer (build) and validator (re-execution) paths.
     pub(super) zero_fee_soft_failures: u32,
-    /// Least-authority off-chain readers used by lifecycle body reads.
-    pub(super) runtime_body_readers: Option<RuntimeBodyReaders>,
-    _execution_read_budget_guard: Option<ExecutionReadBudgetGuard>,
-    /// One lifecycle capability shared with every precompile in this EVM.
-    pub(super) compressed_entities_scope: Arc<ExecutionScope>,
-    pub(super) compressed_entities_started: bool,
-    pub(super) compressed_entities_seal_output: Option<outbe_compressed_entities::SealOutput>,
-    pub(super) compressed_tree_service:
-        Option<Arc<outbe_compressed_entities::CompressedTreeService>>,
 }
 
 impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
@@ -145,19 +136,8 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
                     parent_artifact_hint,
                 },
             dependencies: BlockExecutionDependencies { bridge, evm_signer },
-            runtime:
-                BlockExecutionRuntime {
-                    compressed_entities_scope,
-                    compressed_tree_service,
-                    runtime_body_readers,
-                    execution_read_budget,
-                },
         } = inputs;
         let genesis_hash = inner.spec.genesis_hash();
-        let execution_read_budget_guard = runtime_body_readers
-            .as_ref()
-            .zip(execution_read_budget)
-            .map(|(readers, budget)| readers.enter_execution_budget(budget));
         Self {
             inner,
             genesis_hash,
@@ -193,12 +173,6 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             pending_tee_bootstrap,
             whitelisted_hook_event_logs: Vec::new(),
             zero_fee_soft_failures: 0,
-            runtime_body_readers,
-            _execution_read_budget_guard: execution_read_budget_guard,
-            compressed_entities_scope,
-            compressed_entities_started: false,
-            compressed_entities_seal_output: None,
-            compressed_tree_service,
         }
     }
 }
@@ -228,7 +202,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
         self.final_extra_data = bytes;
     }
 
-    /// Pre-encodes the final execution-produced artifact fields after CE seal.
+    /// Pre-encodes the final execution-produced header fields.
     /// The block-builder adapter owns the encoding. This executor entry point
     /// lets the opaque Reth builder path invoke it before parallel root freeze.
     pub fn prepare_final_header_artifacts(
@@ -238,15 +212,10 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
     where
         Evm: reth_ethereum::evm::primitives::Evm,
     {
-        let seal = self
-            .compressed_entities_seal_output
-            .as_ref()
-            .ok_or(crate::errors::ExecutorValidationError::MissingCompressedEntitiesSealOutput)?;
         self.final_extra_data = crate::builder::encode_final_header_artifacts(
             self.final_extra_data.as_ref(),
             self.current_execution_summary(),
             timestamp_millis_part,
-            seal.new_root,
         )?;
         Ok(())
     }
@@ -322,13 +291,6 @@ where
         if is_ocomp_terminal_request {
             return self.execute_ocomp_terminal_request(recovered, f);
         }
-        let ce_scope = self.compressed_entities_scope.clone();
-        let ce_checkpoint = ce_scope
-            .ce_work_checkpoint()
-            .map_err(BlockExecutionError::other)?;
-        ce_scope
-            .begin_ce_work_transaction()
-            .map_err(BlockExecutionError::other)?;
         let outcome = (|| {
             if is_reserved_system_tx(recovered.tx()) {
                 return self.execute_reserved_system_tx(recovered, f);
@@ -340,18 +302,6 @@ where
             self.route_user_transaction(tx_env, recovered, f)
         })();
 
-        let ce_failure = ce_scope.take_ce_work_failure();
-        ce_scope
-            .end_ce_work_transaction()
-            .map_err(BlockExecutionError::other)?;
-        if !matches!(&outcome, Ok(Some(_))) {
-            ce_scope
-                .restore_ce_work_checkpoint(ce_checkpoint)
-                .map_err(BlockExecutionError::other)?;
-        }
-        if let Some(error) = ce_failure {
-            return Err(BlockExecutionError::other(error));
-        }
         outcome.map_err(preserve_cancelled_execution)
     }
 
@@ -383,8 +333,6 @@ where
                         .into(),
                 );
             }
-        } else {
-            self.finalize_compressed_entities()?;
         }
         let current_summary = self.current_execution_summary();
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
@@ -392,10 +340,9 @@ where
         let block_artifacts =
             artifacts::validate_finish_artifacts(&self, block_number, current_summary)?;
 
-        // OCOMP applies this phase before its terminal request so that the CE
-        // seal remains the final semantic writer. The normal path applies the
-        // same Outbe-owned phase here. Neither path passes withdrawals to the
-        // upstream Ethereum Gwei-to-wei conversion.
+        // OCOMP completes ordinary state changes before its terminal request.
+        // The normal path applies the same phase here. Neither path passes
+        // withdrawals to the upstream Ethereum Gwei-to-wei conversion.
         if !self.ocomp_lifecycle_active {
             self.apply_outbe_ethereum_post_execution()?;
         }
@@ -416,7 +363,7 @@ where
         };
         let evm = self.inner.evm;
         // Validator/import execution ends before Reth validates receipt and
-        // state roots, so it must not publish speculative CE state here. The
+        // state roots, so it must not publish speculative execution artifacts here. The
         // proposer publishes only after block assembly supplies the final hash.
         // A finalized validator block is reconstructed from durable canonical
         // receipts after the DB-only persistence barrier.

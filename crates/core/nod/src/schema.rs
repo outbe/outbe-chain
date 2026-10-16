@@ -1,10 +1,9 @@
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::WwdEntityId;
 use outbe_macros::{contract, storage_schema};
 use outbe_ocomp_protocol::nod_materialization::NodMaterializationHeadV1;
 use outbe_primitives::addresses::NOD_ADDRESS;
-use outbe_primitives::storage::types::Mapping;
 use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 use serde::{Deserialize, Serialize};
 
 /// Read-time lifecycle state. Values are part of the public Nod ABI, not storage.
@@ -126,6 +125,7 @@ pub struct NodOcompTargetProjection {
 /// bodies without materializing one storage record per Nod during activation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NodCertifiedGenerationProjection {
+    pub source_checkpoint: outbe_ocomp_protocol::intent::FinalizedRequestBindingV1,
     pub worldwide_day: WorldwideDay,
     pub generation: u64,
     pub job_id: B256,
@@ -162,15 +162,15 @@ impl NodCertifiedGenerationProjection {
 
 /// EVM storage layout for the Nod NFT contract.
 ///
-/// Nod item and bucket bodies live in the compressed-entity store, not here.
+/// Nod item and bucket bodies and their indexes live in module-owned storage records.
 /// Bucket key = keccak256(worldwide_day ++ entry_price_minor ++ reference_currency).
 ///
 /// Uncalled buckets wait in a per-currency bitmap trie by call price, see `state::CallBins`.
 ///
-/// Field offsets are dense in `order` sequence, so this struct occupies slots 0..=49.
+/// Field offsets are dense in `order` sequence, so this struct occupies slots 0..=63.
 /// Genesis seeds the materialization FIFO counters at slots 13 and 14.
-/// `adr006_tests::nod_contract_slot_layout_is_pinned` checks slots through 48.
-/// The profile selector occupies slot 49.
+/// `adr006_tests::nod_contract_slot_layout_is_pinned` checks the base layout.
+/// The profile selector occupies slot 44.
 #[storage_schema]
 #[contract(addr = NOD_ADDRESS)]
 pub struct NodContract {
@@ -180,7 +180,7 @@ pub struct NodContract {
 
     // Compact reversible WWD prefix for bucket identities parked by bucket_key.
     #[attribute(order = 18)]
-    pub bucket_worldwide_day: Mapping<B256, WorldwideDay>,
+    pub bucket_worldwide_day: Map<B256, WorldwideDay>,
 
     /// Per-WWD certified Nod namespace generation, compare-and-set only through
     /// certified activation.
@@ -242,7 +242,7 @@ pub struct NodContract {
 
     /// Worldwide day stored at each occupied FIFO sequence.
     #[attribute(order = 32)]
-    pub ocomp_materialization_queue_wwd: Mapping<u64, WorldwideDay>,
+    pub ocomp_materialization_queue_wwd: Map<u64, WorldwideDay>,
 
     /// Block height associated with the shared per-block attempt counter.
     #[attribute(order = 33)]
@@ -252,9 +252,8 @@ pub struct NodContract {
     #[attribute(order = 34)]
     pub ocomp_materialization_attempt_count: outbe_primitives::storage::dsl::Value<u16>,
 
-    // --- Bucket member index: lets the forfeit sweep enumerate a bucket's Nods,
-    // which the compressed-entity store cannot do on its own. `WwdEntityId` is a
-    // single storage word, so ids are stored whole and need no rebuilding.
+    // --- Bucket member index: lets the forfeit sweep enumerate native Nod records.
+    // `WwdEntityId` occupies one storage word; IDs require no reconstruction.
     /// Authoritative unpaid member count, stored outside the shared bucket body.
     #[attribute(order = 35)]
     pub bucket_nod_count: outbe_primitives::storage::dsl::Map<B256, u32>,
@@ -262,7 +261,7 @@ pub struct NodContract {
     /// `bucket_nod_key(bucket_key, index)` -> Nod id. Insertion-ordered and
     /// swap-popped, matching the call-price bin index.
     #[attribute(order = 36)]
-    pub bucket_nods: Mapping<B256, WwdEntityId>,
+    pub bucket_nods: Map<B256, WwdEntityId>,
 
     /// Nod id -> position in its bucket, for O(1) swap-remove. A Nod belongs to
     /// exactly one bucket, so one global map suffices.
@@ -276,7 +275,7 @@ pub struct NodContract {
 
     /// Snapshotted with the call price. Selects the `COEN/<iso>` VWAP series.
     #[attribute(order = 41)]
-    pub bucket_currency: Mapping<B256, u16>,
+    pub bucket_currency: Map<B256, u16>,
 
     /// Block timestamp the bucket was force-called; `0` until called.
     #[attribute(order = 42)]
@@ -294,7 +293,7 @@ pub struct NodContract {
     // every already-issued bucket on the terms it was issued with.
     /// Markup percent [`Self::bucket_call_price_minor`] was derived at.
     #[attribute(order = 45)]
-    pub bucket_call_rate: Mapping<B256, u16>,
+    pub bucket_call_rate: Map<B256, u16>,
 
     /// Trailing span the daily scan reads for breaches, in seconds.
     #[attribute(order = 46)]
@@ -384,9 +383,33 @@ pub struct NodContract {
     /// day's pass passes it by.
     #[attribute(order = 82)]
     pub call_scan_failed_day: outbe_primitives::storage::dsl::Map<u16, u32>,
+    #[attribute(order = 83)]
+    pub records:
+        outbe_primitives::storage::dsl::Map<WwdEntityId, crate::storage_records::StoredNod>,
+    #[attribute(order = 84)]
+    pub buckets: outbe_primitives::storage::dsl::Map<B256, crate::storage_records::StoredNodBucket>,
+    #[attribute(order = 85)]
+    pub all_ids: outbe_primitives::storage::dsl::List<WwdEntityId>,
+    #[attribute(order = 86)]
+    pub owner_ids: outbe_primitives::storage::dsl::Map<
+        Address,
+        outbe_primitives::storage::dsl::List<WwdEntityId>,
+    >,
+    #[attribute(order = 87)]
+    pub global_id_position: outbe_primitives::storage::dsl::Map<WwdEntityId, u32>,
+    #[attribute(order = 88)]
+    pub owner_id_position: outbe_primitives::storage::dsl::Map<WwdEntityId, u32>,
+
+    /// Finalized request state retained until all Nods have been materialized.
+    #[attribute(order = 89)]
+    pub ocomp_source_block_number: outbe_primitives::storage::dsl::Map<WorldwideDay, u64>,
+    #[attribute(order = 90)]
+    pub ocomp_source_block_hash: outbe_primitives::storage::dsl::Map<WorldwideDay, B256>,
+    #[attribute(order = 91)]
+    pub ocomp_source_state_root: outbe_primitives::storage::dsl::Map<WorldwideDay, B256>,
 
     /// Per-Nod Gratis cap derived from the certified request's frozen Lysis Limit.
-    #[attribute(order = 83)]
+    #[attribute(order = 92)]
     pub ocomp_nod_gratis_load_max: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
 }
 
@@ -438,6 +461,11 @@ impl<'storage> NodContract<'storage> {
             .ocomp_materialization_last_progress_height
             .read(&worldwide_day)?;
 
+        let source_checkpoint = outbe_ocomp_protocol::intent::FinalizedRequestBindingV1 {
+            block_number: self.ocomp_source_block_number.read(&worldwide_day)?,
+            block_hash: self.ocomp_source_block_hash.read(&worldwide_day)?,
+            state_root: self.ocomp_source_state_root.read(&worldwide_day)?,
+        };
         let roots_and_binding = [
             nod_root,
             bucket_root,
@@ -445,6 +473,8 @@ impl<'storage> NodContract<'storage> {
             job_id,
             protocol_bundle_hash,
             program_semantics_hash,
+            source_checkpoint.block_hash,
+            source_checkpoint.state_root,
         ];
         if generation == 0 {
             let words_clear = roots_and_binding.iter().all(B256::is_zero)
@@ -456,7 +486,11 @@ impl<'storage> NodContract<'storage> {
                 ]
                 .iter()
                 .all(U256::is_zero);
-            if !words_clear || next_nod_ordinal != 0 || last_progress_height != 0 {
+            if !words_clear
+                || next_nod_ordinal != 0
+                || last_progress_height != 0
+                || source_checkpoint.block_number != 0
+            {
                 return Err(crate::errors::NodError::AbsentOcompGenerationHasResidualState.into());
             }
             return Ok(None);
@@ -475,10 +509,14 @@ impl<'storage> NodContract<'storage> {
             }
             .into());
         }
+        if source_checkpoint.block_number == 0 {
+            return Err(crate::errors::NodError::MalformedOcompGenerationMetadata.into());
+        }
         let (issued_at, tribute_count, nod_count, bucket_count) =
             decode_generation_metadata(metadata, next_nod_ordinal, last_progress_height)?;
 
         Ok(Some(NodCertifiedGenerationProjection {
+            source_checkpoint,
             worldwide_day,
             generation,
             job_id,
@@ -528,7 +566,12 @@ impl<'storage> NodContract<'storage> {
         self.ocomp_materialization_next_nod_ordinal
             .write(&worldwide_day, 0)?;
         self.ocomp_materialization_last_progress_height
-            .write(&worldwide_day, 0)
+            .write(&worldwide_day, 0)?;
+        self.ocomp_source_block_number.write(&worldwide_day, 0)?;
+        self.ocomp_source_block_hash
+            .write(&worldwide_day, B256::ZERO)?;
+        self.ocomp_source_state_root
+            .write(&worldwide_day, B256::ZERO)
     }
 
     /// Reads and validates the current canonical materialization FIFO head.

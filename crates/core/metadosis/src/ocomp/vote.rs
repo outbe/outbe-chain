@@ -9,7 +9,6 @@
 //! It never executes Lysis.
 
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
-use outbe_compressed_entities::ExecutionScope;
 use outbe_ocomp_protocol::{
     error::ProtocolError,
     state::{OcompJobRecordV1, OcompJobStatus},
@@ -119,7 +118,6 @@ impl ResponseWindowCloseReport {
 /// signature authorizes this transition.
 pub fn dispatch_public_result_vote(
     storage: StorageHandle<'_>,
-    scope: &ExecutionScope,
     data: &[u8],
     value: U256,
     is_static: bool,
@@ -133,7 +131,7 @@ pub fn dispatch_public_result_vote(
         .map_err(|_| vote_reject(MALFORMED_ENCODING))?;
     let inclusion_height = storage.block_number()?;
     MetadosisContract::new(storage)
-        .record_ocomp_result_vote(&vote, inclusion_height, scope, &limits)
+        .record_ocomp_result_vote(&vote, inclusion_height, &limits)
         .map_err(map_vote_transition_error)?;
     Ok(Bytes::new())
 }

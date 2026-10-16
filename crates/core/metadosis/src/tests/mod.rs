@@ -1,19 +1,11 @@
 use alloy_primitives::{address, Address, B256, U256};
 use alloy_sol_types::SolCall;
-use outbe_compressed_entities::{
-    begin_block, end_block, EntityRef, ExecutionScope, IdPage, IdPageRequest, ParentBodySource,
-    ParentBodySourceError, QueryRef, StoredBody,
-};
-use outbe_nod::NodRepositoryReader;
-use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
-use outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::dsl::StorageRecord;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::{MetadosisMutationPurposeTag, StorageHandle};
 use outbe_promislimit::PromisLimitContract;
-use outbe_tribute::{TributeContract, TributeRepositoryReader};
-use std::sync::Arc;
+use outbe_tribute::TributeContract;
 
 use crate::constants::*;
 use crate::fixture_kernel::FixtureKernelExt;
@@ -68,74 +60,6 @@ fn form_due_fixture_day_limits(storage: &StorageHandle, timestamp: u64) {
     }
 }
 
-struct TestParent {
-    tribute: TributeRepositoryReader,
-    nod: NodRepositoryReader,
-}
-
-impl TestParent {
-    fn empty() -> Self {
-        let storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
-        Self {
-            tribute: TributeRepositoryReader::new(storage.clone()),
-            nod: outbe_nod::nod_reader(storage),
-        }
-    }
-}
-
-impl ParentBodySource for TestParent {
-    fn get(&self, entity: EntityRef) -> Result<Option<StoredBody>, ParentBodySourceError> {
-        match entity {
-            EntityRef::Gem(_) | EntityRef::GemBucket(_) => Err(ParentBodySourceError::Corruption(
-                "Metadosis parent cannot serve a Gem entity".into(),
-            )),
-            EntityRef::Tribute(_) => ParentBodySource::get(&self.tribute, entity),
-            EntityRef::NodItem(_) | EntityRef::NodBucket(_) => {
-                ParentBodySource::get(&self.nod, entity)
-            }
-        }
-    }
-
-    fn list(
-        &self,
-        query: QueryRef,
-        request: IdPageRequest,
-    ) -> Result<IdPage, ParentBodySourceError> {
-        match query {
-            QueryRef::GemByOwner(_) => Err(ParentBodySourceError::Corruption(
-                "Metadosis parent cannot serve a Gem query".into(),
-            )),
-            QueryRef::TributeByOwner(_) | QueryRef::TributeByDay(_) => {
-                ParentBodySource::list(&self.tribute, query, request)
-            }
-            QueryRef::NodByOwner(_) | QueryRef::NodAll => {
-                ParentBodySource::list(&self.nod, query, request)
-            }
-        }
-    }
-}
-
-fn with_active_scope<R>(
-    storage: StorageHandle,
-    f: impl FnOnce(&ExecutionScope, &TestParent) -> R,
-) -> R {
-    let parent = TestParent::empty();
-    let scope = ExecutionScope::default();
-    if storage
-        .sload(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO)
-        .unwrap()
-        .is_zero()
-    {
-        outbe_compressed_entities::test_support::seed_compressed_entities_genesis_after_marker(
-            &storage,
-        );
-    }
-    begin_block(storage.clone(), &scope).unwrap();
-    let result = f(&scope, &parent);
-    end_block(storage, &scope).unwrap();
-    result
-}
-
 /// Price the day-type currency, which genesis lists as a reference: the brief needs a
 /// price for it.
 fn arm_reference_price(storage: &StorageHandle, timestamp: u64) {
@@ -185,10 +109,7 @@ fn run_begin_block_with_chain_id(
         BlockContext::empty_for_tests(block_number, timestamp, chain_id),
         storage,
     );
-    with_active_scope(ctx.storage.clone(), |scope, parent| {
-        crate::commands::start_metadosis(&ctx, scope, parent)
-    })
-    .unwrap();
+    (|| crate::commands::start_metadosis(&ctx))().unwrap();
 }
 
 fn run_begin_block(storage: StorageHandle, block_number: u64, timestamp: u64) {

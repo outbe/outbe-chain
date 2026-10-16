@@ -1,8 +1,8 @@
 //! Pure gem identities shared by issuance and off-chain calculation.
 use alloy_primitives::{B256, U256};
-use outbe_compressed_entities::WwdEntityId;
 use outbe_primitives::storage::StorageKey;
 use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 /// Bucket key from `(worldwide_day, entry_price_minor, reference_currency)`.
 ///

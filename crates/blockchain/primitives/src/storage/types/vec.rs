@@ -32,6 +32,10 @@ impl<'storage, T: Storable> StorageVec<'storage, T> {
         Ok(word.to::<u32>())
     }
 
+    pub fn base_slot(&self) -> U256 {
+        self.base_slot
+    }
+
     pub fn is_empty(&self) -> Result<bool> {
         self.len().map(|l| l == 0)
     }
@@ -97,7 +101,7 @@ impl<'storage, T: Storable> StorageVec<'storage, T> {
             .sstore(self.address, self.base_slot, U256::ZERO)
     }
 
-    fn data_slot(&self, index: u32) -> U256 {
+    pub fn data_slot(&self, index: u32) -> U256 {
         let start = U256::from_be_bytes(keccak256(self.base_slot.to_be_bytes::<32>()).0);
         start + U256::from(index as u64 * T::SLOTS as u64)
     }

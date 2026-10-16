@@ -47,10 +47,6 @@ pub enum OutbeEvmBuilderError {
         install_height: u64,
         lifecycle_height: u64,
     },
-    #[error("live Outbe EVM construction requires RuntimeBodyReaders")]
-    MissingRuntimeBodyReaders,
-    #[error("live Outbe EVM construction requires CompressedTreeService")]
-    MissingCompressedTreeService,
 }
 
 /// Errors that occur when the node checks TEE genesis and ChainSpec data.
@@ -266,19 +262,6 @@ impl From<TeeAttestationActivationError> for String {
     }
 }
 
-/// Errors that occur when the config binds the parent tree.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum CompressedEntitiesScopeConfigError {
-    #[error("{0}")]
-    ConfigureParentTreeFactory(String),
-}
-
-impl CompressedEntitiesScopeConfigError {
-    pub(crate) fn from_display(error: impl Display) -> Self {
-        Self::ConfigureParentTreeFactory(error.to_string())
-    }
-}
-
 /// Errors that occur when the finality authority checks local finalized headers.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum FinalityAuthorityLocalError {
@@ -313,8 +296,6 @@ pub enum SystemTxExpectationError {
     Layout(String),
     #[error("recover system tx signer: {0}")]
     RecoverSigner(String),
-    #[error("compressed-entity exact-parent scope configuration failed: {0}")]
-    ConfigureCompressedEntitiesScope(String),
 }
 
 impl SystemTxExpectationError {
@@ -328,10 +309,6 @@ impl SystemTxExpectationError {
 
     pub(crate) fn recover_signer(error: impl Display) -> Self {
         Self::RecoverSigner(error.to_string())
-    }
-
-    pub(crate) fn configure_compressed_entities_scope(error: impl Display) -> Self {
-        Self::ConfigureCompressedEntitiesScope(error.to_string())
     }
 }
 
@@ -426,8 +403,6 @@ pub enum BeginBlockPrecompileError {
     NativeValueRejected,
     #[error("invalid system tx input: {0}")]
     InvalidSystemTxInput(String),
-    #[error("OcompLifecycleBegin requires the active compressed-entity scope")]
-    OcompLifecycleBeginMissingScope,
     #[error("OCOMP terminal request requires execution seal authority")]
     OcompTerminalRequestMissingSealAuthority,
     #[error("{name} exceeds u64 range: {value}")]
@@ -616,7 +591,6 @@ impl From<BeginBlockPrecompileError> for PrecompileError {
     fn from(error: BeginBlockPrecompileError) -> Self {
         match error {
             BeginBlockPrecompileError::MissingPreloadedExecutionSummary { .. }
-            | BeginBlockPrecompileError::OcompLifecycleBeginMissingScope
             | BeginBlockPrecompileError::OcompTerminalRequestMissingSealAuthority
             | BeginBlockPrecompileError::MissingCycleBodyReadAuthority
             | BeginBlockPrecompileError::MissingRewardsGemDeliveryBodyReadAuthority
@@ -710,8 +684,6 @@ pub enum ExecutorHookError {
     },
     #[error("boundary active set contains unregistered validator {address}")]
     UnregisteredBoundaryValidator { address: Address },
-    #[error("compressed-entities SealOutput/EVM root mismatch: seal={seal}, evm={evm}")]
-    SealOutputEvmRootMismatch { seal: B256, evm: B256 },
     #[error("Staking min_stake must be initialized in genesis")]
     StakingMinStakeUninitialized,
     #[error("genesis validator {address} stake mismatch between ValidatorSet and Staking")]
@@ -757,7 +729,6 @@ impl From<ExecutorHookError> for PrecompileError {
             }
             ExecutorHookError::ValidatorSetEpochExceedsU64
             | ExecutorHookError::ValidatorSetEpochOverflow
-            | ExecutorHookError::SealOutputEvmRootMismatch { .. }
             | ExecutorHookError::StakingMinStakeUninitialized
             | ExecutorHookError::GenesisValidatorStakeMismatch { .. }
             | ExecutorHookError::GenesisTotalStakeOverflow

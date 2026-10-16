@@ -27,8 +27,6 @@ rand_core.workspace = true
 rand-commonware.workspace = true
 rand-core-commonware.workspace = true
 outbe-evm = { workspace = true, features = ["test-utils"] }
-outbe-offchain-data.workspace = true
-outbe-offchain-storage.workspace = true
 outbe-tributefactory.workspace = true
 alloy-evm.workspace = true
 reth-ethereum.workspace = true
