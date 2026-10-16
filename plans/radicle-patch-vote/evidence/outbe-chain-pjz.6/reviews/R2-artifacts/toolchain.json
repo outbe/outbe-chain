@@ -1,7 +1,0 @@
-{
-  "platform": "macOS-26.7.2-arm64-arm-64bit-Mach-O",
-  "rustc --version": "rustc 1.96.0 (ac68faa20 2026-05-25)",
-  "cargo --version": "cargo 1.96.0 (30a34c682 2026-05-25)",
-  "forge --version": "forge Version: 1.7.1\nCommit SHA: 4072e48705af9d93e3c0f6e29e93b5e9a40caed8\nBuild Timestamp: 2026-05-08T07:54:31.470926000Z (1778226871)\nBuild Profile: dist",
-  "git --version": "git version 2.54.0 (Apple Git-157)"
-}

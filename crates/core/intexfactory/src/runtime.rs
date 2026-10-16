@@ -10,7 +10,7 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::WorldwideDay;
 
 use outbe_intex::{IntexContract, IntexState, SeriesRecord};
-use outbe_vaultrouter::settlement;
+use outbe_vaultrouter::settlement::{self, SettlementPayment};
 
 use crate::constants::{
     INTEX_NFT1155_ADDRESS, MAX_SERIES_PER_MESSAGE, ORIGIN_ROUTER_ADDRESS, SETTLED_TAG,
@@ -230,14 +230,7 @@ pub(crate) fn owner_balances(
     })
 }
 
-/// Who pays a settlement, in which asset, and against which VWAP snapshot.
-pub struct SettlementPayment {
-    pub settler: Address,
-    pub asset: Address,
-    pub snapshot_id: U256,
-}
-
-/// Settle paying the cost from `settler` in `asset` by ERC20 transfer. The settled
+/// Settle paying the cost from `payer` in `asset` by ERC20 transfer. The settled
 /// units stay with `owner`. An issuance-currency payment must name the VWAP
 /// snapshot required at this block.
 pub fn settle_intex(
@@ -248,11 +241,11 @@ pub fn settle_intex(
     payment: SettlementPayment,
 ) -> Result<()> {
     let SettlementPayment {
-        settler,
+        payer,
         asset,
         snapshot_id,
     } = payment;
-    if owner.is_zero() || settler.is_zero() {
+    if owner.is_zero() || payer.is_zero() {
         return Err(IntexFactoryError::ZeroAddress.into());
     }
     if units.is_zero() {
@@ -274,7 +267,7 @@ pub fn settle_intex(
         storage,
         asset,
         pricing::currencies(&series),
-        &pricing::obligation(&series, units),
+        &pricing::settlement_cost(&series, units),
     )?;
     quote.require_snapshot(snapshot_id)?;
     storage.clone().with_checkpoint(|| {
@@ -299,7 +292,7 @@ pub fn settle_intex(
         settlement::collect(
             storage,
             INTEX_FACTORY_ADDRESS,
-            settler,
+            payer,
             asset,
             quote.payment_minor,
         )?;
@@ -319,10 +312,8 @@ fn require_settleable(storage: &StorageHandle<'_>, series: &SeriesRecord) -> Res
     match series.lifecycle_state()? {
         IntexState::Called => {
             let now = storage.timestamp()?.to::<u64>();
-            let deadline =
-                u64::from(series.called_at) + u64::from(series.call_notice_period_seconds);
-            if now > deadline {
-                return Err(IntexFactoryError::DeadlineExpired.into());
+            if now > series.settlement_deadline() {
+                return Err(IntexFactoryError::SettlementDeadlinePassed.into());
             }
             Ok(())
         }

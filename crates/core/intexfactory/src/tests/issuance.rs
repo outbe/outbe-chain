@@ -1,5 +1,6 @@
 use super::*;
 use outbe_primitives::time::SECONDS_PER_DAY_U32;
+use outbe_vaultrouter::settlement::SettlementPayment;
 
 #[test]
 fn issue_creates_series_in_registry() {
@@ -241,8 +242,12 @@ fn with_dual_currency_series<R>(iso: u64, f: impl FnOnce(StorageHandle) -> R) ->
 /// settlement that reaches the payment fails there with `SettlementAmountMismatch`.
 pub(super) fn stub_token_that_never_credits(storage: &mut HashMapStorageProvider) {
     use crate::sol_ext::IERC20;
-    storage.stub_sub_call_at_selector(payment_token(), IERC20::balanceOfCall::SELECTOR, word(0));
-    storage.stub_sub_call_at_selector(payment_token(), IERC20::transferFromCall::SELECTOR, word(1));
+    storage.stub_sub_call_at_selector(settlement_asset(), IERC20::balanceOfCall::SELECTOR, word(0));
+    storage.stub_sub_call_at_selector(
+        settlement_asset(),
+        IERC20::transferFromCall::SELECTOR,
+        word(1),
+    );
 }
 
 /// The storage behind [`with_dual_currency_series`], for tests that move the clock.
@@ -265,11 +270,11 @@ pub(super) fn dual_currency_series(iso: u64) -> HashMapStorageProvider {
         word(1),
     );
     storage.stub_sub_call_at_selector(
-        payment_token(),
+        settlement_asset(),
         IReferenceCurrency::isoCodeCall::SELECTOR,
         word(iso),
     );
-    storage.stub_sub_call_at_selector(payment_token(), IERC20::decimalsCall::SELECTOR, word(18));
+    storage.stub_sub_call_at_selector(settlement_asset(), IERC20::decimalsCall::SELECTOR, word(18));
 
     StorageHandle::enter(&mut storage, |s| {
         let params = IssuanceParams {
@@ -299,7 +304,7 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
         write_day_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
 
         let (_, cost, _) =
-            runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap();
+            runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE).unwrap();
         assert_eq!(cost, U256::from(500_000_000_000_000_000u64));
     });
 }
@@ -321,7 +326,7 @@ fn the_issuance_rail_converts_at_the_trailing_window_not_the_closed_day() {
             .unwrap();
 
         let (_, cost, _) =
-            runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap();
+            runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE).unwrap();
         assert_eq!(cost, U256::from(500_000_000_000_000_000u64));
     });
 }
@@ -339,7 +344,7 @@ fn issuance_currency_settlement_floors_a_non_divisible_fx_result_once() {
         write_day_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
 
         let (_, cost, _) =
-            runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap();
+            runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE).unwrap();
         assert_eq!(cost, U256::from(333_333_333_333_333_333u64));
     });
 }
@@ -355,7 +360,7 @@ fn an_unpriced_issuance_currency_cannot_be_settled_in() {
             U256::from(2u64) * COEN_ISO_RATE_SCALE,
         );
         // No euro pair at all.
-        let err = runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap_err();
+        let err = runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE).unwrap_err();
         assert!(
             err.to_string().contains("oracle nominal unavailable"),
             "{err}"
@@ -376,7 +381,7 @@ fn a_rate_the_window_never_priced_cannot_be_settled_in() {
         // The euro trades live, but the window it converts at holds no euro price.
         write_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
 
-        let err = runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap_err();
+        let err = runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE).unwrap_err();
         assert!(
             err.to_string().contains("oracle nominal unavailable"),
             "{err}"
@@ -396,7 +401,7 @@ fn issuance_currency_settlement_rejects_fx_overflow() {
             U256::MAX / COEN_ISO_RATE_SCALE,
         );
 
-        let err = runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap_err();
+        let err = runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("overflow"), "{err}");
     });
 }
@@ -406,7 +411,7 @@ fn the_reference_currency_settles_without_reading_any_rate() {
     // No rate is published at all, yet the reference currency still settles.
     with_dual_currency_series(REFERENCE_ISO as u64, |s| {
         let (_, cost, _) =
-            runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap();
+            runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE).unwrap();
         assert_eq!(cost, U256::from(1_000_000_000_000_000_000u64));
     });
 }
@@ -417,7 +422,7 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
     stub_token_that_never_credits(&mut storage);
     let quote = |storage: &mut HashMapStorageProvider| {
         StorageHandle::enter(storage, |s| {
-            runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap()
+            runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE).unwrap()
         })
     };
     let settle = |storage: &mut HashMapStorageProvider, snapshot: U256| {
@@ -427,9 +432,9 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
                 sid(7),
                 owner(),
                 U256::ONE,
-                runtime::SettlementPayment {
-                    settler: owner(),
-                    asset: payment_token(),
+                SettlementPayment {
+                    payer: owner(),
+                    asset: settlement_asset(),
                     snapshot_id: snapshot,
                 },
             )
@@ -501,7 +506,7 @@ fn the_hourly_rollover_at_the_call_deadline_grants_no_grace() {
     stub_token_that_never_credits(&mut storage);
     let quote = |storage: &mut HashMapStorageProvider| {
         StorageHandle::enter(storage, |s| {
-            runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE)
+            runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE)
                 .unwrap()
                 .2
         })
@@ -513,9 +518,9 @@ fn the_hourly_rollover_at_the_call_deadline_grants_no_grace() {
                 sid(7),
                 owner(),
                 U256::ONE,
-                runtime::SettlementPayment {
-                    settler: owner(),
-                    asset: payment_token(),
+                SettlementPayment {
+                    payer: owner(),
+                    asset: settlement_asset(),
                     snapshot_id: snapshot,
                 },
             )
@@ -562,7 +567,7 @@ fn the_hourly_rollover_at_the_call_deadline_grants_no_grace() {
     assert_eq!(
         settle(&mut storage, required),
         outbe_primitives::error::PrecompileError::from(
-            crate::errors::IntexFactoryError::DeadlineExpired
+            crate::errors::IntexFactoryError::SettlementDeadlinePassed
         )
         .to_string()
     );
@@ -578,9 +583,9 @@ fn a_reference_payment_ignores_the_snapshot_it_names() {
             sid(7),
             owner(),
             U256::ONE,
-            runtime::SettlementPayment {
-                settler: owner(),
-                asset: payment_token(),
+            SettlementPayment {
+                payer: owner(),
+                asset: settlement_asset(),
                 snapshot_id: U256::from(7u64),
             },
         )

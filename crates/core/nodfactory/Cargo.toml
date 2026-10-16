@@ -25,7 +25,6 @@ outbe-tee-enclave = { workspace = true, optional = true }
 [dev-dependencies]
 outbe-tee = { workspace = true, features = ["test-utils"] }
 outbe-nod = { workspace = true, features = ["test-utils", "test-enclave"] }
-outbe-offchain-storage.workspace = true
 base64.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 # `test-enclave` drives the confidential Gratis path in `mine_gratis` tests via

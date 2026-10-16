@@ -1,8 +1,0 @@
-{
-  "path": "crates/core/tribute/src/runtime.rs",
-  "base_sha": "8fe62b5dd0e625cd65297479cfa687e3e648ad41",
-  "candidate_sha": "91644eb78148e7b81cd8e46478dfb0466d321e27",
-  "same_bytes": true,
-  "sha256": "79b8562c938530755cba50caa9a9a542cbc0bffceafb556ef0e473bb7182f238",
-  "diagnostic": "clippy::collapsible_if at line99 in unchanged dependency; broad clippy exit101 preserved in clippy.log; no source change or lint suppression applied"
-}

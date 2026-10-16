@@ -35,8 +35,8 @@ pub enum NodFactoryError {
     #[error("insufficient proof of work")]
     InsufficientProofOfWork,
 
-    #[error("nod call settlement deadline has expired")]
-    CallDeadlineExpired,
+    #[error("settlement deadline has passed")]
+    SettlementDeadlinePassed,
 
     #[error(transparent)]
     CreateNodForTest(#[from] outbe_tee::TransportError),

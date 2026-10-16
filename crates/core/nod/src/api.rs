@@ -51,11 +51,7 @@ pub fn settlement_deadline(storage: &StorageHandle<'_>, bucket_key: B256) -> Res
     Ok(settlement_deadline_of(called_at, notice))
 }
 
-/// The deadline rule itself, for callers that already hold both values.
-#[must_use]
-pub fn settlement_deadline_of(called_at: u64, notice_period: u32) -> u64 {
-    called_at.saturating_add(u64::from(notice_period))
-}
+pub use outbe_primitives::settlement::settlement_deadline_of;
 
 pub use crate::state_api::{LoadedNodBucket, LoadedNodItem};
 
@@ -110,6 +106,14 @@ pub fn list_all(storage: &StorageHandle<'_>) -> Result<Vec<NodItemState>> {
     NodContract::new(storage.clone())
         .state_records(None)
         .map(|records| records.into_iter().map(Into::into).collect())
+}
+
+/// How many Nods one owner holds, read from the owner index alone.
+pub fn balance_of(storage: &StorageHandle<'_>, owner: Address) -> Result<u32> {
+    NodContract::new(storage.clone())
+        .owner_ids
+        .list(&owner)
+        .len()
 }
 
 /// Loads one owner's Nod collection with overlay-correct membership.

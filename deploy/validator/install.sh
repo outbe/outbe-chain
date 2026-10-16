@@ -4,7 +4,6 @@ set -euo pipefail
 OUTBE_ROOT=/opt/outbe-chain
 ENV_FILE=$OUTBE_ROOT/validator.env
 FEEDER_CONFIG=$OUTBE_ROOT/feeder-public.toml
-STORAGE_CONFIG=$OUTBE_ROOT/offchain-storage.toml
 SOURCE_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 EXPECTED_SOURCE_DIR=$OUTBE_ROOT/deploy/validator
 HELPER=$SOURCE_DIR/outbe-validator-service.py
@@ -20,14 +19,12 @@ fail() {
 [[ $SOURCE_DIR == "$EXPECTED_SOURCE_DIR" ]] || \
   fail "deployment assets must be installed at $EXPECTED_SOURCE_DIR"
 
-for file in "$ENV_FILE" "$FEEDER_CONFIG" "$STORAGE_CONFIG"; do
+for file in "$ENV_FILE" "$FEEDER_CONFIG"; do
   [[ -f $file && ! -L $file ]] || fail "missing local configuration: $file"
   [[ $(stat -c %u "$file") -eq 0 ]] || fail "configuration must be root-owned: $file"
   [[ -z $(find "$file" -maxdepth 0 -perm /022 -print) ]] || \
     fail "configuration must not be group/world writable: $file"
 done
-
-"$HELPER" verify-rocksdb --storage-config "$STORAGE_CONFIG"
 
 seen_names=:
 while IFS= read -r line || [[ -n $line ]]; do
@@ -191,8 +188,8 @@ canonical_hex_file "$KEYS_DIR/reth-p2p-secret.hex" 64 \
 
 "$OUTBE_ROOT/outbe-keygen" verify --key "$KEYS_DIR/signing-key.hex"
 
-chown root:outbe "$ENV_FILE" "$FEEDER_CONFIG" "$STORAGE_CONFIG"
-chmod 0640 "$ENV_FILE" "$FEEDER_CONFIG" "$STORAGE_CONFIG"
+chown root:outbe "$ENV_FILE" "$FEEDER_CONFIG"
+chmod 0640 "$ENV_FILE" "$FEEDER_CONFIG"
 chown root:root "$HELPER"
 chmod 0755 "$HELPER"
 
@@ -204,5 +201,4 @@ install -o root -g root -m 0644 \
 
 systemctl daemon-reload
 
-printf '%s\n' 'Outbe storage backend: rocksdb'
 printf '%s\n' 'Outbe validator services installed but not started.'
