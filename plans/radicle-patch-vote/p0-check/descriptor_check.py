@@ -12,7 +12,7 @@ description = b"Network governance"
 
 
 def encode(chain_id, timestamp, description):
-    assert len(description) <= 1024
+    assert len(description) <= 256
     description.decode("utf-8")
     assert b"\r" not in description and b"\0" not in description
     text = lambda value: struct.pack(">H", len(value)) + value
@@ -39,7 +39,7 @@ def decode(data):
         if length != len(expected) or take(length) != expected:
             raise ValueError("unexpected managed name/branch")
     length = int.from_bytes(take(2), "big")
-    if length > 1024:
+    if length > 256:
         raise ValueError("oversized description")
     description = take(length)
     description.decode("utf-8")
@@ -56,6 +56,24 @@ def decode(data):
 descriptor = encode(2026, 1700000000, description)
 assert decode(descriptor) == (2026, 1700000000, description, tree, content)
 descriptor_hash = sha(descriptor)
+for text in ("x" * 255, "x" * 256, "я" * 128, "я" * 127 + "x"):
+    raw = text.encode("utf-8")
+    assert decode(encode(2026, 1700000000, raw))[2] == raw
+for raw in (b"x" * 257, ("я" * 128 + "x").encode("utf-8")):
+    try:
+        encode(2026, 1700000000, raw)
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("accepted description over256 bytes")
+    malformed = descriptor[:41] + struct.pack(">H", len(raw)) + raw + descriptor[-54:]
+    try:
+        decode(malformed)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("decoded description over256 bytes")
+
 for invalid in (descriptor[:-1], descriptor + b"\0", b"BAD!" + descriptor[4:],
                 descriptor[:5] + b"\x02" + descriptor[6:], descriptor[:-1] + b"\x02"):
     try:

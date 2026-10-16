@@ -107,9 +107,29 @@ class GovernmentsGenesisTests(unittest.TestCase):
                 seed_governments_descriptor(base, StorageBuilder(), configuration())
             seed_governments_descriptor(base, StorageBuilder(), {"max_repositories": 8})
 
+    def test_description_256_byte_boundary_preserves_literal_utf8(self):
+        for description in ["", "x" * 255, "x" * 256, "я" * 128, "я" * 127 + "x"]:
+            config = configuration()
+            config["governments"]["description"] = description
+            base = genesis()
+            seed_governments_descriptor(base, StorageBuilder(), config)
+            encoded = bytes.fromhex(base["config"]["radicleGovernments"][2:])
+            raw = description.encode("utf-8")
+            self.assertEqual(int.from_bytes(encoded[41:43], "big"), len(raw))
+            self.assertEqual(encoded[43:43 + len(raw)], raw)
+            self.assertEqual(len(encoded), 97 + len(raw))
+        for description in ["x" * 257, "я" * 128 + "x", "x" * 1024]:
+            config = configuration()
+            config["governments"]["description"] = description
+            base, storage = genesis(), StorageBuilder()
+            with self.assertRaisesRegex(ValueError, "256 UTF-8 bytes"):
+                seed_governments_descriptor(base, storage, config)
+            self.assertEqual(storage.entries, {})
+            self.assertNotIn("radicleGovernments", base["config"])
+
     def test_invalid_descriptor_rejected_before_any_storage_write(self):
         for key, value in [
-            ("description", "я" * 513),
+            ("description", "я" * 129),
             ("description", "x\r"),
             ("description", "x\0"),
             ("initial_tree_oid", "0x" + "00" * 20),

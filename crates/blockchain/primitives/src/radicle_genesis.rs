@@ -8,9 +8,10 @@ use crate::error::{PrecompileError, Result};
 pub const GENESIS_GOVERNMENTS_FIELD: &str = "radicleGovernments";
 pub const GOVERNMENTS_DESCRIPTOR_HASH_SLOT: u64 = 10;
 pub const GOVERNMENTS_DESCRIPTOR_BYTES_SLOT: u64 = 11;
-pub const MAX_GOVERNMENTS_DESCRIPTION_BYTES: usize = 1024;
+pub const MAX_GOVERNMENTS_DESCRIPTION_BYTES: usize = 256;
 pub const MIN_GOVERNMENTS_DESCRIPTOR_BYTES: usize = 97;
-pub const MAX_GOVERNMENTS_DESCRIPTOR_BYTES: usize = 1121;
+pub const MAX_GOVERNMENTS_DESCRIPTOR_BYTES: usize =
+    MIN_GOVERNMENTS_DESCRIPTOR_BYTES + MAX_GOVERNMENTS_DESCRIPTION_BYTES;
 
 pub fn validate_publication_window(epoch_length: u64, prepare_window: u64) -> Result<()> {
     if epoch_length.saturating_sub(prepare_window.min(epoch_length)) < 64 {

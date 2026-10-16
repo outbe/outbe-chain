@@ -1,15 +1,25 @@
-//! D3 diagnostic only: passing this test confirms the incompatible accepted input ranges.
+//! Genesis and native Project must accept the same literal description byte range.
 
 use outbe_primitives::radicle_genesis::GovernmentsDescriptor;
 use radicle::{git, identity::Project};
 
 #[test]
-fn genesis_description_range_exceeds_native_project_range() {
-    for length in [0, 255, 256, 1024, 1025] {
+fn genesis_description_range_matches_native_project_range() {
+    for description in [
+        String::new(),
+        "x".repeat(255),
+        "x".repeat(256),
+        "я".repeat(128),
+        format!("{}x", "я".repeat(127)),
+        "x".repeat(257),
+        format!("{}x", "я".repeat(128)),
+        "x".repeat(1024),
+    ] {
+        let length = description.len();
         let descriptor = GovernmentsDescriptor {
             chain_id: 2026,
             genesis_timestamp: 1700000000,
-            description: "x".repeat(length),
+            description,
             initial_tree_oid: "0x4b825dc642cb6eb9a060e54bf8d69288fbee4904"
                 .parse()
                 .unwrap(),
@@ -30,8 +40,15 @@ fn genesis_description_range_exceeds_native_project_range() {
             native.is_ok(),
             native.as_ref().err()
         );
-        assert_eq!(genesis.is_ok(), length <= 1024);
-        assert_eq!(native.is_ok(), length <= 255);
+        assert_eq!(genesis.is_ok(), length <= 256);
+        assert_eq!(native.is_ok(), length <= 256);
+        if let Ok(project) = native {
+            assert_eq!(project.description(), descriptor.description);
+            assert_eq!(
+                serde_json::from_slice::<Project>(&serde_json::to_vec(&project).unwrap()).unwrap(),
+                project
+            );
+        }
         if let Ok(encoded) = genesis {
             assert_eq!(
                 GovernmentsDescriptor::from_bytes(&encoded).unwrap(),

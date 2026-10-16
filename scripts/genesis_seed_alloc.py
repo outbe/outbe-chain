@@ -126,8 +126,8 @@ def seed_governments_descriptor(genesis: dict, storage: StorageBuilder, config: 
     if not isinstance(description, str) or "\r" in description or "\0" in description:
         raise ValueError("invalid governments description")
     description_bytes = description.encode("utf-8")
-    if len(description_bytes) > 1024:
-        raise ValueError("governments description exceeds 1024 UTF-8 bytes")
+    if len(description_bytes) > 256:
+        raise ValueError("governments description exceeds 256 UTF-8 bytes")
 
     def commitment(field, size):
         value = governments[field]

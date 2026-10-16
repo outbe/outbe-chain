@@ -420,7 +420,10 @@ OGD1[4] || schema:u16=1 || chain_id:u64 || genesis_timestamp:u64
 ```
 
 Lengths — число bytes, не Unicode characters; name/branch фиксированы указанными
-значениями, description ≤1024 bytes, valid UTF-8 без CR/NUL, bytes сохраняются буквально.
+значениями, description ≤256 bytes, valid UTF-8 без CR/NUL, bytes сохраняются буквально.
+Downstream Heartwood принимает description до256 bytes в constructor/deserializer;
+name/default branch сохраняют upstream limit255. Reader без этой правки отклонит
+identity с description256 bytes. OGD1 maximum =97+256=353 bytes; обрезания текста нет.
 Schema/policy/key_source с иными значениями, trailing/short bytes, несоответствие
 genesis_timestamp header и невалидный initial tree/content artifact отклоняются.
 Content manifest — pre-genesis artifact с canonical file paths/modes/content SHA256;

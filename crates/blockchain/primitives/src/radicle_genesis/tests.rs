@@ -86,14 +86,14 @@ fn descriptor_rejects_bad_version_name_branch_policy_utf8_missing_commitments_an
     for description in [
         "bad\rtext".to_owned(),
         "bad\0text".to_owned(),
-        "x".repeat(1025),
+        "x".repeat(257),
     ] {
         let mut invalid = original.clone();
         invalid.description = description;
         assert!(invalid.to_bytes().is_err());
     }
     let mut maximum = original.clone();
-    maximum.description = "x".repeat(1024);
+    maximum.description = "x".repeat(256);
     assert_eq!(
         maximum.to_bytes().unwrap().len(),
         MAX_GOVERNMENTS_DESCRIPTOR_BYTES
@@ -112,7 +112,7 @@ fn descriptor_rejects_bad_version_name_branch_policy_utf8_missing_commitments_an
         serde_json::Value::Bool(false),
         serde_json::Value::String("abcd".into()),
         serde_json::Value::String("0xgg".into()),
-        serde_json::Value::String(format!("0x{}", "00".repeat(1122))),
+        serde_json::Value::String(format!("0x{}", "00".repeat(354))),
     ] {
         assert!(GovernmentsDescriptor::from_genesis_field(
             Some(&field),

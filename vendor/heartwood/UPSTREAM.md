@@ -63,3 +63,8 @@ Heartwood does not interpret Outbe Vote or checkpoint data.
 Native identity/COB/sigrefs attachment and verification, generic publication-policy
 integration and full two-node BLS acceptance are still pending. These changes do
 not yet establish complete P2 support or any Outbe Vote integration.
+
+The downstream Project description limit is256 UTF-8 bytes (user-directed D3
+correction), enforced by constructor/update/deserialization. Name and branch
+limits remain255 bytes. Unpatched upstream readers reject a256-byte description;
+existing payloads of at most255 bytes retain their encoding.

@@ -40,7 +40,7 @@
     },
     "latest_explicit_question": "Async question resent2026-10-16~00:44UTC: authorize1024->255 UTF-8 byte genesis/seeder/spec correction; answer remains pending. No dependent implementation occurred."
   },
-  "acceptance": "P0/P1/P5 closed; P2/P3 in_progress and incomplete; P4/P6/P7/P8 open; P4 descriptor prerequisite implemented under P3 activation only",
+  "acceptance": "P0 reopened for256-byte contract correction; P1/P5 historical closed; P2/P3 incomplete; P4/P6/P7/P8 open.",
   "last_periodic_report": {
     "completed": "Accepted manifest cache/replay3c132829a and protected node preparation5dc7c1521 implemented/verified. Required full native current regression c383730c6 completed; existing managed positive runtime/Ed pre-Review/receipt-gated Review/cache scenario found in actual passing run,not reimplemented.",
     "proof": "5dc7c1521:71adapter/7consumers/Clippy/fmt. c383730c6:671native/10sidecar/2CLI,whole vendor Clippy/fmt. Bundles .4/checkpoint-replay-store,.4/local-preparation-context,.3/current-native-regression,.3/managed-positive-accounting.",
@@ -123,7 +123,7 @@
   "public_witness_evidence": "evidence/outbe-chain-pjz.4/public-witness",
   "witness_bundle_evidence": "evidence/outbe-chain-pjz.4/witness-bundle",
   "last_goal_turn_classification": "no progress: third consecutive verified same overall D3 impasse, explicit approval still absent; no production/spec changes or live job to await. Blocked goal status required by threshold.",
-  "next_required_work": "Await explicit D3 decision on1024->255 UTF-8 description maximum. If A approved, apply exact Rust validator/Python seeder/spec/boundary correction then new P0 evidence and3 full-AC reviews,actual relevance checks for P1/P5; continue full P0-P8. No bootstrap/root authorization bypass,fixture substitution,D2 redesign or partial-goal closure. If rejected, do not treat native Project expansion as approved fallback; reassess concrete proposal under the same decision gate.",
+  "next_required_work": "Apply explicitly user-selected256-byte correction, prove boundaries and obtain3 independent full-AC P0 reviews before reclosure; full P0-P8 goal incomplete.",
   "review_package_evidence": "evidence/outbe-chain-pjz.4/review-package",
   "review_attestation_evidence": "evidence/outbe-chain-pjz.4/review-attestation",
   "review_store_evidence": "evidence/outbe-chain-pjz.4/review-store-r2",
@@ -151,5 +151,12 @@
     "reason": "Actual12-file vendor delta since prior full regression0dbd83c40; narrower later P3 checks did not substitute for current complete required P2 run.",
     "limits": "Rust1.96 explicit override;static/native/missing-provider scenarios,not complete managed positive Outbe flow/full cache provenance/promotion/live chain/E2E/task acceptance."
   },
-  "managed_positive_accounting_evidence": "evidence/outbe-chain-pjz.3/managed-positive-accounting"
+  "managed_positive_accounting_evidence": "evidence/outbe-chain-pjz.3/managed-positive-accounting",
+  "description_bound_user_decision": {
+    "instruction": "нужпо поставить 256",
+    "maximum_utf8_bytes": 256,
+    "document": "decisions/D3-description-bound/user-decision-256.md",
+    "status": "implementing explicit user direction; acceptance pending; no deployment",
+    "goal_api_status": "blocked; this instruction authorizes the concrete correction, does not assert goal resumed"
+  }
 }
