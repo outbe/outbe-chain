@@ -2,13 +2,13 @@
   "feature": "outbe-chain-pjz",
   "goal_status": "active",
   "scope": "approved plan.md + task-specs.json + design.md only",
-  "last_periodic_report_utc": "2026-10-15T23:44:37Z",
-  "next_periodic_report_due_utc": "2026-10-16T00:14:37Z",
+  "last_periodic_report_utc": "2026-10-16T00:12:38Z",
+  "next_periodic_report_due_utc": "2026-10-16T00:42:38Z",
   "period_minutes": 30,
-  "stage": "P2/P3 exact accepted Review/policy and protected local finalized-receipt transport with opt-in node observer lifecycle verified. Collector client/startup consumption, typed signing control, bootstrap/latest promotion/full collector/Merge/E2E incomplete.",
+  "stage": "P2/P3 foundations verified on301b4763a. P4 bootstrap dependent work stopped at D3: approved1024-byte genesis descriptions conflict with native255-byte Project;3 independent checks complete, explicit user decision pending.",
   "decision_gate": {
     "id": "D3-description-bound",
-    "status": "source_and_behavior_reproduced; three independent decision checks pending; user approval not requested yet",
+    "status": "all three independent decision checks complete; user approval pending; dependent bootstrap implementation stopped",
     "proposal": "decisions/D3-description-bound/proposal.md",
     "snapshot": "decisions/D3-description-bound/snapshot.json",
     "source_sha": "a0c104079c24525bd4d5e9fd4374aedc76c57df4",
@@ -17,15 +17,35 @@
     "proposed_decision": "A: align governments descriptor/seeder/spec maximum to255 UTF-8 bytes, no truncation or native Heartwood behavior change; requires explicit user approval and affected acceptance re-review.",
     "dependent_implementation": "Stopped. No production bound, approved spec, native Project or bootstrap implementation changed. Only diagnostic test and proposal/evidence added.",
     "rule": "Three independent non-authors -> concrete proposal/evidence -> wait explicit user approval; decision review is not task acceptance.",
-    "historical": "D1 approval request withdrawn; D2 explicitly excluded. Neither is reopened."
+    "historical": "D1 approval request withdrawn; D2 explicitly excluded. Neither is reopened.",
+    "user_proposal": "decisions/D3-description-bound/user-proposal.md",
+    "user_proposal_sha256": "e875e2b093d879dfdc0abe80f4f8c2df70d708e44243f010f6a90225f9574390",
+    "user_approval": "not received",
+    "reviews": {
+      "R1": {
+        "report": "decisions/D3-description-bound/reviews/R1.md",
+        "sha256": "2c276b34ed28bbe55cbddf1776c6a99d761882ae94d84b50ccc1fe8b5f624d73",
+        "verdict": "Problem confirmed; A technically acceptable only after explicit user approval; not acceptance"
+      },
+      "R2": {
+        "report": "decisions/D3-description-bound/reviews/R2.md",
+        "sha256": "1baccee8e95359e90bc614adcaa58a26cb9f27400c6ce783c7e1092f9e65762e",
+        "verdict": "Problem confirmed; A technically acceptable only after explicit user approval; not acceptance"
+      },
+      "R3": {
+        "report": "decisions/D3-description-bound/reviews/R3.md",
+        "sha256": "750f78dcf8ace74f533f7048195c814c4dc2980e88f6b21de929a72846529806",
+        "verdict": "Problem confirmed; A technically acceptable only after explicit user approval; not acceptance"
+      }
+    }
   },
   "acceptance": "P0/P1/P5 closed; P2/P3 in_progress and incomplete; P4/P6/P7/P8 open; P4 descriptor prerequisite implemented under P3 activation only",
   "last_periodic_report": {
-    "completed": "Exact accepted Review verifier3ffebe3d4 and scoped Outbe archive PublicationPolicy275c59a61; separate native receiver deny-before/allow-after and Ed pre-grant access. Read-only initial DKG source trace distinguishes distributed runtime from central CLI/manual provisioning.",
-    "proof": "Both frozen sources:53 adapter lib tests/0ignored,7 consumer all-target checks,Clippy -D warnings,scoped fmt PASS; evidence .4/accepted-review and .4/accepted-policy. P4 source-only audit .5/initial-dkg-source, no runtime/chain provenance claim.",
-    "tasks": "P0/P1/P5 closed;P2/P3 in_progress;P4/P6/P7/P8 open; no new acceptance reviews or closures.",
-    "limitations": "No active approval question. No latest canonical promotion/CAS, runtime UDS/policy provisioning/rebuild, full collector/distributed collection, automatic bootstrap, Merge or production E2E. No actual resharing/deployed key provenance claim.",
-    "next": "Continue protected node/sidecar control and existing bootstrap/collector requirements; keep full P0-P8 objective and decision/acceptance gates."
+    "completed": "Protected receipt UDS/node wiring301b4763a verified; D3 accepted-input mismatch diagnostic a0c104079 plus3 independent source/behavior/scope/risk decision checks complete and concrete255-byte proposal ready.",
+    "proof": "301b4763a:60 adapter tests/7 consumer all-target checks/adapter+nodeClippy/fmt PASS(.4/local-receipts). a0c104079 diagnostic and3 independent Rust/Python repeats confirm256/1024 genesis/native mismatch; decisions/D3-description-bound snapshot/reviews/proposal hashes recorded.",
+    "tasks": "No new closures;P0/P1/P5 closed;P2/P3 in_progress;P4/P6/P7/P8 open. Changed P0 contract will require new evidence and3 fullACreviews after explicit approval.",
+    "limitations": "D3 user approval pending; dependent bootstrap implementation stopped; no production/spec limit changed. Full collector/signing control/bootstrap/Merge/production E2E incomplete.",
+    "next": "Present concrete1024→255 UTF-8-byte description proposal and wait explicit answer; preserve full P0-P8 scope and required acceptance gates."
   },
   "blocked_audit": {
     "consecutive_goal_turns": 0,
@@ -96,8 +116,8 @@
   "current_signing_evidence": "evidence/outbe-chain-pjz.4/current-signing",
   "public_witness_evidence": "evidence/outbe-chain-pjz.4/public-witness",
   "witness_bundle_evidence": "evidence/outbe-chain-pjz.4/witness-bundle",
-  "last_goal_turn_classification": "progress: D3 concrete P4 contract mismatch source-audited and behavior reproduced on frozen diagnostic source; production/spec unchanged; dependent bootstrap stopped for mandatory three-agent/user gate",
-  "next_required_work": "Connect the existing sidecar collector to the protected node link with typed current material/native bootstrap/Review signing jobs (never free-message signing); complete bootstrap proof/grants and original journal-first FSM/ordered approvals/partials/distributed checkpoint/refCAS/normal announcement; then separate Merge and production P8 E2E. Full P0-P8 remains required.",
+  "last_goal_turn_classification": "progress: reproduced concrete D3 accepted-input mismatch on frozena0c104079, collected3 independent source/behavior/scope/risk decision checks, prepared reviewable255-byte proposal. Production/spec unchanged; not task acceptance.",
+  "next_required_work": "Wait for explicit D3 answer before changing description contract or dependent bootstrap implementation. If A approved, apply exact255-byte correction/boundary evidence and3 fresh full P0 AC reviews; actual P1/P5 relevant-diff audit. Unrelated approved P3/Review control and later full P0-P8 work remains; no overall goal pause/completion.",
   "review_package_evidence": "evidence/outbe-chain-pjz.4/review-package",
   "review_attestation_evidence": "evidence/outbe-chain-pjz.4/review-attestation",
   "review_store_evidence": "evidence/outbe-chain-pjz.4/review-store-r2",
