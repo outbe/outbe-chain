@@ -161,7 +161,7 @@ impl MongoStorage {
             .iter()
             .any(|name| name != WRITER_LEASE_COLLECTION && !name.contains("__"))
         {
-            return Err(StorageError::Corruption("unscoped MongoDB layout: use a fresh database for schema 3; automatic migration is disabled".into()));
+            return Err(crate::errors::StorageCorruptionError::UnscopedMongoLayout.into());
         }
         Ok(())
     }

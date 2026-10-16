@@ -3,11 +3,7 @@
 use alloy_primitives::{keccak256, Address, B256};
 use k256::ecdsa::{RecoveryId, Signature as EcdsaSignature, VerifyingKey};
 
-use crate::error::{PrecompileError, Result};
-
-fn revert(message: impl Into<String>) -> PrecompileError {
-    PrecompileError::revert(message)
-}
+use crate::error::{Result, TeeSignatureError};
 
 /// Recover the compressed public key that produced a recoverable secp256k1
 /// signature (`r(32) || s(32) || v(1)`) over `prehash`.
@@ -20,28 +16,34 @@ pub fn recover_signer_public_key(prehash: &B256, signature: &[u8; 65]) -> Result
         27 | 28 => recid_byte - 27,
         other => other,
     };
-    let recovery_id = RecoveryId::from_byte(normalized).ok_or_else(|| {
-        revert(format!(
-            "recoverable signature has invalid recovery id {recid_byte}"
-        ))
+    let recovery_id = RecoveryId::from_byte(normalized)
+        .ok_or(TeeSignatureError::InvalidRecoveryId { recid_byte })?;
+    let ecdsa_sig = EcdsaSignature::from_slice(&signature[..64]).map_err(|error| {
+        TeeSignatureError::MalformedRecoverableSignature {
+            reason: error.to_string(),
+        }
     })?;
-    let ecdsa_sig = EcdsaSignature::from_slice(&signature[..64])
-        .map_err(|error| revert(format!("recoverable signature is malformed: {error}")))?;
     let verifying_key =
-        VerifyingKey::recover_from_prehash(prehash.as_slice(), &ecdsa_sig, recovery_id)
-            .map_err(|error| revert(format!("signature recovery failed: {error}")))?;
+        VerifyingKey::recover_from_prehash(prehash.as_slice(), &ecdsa_sig, recovery_id).map_err(
+            |error| TeeSignatureError::SignatureRecoveryFailed {
+                reason: error.to_string(),
+            },
+        )?;
     let encoded = verifying_key.to_encoded_point(true);
     encoded
         .as_bytes()
         .try_into()
-        .map_err(|_| revert("recovered compressed public key is not 33 bytes"))
+        .map_err(|_| TeeSignatureError::InvalidCompressedPublicKeyLength.into())
 }
 
 /// Recover the EVM address that produced a recoverable secp256k1 signature.
 pub fn recover_signer(prehash: &B256, signature: &[u8; 65]) -> Result<Address> {
     let compressed = recover_signer_public_key(prehash, signature)?;
-    let verifying_key = VerifyingKey::from_sec1_bytes(&compressed)
-        .map_err(|error| revert(format!("recovered key decode failed: {error}")))?;
+    let verifying_key = VerifyingKey::from_sec1_bytes(&compressed).map_err(|error| {
+        TeeSignatureError::RecoveredKeyDecodeFailed {
+            reason: error.to_string(),
+        }
+    })?;
     let encoded = verifying_key.to_encoded_point(false);
     let digest = keccak256(&encoded.as_bytes()[1..]);
     Ok(Address::from_slice(&digest[12..]))

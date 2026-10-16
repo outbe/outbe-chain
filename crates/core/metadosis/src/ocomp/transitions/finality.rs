@@ -1,5 +1,5 @@
 use super::super::state::OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS;
-use crate::{errors::storage_corruption_message, schema::MetadosisContract};
+use crate::{errors::MetadosisStorageCorruptionError, schema::MetadosisContract};
 use alloy_primitives::B256;
 use outbe_ocomp_protocol::{
     state::{OcompFinalizedJobV1, OcompJobStatus, RESULT_VOTE_MIN_FINALITY_DEPTH},
@@ -14,10 +14,10 @@ impl FinalityWindow {
     fn derive(recorded_height: u64, response_window_blocks: u64) -> Result<Self> {
         let open_height = recorded_height
             .checked_add(RESULT_VOTE_MIN_FINALITY_DEPTH)
-            .ok_or_else(|| storage_corruption_message("OCOMP voting open height overflow"))?;
+            .ok_or(MetadosisStorageCorruptionError::OcompVotingOpenHeightOverflow)?;
         let deadline_height = open_height
             .checked_add(response_window_blocks)
-            .ok_or_else(|| storage_corruption_message("OCOMP response deadline overflow"))?;
+            .ok_or(MetadosisStorageCorruptionError::OcompResponseDeadlineOverflow)?;
         Ok(Self {
             open_height,
             deadline_height,
@@ -37,37 +37,31 @@ impl MetadosisContract<'_> {
         let response_window_blocks = anchor.response_window_blocks;
         let mut record = self
             .ocomp_job_record(intent_id, schema_limits)?
-            .ok_or_else(|| {
-                storage_corruption_message("OCOMP finality record has no matching intent")
-            })?;
+            .ok_or(MetadosisStorageCorruptionError::OcompFinalityRecordMissingMatchingIntent)?;
         if record.status != OcompJobStatus::AwaitingFinality || record.terminal.is_some() {
-            return Err(storage_corruption_message(
-                "OCOMP finality requires AWAITING_FINALITY",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::OcompFinalityRequiresAwaitingFinality.into(),
+            );
         }
         let awaiting_finality_deadline = record
             .intent_height
             .checked_add(OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS)
-            .ok_or_else(|| {
-                storage_corruption_message("OCOMP awaiting-finality deadline overflow")
-            })?;
+            .ok_or(MetadosisStorageCorruptionError::OcompAwaitingFinalityDeadlineOverflow)?;
         let profile = self
             .read_ocomp_request_profile(schema_limits)?
-            .ok_or_else(|| storage_corruption_message("OCOMP finality has no request profile"))?;
+            .ok_or(MetadosisStorageCorruptionError::OcompFinalityMissingRequestProfile)?;
         if finality_recorded_height < record.intent_height
             || finality_recorded_height > awaiting_finality_deadline
             || response_window_blocks != profile.capacity_profile.result_deadline_blocks
         {
-            return Err(storage_corruption_message(
-                "OCOMP finality/window height is invalid",
-            ));
+            return Err(MetadosisStorageCorruptionError::OcompFinalityWindowHeightInvalid.into());
         }
         let finalized = finalized_binding(&record, anchor, schema_limits)?;
         if let Some(existing) = &record.finalized {
             if existing == &finalized {
                 return Ok(existing.clone());
             }
-            return Err(storage_corruption_message("OCOMP finality binding changed"));
+            return Err(MetadosisStorageCorruptionError::OcompFinalityBindingChanged.into());
         }
         record.finalized = Some(finalized.clone());
         self.write_ocomp_job_record(intent_id, &record, schema_limits)?;
@@ -106,9 +100,9 @@ fn finalized_binding(
                 finalized_request_state_root,
                 schema_limits,
             )
-            .map_err(|error| {
-                storage_corruption_message(format!("derive finalized OCOMP JobId: {error}"))
-            })?,
+            .map_err(
+                |error| MetadosisStorageCorruptionError::DeriveFinalizedOcompJobId { error },
+            )?,
         finalized_request_block_hash,
         finalized_request_state_root,
         finality_recorded_height,
@@ -116,9 +110,9 @@ fn finalized_binding(
         deadline_height,
         quorum: None,
     };
-    finalized.validate_semantics().map_err(|error| {
-        storage_corruption_message(format!("invalid finalized OCOMP job: {error}"))
-    })?;
+    finalized
+        .validate_semantics()
+        .map_err(|error| MetadosisStorageCorruptionError::InvalidFinalizedOcompJob { error })?;
     Ok(finalized)
 }
 

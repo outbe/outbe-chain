@@ -30,7 +30,7 @@ use outbe_tee::protocol::{
 };
 
 use crate::confidential::FIDELITY;
-use crate::errors::{Result, TeeError};
+use crate::errors::{FidelityEnclaveError, Result};
 use crate::fidelity_cipher::{self, CohortTransition};
 use zeroize::Zeroizing;
 
@@ -47,10 +47,6 @@ const MIN_BUCKET: usize = 8;
 /// [`crate::confidential::Domain::derive_state_key`].
 pub fn derive_fidelity_state_key(group_sig: &[u8], chain_id: B256, epoch: u64) -> Result<[u8; 32]> {
     FIDELITY.derive_state_key(group_sig, chain_id, epoch)
-}
-
-fn err(msg: impl Into<String>) -> TeeError {
-    TeeError::Fidelity(msg.into())
 }
 
 /// Plaintext cohort ledger of one account - the decrypted blob interior.
@@ -73,7 +69,7 @@ impl CohortState {
             return Ok(Self::default());
         }
         if interior.len() < HEADER_LEN {
-            return Err(err("cohort interior shorter than header"));
+            return Err(FidelityEnclaveError::CohortInteriorShorterThanHeader.into());
         }
         let mut u64buf = [0u8; 8];
         u64buf.copy_from_slice(&interior[..8]);
@@ -89,9 +85,9 @@ impl CohortState {
             .zip(sold_count.checked_mul(SOLD_ENTRY_LEN))
             .and_then(|(a, s)| a.checked_add(s))
             .and_then(|e| e.checked_add(HEADER_LEN))
-            .ok_or_else(|| err("cohort counts overflow"))?;
+            .ok_or(FidelityEnclaveError::CohortCountsOverflow)?;
         if interior.len() < need {
-            return Err(err("cohort interior truncated"));
+            return Err(FidelityEnclaveError::CohortInteriorTruncated.into());
         }
 
         let mut offset = HEADER_LEN;
@@ -123,10 +119,10 @@ impl CohortState {
     /// combined count never decreases (a full-consume moves active -> sold), so
     /// the blob length is monotone and changes only at bucket crossings.
     fn encode_padded(&self) -> Result<Vec<u8>> {
-        let active_count =
-            u32::try_from(self.active.len()).map_err(|_| err("active cohort count overflow"))?;
-        let sold_count =
-            u32::try_from(self.sold.len()).map_err(|_| err("sold cohort count overflow"))?;
+        let active_count = u32::try_from(self.active.len())
+            .map_err(|_| FidelityEnclaveError::ActiveCohortCountOverflow)?;
+        let sold_count = u32::try_from(self.sold.len())
+            .map_err(|_| FidelityEnclaveError::SoldCohortCountOverflow)?;
         let total = self.active.len() + self.sold.len();
         let bucket = total.max(MIN_BUCKET).next_power_of_two();
         let target = HEADER_LEN + bucket * SOLD_ENTRY_LEN;
@@ -195,14 +191,14 @@ impl CohortState {
         let mut acc = RcfiAccumulator::default();
         for (size, acquired_at) in &self.active {
             acc.add_active(*size, *acquired_at, timestamp)
-                .ok_or_else(|| err("rcfi arithmetic overflow"))?;
+                .ok_or(FidelityEnclaveError::RcfiArithmeticOverflow)?;
         }
         for (size, acquired_at, sold_at) in &self.sold {
             acc.add_sold(*size, *acquired_at, *sold_at, timestamp)
-                .ok_or_else(|| err("rcfi arithmetic overflow"))?;
+                .ok_or(FidelityEnclaveError::RcfiArithmeticOverflow)?;
         }
         acc.finish(self.qualified_start, timestamp)
-            .ok_or_else(|| err("rcfi arithmetic overflow"))
+            .ok_or_else(|| FidelityEnclaveError::RcfiArithmeticOverflow.into())
     }
 
     /// `(rcfi, efficiency, league)` at `timestamp`. `first_qualified_start = 0`
@@ -215,7 +211,7 @@ impl CohortState {
             t_dec(timestamp.saturating_sub(first_qualified_start))
         };
         let league =
-            league_from_rcfi(rcfi, max).ok_or_else(|| err("league arithmetic overflow"))?;
+            league_from_rcfi(rcfi, max).ok_or(FidelityEnclaveError::LeagueArithmeticOverflow)?;
         Ok((rcfi, efficiency, league))
     }
 }
@@ -352,13 +348,13 @@ pub fn query_index(
     req: &FidelityQueryRequest,
 ) -> Result<FidelityQueryResult> {
     if req.chain_id != resident_chain_id {
-        return Err(err("query authorization is for a different chain"));
+        return Err(FidelityEnclaveError::QueryAuthDifferentChain.into());
     }
     if req.expiry < req.block_timestamp {
-        return Err(err("query authorization expired"));
+        return Err(FidelityEnclaveError::QueryAuthExpired.into());
     }
     let Ok(sig65) = <[u8; 65]>::try_from(req.owner_sig.as_slice()) else {
-        return Err(err("owner signature must be 65 bytes"));
+        return Err(FidelityEnclaveError::OwnerSignatureLength.into());
     };
     let prehash = eip191_hash(&fidelity_query_auth_message(
         resident_chain_id,
@@ -367,7 +363,7 @@ pub fn query_index(
     ));
     match outbe_primitives::tee_signatures::recover_signer(&prehash, &sig65) {
         Ok(signer) if signer == req.account => {}
-        _ => return Err(err("owner signature does not control account")),
+        _ => return Err(FidelityEnclaveError::OwnerSignatureAccountMismatch.into()),
     }
 
     let view_key = Zeroizing::new(

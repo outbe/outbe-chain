@@ -133,12 +133,13 @@ pub fn verify_body_in_collection(
     evidence: &CollectionBodyProofV1,
 ) -> Result<(), PointReadServiceError> {
     let leaf = canonical_body_leaf(domain, raw_id, stored_body)?;
-    let collection = collection_key(domain, raw_id)
-        .map_err(|_| PointReadServiceError::InvalidPackage("collection derivation"))?;
+    let collection = collection_key(domain, raw_id).map_err(|_| {
+        PointReadServiceError::from(
+            crate::errors::PointReadInvalidPackageReason::CollectionDerivation,
+        )
+    })?;
     if verify_collection(domain, raw_id, collection, leaf, evidence)? != expected_root {
-        return Err(PointReadServiceError::InvalidPackage(
-            "collection root mismatch",
-        ));
+        return Err(crate::errors::PointReadInvalidPackageReason::CollectionRootMismatch.into());
     }
     Ok(())
 }
@@ -301,9 +302,10 @@ impl CompressedTreeService {
                 .collection_has_records(collection)
                 .map_err(PointReadServiceError::materialization)?
             {
-                return Err(PointReadServiceError::Materialization(
-                    "orphan records behind absent catalog leaf".into(),
-                ));
+                return Err(
+                    crate::errors::PointReadMaterializationReason::OrphanRecordsBehindAbsentCatalogLeaf
+                        .into(),
+                );
             }
             return Ok(FrozenPointReadV1 {
                 marker,
@@ -331,13 +333,14 @@ pub fn verify_point_read_v1(
     selected_header: &SelectedHeaderV1,
     result: &PointReadResultV1,
 ) -> Result<VerifiedPointReadV1, PointReadServiceError> {
-    let domain = domain(expected_request.domain_id)
-        .map_err(|_| PointReadServiceError::InvalidPackage("unknown domain"))?;
+    let domain = domain(expected_request.domain_id).map_err(|_| {
+        PointReadServiceError::from(crate::errors::PointReadInvalidPackageReason::UnknownDomain)
+    })?;
     let common = match result {
         PointReadResultV1::Unavailable => {
-            return Err(PointReadServiceError::InvalidPackage(
-                "unavailable is not a proof package",
-            ))
+            return Err(
+                crate::errors::PointReadInvalidPackageReason::UnavailableNotProofPackage.into(),
+            )
         }
         PointReadResultV1::Present { common, .. } | PointReadResultV1::Absent { common, .. } => {
             common
@@ -348,7 +351,7 @@ pub fn verify_point_read_v1(
         PointReadResultV1::Unavailable => unreachable!(),
         PointReadResultV1::Present { body_bytes, .. } => {
             if body_bytes.is_empty() {
-                return Err(PointReadServiceError::InvalidPackage("empty present body"));
+                return Err(crate::errors::PointReadInvalidPackageReason::EmptyPresentBody.into());
             }
             (
                 canonical_body_leaf(domain, expected_request.raw_id, body_bytes.as_ref())?,
@@ -358,10 +361,14 @@ pub fn verify_point_read_v1(
         PointReadResultV1::Absent { .. } => (B256::ZERO, VerifiedPointReadV1::Absent),
     };
     let artifact = header_artifact(selected_header)?;
-    let collection = collection_key(domain, expected_request.raw_id)
-        .map_err(|_| PointReadServiceError::InvalidPackage("collection derivation"))?;
-    let catalog_key = TreeKey::from_be_bytes(*collection.as_bytes())
-        .map_err(|_| PointReadServiceError::InvalidPackage("catalog key"))?;
+    let collection = collection_key(domain, expected_request.raw_id).map_err(|_| {
+        PointReadServiceError::from(
+            crate::errors::PointReadInvalidPackageReason::CollectionDerivation,
+        )
+    })?;
+    let catalog_key = TreeKey::from_be_bytes(*collection.as_bytes()).map_err(|_| {
+        PointReadServiceError::from(crate::errors::PointReadInvalidPackageReason::CatalogKey)
+    })?;
     let (computed_collection, catalog_proof) = match result {
         PointReadResultV1::Present { evidence, .. } => (
             verify_collection(
@@ -405,16 +412,20 @@ pub fn verify_point_read_v1(
         .tree_proof()?
         .compute_root(
             catalog_key,
-            TreeLeaf::from_be_bytes(computed_collection.0)
-                .map_err(|_| PointReadServiceError::InvalidPackage("catalog leaf"))?,
+            TreeLeaf::from_be_bytes(computed_collection.0).map_err(|_| {
+                PointReadServiceError::from(
+                    crate::errors::PointReadInvalidPackageReason::CatalogLeaf,
+                )
+            })?,
         )
-        .map_err(|_| PointReadServiceError::InvalidPackage("catalog proof"))?;
-    let sealed = crate::sealed_root(B256::from(catalog_root.as_bytes()))
-        .map_err(|_| PointReadServiceError::InvalidPackage("sealed root"))?;
+        .map_err(|_| {
+            PointReadServiceError::from(crate::errors::PointReadInvalidPackageReason::CatalogProof)
+        })?;
+    let sealed = crate::sealed_root(B256::from(catalog_root.as_bytes())).map_err(|_| {
+        PointReadServiceError::from(crate::errors::PointReadInvalidPackageReason::SealedRoot)
+    })?;
     if sealed != artifact.r_sealed {
-        return Err(PointReadServiceError::InvalidPackage(
-            "header root mismatch",
-        ));
+        return Err(crate::errors::PointReadInvalidPackageReason::HeaderRootMismatch.into());
     }
     Ok(verdict)
 }
@@ -426,32 +437,44 @@ fn verify_collection(
     leaf: B256,
     evidence: &CollectionBodyProofV1,
 ) -> Result<B256, PointReadServiceError> {
-    let key = derive_tree_key(collection_for_domain(domain), raw_id)
-        .map_err(|_| PointReadServiceError::InvalidPackage("tree key"))?;
-    let shard = shard_index(key, domain.shard_count())
-        .map_err(|_| PointReadServiceError::InvalidPackage("shard index"))?;
+    let key = derive_tree_key(collection_for_domain(domain), raw_id).map_err(|_| {
+        PointReadServiceError::from(crate::errors::PointReadInvalidPackageReason::TreeKey)
+    })?;
+    let shard = shard_index(key, domain.shard_count()).map_err(|_| {
+        PointReadServiceError::from(crate::errors::PointReadInvalidPackageReason::ShardIndex)
+    })?;
     if evidence.shard_top_siblings.len() != domain.shard_count().trailing_zeros() as usize {
-        return Err(PointReadServiceError::InvalidPackage("top sibling count"));
+        return Err(crate::errors::PointReadInvalidPackageReason::TopSiblingCount.into());
     }
     let mut current = evidence
         .shard_smt_proof
         .tree_proof()?
         .compute_root(
             key,
-            TreeLeaf::from_be_bytes(leaf.0)
-                .map_err(|_| PointReadServiceError::InvalidPackage("leaf field"))?,
+            TreeLeaf::from_be_bytes(leaf.0).map_err(|_| {
+                PointReadServiceError::from(crate::errors::PointReadInvalidPackageReason::LeafField)
+            })?,
         )
-        .map_err(|_| PointReadServiceError::InvalidPackage("shard proof"))?
+        .map_err(|_| {
+            PointReadServiceError::from(crate::errors::PointReadInvalidPackageReason::ShardProof)
+        })?
         .as_bytes();
     for (level, sibling) in evidence.shard_top_siblings.iter().enumerate() {
-        TreeRoot::from_be_bytes(sibling.0)
-            .map_err(|_| PointReadServiceError::InvalidPackage("non-canonical top sibling"))?;
+        TreeRoot::from_be_bytes(sibling.0).map_err(|_| {
+            PointReadServiceError::from(
+                crate::errors::PointReadInvalidPackageReason::NonCanonicalTopSibling,
+            )
+        })?;
         current = top_hash(level as u32, shard, current, sibling.0)?;
-        TreeRoot::from_be_bytes(current)
-            .map_err(|_| PointReadServiceError::InvalidPackage("invalid top root"))?;
+        TreeRoot::from_be_bytes(current).map_err(|_| {
+            PointReadServiceError::from(
+                crate::errors::PointReadInvalidPackageReason::InvalidTopRoot,
+            )
+        })?;
     }
-    collection_root(domain, collection, B256::from(current))
-        .map_err(|_| PointReadServiceError::InvalidPackage("collection root"))
+    collection_root(domain, collection, B256::from(current)).map_err(|_| {
+        PointReadServiceError::from(crate::errors::PointReadInvalidPackageReason::CollectionRoot)
+    })
 }
 
 fn validate_common(
@@ -465,10 +488,10 @@ fn validate_common(
     let header_bound =
         (common.block_number, common.block_hash) == (header.block_number, header.block_hash);
     if common.proof_encoding_version != PROOF_ENCODING_VERSION_V1 || !request_bound {
-        return Err(PointReadServiceError::InvalidPackage("common binding"));
+        return Err(crate::errors::PointReadInvalidPackageReason::CommonBinding.into());
     }
     if common.block_number == 0 || !header_bound {
-        return Err(PointReadServiceError::InvalidPackage("common binding"));
+        return Err(crate::errors::PointReadInvalidPackageReason::CommonBinding.into());
     }
     Ok(())
 }
@@ -478,15 +501,13 @@ fn validate_header(
     header: &SelectedHeaderV1,
 ) -> Result<(), PointReadServiceError> {
     if marker.height != header.block_number || marker.block_hash != header.block_hash {
-        return Err(PointReadServiceError::InvalidPackage(
-            "marker/header identity",
-        ));
+        return Err(crate::errors::PointReadInvalidPackageReason::MarkerHeaderIdentity.into());
     }
     let artifact = header_artifact(header)?;
     if artifact.commitment_scheme_version != marker.commitment_scheme_version
         || artifact.r_sealed != marker.new_root
     {
-        return Err(PointReadServiceError::InvalidPackage("marker/header root"));
+        return Err(crate::errors::PointReadInvalidPackageReason::MarkerHeaderRoot.into());
     }
     Ok(())
 }
@@ -496,16 +517,20 @@ fn header_artifact(
 ) -> Result<outbe_primitives::reshare_artifact::CompressedEntitiesRootArtifact, PointReadServiceError>
 {
     if header.block_number == 0 {
-        return Err(PointReadServiceError::InvalidPackage("genesis header"));
+        return Err(crate::errors::PointReadInvalidPackageReason::GenesisHeader.into());
     }
     let decoded =
         outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(&header.extra_data)
-            .map_err(|_| PointReadServiceError::InvalidPackage("header artifacts"))?;
-    let artifact = decoded
-        .compressed_entities_root
-        .ok_or(PointReadServiceError::InvalidPackage("missing tag 0x08"))?;
+            .map_err(|_| {
+                PointReadServiceError::from(
+                    crate::errors::PointReadInvalidPackageReason::HeaderArtifacts,
+                )
+            })?;
+    let artifact = decoded.compressed_entities_root.ok_or_else(|| {
+        PointReadServiceError::from(crate::errors::PointReadInvalidPackageReason::MissingTag0x08)
+    })?;
     if artifact.commitment_scheme_version != ACTIVE_COMMITMENT_SCHEME {
-        return Err(PointReadServiceError::InvalidPackage("fork scheme"));
+        return Err(crate::errors::PointReadInvalidPackageReason::ForkScheme.into());
     }
     Ok(artifact)
 }
@@ -515,37 +540,66 @@ pub(crate) fn canonical_body_leaf(
     raw_id: WwdEntityId,
     bytes: &[u8],
 ) -> Result<B256, PointReadServiceError> {
-    let stored = crate::decode_stored_body(bytes)
-        .map_err(|_| PointReadServiceError::InvalidPackage("stored body envelope"))?;
+    let stored = crate::decode_stored_body(bytes).map_err(|_| {
+        PointReadServiceError::from(
+            crate::errors::PointReadInvalidPackageReason::StoredBodyEnvelope,
+        )
+    })?;
     let body_id = match domain {
         CeDomain::Tribute if stored.schema_version() == crate::TRIBUTE_BODY_SCHEMA_V2 => {
             crate::decode_stored_tribute_v2(bytes)
                 .map(|body| body.context.tribute_id)
-                .map_err(|_| PointReadServiceError::InvalidPackage("encrypted tribute body"))?
+                .map_err(|_| {
+                    PointReadServiceError::from(
+                        crate::errors::PointReadInvalidPackageReason::EncryptedTributeBody,
+                    )
+                })?
         }
         CeDomain::Tribute => decode_stored_tribute_v1(bytes)
             .map(|b| b.tribute_id)
-            .map_err(|_| PointReadServiceError::InvalidPackage("tribute body"))?,
+            .map_err(|_| {
+                PointReadServiceError::from(
+                    crate::errors::PointReadInvalidPackageReason::TributeBody,
+                )
+            })?,
         CeDomain::NodItem if stored.schema_version() == crate::NOD_BODY_SCHEMA_V2 => {
             crate::decode_stored_nod_item_v2(bytes)
                 .map(|body| body.encrypted.terms.nod_id)
-                .map_err(|_| PointReadServiceError::InvalidPackage("encrypted nod body"))?
+                .map_err(|_| {
+                    PointReadServiceError::from(
+                        crate::errors::PointReadInvalidPackageReason::EncryptedNodBody,
+                    )
+                })?
         }
         CeDomain::NodItem => decode_stored_nod_item_v1(bytes)
             .map(|b| b.nod_id)
-            .map_err(|_| PointReadServiceError::InvalidPackage("nod item body"))?,
+            .map_err(|_| {
+                PointReadServiceError::from(
+                    crate::errors::PointReadInvalidPackageReason::NodItemBody,
+                )
+            })?,
         CeDomain::NodBucket => decode_stored_nod_bucket_v1(bytes)
             .map(|b| b.entity_id())
-            .map_err(|_| PointReadServiceError::InvalidPackage("nod bucket body"))?,
+            .map_err(|_| {
+                PointReadServiceError::from(
+                    crate::errors::PointReadInvalidPackageReason::NodBucketBody,
+                )
+            })?,
         CeDomain::Gem => crate::decode_stored_gem_v1(bytes)
             .map(|b| b.gem_id)
-            .map_err(|_| PointReadServiceError::InvalidPackage("gem body"))?,
+            .map_err(|_| {
+                PointReadServiceError::from(crate::errors::PointReadInvalidPackageReason::GemBody)
+            })?,
         CeDomain::GemBucket => crate::decode_stored_gem_bucket_v1(bytes)
             .map(|b| b.entity_id())
-            .map_err(|_| PointReadServiceError::InvalidPackage("gem bucket body"))?,
+            .map_err(|_| {
+                PointReadServiceError::from(
+                    crate::errors::PointReadInvalidPackageReason::GemBucketBody,
+                )
+            })?,
     };
     if body_id != raw_id {
-        return Err(PointReadServiceError::InvalidPackage("body identity"));
+        return Err(crate::errors::PointReadInvalidPackageReason::BodyIdentity.into());
     }
     body_commitment(
         ACTIVE_COMMITMENT_SCHEME,
@@ -554,7 +608,9 @@ pub(crate) fn canonical_body_leaf(
         stored.payload(),
     )
     .map(|leaf| B256::from(*leaf.as_bytes()))
-    .map_err(|_| PointReadServiceError::InvalidPackage("body commitment"))
+    .map_err(|_| {
+        PointReadServiceError::from(crate::errors::PointReadInvalidPackageReason::BodyCommitment)
+    })
 }
 
 /// Single-leaf fixture using the production Poseidon/CKB proof implementation.
@@ -605,9 +661,7 @@ pub(crate) fn top_siblings(
         || !roots.len().is_power_of_two()
         || selected as usize >= roots.len()
     {
-        return Err(PointReadServiceError::InvalidPackage(
-            "invalid shard-top envelope",
-        ));
+        return Err(crate::errors::PointReadInvalidPackageReason::InvalidShardTopEnvelope.into());
     }
     let mut level_roots: Vec<[u8; 32]> = roots.iter().map(|r| r.0).collect();
     let mut position = selected as usize;
@@ -644,7 +698,9 @@ fn top_hash(
     ];
     crate::commitment::poseidon(TAG_TOP_NODE, &inputs)
         .map(field_to_be32)
-        .map_err(|_| PointReadServiceError::InvalidPackage("top hash"))
+        .map_err(|_| {
+            PointReadServiceError::from(crate::errors::PointReadInvalidPackageReason::TopHash)
+        })
 }
 
 fn domain(id: u16) -> Result<CeDomain, PointReadRequestError> {

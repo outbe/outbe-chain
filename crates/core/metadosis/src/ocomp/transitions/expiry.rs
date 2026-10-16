@@ -1,6 +1,6 @@
 use super::super::state::JobFsmCommand;
 use crate::{
-    errors::storage_corruption_message,
+    errors::MetadosisStorageCorruptionError,
     reducer::{OuterWwdTransition, OuterWwdTransitionKind},
     schema::MetadosisContract,
 };
@@ -61,40 +61,39 @@ impl MetadosisContract<'_> {
             outer_transition.kind(),
             OuterWwdTransitionKind::OcompExpired
         ) {
-            return Err(storage_corruption_message(
-                "OCOMP expiry requires the typed outer expiry transition",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::OcompExpiryRequiresTypedOuterExpiryTransition
+                    .into(),
+            );
         }
         let mut state = self
             .live_ocomp_fsm_state_by_intent(intent_id, schema_limits)?
-            .ok_or_else(|| storage_corruption_message("OCOMP expiry index is empty"))?;
+            .ok_or(MetadosisStorageCorruptionError::OcompExpiryIndexEmpty)?;
         let live_intent_id = state
             .projection()
             .live_intent_id
-            .ok_or_else(|| storage_corruption_message("OCOMP expiry index has no live intent"))?;
+            .ok_or(MetadosisStorageCorruptionError::OcompExpiryIndexMissingLiveIntent)?;
         if live_intent_id != intent_id {
-            return Err(storage_corruption_message(
-                "OCOMP expiry selected a different live job",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::OcompExpirySelectedDifferentLiveJob.into(),
+            );
         }
         let record = self
             .ocomp_job_record(live_intent_id, schema_limits)?
-            .ok_or_else(|| {
-                storage_corruption_message("OCOMP live index points to a missing job")
-            })?;
+            .ok_or(MetadosisStorageCorruptionError::OcompLiveIndexPointsToMissingJob)?;
         let wwd = WorldwideDay::new(record.intent.wwd);
         let terminal = apply_expiry_evidence(&mut state, &record, expiry)?;
         let indexed_terminal = self.terminal_intent_count(wwd)?;
         if indexed_terminal != 0 {
-            return Err(storage_corruption_message(
-                "OCOMP WorldwideDay already has a terminal job",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::OcompWorldwideDayAlreadyHasTerminalJob.into(),
+            );
         }
         let retained_lysis_limit_minor = terminal.retained_lysis_limit_minor;
         if retained_lysis_limit_minor != record.intent.frozen_metadosis_values.lysis_limit_minor {
-            return Err(storage_corruption_message(
-                "expired OCOMP job retained limit mismatch",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::ExpiredOcompJobRetainedLimitMismatch.into(),
+            );
         }
 
         Ok(PreparedExpiry {
@@ -131,18 +130,17 @@ fn apply_expiry_evidence(
     let live_intent_id = expiry.intent_id;
     state
         .apply(JobFsmCommand::Expire { at_height, at_time })
-        .map_err(storage_corruption_message)?;
-    let terminal =
-        state.terminal_attempts().last().copied().ok_or_else(|| {
-            storage_corruption_message("OCOMP expiry produced no terminal evidence")
-        })?;
+        .map_err(MetadosisStorageCorruptionError::from)?;
+    let terminal = state
+        .terminal_attempts()
+        .last()
+        .copied()
+        .ok_or(MetadosisStorageCorruptionError::OcompExpiryProducedNoTerminalEvidence)?;
     if terminal.intent_id != live_intent_id
         || terminal.pending_nonce != record.intent.pending_nonce
         || state.projection().phase != super::super::state::DayPhase::Terminal
     {
-        return Err(storage_corruption_message(
-            "OCOMP terminal evidence is inconsistent",
-        ));
+        return Err(MetadosisStorageCorruptionError::OcompTerminalEvidenceInconsistent.into());
     }
     Ok(terminal)
 }

@@ -62,9 +62,9 @@ pub fn combine(primary: Result<()>, cleanup: Result<()>) -> Result<()> {
     match (primary, cleanup) {
         (Ok(()), Ok(())) => Ok(()),
         (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
-        (Err(error), Err(cleanup)) => {
-            Err(error.wrap_err(format!("application drain also failed: {cleanup:#}")))
-        }
+        (Err(error), Err(cleanup)) => Err(error.wrap_err(
+            crate::errors::ApplicationShutdownError::drain_also_failed(&cleanup),
+        )),
     }
 }
 

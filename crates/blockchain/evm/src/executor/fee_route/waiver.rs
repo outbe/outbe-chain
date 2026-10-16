@@ -99,10 +99,8 @@ where
                 if error.is_node_local() || matches!(error, PrecompileError::Fatal(_)) {
                     BlockExecutionError::other(error)
                 } else {
-                    BlockValidationError::msg(format!(
-                        "free-tx signer account read failed: {error}"
-                    ))
-                    .into()
+                    crate::errors::ExecutorValidationError::free_tx_signer_account_read(error)
+                        .into()
                 }
             })
     }
@@ -125,9 +123,9 @@ where
             .code_by_hash(account.code_hash)
             .map(|code| code.eip7702_address())
             .map_err(|error| {
-                BlockExecutionError::other(PrecompileError::storage(format!(
-                    "free-tx signer code lookup failed: {error}"
-                )))
+                BlockExecutionError::other(
+                    crate::errors::ExecutorStorageError::free_tx_signer_code_lookup(error),
+                )
             })
     }
 }

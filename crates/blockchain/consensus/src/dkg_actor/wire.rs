@@ -198,7 +198,7 @@ impl DkgMessage {
         }
         let version = reader.get_u8();
         if version != DKG_WIRE_VERSION {
-            return Err(Error::Invalid("DkgMessage", "unsupported wire version").into());
+            return Err(crate::errors::DkgWireInvalidReason::UnsupportedWireVersion.into());
         }
         let ceremony_id = DkgCeremonyId::read(reader)?;
         if ceremony_id != cfg.expected_ceremony_id {
@@ -235,7 +235,7 @@ impl DkgMessage {
                     signed_log,
                 })
             }
-            _ => Err(Error::Invalid("DkgMessage", "unknown tag").into()),
+            _ => Err(crate::errors::DkgWireInvalidReason::UnknownTag.into()),
         }
     }
 }
@@ -247,7 +247,7 @@ impl Read for DkgMessage {
         Self::read_for_ceremony(reader, cfg).map_err(|error| match error {
             DkgMessageReadError::Codec(error) => error,
             DkgMessageReadError::WrongCeremonyId { .. } => {
-                Error::Invalid("DkgMessage", "wrong ceremony id")
+                crate::errors::DkgWireInvalidReason::WrongCeremonyId.into()
             }
         })
     }

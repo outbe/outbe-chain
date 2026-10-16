@@ -6,7 +6,7 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum WwdAdvanceEdge {
+pub enum WwdAdvanceEdge {
     ResolveForming,
     OpenOffering,
     CloseOffering,
@@ -50,7 +50,7 @@ impl WwdTransitionPlan {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg_attr(not(test), allow(dead_code))]
-pub(crate) enum ReadyDisposition {
+pub enum ReadyDisposition {
     EmptyTributeDay,
     ZeroGratisAllocation,
     PrepareOcomp,
@@ -58,7 +58,7 @@ pub(crate) enum ReadyDisposition {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg_attr(not(any(test, feature = "test-utils")), allow(dead_code))]
-pub(crate) enum OuterWwdEvent {
+pub enum OuterWwdEvent {
     CreateDay,
     AdvanceDue {
         block_time: u64,
@@ -74,7 +74,7 @@ pub(crate) enum OuterWwdEvent {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum OuterWwdTransitionKind {
+pub enum OuterWwdTransitionKind {
     Noop,
     Created,
     Advance(Vec<WwdAdvanceEdge>),
@@ -135,9 +135,8 @@ pub(crate) fn reduce_outer_wwd(
             ),
         });
     }
-    let current = current.ok_or_else(|| {
-        crate::errors::storage_corruption("Metadosis outer WWD event requires a persisted day")
-    })?;
+    let current = current
+        .ok_or(crate::errors::MetadosisStorageCorruptionError::OuterWwdEventRequiresPersistedDay)?;
     match event {
         OuterWwdEvent::AdvanceDue {
             block_time,
@@ -174,10 +173,13 @@ fn reduce_due(
     admission: Admission,
 ) -> Result<OuterWwdTransition> {
     if admission.retained_count > MAX_RETAINED_WWDS {
-        return Err(crate::errors::storage_corruption(format!(
-            "Metadosis retained WWD count {} exceeds cap {MAX_RETAINED_WWDS}",
-            admission.retained_count,
-        )));
+        return Err(
+            crate::errors::MetadosisStorageCorruptionError::RetainedWwdCountExceedsCap {
+                retained_count: admission.retained_count,
+                max_retained_wwds: MAX_RETAINED_WWDS,
+            }
+            .into(),
+        );
     }
     let mut plan = plan_wwd_advance(current, block_time)?;
     if admission.limit_final && current.metadosis_limit_minor.is_zero() && plan.opens_offering() {
@@ -314,10 +316,11 @@ fn reduce_failure(current: &WwdProjection) -> Result<OuterWwdTransition> {
 }
 
 fn invalid_event(current: &WwdProjection, event: OuterWwdEvent) -> PrecompileError {
-    crate::errors::storage_corruption(format!(
-        "Metadosis outer WWD event {event:?} is invalid from {:?}",
-        current.status
-    ))
+    crate::errors::MetadosisStorageCorruptionError::OuterWwdEventInvalidFromStatus {
+        event,
+        status: current.status,
+    }
+    .into()
 }
 
 fn transition(
@@ -412,8 +415,10 @@ fn plan_offering(current: &WwdProjection, time: u64) -> WwdTransitionPlan {
 }
 
 fn backward_time(current: &WwdProjection, block_time: u64) -> PrecompileError {
-    crate::errors::storage_corruption(format!(
-        "Metadosis WWD {} status {:?} is ahead of block timestamp {}",
-        current.worldwide_day, current.status, block_time
-    ))
+    crate::errors::MetadosisStorageCorruptionError::WwdStatusAheadOfBlockTimestamp {
+        worldwide_day: current.worldwide_day,
+        status: current.status,
+        block_time,
+    }
+    .into()
 }

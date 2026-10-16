@@ -1,8 +1,9 @@
 //! Record dispatch and slot duplication checks, independent of envelope framing.
 use super::{
     consensus, fields, late_finalize, Bytes, ConsensusHeaderArtifact, OutbeBlockArtifacts,
-    PrecompileError, Result, BOUNDARY_TAG, COMMITTEE_PREANNOUNCE_TAG, COMPRESSED_ENTITIES_ROOT_TAG,
-    DEALER_LOG_TAG, EXECUTION_SUMMARY_TAG, LATE_FINALIZE_CREDITS_TAG, TIMESTAMP_MILLIS_PART_TAG,
+    ReshareArtifactError, Result, BOUNDARY_TAG, COMMITTEE_PREANNOUNCE_TAG,
+    COMPRESSED_ENTITIES_ROOT_TAG, DEALER_LOG_TAG, EXECUTION_SUMMARY_TAG, LATE_FINALIZE_CREDITS_TAG,
+    TIMESTAMP_MILLIS_PART_TAG,
 };
 
 pub(super) fn decode_into(
@@ -14,14 +15,14 @@ pub(super) fn decode_into(
         EXECUTION_SUMMARY_TAG => {
             decode_unique_slot(
                 &mut artifacts.execution_summary,
-                "duplicate execution summary artifact",
+                ReshareArtifactError::DuplicateExecutionSummary,
                 || fields::decode_execution_summary(payload),
             )?;
         }
         BOUNDARY_TAG | DEALER_LOG_TAG | COMMITTEE_PREANNOUNCE_TAG => {
             decode_unique_slot(
                 &mut artifacts.consensus_header_artifact,
-                "duplicate consensus header artifact",
+                ReshareArtifactError::DuplicateConsensusHeader,
                 || {
                     Ok(match tag {
                         BOUNDARY_TAG => consensus::decode_boundary_record(payload)?,
@@ -36,40 +37,36 @@ pub(super) fn decode_into(
         }
         TIMESTAMP_MILLIS_PART_TAG => {
             if artifacts.timestamp_millis_part != 0 {
-                return Err(PrecompileError::revert("duplicate timestamp_millis_part"));
+                return Err(ReshareArtifactError::DuplicateTimestampMillisPart.into());
             }
             artifacts.timestamp_millis_part = fields::decode_timestamp(payload)?;
         }
         LATE_FINALIZE_CREDITS_TAG => {
             decode_unique_slot(
                 &mut artifacts.late_finalize_credits,
-                "duplicate late finalize credits artifact",
+                ReshareArtifactError::DuplicateLateFinalizeCredits,
                 || late_finalize::decode_payload(payload),
             )?;
         }
         COMPRESSED_ENTITIES_ROOT_TAG => {
             decode_unique_slot(
                 &mut artifacts.compressed_entities_root,
-                "duplicate compressed-entities root artifact",
+                ReshareArtifactError::DuplicateCompressedEntitiesRoot,
                 || fields::decode_root(payload),
             )?;
         }
-        _ => {
-            return Err(PrecompileError::revert(format!(
-                "unsupported block artifact tag: {tag}"
-            )))
-        }
+        _ => return Err(ReshareArtifactError::UnsupportedTag { tag }.into()),
     }
     Ok(())
 }
 
 fn decode_unique_slot<T>(
     slot: &mut Option<T>,
-    duplicate: &'static str,
+    duplicate: ReshareArtifactError,
     decode: impl FnOnce() -> Result<T>,
 ) -> Result<()> {
     if slot.is_some() {
-        return Err(PrecompileError::revert(duplicate));
+        return Err(duplicate.into());
     }
     *slot = Some(decode()?);
     Ok(())

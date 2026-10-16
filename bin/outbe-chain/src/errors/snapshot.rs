@@ -445,6 +445,16 @@ pub(crate) enum SnapshotError {
         #[source]
         source: std::io::Error,
     },
+    /// Retained body count calculation overflowed.
+    #[error("retained body count overflow")]
+    RetainedBodyCountOverflow,
+}
+
+impl SnapshotError {
+    /// Converts this snapshot error into an invalid `CeAuditError`.
+    pub(crate) fn into_ce_audit_error(self) -> outbe_compressed_entities::CeAuditError {
+        outbe_compressed_entities::CeAuditError::Invalid(self.to_string())
+    }
 }
 
 /// Precompile storage errors raised while reading canonical snapshot state.

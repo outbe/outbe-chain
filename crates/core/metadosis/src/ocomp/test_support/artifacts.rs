@@ -118,6 +118,7 @@ pub fn seed_registry_authority(
     authority: &outbe_ocompregistry::OcompProtocolAuthorityV1,
     limits: &outbe_ocomp_protocol::SchemaLimits,
 ) -> PrecompileResult<()> {
+    use crate::errors::MetadosisTestSupportError;
     let registry = outbe_ocompregistry::OcompRegistry::new(storage.clone());
     registry
         .active_request_profile
@@ -126,15 +127,13 @@ pub fn seed_registry_authority(
         &authority
             .protocol_bundle
             .encode_canonical(limits)
-            .map_err(|error| PrecompileError::Fatal(error.to_string()))?,
+            .map_err(MetadosisTestSupportError::from)?,
     )?;
     registry
         .active_protocol_bundle_hash
         .write(authority.request_profile.protocol_bundle_hash)?;
     if registry.active_authority(limits)?.as_ref() != Some(authority) {
-        return Err(PrecompileError::Fatal(
-            "seeded OCOMP Registry authority does not read back".into(),
-        ));
+        return Err(MetadosisTestSupportError::SeededOcompRegistryAuthorityMismatch.into());
     }
     Ok(())
 }

@@ -24,19 +24,16 @@ pub fn seed_ready_worldwide_days_for_capacity(
     storage: StorageHandle<'_>,
     worldwide_days: &[WorldwideDay],
 ) -> Result<()> {
+    use crate::errors::MetadosisTestSupportError;
     use crate::fixture_kernel::FixtureKernelExt;
 
     if worldwide_days.len() > crate::constants::MAX_RETAINED_WWDS {
-        return Err(outbe_primitives::error::PrecompileError::Fatal(
-            "capacity fixture exceeds MAX_RETAINED_WWDS".into(),
-        ));
+        return Err(MetadosisTestSupportError::CapacityFixtureExceedsMaxRetainedWwds.into());
     }
     let mut contract = crate::schema::MetadosisContract::new(storage);
     for worldwide_day in worldwide_days {
         if !worldwide_day.is_valid() {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(
-                "capacity fixture contains an invalid WorldwideDay".into(),
-            ));
+            return Err(MetadosisTestSupportError::CapacityFixtureInvalidWorldwideDay.into());
         }
         contract.fixture_create_ready_day(*worldwide_day, U256::ZERO, U256::ZERO, U256::ZERO)?;
         contract.add_active_wwd(*worldwide_day)?;

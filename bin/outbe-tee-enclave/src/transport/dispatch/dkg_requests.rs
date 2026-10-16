@@ -131,9 +131,7 @@ fn announce(
     let DispatchInitializationContext { initialization, .. } = context;
     let result = (|| {
         let network_binding = initialization
-            .ok_or_else(|| {
-                crate::errors::TeeError::dkg_err("DKG announcement requires initialized state")
-            })?
+            .ok_or(crate::errors::DkgError::AnnouncementRequiresInitializedState)?
             .network_binding()
             .map_err(crate::errors::TeeError::dkg_err)?
             .ok_or_else(|| {

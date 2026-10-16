@@ -3,12 +3,12 @@ use super::super::json_hex_array;
 use super::super::json_hex_u256_field;
 use super::super::json_hex_u64_field;
 use super::super::sign_node_hash;
-use super::classify_join_offer_key_state_transport;
+use super::classify_join_offer_key_state;
 
 use super::JoinEnclave;
 use super::JoinOfferKeyState;
 
-use crate::errors::TeeJoinAdmissionError;
+use crate::errors::{TeeJoinAdmissionError, TeeJoinError};
 use crate::rpc::Rpc;
 use alloy_consensus::BlockHeader as _;
 
@@ -77,7 +77,7 @@ pub(in super::super) trait FinalizedAdmissionRecoveryIoV1 {
 
     fn reconnect_exact(&mut self) -> std::result::Result<(), TransportError>;
 
-    fn probe_offer_key(&mut self) -> std::result::Result<JoinOfferKeyState, TransportError>;
+    fn probe_offer_key(&mut self) -> std::result::Result<JoinOfferKeyState, TeeJoinError>;
 
     fn expected_offer_key(&self) -> [u8; 32];
 }
@@ -176,11 +176,11 @@ impl<R: Rpc + Sync> FinalizedAdmissionRecoveryIoV1 for CliFinalizedAdmissionIoV1
         Ok(())
     }
 
-    fn probe_offer_key(&mut self) -> std::result::Result<JoinOfferKeyState, TransportError> {
+    fn probe_offer_key(&mut self) -> std::result::Result<JoinOfferKeyState, TeeJoinError> {
         let response = self
             .enclave
             .request_transport(&EnclaveRequest::GetPublicKeys)?;
-        classify_join_offer_key_state_transport(response, self.expected_offer_public)
+        classify_join_offer_key_state(response, self.expected_offer_public)
     }
 
     fn expected_offer_key(&self) -> [u8; 32] {

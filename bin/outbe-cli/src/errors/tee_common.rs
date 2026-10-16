@@ -29,6 +29,14 @@ pub(crate) enum TeeAdmissionHistoryError {
     /// Adjacent blocks in the finality ancestor chain are not contiguous parents.
     #[error("invalid finality ancestor chain")]
     InvalidFinalityAncestorChain,
+    /// The distance to the target block exceeds the maximum proof window.
+    #[cfg(test)]
+    #[error("distance to target block exceeds maximum proof window")]
+    ProofWindowExpired,
+    /// The proof request was rejected as invalid.
+    #[cfg(test)]
+    #[error("invalid proof request")]
+    InvalidProofRequest,
 }
 
 /// Errors for TEE identity, key loading, and `tee pubkey`.

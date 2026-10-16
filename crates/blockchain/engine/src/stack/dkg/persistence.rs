@@ -622,11 +622,11 @@ fn check_unfinalized_pending_private_state(
         )
         .err()
         .map(|error| {
-            format!("unfinalized pending DKG material does not match pending boundary: {error:#}")
+            crate::errors::StackDkgError::unfinalized_pending_material_mismatch(&error).to_string()
         }),
-        Ok(None) if local_is_incoming_participant => {
-            Some("unfinalized pending DKG boundary missing local private material".to_string())
-        }
+        Ok(None) if local_is_incoming_participant => Some(
+            crate::errors::StackDkgError::UnfinalizedPendingMissingLocalPrivateMaterial.to_string(),
+        ),
         Ok(None) => {
             info!(
                 epoch = snapshot.artifact.epoch,
@@ -635,9 +635,10 @@ fn check_unfinalized_pending_private_state(
             );
             None
         }
-        Err(error) => Some(format!(
-            "unfinalized pending DKG private state is incomplete or corrupt: {error:#}"
-        )),
+        Err(error) => Some(
+            crate::errors::StackDkgError::unfinalized_pending_private_state_corrupt(&error)
+                .to_string(),
+        ),
     }
 }
 

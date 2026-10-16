@@ -12,7 +12,6 @@
 //! || ticker bytes
 //! ```
 
-use crate::error::PrecompileError;
 use crate::units::MAX_ASSET_DECIMALS;
 use alloy_primitives::{keccak256, Address, B256, U256};
 use serde::{Deserialize, Serialize};
@@ -96,12 +95,6 @@ pub fn validate_currency_code(iso_code: u16) -> Result<(), CurrencyCodeError> {
 pub enum CurrencyCodeError {
     #[error("Invalid currency code {currency}")]
     InvalidCurrency { currency: u16 },
-}
-
-impl From<CurrencyCodeError> for PrecompileError {
-    fn from(value: CurrencyCodeError) -> Self {
-        PrecompileError::revert(value.to_string())
-    }
 }
 
 /// Validated fields carried by a canonical stablecoin-creation proposal.

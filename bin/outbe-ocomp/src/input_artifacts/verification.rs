@@ -20,7 +20,7 @@ pub(super) fn summarize_verified_chunks(
     let mut references = Vec::new();
     references
         .try_reserve_exact(chunk_objects.len())
-        .map_err(|_| InputArtifactError::Invariant("input chunk reference allocation"))?;
+        .map_err(|_| InputArtifactError::ReferenceAllocationFailed)?;
     let mut exact_encoded_bytes = 0_u64;
     let mut exact_record_count = 0_usize;
     let mut tribute_count = 0_usize;

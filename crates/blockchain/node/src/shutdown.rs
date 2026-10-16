@@ -247,7 +247,7 @@ impl NodeShutdown {
             return Ok(());
         };
         for secondary in failures {
-            primary = primary.wrap_err(format!("additional shutdown failure: {secondary:#}"));
+            primary = primary.wrap_err(NodeShutdownError::additional_shutdown_failure(&secondary));
         }
         Err(primary)
     }

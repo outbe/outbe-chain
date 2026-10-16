@@ -192,7 +192,7 @@ impl<'a> BlockProjection<'a> {
             .transpose()
             .map_err(|reason| ProjectionError::RetentionSelector {
                 worldwide_day,
-                reason,
+                reason: reason.to_string(),
             })?
             .flatten();
         if let Some(pin) = retention_pin {

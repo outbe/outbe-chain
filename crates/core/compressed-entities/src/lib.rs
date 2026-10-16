@@ -45,7 +45,8 @@ pub use api::{
 
 pub use collection::{
     collection_key, collection_root, partition_collection_key, sealed_root,
-    tribute_partition_root_from_leaves, CeDomain, CeTopologyV1, CollectionKey, K_PROVISIONAL,
+    tribute_partition_root_from_leaves, CeDomain, CeTopologyV1, CollectionError, CollectionKey,
+    K_PROVISIONAL,
 };
 pub use collection_proof_archive::{open_tribute_proof_archive, TributeProofArchiveV1};
 pub use collection_reconstruction::{

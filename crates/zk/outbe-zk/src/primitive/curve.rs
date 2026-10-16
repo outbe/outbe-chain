@@ -3,13 +3,14 @@
 use ark_ec::{AffineRepr, PrimeGroup};
 use ark_ff::{BigInteger, PrimeField};
 
+use crate::errors::IdentityError;
 use crate::{Error, Fr};
 
 pub use ark_grumpkin::{Affine, Fr as Scalar, Projective as Group};
 
 /// Affine `(x, y)` as native field elements, rejecting the identity.
 pub fn coords(p: &Affine) -> Result<(Fr, Fr), Error> {
-    let (x, y) = p.xy().ok_or(Error::Identity("curve point coords"))?;
+    let (x, y) = p.xy().ok_or(IdentityError::CurvePointCoords)?;
     Ok((x, y))
 }
 

@@ -139,20 +139,17 @@ pub(super) fn decode_document(
             Bson::String(id) => Some(id),
             _ => None,
         })
-        .ok_or_else(|| {
-            StorageError::Corruption("MongoDB storage document has a non-string _id".to_owned())
-        })?;
+        .ok_or(crate::errors::StorageCorruptionError::MongoNonStringId)?;
     let raw_key = hex::decode(&encoded_key).map_err(|_| {
-        StorageError::Corruption("MongoDB storage document has invalid key encoding".to_owned())
+        StorageError::from(crate::errors::StorageCorruptionError::MongoInvalidKeyEncoding)
     })?;
     if hex::encode(&raw_key) != encoded_key {
         return Err(StorageError::Corruption(
             "MongoDB storage document key is not canonical lowercase hex".to_owned(),
         ));
     }
-    let key = Key::new(raw_key).map_err(|_| {
-        StorageError::Corruption("MongoDB storage document contains an invalid key".to_owned())
-    })?;
+    let key = Key::new(raw_key)
+        .map_err(|_| StorageError::from(crate::errors::StorageCorruptionError::MongoInvalidKey))?;
     if expected_key.is_some_and(|expected| expected != &key) {
         return Err(StorageError::Corruption(
             "MongoDB storage document key does not match its lookup key".to_owned(),
@@ -165,16 +162,14 @@ pub(super) fn decode_document(
             Bson::Binary(binary) => Some(binary),
             _ => None,
         })
-        .ok_or_else(|| {
-            StorageError::Corruption("MongoDB storage document has a non-binary value".to_owned())
-        })?;
+        .ok_or(crate::errors::StorageCorruptionError::MongoNonBinaryValue)?;
     if binary.subtype != BinarySubtype::Generic {
         return Err(StorageError::Corruption(
             "MongoDB storage document uses an unexpected binary subtype".to_owned(),
         ));
     }
     let value = Value::new(binary.bytes).map_err(|_| {
-        StorageError::Corruption("MongoDB storage document contains an oversized value".to_owned())
+        StorageError::from(crate::errors::StorageCorruptionError::MongoOversizedValue)
     })?;
     if !document.is_empty() {
         return Err(StorageError::Corruption(
@@ -204,7 +199,11 @@ pub(super) fn decode_metadata(value: Bson) -> Result<StorageMetadata, StorageErr
         entries.insert(key, value);
     }
     StorageMetadata::new(entries).map_err(|error| {
-        StorageError::Corruption(format!("invalid MongoDB _projection metadata: {error}"))
+        StorageError::from(
+            crate::errors::StorageCorruptionError::MongoInvalidProjectionMetadata {
+                error: Box::new(error),
+            },
+        )
     })
 }
 

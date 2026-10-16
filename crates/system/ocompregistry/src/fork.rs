@@ -9,7 +9,7 @@ use outbe_ocomp_protocol::{
 use outbe_primitives::error::Result;
 
 use crate::{
-    errors::corruption,
+    errors::OcompRegistryError,
     runtime::{validate_protocol_authority, OcompProtocolAuthorityV1},
     OcompRequestProfile,
 };
@@ -33,7 +33,7 @@ impl OcompForkInstallClassification {
         match value {
             1 => Ok(Self::Measurement),
             2 => Ok(Self::Final),
-            _ => Err(corruption("unknown OCOMP fork-install classification")),
+            _ => Err(OcompRegistryError::UnknownForkInstallClassification.into()),
         }
     }
 }
@@ -62,24 +62,20 @@ impl OcompForkInstallV1 {
         limits: &SchemaLimits,
     ) -> Result<()> {
         if self.activation_height == 0 {
-            return Err(corruption("OCOMP fork activation height must be non-zero"));
+            return Err(OcompRegistryError::ForkActivationHeightZero.into());
         }
         if self.classification == OcompForkInstallClassification::Final
             && self.activation_height != OCOMP_POC_FINAL_ACTIVATION_HEIGHT
         {
-            return Err(corruption(
-                "final OCOMP PoC fork must activate at height 32",
-            ));
+            return Err(OcompRegistryError::FinalPocForkActivationHeightMismatch.into());
         }
         if self.request_profile.chain_id != expected_chain_id
             || self.request_profile.genesis_hash != expected_genesis_hash
         {
-            return Err(corruption("OCOMP fork-install chain identity mismatch"));
+            return Err(OcompRegistryError::ForkInstallChainIdentityMismatch.into());
         }
         if self.protocol_bundle.protocol_version != 1 {
-            return Err(corruption(
-                "unsupported initial OCOMP protocol bundle version",
-            ));
+            return Err(OcompRegistryError::UnsupportedInitialProtocolBundleVersion.into());
         }
         validate_protocol_authority(&self.authority(), limits)?;
         self.validate_founders(limits)
@@ -87,11 +83,9 @@ impl OcompForkInstallV1 {
 
     fn validate_founders(&self, limits: &SchemaLimits) -> Result<()> {
         let max = usize::try_from(outbe_consensus::bls::MAX_VALIDATORS)
-            .map_err(|_| corruption("consensus validator bound exceeds usize"))?;
+            .map_err(|_| OcompRegistryError::ConsensusValidatorBoundExceedsUsize)?;
         if self.founder_registrations.is_empty() || self.founder_registrations.len() > max {
-            return Err(corruption(format!(
-                "OCOMP founder registration count must be 1..={max}"
-            )));
+            return Err(OcompRegistryError::FounderRegistrationCountOutOfBounds { max }.into());
         }
         let mut identities = BTreeSet::new();
         let mut keys = BTreeSet::new();
@@ -100,13 +94,11 @@ impl OcompForkInstallV1 {
             if !identities.insert(registration.core.validator_identity_hash)
                 || !keys.insert(registration.core.ocomp_public_key_sec1)
             {
-                return Err(corruption(
-                    "invalid or duplicate OCOMP founder registration",
-                ));
+                return Err(OcompRegistryError::InvalidOrDuplicateFounderRegistration.into());
             }
             registration
                 .validate_proof_of_possession(limits)
-                .map_err(protocol_error)?;
+                .map_err(OcompRegistryError::from)?;
         }
         Ok(())
     }
@@ -116,9 +108,7 @@ impl OcompForkInstallV1 {
             || registration.core.genesis_hash != self.request_profile.genesis_hash
             || registration.core.validator_identity_hash.is_zero()
         {
-            return Err(corruption(
-                "invalid or duplicate OCOMP founder registration",
-            ));
+            return Err(OcompRegistryError::InvalidOrDuplicateFounderRegistration.into());
         }
         Ok(())
     }
@@ -133,14 +123,14 @@ impl OcompForkInstallV1 {
         let bundle = self
             .protocol_bundle
             .encode_canonical(limits)
-            .map_err(protocol_error)?;
+            .map_err(OcompRegistryError::from)?;
         validate_nested(profile.len(), limits)?;
         validate_nested(bundle.len(), limits)?;
         let mut registrations = Vec::with_capacity(self.founder_registrations.len());
         for registration in &self.founder_registrations {
             let bytes = registration
                 .encode_canonical(limits)
-                .map_err(protocol_error)?;
+                .map_err(OcompRegistryError::from)?;
             validate_nested(bytes.len(), limits)?;
             registrations.push(bytes);
         }
@@ -148,11 +138,11 @@ impl OcompForkInstallV1 {
             FIXED_LEN
                 .checked_add(profile.len())
                 .and_then(|n| n.checked_add(bundle.len()))
-                .ok_or_else(|| corruption("OCOMP fork-install length overflow"))?,
-            |sum, item| {
+                .ok_or(OcompRegistryError::ForkInstallLengthOverflow)?,
+            |sum, item| -> Result<usize> {
                 sum.checked_add(4)
                     .and_then(|n| n.checked_add(item.len()))
-                    .ok_or_else(|| corruption("OCOMP fork-install length overflow"))
+                    .ok_or_else(|| OcompRegistryError::ForkInstallLengthOverflow.into())
             },
         )?;
         validate_total(total, limits)?;
@@ -165,7 +155,7 @@ impl OcompForkInstallV1 {
         append_bounded(&mut encoded, &bundle)?;
         encoded.extend_from_slice(
             &u32::try_from(registrations.len())
-                .map_err(|_| corruption("OCOMP founder count exceeds u32"))?
+                .map_err(|_| OcompRegistryError::FounderCountExceedsU32)?
                 .to_be_bytes(),
         );
         for registration in registrations {
@@ -178,29 +168,29 @@ impl OcompForkInstallV1 {
         validate_total(encoded.len(), limits)?;
         let mut reader = Reader::new(encoded);
         if reader.take::<4>()? != MAGIC || u16::from_be_bytes(reader.take::<2>()?) != VERSION {
-            return Err(corruption("OCOMP fork-install magic/version mismatch"));
+            return Err(OcompRegistryError::ForkInstallMagicOrVersionMismatch.into());
         }
         let classification = OcompForkInstallClassification::decode(reader.take::<1>()?[0])?;
         let activation_height = u64::from_be_bytes(reader.take::<8>()?);
         let profile = OcompRequestProfile::decode_canonical(reader.bounded(limits)?, limits)?;
         let bundle = ProtocolBundleV1::decode_canonical(reader.bounded(limits)?, limits)
-            .map_err(protocol_error)?;
+            .map_err(OcompRegistryError::from)?;
         let count = usize::try_from(u32::from_be_bytes(reader.take::<4>()?))
-            .map_err(|_| corruption("OCOMP founder count exceeds usize"))?;
+            .map_err(|_| OcompRegistryError::FounderCountExceedsUsize)?;
         let max = usize::try_from(outbe_consensus::bls::MAX_VALIDATORS)
-            .map_err(|_| corruption("consensus validator bound exceeds usize"))?;
+            .map_err(|_| OcompRegistryError::ConsensusValidatorBoundExceedsUsize)?;
         if count == 0 || count > max {
-            return Err(corruption("invalid OCOMP founder registration count"));
+            return Err(OcompRegistryError::InvalidFounderRegistrationCount.into());
         }
         let mut founder_registrations = Vec::with_capacity(count);
         for _ in 0..count {
             founder_registrations.push(
                 OcompKeyRegistrationV1::decode_canonical(reader.bounded(limits)?, limits)
-                    .map_err(protocol_error)?,
+                    .map_err(OcompRegistryError::from)?,
             );
         }
         if reader.remaining() != 0 {
-            return Err(corruption("trailing OCOMP fork-install bytes"));
+            return Err(OcompRegistryError::TrailingForkInstallBytes.into());
         }
         let install = Self {
             classification,
@@ -215,7 +205,7 @@ impl OcompForkInstallV1 {
             limits,
         )?;
         if install.encode_canonical(limits)? != encoded {
-            return Err(corruption("non-canonical OCOMP fork-install encoding"));
+            return Err(OcompRegistryError::NonCanonicalForkInstallEncoding.into());
         }
         Ok(install)
     }
@@ -232,7 +222,7 @@ impl OcompForkInstallV1 {
 fn append_bounded(target: &mut Vec<u8>, bytes: &[u8]) -> Result<()> {
     target.extend_from_slice(
         &u32::try_from(bytes.len())
-            .map_err(|_| corruption("OCOMP fork-install field exceeds u32"))?
+            .map_err(|_| OcompRegistryError::ForkInstallFieldExceedsU32)?
             .to_be_bytes(),
     );
     target.extend_from_slice(bytes);
@@ -241,7 +231,7 @@ fn append_bounded(target: &mut Vec<u8>, bytes: &[u8]) -> Result<()> {
 
 fn validate_nested(length: usize, limits: &SchemaLimits) -> Result<()> {
     if length > limits.codec.max_allocation_bytes {
-        Err(corruption("OCOMP fork-install field exceeds byte cap"))
+        Err(OcompRegistryError::ForkInstallFieldExceedsByteCap.into())
     } else {
         Ok(())
     }
@@ -249,7 +239,7 @@ fn validate_nested(length: usize, limits: &SchemaLimits) -> Result<()> {
 
 fn validate_total(length: usize, limits: &SchemaLimits) -> Result<()> {
     if length < FIXED_LEN || length > limits.codec.max_allocation_bytes {
-        Err(corruption("OCOMP fork-install exceeds byte cap"))
+        Err(OcompRegistryError::ForkInstallExceedsByteCap.into())
     } else {
         Ok(())
     }
@@ -271,33 +261,29 @@ impl<'a> Reader<'a> {
         let end = self
             .offset
             .checked_add(N)
-            .ok_or_else(|| corruption("OCOMP fork-install offset overflow"))?;
+            .ok_or(OcompRegistryError::ForkInstallOffsetOverflow)?;
         let bytes = self
             .bytes
             .get(self.offset..end)
-            .ok_or_else(|| corruption("truncated OCOMP fork-install"))?;
+            .ok_or(OcompRegistryError::TruncatedForkInstall)?;
         self.offset = end;
         bytes
             .try_into()
-            .map_err(|_| corruption("OCOMP fork-install fixed-width decode"))
+            .map_err(|_| OcompRegistryError::ForkInstallFixedWidthDecode.into())
     }
     fn bounded(&mut self, limits: &SchemaLimits) -> Result<&'a [u8]> {
         let length = usize::try_from(u32::from_be_bytes(self.take::<4>()?))
-            .map_err(|_| corruption("OCOMP field length exceeds usize"))?;
+            .map_err(|_| OcompRegistryError::FieldLengthExceedsUsize)?;
         validate_nested(length, limits)?;
         let end = self
             .offset
             .checked_add(length)
-            .ok_or_else(|| corruption("OCOMP field offset overflow"))?;
+            .ok_or(OcompRegistryError::FieldOffsetOverflow)?;
         let bytes = self
             .bytes
             .get(self.offset..end)
-            .ok_or_else(|| corruption("truncated OCOMP fork-install field"))?;
+            .ok_or(OcompRegistryError::TruncatedForkInstallField)?;
         self.offset = end;
         Ok(bytes)
     }
-}
-
-fn protocol_error(error: impl core::fmt::Display) -> outbe_primitives::error::PrecompileError {
-    corruption(format!("invalid OCOMP fork-install object: {error}"))
 }

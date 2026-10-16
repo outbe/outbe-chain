@@ -224,7 +224,9 @@ impl ArchiveNodeWriter {
         Ok(Self { file, count: 0 })
     }
     pub(crate) fn finish(self) -> Result<()> {
-        self.file.sync_all().map_err(sync_proof_shard_error)
+        self.file
+            .sync_all()
+            .map_err(|error| crate::errors::ArchiveTreeError::SyncProofShard(error).into())
     }
     fn append(&mut self, node: ArchiveNode) -> std::result::Result<u64, TreeError> {
         let mut bytes = Vec::with_capacity(NODE_BYTES);
@@ -236,10 +238,9 @@ impl ArchiveNodeWriter {
         encode_merge(&mut bytes, &node.right);
         debug_assert_eq!(bytes.len(), NODE_BYTES);
         self.file.write_all(&bytes).map_err(TreeError::vendor)?;
-        self.count = self
-            .count
-            .checked_add(1)
-            .ok_or(TreeError::ReducerInvariant("archive node count overflow"))?;
+        self.count = self.count.checked_add(1).ok_or_else(|| {
+            TreeError::from(crate::errors::SmtReducerInvariantReason::ArchiveNodeCountOverflow)
+        })?;
         Ok(self.count)
     }
 }
@@ -376,9 +377,6 @@ fn tree_error(error: impl core::fmt::Display) -> TributePartitionReconstructionE
 }
 fn protocol_error(message: impl core::fmt::Display) -> TributePartitionReconstructionError {
     TributePartitionReconstructionError::Tree(message.to_string())
-}
-fn sync_proof_shard_error(error: impl core::fmt::Display) -> TributePartitionReconstructionError {
-    TributePartitionReconstructionError::Tree(format!("sync proof shard: {error}"))
 }
 fn corrupt(path: &Path) -> TributePartitionReconstructionError {
     TributePartitionReconstructionError::CorruptRun(path.to_path_buf())

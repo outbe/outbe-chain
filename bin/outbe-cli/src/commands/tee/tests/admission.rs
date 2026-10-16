@@ -64,7 +64,9 @@ impl FinalizedAdmissionRecoveryIoV1 for ScriptedAdmissionRecoveryIoV1 {
         Ok(())
     }
 
-    fn probe_offer_key(&mut self) -> std::result::Result<JoinOfferKeyState, TransportError> {
+    fn probe_offer_key(
+        &mut self,
+    ) -> std::result::Result<JoinOfferKeyState, crate::errors::TeeJoinError> {
         self.probe_count += 1;
         Ok(self.probes.pop_front().expect("scripted recovery probe"))
     }

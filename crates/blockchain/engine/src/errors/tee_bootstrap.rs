@@ -185,11 +185,32 @@ pub enum TeeBootstrapError {
     /// Indicates that signing a prehash with the NodeHost secp256k1 key failed.
     #[error("{0}")]
     NodeHostSignPrehash(String),
+    /// Indicates that the recipient mode is unsupported for tracked delivery.
+    #[error("unsupported recipient mode for tracked delivery")]
+    UnsupportedRecipientModeForTrackedDelivery,
+    /// Indicates that the pending delivery budget was exceeded.
+    #[error("pending delivery budget exceeded: messages={messages}, bytes={bytes}")]
+    PendingDeliveryBudgetExceeded {
+        /// Pending message count.
+        messages: usize,
+        /// Pending byte count.
+        bytes: usize,
+    },
 }
 
 impl TeeBootstrapError {
     /// Formats a NodeHost prehash signing error message.
     pub fn node_host_sign_prehash(error: impl std::fmt::Display) -> Self {
         Self::NodeHostSignPrehash(error.to_string())
+    }
+
+    /// Formats an unexpected `GetPublicKeys` enclave response.
+    pub fn unexpected_get_public_keys_response(response: impl std::fmt::Debug) -> Self {
+        Self::UnexpectedGetPublicKeysResponse(format!("{response:?}"))
+    }
+
+    /// Formats an unexpected `DkgParticipantAnnounceV1` enclave response.
+    pub fn unexpected_dkg_announcement_response(response: impl std::fmt::Debug) -> Self {
+        Self::UnexpectedDkgAnnouncementResponse(format!("{response:?}"))
     }
 }

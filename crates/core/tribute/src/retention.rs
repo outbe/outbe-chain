@@ -505,8 +505,7 @@ fn commitment_for_stored_bytes(
         stored.schema_version(),
         tribute_id,
         stored.payload(),
-    )
-    .map_err(crate::errors::retained_commitment_error)?;
+    )?;
     Ok(B256::from(*commitment.as_bytes()))
 }
 

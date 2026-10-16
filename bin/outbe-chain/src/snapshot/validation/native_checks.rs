@@ -277,7 +277,7 @@ impl outbe_tribute::RetainedTributeAuditVisitor for CountRetainedBodies {
         _entry: outbe_tribute::RetainedTributeAuditEntry,
     ) -> Result<(), outbe_compressed_entities::CeAuditError> {
         self.0 = self.0.checked_add(1).ok_or_else(|| {
-            outbe_compressed_entities::CeAuditError::Invalid("retained body count overflow".into())
+            crate::errors::SnapshotError::RetainedBodyCountOverflow.into_ce_audit_error()
         })?;
         Ok(())
     }

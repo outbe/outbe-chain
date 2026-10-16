@@ -81,7 +81,7 @@ impl LysisPlanAuditCursorV1<'_> {
                 owner,
                 WorldwideDay::new(self.audit.schedule.manifest.wwd),
             )
-            .map_err(|_| ExactLysisPlanError::AuthorityMismatch("Tribute owner identity"))?;
+            .map_err(|_| ExactLysisPlanError::TributeOwnerIdentity)?;
             self.owner_tribute_search = Some(OwnerTributeSearchV1 {
                 owner,
                 tribute_id: tribute_id.to_vec(),
@@ -289,7 +289,7 @@ impl LysisPlanAuditCursorV1<'_> {
     fn observe_tribute(&mut self, encoded: &[u8]) -> Result<(), ExactLysisPlanError> {
         let tribute = outbe_tribute::record::decode_canonical(encoded)?;
         if tribute.worldwide_day.value() != self.audit.schedule.manifest.wwd {
-            return Err(ExactLysisPlanError::AuthorityMismatch("Tribute WWD"));
+            return Err(ExactLysisPlanError::TributeWwd);
         }
         self.tribute_count =
             self.tribute_count
@@ -336,9 +336,7 @@ impl LysisPlanAuditCursorV1<'_> {
         if owners.is_empty()
             || owners.len()
                 > usize::try_from(outbe_lysis::program_v1::planner::PRIMARY_WORK_SHARD_SIZE)
-                    .map_err(|_| {
-                        ExactLysisPlanError::AuthorityMismatch("Fidelity owner batch bound")
-                    })?
+                    .map_err(|_| ExactLysisPlanError::FidelityOwnerBatchBound)?
             || self.has_pending_fidelity_membership()
         {
             return Err(ExactLysisPlanError::AuthorityMismatch(
@@ -384,11 +382,11 @@ impl LysisPlanAuditCursorV1<'_> {
         )?;
         let (wwd, isos) = decode_oracle_subject_key(&opening.canonical_subject_key.0)?;
         if wwd != self.audit.schedule.manifest.wwd {
-            return Err(ExactLysisPlanError::AuthorityMismatch("Oracle opening WWD"));
+            return Err(ExactLysisPlanError::OracleOpeningWwd);
         }
         self.oracle_root
             .as_mut()
-            .ok_or(ExactLysisPlanError::AuthorityMismatch("Oracle root state"))?
+            .ok_or(ExactLysisPlanError::OracleRootState)?
             .push(encoded, self.audit.schedule.limits.max_bounded_bytes)?;
         self.oracle_subject_isos = Some(isos);
         Ok(())
@@ -405,7 +403,7 @@ impl LysisPlanAuditCursorV1<'_> {
         let oracle_root = self
             .oracle_root
             .take()
-            .ok_or(ExactLysisPlanError::AuthorityMismatch("Oracle root state"))?
+            .ok_or(ExactLysisPlanError::OracleRootState)?
             .finish()?;
         let expected_isos = self.tribute_isos.iter().copied().collect::<Vec<_>>();
         let tribute_conservation_matches = (self.tribute_count, self.fidelity_owner_count)

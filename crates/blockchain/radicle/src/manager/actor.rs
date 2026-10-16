@@ -104,9 +104,7 @@ impl RadicleManagerHandle {
         if let Some(shutdown) = self.shutdown.take() {
             let _ = shutdown.send(());
         }
-        (&mut self.join)
-            .await
-            .map_err(|error| ManagerError::Task(format!("manager: {error}")))
+        (&mut self.join).await.map_err(ManagerError::manager_task)
     }
 
     /// Own the task through graceful shutdown and bounded cancellation. Reserve
@@ -118,12 +116,12 @@ impl RadicleManagerHandle {
             let _ = shutdown.send(());
         }
         match tokio::time::timeout_at(drain_end, &mut self.join).await {
-            Ok(result) => result.map_err(|error| ManagerError::Task(format!("manager: {error}"))),
+            Ok(result) => result.map_err(ManagerError::manager_task),
             Err(_) => {
                 self.join.abort();
                 match tokio::time::timeout_at(end, &mut self.join).await {
                     Ok(Err(error)) if !error.is_cancelled() => {
-                        Err(ManagerError::Task(format!("manager: {error}")))
+                        Err(ManagerError::manager_task(error))
                     }
                     Ok(_) => Err(ManagerError::ShutdownDeadline("manager")),
                     Err(_) => Err(ManagerError::ShutdownDeadline("manager cancellation")),

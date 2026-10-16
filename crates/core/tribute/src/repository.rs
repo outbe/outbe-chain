@@ -119,7 +119,7 @@ pub enum TributeRepositoryError {
     RetainedIdentity(#[from] core::array::TryFromSliceError),
     /// CES2 commitment construction failed for a retained body.
     #[error("failed to derive retained Tribute commitment: {0}")]
-    RetainedCommitment(String),
+    RetainedCommitment(#[from] outbe_compressed_entities::CommitmentError),
     /// One job/entity identity resolved to different retained bytes or commitments.
     #[error("OCOMP retained job {job_id} has conflicting bytes for Tribute {tribute_id}")]
     ConflictingRetainedBody {

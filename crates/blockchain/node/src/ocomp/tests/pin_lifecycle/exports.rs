@@ -86,7 +86,7 @@ fn shared_retention_selector_fails_closed_then_delegates_without_rebinding() {
     let day = WorldwideDay::new(17);
     assert_eq!(
         TributeRetentionSelector::active_pin_for(&selector, day),
-        Err("OCOMP retention coordinator is not installed".to_owned())
+        Err(outbe_offchain_data::RetentionSelectorError::RetentionCoordinatorNotInstalled)
     );
 
     let request = block(100, B256::repeat_byte(0x31), 0x32);

@@ -17,7 +17,7 @@ impl StorageLifecycle for MongoLifecycle {
             // This runs on the session cleanup worker, never on node's shutdown thread.
             if let Some(renewer) = lease.renewer.take() {
                 renewer.join().map_err(|_| {
-                    StorageError::backend(std::io::Error::other("Mongo lease renewer panicked"))
+                    StorageError::backend(crate::errors::MongoLifecycleError::RenewerPanicked)
                 })?;
             }
             super::release_writer_lease(&lease.storage.database, &lease.owner)?;

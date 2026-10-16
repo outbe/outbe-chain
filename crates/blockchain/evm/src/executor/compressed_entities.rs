@@ -3,18 +3,16 @@ use super::*;
 pub(in crate::executor) fn validate_compressed_entities_root_scheme(
     artifact: Option<CompressedEntitiesRootArtifact>,
 ) -> Result<CompressedEntitiesRootArtifact, BlockExecutionError> {
-    let artifact = artifact.ok_or_else(|| {
-        BlockExecutionError::from(BlockValidationError::msg(
-            "missing compressed-entities root artifact in block extra_data",
-        ))
-    })?;
+    let artifact = artifact
+        .ok_or(crate::errors::ExecutorValidationError::MissingCompressedEntitiesRootArtifact)?;
     if artifact.commitment_scheme_version != outbe_compressed_entities::ACTIVE_COMMITMENT_SCHEME {
-        return Err(BlockValidationError::msg(format!(
-            "compressed-entities root artifact scheme mismatch: header={}, active={}",
-            artifact.commitment_scheme_version,
-            outbe_compressed_entities::ACTIVE_COMMITMENT_SCHEME
-        ))
-        .into());
+        return Err(
+            crate::errors::ExecutorValidationError::CompressedEntitiesRootSchemeMismatch {
+                header: artifact.commitment_scheme_version,
+                active: outbe_compressed_entities::ACTIVE_COMMITMENT_SCHEME,
+            }
+            .into(),
+        );
     }
     Ok(artifact)
 }
@@ -25,11 +23,13 @@ pub(in crate::executor) fn validate_compressed_entities_root_after_seal(
 ) -> Result<CompressedEntitiesRootArtifact, BlockExecutionError> {
     let artifact = validate_compressed_entities_root_scheme(artifact)?;
     if artifact.r_sealed != sealed_root {
-        return Err(BlockValidationError::msg(format!(
-            "compressed-entities header/SealOutput root mismatch: header={}, seal={sealed_root}",
-            artifact.r_sealed
-        ))
-        .into());
+        return Err(
+            crate::errors::ExecutorValidationError::CompressedEntitiesHeaderSealRootMismatch {
+                header: artifact.r_sealed,
+                seal: sealed_root,
+            }
+            .into(),
+        );
     }
     Ok(artifact)
 }
@@ -116,10 +116,10 @@ where
             })?
         };
         if !events.is_empty() {
-            return Err(BlockValidationError::msg(
-                "compressed-entity end_block emitted an unexpected event",
-            )
-            .into());
+            return Err(
+                crate::errors::ExecutorValidationError::CompressedEntitiesEndBlockUnexpectedEvent
+                    .into(),
+            );
         }
 
         self.compressed_entities_started = false;
@@ -133,10 +133,10 @@ where
         &mut self,
     ) -> Result<outbe_compressed_entities::SealOutput, BlockExecutionError> {
         if !self.compressed_entities_started {
-            return Err(BlockValidationError::msg(
-                "compressed-entity preview requested outside active lifecycle",
-            )
-            .into());
+            return Err(
+                crate::errors::ExecutorValidationError::CompressedEntitiesPreviewOutsideActiveLifecycle
+                    .into(),
+            );
         }
 
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
@@ -166,10 +166,10 @@ where
             })?
         };
         if !changes.is_empty() || !events.is_empty() {
-            return Err(BlockValidationError::msg(
-                "compressed-entity preview unexpectedly mutated EVM state",
-            )
-            .into());
+            return Err(
+                crate::errors::ExecutorValidationError::CompressedEntitiesPreviewMutatedEvmState
+                    .into(),
+            );
         }
         Ok(output)
     }

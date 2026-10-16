@@ -33,6 +33,7 @@ use ark_ec::CurveGroup;
 use ark_ff::{BigInteger, PrimeField};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
+use crate::errors::{NonCanonicalError, SignatureError, UnsortedSetError};
 use crate::primitive::curve::{mul_generator, Affine, Scalar};
 use crate::{Error, Fr};
 
@@ -161,7 +162,7 @@ impl FieldElement for bool {
         match field_to_be_array::<1>(value, "bool")?[0] {
             0 => Ok(false),
             1 => Ok(true),
-            _ => Err(Error::NonCanonical("bool")),
+            _ => Err(NonCanonicalError::Bool.into()),
         }
     }
 }
@@ -216,9 +217,7 @@ impl<T: FieldElement> FieldEncode for SortedSet<'_, T> {
                 // Reject anything not *strictly* greater — catches both
                 // unsorted input and duplicate elements in one check.
                 if cur <= p {
-                    return Err(Error::UnsortedSet(
-                        "entity vector field must be strictly ascending by field value (sorted + de-duplicated)".to_string(),
-                    ));
+                    return Err(UnsortedSetError::EntityVectorNotStrictlyAscending.into());
                 }
             }
             out.push(f);
@@ -376,9 +375,9 @@ fn serialize<T: CanonicalSerialize>(value: &T) -> Result<[u8; 32], Error> {
     let mut output = bytes.as_mut_slice();
     value
         .serialize_compressed(&mut output)
-        .map_err(|_| Error::Signature("serialize failed"))?;
+        .map_err(|_| SignatureError::SerializeFailed)?;
     if !output.is_empty() {
-        return Err(Error::Signature("serialized length != 32"));
+        return Err(SignatureError::SerializedLengthMismatch.into());
     }
     Ok(bytes)
 }
@@ -416,7 +415,7 @@ pub fn fields_from_u256(value: &U256) -> Result<[Fr; 3], Error> {
 #[cfg(feature = "alloy")]
 pub fn fields_to_u256(fields: &[Fr]) -> Result<U256, Error> {
     let [lo, mid, hi] = fields else {
-        return Err(Error::NonCanonical("uint256 requires three field limbs"));
+        return Err(NonCanonicalError::Uint256RequiresThreeFieldLimbs.into());
     };
     let limbs = [
         u128::from_field(lo)?,
@@ -425,7 +424,7 @@ pub fn fields_to_u256(fields: &[Fr]) -> Result<U256, Error> {
     ];
     u256_from_limbs_be(limbs)
         .map(U256::from_be_bytes)
-        .ok_or(Error::NonCanonical("uint256 limbs"))
+        .ok_or_else(|| NonCanonicalError::Uint256Limbs.into())
 }
 
 /// Grumpkin secret scalar → its compressed 32-byte representation.
@@ -435,7 +434,7 @@ pub fn secret_to_bytes(s: &Scalar) -> Result<[u8; 32], Error> {
 
 /// Bytes → Grumpkin secret scalar.
 pub fn secret_from_bytes(b: &[u8]) -> Result<Scalar, Error> {
-    Scalar::deserialize_compressed(b).map_err(|_| Error::Signature("bad scalar"))
+    Scalar::deserialize_compressed(b).map_err(|_| SignatureError::BadScalar.into())
 }
 
 /// Public key from its secret: `pk = sk·G`.
@@ -450,5 +449,5 @@ pub fn public_key_to_bytes(p: &Affine) -> Result<[u8; 32], Error> {
 
 /// Bytes → Grumpkin public key.
 pub fn public_key_from_bytes(b: &[u8]) -> Result<Affine, Error> {
-    Affine::deserialize_compressed(b).map_err(|_| Error::Signature("bad public key"))
+    Affine::deserialize_compressed(b).map_err(|_| SignatureError::BadPublicKey.into())
 }

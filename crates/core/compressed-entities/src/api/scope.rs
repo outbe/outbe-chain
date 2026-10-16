@@ -1,4 +1,5 @@
 use super::*;
+use crate::errors::{CompressedEntitiesFatalError, CompressedEntitiesTreeUnavailableError};
 
 impl ExecutionScope {
     /// Binds the factory/identity to the scope already captured by this EVM's
@@ -13,27 +14,26 @@ impl ExecutionScope {
         parent_block_hash: B256,
     ) -> Result<()> {
         if self.phase.load(Ordering::Acquire) != PHASE_BEFORE_BEGIN {
-            return Err(fatal_scope(
-                "exact-parent tree factory configured after begin-block",
-            ));
+            return Err(
+                CompressedEntitiesFatalError::ExactParentFactoryConfiguredAfterBeginBlock.into(),
+            );
         }
         self.parent_binding_configured
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .map_err(|_| fatal_scope("exact-parent tree factory configured more than once"))?;
+            .map_err(|_| CompressedEntitiesFatalError::ExactParentFactoryConfiguredMoreThanOnce)?;
         self.rpc_read_only.store(false, Ordering::Release);
 
         let mut tree = self
             .parent_tree
             .lock()
-            .map_err(|_| fatal_scope("authenticated parent tree lock poisoned"))?;
-        let mut installed_factory = self
-            .parent_tree_factory
-            .lock()
-            .map_err(|_| fatal_scope("authenticated parent tree factory lock poisoned"))?;
+            .map_err(|_| CompressedEntitiesFatalError::AuthenticatedParentTreeLockPoisoned)?;
+        let mut installed_factory = self.parent_tree_factory.lock().map_err(|_| {
+            CompressedEntitiesFatalError::AuthenticatedParentTreeFactoryLockPoisoned
+        })?;
         let mut identity = self
             .parent_identity_without_root
             .lock()
-            .map_err(|_| fatal_scope("authenticated parent identity lock poisoned"))?;
+            .map_err(|_| CompressedEntitiesFatalError::AuthenticatedParentIdentityLockPoisoned)?;
         *tree = None;
         *installed_factory = Some(factory);
         *identity = Some((
@@ -48,30 +48,26 @@ impl ExecutionScope {
         let mut tree = self
             .parent_tree
             .lock()
-            .map_err(|_| fatal_scope("authenticated parent tree lock poisoned"))?;
+            .map_err(|_| CompressedEntitiesFatalError::AuthenticatedParentTreeLockPoisoned)?;
         if let Some(opened) = tree.as_ref() {
             if opened.parent_root() != evm_root {
-                return Err(outbe_primitives::error::PrecompileError::TreeUnavailable(
-                    "opened parent tree root does not match EVM slot 1".into(),
-                ));
+                return Err(
+                    CompressedEntitiesTreeUnavailableError::OpenedParentRootMismatch.into(),
+                );
             }
             return Ok(());
         }
         let factory = self
             .parent_tree_factory
             .lock()
-            .map_err(|_| fatal_scope("authenticated parent tree factory lock poisoned"))?
+            .map_err(|_| CompressedEntitiesFatalError::AuthenticatedParentTreeFactoryLockPoisoned)?
             .clone()
-            .ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::TreeUnavailable(
-                    "no exact-parent tree factory was installed".into(),
-                )
-            })?;
+            .ok_or(CompressedEntitiesTreeUnavailableError::MissingExactParentTreeFactory)?;
         let (commitment_scheme_version, block_number, block_hash) = self
             .parent_identity_without_root
             .lock()
-            .map_err(|_| fatal_scope("authenticated parent identity lock poisoned"))?
-            .ok_or_else(|| fatal_scope("missing exact-parent identity metadata"))?;
+            .map_err(|_| CompressedEntitiesFatalError::AuthenticatedParentIdentityLockPoisoned)?
+            .ok_or(CompressedEntitiesFatalError::MissingExactParentIdentityMetadata)?;
         let opened = factory.open_parent(crate::ExactParentIdentity {
             commitment_scheme_version,
             block_number,
@@ -79,9 +75,9 @@ impl ExecutionScope {
             root: evm_root,
         })?;
         if opened.parent_block_hash() != block_hash || opened.parent_root() != evm_root {
-            return Err(outbe_primitives::error::PrecompileError::TreeUnavailable(
-                "exact-parent factory returned a tree with the wrong block hash or root".into(),
-            ));
+            return Err(
+                CompressedEntitiesTreeUnavailableError::FactoryReturnedWrongParentIdentity.into(),
+            );
         }
         *tree = Some(opened);
         Ok(())
@@ -90,13 +86,9 @@ impl ExecutionScope {
     fn opened_parent_tree(&self) -> Result<Arc<dyn AuthenticatedParentTree>> {
         self.parent_tree
             .lock()
-            .map_err(|_| fatal_scope("authenticated parent tree lock poisoned"))?
+            .map_err(|_| CompressedEntitiesFatalError::AuthenticatedParentTreeLockPoisoned)?
             .clone()
-            .ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::TreeUnavailable(
-                    "exact-parent tree has not been opened by begin-block".into(),
-                )
-            })
+            .ok_or_else(|| CompressedEntitiesTreeUnavailableError::ExactParentTreeNotOpened.into())
     }
 
     pub fn read_parent_leaf_verified(
@@ -110,9 +102,9 @@ impl ExecutionScope {
         }
         let parent_tree = self.opened_parent_tree()?;
         if parent_tree.parent_root() != expected_parent_root {
-            return Err(outbe_primitives::error::PrecompileError::TreeUnavailable(
-                "authenticated parent tree root does not match EVM slot 1".into(),
-            ));
+            return Err(
+                CompressedEntitiesTreeUnavailableError::AuthenticatedParentRootMismatch.into(),
+            );
         }
         parent_tree.read_leaf_verified(entity, expected_parent_root)
     }
@@ -151,9 +143,9 @@ impl ExecutionScope {
         let output = self
             .provisional_seal
             .lock()
-            .map_err(|_| fatal_scope("provisional compressed-entity seal lock poisoned"))?
+            .map_err(|_| CompressedEntitiesFatalError::ProvisionalSealLockPoisoned)?
             .clone()
-            .ok_or_else(|| fatal_scope("provisional compressed-entity seal is absent"))?;
+            .ok_or(CompressedEntitiesFatalError::ProvisionalSealAbsent)?;
         self.validate_seal_output(&output)?;
         Ok(output)
     }
@@ -184,16 +176,14 @@ impl ExecutionScope {
 
     fn completed_seal(&self) -> Result<crate::SealOutput> {
         if self.phase.load(Ordering::Acquire) != PHASE_ENDED {
-            return Err(fatal_scope(
-                "compressed-entity seal requested before end-block completed",
-            ));
+            return Err(CompressedEntitiesFatalError::SealRequestedBeforeEndBlockCompleted.into());
         }
         let output = self
             .completed_seal
             .lock()
-            .map_err(|_| fatal_scope("completed compressed-entity seal lock poisoned"))?
+            .map_err(|_| CompressedEntitiesFatalError::CompletedSealLockPoisoned)?
             .clone()
-            .ok_or_else(|| fatal_scope("completed compressed-entity seal is absent"))?;
+            .ok_or(CompressedEntitiesFatalError::CompletedSealAbsent)?;
         self.validate_seal_output(&output)?;
         Ok(output)
     }
@@ -207,20 +197,18 @@ impl ExecutionScope {
         partition: PartitionRef,
     ) -> Result<SealedCollectionRoot> {
         if self.phase.load(Ordering::Acquire) != PHASE_ENDED {
-            return Err(fatal_scope(
-                "collection root requested before compressed-entity seal completed",
-            ));
+            return Err(
+                CompressedEntitiesFatalError::CollectionRootRequestedBeforeSealCompleted.into(),
+            );
         }
         if self
             .completed_seal
             .lock()
-            .map_err(|_| fatal_scope("completed compressed-entity seal lock poisoned"))?
+            .map_err(|_| CompressedEntitiesFatalError::CompletedSealLockPoisoned)?
             .as_ref()
             != Some(output)
         {
-            return Err(fatal_scope(
-                "SealOutput was not completed by this execution scope",
-            ));
+            return Err(CompressedEntitiesFatalError::SealOutputNotCompletedByScope.into());
         }
         self.collection_root_from_output(output, partition)
     }
@@ -229,14 +217,10 @@ impl ExecutionScope {
         if output.parent_root != output.staged_tree_batch.parent_root()
             || output.new_root != output.staged_tree_batch.new_root()
         {
-            return Err(fatal_scope(
-                "compressed-entity SealOutput does not match its staged tree batch",
-            ));
+            return Err(CompressedEntitiesFatalError::SealOutputBatchMismatch.into());
         }
         if self.opened_parent_tree()?.parent_root() != output.parent_root {
-            return Err(fatal_scope(
-                "compressed-entity SealOutput does not match the authenticated parent",
-            ));
+            return Err(CompressedEntitiesFatalError::SealOutputParentMismatch.into());
         }
         Ok(())
     }
@@ -248,14 +232,15 @@ impl ExecutionScope {
     ) -> Result<SealedCollectionRoot> {
         self.validate_seal_output(output)?;
         let parent = self.opened_parent_tree()?;
-        let (_, key) = crate::partition_collection_key(partition).map_err(fatal_scope)?;
+        let (_, key) = crate::partition_collection_key(partition)
+            .map_err(CompressedEntitiesFatalError::from)?;
         let root = match output.staged_tree_batch.changed_collections.get(&key) {
             Some(crate::CollectionOperation::Mutate(batch)) => Some(batch.new_collection_root),
             Some(crate::CollectionOperation::Retire(_)) => None,
             None => parent.partition_root_verified(partition, output.parent_root)?,
         }
         .filter(|root| !root.is_zero())
-        .ok_or_else(|| fatal_scope("sealed compressed-entity collection is absent"))?;
+        .ok_or(CompressedEntitiesFatalError::SealedCollectionAbsent)?;
 
         Ok(SealedCollectionRoot { partition, root })
     }
@@ -266,7 +251,7 @@ impl ExecutionScope {
         *self
             .provisional_seal
             .lock()
-            .map_err(|_| fatal_scope("provisional compressed-entity seal lock poisoned"))? =
+            .map_err(|_| CompressedEntitiesFatalError::ProvisionalSealLockPoisoned)? =
             Some(output.clone());
         Ok(())
     }
@@ -302,7 +287,7 @@ impl ExecutionScope {
         self.ce_work
             .lock()
             .map(|state| CeWorkCheckpoint(state.clone()))
-            .map_err(|_| fatal_scope("compressed-entity work meter lock poisoned"))
+            .map_err(|_| CompressedEntitiesFatalError::WorkMeterLockPoisoned.into())
     }
 
     /// Opens one executor transaction window so overflow can distinguish a
@@ -314,11 +299,9 @@ impl ExecutionScope {
         let mut state = self
             .ce_work
             .lock()
-            .map_err(|_| fatal_scope("compressed-entity work meter lock poisoned"))?;
+            .map_err(|_| CompressedEntitiesFatalError::WorkMeterLockPoisoned)?;
         if state.transaction_start.is_some() {
-            return Err(fatal_scope(
-                "compressed-entity work transaction window is already active",
-            ));
+            return Err(CompressedEntitiesFatalError::WorkTransactionWindowAlreadyActive.into());
         }
         state.transaction_start = Some(CeWorkTransactionStart {
             transaction_keys: BTreeSet::new(),
@@ -332,11 +315,9 @@ impl ExecutionScope {
         let mut state = self
             .ce_work
             .lock()
-            .map_err(|_| fatal_scope("compressed-entity work meter lock poisoned"))?;
+            .map_err(|_| CompressedEntitiesFatalError::WorkMeterLockPoisoned)?;
         if state.transaction_start.take().is_none() {
-            return Err(fatal_scope(
-                "compressed-entity work transaction window is not active",
-            ));
+            return Err(CompressedEntitiesFatalError::WorkTransactionWindowNotActive.into());
         }
         Ok(())
     }
@@ -362,11 +343,9 @@ impl ExecutionScope {
         let mut state = self
             .ce_work
             .lock()
-            .map_err(|_| fatal_scope("compressed-entity work meter lock poisoned"))?;
+            .map_err(|_| CompressedEntitiesFatalError::WorkMeterLockPoisoned)?;
         if checkpoint.0.used > state.used || !checkpoint.0.seen_keys.is_subset(&state.seen_keys) {
-            return Err(fatal_scope(
-                "invalid compressed-entity work checkpoint restore",
-            ));
+            return Err(CompressedEntitiesFatalError::InvalidWorkCheckpointRestore.into());
         }
         *state = checkpoint.0;
         Ok(())
@@ -376,7 +355,7 @@ impl ExecutionScope {
         self.ce_work
             .lock()
             .map(|state| state.used)
-            .map_err(|_| fatal_scope("compressed-entity work meter lock poisoned"))
+            .map_err(|_| CompressedEntitiesFatalError::WorkMeterLockPoisoned.into())
     }
 
     pub(crate) fn reserve_unique_key_work(&self, entity: EntityRef) -> Result<()> {
@@ -384,7 +363,7 @@ impl ExecutionScope {
         let mut state = self
             .ce_work
             .lock()
-            .map_err(|_| fatal_scope("compressed-entity work meter lock poisoned"))?;
+            .map_err(|_| CompressedEntitiesFatalError::WorkMeterLockPoisoned)?;
         let transaction_unique_keys = state.transaction_start.as_ref().map_or(1_usize, |start| {
             if start.transaction_keys.contains(&entity) {
                 0
@@ -432,7 +411,7 @@ impl ExecutionScope {
         self.require_active()?;
         self.explicit_gas_window_active
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .map_err(|_| fatal_scope("compressed-entity explicit gas window is already active"))?;
+            .map_err(|_| CompressedEntitiesFatalError::ExplicitGasWindowAlreadyActive)?;
         let start = self.explicit_gas_checkpoint();
         self.explicit_gas_window_start
             .store(start.0, Ordering::Release);
@@ -456,7 +435,7 @@ impl ExecutionScope {
         self.explicit_gas_charged
             .load(Ordering::Acquire)
             .checked_sub(checkpoint.0)
-            .ok_or_else(|| fatal_scope("compressed-entity gas checkpoint exceeds current counter"))
+            .ok_or_else(|| CompressedEntitiesFatalError::GasCheckpointExceedsCurrentCounter.into())
     }
 
     pub(crate) fn deduct_explicit_gas(&self, storage: &StorageHandle<'_>, gas: u64) -> Result<()> {
@@ -465,9 +444,9 @@ impl ExecutionScope {
             let charged = self.explicit_gas_charged.load(Ordering::Acquire);
             let start = self.explicit_gas_window_start.load(Ordering::Acquire);
             let limit = self.explicit_gas_window_limit.load(Ordering::Acquire);
-            let used = charged.checked_sub(start).ok_or_else(|| {
-                fatal_scope("compressed-entity explicit gas window starts after current counter")
-            })?;
+            let used = charged
+                .checked_sub(start)
+                .ok_or(CompressedEntitiesFatalError::ExplicitGasWindowStartsAfterCurrentCounter)?;
             if used.checked_add(gas).is_none_or(|next| next > limit) {
                 return Err(outbe_primitives::error::PrecompileError::OutOfGas);
             }
@@ -478,16 +457,14 @@ impl ExecutionScope {
                 charged.checked_add(gas)
             })
             .map(|_| ())
-            .map_err(|_| fatal_scope("compressed-entity explicit gas counter overflow"))
+            .map_err(|_| CompressedEntitiesFatalError::ExplicitGasCounterOverflow.into())
     }
 
     pub(crate) fn require_active(&self) -> Result<()> {
         if self.phase.load(Ordering::Acquire) == PHASE_ACTIVE {
             return Ok(());
         }
-        Err(fatal_scope(
-            "compressed-entity execution attempted outside active block lifecycle",
-        ))
+        Err(CompressedEntitiesFatalError::ExecutionOutsideActiveLifecycle.into())
     }
 
     pub(super) fn require_readable(&self) -> Result<()> {
@@ -496,16 +473,14 @@ impl ExecutionScope {
         {
             return Ok(());
         }
-        Err(fatal_scope(
-            "compressed-entity execution attempted outside active block lifecycle",
-        ))
+        Err(CompressedEntitiesFatalError::ExecutionOutsideActiveLifecycle.into())
     }
 
     pub(crate) fn activate(&self) -> Result<()> {
         if self.rpc_read_only.load(Ordering::Acquire) {
-            return Err(fatal_scope(
-                "finalized RPC read scope cannot enter block mutation lifecycle",
-            ));
+            return Err(
+                CompressedEntitiesFatalError::RpcReadScopeCannotEnterMutationLifecycle.into(),
+            );
         }
         self.phase
             .compare_exchange(
@@ -515,11 +490,11 @@ impl ExecutionScope {
                 Ordering::Acquire,
             )
             .map(|_| ())
-            .map_err(|_| fatal_scope("compressed-entity begin_block called more than once"))?;
+            .map_err(|_| CompressedEntitiesFatalError::BeginBlockCalledMoreThanOnce)?;
         let mut work = self
             .ce_work
             .lock()
-            .map_err(|_| fatal_scope("compressed-entity work meter lock poisoned"))?;
+            .map_err(|_| CompressedEntitiesFatalError::WorkMeterLockPoisoned)?;
         if self.ce_work_config.seal_base_units > self.ce_work_config.work_limit {
             return Err(outbe_primitives::error::PrecompileError::TransactionCeWorkLimitExceeded);
         }
@@ -541,23 +516,19 @@ impl ExecutionScope {
                 Ordering::Acquire,
             )
             .map(|_| ())
-            .map_err(|_| fatal_scope("compressed-entity end_block called outside active lifecycle"))
+            .map_err(|_| CompressedEntitiesFatalError::EndBlockCalledOutsideActiveLifecycle.into())
     }
 
     pub(crate) fn finish_with_seal(&self, output: &crate::SealOutput) -> Result<()> {
         let mut completed = self
             .completed_seal
             .lock()
-            .map_err(|_| fatal_scope("completed compressed-entity seal lock poisoned"))?;
+            .map_err(|_| CompressedEntitiesFatalError::CompletedSealLockPoisoned)?;
         if completed.is_some() {
-            return Err(fatal_scope(
-                "compressed-entity seal identity recorded more than once",
-            ));
+            return Err(CompressedEntitiesFatalError::SealIdentityRecordedMoreThanOnce.into());
         }
         if self.phase.load(Ordering::Acquire) != PHASE_ACTIVE {
-            return Err(fatal_scope(
-                "compressed-entity end_block called outside active lifecycle",
-            ));
+            return Err(CompressedEntitiesFatalError::EndBlockCalledOutsideActiveLifecycle.into());
         }
         *completed = Some(output.clone());
         if self
@@ -571,9 +542,7 @@ impl ExecutionScope {
             .is_err()
         {
             *completed = None;
-            return Err(fatal_scope(
-                "compressed-entity end_block called outside active lifecycle",
-            ));
+            return Err(CompressedEntitiesFatalError::EndBlockCalledOutsideActiveLifecycle.into());
         }
         Ok(())
     }

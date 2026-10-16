@@ -29,27 +29,25 @@ impl State<'_> {
         let mut unique_bodies = BTreeSet::new();
         for locator in body_keys {
             if !unique_bodies.insert(*locator) {
-                return Err(fatal("duplicate compressed-entity touched body locator"));
+                return Err(CompressedEntitiesFatalError::DuplicateTouchedBodyLocator.into());
             }
             let (collection, entity_id) = self
                 .read_body_identity(*locator)?
-                .ok_or_else(|| fatal("compressed-entity cleanup body has no identity"))?;
+                .ok_or(CompressedEntitiesFatalError::CleanupBodyMissingIdentity)?;
             if body_locator(collection, entity_id)? != *locator {
-                return Err(fatal("compressed-entity cleanup body locator mismatch"));
+                return Err(CompressedEntitiesFatalError::CleanupBodyLocatorMismatch.into());
             }
             let pending = PendingWord::decode(schema.pending_word.read(locator)?)?;
             let body = schema.pending_body.get_bytes(locator).read()?;
             match pending {
                 PendingWord::Set(_) if body.is_empty() => {
-                    return Err(fatal("compressed-entity cleanup Set entry has no body"));
+                    return Err(CompressedEntitiesFatalError::CleanupSetEntryMissingBody.into());
                 }
                 PendingWord::Deleted if !body.is_empty() => {
-                    return Err(fatal(
-                        "compressed-entity cleanup Deleted entry retains body",
-                    ));
+                    return Err(CompressedEntitiesFatalError::CleanupDeletedEntryRetainsBody.into());
                 }
                 PendingWord::Untouched => {
-                    return Err(fatal("compressed-entity cleanup reached untouched body"));
+                    return Err(CompressedEntitiesFatalError::CleanupReachedUntouchedBody.into());
                 }
                 _ => {}
             }
@@ -65,15 +63,15 @@ impl State<'_> {
         let mut unique_indexes = BTreeSet::new();
         for key in index_keys {
             if !unique_indexes.insert(*key) {
-                return Err(fatal("duplicate compressed-entity touched index key"));
+                return Err(CompressedEntitiesFatalError::DuplicateTouchedIndexKey.into());
             }
             let status = DeltaStatus::decode(schema.index_delta_word.read(key)?)?;
             if status == DeltaStatus::NeverTouched {
-                return Err(fatal("compressed-entity cleanup reached untouched index"));
+                return Err(CompressedEntitiesFatalError::CleanupReachedUntouchedIndex.into());
             }
             let record = schema.index_delta_record.get_bytes(key).read()?;
             if IndexRecord::decode(&record)?.key() != *key {
-                return Err(fatal("compressed-entity cleanup index hash mismatch"));
+                return Err(CompressedEntitiesFatalError::CleanupIndexHashMismatch.into());
             }
             schema.index_delta_record.get_bytes(key).clear()?;
             schema.index_delta_word.write(key, U256::ZERO)?;
@@ -87,12 +85,15 @@ impl State<'_> {
         for day in retirement_days {
             let partition =
                 PartitionRef::TributeWwd(outbe_primitives::time::WorldwideDay::new(*day));
-            let (_, key) = partition_collection_key(partition).map_err(revert)?;
+            let (_, key) =
+                partition_collection_key(partition).map_err(CompressedEntitiesError::from)?;
             let storage_key = B256::from(*key.as_bytes());
             if !unique_retirements.insert(storage_key)
                 || schema.pending_retirement.read(&storage_key)? != U256::from(1)
             {
-                return Err(fatal("malformed retirement journal during cleanup"));
+                return Err(
+                    CompressedEntitiesFatalError::MalformedRetirementJournalDuringCleanup.into(),
+                );
             }
             schema.pending_retirement.write(&storage_key, U256::ZERO)?;
         }
@@ -110,34 +111,28 @@ impl State<'_> {
             || !schema.touched_index_deltas.is_empty()?
             || !schema.retirement_touched.is_empty()?
         {
-            return Err(fatal(
-                "compressed-entity cleanup left non-empty touched lists",
-            ));
+            return Err(CompressedEntitiesFatalError::CleanupLeftNonEmptyTouchedLists.into());
         }
         for locator in body_keys {
             if !schema.pending_word.read(&locator)?.is_zero()
                 || !schema.pending_body.get_bytes(&locator).is_empty()?
                 || self.has_body_identity(locator)?
             {
-                return Err(fatal(
-                    "compressed-entity body cleanup post-condition failed",
-                ));
+                return Err(CompressedEntitiesFatalError::BodyCleanupPostConditionFailed.into());
             }
         }
         for key in index_keys {
             if !schema.index_delta_word.read(&key)?.is_zero()
                 || !schema.index_delta_record.get_bytes(&key).is_empty()?
             {
-                return Err(fatal(
-                    "compressed-entity index cleanup post-condition failed",
-                ));
+                return Err(CompressedEntitiesFatalError::IndexCleanupPostConditionFailed.into());
             }
         }
         for storage_key in unique_retirements {
             if !schema.pending_retirement.read(&storage_key)?.is_zero() {
-                return Err(fatal(
-                    "compressed-entity retirement cleanup post-condition failed",
-                ));
+                return Err(
+                    CompressedEntitiesFatalError::RetirementCleanupPostConditionFailed.into(),
+                );
             }
         }
         Ok(())

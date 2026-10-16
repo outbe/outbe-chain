@@ -7,7 +7,7 @@ use std::{
 };
 
 use super::network::EndpointNetworkResolver;
-use crate::manager::ManagerError;
+use crate::{errors::RadicleTaskError, manager::ManagerError};
 
 #[derive(Default)]
 enum State {
@@ -42,10 +42,10 @@ impl EndpointTaskOwner {
         let mut state = self
             .0
             .lock()
-            .map_err(|_| ManagerError::Task("endpoint owner poisoned".into()))?;
+            .map_err(|_| ManagerError::from(RadicleTaskError::EndpointOwnerPoisoned))?;
         match &state.0 {
             State::Closed => Ok(false),
-            State::Running(_) => Err(ManagerError::Task("endpoint already installed".into())),
+            State::Running(_) => Err(RadicleTaskError::EndpointAlreadyInstalled.into()),
             State::Unstarted => {
                 state.0 = State::Running(tokio::spawn(run));
                 Ok(true)
@@ -60,12 +60,12 @@ impl EndpointTaskOwner {
             let mut state = self
                 .0
                 .lock()
-                .map_err(|_| ManagerError::Task("endpoint owner poisoned".into()))?;
+                .map_err(|_| ManagerError::from(RadicleTaskError::EndpointOwnerPoisoned))?;
             match std::mem::replace(&mut state.0, State::Closed) {
                 State::Running(task) => task,
                 State::Unstarted => return Ok(()),
                 State::Closed => {
-                    return Err(ManagerError::Task("endpoint drain already claimed".into()));
+                    return Err(RadicleTaskError::EndpointDrainAlreadyClaimed.into());
                 }
             }
         };
@@ -86,9 +86,7 @@ async fn stop_and_join(
     }
     let _guard = AbortOnDrop(task.abort_handle());
     if task.is_finished() {
-        return task
-            .await
-            .map_err(|error| ManagerError::Task(format!("endpoint service: {error}")))?;
+        return task.await.map_err(ManagerError::endpoint_service_task)?;
     }
     let end = tokio::time::Instant::now() + crate::endpoint::HANDLE_DEADLINE;
     let drain_end = end - Duration::from_millis(500);
@@ -99,12 +97,12 @@ async fn stop_and_join(
     // transport error. Let it return that result before resorting to abort.
     let joined = match tokio::time::timeout_at(drain_end, &mut task).await {
         Ok(Ok(result)) => result,
-        Ok(Err(error)) => Err(ManagerError::Task(format!("endpoint service: {error}"))),
+        Ok(Err(error)) => Err(ManagerError::endpoint_service_task(error)),
         Err(_) => {
             task.abort();
             match tokio::time::timeout_at(end, &mut task).await {
                 Ok(Err(error)) if !error.is_cancelled() => {
-                    Err(ManagerError::Task(format!("endpoint service: {error}")))
+                    Err(ManagerError::endpoint_service_task(error))
                 }
                 Ok(_) => Err(ManagerError::ShutdownDeadline("endpoint service join")),
                 Err(_) => Err(ManagerError::ShutdownDeadline(
@@ -116,9 +114,7 @@ async fn stop_and_join(
     match (stopped, joined) {
         (Ok(()), Ok(())) => Ok(()),
         (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
-        (Err(stop), Err(join)) => Err(ManagerError::Task(format!(
-            "{stop}; endpoint join also failed: {join}"
-        ))),
+        (Err(stop), Err(join)) => Err(ManagerError::endpoint_stop_and_join_failed(stop, join)),
     }
 }
 

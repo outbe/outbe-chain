@@ -216,7 +216,7 @@ pub enum TeeRegistryError {
 
     /// Calldata violates canonical V1 registration ABI framing rules.
     #[error("invalid canonical V1 registration ABI: {0}")]
-    InvalidCanonicalRegistrationAbi(&'static str),
+    InvalidCanonicalRegistrationAbi(#[from] RegisterAbiError),
 
     /// Stored V1 binding hash does not match the requested identity hash.
     #[error("stored V1 binding identity mismatch")]
@@ -930,6 +930,53 @@ impl From<TeeRegistryError> for PrecompileError {
             }
             _ => Self::Revert(error.to_string()),
         }
+    }
+}
+
+/// Canonical V1 registration ABI framing error reasons.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum RegisterAbiError {
+    #[error("missing function selector")]
+    MissingFunctionSelector,
+    #[error("truncated argument head")]
+    TruncatedArgumentHead,
+    #[error("non-canonical evidence offset")]
+    NonCanonicalEvidenceOffset,
+    #[error("non-canonical node signature offset")]
+    NonCanonicalNodeSignatureOffset,
+    #[error("non-canonical enclave signature offset")]
+    NonCanonicalEnclaveSignatureOffset,
+    #[error("non-canonical validator signature offset")]
+    NonCanonicalValidatorSignatureOffset,
+    #[error("non-canonical NodeHost binding signature offset")]
+    NonCanonicalNodeHostBindingSignatureOffset,
+    #[error("non-canonical validator NodeHost binding offset")]
+    NonCanonicalValidatorNodeHostBindingOffset,
+    #[error("trailing ABI bytes")]
+    TrailingAbiBytes,
+    #[error("evidence length exceeds calldata")]
+    EvidenceLengthExceedsCalldata,
+    #[error("dynamic offset overflow")]
+    DynamicOffsetOverflow,
+    #[error("truncated dynamic length")]
+    TruncatedDynamicLength,
+    #[error("dynamic length overflow")]
+    DynamicLengthOverflow,
+    #[error("truncated dynamic value")]
+    TruncatedDynamicValue,
+    #[error("dynamic padding overflow")]
+    DynamicPaddingOverflow,
+    #[error("truncated dynamic padding")]
+    TruncatedDynamicPadding,
+    #[error("non-zero dynamic padding")]
+    NonZeroDynamicPadding,
+    #[error("ABI integer exceeds host usize")]
+    AbiIntegerExceedsHostUsize,
+}
+
+impl From<RegisterAbiError> for PrecompileError {
+    fn from(error: RegisterAbiError) -> Self {
+        TeeRegistryError::from(error).into()
     }
 }
 

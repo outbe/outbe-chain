@@ -173,20 +173,16 @@ pub(super) fn verify_present_reference_membership(
     work.visit_refs(id, &mut |reference| {
         if !membership_valid {
             cas.read_verified(&reference)?;
-            return Err(Incomplete(format!(
-                "job {id}: materialization reference lacks available plan membership evidence"
-            ))
-            .into());
+            return Err(
+                SnapshotIncompleteError::MaterializationRefLacksPlanMembership { id }.into_report(),
+            );
         }
         membership.verify(id, &reference, cas, membership_complete)?;
         increment_present(&mut count, 1)
     })?;
     increment_present(&mut counts.references, count)?;
     if !membership_complete {
-        return Err(Incomplete(format!(
-            "job {id}: retained reference membership is partial; certified output-root comparison unavailable"
-        ))
-        .into());
+        return Err(SnapshotIncompleteError::RetainedRefMembershipPartial { id }.into_report());
     }
     Ok(())
 }

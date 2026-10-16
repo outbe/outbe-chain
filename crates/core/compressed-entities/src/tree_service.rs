@@ -11,6 +11,7 @@ use outbe_primitives::error::{PrecompileError, Result};
 use crate::{
     api::{AuthenticatedParentTree, EntityRef, FinalLeafMutation},
     collection::{collection_key, collection_root, sealed_root},
+    errors::{CompressedEntitiesTreeCorruptionError, CompressedEntitiesTreeUnavailableError},
     persistence::{CeMdbx, ExactParentIdentity, PersistenceError, TreeNamespace},
     schema::Collection,
     sharding::{aggregate_b256_shard_roots, shard_index},
@@ -67,8 +68,8 @@ impl MdbxAuthenticatedTree {
 
     pub(crate) fn from_view(view: AuthenticatedCatalogView) -> Result<Self> {
         let identity = view.identity();
-        let catalog_root =
-            TreeRoot::from_be_bytes(view.catalog_root().0).map_err(tree_corruption)?;
+        let catalog_root = TreeRoot::from_be_bytes(view.catalog_root().0)
+            .map_err(CompressedEntitiesTreeCorruptionError::from)?;
         let catalog_store =
             StagingCkbStore::new(view.clone(), TreeNamespace::Catalog, view.catalog_root());
         Ok(Self {
@@ -90,7 +91,9 @@ impl MdbxAuthenticatedTree {
     ) -> Result<()> {
         if let Some(existing) = state.collections.get(&key) {
             if existing.domain != domain {
-                return Err(tree_corruption("collection key/domain collision"));
+                return Err(
+                    CompressedEntitiesTreeCorruptionError::CollectionKeyDomainCollision.into(),
+                );
             }
             return Ok(());
         }
@@ -105,17 +108,23 @@ impl MdbxAuthenticatedTree {
         let catalog = state
             .catalog_tree
             .as_ref()
-            .ok_or_else(|| tree_corruption("authenticated catalog session already sealed"))?;
-        let catalog_key = TreeKey::from_be_bytes(*key.as_bytes()).map_err(tree_corruption)?;
-        let leaf = catalog.get(catalog_key).map_err(tree_corruption)?;
-        let proof = catalog.prove(vec![catalog_key]).map_err(tree_corruption)?;
+            .ok_or(CompressedEntitiesTreeCorruptionError::CatalogSessionAlreadySealed)?;
+        let catalog_key = TreeKey::from_be_bytes(*key.as_bytes())
+            .map_err(CompressedEntitiesTreeCorruptionError::from)?;
+        let leaf = catalog
+            .get(catalog_key)
+            .map_err(CompressedEntitiesTreeCorruptionError::from)?;
+        let proof = catalog
+            .prove(vec![catalog_key])
+            .map_err(CompressedEntitiesTreeCorruptionError::from)?;
         catalog
             .verify(
-                TreeRoot::from_be_bytes(self.view.catalog_root().0).map_err(tree_corruption)?,
+                TreeRoot::from_be_bytes(self.view.catalog_root().0)
+                    .map_err(CompressedEntitiesTreeCorruptionError::from)?,
                 &proof,
                 vec![(catalog_key, leaf)],
             )
-            .map_err(tree_corruption)?;
+            .map_err(CompressedEntitiesTreeCorruptionError::from)?;
 
         if leaf == TreeLeaf::ZERO {
             if self
@@ -123,9 +132,7 @@ impl MdbxAuthenticatedTree {
                 .collection_has_records(key)
                 .map_err(classify_staging_error)?
             {
-                return Err(tree_corruption(
-                    "orphan collection records behind catalog non-membership",
-                ));
+                return Err(CompressedEntitiesTreeCorruptionError::OrphanCollectionRecords.into());
             }
             state.collections.insert(
                 key,
@@ -145,10 +152,13 @@ impl MdbxAuthenticatedTree {
             .collection_root_count(key)
             .map_err(classify_staging_error)?;
         if root_count != domain.shard_count() as usize {
-            return Err(tree_corruption(format!(
-                "present collection has {root_count} shard roots, expected {}",
-                domain.shard_count()
-            )));
+            return Err(
+                CompressedEntitiesTreeCorruptionError::ShardRootCountMismatch {
+                    actual: root_count,
+                    expected: domain.shard_count(),
+                }
+                .into(),
+            );
         }
         let mut roots = Vec::with_capacity(domain.shard_count() as usize);
         let mut trees = Vec::with_capacity(domain.shard_count() as usize);
@@ -158,20 +168,23 @@ impl MdbxAuthenticatedTree {
                 .view
                 .tree_root(namespace)
                 .map_err(classify_staging_error)?
-                .ok_or_else(|| tree_corruption("present collection has a missing shard root"))?;
-            let tree_root = TreeRoot::from_be_bytes(root.0).map_err(tree_corruption)?;
+                .ok_or(CompressedEntitiesTreeCorruptionError::MissingShardRoot)?;
+            let tree_root = TreeRoot::from_be_bytes(root.0)
+                .map_err(CompressedEntitiesTreeCorruptionError::from)?;
             trees.push(PoseidonSmt::open_with_store(
                 tree_root,
                 StagingCkbStore::new(self.view.clone(), namespace, root),
             ));
             roots.push(root);
         }
-        let top = aggregate_b256_shard_roots(&roots).map_err(tree_corruption)?;
-        let recomputed = collection_root(domain, key, top).map_err(tree_corruption)?;
+        let top = aggregate_b256_shard_roots(&roots)
+            .map_err(CompressedEntitiesTreeCorruptionError::from)?;
+        let recomputed = collection_root(domain, key, top)
+            .map_err(CompressedEntitiesTreeCorruptionError::from)?;
         if recomputed != parent_collection_root {
-            return Err(tree_corruption(
-                "catalog collection root does not match exact shard-root vector",
-            ));
+            return Err(
+                CompressedEntitiesTreeCorruptionError::CatalogCollectionRootMismatch.into(),
+            );
         }
         state.collections.insert(
             key,
@@ -220,44 +233,53 @@ impl AuthenticatedParentTree for MdbxAuthenticatedTree {
         expected_parent_root: B256,
     ) -> Result<Option<Commitment>> {
         if expected_parent_root != self.identity.root {
-            return Err(tree_unavailable(
-                "requested EVM root does not match exact catalog view",
-            ));
+            return Err(
+                CompressedEntitiesTreeUnavailableError::RequestedRootDoesNotMatchCatalogView.into(),
+            );
         }
         let mut state = self
             .state
             .lock()
-            .map_err(|_| tree_corruption("authenticated catalog session lock poisoned"))?;
+            .map_err(|_| CompressedEntitiesTreeCorruptionError::CatalogSessionLockPoisoned)?;
         if let Some(cached) = state.verified_leaves.get(&entity) {
             return Ok(*cached);
         }
         let (domain, _, id) = entity_parts(entity);
-        let key = collection_key(domain, id).map_err(tree_corruption)?;
+        let key =
+            collection_key(domain, id).map_err(CompressedEntitiesTreeCorruptionError::from)?;
         self.ensure_collection(&mut state, domain, key)?;
         let session = state
             .collections
             .get(&key)
-            .ok_or_else(|| tree_corruption("verified collection cache entry is missing"))?;
+            .ok_or(CompressedEntitiesTreeCorruptionError::MissingVerifiedCollectionCacheEntry)?;
         let Some(trees) = session.trees.as_ref() else {
             state.verified_leaves.insert(entity, None);
             return Ok(None);
         };
         let tree_key = entity_tree_key(entity)?;
-        let shard = shard_index(tree_key, domain.shard_count()).map_err(tree_corruption)?;
+        let shard = shard_index(tree_key, domain.shard_count())
+            .map_err(CompressedEntitiesTreeCorruptionError::from)?;
         let tree = &trees[shard as usize];
-        let leaf = tree.get(tree_key).map_err(tree_corruption)?;
-        let proof = tree.prove(vec![tree_key]).map_err(tree_corruption)?;
+        let leaf = tree
+            .get(tree_key)
+            .map_err(CompressedEntitiesTreeCorruptionError::from)?;
+        let proof = tree
+            .prove(vec![tree_key])
+            .map_err(CompressedEntitiesTreeCorruptionError::from)?;
         tree.verify(
             TreeRoot::from_be_bytes(session.parent_shard_roots[shard as usize].0)
-                .map_err(tree_corruption)?,
+                .map_err(CompressedEntitiesTreeCorruptionError::from)?,
             &proof,
             vec![(tree_key, leaf)],
         )
-        .map_err(tree_corruption)?;
+        .map_err(CompressedEntitiesTreeCorruptionError::from)?;
         let commitment = if leaf == TreeLeaf::ZERO {
             None
         } else {
-            Some(Commitment::try_from(leaf.as_bytes()).map_err(tree_corruption)?)
+            Some(
+                Commitment::try_from(leaf.as_bytes())
+                    .map_err(CompressedEntitiesTreeCorruptionError::from)?,
+            )
         };
         state.verified_leaves.insert(entity, commitment);
         Ok(commitment)
@@ -269,15 +291,16 @@ impl AuthenticatedParentTree for MdbxAuthenticatedTree {
         expected_parent_root: B256,
     ) -> Result<bool> {
         if expected_parent_root != self.identity.root {
-            return Err(tree_unavailable(
-                "requested EVM root does not match exact catalog view",
-            ));
+            return Err(
+                CompressedEntitiesTreeUnavailableError::RequestedRootDoesNotMatchCatalogView.into(),
+            );
         }
-        let (domain, key) = crate::partition_collection_key(partition).map_err(tree_corruption)?;
+        let (domain, key) = crate::partition_collection_key(partition)
+            .map_err(CompressedEntitiesTreeCorruptionError::from)?;
         let mut state = self
             .state
             .lock()
-            .map_err(|_| tree_corruption("authenticated catalog session lock poisoned"))?;
+            .map_err(|_| CompressedEntitiesTreeCorruptionError::CatalogSessionLockPoisoned)?;
         self.ensure_collection(&mut state, domain, key)?;
         Ok(state
             .collections
@@ -292,21 +315,22 @@ impl AuthenticatedParentTree for MdbxAuthenticatedTree {
         expected_parent_root: B256,
     ) -> Result<Option<B256>> {
         if expected_parent_root != self.identity.root {
-            return Err(tree_unavailable(
-                "requested EVM root does not match exact catalog view",
-            ));
+            return Err(
+                CompressedEntitiesTreeUnavailableError::RequestedRootDoesNotMatchCatalogView.into(),
+            );
         }
-        let (domain, key) = crate::partition_collection_key(partition).map_err(tree_corruption)?;
+        let (domain, key) = crate::partition_collection_key(partition)
+            .map_err(CompressedEntitiesTreeCorruptionError::from)?;
         let mut state = self
             .state
             .lock()
-            .map_err(|_| tree_corruption("authenticated catalog session lock poisoned"))?;
+            .map_err(|_| CompressedEntitiesTreeCorruptionError::CatalogSessionLockPoisoned)?;
         if !state.collections.contains_key(&key) {
             if state.catalog_tree.is_some() {
                 self.ensure_collection(&mut state, domain, key)?;
             } else {
-                let catalog_root =
-                    TreeRoot::from_be_bytes(self.view.catalog_root().0).map_err(tree_corruption)?;
+                let catalog_root = TreeRoot::from_be_bytes(self.view.catalog_root().0)
+                    .map_err(CompressedEntitiesTreeCorruptionError::from)?;
                 let catalog_store = StagingCkbStore::new(
                     self.view.clone(),
                     TreeNamespace::Catalog,
@@ -318,10 +342,9 @@ impl AuthenticatedParentTree for MdbxAuthenticatedTree {
                     verified_leaves: BTreeMap::new(),
                 };
                 self.ensure_collection(&mut verification, domain, key)?;
-                let collection = verification
-                    .collections
-                    .remove(&key)
-                    .ok_or_else(|| tree_corruption("verified collection cache entry is missing"))?;
+                let collection = verification.collections.remove(&key).ok_or(
+                    CompressedEntitiesTreeCorruptionError::MissingVerifiedCollectionCacheEntry,
+                )?;
                 state.collections.insert(key, collection);
             }
         }
@@ -353,17 +376,14 @@ fn entity_parts(entity: EntityRef) -> (CeDomain, Collection, crate::WwdEntityId)
 
 fn entity_tree_key(entity: EntityRef) -> Result<TreeKey> {
     let (_, collection, id) = entity_parts(entity);
-    derive_tree_key(collection, id).map_err(tree_corruption)
-}
-
-fn tree_unavailable(message: impl Into<String>) -> PrecompileError {
-    PrecompileError::TreeUnavailable(message.into())
+    derive_tree_key(collection, id)
+        .map_err(|err| CompressedEntitiesTreeCorruptionError::from(err).into())
 }
 
 fn classify_snapshot_error(error: PersistenceError) -> PrecompileError {
     match error {
         PersistenceError::Io { .. } | PersistenceError::Database { .. } => {
-            tree_unavailable(error.to_string())
+            CompressedEntitiesTreeUnavailableError::Persistence(error).into()
         }
         PersistenceError::ExactParentMismatch { required, actual }
             if required.commitment_scheme_version == actual.commitment_scheme_version
@@ -374,21 +394,20 @@ fn classify_snapshot_error(error: PersistenceError) -> PrecompileError {
             // catching-up node can request a parent ahead of its marker. Neither
             // height skew proves corruption. Same-height hash/root mismatches and
             // scheme mismatches remain fatal below.
-            tree_unavailable(PersistenceError::ExactParentMismatch { required, actual }.to_string())
+            CompressedEntitiesTreeUnavailableError::Persistence(
+                PersistenceError::ExactParentMismatch { required, actual },
+            )
+            .into()
         }
-        corruption => tree_corruption(corruption),
+        corruption => CompressedEntitiesTreeCorruptionError::Persistence(corruption).into(),
     }
 }
 
 fn classify_staging_error(error: StagingError) -> PrecompileError {
     match error {
         StagingError::Persistence(error) => classify_snapshot_error(error),
-        corruption => tree_corruption(corruption),
+        corruption => CompressedEntitiesTreeCorruptionError::Staging(corruption).into(),
     }
-}
-
-fn tree_corruption(message: impl core::fmt::Display) -> PrecompileError {
-    crate::errors::tree_corruption(message)
 }
 
 #[cfg(test)]

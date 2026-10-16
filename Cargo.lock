@@ -9373,6 +9373,7 @@ dependencies = [
  "outbe-macros",
  "outbe-ocomp-protocol",
  "outbe-primitives",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -9770,6 +9771,7 @@ dependencies = [
  "sha2 0.10.9",
  "tar",
  "tempfile",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
