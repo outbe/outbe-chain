@@ -2,8 +2,8 @@
   "feature": "outbe-chain-pjz",
   "goal_status": "active",
   "scope": "approved plan.md + task-specs.json + design.md only",
-  "last_periodic_report_utc": "2026-10-16T00:38:14Z",
-  "next_periodic_report_due_utc": "2026-10-16T01:08:14Z",
+  "last_periodic_report_utc": "2026-10-16T01:08:17Z",
+  "next_periodic_report_due_utc": "2026-10-16T01:38:17Z",
   "period_minutes": 30,
   "stage": "P2/P3 intermediate with protected node preparation context verified5dc7c1521: accepted manifest cache uploads and own-reader pinned refs replay/current state/public Output response; P4 bootstrap remains stopped at pending D3.",
   "decision_gate": {
@@ -42,15 +42,15 @@
   },
   "acceptance": "P0/P1/P5 closed; P2/P3 in_progress and incomplete; P4/P6/P7/P8 open; P4 descriptor prerequisite implemented under P3 activation only",
   "last_periodic_report": {
-    "completed": "Protected current proposal state d64b9ca92 and public Output f487b894c implemented/verified; required interactive DKG->membership reshare->native signer behavioral proof b4bfc6f6f added, fresh public-only native verifier PASS.",
-    "proof": "Source b4bfc6f6f:513consensus+66adapter tests,all-target scoped Clippy,fmt and standalone native verifier PASS; .4/local-signing-state,.4/local-public-material,.4/interactive-repository-signing.",
-    "tasks": "Authoritative statuses rechecked00:38UTC:no new closures;P0/P1/P5 closed;P2/P3 in_progress;P4/P6/P7/P8 open.",
-    "limitations": "D3 explicit approval pending; dependent bootstrap unchanged. Signer/control/sidecar distributed collector/Merge/production E2E and complete acceptance still incomplete. New DKG proof uses mock transport/injected canonical logs, not live chain.",
-    "next": "Implement approved narrow typed Review signer/control and collector, preserving node revalidation/no arbitrary signing bytes; wait explicit D3 answer before description/bootstrap change."
+    "completed": "Accepted manifest cache/replay3c132829a and protected node preparation5dc7c1521 implemented/verified. Required full native current regression c383730c6 completed; existing managed positive runtime/Ed pre-Review/receipt-gated Review/cache scenario found in actual passing run,not reimplemented.",
+    "proof": "5dc7c1521:71adapter/7consumers/Clippy/fmt. c383730c6:671native/10sidecar/2CLI,whole vendor Clippy/fmt. Bundles .4/checkpoint-replay-store,.4/local-preparation-context,.3/current-native-regression,.3/managed-positive-accounting.",
+    "tasks": "No new closures;P0/P1/P5 closed;P2/P3 in_progress;P4/P6/P7/P8 open.",
+    "limitations": "D3 explicit255-byte decision still pending,dependent bootstrap unchanged. Actual narrow signer/control,Outbe managed integration/collector,Merge,production E2E and full acceptance still incomplete. Generic managed test uses fixture receipts/static key,not Vote/threshold proof.",
+    "next": "Account for proven P2 generic behavior without duplicates,continue approved remaining integration;do not add D2/native fetch/cache redesign or infer D3 approval."
   },
   "blocked_audit": {
     "consecutive_goal_turns": 0,
-    "reset": "P2 current-source verification gap closed; independent approved generic managed positive scenario remains available. D3 dependent bootstrap stopped."
+    "reset": "Source/log evidence audit changed next action by proving planned managed positive work already implemented;no duplicate edits. D3 remains pending and dependent work stopped."
   },
   "user_confirmed_contract": {
     "network_repository_owner": "sole network BLS authority; no user delegation feature",
@@ -117,8 +117,8 @@
   "current_signing_evidence": "evidence/outbe-chain-pjz.4/current-signing",
   "public_witness_evidence": "evidence/outbe-chain-pjz.4/public-witness",
   "witness_bundle_evidence": "evidence/outbe-chain-pjz.4/witness-bundle",
-  "last_goal_turn_classification": "progress: actual required P2 current-source regression gap from12 vendor changes verified on c383730c6;671native+10sidecar+2CLI tests,full vendor Clippy/fmt exact-SHA evidence recorded. No source edits/task closure.",
-  "next_required_work": "Independent P2 generic managed positive BLS owner/ordinary Ed patch behavioral scenario using existing PublicationPolicy,without D2/fetch architecture or bootstrap changes. Narrow signer/control+collector remain incomplete. D3 explicit255-byte answer required before changing genesis description contract/dependent bootstrap; remaining P0-P8 production evidence/reviews unchanged.",
+  "last_goal_turn_classification": "progress: source/log audit located the already implemented generic managed positive runtime/Ed pre-Review/BLS receipt-gated/cache/reopen/rebuild scenario, verified actual execution on c383730c6 and current byte equality; planned duplicate implementation removed. Production unchanged;no task closure.",
+  "next_required_work": "Do not duplicate existing managed positive native runtime test: current actual pass/evidence now accounted. Finish authorized outstanding P2/P3/P6 behavior and runtime integration; narrow Review signer/control cannot bypass canonical native bootstrap/grant verification. Explicit D3 answer still required before description/auto-bootstrap changes. Preserve full P0-P8/evidence/3-review gates; no D2 redesign or arbitrary signer interface.",
   "review_package_evidence": "evidence/outbe-chain-pjz.4/review-package",
   "review_attestation_evidence": "evidence/outbe-chain-pjz.4/review-attestation",
   "review_store_evidence": "evidence/outbe-chain-pjz.4/review-store-r2",
@@ -145,5 +145,6 @@
     "checks": "671 native library tests/10 sidecar tests/2 CLI tests,all0ignored;whole vendor workspace all-target Clippy -D warnings and vendor fmt PASS;source unchanged.",
     "reason": "Actual12-file vendor delta since prior full regression0dbd83c40; narrower later P3 checks did not substitute for current complete required P2 run.",
     "limits": "Rust1.96 explicit override;static/native/missing-provider scenarios,not complete managed positive Outbe flow/full cache provenance/promotion/live chain/E2E/task acceptance."
-  }
+  },
+  "managed_positive_accounting_evidence": "evidence/outbe-chain-pjz.3/managed-positive-accounting"
 }
