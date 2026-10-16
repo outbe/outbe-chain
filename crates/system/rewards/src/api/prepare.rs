@@ -13,7 +13,7 @@ use super::batch::{
 use super::replay::require_identical_reward_gem_batch_replay;
 use super::{day_participation_complete, PreparedRewardGemBatch, RewardGemPreparationOutcome};
 use crate::constants::REWARD_GEM_CURRENCY;
-use crate::errors::RewardsError;
+use crate::errors::{RewardGemRetryableReason, RewardsError};
 use crate::schema::Rewards;
 
 /// Calculates and stores one exact validator reward Gem obligation without
@@ -95,7 +95,7 @@ fn validator_reward_shares(
 ) -> Result<(Vec<(Address, U256)>, U256)> {
     let total_count = voters.iter().try_fold(0u64, |total, (_, count)| {
         total.checked_add(*count).ok_or_else(|| {
-            reward_gem_retryable_error("validator reward participation total overflow")
+            reward_gem_retryable_error(RewardGemRetryableReason::ParticipationTotalOverflow)
         })
     })?;
     let mut recipients = Vec::new();
@@ -111,12 +111,15 @@ fn validator_reward_shares(
         }
         if owner.is_zero() {
             return Err(reward_gem_retryable_error(
-                "validator reward Gem owner is zero",
+                RewardGemRetryableReason::OwnerIsZero,
             ));
         }
-        planned_promis_load_amount = planned_promis_load_amount
-            .checked_add(load)
-            .ok_or_else(|| reward_gem_retryable_error("validator reward planned total overflow"))?;
+        planned_promis_load_amount =
+            planned_promis_load_amount
+                .checked_add(load)
+                .ok_or_else(|| {
+                    reward_gem_retryable_error(RewardGemRetryableReason::PlannedTotalOverflow)
+                })?;
         recipients.push((*owner, load));
     }
     Ok((recipients, planned_promis_load_amount))
@@ -132,27 +135,30 @@ fn validator_reward_share(
     }
     let weighted = validator_topup_amount
         .checked_mul(U256::from(count))
-        .ok_or_else(|| reward_gem_retryable_error("validator reward share multiply overflow"))?;
+        .ok_or_else(|| {
+            reward_gem_retryable_error(RewardGemRetryableReason::ShareMultiplyOverflow)
+        })?;
     Ok(weighted / denominator)
 }
 
 fn reward_gem_recipient_count(recipients: &[(Address, U256)]) -> Result<u32> {
     if recipients.len() > outbe_consensus::bls::MAX_VALIDATORS as usize {
-        return Err(reward_gem_retryable_error(format!(
-            "validator reward Gem batch exceeds validator bound: count={} max={}",
-            recipients.len(),
-            outbe_consensus::bls::MAX_VALIDATORS
-        )));
+        return Err(reward_gem_retryable_error(
+            RewardGemRetryableReason::BatchExceedsValidatorBound {
+                count: recipients.len(),
+                max: outbe_consensus::bls::MAX_VALIDATORS,
+            },
+        ));
     }
     u32::try_from(recipients.len())
-        .map_err(|_| reward_gem_retryable_error("validator reward Gem recipient count overflow"))
+        .map_err(|_| reward_gem_retryable_error(RewardGemRetryableReason::RecipientCountOverflow))
 }
 
 fn require_unprepared_day_unsettled(rewards: &Rewards<'_>, utc_day: u32) -> Result<()> {
     if rewards.daily_topup_settled.read(&utc_day)? {
-        return Err(reward_gem_retryable_error(format!(
-            "validator reward Gem UTC day {utc_day} is settled without a preparation"
-        )));
+        return Err(reward_gem_retryable_error(
+            RewardGemRetryableReason::SettledWithoutPreparation { utc_day },
+        ));
     }
     Ok(())
 }
@@ -187,23 +193,23 @@ fn enqueue_reward_gem_batch(
     let head = rewards.reward_gem_queue_head.read()?;
     let tail = rewards.reward_gem_queue_tail.read()?;
     let pending_batch_count = require_reward_gem_queue_consistency(rewards, head, tail)?;
-    let next_tail = tail
-        .checked_add(1)
-        .ok_or_else(|| reward_gem_retryable_error("validator reward Gem FIFO sequence overflow"))?;
+    let next_tail = tail.checked_add(1).ok_or_else(|| {
+        reward_gem_retryable_error(RewardGemRetryableReason::FifoSequenceOverflow)
+    })?;
     let next_pending_batch_count = pending_batch_count.checked_add(1).ok_or_else(|| {
-        reward_gem_retryable_error("validator reward Gem pending batch count overflow")
+        reward_gem_retryable_error(RewardGemRetryableReason::PendingBatchCountOverflow)
     })?;
     if rewards.reward_gem_queue_sequence_plus_one.read(&utc_day)? != 0 {
-        return Err(reward_gem_retryable_error(format!(
-            "validator reward Gem UTC day {utc_day} is already present in the FIFO"
-        )));
+        return Err(reward_gem_retryable_error(
+            RewardGemRetryableReason::AlreadyPresentInFifo { utc_day },
+        ));
     }
 
     let owners = rewards.reward_gem_owner_at.get_nested(&utc_day);
     let loads = rewards.reward_promis_load_at.get_nested(&utc_day);
     for (index, (owner, load)) in recipients.iter().copied().enumerate() {
         let index = u32::try_from(index).map_err(|_| {
-            reward_gem_retryable_error("validator reward Gem recipient index overflow")
+            reward_gem_retryable_error(RewardGemRetryableReason::RecipientIndexOverflow)
         })?;
         owners.write(&index, owner)?;
         loads.write(&index, load)?;

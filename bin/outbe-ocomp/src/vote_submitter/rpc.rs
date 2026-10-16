@@ -6,7 +6,6 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256};
-use thiserror::Error;
 
 use super::{VoteBlockV1, VoteReceiptV1, VoteSubmissionRpcV1};
 
@@ -120,7 +119,7 @@ pub(super) fn parse_rpc_response(
     envelope
         .get("result")
         .cloned()
-        .ok_or_else(|| PublicVoteRpcErrorV1::Malformed("missing result".to_owned()))
+        .ok_or(PublicVoteRpcErrorV1::MissingResult)
 }
 
 impl VoteSubmissionRpcV1 for PublicVoteRpcClientV1 {
@@ -246,7 +245,7 @@ fn parse_quantity_field(
         value
             .get(field)
             .cloned()
-            .ok_or_else(|| PublicVoteRpcErrorV1::Malformed(format!("missing {field}")))?,
+            .ok_or(PublicVoteRpcErrorV1::MissingField(field))?,
         field,
     )
 }
@@ -254,7 +253,7 @@ fn parse_quantity_field(
 fn parse_b256(value: serde_json::Value, field: &'static str) -> Result<B256, PublicVoteRpcErrorV1> {
     value
         .as_str()
-        .ok_or_else(|| PublicVoteRpcErrorV1::Malformed(format!("{field} is not a string")))
+        .ok_or(PublicVoteRpcErrorV1::FieldNotString(field))
         .and_then(|encoded| B256::from_str(encoded).map_err(PublicVoteRpcErrorV1::malformed))
 }
 
@@ -266,28 +265,12 @@ fn parse_b256_field(
         value
             .get(field)
             .cloned()
-            .ok_or_else(|| PublicVoteRpcErrorV1::Malformed(format!("missing {field}")))?,
+            .ok_or(PublicVoteRpcErrorV1::MissingField(field))?,
         field,
     )
 }
 
-#[derive(Debug, Error)]
-pub enum PublicVoteRpcErrorV1 {
-    #[error("invalid public vote RPC configuration")]
-    InvalidConfiguration,
-    #[error("public vote RPC transport failed: {0}")]
-    Transport(String),
-    #[error("public vote RPC response exceeds its byte cap")]
-    ResponseTooLarge,
-    #[error("public vote RPC response is malformed: {0}")]
-    Malformed(String),
-    #[error("public vote RPC returned error {code}: {message}")]
-    Remote { code: i64, message: String },
-    #[error("public vote RPC returned no block")]
-    MissingBlock,
-    #[error("public vote RPC field {0} is not a canonical hex quantity")]
-    InvalidQuantity(&'static str),
-}
+pub use crate::errors::PublicVoteRpcErrorV1;
 
 impl PublicVoteRpcErrorV1 {
     pub(super) const fn is_retryable(&self) -> bool {

@@ -9,7 +9,7 @@ use revm::{
 };
 
 use crate::block::BlockContext;
-use crate::error::{PrecompileError, Result};
+use crate::error::{PrimitivesStorageError, Result};
 use crate::storage::PrecompileStorageProvider;
 
 /// Storage provider for block-level hooks, wrapping a mutable [`StateDB`].
@@ -74,7 +74,13 @@ impl<'a, DB: StateDB> DirectStorageProvider<'a, DB> {
 
         self.state
             .basic(address)
-            .map_err(|e| PrecompileError::Storage(format!("basic({address}): {e}")))
+            .map_err(|e| {
+                PrimitivesStorageError::BasicRead {
+                    address,
+                    reason: e.to_string(),
+                }
+                .into()
+            })
             .map(|info| info.unwrap_or_default())
     }
 
@@ -94,7 +100,7 @@ impl<'a, DB: StateDB> DirectStorageProvider<'a, DB> {
     ///
     /// # Errors
     ///
-    /// Returns [`PrecompileError::Storage`] if reading the original slot value
+    /// Returns [`crate::error::PrecompileError::Storage`] if reading the original slot value
     /// from the database fails.
     pub fn flush(&mut self) -> Result<()> {
         if self.pending.is_empty() && self.pending_accounts.is_empty() {
@@ -124,7 +130,10 @@ impl<'a, DB: StateDB> DirectStorageProvider<'a, DB> {
                 None => self
                     .state
                     .basic(addr)
-                    .map_err(|e| PrecompileError::Storage(format!("basic({addr}): {e}")))?
+                    .map_err(|e| PrimitivesStorageError::BasicRead {
+                        address: addr,
+                        reason: e.to_string(),
+                    })?
                     .unwrap_or_default(),
             };
 
@@ -132,10 +141,13 @@ impl<'a, DB: StateDB> DirectStorageProvider<'a, DB> {
             // each write so that the journal can produce correct reverts.
             let mut storage = EvmStorage::default();
             for (key, new_value) in slots {
-                let original = self
-                    .state
-                    .storage(addr, key)
-                    .map_err(|e| PrecompileError::Storage(format!("storage({addr},{key}): {e}")))?;
+                let original = self.state.storage(addr, key).map_err(|e| {
+                    PrimitivesStorageError::StorageSlotRead {
+                        address: addr,
+                        key,
+                        reason: e.to_string(),
+                    }
+                })?;
                 storage.insert(
                     key,
                     EvmStorageSlot::new_changed(
@@ -216,10 +228,13 @@ where
         // Reth's `StateProviderDatabase::block_hash` returns the canonical
         // hash for any in-window block and `B256::ZERO` otherwise. Map ZERO
         // to `None` so callers see a clean "unknown" signal.
-        let hash = self
-            .state
-            .block_hash(number)
-            .map_err(|e| PrecompileError::Storage(format!("block_hash({number}) failed: {e}")))?;
+        let hash =
+            self.state
+                .block_hash(number)
+                .map_err(|e| PrimitivesStorageError::BlockHashRead {
+                    number,
+                    reason: e.to_string(),
+                })?;
         Ok((!hash.is_zero()).then_some(hash))
     }
 
@@ -240,9 +255,14 @@ where
         if let Some(value) = self.pending.get(&address).and_then(|s| s.get(&key)) {
             return Ok(*value);
         }
-        self.state
-            .storage(address, key)
-            .map_err(|e| PrecompileError::Storage(format!("storage({address},{key}): {e}")))
+        self.state.storage(address, key).map_err(|e| {
+            PrimitivesStorageError::StorageSlotRead {
+                address,
+                key,
+                reason: e.to_string(),
+            }
+            .into()
+        })
     }
 
     fn tload(&mut self, _address: Address, _key: U256) -> Result<U256> {
@@ -331,19 +351,22 @@ where
         let mut from_info = self.effective_account_info(from)?;
 
         if from_info.balance < amount {
-            return Err(PrecompileError::revert(format!(
-                "insufficient balance: {from} has {} but needs {amount}",
-                from_info.balance
-            )));
+            return Err(PrimitivesStorageError::InsufficientBalance {
+                from,
+                balance: from_info.balance,
+                needed: amount,
+            }
+            .into());
         }
 
         let mut to_info = self.effective_account_info(to)?;
-        let credited = to_info.balance.checked_add(amount).ok_or_else(|| {
-            PrecompileError::revert(format!(
-                "balance overflow: crediting {amount} to {to} with balance {}",
-                to_info.balance
-            ))
-        })?;
+        let credited = to_info.balance.checked_add(amount).ok_or(
+            PrimitivesStorageError::CreditBalanceOverflow {
+                amount,
+                to,
+                balance: to_info.balance,
+            },
+        )?;
         from_info.balance -= amount;
         to_info.balance = credited;
         self.pending_accounts.insert(from, from_info);
@@ -357,12 +380,13 @@ where
         }
 
         let mut info = self.effective_account_info(address)?;
-        info.balance = info.balance.checked_add(amount).ok_or_else(|| {
-            PrecompileError::revert(format!(
-                "balance overflow: increasing {address} by {amount} from {}",
-                info.balance
-            ))
-        })?;
+        info.balance = info.balance.checked_add(amount).ok_or(
+            PrimitivesStorageError::IncreaseBalanceOverflow {
+                address,
+                amount,
+                balance: info.balance,
+            },
+        )?;
         self.pending_accounts.insert(address, info);
         Ok(())
     }
@@ -375,10 +399,12 @@ where
         let mut info = self.effective_account_info(address)?;
 
         if info.balance < amount {
-            return Err(PrecompileError::revert(format!(
-                "insufficient balance for burn: {address} has {} but needs {amount}",
-                info.balance
-            )));
+            return Err(PrimitivesStorageError::InsufficientBalanceForBurn {
+                address,
+                balance: info.balance,
+                needed: amount,
+            }
+            .into());
         }
 
         info.balance -= amount;

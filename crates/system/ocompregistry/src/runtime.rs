@@ -4,9 +4,7 @@ mod lineage;
 pub(crate) use authority::validate_protocol_authority;
 pub use authority::{OcompProtocolAuthorityV1, OcompSuccessorV1};
 
-use authority::{
-    decode_authority, encode_authority, protocol_error, validate_successor, CanonicalAuthorityParts,
-};
+use authority::{decode_authority, encode_authority, validate_successor, CanonicalAuthorityParts};
 
 use lineage::retention_deadline;
 
@@ -15,7 +13,7 @@ use outbe_ocomp_protocol::{profile::ProtocolBundleV1, SchemaLimits, OCB1_HEADER_
 use outbe_primitives::error::Result;
 
 use crate::{
-    errors::corruption, precompile::IOcompRegistry, profile::OcompRequestProfile,
+    errors::OcompRegistryError, precompile::IOcompRegistry, profile::OcompRequestProfile,
     schema::OcompRegistry,
 };
 
@@ -40,7 +38,7 @@ impl StoredAuthorityHeader {
 
     fn validate_complete(&self) -> Result<()> {
         if self.profile_len == 0 || self.bundle_len == 0 || self.bundle_hash.is_zero() {
-            return Err(corruption("OCOMP Registry active authority is partial"));
+            return Err(OcompRegistryError::ActiveAuthorityPartial.into());
         }
         Ok(())
     }
@@ -50,11 +48,9 @@ impl StoredAuthorityHeader {
             .codec
             .max_allocation_bytes
             .checked_add(OCB1_HEADER_LEN)
-            .ok_or_else(|| corruption("OCOMP Registry authority byte cap overflow"))?;
+            .ok_or(OcompRegistryError::AuthorityByteCapOverflow)?;
         if self.profile_len > max || self.bundle_len > max {
-            return Err(corruption(
-                "OCOMP Registry active authority exceeds byte cap",
-            ));
+            return Err(OcompRegistryError::ActiveAuthorityExceedsByteCap.into());
         }
         Ok(())
     }
@@ -94,12 +90,10 @@ impl OcompRegistry<'_> {
             || current_height != activation_height
             || self.storage.block_number()? != current_height
         {
-            return Err(corruption(
-                "OCOMP Registry install attempted outside its activation height",
-            ));
+            return Err(OcompRegistryError::InstallOutsideActivationHeight.into());
         }
         if install_hash.is_zero() {
-            return Err(corruption("OCOMP Registry install hash must be non-zero"));
+            return Err(OcompRegistryError::InstallHashZero.into());
         }
         Ok(())
     }
@@ -108,7 +102,7 @@ impl OcompRegistry<'_> {
         if self.storage.chain_id()? != profile.chain_id
             || self.storage.genesis_hash()? != profile.genesis_hash
         {
-            return Err(corruption("OCOMP Registry chain identity mismatch"));
+            return Err(OcompRegistryError::ChainIdentityMismatch.into());
         }
         Ok(())
     }
@@ -148,14 +142,14 @@ impl OcompRegistry<'_> {
             || self.install_hash.read()? != install_hash
             || self.activation_height.read()? != activation_height
         {
-            return Err(corruption("OCOMP Registry genesis authority is immutable"));
+            return Err(OcompRegistryError::GenesisAuthorityImmutable.into());
         }
         Ok(())
     }
 
     fn validate_empty_genesis_install(&self) -> Result<()> {
         if !self.install_hash.read()?.is_zero() || self.activation_height.read()? != 0 {
-            return Err(corruption("OCOMP Registry genesis authority is partial"));
+            return Err(OcompRegistryError::GenesisAuthorityPartial.into());
         }
         Ok(())
     }
@@ -183,7 +177,7 @@ impl OcompRegistry<'_> {
             activationHeight: activation_height,
         })?;
         if self.active_authority(limits)? != Some(authority.clone()) {
-            return Err(corruption("OCOMP Registry authority write/read mismatch"));
+            return Err(OcompRegistryError::AuthorityWriteReadMismatch.into());
         }
         checkpoint.commit();
         Ok(())
@@ -203,16 +197,14 @@ impl OcompRegistry<'_> {
             OcompRequestProfile::decode_canonical(&self.active_request_profile.read()?, limits)?;
         let protocol_bundle =
             ProtocolBundleV1::decode_canonical(&self.active_protocol_bundle.read()?, limits)
-                .map_err(protocol_error)?;
+                .map_err(OcompRegistryError::from)?;
         let authority = OcompProtocolAuthorityV1 {
             request_profile,
             protocol_bundle,
         };
         validate_protocol_authority(&authority, limits)?;
         if authority.request_profile.protocol_bundle_hash != header.bundle_hash {
-            return Err(corruption(
-                "OCOMP Registry active bundle hash slot is inconsistent",
-            ));
+            return Err(OcompRegistryError::ActiveBundleHashInconsistent.into());
         }
         Ok(Some(authority))
     }
@@ -229,7 +221,7 @@ impl OcompRegistry<'_> {
                 proposal_id,
                 OcompSuccessorV1::decode_canonical(&bytes, limits)?,
             ))),
-            _ => Err(corruption("OCOMP Registry staged successor is partial")),
+            _ => Err(OcompRegistryError::StagedSuccessorPartial.into()),
         }
     }
 
@@ -240,24 +232,22 @@ impl OcompRegistry<'_> {
         limits: &SchemaLimits,
     ) -> Result<()> {
         if proposal_id.is_zero() {
-            return Err(corruption("OCOMP successor proposal id must be non-zero"));
+            return Err(OcompRegistryError::SuccessorProposalIdZero.into());
         }
         let current_height = self.storage.block_number()?;
         let active = self
             .active_authority(limits)?
-            .ok_or_else(|| corruption("OCOMP Registry is not initialized"))?;
+            .ok_or(OcompRegistryError::NotInitialized)?;
         validate_successor(&active, successor, current_height, limits)?;
         if !self.retiring_authority.is_empty()? {
-            return Err(corruption(
-                "OCOMP predecessor retirement must finish before staging another successor",
-            ));
+            return Err(OcompRegistryError::PredecessorRetirementPending.into());
         }
         let encoded = successor.encode_canonical(limits)?;
         if let Some((stored_id, stored)) = self.staged_successor(limits)? {
             if stored_id == proposal_id && stored == *successor {
                 return Ok(());
             }
-            return Err(corruption("another OCOMP successor is already staged"));
+            return Err(OcompRegistryError::AnotherSuccessorAlreadyStaged.into());
         }
         let checkpoint = self.storage.checkpoint_guard();
         self.staged_successor.write(&encoded)?;
@@ -276,9 +266,7 @@ impl OcompRegistry<'_> {
             return Ok(());
         };
         if stored_id != proposal_id {
-            return Err(corruption(
-                "cannot discard another Update proposal's OCOMP successor",
-            ));
+            return Err(OcompRegistryError::CannotDiscardAnotherProposalSuccessor.into());
         }
         self.staged_successor.clear()?;
         self.staged_proposal_id.delete()
@@ -291,26 +279,20 @@ impl OcompRegistry<'_> {
         limits: &SchemaLimits,
     ) -> Result<()> {
         if self.storage.block_number()? != current_height {
-            return Err(corruption(
-                "OCOMP successor activation height does not match storage context",
-            ));
+            return Err(OcompRegistryError::SuccessorActivationHeightContextMismatch.into());
         }
         let Some((stored_id, successor)) = self.staged_successor(limits)? else {
-            return Err(corruption("OCOMP successor is not staged"));
+            return Err(OcompRegistryError::SuccessorNotStaged.into());
         };
         if stored_id != proposal_id || successor.activation_height != current_height {
-            return Err(corruption(
-                "OCOMP successor activation proposal or height mismatch",
-            ));
+            return Err(OcompRegistryError::SuccessorActivationProposalOrHeightMismatch.into());
         }
         if !self.retiring_authority.is_empty()? {
-            return Err(corruption(
-                "OCOMP Registry already has a retiring predecessor",
-            ));
+            return Err(OcompRegistryError::AlreadyHasRetiringPredecessor.into());
         }
         let active = self
             .active_authority(limits)?
-            .ok_or_else(|| corruption("OCOMP Registry is not initialized"))?;
+            .ok_or(OcompRegistryError::NotInitialized)?;
         validate_successor(
             &active,
             &successor,

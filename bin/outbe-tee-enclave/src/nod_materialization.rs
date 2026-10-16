@@ -1,7 +1,7 @@
 //! Verify the original certified action and source proof before encrypting NODs.
 use crate::{
     crypto::{chacha20poly1305_decrypt, chacha20poly1305_encrypt, hkdf_sha256},
-    errors::{Result, TeeError},
+    errors::{NodMaterializationRejectReason, Result, TeeError},
 };
 use std::collections::BTreeMap;
 
@@ -49,7 +49,7 @@ pub fn prepare(
     let encrypted_witness = chacha20poly1305_encrypt(&key, &[0u8; 12], &plaintext)?;
     let head =
         NodMaterializationHeadV1::decode_canonical(&request.authority.head, &poc_schema_limits())
-            .map_err(rejected)?;
+            .map_err(TeeError::tribute_offer_reject)?;
     Ok(ProtectedNodMaterializationV2 {
         queue_sequence: head.queue_sequence,
         first_nod_ordinal: head.next_nod_ordinal,
@@ -83,11 +83,11 @@ pub fn open(
     let request: PrepareEncryptedNodsRequestV2 =
         postcard::from_bytes(&plaintext).map_err(|_| TeeError::DecryptFailed)?;
     if &request.authority != authority {
-        return Err(rejected("stale materialization authority"));
+        return Err(NodMaterializationRejectReason::StaleAuthority.into());
     }
     let expected = prepare(secret, &request)?;
     if &expected != carrier {
-        return Err(rejected("materialization ciphertext mismatch"));
+        return Err(NodMaterializationRejectReason::CiphertextMismatch.into());
     }
     verify_and_encrypt(secret, &request)
 }
@@ -97,14 +97,14 @@ fn verify_and_encrypt(
 ) -> Result<Vec<EncryptedNodV2>> {
     let limits = poc_schema_limits();
     let head = NodMaterializationHeadV1::decode_canonical(&request.authority.head, &limits)
-        .map_err(rejected)?;
-    let batch =
-        NodMaterializationBatchV1::decode_canonical(&request.batch, &limits).map_err(rejected)?;
+        .map_err(TeeError::tribute_offer_reject)?;
+    let batch = NodMaterializationBatchV1::decode_canonical(&request.batch, &limits)
+        .map_err(TeeError::tribute_offer_reject)?;
     let verified =
         verify_nod_materialization_batch(&batch, &head, request.authority.subtree_height, &limits)
-            .map_err(rejected)?;
+            .map_err(TeeError::tribute_offer_reject)?;
     if verified.actions().len() != request.sources.len() {
-        return Err(rejected("NOD source count mismatch"));
+        return Err(NodMaterializationRejectReason::SourceCountMismatch.into());
     }
     let mut fractions = BTreeMap::new();
     for fraction in &request.league_fractions {
@@ -113,7 +113,7 @@ fn verify_and_encrypt(
                 .insert(fraction.league_id, fraction.fraction_fp)
                 .is_some()
         {
-            return Err(rejected("NOD league fraction"));
+            return Err(NodMaterializationRejectReason::LeagueFraction.into());
         }
     }
     verified
@@ -123,15 +123,15 @@ fn verify_and_encrypt(
         .map(|(action, source)| {
             let tribute = &source.tribute;
             if action.tribute_id.as_slice() != tribute.context.tribute_id.as_slice() {
-                return Err(rejected("NOD Tribute identity mismatch"));
+                return Err(NodMaterializationRejectReason::TributeIdentityMismatch.into());
             }
             let proof: CollectionBodyProofV1 = postcard::from_bytes(&source.proof)
-                .map_err(|_| rejected("invalid Tribute proof encoding"))?;
+                .map_err(|_| NodMaterializationRejectReason::InvalidTributeProofEncoding)?;
             let body = StoredBody::new(
                 TRIBUTE_BODY_SCHEMA_V2,
-                encode_tribute_v2(tribute).map_err(rejected)?,
+                encode_tribute_v2(tribute).map_err(TeeError::tribute_offer_reject)?,
             )
-            .map_err(rejected)?
+            .map_err(TeeError::tribute_offer_reject)?
             .encode();
             verify_body_in_collection(
                 request.authority.sealed_tribute_root,
@@ -140,10 +140,10 @@ fn verify_and_encrypt(
                 &body,
                 &proof,
             )
-            .map_err(rejected)?;
+            .map_err(TeeError::tribute_offer_reject)?;
             let nod_id =
                 outbe_primitives::wwd_entity_id::WwdEntityId::try_from(action.nod_id.as_slice())
-                    .map_err(rejected)?;
+                    .map_err(TeeError::tribute_offer_reject)?;
             let terms = NodTermsV2 {
                 chain_id: request.authority.chain_id,
                 nod_id,
@@ -158,7 +158,7 @@ fn verify_and_encrypt(
             let fraction = fractions
                 .get(&action.league_id)
                 .copied()
-                .ok_or_else(|| rejected("NOD league fraction"))?;
+                .ok_or(NodMaterializationRejectReason::LeagueFraction)?;
             let load = gratis_load(
                 amounts.nominal_amount_minor,
                 fraction,
@@ -174,14 +174,10 @@ fn gratis_load(
     nod_gratis_load_max: U256,
 ) -> Result<U256> {
     let load = checked_mul_div_floor(nominal_amount_minor, fraction_fp, SCALE_1E6_U256)
-        .map_err(|_| rejected("NOD gratis load"))?
+        .map_err(|_| NodMaterializationRejectReason::GratisLoad)?
         .min(nod_gratis_load_max);
     if load.is_zero() {
-        return Err(rejected("NOD gratis load"));
+        return Err(NodMaterializationRejectReason::GratisLoad.into());
     }
     Ok(load)
-}
-
-fn rejected(error: impl std::fmt::Display) -> TeeError {
-    TeeError::TributeOfferReject(error.to_string())
 }

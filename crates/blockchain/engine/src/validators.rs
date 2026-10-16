@@ -3,7 +3,7 @@
 //! `validators.json` is a tooling/genesis artifact only. Runtime validator
 //! membership is read from the ValidatorSet precompile at specific block heights.
 
-use crate::errors::{validator_has_no_node_host_enclave_binding_error, ValidatorsError};
+use crate::errors::{ValidatorsError, ValidatorsPrecompileError};
 use alloy_primitives::{Address, B256, U256};
 use commonware_codec::ReadExt as _;
 use commonware_cryptography::bls12381;
@@ -63,9 +63,7 @@ impl<'a> StorageReader for RethStateReader<'a> {
         self.state
             .storage_read(address, key)
             .map(|opt| opt.unwrap_or(U256::ZERO))
-            .map_err(|e| {
-                outbe_primitives::error::PrecompileError::Storage(format!("state read failed: {e}"))
-            })
+            .map_err(|e| ValidatorsPrecompileError::StateReadFailed(e.to_string()).into())
     }
 }
 
@@ -574,7 +572,9 @@ pub fn read_tee_recipient_x25519_from_state(
             .and_then(|binding| {
                 binding
                     .map(|binding| binding.recipient_x25519)
-                    .ok_or_else(validator_has_no_node_host_enclave_binding_error)
+                    .ok_or_else(|| {
+                        ValidatorsPrecompileError::ValidatorMissingNodeHostEnclaveBinding.into()
+                    })
             })
             .map_err(|e| ValidatorsError::ReadTeeRecipientX25519(format!("{e}")).into())
     }

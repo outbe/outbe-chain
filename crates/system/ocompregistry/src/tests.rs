@@ -315,8 +315,7 @@ fn precompile_exposes_active_staged_retiring_and_lineage_state() {
                 alloy_primitives::Address::ZERO,
                 U256::ZERO,
             )?;
-            let staged = IOcompRegistry::stagedSuccessorCall::abi_decode_returns(&staged)
-                .map_err(|error| crate::errors::corruption(error.to_string()))?;
+            let staged = IOcompRegistry::stagedSuccessorCall::abi_decode_returns(&staged).unwrap();
             assert_eq!(staged.proposalId, proposal_id);
             assert_eq!(
                 staged.canonicalSuccessor.as_ref(),
@@ -331,7 +330,7 @@ fn precompile_exposes_active_staged_retiring_and_lineage_state() {
             )?;
             assert_eq!(
                 IOcompRegistry::lineageProtocolBundleHashCall::abi_decode_returns(&lineage_hash)
-                    .map_err(|error| crate::errors::corruption(error.to_string()))?,
+                    .unwrap(),
                 initial.request_profile.protocol_bundle_hash
             );
             Ok::<_, outbe_primitives::error::PrecompileError>(())
@@ -354,7 +353,7 @@ fn precompile_exposes_active_staged_retiring_and_lineage_state() {
             )?;
             assert_eq!(
                 IOcompRegistry::retiringProtocolBundleHashCall::abi_decode_returns(&retiring)
-                    .map_err(|error| crate::errors::corruption(error.to_string()))?,
+                    .unwrap(),
                 initial.request_profile.protocol_bundle_hash
             );
             Ok::<_, outbe_primitives::error::PrecompileError>(())

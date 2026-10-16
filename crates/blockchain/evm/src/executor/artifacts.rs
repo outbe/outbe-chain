@@ -10,16 +10,16 @@ pub(in crate::executor) fn validate_execution_summary_artifact(
         return Ok(());
     }
     let Some(header_summary) = header_summary else {
-        return Err(BlockValidationError::msg(
-            "missing execution summary artifact in block extra_data",
-        )
-        .into());
+        return Err(crate::errors::ExecutorValidationError::MissingExecutionSummaryArtifact.into());
     };
     if header_summary != current_summary {
-        return Err(BlockValidationError::msg(format!(
-            "execution summary artifact mismatch: header={header_summary:?}, local={current_summary:?}"
-        ))
-        .into());
+        return Err(
+            crate::errors::ExecutorValidationError::ExecutionSummaryArtifactMismatch {
+                header: header_summary,
+                local: current_summary,
+            }
+            .into(),
+        );
     }
     Ok(())
 }
@@ -30,14 +30,12 @@ pub(in crate::executor) fn validate_finish_artifacts(
     current_summary: ExecutionSummaryArtifact,
 ) -> Result<outbe_primitives::reshare_artifact::OutbeBlockArtifacts, BlockExecutionError> {
     let block_artifacts = decode_outbe_block_artifacts(executor.final_extra_data().as_ref())
-        .map_err(|err| BlockExecutionError::Validation(BlockValidationError::msg(err)))?;
+        .map_err(crate::errors::ExecutorValidationError::block_artifacts)?;
     if block_number > 0 {
         let seal_output = executor
             .compressed_entities_seal_output
             .as_ref()
-            .ok_or_else(|| -> BlockExecutionError {
-                BlockValidationError::msg("missing compressed-entities SealOutput").into()
-            })?;
+            .ok_or(crate::errors::ExecutorValidationError::MissingCompressedEntitiesSealOutput)?;
         validate_compressed_entities_root_after_seal(
             block_artifacts.compressed_entities_root,
             seal_output.new_root,

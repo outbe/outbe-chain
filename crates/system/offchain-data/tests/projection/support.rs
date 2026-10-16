@@ -86,7 +86,7 @@ impl TributeRetentionSelector for FixedRetentionSelector {
     fn active_pin_for(
         &self,
         worldwide_day: WorldwideDay,
-    ) -> Result<Option<RetainedTributePin>, String> {
+    ) -> Result<Option<RetainedTributePin>, outbe_offchain_data::RetentionSelectorError> {
         Ok((self.pin.worldwide_day == worldwide_day).then_some(self.pin))
     }
 }

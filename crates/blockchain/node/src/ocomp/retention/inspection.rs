@@ -17,7 +17,7 @@ pub fn inspect_retention_journal(
         ));
     }
     if metadata.len() > JOURNAL_MAX_BYTES as u64 {
-        return Err(RetentionError::MalformedJournal("journal exceeds byte cap"));
+        return Err(crate::errors::RetentionMalformedJournalError::JournalExceedsByteCap.into());
     }
     let mut file = File::open(&path).map_err(|source| RetentionError::Io {
         operation: "open",

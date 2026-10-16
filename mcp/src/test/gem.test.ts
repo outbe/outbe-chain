@@ -39,7 +39,7 @@ async function run(tool: string, args: Record<string, unknown>, prepare: (chain:
     chain.register(FACTORY_ABI, intexAddress({ name: "outbe-testnet", isOutbe: true }, "factory"));
     chain.register(ERC20_ABI);
     fakeEnclave(chain);
-    chain.reply("powDifficulty", 1);
+    chain.reply("powDifficulty", 2);
     prepare(chain);
   });
   try {
@@ -64,7 +64,7 @@ test("gem_promis_mine sends the owner's proof of work and Promis Mint authorizat
     opNonce: 7n,
     chainId: chainIdWord(54_322_345),
   });
-  assert.deepEqual(sent.at(-1)?.args, [9n, grindMiningNonce("Gem", 9n, SIGNER, 1), mac, 7n]);
+  assert.deepEqual(sent.at(-1)?.args, [9n, grindMiningNonce("Gem", 9n, SIGNER, 2), mac, 7n]);
 });
 
 test("gem_promis_mine refuses another owner's Gem and an unsettled one", async () => {
@@ -119,7 +119,7 @@ test("nod_gratis_mine opens the signer's Nod amount and sends its Gratis Mint au
     opNonce: 3n,
     chainId: chainIdWord(54_322_345),
   });
-  assert.deepEqual(sent.at(-1)?.args, [4n, grindMiningNonce("Nod", 4n, SIGNER, 1), mac, 3n]);
+  assert.deepEqual(sent.at(-1)?.args, [4n, grindMiningNonce("Nod", 4n, SIGNER, 2), mac, 3n]);
   assert.equal(JSON.parse(text).gratisMinor, "4500000");
 });
 

@@ -24,19 +24,18 @@ use outbe_ocomp_protocol::{
     CasObjectRefV1, ListKind, ObjectKind, ProtocolError, SchemaLimits, StreamingOrderedListRoot,
 };
 use outbe_primitives::time::WorldwideDay;
-use thiserror::Error;
 
 use crate::{
     admission_catalog::{
-        AdmissionCatalogError, AdmissionCatalogReader, AdmissionDirectoryCursorV1,
-        AdmissionDirectoryStepV1, VerifiedAdmissionCatalog, VerifiedAdmissionRecordV1,
+        AdmissionCatalogReader, AdmissionDirectoryCursorV1, AdmissionDirectoryStepV1,
+        VerifiedAdmissionCatalog, VerifiedAdmissionRecordV1,
     },
     bundle::PinnedProtocolBundle,
-    cas::{CasError, FilesystemCasReader},
-    input_artifacts::{decode_fidelity_subject_key, decode_oracle_subject_key, InputArtifactError},
+    cas::FilesystemCasReader,
+    input_artifacts::{decode_fidelity_subject_key, decode_oracle_subject_key},
     input_ref_catalog::{
-        InputRefCatalogClosureCursorV1, InputRefCatalogClosureStepV1, InputRefCatalogError,
-        VerifiedInputChunkRefCatalog, VerifiedInputChunkRefV1,
+        InputRefCatalogClosureCursorV1, InputRefCatalogClosureStepV1, VerifiedInputChunkRefCatalog,
+        VerifiedInputChunkRefV1,
     },
 };
 
@@ -367,7 +366,7 @@ impl<'a> LocalLysisPlanAuditV1<'a> {
             item.artifact().phase_payload(self.schedule.limits)?,
             self.schedule.limits,
         )
-        .map_err(|_| ExactLysisPlanError::AuthorityMismatch("fixed reduce league fractions"))?;
+        .map_err(|_| ExactLysisPlanError::FixedReduceLeagueFractions)?;
         if output.ordered_fractions.is_empty()
             || output
                 .aggregate
@@ -375,9 +374,7 @@ impl<'a> LocalLysisPlanAuditV1<'a> {
                 .map(|aggregate| aggregate.tribute_count)
                 != Some(self.schedule.plan.tribute_count)
         {
-            return Err(ExactLysisPlanError::AuthorityMismatch(
-                "fixed reduce league fractions",
-            ));
+            return Err(ExactLysisPlanError::FixedReduceLeagueFractions);
         }
         Ok(output
             .ordered_fractions
@@ -487,26 +484,4 @@ fn exact_pair(producer_ids: &[Option<B256>]) -> Result<[Option<B256>; 2], ExactL
     }
 }
 
-#[derive(Debug, Error)]
-pub enum ExactLysisPlanError {
-    #[error("private Tribute amount read failed: {0}")]
-    PrivateTribute(#[from] outbe_tee::TransportError),
-    #[error(transparent)]
-    Admission(#[from] AdmissionCatalogError),
-    #[error(transparent)]
-    InputRef(#[from] InputRefCatalogError),
-    #[error(transparent)]
-    InputArtifact(#[from] InputArtifactError),
-    #[error(transparent)]
-    TributeBody(#[from] outbe_compressed_entities::CanonicalBodyError),
-    #[error(transparent)]
-    Cas(#[from] CasError),
-    #[error(transparent)]
-    Planner(#[from] PlannerErrorV1),
-    #[error(transparent)]
-    Protocol(#[from] ProtocolError),
-    #[error("Lysis plan authority mismatch: {0}")]
-    AuthorityMismatch(&'static str),
-    #[error("plan ordinal {plan_ordinal} admitted an unexpected UnitId")]
-    UnexpectedUnitId { plan_ordinal: u32 },
-}
+pub use crate::errors::ExactLysisPlanError;

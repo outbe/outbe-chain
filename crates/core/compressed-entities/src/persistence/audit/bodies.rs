@@ -40,8 +40,8 @@ impl<'a> CeBodyAudit<'a> {
         id: WwdEntityId,
         encoded: &[u8],
     ) -> Result<(), CeAuditError> {
-        let leaf = canonical_body_leaf(domain, id, encoded).map_err(invalid)?;
-        let collection = collection_key(domain, id).map_err(invalid)?;
+        let leaf = canonical_body_leaf(domain, id, encoded)?;
+        let collection = collection_key(domain, id)?;
         let kind = match domain {
             CeDomain::Tribute => Collection::Tribute,
             CeDomain::NodItem => Collection::NodItem,
@@ -49,8 +49,8 @@ impl<'a> CeBodyAudit<'a> {
             CeDomain::Gem => Collection::Gem,
             CeDomain::GemBucket => Collection::GemBucket,
         };
-        let key = derive_tree_key(kind, id).map_err(invalid)?;
-        let shard = shard_index(key, domain.shard_count()).map_err(invalid)?;
+        let key = derive_tree_key(kind, id)?;
+        let shard = shard_index(key, domain.shard_count())?;
         let record = leaf_record(
             TreeNamespace::CollectionShard(collection, shard),
             TreeKey::try_from(alloy_primitives::B256::from(key.as_bytes()))?,
@@ -85,13 +85,13 @@ impl<'a> CeBodyAudit<'a> {
                         .as_ref()
                         .is_none_or(|row| &row[..32] != collection)
                     {
-                        return Err(invalid("body collection is missing from catalog"));
+                        return Err(CeAuditError::MissingBodyCollectionInCatalog);
                     }
                     bodies = bodies
                         .checked_add(1)
-                        .ok_or_else(|| invalid("body count overflow"))?;
+                        .ok_or(CeAuditError::BodyCountOverflow)?;
                 }
-                _ => return Err(invalid("live CE leaves and primary bodies differ")),
+                _ => return Err(CeAuditError::LiveLeavesAndPrimaryBodiesDiffer),
             }
         }
         for record in catalog {
@@ -133,8 +133,4 @@ fn leaf_record(namespace: TreeNamespace, key: TreeKey, value: LeafValue) -> [u8;
     record[37..69].copy_from_slice(&key);
     record[69..].copy_from_slice(&value.encode());
     record
-}
-
-fn invalid(error: impl std::fmt::Display) -> CeAuditError {
-    CeAuditError::Invalid(error.to_string())
 }

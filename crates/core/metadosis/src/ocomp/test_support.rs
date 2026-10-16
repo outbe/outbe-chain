@@ -61,7 +61,7 @@ use outbe_primitives::addresses::STAKING_ADDRESS;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::{COMPRESSED_ENTITIES_ADDRESS, METADOSIS_ADDRESS},
-    error::{PrecompileError, Result as PrecompileResult},
+    error::Result as PrecompileResult,
     storage::{hashmap::HashMapStorageProvider, MetadosisMutationPurposeTag, StorageHandle},
 };
 use outbe_tribute::{DayPreAdmission, DayTotals, TributeContract};
@@ -165,7 +165,8 @@ pub(crate) fn seed_ce_parent(storage: &StorageHandle<'_>, root: B256) -> Precomp
 
 #[cfg(test)]
 pub(crate) fn seed_ce_genesis(storage: &StorageHandle<'_>) -> PrecompileResult<()> {
-    let root = outbe_compressed_entities::sealed_root(B256::ZERO)
-        .map_err(|error| PrecompileError::Fatal(format!("fixture CE genesis root: {error}")))?;
+    let root = outbe_compressed_entities::sealed_root(B256::ZERO).map_err(|error| {
+        crate::errors::MetadosisTestSupportError::FixtureCeGenesisRoot { error }
+    })?;
     seed_ce_parent(storage, root)
 }

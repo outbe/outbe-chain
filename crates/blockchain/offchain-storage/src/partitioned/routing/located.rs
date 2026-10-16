@@ -59,14 +59,14 @@ impl PartitionRouting for LocatedRouting {
                 let Some(record) = record else {
                     return Ok(None);
                 };
-                let raw: [u8; 4] = record
-                    .value
-                    .as_bytes()
-                    .try_into()
-                    .map_err(|_| StorageError::Corruption("malformed entity locator".into()))?;
+                let raw: [u8; 4] = record.value.as_bytes().try_into().map_err(|_| {
+                    StorageError::from(
+                        crate::errors::StorageCorruptionError::MalformedEntityLocator,
+                    )
+                })?;
                 let index = u32::from_be_bytes(raw);
                 if record.metadata.is_some() || index >= u32::from(self.partitions) {
-                    return Err(StorageError::Corruption("invalid entity locator".into()));
+                    return Err(crate::errors::StorageCorruptionError::InvalidEntityLocator.into());
                 }
                 Ok(Some(ReadLocation {
                     scope: StorageScope::numbered(&self.shared.domain, &self.family, index)?,

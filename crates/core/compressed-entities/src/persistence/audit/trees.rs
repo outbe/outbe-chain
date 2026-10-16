@@ -25,14 +25,6 @@ use crate::{
     CeDomain, CollectionKey, WwdEntityId,
 };
 
-fn invalid(message: impl core::fmt::Display) -> CeAuditError {
-    CeAuditError::Invalid(message.to_string())
-}
-
-fn create_scratch_db_error(error: impl core::fmt::Display) -> CeAuditError {
-    CeAuditError::Invalid(format!("create audit scratch database: {error:#}"))
-}
-
 pub(in crate::persistence) fn audit(
     source: &impl DbTx,
     source_path: &Path,
@@ -44,11 +36,13 @@ pub(in crate::persistence) fn audit(
     let source_path = source_path.canonicalize()?;
     let scratch_path = work.root.canonicalize()?;
     if scratch_path.starts_with(&source_path) || source_path.starts_with(&scratch_path) {
-        return Err(invalid("audit scratch overlaps the source environment"));
+        return Err(CeAuditError::ScratchOverlapsSourceEnvironment);
     }
     verify_source(source, &source_path, identity, required)?;
     let mut database = create_db(scratch_path.join("trees"), DatabaseArguments::default())
-        .map_err(create_scratch_db_error)?;
+        .map_err(|error| CeAuditError::CreateScratchDatabase {
+            reason: format!("{error:#}"),
+        })?;
     database.create_and_track_tables_for::<tables::CeTables>()?;
     let rebuilt = database.tx_mut()?;
     let mut report = CeAuditReport {
@@ -75,7 +69,7 @@ pub(in crate::persistence) fn audit(
                 }
             };
             if shard >= domain.shard_count() {
-                return Err(invalid("shard is outside its collection topology"));
+                return Err(CeAuditError::ShardOutsideCollectionTopology);
             }
             domain.shard_count()
         } else {
@@ -105,15 +99,15 @@ fn verify_collection(
 ) -> Result<(), CeAuditError> {
     let domain = domain_for_collection(collection)?;
     let roots = read_collection_roots(source, path, collection, domain.shard_count())?
-        .ok_or_else(|| invalid("catalog entry has no materialized collection roots"))?;
-    let top = aggregate_b256_shard_roots(&roots).map_err(invalid)?;
-    let expected = collection_root(domain, collection, top).map_err(invalid)?;
+        .ok_or(CeAuditError::MissingMaterializedCollectionRoots)?;
+    let top = aggregate_b256_shard_roots(&roots)?;
+    let expected = collection_root(domain, collection, top)?;
     let key = prefixed_key(TreeNamespace::Catalog, collection.as_bytes());
     let actual = source
         .get::<tables::CeLeaves>(key)?
-        .ok_or_else(|| invalid("collection roots lack a catalog leaf"))?;
+        .ok_or(CeAuditError::MissingCatalogLeafForCollectionRoots)?;
     if LeafValue::decode(&actual)?.into_inner() != expected {
-        return Err(invalid("collection root differs from catalog leaf"));
+        return Err(CeAuditError::CollectionRootDiffersFromCatalogLeaf);
     }
     Ok(())
 }
@@ -128,10 +122,7 @@ fn compare_table<T: Table<Key = Vec<u8>, Value = Vec<u8>>>(
     let mut b = right.first()?;
     loop {
         if a != b {
-            return Err(invalid(format!(
-                "persisted {} population differs from reconstruction",
-                T::NAME
-            )));
+            return Err(CeAuditError::PersistedTablePopulationDiffers { table: T::NAME });
         }
         if a.is_none() {
             return Ok(());
@@ -149,7 +140,7 @@ fn domain_for_collection(key: CollectionKey) -> Result<CeDomain, CeAuditError> {
         CeDomain::Gem,
         CeDomain::GemBucket,
     ] {
-        if crate::collection_key(domain, WwdEntityId::from([0; 32])).map_err(invalid)? == key {
+        if crate::collection_key(domain, WwdEntityId::from([0; 32]))? == key {
             return Ok(domain);
         }
     }
@@ -168,7 +159,7 @@ fn verify_source(
         || marker.new_root != required.root
         || marker.commitment_scheme_version != required.commitment_scheme_version
     {
-        return Err(invalid("CE marker differs from required block identity"));
+        return Err(CeAuditError::MarkerDiffersFromRequiredIdentity);
     }
     verify_metadata(source, identity)?;
     let catalog = read_required_tree_root(source, source_path, TreeNamespace::Catalog)?;
@@ -180,12 +171,10 @@ fn verify_source(
             catalog,
         ) != (identity.genesis_hash, B256::ZERO, B256::ZERO, B256::ZERO)
     {
-        return Err(invalid(
-            "genesis must use its native empty catalog and configured block identity",
-        ));
+        return Err(CeAuditError::InvalidGenesisCatalogOrIdentity);
     }
-    if sealed_root(catalog).map_err(invalid)? != required.root {
-        return Err(invalid("sealed catalog root differs from required root"));
+    if sealed_root(catalog)? != required.root {
+        return Err(CeAuditError::SealedCatalogRootMismatch);
     }
     Ok(())
 }
@@ -195,10 +184,10 @@ fn verify_metadata(source: &impl DbTx, identity: &EnvironmentIdentity) -> Result
         let (key, bytes) = row?;
         if key == IDENTITY_KEY {
             if EnvironmentIdentity::decode(&bytes)? != *identity {
-                return Err(invalid("CE environment identity changed"));
+                return Err(CeAuditError::EnvironmentIdentityChanged);
             }
         } else if key != LAST_APPLIED_KEY {
-            return Err(invalid("unknown CE metadata record"));
+            return Err(CeAuditError::UnknownMetadataRecord);
         }
     }
     Ok(())

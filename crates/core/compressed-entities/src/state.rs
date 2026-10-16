@@ -5,14 +5,13 @@ mod index;
 use std::collections::BTreeSet;
 
 use alloy_primitives::{B256, U256};
-use outbe_primitives::{
-    error::{PrecompileError, Result},
-    storage::StorageHandle,
-};
+use outbe_primitives::{error::Result, storage::StorageHandle};
 
 use crate::{
     api::{EntityRef, ExecutionScope},
-    collection_key, partition_collection_key,
+    collection_key,
+    errors::{CompressedEntitiesError, CompressedEntitiesFatalError},
+    partition_collection_key,
     schema::{
         body_locator, Collection, CompressedEntitiesSchema, DeltaStatus, IndexRecord, PendingWord,
         STORAGE_SCHEMA_VERSION,
@@ -65,13 +64,12 @@ impl<'storage> State<'storage> {
                     || !schema.reserved_2.read()?.is_zero()
                     || !schema.reserved_3.read()?.is_zero()
                 {
-                    return Err(fatal(
-                        "compressed-entity schema initialization found non-empty root/reserved slots",
-                    ));
+                    return Err(CompressedEntitiesFatalError::SchemaInitFoundNonEmptySlots.into());
                 }
                 #[cfg(test)]
                 {
-                    let root = crate::sealed_root(B256::ZERO).map_err(fatal)?;
+                    let root = crate::sealed_root(B256::ZERO)
+                        .map_err(CompressedEntitiesFatalError::from)?;
                     schema
                         .last_smt_root
                         .write(U256::from_be_slice(root.as_slice()))?;
@@ -79,9 +77,7 @@ impl<'storage> State<'storage> {
                 }
                 #[cfg(not(test))]
                 {
-                    Err(fatal(
-                        "compressed-entity genesis allocation is missing; lazy initialization is forbidden",
-                    ))
+                    Err(CompressedEntitiesFatalError::MissingGenesisAllocationOnWrite.into())
                 }
             }
             STORAGE_SCHEMA_VERSION => Ok(()),
@@ -90,15 +86,15 @@ impl<'storage> State<'storage> {
                     || !schema.touched_index_deltas.is_empty()?
                     || !schema.retirement_touched.is_empty()?
                 {
-                    return Err(fatal(
-                        "compressed-entity schema migration requires an empty overlay",
-                    ));
+                    return Err(
+                        CompressedEntitiesFatalError::SchemaMigrationRequiresEmptyOverlay.into(),
+                    );
                 }
                 schema.storage_schema_version.write(STORAGE_SCHEMA_VERSION)
             }
-            _ => Err(fatal(format!(
-                "unsupported compressed-entity storage schema {actual}"
-            ))),
+            _ => Err(
+                CompressedEntitiesFatalError::UnsupportedStorageSchema { schema: actual }.into(),
+            ),
         }
     }
 
@@ -109,12 +105,10 @@ impl<'storage> State<'storage> {
             #[cfg(test)]
             0 => Ok(()),
             #[cfg(not(test))]
-            0 => Err(fatal(
-                "compressed-entity genesis allocation is missing; reads cannot bootstrap it",
-            )),
-            _ => Err(fatal(format!(
-                "unsupported compressed-entity storage schema {actual}"
-            ))),
+            0 => Err(CompressedEntitiesFatalError::MissingGenesisAllocationOnRead.into()),
+            _ => Err(
+                CompressedEntitiesFatalError::UnsupportedStorageSchema { schema: actual }.into(),
+            ),
         }
     }
 
@@ -122,9 +116,7 @@ impl<'storage> State<'storage> {
         self.validate_schema_for_read()?;
         let schema = self.schema();
         if !schema.reserved_2.read()?.is_zero() || !schema.reserved_3.read()?.is_zero() {
-            return Err(fatal(
-                "compressed-entity reserved schema slots are non-zero",
-            ));
+            return Err(CompressedEntitiesFatalError::ReservedSchemaSlotsNonZero.into());
         }
         Ok(B256::from(schema.last_smt_root.read()?.to_be_bytes::<32>()))
     }
@@ -133,9 +125,7 @@ impl<'storage> State<'storage> {
         self.ensure_schema()?;
         let schema = self.schema();
         if !schema.reserved_2.read()?.is_zero() || !schema.reserved_3.read()?.is_zero() {
-            return Err(fatal(
-                "compressed-entity reserved schema slots are non-zero",
-            ));
+            return Err(CompressedEntitiesFatalError::ReservedSchemaSlotsNonZero.into());
         }
         schema.last_smt_root.write(U256::from_be_bytes(root.0))
     }
@@ -146,7 +136,8 @@ impl<'storage> State<'storage> {
         partition: PartitionRef,
     ) -> Result<RetirementOutcome> {
         self.ensure_schema()?;
-        let (_, key) = partition_collection_key(partition).map_err(revert)?;
+        let (_, key) =
+            partition_collection_key(partition).map_err(CompressedEntitiesError::from)?;
         let storage_key = B256::from(*key.as_bytes());
         if !self
             .schema()
@@ -154,7 +145,7 @@ impl<'storage> State<'storage> {
             .read(&storage_key)?
             .is_zero()
         {
-            return Err(revert("duplicate compressed-entity retirement request"));
+            return Err(CompressedEntitiesError::DuplicateRetirementRequest.into());
         }
         for (collection, entity_id, _) in self.final_body_mutations()? {
             let domain = match collection {
@@ -164,10 +155,8 @@ impl<'storage> State<'storage> {
                 Collection::Gem => CeDomain::Gem,
                 Collection::GemBucket => CeDomain::GemBucket,
             };
-            if collection_key(domain, entity_id).map_err(revert)? == key {
-                return Err(revert(
-                    "collection retirement conflicts with an earlier entity mutation",
-                ));
+            if collection_key(domain, entity_id).map_err(CompressedEntitiesError::from)? == key {
+                return Err(CompressedEntitiesError::RetirementConflictsWithEntityMutation.into());
             }
         }
         if !scope.partition_present_verified(partition)? {
@@ -198,12 +187,13 @@ impl<'storage> State<'storage> {
         for day in days {
             let partition =
                 PartitionRef::TributeWwd(outbe_primitives::time::WorldwideDay::new(day));
-            let (_, key) = partition_collection_key(partition).map_err(revert)?;
+            let (_, key) =
+                partition_collection_key(partition).map_err(CompressedEntitiesError::from)?;
             let storage_key = B256::from(*key.as_bytes());
             if !unique.insert(storage_key)
                 || self.schema().pending_retirement.read(&storage_key)? != U256::from(1)
             {
-                return Err(fatal("malformed compressed-entity retirement journal"));
+                return Err(CompressedEntitiesFatalError::MalformedRetirementJournal.into());
             }
             retirements.push(partition);
         }
@@ -214,26 +204,14 @@ impl<'storage> State<'storage> {
         self.ensure_schema()?;
         let schema = self.schema();
         if !schema.reserved_2.read()?.is_zero() || !schema.reserved_3.read()?.is_zero() {
-            return Err(fatal(
-                "compressed-entity reserved schema slots are non-zero",
-            ));
+            return Err(CompressedEntitiesFatalError::ReservedSchemaSlotsNonZero.into());
         }
         if !schema.touched.is_empty()?
             || !schema.touched_index_deltas.is_empty()?
             || !schema.retirement_touched.is_empty()?
         {
-            return Err(fatal(
-                "compressed-entity block overlay is dirty at begin_block",
-            ));
+            return Err(CompressedEntitiesFatalError::DirtyOverlayAtBeginBlock.into());
         }
         Ok(())
     }
-}
-
-fn fatal(message: impl core::fmt::Display) -> PrecompileError {
-    crate::errors::fatal_error(message)
-}
-
-fn revert(message: impl core::fmt::Display) -> PrecompileError {
-    crate::errors::revert_error(message)
 }

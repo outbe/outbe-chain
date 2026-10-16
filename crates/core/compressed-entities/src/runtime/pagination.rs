@@ -33,7 +33,7 @@ impl<P: ParentBodySource> Pagination<'_, '_, P> {
         validate_page_request(self.query, self.request)?;
         let deltas = self.pending_deltas()?;
         let target = usize::try_from(self.request.limit)
-            .map_err(|_| revert("page limit is not representable"))?;
+            .map_err(|_| CompressedEntitiesError::PageLimitNotRepresentable)?;
         let index = self.scan_parent(&deltas, target)?;
         self.body_page(&deltas, &index, target)
     }
@@ -65,7 +65,9 @@ impl<P: ParentBodySource> Pagination<'_, '_, P> {
                 }
                 DeltaStatus::NoChangeTouched => {}
                 DeltaStatus::NeverTouched => {
-                    return Err(fatal("zero index delta escaped state validation"));
+                    return Err(
+                        CompressedEntitiesFatalError::ZeroIndexDeltaEscapedValidation.into(),
+                    );
                 }
             }
         }
@@ -117,9 +119,9 @@ impl<P: ParentBodySource> Pagination<'_, '_, P> {
                 .filter(|id| self.request.after.is_none_or(|after| *id > after))
                 .collect();
             if index.observed_removed != relevant_removed {
-                return Err(crate::errors::body_read_corruption(
-                    "Removed ID is missing from finalized-parent index",
-                ));
+                return Err(
+                    CompressedEntitiesBodyCorruptionError::RemovedIdMissingFromParentIndex.into(),
+                );
             }
         }
         Ok(index)
@@ -135,14 +137,17 @@ impl<P: ParentBodySource> Pagination<'_, '_, P> {
             self.scope
                 .deduct_explicit_gas(&self.storage, PARENT_ID_GAS)?;
             if deltas.added.contains(id) {
-                return Err(crate::errors::body_read_corruption(format!(
-                    "Added ID {id} already exists in finalized-parent index"
-                )));
+                return Err(
+                    CompressedEntitiesBodyCorruptionError::AddedIdAlreadyExistsInParentIndex {
+                        id: *id,
+                    }
+                    .into(),
+                );
             }
             if !index.seen.insert(*id) {
-                return Err(crate::errors::body_read_corruption(format!(
-                    "duplicate finalized-parent ID {id}"
-                )));
+                return Err(
+                    CompressedEntitiesBodyCorruptionError::DuplicateParentId { id: *id }.into(),
+                );
             }
             if deltas.removed.contains(id) {
                 index.observed_removed.insert(*id);
@@ -155,9 +160,9 @@ impl<P: ParentBodySource> Pagination<'_, '_, P> {
                     && !index.observed_removed.contains(removed_id)
             });
             if skipped_removed {
-                return Err(crate::errors::body_read_corruption(
-                    "Removed ID was skipped by the ordered finalized-parent index",
-                ));
+                return Err(
+                    CompressedEntitiesBodyCorruptionError::RemovedIdSkippedByParentIndex.into(),
+                );
             }
         }
         Ok(())
@@ -173,25 +178,27 @@ impl<P: ParentBodySource> Pagination<'_, '_, P> {
         let has_more = candidates.len() > target || !index.exhausted;
         let selected: Vec<_> = candidates.into_iter().take(target).collect();
         let next_after = if has_more {
-            Some(*selected.last().ok_or_else(|| {
-                fatal("parent continuation or merged lookahead produced an empty result page")
-            })?)
+            Some(
+                *selected
+                    .last()
+                    .ok_or(CompressedEntitiesFatalError::EmptyResultPageWithContinuation)?,
+            )
         } else {
             None
         };
         let mut bodies = Vec::with_capacity(selected.len());
         for id in selected {
             let entity = entity_for_query(self.query, id);
-            let body =
-                read(self.storage.clone(), self.scope, self.parent, entity)?.ok_or_else(|| {
-                    crate::errors::body_read_corruption(format!(
-                        "listed compressed entity {id} is canonically absent"
-                    ))
-                })?;
+            let body = read(self.storage.clone(), self.scope, self.parent, entity)?.ok_or(
+                CompressedEntitiesBodyCorruptionError::ListedEntityCanonicallyAbsent { id },
+            )?;
             if !verified_matches_query(&body, self.query) {
-                return Err(crate::errors::body_read_corruption(format!(
-                    "listed compressed entity {id} violates query predicate"
-                )));
+                return Err(
+                    CompressedEntitiesBodyCorruptionError::ListedEntityViolatesQueryPredicate {
+                        id,
+                    }
+                    .into(),
+                );
             }
             bodies.push(body);
         }

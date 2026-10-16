@@ -248,11 +248,11 @@ fn set_remote_read_deadline(
     };
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|_| TransportError::Handshake("system time precedes Unix epoch".into()))?;
+        .map_err(|_| crate::errors::RemoteSessionHandshakeError::SystemTimeBeforeUnixEpoch)?;
     let remaining = Duration::from_secs(session.deadline())
         .checked_sub(now)
         .filter(|remaining| !remaining.is_zero())
-        .ok_or_else(|| TransportError::Handshake("remote session lease expired".into()))?;
+        .ok_or(crate::errors::RemoteSessionHandshakeError::LeaseExpired)?;
     stream.set_session_read_timeout(Some(remaining))?;
     Ok(())
 }

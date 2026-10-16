@@ -144,6 +144,9 @@ pub enum NodError {
 
     #[error("compressed-entity read returned a non-Nod-bucket payload")]
     NonNodBucketPayload,
+
+    #[error("NOD amount read failed: {0}")]
+    AmountReadFailed(#[source] outbe_tee::TransportError),
 }
 
 impl NodError {
@@ -155,17 +158,13 @@ impl NodError {
 
 impl From<NodError> for PrecompileError {
     fn from(value: NodError) -> Self {
-        PrecompileError::Revert(value.to_string())
-    }
-}
-
-/// Maps an enclave transport error from a NOD amount read into a precompile error.
-pub(crate) fn map_amount_read_error(error: outbe_tee::TransportError) -> PrecompileError {
-    let message = format!("NOD amount read failed: {error}");
-    if error.is_node_local() {
-        PrecompileError::EnclaveUnavailable(message)
-    } else {
-        PrecompileError::Revert(message)
+        let message = value.to_string();
+        match value {
+            NodError::AmountReadFailed(error) if error.is_node_local() => {
+                PrecompileError::EnclaveUnavailable(message)
+            }
+            _ => PrecompileError::Revert(message),
+        }
     }
 }
 

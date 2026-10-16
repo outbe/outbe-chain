@@ -5,7 +5,7 @@ use outbe_ocomp_protocol::{
 };
 use outbe_primitives::error::Result;
 
-use crate::errors::corruption;
+use crate::errors::OcompRegistryError;
 
 const REQUEST_PROFILE_MAGIC: [u8; 4] = *b"OMRP";
 const REQUEST_PROFILE_VERSION: u16 = 1;
@@ -46,16 +46,12 @@ pub fn poc_schema_limits() -> SchemaLimits {
 pub(crate) fn validate_request_profile(profile: &OcompRequestProfile) -> Result<()> {
     let capacity = &profile.capacity_profile;
     if has_reserved_zero_identity(profile) {
-        return Err(corruption(
-            "OCOMP request profile contains a reserved zero identity",
-        ));
+        return Err(OcompRegistryError::RequestProfileReservedZeroIdentity.into());
     }
 
     let bounds = PocCapacityBounds::generated()?;
     if !matches_frozen_poc_policy(capacity, &bounds) {
-        return Err(corruption(
-            "OCOMP request profile violates frozen PoC bounds",
-        ));
+        return Err(OcompRegistryError::RequestProfileViolatesFrozenPocBounds.into());
     }
     Ok(())
 }
@@ -88,13 +84,13 @@ impl PocCapacityBounds {
         let candidate = OCOMP_POC_CANDIDATE_LIMITS_V1;
         Ok(Self {
             max_tributes_per_work_shard: u32::try_from(candidate.max_tributes_per_work_shard)
-                .map_err(|_| corruption("generated unit size exceeds u32"))?,
+                .map_err(|_| OcompRegistryError::GeneratedUnitSizeExceedsU32)?,
             max_reference_currencies: u16::try_from(candidate.max_oracle_openings)
-                .map_err(|_| corruption("generated reference-currency cap exceeds u16"))?,
+                .map_err(|_| OcompRegistryError::GeneratedReferenceCurrencyCapExceedsU16)?,
             max_oracle_entries: u32::try_from(candidate.max_oracle_wwd_pair_entries)
-                .map_err(|_| corruption("generated Oracle entry cap exceeds u32"))?,
+                .map_err(|_| OcompRegistryError::GeneratedOracleEntryCapExceedsU32)?,
             max_active_scurve_entries: u32::try_from(candidate.max_active_scurve_entries)
-                .map_err(|_| corruption("generated S-curve entry cap exceeds u32"))?,
+                .map_err(|_| OcompRegistryError::GeneratedScurveEntryCapExceedsU32)?,
             source_retention_after_terminal_blocks: candidate
                 .source_retention_after_terminal_blocks,
         })
@@ -155,16 +151,16 @@ fn encode_request_profile(profile: &OcompRequestProfile, limits: &SchemaLimits) 
     let capacity = profile
         .capacity_profile
         .encode_canonical(limits)
-        .map_err(|error| corruption(format!("encode OCOMP capacity profile: {error}")))?;
+        .map_err(OcompRegistryError::EncodeCapacityProfile)?;
     let capacity_len = u32::try_from(capacity.len())
-        .map_err(|_| corruption("capacity profile length exceeds u32"))?;
+        .map_err(|_| OcompRegistryError::CapacityProfileLengthExceedsU32)?;
     let total = REQUEST_PROFILE_FIXED_LEN
         .checked_add(capacity.len())
-        .ok_or_else(|| corruption("OCOMP request profile length overflow"))?;
+        .ok_or(OcompRegistryError::RequestProfileLengthOverflow)?;
     let mut encoded = Vec::new();
     encoded
         .try_reserve_exact(total)
-        .map_err(|_| corruption("allocate OCOMP request profile"))?;
+        .map_err(|_| OcompRegistryError::AllocateRequestProfile)?;
     encoded.extend_from_slice(&REQUEST_PROFILE_MAGIC);
     encoded.extend_from_slice(&REQUEST_PROFILE_VERSION.to_be_bytes());
     encoded.extend_from_slice(&profile.chain_id.to_be_bytes());
@@ -176,20 +172,20 @@ fn encode_request_profile(profile: &OcompRequestProfile, limits: &SchemaLimits) 
     encoded.extend_from_slice(&capacity_len.to_be_bytes());
     encoded.extend_from_slice(&capacity);
     if encoded.len() != total {
-        return Err(corruption("OCOMP request profile encoded length mismatch"));
+        return Err(OcompRegistryError::RequestProfileEncodedLengthMismatch.into());
     }
     Ok(encoded)
 }
 
 fn decode_request_profile(encoded: &[u8], limits: &SchemaLimits) -> Result<OcompRequestProfile> {
     if encoded.len() < REQUEST_PROFILE_FIXED_LEN {
-        return Err(corruption("truncated OCOMP request profile"));
+        return Err(OcompRegistryError::TruncatedRequestProfile.into());
     }
     let mut reader = ProfileReader::new(encoded);
     if reader.take::<4>()? != REQUEST_PROFILE_MAGIC
         || u16::from_be_bytes(reader.take::<2>()?) != REQUEST_PROFILE_VERSION
     {
-        return Err(corruption("OCOMP request profile magic/version mismatch"));
+        return Err(OcompRegistryError::RequestProfileMagicOrVersionMismatch.into());
     }
     let chain_id = reader.u64()?;
     let genesis_hash = B256::from(reader.take::<32>()?);
@@ -198,14 +194,14 @@ fn decode_request_profile(encoded: &[u8], limits: &SchemaLimits) -> Result<Ocomp
     let correctness_profile_id = B256::from(reader.take::<32>()?);
     let source_availability_policy_id = B256::from(reader.take::<32>()?);
     let capacity_len = usize::try_from(reader.u32()?)
-        .map_err(|_| corruption("OCOMP capacity profile length exceeds usize"))?;
+        .map_err(|_| OcompRegistryError::CapacityProfileLengthExceedsUsize)?;
     if capacity_len != reader.remaining() {
-        return Err(corruption("OCOMP capacity profile length mismatch"));
+        return Err(OcompRegistryError::CapacityProfileLengthMismatch.into());
     }
     let capacity_encoded = reader.take_dynamic(capacity_len)?;
     reader.finish()?;
     let capacity_profile = CapacityProfileV1::decode_canonical(capacity_encoded, limits)
-        .map_err(|error| corruption(format!("decode OCOMP capacity profile: {error}")))?;
+        .map_err(OcompRegistryError::DecodeCapacityProfile)?;
     let profile = OcompRequestProfile {
         chain_id,
         genesis_hash,
@@ -217,7 +213,7 @@ fn decode_request_profile(encoded: &[u8], limits: &SchemaLimits) -> Result<Ocomp
     };
     validate_request_profile(&profile)?;
     if encode_request_profile(&profile, limits)? != encoded {
-        return Err(corruption("non-canonical OCOMP request profile encoding"));
+        return Err(OcompRegistryError::NonCanonicalRequestProfileEncoding.into());
     }
     Ok(profile)
 }
@@ -236,15 +232,15 @@ impl<'a> ProfileReader<'a> {
         let end = self
             .offset
             .checked_add(N)
-            .ok_or_else(|| corruption("OCOMP request profile offset overflow"))?;
+            .ok_or(OcompRegistryError::RequestProfileOffsetOverflow)?;
         let bytes = self
             .encoded
             .get(self.offset..end)
-            .ok_or_else(|| corruption("truncated OCOMP request profile"))?;
+            .ok_or(OcompRegistryError::TruncatedRequestProfile)?;
         self.offset = end;
         bytes
             .try_into()
-            .map_err(|_| corruption("invalid OCOMP request profile field width"))
+            .map_err(|_| OcompRegistryError::InvalidRequestProfileFieldWidth.into())
     }
 
     fn u32(&mut self) -> Result<u32> {
@@ -263,11 +259,11 @@ impl<'a> ProfileReader<'a> {
         let end = self
             .offset
             .checked_add(len)
-            .ok_or_else(|| corruption("OCOMP request profile offset overflow"))?;
+            .ok_or(OcompRegistryError::RequestProfileOffsetOverflow)?;
         let bytes = self
             .encoded
             .get(self.offset..end)
-            .ok_or_else(|| corruption("truncated OCOMP request profile field"))?;
+            .ok_or(OcompRegistryError::TruncatedRequestProfileField)?;
         self.offset = end;
         Ok(bytes)
     }
@@ -276,7 +272,7 @@ impl<'a> ProfileReader<'a> {
         if self.offset == self.encoded.len() {
             Ok(())
         } else {
-            Err(corruption("OCOMP request profile has trailing bytes"))
+            Err(OcompRegistryError::RequestProfileTrailingBytes.into())
         }
     }
 }

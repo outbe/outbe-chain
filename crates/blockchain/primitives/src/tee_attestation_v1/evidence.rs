@@ -57,7 +57,7 @@ impl DcapEvidenceV1 {
         }
         enforce_limit("SGX quote", MAX_QUOTE_BYTES, self.quote.len())?;
         if self.quote.is_empty() {
-            return Err(CodecError::NonCanonical("empty SGX quote"));
+            return Err(crate::error::TeeCodecNonCanonicalError::EmptySgxQuote.into());
         }
         self.validate_components()?;
         self.validate_transition_proof_presence()?;
@@ -133,7 +133,7 @@ impl DcapEvidenceV1 {
         }
         let quote_len = decoder.declared_len("SGX quote", MAX_QUOTE_BYTES)?;
         if quote_len == 0 {
-            return Err(CodecError::NonCanonical("empty SGX quote"));
+            return Err(crate::error::TeeCodecNonCanonicalError::EmptySgxQuote.into());
         }
         let quote = decoder.take(quote_len)?.to_vec();
         let components = Self::decode_components(&mut decoder)?;
@@ -180,7 +180,9 @@ impl DcapEvidenceV1 {
                 component.bytes.len(),
             )?;
             if component.bytes.is_empty() {
-                return Err(CodecError::NonCanonical("empty DCAP collateral component"));
+                return Err(
+                    crate::error::TeeCodecNonCanonicalError::EmptyDcapCollateralComponent.into(),
+                );
             }
             if component.kind as u8 != (index + 1) as u8 {
                 return Err(CodecError::NonCanonical(
@@ -222,7 +224,9 @@ impl DcapEvidenceV1 {
             let component_len = decoder
                 .declared_len("DCAP collateral component", MAX_COLLATERAL_COMPONENT_BYTES)?;
             if component_len == 0 {
-                return Err(CodecError::NonCanonical("empty DCAP collateral component"));
+                return Err(
+                    crate::error::TeeCodecNonCanonicalError::EmptyDcapCollateralComponent.into(),
+                );
             }
             components.push(DcapCollateralComponentV1 {
                 kind,
@@ -282,7 +286,7 @@ impl GramineDirectEvidenceV1 {
         let mut decoder = Decoder::new(input);
         let version = decoder.u8()?;
         if version != 1 && version != 2 {
-            return Err(CodecError::NonCanonical("DirectDev evidence version"));
+            return Err(crate::error::TeeCodecNonCanonicalError::DirectDevEvidenceVersion.into());
         }
         let intent_len =
             decoder.declared_len("registration intent", MAX_EVIDENCE_CALL_FRAMING_BYTES)?;

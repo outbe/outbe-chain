@@ -83,8 +83,9 @@ fn decode_retirement(value: u8) -> Result<RetirementOutcome> {
     match value {
         terminal_retirement::NOT_PRESENT => Ok(RetirementOutcome::NotPresent),
         terminal_retirement::REQUESTED => Ok(RetirementOutcome::Requested),
-        _ => Err(crate::errors::storage_corruption(
-            "Metadosis WWD terminal receipt has invalid retirement outcome",
-        )),
+        _ => Err(
+            crate::errors::MetadosisStorageCorruptionError::WwdTerminalReceiptInvalidRetirementOutcome
+                .into(),
+        ),
     }
 }

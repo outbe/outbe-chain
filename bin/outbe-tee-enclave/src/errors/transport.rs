@@ -323,3 +323,20 @@ pub fn transport_noise_debug(err: impl fmt::Debug) -> TransportError {
 pub fn transport_handshake(err: impl fmt::Display) -> TransportError {
     TransportError::Handshake(err.to_string())
 }
+
+/// Handshake errors when establishing a remote session read deadline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum RemoteSessionHandshakeError {
+    /// The host system clock is earlier than the Unix epoch.
+    #[error("system time precedes Unix epoch")]
+    SystemTimeBeforeUnixEpoch,
+    /// The remote session lease has already expired.
+    #[error("remote session lease expired")]
+    LeaseExpired,
+}
+
+impl From<RemoteSessionHandshakeError> for TransportError {
+    fn from(err: RemoteSessionHandshakeError) -> Self {
+        TransportError::Handshake(err.to_string())
+    }
+}

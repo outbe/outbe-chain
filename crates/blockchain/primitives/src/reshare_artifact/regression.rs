@@ -1,5 +1,5 @@
 use super::*;
-use crate::consensus::ReshareResult;
+use crate::{consensus::ReshareResult, error::PrecompileError};
 
 fn mixed_artifacts(consensus: ConsensusHeaderArtifact) -> OutbeBlockArtifacts {
     OutbeBlockArtifacts {

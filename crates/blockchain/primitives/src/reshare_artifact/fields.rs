@@ -1,6 +1,6 @@
 //! Fixed-size record payloads that execution produces. Validation is structural only.
 use super::{
-    CompressedEntitiesRootArtifact, ExecutionSummaryArtifact, PrecompileError, Result, B256,
+    CompressedEntitiesRootArtifact, ExecutionSummaryArtifact, ReshareArtifactError, Result, B256,
     COMPRESSED_ENTITIES_ROOT_PAYLOAD_LEN, EXECUTION_SUMMARY_LEN, TIMESTAMP_MILLIS_PART_LEN, U256,
 };
 
@@ -27,10 +27,9 @@ pub(super) fn encode_root(root: CompressedEntitiesRootArtifact) -> Vec<u8> {
 
 pub(super) fn decode_execution_summary(payload: &[u8]) -> Result<ExecutionSummaryArtifact> {
     if payload.len() != EXECUTION_SUMMARY_LEN {
-        return Err(PrecompileError::revert(format!(
-            "invalid execution summary artifact length: {}",
-            payload.len()
-        )));
+        return Err(
+            ReshareArtifactError::InvalidExecutionSummaryLength { len: payload.len() }.into(),
+        );
     }
 
     Ok(ExecutionSummaryArtifact {
@@ -40,11 +39,11 @@ pub(super) fn decode_execution_summary(payload: &[u8]) -> Result<ExecutionSummar
 
 pub(super) fn decode_timestamp(payload: &[u8]) -> Result<u64> {
     if payload.len() != TIMESTAMP_MILLIS_PART_LEN {
-        return Err(PrecompileError::revert(format!(
-            "timestamp_millis_part payload length: {} (expected {})",
-            payload.len(),
-            TIMESTAMP_MILLIS_PART_LEN
-        )));
+        return Err(ReshareArtifactError::InvalidTimestampMillisPartLength {
+            len: payload.len(),
+            expected: TIMESTAMP_MILLIS_PART_LEN,
+        }
+        .into());
     }
     let mut buf = [0u8; TIMESTAMP_MILLIS_PART_LEN];
     buf.copy_from_slice(payload);
@@ -55,11 +54,11 @@ pub(super) fn decode_timestamp(payload: &[u8]) -> Result<u64> {
 
 pub(super) fn decode_root(payload: &[u8]) -> Result<CompressedEntitiesRootArtifact> {
     if payload.len() != COMPRESSED_ENTITIES_ROOT_PAYLOAD_LEN {
-        return Err(PrecompileError::revert(format!(
-            "compressed-entities root payload length: {} (expected {})",
-            payload.len(),
-            COMPRESSED_ENTITIES_ROOT_PAYLOAD_LEN
-        )));
+        return Err(ReshareArtifactError::InvalidCompressedEntitiesRootLength {
+            len: payload.len(),
+            expected: COMPRESSED_ENTITIES_ROOT_PAYLOAD_LEN,
+        }
+        .into());
     }
     let mut scheme = [0_u8; 4];
     scheme.copy_from_slice(&payload[..4]);

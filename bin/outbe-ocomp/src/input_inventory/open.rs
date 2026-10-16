@@ -26,7 +26,7 @@ pub fn open_sealed_inventory_observing(
     }
     let owner_digest = digest_file_observing(&root.join(OWNERS_FILE), &on_progress)?;
     if owner_digest != header.owner_file_digest {
-        return Err(TributeInventoryError::Corrupt("owner inventory digest"));
+        return Err(TributeInventoryError::CorruptOwnerInventoryDigest);
     }
     verify_owner_file(
         &root.join(OWNERS_FILE),
@@ -34,7 +34,7 @@ pub fn open_sealed_inventory_observing(
         &on_progress,
     )?;
     if digest_file_observing(&root.join(BODIES_FILE), &on_progress)? != header.body_file_digest {
-        return Err(TributeInventoryError::Corrupt("Tribute body spool digest"));
+        return Err(TributeInventoryError::CorruptTributeBodySpoolDigest);
     }
     verify_body_spool(
         &root.join(BODIES_FILE),
@@ -48,7 +48,7 @@ pub fn open_sealed_inventory_observing(
     if B256::from_slice(&Keccak256::digest(&isos[..])) != header.iso_bitmap_digest
         || !contains_iso(&isos, 840)
     {
-        return Err(TributeInventoryError::Corrupt("reference ISO inventory"));
+        return Err(TributeInventoryError::CorruptReferenceIsoInventory);
     }
     Ok(SealedTributeInventory {
         root,

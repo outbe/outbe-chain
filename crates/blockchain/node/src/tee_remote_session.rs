@@ -655,9 +655,10 @@ struct ProofStorageReader {
 impl StorageReader for ProofStorageReader {
     fn read_storage(&self, address: Address, key: B256) -> outbe_primitives::error::Result<U256> {
         if address != outbe_primitives::addresses::TEE_REGISTRY_ADDRESS {
-            return Err(outbe_primitives::error::PrecompileError::Storage(
-                "anchored proof reader is restricted to TeeRegistry".into(),
-            ));
+            return Err(
+                crate::errors::NodeStorageReadError::AnchoredProofReaderRestrictedToTeeRegistry
+                    .into(),
+            );
         }
         Ok(self.values.get(&key).copied().unwrap_or_default())
     }
@@ -669,9 +670,7 @@ impl StorageReader for RethStateReader<'_> {
             .storage(address, key)
             .map(|value| value.unwrap_or(U256::ZERO))
             .map_err(|error| {
-                outbe_primitives::error::PrecompileError::Storage(format!(
-                    "finalized state read failed: {error}"
-                ))
+                crate::errors::NodeStorageReadError::FinalizedStateReadFailed(error).into()
             })
     }
 }

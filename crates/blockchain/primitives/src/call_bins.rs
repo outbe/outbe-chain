@@ -6,7 +6,7 @@
 use alloy_primitives::{keccak256, B256, U256};
 
 use crate::daily_sweep::currency_position;
-use crate::error::{PrecompileError, Result};
+use crate::error::{CallBinError, Result};
 use crate::expiry_queue::QueueEntry;
 use crate::math::constants::MAX_BIN_ID;
 use crate::math::reference_price;
@@ -80,10 +80,6 @@ pub trait CallBinStore<'storage>: BinTreeStorage {
     fn failed_day(&self) -> &Map<'storage, u16, u32>;
 }
 
-fn corrupt(message: &str) -> PrecompileError {
-    PrecompileError::revert(format!("call bin index: {message}"))
-}
-
 /// The bin `entry` is indexed in, or `None` when it is not indexed.
 pub fn bin_of<'s, S: CallBinStore<'s>>(store: &S, entry: S::Entry) -> Result<Option<u32>> {
     let packed = store.entry_slot().read(&entry)?;
@@ -103,13 +99,13 @@ pub fn entry_at<'s, S: CallBinStore<'s>>(store: &S, bin: u32, index: u32) -> Res
 /// Appends `entry` to `bin`, lighting the bin in the trie when it was empty.
 pub fn insert<'s, S: CallBinStore<'s>>(store: &S, entry: S::Entry, bin: u32) -> Result<()> {
     if store.entry_slot().read(&entry)? != 0 {
-        return Err(corrupt("entry is already indexed"));
+        return Err(CallBinError::EntryAlreadyIndexed.into());
     }
     let iso = store.currency();
     let count = len(store, bin)?;
     let next = count
         .checked_add(1)
-        .ok_or_else(|| corrupt("bin entry count overflow"))?;
+        .ok_or(CallBinError::BinEntryCountOverflow)?;
     store
         .bin_at()
         .write(&bin_index_key(iso, bin, count), entry)?;
@@ -130,12 +126,12 @@ pub fn remove<'s, S: CallBinStore<'s>>(store: &S, entry: S::Entry) -> Result<boo
     let iso = store.currency();
     let (bin, index) = unpack_slot(packed);
     if entry_at(store, bin, index)? != entry {
-        return Err(corrupt("slot does not hold its entry"));
+        return Err(CallBinError::SlotDoesNotHoldEntry.into());
     }
     let last = len(store, bin)?
         .checked_sub(1)
         .filter(|last| index <= *last)
-        .ok_or_else(|| corrupt("slot past the end of its bin"))?;
+        .ok_or(CallBinError::SlotPastEndOfBin)?;
     let last_key = bin_index_key(iso, bin, last);
     if index != last {
         let moved = store.bin_at().read(&last_key)?;

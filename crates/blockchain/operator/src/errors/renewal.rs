@@ -161,6 +161,11 @@ pub enum RenewalError {
     /// The receipt status is not `0x1`.
     #[error("exact renewal transaction receipt has non-success status {0}")]
     NonSuccessReceiptStatus(String),
+
+    /// Test mock fault or invariant violation.
+    #[cfg(test)]
+    #[error("{0}")]
+    TestFault(&'static str),
 }
 
 /// Errors from TEE renewal journal files and checks.

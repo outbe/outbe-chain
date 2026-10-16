@@ -365,15 +365,23 @@ impl Mailbox {
             next = ancestry.get_block_by_hash(expected_hash).await;
         }
         let Some(next) = next else {
-            return Err(BoundaryRequirementError::Unavailable(format!(
-                "DKG boundary ancestry unavailable before seeing pending boundary: missing parent {expected_hash} at height {expected_height}",
-            )));
+            return Err(
+                crate::errors::BoundaryResolutionError::MissingParentBeforePendingBoundary {
+                    expected_hash,
+                    expected_height,
+                }
+                .into(),
+            );
         };
         if next.number() != expected_height {
-            return Err(BoundaryRequirementError::Unavailable(format!(
-                "DKG boundary ancestry unavailable: parent {expected_hash} resolved at height {}, expected {expected_height}",
-                next.number()
-            )));
+            return Err(
+                crate::errors::BoundaryResolutionError::ParentHeightMismatch {
+                    expected_hash,
+                    actual_height: next.number(),
+                    expected_height,
+                }
+                .into(),
+            );
         };
         Ok(next)
     }
@@ -383,9 +391,7 @@ fn ensure_boundary_ancestry_ready(
     ancestry: &impl AncestryReader,
 ) -> Result<(), BoundaryRequirementError> {
     if !ancestry.is_ready() {
-        return Err(BoundaryRequirementError::Unavailable(
-            "DKG boundary ancestry unavailable: marshal ancestry reader is not ready".to_string(),
-        ));
+        return Err(crate::errors::BoundaryResolutionError::MarshalAncestryReaderNotReady.into());
     }
     Ok(())
 }

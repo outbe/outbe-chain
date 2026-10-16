@@ -160,7 +160,8 @@ fn certified_fixture(count: usize) -> Result<CertifiedFixture, String> {
 
     let sources =
         outbe_nodfactory::test_support::MaterializationFixtureBuilder::new(&actions, CHAIN_ID)
-            .build()?;
+            .build()
+            .map_err(|e| e.to_string())?;
     let batches = batches
         .into_iter()
         .enumerate()
@@ -176,16 +177,18 @@ fn certified_fixture(count: usize) -> Result<CertifiedFixture, String> {
                 next_nod_ordinal: batch.first_nod_ordinal,
                 last_progress_height: (index.max(1)) as u64,
             };
-            sources.protect(
-                &outbe_tee::nod_materialization::NodMaterializationAuthorityV2 {
-                    chain_id: CHAIN_ID,
-                    head: head.encode_canonical(&limits).map_err(|e| e.to_string())?,
-                    subtree_height: SUBTREE_HEIGHT as u8,
-                    sealed_tribute_root: sources.source_root(),
-                    nod_gratis_load_max: U256::from(10_000),
-                },
-                &batch,
-            )
+            sources
+                .protect(
+                    &outbe_tee::nod_materialization::NodMaterializationAuthorityV2 {
+                        chain_id: CHAIN_ID,
+                        head: head.encode_canonical(&limits).map_err(|e| e.to_string())?,
+                        subtree_height: SUBTREE_HEIGHT as u8,
+                        sealed_tribute_root: sources.source_root(),
+                        nod_gratis_load_max: U256::from(10_000),
+                    },
+                    &batch,
+                )
+                .map_err(|e| e.to_string())
         })
         .collect::<Result<Vec<_>, String>>()?;
     let fixture = CertifiedFixture {
@@ -208,7 +211,10 @@ fn seed_certified_world(
     storage: &StorageHandle<'_>,
     fixture: &CertifiedFixture,
 ) -> Result<(), String> {
-    fixture.sources.seed_source_root(storage)?;
+    fixture
+        .sources
+        .seed_source_root(storage)
+        .map_err(|e| e.to_string())?;
     let limits = poc_schema_limits();
     let encoded = fixture
         .actions

@@ -43,7 +43,9 @@ fn query_sidecar_blocking(socket: &Path, deadline: Duration) -> Result<SidecarIn
     let advertised = config
         .get("externalAddresses")
         .and_then(Value::as_array)
-        .ok_or_else(|| SidecarError::Malformed("missing externalAddresses".to_owned()))?;
+        .ok_or_else(|| {
+            SidecarError::from(crate::errors::SidecarMalformedError::MissingExternalAddresses)
+        })?;
     if advertised.is_empty() || advertised.len() > MAX_ADDRESSES {
         return Err(SidecarError::Addresses);
     }
@@ -52,7 +54,11 @@ fn query_sidecar_blocking(socket: &Path, deadline: Duration) -> Result<SidecarIn
         .map(|value| {
             value
                 .as_str()
-                .ok_or_else(|| SidecarError::Malformed("non-string external address".to_owned()))
+                .ok_or_else(|| {
+                    SidecarError::from(
+                        crate::errors::SidecarMalformedError::NonStringExternalAddress,
+                    )
+                })
                 .and_then(parse_address)
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -88,9 +94,9 @@ fn parse_address(value: &str) -> Result<EndpointAddress, SidecarError> {
     }
     let (host, port) = value
         .rsplit_once(':')
-        .ok_or_else(|| SidecarError::Malformed(format!("invalid external address {value}")))?;
+        .ok_or_else(|| SidecarError::invalid_external_address(value))?;
     let port = port
         .parse::<u16>()
-        .map_err(|_| SidecarError::Malformed(format!("invalid external address {value}")))?;
+        .map_err(|_| SidecarError::invalid_external_address(value))?;
     EndpointAddress::dns(host, port).map_err(SidecarError::malformed)
 }

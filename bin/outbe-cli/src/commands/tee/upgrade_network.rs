@@ -2,7 +2,7 @@
 use super::admission_history;
 use super::args::{UpgradeCandidateArgs, UpgradeProvisionArgs};
 use super::join::{
-    classify_join_offer_key_state_transport, load_finalized_admission_anchor_v1, JoinOfferKeyState,
+    classify_join_offer_key_state, load_finalized_admission_anchor_v1, JoinOfferKeyState,
 };
 use super::rpc::{json_b256_field, json_hex_array, json_hex_u256_field, json_hex_u64_field};
 use super::upgrade::connect_upgrade_candidate_v1;
@@ -88,7 +88,7 @@ pub(super) async fn provision(
     .await?;
     let (context, finalized_height) =
         finality::wait_for_finalized_prepare(rpc, &relay, &durable, timeout).await?;
-    match classify_join_offer_key_state_transport(
+    match classify_join_offer_key_state(
         candidate.request(&EnclaveRequest::GetPublicKeys)?,
         context.tribute_offer_public,
     )? {

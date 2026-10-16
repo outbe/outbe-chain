@@ -2,13 +2,14 @@ use super::*;
 
 pub(super) fn validate_page_request(query: QueryRef, request: IdPageRequest) -> Result<()> {
     if request.limit == 0 || request.limit > MAX_ID_PAGE_LIMIT {
-        return Err(revert(format!(
-            "page limit must be in 1..={MAX_ID_PAGE_LIMIT}"
-        )));
+        return Err(CompressedEntitiesError::InvalidPageLimit {
+            max: MAX_ID_PAGE_LIMIT,
+        }
+        .into());
     }
     if let (QueryRef::TributeByDay(day), Some(after)) = (query, request.after) {
         if after.worldwide_day() != day {
-            return Err(revert("TributeByDay cursor has the wrong day prefix"));
+            return Err(CompressedEntitiesError::TributeByDayCursorWrongDayPrefix.into());
         }
     }
     Ok(())
@@ -21,35 +22,31 @@ pub(super) fn validate_parent_page(
     page: &crate::IdPage,
 ) -> Result<()> {
     if page.ids.len() > limit as usize {
-        return Err(crate::errors::body_read_corruption(
-            "parent page exceeds requested limit",
-        ));
+        return Err(CompressedEntitiesBodyCorruptionError::ParentPageExceedsLimit.into());
     }
     let mut previous = after;
     for id in &page.ids {
         if previous.is_some_and(|value| *id <= value) {
-            return Err(crate::errors::body_read_corruption(
-                "parent IDs are not strictly ascending after the cursor",
-            ));
+            return Err(
+                CompressedEntitiesBodyCorruptionError::ParentIdsNotStrictlyAscending.into(),
+            );
         }
         if let QueryRef::TributeByDay(day) = query {
             if id.worldwide_day() != day {
-                return Err(crate::errors::body_read_corruption(
-                    "parent TributeByDay ID has the wrong day prefix",
-                ));
+                return Err(
+                    CompressedEntitiesBodyCorruptionError::ParentTributeByDayWrongDayPrefix.into(),
+                );
             }
         }
         previous = Some(*id);
     }
     match page.next_after {
         Some(next) if page.ids.last().copied() != Some(next) => {
-            Err(crate::errors::body_read_corruption(
-                "parent next_after must equal its last returned ID",
-            ))
+            Err(CompressedEntitiesBodyCorruptionError::ParentNextAfterMismatch.into())
         }
-        Some(_) if page.ids.is_empty() => Err(crate::errors::body_read_corruption(
-            "empty parent page cannot advertise a continuation",
-        )),
+        Some(_) if page.ids.is_empty() => {
+            Err(CompressedEntitiesBodyCorruptionError::EmptyParentPageWithContinuation.into())
+        }
         _ => Ok(()),
     }
 }

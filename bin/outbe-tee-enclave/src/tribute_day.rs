@@ -10,7 +10,7 @@ use zeroize::Zeroizing;
 
 use crate::{
     confidential::SlotCipherDomain,
-    errors::{Result, TeeError},
+    errors::{Result, TeeError, TributeDayRejectReason},
     tribute_encryption::decrypt_tribute,
 };
 
@@ -47,7 +47,7 @@ pub fn apply_day_operation(
                 || previous.worldwide_day != request.worldwide_day
                 || previous.frozen
             {
-                return Err(rejected("invalid day predecessor"));
+                return Err(TributeDayRejectReason::InvalidDayPredecessor.into());
             }
             (
                 previous.version().ok_or(TeeError::DecryptFailed)?,
@@ -89,11 +89,11 @@ fn apply_amount(
             if tribute.context.chain_id != request.chain_id
                 || tribute.context.worldwide_day != request.worldwide_day
             {
-                return Err(rejected("Tribute belongs to another day or chain"));
+                return Err(TributeDayRejectReason::TributeWrongDayOrChain.into());
             }
             let amounts = decrypt_tribute(network_secret, tribute)?;
             if amounts.issuance_amount_minor.is_zero() {
-                return Err(rejected("Tribute issuance amount must be positive"));
+                return Err(TributeDayRejectReason::IssuanceAmountMustBePositive.into());
             }
             (amounts.nominal_amount_minor, *add)
         }
@@ -103,7 +103,7 @@ fn apply_amount(
         } => (*nominal_amount_minor, *add),
         TributeDayOperationV2::Reset { expected_total } => {
             if amount != *expected_total {
-                return Err(rejected("day retirement amount mismatch"));
+                return Err(TributeDayRejectReason::DayRetirementAmountMismatch.into());
             }
             (*expected_total, false)
         }
@@ -114,9 +114,5 @@ fn apply_amount(
     } else {
         amount.checked_sub(delta)
     }
-    .ok_or_else(|| rejected("day nominal amount overflow or underflow"))
-}
-
-fn rejected(reason: &str) -> TeeError {
-    TeeError::TributeOfferReject(reason.into())
+    .ok_or_else(|| TributeDayRejectReason::DayNominalAmountOverflowOrUnderflow.into())
 }

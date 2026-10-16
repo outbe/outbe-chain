@@ -101,7 +101,7 @@ impl FinalizedJoinAdmissionAnchorV1 {
         let anchor = Self {
             chain_id: input[1..33]
                 .try_into()
-                .map_err(|_| TransportError::Codec("finalized join chain id".into()))?,
+                .map_err(|_| crate::errors::NodeHostRecordError::FinalizedJoinChainId)?,
             genesis_hash: B256::from_slice(&input[33..65]),
             node_id_hash: B256::from_slice(&input[65..97]),
             enclave_id: B256::from_slice(&input[97..129]),
@@ -109,14 +109,14 @@ impl FinalizedJoinAdmissionAnchorV1 {
             finalized_height: u64::from_be_bytes(
                 input[161..169]
                     .try_into()
-                    .map_err(|_| TransportError::Codec("finalized join height".into()))?,
+                    .map_err(|_| crate::errors::NodeHostRecordError::FinalizedJoinHeight)?,
             ),
             finalized_hash: B256::from_slice(&input[169..201]),
             finalized_state_root: B256::from_slice(&input[201..233]),
             finalized_consensus_timestamp: u64::from_be_bytes(
                 input[233..241]
                     .try_into()
-                    .map_err(|_| TransportError::Codec("finalized join timestamp".into()))?,
+                    .map_err(|_| crate::errors::NodeHostRecordError::FinalizedJoinTimestamp)?,
             ),
         };
         validate_finalized_join_admission_anchor(anchor)?;
@@ -216,9 +216,9 @@ impl CommittedJoinSubmissionV1 {
         validate_submission_frame(input, &COMMITTED_JOIN_SUBMISSION_VALIDATION)?;
         let evidence_len =
             usize::try_from(u32::from_be_bytes(input[21..25].try_into().map_err(
-                |_| TransportError::Codec("committed join evidence length".into()),
+                |_| crate::errors::NodeHostRecordError::CommittedJoinEvidenceLength,
             )?))
-            .map_err(|_| TransportError::Codec("committed join evidence length overflow".into()))?;
+            .map_err(|_| crate::errors::NodeHostRecordError::CommittedJoinEvidenceLengthOverflow)?;
         validate_submission_evidence_length(
             input.len(),
             evidence_len,

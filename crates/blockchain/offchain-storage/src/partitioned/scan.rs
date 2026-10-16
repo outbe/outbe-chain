@@ -1,8 +1,8 @@
 //! Per-call ordered pagination over injected readers. Prefetch never becomes a logical cursor.
 
 use crate::{
-    Key, Namespace, ScanEntry, ScanPage, ScanRequest, StorageError, StorageReaderHandle,
-    MAX_SCAN_PAGE_VALUE_BYTES,
+    errors::PartitionScanCorruptionError, Key, Namespace, ScanEntry, ScanPage, ScanRequest,
+    StorageError, StorageReaderHandle, MAX_SCAN_PAGE_VALUE_BYTES,
 };
 use std::{
     cmp::Reverse,
@@ -54,7 +54,7 @@ pub(super) fn merge(
             .peek()
             .is_some_and(|Reverse((other, _))| *other == key)
         {
-            return Err(corruption("duplicate entity key across partitions"));
+            return Err(PartitionScanCorruptionError::DuplicateEntityKeyAcrossPartitions.into());
         }
         let cursor = &mut cursors[index];
         let entry = cursor
@@ -73,7 +73,11 @@ pub(super) fn merge(
                 result
                     .entries
                     .last()
-                    .ok_or_else(|| corruption("partition record exceeds page bound"))?
+                    .ok_or_else(|| {
+                        StorageError::from(
+                            PartitionScanCorruptionError::PartitionRecordExceedsPageBound,
+                        )
+                    })?
                     .key
                     .clone(),
             );
@@ -129,7 +133,7 @@ impl PartitionCursor {
 
 pub(super) fn validate_page(page: &ScanPage, request: ScanRequest<'_>) -> Result<(), StorageError> {
     if page.entries.len() > request.limit() {
-        return Err(corruption("partition scan exceeds entry bound"));
+        return Err(PartitionScanCorruptionError::PartitionScanExceedsEntryBound.into());
     }
     let mut previous = request.after();
     let mut bytes = 0;
@@ -137,11 +141,11 @@ pub(super) fn validate_page(page: &ScanPage, request: ScanRequest<'_>) -> Result
         if !entry.key.as_bytes().starts_with(request.prefix())
             || previous.is_some_and(|key| key >= &entry.key)
         {
-            return Err(corruption("partition scan violates prefix or ordering"));
+            return Err(PartitionScanCorruptionError::PartitionScanViolatesPrefixOrOrdering.into());
         }
         bytes += payload_bytes(entry);
         if bytes > MAX_SCAN_PAGE_VALUE_BYTES {
-            return Err(corruption("partition scan exceeds page byte bound"));
+            return Err(PartitionScanCorruptionError::PartitionScanExceedsPageByteBound.into());
         }
         previous = Some(&entry.key);
     }
@@ -150,9 +154,9 @@ pub(super) fn validate_page(page: &ScanPage, request: ScanRequest<'_>) -> Result
         .as_ref()
         .is_some_and(|cursor| page.entries.last().is_none_or(|entry| &entry.key != cursor))
     {
-        return Err(corruption(
-            "partition scan continuation is not its last returned key",
-        ));
+        return Err(
+            PartitionScanCorruptionError::PartitionScanContinuationNotLastReturnedKey.into(),
+        );
     }
     Ok(())
 }
@@ -163,7 +167,4 @@ fn payload_bytes(entry: &ScanEntry) -> usize {
             .metadata
             .as_ref()
             .map_or(0, crate::StorageMetadata::encoded_len)
-}
-fn corruption(message: &str) -> StorageError {
-    StorageError::Corruption(message.into())
 }

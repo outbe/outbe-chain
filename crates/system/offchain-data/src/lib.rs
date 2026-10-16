@@ -14,7 +14,7 @@ mod retirement;
 mod runtime_readers;
 mod state;
 
-pub use errors::ProjectionError;
+pub use errors::{ProjectionError, RetentionSelectorError};
 pub use open::{open_projection, open_projection_with_retention_selector};
 pub use outbe_primitives::projection::{
     projection_readiness, ProjectionCheckpoint, ProjectionFailure, ProjectionFailureClass,
