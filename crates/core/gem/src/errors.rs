@@ -24,6 +24,9 @@ pub enum GemError {
     #[error("gem already exists")]
     AlreadyExists,
 
+    #[error("gem owner is the zero address")]
+    ZeroOwner,
+
     #[error("unknown gem profile selector: {0}")]
     UnknownProfileSelector(u8),
 

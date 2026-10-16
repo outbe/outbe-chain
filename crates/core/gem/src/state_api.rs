@@ -111,6 +111,9 @@ impl GemContract<'_> {
         entry_price_minor: U256,
         call_terms: Option<CallTerms>,
     ) -> Result<()> {
+        if item.owner.is_zero() {
+            return Err(GemError::ZeroOwner.into());
+        }
         if self.records.get(item.gem_id)?.is_some() {
             return Err(GemError::AlreadyExists.into());
         }
@@ -278,6 +281,35 @@ mod tests {
             .unwrap();
             assert_eq!(contract.total_supply.read().unwrap(), 0);
             assert!(contract.state_records(None).unwrap().is_empty());
+            assert!(contract.buckets.get(item.bucket_key).unwrap().is_none());
+        });
+    }
+
+    #[test]
+    fn a_gem_without_an_owner_is_rejected_before_any_write() {
+        let mut provider = HashMapStorageProvider::new(1);
+        StorageHandle::enter(&mut provider, |storage| {
+            let day = WorldwideDay::new(20261015);
+            let item = GemItemState {
+                gem_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(7)),
+                owner: Address::ZERO,
+                gem_type: 0,
+                promis_load_minor: U256::from(5_000_000),
+                floor_price_minor: U256::ZERO,
+                issuance_currency: 840,
+                reference_currency: 840,
+                issued_at: day.start_timestamp(),
+                bucket_key: crate::identity::bucket_key(day, U256::from(1_000_000), 840),
+                state: GemState::Issued as u8,
+                called_at: 0,
+                settled_at: 0,
+            };
+            assert!(matches!(
+                add_item(&storage, &item, U256::from(1_000_000), None),
+                Err(PrecompileError::Revert(reason)) if reason == GemError::ZeroOwner.to_string()
+            ));
+            let contract = GemContract::new(storage.clone());
+            assert_eq!(contract.total_supply.read().unwrap(), 0);
             assert!(contract.buckets.get(item.bucket_key).unwrap().is_none());
         });
     }
