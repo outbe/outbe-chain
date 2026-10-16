@@ -273,7 +273,7 @@ pub(super) async fn sign_native(
 pub(super) fn decode_partial(
     bytes: &[u8],
     magic: &[u8; 4],
-    context: &BootstrapSigningContext,
+    material: &RepositorySigningMaterial,
 ) -> Result<
     (
         crate::integration::signing::RepositoryPartial,
@@ -292,8 +292,7 @@ pub(super) fn decode_partial(
     }
     let partial = crate::integration::signing::RepositoryPartial::from_bytes(&bytes[5..])
         .map_err(|_| Error::Protocol)?;
-    let member = context
-        .state
+    let member = material
         .authority()
         .committee()
         .committee

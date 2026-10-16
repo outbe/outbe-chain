@@ -13,7 +13,10 @@ use crate::{
 };
 use alloy_primitives::B256;
 use commonware_cryptography::{Hasher as _, Sha256};
-use outbe_primitives::radicle_publication::{PublicationBody, PUBLICATION_BODY_LEN};
+use outbe_primitives::{
+    radicle_genesis::{GovernmentsDescriptor, MAX_GOVERNMENTS_DESCRIPTOR_BYTES},
+    radicle_publication::{PublicationAction, PublicationBody, PUBLICATION_BODY_LEN},
+};
 use radicle::{
     git,
     storage::{git::Repository, WriteRepository as _},
@@ -235,6 +238,7 @@ impl ReviewPackageStore {
             publication.manifest(),
             publication.witness_hash(),
             witness,
+            None,
         )?;
         Ok(SelectedReviewPublication { publication })
     }
@@ -251,6 +255,7 @@ impl ReviewPackageStore {
             publication.manifest(),
             publication.witness_hash(),
             witness,
+            Some((publication.descriptor(), publication.content_manifest())),
         )?;
         Ok(SelectedBootstrapPublication { publication })
     }
@@ -262,6 +267,7 @@ impl ReviewPackageStore {
         manifest: &PublicationManifest,
         expected_witness_hash: B256,
         witness: &RepositoryWitnessBundle,
+        bootstrap: Option<(&GovernmentsDescriptor, &[u8])>,
     ) -> Result<(), Error> {
         let body_hash = body.receipt_hash();
         let witness_bytes = witness.to_bytes()?;
@@ -284,6 +290,14 @@ impl ReviewPackageStore {
         }
         write_once(&directory.join("body"), &body.to_bytes())?;
         write_once(&directory.join("manifest"), &manifest.to_bytes()?)?;
+        if let Some((descriptor, content)) = bootstrap {
+            validate_bootstrap_inputs(body, descriptor, content)?;
+            write_once(
+                &directory.join("descriptor"),
+                &descriptor.to_bytes().map_err(|_| Error::Corrupt)?,
+            )?;
+            write_once(&directory.join("initial-content.manifest"), content)?;
+        }
         let odb = repo.raw().odb()?;
         for row in manifest.objects() {
             let oid: git::Oid = row.oid.parse().map_err(|_| Error::Corrupt)?;
@@ -311,6 +325,82 @@ impl ReviewPackageStore {
         )?;
         self.select(slot, body_hash, witness_hash)?;
         Ok(())
+    }
+
+    /// Historical reconstruction inputs are authenticated by this node's accepted checkpoint.
+    pub fn load_bootstrap_inputs(
+        &self,
+        checkpoint: &FinalizedPublicationReceipt,
+    ) -> Result<(GovernmentsDescriptor, Vec<u8>), Error> {
+        self.load_checkpoint_manifest(checkpoint)?;
+        let body = &checkpoint.receipt().body;
+        let directory = self.package_dir(checkpoint.receipt().receipt_hash);
+        let descriptor = GovernmentsDescriptor::from_bytes(&read(
+            &directory.join("descriptor"),
+            MAX_GOVERNMENTS_DESCRIPTOR_BYTES,
+        )?)
+        .map_err(|_| Error::Corrupt)?;
+        let content = read(
+            &directory.join("initial-content.manifest"),
+            MAX_MANIFEST_BYTES,
+        )?;
+        validate_bootstrap_inputs(body, &descriptor, &content)?;
+        Ok((descriptor, content))
+    }
+
+    /// Rebuild root read authorization from this node's receipt and archived q-proof.
+    /// This does not promote refs or authorize any subsequent owner operation.
+    pub fn open_bootstrap_repository(
+        &self,
+        reader: &dyn RepositoryReceiptReader,
+        path: &Path,
+        info: git::UserInfo,
+    ) -> Result<Repository, Error> {
+        use radicle::storage::ReadStorage as _;
+        let checkpoint = reader
+            .read_current_publication_receipt(1)?
+            .ok_or(Error::MissingCheckpoint(1))?;
+        let body = &checkpoint.receipt().body;
+        let id = git::Oid::from_sha1(body.repo_id.0).into();
+        let storage = radicle::Storage::open(path.parent().ok_or(Error::Corrupt)?, info)
+            .map_err(|_| Error::Corrupt)?;
+        let repo = storage.repository(id).map_err(|_| Error::Corrupt)?;
+        if repo.raw().path().canonicalize()? != path.canonicalize()? {
+            return Err(Error::Corrupt);
+        }
+        let package = self
+            .load_selected(review_slot_key(body), &repo)?
+            .ok_or(Error::Corrupt)?;
+        if package.body != *body {
+            return Err(Error::Corrupt);
+        }
+        let (descriptor, content) = self.load_bootstrap_inputs(&checkpoint)?;
+        let verifier = super::super::signing::accepted::AcceptedPublicationVerifier::from_receipt(
+            checkpoint.clone(),
+            package.manifest.clone(),
+            package.witness.public_output(),
+        )?;
+        let proof = crate::integration::bootstrap::verify_accepted_bootstrap(
+            &repo,
+            &descriptor,
+            &content,
+            &verifier,
+            &package.witness,
+        )
+        .map_err(|_| Error::Corrupt)?;
+        let snapshot = CheckpointOwnerSnapshot::bootstrap(checkpoint.clone(), &package.manifest)?;
+        let policy = Arc::new(
+            super::policy::AcceptedRepositoryPolicy::new(&snapshot).map_err(|_| Error::Corrupt)?,
+        );
+        policy
+            .accept_bootstrap(&proof)
+            .map_err(|_| Error::Corrupt)?;
+        let owner = radicle::crypto::BlsPublicKey::from_bytes(body.owner_bls_public.0)
+            .map_err(|_| Error::Corrupt)?;
+        storage
+            .manage_repository(id, owner.into(), policy)
+            .map_err(|_| Error::Corrupt)?;
+        storage.repository(id).map_err(|_| Error::Corrupt)
     }
 
     pub fn load_selected(
@@ -418,6 +508,24 @@ impl ReviewPackageStore {
             &[SLOT, body.as_slice(), witness.as_slice()].concat(),
         )
     }
+}
+
+fn validate_bootstrap_inputs(
+    body: &PublicationBody,
+    descriptor: &GovernmentsDescriptor,
+    content: &[u8],
+) -> Result<(), Error> {
+    if body.action != PublicationAction::Bootstrap
+        || body.sequence != 1
+        || !body.previous_receipt_hash.is_zero()
+        || descriptor.chain_id != body.chain_id
+        || descriptor.hash().map_err(|_| Error::Corrupt)? != body.descriptor_hash
+        || content.len() > MAX_MANIFEST_BYTES
+        || B256::from(Sha256::hash(&[content]).0) != descriptor.initial_content_manifest_sha256
+    {
+        return Err(Error::Corrupt);
+    }
+    Ok(())
 }
 
 fn object_type(kind: ObjectKind) -> git::raw::ObjectType {

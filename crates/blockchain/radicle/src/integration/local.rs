@@ -6,6 +6,7 @@ mod material;
 mod preparation;
 mod progress;
 mod publication;
+mod review;
 mod state;
 
 pub use bootstrap::BootstrapSigningContext;
@@ -128,6 +129,7 @@ pub struct LocalReceiptServer {
     authority: Option<Arc<dyn RepositoryAuthorityReader>>,
     material: Option<EndpointNetworkResolver>,
     publications: Option<Arc<Mutex<ReviewPackageStore>>>,
+    native_node: Option<[u8; 32]>,
     _lease: SocketLease,
 }
 
@@ -188,6 +190,7 @@ impl LocalReceiptServer {
             authority: None,
             material: None,
             publications: None,
+            native_node: None,
             _lease: lease,
         })
     }
@@ -204,6 +207,11 @@ impl LocalReceiptServer {
 
     pub fn with_publication_store(mut self, store: ReviewPackageStore) -> Self {
         self.publications = Some(Arc::new(Mutex::new(store)));
+        self
+    }
+
+    pub fn with_native_node_id(mut self, node_id: [u8; 32]) -> Self {
+        self.native_node = Some(node_id);
         self
     }
 
@@ -226,8 +234,9 @@ impl LocalReceiptServer {
                     let material = self.material.clone();
                     let publications = self.publications.clone();
                     let readers = readers.clone();
+                    let native_node = self.native_node;
                     clients.spawn(async move {
-                        let _ = tokio::time::timeout(DEADLINE, serve(stream, reader, authority, material, publications, readers)).await;
+                        let _ = tokio::time::timeout(DEADLINE, serve(stream, reader, authority, material, publications, readers, native_node)).await;
                     });
                 }
             }
@@ -392,7 +401,7 @@ impl LocalReceiptClient {
         .concat();
         let response = self.exchange(&request, bootstrap::SIGN_FRAME).await?;
         let (partial, sender) =
-            bootstrap::decode_partial(&response, bootstrap::SIGN_DOCUMENT, context)?;
+            bootstrap::decode_partial(&response, bootstrap::SIGN_DOCUMENT, &context.material)?;
         context
             .material
             .verify_bootstrap_document_partial(&job, &context.state, &sender, &partial)
@@ -421,7 +430,7 @@ impl LocalReceiptClient {
         )?;
         let response = self.exchange(&request, bootstrap::SIGN_FRAME).await?;
         let (partial, sender) =
-            bootstrap::decode_partial(&response, bootstrap::SIGN_IDENTITY, context)?;
+            bootstrap::decode_partial(&response, bootstrap::SIGN_IDENTITY, &context.material)?;
         context
             .material
             .verify_bootstrap_identity_partial(job, &context.state, &sender, &partial)
@@ -450,7 +459,7 @@ impl LocalReceiptClient {
         )?;
         let response = self.exchange(&request, bootstrap::SIGN_FRAME).await?;
         let (partial, sender) =
-            bootstrap::decode_partial(&response, bootstrap::SIGN_REFS, context)?;
+            bootstrap::decode_partial(&response, bootstrap::SIGN_REFS, &context.material)?;
         context
             .material
             .verify_bootstrap_refs_partial(job, &context.state, &sender, &partial)
@@ -560,6 +569,7 @@ async fn serve(
     material: Option<EndpointNetworkResolver>,
     publications: Option<Arc<Mutex<ReviewPackageStore>>>,
     readers: Arc<Semaphore>,
+    native_node: Option<[u8; 32]>,
 ) -> Result<(), Error> {
     let request = read_frame(&mut stream, MAX_REQUEST).await?;
     let magic = match (request.get(..4), request.len()) {
@@ -580,6 +590,12 @@ async fn serve(
         (Some(magic), length) if magic == bootstrap::SIGN_REFS && length > 36 => {
             bootstrap::SIGN_REFS
         }
+        (Some(magic), length) if magic == review::COB && length >= review::MIN_REQUEST => {
+            review::COB
+        }
+        (Some(magic), length) if magic == review::REFS && length >= review::MIN_REQUEST + 269 => {
+            review::REFS
+        }
         (Some(magic), 36) if magic == state::MAGIC => state::MAGIC,
         (Some(magic), 36) if magic == material::MAGIC => material::MAGIC,
         (Some(magic), 36) if magic == preparation::MAGIC => preparation::MAGIC,
@@ -590,6 +606,24 @@ async fn serve(
         Ok(permit) => permit,
         Err(_) => return write_frame(&mut stream, &[magic.as_slice(), &[0]].concat()).await,
     };
+    if magic == review::COB || magic == review::REFS {
+        let result = async {
+            let request = review::Request::parse(&request, native_node)?;
+            review::sign(
+                reader,
+                authority,
+                material,
+                publications,
+                readers,
+                permit,
+                request,
+            )
+            .await
+        }
+        .await;
+        let response = result.unwrap_or_else(|_| [magic.as_slice(), &[0]].concat());
+        return write_frame(&mut stream, &response).await;
+    }
     if magic == progress::MAGIC {
         let body = PublicationBody::from_bytes(&request[4..]).map_err(|_| Error::Protocol)?;
         let response = progress::read(reader, permit, body)

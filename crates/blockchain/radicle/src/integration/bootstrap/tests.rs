@@ -5,6 +5,7 @@ use commonware_utils::{Participant, TryCollect as _};
 use outbe_consensus::{bls::bootstrap_dkg_for_participants, hybrid::VrfMaterialProvider};
 use radicle::identity::doc::GetPayload as _;
 use radicle::{crypto::Signer as _, storage::WriteStorage as _};
+mod local_review;
 
 #[tokio::test]
 async fn independent_collectors_prepare_identical_bootstrap_without_promoting_refs() {
@@ -332,6 +333,30 @@ async fn independent_collectors_prepare_identical_bootstrap_without_promoting_re
         drop(store);
         let store =
             super::super::publication::store::ReviewPackageStore::open(&store_path).unwrap();
+        let (archived_descriptor, archived_content) =
+            store.load_bootstrap_inputs(&receipt).unwrap();
+        assert_eq!(archived_descriptor, descriptor);
+        assert_eq!(archived_content, b"[]");
+        let package_directory = store_path
+            .join("packages")
+            .join(hex::encode(body.receipt_hash()));
+        let archived_descriptor_path = package_directory.join("descriptor");
+        let mut wrong_descriptor = descriptor.clone();
+        wrong_descriptor.description = "other descriptor".into();
+        std::fs::write(
+            &archived_descriptor_path,
+            wrong_descriptor.to_bytes().unwrap(),
+        )
+        .unwrap();
+        assert!(store.load_bootstrap_inputs(&receipt).is_err());
+        std::fs::write(&archived_descriptor_path, descriptor.to_bytes().unwrap()).unwrap();
+        let archived_content_path = package_directory.join("initial-content.manifest");
+        std::fs::write(&archived_content_path, b"[]\n").unwrap();
+        assert!(store.load_bootstrap_inputs(&receipt).is_err());
+        std::fs::remove_file(&archived_content_path).unwrap();
+        assert!(store.load_bootstrap_inputs(&receipt).is_err());
+        std::fs::write(&archived_content_path, b"[]").unwrap();
+        assert_eq!(store.load_bootstrap_inputs(&receipt).unwrap().1, b"[]");
         let replay_storage = radicle::Storage::open(
             temp.path().join("replay"),
             git::UserInfo {
@@ -441,6 +466,18 @@ async fn independent_collectors_prepare_identical_bootstrap_without_promoting_re
                 .0,
             git::Oid::from_sha1(repo.id().into_sha1().unwrap())
         );
+        if first == 0 {
+            local_review::assert_review_socket(
+                &repo,
+                store,
+                proof.receipt().clone(),
+                &material,
+                &keys,
+                &providers,
+                &dkg.output,
+            )
+            .await;
+        }
         results.push((body, manifest.to_bytes().unwrap()));
     }
     assert_eq!(results[0], results[1]);

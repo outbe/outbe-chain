@@ -398,6 +398,8 @@ pub struct VerifiedBootstrapPublication {
     body: PublicationBody,
     manifest: PublicationManifest,
     witness_hash: B256,
+    descriptor: GovernmentsDescriptor,
+    content_manifest: Vec<u8>,
 }
 
 impl VerifiedBootstrapPublication {
@@ -409,6 +411,12 @@ impl VerifiedBootstrapPublication {
     }
     pub(crate) fn witness_hash(&self) -> B256 {
         self.witness_hash
+    }
+    pub(crate) fn descriptor(&self) -> &GovernmentsDescriptor {
+        &self.descriptor
+    }
+    pub(crate) fn content_manifest(&self) -> &[u8] {
+        &self.content_manifest
     }
     pub fn authorize_current(
         &self,
@@ -447,6 +455,8 @@ pub fn prepare_bootstrap_publication(
         body,
         manifest,
         witness_hash: Sha256::hash(&[&witness.to_bytes()?]).0.into(),
+        descriptor: state.descriptor().clone(),
+        content_manifest: content_manifest.to_vec(),
     })
 }
 

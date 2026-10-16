@@ -321,6 +321,42 @@ impl RepositorySigningMaterial {
         self.sign_review(provider, job, validator, identity)
     }
 
+    pub fn verify_current_review_partial(
+        &self,
+        job: &CheckpointPreparedReview,
+        state: &FinalizedPatchSigningState,
+        sender: &bls12381::PublicKey,
+        frame: &RepositoryPartial,
+    ) -> Result<(), Error> {
+        self.authorize_current_review(
+            state,
+            job.approval(),
+            job.snapshot(),
+            job.signing_context(),
+            job.owner(),
+        )?;
+        self.verify_partial(&self.public_verifier(), job, sender, frame)
+            .map(|_| ())
+    }
+
+    pub fn verify_current_review_refs_partial(
+        &self,
+        job: &CheckpointPreparedReviewRefs,
+        state: &FinalizedPatchSigningState,
+        sender: &bls12381::PublicKey,
+        frame: &RepositoryPartial,
+    ) -> Result<(), Error> {
+        self.authorize_current_review(
+            state,
+            job.approval(),
+            job.snapshot(),
+            job.signing_context(),
+            job.owner(),
+        )?;
+        self.verify_review_refs_partial(&self.public_verifier(), job, sender, frame)
+            .map(|_| ())
+    }
+
     pub fn sign_current_review_refs(
         &self,
         provider: &VrfMaterialProvider<MinSig>,

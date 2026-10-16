@@ -151,6 +151,7 @@ pub(super) fn start(
                 .wrap_err("bind protected Radicle receipt socket")?
                 .with_authority_reader(repository_snapshots)
                 .with_material_resolver(resolver.clone())
+                .with_native_node_id(sidecar.node_id)
                 .with_publication_store(publications),
             )
         } else {

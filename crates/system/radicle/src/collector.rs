@@ -5,7 +5,7 @@ use commonware_codec::DecodeExt as _;
 use commonware_cryptography::{bls12381, Hasher as _, Sha256};
 use journal::{put, read, Journal};
 use outbe_primitives::{
-    radicle_genesis::{GovernmentsDescriptor, MAX_GOVERNMENTS_DESCRIPTOR_BYTES},
+    radicle_genesis::GovernmentsDescriptor,
     radicle_publication::{
         PublicationAttestation, PublicationBatch, PublicationBody, MAX_PUBLICATION_ATTESTATIONS,
     },
@@ -481,18 +481,7 @@ impl Collector {
         if package.body != receipt.receipt().body {
             return Err("accepted bootstrap differs from persisted selection".into());
         }
-        let descriptor = GovernmentsDescriptor::from_bytes(
-            &read(
-                &self.journal.root.join("descriptor"),
-                MAX_GOVERNMENTS_DESCRIPTOR_BYTES,
-            )?
-            .ok_or("bootstrap descriptor unavailable")?,
-        )?;
-        let content = read(
-            &self.journal.root.join("initial-content.manifest"),
-            MAX_MANIFEST_BYTES,
-        )?
-        .ok_or("initial content manifest unavailable")?;
+        let (descriptor, content) = self.journal.packages.load_bootstrap_inputs(&receipt)?;
         let verifier = AcceptedPublicationVerifier::from_receipt(
             receipt.clone(),
             package.manifest.clone(),

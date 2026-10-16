@@ -74,6 +74,28 @@ pub(super) async fn read(
     permit: OwnedSemaphorePermit,
     proposal_id: U256,
 ) -> Result<Vec<u8>, Error> {
+    let context = current(
+        reader,
+        authority,
+        resolver,
+        store,
+        readers,
+        permit,
+        proposal_id,
+    )
+    .await?;
+    encode(&context.state, &context.material, &context.snapshot)
+}
+
+pub(super) async fn current(
+    reader: Arc<dyn RepositoryReceiptReader>,
+    authority: Option<Arc<dyn RepositoryAuthorityReader>>,
+    resolver: Option<EndpointNetworkResolver>,
+    store: Option<Arc<Mutex<ReviewPackageStore>>>,
+    readers: Arc<Semaphore>,
+    permit: OwnedSemaphorePermit,
+    proposal_id: U256,
+) -> Result<PatchPreparationContext, Error> {
     let store = store.ok_or(Error::Unavailable)?;
     let (state, material) = material::current(authority, resolver, permit, proposal_id).await?;
     let permit = readers
@@ -86,7 +108,11 @@ pub(super) async fn read(
             .map_err(|_| Error::Unavailable)?
             .replay_checkpoint_snapshot(reader.as_ref(), state.checkpoint())
             .map_err(|_| Error::Unavailable)?;
-        encode(&state, &material, &snapshot)
+        Ok(PatchPreparationContext {
+            state,
+            material,
+            snapshot,
+        })
     })
     .await
     .map_err(|_| Error::Unavailable)?
