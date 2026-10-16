@@ -314,6 +314,7 @@ fn signing_fixture(
         commonware_cryptography::bls12381::PublicKey,
     >,
     Vec<commonware_cryptography::bls12381::PrivateKey>,
+    Vec<commonware_cryptography::bls12381::primitives::group::Share>,
 ) {
     use crate::manager::{FinalizedPatchApproval, FinalizedRepositoryAuthority};
     use alloy_primitives::Address;
@@ -407,7 +408,7 @@ fn signing_fixture(
         receipt.body.material_hash = material.material_hash().into();
         receipt.receipt_hash = receipt.body.receipt_hash();
     }
-    (state, dkg.output, keys)
+    (state, dkg.output, keys, dkg.shares)
 }
 
 struct AuthorityReader {
@@ -616,7 +617,7 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
     use commonware_codec::Encode as _;
     let directory = private_directory();
     let control = directory.path().join("control");
-    let (original, output, keys) = signing_fixture(4);
+    let (original, output, keys, _) = signing_fixture(4);
     let proposal = original.approval.approval.proposal_id;
     let validator = original.authority.committee.committee[0].address;
     let reader = Arc::new(ContextReader {
@@ -730,7 +731,7 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
 
 #[test]
 fn public_output_codec_binds_exact_material_and_rejects_corruption_and_lengths() {
-    let (state, output, _) = signing_fixture(4);
+    let (state, output, _, _) = signing_fixture(4);
     let proposal = state.approval.approval.proposal_id;
     let owner =
         radicle::crypto::BlsPublicKey::from_bytes(state.material.receipt.body.owner_bls_public.0)
@@ -781,4 +782,315 @@ fn public_output_codec_binds_exact_material_and_rejects_corruption_and_lengths()
     let mut mixed = bytes;
     mixed[9..9 + state_length].copy_from_slice(&encoded);
     assert!(material::decode(&mixed, proposal, chain()).is_err());
+}
+
+fn preparation_manifest(
+    state: &mut FinalizedPatchSigningState,
+    output: &commonware_cryptography::bls12381::dkg::feldman_desmedt::Output<
+        commonware_cryptography::bls12381::primitives::variant::MinSig,
+        commonware_cryptography::bls12381::PublicKey,
+    >,
+    shares: &[commonware_cryptography::bls12381::primitives::group::Share],
+) -> PublicationManifest {
+    use crate::integration::publication::{
+        native_policy_context, NativeSubject, ObjectCommitment, ObjectKind, OwnerRef, RefUpdate,
+    };
+    use commonware_codec::Encode as _;
+    use outbe_consensus::hybrid::VrfMaterialProvider;
+    use radicle::crypto::{BlsEnvelope, BlsPublicKey, RepositorySubject};
+    let body = &state.checkpoint.receipt.body;
+    let owner = BlsPublicKey::from_bytes(body.owner_bls_public.0).unwrap();
+    let providers: Vec<_> = shares
+        .iter()
+        .map(|share| {
+            VrfMaterialProvider::new(
+                body.material_version,
+                output.public().clone(),
+                Some(share.clone()),
+            )
+        })
+        .collect();
+    let subjects = (0..3)
+        .map(|ordinal| {
+            let context = native_policy_context(body, ordinal);
+            // Real threshold envelopes over framing fixtures, not a native Git bootstrap package.
+            let subject = match ordinal {
+                0 => RepositorySubject::identity(body.repo_id.0, context, [2; 20]),
+                1 => RepositorySubject::cob(body.repo_id.0, context, [4; 20], b"fixture"),
+                _ => RepositorySubject::signed_refs(body.repo_id.0, context, [0; 20], b"fixture")
+                    .unwrap(),
+            };
+            let partials: Vec<_> = providers
+                .iter()
+                .enumerate()
+                .take(3)
+                .map(|(index, provider)| {
+                    provider
+                        .sign_repository(
+                            body.material_version,
+                            commonware_utils::Participant::from_usize(index),
+                            output.public(),
+                            &subject,
+                        )
+                        .unwrap()
+                })
+                .collect();
+            let signature = providers[0]
+                .recover_repository(body.material_version, output.public(), &subject, &partials)
+                .unwrap();
+            let envelope = BlsEnvelope::attach(
+                subject,
+                owner,
+                signature.encode().as_ref().try_into().unwrap(),
+            )
+            .unwrap();
+            NativeSubject {
+                ordinal,
+                envelope: envelope.to_hex(),
+            }
+        })
+        .collect();
+    let owner_snapshot = vec![
+        OwnerRef {
+            name: "refs/heads/main".into(),
+            oid: hex::encode([1; 20]),
+        },
+        OwnerRef {
+            name: "refs/rad/root".into(),
+            oid: hex::encode([2; 20]),
+        },
+    ];
+    let mut refs: Vec<_> = owner_snapshot
+        .iter()
+        .map(|row| RefUpdate {
+            name: row.name.clone(),
+            old: hex::encode([0; 20]),
+            new: row.oid.clone(),
+        })
+        .collect();
+    refs.push(RefUpdate {
+        name: "refs/rad/sigrefs".into(),
+        old: hex::encode([0; 20]),
+        new: hex::encode([3; 20]),
+    });
+    let manifest = PublicationManifest::new(
+        vec![ObjectCommitment {
+            kind: ObjectKind::Commit,
+            oid: hex::encode([3; 20]),
+            sha256: hex::encode([4; 32]),
+        }],
+        refs,
+        subjects,
+        owner_snapshot,
+    )
+    .unwrap();
+    for receipt in [&mut state.checkpoint.receipt, &mut state.material.receipt] {
+        receipt.body.package_manifest_hash = manifest.hash().unwrap();
+        receipt.receipt_hash = receipt.body.receipt_hash();
+    }
+    manifest
+}
+
+struct PreparationReceipts {
+    current: std::sync::Mutex<Option<FinalizedPublicationReceipt>>,
+}
+
+impl RepositoryReceiptReader for PreparationReceipts {
+    fn read_current_publication_receipt(
+        &self,
+        sequence: u64,
+    ) -> Result<Option<FinalizedPublicationReceipt>, ManagerError> {
+        Ok(self
+            .current
+            .lock()
+            .unwrap()
+            .as_ref()
+            .filter(|r| r.receipt().body.sequence == sequence)
+            .cloned())
+    }
+}
+
+#[tokio::test]
+async fn preparation_socket_verifies_manifest_receipts_and_replays_after_restart() {
+    use crate::endpoint::EndpointAddress;
+    use crate::integration::{
+        network::shutdown_tests::{NoSend, TestReceiver},
+        EndpointNetwork, EndpointSigningIdentity, EndpointTransport, LocalEndpointIdentity,
+        LocalEndpointIdentityChannel, RadicleStatusChannel,
+    };
+    let directory = private_directory();
+    let control = directory.path().join("control");
+    let store_path = publication_store_path(&control);
+    let (mut original, output, keys, shares) = signing_fixture(4);
+    let manifest = preparation_manifest(&mut original, &output, &shares);
+    let proposal = original.approval.approval.proposal_id;
+    let receipts = Arc::new(PreparationReceipts {
+        current: std::sync::Mutex::new(Some(original.checkpoint.clone())),
+    });
+    let reader = Arc::new(ContextReader {
+        state: std::sync::Mutex::new(Some(original.clone())),
+        authority: std::sync::Mutex::new(Some(original.authority.clone())),
+    });
+    let validator = original.authority.committee.committee[0].address;
+    let (_, status) = RadicleStatusChannel::enabled(validator, [1; 32]);
+    let (service, resolver, _) = EndpointNetwork::build(chain(), status);
+    let mut service = service.with_repository_authority_reader(reader.clone());
+    let publisher = service.take_repository_material_publisher().unwrap();
+    publisher.publish(5, 6, Some(&output));
+    let (_, local) = LocalEndpointIdentityChannel::create(LocalEndpointIdentity {
+        validator,
+        node_id: [1; 32],
+        addresses: vec![EndpointAddress::dns("local.example", 8776).unwrap()],
+    });
+    let (_incoming, receiver) = mpsc::unbounded_channel();
+    let actor = tokio::spawn(service.run(
+        EndpointTransport {
+            sender: NoSend,
+            receiver: TestReceiver(receiver),
+        },
+        EndpointSigningIdentity {
+            signer: keys[0].clone(),
+            local,
+        },
+    ));
+    let client = LocalReceiptClient::new(&control, chain());
+    for restart in [false, true] {
+        let store = ReviewPackageStore::open(&store_path).unwrap();
+        let server = LocalReceiptServer::bind(&control, receipts.clone())
+            .unwrap()
+            .with_authority_reader(reader.clone())
+            .with_material_resolver(resolver.clone())
+            .with_publication_store(store);
+        let (stop, stopping) = oneshot::channel();
+        let task = tokio::spawn(server.run(async {
+            let _ = stopping.await;
+        }));
+        if !restart {
+            assert!(matches!(
+                client.read_patch_preparation_context(proposal).await,
+                Err(Error::Unavailable)
+            ));
+            let receipt = client.read(1).await.unwrap().unwrap();
+            client
+                .cache_checkpoint_manifest(&receipt, &manifest)
+                .await
+                .unwrap();
+            client
+                .cache_checkpoint_manifest(&receipt, &manifest)
+                .await
+                .unwrap();
+            let wrong_manifest = PublicationManifest::new(
+                vec![],
+                vec![],
+                vec![],
+                manifest.owner_snapshot().to_vec(),
+            )
+            .unwrap();
+            assert!(client
+                .cache_checkpoint_manifest(&receipt, &wrong_manifest)
+                .await
+                .is_err());
+            let mut wrong_receipt = receipt.clone();
+            wrong_receipt.receipt.receipt_hash = B256::repeat_byte(99);
+            assert!(client
+                .cache_checkpoint_manifest(&wrong_receipt, &manifest)
+                .await
+                .is_err());
+            let mut wrong_chain = chain();
+            wrong_chain.chain_id += 1;
+            assert!(matches!(
+                LocalReceiptClient::new(&control, wrong_chain)
+                    .cache_checkpoint_manifest(&receipt, &manifest)
+                    .await,
+                Err(Error::Protocol)
+            ));
+        }
+        let prepared = client
+            .read_patch_preparation_context(proposal)
+            .await
+            .unwrap();
+        assert_eq!(prepared.state, original);
+        assert_eq!(
+            prepared.material.material_hash(),
+            original.material.receipt.body.material_hash.0
+        );
+        assert_eq!(
+            prepared.snapshot.owner_refs(),
+            &manifest.owner_refs().unwrap()
+        );
+        assert_eq!(
+            prepared.snapshot.sigrefs().to_string(),
+            hex::encode([3; 20])
+        );
+        *receipts.current.lock().unwrap() = None;
+        assert!(matches!(
+            client.read_patch_preparation_context(proposal).await,
+            Err(Error::Unavailable)
+        ));
+        *receipts.current.lock().unwrap() = Some(original.checkpoint.clone());
+        if restart {
+            let path = store_path
+                .join("packages")
+                .join(hex::encode(original.checkpoint.receipt.receipt_hash))
+                .join("manifest");
+            fs::write(&path, b"{}").unwrap();
+            assert!(matches!(
+                client.read_patch_preparation_context(proposal).await,
+                Err(Error::Unavailable)
+            ));
+            fs::write(path, manifest.to_bytes().unwrap()).unwrap();
+            publisher.publish(5, 6, None);
+            assert!(matches!(
+                client.read_patch_preparation_context(proposal).await,
+                Err(Error::Unavailable)
+            ));
+        }
+        stop.send(()).unwrap();
+        task.await.unwrap().unwrap();
+    }
+    resolver.shutdown().await.unwrap();
+    actor.await.unwrap().unwrap();
+}
+
+#[test]
+fn preparation_context_codec_requires_exact_context_refs_and_sigrefs() {
+    use crate::integration::publication::CheckpointOwnerSnapshot;
+    use commonware_codec::Encode as _;
+    let (mut state, output, _, shares) = signing_fixture(4);
+    let manifest = preparation_manifest(&mut state, &output, &shares);
+    let proposal = state.approval.approval.proposal_id;
+    let owner =
+        radicle::crypto::BlsPublicKey::from_bytes(state.material.receipt.body.owner_bls_public.0)
+            .unwrap();
+    let material = RepositorySigningMaterial::from_canonical_output(
+        state.authority.clone(),
+        &output.encode(),
+        owner,
+    )
+    .unwrap();
+    let snapshot = CheckpointOwnerSnapshot::bootstrap(state.checkpoint.clone(), &manifest).unwrap();
+    let bytes = preparation::encode(&state, &material, &snapshot).unwrap();
+    let decoded = preparation::decode(&bytes, proposal, chain()).unwrap();
+    assert_eq!(decoded.snapshot.owner_refs(), snapshot.owner_refs());
+    assert_eq!(decoded.snapshot.sigrefs(), snapshot.sigrefs());
+    assert_eq!(decoded.snapshot.checkpoint(), state.checkpoint());
+    for length in [0, 4, 5, 8, 9, bytes.len() - 1] {
+        assert!(preparation::decode(&bytes[..length], proposal, chain()).is_err());
+    }
+    let mut trailing = bytes.clone();
+    trailing.push(0);
+    assert!(preparation::decode(&trailing, proposal, chain()).is_err());
+    let mut zero = bytes.clone();
+    let length = zero.len();
+    zero[length - 20..].fill(0);
+    assert!(preparation::decode(&zero, proposal, chain()).is_err());
+    let mut oversized = bytes;
+    oversized[5..9].copy_from_slice(&((material::MAX_FRAME + 1) as u32).to_be_bytes());
+    assert!(preparation::decode(&oversized, proposal, chain()).is_err());
+    assert!(CheckpointOwnerSnapshot::from_local_refs(
+        state.checkpoint.clone(),
+        Default::default(),
+        snapshot.sigrefs()
+    )
+    .is_err());
 }

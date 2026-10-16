@@ -131,16 +131,24 @@ pub(super) fn start(
             .extra_fields
             .contains_key(outbe_primitives::radicle_genesis::GENESIS_GOVERNMENTS_FIELD)
         {
+            let control = args
+                .radicle_control_socket
+                .as_ref()
+                .expect("validated Radicle control socket");
+            let publications =
+                outbe_radicle::integration::publication::store::ReviewPackageStore::open(
+                    outbe_radicle::integration::local::publication_store_path(control),
+                )
+                .wrap_err("open protected Radicle publication store")?;
             Some(
                 outbe_radicle::integration::local::LocalReceiptServer::bind(
-                    args.radicle_control_socket
-                        .as_ref()
-                        .expect("validated Radicle control socket"),
+                    control,
                     repository_snapshots.clone(),
                 )
                 .wrap_err("bind protected Radicle receipt socket")?
                 .with_authority_reader(repository_snapshots)
-                .with_material_resolver(resolver.clone()),
+                .with_material_resolver(resolver.clone())
+                .with_publication_store(publications),
             )
         } else {
             None

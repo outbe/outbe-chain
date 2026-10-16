@@ -19,6 +19,16 @@ pub(super) async fn read(
     permit: OwnedSemaphorePermit,
     proposal_id: U256,
 ) -> Result<Vec<u8>, Error> {
+    let (state, material) = current(authority, resolver, permit, proposal_id).await?;
+    encode(&state, &material)
+}
+
+pub(super) async fn current(
+    authority: Option<Arc<dyn RepositoryAuthorityReader>>,
+    resolver: Option<EndpointNetworkResolver>,
+    permit: OwnedSemaphorePermit,
+    proposal_id: U256,
+) -> Result<(FinalizedPatchSigningState, RepositorySigningMaterial), Error> {
     let authority = authority.ok_or(Error::Unavailable)?;
     let resolver = resolver.ok_or(Error::Unavailable)?;
     let state = tokio::task::spawn_blocking(move || {
@@ -35,7 +45,8 @@ pub(super) async fn read(
         .await
         .map_err(|_| Error::Unavailable)?;
     // The actor samples its own current authority; a transition between the reads requires retry.
-    encode(&state, &material)
+    bind(&state, &material)?;
+    Ok((state, material))
 }
 
 fn bind(
@@ -100,7 +111,7 @@ pub(super) fn decode(
     Ok((state, material))
 }
 
-fn take<'a>(input: &mut &'a [u8], maximum: usize) -> Result<&'a [u8], Error> {
+pub(super) fn take<'a>(input: &mut &'a [u8], maximum: usize) -> Result<&'a [u8], Error> {
     let (length, rest) = input.split_at_checked(4).ok_or(Error::Protocol)?;
     let length = u32::from_be_bytes(length.try_into().map_err(|_| Error::Protocol)?) as usize;
     if length > maximum {

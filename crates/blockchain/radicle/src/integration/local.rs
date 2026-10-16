@@ -1,8 +1,12 @@
 //! Trusted local finalized context. No secret material or signing messages cross this socket.
 
 mod material;
+mod preparation;
 mod state;
 
+pub use preparation::{publication_store_path, PatchPreparationContext};
+
+use super::publication::{store::ReviewPackageStore, PublicationManifest};
 use super::{network::EndpointNetworkResolver, signing::RepositorySigningMaterial};
 
 use crate::{
@@ -21,7 +25,7 @@ use std::{
     io,
     os::unix::fs::{FileTypeExt as _, MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 use tokio::{
@@ -33,8 +37,8 @@ use tokio::{
 
 const MAGIC: &[u8; 4] = b"ORL1";
 const RECEIPT_FRAME_LEN: usize = 5 + 8 + 32 + 8 + 32 + PUBLICATION_BODY_LEN;
-const MAX_FRAME: usize = material::MAX_FRAME;
-const MAX_REQUEST: usize = 4 + 32;
+const MAX_FRAME: usize = preparation::MAX_FRAME;
+const MAX_REQUEST: usize = preparation::MAX_REQUEST;
 const MAX_CONNECTIONS: usize = 32;
 const MAX_READERS: usize = 4;
 const DEADLINE: Duration = Duration::from_secs(5);
@@ -113,6 +117,7 @@ pub struct LocalReceiptServer {
     reader: Arc<dyn RepositoryReceiptReader>,
     authority: Option<Arc<dyn RepositoryAuthorityReader>>,
     material: Option<EndpointNetworkResolver>,
+    publications: Option<Arc<Mutex<ReviewPackageStore>>>,
     _lease: SocketLease,
 }
 
@@ -172,6 +177,7 @@ impl LocalReceiptServer {
             reader,
             authority: None,
             material: None,
+            publications: None,
             _lease: lease,
         })
     }
@@ -183,6 +189,11 @@ impl LocalReceiptServer {
 
     pub fn with_material_resolver(mut self, resolver: EndpointNetworkResolver) -> Self {
         self.material = Some(resolver);
+        self
+    }
+
+    pub fn with_publication_store(mut self, store: ReviewPackageStore) -> Self {
+        self.publications = Some(Arc::new(Mutex::new(store)));
         self
     }
 
@@ -203,9 +214,10 @@ impl LocalReceiptServer {
                     let reader = self.reader.clone();
                     let authority = self.authority.clone();
                     let material = self.material.clone();
+                    let publications = self.publications.clone();
                     let readers = readers.clone();
                     clients.spawn(async move {
-                        let _ = tokio::time::timeout(DEADLINE, serve(stream, reader, authority, material, readers)).await;
+                        let _ = tokio::time::timeout(DEADLINE, serve(stream, reader, authority, material, publications, readers)).await;
                     });
                 }
             }
@@ -274,6 +286,52 @@ impl LocalReceiptClient {
         )
     }
 
+    /// Cache an exact manifest only after the node confirms its immutable accepted receipt.
+    pub async fn cache_checkpoint_manifest(
+        &self,
+        checkpoint: &FinalizedPublicationReceipt,
+        manifest: &PublicationManifest,
+    ) -> Result<(), Error> {
+        let receipt = checkpoint.receipt();
+        if receipt.body.chain_id != self.chain.chain_id
+            || receipt.body.genesis_hash != self.chain.genesis_hash
+        {
+            return Err(Error::Protocol);
+        }
+        let request = [
+            preparation::CACHE.as_slice(),
+            &receipt.body.sequence.to_be_bytes(),
+            receipt.receipt_hash.as_slice(),
+            &manifest.to_bytes().map_err(|_| Error::Protocol)?,
+        ]
+        .concat();
+        let response = self.exchange(&request, 5).await?;
+        if response == [preparation::CACHE.as_slice(), &[2]].concat() {
+            Ok(())
+        } else if response == [preparation::CACHE.as_slice(), &[0]].concat() {
+            Err(Error::Unavailable)
+        } else {
+            Err(Error::Protocol)
+        }
+    }
+
+    /// Preparation inputs only; subsequent signing still rechecks the current chain state.
+    pub async fn read_patch_preparation_context(
+        &self,
+        proposal_id: U256,
+    ) -> Result<PatchPreparationContext, Error> {
+        let request = [
+            preparation::MAGIC.as_slice(),
+            &proposal_id.to_be_bytes::<32>(),
+        ]
+        .concat();
+        preparation::decode(
+            &self.exchange(&request, preparation::MAX_FRAME).await?,
+            proposal_id,
+            self.chain,
+        )
+    }
+
     async fn exchange(&self, request: &[u8], maximum: usize) -> Result<Vec<u8>, Error> {
         tokio::time::timeout(DEADLINE, async {
             private_socket(&self.socket)?;
@@ -292,6 +350,7 @@ async fn serve(
     reader: Arc<dyn RepositoryReceiptReader>,
     authority: Option<Arc<dyn RepositoryAuthorityReader>>,
     material: Option<EndpointNetworkResolver>,
+    publications: Option<Arc<Mutex<ReviewPackageStore>>>,
     readers: Arc<Semaphore>,
 ) -> Result<(), Error> {
     let request = read_frame(&mut stream, MAX_REQUEST).await?;
@@ -299,12 +358,33 @@ async fn serve(
         (Some(magic), 12) if magic == MAGIC => MAGIC,
         (Some(magic), 36) if magic == state::MAGIC => state::MAGIC,
         (Some(magic), 36) if magic == material::MAGIC => material::MAGIC,
+        (Some(magic), 36) if magic == preparation::MAGIC => preparation::MAGIC,
+        (Some(magic), length) if magic == preparation::CACHE && length > 44 => preparation::CACHE,
         _ => return Err(Error::Protocol),
     };
-    let permit = match readers.try_acquire_owned() {
+    let permit = match readers.clone().try_acquire_owned() {
         Ok(permit) => permit,
         Err(_) => return write_frame(&mut stream, &[magic.as_slice(), &[0]].concat()).await,
     };
+    if magic == preparation::CACHE {
+        let result = preparation::cache(reader, publications, permit, request).await;
+        let response = [magic.as_slice(), &[if result.is_ok() { 2 } else { 0 }]].concat();
+        return write_frame(&mut stream, &response).await;
+    }
+    if magic == preparation::MAGIC {
+        let result = preparation::read(
+            reader,
+            authority,
+            material,
+            publications,
+            readers,
+            permit,
+            U256::from_be_slice(&request[4..]),
+        )
+        .await;
+        let response = result.unwrap_or_else(|_| [magic.as_slice(), &[0]].concat());
+        return write_frame(&mut stream, &response).await;
+    }
     if magic == material::MAGIC {
         let result = material::read(
             authority,

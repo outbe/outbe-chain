@@ -276,6 +276,25 @@ pub struct CheckpointOwnerSnapshot {
 }
 
 impl CheckpointOwnerSnapshot {
+    /// Only the protected local node transport may reconstruct its verified preparation refs.
+    pub(crate) fn from_local_refs(
+        checkpoint: FinalizedPublicationReceipt,
+        refs: Refs,
+        sigrefs: git::Oid,
+    ) -> Result<Self, Error> {
+        if sigrefs.is_zero()
+            || refs.get(&radicle::storage::refs::IDENTITY_ROOT).is_none()
+            || refs.head(git::fmt::refname!("main")).is_none()
+        {
+            return Err(Error::Snapshot);
+        }
+        Ok(Self {
+            checkpoint,
+            refs,
+            sigrefs,
+        })
+    }
+
     pub fn bootstrap(
         checkpoint: FinalizedPublicationReceipt,
         manifest: &PublicationManifest,
