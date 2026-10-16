@@ -112,14 +112,8 @@ impl From<StoredGemBucket> for crate::GemBucketState {
 }
 
 impl crate::GemContract<'_> {
-    pub fn state_records(
-        &self,
-        owner: Option<Address>,
-    ) -> outbe_primitives::error::Result<Vec<StoredGem>> {
-        let mut ids = match owner {
-            Some(owner) => self.owner_ids.list(&owner).read_all()?,
-            None => self.all_ids.read_all()?,
-        };
+    pub fn state_records(&self, owner: Address) -> outbe_primitives::error::Result<Vec<StoredGem>> {
+        let mut ids = self.owner_ids.list(&owner).read_all()?;
         ids.sort_unstable();
         if ids.windows(2).any(|ids| ids[0] == ids[1]) {
             return Err(outbe_primitives::error::PrecompileError::fatal(
@@ -133,7 +127,7 @@ impl crate::GemContract<'_> {
                         "gem index selects a missing record",
                     )
                 })?;
-                if owner.is_some_and(|owner| record.owner != owner) {
+                if record.owner != owner {
                     return Err(outbe_primitives::error::PrecompileError::fatal(
                         "gem owner index does not match its record",
                     ));
@@ -152,10 +146,7 @@ impl crate::GemContract<'_> {
                 &self.owner_ids.list(&record.owner),
                 self.owner_id_position.clone(),
             )
-            .insert(record.gem_id)?;
-            IndexedList::new(&self.all_ids, self.global_id_position.clone())
-                .insert(record.gem_id)?;
-            Ok(())
+            .insert(record.gem_id)
         })
     }
 
@@ -173,7 +164,6 @@ impl crate::GemContract<'_> {
                 self.owner_id_position.clone(),
             )
             .remove(id)?;
-            IndexedList::new(&self.all_ids, self.global_id_position.clone()).remove(id)?;
             self.records.delete(id)
         })
     }

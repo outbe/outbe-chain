@@ -126,7 +126,7 @@ pub fn view_of(
 /// One owner's gems, with the block's own mutations folded in.
 pub fn list_by_owner(storage: &StorageHandle<'_>, owner: Address) -> Result<Vec<GemItemState>> {
     GemContract::new(storage.clone())
-        .state_records(Some(owner))
+        .state_records(owner)
         .map(|records| records.into_iter().map(Into::into).collect())
 }
 

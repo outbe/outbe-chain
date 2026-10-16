@@ -48,12 +48,6 @@ pub enum GemError {
     #[error("gem bucket {bucket_id} settled count underflow")]
     SettledCountUnderflow { bucket_id: WwdEntityId },
 
-    #[error("loaded gem bucket {actual} does not match item bucket {expected}")]
-    LoadedBucketMismatch {
-        actual: WwdEntityId,
-        expected: WwdEntityId,
-    },
-
     #[error("gem bucket {bucket} is empty")]
     EmptyBucket { bucket: B256 },
 

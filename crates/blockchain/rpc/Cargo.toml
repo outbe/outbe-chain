@@ -41,8 +41,6 @@ thiserror.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
-outbe-gem.workspace = true
-outbe-offchain-storage.workspace = true
 tempfile.workspace = true
 commonware-cryptography.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }

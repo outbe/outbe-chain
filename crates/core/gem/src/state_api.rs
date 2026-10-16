@@ -280,7 +280,7 @@ mod tests {
             )
             .unwrap();
             assert_eq!(contract.total_supply.read().unwrap(), 0);
-            assert!(contract.state_records(None).unwrap().is_empty());
+            assert!(contract.state_records(item.owner).unwrap().is_empty());
             assert!(contract.buckets.get(item.bucket_key).unwrap().is_none());
         });
     }
