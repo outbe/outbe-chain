@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 
 use outbe_zk::error::Error;
 
-use crate::errors::BackendProofError;
+use crate::errors::{BackendProofError, CrsError};
 
 /// Capacity of the native CRS installed by the process-wide handler at startup.
 pub(super) struct Crs {
@@ -20,17 +20,12 @@ pub(super) struct Crs {
 }
 
 impl Crs {
-    pub(super) fn initialize(
-        api: &mut BarretenbergApi<FfiBackend>,
-        points: u32,
-    ) -> Result<Self, Error> {
-        initialize_srs(api, points)?;
-        Ok(Self { points })
+    pub fn new(points: u32) -> Self {
+        Self { points }
     }
-
     pub(super) fn ensure_capacity(&self, requested: u32) -> Result<(), Error> {
         if requested > self.points {
-            return Err(BackendProofError::SrsAlreadyInitialized {
+            return Err(CrsError::SrsAlreadyInitialized {
                 initialized: self.points,
                 requested,
             }
@@ -90,7 +85,7 @@ const G1_POINT_SIZE: u32 = 64;
 /// a pinned size that mismatches is rejected (tampered CRS); an unpinned size
 /// is allowed through but its hash is reported so an operator can pin it (pin
 /// every size you deploy, or flip the `None` arm in [`verify_g1`] to fail
-/// closed). The canonical set's [`super::preinit_srs`] size is `(1<<16)+1`.
+/// closed). The handler's canonical capacity is `(1<<16)+1`.
 /// The `(1<<20)+1` prefix stays pinned for future circuits without increasing
 /// the default initialization size. Every digest is a prefix of the canonical
 /// Aztec `g1.dat`.
@@ -105,7 +100,7 @@ const PINNED_G1_SHA256: &[(u32, [u8; 32])] = &[
         ],
     ),
     // (1<<16)+1 — the canonical set's largest domain (ownership, demo tribute,
-    // Niflheim tribute) and the `preinit_srs` size.
+    // Niflheim tribute) and the handler's fixed capacity.
     (
         (1 << 16) + 1,
         [
@@ -138,16 +133,15 @@ fn hex32(b: &[u8; 32]) -> String {
 /// (see [`PINNED_G1_SHA256`]). Called on **both** the cached and the
 /// freshly-downloaded bytes, before they reach `srs_init_srs`.
 #[allow(clippy::print_stderr)] // emits an SRS-not-pinned security warning
-fn verify_g1(num_points: u32, bytes: &[u8]) -> Result<(), Error> {
+fn verify_g1(num_points: u32, bytes: &[u8]) -> Result<(), CrsError> {
     let digest: [u8; 32] = Sha256::digest(bytes).into();
     match PINNED_G1_SHA256.iter().find(|(n, _)| *n == num_points) {
         Some((_, expected)) if &digest == expected => Ok(()),
-        Some((_, expected)) => Err(BackendProofError::SrsChecksumMismatch {
+        Some((_, expected)) => Err(CrsError::SrsChecksumMismatch {
             num_points,
             got: hex32(&digest),
             pinned: hex32(expected),
-        }
-        .into()),
+        }),
         None => {
             eprintln!(
                 "outbe-zk-backend: SRS size {num_points} points is not pinned; \
@@ -206,21 +200,20 @@ fn subgroup_size(
 }
 
 /// Load `num_points` G1 points (`num_points * 64` bytes) from the local cache.
-fn local_g1(num_points: u32) -> Result<Vec<u8>, Error> {
+fn local_g1(num_points: u32) -> Result<Vec<u8>, CrsError> {
     let path = local_g1_path();
-    let bytes = std::fs::read(&path).map_err(|source| BackendProofError::ReadSrs {
+    let bytes = std::fs::read(&path).map_err(|source| CrsError::ReadSrs {
         path: path.clone(),
         source,
     })?;
     let need = (num_points * G1_POINT_SIZE) as usize;
     if bytes.len() < need {
-        return Err(BackendProofError::CachedSrsTooShort {
+        return Err(CrsError::CachedSrsTooShort {
             path,
             actual: bytes.len(),
             need,
             num_points,
-        }
-        .into());
+        });
     }
     Ok(bytes[..need].to_vec())
 }
@@ -234,16 +227,16 @@ fn local_g1(num_points: u32) -> Result<Vec<u8>, Error> {
 /// fetch the trusted setup at proving time — `reqwest::blocking` also panics on
 /// the mobile event loop. The SRS is provided via [`set_srs_path`] instead.
 #[cfg(feature = "with-network-srs")]
-fn net_g1(num_points: u32) -> Result<Vec<u8>, Error> {
+fn net_g1(num_points: u32) -> Result<Vec<u8>, CrsError> {
     let g1_end = num_points * G1_POINT_SIZE - 1;
     let resp = reqwest::blocking::Client::new()
         .get(AZTEC_CRS_G1)
         .header(reqwest::header::RANGE, format!("bytes=0-{g1_end}"))
         .send()
-        .map_err(|e| BackendProofError::SrsDownload(e.to_string()))?;
+        .map_err(|e| CrsError::SrsDownload(e.to_string()))?;
     let bytes = resp
         .bytes()
-        .map_err(|e| BackendProofError::SrsDownloadBody(e.to_string()))?
+        .map_err(|e| CrsError::SrsDownloadBody(e.to_string()))?
         .to_vec();
     Ok(bytes)
 }
@@ -260,8 +253,7 @@ fn cache_g1(bytes: &[u8]) {
     let _ = std::fs::write(&path, bytes);
 }
 
-/// Install the native CRS during handler initialization. The capacity cannot grow.
-fn initialize_srs(api: &mut BarretenbergApi<FfiBackend>, num_points: u32) -> Result<(), Error> {
+pub(crate) fn load_srs(num_points: u32) -> Result<(Vec<u8>, u32, Vec<u8>), CrsError> {
     // Source the G1 prefix: local first (the set_srs_path override / cache),
     // else the network — except without `with-network-srs`, where a missing local
     // SRS is a hard error (no download). Integrity-check the bytes (whether
@@ -275,11 +267,10 @@ fn initialize_srs(api: &mut BarretenbergApi<FfiBackend>, num_points: u32) -> Res
         Err(_local_err) => {
             #[cfg(not(feature = "with-network-srs"))]
             {
-                return Err(BackendProofError::SrsUnavailableWithoutNetwork {
+                return Err(CrsError::SrsUnavailableWithoutNetwork {
                     path: local_g1_path(),
                     reason: _local_err.to_string(),
-                }
-                .into());
+                });
             }
             #[cfg(feature = "with-network-srs")]
             {
@@ -290,9 +281,8 @@ fn initialize_srs(api: &mut BarretenbergApi<FfiBackend>, num_points: u32) -> Res
             }
         }
     };
-    api.srs_init_srs(&g1, num_points, &G2)
-        .map_err(|e| BackendProofError::SrsInit(e.to_string()))?;
-    Ok(())
+
+    Ok((g1, num_points, G2.to_vec()))
 }
 
 #[cfg(test)]

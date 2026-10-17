@@ -22,7 +22,7 @@ use sha2::{Digest, Sha256};
 use outbe_zk::noir::demo_tribute::DemoTribute;
 use outbe_zk::noir::niflheim_tribute::NiflheimTribute;
 use outbe_zk::CircuitId;
-use outbe_zk_backend::barretenberg::{init_crs, BarretenbergHandler};
+use outbe_zk_backend::barretenberg::BarretenbergHandler;
 
 const G1_POINT_SIZE: usize = 64;
 
@@ -87,8 +87,8 @@ fn pin_row(label: &str, n: u32) -> String {
 #[test]
 #[ignore = "regen helper: needs valid local CRS + libbb; run with --ignored --nocapture"]
 fn print_srs_pins() {
-    init_crs().unwrap();
-    let handler = BarretenbergHandler::global().unwrap();
+    BarretenbergHandler::init().unwrap();
+    let handler = BarretenbergHandler::global();
     let circuits: &[(&str, &str)] = &[
         ("demo tribute", DemoTribute::BYTECODE_B64),
         ("niflheim tribute", NiflheimTribute::BYTECODE_B64),
@@ -122,8 +122,8 @@ fn gate_counts(handler: &BarretenbergHandler, acir: &[u8]) -> (u32, u32) {
 #[test]
 #[ignore = "complexity capture: needs valid local CRS + libbb; run with --ignored --nocapture"]
 fn print_circuit_complexity() {
-    init_crs().unwrap();
-    let handler = BarretenbergHandler::global().unwrap();
+    BarretenbergHandler::init().unwrap();
+    let handler = BarretenbergHandler::global();
     let circuits: &[(&str, &str)] = &[
         ("demo tribute", DemoTribute::BYTECODE_B64),
         ("niflheim tribute", NiflheimTribute::BYTECODE_B64),

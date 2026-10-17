@@ -1,20 +1,22 @@
-//! This test uses a separate process. Raw verification must not initialize or download CRS data.
+//! Global access requires successful launch initialization. It must never initialize CRS data.
 
-use outbe_zk_backend::barretenberg::{Barretenberg, BarretenbergHandler, RawVerifier};
-use outbe_zk_backend::errors::HandlerError;
+use outbe_zk_backend::barretenberg::{set_srs_path, BarretenbergHandler, CANONICAL_SRS_POINTS};
+use outbe_zk_backend::errors::{CrsError, HandlerError};
 
 #[test]
-fn raw_verification_requires_explicit_initialization() {
+fn global_requires_successful_launch_initialization() {
+    assert!(std::panic::catch_unwind(BarretenbergHandler::global).is_err());
+    let path = std::env::temp_dir().join(format!("outbe-invalid-crs-{}.dat", std::process::id()));
+    let file = std::fs::File::create_new(&path).unwrap();
+    file.set_len(u64::from(CANONICAL_SRS_POINTS) * 64).unwrap();
+    drop(file);
+    set_srs_path(path.clone());
     assert!(matches!(
-        BarretenbergHandler::global(),
-        Err(HandlerError::NotInitialized)
+        BarretenbergHandler::init(),
+        Err(HandlerError::Initialization(
+            CrsError::SrsChecksumMismatch { .. }
+        ))
     ));
-    let error = Barretenberg::default()
-        .verify_combined(b"vk", &0u32.to_be_bytes())
-        .unwrap_err();
-    assert!(error.to_string().contains("handler is not initialized"));
-    assert!(matches!(
-        BarretenbergHandler::global(),
-        Err(HandlerError::NotInitialized)
-    ));
+    assert!(std::panic::catch_unwind(BarretenbergHandler::global).is_err());
+    std::fs::remove_file(path).unwrap();
 }

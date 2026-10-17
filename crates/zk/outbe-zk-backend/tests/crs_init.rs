@@ -1,6 +1,4 @@
-use outbe_zk_backend::barretenberg::{
-    init_crs, preinit_srs, BarretenbergHandler, CANONICAL_SRS_POINTS,
-};
+use outbe_zk_backend::barretenberg::{BarretenbergHandler, CANONICAL_SRS_POINTS};
 
 #[test]
 fn crs_initialization_is_idempotent() {
@@ -9,22 +7,26 @@ fn crs_initialization_is_idempotent() {
         let callers: Vec<_> = (0..4)
             .map(|_| {
                 scope.spawn(|| {
-                    init_crs().expect("CRS initialization");
-                    BarretenbergHandler::global().unwrap()
+                    BarretenbergHandler::init().expect("CRS initialization");
+                    BarretenbergHandler::global()
                 })
             })
             .collect();
         for caller in callers {
             let initialized = caller.join().unwrap();
-            assert!(std::ptr::eq(
-                initialized,
-                BarretenbergHandler::global().unwrap()
-            ));
+            assert!(std::ptr::eq(initialized, BarretenbergHandler::global()));
         }
     });
-    init_crs().expect("repeated CRS initialization");
-    preinit_srs(CANONICAL_SRS_POINTS - 1).expect("smaller capacity remains available");
-    let error = preinit_srs(CANONICAL_SRS_POINTS + 1).unwrap_err();
+    BarretenbergHandler::init().expect("repeated CRS initialization");
+    let handler = BarretenbergHandler::global();
+    handler
+        .ensure_capacity(CANONICAL_SRS_POINTS - 1)
+        .expect("smaller capacity remains available");
+    let error = handler
+        .ensure_capacity(CANONICAL_SRS_POINTS + 1)
+        .unwrap_err();
     assert!(error.to_string().contains("one-shot"));
-    init_crs().expect("capacity rejection does not stop the owner");
+    handler
+        .ensure_capacity(CANONICAL_SRS_POINTS)
+        .expect("capacity rejection does not stop the owner");
 }

@@ -384,50 +384,6 @@ mod tests {
     }
 
     #[test]
-    fn uninitialized_verifier_is_unavailable_after_public_inputs_match() {
-        use outbe_zk_backend::errors::HandlerError;
-
-        const CHILD: &str = "OUTBE_TRIBUTE_ZK_UNINITIALIZED_CHILD";
-        if std::env::var_os(CHILD).is_none() {
-            // Use a separate process to keep the singleton uninitialized while other tests use a real CRS.
-            let output = std::process::Command::new(std::env::current_exe().unwrap())
-                .args([
-                    "--exact",
-                    "runtime::tests::uninitialized_verifier_is_unavailable_after_public_inputs_match",
-                    "--nocapture",
-                ])
-                .env(CHILD, "1")
-                .output()
-                .unwrap();
-            assert!(
-                output.status.success(),
-                "isolated test failed:\n{}\n{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr),
-            );
-            assert!(String::from_utf8_lossy(&output.stdout).contains("running 1 test"));
-            return;
-        }
-
-        let proof = include_bytes!(
-            "../../../../testing/protocol-benchmarks/fixtures/tribute_demo_tribute_v1.bin"
-        );
-        let public = decode_zk_public_inputs(proof, verification_key()).unwrap();
-        let expected = TributeZkExpectedHashes {
-            nft_hash: public.nft_hash,
-            binding_hash: public.binding_hash,
-        };
-
-        let error =
-            validate_zk_result(proof, verification_key(), public, Some(&expected)).unwrap_err();
-        let backend_error = outbe_zk::error::Error::from(HandlerError::NotInitialized);
-        let unavailable = TributeFactoryError::zk_verifier_unavailable(backend_error).to_string();
-        // Matching public fields must pass the earlier checks and reach the verifier.
-        // Report an infrastructure fault as ZkVerifierUnavailable, not InvalidZkProof.
-        assert!(matches!(error, PrecompileError::Revert(message) if message == unavailable));
-    }
-
-    #[test]
     fn circuit_selection_requires_exact_versions_and_development_host_for_stub() {
         use outbe_primitives::chain::{DEVNET_CHAIN_ID, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID};
         for host_chain_id in [
@@ -482,7 +438,7 @@ mod tests {
     #[test]
     #[ignore = "requires the pinned Barretenberg CRS"]
     fn registered_circuit_verifies_real_proof_and_rejects_changed_statement() {
-        outbe_zk_backend::barretenberg::init_crs().unwrap();
+        outbe_zk_backend::barretenberg::BarretenbergHandler::init().unwrap();
         let proof = include_bytes!(
             "../../../../testing/protocol-benchmarks/fixtures/tribute_demo_tribute_v1.bin"
         );

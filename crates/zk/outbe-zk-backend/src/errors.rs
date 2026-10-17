@@ -5,14 +5,11 @@ use thiserror::Error;
 
 /// Failures of the native handler for this process.
 /// Restart the process after a terminal failure.
-#[derive(Clone, Debug, PartialEq, Eq, Error)]
+#[derive(Debug, Error)]
 pub enum HandlerError {
     /// Native initialization failed. Launch must stop before proof processing starts.
     #[error("Barretenberg initialization failed: {0}")]
-    Initialization(CrsInitError),
-    /// Proof operations require the handler installed during launch.
-    #[error("Barretenberg handler is not initialized")]
-    NotInitialized,
+    Initialization(CrsError),
     /// A native operation panicked. Do not reuse the native state.
     #[error("Barretenberg handler failed; process restart required")]
     Terminal,
@@ -28,24 +25,73 @@ impl From<HandlerError> for Error {
 }
 
 /// Errors that CRS setup returns.
-#[derive(Clone, Debug, PartialEq, Eq, Error)]
-pub enum CrsInitError {
-    /// Barretenberg SRS setup returned a backend error.
-    #[error("{0}")]
-    Failed(String),
+#[derive(Debug, Error)]
+pub enum CrsError {
     /// Barretenberg SRS setup panicked across the FFI boundary.
     #[error("Barretenberg SRS initialization panicked")]
     Panicked,
+    /// G1 SRS SHA-256 digest did not match the pinned digest for the point count.
+    #[error(
+        "SRS checksum mismatch at {num_points} points (tampered CRS?): got {got}, pinned {pinned}"
+    )]
+    SrsChecksumMismatch {
+        /// Number of G1 points verified.
+        num_points: u32,
+        /// Actual hex-encoded SHA-256 digest.
+        got: String,
+        /// Pinned hex-encoded SHA-256 digest.
+        pinned: String,
+    },
+    /// Failed to read local SRS file from disk.
+    #[error("read SRS {}: {source}", path.display())]
+    ReadSrs {
+        /// Path to the SRS file.
+        path: std::path::PathBuf,
+        /// Underlying I/O error.
+        #[source]
+        source: std::io::Error,
+    },
+    /// Local cached SRS file has fewer bytes than required for the point count.
+    #[error("cached SRS {} has {actual} bytes, need {need} for {num_points} points", path.display())]
+    CachedSrsTooShort {
+        /// Path to the cached SRS file.
+        path: std::path::PathBuf,
+        /// Actual byte length of the file.
+        actual: usize,
+        /// Required byte length.
+        need: usize,
+        /// Requested G1 point count.
+        num_points: u32,
+    },
+    /// Failed to send SRS range download request.
+    #[error("SRS download: {0}")]
+    SrsDownload(String),
+    /// Failed to read SRS range download response body.
+    #[error("SRS download body: {0}")]
+    SrsDownloadBody(String),
+    /// Barretenberg global one-shot SRS was already initialized with fewer points.
+    #[error("bb SRS already initialized to {initialized} points (one-shot) but this circuit needs {requested}; the handler uses the fixed canonical CRS capacity")]
+    SrsAlreadyInitialized {
+        /// Point count already initialized.
+        initialized: u32,
+        /// Point count requested by the current circuit.
+        requested: u32,
+    },
+    /// Local SRS was unavailable and network SRS fallback is disabled at compile time.
+    #[error("SRS not available at {} ({reason}); the network fallback is disabled (built without `with-network-srs`). Initialize the wallet with a bundled SRS file via set_srs_path() before proving.", path.display())]
+    SrsUnavailableWithoutNetwork {
+        /// Path checked for local SRS.
+        path: std::path::PathBuf,
+        /// Reason the local read failed.
+        reason: String,
+    },
+    /// Barretenberg srs_init_srs FFI call failed.
+    #[error("srs init: {0}")]
+    SrsInit(String),
 }
 
-impl From<Error> for CrsInitError {
-    fn from(error: Error) -> Self {
-        Self::Failed(error.to_string())
-    }
-}
-
-impl From<CrsInitError> for Error {
-    fn from(error: CrsInitError) -> Self {
+impl From<CrsError> for Error {
+    fn from(error: CrsError) -> Self {
         Self::Proof(error.to_string())
     }
 }
@@ -95,67 +141,9 @@ pub enum BackendProofError {
     /// Combined proof blob's proof section length is not a multiple of 32 bytes.
     #[error("combined proof: proof section not a multiple of 32 bytes")]
     CombinedProofMisalignedProofSection,
-    /// G1 SRS SHA-256 digest did not match the pinned digest for the point count.
-    #[error(
-        "SRS checksum mismatch at {num_points} points (tampered CRS?): got {got}, pinned {pinned}"
-    )]
-    SrsChecksumMismatch {
-        /// Number of G1 points verified.
-        num_points: u32,
-        /// Actual hex-encoded SHA-256 digest.
-        got: String,
-        /// Pinned hex-encoded SHA-256 digest.
-        pinned: String,
-    },
     /// Barretenberg circuit_stats call failed.
     #[error("bb circuit_stats: {0}")]
     BbCircuitStats(String),
-    /// Failed to read local SRS file from disk.
-    #[error("read SRS {}: {source}", path.display())]
-    ReadSrs {
-        /// Path to the SRS file.
-        path: std::path::PathBuf,
-        /// Underlying I/O error.
-        #[source]
-        source: std::io::Error,
-    },
-    /// Local cached SRS file has fewer bytes than required for the point count.
-    #[error("cached SRS {} has {actual} bytes, need {need} for {num_points} points", path.display())]
-    CachedSrsTooShort {
-        /// Path to the cached SRS file.
-        path: std::path::PathBuf,
-        /// Actual byte length of the file.
-        actual: usize,
-        /// Required byte length.
-        need: usize,
-        /// Requested G1 point count.
-        num_points: u32,
-    },
-    /// Failed to send SRS range download request.
-    #[error("SRS download: {0}")]
-    SrsDownload(String),
-    /// Failed to read SRS range download response body.
-    #[error("SRS download body: {0}")]
-    SrsDownloadBody(String),
-    /// Barretenberg global one-shot SRS was already initialized with fewer points.
-    #[error("bb SRS already initialized to {initialized} points (one-shot) but this circuit needs {requested}; call preinit_srs(max) with the largest circuit's size first")]
-    SrsAlreadyInitialized {
-        /// Point count already initialized.
-        initialized: u32,
-        /// Point count requested by the current circuit.
-        requested: u32,
-    },
-    /// Local SRS was unavailable and network SRS fallback is disabled at compile time.
-    #[error("SRS not available at {} ({reason}); the network fallback is disabled (built without `with-network-srs`). Initialize the wallet with a bundled SRS file via set_srs_path() before proving.", path.display())]
-    SrsUnavailableWithoutNetwork {
-        /// Path checked for local SRS.
-        path: std::path::PathBuf,
-        /// Reason the local read failed.
-        reason: String,
-    },
-    /// Barretenberg srs_init_srs FFI call failed.
-    #[error("srs init: {0}")]
-    SrsInit(String),
 }
 
 impl From<BackendProofError> for Error {

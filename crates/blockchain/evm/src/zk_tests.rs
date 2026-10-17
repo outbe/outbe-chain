@@ -25,53 +25,12 @@ fn abi_encode(circuit_hash: &[u8; 32], proof: &[u8]) -> Vec<u8> {
 }
 
 #[test]
-fn demo_tribute_without_initialized_handler_returns_backend_error() {
-    use outbe_zk::noir::demo_tribute::DemoTribute;
-    use outbe_zk::CircuitId as _;
-    use outbe_zk_backend::errors::HandlerError;
-
-    const CHILD: &str = "OUTBE_EVM_ZK_UNINITIALIZED_CHILD";
-    if std::env::var_os(CHILD).is_none() {
-        // Other tests may initialize the handler, even if the test runner uses one thread.
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "zk_tests::demo_tribute_without_initialized_handler_returns_backend_error",
-                "--nocapture",
-            ])
-            .env(CHILD, "1")
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "isolated test failed:\n{}\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr),
-        );
-        assert!(String::from_utf8_lossy(&output.stdout).contains("running 1 test"));
-        return;
-    }
-
-    let proof = include_bytes!(
-        "../../../../testing/protocol-benchmarks/fixtures/tribute_demo_tribute_v1.bin"
-    );
-    let input = abi_encode(&DemoTribute::CIRCUIT_HASH, proof);
-    let backend_error = outbe_zk::error::Error::from(HandlerError::NotInitialized);
-    let expected = format!("zk verification backend failed: {backend_error}");
-    // Return an infrastructure error, not the zero word that indicates an invalid proof.
-    assert!(matches!(
-        zk_verify(&input),
-        Err(PrecompileError::Revert(message)) if message == expected
-    ));
-}
-
-#[test]
 #[ignore = "requires the pinned Barretenberg CRS"]
 fn zk_verify_real_proof_and_changed_statement() {
     use outbe_zk::noir::demo_tribute::DemoTribute;
     use outbe_zk::CircuitId as _;
 
-    outbe_zk_backend::barretenberg::init_crs().unwrap();
+    outbe_zk_backend::barretenberg::BarretenbergHandler::init().unwrap();
     let proof = include_bytes!(
         "../../../../testing/protocol-benchmarks/fixtures/tribute_demo_tribute_v1.bin"
     );

@@ -11,7 +11,7 @@ fn operations_execute_on_the_calling_thread() {
         *count += 1;
         Ok((*count, thread::current().id()))
     });
-    assert_eq!(result, Ok((1, caller)));
+    assert_eq!(result.unwrap(), (1, caller));
 }
 
 #[test]
@@ -35,7 +35,7 @@ fn concurrent_operations_share_state_without_interleaving() {
         .collect();
     start.wait();
     for (id, caller) in callers.into_iter().enumerate() {
-        assert_eq!(caller.join().unwrap(), Ok(id));
+        assert_eq!(caller.join().unwrap().unwrap(), id);
     }
     let events = state.lock().unwrap();
     assert_eq!(events.len(), 16);
@@ -52,11 +52,10 @@ fn ordinary_command_error_does_not_disable_the_handler() {
         *count += 1;
         Err::<(), _>(Error::Proof("rejected command".into()))
     });
-    assert_eq!(
-        failure,
-        Err(HandlerError::Command("rejected command".into()))
+    assert!(
+        matches!(failure, Err(HandlerError::Command(message)) if message == "rejected command")
     );
-    assert_eq!(execute(&state, |count| Ok(*count)), Ok(1));
+    assert_eq!(execute(&state, |count| Ok(*count)).unwrap(), 1);
 }
 
 #[test]
@@ -66,6 +65,9 @@ fn panic_disables_later_operations_without_recovering_native_state() {
         *count += 1;
         panic!("fake native panic");
     });
-    assert_eq!(failure, Err(HandlerError::Terminal));
-    assert_eq!(execute(&state, |_| Ok(())), Err(HandlerError::Terminal));
+    assert!(matches!(failure, Err(HandlerError::Terminal)));
+    assert!(matches!(
+        execute(&state, |_| Ok(())),
+        Err(HandlerError::Terminal)
+    ));
 }

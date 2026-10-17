@@ -16,7 +16,7 @@ use outbe_zk::protocol::key::{NftSecret, Signer};
 use outbe_zk::protocol::zk::{ProofGenerator, ProofVerifier};
 use outbe_zk::Fr;
 use outbe_zk::INCLUSION_DEPTH;
-use outbe_zk_backend::barretenberg::{init_crs, verify_circuit, Barretenberg, BarretenbergHandler};
+use outbe_zk_backend::barretenberg::{verify_circuit, Barretenberg, BarretenbergHandler};
 
 struct TestNft {
     id: Fr,
@@ -44,7 +44,7 @@ impl Owned for TestNft {
 
 #[test]
 fn demo_tribute_prove_verify_round_trip() {
-    init_crs().expect("launch initializes the handler before proof generation");
+    BarretenbergHandler::init().expect("launch initializes the handler before proof generation");
     let mut rng = ark_std::test_rng();
     let (sk, pk) = signature::keypair(&mut rng);
     let nonce = Fr::rand(&mut rng);
@@ -97,7 +97,6 @@ fn demo_tribute_prove_verify_round_trip() {
         });
         let stats = scope.spawn(|| {
             let info = BarretenbergHandler::global()
-                .unwrap()
                 .circuit_stats(
                     barretenberg_rs::generated_types::CircuitInput {
                         name: String::new(),
@@ -118,7 +117,6 @@ fn demo_tribute_prove_verify_round_trip() {
         verify.join().unwrap();
         stats.join().unwrap();
     });
-    init_crs().unwrap();
     let combined = demo_tribute::encode_combined_proof(public.clone(), proof.proof).unwrap();
     assert!(verify_circuit::<DemoTribute>(&combined).unwrap());
     let mut tampered = combined.clone();

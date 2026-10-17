@@ -28,7 +28,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
     // Initialize before starting the execution runtime.
     if command_requires_crs(&cli.command) {
         let srs_path = std::env::var("OUTBE_BB_SRS_PATH").ok();
-        outbe_zk_backend::barretenberg::init_crs().map_err(eyre::Report::from)?;
+        outbe_zk_backend::barretenberg::BarretenbergHandler::init().map_err(eyre::Report::from)?;
         tracing::info!(
             num_points = outbe_zk_backend::barretenberg::CANONICAL_SRS_POINTS,
             path = ?srs_path,

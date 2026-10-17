@@ -5,20 +5,21 @@
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Mutex, OnceLock};
 
+use super::{configure_memory, srs, Barretenberg, CANONICAL_SRS_POINTS};
+use crate::barretenberg::srs::load_srs;
+use crate::errors::{BackendProofError, CrsError, HandlerError};
 use barretenberg_rs::api::BarretenbergApi;
 use barretenberg_rs::backends::FfiBackend;
 use barretenberg_rs::generated_types::{CircuitInfoResponse, CircuitInput, ProofSystemSettings};
 use outbe_zk::error::Error;
 
-use super::{configure_memory, srs, Barretenberg};
-use crate::errors::{BackendProofError, CrsInitError, HandlerError};
-
 #[cfg(test)]
 mod tests;
 
 static HANDLER: OnceLock<BarretenbergHandler> = OnceLock::new();
-// Serialize startup attempts before the handler and its native mutex exist.
+// Native CRS initialization must not race before the handler's mutex exists.
 static INITIALIZATION: Mutex<()> = Mutex::new(());
+
 /// A process-wide interface to one native API.
 ///
 /// Methods execute on the calling thread. A mutex serializes complete native operations.
@@ -40,7 +41,7 @@ static INITIALIZATION: Mutex<()> = Mutex::new(());
 /// Measure verification throughput to determine the effect.
 /// This setting does not permit concurrent dispatcher calls or parallel execution of Rust Poseidon2.
 ///
-/// Initialization must complete during launch, before proof operations start.
+/// Call `init` during launch to complete blocking initialization before proof operations start.
 /// Restart the process after a panic during a native operation.
 /// Another reference to this interface does not create an independent engine or reset native state.
 pub struct BarretenbergHandler {
@@ -49,34 +50,45 @@ pub struct BarretenbergHandler {
 }
 
 impl BarretenbergHandler {
-    /// Return the handler installed during launch. This method never initializes CRS data.
-    pub fn global() -> Result<&'static Self, HandlerError> {
-        HANDLER.get().ok_or(HandlerError::NotInitialized)
-    }
-
-    pub(super) fn initialize(points: u32) -> Result<&'static Self, HandlerError> {
+    /// Initialize the handler and canonical CRS during launch, before proof operations start.
+    pub fn init() -> Result<(), HandlerError> {
         catch_unwind(AssertUnwindSafe(|| {
             let _initialization = INITIALIZATION.lock().map_err(|_| HandlerError::Terminal)?;
-            if let Some(handler) = HANDLER.get() {
-                handler.ensure_capacity(points)?;
-                return Ok(handler);
+            if HANDLER.get().is_none() {
+                let handler = Self::new_instance()?;
+                let _ = HANDLER.set(handler);
             }
-            if let Ok(path) = std::env::var("OUTBE_BB_SRS_PATH") {
-                srs::set_srs_path(path.into());
-            }
-            let backend = FfiBackend::new().map_err(|error| {
-                HandlerError::Initialization(CrsInitError::Failed(error.to_string()))
-            })?;
-            let mut api = BarretenbergApi::new(backend);
-            let crs = srs::Crs::initialize(&mut api, points)
-                .map_err(|error| HandlerError::Initialization(error.into()))?;
-            let _ = HANDLER.set(Self {
-                api: Mutex::new(api),
-                crs,
-            });
-            Self::global()
+            Ok(())
         }))
-        .unwrap_or(Err(HandlerError::Initialization(CrsInitError::Panicked)))
+        .unwrap_or(Err(HandlerError::Initialization(CrsError::Panicked)))
+    }
+
+    /// Return the handler initialized during launch. Never initialize or load CRS data here.
+    ///
+    /// # Panics
+    /// Panics if the application did not call `init` successfully before accessing the handler.
+    pub fn global() -> &'static Self {
+        HANDLER
+            .get()
+            .expect("BarretenbergHandler::init must complete during launch before global access")
+    }
+
+    fn new_instance() -> Result<Self, HandlerError> {
+        let points = CANONICAL_SRS_POINTS;
+        if let Ok(path) = std::env::var("OUTBE_BB_SRS_PATH") {
+            srs::set_srs_path(path.into());
+        }
+        let backend = FfiBackend::new()
+            .map_err(|error| command_error(BackendProofError::BbInit(error.to_string()).into()))?;
+        let mut api = BarretenbergApi::new(backend);
+        let (points_buf, num_points, g2_point) =
+            load_srs(points).map_err(HandlerError::Initialization)?;
+        api.srs_init_srs(&points_buf, num_points, &g2_point)
+            .map_err(|e| HandlerError::Initialization(CrsError::SrsInit(e.to_string())))?;
+        Ok(Self {
+            api: Mutex::new(api),
+            crs: srs::Crs::new(points),
+        })
     }
 
     /// Check the fixed native CRS capacity. This method cannot increase the capacity.

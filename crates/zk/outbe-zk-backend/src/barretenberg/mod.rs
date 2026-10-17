@@ -44,27 +44,6 @@ pub use srs::set_srs_path;
 /// Emit mint and Paynote spend use a `2^14` domain. PayNote merge uses a `2^15` domain.
 pub const CANONICAL_SRS_POINTS: u32 = (1 << 16) + 1;
 
-/// Initialize the process-global CRS with `num_points` G1 points.
-/// Native initialization fixes the capacity for the process.
-/// If the process uses different circuit sizes, call once at startup with the largest required capacity.
-/// Otherwise, a smaller initial capacity prevents larger circuits from generating proofs.
-/// The canonical circuits require [`CANONICAL_SRS_POINTS`] (`(1 << 16) + 1`).
-///
-/// Call during launch, before any proof operation. Proof operations never initialize CRS data.
-pub fn preinit_srs(num_points: u32) -> Result<(), Error> {
-    BarretenbergHandler::initialize(num_points)?;
-    Ok(())
-}
-
-/// Initialize the process-global CRS once for every canonical circuit.
-///
-/// If set, `OUTBE_BB_SRS_PATH` selects a local G1 SRS file.
-/// The handler converts panics at the FFI boundary to proof errors.
-/// Startup callers can return these errors instead of terminating with a panic.
-pub fn init_crs() -> Result<(), Error> {
-    preinit_srs(CANONICAL_SRS_POINTS)
-}
-
 /// Verify a decoded combined proof against its compile-time circuit identity.
 ///
 /// The protocol decoder must validate the public words before this backend call.
@@ -168,7 +147,7 @@ where
             verification_key: C::VK_BYTES.to_vec(),
         };
         Ok(Proof {
-            proof: BarretenbergHandler::global()?.prove(circuit, solved, *self)?,
+            proof: BarretenbergHandler::global().prove(circuit, solved, *self)?,
         })
     }
 }
@@ -183,7 +162,7 @@ where
         let public_inputs = witness::public_inputs::<C>(public);
         let settings = settings_ultra_honk_keccak(self.disable_zk);
 
-        Ok(BarretenbergHandler::global()?.verify(
+        Ok(BarretenbergHandler::global().verify(
             C::VK_BYTES.to_vec(),
             public_inputs,
             proof.proof.clone(),
@@ -218,8 +197,8 @@ pub trait RawVerifier {
     ///
     /// The header identifies the section boundaries. The parser does not inspect the VK.
     ///
-    /// Initialize the global CRS before this call. See [`preinit_srs`].
-    /// This method does not size or download CRS data.
+    /// Call [`BarretenbergHandler::init`] during launch before this call.
+    /// This method never initializes or downloads CRS data.
     /// It returns `Ok(false)` for a correctly formatted but invalid proof.
     /// It returns `Err` for malformed data or a backend failure.
     fn verify_combined(&self, vk_bytes: &[u8], combined_proof: &[u8]) -> Result<bool, Error>;
@@ -262,7 +241,7 @@ impl RawVerifier for Barretenberg {
 
         let settings = settings_ultra_honk_keccak(self.disable_zk);
 
-        Ok(BarretenbergHandler::global()?.verify(
+        Ok(BarretenbergHandler::global().verify(
             vk_bytes.to_vec(),
             public_inputs,
             proof,
