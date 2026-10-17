@@ -42,5 +42,8 @@ interface ITribute {
         returns (uint32 tributeCount, bytes memory tributeNominalTotalMinor, bool isSealed);
     function getTributesByOwner(address owner) external view returns (uint256[] memory tributeIds);
     function getTributesByDay(uint32 worldwideDay) external view returns (uint256[] memory tributeIds);
+    function getLeague(uint256 tributeId) external view returns (uint16 league);
+    function getDayLeagueFraction(uint32 worldwideDay, uint16 league) external view returns (uint64 fraction);
+    function createNod(uint256 tributeId) external returns (uint256 nodId);
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 }

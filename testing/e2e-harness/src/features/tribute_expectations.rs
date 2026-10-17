@@ -136,4 +136,23 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn tribute_v1_mechanics_selectors_match_solidity_interface() {
+        use alloy_primitives::keccak256;
+        use alloy_sol_types::SolCall;
+
+        assert_eq!(
+            eth::ITribute::getLeagueCall::SELECTOR,
+            &keccak256(b"getLeague(uint256)")[..4]
+        );
+        assert_eq!(
+            eth::ITribute::getDayLeagueFractionCall::SELECTOR,
+            &keccak256(b"getDayLeagueFraction(uint32,uint16)")[..4]
+        );
+        assert_eq!(
+            eth::ITribute::createNodCall::SELECTOR,
+            &keccak256(b"createNod(uint256)")[..4]
+        );
+    }
 }

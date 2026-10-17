@@ -1,6 +1,8 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_macros::storage_record;
-use outbe_primitives::storage::indexed_list::{create_indexed, delete_indexed, IndexedList};
+use outbe_primitives::storage::indexed_list::{
+    create_indexed, delete_indexed, delete_loaded_indexed, IndexedList,
+};
 use outbe_primitives::{time::WorldwideDay, wwd_entity_id::WwdEntityId};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -152,17 +154,22 @@ impl<'storage> crate::TributeContract<'storage> {
             .collect()
     }
 
-    fn record_indexes(&self, record: &StoredTribute) -> [IndexedList<'storage, WwdEntityId>; 2] {
+    fn record_indexes_for(
+        &self,
+        owner: Address,
+        worldwide_day: WorldwideDay,
+    ) -> [IndexedList<'storage, WwdEntityId>; 2] {
         [
+            IndexedList::new(self.owner_ids.list(&owner), self.owner_id_position.clone()),
             IndexedList::new(
-                self.owner_ids.list(&record.owner),
-                self.owner_id_position.clone(),
-            ),
-            IndexedList::new(
-                self.day_ids.list(&record.worldwide_day),
+                self.day_ids.list(&worldwide_day),
                 self.day_id_position.clone(),
             ),
         ]
+    }
+
+    fn record_indexes(&self, record: &StoredTribute) -> [IndexedList<'storage, WwdEntityId>; 2] {
+        self.record_indexes_for(record.owner, record.worldwide_day)
     }
 
     pub fn insert_state_record(
@@ -174,6 +181,17 @@ impl<'storage> crate::TributeContract<'storage> {
 
     pub fn delete_state_record(&self, id: WwdEntityId) -> outbe_primitives::error::Result<()> {
         delete_indexed(&self.records, id, |record| self.record_indexes(record))
+    }
+
+    pub fn delete_loaded_state_record(
+        &self,
+        record: &crate::TributeRecord,
+    ) -> outbe_primitives::error::Result<()> {
+        delete_loaded_indexed(
+            &self.records,
+            record.tribute_id,
+            self.record_indexes_for(record.owner, record.worldwide_day),
+        )
     }
 }
 

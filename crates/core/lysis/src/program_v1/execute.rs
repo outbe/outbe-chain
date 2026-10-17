@@ -314,7 +314,7 @@ pub(crate) fn compute_fraction_map(
     )
 }
 
-pub(crate) fn compute_fraction_map_from_groups(
+pub fn compute_fraction_map_from_groups(
     fi_groups: &BTreeMap<u16, (u32, U256)>,
     tribute_count: u32,
     total_interest: U256,
@@ -391,7 +391,7 @@ fn scaled_floor(
     checked_mul_div_floor(numerator, multiplier, denominator).map_err(ProgramErrorV1::math)
 }
 
-pub(crate) fn calculate_gratis_load(
+pub fn calculate_gratis_load(
     nominal_amount_minor: U256,
     fraction: U256,
     nod_gratis_load_max: U256,

@@ -74,6 +74,9 @@ pub fn encrypt_nod(
     Ok(nod)
 }
 pub fn decrypt_nod(network_secret: &[u8; 32], nod: &EncryptedNodV2) -> Result<U256> {
+    if let Some(amount) = outbe_primitives::nod_encryption::decode_v1_nod_amount(nod) {
+        return Ok(amount);
+    }
     if !nod.has_valid_encoding() {
         return Err(TeeError::DecryptFailed);
     }
