@@ -89,5 +89,4 @@ interface INod {
 
     // outbe-specific
     function getNod(uint256 nodId) external view returns (NodData memory);
-
 }

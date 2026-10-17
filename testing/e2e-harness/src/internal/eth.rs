@@ -1587,7 +1587,7 @@ mod tests {
         );
         assert_eq!(
             IValidatorSet::confirmValidatorReadyCall::SELECTOR,
-            selector("confirmValidatorReady(bytes)")
+            selector("confirmValidatorReady()")
         );
         assert_eq!(
             IValidatorSetRaw::activateResharedSetCall::SELECTOR,

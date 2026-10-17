@@ -41,6 +41,22 @@ pub struct TributeLysisReceipt {
 }
 
 impl TributeContract<'_> {
+    fn is_valid_lysis_partition(
+        &self,
+        day: WorldwideDay,
+        totals: &crate::schema::DayTotals,
+        verified_count: u32,
+        verified_nominal: U256,
+    ) -> Result<bool> {
+        if self.retired_days.read(&day)? {
+            return Ok(false);
+        }
+        let ready = totals.initialized && totals.is_sealed && verified_count > 0;
+        let matches = totals.tribute_count == verified_count
+            && totals.tribute_nominal_total_minor == verified_nominal;
+        Ok(ready && matches)
+    }
+
     pub fn consume_and_retire_lysis_partition(
         &mut self,
         day: WorldwideDay,
@@ -51,13 +67,7 @@ impl TributeContract<'_> {
         storage.require_metadosis_process_ready()?;
         storage.with_checkpoint(|| {
             let totals = self.get_day_totals(day)?;
-            if self.retired_days.read(&day)?
-                || !totals.initialized
-                || !totals.is_sealed
-                || verified_count == 0
-                || totals.tribute_count != verified_count
-                || totals.tribute_nominal_total_minor != verified_nominal
-            {
+            if !self.is_valid_lysis_partition(day, &totals, verified_count, verified_nominal)? {
                 return Err(TributeError::LysisInputMismatch.into());
             }
             self.freeze_day_nominal(&totals)?;
@@ -229,6 +239,32 @@ impl TributeContract<'_> {
         Ok(())
     }
 
+    fn sum_allocated_gratis_from_groups(
+        fi_groups: &std::collections::BTreeMap<u16, (u32, U256)>,
+        u256_fractions: &std::collections::BTreeMap<u16, U256>,
+        lysis_limit_minor: U256,
+    ) -> U256 {
+        let nod_max: U256 = lysis_limit_minor >> 10usize;
+        if nod_max.is_zero() {
+            return U256::ZERO;
+        }
+        let scale = U256::from(1_000_000u64);
+        let mut total_allocated = U256::ZERO;
+        for (&league, &(count, nominal_sum)) in fi_groups {
+            if count == 0 || nominal_sum.is_zero() {
+                continue;
+            }
+            let fraction = u256_fractions.get(&league).copied().unwrap_or(U256::ZERO);
+            if fraction.is_zero() {
+                continue;
+            }
+            let league_raw = nominal_sum.saturating_mul(fraction) / scale;
+            let league_cap = nod_max.saturating_mul(U256::from(count));
+            total_allocated = total_allocated.saturating_add(league_raw.min(league_cap));
+        }
+        total_allocated.min(lysis_limit_minor)
+    }
+
     /// Computes league fractions from `fi_groups[day]` and `lysis_limit_minor`,
     /// stores them along with `completed_at`, and returns `(fractions, total_allocated_minor)`.
     pub fn compute_and_record_metadosis_fractions(
@@ -238,12 +274,11 @@ impl TributeContract<'_> {
         completed_at: u64,
     ) -> Result<(std::collections::BTreeMap<u16, u64>, U256)> {
         let fi_groups = self.get_fi_groups(day)?;
-        let mut tribute_count = 0u32;
-        let mut total_interest = U256::ZERO;
-        for &(count, nom) in fi_groups.values() {
-            tribute_count = tribute_count.saturating_add(count);
-            total_interest = total_interest.saturating_add(nom);
-        }
+        let (tribute_count, total_interest) = fi_groups
+            .values()
+            .fold((0u32, U256::ZERO), |(c, n), &(count, nom)| {
+                (c.saturating_add(count), n.saturating_add(nom))
+            });
         let u256_fractions = if tribute_count == 0 || total_interest.is_zero() {
             std::collections::BTreeMap::new()
         } else {
@@ -260,28 +295,9 @@ impl TributeContract<'_> {
             .map(|(&league, &frac)| (league, u64::try_from(frac).unwrap_or(u64::MAX)))
             .collect();
         self.record_metadosis_fractions(day, lysis_limit_minor, &fractions, completed_at)?;
-        let nod_max: U256 = lysis_limit_minor >> 10usize;
-        let mut total_allocated = U256::ZERO;
-        for (ordinal, tribute_id) in self.get_tribute_ids_by_day(day)?.into_iter().enumerate() {
-            let league = self.tribute_leagues.read(&tribute_id)?.max(1);
-            let fraction = u256_fractions.get(&league).copied().unwrap_or(U256::ZERO);
-            let mut nominal = self.tribute_nominals.read(&tribute_id)?;
-            if nominal.is_zero() {
-                if let Some(rec) = self.get_record(tribute_id)? {
-                    if let Ok(view) = rec.calculation_view() {
-                        nominal = view.nominal_amount_minor;
-                    }
-                }
-            }
-            if !nominal.is_zero() && !fraction.is_zero() && !nod_max.is_zero() {
-                if let Ok(load) = outbe_lysis::program_v1::calculate_gratis_load(
-                    nominal, fraction, nod_max, ordinal,
-                ) {
-                    total_allocated = total_allocated.saturating_add(load);
-                }
-            }
-        }
-        Ok((fractions, total_allocated.min(lysis_limit_minor)))
+        let allocated =
+            Self::sum_allocated_gratis_from_groups(&fi_groups, &u256_fractions, lysis_limit_minor);
+        Ok((fractions, allocated))
     }
 
     /// Stage 5: Creates a `Nod` for `tribute_id` within 7 days after `Metadosis`

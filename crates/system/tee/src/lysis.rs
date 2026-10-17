@@ -78,6 +78,51 @@ pub fn rejection_preimage(inputs: B256) -> Vec<u8> {
     bytes
 }
 
+fn matches_tribute_terms(
+    request: &LysisRequest,
+    terms: &outbe_primitives::nod_encryption::NodTermsV2,
+    context: &outbe_primitives::tribute_encryption::TributeContextV2,
+) -> bool {
+    let basic_match =
+        terms.chain_id == request.chain_id && terms.worldwide_day == request.worldwide_day;
+    let identity_match = terms.owner == context.owner && terms.nod_id == context.tribute_id;
+    let currency_match = terms.issuance_currency == context.issuance_currency
+        && terms.reference_currency == context.reference_currency;
+    basic_match && identity_match && currency_match
+}
+
+fn is_valid_nod_output(
+    request: &LysisRequest,
+    output: &LysisNod,
+    tribute: &EncryptedTributeV2,
+) -> bool {
+    let terms = &output.nod.terms;
+    let has_entry_price = request
+        .entry_prices
+        .contains(&(terms.reference_currency, Some(terms.entry_price_minor)));
+    output.nod.has_valid_encoding()
+        && matches_tribute_terms(request, terms, &tribute.context)
+        && has_entry_price
+}
+
+fn validate_executed_result(
+    request: &LysisRequest,
+    result: &LysisResult,
+) -> Result<(), TransportError> {
+    let valid_bounds = result.nods.len() == request.tributes.len()
+        && result.unused_lysis_limit_minor <= request.lysis_limit_minor;
+    let valid_nods = result
+        .nods
+        .iter()
+        .zip(&request.tributes)
+        .all(|(output, tribute)| is_valid_nod_output(request, output, tribute));
+    if valid_bounds && valid_nods {
+        Ok(())
+    } else {
+        Err(TransportError::UnexpectedResponse)
+    }
+}
+
 pub fn execute(request: LysisRequest) -> Result<LysisOutcome, TransportError> {
     let expected = inputs_hash(&request)?;
     #[cfg(any(test, feature = "test-utils"))]
@@ -90,67 +135,41 @@ pub fn execute(request: LysisRequest) -> Result<LysisOutcome, TransportError> {
             request: Box::new(request.clone()),
         })?,
     };
-    if let EnclaveResponse::LysisRejected {
-        inputs_canonical_hash,
-        attestation_tag,
-    } = &response
-    {
-        if *inputs_canonical_hash != expected {
-            return Err(TransportError::UnexpectedResponse);
-        }
-        crate::tribute_v2::verify_attestation(
-            &key,
-            &rejection_preimage(expected),
+    match response {
+        EnclaveResponse::LysisRejected {
+            inputs_canonical_hash,
             attestation_tag,
-        )?;
-        return Ok(LysisOutcome::Rejected(VerifiedLysisRejection(())));
-    }
-    let EnclaveResponse::LysisExecuted {
-        result,
-        inputs_canonical_hash,
-        attestation_tag,
-    } = response
-    else {
-        return Err(TransportError::UnexpectedResponse);
-    };
-    if inputs_canonical_hash != expected {
-        return Err(TransportError::UnexpectedResponse);
-    }
-    crate::tribute_v2::verify_attestation(
-        &key,
-        &result_preimage(expected, &result)?,
-        &attestation_tag,
-    )?;
-    if result.nods.len() != request.tributes.len()
-        || result.unused_lysis_limit_minor > request.lysis_limit_minor
-    {
-        return Err(TransportError::UnexpectedResponse);
-    }
-    for (output, tribute) in result.nods.iter().zip(&request.tributes) {
-        let terms = &output.nod.terms;
-        let context = &tribute.context;
-        if !output.nod.has_valid_encoding()
-            || terms.chain_id != request.chain_id
-            || terms.worldwide_day != request.worldwide_day
-            || terms.owner != context.owner
-            || terms.nod_id != context.tribute_id
-            || terms.issuance_currency != context.issuance_currency
-            || terms.reference_currency != context.reference_currency
-            || !request
-                .entry_prices
-                .contains(&(terms.reference_currency, Some(terms.entry_price_minor)))
-        {
-            return Err(TransportError::UnexpectedResponse);
+        } if inputs_canonical_hash == expected => {
+            crate::tribute_v2::verify_attestation(
+                &key,
+                &rejection_preimage(expected),
+                &attestation_tag,
+            )?;
+            Ok(LysisOutcome::Rejected(VerifiedLysisRejection(())))
         }
+        EnclaveResponse::LysisExecuted {
+            result,
+            inputs_canonical_hash,
+            attestation_tag,
+        } if inputs_canonical_hash == expected => {
+            crate::tribute_v2::verify_attestation(
+                &key,
+                &result_preimage(expected, &result)?,
+                &attestation_tag,
+            )?;
+            validate_executed_result(&request, &result)?;
+            let result_hash =
+                hash(b"outbe/lysis/output", &result).map_err(TransportError::codec)?;
+            Ok(LysisOutcome::Completed(VerifiedLysisResult {
+                nods: result.nods.into_iter().map(VerifiedLysisNod).collect(),
+                total_nominal_minor: result.total_nominal_minor,
+                unused_lysis_limit_minor: result.unused_lysis_limit_minor,
+                inputs_hash: expected,
+                result_hash,
+            }))
+        }
+        _ => Err(TransportError::UnexpectedResponse),
     }
-    let result_hash = hash(b"outbe/lysis/output", &result).map_err(TransportError::codec)?;
-    Ok(LysisOutcome::Completed(VerifiedLysisResult {
-        nods: result.nods.into_iter().map(VerifiedLysisNod).collect(),
-        total_nominal_minor: result.total_nominal_minor,
-        unused_lysis_limit_minor: result.unused_lysis_limit_minor,
-        inputs_hash: expected,
-        result_hash,
-    }))
 }
 
 #[cfg(any(test, feature = "test-utils"))]

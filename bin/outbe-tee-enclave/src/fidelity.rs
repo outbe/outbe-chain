@@ -61,6 +61,18 @@ struct CohortState {
     sold: Vec<(U256, u64, u64)>,
 }
 
+fn read_u64_be(bytes: &[u8]) -> u64 {
+    let mut buf = [0u8; 8];
+    buf.copy_from_slice(&bytes[..8]);
+    u64::from_be_bytes(buf)
+}
+
+fn read_u32_be(bytes: &[u8]) -> usize {
+    let mut buf = [0u8; 4];
+    buf.copy_from_slice(&bytes[..4]);
+    u32::from_be_bytes(buf) as usize
+}
+
 impl CohortState {
     /// Decode a blob interior. Empty interior = fresh account. Trailing bytes
     /// beyond the declared entries are padding and ignored.
@@ -71,42 +83,45 @@ impl CohortState {
         if interior.len() < HEADER_LEN {
             return Err(FidelityEnclaveError::CohortInteriorShorterThanHeader.into());
         }
-        let mut u64buf = [0u8; 8];
-        u64buf.copy_from_slice(&interior[..8]);
-        let qualified_start = u64::from_be_bytes(u64buf);
-        let mut u32buf = [0u8; 4];
-        u32buf.copy_from_slice(&interior[8..12]);
-        let active_count = u32::from_be_bytes(u32buf) as usize;
-        u32buf.copy_from_slice(&interior[12..16]);
-        let sold_count = u32::from_be_bytes(u32buf) as usize;
+        let qualified_start = read_u64_be(&interior[..8]);
+        let active_count = read_u32_be(&interior[8..12]);
+        let sold_count = read_u32_be(&interior[12..16]);
 
-        let need = active_count
+        let active_bytes = active_count
             .checked_mul(ACTIVE_ENTRY_LEN)
-            .zip(sold_count.checked_mul(SOLD_ENTRY_LEN))
-            .and_then(|(a, s)| a.checked_add(s))
-            .and_then(|e| e.checked_add(HEADER_LEN))
+            .ok_or(FidelityEnclaveError::CohortCountsOverflow)?;
+        let sold_bytes = sold_count
+            .checked_mul(SOLD_ENTRY_LEN)
+            .ok_or(FidelityEnclaveError::CohortCountsOverflow)?;
+        let sold_start = HEADER_LEN
+            .checked_add(active_bytes)
+            .ok_or(FidelityEnclaveError::CohortCountsOverflow)?;
+        let need = sold_start
+            .checked_add(sold_bytes)
             .ok_or(FidelityEnclaveError::CohortCountsOverflow)?;
         if interior.len() < need {
             return Err(FidelityEnclaveError::CohortInteriorTruncated.into());
         }
 
-        let mut offset = HEADER_LEN;
-        let mut active = Vec::with_capacity(active_count);
-        for _ in 0..active_count {
-            let size = U256::from_be_slice(&interior[offset..offset + 32]);
-            u64buf.copy_from_slice(&interior[offset + 32..offset + 40]);
-            active.push((size, u64::from_be_bytes(u64buf)));
-            offset += ACTIVE_ENTRY_LEN;
-        }
-        let mut sold = Vec::with_capacity(sold_count);
-        for _ in 0..sold_count {
-            let size = U256::from_be_slice(&interior[offset..offset + 32]);
-            u64buf.copy_from_slice(&interior[offset + 32..offset + 40]);
-            let acquired_at = u64::from_be_bytes(u64buf);
-            u64buf.copy_from_slice(&interior[offset + 40..offset + 48]);
-            sold.push((size, acquired_at, u64::from_be_bytes(u64buf)));
-            offset += SOLD_ENTRY_LEN;
-        }
+        let active = interior[HEADER_LEN..sold_start]
+            .chunks_exact(ACTIVE_ENTRY_LEN)
+            .map(|chunk| {
+                (
+                    U256::from_be_slice(&chunk[..32]),
+                    read_u64_be(&chunk[32..40]),
+                )
+            })
+            .collect();
+        let sold = interior[sold_start..need]
+            .chunks_exact(SOLD_ENTRY_LEN)
+            .map(|chunk| {
+                (
+                    U256::from_be_slice(&chunk[..32]),
+                    read_u64_be(&chunk[32..40]),
+                    read_u64_be(&chunk[40..48]),
+                )
+            })
+            .collect();
         Ok(Self {
             qualified_start,
             active,
@@ -150,20 +165,44 @@ impl CohortState {
         if amount.is_zero() {
             return None;
         }
-        let initialized = if self.qualified_start == 0 {
+        let initialized = (self.qualified_start == 0).then(|| {
             self.qualified_start = utc_day;
-            Some(utc_day)
+            utc_day
+        });
+        if let Some((last_size, _)) = self.active.last_mut().filter(|(_, day)| *day == utc_day) {
+            *last_size = last_size.saturating_add(amount);
         } else {
-            None
-        };
-        if let Some((last_size, last_day)) = self.active.last_mut() {
-            if *last_day == utc_day {
-                *last_size = last_size.saturating_add(amount);
-                return initialized;
-            }
+            self.active.push((amount, utc_day));
         }
-        self.active.push((amount, utc_day));
         initialized
+    }
+
+    fn consume_top_active(&mut self, remaining: &mut U256) -> Option<(U256, u64)> {
+        let (size, acquired_day) = *self.active.last()?;
+        if size <= *remaining {
+            self.active.pop();
+            *remaining -= size;
+            return Some((size, acquired_day));
+        }
+        self.active.last_mut().expect("non-empty active").0 = size - *remaining;
+        let consumed = *remaining;
+        *remaining = U256::ZERO;
+        Some((consumed, acquired_day))
+    }
+
+    fn record_sold_slice(&mut self, slice: U256, acquired_day: u64, utc_day: u64) {
+        if acquired_day >= utc_day {
+            return;
+        }
+        if let Some((last_size, _, _)) = self
+            .sold
+            .last_mut()
+            .filter(|(_, acq, sold)| *acq == acquired_day && *sold == utc_day)
+        {
+            *last_size = last_size.saturating_add(slice);
+        } else {
+            self.sold.push((slice, acquired_day, utc_day));
+        }
     }
 
     /// SALE: consume active cohorts LIFO (youngest first) at `utc_day`. Splits
@@ -173,30 +212,10 @@ impl CohortState {
     fn cohort_out(&mut self, amount: U256, utc_day: u64) {
         let mut remaining = amount;
         while !remaining.is_zero() {
-            let Some((size, acquired_day)) = self.active.last().copied() else {
+            let Some((slice, acquired_day)) = self.consume_top_active(&mut remaining) else {
                 break;
             };
-            let slice = if size <= remaining {
-                self.active.pop();
-                remaining -= size;
-                size
-            } else {
-                if let Some(last) = self.active.last_mut() {
-                    last.0 = size - remaining;
-                }
-                let consumed = remaining;
-                remaining = U256::ZERO;
-                consumed
-            };
-            if acquired_day < utc_day {
-                if let Some((last_size, last_acq, last_sold)) = self.sold.last_mut() {
-                    if *last_acq == acquired_day && *last_sold == utc_day {
-                        *last_size = last_size.saturating_add(slice);
-                        continue;
-                    }
-                }
-                self.sold.push((slice, acquired_day, utc_day));
-            }
+            self.record_sold_slice(slice, acquired_day, utc_day);
         }
     }
 
@@ -224,11 +243,9 @@ impl CohortState {
     /// `first_qualified_start = 0` means no account has qualified (league floor).
     fn evaluate(&self, eval_day: u64, first_qualified_start: u64) -> Result<(U256, U256, u16)> {
         let (rcfi, efficiency, _) = self.rcfi_triple(eval_day)?;
-        let max = if first_qualified_start == 0 {
-            U256::ZERO
-        } else {
-            t_dec(eval_day.saturating_sub(first_qualified_start))
-        };
+        let max = (first_qualified_start != 0)
+            .then(|| t_dec(eval_day.saturating_sub(first_qualified_start)))
+            .unwrap_or(U256::ZERO);
         let league =
             league_from_rcfi(rcfi, max).ok_or(FidelityEnclaveError::LeagueArithmeticOverflow)?;
         Ok((rcfi, efficiency, league))
