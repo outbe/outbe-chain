@@ -220,13 +220,20 @@ impl FidelityContract<'_> {
         if blob.is_empty() {
             return Ok(crate::MIN_LEAGUE);
         }
-        #[cfg(any(test, feature = "test-enclave"))]
-        if let Some(rcfi_res) = enclave_client::test_enclave::try_rcfi(account, &blob, timestamp) {
-            let rcfi = rcfi_res?;
-            return self.league_from_rcfi_for_wwd(wwd, rcfi);
-        }
-        let _max_fid = self.ensure_wwd_max_fidelity(wwd)?;
-        self.league_at(account, timestamp)
+        let req = FidelitySnapshotRequest {
+            timestamp,
+            first_qualified_start: self.first_qualified_start()?,
+            entries: vec![FidelitySnapshotEntry {
+                owner: account,
+                cohort_blob: blob,
+            }],
+        };
+        let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&self.storage)?;
+        let entry = enclave_client::snapshot_leagues(req)?
+            .into_iter()
+            .next()
+            .ok_or(FidelityFatalError::SnapshotReturnedNoLeague)?;
+        self.league_from_rcfi_for_wwd(wwd, entry.rcfi)
     }
 
     /// Finalizes `wwd` at Metadosis time by rolling `wwd_running_max_fidelity[wwd]`
@@ -234,14 +241,18 @@ impl FidelityContract<'_> {
     pub fn finalize_wwd_max_fidelity(
         &self,
         wwd: outbe_primitives::time::WorldwideDay,
-        timestamp: u64,
+        _timestamp: u64,
     ) -> Result<U256> {
         let prev = self.max_fidelity_prev()?;
         let running = self.wwd_running_max_fidelity_of(wwd)?;
-        let current_max = self.max_fidelity_for_wwd(wwd)?;
-        let synthetic = self.max_rcfi_at(timestamp)?;
-        let finalized = prev.max(running).max(current_max).max(synthetic);
-        self.set_max_fidelity_prev(finalized)?;
+        let current_max = match self.wwd_max_fidelity_of(wwd)? {
+            Some(locked) => locked,
+            None => prev.max(self.synthetic_max_for_wwd(wwd)?),
+        };
+        let finalized = prev.max(running).max(current_max);
+        if finalized != prev {
+            self.set_max_fidelity_prev(finalized)?;
+        }
         Ok(finalized)
     }
 

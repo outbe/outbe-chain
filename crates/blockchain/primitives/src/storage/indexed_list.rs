@@ -91,6 +91,23 @@ where
     })
 }
 
+/// Unlists an already-loaded record under `key` from `indexes` and deletes it, all or
+/// nothing.
+pub fn delete_loaded_indexed<'storage, V, const N: usize>(
+    records: &Map<'storage, V::Key, V>,
+    key: V::Key,
+    indexes: [IndexedList<'storage, V::Key>; N],
+) -> Result<()>
+where
+    V: StorageRecord,
+    V::Key: Storable + StorageKey + Copy + Eq,
+{
+    records.storage().with_checkpoint(|| {
+        indexes.iter().try_for_each(|index| index.remove(key))?;
+        records.delete(key)
+    })
+}
+
 /// Unlists the record under `key` from the indexes it selects and deletes it, all or
 /// nothing.
 pub fn delete_indexed<'storage, V, const N: usize>(
@@ -106,10 +123,7 @@ where
         let record = records
             .get(key)?
             .ok_or_else(|| PrecompileError::fatal("state record is absent from its index"))?;
-        indexes(&record)
-            .iter()
-            .try_for_each(|index| index.remove(key))?;
-        records.delete(key)
+        delete_loaded_indexed(records, key, indexes(&record))
     })
 }
 

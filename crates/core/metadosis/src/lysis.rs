@@ -176,6 +176,7 @@ fn execute_onchain_fractions(
 ) -> Result<()> {
     let day = current.worldwide_day;
     let (mut tribute, totals) = load_ready_tribute(ctx, day)?;
+    tribute.freeze_day_nominal(&totals)?;
     let (_, onchain_allocated_minor) = tribute.compute_and_record_metadosis_fractions(
         day,
         calculation.lysis_limit_minor,

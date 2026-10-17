@@ -217,6 +217,9 @@ impl CohortState {
             };
             self.record_sold_slice(slice, acquired_day, utc_day);
         }
+        if self.active.is_empty() && self.sold.is_empty() {
+            self.qualified_start = 0;
+        }
     }
 
     /// `(rcfi, efficiency, d_dec_age)` at `eval_day` (UTC day index).
@@ -351,27 +354,14 @@ pub fn snapshot_leagues(
                 .derive_view_key(state_key, entry.owner)?,
         );
         let (_, state) = read_state(&view_key, entry.owner, &entry.cohort_blob)?;
-        let (_, _, league) = state.evaluate(eval_day, req.first_qualified_start)?;
+        let (rcfi, _, league) = state.evaluate(eval_day, req.first_qualified_start)?;
         leagues.push(FidelityLeagueEntry {
             owner: entry.owner,
             league,
+            rcfi,
         });
     }
     Ok(leagues)
-}
-
-/// Evaluate the RCFI of a single account at `timestamp` (UTC day index).
-pub fn evaluate_rcfi(
-    state_key: &[u8; 32],
-    account: Address,
-    cohort_blob: &[u8],
-    timestamp: u64,
-) -> Result<U256> {
-    let view_key = Zeroizing::new(FIDELITY.account_keys.derive_view_key(state_key, account)?);
-    let (_, state) = read_state(&view_key, account, cohort_blob)?;
-    let eval_day = outbe_primitives::time::utc_day_from_timestamp(timestamp);
-    let (rcfi, _, _) = state.rcfi_triple(eval_day)?;
-    Ok(rcfi)
 }
 
 /// Owner-authorized RCFI/league read. Verifies the signed authorization INSIDE

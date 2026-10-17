@@ -256,8 +256,13 @@ impl TributeContract<'_> {
             if fraction.is_zero() {
                 continue;
             }
-            let league_raw = nominal_sum.saturating_mul(fraction) / scale;
             let league_cap = nod_max.saturating_mul(U256::from(count));
+            let league_raw = outbe_primitives::math::scaled_math::checked_mul_div_floor(
+                nominal_sum,
+                fraction,
+                scale,
+            )
+            .unwrap_or(league_cap);
             total_allocated = total_allocated.saturating_add(league_raw.min(league_cap));
         }
         total_allocated.min(lysis_limit_minor)
@@ -272,11 +277,16 @@ impl TributeContract<'_> {
         completed_at: u64,
     ) -> Result<(std::collections::BTreeMap<u16, u64>, U256)> {
         let fi_groups = self.get_fi_groups(day)?;
-        let (tribute_count, total_interest) = fi_groups
-            .values()
-            .fold((0u32, U256::ZERO), |(c, n), &(count, nom)| {
-                (c.saturating_add(count), n.saturating_add(nom))
-            });
+        let mut tribute_count = 0u32;
+        let mut total_interest = U256::ZERO;
+        for &(count, nom) in fi_groups.values() {
+            tribute_count = tribute_count
+                .checked_add(count)
+                .ok_or(TributeError::DayCountOverflowOrUnderflow)?;
+            total_interest = total_interest
+                .checked_add(nom)
+                .ok_or(TributeError::DayCountOverflowOrUnderflow)?;
+        }
         let u256_fractions = if tribute_count == 0 || total_interest.is_zero() {
             std::collections::BTreeMap::new()
         } else {
@@ -306,22 +316,29 @@ impl TributeContract<'_> {
         tribute_id: WwdEntityId,
     ) -> Result<WwdEntityId> {
         let storage = self.storage_handle();
+        let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&storage)?;
         storage.with_checkpoint(|| {
-            let record = crate::state_api::get_record(&storage, tribute_id)?
-                .ok_or(TributeError::TributeNotFound)?;
-            if record.owner != caller {
-                return Err(TributeError::CallerNotTributeOwner.into());
+            let day = tribute_id.worldwide_day();
+            if self.retired_days.read(&day)? {
+                return Err(TributeError::TributeNotFound.into());
             }
-            let day = record.worldwide_day;
             let completed_at = self.day_metadosis_completed_at.read(&day)?;
             if completed_at == 0 {
                 return Err(TributeError::MetadosisNotCompleted.into());
             }
-            let now = u64::try_from(storage.timestamp()?).unwrap_or(0);
-            if now > completed_at.saturating_add(7 * outbe_primitives::time::SECONDS_PER_DAY) {
+            let now = u64::try_from(storage.timestamp()?).unwrap_or(u64::MAX);
+            if now < completed_at
+                || now > completed_at.saturating_add(7 * outbe_primitives::time::SECONDS_PER_DAY)
+            {
                 return Err(TributeError::NodCreationWindowExpired.into());
             }
-            let league = self.tribute_leagues.read(&tribute_id)?.max(1);
+            let record = crate::state_api::get_retained_record(&storage, tribute_id)?
+                .ok_or(TributeError::TributeNotFound)?;
+            if record.owner != caller {
+                return Err(TributeError::CallerNotTributeOwner.into());
+            }
+            let raw_league = self.tribute_leagues.read(&tribute_id)?;
+            let league = raw_league.max(1);
             let fraction = U256::from(
                 self.day_fractions
                     .read(&crate::schema::day_league_key(day, league))?,
@@ -336,14 +353,12 @@ impl TributeContract<'_> {
                 outbe_lysis::program_v1::calculate_gratis_load(nominal, fraction, nod_max, 0)
                     .map_err(|e| outbe_primitives::error::PrecompileError::revert(e.to_string()))?;
 
-            let price_day = outbe_nod::openings::entry_price_day(now);
+            let price_day = outbe_nod::openings::entry_price_day(completed_at);
             let gratis_day_price = outbe_oracle::api::get_utc_day_vwap_for_iso(
                 storage.clone(),
                 price_day,
                 record.reference_currency,
-            )
-            .ok()
-            .flatten()
+            )?
             .filter(|p| !p.is_zero())
             .unwrap_or_else(|| {
                 if !record.tribute_price_minor.is_zero() {
@@ -368,15 +383,19 @@ impl TributeContract<'_> {
             );
             outbe_nodfactory::api::issue_tribute_nod(&storage, &encrypted_nod, gratis_load_minor)?;
 
-            // Atomically burn the Tribute upon Nod creation.
+            // Atomically burn the Tribute upon Nod creation, keeping partition accounting consistent.
+            self.bump_day_bucket_record(&record, false)?;
+            if raw_league != 0 {
+                self.adjust_fi_group(day, raw_league, nominal, false)?;
+                self.tribute_leagues.clear(&tribute_id)?;
+            }
             let supply = self
                 .total_supply
                 .read()?
                 .checked_sub(1)
                 .ok_or(TributeError::TotalSupplyUnderflowDuringBurn)?;
             self.total_supply.write(supply)?;
-            self.delete_state_record(tribute_id)?;
-            self.tribute_leagues.write(&tribute_id, 0)?;
+            self.delete_loaded_state_record(&record)?;
             self.emit(ITribute::TributeBurned {
                 tributeId: tribute_id.to_u256(),
                 owner: record.owner,

@@ -175,6 +175,9 @@ pub(crate) fn pow_one_half_fp(x_fp: U256) -> U256 {
     // Iterate factors for fractional bits 2^-1, 2^-2, ... extracting each bit by
     // doubling `frac` and testing the carry past SCALE.
     for &factor in HALF_POW_TABLE.iter() {
+        if frac.is_zero() {
+            break;
+        }
         frac *= two;
         if frac >= SCALE {
             frac -= SCALE;

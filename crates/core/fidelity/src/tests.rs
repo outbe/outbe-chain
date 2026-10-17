@@ -332,6 +332,7 @@ mod enclave_responses {
         let leagues = vec![FidelityLeagueEntry {
             owner: Address::repeat_byte(1),
             league: 2,
+            rcfi: U256::ZERO,
         }];
         let preimage = fidelity_snapshot_attestation_preimage(hash, &leagues);
         let mut attestation_tag = signer().sign(&preimage).to_bytes().to_vec();
@@ -393,6 +394,7 @@ mod enclave_responses {
             vec![FidelityLeagueEntry {
                 owner: Address::repeat_byte(1),
                 league: 2,
+                rcfi: U256::ZERO,
             }]
         );
         assert_eq!(
@@ -483,5 +485,26 @@ fn wwd_max_fidelity_locks_per_wwd_and_rolls_over_at_metadosis() {
                 .unwrap(),
             2049
         );
+    });
+}
+
+#[test]
+fn same_day_buy_and_full_sell_resets_qualified_start() {
+    use outbe_primitives::time::WorldwideDay;
+
+    with_env(|storage| {
+        let fc = FidelityContract::new(storage.clone());
+        let user = Address::repeat_byte(0x42);
+        let t0 = 10 * DAY;
+
+        // Buy 100 COEN and immediately sell all 100 COEN on the same UTC day.
+        api::cohort_in(storage.clone(), user, U256::from(100_000_000u64), t0).unwrap();
+        api::cohort_out(storage.clone(), user, U256::from(100_000_000u64), t0 + 60).unwrap();
+
+        // 30 days later, the user should not have accrued personal fidelity.
+        let t_later = t0 + 30 * DAY;
+        let wwd = WorldwideDay::new(20261015);
+        assert_eq!(fc.league_for_wwd(user, wwd, t_later).unwrap(), MIN_LEAGUE);
+        assert_eq!(fc.wwd_running_max_fidelity_of(wwd).unwrap(), U256::ZERO);
     });
 }

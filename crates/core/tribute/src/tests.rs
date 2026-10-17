@@ -877,7 +877,7 @@ fn v1_mechanics_fi_groups_fractions_and_create_nod_within_7_days_burns_tribute()
             crate::precompile::ITribute::createNodCall::abi_decode_returns(&ret).unwrap();
         assert_eq!(WwdEntityId::from(nod_id_u256), t1.tribute_id);
 
-        // Verify Nod exists in outbe-nod and Tribute is burned!
+        // Verify Nod exists in outbe-nod and Tribute is burned with consistent partition counters!
         let nod_item = outbe_nod::api::get_item(&storage, t1.tribute_id)
             .unwrap()
             .expect("Nod must be created");
@@ -885,6 +885,18 @@ fn v1_mechanics_fi_groups_fractions_and_create_nod_within_7_days_burns_tribute()
         assert_eq!(nod_item.league_id, 100);
         assert!(tc.get_record(t1.tribute_id).unwrap().is_none());
         assert_eq!(tc.total_supply().unwrap(), 1);
+        let totals_after_t1 = tc.get_day_totals(day).unwrap();
+        assert_eq!(totals_after_t1.tribute_count, 1);
+        assert_eq!(
+            totals_after_t1.tribute_nominal_total_minor,
+            t2.nominal_amount_minor
+        );
+        let groups_after_t1 = tc.get_fi_groups(day).unwrap();
+        assert_eq!(groups_after_t1.len(), 1);
+        assert_eq!(
+            groups_after_t1.get(&4000),
+            Some(&(1, t2.nominal_amount_minor))
+        );
 
         // Calling createNod a second time for the burned Tribute must fail
         assert!(

@@ -299,18 +299,4 @@ pub mod test_enclave {
             })
         })
     }
-
-    pub(crate) fn try_rcfi(
-        account: alloy_primitives::Address,
-        blob: &[u8],
-        timestamp: u64,
-    ) -> Option<Result<alloy_primitives::U256>> {
-        STATE_KEY.with(|k| {
-            k.borrow().map(|key| {
-                outbe_tee_enclave::fidelity::evaluate_rcfi(&key, account, blob, timestamp).map_err(
-                    |e| FidelityFatalError::enclave_op_error("EvaluateFidelityRcfi", e).into(),
-                )
-            })
-        })
-    }
 }

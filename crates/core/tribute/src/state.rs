@@ -7,6 +7,7 @@ use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 use crate::errors::TributeError;
 use crate::schema::{DayTotals, TributeContract, TributeData};
+use crate::storage_records::StoredTributeEntryExt;
 use crate::TributeRecord;
 
 impl TributeContract<'_> {
@@ -15,10 +16,14 @@ impl TributeContract<'_> {
     }
 
     pub fn owner_of(&self, tribute_id: WwdEntityId) -> Result<Address> {
-        let tribute = self
-            .get_record(tribute_id)?
-            .ok_or(TributeError::TributeNotFound)?;
-        Ok(tribute.owner)
+        if self.retired_days.read(&tribute_id.worldwide_day())? {
+            return Err(TributeError::TributeNotFound.into());
+        }
+        let owner = self.records.entry(tribute_id).owner().read()?;
+        if owner.is_zero() {
+            return Err(TributeError::TributeNotFound.into());
+        }
+        Ok(owner)
     }
 
     pub fn balance_of(&self, owner: Address) -> Result<u64> {
@@ -193,12 +198,7 @@ impl TributeContract<'_> {
         day: WorldwideDay,
     ) -> Result<std::collections::BTreeMap<u16, (u32, alloy_primitives::U256)>> {
         let mut groups = std::collections::BTreeMap::new();
-        let active_list = self.day_active_leagues.list(&day);
-        let len = active_list.len()?;
-        for idx in 0..len {
-            let Some(league) = active_list.get(idx)? else {
-                continue;
-            };
+        for league in self.day_active_leagues.list(&day).read_all()? {
             let key = crate::schema::day_league_key(day, league);
             let count = (self.fi_group_counts.read(&key)? & 0xFFFF_FFFF) as u32;
             if count > 0 {
@@ -220,7 +220,6 @@ impl TributeContract<'_> {
         let key = crate::schema::day_league_key(day, league);
         let packed = self.fi_group_counts.read(&key)?;
         let prev_count = (packed & 0xFFFF_FFFF) as u32;
-        let prev_nom = self.fi_group_nominals.read(&key)?;
         if add {
             if (packed & IN_ACTIVE_LIST_BIT) == 0 {
                 self.day_active_leagues.list(&day).push(league)?;
@@ -228,17 +227,28 @@ impl TributeContract<'_> {
             let next_count = prev_count
                 .checked_add(1)
                 .ok_or(TributeError::DayCountOverflowOrUnderflow)?;
+            let prev_nom = if prev_count == 0 {
+                alloy_primitives::U256::ZERO
+            } else {
+                self.fi_group_nominals.read(&key)?
+            };
+            let next_nom = prev_nom
+                .checked_add(nominal)
+                .ok_or(TributeError::DayCountOverflowOrUnderflow)?;
             self.fi_group_counts
                 .write(&key, IN_ACTIVE_LIST_BIT | u64::from(next_count))?;
-            self.fi_group_nominals
-                .write(&key, prev_nom.saturating_add(nominal))?;
-        } else if prev_count > 0 {
-            self.fi_group_counts.write(
-                &key,
-                (packed & IN_ACTIVE_LIST_BIT) | u64::from(prev_count - 1),
-            )?;
-            self.fi_group_nominals
-                .write(&key, prev_nom.saturating_sub(nominal))?;
+            self.fi_group_nominals.write(&key, next_nom)?;
+        } else {
+            let next_count = prev_count
+                .checked_sub(1)
+                .ok_or(TributeError::DayCountOverflowOrUnderflow)?;
+            let prev_nom = self.fi_group_nominals.read(&key)?;
+            let next_nom = prev_nom
+                .checked_sub(nominal)
+                .ok_or(TributeError::DayCountOverflowOrUnderflow)?;
+            self.fi_group_counts
+                .write(&key, (packed & IN_ACTIVE_LIST_BIT) | u64::from(next_count))?;
+            self.fi_group_nominals.write(&key, next_nom)?;
         }
         Ok(())
     }

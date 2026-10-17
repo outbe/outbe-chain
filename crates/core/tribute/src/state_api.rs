@@ -66,29 +66,18 @@ pub fn issue_encrypted_with_league(
     if body.context.chain_id != storage.chain_id()? {
         return Err(TributeError::ChainIdentityMismatch.into());
     }
+    if let Some(l) = explicit_league {
+        if !(1..=4096).contains(&l) {
+            return Err(TributeError::InvalidLeague(l).into());
+        }
+    }
     let record = crate::record::from_encrypted(body.clone());
     let expected = derive_poseidon_entity_id(record.owner, record.worldwide_day)
         .map_err(TributeError::entity_id_derivation)?;
     if record.owner.is_zero() || record.tribute_id != expected {
         return Err(TributeError::InvalidOwner.into());
     }
-    let league = match explicit_league {
-        Some(l) if (1..=4096).contains(&l) => l,
-        Some(l) => return Err(TributeError::InvalidLeague(l).into()),
-        None => {
-            let timestamp = u64::try_from(storage.timestamp()?).unwrap_or(0);
-            outbe_fidelity::api::league_for_wwd(
-                storage.clone(),
-                record.owner,
-                record.worldwide_day,
-                timestamp,
-            )?
-        }
-    };
-    let nominal_amount_minor = record
-        .calculation_view()
-        .map(|d| d.nominal_amount_minor)
-        .unwrap_or_default();
+    let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(storage)?;
     let mut contract = TributeContract::new(storage.clone());
     storage.with_checkpoint(|| {
         contract.ensure_day_accepts_tributes(record.worldwide_day)?;
@@ -97,6 +86,22 @@ pub fn issue_encrypted_with_league(
         {
             return Err(TributeError::TributeAlreadyExists.into());
         }
+        let league = match explicit_league {
+            Some(l) => l,
+            None => {
+                let timestamp = u64::try_from(storage.timestamp()?).unwrap_or(0);
+                outbe_fidelity::api::league_for_wwd(
+                    storage.clone(),
+                    record.owner,
+                    record.worldwide_day,
+                    timestamp,
+                )?
+            }
+        };
+        let nominal_amount_minor = record
+            .calculation_view()
+            .map_err(TributeError::private_amount_read_failed)?
+            .nominal_amount_minor;
         contract.bump_day_bucket_record(&record, true)?;
         contract.tribute_leagues.write(&record.tribute_id, league)?;
         contract.adjust_fi_group(record.worldwide_day, league, nominal_amount_minor, true)?;
@@ -143,6 +148,7 @@ pub fn load(storage: &StorageHandle<'_>, id: WwdEntityId) -> Result<Option<Loade
 
 pub fn burn_loaded(storage: &StorageHandle<'_>, loaded: LoadedTribute) -> Result<()> {
     let LoadedTribute { record, current } = loaded;
+    let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(storage)?;
     let mut contract = TributeContract::new(storage.clone());
     storage.with_checkpoint(|| {
         contract.ensure_day_accepts_tributes(record.worldwide_day)?;
@@ -156,10 +162,10 @@ pub fn burn_loaded(storage: &StorageHandle<'_>, loaded: LoadedTribute) -> Result
         if league != 0 {
             let nominal = record
                 .calculation_view()
-                .map(|d| d.nominal_amount_minor)
-                .unwrap_or_default();
+                .map_err(TributeError::private_amount_read_failed)?
+                .nominal_amount_minor;
             contract.adjust_fi_group(record.worldwide_day, league, nominal, false)?;
-            contract.tribute_leagues.write(&record.tribute_id, 0)?;
+            contract.tribute_leagues.clear(&record.tribute_id)?;
         }
         let supply = contract
             .total_supply
@@ -167,7 +173,7 @@ pub fn burn_loaded(storage: &StorageHandle<'_>, loaded: LoadedTribute) -> Result
             .checked_sub(1)
             .ok_or(TributeError::TotalSupplyUnderflowDuringBurn)?;
         contract.total_supply.write(supply)?;
-        contract.delete_state_record(record.tribute_id)?;
+        contract.delete_loaded_state_record(&record)?;
         contract.emit(ITribute::TributeBurned {
             tributeId: record.tribute_id.to_u256(),
             owner: record.owner,
