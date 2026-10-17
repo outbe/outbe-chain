@@ -229,8 +229,6 @@ impl TributeContract<'_> {
         completed_at: u64,
     ) -> Result<()> {
         self.day_lysis_limit_minor.write(&day, lysis_limit_minor)?;
-        self.day_remaining_lysis_limit_minor
-            .write(&day, lysis_limit_minor)?;
         self.day_metadosis_completed_at.write(&day, completed_at)?;
         for (&league, &fraction) in fractions {
             let key = crate::schema::day_league_key(day, league);
@@ -329,21 +327,14 @@ impl TributeContract<'_> {
                     .read(&crate::schema::day_league_key(day, league))?,
             );
             let lysis_limit = self.day_lysis_limit_minor.read(&day)?;
-            let remaining_limit = self.day_remaining_lysis_limit_minor.read(&day)?;
-            let mut nominal = self.tribute_nominals.read(&tribute_id)?;
-            if nominal.is_zero() {
-                nominal = record
-                    .calculation_view()
-                    .map_err(TributeError::private_amount_read_failed)?
-                    .nominal_amount_minor;
-            }
+            let nominal = record
+                .calculation_view()
+                .map_err(TributeError::private_amount_read_failed)?
+                .nominal_amount_minor;
             let nod_max: U256 = lysis_limit >> 10usize;
-            let raw_load =
+            let gratis_load_minor =
                 outbe_lysis::program_v1::calculate_gratis_load(nominal, fraction, nod_max, 0)
                     .map_err(|e| outbe_primitives::error::PrecompileError::revert(e.to_string()))?;
-            let gratis_load_minor = raw_load.min(remaining_limit);
-            self.day_remaining_lysis_limit_minor
-                .write(&day, remaining_limit.saturating_sub(gratis_load_minor))?;
 
             let price_day = outbe_nod::openings::entry_price_day(now);
             let gratis_day_price = outbe_oracle::api::get_utc_day_vwap_for_iso(
@@ -386,7 +377,6 @@ impl TributeContract<'_> {
             self.total_supply.write(supply)?;
             self.delete_state_record(tribute_id)?;
             self.tribute_leagues.write(&tribute_id, 0)?;
-            self.tribute_nominals.write(&tribute_id, U256::ZERO)?;
             self.emit(ITribute::TributeBurned {
                 tributeId: tribute_id.to_u256(),
                 owner: record.owner,

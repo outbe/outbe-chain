@@ -200,21 +200,22 @@ impl FidelityContract<'_> {
         let max_fid = self.ensure_wwd_max_fidelity(wwd)?;
         let league = crate::math::league_from_rcfi(user_rcfi, max_fid)
             .ok_or(FidelityFatalError::SnapshotReturnedNoLeague)?;
-        self.record_wwd_fidelity(wwd, user_rcfi)?;
+        if !user_rcfi.is_zero() {
+            self.record_wwd_fidelity(wwd, user_rcfi)?;
+        }
         Ok(league)
     }
 
     /// Evaluates the league (`1..=4096`) for `account` on `wwd` at `timestamp`
     /// (user fidelity by UTC day, max fidelity fixed per WWD).
     /// When the account has no cohort history (`cohorts_ct` is empty), returns
-    /// `MIN_LEAGUE` (`1`) without requiring an enclave round-trip.
+    /// `MIN_LEAGUE` (`1`) without requiring an enclave round-trip or storage writes.
     pub fn league_for_wwd(
         &self,
         account: Address,
         wwd: outbe_primitives::time::WorldwideDay,
         timestamp: u64,
     ) -> Result<u16> {
-        let _max_fid = self.ensure_wwd_max_fidelity(wwd)?;
         let blob = self.cohorts_ct_of(account)?;
         if blob.is_empty() {
             return Ok(crate::MIN_LEAGUE);
@@ -224,6 +225,7 @@ impl FidelityContract<'_> {
             let rcfi = rcfi_res?;
             return self.league_from_rcfi_for_wwd(wwd, rcfi);
         }
+        let _max_fid = self.ensure_wwd_max_fidelity(wwd)?;
         self.league_at(account, timestamp)
     }
 

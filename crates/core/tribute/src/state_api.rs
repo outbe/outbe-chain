@@ -99,9 +99,6 @@ pub fn issue_encrypted_with_league(
         }
         contract.bump_day_bucket_record(&record, true)?;
         contract.tribute_leagues.write(&record.tribute_id, league)?;
-        contract
-            .tribute_nominals
-            .write(&record.tribute_id, nominal_amount_minor)?;
         contract.adjust_fi_group(record.worldwide_day, league, nominal_amount_minor, true)?;
         let supply = contract
             .total_supply
@@ -156,13 +153,13 @@ pub fn burn_loaded(storage: &StorageHandle<'_>, loaded: LoadedTribute) -> Result
         }
         contract.bump_day_bucket_record(&record, false)?;
         let league = contract.tribute_leagues.read(&record.tribute_id)?;
-        let nominal = contract.tribute_nominals.read(&record.tribute_id)?;
         if league != 0 {
+            let nominal = record
+                .calculation_view()
+                .map(|d| d.nominal_amount_minor)
+                .unwrap_or_default();
             contract.adjust_fi_group(record.worldwide_day, league, nominal, false)?;
             contract.tribute_leagues.write(&record.tribute_id, 0)?;
-            contract
-                .tribute_nominals
-                .write(&record.tribute_id, alloy_primitives::U256::ZERO)?;
         }
         let supply = contract
             .total_supply

@@ -96,23 +96,19 @@ pub struct TributeContract {
     #[attribute(order = 15)]
     pub tribute_leagues: outbe_primitives::storage::dsl::Map<WwdEntityId, u16>,
     #[attribute(order = 16)]
-    pub tribute_nominals: outbe_primitives::storage::dsl::Map<WwdEntityId, U256>,
-    #[attribute(order = 17)]
     pub day_active_leagues: outbe_primitives::storage::dsl::Map<
         WorldwideDay,
         outbe_primitives::storage::dsl::List<u16>,
     >,
+    #[attribute(order = 17)]
+    pub fi_group_counts: outbe_primitives::storage::dsl::Map<u64, u64>,
     #[attribute(order = 18)]
-    pub fi_group_counts: outbe_primitives::storage::dsl::Map<u64, u32>,
-    #[attribute(order = 19)]
     pub fi_group_nominals: outbe_primitives::storage::dsl::Map<u64, U256>,
-    #[attribute(order = 20)]
+    #[attribute(order = 19)]
     pub day_fractions: outbe_primitives::storage::dsl::Map<u64, u64>,
-    #[attribute(order = 21)]
+    #[attribute(order = 20)]
     pub day_lysis_limit_minor: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
-    #[attribute(order = 22)]
-    pub day_remaining_lysis_limit_minor: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
-    #[attribute(order = 23)]
+    #[attribute(order = 21)]
     pub day_metadosis_completed_at: outbe_primitives::storage::dsl::Map<WorldwideDay, u64>,
 }
 

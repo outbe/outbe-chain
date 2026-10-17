@@ -174,9 +174,11 @@ impl TributeContract<'_> {
     }
 
     pub fn get_league(&self, tribute_id: WwdEntityId) -> Result<u16> {
-        let _ = self
-            .get_record(tribute_id)?
-            .ok_or(TributeError::TributeNotFound)?;
+        if self.retired_days.read(&tribute_id.worldwide_day())?
+            || !self.records.exists(tribute_id)?
+        {
+            return Err(TributeError::TributeNotFound.into());
+        }
         let league = self.tribute_leagues.read(&tribute_id)?;
         Ok(league.max(1))
     }
@@ -198,7 +200,7 @@ impl TributeContract<'_> {
                 continue;
             };
             let key = crate::schema::day_league_key(day, league);
-            let count = self.fi_group_counts.read(&key)?;
+            let count = (self.fi_group_counts.read(&key)? & 0xFFFF_FFFF) as u32;
             if count > 0 {
                 let nominal = self.fi_group_nominals.read(&key)?;
                 groups.insert(league, (count, nominal));
@@ -214,32 +216,27 @@ impl TributeContract<'_> {
         nominal: alloy_primitives::U256,
         add: bool,
     ) -> Result<()> {
+        const IN_ACTIVE_LIST_BIT: u64 = 1u64 << 32;
         let key = crate::schema::day_league_key(day, league);
-        let prev_count = self.fi_group_counts.read(&key)?;
+        let packed = self.fi_group_counts.read(&key)?;
+        let prev_count = (packed & 0xFFFF_FFFF) as u32;
         let prev_nom = self.fi_group_nominals.read(&key)?;
         if add {
-            if prev_count == 0 {
-                let active_list = self.day_active_leagues.list(&day);
-                let len = active_list.len()?;
-                let mut found = false;
-                for idx in 0..len {
-                    if active_list.get(idx)? == Some(league) {
-                        found = true;
-                        break;
-                    }
-                }
-                if !found {
-                    active_list.push(league)?;
-                }
+            if (packed & IN_ACTIVE_LIST_BIT) == 0 {
+                self.day_active_leagues.list(&day).push(league)?;
             }
             let next_count = prev_count
                 .checked_add(1)
                 .ok_or(TributeError::DayCountOverflowOrUnderflow)?;
-            self.fi_group_counts.write(&key, next_count)?;
+            self.fi_group_counts
+                .write(&key, IN_ACTIVE_LIST_BIT | u64::from(next_count))?;
             self.fi_group_nominals
                 .write(&key, prev_nom.saturating_add(nominal))?;
         } else if prev_count > 0 {
-            self.fi_group_counts.write(&key, prev_count - 1)?;
+            self.fi_group_counts.write(
+                &key,
+                (packed & IN_ACTIVE_LIST_BIT) | u64::from(prev_count - 1),
+            )?;
             self.fi_group_nominals
                 .write(&key, prev_nom.saturating_sub(nominal))?;
         }

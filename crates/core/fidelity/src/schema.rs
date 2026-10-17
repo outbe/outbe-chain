@@ -30,10 +30,8 @@ pub struct FidelityContract {
     pub first_qualified_start: Slot<u64>,
     // slot 2: finalized max_fidelity from the previous WWD (WWD - 1), 10^18-scaled.
     pub max_fidelity_prev: Slot<U256>,
-    // slot 3: fixed max_fidelity snapshot used for each WWD.
+    // slot 3: fixed max_fidelity snapshot used for each WWD (stored as value + 1; 0 = unlocked).
     pub wwd_max_fidelity: Mapping<WorldwideDay, U256>,
     // slot 4: running maximum of observed user RCFI during each WWD.
     pub wwd_running_max_fidelity: Mapping<WorldwideDay, U256>,
-    // slot 5: whether wwd_max_fidelity has been locked for a given WWD.
-    pub wwd_max_fidelity_locked: Mapping<WorldwideDay, bool>,
 }

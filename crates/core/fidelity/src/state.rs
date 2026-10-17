@@ -49,15 +49,17 @@ impl FidelityContract<'_> {
 
     /// Fixed `max_fidelity` locked for `wwd`, or `None` if not yet locked.
     pub fn wwd_max_fidelity_of(&self, wwd: WorldwideDay) -> Result<Option<U256>> {
-        if !self.wwd_max_fidelity_locked.get(&wwd).read()? {
+        let raw = self.wwd_max_fidelity.get(&wwd).read()?;
+        if raw.is_zero() {
             return Ok(None);
         }
-        Ok(Some(self.wwd_max_fidelity.get(&wwd).read()?))
+        Ok(Some(raw - U256::from(1u8)))
     }
 
     pub(crate) fn lock_wwd_max_fidelity(&self, wwd: WorldwideDay, value: U256) -> Result<()> {
-        self.wwd_max_fidelity.get(&wwd).write(value)?;
-        self.wwd_max_fidelity_locked.get(&wwd).write(true)
+        self.wwd_max_fidelity
+            .get(&wwd)
+            .write(value.saturating_add(U256::from(1u8)))
     }
 
     /// Running maximum of observed user RCFI during `wwd`.
