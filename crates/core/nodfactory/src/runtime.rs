@@ -48,6 +48,25 @@ pub fn issue_lysis_nod(
     )
 }
 
+/// Issues a Nod claimed from a Tribute within the 7-day post-Metadosis claim window.
+pub fn issue_tribute_nod(
+    storage: &StorageHandle<'_>,
+    encrypted: &EncryptedNodV2,
+    gratis_load_minor: U256,
+) -> Result<WwdEntityId> {
+    let cost =
+        nod_api::settlement_cost_minor(encrypted.terms.entry_price_minor, gratis_load_minor)?;
+    if cost.is_zero() {
+        return Err(NodFactoryError::EntryPriceOutOfBounds.into());
+    }
+    issue_nod_with_cost(
+        storage,
+        encrypted,
+        storage.timestamp()?.to::<u64>(),
+        Some(cost),
+    )
+}
+
 fn issue_nod_with_cost(
     storage: &StorageHandle<'_>,
     encrypted: &EncryptedNodV2,

@@ -209,4 +209,174 @@ impl TributeContract<'_> {
         })?;
         Ok(())
     }
+
+    /// Records the Stage 3 Metadosis league fractions and lysis limit for `day`.
+    pub fn record_metadosis_fractions(
+        &mut self,
+        day: WorldwideDay,
+        lysis_limit_minor: U256,
+        fractions: &std::collections::BTreeMap<u16, u64>,
+        completed_at: u64,
+    ) -> Result<()> {
+        self.day_lysis_limit_minor.write(&day, lysis_limit_minor)?;
+        self.day_remaining_lysis_limit_minor
+            .write(&day, lysis_limit_minor)?;
+        self.day_metadosis_completed_at.write(&day, completed_at)?;
+        for (&league, &fraction) in fractions {
+            let key = crate::schema::day_league_key(day, league);
+            self.day_fractions.write(&key, fraction)?;
+        }
+        Ok(())
+    }
+
+    /// Computes league fractions from `fi_groups[day]` and `lysis_limit_minor`,
+    /// stores them along with `completed_at`, and returns `(fractions, total_allocated_minor)`.
+    pub fn compute_and_record_metadosis_fractions(
+        &mut self,
+        day: WorldwideDay,
+        lysis_limit_minor: U256,
+        completed_at: u64,
+    ) -> Result<(std::collections::BTreeMap<u16, u64>, U256)> {
+        let fi_groups = self.get_fi_groups(day)?;
+        let mut tribute_count = 0u32;
+        let mut total_interest = U256::ZERO;
+        for &(count, nom) in fi_groups.values() {
+            tribute_count = tribute_count.saturating_add(count);
+            total_interest = total_interest.saturating_add(nom);
+        }
+        let u256_fractions = if tribute_count == 0 || total_interest.is_zero() {
+            std::collections::BTreeMap::new()
+        } else {
+            outbe_lysis::program_v1::compute_fraction_map_from_groups(
+                &fi_groups,
+                tribute_count,
+                total_interest,
+                lysis_limit_minor,
+            )
+            .map_err(|e| outbe_primitives::error::PrecompileError::revert(e.to_string()))?
+        };
+        let fractions: std::collections::BTreeMap<u16, u64> = u256_fractions
+            .iter()
+            .map(|(&league, &frac)| (league, u64::try_from(frac).unwrap_or(u64::MAX)))
+            .collect();
+        self.record_metadosis_fractions(day, lysis_limit_minor, &fractions, completed_at)?;
+        let nod_max: U256 = lysis_limit_minor >> 10usize;
+        let mut total_allocated = U256::ZERO;
+        for (ordinal, tribute_id) in self.get_tribute_ids_by_day(day)?.into_iter().enumerate() {
+            let league = self.tribute_leagues.read(&tribute_id)?.max(1);
+            let fraction = u256_fractions.get(&league).copied().unwrap_or(U256::ZERO);
+            let mut nominal = self.tribute_nominals.read(&tribute_id)?;
+            if nominal.is_zero() {
+                if let Some(rec) = self.get_record(tribute_id)? {
+                    if let Ok(view) = rec.calculation_view() {
+                        nominal = view.nominal_amount_minor;
+                    }
+                }
+            }
+            if !nominal.is_zero() && !fraction.is_zero() && !nod_max.is_zero() {
+                if let Ok(load) = outbe_lysis::program_v1::calculate_gratis_load(
+                    nominal, fraction, nod_max, ordinal,
+                ) {
+                    total_allocated = total_allocated.saturating_add(load);
+                }
+            }
+        }
+        Ok((fractions, total_allocated.min(lysis_limit_minor)))
+    }
+
+    /// Stage 5: Creates a `Nod` for `tribute_id` within 7 days after `Metadosis`
+    /// and atomically burns the `Tribute`.
+    pub fn create_nod(
+        &mut self,
+        caller: alloy_primitives::Address,
+        tribute_id: WwdEntityId,
+    ) -> Result<WwdEntityId> {
+        let storage = self.storage_handle();
+        storage.with_checkpoint(|| {
+            let record = crate::state_api::get_record(&storage, tribute_id)?
+                .ok_or(TributeError::TributeNotFound)?;
+            if record.owner != caller {
+                return Err(TributeError::CallerNotTributeOwner.into());
+            }
+            let day = record.worldwide_day;
+            let completed_at = self.day_metadosis_completed_at.read(&day)?;
+            if completed_at == 0 {
+                return Err(TributeError::MetadosisNotCompleted.into());
+            }
+            let now = u64::try_from(storage.timestamp()?).unwrap_or(0);
+            if now > completed_at.saturating_add(7 * outbe_primitives::time::SECONDS_PER_DAY) {
+                return Err(TributeError::NodCreationWindowExpired.into());
+            }
+            let league = self.tribute_leagues.read(&tribute_id)?.max(1);
+            let fraction = U256::from(
+                self.day_fractions
+                    .read(&crate::schema::day_league_key(day, league))?,
+            );
+            let lysis_limit = self.day_lysis_limit_minor.read(&day)?;
+            let remaining_limit = self.day_remaining_lysis_limit_minor.read(&day)?;
+            let mut nominal = self.tribute_nominals.read(&tribute_id)?;
+            if nominal.is_zero() {
+                nominal = record
+                    .calculation_view()
+                    .map_err(TributeError::private_amount_read_failed)?
+                    .nominal_amount_minor;
+            }
+            let nod_max: U256 = lysis_limit >> 10usize;
+            let raw_load =
+                outbe_lysis::program_v1::calculate_gratis_load(nominal, fraction, nod_max, 0)
+                    .map_err(|e| outbe_primitives::error::PrecompileError::revert(e.to_string()))?;
+            let gratis_load_minor = raw_load.min(remaining_limit);
+            self.day_remaining_lysis_limit_minor
+                .write(&day, remaining_limit.saturating_sub(gratis_load_minor))?;
+
+            let price_day = outbe_nod::openings::entry_price_day(now);
+            let gratis_day_price = outbe_oracle::api::get_utc_day_vwap_for_iso(
+                storage.clone(),
+                price_day,
+                record.reference_currency,
+            )
+            .ok()
+            .flatten()
+            .filter(|p| !p.is_zero())
+            .unwrap_or_else(|| {
+                if !record.tribute_price_minor.is_zero() {
+                    record.tribute_price_minor
+                } else {
+                    U256::from(1_000_000u64)
+                }
+            });
+
+            let encrypted_nod = outbe_primitives::nod_encryption::encode_v1_nod(
+                outbe_primitives::nod_encryption::NodTermsV2 {
+                    chain_id: storage.chain_id()?,
+                    nod_id: tribute_id,
+                    owner: record.owner,
+                    worldwide_day: day,
+                    league_id: league,
+                    issuance_currency: record.issuance_currency,
+                    reference_currency: record.reference_currency,
+                    entry_price_minor: gratis_day_price,
+                },
+                gratis_load_minor,
+            );
+            outbe_nodfactory::api::issue_tribute_nod(&storage, &encrypted_nod, gratis_load_minor)?;
+
+            // Atomically burn the Tribute upon Nod creation.
+            let supply = self
+                .total_supply
+                .read()?
+                .checked_sub(1)
+                .ok_or(TributeError::TotalSupplyUnderflowDuringBurn)?;
+            self.total_supply.write(supply)?;
+            self.delete_state_record(tribute_id)?;
+            self.tribute_leagues.write(&tribute_id, 0)?;
+            self.tribute_nominals.write(&tribute_id, U256::ZERO)?;
+            self.emit(ITribute::TributeBurned {
+                tributeId: tribute_id.to_u256(),
+                owner: record.owner,
+                worldwideDay: day.into(),
+            })?;
+            Ok(tribute_id)
+        })
+    }
 }

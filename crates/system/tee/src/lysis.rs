@@ -177,11 +177,25 @@ pub mod test_transport {
             _thread: std::marker::PhantomData,
         }
     }
+    pub fn is_installed() -> bool {
+        EXCHANGE.with(|exchange| exchange.borrow().is_some())
+    }
     pub(super) fn exchange(
         request: &LysisRequest,
     ) -> Option<Result<([u8; 32], EnclaveResponse), TransportError>> {
         EXCHANGE
             .with(|exchange| *exchange.borrow())
             .map(|exchange| exchange(request))
+    }
+}
+
+pub fn is_test_transport_installed() -> bool {
+    #[cfg(any(test, feature = "test-utils"))]
+    {
+        test_transport::is_installed()
+    }
+    #[cfg(not(any(test, feature = "test-utils")))]
+    {
+        false
     }
 }

@@ -172,6 +172,79 @@ impl TributeContract<'_> {
             .map(|record| crate::record::from_encrypted(record.into()))
             .collect())
     }
+
+    pub fn get_league(&self, tribute_id: WwdEntityId) -> Result<u16> {
+        let _ = self
+            .get_record(tribute_id)?
+            .ok_or(TributeError::TributeNotFound)?;
+        let league = self.tribute_leagues.read(&tribute_id)?;
+        Ok(league.max(1))
+    }
+
+    pub fn get_day_league_fraction(&self, day: WorldwideDay, league: u16) -> Result<u64> {
+        self.day_fractions
+            .read(&crate::schema::day_league_key(day, league))
+    }
+
+    pub fn get_fi_groups(
+        &self,
+        day: WorldwideDay,
+    ) -> Result<std::collections::BTreeMap<u16, (u32, alloy_primitives::U256)>> {
+        let mut groups = std::collections::BTreeMap::new();
+        let active_list = self.day_active_leagues.list(&day);
+        let len = active_list.len()?;
+        for idx in 0..len {
+            let Some(league) = active_list.get(idx)? else {
+                continue;
+            };
+            let key = crate::schema::day_league_key(day, league);
+            let count = self.fi_group_counts.read(&key)?;
+            if count > 0 {
+                let nominal = self.fi_group_nominals.read(&key)?;
+                groups.insert(league, (count, nominal));
+            }
+        }
+        Ok(groups)
+    }
+
+    pub(crate) fn adjust_fi_group(
+        &mut self,
+        day: WorldwideDay,
+        league: u16,
+        nominal: alloy_primitives::U256,
+        add: bool,
+    ) -> Result<()> {
+        let key = crate::schema::day_league_key(day, league);
+        let prev_count = self.fi_group_counts.read(&key)?;
+        let prev_nom = self.fi_group_nominals.read(&key)?;
+        if add {
+            if prev_count == 0 {
+                let active_list = self.day_active_leagues.list(&day);
+                let len = active_list.len()?;
+                let mut found = false;
+                for idx in 0..len {
+                    if active_list.get(idx)? == Some(league) {
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    active_list.push(league)?;
+                }
+            }
+            let next_count = prev_count
+                .checked_add(1)
+                .ok_or(TributeError::DayCountOverflowOrUnderflow)?;
+            self.fi_group_counts.write(&key, next_count)?;
+            self.fi_group_nominals
+                .write(&key, prev_nom.saturating_add(nominal))?;
+        } else if prev_count > 0 {
+            self.fi_group_counts.write(&key, prev_count - 1)?;
+            self.fi_group_nominals
+                .write(&key, prev_nom.saturating_sub(nominal))?;
+        }
+        Ok(())
+    }
 }
 
 fn calculation_view(record: &TributeRecord) -> Result<TributeData> {

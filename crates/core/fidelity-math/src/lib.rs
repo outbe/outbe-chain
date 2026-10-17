@@ -11,7 +11,6 @@
 //! Validated against the PDF reference `decay.py` (errors ~1e-15 vs float64).
 
 use alloy_primitives::U256;
-use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::units::SCALE_1E18;
 
 pub mod errors;
@@ -24,9 +23,9 @@ pub(crate) const SCALE: U256 = SCALE_1E18;
 /// `IFidelity.decimals()`.
 pub const DECIMALS: u8 = 18;
 
-/// Half-life in seconds (365 days). The crate computes the decay ratio `T/H` in
-/// seconds to keep sub-day precision.
-pub(crate) const H_SEC: u64 = 365 * SECONDS_PER_DAY;
+/// Half-life in UTC days (365 days). The crate computes the decay ratio `T/H` in
+/// whole UTC days.
+pub const H_DAYS: u64 = 365;
 
 /// Saturation limit `L = H / ln2` in fixed-point decayed-days
 /// (~= 526.583690 days). `526583689924471619584 = round(365/ln2 * 10^18)`.
@@ -48,8 +47,8 @@ pub struct RcfiAccumulator {
 }
 
 impl RcfiAccumulator {
-    pub fn add_active(&mut self, size: U256, acquired_at: u64, timestamp: u64) -> Option<()> {
-        let contribution = size.checked_mul(t_dec(timestamp.saturating_sub(acquired_at)))?;
+    pub fn add_active(&mut self, size: U256, acquired_day: u64, eval_day: u64) -> Option<()> {
+        let contribution = size.checked_mul(t_dec(eval_day.saturating_sub(acquired_day)))?;
         self.numerator = self.numerator.checked_add(contribution)?;
         self.denominator = self.denominator.checked_add(contribution)?;
         Some(())
@@ -58,21 +57,21 @@ impl RcfiAccumulator {
     pub fn add_sold(
         &mut self,
         size: U256,
-        acquired_at: u64,
-        sold_at: u64,
-        timestamp: u64,
+        acquired_day: u64,
+        sold_day: u64,
+        eval_day: u64,
     ) -> Option<()> {
-        let held = t_dec(timestamp.saturating_sub(acquired_at))
-            .saturating_sub(t_dec(timestamp.saturating_sub(sold_at)));
+        let held = t_dec(eval_day.saturating_sub(acquired_day))
+            .saturating_sub(t_dec(eval_day.saturating_sub(sold_day)));
         self.denominator = self.denominator.checked_add(size.checked_mul(held)?)?;
         Some(())
     }
 
-    pub fn finish(self, qualified_start: u64, timestamp: u64) -> Option<(U256, U256, U256)> {
-        if qualified_start == 0 {
+    pub fn finish(self, qualified_start_day: u64, eval_day: u64) -> Option<(U256, U256, U256)> {
+        if qualified_start_day == 0 {
             return Some((U256::ZERO, U256::ZERO, U256::ZERO));
         }
-        let d_dec_age = t_dec(timestamp.saturating_sub(qualified_start));
+        let d_dec_age = t_dec(eval_day.saturating_sub(qualified_start_day));
         let efficiency = if self.denominator.is_zero() {
             U256::ZERO
         } else {
@@ -185,14 +184,14 @@ pub(crate) fn pow_one_half_fp(x_fp: U256) -> U256 {
     result >> k.to::<u64>() as usize
 }
 
-/// Decayed time `T_dec(age) = L * (1 - (1/2)^(age/H))` in fixed-point
-/// decayed-days. `age_sec` is the elapsed time since the event in seconds.
-/// Callers must clamp clock skew (`now < event_time`) to `0` before calling.
-pub fn t_dec(age_sec: u64) -> U256 {
-    if age_sec == 0 {
+/// Decayed time `T_dec(age_days) = L * (1 - (1/2)^(age_days/H_DAYS))` in fixed-point
+/// decayed-days. `age_days` is the elapsed time since the event in whole UTC days.
+/// Callers must clamp clock skew (`now < event_day`) to `0` before calling.
+pub fn t_dec(age_days: u64) -> U256 {
+    if age_days == 0 {
         return U256::ZERO;
     }
-    let x_fp = U256::from(age_sec) * SCALE / U256::from(H_SEC);
+    let x_fp = U256::from(age_days) * SCALE / U256::from(H_DAYS);
     let half = pow_one_half_fp(x_fp);
     // half <= SCALE always, so the subtraction never underflows.
     L_FP * (SCALE - half) / SCALE
@@ -201,8 +200,6 @@ pub fn t_dec(age_sec: u64) -> U256 {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use outbe_primitives::time::SECONDS_PER_DAY as DAY;
 
     fn days(fp: U256) -> f64 {
         // fixed-point decayed-days -> f64 for tolerance checks only.
@@ -227,15 +224,15 @@ mod tests {
     fn t_dec_spec_checkpoints() {
         // From the PDF / decay.py reference benchmark.
         assert_eq!(t_dec(0), U256::ZERO);
-        assert!((days(t_dec(365 * DAY)) - 263.2918).abs() < 0.001); // 0.5 L
-        assert!((days(t_dec(730 * DAY)) - 394.9378).abs() < 0.001); // 0.75 L
-        assert!((days(t_dec(1460 * DAY)) - 493.6722).abs() < 0.001); // 4 years, 0.9375 L
+        assert!((days(t_dec(365)) - 263.2918).abs() < 0.001); // 0.5 L
+        assert!((days(t_dec(730)) - 394.9378).abs() < 0.001); // 0.75 L
+        assert!((days(t_dec(1460)) - 493.6722).abs() < 0.001); // 4 years, 0.9375 L
     }
 
     #[test]
     fn t_dec_saturates_at_l() {
         // Ancient ages saturate at L (526.58 days) and never exceed it.
-        let ancient = t_dec(100 * 365 * DAY);
+        let ancient = t_dec(100 * 365);
         assert!(ancient <= L_FP);
         assert!((days(ancient) - 526.5837).abs() < 0.001);
     }
@@ -244,7 +241,7 @@ mod tests {
     fn t_dec_is_monotonic_non_decreasing() {
         let mut prev = U256::ZERO;
         for d in [0u64, 1, 10, 100, 365, 730, 1460, 3650, 36500] {
-            let cur = t_dec(d * DAY);
+            let cur = t_dec(d);
             assert!(cur >= prev, "t_dec decreased at {d} days");
             prev = cur;
         }

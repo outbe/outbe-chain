@@ -52,6 +52,14 @@ pub fn get_retained_record(
 }
 
 pub fn issue_encrypted(storage: &StorageHandle<'_>, body: &EncryptedTributeV2) -> Result<()> {
+    issue_encrypted_with_league(storage, body, None)
+}
+
+pub fn issue_encrypted_with_league(
+    storage: &StorageHandle<'_>,
+    body: &EncryptedTributeV2,
+    explicit_league: Option<u16>,
+) -> Result<()> {
     if !body.has_valid_encoding() {
         return Err(TributeError::InvalidEncryptedEncoding.into());
     }
@@ -64,6 +72,23 @@ pub fn issue_encrypted(storage: &StorageHandle<'_>, body: &EncryptedTributeV2) -
     if record.owner.is_zero() || record.tribute_id != expected {
         return Err(TributeError::InvalidOwner.into());
     }
+    let league = match explicit_league {
+        Some(l) if (1..=4096).contains(&l) => l,
+        Some(l) => return Err(TributeError::InvalidLeague(l).into()),
+        None => {
+            let timestamp = u64::try_from(storage.timestamp()?).unwrap_or(0);
+            outbe_fidelity::api::league_for_wwd(
+                storage.clone(),
+                record.owner,
+                record.worldwide_day,
+                timestamp,
+            )?
+        }
+    };
+    let nominal_amount_minor = record
+        .calculation_view()
+        .map(|d| d.nominal_amount_minor)
+        .unwrap_or_default();
     let mut contract = TributeContract::new(storage.clone());
     storage.with_checkpoint(|| {
         contract.ensure_day_accepts_tributes(record.worldwide_day)?;
@@ -73,6 +98,11 @@ pub fn issue_encrypted(storage: &StorageHandle<'_>, body: &EncryptedTributeV2) -
             return Err(TributeError::TributeAlreadyExists.into());
         }
         contract.bump_day_bucket_record(&record, true)?;
+        contract.tribute_leagues.write(&record.tribute_id, league)?;
+        contract
+            .tribute_nominals
+            .write(&record.tribute_id, nominal_amount_minor)?;
+        contract.adjust_fi_group(record.worldwide_day, league, nominal_amount_minor, true)?;
         let supply = contract
             .total_supply
             .read()?
@@ -125,6 +155,15 @@ pub fn burn_loaded(storage: &StorageHandle<'_>, loaded: LoadedTribute) -> Result
             ));
         }
         contract.bump_day_bucket_record(&record, false)?;
+        let league = contract.tribute_leagues.read(&record.tribute_id)?;
+        let nominal = contract.tribute_nominals.read(&record.tribute_id)?;
+        if league != 0 {
+            contract.adjust_fi_group(record.worldwide_day, league, nominal, false)?;
+            contract.tribute_leagues.write(&record.tribute_id, 0)?;
+            contract
+                .tribute_nominals
+                .write(&record.tribute_id, alloy_primitives::U256::ZERO)?;
+        }
         let supply = contract
             .total_supply
             .read()?

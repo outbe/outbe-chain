@@ -806,3 +806,109 @@ fn old_digest_is_rejected_without_issuing_a_tribute() {
         assert_eq!(tc.total_supply().unwrap(), 1);
     });
 }
+
+#[test]
+fn v1_mechanics_fi_groups_fractions_and_create_nod_within_7_days_burns_tribute() {
+    use alloy_sol_types::SolCall;
+
+    let mut provider = HashMapStorageProvider::new(1);
+    let base_ts = 1_750_000_000u64;
+    provider.set_timestamp(U256::from(base_ts));
+
+    let day: outbe_primitives::time::WorldwideDay = 20241220u32.into();
+    let owner1 = address!("0x1111111111111111111111111111111111111111");
+    let owner2 = address!("0x2222222222222222222222222222222222222222");
+    let stranger = address!("0x9999999999999999999999999999999999999999");
+
+    let mut t1 = sample_tribute();
+    set_owner(&mut t1, owner1);
+    t1.nominal_amount_minor = U256::from(400_000_000u64); // 400 USD
+
+    let mut t2 = sample_tribute();
+    set_owner(&mut t2, owner2);
+    t2.nominal_amount_minor = U256::from(600_000_000u64); // 600 USD
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let _enclave = crate::enclave_client::test_enclave::scope();
+        let mut tc = TributeContract::new(storage.clone());
+        tc.unseal_day(day).unwrap();
+
+        // Stage 4: Issue Tributes in leagues 100 and 4000
+        tc.issue_with_league(&t1, Some(100)).unwrap();
+        tc.issue_with_league(&t2, Some(4000)).unwrap();
+        assert_eq!(tc.get_league(t1.tribute_id).unwrap(), 100);
+        assert_eq!(tc.get_league(t2.tribute_id).unwrap(), 4000);
+
+        // Stage 2: Verify fi_groups[wwd]
+        let groups = tc.get_fi_groups(day).unwrap();
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups.get(&100), Some(&(1, t1.nominal_amount_minor)));
+        assert_eq!(groups.get(&4000), Some(&(1, t2.nominal_amount_minor)));
+
+        // Cannot createNod before Metadosis has completed
+        assert!(tc.create_nod(owner1, t1.tribute_id).is_err());
+
+        // Stage 3: Seal day and compute Metadosis fractions for WWD
+        tc.seal_day(day).unwrap();
+        let lysis_limit = U256::from(500_000_000_000u64); // large enough so nod_max = lysis_limit / 1024 >= loads
+        let (fractions, allocated) = tc
+            .compute_and_record_metadosis_fractions(day, lysis_limit, base_ts)
+            .unwrap();
+        assert!(fractions.get(&4000).copied().unwrap_or(0) > 0);
+        assert!(fractions.get(&100).copied().unwrap_or(0) > 0);
+        assert!(allocated > U256::ZERO);
+
+        // Stage 5: Stranger cannot createNod for owner1's Tribute
+        assert!(tc.create_nod(stranger, t1.tribute_id).is_err());
+
+        // Owner1 creates Nod via precompile ABI dispatch within 7 days (day + 3 days)
+        storage
+            .set_block_timestamp(U256::from(
+                base_ts + 3 * outbe_primitives::time::SECONDS_PER_DAY,
+            ))
+            .unwrap();
+        let call_bytes = crate::precompile::ITribute::createNodCall {
+            tributeId: t1.tribute_id.to_u256(),
+        }
+        .abi_encode();
+        let ret =
+            crate::precompile::dispatch(storage.clone(), &call_bytes, owner1, U256::ZERO).unwrap();
+        let nod_id_u256 =
+            crate::precompile::ITribute::createNodCall::abi_decode_returns(&ret).unwrap();
+        assert_eq!(WwdEntityId::from(nod_id_u256), t1.tribute_id);
+
+        // Verify Nod exists in outbe-nod and Tribute is burned!
+        let nod_item = outbe_nod::api::get_item(&storage, t1.tribute_id)
+            .unwrap()
+            .expect("Nod must be created");
+        assert_eq!(nod_item.owner, owner1);
+        assert_eq!(nod_item.league_id, 100);
+        assert!(tc.get_record(t1.tribute_id).unwrap().is_none());
+        assert_eq!(tc.total_supply().unwrap(), 1);
+
+        // Calling createNod a second time for the burned Tribute must fail
+        assert!(
+            crate::precompile::dispatch(storage.clone(), &call_bytes, owner1, U256::ZERO).is_err()
+        );
+
+        // Advance past 7 days (7 days + 1 second) -> owner2's createNod expires!
+        storage
+            .set_block_timestamp(U256::from(
+                base_ts + 7 * outbe_primitives::time::SECONDS_PER_DAY + 1,
+            ))
+            .unwrap();
+        assert!(tc.create_nod(owner2, t2.tribute_id).is_err());
+        // Tribute 2 remains unburned when window expired
+        assert!(tc.get_record(t2.tribute_id).unwrap().is_some());
+    });
+
+    // Verify TributeBurned event was emitted when t1's Nod was created
+    let events = provider.get_events(TRIBUTE_ADDRESS);
+    let burned_events: Vec<_> = events
+        .iter()
+        .filter_map(|log| crate::precompile::ITribute::TributeBurned::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(burned_events.len(), 1);
+    assert_eq!(burned_events[0].tributeId, t1.tribute_id.to_u256());
+    assert_eq!(burned_events[0].owner, owner1);
+}

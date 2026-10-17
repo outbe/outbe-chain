@@ -43,15 +43,16 @@ fn cohort_in_encrypts_and_sets_anchor() {
         api::cohort_in(storage.clone(), ALICE, U256::from(1_000u64), T0).unwrap();
 
         // Blob is now non-empty ciphertext, and the global anchor is set to the
-        // first acquisition time.
+        // first acquisition UTC day.
         let blob = c.cohorts_ct_of(ALICE).unwrap();
         assert!(!blob.is_empty());
-        assert_eq!(c.first_qualified_start().unwrap(), T0);
+        let expected_day = outbe_primitives::time::utc_day_from_timestamp(T0);
+        assert_eq!(c.first_qualified_start().unwrap(), expected_day);
 
         // A later acquisition by a different owner does NOT move the set-once
         // anchor.
         api::cohort_in(storage.clone(), BOB, U256::from(5u64), T0 + 100 * DAY).unwrap();
-        assert_eq!(c.first_qualified_start().unwrap(), T0);
+        assert_eq!(c.first_qualified_start().unwrap(), expected_day);
     });
 }
 
@@ -438,4 +439,49 @@ mod enclave_responses {
         assert!(fatal(validate(HASH, snapshot(HASH, false)))
             .starts_with("unexpected enclave response: "));
     }
+}
+
+#[test]
+fn wwd_max_fidelity_locks_per_wwd_and_rolls_over_at_metadosis() {
+    use outbe_primitives::time::WorldwideDay;
+
+    with_env(|storage| {
+        let fc = FidelityContract::new(storage.clone());
+        let wwd1 = WorldwideDay::new(20261015);
+        let wwd2 = WorldwideDay::new(20261016);
+
+        // Initially no account qualified -> max_fidelity_for_wwd is 0, league is 1.
+        assert_eq!(fc.max_fidelity_for_wwd(wwd1).unwrap(), U256::ZERO);
+        assert_eq!(
+            fc.league_from_rcfi_for_wwd(wwd1, U256::from(500_000_000_000_000_000u64))
+                .unwrap(),
+            MIN_LEAGUE
+        );
+        // Running max for wwd1 accumulated 0.5e18, while locked max for wwd1 remains 0.
+        assert_eq!(fc.max_fidelity_for_wwd(wwd1).unwrap(), U256::ZERO);
+        assert_eq!(
+            fc.wwd_running_max_fidelity_of(wwd1).unwrap(),
+            U256::from(500_000_000_000_000_000u64)
+        );
+
+        // Finalize wwd1 at Metadosis -> rolls 0.5e18 into max_fidelity_prev.
+        fc.finalize_wwd_max_fidelity(wwd1, 10 * DAY).unwrap();
+        assert_eq!(
+            fc.max_fidelity_prev().unwrap(),
+            U256::from(500_000_000_000_000_000u64)
+        );
+
+        // On wwd2, max_fidelity is now 0.5e18; a user with 0.5e18 gets MAX_LEAGUE (4096),
+        // and a user with 0.25e18 gets ~2048.
+        assert_eq!(
+            fc.league_from_rcfi_for_wwd(wwd2, U256::from(500_000_000_000_000_000u64))
+                .unwrap(),
+            MAX_LEAGUE
+        );
+        assert_eq!(
+            fc.league_from_rcfi_for_wwd(wwd2, U256::from(250_000_000_000_000_000u64))
+                .unwrap(),
+            2049
+        );
+    });
 }

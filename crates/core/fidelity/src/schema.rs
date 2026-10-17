@@ -1,7 +1,8 @@
-use alloy_primitives::Address;
+use alloy_primitives::{Address, U256};
 use outbe_macros::contract;
 use outbe_primitives::addresses::FIDELITY_ADDRESS;
 use outbe_primitives::storage::types::{Mapping, Slot, StorageBytes};
+use outbe_primitives::time::WorldwideDay;
 
 /// EVM storage layout for the Fidelity (RCFI) module.
 ///
@@ -25,6 +26,14 @@ pub struct FidelityContract {
     // slot 0: encrypted per-owner cohort ledger blob (`version(8) || FID2 || binding(32) || AEAD-ct`);
     // empty when the owner has no cohort history.
     pub cohorts_ct: Mapping<Address, StorageBytes>,
-    // slot 1: earliest qualified_start across all accounts. 0 = none qualified.
+    // slot 1: earliest qualified_start across all accounts (UTC day). 0 = none qualified.
     pub first_qualified_start: Slot<u64>,
+    // slot 2: finalized max_fidelity from the previous WWD (WWD - 1), 10^18-scaled.
+    pub max_fidelity_prev: Slot<U256>,
+    // slot 3: fixed max_fidelity snapshot used for each WWD.
+    pub wwd_max_fidelity: Mapping<WorldwideDay, U256>,
+    // slot 4: running maximum of observed user RCFI during each WWD.
+    pub wwd_running_max_fidelity: Mapping<WorldwideDay, U256>,
+    // slot 5: whether wwd_max_fidelity has been locked for a given WWD.
+    pub wwd_max_fidelity_locked: Mapping<WorldwideDay, bool>,
 }

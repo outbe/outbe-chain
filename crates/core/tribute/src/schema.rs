@@ -93,6 +93,31 @@ pub struct TributeContract {
     pub day_id_position: outbe_primitives::storage::dsl::Map<WwdEntityId, u32>,
     #[attribute(order = 14)]
     pub retired_days: outbe_primitives::storage::dsl::Map<WorldwideDay, bool>,
+    #[attribute(order = 15)]
+    pub tribute_leagues: outbe_primitives::storage::dsl::Map<WwdEntityId, u16>,
+    #[attribute(order = 16)]
+    pub tribute_nominals: outbe_primitives::storage::dsl::Map<WwdEntityId, U256>,
+    #[attribute(order = 17)]
+    pub day_active_leagues: outbe_primitives::storage::dsl::Map<
+        WorldwideDay,
+        outbe_primitives::storage::dsl::List<u16>,
+    >,
+    #[attribute(order = 18)]
+    pub fi_group_counts: outbe_primitives::storage::dsl::Map<u64, u32>,
+    #[attribute(order = 19)]
+    pub fi_group_nominals: outbe_primitives::storage::dsl::Map<u64, U256>,
+    #[attribute(order = 20)]
+    pub day_fractions: outbe_primitives::storage::dsl::Map<u64, u64>,
+    #[attribute(order = 21)]
+    pub day_lysis_limit_minor: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
+    #[attribute(order = 22)]
+    pub day_remaining_lysis_limit_minor: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
+    #[attribute(order = 23)]
+    pub day_metadosis_completed_at: outbe_primitives::storage::dsl::Map<WorldwideDay, u64>,
+}
+
+pub const fn day_league_key(day: WorldwideDay, league: u16) -> u64 {
+    ((day.value() as u64) << 16) | (league as u64)
 }
 
 impl<'storage> TributeContract<'storage> {

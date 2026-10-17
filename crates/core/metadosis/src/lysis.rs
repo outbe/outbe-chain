@@ -43,6 +43,104 @@ pub(crate) fn execute(
     if !totals.is_sealed || !totals.initialized || totals.tribute_count == 0 {
         return Err(mismatch());
     }
+
+    let use_legacy_enclave = outbe_tee::lysis::is_test_transport_installed();
+
+    if !use_legacy_enclave {
+        let mut owners = BTreeSet::new();
+        let records = tribute.state_records_by_day(day)?;
+        if records.len() != totals.tribute_count as usize {
+            return Err(mismatch());
+        }
+        for record in records {
+            let encrypted: EncryptedTributeV2 = record.into();
+            let source = &encrypted.context;
+            if source.chain_id != ctx.block.chain_id
+                || !encrypted.has_valid_encoding()
+                || !owners.insert(source.owner)
+                || outbe_nod::api::get_item(&storage, source.tribute_id)?.is_some()
+            {
+                return Err(mismatch());
+            }
+        }
+        let (_, onchain_allocated_minor) = tribute.compute_and_record_metadosis_fractions(
+            day,
+            calculation.lysis_limit_minor,
+            ctx.block.timestamp,
+        )?;
+        outbe_fidelity::api::finalize_wwd_max_fidelity(storage.clone(), day, ctx.block.timestamp)?;
+
+        let total_nominal_minor = totals.tribute_nominal_total_minor;
+        let used = onchain_allocated_minor.min(calculation.lysis_limit_minor);
+        let unused_lysis_limit_minor = calculation.lysis_limit_minor.saturating_sub(used);
+        let carry_before = PromisLimitContract::new(storage.clone()).get_total_unallocated()?;
+        let green = match current.day_type {
+            WwdDayType::Green => true,
+            WwdDayType::Red => false,
+            WwdDayType::Unknown => return Err(mismatch()),
+        };
+        let split = apply_lysis_limit(
+            storage.clone(),
+            LysisLimitInput {
+                base_limit: current.metadosis_limit_minor,
+                lysis_limit_minor: calculation.lysis_limit_minor,
+                nominal_total: total_nominal_minor,
+                green,
+            },
+        )?;
+        if used
+            .checked_add(split.desis_limit_minor)
+            .is_none_or(|allocation| allocation > total_nominal_minor)
+        {
+            return Err(mismatch());
+        }
+        let credit = PromisLimitContract::new(storage.clone())
+            .checked_add_carry_over(unused_lysis_limit_minor)?;
+        if credit.credited != unused_lysis_limit_minor {
+            return Err(mismatch());
+        }
+        apply_auction_brief(storage.clone(), day, &split, green, ctx.block.timestamp)?;
+        let carry_after = PromisLimitContract::new(storage).get_total_unallocated()?;
+        let transition = reduce_outer_wwd(
+            Some(current),
+            OuterWwdEvent::ProcessReady(ReadyDisposition::LysisCompleted),
+        )?;
+        let inputs_hash = alloy_primitives::keccak256(day.value().to_be_bytes());
+        let result_hash = alloy_primitives::keccak256(used.to_be_bytes::<32>());
+        metadosis.write_terminal_receipt(WwdTerminalReceipt::LysisCompleted {
+            common: TerminalReceiptCommon {
+                worldwide_day: day,
+                value_routed: current.metadosis_limit_minor,
+                carry_over_before: carry_before,
+                carry_over_after: carry_after,
+                retirement: outbe_tribute::runtime::RetirementOutcome::NotPresent,
+                block_number: ctx.block.block_number,
+            },
+            detail: LysisCompletionDetail {
+                tribute_count: totals.tribute_count,
+                lysis_limit: calculation.lysis_limit_minor,
+                used,
+                unused: unused_lysis_limit_minor,
+                desis_limit: split.desis_limit_minor,
+                inputs_hash,
+                result_hash,
+            },
+        })?;
+        commit_outer_transition(metadosis, day, &transition, ctx.block.block_number)?;
+        return metadosis.emit(IMetadosis::MetadosisExecuted {
+            worldwideDay: day.into(),
+            tributeNominalTotalMinor: total_nominal_minor,
+            gratisDemandMinor: calculation.gratis_demand,
+            dayGratisLimitMinor: calculation.day_gratis_limit_minor,
+            lysisLimitMinor: calculation.lysis_limit_minor,
+            unusedLysisLimitMinor: unused_lysis_limit_minor,
+            lysisAllocationMinor: used,
+            promisLimitReturnedMinor: unused_lysis_limit_minor,
+            status: "COMPLETED".into(),
+            blockNumber: ctx.block.block_number,
+        });
+    }
+
     let mut tributes = Vec::with_capacity(totals.tribute_count as usize);
     let mut owners = BTreeSet::new();
     let mut currencies = BTreeMap::new();
@@ -121,6 +219,12 @@ pub(crate) fn execute(
     if result.total_nominal_minor != totals.tribute_nominal_total_minor {
         return Err(mismatch());
     }
+    tribute.compute_and_record_metadosis_fractions(
+        day,
+        calculation.lysis_limit_minor,
+        ctx.block.timestamp,
+    )?;
+    outbe_fidelity::api::finalize_wwd_max_fidelity(storage.clone(), day, ctx.block.timestamp)?;
     let used = calculation
         .lysis_limit_minor
         .checked_sub(result.unused_lysis_limit_minor)
