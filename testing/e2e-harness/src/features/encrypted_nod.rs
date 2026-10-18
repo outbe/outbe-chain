@@ -1,7 +1,7 @@
 //! Dedicated production-chain acceptance for private NOD creation and exercise.
 use super::entity_lifecycle::chain::settlement_read;
 use crate::internal::{addresses, eth, nod_keys};
-use crate::world::World;
+use crate::world::{rpc::FinalizedCheckpoint, World};
 use alloy_primitives::{Address, U256};
 use base64::Engine as _;
 use cucumber::{then, when};
@@ -58,9 +58,13 @@ fn verify_encrypted_nod(world: &mut World) {
         .rpc
         .wait_finalized_checkpoint(&world.validators.committee_ports(), completed_at, 120)
         .expect("encrypted creation finalized on every validator");
+    let checkpoint = world
+        .rpc
+        .checkpoint_at(port, completed_at)
+        .expect("exact encrypted Nod issuance checkpoint");
     let mut expected_body = None;
     for (index, peer) in world.validators.committee_ports().into_iter().enumerate() {
-        let body = assert_nod_state(world, (index, peer), &encrypted, completed_at);
+        let body = assert_nod_state(world, (index, peer), &encrypted, checkpoint);
         assert_eq!(*expected_body.get_or_insert(body.clone()), body);
     }
     super::oracle_expectations::assert_native_entry_price(world, &encrypted.terms, completed_at);
@@ -71,15 +75,11 @@ fn assert_nod_state(
     world: &World,
     validator: (usize, u16),
     encrypted: &outbe_primitives::nod_encryption::EncryptedNodV2,
-    completed_at: u64,
+    checkpoint: FinalizedCheckpoint,
 ) -> Vec<u8> {
     let (index, peer) = validator;
     let url = world.rpc.url(peer);
     let id = encrypted.terms.nod_id;
-    let checkpoint = world
-        .rpc
-        .wait_finalized_checkpoint(&world.validators.committee_ports(), completed_at, 120)
-        .expect("encrypted Nod finalized checkpoint");
     let (item, _) = world
         .rpc
         .nod_state_at(peer, checkpoint, id)

@@ -1,4 +1,4 @@
-//! Independent WWD and Nod entry prices from historical Oracle observations.
+//! Check Oracle history and compare entry prices with genesis.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -91,6 +91,7 @@ fn scale6(value: &str) -> U256 {
         .expect("controlled scale6 input fits U256")
 }
 
+#[cfg(test)]
 fn weighted_price(quotes: &[Quote], start: u64, end: u64) -> U256 {
     assert!(start < end, "nonempty FORMING interval");
     let mut numerator = U256::ZERO;
@@ -123,6 +124,7 @@ fn weighted_price(quotes: &[Quote], start: u64, end: u64) -> U256 {
     numerator / denominator
 }
 
+#[cfg(test)]
 fn previous_day_entry_price(quotes: &[Quote], requested_at: u64) -> U256 {
     let end = requested_at / 86_400 * 86_400;
     let price = weighted_price(quotes, end.saturating_sub(86_400), end);
@@ -133,18 +135,18 @@ fn previous_day_entry_price(quotes: &[Quote], requested_at: u64) -> U256 {
     price
 }
 
-fn oracle_usd_price_at(world: &World, port: u16, day: u32, height: u64) -> U256 {
+fn oracle_price_at(world: &World, port: u16, day: u32, iso: u16, height: u64) -> U256 {
     eth::read_call_at_result(
         &world.rpc.url(port),
         ORACLE_ADDRESS,
         &eth::IOracle::getUtcDayVwapCall {
             base: Address::ZERO,
-            quote: outbe_primitives::asset_type::currency_address(840),
+            quote: outbe_primitives::asset_type::currency_address(iso),
             utcDay: day,
         },
         height,
     )
-    .expect("historical USD day VWAP")
+    .expect("historical reference-currency day VWAP")
 }
 
 pub(super) fn assert_native_entry_price(
@@ -153,24 +155,43 @@ pub(super) fn assert_native_entry_price(
     height: u64,
 ) {
     let ports = world.validators.committee_ports();
-    let checkpoint = world
+    world
         .rpc
         .wait_finalized_checkpoint(&ports, height, 120)
-        .expect("native entry-price checkpoint");
+        .expect("native entry-price finality");
+    let checkpoint = world
+        .rpc
+        .checkpoint_at(ports[0], height)
+        .expect("exact native entry-price checkpoint");
     let timestamp = world
         .rpc
         .block_timestamp(ports[0], height)
         .expect("native evaluation time");
     let day = entry_price_day(timestamp);
     let quotes = history(world, ports[0], height);
-    let expected = previous_day_entry_price(&quotes, timestamp);
+    let iso = terms.reference_currency;
+    let expected = oracle_price_at(world, ports[0], day, iso, 0);
+    assert!(
+        !expected.is_zero(),
+        "genesis contains a positive entry price"
+    );
+    let declared = match iso {
+        840 => U256::from(1_000_000),
+        978 => U256::from(250_000),
+        _ => panic!("unsupported native fixture reference currency: {iso}"),
+    };
+    assert_eq!(
+        expected, declared,
+        "genesis entry price matches the fixture"
+    );
     assert_eq!(
         terms.entry_price_minor, expected,
-        "independent closed-day entry price"
+        "entry price matches the closed day in genesis"
     );
     for port in ports {
         assert_eq!(history(world, port, height), quotes);
-        assert_eq!(oracle_usd_price_at(world, port, day, height), expected);
+        assert_eq!(oracle_price_at(world, port, day, iso, 0), expected);
+        assert_eq!(oracle_price_at(world, port, day, iso, height), expected);
         assert_eq!(
             world
                 .rpc

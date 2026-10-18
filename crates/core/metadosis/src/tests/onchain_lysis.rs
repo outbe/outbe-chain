@@ -195,6 +195,41 @@ fn run(provider: &mut HashMapStorageProvider) -> outbe_primitives::error::Result
 }
 
 #[test]
+fn native_fraction_completion_keeps_tributes_for_owner_create_nod() {
+    let mut provider = fixture();
+    assert!(!outbe_tee::lysis::is_test_transport_installed());
+
+    run(&mut provider).unwrap();
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let metadosis = MetadosisContract::new(storage.clone());
+        assert_eq!(
+            metadosis.get_wwd_status(DAY).unwrap(),
+            crate::WwdStatus::Completed
+        );
+        let terminal = metadosis.read_terminal_receipt(DAY).unwrap().unwrap();
+        assert_eq!(
+            terminal.common().retirement,
+            outbe_tribute::runtime::RetirementOutcome::NotPresent
+        );
+        let completion = metadosis.read_lysis_completion(DAY).unwrap().unwrap();
+        assert_eq!(completion.tribute_count, 3);
+        assert_eq!(completion.used + completion.unused, U256::from(LIMIT));
+
+        let tribute = TributeContract::new(storage.clone());
+        assert_eq!(tribute.total_supply().unwrap(), 3);
+        assert_eq!(tribute.state_records_by_day(DAY).unwrap().len(), 3);
+        assert!(!tribute.retired_days.read(&DAY).unwrap());
+        assert_eq!(
+            outbe_nod::schema::NodContract::new(storage)
+                .total_supply()
+                .unwrap(),
+            0
+        );
+    });
+}
+
+#[test]
 fn production_command_issues_encrypted_nods_and_completes_without_worker() {
     let _transport = outbe_tee::lysis::test_transport::scope(exchange);
     let mut provider = fixture();

@@ -490,7 +490,10 @@ impl Localnet {
             .or_insert_with(|| json!({}))
             .as_object_mut()
             .ok_or_else(|| eyre!("genesis seed oracle config is not an object"))?;
-        config.insert("vote_period".into(), json!(E2E_ORACLE_VOTE_PERIOD_BLOCKS));
+        config.insert(
+            "vote_period".into(),
+            json!(profile.oracle_vote_period_blocks.get()),
+        );
         if let Some(pairs) = &profile.oracle_pairs {
             oracle.insert(
                 "pairs".into(),
@@ -1130,7 +1133,7 @@ mod tests {
     }
 
     #[test]
-    fn scenario_seed_always_uses_the_e2e_oracle_window() {
+    fn scenario_seed_uses_profile_oracle_period_without_mutating_input() {
         let directory = tempfile::tempdir().unwrap();
         let env = crate::env::Environment {
             data_dir: directory.path().to_path_buf(),
@@ -1149,24 +1152,46 @@ mod tests {
         ] {
             let original = serde_json::to_vec(&seed).unwrap();
             fs::write(&localnet.cfg.seed, &original).unwrap();
-            for profile in [
-                BootstrapProfile::default(),
-                BootstrapProfile::default()
-                    .with_oracle_pairs(vec![("COEN".into(), "840".into(), "1000000".into())])
+            for (profile, expected_period) in [
+                (BootstrapProfile::default(), E2E_ORACLE_VOTE_PERIOD_BLOCKS),
+                (
+                    BootstrapProfile::default()
+                        .with_oracle_pairs(vec![("COEN".into(), "840".into(), "1000000".into())])
+                        .unwrap(),
+                    E2E_ORACLE_VOTE_PERIOD_BLOCKS,
+                ),
+                (
+                    BootstrapProfile::from_tuning(&[(
+                        "TESTNET_ORACLE_VOTE_PERIOD_BLOCKS",
+                        "8".into(),
+                    )])
                     .unwrap(),
+                    8,
+                ),
             ] {
                 let path = localnet.prepare_scenario_seed(&profile).unwrap();
                 let actual: serde_json::Value =
                     serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
-                assert_eq!(
-                    actual["oracle"]["config"]["vote_period"],
-                    E2E_ORACLE_VOTE_PERIOD_BLOCKS
-                );
+                assert_eq!(actual["oracle"]["config"]["vote_period"], expected_period);
                 if let Some(penalties) = seed.pointer("/oracle/config/penalties_enabled") {
                     assert_eq!(&actual["oracle"]["config"]["penalties_enabled"], penalties);
                 }
                 assert_eq!(fs::read(&localnet.cfg.seed).unwrap(), original);
             }
+        }
+    }
+
+    #[test]
+    fn oracle_period_profile_rejects_zero_and_malformed_values() {
+        assert!(BootstrapProfile::default()
+            .with_oracle_vote_period(0)
+            .is_err());
+        for value in ["0", "-1", "not-a-number"] {
+            assert!(BootstrapProfile::from_tuning(&[(
+                "TESTNET_ORACLE_VOTE_PERIOD_BLOCKS",
+                value.into(),
+            )])
+            .is_err());
         }
     }
 

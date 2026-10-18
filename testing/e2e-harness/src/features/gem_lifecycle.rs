@@ -6,12 +6,12 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use alloy_primitives::{Address, U256};
-use cucumber::{then, when};
+use cucumber::{given, then, when};
 use outbe_gem::{GemBucketState, GemItemState};
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 use crate::features::entity_lifecycle::chain::{
-    assert_single_event, finalized_checkpoint, head_time, poll_until,
+    assert_single_event, finalized_checkpoint, head_time, poll_until, verify_checkpoint,
 };
 use crate::features::entity_lifecycle::entity::{Item, Lifecycle, Phase, Target, Terms};
 use crate::features::entity_lifecycle::holders::{self, FORFEITED, HOLDERS, UNPAID_AT_CALL};
@@ -66,6 +66,36 @@ const POSITION_SWEEP_TIMEOUT_SECS: u64 = 300;
 const POSITION_DEADLINE_TIMEOUT_SECS: u64 = 900;
 
 pub(crate) struct GemLifecycle;
+
+/// Ten real Oracle publications and restart slack must fit inside one pricing hour.
+const HOURLY_PRICING_ORACLE_PERIOD: u64 = 8;
+
+#[given(expr = "a fresh Gem lifecycle localnet with a {int}-block voting window")]
+fn fresh_gem_lifecycle_localnet(world: &mut World, window: u64) {
+    crate::features::common::boot_localnet(
+        world,
+        window,
+        &[(
+            "TESTNET_ORACLE_VOTE_PERIOD_BLOCKS",
+            HOURLY_PRICING_ORACLE_PERIOD.to_string(),
+        )],
+    );
+    let checkpoint = finalized_checkpoint(world);
+    for port in world.validators.committee_ports() {
+        let params = eth::read_call_at_result(
+            &world.rpc.url(port),
+            outbe_primitives::addresses::ORACLE_ADDRESS,
+            &eth::IOracle::getParamsCall {},
+            checkpoint.height,
+        )
+        .expect("read the executed Gem fixture Oracle parameters");
+        assert_eq!(
+            params.votePeriod, HOURLY_PRICING_ORACLE_PERIOD,
+            "Gem fixture Oracle period on port {port}"
+        );
+    }
+    verify_checkpoint(world, checkpoint);
+}
 
 #[when("a test Intex series is issued to the merchant in MYR against USD")]
 fn issue_source_series(world: &mut World) {

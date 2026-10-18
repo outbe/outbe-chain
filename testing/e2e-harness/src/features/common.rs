@@ -13,6 +13,37 @@ use cucumber::{given, then};
 use crate::world::localnet::StartOpts;
 use crate::world::World;
 
+/// Budget a bounded test wait from the executed consensus settings.
+pub(crate) fn consensus_block_wait_budget(
+    genesis: &serde_json::Value,
+    blocks: u64,
+) -> eyre::Result<Duration> {
+    use outbe_consensus::timing::{
+        DEFAULT_CERTIFICATION_TIMEOUT_MS, DEFAULT_LEADER_TIMEOUT_MS, DEFAULT_MIN_BLOCK_TIME_MS,
+    };
+
+    let timing = |name: &str, default| -> eyre::Result<u64> {
+        match genesis.pointer(&format!("/config/{name}")) {
+            None => Ok(default),
+            Some(value) => value
+                .as_u64()
+                .ok_or_else(|| eyre::eyre!("genesis {name} must be an unsigned integer")),
+        }
+    };
+    let min = timing("minBlockTimeMs", DEFAULT_MIN_BLOCK_TIME_MS)?;
+    let leader = timing("leaderTimeoutMs", DEFAULT_LEADER_TIMEOUT_MS)?;
+    let certification = timing("certificationTimeoutMs", DEFAULT_CERTIFICATION_TIMEOUT_MS)?;
+    eyre::ensure!(
+        min > 0 && min < leader && leader <= certification,
+        "genesis consensus timing must satisfy 0 < min < leader <= certification"
+    );
+    eyre::ensure!(blocks > 0, "consensus wait requires a positive block count");
+    let millis = blocks
+        .checked_mul(certification)
+        .ok_or_else(|| eyre::eyre!("consensus block wait budget overflow"))?;
+    Ok(Duration::from_millis(millis))
+}
+
 /// Localnet setup shared by every flow. The committee size and TEE mode come
 /// from the environment (`--validators` / `--tee`, gated by the scenario's
 /// `@min-validators-N` / `@tee` tags). The voting window is a step parameter
