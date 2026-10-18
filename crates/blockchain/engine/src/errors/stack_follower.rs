@@ -560,29 +560,6 @@ pub enum StackRecoveryError {
     /// Indicates that Reth returned a zero canonical head hash.
     #[error("Reth returned a zero canonical head")]
     RethZeroCanonicalHead,
-    /// Indicates that projection recovery readiness expired without a request budget.
-    #[error("{0} recovery readiness expired without a request budget")]
-    ProjectionReadinessExpired(String),
-    /// Indicates that a projection is ahead of the certified follower recovery anchor.
-    #[error("{name} projection is ahead of certified follower recovery anchor {block_number}:{block_hash}")]
-    ProjectionAheadOfRecoveryAnchor {
-        /// Projection name.
-        name: String,
-        /// Anchor block number.
-        block_number: u64,
-        /// Anchor block hash.
-        block_hash: B256,
-    },
-    /// Indicates that projection recovery readiness failed.
-    #[error("{name} recovery readiness failed ({class}): {message}")]
-    ProjectionReadinessFailed {
-        /// Projection name.
-        name: String,
-        /// Formatted failure class.
-        class: String,
-        /// Failure message.
-        message: std::sync::Arc<str>,
-    },
     /// Indicates that Marshal finalization is missing for a finalized execution height.
     #[error(
         "marshal finalization missing for finalized execution height {0}; likely partial restore/archive corruption; resync/rebuild consensus storage"

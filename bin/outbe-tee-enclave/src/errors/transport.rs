@@ -80,9 +80,6 @@ pub enum TransportDispatchError {
     /// Hashing the NOD prepare request inputs failed.
     #[error("invalid NOD prepare inputs")]
     InvalidLysisInputs,
-    /// Encoding the protected NOD materialization carrier failed.
-    #[error("invalid protected NOD carrier")]
-    InvalidProtectedNodCarrier,
     /// Building the NOD prepare attestation preimage failed.
     #[error("invalid NOD prepare result")]
     InvalidLysisResult,
@@ -130,9 +127,6 @@ pub enum TransportDispatchError {
     /// Building the NOD test fixture attestation preimage failed.
     #[error("invalid NOD fixture result")]
     InvalidNodFixtureResult,
-    /// Building the NOD capacity attestation preimage failed.
-    #[error("invalid NOD capacity result")]
-    InvalidNodCapacityResult,
     /// Protected NOD materialization failed with a fatal enclave error.
     /// The NOD transfer total size or payload is out of bounds.
     #[error("invalid NOD transfer bounds")]

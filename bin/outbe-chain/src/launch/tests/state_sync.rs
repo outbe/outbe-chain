@@ -6,7 +6,6 @@ use outbe_consensus::executor::actor::FinalizedExecutionBarrier;
 use outbe_engine::finalization::{
     DurableExecutionState, RethDurableExecutionState, RethFinalizationBarrier,
 };
-use outbe_node::finalized_frame::{read_bounded_finalized_frames, RethFinalizedFrameSource};
 use outbe_primitives::{
     chain::TESTNET_CHAIN_ID, projection::ProjectionCheckpoint, OutbeHeader, OutbePrimitives,
 };
@@ -174,7 +173,7 @@ fn copied_native_checkpoint_and_recipient_identity_survive_repeated_reopen() {
     let target = point(&headers, H);
     for _ in 0..2 {
         let provider = open_provider(recipient.path());
-        let source = Arc::new(RethDurableExecutionState::new(provider.clone()));
+        let source = Arc::new(RethDurableExecutionState::new(provider));
         let evidence = source.block_and_root(H).unwrap().unwrap();
         assert_eq!(evidence.block_hash, target.block_hash);
         assert_eq!(
@@ -184,18 +183,6 @@ fn copied_native_checkpoint_and_recipient_identity_survive_repeated_reopen() {
         RethFinalizationBarrier::new(source)
             .verify_checkpoint(target)
             .unwrap();
-        let frames = read_bounded_finalized_frames(
-            &RethFinalizedFrameSource::new(provider),
-            1,
-            (target.block_number, target.block_hash).into(),
-        )
-        .unwrap()
-        .unwrap();
-        assert_eq!(frames.frames().len(), H as usize);
-        assert_eq!(
-            frames.frames().last().unwrap().identity().hash,
-            target.block_hash
-        );
         let (_, public) =
             super::load_reth_p2p_node_host_signer(&network, default_secret.clone()).unwrap();
         assert_eq!(public, own_public);
@@ -216,20 +203,9 @@ fn copied_native_missing_frame_is_not_repaired_by_checkpoint_verification() {
     let target = point(&headers, H);
     for _ in 0..2 {
         let provider = open_provider(recipient.path());
-        RethFinalizationBarrier::new(Arc::new(RethDurableExecutionState::new(provider.clone())))
+        RethFinalizationBarrier::new(Arc::new(RethDurableExecutionState::new(provider)))
             .verify_checkpoint(target)
             .unwrap();
-        let error = read_bounded_finalized_frames(
-            &RethFinalizedFrameSource::new(provider),
-            H,
-            (target.block_number, target.block_hash).into(),
-        )
-        .unwrap_err();
-        let message = format!("{error:#}");
-        assert!(
-            message.contains("finalized block 3") && message.contains("unavailable"),
-            "{message}"
-        );
     }
     let db = init_db(recipient.path().join("db"), DatabaseArguments::test()).unwrap();
     assert!(db

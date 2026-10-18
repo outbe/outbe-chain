@@ -4,7 +4,6 @@ use alloy_primitives::{Address, B256};
 use commonware_consensus::types::{Epoch, Height, Round};
 use outbe_primitives::{
     error::PrecompileError,
-    projection::ProjectionFailureClass,
     system_tx::{
         binding::{BoundaryBindingError, LayoutBindingError, ParentAccountingBindingError},
         SystemTxError, SystemTxKind,
@@ -386,11 +385,6 @@ pub enum ApplicationError {
     ClockMillisOverflow,
     #[error("Unix time offset {0} moves timestamp outside u64")]
     UnixTimeOffsetOverflow(i64),
-    #[error("projection readiness failed ({class:?}): {message}")]
-    ProjectionReadiness {
-        class: ProjectionFailureClass,
-        message: std::sync::Arc<str>,
-    },
     #[error("{0}")]
     EncodeBlockArtifacts(String),
     #[error("canonicalize_and_build failed: {0}")]

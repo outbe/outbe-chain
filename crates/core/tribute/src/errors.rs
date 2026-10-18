@@ -105,9 +105,6 @@ pub enum TributeError {
     CallerNotTributeOwner,
 
     #[error(transparent)]
-    CanonicalBody(#[from] outbe_primitives::entity_codec::CanonicalBodyError),
-
-    #[error(transparent)]
     DayAmountCodec(#[from] postcard::Error),
 
     #[error("Tribute day enclave: {0}")]
@@ -150,7 +147,6 @@ impl From<TributeError> for PrecompileError {
             | TributeError::TotalSupplyUnderflowDuringCapacityForfeiture
             | TributeError::CapacityForfeitureRequiresSealedPartition
             | TributeError::CapacityForfeitureRequiresUnretiredPartition
-            | TributeError::CanonicalBody(_)
             | TributeError::DayAmountCodec(_) => PrecompileError::BodyReadCorruption(message),
             _ => PrecompileError::Revert(message),
         }

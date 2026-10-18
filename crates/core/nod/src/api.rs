@@ -93,12 +93,12 @@ pub fn load_bucket(
 
 /// Fetches a Nod item state by ID.
 pub fn get_item(storage: &StorageHandle<'_>, nod_id: WwdEntityId) -> Result<Option<NodItemState>> {
-    load_item(storage, nod_id).map(|loaded| loaded.map(|loaded| loaded.into_parts().0))
+    load_item(storage, nod_id).map(|loaded| loaded.map(|loaded| loaded.into_body()))
 }
 
 /// Fetches a Nod bucket state by ID.
 pub fn get_bucket(storage: &StorageHandle<'_>, bucket_key: B256) -> Result<Option<NodBucketState>> {
-    load_bucket(storage, bucket_key).map(|loaded| loaded.map(|loaded| loaded.into_parts().0))
+    load_bucket(storage, bucket_key).map(|loaded| loaded.map(|loaded| loaded.into_body()))
 }
 
 /// Loads the complete Nod collection with overlay-correct membership.

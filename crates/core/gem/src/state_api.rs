@@ -9,29 +9,29 @@ use outbe_primitives::{
     wwd_entity_id::WwdEntityId,
 };
 
+/// A gem exactly as stored when it was loaded; mutation re-checks storage against it.
 pub struct LoadedGem {
     body: GemItemState,
-    current: GemItemState,
 }
 impl LoadedGem {
     pub const fn body(&self) -> &GemItemState {
         &self.body
     }
-    pub(crate) fn into_parts(self) -> (GemItemState, GemItemState) {
-        (self.body, self.current)
+    pub(crate) fn into_body(self) -> GemItemState {
+        self.body
     }
 }
 
+/// A gem bucket exactly as stored when it was loaded; mutation re-checks storage against it.
 pub struct LoadedGemBucket {
     body: GemBucketState,
-    current: GemBucketState,
 }
 impl LoadedGemBucket {
     pub const fn body(&self) -> &GemBucketState {
         &self.body
     }
-    pub(crate) fn into_parts(self) -> (GemBucketState, GemBucketState) {
-        (self.body, self.current)
+    pub(crate) fn into_body(self) -> GemBucketState {
+        self.body
     }
 }
 
@@ -40,12 +40,7 @@ pub fn load_item(storage: &StorageHandle<'_>, id: WwdEntityId) -> Result<Option<
     contract
         .records
         .get(id)?
-        .map(|current| {
-            Ok(LoadedGem {
-                body: current.clone(),
-                current,
-            })
-        })
+        .map(|body| Ok(LoadedGem { body }))
         .transpose()
 }
 pub fn load_bucket(storage: &StorageHandle<'_>, key: B256) -> Result<Option<LoadedGemBucket>> {
@@ -53,12 +48,7 @@ pub fn load_bucket(storage: &StorageHandle<'_>, key: B256) -> Result<Option<Load
     contract
         .buckets
         .get(key)?
-        .map(|current| {
-            Ok(LoadedGemBucket {
-                body: current.clone(),
-                current,
-            })
-        })
+        .map(|body| Ok(LoadedGemBucket { body }))
         .transpose()
 }
 pub fn add_item(
@@ -89,14 +79,14 @@ pub fn remove_item(
         GemContract::new(storage.clone()).record_gem_removed_state(item, bucket)
     })
 }
+/// Must run before `item` or `bucket` is mutated: both are compared with storage as loaded.
 fn check_loaded(
     contract: &GemContract<'_>,
     item: &GemItemState,
-    current: &GemItemState,
     bucket: &GemBucketState,
 ) -> Result<()> {
     if item.bucket_key != bucket.bucket_key
-        || contract.records.get(item.gem_id)?.as_ref() != Some(current)
+        || contract.records.get(item.gem_id)?.as_ref() != Some(item)
         || contract.buckets.get(bucket.bucket_key)?.as_ref() != Some(bucket)
     {
         return Err(PrecompileError::revert("Gem state changed after loading"));
@@ -167,9 +157,9 @@ impl GemContract<'_> {
     }
 
     fn record_gem_settled_state(&mut self, item: LoadedGem, bucket: LoadedGemBucket) -> Result<()> {
-        let (mut item, current_item) = item.into_parts();
-        let (mut bucket, current_bucket) = bucket.into_parts();
-        check_loaded(self, &item, &current_item, &current_bucket)?;
+        let mut item = item.into_body();
+        let mut bucket = bucket.into_body();
+        check_loaded(self, &item, &bucket)?;
         if item.is_settled() {
             return Err(GemError::AlreadySettled.into());
         }
@@ -189,13 +179,10 @@ impl GemContract<'_> {
     }
 
     fn record_gem_removed_state(&mut self, item: LoadedGem, bucket: LoadedGemBucket) -> Result<()> {
-        let (item, current_item) = item.into_parts();
-        let (mut bucket, current_bucket) = bucket.into_parts();
-        check_loaded(self, &item, &current_item, &current_bucket)?;
-        let bucket_id = WwdEntityId::from_day_and_digest(
-            current_bucket.worldwide_day,
-            current_bucket.bucket_key,
-        );
+        let item = item.into_body();
+        let mut bucket = bucket.into_body();
+        check_loaded(self, &item, &bucket)?;
+        let bucket_id = WwdEntityId::from_day_and_digest(bucket.worldwide_day, bucket.bucket_key);
         let supply = self
             .total_supply
             .read()?

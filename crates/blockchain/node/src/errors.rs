@@ -1,6 +1,6 @@
 //! This module defines typed errors for `outbe-node`.
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::Address;
 use reth_ethereum::consensus::ConsensusError;
 use reth_provider::ProviderError;
 use std::sync::Arc;
@@ -71,53 +71,6 @@ impl ConsensusPolicyError {
 impl From<ConsensusPolicyError> for ConsensusError {
     fn from(error: ConsensusPolicyError) -> Self {
         consensus_display_error(error)
-    }
-}
-
-/// This enum defines errors that occur when the node reads a finalized frame.
-#[derive(Debug, thiserror::Error)]
-pub enum FinalizedFrameError {
-    #[error("canonical finalized block {height} is unavailable")]
-    CanonicalBlockUnavailable { height: u64 },
-    #[error("canonical finalized block {height} ({hash}) is unavailable by hash")]
-    BlockUnavailableByHash { height: u64, hash: B256 },
-    #[error("provider returned finalized block {actual} while height {requested} was requested")]
-    BlockHeightMismatch { actual: u64, requested: u64 },
-    #[error("finalized block at height {height} recomputed to {actual}, expected {expected}")]
-    RecomputedBlockHashMismatch {
-        height: u64,
-        actual: B256,
-        expected: B256,
-    },
-    #[error(
-        "canonical block hash {canonical} conflicts with finalized hash {finalized} at height {height}"
-    )]
-    FinalizedTargetHashConflict {
-        canonical: B256,
-        finalized: B256,
-        height: u64,
-    },
-    #[error("receipts for finalized block {height} are unavailable")]
-    ReceiptsUnavailable { height: u64 },
-    #[error("finalized block {height} has {transactions} transactions but {receipts} receipts")]
-    ReceiptCountMismatch {
-        height: u64,
-        transactions: usize,
-        receipts: usize,
-    },
-}
-
-impl FinalizedFrameError {
-    /// Returns true when the error reflects transient provider lag rather than
-    /// a canonical history or receipt conflict.
-    #[must_use]
-    pub const fn is_transient_unavailability(&self) -> bool {
-        matches!(
-            self,
-            Self::CanonicalBlockUnavailable { .. }
-                | Self::BlockUnavailableByHash { .. }
-                | Self::ReceiptsUnavailable { .. }
-        )
     }
 }
 

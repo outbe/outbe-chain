@@ -240,7 +240,6 @@ fn try_forfeit(
     // Burns from the last member down, each in its own checkpoint, as the sweep does.
     storage.with_checkpoint(|| {
         let mut nod = NodContract::new(storage.clone());
-        let bodies = crate::expired::Bodies { storage };
         let mut burned = 0;
         while burned < budget {
             let Some(last) = nod.bucket_nod_count.read(&bucket_key)?.checked_sub(1) else {
@@ -250,7 +249,7 @@ fn try_forfeit(
                 .bucket_nods
                 .read(&outbe_nod::index_keys::bucket_nod_key(bucket_key, last))?;
             let burn = storage.with_checkpoint(|| {
-                crate::expired::forfeit_member(&bodies, &mut nod, bucket_key, nod_id)
+                crate::expired::forfeit_member(storage, &mut nod, bucket_key, nod_id)
             });
             match burn {
                 Ok(()) => burned += 1,

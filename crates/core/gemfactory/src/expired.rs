@@ -33,7 +33,8 @@ pub(crate) fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
 
 /// One block's burns across the due hours.
 pub(crate) struct GemExpiry<'a, 's> {
-    bodies: Bodies<'a, 's>,
+    /// The EVM state used to load and remove Gems during forfeiture.
+    storage: &'a StorageHandle<'s>,
     gem: GemContract<'s>,
     burned: u32,
 }
@@ -72,7 +73,7 @@ impl ExpiryHandler<B256> for GemExpiry<'_, '_> {
     }
 
     fn expire_member(&mut self, bucket: B256, gem_id: U256) -> Result<()> {
-        forfeit_member(&self.bodies, &mut self.gem, bucket, gem_id)?;
+        forfeit_member(self.storage, &mut self.gem, bucket, gem_id)?;
         self.burned = self.burned.saturating_add(1);
         Ok(())
     }
@@ -92,18 +93,11 @@ impl ExpiryHandler<B256> for GemExpiry<'_, '_> {
 impl<'a, 's> GemExpiry<'a, 's> {
     pub(crate) fn new(ctx: &'a BlockRuntimeContext<'s>) -> Self {
         Self {
-            bodies: Bodies {
-                storage: &ctx.storage,
-            },
+            storage: &ctx.storage,
             gem: GemContract::new(ctx.storage.clone()),
             burned: 0,
         }
     }
-}
-
-/// The EVM state used to load and remove Gems during forfeiture.
-struct Bodies<'a, 's> {
-    storage: &'a StorageHandle<'s>,
 }
 
 /// Forfeit-burns one unpaid member of a lapsed bucket and returns its load to the
@@ -111,12 +105,11 @@ struct Bodies<'a, 's> {
 /// it goes back. The return uses the same checkpoint as the burn, or there is nothing
 /// to recover.
 fn forfeit_member(
-    bodies: &Bodies<'_, '_>,
+    storage: &StorageHandle<'_>,
     gem: &mut GemContract<'_>,
     bucket_key: B256,
     gem_id: U256,
 ) -> Result<()> {
-    let Bodies { storage } = *bodies;
     if gem_id.is_zero() {
         return Err(GemFactoryError::EmptyMemberSlotDuringForfeit { bucket_key }.into());
     }

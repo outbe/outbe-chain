@@ -16,19 +16,12 @@ use crate::runtime::emit_event;
 use outbe_nod::state::ExpiryHours;
 use outbe_nod::{api, precompile::INod, schema::NodContract};
 
-/// The EVM state used to load and remove Nods during forfeiture.
-pub(crate) struct Bodies<'a, 's> {
-    pub(crate) storage: &'a StorageHandle<'s>,
-}
-
 /// Forfeit-burns the unpaid Nods of the called buckets whose notice period lapsed.
 /// Returns the Nods burned.
 pub(crate) fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = NodContract::new(ctx.storage.clone());
     let mut expiry = NodExpiry {
-        bodies: Bodies {
-            storage: &ctx.storage,
-        },
+        storage: &ctx.storage,
         nod: NodContract::new(ctx.storage.clone()),
         forfeited: 0,
     };
@@ -45,7 +38,8 @@ pub(crate) fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
 
 /// One block's burns across the due hours.
 struct NodExpiry<'a, 's> {
-    bodies: Bodies<'a, 's>,
+    /// The EVM state used to load and remove Nods during forfeiture.
+    storage: &'a StorageHandle<'s>,
     nod: NodContract<'s>,
     forfeited: u32,
 }
@@ -77,7 +71,7 @@ impl ExpiryHandler<B256> for NodExpiry<'_, '_> {
     }
 
     fn expire_member(&mut self, bucket_key: B256, nod_id: WwdEntityId) -> Result<()> {
-        forfeit_member(&self.bodies, &mut self.nod, bucket_key, nod_id)?;
+        forfeit_member(self.storage, &mut self.nod, bucket_key, nod_id)?;
         self.forfeited = self.forfeited.saturating_add(1);
         Ok(())
     }
@@ -89,7 +83,7 @@ impl ExpiryHandler<B256> for NodExpiry<'_, '_> {
     fn deferred(&mut self, bucket_key: B256, retry_at: u64) -> Result<()> {
         tracing::warn!(target: "outbe::nodfactory", %bucket_key, retry_at, "forfeit sweep: bucket deferred");
         emit_event(
-            self.bodies.storage,
+            self.storage,
             INodFactory::ExpiryDeferred {
                 bucketKey: bucket_key,
                 retryAt: retry_at,
@@ -105,12 +99,11 @@ impl ExpiryHandler<B256> for NodExpiry<'_, '_> {
 /// The bucket body remains while settled members exist. Removal requires both
 /// unpaid and settled member counts to reach zero.
 pub(crate) fn forfeit_member(
-    bodies: &Bodies<'_, '_>,
+    storage: &StorageHandle<'_>,
     nod: &mut NodContract<'_>,
     bucket_key: B256,
     nod_id: WwdEntityId,
 ) -> Result<()> {
-    let Bodies { storage } = *bodies;
     if nod_id.is_zero() {
         return Err(
             crate::errors::NodFactoryError::EmptyBucketMemberSlotDuringForfeit { bucket_key }

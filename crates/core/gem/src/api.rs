@@ -85,12 +85,12 @@ pub fn load_pair(
 
 /// Fetches a gem body by id.
 pub fn get_item(storage: &StorageHandle<'_>, gem_id: U256) -> Result<Option<GemItemState>> {
-    load_item(storage, gem_id).map(|loaded| loaded.map(|loaded| loaded.into_parts().0))
+    load_item(storage, gem_id).map(|loaded| loaded.map(|loaded| loaded.into_body()))
 }
 
 /// Fetches a bucket body by id.
 pub fn get_bucket(storage: &StorageHandle<'_>, bucket_key: B256) -> Result<Option<GemBucketState>> {
-    load_bucket(storage, bucket_key).map(|loaded| loaded.map(|loaded| loaded.into_parts().0))
+    load_bucket(storage, bucket_key).map(|loaded| loaded.map(|loaded| loaded.into_body()))
 }
 
 /// Fetches the full status view of a gem: body, bucket body and sealed terms.
@@ -100,8 +100,8 @@ pub fn get_view(storage: &StorageHandle<'_>, gem_id: U256) -> Result<Option<GemV
     };
     Ok(Some(view_of(
         storage,
-        item.into_parts().0,
-        bucket.into_parts().0,
+        item.into_body(),
+        bucket.into_body(),
     )?))
 }
 

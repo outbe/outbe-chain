@@ -123,9 +123,10 @@ pub fn issue_encrypted_with_league(
     })
 }
 
+/// A Tribute exactly as stored when it was loaded; the burn re-checks storage against it.
+/// Its record always carries the encrypted body, checked by `load`.
 pub struct LoadedTribute {
     record: TributeRecord,
-    current: StoredTribute,
 }
 impl LoadedTribute {
     pub const fn record(&self) -> &TributeRecord {
@@ -136,18 +137,21 @@ impl LoadedTribute {
 pub fn load(storage: &StorageHandle<'_>, id: WwdEntityId) -> Result<Option<LoadedTribute>> {
     get_record(storage, id)?
         .map(|record| {
-            let current = StoredTribute::from(
-                record
-                    .encrypted()
-                    .ok_or(TributeError::InvalidEncryptedEncoding)?,
-            );
-            Ok(LoadedTribute { record, current })
+            record
+                .encrypted()
+                .ok_or(TributeError::InvalidEncryptedEncoding)?;
+            Ok(LoadedTribute { record })
         })
         .transpose()
 }
 
 pub fn burn_loaded(storage: &StorageHandle<'_>, loaded: LoadedTribute) -> Result<()> {
-    let LoadedTribute { record, current } = loaded;
+    let LoadedTribute { record } = loaded;
+    let current = StoredTribute::from(
+        record
+            .encrypted()
+            .ok_or(TributeError::InvalidEncryptedEncoding)?,
+    );
     let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(storage)?;
     let mut contract = TributeContract::new(storage.clone());
     storage.with_checkpoint(|| {
