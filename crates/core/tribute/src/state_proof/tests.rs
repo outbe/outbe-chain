@@ -12,7 +12,6 @@ struct Fixture {
     provider: HashMapStorageProvider,
     subject: TributeStateProofSubject,
     records: Vec<TributeRecordStateProof>,
-    day_proof: AccountStorageProof,
 }
 
 fn limits() -> StateProofLimits {
@@ -23,7 +22,7 @@ fn limits() -> StateProofLimits {
     }
 }
 
-fn fixture(count: u8, duplicate: bool, invalid_word: bool) -> Fixture {
+fn fixture(count: u8, invalid_word: bool) -> Fixture {
     let mut subject = TributeStateProofSubject {
         checkpoint: FinalizedStateCheckpoint {
             block_number: 42,
@@ -65,14 +64,6 @@ fn fixture(count: u8, duplicate: bool, invalid_word: bool) -> Fixture {
                 .insert_state_record(&crate::storage_records::StoredTribute::from(&body))
                 .unwrap();
             bodies.push(body);
-        }
-        if duplicate {
-            contract
-                .day_ids
-                .list(&subject.worldwide_day)
-                .set(1, bodies[0].context.tribute_id)
-                .unwrap();
-            bodies[1] = bodies[0].clone();
         }
         if invalid_word {
             let slot = contract
@@ -130,7 +121,6 @@ fn fixture(count: u8, duplicate: bool, invalid_word: bool) -> Fixture {
     Fixture {
         provider,
         subject,
-        day_proof: proof_for(&[B256::from(day_length_slot.to_be_bytes::<32>())]),
         records: bodies
             .into_iter()
             .zip(selected)
@@ -145,61 +135,8 @@ fn fixture(count: u8, duplicate: bool, invalid_word: bool) -> Fixture {
 }
 
 #[test]
-fn complete_day_opens_real_state_without_ce_and_includes_every_ciphertext_word() {
-    let fixture = fixture(2, false, false);
-    let mut verifier =
-        TributeDayProofVerifier::new(fixture.subject, &fixture.day_proof, limits()).unwrap();
-    assert!(verifier.finish().is_err());
-    for proof in &fixture.records {
-        assert_eq!(proof.account.slots.len(), 17);
-        verifier.verify_next(proof, limits()).unwrap();
-    }
-    verifier.finish().unwrap();
-    assert!(verifier.verify_next(&fixture.records[0], limits()).is_err());
-}
-
-#[test]
-fn empty_day_requires_a_valid_length_opening() {
-    let fixture = fixture(0, false, false);
-    TributeDayProofVerifier::new(fixture.subject, &fixture.day_proof, limits())
-        .unwrap()
-        .finish()
-        .unwrap();
-    let mut omitted = fixture.day_proof.clone();
-    omitted.slots.clear();
-    assert!(TributeDayProofVerifier::new(fixture.subject, &omitted, limits()).is_err());
-    let mut wrong_count = fixture.subject;
-    wrong_count.tribute_count = 1;
-    assert!(TributeDayProofVerifier::new(wrong_count, &fixture.day_proof, limits()).is_err());
-}
-
-#[test]
-fn omissions_reordering_and_duplicate_identities_do_not_advance_the_cursor() {
-    let fixture = fixture(2, false, false);
-    let mut verifier =
-        TributeDayProofVerifier::new(fixture.subject, &fixture.day_proof, limits()).unwrap();
-    assert!(verifier.verify_next(&fixture.records[1], limits()).is_err());
-    verifier.verify_next(&fixture.records[0], limits()).unwrap();
-    assert!(verifier.verify_next(&fixture.records[0], limits()).is_err());
-    assert!(verifier.finish().is_err());
-    verifier.verify_next(&fixture.records[1], limits()).unwrap();
-    verifier.finish().unwrap();
-
-    let duplicate = self::fixture(2, true, false);
-    let mut verifier =
-        TributeDayProofVerifier::new(duplicate.subject, &duplicate.day_proof, limits()).unwrap();
-    verifier
-        .verify_next(&duplicate.records[0], limits())
-        .unwrap();
-    assert!(verifier
-        .verify_next(&duplicate.records[1], limits())
-        .is_err());
-    assert!(verifier.finish().is_err());
-}
-
-#[test]
 fn every_omitted_slot_or_forged_value_is_rejected() {
-    let fixture = fixture(1, false, false);
+    let fixture = fixture(1, false);
     let original = &fixture.records[0];
     for index in 0..original.account.slots.len() {
         let mut omitted = original.clone();
@@ -216,7 +153,7 @@ fn every_omitted_slot_or_forged_value_is_rejected() {
 
 #[test]
 fn wrong_context_ciphertext_checkpoint_and_limits_are_rejected() {
-    let fixture = fixture(1, false, false);
+    let fixture = fixture(1, false);
     let original = &fixture.records[0];
     for mutate in [
         (|body: &mut EncryptedTributeV2| body.context.chain_id += 1) as fn(&mut EncryptedTributeV2),
@@ -250,7 +187,7 @@ fn wrong_context_ciphertext_checkpoint_and_limits_are_rejected() {
 
 #[test]
 fn authenticated_noncanonical_integer_is_rejected_without_narrowing() {
-    let fixture = fixture(1, false, true);
+    let fixture = fixture(1, true);
     fixture.records[0]
         .account
         .verify(
@@ -266,7 +203,7 @@ fn authenticated_noncanonical_integer_is_rejected_without_narrowing() {
 
 #[test]
 fn retained_source_binding_survives_logical_retirement_and_rejects_index_changes() {
-    let mut fixture = fixture(2, false, false);
+    let mut fixture = fixture(2, false);
     let record = &fixture.records[0];
     let id = record.tribute.context.tribute_id;
     StorageHandle::enter(&mut fixture.provider, |storage| {

@@ -521,7 +521,7 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
         assert_dense_agent_settlement(storage.clone(), prev_day, DENSE_ADDRESS_COUNT)?;
         let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
         assert!(rewards.daily_topup_prepared.read(&prev_day)?);
-        // One compressed Gem body per block: the dense batch drains over later blocks
+        // One reward Gem per block: the dense batch drains over later blocks
         // and the day settles only when its FIFO head retires.
         assert!(!rewards.daily_topup_settled.read(&prev_day)?);
         assert_eq!(rewards.reward_gem_queue_head.read()?, 0);

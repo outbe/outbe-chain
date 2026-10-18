@@ -252,7 +252,7 @@ fn supported_interfaces_match_the_implemented_selectors() {
         }
         assert!(
             !supports(ERC721_ENUMERABLE_INTERFACE_ID),
-            "no global enumeration over compressed bodies"
+            "Gem keeps no global id index"
         );
         assert!(!supports(ERC20_INTERFACE_ID));
         assert!(!supports([0xff; 4]));

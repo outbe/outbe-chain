@@ -91,25 +91,3 @@ pub struct ProjectionCheckpoint {
     pub block_number: u64,
     pub block_hash: B256,
 }
-
-/// Stable class for a deterministic projection failure.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ProjectionFailureClass {
-    MalformedEvent,
-    UnsupportedSchema,
-    WrongNetwork,
-    CheckpointMismatch,
-    UnmanagedData,
-    HistoricalReceiptsUnavailable,
-    CorruptBody,
-    DanglingIndex,
-    ProjectorExited,
-    ReadinessChannelClosed,
-    StorageReconnectDeadline,
-    WriterLeaseLost,
-    StorageInvalidArgument,
-    StorageUnavailable,
-    StorageBackend,
-    StorageRequestDeadline,
-    Other,
-}

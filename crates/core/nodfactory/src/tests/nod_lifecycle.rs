@@ -253,7 +253,7 @@ fn try_forfeit(
             });
             match burn {
                 Ok(()) => burned += 1,
-                Err(error) if error.body_sweep_failure() == SweepFailure::Stop => break,
+                Err(error) if error.record_sweep_failure() == SweepFailure::Stop => break,
                 Err(error) => return Err(error),
             }
         }

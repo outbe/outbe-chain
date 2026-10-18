@@ -856,8 +856,9 @@ impl PrecompileError {
     }
 
     /// As [`Self::sweep_failure`], for a sweep over stored records. The right's own
-    /// index checks revert, so a body corruption reaching the sweep is this node's store.
-    pub fn body_sweep_failure(&self) -> SweepFailure {
+    /// index checks revert, so a [`Self::BodyReadCorruption`] reaching the sweep is this
+    /// node's store.
+    pub fn record_sweep_failure(&self) -> SweepFailure {
         match self {
             Self::BodyReadCorruption(_) => SweepFailure::Propagate,
             other => other.sweep_failure(),
@@ -958,15 +959,15 @@ mod tests {
     }
 
     #[test]
-    fn a_body_sweep_fails_the_block_on_a_corrupt_body() {
+    fn a_record_sweep_fails_the_block_on_read_corruption() {
         let corrupt = PrecompileError::BodyReadCorruption("x".into());
-        assert_eq!(corrupt.body_sweep_failure(), SweepFailure::Propagate);
+        assert_eq!(corrupt.record_sweep_failure(), SweepFailure::Propagate);
         assert_eq!(
-            PrecompileError::Revert("x".into()).body_sweep_failure(),
+            PrecompileError::Revert("x".into()).record_sweep_failure(),
             SweepFailure::Skip
         );
         assert_eq!(
-            PrecompileError::OutOfGas.body_sweep_failure(),
+            PrecompileError::OutOfGas.record_sweep_failure(),
             SweepFailure::Stop
         );
     }

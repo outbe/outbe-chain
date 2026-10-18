@@ -44,7 +44,7 @@ fn coen_iso_one_maps_to_the_center_price_bin_at_six_decimals() {
 }
 
 #[test]
-fn reverted_issuance_rolls_back_overlay_compact_state_and_events() {
+fn reverted_issuance_rolls_back_nod_state() {
     let body = item(Address::repeat_byte(0x66));
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
@@ -83,7 +83,7 @@ fn nod_identity_and_abi_boundary_preserve_exact_32_bytes() {
 }
 
 #[test]
-fn membership_changes_preserve_bucket_body_and_commitment_until_last_removal() {
+fn bucket_record_survives_membership_changes_until_last_removal() {
     let first = item(Address::repeat_byte(0x71));
     let second = item(Address::repeat_byte(0x72));
     let bucket_id = first.bucket_key;

@@ -317,14 +317,6 @@ pub trait OutbeApi {
         tribute_id: outbe_primitives::wwd_entity_id::WwdEntityId,
     ) -> jsonrpsee::core::RpcResult<outbe_tee::tribute_source::TributeStateSource>;
 
-    /// Proves day length and optionally one physical day index at a fixed finalized state.
-    #[method(name = "getTributeDayStateProof")]
-    async fn get_tribute_day_state_proof(
-        &self,
-        subject: outbe_tee::tribute_source::TributeSourceSubject,
-        day_index: Option<u32>,
-    ) -> jsonrpsee::core::RpcResult<outbe_tribute::state_proof::TributeDayStateProof>;
-
     /// Export the network key only for a finalized upgrade candidate.
     #[method(name = "upgradeKeyV1")]
     async fn upgrade_key_v1(

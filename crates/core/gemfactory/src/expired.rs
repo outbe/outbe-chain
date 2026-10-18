@@ -63,13 +63,13 @@ impl ExpiryHandler<B256> for GemExpiry<'_, '_> {
             .read(&GemContract::bucket_member_key(bucket, index))
     }
 
-    /// A forfeit loads a body and deletes it, which costs more than a slot write.
+    /// Each forfeit draws from the per-block forfeit limit, separate from slot writes.
     fn charge(&self, budget: &mut SweepBudget) -> bool {
         budget.body_write()
     }
 
     fn classify(&self, error: &PrecompileError) -> SweepFailure {
-        error.body_sweep_failure()
+        error.record_sweep_failure()
     }
 
     fn expire_member(&mut self, bucket: B256, gem_id: U256) -> Result<()> {
@@ -114,7 +114,7 @@ fn forfeit_member(
         return Err(GemFactoryError::EmptyMemberSlotDuringForfeit { bucket_key }.into());
     }
     let (item, bucket) = gem_api::load_pair(storage, gem_id)?
-        .ok_or(GemFactoryError::MissingMemberBodyDuringForfeit { bucket_key, gem_id })?;
+        .ok_or(GemFactoryError::MissingMemberRecordDuringForfeit { bucket_key, gem_id })?;
     if item.body().is_settled() || item.body().bucket_key != bucket_key {
         return Err(GemFactoryError::IneligibleBucketMember { bucket_key, gem_id }.into());
     }

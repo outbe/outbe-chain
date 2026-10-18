@@ -374,7 +374,7 @@ fn fresh_delivery_mints_the_head_exactly_once() {
         )
         .unwrap();
 
-        // One compressed Gem body per block: the head drains one recipient per call.
+        // One reward Gem per block: the head drains one recipient per call.
         assert_eq!(
             deliver_oldest_reward_gem_batch(&ctx).unwrap(),
             RewardGemDeliveryOutcome::Delivered {

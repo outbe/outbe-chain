@@ -148,7 +148,7 @@ fn assert_reward_queues(
         outbe_primitives::storage::direct::DirectStorageProvider::new(state, read_ctx);
     StorageHandle::enter(&mut provider, |storage| {
         let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
-        // One compressed Gem body per block: the backlog head stays pending with one
+        // One reward Gem per block: the backlog head stays pending with one
         // recipient served while Cycle appended the next day behind it.
         assert_eq!(rewards.reward_gem_queue_head.read()?, 0);
         assert_eq!(rewards.reward_gem_queue_tail.read()?, 2);

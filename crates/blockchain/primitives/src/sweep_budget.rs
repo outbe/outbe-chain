@@ -4,7 +4,7 @@
 pub const SWEEP_VISITS_PER_BLOCK: u32 = 256;
 /// EVM state changes: a call, a burned or expired member, a void, a sent notice.
 pub const SWEEP_WRITES_PER_BLOCK: u32 = 64;
-/// Body deletions in one expiry sweep. A forfeit loads a body and deletes it.
+/// Forfeits in one expiry sweep. Each forfeit deletes one member record.
 pub const SWEEP_BODY_WRITES_PER_BLOCK: u32 = 8;
 
 /// What is left of one sweep's work in this block.

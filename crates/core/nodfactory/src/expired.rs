@@ -77,7 +77,7 @@ impl ExpiryHandler<B256> for NodExpiry<'_, '_> {
     }
 
     fn classify(&self, error: &PrecompileError) -> SweepFailure {
-        error.body_sweep_failure()
+        error.record_sweep_failure()
     }
 
     fn deferred(&mut self, bucket_key: B256, retry_at: u64) -> Result<()> {
@@ -111,7 +111,10 @@ pub(crate) fn forfeit_member(
         );
     }
     let item = api::load_item(storage, nod_id)?.ok_or(
-        crate::errors::NodFactoryError::MissingBucketMemberBodyDuringForfeit { bucket_key, nod_id },
+        crate::errors::NodFactoryError::MissingBucketMemberRecordDuringForfeit {
+            bucket_key,
+            nod_id,
+        },
     )?;
     if item.body().is_settled || item.body().bucket_key != bucket_key {
         return Err(
@@ -122,7 +125,7 @@ pub(crate) fn forfeit_member(
     let gratis_load_minor = api::calculation_amount(item.body())?;
     let encrypted_gratis_amount = item.body().encrypted.encrypted_gratis_amount.clone();
     let bucket = api::load_bucket(storage, bucket_key)?
-        .ok_or(crate::errors::NodFactoryError::MissingBucketBodyDuringForfeit { bucket_key })?;
+        .ok_or(crate::errors::NodFactoryError::MissingBucketRecordDuringForfeit { bucket_key })?;
     api::remove_nod(storage, item, bucket)?;
     nod.emit(INod::NodForfeited {
         owner,

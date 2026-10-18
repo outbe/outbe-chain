@@ -101,7 +101,7 @@ pub fn get_bucket(storage: &StorageHandle<'_>, bucket_key: B256) -> Result<Optio
     load_bucket(storage, bucket_key).map(|loaded| loaded.map(|loaded| loaded.into_body()))
 }
 
-/// Loads the complete Nod collection with overlay-correct membership.
+/// Loads the complete Nod collection.
 pub fn list_all(storage: &StorageHandle<'_>) -> Result<Vec<NodItemState>> {
     NodContract::new(storage.clone())
         .state_records(None)
@@ -116,7 +116,7 @@ pub fn balance_of(storage: &StorageHandle<'_>, owner: Address) -> Result<u32> {
         .len()
 }
 
-/// Loads one owner's Nod collection with overlay-correct membership.
+/// Loads one owner's Nod collection.
 pub fn list_by_owner(storage: &StorageHandle<'_>, owner: Address) -> Result<Vec<NodItemState>> {
     NodContract::new(storage.clone())
         .state_records(Some(owner))
@@ -132,7 +132,7 @@ pub fn record_settled(
     crate::state_api::record_settled(storage, item, bucket)
 }
 
-/// Internal arithmetic boundary; public bodies and projections retain ciphertext.
+/// Internal arithmetic boundary; stored records and public views keep the amount encrypted.
 pub fn calculation_amount(item: &NodItemState) -> Result<U256> {
     crate::enclave_client::read_amount(&item.encrypted)
         .map_err(|error| crate::errors::NodError::AmountReadFailed(error).into())

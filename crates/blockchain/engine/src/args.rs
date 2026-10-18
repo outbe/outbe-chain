@@ -489,18 +489,6 @@ mod tests {
     }
 
     #[test]
-    fn cli_rejects_removed_projection_configuration() {
-        for (flag, value) in [
-            ("--projection.storage-config", "/node/offchain-storage.toml"),
-            ("--projection.mongodb-uri", "mongodb://mongo:27017"),
-            ("--projection.mongodb-database", "projection"),
-            ("--projection.start-block", "1"),
-        ] {
-            assert!(TestConsensusCli::try_parse_from(["test", flag, value]).is_err());
-        }
-    }
-
-    #[test]
     fn automatic_tee_renewal_options_are_rejected_after_worker_removal() {
         for obsolete in [
             ["--tee-renewal.relay-key", "/tmp/relay-key.hex"],
@@ -525,7 +513,7 @@ mod tests {
 
         let args_debug = format!("{args:?}");
 
-        for secret in ["bls-secret-value", "upstream-secret", "mongo-secret"] {
+        for secret in ["bls-secret-value", "upstream-secret"] {
             assert!(!args_debug.contains(secret));
         }
     }

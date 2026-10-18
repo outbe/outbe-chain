@@ -76,7 +76,7 @@ pub enum GemFactoryError {
     EmptyMemberSlotDuringForfeit { bucket_key: B256 },
 
     #[error("gem bucket {bucket_key} member {gem_id} has no body during forfeit")]
-    MissingMemberBodyDuringForfeit { bucket_key: B256, gem_id: U256 },
+    MissingMemberRecordDuringForfeit { bucket_key: B256, gem_id: U256 },
 
     #[error("gem bucket {bucket_key} indexes an ineligible member {gem_id}")]
     IneligibleBucketMember { bucket_key: B256, gem_id: U256 },
