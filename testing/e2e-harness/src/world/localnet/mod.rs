@@ -761,7 +761,7 @@ impl Localnet {
         } else {
             self.validators.insert(index, guard);
         }
-        // Capture actual final argv again. Projection option handling is idempotent.
+        // Capture the final argv again: an ordinary restart reuses the exact launch options.
         let observed = self.captured_node_recipe(index, pid)?.observation;
         eyre::ensure!(
             observed.argv == stopped.recipe.observation.argv

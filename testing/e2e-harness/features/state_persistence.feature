@@ -1,4 +1,4 @@
-@tee @price-oracle @min-validators-4 @offchain-storage-e2e
+@tee @price-oracle @min-validators-4 @state-persistence-e2e
 Feature: EVM state persists through confidential Lysis and restart
   Scenario: Native Tribute and Nod state survives validator restart
     Given a fresh four-validator native Lysis localnet

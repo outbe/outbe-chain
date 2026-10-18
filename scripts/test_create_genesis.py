@@ -845,24 +845,6 @@ class LaunchBundleTests(unittest.TestCase):
 
 
 
-    def test_bundle_uses_evm_state_without_entity_datasource_configuration(self):
-        import tarfile
-
-        with tempfile.TemporaryDirectory() as tmp:
-            _, _, output_dir = self.render(tmp)
-            for index in range(4):
-                directory = output_dir / f"validator-{index}"
-                for old in ["offchain-storage.toml", "run-storage.sh", "run-mongodb.sh"]:
-                    self.assertFalse((directory / old).exists())
-                node = (directory / "run-node.sh").read_text()
-                self.assertNotIn("--projection.", node)
-                with tarfile.open(output_dir / "dist" / f"validator-{index}.tgz") as archive:
-                    names = archive.getnames()
-                    self.assertNotIn("offchain_storage.py", names)
-                    self.assertNotIn(f"validator-{index}/offchain-storage.toml", names)
-
-
-
     def test_feeder_provider_name_is_one_the_binary_accepts(self):
         """outbe-feeder validates provider names against a fixed list and
         refuses to start on anything else."""

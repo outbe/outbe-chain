@@ -1007,8 +1007,8 @@ def main() -> None:
     if output_dir.exists():
         raise ValueError(f"refusing to reuse existing output directory: {output_dir}")
     output_dir.mkdir(parents=True)
-    projection_scope = secrets.token_hex(8)
-    write_secret_hex(output_dir / "projection-scope", projection_scope)
+    deployment_scope = secrets.token_hex(8)
+    write_secret_hex(output_dir / "deployment-scope", deployment_scope)
 
     if args.validators and args.generate_validators:
         raise ValueError("use either --validators or --generate-validators, not both")
@@ -1274,7 +1274,7 @@ def main() -> None:
             runtime_enclave_binary=args.runtime_enclave_binary,
             chain_id=args.chain_id,
             validator_index=index,
-            container_name=f"outbe-{projection_scope}-enclave-{index}",
+            container_name=f"outbe-{deployment_scope}-enclave-{index}",
         )
         enclave_script_path = commands_dir / f"enclave-{index}.sh"
         write_command_script(enclave_script_path, enclave_cmd)

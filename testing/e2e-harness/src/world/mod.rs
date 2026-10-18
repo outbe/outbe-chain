@@ -46,7 +46,7 @@ pub struct World {
     /// The localnet and every owned node: bootstrap/start/stop the committee,
     /// provision/launch the joiner + followers, kill/restart validators.
     pub localnet: Localnet,
-    /// Scenario-owned RocksDB projection and read-only observation sessions.
+    /// Fixed-checkpoint EVM state reads over RPC, compared across validators.
     pub projection: ProjectionFixture,
     /// Chain reads/sends/waits.
     pub rpc: Rpc,

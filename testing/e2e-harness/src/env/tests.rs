@@ -2,9 +2,9 @@ use super::*;
 use std::path::Path;
 
 #[test]
-fn offchain_storage_network_scenario_is_registered_for_rocksdb() {
+fn state_persistence_scenario_is_registered_for_sgx_lanes() {
     let feature = Feature::parse_path(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("features/offchain_storage.feature"),
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("features/state_persistence.feature"),
         cucumber::gherkin::GherkinEnv::default(),
     )
     .unwrap();
@@ -22,7 +22,7 @@ fn offchain_storage_network_scenario_is_registered_for_rocksdb() {
 }
 
 #[test]
-fn removed_projection_backend_options_are_rejected() {
+fn flattened_env_cli_parses_with_default_validator_count() {
     use clap::Parser;
 
     #[derive(Parser)]
@@ -30,19 +30,13 @@ fn removed_projection_backend_options_are_rejected() {
         #[command(flatten)]
         env: EnvCli,
     }
-    for backend in ["rocksdb", "mongodb"] {
-        assert!(Cli::try_parse_from(["e2e", "--projection-backend", backend]).is_err());
-    }
-    assert!(
-        Cli::try_parse_from(["e2e", "--projection-mongodb-uri", "mongodb://127.0.0.1"]).is_err()
-    );
     assert_eq!(Cli::try_parse_from(["e2e"]).unwrap().env.validators, 4);
 }
 
 #[test]
-fn native_storage_scenario_runs_only_in_its_explicit_profile_even_with_all() {
+fn native_state_persistence_scenario_runs_only_in_its_explicit_profile_even_with_all() {
     let feature = Feature::parse_path(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("features/offchain_storage_native.feature"),
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("features/state_persistence_native.feature"),
         cucumber::gherkin::GherkinEnv::default(),
     )
     .unwrap();

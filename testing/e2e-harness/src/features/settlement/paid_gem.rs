@@ -351,21 +351,12 @@ impl PaidGem {
     }
 }
 
-/// Gem views at a finalized height are served by the body projection, which trails the
-/// block that wrote the body for a moment; retry errors until it catches up.
+/// A Gem view at a height every port has already finalized.
 fn gem_view_at<C>(url: &str, call: &C, height: u64, what: &str) -> C::Return
 where
     C: alloy_sol_types::SolCall,
     C::Return: Send + 'static,
 {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
-    loop {
-        match eth::read_call_at_result(url, addresses::GEM_ADDR, call, height) {
-            Ok(value) => return value,
-            Err(error) => {
-                assert!(std::time::Instant::now() < deadline, "{what}: {error}");
-                std::thread::sleep(std::time::Duration::from_millis(250));
-            }
-        }
-    }
+    eth::read_call_at_result(url, addresses::GEM_ADDR, call, height)
+        .unwrap_or_else(|error| panic!("{what}: {error}"))
 }

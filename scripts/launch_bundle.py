@@ -789,8 +789,7 @@ else
   note "enclave signature" "MISSING"; fail=1
 fi
 
-# State from an earlier genesis makes the node exit with
-# 'projection identity does not match configured chain'.
+# State from an earlier genesis belongs to a different chain; the node refuses to start on it.
 for stale in validator-{index}/data validator-{index}/consensus tee; do
   [ -e "$stale" ] && {{ note "leftover state" "$stale - remove before a new genesis"; fail=1; }}
 done

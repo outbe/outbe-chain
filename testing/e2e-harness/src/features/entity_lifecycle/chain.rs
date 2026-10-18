@@ -23,7 +23,8 @@ pub(crate) fn poll_until(
     }
 }
 
-/// Retry a failed settlement read twice while the body projection applies updates.
+/// Retry a failed read twice, two seconds apart, for reads that race the live head: the
+/// value is written by a later block, or the head moves while the read runs.
 pub(crate) fn settlement_read<T>(mut read: impl FnMut() -> Result<T, String>) -> Result<T, String> {
     let mut result = read();
     for attempt in 1..=2 {

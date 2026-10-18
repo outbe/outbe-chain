@@ -531,7 +531,7 @@ fn prepare_credis_seed(
     balances.insert(format!("{user:#x}"), json!("1000000000000000000000"));
     // One billion COEN for the CCA bond plus 10,000 for origination and gas.
     balances.insert(format!("{cca:#x}"), json!("1000010000000000000000000000"));
-    // The user's paid Gem is a compressed body: the scenario issues it at runtime.
+    // Genesis seeds no Gems: the scenario issues the user's paid Gem at runtime.
     Ok(())
 }
 

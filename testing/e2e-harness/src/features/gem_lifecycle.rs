@@ -25,8 +25,6 @@ use crate::world::settlement_currency::USD_ISO;
 use crate::world::test_issuance::{self, SeriesSpec};
 use crate::world::{venue_probes, World};
 
-/// How long a view may trail the block that wrote the body it reads.
-const PROJECTION_READ_TIMEOUT: Duration = Duration::from_secs(90);
 /// The source series' entry price; the gems derive their own from it. Low enough that
 /// the controlled COEN/USD quote clears the call price.
 const ENTRY_PRICE_MINOR: u64 = 800_000;
@@ -544,11 +542,9 @@ impl Lifecycle for GemLifecycle {
                 )
                 .expect("submit Promis mining");
                 assert_mined_success(&outcome, "mine Promis from the paid gem");
-                // The balance view trails the mining block by the projection's lag.
-                poll_until(
-                    PROJECTION_READ_TIMEOUT,
-                    || format!("mining did not burn gem {id}"),
-                    || gem_count(&url, owner).is_zero(),
+                assert!(
+                    gem_count(&url, owner).is_zero(),
+                    "mining did not burn gem {id}"
                 );
                 Mined {
                     owner,
@@ -761,23 +757,13 @@ fn read_position(world: &World) -> eth::IGemFactory::PositionData {
     .expect("the parked position reads back")
 }
 
-/// Gem views read through the compressed-body projection. The projection trails the
-/// block that wrote the body, so a fresh write can answer an error for a moment.
 fn read_gem_view<C>(url: &str, call: &C, what: &str) -> C::Return
 where
     C: alloy_sol_types::SolCall,
     C::Return: Send + 'static,
 {
-    let deadline = Instant::now() + PROJECTION_READ_TIMEOUT;
-    loop {
-        match eth::read_call_result(url, addresses::GEM_ADDR, call) {
-            Ok(value) => return value,
-            Err(error) => {
-                assert!(Instant::now() < deadline, "{what}: {error}");
-                sleep(Duration::from_secs(1));
-            }
-        }
-    }
+    eth::read_call_result(url, addresses::GEM_ADDR, call)
+        .unwrap_or_else(|error| panic!("{what}: {error}"))
 }
 
 fn gem_count(url: &str, owner: Address) -> U256 {

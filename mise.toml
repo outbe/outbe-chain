@@ -302,20 +302,20 @@ cargo run --locked --release -j 4 -p outbe-e2e-harness --bin outbe-e2e-build -- 
 target/release/outbe-e2e --artifact-manifest target/e2e-artifacts/mock.json --tee mock --validators 4 --all "$@"
 """
 
-[tasks.e2e-offchain-storage]
-description = "Run the separate Linux RocksDB storage E2E"
+[tasks.e2e-state-persistence]
+description = "Run the separate Linux EVM state persistence E2E"
 run = """
 set -eu
 cargo run --locked --release -j 4 -p outbe-e2e-harness --bin outbe-e2e-build -- --lane sgx-no-attest --repo . --jobs 4 --output target/e2e-artifacts/sgx-no-attest.json
-target/release/outbe-e2e --artifact-manifest target/e2e-artifacts/sgx-no-attest.json --tee sgx-no-attest --sudo --validators 4 --tags @offchain-storage-e2e "$@"
+target/release/outbe-e2e --artifact-manifest target/e2e-artifacts/sgx-no-attest.json --tee sgx-no-attest --sudo --validators 4 --tags @state-persistence-e2e "$@"
 """
 
-[tasks.e2e-offchain-storage-native]
-description = "Run RocksDB storage E2E with the native mock enclave, without Docker or SGX"
+[tasks.e2e-state-persistence-native]
+description = "Run the EVM state persistence E2E with the native mock enclave, without Docker or SGX"
 run = """
 set -eu
 cargo run --locked --release -j 4 -p outbe-e2e-harness --bin outbe-e2e-build -- --lane mock-native --repo . --jobs 4 --output target/e2e-artifacts/mock-native.json
-target/release/outbe-e2e --artifact-manifest target/e2e-artifacts/mock-native.json --tee mock-native --no-sudo --validators 4 --tags @offchain-storage-native-e2e "$@"
+target/release/outbe-e2e --artifact-manifest target/e2e-artifacts/mock-native.json --tee mock-native --no-sudo --validators 4 --tags @state-persistence-native-e2e "$@"
 """
 
 # The hardware lane must be distinct from `e2e`: the default suite intentionally

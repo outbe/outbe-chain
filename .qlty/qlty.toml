@@ -40,7 +40,6 @@ exclude_patterns = [
   "**/templates/**",
   "**/testdata/**",
   "**/vendor/**",
-  "crates/poseidon/src/poseidon/constants.rs",
   # Codegen scripts. Inline qlty-ignore and [[triage]] do not hide their smells.
   "crates/zk/outbe-zk/build.rs",
 ]
