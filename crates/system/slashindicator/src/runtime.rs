@@ -84,7 +84,7 @@ impl SlashIndicator<'_> {
     /// The next reshare removes a validator that is already JAILED or EXITING
     /// from the consensus set. While it stays in the committee snapshot, do not
     /// apply another felony for the same continuous liveness fault.
-    /// Repeated jail and 5% slash penalties at subsequent miss thresholds would
+    /// Repeated jail and 8% slash penalties at subsequent miss thresholds would
     /// compound to far more than the intended single-felony penalty.
     pub(crate) fn validator_already_penalized(&self, validator: Address) -> Result<bool> {
         let vs = ValidatorSet::new(self.storage.clone());
