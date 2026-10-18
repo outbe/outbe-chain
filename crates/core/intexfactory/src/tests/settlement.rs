@@ -478,13 +478,11 @@ fn compute_pow_hash_matches_manual_sha256() {
     assert_eq!(got.as_slice(), expected.as_ref());
 }
 
-/// The vectors the MCP miner is tested against, computed outside both implementations.
+/// Check the historical MCP miner vectors preserved from commit 6c6cb705.
 #[test]
 fn compute_pow_hash_matches_the_shared_client_vectors() {
-    let fixture: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../../../mcp/src/intex/pow.vectors.json"
-    ))
-    .unwrap();
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/pow.vectors.json")).unwrap();
     assert_eq!(
         fixture["difficulty_bytes"].as_u64(),
         Some(outbe_common::pow::POW_DIFFICULTY as u64)

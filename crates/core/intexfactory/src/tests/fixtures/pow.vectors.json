@@ -1,0 +1,35 @@
+{
+  "difficulty_bytes": 2,
+  "vectors": [
+    {
+      "owner": "0x1111111111111111111111111111111111111111",
+      "promis_amount": "1000000",
+      "series_id": "0x0135a7f2000000000000000003e8",
+      "seq": 0,
+      "nonce": "42",
+      "hash": "0x47908d58fdf275f987a0914c0edc6695b09176638276ed808c8576bee9fe6bd6",
+      "first_valid_nonce": "8217",
+      "first_valid_hash": "0x0000cede92bed214fc9ed403e44dc3402959823bf0f3390b5b7f677f80542583"
+    },
+    {
+      "owner": "0xabcdef0123456789abcdef0123456789abcdef01",
+      "promis_amount": "123456789012345678901234567890",
+      "series_id": "0xffeeddccbbaa9988776655443322",
+      "seq": 7,
+      "nonce": "72623859790382856",
+      "hash": "0x1692a5e9255df70924255b1b404729c73b4bb97c7f3a20caf71ec8b071500f2b",
+      "first_valid_nonce": "240435",
+      "first_valid_hash": "0x0000015551da501b9d2995c9ceecb3f4de1a86af3bbd47e6d416edc709123a5e"
+    },
+    {
+      "owner": "0xffffffffffffffffffffffffffffffffffffffff",
+      "promis_amount": "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+      "series_id": "0xffffffffffffffffffffffffffff",
+      "seq": 4294967295,
+      "nonce": "18446744073709551615",
+      "hash": "0xbffdc95901e365b7b365d4ff7f571042deb01be218462c2af09e8b8e9c9b7c4e",
+      "first_valid_nonce": "82251",
+      "first_valid_hash": "0x0000abb3f4d59ea4f177cfcaee62caceba6782cc99cca42ed4e740ff606e7048"
+    }
+  ]
+}
