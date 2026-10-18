@@ -91,7 +91,12 @@ struct Sidecar {
 }
 impl Sidecar {
     fn new(seed: u8) -> Self {
-        let directory = tempfile::tempdir_in("/private/tmp").unwrap();
+        let directory = tempfile::tempdir_in(if cfg!(target_os = "macos") {
+            "/private/tmp"
+        } else {
+            "/tmp"
+        })
+        .unwrap();
         let home = Home::new(directory.path()).unwrap();
         let node_id = Keystore::new(&home.keys())
             .init("transport-only", None, Seed::new([seed; 32]))

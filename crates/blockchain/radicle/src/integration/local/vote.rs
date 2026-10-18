@@ -144,7 +144,12 @@ mod tests {
     }
     #[tokio::test]
     async fn existing_vote_events_cross_private_socket_with_chain_page_and_size_checks() {
-        let directory = tempfile::tempdir_in("/private/tmp").unwrap();
+        let directory = tempfile::tempdir_in(if cfg!(target_os = "macos") {
+            "/private/tmp"
+        } else {
+            "/tmp"
+        })
+        .unwrap();
         fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
         let control = directory.path().join("control");
         let chain = ChainIdentity {

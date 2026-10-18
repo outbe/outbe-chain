@@ -246,9 +246,11 @@ impl CohortState {
     /// `first_qualified_start = 0` means no account has qualified (league floor).
     fn evaluate(&self, eval_day: u64, first_qualified_start: u64) -> Result<(U256, U256, u16)> {
         let (rcfi, efficiency, _) = self.rcfi_triple(eval_day)?;
-        let max = (first_qualified_start != 0)
-            .then(|| t_dec(eval_day.saturating_sub(first_qualified_start)))
-            .unwrap_or(U256::ZERO);
+        let max = if first_qualified_start != 0 {
+            t_dec(eval_day.saturating_sub(first_qualified_start))
+        } else {
+            U256::ZERO
+        };
         let league =
             league_from_rcfi(rcfi, max).ok_or(FidelityEnclaveError::LeagueArithmeticOverflow)?;
         Ok((rcfi, efficiency, league))
