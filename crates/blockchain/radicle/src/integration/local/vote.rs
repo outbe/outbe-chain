@@ -29,15 +29,15 @@ impl LocalReceiptClient {
 }
 
 fn validate(page: &FinalizedVotePage, height: u64, offset: u32) -> Result<(), Error> {
-    if page.block.number != height
+    let invalid_block_or_len = page.block.number != height
         || page.block.hash.is_zero()
-        || page.proposals.len() > MAX_VOTE_PAGE
-        || page.proposals.iter().any(|id| id.is_zero())
+        || page.proposals.len() > MAX_VOTE_PAGE;
+    let invalid_proposals_or_offset = page.proposals.iter().any(|id| id.is_zero())
         || page.proposals.windows(2).any(|p| p[0] >= p[1])
         || page
             .next_offset
-            .is_some_and(|n| offset.checked_add(MAX_VOTE_PAGE as u32) != Some(n))
-    {
+            .is_some_and(|n| offset.checked_add(MAX_VOTE_PAGE as u32) != Some(n));
+    if invalid_block_or_len || invalid_proposals_or_offset {
         return Err(Error::Protocol);
     }
     Ok(())
