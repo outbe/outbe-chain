@@ -257,11 +257,11 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
             address = seed_genesis.address_bytes(validator["address"])
             node_id = bytes.fromhex(validator["radicle_node_id"])
             self.assertEqual(
-                storage.entries[seed_genesis.mapping_key(address, 59)],
+                storage.entries[seed_genesis.mapping_key(address, 50)],
                 "0x" + node_id.hex(),
             )
             self.assertEqual(
-                storage.entries[seed_genesis.mapping_key(node_id, 60)],
+                storage.entries[seed_genesis.mapping_key(node_id, 51)],
                 seed_genesis.hex32(seed_genesis.address_as_u256(validator["address"])),
             )
 

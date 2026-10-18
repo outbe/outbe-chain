@@ -117,20 +117,53 @@ fn off_grid_boundary_setup(world: &mut World) {
 #[when("the committee drives past a reshare")]
 fn drive_past_reshare(world: &mut World) {
     let primary = world.validators.primary_port();
-    let mut reshared = false;
-    for _ in 0..70 {
-        sleep(Duration::from_secs(5));
-        if let Some(v) = world
+    let genesis = std::fs::read(world.localnet.scenario_dir().join("genesis.json"))
+        .expect("read executed reshare scenario genesis");
+    let genesis = serde_json::from_slice(&genesis).expect("decode reshare scenario genesis");
+    let timeout = reshare_wait_budget(&genesis).expect("reshare budget from executed genesis");
+    let deadline = std::time::Instant::now()
+        .checked_add(timeout)
+        .expect("reshare deadline fits the monotonic clock");
+    loop {
+        world
+            .localnet
+            .ensure_committee_alive()
+            .expect("committee stays alive while awaiting reshare");
+        let version = world
             .rpc
-            .consensus_status_field(primary, "vrfMaterialVersion")
+            .consensus_status_field(primary, "vrfMaterialVersion");
+        if version
+            .as_deref()
+            .is_some_and(|v| v != "0" && v != "null" && !v.is_empty())
         {
-            if v != "0" && v != "null" && !v.is_empty() {
-                reshared = true;
-                break;
-            }
+            return;
         }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no reshare observed within {timeout:?}: finalized height {:?}, material version {version:?}",
+            world.rpc.finalized(primary),
+        );
+        sleep(Duration::from_secs(5));
     }
-    assert!(reshared, "no reshare observed within the window");
+}
+
+pub(super) fn reshare_wait_budget(genesis: &serde_json::Value) -> eyre::Result<Duration> {
+    let epoch = genesis
+        .pointer("/config/epochLengthBlocks")
+        .and_then(serde_json::Value::as_u64)
+        .filter(|epoch| *epoch > 0)
+        .ok_or_else(|| eyre::eyre!("genesis has no positive epochLengthBlocks"))?;
+    let grace = match genesis.pointer("/config/dkgActivationGraceBlocks") {
+        None => outbe_consensus::config::DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS,
+        Some(value) => value.as_u64().ok_or_else(|| {
+            eyre::eyre!("genesis DKG activation grace must be an unsigned integer")
+        })?,
+    };
+    let blocks = epoch
+        .checked_add(grace)
+        .and_then(|blocks| blocks.checked_add(2))
+        .ok_or_else(|| eyre::eyre!("reshare block allowance overflow"))?;
+    super::common::consensus_block_wait_budget(genesis, blocks)
 }
 
 #[when("a production FullNode with its own enclave syncs from the committee")]
@@ -576,4 +609,33 @@ fn promoted_activates(world: &mut World) {
         lockstep(&world.rpc, primary, joiner_port),
         "warm-promoted validator stalled after activation"
     );
+}
+
+#[cfg(test)]
+mod timing_tests {
+    use super::*;
+
+    #[test]
+    fn reshare_wait_covers_executed_epoch_and_grace_and_rejects_overflow() {
+        let mut genesis = serde_json::json!({"config": {
+            "epochLengthBlocks": 60,
+            "dkgActivationGraceBlocks": 30,
+            "minBlockTimeMs": 2000,
+            "leaderTimeoutMs": 15000,
+            "certificationTimeoutMs": 30000,
+        }});
+        assert_eq!(
+            reshare_wait_budget(&genesis).unwrap(),
+            Duration::from_secs(2760)
+        );
+        genesis["config"]["epochLengthBlocks"] = serde_json::json!(120);
+        assert_eq!(
+            reshare_wait_budget(&genesis).unwrap(),
+            Duration::from_secs(4560)
+        );
+        genesis["config"]["epochLengthBlocks"] = serde_json::json!(0);
+        assert!(reshare_wait_budget(&genesis).is_err());
+        genesis["config"]["epochLengthBlocks"] = serde_json::json!(u64::MAX);
+        assert!(reshare_wait_budget(&genesis).is_err());
+    }
 }

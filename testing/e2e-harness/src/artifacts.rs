@@ -14,6 +14,16 @@ use crate::env::{Environment, TeeMode};
 use crate::verification_ledger::{hash_file, MemberDigestV1};
 
 const BUILD_MANIFEST_SCHEMA_VERSION: u32 = 1;
+const GENESIS_TOOLING_INPUTS: [(&str, &str); 2] = [
+    (
+        "genesis_validator_seeder_source",
+        "scripts/genesis_seed_validators.py",
+    ),
+    (
+        "genesis_validator_seeder_layout_test",
+        "scripts/test_seed_genesis_protocol_constants.py",
+    ),
+];
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
 #[serde(rename_all = "kebab-case")]
@@ -225,15 +235,40 @@ pub fn build_lane(repo: &Path, lane: BuildLane, jobs: usize, output: &Path) -> R
 
 /// Rebuild the harness while retaining byte-identical release runtime artifacts.
 /// The prior manifest must describe the same checkout, lockfile, toolchain, and lane.
+/// A saved source diff can authenticate unchanged dirty files from the prior build.
 pub fn refresh_harness_lane(
     repo: &Path,
     lane: BuildLane,
     jobs: usize,
     prior_path: &Path,
+    prior_source_diff: Option<&Path>,
+    refresh_genesis_tooling: bool,
     output: &Path,
 ) -> Result<()> {
     ensure!((1..=8).contains(&jobs), "--jobs must be between 1 and 8");
     let repo = repo.canonicalize()?;
+    let mut reuse_evidence = Vec::new();
+    ensure!(
+        !refresh_genesis_tooling || prior_source_diff.is_some(),
+        "genesis tooling refresh requires an authenticated prior source diff"
+    );
+    if refresh_genesis_tooling {
+        reuse_evidence.extend(genesis_tooling_evidence(&repo)?);
+    }
+    if let Some(diff_path) = prior_source_diff {
+        for (name, path) in [
+            ("reuse_prior_manifest", prior_path),
+            ("reuse_prior_source_diff", diff_path),
+        ] {
+            reuse_evidence.push((name.to_owned(), identify(&path.canonicalize()?, false)?));
+        }
+    }
+    for (name, identity) in &reuse_evidence {
+        ensure!(
+            !output.exists() || output.canonicalize()? != identity.canonical_path,
+            "preserve reuse evidence {name} when publishing the new manifest"
+        );
+    }
     let prior: BuildManifestV1 = serde_json::from_slice(&fs::read(prior_path)?)?;
     ensure!(
         prior.schema_version == BUILD_MANIFEST_SCHEMA_VERSION,
@@ -253,12 +288,12 @@ pub fn refresh_harness_lane(
         prior.source.rust_toolchain_sha256 == source_before.rust_toolchain_sha256,
         "Rust toolchain differs"
     );
-    for area in ["bin", "crates", "contracts", "scripts", "release"] {
-        ensure!(
-            command_output(&repo, "git", &["status", "--porcelain", "--", area])?.is_empty(),
-            "production inputs under {area} are dirty; rebuild the complete lane"
-        );
-    }
+    verify_reused_sources(
+        &repo,
+        &prior.source,
+        prior_source_diff,
+        refresh_genesis_tooling,
+    )?;
     for spec in lane_artifacts(&repo, lane)
         .into_iter()
         .filter(|spec| spec.name != "outbe_e2e")
@@ -296,6 +331,13 @@ pub fn refresh_harness_lane(
     }
     let mut commands = prior.cargo_commands;
     commands.push(harness_command);
+    for (name, identity) in reuse_evidence {
+        ensure!(
+            identify(&identity.requested_path, false)? == identity,
+            "reuse evidence {name} changed during harness build"
+        );
+        artifacts.insert(name, identity);
+    }
     publish_manifest(
         output,
         &BuildManifestV1 {
@@ -527,8 +569,12 @@ fn identify(path: &Path, executable: bool) -> Result<ArtifactIdentity> {
 }
 
 fn source_fingerprint(repo: &Path) -> Result<SourceFingerprintV1> {
-    let git_sha = command_stdout(repo, "git", &["rev-parse", "HEAD"])?;
     let diff = command_output(repo, "git", &["diff", "--binary", "HEAD", "--", "."])?;
+    source_fingerprint_with_diff(repo, &diff)
+}
+
+fn source_fingerprint_with_diff(repo: &Path, diff: &[u8]) -> Result<SourceFingerprintV1> {
+    let git_sha = command_stdout(repo, "git", &["rev-parse", "HEAD"])?;
     let untracked = command_output(
         repo,
         "git",
@@ -536,7 +582,7 @@ fn source_fingerprint(repo: &Path) -> Result<SourceFingerprintV1> {
     )?;
     let mut hasher = Sha256::new();
     hash_component(&mut hasher, git_sha.as_bytes());
-    hash_component(&mut hasher, &diff);
+    hash_component(&mut hasher, diff);
     for relative in untracked
         .split(|byte| *byte == 0)
         .filter(|path| !path.is_empty())
@@ -570,6 +616,99 @@ fn source_fingerprint(repo: &Path) -> Result<SourceFingerprintV1> {
         cargo_lock_sha256: hash_file(&repo.join("Cargo.lock"))?.sha256,
         rust_toolchain_sha256: hash_file(&repo.join("rust-toolchain.toml"))?.sha256,
     })
+}
+
+fn verify_reused_sources(
+    repo: &Path,
+    prior: &SourceFingerprintV1,
+    prior_source_diff: Option<&Path>,
+    refresh_genesis_tooling: bool,
+) -> Result<()> {
+    ensure!(
+        !refresh_genesis_tooling || prior_source_diff.is_some(),
+        "genesis tooling refresh requires an authenticated prior source diff"
+    );
+    let Some(diff_path) = prior_source_diff else {
+        for area in ["bin", "crates", "contracts", "scripts", "release"] {
+            ensure!(
+                command_output(repo, "git", &["status", "--porcelain", "--", area])?.is_empty(),
+                "production inputs under {area} are dirty; rebuild the complete lane"
+            );
+        }
+        return Ok(());
+    };
+    let diff = fs::read(diff_path)?;
+    ensure!(
+        source_fingerprint_with_diff(repo, &diff)? == *prior,
+        "saved source diff and current untracked inputs do not match the prior manifest"
+    );
+
+    // Reconstruct the authenticated baseline without modifying the working index.
+    let index = tempfile::NamedTempFile::new()?;
+    let run = |arguments: &[&OsStr]| -> Result<Vec<u8>> {
+        let output = Command::new("git")
+            .args(arguments)
+            .env("GIT_INDEX_FILE", index.path())
+            .current_dir(repo)
+            .output()?;
+        ensure!(
+            output.status.success(),
+            "cannot reconstruct baseline source: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+        Ok(output.stdout)
+    };
+    run(&[OsStr::new("read-tree"), OsStr::new(&prior.git_sha)])?;
+    if !diff.is_empty() {
+        let patch = tempfile::NamedTempFile::new()?;
+        fs::write(patch.path(), &diff)?;
+        run(&[
+            OsStr::new("apply"),
+            OsStr::new("--cached"),
+            OsStr::new("--binary"),
+            patch.path().as_os_str(),
+        ])?;
+    }
+    let mut current_arguments = vec![
+        "diff",
+        "--binary",
+        "HEAD",
+        "--",
+        ".",
+        ":(exclude)testing/e2e-harness",
+    ];
+    let tooling_exclusions: Vec<_> = if refresh_genesis_tooling {
+        GENESIS_TOOLING_INPUTS
+            .iter()
+            .map(|(_, path)| format!(":(exclude,literal){path}"))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    current_arguments.extend(tooling_exclusions.iter().map(String::as_str));
+    let mut baseline_arguments: Vec<_> = current_arguments.iter().map(OsStr::new).collect();
+    baseline_arguments.insert(2, OsStr::new("--cached"));
+    let baseline = run(&baseline_arguments)?;
+    let current = command_output(repo, "git", &current_arguments)?;
+    ensure!(
+        baseline == current,
+        "source outside testing/e2e-harness differs from the authenticated baseline"
+    );
+    Ok(())
+}
+
+fn genesis_tooling_evidence(repo: &Path) -> Result<Vec<(String, ArtifactIdentity)>> {
+    GENESIS_TOOLING_INPUTS
+        .iter()
+        .map(|(name, relative)| {
+            command_output(
+                repo,
+                "git",
+                &["ls-files", "--error-unmatch", "--", relative],
+            )?;
+            Ok(((*name).to_owned(), identify(&repo.join(relative), false)?))
+        })
+        .collect()
 }
 
 #[cfg(unix)]
@@ -928,6 +1067,136 @@ mod tests {
         fs::write(repo.join("new.rs"), b"untracked").expect("write untracked source");
         let untracked = source_fingerprint(repo).expect("untracked source fingerprint");
         assert_ne!(clean, untracked);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn harness_reuse_authenticates_a_dirty_baseline_and_rejects_foreign_inputs() {
+        let (directory, env, _, _) = manifest_fixture();
+        let repo = &env.repo;
+        for (path, contents) in [
+            ("crates/source.rs", "original runtime"),
+            ("scripts/genesis_seed_validators.py", "original seeder"),
+            (
+                "scripts/test_seed_genesis_protocol_constants.py",
+                "original seeder test",
+            ),
+            ("scripts/other.py", "unrelated script"),
+            ("vendor/source.rs", "original dependency"),
+            ("testing/e2e-harness/harness.rs", "original harness"),
+        ] {
+            let path = repo.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, contents).unwrap();
+        }
+        git(repo, &["add", "."]);
+        git(repo, &["commit", "-m", "runtime source fixture"]);
+        let runtime = repo.join("crates/source.rs");
+        fs::write(&runtime, "dirty source used by the prior build").unwrap();
+        let baseline_diff =
+            command_output(repo, "git", &["diff", "--binary", "HEAD", "--", "."]).unwrap();
+        let patch = directory.path().join("baseline.diff");
+        fs::write(&patch, &baseline_diff).unwrap();
+        let prior = source_fingerprint(repo).unwrap();
+        let original_index =
+            command_output(repo, "git", &["diff", "--cached", "--binary"]).unwrap();
+
+        fs::write(
+            repo.join("testing/e2e-harness/harness.rs"),
+            "corrected harness",
+        )
+        .unwrap();
+        verify_reused_sources(repo, &prior, Some(&patch), false)
+            .expect("unchanged dirty runtime sources permit harness reuse");
+        assert_eq!(
+            command_output(repo, "git", &["diff", "--cached", "--binary"]).unwrap(),
+            original_index,
+            "baseline reconstruction must not modify the working index"
+        );
+        let error = verify_reused_sources(repo, &prior, None, false)
+            .expect_err("the default workflow still rejects dirty production directories");
+        assert!(error.to_string().contains("production inputs under crates"));
+
+        fs::write(&patch, b"forged baseline patch").unwrap();
+        let error = verify_reused_sources(repo, &prior, Some(&patch), false)
+            .expect_err("a caller cannot substitute an unauthenticated baseline");
+        assert!(error
+            .to_string()
+            .contains("do not match the prior manifest"));
+        fs::write(&patch, &baseline_diff).unwrap();
+
+        let untracked = repo.join("untracked-runtime.rs");
+        fs::write(&untracked, "new input").unwrap();
+        let error = verify_reused_sources(repo, &prior, Some(&patch), false)
+            .expect_err("untracked inputs must still match the authenticated baseline");
+        assert!(error
+            .to_string()
+            .contains("do not match the prior manifest"));
+        fs::remove_file(untracked).unwrap();
+
+        for (path, original) in [
+            ("crates/source.rs", "dirty source used by the prior build"),
+            ("scripts/genesis_seed_validators.py", "original seeder"),
+            ("scripts/other.py", "unrelated script"),
+            ("vendor/source.rs", "original dependency"),
+            ("Cargo.lock", "lock"),
+            ("rust-toolchain.toml", "toolchain"),
+        ] {
+            fs::write(repo.join(path), "new runtime input").unwrap();
+            assert!(
+                verify_reused_sources(repo, &prior, Some(&patch), false).is_err(),
+                "changed {path} must invalidate runtime reuse"
+            );
+            fs::write(repo.join(path), original).unwrap();
+        }
+        verify_reused_sources(repo, &prior, Some(&patch), false)
+            .expect("restoring the original inputs restores reuse eligibility");
+
+        for (_, path) in GENESIS_TOOLING_INPUTS {
+            fs::write(repo.join(path), "approved interpreted tooling update").unwrap();
+        }
+        assert!(verify_reused_sources(repo, &prior, Some(&patch), false).is_err());
+        verify_reused_sources(repo, &prior, Some(&patch), true)
+            .expect("explicit tooling refresh accepts only the declared Python inputs");
+        assert!(verify_reused_sources(repo, &prior, None, true).is_err());
+        let evidence = genesis_tooling_evidence(repo)
+            .expect("tracked regular tooling inputs are valid evidence");
+        assert_eq!(
+            evidence
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "genesis_validator_seeder_source",
+                "genesis_validator_seeder_layout_test"
+            ]
+        );
+
+        for (path, original) in [
+            ("crates/source.rs", "dirty source used by the prior build"),
+            ("scripts/other.py", "unrelated script"),
+            ("vendor/source.rs", "original dependency"),
+            ("Cargo.lock", "lock"),
+            ("rust-toolchain.toml", "toolchain"),
+        ] {
+            fs::write(repo.join(path), "unexpected compiled or tooling input").unwrap();
+            assert!(
+                verify_reused_sources(repo, &prior, Some(&patch), true).is_err(),
+                "tooling refresh must reject an additional change to {path}"
+            );
+            fs::write(repo.join(path), original).unwrap();
+        }
+
+        let writer = repo.join(GENESIS_TOOLING_INPUTS[0].1);
+        let backup = directory.path().join("seeder.py");
+        fs::rename(&writer, &backup).unwrap();
+        assert!(genesis_tooling_evidence(repo).is_err());
+        std::os::unix::fs::symlink(&backup, &writer).unwrap();
+        assert!(genesis_tooling_evidence(repo).is_err());
+        fs::remove_file(&writer).unwrap();
+        fs::rename(&backup, &writer).unwrap();
+        verify_reused_sources(repo, &prior, Some(&patch), true)
+            .expect("valid restored tooling still permits runtime reuse");
     }
 
     #[cfg(unix)]

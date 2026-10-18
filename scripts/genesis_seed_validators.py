@@ -46,7 +46,7 @@ def seed_validator_set(
       slots 21-26: epoch / consensus-set tracking
       slot 27: re-registration cooldown
       slots 28-29: versioned Commonware P2P address registry
-      slots 59-60: Radicle NodeId forward and reverse indexes
+      slots 50-51: Radicle NodeId forward and reverse indexes
     """
     epoch_length_blocks = terms.epoch_length_blocks
     epoch_start_timestamp = terms.epoch_start_timestamp
@@ -112,8 +112,8 @@ def seed_validator_set(
         storage.set_mapping(17, u64_bytes(index), address_as_u256(addr))
         storage.set_mapping(18, pk_hash, address_as_u256(addr))
         storage.set_mapping(24, address_bytes(addr), 1)
-        storage.set_mapping_b256(59, address_bytes(addr), radicle_node_id)
-        storage.set_mapping(60, radicle_node_id, address_as_u256(addr))
+        storage.set_mapping_b256(50, address_bytes(addr), radicle_node_id)
+        storage.set_mapping(51, radicle_node_id, address_as_u256(addr))
         p2p_seed = encode_p2p_address_payload(validator.get("p2p_address"))
         if p2p_seed is not None:
             version, payload = p2p_seed

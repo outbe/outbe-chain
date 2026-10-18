@@ -91,7 +91,7 @@ struct Sidecar {
 }
 impl Sidecar {
     fn new(seed: u8) -> Self {
-        let directory = tempfile::tempdir_in("/private/tmp").unwrap();
+        let directory = tempfile::tempdir_in("/tmp").unwrap();
         let home = Home::new(directory.path()).unwrap();
         let node_id = Keystore::new(&home.keys())
             .init("transport-only", None, Seed::new([seed; 32]))
@@ -1192,14 +1192,28 @@ async fn automatic_bootstrap_vote_review_and_merge_with_one_offline_member_and_r
     );
     ordinary.stop();
 
-    // A fresh receiver has trusted receipts but no package: ordinary fetch must stay closed.
+    // Receipts alone cannot authorize recovery without the trusted descriptor and approvals.
+    struct ReceiptOnlyReader(Arc<RethSnapshotReader<FinalizedProvider>>);
+    impl outbe_radicle::manager::RepositoryReceiptReader for ReceiptOnlyReader {
+        fn read_current_publication_receipt(
+            &self,
+            sequence: u64,
+        ) -> Result<
+            Option<outbe_radicle::manager::FinalizedPublicationReceipt>,
+            outbe_radicle::manager::ManagerError,
+        > {
+            self.0.read_current_publication_receipt(sequence)
+        }
+    }
     let mut fresh = Sidecar::new(74);
-    let store = ReviewPackageStore::open(fresh.home.node().join("node-publications")).unwrap();
-    let server = LocalReceiptServer::bind(&fresh.control, reader.clone())
-        .unwrap()
-        .with_authority_reader(reader.clone())
-        .with_native_node_id(fresh.node_id.into_inner())
-        .with_publication_store(store);
+    let store_path = fresh.home.node().join("node-publications");
+    let store = ReviewPackageStore::open(&store_path).unwrap();
+    let server =
+        LocalReceiptServer::bind(&fresh.control, Arc::new(ReceiptOnlyReader(reader.clone())))
+            .unwrap()
+            .with_authority_reader(reader.clone())
+            .with_native_node_id(fresh.node_id.into_inner())
+            .with_publication_store(store);
     let (stop_fresh, stopped) = oneshot::channel();
     let serving = tokio::spawn(server.run(async {
         let _ = stopped.await;
@@ -1261,9 +1275,12 @@ async fn automatic_bootstrap_vote_review_and_merge_with_one_offline_member_and_r
         .fetch(rid, source, HANDLE_DEADLINE, None)
         .unwrap();
     match fetched {
-        // Native fetch checks the empty local identity before requesting the missing package.
+        // Native fetch cannot authorize the fetched identity without accepted recovery history.
         radicle::node::FetchResult::Failed { reason } => {
-            assert_eq!(reason, "missing identity document")
+            assert_eq!(
+                reason,
+                format!("verification of rad/id for {source} failed")
+            )
         }
         other => panic!("fresh receiver accepted owner entries without its package: {other:?}"),
     }
@@ -1275,9 +1292,112 @@ async fn automatic_bootstrap_vote_review_and_merge_with_one_offline_member_and_r
         .unwrap()
         .next()
         .is_none());
+    drop(empty);
+    stop_fresh.send(()).unwrap();
+    serving.await.unwrap().unwrap();
+
+    // Full finalized history permits reconstruction, but only through accepted-proof checks.
+    let store = ReviewPackageStore::open(&store_path).unwrap();
+    let server = LocalReceiptServer::bind(&fresh.control, reader.clone())
+        .unwrap()
+        .with_authority_reader(reader.clone())
+        .with_native_node_id(fresh.node_id.into_inner())
+        .with_publication_store(store);
+    let (stop_fresh, stopped) = oneshot::channel();
+    let serving = tokio::spawn(server.run(async {
+        let _ = stopped.await;
+    }));
+    let deadline = Instant::now() + HANDLE_DEADLINE * 4;
+    loop {
+        let fetched = fresh
+            .node
+            .fetch(rid, source, HANDLE_DEADLINE, None)
+            .unwrap();
+        if fetched.is_success() {
+            assert!(fetched.success().unwrap().1.contains(&owner));
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "fresh receiver did not recover accepted history: {fetched:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    while !fresh.available(rid)
+        || !std::fs::read(fresh.journal().join("latest-installed"))
+            .is_ok_and(|bytes| bytes.get(..8) == Some(8u64.to_be_bytes().as_slice()))
+    {
+        assert!(
+            Instant::now() < deadline,
+            "fresh receiver did not install accepted history through sequence 8"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
     fresh.stop();
     stop_fresh.send(()).unwrap();
     serving.await.unwrap().unwrap();
+    {
+        use radicle::storage::{
+            ReadRepository as _, RemoteRepository as _, ValidateRepository as _,
+        };
+        let store = ReviewPackageStore::open(fresh.journal().join("packages")).unwrap();
+        let checkpoint = reader.read_current_publication_receipt(8).unwrap().unwrap();
+        let verifier = SigningKey::from_seed(Seed::new([76; 32]));
+        let repository = store
+            .open_checkpoint_repository(
+                reader.as_ref(),
+                &checkpoint,
+                &fresh.home.storage().join(rid.canonical()),
+                git::UserInfo {
+                    alias: radicle::node::Alias::new("Verifier"),
+                    key: *verifier.public_key(),
+                },
+            )
+            .unwrap();
+        for sequence in 1..=8 {
+            let receipt = reader
+                .read_current_publication_receipt(sequence)
+                .unwrap()
+                .unwrap();
+            if matches!(
+                receipt.receipt().body.action,
+                outbe_primitives::radicle_publication::PublicationAction::Bootstrap
+                    | outbe_primitives::radicle_publication::PublicationAction::Review
+                    | outbe_primitives::radicle_publication::PublicationAction::Merge
+            ) {
+                assert!(store
+                    .load_accepted(&receipt, &repository)
+                    .unwrap()
+                    .is_some());
+            }
+        }
+        let source_repository =
+            git::raw::Repository::open_bare(sidecars[1].home.storage().join(rid.canonical()))
+                .unwrap();
+        assert_eq!(
+            repository
+                .identity_doc()
+                .unwrap()
+                .doc
+                .delegates()
+                .first()
+                .as_key(),
+            &owner
+        );
+        assert_eq!(
+            repository.raw().head().unwrap().target(),
+            source_repository.head().unwrap().target()
+        );
+        assert_eq!(
+            repository.remote(&owner).unwrap().refs.at,
+            git::Oid::from(
+                source_repository
+                    .refname_to_id(&format!("refs/namespaces/{owner}/refs/rad/sigrefs"))
+                    .unwrap()
+            )
+        );
+        assert!(repository.validate().unwrap().is_empty());
+    }
     for sidecar in &mut sidecars {
         sidecar.stop();
     }

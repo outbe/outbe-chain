@@ -31,12 +31,28 @@ fn snapshot_start_and_restart(world: &mut World) {
 fn run_snapshot_start_and_restart(world: &mut World) -> Result<()> {
     let primary = world.validators.primary_port();
     let minimum_cut = EPOCH_LENGTH * 2;
-    ensure!(
-        world
+    let rotation_target = minimum_cut + 10;
+    let genesis: serde_json::Value = serde_json::from_slice(&std::fs::read(
+        world.localnet.scenario_dir().join("genesis.json"),
+    )?)?;
+    let rotation_timeout = super::common::consensus_block_wait_budget(&genesis, rotation_target)?;
+    let rotation_deadline = Instant::now()
+        .checked_add(rotation_timeout)
+        .ok_or_else(|| eyre!("snapshot rotation deadline overflow"))?;
+    loop {
+        if world
             .rpc
-            .wait_finalized_at_least(primary, minimum_cut + 10, 600),
-        "committee did not rotate"
-    );
+            .finalized(primary)
+            .is_some_and(|height| height >= rotation_target)
+        {
+            break;
+        }
+        ensure!(
+            Instant::now() < rotation_deadline,
+            "committee did not finalize snapshot rotation target {rotation_target} within {rotation_timeout:?}"
+        );
+        std::thread::sleep(Duration::from_secs(2));
+    }
     let slot = world.validators.joiner_index();
     world.localnet.prepare_snapshot_full_node(slot)?;
     let recipient = world.validators.data_dir(slot);

@@ -184,7 +184,7 @@ pub(super) async fn assert_review_socket(
         accepted: Mutex::new(vec![]),
         approval: Mutex::new(None),
     });
-    let directory = tempfile::tempdir_in("/private/tmp").unwrap();
+    let directory = tempfile::tempdir_in("/tmp").unwrap();
     std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
     let control = directory.path().join("control");
     let chain = ChainIdentity {

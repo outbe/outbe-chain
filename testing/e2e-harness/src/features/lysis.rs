@@ -22,7 +22,7 @@ fn fresh_native_lysis(world: &mut World) {
         .expect("native Offering fixture");
     world
         .localnet
-        .prepare_lysis_entry_price()
+        .prepare_lysis_entry_price(day)
         .expect("nonzero native Lysis entry price");
     world.state.wwd = Some(day.to_string());
     world.state.tribute_owner_keys = world
@@ -78,6 +78,8 @@ fn reach_processing_time(world: &mut World) {
 
 #[then("Metadosis completes confidential Lysis and stores ready Nods on every validator")]
 fn native_lysis_completes(world: &mut World) {
+    // getWorldwideDayTerminalReceipt outcome for native Lysis completion.
+    const LYSIS_COMPLETED_RECEIPT_OUTCOME: u8 = 4;
     let day = world
         .state
         .wwd
@@ -87,7 +89,7 @@ fn native_lysis_completes(world: &mut World) {
         .expect("numeric WWD");
     let ports = world.validators.committee_ports();
     let deadline = Instant::now() + Duration::from_secs(240);
-    let height = loop {
+    let receipt = loop {
         let states = ports
             .iter()
             .map(|&port| {
@@ -105,16 +107,26 @@ fn native_lysis_completes(world: &mut World) {
             .iter()
             .all(|status| *status == Some(WwdStatus::Completed))
         {
-            let changes = world
-                .rpc
-                .finalized_metadosis_wwd_status_changes_on(ports[0], day)
-                .expect("native WWD status events");
-            let completed = changes
+            let receipts = ports
                 .iter()
-                .filter(|event| event.new_status == WwdStatus::Completed.as_u8())
+                .map(|&port| {
+                    world
+                        .rpc
+                        .metadosis_terminal_receipt_on(port, day)
+                        .expect("native Lysis terminal receipt")
+                })
                 .collect::<Vec<_>>();
-            assert_eq!(completed.len(), 1, "exactly one completed transition");
-            break completed[0].block_number;
+            let receipt = &receipts[0];
+            assert_eq!(
+                receipt.outcome, LYSIS_COMPLETED_RECEIPT_OUTCOME,
+                "native Lysis completion outcome"
+            );
+            assert!(receipt.block_number > 0, "native Lysis completion block");
+            assert!(
+                receipts.iter().all(|other| other == receipt),
+                "same immutable Lysis terminal receipt on every validator"
+            );
+            break receipt.clone();
         }
         assert!(
             Instant::now() < deadline,
@@ -122,10 +134,40 @@ fn native_lysis_completes(world: &mut World) {
         );
         sleep(Duration::from_secs(1));
     };
+    let height = receipt.block_number;
     world
         .rpc
         .wait_finalized_checkpoint(&ports, height, 120)
-        .expect("same native Lysis block and state root");
+        .expect("native Lysis completion finalized on every validator");
+    let checkpoint = world
+        .rpc
+        .checkpoint_at(ports[0], height)
+        .expect("exact native Lysis completion checkpoint");
+    for &port in &ports {
+        assert_eq!(
+            world
+                .rpc
+                .checkpoint_at(port, height)
+                .expect("native Lysis completion checkpoint on every validator"),
+            checkpoint,
+            "same native Lysis block and state root"
+        );
+        let state = world
+            .rpc
+            .metadosis_wwd_state_at(port, day, height)
+            .expect("native Lysis state at the completion checkpoint");
+        assert_eq!(state.status, WwdStatus::Completed.as_u8());
+    }
+    let completed = world
+        .rpc
+        .finalized_metadosis_lysis_completion_blocks_on(ports[0], day, height)
+        .expect("canonical native Lysis completion events");
+    assert_eq!(
+        completed.len(),
+        1,
+        "exactly one native Lysis completion event"
+    );
+    assert_eq!(completed[0], (height, checkpoint.block_hash));
     let supply = world.rpc.nod_supply(ports[0]).expect("native Nod supply");
     assert!(supply > 0);
     for port in ports {

@@ -27,6 +27,14 @@ struct Cli {
     /// Reuse and verify byte-identical runtime artifacts from this manifest.
     #[arg(long)]
     reuse_runtime_manifest: Option<PathBuf>,
+
+    /// Authenticate an existing dirty baseline using its saved git diff --binary HEAD.
+    #[arg(long, requires = "reuse_runtime_manifest")]
+    prior_source_diff: Option<PathBuf>,
+
+    /// Refresh the interpreted validator genesis seeder and its layout-test evidence.
+    #[arg(long, requires_all = ["reuse_runtime_manifest", "prior_source_diff"])]
+    refresh_genesis_tooling: bool,
 }
 
 fn main() -> Result<()> {
@@ -39,7 +47,15 @@ fn main() -> Result<()> {
             .to_path_buf()
     });
     if let Some(prior) = cli.reuse_runtime_manifest {
-        refresh_harness_lane(&repo, cli.lane, cli.jobs, &prior, &cli.output)
+        refresh_harness_lane(
+            &repo,
+            cli.lane,
+            cli.jobs,
+            &prior,
+            cli.prior_source_diff.as_deref(),
+            cli.refresh_genesis_tooling,
+            &cli.output,
+        )
     } else {
         build_lane(&repo, cli.lane, cli.jobs, &cli.output)
     }

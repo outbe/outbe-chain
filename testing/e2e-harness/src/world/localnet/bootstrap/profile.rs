@@ -24,6 +24,7 @@ pub struct BootstrapProfile {
     pub(super) metadosis_offering_seconds: u64,
     pub(super) governance_voting_window_blocks: u64,
     pub(super) governments: bool,
+    pub(super) oracle_vote_period_blocks: NonZeroU64,
     pub(super) oracle_pairs: Option<Vec<(String, String, String)>>,
     pub(super) credis_accounts: Option<(alloy_primitives::Address, alloy_primitives::Address)>,
 }
@@ -49,6 +50,8 @@ impl Default for BootstrapProfile {
             metadosis_offering_seconds: LOCALNET_METADOSIS_OFFERING_SECONDS,
             governance_voting_window_blocks: 6,
             governments: false,
+            oracle_vote_period_blocks: NonZeroU64::new(E2E_ORACLE_VOTE_PERIOD_BLOCKS)
+                .expect("non-zero default Oracle period"),
             oracle_pairs: None,
             credis_accounts: None,
         }
@@ -81,6 +84,12 @@ impl BootstrapProfile {
             "governance": { "votingWindowBlocks": blocks }
         })))?;
         self.governance_voting_window_blocks = blocks;
+        Ok(self)
+    }
+
+    /// Set this fixture's positive Oracle period through the normal genesis seeder.
+    pub fn with_oracle_vote_period(mut self, blocks: u64) -> Result<Self> {
+        self.oracle_vote_period_blocks = positive(blocks, "Oracle vote period")?;
         Ok(self)
     }
 
@@ -230,6 +239,9 @@ impl BootstrapProfile {
                 }
                 "TESTNET_VALIDATOR_BALANCE_COEN" => {
                     profile.validator_balance_coen = Some(parsed()?);
+                }
+                "TESTNET_ORACLE_VOTE_PERIOD_BLOCKS" => {
+                    profile = profile.with_oracle_vote_period(parsed()?)?;
                 }
                 "TESTNET_METADOSIS_FORMING_SECONDS" => {
                     profile.metadosis_forming_seconds = Some(parsed()?);
