@@ -213,8 +213,8 @@ use dkg::persistence::{
 #[cfg(test)]
 use dkg::startup::{
     genesis_formation_gate_decision, genesis_formation_required_remote_peers,
-    missing_current_threshold_material_error, vrf_material_matches_recovered_boundary,
-    GenesisFormationGate, RethGenesisPeerEvidence, RethGenesisPeerStatus, StartupDkgContext,
+    vrf_material_matches_recovered_boundary, GenesisFormationGate, RethGenesisPeerEvidence,
+    RethGenesisPeerStatus, StartupDkgContext,
 };
 
 #[cfg(test)]

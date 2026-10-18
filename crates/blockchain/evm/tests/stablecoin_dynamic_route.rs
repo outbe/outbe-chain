@@ -215,6 +215,10 @@ fn nested_static_mutation_halts_without_committing_an_event() {
     .unwrap();
 
     assert!(matches!(result.status, SubCallStatus::Halt(_)));
+    assert!(
+        ctx.journaled_state.logs.is_empty(),
+        "static denial must not commit an Approval event to the EVM journal"
+    );
 
     let allowance = sub_call::run(
         &mut ctx,

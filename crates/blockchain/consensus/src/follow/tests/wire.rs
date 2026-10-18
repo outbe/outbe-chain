@@ -104,7 +104,6 @@ fn served_finalization_round_trips_to_verified_certified_block() {
 
     // SERVER: encode cert + block separately (the drainer's FinalizedBlockBytes)
     // and hex them (the FinalizationProof shipped over RPC).
-    let finalization = c.finalization(epoch);
     let block = {
         use alloy_primitives::Bytes;
         use outbe_primitives::OutbeHeader;
@@ -116,6 +115,7 @@ fn served_finalization_round_trips_to_verified_certified_block() {
         let b = b.map_header(OutbeHeader::new);
         ConsensusBlock::from_sealed(SealedBlock::seal_slow(b))
     };
+    let finalization = c.finalization_for(epoch, block.digest());
     let finalization_hex = format!("0x{}", hex::encode(finalization.encode()));
     let block_hex = format!("0x{}", hex::encode(block.encode()));
 
@@ -133,9 +133,12 @@ fn served_finalization_round_trips_to_verified_certified_block() {
         "no trailing bytes after finalization"
     );
     let mut block_reader: &[u8] = &block_bytes;
-    let _decoded_block = ConsensusBlock::read_cfg(&mut block_reader, &())
+    let decoded_block = ConsensusBlock::read_cfg(&mut block_reader, &())
         .expect("client must decode the served block");
     assert!(block_reader.is_empty(), "no trailing bytes after block");
+    assert_eq!(decoded_block.number(), 4);
+    assert_eq!(decoded_block.digest(), block.digest());
+    assert_eq!(decoded_fin.proposal.payload, decoded_block.digest());
 
     // The decoded certificate verifies against the committee the follower
     // registered from the boundary block - a follower accepts what the

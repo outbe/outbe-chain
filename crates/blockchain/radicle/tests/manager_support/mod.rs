@@ -147,10 +147,6 @@ impl Endpoints {
             .insert(endpoint.validator, endpoint);
     }
 
-    pub fn remove(&self, validator: Address) {
-        self.values.lock().unwrap().remove(&validator);
-    }
-
     pub fn fail(&self, fail: bool) {
         *self.fail.lock().unwrap() = fail;
     }

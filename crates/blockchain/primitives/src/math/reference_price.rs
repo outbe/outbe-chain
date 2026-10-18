@@ -85,9 +85,21 @@ mod tests {
 
     #[test]
     fn one_coen_in_any_iso_stable_unit_maps_to_the_center_bin() {
+        use super::bin_id_to_coen_iso_price;
+
+        let center = REAL_ID_SHIFT as u32;
         assert_eq!(
             coen_iso_price_to_bin_id(U256::from(1_000_000u64), 1).unwrap(),
-            REAL_ID_SHIFT as u32
+            center
         );
+        assert_eq!(
+            bin_id_to_coen_iso_price(center, 1).unwrap(),
+            U256::from(1_000_000u64)
+        );
+        let below = bin_id_to_coen_iso_price(center - 100, 25).unwrap();
+        let above = bin_id_to_coen_iso_price(center + 100, 25).unwrap();
+        assert!(below < U256::from(1_000_000u64));
+        assert!(above > U256::from(1_000_000u64));
+        assert!(bin_id_to_coen_iso_price(u32::MAX, 100).is_err());
     }
 }

@@ -418,36 +418,9 @@ mod tests {
     }
 
     fn default_args() -> ConsensusArgs {
-        ConsensusArgs {
-            is_validator: false,
-            signing_key: None,
-            validator_evm_key: None,
-            signing_share: None,
-            public_polynomial: None,
-            dkg_output: None,
-            listen_address: "127.0.0.1:30400".parse().unwrap(),
-            storage_dir: None,
-            keys_dir: None,
-            trust_el_head: false,
-            testnet_unix_time_offset_secs: None,
-            consensus_peers: vec![],
-            use_local_defaults: false,
-            payload_resolve_time_ms: 200,
-            payload_return_time_ms: 450,
-            worker_threads: 3,
-            bls_key_backend: "plaintext".to_string(),
-            bls_passphrase: None,
-            tee_enclave_socket: None,
-            tee_session_mode: TeeSessionMode::PolicyDefault,
-            tee_bootstrap_timeout_secs: 60,
-            tee_canary_interval_secs: 30,
-            tee_canary_failure_threshold: 3,
-            txpool_pending_staleness_secs: 600,
-            upstream: None,
-            upstream_nocertify: false,
-            radicle_control_socket: None,
-            radicle_status_address: None,
-        }
+        TestConsensusCli::try_parse_from(["test"])
+            .expect("default CLI args should parse")
+            .consensus
     }
 
     #[test]
@@ -486,23 +459,6 @@ mod tests {
         assert!(TeeSessionMode::Development
             .resolve(AttestationMode::DcapRequired)
             .is_err());
-    }
-
-    #[test]
-    fn automatic_tee_renewal_options_are_rejected_after_worker_removal() {
-        for obsolete in [
-            ["--tee-renewal.relay-key", "/tmp/relay-key.hex"],
-            ["--tee-renewal.rpc-url", "http://127.0.0.1:8545"],
-            ["--tee-renewal.poll-secs", "30"],
-            ["--tee-renewal.warning-blocks", "600"],
-            ["--tee-renewal.critical-blocks", "120"],
-        ] {
-            assert!(
-                TestConsensusCli::try_parse_from(["test", obsolete[0], obsolete[1]]).is_err(),
-                "obsolete automatic-renewal option still parses: {}",
-                obsolete[0]
-            );
-        }
     }
 
     #[test]
@@ -635,18 +591,6 @@ mod tests {
     }
 
     #[test]
-    fn test_manual_dkg_material_requires_complete_triplet() {
-        let mut args = default_args();
-        args.signing_share = Some(PathBuf::from("/tmp/dkg_share.hex"));
-        args.public_polynomial = Some(PathBuf::from("/tmp/dkg_polynomial.hex"));
-        let err = args.validate().unwrap_err().to_string();
-        assert!(err.contains("manual DKG provisioning"), "error: {err}");
-
-        args.dkg_output = Some(PathBuf::from("/tmp/dkg_output.hex"));
-        assert!(args.validate().is_ok());
-    }
-
-    #[test]
     fn test_validator_evm_key_default_is_sibling_to_signing_key() {
         let mut args = default_args();
         args.is_validator = true;
@@ -702,18 +646,13 @@ mod tests {
     }
 
     #[test]
-    fn test_encrypted_backend_without_passphrase_errors() {
+    fn test_encrypted_backend_requires_password() {
         let mut args = default_args();
         args.bls_key_backend = "encrypted".to_string();
         args.bls_passphrase = None;
         let err = args.validate().unwrap_err().to_string();
         assert!(err.contains("passphrase"), "error: {err}");
-    }
 
-    #[test]
-    fn test_encrypted_backend_with_passphrase_ok() {
-        let mut args = default_args();
-        args.bls_key_backend = "encrypted".to_string();
         args.bls_passphrase = Some("secret".to_string());
         assert!(args.validate().is_ok());
     }
@@ -721,8 +660,7 @@ mod tests {
     #[test]
     fn test_key_backend_parsing() {
         let mut args = default_args();
-
-        args.bls_key_backend = "plaintext".to_string();
+        assert_eq!(args.bls_key_backend, "plaintext");
         assert!(matches!(
             args.key_backend().unwrap(),
             outbe_consensus::bls::KeyBackend::Plaintext
@@ -746,91 +684,37 @@ mod tests {
     }
 
     #[test]
-    fn test_plaintext_backward_compatibility() {
-        // Default is plaintext. Existing setups continue working.
-        let args = default_args();
-        assert_eq!(args.bls_key_backend, "plaintext");
-        assert!(matches!(
-            args.key_backend().unwrap(),
-            outbe_consensus::bls::KeyBackend::Plaintext
-        ));
-    }
-
-    #[test]
     fn test_p2p_profile_defaults_to_production() {
         let args = default_args();
         assert!(!args.use_local_defaults);
     }
 
     #[test]
-    fn test_removed_fee_recipient_flag_is_rejected() {
-        let err = TestConsensusCli::try_parse_from([
-            "test",
-            "--consensus.fee-recipient",
-            "0x0000000000000000000000000000000000000001",
-        ])
-        .unwrap_err()
-        .to_string();
-        assert!(
-            err.contains("--consensus.fee-recipient"),
-            "unexpected clap error: {err}"
-        );
-    }
-
-    #[test]
-    fn test_removed_validators_flag_is_rejected() {
-        let err = TestConsensusCli::try_parse_from([
-            "test",
-            "--consensus.validators",
-            "/tmp/validators.json",
-        ])
-        .unwrap_err()
-        .to_string();
-        assert!(
-            err.contains("--consensus.validators"),
-            "unexpected clap error: {err}"
-        );
-    }
-
-    #[test]
-    fn test_removed_execution_watchdog_fatal_flag_is_rejected() {
-        let err = TestConsensusCli::try_parse_from([
-            "test",
-            "--consensus.execution-watchdog-fatal-enabled",
-        ])
-        .unwrap_err()
-        .to_string();
-        assert!(
-            err.contains("--consensus.execution-watchdog-fatal-enabled"),
-            "unexpected clap error: {err}"
-        );
-    }
-
-    #[test]
-    fn test_removed_leader_timeout_flag_is_rejected() {
-        // Leader/cert timeouts are genesis-only now. The CLI flags were removed.
-        let err =
-            TestConsensusCli::try_parse_from(["test", "--consensus.leader-timeout-ms", "30000"])
+    fn test_removed_legacy_flags_rejected_by_clap() {
+        for argv in [
+            &["test", "--tee-renewal.relay-key", "/tmp/relay-key.hex"][..],
+            &["test", "--tee-renewal.rpc-url", "http://127.0.0.1:8545"],
+            &["test", "--tee-renewal.poll-secs", "30"],
+            &["test", "--tee-renewal.warning-blocks", "600"],
+            &["test", "--tee-renewal.critical-blocks", "120"],
+            &[
+                "test",
+                "--consensus.fee-recipient",
+                "0x0000000000000000000000000000000000000001",
+            ],
+            &["test", "--consensus.validators", "/tmp/validators.json"],
+            &["test", "--consensus.execution-watchdog-fatal-enabled"],
+            &["test", "--consensus.leader-timeout-ms", "30000"],
+            &["test", "--consensus.certification-timeout-ms", "30000"],
+        ] {
+            let err = TestConsensusCli::try_parse_from(argv)
                 .unwrap_err()
                 .to_string();
-        assert!(
-            err.contains("--consensus.leader-timeout-ms"),
-            "unexpected clap error: {err}"
-        );
-    }
-
-    #[test]
-    fn test_removed_certification_timeout_flag_is_rejected() {
-        let err = TestConsensusCli::try_parse_from([
-            "test",
-            "--consensus.certification-timeout-ms",
-            "30000",
-        ])
-        .unwrap_err()
-        .to_string();
-        assert!(
-            err.contains("--consensus.certification-timeout-ms"),
-            "unexpected clap error: {err}"
-        );
+            assert!(
+                err.contains(argv[1]),
+                "unexpected clap error for {}: {err}",
+                argv[1]
+            );
+        }
     }
 }

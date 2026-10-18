@@ -173,4 +173,129 @@ mod tests {
             assert_eq!(index.positions.read(&11).unwrap(), 1);
         });
     }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct SampleRecord {
+        id: u64,
+        amount: u64,
+    }
+
+    impl StorageRecord for SampleRecord {
+        type Key = u64;
+        const SLOTS: u64 = 1;
+
+        fn key(&self) -> Self::Key {
+            self.id
+        }
+
+        fn exists(entry: &super::super::dsl::RecordEntry<'_, Self::Key, Self>) -> Result<bool> {
+            Ok(super::super::types::Mapping::<u64, u64>::new(
+                entry.base_slot(),
+                entry.address(),
+                entry.storage(),
+            )
+            .read(entry.key_ref())?
+                != 0)
+        }
+
+        fn load(
+            entry: &super::super::dsl::RecordEntry<'_, Self::Key, Self>,
+        ) -> Result<Option<Self>> {
+            let amount = super::super::types::Mapping::<u64, u64>::new(
+                entry.base_slot(),
+                entry.address(),
+                entry.storage(),
+            )
+            .read(entry.key_ref())?;
+            if amount == 0 {
+                Ok(None)
+            } else {
+                Ok(Some(Self {
+                    id: *entry.key_ref(),
+                    amount,
+                }))
+            }
+        }
+
+        fn create(
+            entry: &super::super::dsl::RecordEntry<'_, Self::Key, Self>,
+            value: &Self,
+        ) -> Result<()> {
+            if Self::exists(entry)? {
+                return Err(super::super::dsl::existing_record_err("SampleRecord"));
+            }
+            Self::update(entry, value)
+        }
+
+        fn update(
+            entry: &super::super::dsl::RecordEntry<'_, Self::Key, Self>,
+            value: &Self,
+        ) -> Result<()> {
+            super::super::types::Mapping::<u64, u64>::new(
+                entry.base_slot(),
+                entry.address(),
+                entry.storage(),
+            )
+            .write(entry.key_ref(), value.amount)
+        }
+
+        fn delete(entry: &super::super::dsl::RecordEntry<'_, Self::Key, Self>) -> Result<()> {
+            if !Self::exists(entry)? {
+                return Err(super::super::dsl::missing_record_err("SampleRecord"));
+            }
+            super::super::types::Mapping::<u64, u64>::new(
+                entry.base_slot(),
+                entry.address(),
+                entry.storage(),
+            )
+            .get(entry.key_ref())
+            .delete()
+        }
+    }
+
+    #[test]
+    fn create_and_delete_indexed_keep_record_and_indexes_atomic() {
+        let mut provider = HashMapStorageProvider::new(1);
+        StorageHandle::enter(&mut provider, |storage| {
+            let records =
+                Map::<u64, SampleRecord>::new(U256::from(10), Address::ZERO, storage.clone());
+            let make_index = || {
+                IndexedList::new(
+                    List::new(U256::from(20), Address::ZERO, storage.clone()),
+                    Map::new(U256::from(21), Address::ZERO, storage.clone()),
+                )
+            };
+
+            for rec in [
+                SampleRecord { id: 1, amount: 100 },
+                SampleRecord { id: 2, amount: 200 },
+                SampleRecord { id: 3, amount: 300 },
+            ] {
+                create_indexed(&records, &rec, [make_index()]).unwrap();
+            }
+
+            // Duplicate creation fails without corrupting the index.
+            assert!(create_indexed(
+                &records,
+                &SampleRecord { id: 2, amount: 999 },
+                [make_index()]
+            )
+            .is_err());
+            assert_eq!(
+                records.get(2).unwrap(),
+                Some(SampleRecord { id: 2, amount: 200 })
+            );
+
+            // Deleting the first record swaps the last key (3) into position 1.
+            delete_indexed(&records, 1, |_| [make_index()]).unwrap();
+            assert_eq!(records.get(1).unwrap(), None);
+            let idx = make_index();
+            assert_eq!(idx.values.read_all().unwrap(), vec![3, 2]);
+            assert_eq!(idx.positions.read(&3).unwrap(), 1);
+            assert_eq!(idx.positions.read(&2).unwrap(), 2);
+
+            // Deleting a missing key fails.
+            assert!(delete_indexed(&records, 1, |_| [make_index()]).is_err());
+        });
+    }
 }

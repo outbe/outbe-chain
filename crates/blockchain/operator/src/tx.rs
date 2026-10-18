@@ -281,6 +281,12 @@ mod tests {
 
     #[test]
     fn replacement_keeps_nonce_and_calldata_but_changes_only_fee_and_hash() {
+        use alloy_consensus::{
+            transaction::SignerRecoverable as _, EthereumTxEnvelope, Transaction as _, TxEip4844,
+        };
+        use alloy_eips::eip2718::Decodable2718 as _;
+        use alloy_primitives::TxKind;
+
         let signer = RelaySignerV1::new(&format!("{:064x}", 2)).unwrap();
         let low = signer
             .sign_renewal(UnsignedRelayTransactionV1 {
@@ -306,5 +312,70 @@ mod tests {
         assert_eq!(low.calldata_hash, high.calldata_hash);
         assert_ne!(low.raw_transaction, high.raw_transaction);
         assert_ne!(low.transaction_hash, high.transaction_hash);
+
+        let mut low_bytes = low.raw_transaction.as_slice();
+        let mut high_bytes = high.raw_transaction.as_slice();
+        let low_env = EthereumTxEnvelope::<TxEip4844>::decode_2718(&mut low_bytes).unwrap();
+        let high_env = EthereumTxEnvelope::<TxEip4844>::decode_2718(&mut high_bytes).unwrap();
+        assert!(low_bytes.is_empty() && high_bytes.is_empty());
+
+        for (env, expected_gas_price, expected_hash) in [
+            (&low_env, 10u128, low.transaction_hash),
+            (&high_env, 20u128, high.transaction_hash),
+        ] {
+            assert_eq!(env.recover_signer().unwrap(), signer.address());
+            assert_eq!(env.chain_id(), Some(1));
+            assert_eq!(env.nonce(), 9);
+            assert_eq!(env.gas_limit(), 100);
+            assert_eq!(env.kind(), TxKind::Call(Address::ZERO));
+            assert_eq!(env.value(), U256::ZERO);
+            assert_eq!(env.input().as_ref(), &[4, 5]);
+            assert_eq!(env.gas_price(), Some(expected_gas_price));
+            assert_eq!(*env.tx_hash(), expected_hash);
+        }
+    }
+
+    #[test]
+    fn relay_signer_from_file_enforces_permissions_bounds_and_formats() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw_key = [0x11u8; 32];
+        let hex_key = format!("0x{}\n", hex::encode(raw_key));
+        let expected_address = RelaySignerV1::new(&hex_key).unwrap().address();
+
+        let write_key = |name: &str, bytes: &[u8], mode: u32| {
+            let path = dir.path().join(name);
+            fs::write(&path, bytes).unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+            path
+        };
+
+        let hex_path = write_key("relay.hex", hex_key.as_bytes(), 0o600);
+        assert_eq!(
+            RelaySignerV1::from_file(&hex_path).unwrap().address(),
+            expected_address
+        );
+
+        let raw_path = write_key("relay.raw", &raw_key, 0o600);
+        assert_eq!(
+            RelaySignerV1::from_file(&raw_path).unwrap().address(),
+            expected_address
+        );
+
+        assert!(RelaySignerV1::from_file(&dir.path().join("missing.key")).is_err());
+
+        for (name, bytes, mode) in [
+            ("group-readable.key", hex_key.as_bytes(), 0o640),
+            ("empty.key", b"".as_slice(), 0o600),
+            ("oversized.key", &[b'a'; 131], 0o600),
+            ("bad-hex.key", b"not-hex".as_slice(), 0o600),
+        ] {
+            let path = write_key(name, bytes, mode);
+            assert!(RelaySignerV1::from_file(&path).is_err(), "{name}");
+        }
+
+        let hardlink = dir.path().join("hardlink.key");
+        fs::hard_link(&hex_path, &hardlink).unwrap();
+        assert!(RelaySignerV1::from_file(&hex_path).is_err());
+        assert!(RelaySignerV1::from_file(&hardlink).is_err());
     }
 }

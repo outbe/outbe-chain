@@ -93,3 +93,60 @@ pub enum PublicStateProofError {
     #[error("public storage proof rejected: {0}")]
     StorageProof(String),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verify_public_account_proof_rejects_wrong_address_slot_set_and_corrupted_account_proof() {
+        let expected_address = Address::repeat_byte(0x11);
+        let slot_a = B256::repeat_byte(0x01);
+        let slot_b = B256::repeat_byte(0x02);
+        let mut proof = PublicAccountProofV1 {
+            address: Address::repeat_byte(0x22),
+            nonce: 0,
+            balance: U256::ZERO,
+            storage_root: B256::ZERO,
+            code_hash: B256::ZERO,
+            account_nodes: Vec::new(),
+            storage_proofs: vec![PublicStorageProofV1 {
+                key: slot_a,
+                value: U256::ZERO,
+                nodes: Vec::new(),
+            }],
+        };
+
+        assert!(matches!(
+            verify_public_account_proof(&proof, expected_address, &[slot_a], B256::ZERO),
+            Err(PublicStateProofError::ProofAddress)
+        ));
+
+        proof.address = expected_address;
+        assert!(matches!(
+            verify_public_account_proof(&proof, expected_address, &[slot_a, slot_b], B256::ZERO),
+            Err(PublicStateProofError::ProofSlotSet)
+        ));
+
+        proof.storage_proofs.push(PublicStorageProofV1 {
+            key: slot_a,
+            value: U256::ZERO,
+            nodes: Vec::new(),
+        });
+        assert!(matches!(
+            verify_public_account_proof(&proof, expected_address, &[slot_a, slot_b], B256::ZERO),
+            Err(PublicStateProofError::ProofSlotSet)
+        ));
+
+        proof.storage_proofs[1].key = slot_b;
+        assert!(matches!(
+            verify_public_account_proof(
+                &proof,
+                expected_address,
+                &[slot_a, slot_b],
+                B256::repeat_byte(0x99)
+            ),
+            Err(PublicStateProofError::AccountProof(_))
+        ));
+    }
+}

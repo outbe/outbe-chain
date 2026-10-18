@@ -4,7 +4,7 @@ mod retry;
 mod task;
 use super::super::*;
 use super::runtime::*;
-use task::CeremonyAttempt;
+pub(in crate::stack) use task::CeremonyAttempt;
 
 impl<E> EpochSupervisor<E>
 where

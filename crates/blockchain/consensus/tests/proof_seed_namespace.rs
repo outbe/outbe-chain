@@ -53,6 +53,7 @@ fn seed_namespace_is_chain_bound_committee_independent() {
         v
     };
     assert_eq!(hybrid_seed_namespace(), with(b"_SEED"));
+    assert_eq!(hybrid_seed_namespace().len(), 18);
     assert_ne!(hybrid_seed_namespace().as_slice(), b"outbe_SEED");
 }
 
@@ -69,6 +70,8 @@ fn vote_namespaces_bind_chain_and_committee() {
     assert_eq!(notarize_namespace(&committee), with(b"_NOTARIZE"));
     assert_eq!(nullify_namespace(&committee), with(b"_NULLIFY"));
     assert_eq!(finalize_namespace(&committee), with(b"_FINALIZE"));
+    assert_eq!(notarize_namespace(&committee).len(), 54);
+    assert_eq!(finalize_namespace(&committee).len(), 54);
 
     // The namespaces are not the chain-independent constants that a cross-chain
     // replay would match. They are also not the chain-only (committee-independent) form.

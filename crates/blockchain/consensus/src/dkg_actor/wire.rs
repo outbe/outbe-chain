@@ -328,6 +328,8 @@ mod tests {
         .unwrap();
 
         let (_, priv_msg) = priv_msgs.into_iter().nth(1).unwrap();
+        let expected_pub = pub_msg.encode();
+        let expected_priv = priv_msg.encode();
         let msg = DkgMessage::DealerBundle {
             ceremony_id: cfg.expected_ceremony_id,
             pub_msg,
@@ -335,11 +337,22 @@ mod tests {
         };
 
         let encoded = msg.encode();
+        assert_eq!(msg.encode_size(), encoded.len());
         assert_eq!(encoded[0], DKG_WIRE_VERSION);
 
-        let decoded = DkgMessage::read_cfg(&mut encoded.as_ref(), &cfg).unwrap();
+        let mut reader = encoded.as_ref();
+        let decoded = DkgMessage::read_cfg(&mut reader, &cfg).unwrap();
+        assert!(reader.is_empty(), "all bytes must be consumed");
         match decoded {
-            DkgMessage::DealerBundle { .. } => {}
+            DkgMessage::DealerBundle {
+                ceremony_id,
+                pub_msg,
+                priv_msg,
+            } => {
+                assert_eq!(ceremony_id, cfg.expected_ceremony_id);
+                assert_eq!(pub_msg.encode(), expected_pub);
+                assert_eq!(priv_msg.encode(), expected_priv);
+            }
             other => panic!("expected DealerBundle, got {:?}", other),
         }
     }
@@ -374,16 +387,23 @@ mod tests {
             .expect("fixture dealing must be valid")
             .expect("player should produce an ack");
 
+        let expected_ack = ack.encode();
         let msg = DkgMessage::Ack {
             ceremony_id: cfg.expected_ceremony_id,
             ack,
         };
         let encoded = msg.encode();
+        assert_eq!(msg.encode_size(), encoded.len());
         assert_eq!(encoded[0], DKG_WIRE_VERSION);
 
-        let decoded = DkgMessage::read_cfg(&mut encoded.as_ref(), &cfg).unwrap();
+        let mut reader = encoded.as_ref();
+        let decoded = DkgMessage::read_cfg(&mut reader, &cfg).unwrap();
+        assert!(reader.is_empty(), "all bytes must be consumed");
         match decoded {
-            DkgMessage::Ack { .. } => {}
+            DkgMessage::Ack { ceremony_id, ack } => {
+                assert_eq!(ceremony_id, cfg.expected_ceremony_id);
+                assert_eq!(ack.encode(), expected_ack);
+            }
             other => panic!("expected Ack, got {:?}", other),
         }
     }
@@ -425,16 +445,26 @@ mod tests {
         }
 
         let signed_log = dealer.finalize::<N3f1>();
+        let expected_log = signed_log.encode();
         let msg = DkgMessage::FinalizedLog {
             ceremony_id: cfg.expected_ceremony_id,
             signed_log,
         };
         let encoded = msg.encode();
+        assert_eq!(msg.encode_size(), encoded.len());
         assert_eq!(encoded[0], DKG_WIRE_VERSION);
 
-        let decoded = DkgMessage::read_cfg(&mut encoded.as_ref(), &cfg).unwrap();
+        let mut reader = encoded.as_ref();
+        let decoded = DkgMessage::read_cfg(&mut reader, &cfg).unwrap();
+        assert!(reader.is_empty(), "all bytes must be consumed");
         match decoded {
-            DkgMessage::FinalizedLog { .. } => {}
+            DkgMessage::FinalizedLog {
+                ceremony_id,
+                signed_log,
+            } => {
+                assert_eq!(ceremony_id, cfg.expected_ceremony_id);
+                assert_eq!(signed_log.encode(), expected_log);
+            }
             other => panic!("expected FinalizedLog, got {:?}", other),
         }
     }
@@ -460,29 +490,6 @@ mod tests {
         let empty: &[u8] = &[];
         let result = DkgMessage::read_cfg(&mut &empty[..], &cfg);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_encode_size_matches_encoded_length() {
-        let (info, keys, participants) = setup_dkg(3);
-        let cfg = wire_cfg(NonZeroU32::new(3).unwrap(), &participants);
-
-        let (_, pub_msg, priv_msgs) = Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
-            rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
-            info,
-            keys[0].clone(),
-            None,
-        )
-        .unwrap();
-
-        let (_, priv_msg) = priv_msgs.into_iter().nth(1).unwrap();
-        let msg = DkgMessage::DealerBundle {
-            ceremony_id: cfg.expected_ceremony_id,
-            pub_msg,
-            priv_msg,
-        };
-
-        assert_eq!(msg.encode_size(), msg.encode().len());
     }
 
     #[test]

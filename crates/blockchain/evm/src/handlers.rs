@@ -174,7 +174,4 @@ pub mod update {
     pub fn registry() -> &'static UpgradeHandlerRegistry {
         &REGISTRY
     }
-
-    #[cfg(test)]
-    mod tests {}
 }

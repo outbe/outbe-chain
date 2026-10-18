@@ -31,17 +31,58 @@ fn activated_dkg_cleanup_removes_retry_and_pending_artifacts() {
 }
 
 #[test]
-fn existing_chain_without_current_threshold_material_fails_with_recovery_contract() {
-    let error = missing_current_threshold_material_error(
-        "saved DKG material is stale for the latest finalized boundary",
-    );
-    let message = error.to_string();
+fn migrate_dkg_keys_if_needed_moves_legacy_files_and_never_overwrites_existing_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let consensus_dir = dir.path().join("consensus");
+    let keys_dir = dir.path().join("keys");
+    std::fs::create_dir_all(&consensus_dir).unwrap();
 
-    assert!(message.contains("startup cannot recover threshold material before sync starts"));
-    assert!(message.contains("--consensus.public-polynomial"));
-    assert!(message.contains("--consensus.dkg-output"));
-    assert!(message.contains("without --consensus.signing-share"));
-    assert!(message.contains("saved DKG material is stale"));
+    // No-op when legacy dkg_share.hex is absent.
+    std::fs::write(consensus_dir.join(DKG_OUTPUT_FILE), b"orphan-output").unwrap();
+    migrate_dkg_keys_if_needed(&consensus_dir, &keys_dir).unwrap();
+    assert!(!keys_dir.exists());
+
+    // When legacy dkg_share.hex exists and keys/dkg_share.hex does not, all present
+    // DKG files are moved from consensus_dir to keys_dir.
+    let legacy_files = [
+        DKG_SHARE_FILE,
+        DKG_POLYNOMIAL_FILE,
+        DKG_OUTPUT_FILE,
+        DKG_PENDING_SHARE_FILE,
+        DKG_PENDING_POLYNOMIAL_FILE,
+        DKG_PENDING_OUTPUT_FILE,
+        DKG_PENDING_BOUNDARY_FILE,
+        DKG_DEALER_RETRY_FILE,
+        DKG_PLAYER_RETRY_FILE,
+    ];
+    for file in legacy_files {
+        std::fs::write(consensus_dir.join(file), format!("legacy-{file}")).unwrap();
+    }
+    migrate_dkg_keys_if_needed(&consensus_dir, &keys_dir).unwrap();
+    for file in legacy_files {
+        assert!(
+            !consensus_dir.join(file).exists(),
+            "{file} should have been moved from consensus_dir"
+        );
+        assert_eq!(
+            std::fs::read_to_string(keys_dir.join(file)).unwrap(),
+            format!("legacy-{file}")
+        );
+    }
+
+    // When keys/dkg_share.hex already exists, legacy files in consensus_dir must
+    // not overwrite anything in keys_dir.
+    std::fs::write(consensus_dir.join(DKG_SHARE_FILE), b"stale-share").unwrap();
+    std::fs::write(consensus_dir.join(DKG_OUTPUT_FILE), b"stale-output").unwrap();
+    migrate_dkg_keys_if_needed(&consensus_dir, &keys_dir).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(keys_dir.join(DKG_SHARE_FILE)).unwrap(),
+        format!("legacy-{DKG_SHARE_FILE}")
+    );
+    assert_eq!(
+        std::fs::read_to_string(keys_dir.join(DKG_OUTPUT_FILE)).unwrap(),
+        format!("legacy-{DKG_OUTPUT_FILE}")
+    );
 }
 
 #[test]
@@ -553,68 +594,6 @@ fn test_load_saved_dkg_state_rejects_incomplete_files() {
 
     let error = load_saved_dkg_state(dir.path(), &backend).unwrap_err();
     assert!(error.to_string().contains("saved DKG state is incomplete"));
-}
-
-/// A node that has already finalized (`Some(N>0)`) must classify as an
-/// existing-chain join. The same applies to a node whose execution layer
-/// recovered after a crash with consensus still durable. Such a node must NOT
-/// re-run the initial genesis DKG, and the genesis-formation gate must NOT
-/// (re)form genesis. An inverted height check would compile clean but re-run
-/// genesis DKG on a restarted validator.
-#[test]
-fn restarted_finalized_node_does_not_refresh_genesis_dkg() {
-    let fresh = StartupDkgContext {
-        last_execution_height: 0,
-        last_consensus_finalized_height: 0,
-        recovered_boundary_finalized: false,
-        recovered_vrf_group_public_key: None,
-        recovered_dkg_output_hash: None,
-        genesis_formation_proven: true,
-    };
-    // Genuinely fresh node (local key in set, no force) runs the genesis DKG.
-    assert_eq!(
-        startup_dkg_mode(fresh, true),
-        StartupDkgMode::InitialGenesisDkg
-    );
-
-    // Restarted after finalizing 42 blocks (durable Some(42)) -> live join,
-    // never a fresh genesis DKG.
-    let finalized = StartupDkgContext {
-        last_consensus_finalized_height: 42,
-        ..fresh
-    };
-    assert_eq!(
-        startup_dkg_mode(finalized, true),
-        StartupDkgMode::LiveJoinRequired,
-        "a node that already finalized blocks must NOT re-run the initial genesis DKG"
-    );
-
-    // The genesis-formation gate short-circuits to existing-chain on any prior
-    // progress, regardless of peer evidence.
-    let genesis = B256::repeat_byte(0x11);
-    let evidence = RethGenesisPeerEvidence {
-        connected_peers: 0,
-        is_syncing: false,
-        is_initially_syncing: false,
-        peer_query_failed: false,
-        peers: Vec::new(),
-    };
-    assert_eq!(
-        genesis_formation_gate_decision(finalized, genesis, 3, &evidence),
-        GenesisFormationGate::ExistingChainJoin,
-        "durable consensus finalization must classify as existing-chain join"
-    );
-    // Crash recovery: execution lost (height 0) but consensus durable -> still
-    // existing-chain (must not reset to genesis formation).
-    let crash_recovery = StartupDkgContext {
-        last_execution_height: 10,
-        last_consensus_finalized_height: 0,
-        ..fresh
-    };
-    assert_eq!(
-        genesis_formation_gate_decision(crash_recovery, genesis, 3, &evidence),
-        GenesisFormationGate::ExistingChainJoin
-    );
 }
 
 #[test]

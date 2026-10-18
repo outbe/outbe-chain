@@ -354,74 +354,103 @@ fn genesis_json_does_not_contain_private_dkg_shares() {
 // (`stack::tests::*_dkg_*` family) and the localnet restart smoke harness
 // exercise the DKG-share / VRF-group-key mismatch rejection end-to-end.
 
-/// T-4 (runtime semantic) / block 1's begin-zone layout under V2
-/// includes `BoundaryOutcome`, which carries the genesis `DkgManager` output
-/// and seeds the epoch-0 `CommitteeSnapshotStore`. Without this entry the
-/// CommitteeSnapshot at slots 31..40 never gets written and block 2 cannot
-/// look up the active committee.
-#[test]
-fn genesis_seeds_epoch0_committee_snapshot() {
-    let block1 = expected_begin_block_kinds(1, true, false);
-    assert!(
-        block1.contains(&SystemTxKind::BoundaryOutcome),
-        "block 1 begin-zone must include BoundaryOutcome under V2 genesis \
-         bootstrap (epoch-0 CommitteeSnapshotStore writer); got {block1:?}"
-    );
-    // Genesis V2 carries no VRF material in `genesis.json`.
-    // The same `expected_begin_block_kinds(1, false, false)` must reject the
-    // layout via the V2-specific block-1 missing-BoundaryOutcome error,
-    // proven separately in `crates/blockchain/primitives/tests/system_tx_layout.rs`.
-}
-
-/// T-5 / block 1's `BoundaryOutcome` runs before any block 2
-/// begin-zone tx. Phase 1 (`CertifiedParentAccounting`) at block 2 reads the
-/// snapshot written by Phase 3 (`BoundaryOutcome`) at block 1.
-#[test]
-fn genesis_committee_snapshot_exists_before_block2_accounting() {
-    let block1 = expected_begin_block_kinds(1, true, false);
-    let block2 = expected_begin_block_kinds(2, false, false);
-    assert!(
-        block1.contains(&SystemTxKind::BoundaryOutcome),
-        "block 1 must seed the epoch-0 snapshot before block 2 reads it"
-    );
-    assert_eq!(
-        block2.first(),
-        Some(&SystemTxKind::CertifiedParentAccounting),
-        "block 2's first begin-zone tx must be CertifiedParentAccounting, the \
-         first reader of the snapshot seeded at block 1"
-    );
-}
-
-/// T-6 / block 1 emits `BoundaryOutcome` strictly before any block 2
-/// activity. Block ordering is monotonic (`finalization is monotonic`). Thus a
-/// successful BoundaryOutcome at block 1 is observable to any block N >= 2 via
-/// the `CommitteeSnapshotStore`.
+/// T-6 / block 1 executes `BoundaryOutcome` and persists the epoch-0
+/// `CommitteeSnapshot` in `CommitteeSnapshotStore` before block 2's Phase 1
+/// (`CertifiedParentAccounting`) reads it.
 #[test]
 fn block1_boundary_outcome_writes_epoch0_snapshot_before_block2() {
-    let block1 = expected_begin_block_kinds(1, true, false);
-    let boundary_position = block1
-        .iter()
-        .position(|kind| *kind == SystemTxKind::BoundaryOutcome)
-        .expect("block 1 must contain BoundaryOutcome");
-    assert!(
-        boundary_position < block1.len(),
-        "BoundaryOutcome must appear inside the block 1 begin-zone (any \
-         position) so the snapshot write happens before block 1 finalizes"
-    );
-    // No CertifiedParentAccounting at block 1. The snapshot must be readable
-    // by block 2's Phase 1, not consumed in-block.
-    assert!(
-        !block1.contains(&SystemTxKind::CertifiedParentAccounting),
-        "block 1 must not run CertifiedParentAccounting; the writer (block 1) \
-         and the first reader (block 2) live in different blocks"
-    );
+    use alloy_primitives::{keccak256, Bytes, B256, U256};
+    use outbe_evm::{begin_block_precompile::dispatch, system_tx::SystemTxInputV2};
+    use outbe_primitives::{
+        addresses::SYSTEM_ADDRESS,
+        consensus::{DkgBoundaryArtifact, ReshareResult},
+    };
+
+    let validator = Address::repeat_byte(0x11);
+    let owner = Address::repeat_byte(0xAA);
+    let consensus_pubkey = [7u8; 48];
+    let vrf_group_public_key_bytes = vec![0x42u8; 96];
+    let expected_snapshot = outbe_validatorset::CommitteeSnapshot {
+        committee: vec![outbe_validatorset::CommitteeEntry {
+            address: validator,
+            consensus_pubkey,
+        }],
+        vrf_material_version: 0,
+        vrf_group_public_key_bytes: vrf_group_public_key_bytes.clone(),
+        vrf_public_polynomial_hash: B256::ZERO,
+    };
+    let committee_set_hash = outbe_validatorset::committee_set_hash_v2(0, &expected_snapshot);
+    let snapshot_key = outbe_validatorset::committee_snapshot_key(0, committee_set_hash);
+
+    let mut active_set_bytes = Vec::with_capacity(28);
+    active_set_bytes.extend_from_slice(&1u64.to_be_bytes());
+    active_set_bytes.extend_from_slice(validator.as_slice());
+    let active_set_hash = keccak256(active_set_bytes);
+
+    let mut provider = HashMapStorageProvider::new(512_215);
+    provider.set_block_number(1);
+    provider.set_timestamp(U256::from(1_700_000_001u64));
+    provider.set_beneficiary(validator);
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+        vs.config_owner.write(owner).unwrap();
+        vs.set_config_max_validators(128).unwrap();
+        vs.config_epoch_length_blocks.write(60).unwrap();
+        vs.register_validator(owner, validator, &consensus_pubkey)
+            .unwrap();
+        vs.mark_pending(validator).unwrap();
+        vs.confirm_validator_ready(validator).unwrap();
+        vs.activate_validator_via_boundary_for_test(validator)
+            .unwrap();
+        assert!(
+            outbe_validatorset::read_committee_snapshot(storage.clone(), snapshot_key)
+                .unwrap()
+                .is_none(),
+            "epoch-0 snapshot must not exist before block 1 BoundaryOutcome runs"
+        );
+
+        let artifact = DkgBoundaryArtifact {
+            epoch: 0,
+            dkg_cycle: 0,
+            freeze_height: 0,
+            planned_activation_height: 0,
+            target_set_hash: active_set_hash,
+            vrf_material_version: 0,
+            vrf_group_public_key: keccak256(&vrf_group_public_key_bytes),
+            vrf_group_public_key_bytes: Bytes::from(vrf_group_public_key_bytes.clone()),
+            committee_set_hash,
+            is_validator_set_change: false,
+            outcome: Bytes::new(),
+            is_full_dkg: true,
+            tee_recipient_pubkeys: Vec::new(),
+            tee_expired_target_exclusions: Vec::new(),
+            tee_expired_target_exclusions_hash: B256::ZERO,
+            reshare: ReshareResult {
+                new_active_set: vec![validator],
+                active_set_hash,
+            },
+        };
+        let input = SystemTxInputV2::BoundaryOutcome { artifact }
+            .encode()
+            .unwrap();
+        dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO)
+            .expect("block 1 genesis DKG BoundaryOutcome must commit epoch-0 snapshot");
+    });
+
+    // Advance to block 2 and verify the persisted epoch-0 snapshot is readable
+    // at the exact key that block 2's CertifiedParentAccounting preflight queries.
+    provider.set_block_number(2);
+    provider.set_timestamp(U256::from(1_700_000_002u64));
+    StorageHandle::enter(&mut provider, |storage| {
+        let persisted = outbe_validatorset::read_committee_snapshot(storage, snapshot_key)
+            .unwrap()
+            .expect("epoch-0 committee snapshot written at block 1 must be readable at block 2");
+        assert_eq!(persisted, expected_snapshot);
+    });
 }
 
-/// T-7 / same ordering invariant approached from the
-/// `runtime_genesis_dkg_boundary` angle. The runtime `DkgManager` (consensus
-/// crate) produces the `DkgBoundaryArtifact` consumed by the V2
-/// `BoundaryOutcome` system tx at block 1. Verifying the expected kind set
-/// pins the genesis-DKG -> epoch-0-snapshot path.
+/// T-7 / Begin-zone layout contract for block 1 (genesis DKG `BoundaryOutcome`,
+/// no `CertifiedParentAccounting`) vs block 2 (`CertifiedParentAccounting` first).
 #[test]
 fn runtime_genesis_dkg_boundary_seeds_epoch0_vrf_snapshot_before_block2() {
     let block1 = expected_begin_block_kinds(1, true, false);
@@ -435,8 +464,16 @@ fn runtime_genesis_dkg_boundary_seeds_epoch0_vrf_snapshot_before_block2() {
     assert_eq!(
         block1, expected_block1,
         "block 1 V2 layout pins to [CycleTick, RewardsGemDelivery, \
-         BoundaryOutcome, OracleSlashWindow]; BoundaryOutcome is the genesis DKG VRF \
-         snapshot writer"
+         BoundaryOutcome, OracleSlashWindow, HookEvents]; BoundaryOutcome is \
+         the genesis DKG VRF snapshot writer and CertifiedParentAccounting is absent"
+    );
+
+    let block2 = expected_begin_block_kinds(2, false, false);
+    assert_eq!(
+        block2.first(),
+        Some(&SystemTxKind::CertifiedParentAccounting),
+        "block 2's first begin-zone tx must be CertifiedParentAccounting, the \
+         first reader of the snapshot seeded at block 1"
     );
 }
 

@@ -226,16 +226,18 @@ impl Epocher for FollowerEpocher {
 mod tests {
     use super::*;
 
-    /// Pin `containing(height).epoch()` against the live-localnet ground truth
-    /// (`L=60`): block 60 -> cert epoch 0, 61 -> 1, 120 -> 1, 121 -> 2. With this
-    /// mapping the marshal's `finalization.epoch() == containing(height)` check
-    /// holds for every certified block, so a follower can verify boundary blocks.
+    /// Pin `containing`, `first`, and `last` against the live-localnet ground truth
+    /// (`L=60`): block 60 -> cert epoch 0, 61 -> 1, 120 -> 1, 121 -> 2, and
+    /// `last(E) + 1 == first(E+1)` for contiguous epochs.
     #[test]
     fn containing_matches_onchain_cert_epochs() {
         let e = FollowerEpocher::new(60, 0);
         e.observe_boundary(Epoch::new(1), Height::new(61)).unwrap();
         e.observe_boundary(Epoch::new(2), Height::new(121)).unwrap();
         e.observe_boundary(Epoch::new(3), Height::new(181)).unwrap();
+        e.observe_boundary(Epoch::new(4), Height::new(241)).unwrap();
+        e.observe_boundary(Epoch::new(5), Height::new(301)).unwrap();
+
         let epoch_of = |h: u64| e.containing(Height::new(h)).unwrap().epoch().get();
         assert_eq!(epoch_of(0), 0, "genesis anchor is epoch 0");
         assert_eq!(epoch_of(1), 0);
@@ -250,6 +252,21 @@ mod tests {
         assert_eq!(epoch_of(121), 2);
         assert_eq!(epoch_of(180), 2);
         assert_eq!(epoch_of(181), 3);
+
+        assert_eq!(e.first(Epoch::new(0)).unwrap().get(), 0);
+        assert_eq!(e.first(Epoch::new(1)).unwrap().get(), 61);
+        assert_eq!(e.first(Epoch::new(2)).unwrap().get(), 121);
+        assert_eq!(e.first(Epoch::new(3)).unwrap().get(), 181);
+
+        assert_eq!(e.last(Epoch::new(0)).unwrap().get(), 60);
+        assert_eq!(e.last(Epoch::new(1)).unwrap().get(), 120);
+        assert_eq!(e.last(Epoch::new(2)).unwrap().get(), 180);
+        for ep in 1..5u64 {
+            assert_eq!(
+                e.last(Epoch::new(ep)).unwrap().get() + 1,
+                e.first(Epoch::new(ep + 1)).unwrap().get()
+            );
+        }
     }
 
     #[test]
@@ -278,47 +295,9 @@ mod tests {
             .is_err());
     }
 
-    /// `first(E)` lands on epoch `E`'s boundary-outcome block (1, 61, 121, ...) -
-    /// exactly where the driver fetches to register epoch `E`'s committee.
     #[test]
-    fn first_lands_on_boundary_block() {
-        let e = FollowerEpocher::new(60, 0);
-        e.observe_boundary(Epoch::new(1), Height::new(61)).unwrap();
-        e.observe_boundary(Epoch::new(2), Height::new(121)).unwrap();
-        e.observe_boundary(Epoch::new(3), Height::new(181)).unwrap();
-        // first(0) = 0 (genesis anchor). Epoch 0's boundary outcome rides block 1.
-        assert_eq!(e.first(Epoch::new(0)).unwrap().get(), 0);
-        assert_eq!(e.first(Epoch::new(1)).unwrap().get(), 61);
-        assert_eq!(e.first(Epoch::new(2)).unwrap().get(), 121);
-        assert_eq!(e.first(Epoch::new(3)).unwrap().get(), 181);
-    }
-
-    /// `last(E)` is the block `(E+1)*L` (60, 120, 180) - the last block epoch `E`
-    /// signs, contiguous with `first(E+1) - 1`.
-    #[test]
-    fn last_is_epoch_final_block() {
-        let e = FollowerEpocher::new(60, 0);
-        e.observe_boundary(Epoch::new(1), Height::new(61)).unwrap();
-        e.observe_boundary(Epoch::new(2), Height::new(121)).unwrap();
-        e.observe_boundary(Epoch::new(3), Height::new(181)).unwrap();
-        e.observe_boundary(Epoch::new(4), Height::new(241)).unwrap();
-        e.observe_boundary(Epoch::new(5), Height::new(301)).unwrap();
-        assert_eq!(e.last(Epoch::new(0)).unwrap().get(), 60);
-        assert_eq!(e.last(Epoch::new(1)).unwrap().get(), 120);
-        assert_eq!(e.last(Epoch::new(2)).unwrap().get(), 180);
-        // Contiguity: last(E) + 1 == first(E+1) for E >= 1.
-        for ep in 1..5u64 {
-            assert_eq!(
-                e.last(Epoch::new(ep)).unwrap().get() + 1,
-                e.first(Epoch::new(ep + 1)).unwrap().get()
-            );
-        }
-    }
-
-    #[test]
-    fn observed_non_grid_boundary_defines_the_epoch_instead_of_the_formula() {
+    fn observed_boundaries_accumulate_drift_from_the_previous_activation() {
         let e = FollowerEpocher::new(60, 10);
-
         e.observe_boundary(Epoch::new(1), Height::new(63))
             .expect("delayed boundary within activation grace must be accepted");
 
@@ -332,12 +311,7 @@ mod tests {
         );
         assert_eq!(e.first(Epoch::new(1)), Some(Height::new(63)));
         assert_eq!(e.last(Epoch::new(0)), Some(Height::new(62)));
-    }
 
-    #[test]
-    fn observed_boundaries_accumulate_drift_from_the_previous_activation() {
-        let e = FollowerEpocher::new(60, 10);
-        e.observe_boundary(Epoch::new(1), Height::new(63)).unwrap();
         e.observe_boundary(Epoch::new(2), Height::new(126)).unwrap();
 
         assert_eq!(

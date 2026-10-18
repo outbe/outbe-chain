@@ -250,3 +250,205 @@ where
             }),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use commonware_cryptography::{bls12381, Signer as _};
+    use commonware_p2p::{
+        simulated::{Config as SimConfig, Network, Receiver as SimReceiver, Sender as SimSender},
+        utils::mux::Muxer,
+    };
+    use commonware_runtime::{deterministic, Quota, Runner as _, Spawner as _, Supervisor as _};
+    use commonware_utils::{NZUsize, NZU32};
+    use std::num::NonZeroUsize;
+
+    type TestMux = MuxHandle<
+        SimSender<bls12381::PublicKey, deterministic::Context>,
+        SimReceiver<bls12381::PublicKey>,
+    >;
+
+    async fn setup_test_muxes(ctx: &deterministic::Context) -> (TestMux, TestMux, TestMux) {
+        let (network, oracle) = Network::new(
+            ctx.child("network"),
+            SimConfig {
+                max_size: 64 * 1024,
+                disconnect_on_block: true,
+                max_peers_per_set: NonZeroUsize::new(1).unwrap(),
+                tracked_peer_sets: NZUsize!(1),
+            },
+        );
+        network.start();
+
+        let pk = bls12381::PrivateKey::from_seed(1).public_key();
+        let control = oracle.control(pk);
+        let quota = Quota::per_second(NZU32!(1_000));
+        let (votes_tx, votes_rx) = control.register(0, quota).await.unwrap();
+        let (certs_tx, certs_rx) = control.register(1, quota).await.unwrap();
+        let (res_tx, res_rx) = control.register(2, quota).await.unwrap();
+
+        let (vote_muxer, vote_mux) = Muxer::new(ctx.child("vote_mux"), votes_tx, votes_rx, 16);
+        vote_muxer.start();
+        let (cert_muxer, cert_mux) = Muxer::new(ctx.child("cert_mux"), certs_tx, certs_rx, 16);
+        cert_muxer.start();
+        let (res_muxer, res_mux) = Muxer::new(ctx.child("res_mux"), res_tx, res_rx, 16);
+        res_muxer.start();
+
+        (vote_mux, cert_mux, res_mux)
+    }
+
+    #[test]
+    fn take_or_register_current_handles_stash_hit_lazy_register_and_epoch_mismatch() {
+        deterministic::Runner::default().start(|ctx| async move {
+            let (mut vote_mux, mut cert_mux, mut res_mux) = setup_test_muxes(&ctx).await;
+
+            // 1. Lazy registration when stash is None.
+            let mut stash = None;
+            let e1 = take_or_register_current(
+                Epoch::new(1),
+                &mut stash,
+                &mut vote_mux,
+                &mut cert_mux,
+                &mut res_mux,
+            )
+            .await
+            .expect("lazy registration must succeed");
+            assert_eq!(e1.epoch, Epoch::new(1));
+            assert!(stash.is_none());
+
+            // 2. Stash hit consumes pre-registered subchannels without re-registering.
+            let pre_e2 = register_epoch_subchannels(
+                Epoch::new(2),
+                &mut vote_mux,
+                &mut cert_mux,
+                &mut res_mux,
+            )
+            .await
+            .expect("pre-register epoch 2");
+            stash = Some(pre_e2);
+            let e2 = take_or_register_current(
+                Epoch::new(2),
+                &mut stash,
+                &mut vote_mux,
+                &mut cert_mux,
+                &mut res_mux,
+            )
+            .await
+            .expect("stash hit must succeed");
+            assert_eq!(e2.epoch, Epoch::new(2));
+            assert!(stash.is_none());
+
+            // 3. Stash epoch mismatch fails closed and drops the wrong-epoch stash.
+            let pre_e3 = register_epoch_subchannels(
+                Epoch::new(3),
+                &mut vote_mux,
+                &mut cert_mux,
+                &mut res_mux,
+            )
+            .await
+            .expect("pre-register epoch 3");
+            stash = Some(pre_e3);
+            let err = match take_or_register_current(
+                Epoch::new(4),
+                &mut stash,
+                &mut vote_mux,
+                &mut cert_mux,
+                &mut res_mux,
+            )
+            .await
+            {
+                Ok(_) => panic!("mismatched stash epoch must fail closed"),
+                Err(err) => err,
+            };
+            assert!(stash.is_none(), "mismatched stash must be consumed/dropped");
+            assert!(matches!(
+                err.downcast_ref::<EpochSubchannelError>(),
+                Some(EpochSubchannelError::StashEpochMismatch {
+                    stash_epoch,
+                    epoch,
+                }) if *stash_epoch == Epoch::new(3) && *epoch == Epoch::new(4)
+            ));
+        });
+    }
+
+    #[test]
+    fn partial_registration_rolls_back_and_reacquire_retries_or_times_out() {
+        deterministic::Runner::default().start(|ctx| async move {
+            let (mut vote_mux, mut cert_mux, mut res_mux) = setup_test_muxes(&ctx).await;
+            let epoch = Epoch::new(5);
+
+            // Occupy only `res_mux` for epoch 5 so `vote` and `cert` succeed first,
+            // then `res` fails with AlreadyRegistered and triggers rollback of `vote` and `cert`.
+            let held_res = res_mux.register(epoch.get()).await.unwrap();
+
+            let err =
+                match register_epoch_subchannels(epoch, &mut vote_mux, &mut cert_mux, &mut res_mux)
+                    .await
+                {
+                    Ok(_) => panic!("duplicate res registration must fail"),
+                    Err(err) => err,
+                };
+            assert!(matches!(
+                err.downcast_ref::<EpochSubchannelError>(),
+                Some(EpochSubchannelError::Register {
+                    channel: "res",
+                    epoch: ep,
+                    ..
+                }) if *ep == epoch
+            ));
+
+            // While `held_res` remains alive, `reacquire_epoch_subchannels` must time out on "res"
+            // (confirming `vote` and `cert` were rolled back on the failed attempt).
+            let policy = SubchannelRetryPolicy {
+                timeout: Duration::from_millis(20),
+                retry_interval: Duration::from_millis(5),
+            };
+            let timeout_err = match reacquire_epoch_subchannels(
+                epoch,
+                &ctx,
+                policy,
+                EpochMuxHandles {
+                    vote: &mut vote_mux,
+                    cert: &mut cert_mux,
+                    res: &mut res_mux,
+                },
+            )
+            .await
+            {
+                Ok(_) => panic!("reacquire must time out while prior res receiver is held"),
+                Err(err) => err,
+            };
+            assert!(matches!(
+                timeout_err.downcast_ref::<EpochSubchannelError>(),
+                Some(EpochSubchannelError::ReacquireTimeout {
+                    channel: "res",
+                    epoch: ep,
+                    ..
+                }) if *ep == epoch
+            ));
+
+            // Drop `held_res` asynchronously after 10ms; `reacquire_epoch_subchannels` must succeed.
+            ctx.child("drop_held_res").spawn(move |clock| async move {
+                clock.sleep(Duration::from_millis(10)).await;
+                drop(held_res);
+            });
+
+            let reacquired = reacquire_epoch_subchannels(
+                epoch,
+                &ctx,
+                SubchannelRetryPolicy {
+                    timeout: Duration::from_millis(50),
+                    retry_interval: Duration::from_millis(5),
+                },
+                EpochMuxHandles {
+                    vote: &mut vote_mux,
+                    cert: &mut cert_mux,
+                    res: &mut res_mux,
+                },
+            )
+            .await
+            .expect("reacquire must succeed once prior receiver drops");
+            assert_eq!(reacquired.epoch, epoch);
+        });
+    }
+}

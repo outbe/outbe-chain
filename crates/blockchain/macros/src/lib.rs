@@ -2,12 +2,12 @@
 
 mod contract_codegen;
 mod dispatch_codegen;
-#[allow(dead_code)]
-mod errors;
 mod field_attrs;
 mod record_codegen;
 
 use contract_codegen::{generate_contract, ContractConfig};
+#[cfg(test)]
+use dispatch_codegen::generate_dispatch;
 use proc_macro::TokenStream;
 use record_codegen::{generate_storage_record, StorageRecordConfig};
 use syn::{parse_macro_input, DeriveInput, GenericArgument, PathArguments, Type};

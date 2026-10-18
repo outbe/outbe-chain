@@ -368,7 +368,7 @@ fn real_factory_vote_rejects_global_ticker_collision_before_allocation() {
 }
 
 #[test]
-fn factory_target_approved_expired_error_and_fatal_paths_are_distinct() {
+fn factory_target_approved_expired_malformed_payload_and_corrupted_reservation_outcomes() {
     let issuer = Address::repeat_byte(0x11);
     let raw = payload(issuer);
     let target = registry().lookup(STABLECOIN_FACTORY_ADDRESS).unwrap();
@@ -468,34 +468,34 @@ fn factory_target_approved_expired_error_and_fatal_paths_are_distinct() {
         .exists(U256::from(3u64))
         .unwrap());
 
-    let mut fatal_provider = HashMapStorageProvider::new(1);
-    let fatal_storage = StorageHandle::new(&mut fatal_provider);
+    let mut corrupted_provider = HashMapStorageProvider::new(1);
+    let corrupted_storage = StorageHandle::new(&mut corrupted_provider);
     target
         .reserve(
-            fatal_storage.clone(),
+            corrupted_storage.clone(),
             U256::from(4u64),
             &raw,
             context(issuer),
         )
         .unwrap();
-    let fatal_factory = StablecoinFactoryContract::new(fatal_storage.clone());
-    let fatal_reservation = fatal_factory
+    let corrupted_factory = StablecoinFactoryContract::new(corrupted_storage.clone());
+    let corrupted_reservation = corrupted_factory
         .reservations
         .get(U256::from(4u64))
         .unwrap()
         .unwrap();
-    fatal_factory
+    corrupted_factory
         .pending_address
-        .clear(&fatal_reservation.token)
+        .clear(&corrupted_reservation.token)
         .unwrap();
-    let fatal_ctx = BlockRuntimeContext::new(
+    let corrupted_ctx = BlockRuntimeContext::new(
         BlockContext::new(7, 1_700_000_000, 1, issuer, vec![issuer]),
-        fatal_storage,
+        corrupted_storage,
     );
     assert!(matches!(
         target
             .handle_tally(
-                &fatal_ctx,
+                &corrupted_ctx,
                 U256::from(4u64),
                 &raw,
                 context(issuer),

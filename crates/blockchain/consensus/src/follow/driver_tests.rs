@@ -6,17 +6,14 @@ use std::sync::{
 };
 
 use commonware_consensus::{marshal, types::ViewDelta};
-use commonware_cryptography::{bls12381::primitives::variant::MinSig, certificate::Verifier as _};
 use commonware_parallel::Sequential;
 use commonware_runtime::{buffer::paged::CacheRef, deterministic, Runner as _, Supervisor as _};
-use commonware_storage::archive::immutable;
 use futures::FutureExt as _;
 use reth_ethereum::{primitives::SealedBlock, Block};
 
 use crate::{
-    block::ConsensusBlock,
-    hybrid::{HybridScheme, HybridSchemeProvider},
-    marshal_types::FollowMarshalActor,
+    block::ConsensusBlock, hybrid::HybridSchemeProvider, marshal_types::FollowMarshalActor,
+    test_fixtures::marshal::MarshalArchiveFixture,
 };
 
 /// Real mailbox with an unstarted actor. Its progress query stays pending until
@@ -31,62 +28,14 @@ async fn pending_marshal(
     );
     let items = NonZeroU64::new(10).unwrap();
     let buffer = NonZeroUsize::new(1024).unwrap();
-    let archive_config = |label: &str, codec_config| immutable::Config {
-        metadata_partition: format!("{label}-metadata"),
-        freezer_table_partition: format!("{label}-table"),
-        freezer_table_initial_size: 64,
-        freezer_table_resize_frequency: 10,
-        freezer_table_resize_chunk_size: 10,
-        freezer_key_partition: format!("{label}-key"),
-        freezer_key_page_cache: cache.clone(),
-        freezer_value_partition: format!("{label}-value"),
-        freezer_value_target_size: 1024,
-        freezer_value_compression: None,
-        ordinal_partition: format!("{label}-ordinal"),
+    let (certificates, blocks) = MarshalArchiveFixture {
+        partition_prefix: "driver-test",
+        page_cache: &cache,
         items_per_section: items,
-        codec_config,
         replay_buffer: buffer,
-        freezer_key_write_buffer: buffer,
-        freezer_value_write_buffer: buffer,
-        ordinal_write_buffer: buffer,
-    };
-    let certificates = immutable::Archive::init(
-        context.child("certificates"),
-        archive_config(
-            "certificates",
-            HybridScheme::<MinSig>::certificate_codec_config_unbounded(),
-        ),
-    )
-    .await
-    .unwrap();
-    // Block and certificate codec configs differ. Keep the same storage
-    // parameters while supplying the block codec's unit config.
-    let base = archive_config(
-        "blocks",
-        HybridScheme::<MinSig>::certificate_codec_config_unbounded(),
-    );
-    let blocks = immutable::Archive::init(
-        context.child("blocks"),
-        immutable::Config {
-            metadata_partition: base.metadata_partition,
-            freezer_table_partition: base.freezer_table_partition,
-            freezer_table_initial_size: base.freezer_table_initial_size,
-            freezer_table_resize_frequency: base.freezer_table_resize_frequency,
-            freezer_table_resize_chunk_size: base.freezer_table_resize_chunk_size,
-            freezer_key_partition: base.freezer_key_partition,
-            freezer_key_page_cache: base.freezer_key_page_cache,
-            freezer_value_partition: base.freezer_value_partition,
-            freezer_value_target_size: base.freezer_value_target_size,
-            freezer_value_compression: base.freezer_value_compression,
-            ordinal_partition: base.ordinal_partition,
-            items_per_section: items,
-            codec_config: (),
-            replay_buffer: buffer,
-            freezer_key_write_buffer: buffer,
-            freezer_value_write_buffer: buffer,
-            ordinal_write_buffer: buffer,
-        },
-    )
+        write_buffer: buffer,
+    }
+    .open(context)
     .await
     .unwrap();
     let genesis = Block::default().map_header(outbe_primitives::OutbeHeader::new);

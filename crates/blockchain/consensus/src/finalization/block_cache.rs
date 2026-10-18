@@ -157,17 +157,30 @@ mod tests {
         // numbers and distinct digests. The height window must keep
         // `cache.len()` bounded by `BLOCK_CACHE_KEEP_DEPTH`.
         let mut cache: BTreeMap<Digest, ConsensusBlock> = BTreeMap::new();
+        let first_digest = digest_of(&make_block(0, 0));
+        let last_evicted_digest = digest_of(&make_block(
+            9_999 - BLOCK_CACHE_KEEP_DEPTH,
+            9_999 - BLOCK_CACHE_KEEP_DEPTH,
+        ));
+        let first_retained_digest = digest_of(&make_block(
+            9_999 - BLOCK_CACHE_KEEP_DEPTH + 1,
+            9_999 - BLOCK_CACHE_KEEP_DEPTH + 1,
+        ));
+        let last_digest = digest_of(&make_block(9_999, 9_999));
         for n in 0..10_000_u64 {
             let block = make_block(n, n);
             let digest = digest_of(&block);
             insert_block_cache_bounded(&mut cache, digest, block);
         }
-        assert!(
-            cache.len() <= BLOCK_CACHE_KEEP_DEPTH as usize,
-            "height window failed to bound cache: len={}, keep_depth={}",
+        assert_eq!(
             cache.len(),
-            BLOCK_CACHE_KEEP_DEPTH
+            BLOCK_CACHE_KEEP_DEPTH as usize,
+            "height window should retain exact BLOCK_CACHE_KEEP_DEPTH entries"
         );
+        assert!(!cache.contains_key(&first_digest));
+        assert!(!cache.contains_key(&last_evicted_digest));
+        assert!(cache.contains_key(&first_retained_digest));
+        assert!(cache.contains_key(&last_digest));
         // All survivors must lie in the keep-depth window above the
         // final inserted number (9999).
         let floor = 9_999 - BLOCK_CACHE_KEEP_DEPTH;
@@ -181,19 +194,30 @@ mod tests {
     fn insert_block_cache_bounded_fork_spam() {
         // Drive 10_000 inserts all at the SAME height with distinct
         // digests (fork spam). The height window cannot bound this. The
-        // hard entry cap must take effect.
+        // hard entry cap must take effect, evicting the lowest `(number, digest)`.
         const SAME_HEIGHT: u64 = BLOCK_CACHE_KEEP_DEPTH + 100;
         let mut cache: BTreeMap<Digest, ConsensusBlock> = BTreeMap::new();
+        let mut min_digest: Option<Digest> = None;
+        let mut max_digest: Option<Digest> = None;
         for salt in 0..10_000_u64 {
             let block = make_block(SAME_HEIGHT, salt);
             let digest = digest_of(&block);
+            min_digest = Some(min_digest.map_or(digest, |m| m.min(digest)));
+            max_digest = Some(max_digest.map_or(digest, |m| m.max(digest)));
             insert_block_cache_bounded(&mut cache, digest, block);
         }
-        assert!(
-            cache.len() <= BLOCK_CACHE_MAX_ENTRIES,
-            "hard cap failed under fork spam: len={}, max_entries={}",
+        assert_eq!(
             cache.len(),
-            BLOCK_CACHE_MAX_ENTRIES
+            BLOCK_CACHE_MAX_ENTRIES,
+            "hard cap must retain exact BLOCK_CACHE_MAX_ENTRIES under fork spam"
+        );
+        assert!(
+            !cache.contains_key(&min_digest.unwrap()),
+            "lowest digest at same height must be evicted under hard cap"
+        );
+        assert!(
+            cache.contains_key(&max_digest.unwrap()),
+            "highest digest at same height must be retained under hard cap"
         );
     }
 

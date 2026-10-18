@@ -9,16 +9,22 @@
 use alloy_primitives::{Address, Bytes, B256};
 use commonware_codec::{Encode, FixedSize};
 use commonware_consensus::{
-    simplex::types::Proposal,
+    simplex::types::{Finalization, Notarization, Proposal},
     types::{Epoch, Round, View},
 };
 use commonware_cryptography::{
     bls12381::primitives::variant::{MinSig, Variant},
     sha256::Digest as Sha256Digest,
 };
-use outbe_consensus::proof::{verify_v2_proof, V2VerifyError};
-use outbe_consensus::proof::{CommitteeEntry, CommitteeSnapshot};
-use outbe_consensus::test_harness::{test_fully_signed_metadata, TestFinalizedParent};
+use outbe_consensus::hybrid::HybridScheme;
+use outbe_consensus::proof::constants::{finalize_namespace, notarize_namespace};
+use outbe_consensus::proof::{
+    verify_v2_proof, CommitteeEntry, CommitteeSnapshot, HybridCertificate, V2VerifyError,
+};
+use outbe_consensus::test_harness::{
+    finalize_messages, test_fully_signed_metadata, vrf_test_committee, CertificateMessages,
+    TestFinalizedParent,
+};
 use outbe_primitives::consensus_metadata::{
     CertifiedParentAccountingMetadata, MissedProposerEvent, ParentParticipationProof,
 };
@@ -65,27 +71,77 @@ fn fixture_metadata(
     test_fully_signed_metadata(&parent, snapshot, b"opaque-cert-bytes-not-real")
 }
 
-// (FixedSize is imported at top via `use commonware_codec::FixedSize;`.)
+/// Build a cryptographically valid `(snapshot, metadata, cert, proof_bytes)` tuple
+/// for `proof_kind` using the cached 4-validator DKG fixture.
+fn real_proof_fixture(
+    parent_hash: B256,
+    proof_kind: ParentParticipationProof,
+) -> (
+    CommitteeSnapshot,
+    CertifiedParentAccountingMetadata,
+    HybridCertificate<MinSig>,
+    Vec<u8>,
+) {
+    let dkg = vrf_test_committee(4);
+    let version = 7u64;
+    let epoch = 3u64;
+    let view = 100u64;
+    let parent_view = 99u64;
+    let snapshot = dkg.snapshot(version);
+    let (_, vote, seed) = finalize_messages(epoch, view, parent_view, parent_hash);
+    let committee_set = dkg.committee_set();
+    let vote_namespace = match proof_kind {
+        ParentParticipationProof::Finalization => finalize_namespace(&committee_set),
+        ParentParticipationProof::CertifiedNotarization => notarize_namespace(&committee_set),
+    };
+    let messages = CertificateMessages {
+        vote_namespace: &vote_namespace,
+        vote: &vote,
+        seed: &seed,
+    };
+    let cert = dkg.certificate(
+        &[0, 1, 2, 3],
+        &messages,
+        &dkg.vrf_threshold_private,
+        version,
+    );
+    let proposal = Proposal::new(
+        Round::new(Epoch::new(epoch), View::new(view)),
+        View::new(parent_view),
+        Sha256Digest(parent_hash.0),
+    );
+    let proof_bytes = match proof_kind {
+        ParentParticipationProof::Finalization => {
+            Finalization::<HybridScheme<MinSig>, Sha256Digest> {
+                proposal,
+                certificate: cert.clone(),
+            }
+            .encode()
+            .to_vec()
+        }
+        ParentParticipationProof::CertifiedNotarization => {
+            Notarization::<HybridScheme<MinSig>, Sha256Digest> {
+                proposal,
+                certificate: cert.clone(),
+            }
+            .encode()
+            .to_vec()
+        }
+    };
+    let parent = TestFinalizedParent {
+        block_number: 41,
+        block_hash: parent_hash,
+        epoch,
+        view,
+        parent_view,
+        vrf_material_version: version,
+        proof_kind,
+    };
+    let metadata = test_fully_signed_metadata(&parent, &snapshot, &proof_bytes);
+    (snapshot, metadata, cert, proof_bytes)
+}
 
 // -- Tests: NonEmptyMissedProposers (highest-priority gate) ----------------
-
-#[test]
-fn finalization_missed_proposers_must_be_empty() {
-    let snapshot = fixture_snapshot(3);
-    let parent_hash = B256::with_last_byte(0xAA);
-    let mut metadata = fixture_metadata(&snapshot, parent_hash);
-    metadata.proof_kind = ParentParticipationProof::Finalization;
-    metadata.missed_proposers.push(MissedProposerEvent {
-        view: 99,
-        validator: Address::with_last_byte(1),
-    });
-    let err = verify_v2_proof(&metadata, &snapshot, &[], parent_hash)
-        .expect_err("non-empty missed_proposers must reject");
-    assert!(
-        matches!(err, V2VerifyError::NonEmptyMissedProposers { count: 1 }),
-        "{err:?}"
-    );
-}
 
 #[test]
 fn certified_notarization_missed_proposers_must_be_empty() {
@@ -99,7 +155,10 @@ fn certified_notarization_missed_proposers_must_be_empty() {
     });
     let err = verify_v2_proof(&metadata, &snapshot, &[], parent_hash)
         .expect_err("non-empty missed_proposers must reject for CertifiedNotarization too");
-    assert!(matches!(err, V2VerifyError::NonEmptyMissedProposers { .. }));
+    assert!(matches!(
+        err,
+        V2VerifyError::NonEmptyMissedProposers { count: 1 }
+    ));
 }
 
 #[test]
@@ -134,24 +193,6 @@ fn wrong_accounted_block_hash_rejects() {
     let err = verify_v2_proof(&metadata, &snapshot, &metadata.proof, wrong_hash)
         .expect_err("hash mismatch must reject");
     assert!(matches!(err, V2VerifyError::WrongAccountedHash { .. }));
-}
-
-#[test]
-fn wrong_accounted_block_number_rejects() {
-    // The header_parent_hash carries the exact-parent contract. The
-    // verifier does not separately track block number (that comes from the
-    // chain provider). This case is documented as covered by `WrongAccountedHash`.
-    // This test pins the behaviour: differing block numbers on metadata
-    // alone do not trigger any extra check beyond the hash check.
-    let snapshot = fixture_snapshot(3);
-    let parent_hash = B256::with_last_byte(0xAA);
-    let mut metadata = fixture_metadata(&snapshot, parent_hash);
-    metadata.finalized_block_number = 99999; // does not match the chain, but verifier doesn't see chain.
-    let err = verify_v2_proof(&metadata, &snapshot, &metadata.proof, parent_hash)
-        .expect_err("verifier proceeds past hash check; fails later (bls / cert decode)");
-    // It falls through to a downstream check. What matters is that it is NOT a
-    // panic and is a structured error.
-    assert!(!matches!(err, V2VerifyError::WrongAccountedHash { .. }));
 }
 
 #[test]
@@ -254,24 +295,21 @@ fn metadata_cannot_override_consensus_pubkeys() {
 }
 
 #[test]
-fn canonical_committee_pubkey_mismatch_rejects() {
-    // Same root cause as the previous test. This test restates it for
-    // traceability.
-    let snapshot = fixture_snapshot(3);
-    let parent_hash = B256::with_last_byte(0xAA);
-    let mut metadata = fixture_metadata(&snapshot, parent_hash);
-    metadata.ordered_committee[0] = Address::with_last_byte(0xFE);
-    assert!(verify_v2_proof(&metadata, &snapshot, &metadata.proof, parent_hash).is_err());
-}
-
-#[test]
 fn address_pubkey_order_mismatch_rejects() {
-    let snapshot = fixture_snapshot(3);
     let parent_hash = B256::with_last_byte(0xAA);
-    let mut metadata = fixture_metadata(&snapshot, parent_hash);
+    let (snapshot, mut metadata, _cert, proof_bytes) =
+        real_proof_fixture(parent_hash, ParentParticipationProof::Finalization);
+    // Valid control passes full verification.
+    verify_v2_proof(&metadata, &snapshot, &proof_bytes, parent_hash)
+        .expect("control proof must verify before address-order mutation");
     // Reverse the committee in metadata. This gives a per-position address mismatch.
     metadata.ordered_committee.reverse();
-    assert!(verify_v2_proof(&metadata, &snapshot, &metadata.proof, parent_hash).is_err());
+    let err = verify_v2_proof(&metadata, &snapshot, &proof_bytes, parent_hash)
+        .expect_err("reversed ordered_committee must reject");
+    assert!(
+        matches!(err, V2VerifyError::BitmapMismatch { .. }),
+        "{err:?}"
+    );
 }
 
 // -- Tests: committee_set_hash + vrf material binding ----------------------
@@ -327,138 +365,159 @@ fn wrong_proof_domain_rejects_when_bytes_differ_from_metadata_certificate() {
 
 #[test]
 fn proof_embedded_proposal_mismatch_rejects() {
-    // The proof-bytes domain check + the inner BLS verifier verify this
-    // end-to-end. The inner verifier checks the BLS aggregate against
-    // `Proposal.encode()` derived from metadata's epoch/view/parent_view/
-    // payload. A mismatching certificate fails BLS aggregate verification.
-    let snapshot = fixture_snapshot(3);
+    // Pass outer `proof_bytes == metadata.proof` (Rule 8) with a real decoded
+    // Finalization certificate, and mutate each embedded Proposal identity field
+    // (`epoch`, `view`, `parent_view`, `payload`) in isolation to verify that
+    // `proposal_matches_metadata` rejects with `WrongProofDomain`.
     let parent_hash = B256::with_last_byte(0xAA);
-    let metadata = fixture_metadata(&snapshot, parent_hash);
-    // Wrong bytes fall into WrongProofDomain.
-    assert!(verify_v2_proof(
-        &metadata,
-        &snapshot,
-        b"not-the-same-as-metadata.proof",
-        parent_hash
-    )
-    .is_err());
+    let (snapshot, control_metadata, cert, control_bytes) =
+        real_proof_fixture(parent_hash, ParentParticipationProof::Finalization);
+    verify_v2_proof(&control_metadata, &snapshot, &control_bytes, parent_hash)
+        .expect("control proof must verify");
+
+    let wrong_payload = B256::with_last_byte(0xEE);
+    let mismatched_proposals = [
+        (
+            Proposal::new(
+                Round::new(Epoch::new(4), View::new(100)),
+                View::new(99),
+                Sha256Digest(parent_hash.0),
+            ),
+            parent_hash,
+        ),
+        (
+            Proposal::new(
+                Round::new(Epoch::new(3), View::new(101)),
+                View::new(99),
+                Sha256Digest(parent_hash.0),
+            ),
+            parent_hash,
+        ),
+        (
+            Proposal::new(
+                Round::new(Epoch::new(3), View::new(100)),
+                View::new(98),
+                Sha256Digest(parent_hash.0),
+            ),
+            parent_hash,
+        ),
+        (
+            Proposal::new(
+                Round::new(Epoch::new(3), View::new(100)),
+                View::new(99),
+                Sha256Digest(wrong_payload.0),
+            ),
+            wrong_payload,
+        ),
+    ];
+
+    for (proposal, expected_actual) in mismatched_proposals {
+        let tampered_bytes = Finalization::<HybridScheme<MinSig>, Sha256Digest> {
+            proposal,
+            certificate: cert.clone(),
+        }
+        .encode()
+        .to_vec();
+        let mut metadata = control_metadata.clone();
+        metadata.proof = Bytes::from(tampered_bytes.clone());
+        let err = verify_v2_proof(&metadata, &snapshot, &tampered_bytes, parent_hash)
+            .expect_err("embedded proposal mismatch must reject");
+        assert!(
+            matches!(
+                err,
+                V2VerifyError::WrongProofDomain { expected, actual }
+                    if expected == parent_hash && actual == expected_actual
+            ),
+            "expected WrongProofDomain({parent_hash}, {expected_actual}), got {err:?}"
+        );
+    }
 }
 
-// -- Tests: namespace / round encoding pin ---------------------------------
-
-#[test]
-fn wrong_vrf_seed_round_pinned_by_round_encoding() {
-    // The verifier computes seed_message internally from
-    // `Round(metadata.finalized_epoch, metadata.finalized_view).encode()`.
-    // Changing the round in metadata changes the seed message. The inner
-    // VRF verify would reject. This test asserts encoding determinism.
-    let r1 = Round::new(Epoch::new(3), View::new(100)).encode().to_vec();
-    let r2 = Round::new(Epoch::new(3), View::new(101)).encode().to_vec();
-    assert_ne!(r1, r2);
-}
-
-// -- Tests: happy-path structural verification (no real BLS) ---------------
+// -- Tests: happy-path & mandatory VRF verification ------------------------
 
 #[test]
 fn happy_path_metadata_to_verifier_pipeline_reaches_bls_layer() {
-    // With aligned metadata + snapshot + matching certificate bytes, the
-    // verifier reaches the inner BLS layer. The inner layer fails because
-    // we don't have a real-signed certificate in this fixture. But the
-    // failure class proves the entire binding chain passed. This is the
-    // structural "happy path" coverage for the metadata-bound verifier.
-    // `verifier_smoke.rs::verify_v2_proof_accepts_valid_quorum_certificate`
-    // covers the BLS-and-VRF happy path.
-    let snapshot = fixture_snapshot(3);
     let parent_hash = B256::with_last_byte(0xAA);
-    let metadata = fixture_metadata(&snapshot, parent_hash);
+    let (snapshot, metadata, _cert, proof_bytes) =
+        real_proof_fixture(parent_hash, ParentParticipationProof::Finalization);
 
-    // Build a Proposal-encoded vote message that matches what the verifier
-    // will derive internally. This sanity-checks the encoding pipeline.
-    let round = Round::new(Epoch::new(3), View::new(100));
-    let payload = Sha256Digest(parent_hash.0);
-    let proposal: Proposal<Sha256Digest> = Proposal::new(round, View::new(99), payload);
-    let encoded = proposal.encode().to_vec();
-    assert!(!encoded.is_empty(), "Proposal encoding must produce bytes");
+    // Valid control reaches and passes the full BLS + VRF layer.
+    let verified = verify_v2_proof(&metadata, &snapshot, &proof_bytes, parent_hash)
+        .expect("real certificate must pass metadata binding and BLS/VRF verification");
+    assert_eq!(verified.signer_bitmap, vec![1, 1, 1, 1]);
 
-    let result = verify_v2_proof(&metadata, &snapshot, &metadata.proof, parent_hash);
-    // The result is an error, but NOT one of the structural binding errors.
-    // It is a downstream BLS/cert decode failure (the fixture bytes aren't a
-    // real cert). Asserting `is_err()` proves the binding passed.
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(
-        !matches!(
-            err,
-            V2VerifyError::NonEmptyMissedProposers { .. }
-                | V2VerifyError::WrongAccountedHash { .. }
-                | V2VerifyError::CommitteeSnapshotMissing
-                | V2VerifyError::BitmapMismatch { .. }
-                | V2VerifyError::WrongVrfMaterialVersion { .. }
-                | V2VerifyError::WrongVrfGroupKeyHash { .. }
-                | V2VerifyError::CommitteeSetHashMismatch { .. }
-                | V2VerifyError::WrongProofDomain { .. }
-        ),
-        "binding chain must pass; got {err:?}"
+    // Corrupting only the BLS aggregate vote signature (wrong vote domain) while
+    // keeping all metadata bindings, VRF proof, and proposal fields intact proves
+    // the pipeline reaches the BLS layer.
+    let dkg = vrf_test_committee(4);
+    let (_, vote, seed) = finalize_messages(3, 100, 99, parent_hash);
+    let bad_bls_cert = dkg.certificate(
+        &[0, 1, 2, 3],
+        &CertificateMessages {
+            vote_namespace: b"WRONG_BLS_DOMAIN",
+            vote: &vote,
+            seed: &seed,
+        },
+        &dkg.vrf_threshold_private,
+        snapshot.vrf_material_version,
     );
+    let bad_bytes = Finalization::<HybridScheme<MinSig>, Sha256Digest> {
+        proposal: Proposal::new(
+            Round::new(Epoch::new(3), View::new(100)),
+            View::new(99),
+            Sha256Digest(parent_hash.0),
+        ),
+        certificate: bad_bls_cert,
+    }
+    .encode()
+    .to_vec();
+    let mut bad_metadata = metadata;
+    bad_metadata.proof = Bytes::from(bad_bytes.clone());
+    let err = verify_v2_proof(&bad_metadata, &snapshot, &bad_bytes, parent_hash)
+        .expect_err("corrupted BLS vote signature must fail at BLS layer");
+    assert!(matches!(err, V2VerifyError::BlsAggregateInvalid), "{err:?}");
 }
 
 #[test]
 fn valid_vrf_proof_required_for_certified_notarization_and_finalization() {
-    // The verifier requires a VRF proof for BOTH proof kinds. This test
-    // verifies that by toggling proof_kind and asserting that both branches
-    // reach the inner verifier (where the missing-VRF check would fire).
-    let snapshot = fixture_snapshot(3);
+    // For BOTH proof kinds, a real certificate with a valid VRF proof verifies,
+    // and stripping the mandatory 56-byte VRF tail fails decoding.
     let parent_hash = B256::with_last_byte(0xAA);
-    let mut metadata = fixture_metadata(&snapshot, parent_hash);
+    for kind in [
+        ParentParticipationProof::Finalization,
+        ParentParticipationProof::CertifiedNotarization,
+    ] {
+        let (snapshot, mut metadata, _cert, mut proof_bytes) =
+            real_proof_fixture(parent_hash, kind);
+        verify_v2_proof(&metadata, &snapshot, &proof_bytes, parent_hash)
+            .expect("valid certificate with mandatory VRF must verify");
 
-    metadata.proof_kind = ParentParticipationProof::Finalization;
-    let r1 = verify_v2_proof(&metadata, &snapshot, &metadata.proof, parent_hash);
-    assert!(r1.is_err());
-
-    metadata.proof_kind = ParentParticipationProof::CertifiedNotarization;
-    let r2 = verify_v2_proof(&metadata, &snapshot, &metadata.proof, parent_hash);
-    assert!(r2.is_err());
+        proof_bytes.truncate(proof_bytes.len() - 56);
+        metadata.proof = Bytes::from(proof_bytes.clone());
+        let err = verify_v2_proof(&metadata, &snapshot, &proof_bytes, parent_hash)
+            .expect_err("missing mandatory VRF must reject for both proof kinds");
+        assert!(matches!(err, V2VerifyError::Decode(_)), "{err:?}");
+    }
 }
-
-// -- Tests: invariants of the inner low-level verifier --------------------
-
-// `tests/fingerprint.rs::canonical_vrf_proof_hash_v2_equals_keccak_of_encode_proptest`
-// in the test suite covers `canonical_vrf_proof_hash_v2` purity. There is no
-// need to duplicate it here.
 
 // -- Determinism ------------------------------------------------------------
 
 #[test]
 fn verifier_outcome_deterministic_from_parent_state_and_body() {
-    let snapshot = fixture_snapshot(3);
     let parent_hash = B256::with_last_byte(0xAA);
-    let metadata = fixture_metadata(&snapshot, parent_hash);
+    let (snapshot, metadata, _cert, proof_bytes) =
+        real_proof_fixture(parent_hash, ParentParticipationProof::Finalization);
 
-    // Call the verifier 16 times with the same inputs. The outcomes must be
-    // byte-identical errors (or byte-identical successes).
-    let first = verify_v2_proof(&metadata, &snapshot, &metadata.proof, parent_hash);
+    // Call the verifier 16 times on a real valid certificate (and without a Tokio
+    // runtime) to confirm deterministic Ok outcomes.
+    let first = verify_v2_proof(&metadata, &snapshot, &proof_bytes, parent_hash)
+        .expect("real certificate must verify deterministically");
     for _ in 0..15 {
-        let next = verify_v2_proof(&metadata, &snapshot, &metadata.proof, parent_hash);
-        match (&first, &next) {
-            (Err(e1), Err(e2)) => assert_eq!(format!("{e1:?}"), format!("{e2:?}")),
-            (Ok(v1), Ok(v2)) => {
-                assert_eq!(v1.signer_bitmap, v2.signer_bitmap);
-                assert_eq!(v1.vrf_proof_hash, v2.vrf_proof_hash);
-                assert_eq!(v1.vrf_material_version, v2.vrf_material_version);
-            }
-            _ => panic!("non-deterministic outcome"),
-        }
+        let next = verify_v2_proof(&metadata, &snapshot, &proof_bytes, parent_hash)
+            .expect("repeated verification must succeed");
+        assert_eq!(first.signer_bitmap, next.signer_bitmap);
+        assert_eq!(first.vrf_proof_hash, next.vrf_proof_hash);
+        assert_eq!(first.prev_randao, next.prev_randao);
+        assert_eq!(first.vrf_material_version, next.vrf_material_version);
     }
-}
-
-#[test]
-fn verifier_outcome_independent_of_marshal_state() {
-    // The verifier uses no tokio async, no marshal/store API, no
-    // Mutex/RwLock. The function is `pub fn` (sync), and this test
-    // demonstrates it is callable from a context with no tokio runtime.
-    // No `#[tokio::test]` attribute -> no tokio runtime started.
-    let snapshot = fixture_snapshot(3);
-    let parent_hash = B256::with_last_byte(0xAA);
-    let metadata = fixture_metadata(&snapshot, parent_hash);
-    let _ = verify_v2_proof(&metadata, &snapshot, &metadata.proof, parent_hash);
 }

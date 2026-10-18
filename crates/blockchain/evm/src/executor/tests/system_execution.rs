@@ -161,14 +161,21 @@ fn gas_02_phase1_preexec_failure_must_consume_body0_or_abort() {
     );
 
     let block_artifacts = OutbeBlockArtifacts::default();
-    let preexec = crate::factory::with_forced_outbe_system_call_error(|| {
+    let preexec_err = crate::factory::with_forced_outbe_system_call_error(|| {
         executor.apply_phase1_commit_in_preexec(2, &block_artifacts)
-    });
-    if preexec.is_err() {
-        return;
-    }
+    })
+    .expect_err("GAS-02: forced system-call error in Phase 1 pre-exec must abort with Err");
+    assert!(
+        preexec_err
+            .to_string()
+            .contains("forced Outbe system-call error"),
+        "GAS-02: unexpected pre-exec error: {preexec_err}"
+    );
+    assert!(
+        executor.receipts().is_empty(),
+        "GAS-02: failed Phase 1 pre-exec must not emit a receipt"
+    );
 
-    let receipt_count_after_preexec_failure = executor.receipts().len();
     let phase1_tx = begin_system_txs_for_test(
         &config,
         BeginBlockFixture {
@@ -183,15 +190,19 @@ fn gas_02_phase1_preexec_failure_must_consume_body0_or_abort() {
     .into_iter()
     .next()
     .expect("Phase 1 system tx should be present");
-    let _ = crate::factory::with_forced_outbe_system_call_error(|| {
+    let body0_err = crate::factory::with_forced_outbe_system_call_error(|| {
         executor.execute_transaction(phase1_tx)
-    });
-
-    assert_eq!(
-        executor.receipts().len(),
-        receipt_count_after_preexec_failure,
-        "GAS-02: Phase 1 pre-exec failure returned Ok and body[0] created another \
-         receipt instead of being consumed or making pre-exec fatal"
+    })
+    .expect_err("GAS-02: forced system-call error on body[0] must also abort with Err");
+    assert!(
+        body0_err
+            .to_string()
+            .contains("forced Outbe system-call error"),
+        "GAS-02: unexpected body[0] error: {body0_err}"
+    );
+    assert!(
+        executor.receipts().is_empty(),
+        "GAS-02: Phase 1 failure must never leave a synthetic receipt"
     );
 }
 

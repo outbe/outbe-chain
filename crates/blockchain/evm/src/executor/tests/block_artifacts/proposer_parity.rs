@@ -123,8 +123,8 @@ fn proposer_validator_same_state_root() {
     let settle_committee = 4u64;
     let settle_fee = U256::from(4_000u64) * outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT;
     // payout_i = fee * w(1) / (committee * w_max) = 4000e12 * 100 / 400 = 1000e12.
-    let expected_payout = settle_fee * outbe_rewards::constants::decay_weight(1)
-        / outbe_rewards::constants::fixed_denominator(settle_committee);
+    let expected_payout =
+        U256::from(1_000u64) * outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT;
     let artifact = signed_late_credit_artifact(
         &keys,
         &LateCreditBinding {

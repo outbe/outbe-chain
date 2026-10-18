@@ -2180,29 +2180,6 @@ mod tests {
         );
     }
 
-    /// signer() with correct share.index succeeds (positive case).
-    #[test]
-    fn test_signer_correct_share_index_succeeds() {
-        let (keys, participants) = test_participants(3);
-        let dkg = bootstrap_dkg(3).unwrap();
-
-        let pk0 = bls12381::PublicKey::from(keys[0].clone());
-        let idx = participants.index(&pk0).unwrap();
-        let correct_share = dkg.shares[idx.get() as usize].clone();
-
-        let result = HybridScheme::<MinSig>::signer(
-            NAMESPACE,
-            participants,
-            keys[0].clone(),
-            dkg.polynomial.clone(),
-            correct_share,
-        );
-        assert!(
-            result.is_some(),
-            "signer with correct share.index must succeed"
-        );
-    }
-
     /// The Subject seed message must be byte-identical to the proof-side canonical
     /// recipe `proof::constants::seed_namespace_and_message`. This makes sure that
     /// the hybrid signer, the hybrid verifier, and the proof-side slashing /

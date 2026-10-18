@@ -343,12 +343,33 @@ mod tests {
 
     #[test]
     fn test_write_if_changed_skips_equal() {
-        with_storage(|storage| {
+        let mut provider = HashMapStorageProvider::new(1);
+        provider.enable_production_storage_gas_metering();
+
+        provider.enter(|storage| {
             let sb = StorageBytes::new(U256::ZERO, ADDR, storage);
             assert!(sb.write_if_changed(b"hello").unwrap()); // first write
+        });
+        assert_eq!(provider.clear_mutation_failure(), 1);
+        assert_eq!(provider.metered_storage_operations().1, 1);
+
+        provider.enter(|storage| {
+            let sb = StorageBytes::new(U256::ZERO, ADDR, storage);
             assert!(!sb.write_if_changed(b"hello").unwrap()); // unchanged -> skip
+        });
+        assert_eq!(
+            provider.clear_mutation_failure(),
+            0,
+            "equal-value write_if_changed must not emit any sstore"
+        );
+        assert_eq!(provider.metered_storage_operations().1, 1);
+
+        provider.enter(|storage| {
+            let sb = StorageBytes::new(U256::ZERO, ADDR, storage);
             assert!(sb.write_if_changed(b"world").unwrap()); // changed -> write
             assert_eq!(sb.read().unwrap(), b"world");
         });
+        assert_eq!(provider.clear_mutation_failure(), 1);
+        assert_eq!(provider.metered_storage_operations().1, 2);
     }
 }

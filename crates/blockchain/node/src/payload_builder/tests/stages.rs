@@ -99,8 +99,8 @@ fn run_user_stage_with_options(
     cancel: CancelOnDrop,
     options: StageOptions,
 ) -> UserStageResult {
-    let case = build_active_payload_case(0, 1);
-    let chain_spec = case.provider.chain_spec();
+    let (evm_config, provider) = narrow_user_stage_fixture();
+    let chain_spec = provider.chain_spec();
     let parent = SealedHeader::seal_slow(OutbeHeader::new(alloy_consensus::Header {
         gas_limit: 100_000,
         timestamp: ACTIVE_PAYLOAD_BLOCK_TIMESTAMP - 1,
@@ -121,25 +121,24 @@ fn run_user_stage_with_options(
         attributes: &attributes,
         chain_spec: &chain_spec,
     };
-    let mut env = preparation::prepare(&case.evm_config, &context)
+    let mut env = preparation::prepare(&evm_config, &context)
         .expect("execution attributes prepare")
         .env;
     env.execute_outbe_block_hooks = false;
     if !options.code.is_empty() {
-        case.provider.add_account(
+        provider.add_account(
             address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"),
             ExtendedAccount::new(0, U256::ZERO).with_bytecode(options.code.clone()),
         );
     }
     let mut db = State::builder()
         .with_database(StageDatabase {
-            inner: StateProviderDatabase::new(&case.provider),
+            inner: StateProviderDatabase::new(&provider),
             fail_storage: options.fail_storage,
         })
         .with_bundle_update()
         .build();
-    let mut builder = case
-        .evm_config
+    let mut builder = evm_config
         .builder_for_next_block(&mut db, &parent, env)
         .expect("user-stage builder initializes");
     preparation::apply_pre_execution_changes(&mut builder).expect("pre-execution succeeds");
@@ -177,7 +176,7 @@ fn run_user_stage_with_options(
                     alloy_rlp::Encodable::length(recovered.inner()),
                 ));
             }
-            case.provider.add_account(
+            provider.add_account(
                 sender,
                 ExtendedAccount::new(
                     options.account_nonce.unwrap_or(nonce),

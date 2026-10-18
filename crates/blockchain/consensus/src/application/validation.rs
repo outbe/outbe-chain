@@ -170,46 +170,39 @@ mod tests {
     }
 
     #[test]
-    fn context_parent_binding_accepts_direct_child() {
+    fn context_parent_binding_enforces_direct_child_and_genesis_rules() {
         let parent = block_with_number(7);
-        let child = block_with_number_and_parent(8, parent.block_hash());
-
-        validate_context_parent_binding(&child, Some(&parent), parent.digest(), B256::ZERO)
+        let direct_child = block_with_number_and_parent(8, parent.block_hash());
+        validate_context_parent_binding(&direct_child, Some(&parent), parent.digest(), B256::ZERO)
             .expect("direct child extends Simplex context parent");
-    }
 
-    #[test]
-    fn context_parent_binding_rejects_wrong_parent_digest() {
-        let parent = block_with_number(7);
-        let child = block_with_number_and_parent(8, B256::from([0x44; 32]));
-
-        let error =
-            validate_context_parent_binding(&child, Some(&parent), parent.digest(), B256::ZERO)
-                .expect_err("child must bind header parent to Simplex context parent");
+        let wrong_parent_child = block_with_number_and_parent(8, B256::from([0x44; 32]));
+        let error = validate_context_parent_binding(
+            &wrong_parent_child,
+            Some(&parent),
+            parent.digest(),
+            B256::ZERO,
+        )
+        .expect_err("child must bind header parent to Simplex context parent");
         assert!(error
             .to_string()
             .contains("does not match Simplex context parent"));
-    }
 
-    #[test]
-    fn context_parent_binding_rejects_height_gap() {
-        let parent = block_with_number(7);
-        let child = block_with_number_and_parent(9, parent.block_hash());
-
-        let error =
-            validate_context_parent_binding(&child, Some(&parent), parent.digest(), B256::ZERO)
-                .expect_err("child height must be parent height plus one");
+        let gapped_child = block_with_number_and_parent(9, parent.block_hash());
+        let error = validate_context_parent_binding(
+            &gapped_child,
+            Some(&parent),
+            parent.digest(),
+            B256::ZERO,
+        )
+        .expect_err("child height must be parent height plus one");
         assert!(error
             .to_string()
             .contains("does not extend Simplex parent height"));
-    }
 
-    #[test]
-    fn context_parent_binding_accepts_genesis_parent_for_block_one() {
         let genesis_hash = B256::from([0x55; 32]);
-        let child = block_with_number_and_parent(1, genesis_hash);
-
-        validate_context_parent_binding(&child, None, Digest(genesis_hash), genesis_hash)
+        let block_one = block_with_number_and_parent(1, genesis_hash);
+        validate_context_parent_binding(&block_one, None, Digest(genesis_hash), genesis_hash)
             .expect("block 1 extends genesis parent");
     }
 

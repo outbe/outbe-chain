@@ -977,22 +977,21 @@ mod tests {
             .package_dir(target.receipt().receipt_hash)
             .join("ready")
             .exists());
-        let expected = rows[1..].iter().fold(
-            CheckpointOwnerSnapshot::bootstrap(rows[0].0.clone(), &rows[0].1).unwrap(),
-            |mut snapshot, (receipt, manifest)| {
-                snapshot.advance(receipt.clone(), manifest).unwrap();
-                snapshot
-            },
-        );
+        let initial_bootstrap =
+            CheckpointOwnerSnapshot::bootstrap(rows[0].0.clone(), &rows[0].1).unwrap();
+        let expected_owner_refs = initial_bootstrap.owner_refs().clone();
         drop(store);
         let reopened = ReviewPackageStore::open(&root).unwrap();
         let source = receipt_source(&rows);
         let actual = reopened
             .replay_checkpoint_snapshot(&source, target)
             .unwrap();
-        assert_eq!(actual.checkpoint(), expected.checkpoint());
-        assert_eq!(actual.owner_refs(), expected.owner_refs());
-        assert_eq!(actual.sigrefs(), expected.sigrefs());
+        assert_eq!(actual.checkpoint(), target);
+        assert_eq!(actual.owner_refs(), &expected_owner_refs);
+        assert_eq!(
+            actual.sigrefs().to_string(),
+            "0303030303030303030303030303030303030303"
+        );
         assert_eq!(*source.reads.lock().unwrap(), vec![1, 2, 3, 4]);
     }
 
