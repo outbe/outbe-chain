@@ -427,7 +427,7 @@ fn claim_gem_and_assert_gas_only_cost(
     let beneficiary = beneficiary_address(world, key);
     let primary = world.validators.primary_port();
     let before = native_balance(world, primary, beneficiary);
-    let inventory_before = observe_gem_projection(world, primary, || {
+    let inventory_before = observe_gem_state(world, primary, || {
         gem_inventory(world, primary, beneficiary).map(Some)
     });
     let receipt = world
@@ -462,7 +462,7 @@ fn claim_gem_and_assert_gas_only_cost(
         eth::receipt_event::<eth::IGemFactory::GemIssued>(&receipt, addresses::GEM_FACTORY_ADDR);
     let mut expected_body = None;
     for port in ports {
-        let (after, gem) = observe_gem_projection(world, port, || {
+        let (after, gem) = observe_gem_state(world, port, || {
             let after = gem_inventory(world, port, beneficiary)?;
             if after.len() < inventory_before.len() + 1 {
                 return Ok(None);
@@ -539,7 +539,8 @@ fn claim_gem_and_assert_gas_only_cost(
     height
 }
 
-fn observe_gem_projection<T>(
+/// Sample a Gem read until it lands within one unchanged head on `port`.
+fn observe_gem_state<T>(
     world: &World,
     port: u16,
     mut read: impl FnMut() -> Result<Option<T>, String>,
@@ -567,7 +568,7 @@ fn observe_gem_projection<T>(
         Instant::now,
         || sleep(Duration::from_secs(2).min(deadline.saturating_duration_since(Instant::now()))),
     )
-    .unwrap_or_else(|error| panic!("Gem projection on port {port}: {error:#}"))
+    .unwrap_or_else(|error| panic!("Gem state on port {port}: {error:#}"))
 }
 
 fn gem_inventory(world: &World, port: u16, owner: Address) -> Result<Vec<U256>, String> {

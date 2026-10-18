@@ -1,4 +1,4 @@
-//! Static issuance invariants checked before compressed state is changed.
+//! Static issuance invariants checked before Nod storage is changed.
 use crate::{errors::NodError, NodItemState};
 use alloy_primitives::U256;
 use outbe_primitives::error::Result;

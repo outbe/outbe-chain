@@ -62,7 +62,7 @@ fn issue_is_immediately_readable_and_keeps_product_event_order() {
 }
 
 #[test]
-fn second_same_block_issue_reuses_the_pending_bucket_without_parent_projection() {
+fn second_same_block_issue_reuses_the_bucket() {
     let mut world = World::new();
     let first = params(Address::repeat_byte(0x18));
     let second = params(Address::repeat_byte(0x19));

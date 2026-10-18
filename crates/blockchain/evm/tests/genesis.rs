@@ -36,7 +36,6 @@ use serde_json::Value;
 use tempfile::TempDir;
 
 const ACCOUNTING_PROGRESS_ADDRESS_HEX: &str = "000000000000000000000000000000000000ee04";
-const COMPRESSED_ENTITIES_ADDRESS_HEX: &str = "000000000000000000000000000000000000ee0d";
 const VALIDATOR_SET_ADDRESS_HEX: &str = "000000000000000000000000000000000000ee00";
 
 /// `0xef` marker bytecode, mirroring `MARKER_CODE` in `scripts/seed_genesis.py`
@@ -177,19 +176,6 @@ fn accounting_progress_address_seeded_with_marker_and_zero_slot0() {
         slot0, ZERO_WORD_HEX,
         "EE04 slot 0 (last_accounted_block_number) must be zero at genesis"
     );
-}
-
-#[test]
-fn clean_genesis_does_not_allocate_a_compressed_entity_account() {
-    let (_tmp, genesis, _raw) = run_seed_genesis(
-        FIXTURE_GENESIS,
-        FIXTURE_SEED,
-        FIXTURE_VALIDATORS_4_PUBLIC_ONLY,
-    );
-    assert!(!genesis["alloc"]
-        .as_object()
-        .unwrap()
-        .contains_key(COMPRESSED_ENTITIES_ADDRESS_HEX));
 }
 
 /// `seed_genesis.py` does not write any direct-slot
@@ -519,8 +505,8 @@ fn load_seeded_storage(provider: &mut HashMapStorageProvider, genesis: &Value, a
 }
 
 /// The seeder writes raw slots. This test reads them back through the schemas that own
-/// them. Gem bodies are compressed entities and cannot be seeded: the Gem account
-/// carries only its profile and an empty supply.
+/// them. Genesis does not seed Gem bodies: the Gem account carries only its profile
+/// and an empty supply.
 #[test]
 fn seeded_profiles_and_gems_read_back_through_their_schemas() {
     const SEED: &str = r#"{

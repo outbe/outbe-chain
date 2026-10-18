@@ -180,11 +180,6 @@ impl TeeError {
     pub fn dkg_debug_context(prefix: &'static str, err: impl fmt::Debug) -> Self {
         Self::Dkg(format!("{prefix}: {err:?}"))
     }
-
-    /// Wrap a displayable error as a `TeeError::TributeOfferReject` variant.
-    pub fn tribute_offer_reject(err: impl fmt::Display) -> Self {
-        Self::TributeOfferReject(err.to_string())
-    }
 }
 
 /// Unified typed error for enclave modules outside the `TeeError` boundary.

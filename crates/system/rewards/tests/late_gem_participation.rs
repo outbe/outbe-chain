@@ -105,7 +105,7 @@ fn midnight_late_vote_survives_reentry_and_mints_equal_gems_once() {
         let counts = api::read_voters_for_day(&ctx, DAY).unwrap();
         api::prepare_daily_validator_gem_batch(&ctx, DAY, U256::from(400), &counts).unwrap();
 
-        // One compressed Gem body per block: the batch drains one voter per call.
+        // One reward Gem per block: the batch drains one voter per call.
         for _ in VOTERS {
             assert!(matches!(
                 api::deliver_oldest_reward_gem_batch(&ctx).unwrap(),

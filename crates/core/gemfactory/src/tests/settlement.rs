@@ -680,9 +680,9 @@ fn the_issuance_rail_converts_at_the_trailing_window_not_the_closed_day() {
     });
 }
 
-/// The gem body carries the load and the type. It has no entry-price field:
+/// The gem record carries the load and the type. It has no entry-price field:
 /// adding one fails this destructure.
-fn gem_body_cost_inputs(item: &GemItemState) -> (u8, U256) {
+fn gem_cost_inputs(item: &GemItemState) -> (u8, U256) {
     let GemItemState {
         gem_id: _,
         owner: _,
@@ -710,7 +710,7 @@ fn six_decimal_settlement_cost(entry: U256, load: U256, gem_type: u8) -> U256 {
 }
 
 #[test]
-fn settlement_cost_reads_entry_price_from_the_bucket_body() {
+fn settlement_cost_reads_entry_price_from_the_bucket() {
     let rate = U256::from(2u64) * six_decimal_unit();
     let other_entry = U256::from(3u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
@@ -720,7 +720,7 @@ fn settlement_cost_reads_entry_price_from_the_bucket_body() {
             issue_at_live_rate(storage, ALICE, GemTypes::Wallet, heavy, 840, 840).unwrap();
         let light_id = issue_at_live_rate(storage, BOB, GemTypes::Wallet, light, 840, 840).unwrap();
         // Same load as the heavy gem, so the id needs another owner. A different
-        // entry price opens a second bucket. The gem body still has none.
+        // entry price opens a second bucket. The gem record still has none.
         let other_owner = address!("0x3333333333333333333333333333333333333333");
         let other_id = runtime::issue_gem(
             storage,
@@ -754,7 +754,7 @@ fn settlement_cost_reads_entry_price_from_the_bucket_body() {
                 .1
         };
         let expected = |view: &GemView| {
-            let (gem_type, load) = gem_body_cost_inputs(&view.item);
+            let (gem_type, load) = gem_cost_inputs(&view.item);
             six_decimal_settlement_cost(view.bucket.entry_price_minor, load, gem_type)
         };
         assert_eq!(quoted(heavy_id), expected(&heavy_view));

@@ -63,7 +63,7 @@ pub enum GemError {
 #[non_exhaustive]
 pub enum GemFatalError {
     #[error("gem {gem_id} has no bucket body {bucket_id}")]
-    MissingBucketBody {
+    MissingBucketRecord {
         gem_id: U256,
         bucket_id: WwdEntityId,
     },

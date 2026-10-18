@@ -4,7 +4,7 @@ use outbe_primitives::{
     addresses::TRIBUTE_ADDRESS,
     error::{PrecompileError, Result},
     storage::{
-        proof::{AccountStorageProof, StateProofLimits, VerifiedStateSlots},
+        proof::{AccountStorageProof, StateProofLimits},
         readonly::ReadOnlyStorageProvider,
         types::Storable,
         StorageHandle,
@@ -69,16 +69,29 @@ impl From<outbe_tee::tribute_source::TributeSourceSubject> for TributeStateProof
 }
 
 impl TributeStateProofSubject {
+    fn checkpoint_is_complete(&self) -> bool {
+        self.checkpoint.block_number != 0
+            && !self.checkpoint.block_hash.is_zero()
+            && !self.checkpoint.state_root.is_zero()
+    }
+
+    fn is_complete(&self) -> bool {
+        self.chain_id != 0 && self.worldwide_day.value() != 0 && self.checkpoint_is_complete()
+    }
+
     fn validate(&self) -> Result<()> {
-        if self.chain_id == 0
-            || self.worldwide_day.value() == 0
-            || self.checkpoint.block_number == 0
-            || self.checkpoint.block_hash.is_zero()
-            || self.checkpoint.state_root.is_zero()
-        {
+        if !self.is_complete() {
             return Err(invalid("incomplete finalized Tribute proof subject"));
         }
         Ok(())
+    }
+
+    fn matches_context(&self, day_index: u32, tribute: &EncryptedTributeV2) -> bool {
+        let context = &tribute.context;
+        day_index < self.tribute_count
+            && tribute.has_valid_encoding()
+            && (context.chain_id, context.worldwide_day) == (self.chain_id, self.worldwide_day)
+            && !context.owner.is_zero()
     }
 }
 
@@ -87,13 +100,6 @@ pub struct TributeRecordStateProof {
     pub day_index: u32,
     pub tribute: EncryptedTributeV2,
     pub account: AccountStorageProof,
-}
-
-/// One bounded physical-index lookup. A length-only lookup also proves an empty day.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct TributeDayStateProof {
-    pub day_index_proof: AccountStorageProof,
-    pub record: Option<TributeRecordStateProof>,
 }
 
 /// Derives every expected word from the module-owned storage DSL.
@@ -105,15 +111,9 @@ pub fn expected_record_words(
 ) -> Result<Vec<(B256, U256)>> {
     subject.validate()?;
     let context = &tribute.context;
-    if day_index >= subject.tribute_count
-        || !tribute.has_valid_encoding()
-        || context.chain_id != subject.chain_id
-        || context.worldwide_day != subject.worldwide_day
-        || context.owner.is_zero()
-        || derive_poseidon_entity_id(context.owner, context.worldwide_day)
-            .map_err(|error| invalid(error.to_string()))?
-            != context.tribute_id
-    {
+    let expected_id = derive_poseidon_entity_id(context.owner, context.worldwide_day)
+        .map_err(|error| invalid(error.to_string()))?;
+    if !subject.matches_context(day_index, tribute) || expected_id != context.tribute_id {
         return Err(invalid(
             "Tribute source identity does not match its subject",
         ));
@@ -228,67 +228,6 @@ impl TributeRecordStateProof {
             }
             Ok(())
         })
-    }
-}
-
-/// Verifies complete physical day order with constant retained state.
-pub struct TributeDayProofVerifier {
-    subject: TributeStateProofSubject,
-    next_index: u32,
-}
-
-impl TributeDayProofVerifier {
-    pub fn new(
-        subject: TributeStateProofSubject,
-        day_index_proof: &AccountStorageProof,
-        limits: StateProofLimits,
-    ) -> Result<Self> {
-        subject.validate()?;
-        let verified: VerifiedStateSlots = day_index_proof
-            .verify(TRIBUTE_ADDRESS, subject.checkpoint.state_root, limits)
-            .map_err(|error| invalid(error.to_string()))?;
-        let mut provider = ReadOnlyStorageProvider::new_with_chain_identity(
-            verified,
-            subject.chain_id,
-            B256::ZERO,
-        );
-        StorageHandle::enter(&mut provider, |storage| {
-            let contract = TributeContract::new(storage.clone());
-            let slot = contract.day_ids.list(&subject.worldwide_day).base_slot();
-            if storage.sload(TRIBUTE_ADDRESS, slot)? != U256::from(subject.tribute_count) {
-                return Err(invalid(
-                    "Tribute proof day length does not match its subject",
-                ));
-            }
-            Ok(())
-        })?;
-        Ok(Self {
-            subject,
-            next_index: 0,
-        })
-    }
-
-    pub fn verify_next(
-        &mut self,
-        proof: &TributeRecordStateProof,
-        limits: StateProofLimits,
-    ) -> Result<()> {
-        if proof.day_index != self.next_index {
-            return Err(invalid("Tribute proof skips or repeats a day index"));
-        }
-        proof.verify(&self.subject, limits)?;
-        self.next_index = self
-            .next_index
-            .checked_add(1)
-            .ok_or_else(|| invalid("Tribute proof cursor overflow"))?;
-        Ok(())
-    }
-
-    pub fn finish(&self) -> Result<()> {
-        if self.next_index != self.subject.tribute_count {
-            return Err(invalid("Tribute proof day is incomplete"));
-        }
-        Ok(())
     }
 }
 

@@ -89,7 +89,9 @@ fn assert_nod_state(
     let body_bytes =
         outbe_primitives::entity_codec::encode_nod_item_v2(&outbe_nod::canonical_item(&item))
             .expect("canonical encrypted Nod");
-    let view = settlement_read(|| world.rpc.nod_data_on(peer, id.as_slice()))
+    let view = world
+        .rpc
+        .nod_data_on(peer, id.as_slice())
         .expect("encrypted NOD public view");
     assert_eq!(&nod_keys::encrypted(&view), encrypted);
     assert_eq!(
@@ -107,15 +109,13 @@ fn assert_encrypted_metadata(
     url: &str,
     encrypted: &outbe_primitives::nod_encryption::EncryptedNodV2,
 ) {
-    let uri: String = settlement_read(|| {
-        eth::read_call_result(
-            url,
-            addresses::NOD_ADDR,
-            &eth::INod::tokenURICall {
-                nodId: encrypted.terms.nod_id.to_u256(),
-            },
-        )
-    })
+    let uri: String = eth::read_call_result(
+        url,
+        addresses::NOD_ADDR,
+        &eth::INod::tokenURICall {
+            nodId: encrypted.terms.nod_id.to_u256(),
+        },
+    )
     .expect("encrypted NOD metadata");
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(uri.strip_prefix("data:application/json;base64,").unwrap())

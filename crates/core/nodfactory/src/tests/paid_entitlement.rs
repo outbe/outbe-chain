@@ -157,7 +157,7 @@ fn settlement_preserves_entitlement_and_failed_mining_can_retry_after_deadline()
 }
 
 #[test]
-fn settlement_failure_rolls_back_body_updates() {
+fn settlement_failure_rolls_back_record_updates() {
     let mut world = World::new();
     let input = free(Address::repeat_byte(0x83));
     let nod_id = world.issue(&input);

@@ -42,7 +42,7 @@ pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256
     Ok(gem_id)
 }
 
-/// Records an already built gem body, opening its bucket with `call_terms` if it is the first.
+/// Records an already built gem, opening its bucket with `call_terms` if it is the first.
 pub fn record_issued(
     storage: &StorageHandle<'_>,
     item: &GemItemState,
@@ -65,7 +65,7 @@ pub fn load_bucket(
     crate::state_api::load_bucket(storage, bucket_key)
 }
 
-/// Loads a gem together with its bucket. A gem whose bucket body is missing is
+/// Loads a gem together with its bucket. A gem whose bucket record is missing is
 /// corruption: the bucket outlives every member.
 pub fn load_pair(
     storage: &StorageHandle<'_>,
@@ -75,7 +75,7 @@ pub fn load_pair(
         return Ok(None);
     };
     let bucket = load_bucket(storage, item.body().bucket_key)?.ok_or_else(|| {
-        crate::errors::GemFatalError::MissingBucketBody {
+        crate::errors::GemFatalError::MissingBucketRecord {
             gem_id,
             bucket_id: item.body().bucket_id(),
         }
@@ -83,29 +83,29 @@ pub fn load_pair(
     Ok(Some((item, bucket)))
 }
 
-/// Fetches a gem body by id.
+/// Fetches a gem by id.
 pub fn get_item(storage: &StorageHandle<'_>, gem_id: U256) -> Result<Option<GemItemState>> {
-    load_item(storage, gem_id).map(|loaded| loaded.map(|loaded| loaded.into_parts().0))
+    load_item(storage, gem_id).map(|loaded| loaded.map(|loaded| loaded.into_body()))
 }
 
-/// Fetches a bucket body by id.
+/// Fetches a gem bucket by id.
 pub fn get_bucket(storage: &StorageHandle<'_>, bucket_key: B256) -> Result<Option<GemBucketState>> {
-    load_bucket(storage, bucket_key).map(|loaded| loaded.map(|loaded| loaded.into_parts().0))
+    load_bucket(storage, bucket_key).map(|loaded| loaded.map(|loaded| loaded.into_body()))
 }
 
-/// Fetches the full status view of a gem: body, bucket body and sealed terms.
+/// Fetches the full status view of a gem: gem, bucket and sealed terms.
 pub fn get_view(storage: &StorageHandle<'_>, gem_id: U256) -> Result<Option<GemView>> {
     let Some((item, bucket)) = load_pair(storage, gem_id)? else {
         return Ok(None);
     };
     Ok(Some(view_of(
         storage,
-        item.into_parts().0,
-        bucket.into_parts().0,
+        item.into_body(),
+        bucket.into_body(),
     )?))
 }
 
-/// Assembles the view from already loaded bodies.
+/// Assembles the view from an already loaded gem and bucket.
 pub fn view_of(
     storage: &StorageHandle<'_>,
     item: GemItemState,
@@ -130,7 +130,7 @@ pub fn balance_of(storage: &StorageHandle<'_>, owner: Address) -> Result<u32> {
         .len()
 }
 
-/// One owner's gems, with the block's own mutations folded in.
+/// One owner's gems, read through the owner index.
 pub fn list_by_owner(storage: &StorageHandle<'_>, owner: Address) -> Result<Vec<GemItemState>> {
     GemContract::new(storage.clone()).state_records(owner)
 }

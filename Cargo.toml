@@ -228,7 +228,6 @@ reth-primitives-traits = { version = "0.7.1", default-features = false }
 reth-codecs = { version = "0.7.0", default-features = false, features = [
     "alloy",
 ] }
-reth-storage-overlay = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.6.0" }
 reth-stages-types = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.6.0" }
 reth-storage-api = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.6.0" }
 reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.6.0" }

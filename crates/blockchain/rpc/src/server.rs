@@ -357,20 +357,6 @@ where
         .map_err(|error| internal_err(format!("Tribute source worker failed: {error}")))?
     }
 
-    async fn get_tribute_day_state_proof(
-        &self,
-        subject: outbe_tee::tribute_source::TributeSourceSubject,
-        day_index: Option<u32>,
-    ) -> RpcResult<outbe_tribute::state_proof::TributeDayStateProof> {
-        let provider = Arc::clone(&self.provider);
-        let chain_identity = self.chain_identity;
-        tokio::task::spawn_blocking(move || {
-            tribute_sources::serve_day(&*provider, chain_identity, subject, day_index)
-        })
-        .await
-        .map_err(|error| internal_err(format!("Tribute day proof worker failed: {error}")))?
-    }
-
     async fn derive_keys(
         &self,
         ledger: outbe_tee::protocol::Ledger,

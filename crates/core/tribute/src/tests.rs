@@ -689,7 +689,7 @@ fn failed_mutations_emit_no_events_and_sealing_emits_only_its_business_event() {
 }
 
 #[test]
-fn failed_burn_transaction_restores_body_compact_state_and_events() {
+fn failed_burn_transaction_restores_tribute_state_and_events() {
     with_provider(|provider| {
         let tribute = sample_tribute();
         StorageHandle::enter(&mut *provider, |storage| {

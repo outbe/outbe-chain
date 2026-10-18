@@ -6,7 +6,6 @@
 pub mod consensus;
 pub mod engine;
 pub mod errors;
-pub mod finalized_frame;
 pub mod node;
 pub mod payload_builder;
 pub mod shutdown;
