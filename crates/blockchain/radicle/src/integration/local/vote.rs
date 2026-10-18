@@ -29,15 +29,15 @@ impl LocalReceiptClient {
 }
 
 fn validate(page: &FinalizedVotePage, height: u64, offset: u32) -> Result<(), Error> {
-    if page.block.number != height
+    let invalid_block_or_len = page.block.number != height
         || page.block.hash.is_zero()
-        || page.proposals.len() > MAX_VOTE_PAGE
-        || page.proposals.iter().any(|id| id.is_zero())
+        || page.proposals.len() > MAX_VOTE_PAGE;
+    let invalid_proposals_or_offset = page.proposals.iter().any(|id| id.is_zero())
         || page.proposals.windows(2).any(|p| p[0] >= p[1])
         || page
             .next_offset
-            .is_some_and(|n| offset.checked_add(MAX_VOTE_PAGE as u32) != Some(n))
-    {
+            .is_some_and(|n| offset.checked_add(MAX_VOTE_PAGE as u32) != Some(n));
+    if invalid_block_or_len || invalid_proposals_or_offset {
         return Err(Error::Protocol);
     }
     Ok(())
@@ -144,7 +144,12 @@ mod tests {
     }
     #[tokio::test]
     async fn existing_vote_events_cross_private_socket_with_chain_page_and_size_checks() {
-        let directory = tempfile::tempdir_in("/private/tmp").unwrap();
+        let directory = tempfile::tempdir_in(if cfg!(target_os = "macos") {
+            "/private/tmp"
+        } else {
+            "/tmp"
+        })
+        .unwrap();
         fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
         let control = directory.path().join("control");
         let chain = ChainIdentity {

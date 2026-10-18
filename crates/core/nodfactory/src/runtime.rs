@@ -48,6 +48,25 @@ pub fn issue_lysis_nod(
     )
 }
 
+/// Issues a Nod claimed from a Tribute within the 7-day post-Metadosis claim window.
+pub fn issue_tribute_nod(
+    storage: &StorageHandle<'_>,
+    encrypted: &EncryptedNodV2,
+    gratis_load_minor: U256,
+) -> Result<WwdEntityId> {
+    let cost =
+        nod_api::settlement_cost_minor(encrypted.terms.entry_price_minor, gratis_load_minor)?;
+    if cost.is_zero() {
+        return Err(NodFactoryError::EntryPriceOutOfBounds.into());
+    }
+    issue_nod_with_cost(
+        storage,
+        encrypted,
+        storage.timestamp()?.to::<u64>(),
+        Some(cost),
+    )
+}
+
 fn issue_nod_with_cost(
     storage: &StorageHandle<'_>,
     encrypted: &EncryptedNodV2,
@@ -95,12 +114,21 @@ fn issue_nod_with_cost(
             nod_api::calculation_amount(&item)?,
         )?,
     };
-    let call_terms = call_terms(storage, terms.entry_price_minor, terms.reference_currency)?;
+    let existing_call_price = NodContract::new(storage.clone())
+        .bucket_call_price_minor
+        .read(&item.bucket_key)?;
+    let call_terms = if existing_call_price.is_zero() {
+        call_terms(storage, terms.entry_price_minor, terms.reference_currency)?
+    } else {
+        None
+    };
     nod_api::add_nod(storage, &item, terms.entry_price_minor, call_terms)?;
     // The bucket's sealed terms, which a Nod joining an existing bucket inherits.
-    let call_price_minor = NodContract::new(storage.clone())
-        .read_call_terms(item.bucket_key)?
-        .call_price_minor;
+    let call_price_minor = if existing_call_price.is_zero() {
+        call_terms.map_or(U256::ZERO, |t| t.call_price_minor)
+    } else {
+        existing_call_price
+    };
     emit_event(
         storage,
         INodFactory::NodIssued {

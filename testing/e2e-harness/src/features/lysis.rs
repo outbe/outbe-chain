@@ -126,12 +126,139 @@ fn native_lysis_completes(world: &mut World) {
         .rpc
         .wait_finalized_checkpoint(&ports, height, 120)
         .expect("same native Lysis block and state root");
+    let height = create_nods_for_completed_day(world, day, &ports, height);
     let supply = world.rpc.nod_supply(ports[0]).expect("native Nod supply");
     assert!(supply > 0);
     for port in ports {
         assert_eq!(world.rpc.nod_supply(port), Some(supply));
     }
     world.state.lysis_completion_height = Some(height);
+}
+
+fn create_nods_for_completed_day(
+    world: &World,
+    day: u32,
+    ports: &[u16],
+    completed_height: u64,
+) -> u64 {
+    use crate::internal::{addresses, eth};
+    use alloy_primitives::{Address, U256};
+    use std::collections::BTreeMap;
+
+    let primary = ports[0];
+    let url = world.rpc.url(primary);
+    let tribute_ids = world.rpc.tributes_by_day(primary, day).unwrap_or_default();
+    if tribute_ids.is_empty() {
+        return completed_height;
+    }
+
+    let mut owner_keys = BTreeMap::<Address, String>::new();
+    for idx in 0..world.validators.size() {
+        if let Ok(key) = world.validators.get(idx).evm_key() {
+            if let Some(addr) = eth::address_of(&key) {
+                owner_keys.insert(addr, key);
+            }
+        }
+    }
+    for key in &world.state.tribute_owner_keys {
+        if let Some(addr) = eth::address_of(key) {
+            owner_keys.insert(addr, key.clone());
+        }
+    }
+    if let Some(addr) = eth::address_of(crate::world::forge::DEPLOYER_KEY) {
+        owner_keys.insert(addr, crate::world::forge::DEPLOYER_KEY.to_owned());
+    }
+
+    let mut calls = Vec::with_capacity(tribute_ids.len());
+    for tribute_id in &tribute_ids {
+        let owner: Address = eth::read_call(
+            &url,
+            addresses::TRIBUTE_ADDR,
+            &eth::ITribute::ownerOfCall {
+                tributeId: *tribute_id,
+            },
+        )
+        .expect("tribute owner before createNod");
+        let league: u16 = eth::read_call(
+            &url,
+            addresses::TRIBUTE_ADDR,
+            &eth::ITribute::getLeagueCall {
+                tributeId: *tribute_id,
+            },
+        )
+        .expect("tribute league before createNod");
+        assert!(
+            (1..=4096).contains(&league),
+            "expected valid league in 1..=4096, got {league}"
+        );
+        let fraction: u64 = eth::read_call(
+            &url,
+            addresses::TRIBUTE_ADDR,
+            &eth::ITribute::getDayLeagueFractionCall {
+                worldwideDay: day,
+                league,
+            },
+        )
+        .expect("day league fraction after Metadosis");
+        assert!(
+            fraction > 0,
+            "expected positive day league fraction for day {day} league {league}"
+        );
+        let key = owner_keys
+            .get(&owner)
+            .unwrap_or_else(|| panic!("missing private key for Tribute owner {owner:#x}"))
+            .clone();
+        calls.push((*tribute_id, key));
+    }
+
+    let mut last_height = completed_height;
+    for chunk in calls.chunks(8) {
+        let outcomes = std::thread::scope(|scope| {
+            chunk
+                .iter()
+                .map(|(tribute_id, key)| {
+                    let url = url.clone();
+                    let tribute_id = *tribute_id;
+                    scope.spawn(move || {
+                        eth::send_call_outcome(
+                            &url,
+                            addresses::TRIBUTE_ADDR,
+                            key,
+                            &eth::ITribute::createNodCall {
+                                tributeId: tribute_id,
+                            },
+                            Some(U256::ZERO),
+                        )
+                        .expect("submit ITribute::createNod")
+                    })
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|handle| handle.join().expect("join createNod worker"))
+                .collect::<Vec<_>>()
+        });
+        for outcome in &outcomes {
+            crate::features::settlement::assert_mined_success(outcome, "ITribute::createNod");
+            let block_number = world
+                .rpc
+                .receipt_block_number(&outcome.transaction_hash, primary)
+                .expect("createNod receipt block number");
+            last_height = last_height.max(block_number);
+        }
+    }
+
+    world
+        .rpc
+        .wait_finalized_checkpoint(ports, last_height, 120)
+        .expect("createNod finalized on all validators");
+    for &port in ports {
+        assert_eq!(
+            world.rpc.tributes_by_day(port, day),
+            Some(Vec::new()),
+            "all Tributes for day {day} must be burned after createNod on port {port}"
+        );
+    }
+    last_height
 }
 
 #[when("all validator nodes restart with preserved EVM state")]

@@ -65,3 +65,43 @@ impl EncryptedNodV2 {
             .all(|blob| blob.len() == NOD_BLOB_LEN && blob[..8] == 1u64.to_be_bytes())
     }
 }
+
+pub const V1_NOD_KEY_TAG: &[u8; 16] = b"OUTBE_V1_NOD_KEY";
+pub const V1_NOD_AMOUNT_TAG: &[u8; 16] = b"OUTBE_V1_NOD_AMT";
+
+pub fn v1_nod_binding(terms: &NodTermsV2, amount: U256) -> B256 {
+    let mut bytes = b"outbe/nod/v1-binding".to_vec();
+    bytes.extend_from_slice(terms.digest().as_slice());
+    bytes.extend_from_slice(&amount.to_be_bytes::<32>());
+    keccak256(bytes)
+}
+
+pub fn encode_v1_nod(terms: NodTermsV2, gratis_load_minor: U256) -> EncryptedNodV2 {
+    let mut key_blob = Vec::with_capacity(NOD_BLOB_LEN);
+    key_blob.extend_from_slice(&1u64.to_be_bytes());
+    key_blob.extend_from_slice(&[0x6b; 32]);
+    key_blob.extend_from_slice(V1_NOD_KEY_TAG);
+
+    let mut amount_blob = Vec::with_capacity(NOD_BLOB_LEN);
+    amount_blob.extend_from_slice(&1u64.to_be_bytes());
+    amount_blob.extend_from_slice(&gratis_load_minor.to_be_bytes::<32>());
+    amount_blob.extend_from_slice(V1_NOD_AMOUNT_TAG);
+
+    EncryptedNodV2 {
+        encryption_binding: v1_nod_binding(&terms, gratis_load_minor),
+        terms,
+        encrypted_creator_public_key: key_blob,
+        encrypted_gratis_amount: amount_blob,
+    }
+}
+
+pub fn decode_v1_nod_amount(nod: &EncryptedNodV2) -> Option<U256> {
+    if !nod.has_valid_encoding()
+        || &nod.encrypted_gratis_amount[40..56] != V1_NOD_AMOUNT_TAG
+        || &nod.encrypted_creator_public_key[40..56] != V1_NOD_KEY_TAG
+    {
+        return None;
+    }
+    let amount = U256::from_be_slice(&nod.encrypted_gratis_amount[8..40]);
+    (nod.encryption_binding == v1_nod_binding(&nod.terms, amount)).then_some(amount)
+}

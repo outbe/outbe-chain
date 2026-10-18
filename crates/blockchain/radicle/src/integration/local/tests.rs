@@ -6,7 +6,12 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::sync::{mpsc, oneshot};
 
 fn private_directory() -> tempfile::TempDir {
-    let directory = tempfile::tempdir_in("/private/tmp").unwrap();
+    let root = if cfg!(target_os = "macos") {
+        "/private/tmp"
+    } else {
+        "/tmp"
+    };
+    let directory = tempfile::tempdir_in(root).unwrap();
     fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
     directory
 }

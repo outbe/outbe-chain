@@ -433,11 +433,13 @@ pub struct FidelitySnapshotRequest {
     pub entries: Vec<FidelitySnapshotEntry>,
 }
 
-/// One owner's plaintext league in a snapshot result, in request order.
+/// One owner's plaintext league and RCFI in a snapshot result, in request order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FidelityLeagueEntry {
     pub owner: Address,
     pub league: u16,
+    #[serde(default)]
+    pub rcfi: U256,
 }
 
 /// Inputs for a `QueryFidelityIndex`: an owner-authorized read of one account's

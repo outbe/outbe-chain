@@ -2,7 +2,6 @@
 pragma solidity ^0.8.30;
 
 interface IMetadosis {
-
     event MetadosisAccumulation(
         uint32 indexed date, uint256 metadosisLimitMinor, uint256 totalAccumulatedMinor, uint64 blockNumber
     );
@@ -131,5 +130,4 @@ interface IMetadosis {
             uint8 retirementOutcome,
             uint64 blockNumber
         );
-
 }

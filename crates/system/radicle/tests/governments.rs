@@ -91,7 +91,12 @@ struct Sidecar {
 }
 impl Sidecar {
     fn new(seed: u8) -> Self {
-        let directory = tempfile::tempdir_in("/private/tmp").unwrap();
+        let directory = tempfile::tempdir_in(if cfg!(target_os = "macos") {
+            "/private/tmp"
+        } else {
+            "/tmp"
+        })
+        .unwrap();
         let home = Home::new(directory.path()).unwrap();
         let node_id = Keystore::new(&home.keys())
             .init("transport-only", None, Seed::new([seed; 32]))
@@ -1192,7 +1197,7 @@ async fn automatic_bootstrap_vote_review_and_merge_with_one_offline_member_and_r
     );
     ordinary.stop();
 
-    // A fresh receiver has trusted receipts but no package: ordinary fetch must stay closed.
+    // A fresh managed receiver has trusted receipts but no package archive; it recovers from Git + chain.
     let mut fresh = Sidecar::new(74);
     let store = ReviewPackageStore::open(fresh.home.node().join("node-publications")).unwrap();
     let server = LocalReceiptServer::bind(&fresh.control, reader.clone())
@@ -1256,25 +1261,35 @@ async fn automatic_bootstrap_vote_review_and_merge_with_one_offline_member_and_r
             },
         )
         .unwrap();
-    let fetched = fresh
-        .node
-        .fetch(rid, source, HANDLE_DEADLINE, None)
-        .unwrap();
-    match fetched {
-        // Native fetch checks the empty local identity before requesting the missing package.
-        radicle::node::FetchResult::Failed { reason } => {
-            assert_eq!(reason, "missing identity document")
+    let deadline = Instant::now() + HANDLE_DEADLINE * 4;
+    loop {
+        let fetched = fresh
+            .node
+            .fetch(rid, source, HANDLE_DEADLINE, None)
+            .unwrap();
+        if fetched.is_success() {
+            assert!(fetched.success().unwrap().1.contains(&owner));
+            break;
         }
-        other => panic!("fresh receiver accepted owner entries without its package: {other:?}"),
+        assert!(
+            Instant::now() < deadline,
+            "fresh receiver did not recover accepted history: {fetched:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    let empty =
-        git::raw::Repository::open_bare(fresh.home.storage().join(rid.canonical())).unwrap();
-    assert!(empty.head().is_err());
-    assert!(empty
-        .references_glob(&format!("refs/namespaces/{owner}/refs/*"))
-        .unwrap()
-        .next()
-        .is_none());
+    while !std::fs::read(fresh.journal().join("latest-installed"))
+        .is_ok_and(|bytes| bytes.get(..8) == Some(8u64.to_be_bytes().as_slice()))
+    {
+        assert!(
+            Instant::now() < deadline,
+            "fresh collector did not finish installing recovered history"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(
+        owner_refs(&fresh, rid, owner),
+        owner_refs(&sidecars[1], rid, owner)
+    );
     fresh.stop();
     stop_fresh.send(()).unwrap();
     serving.await.unwrap().unwrap();
