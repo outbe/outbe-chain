@@ -155,13 +155,13 @@ fn test_slash_proposer_felony() {
             ValidatorLifecycle::JailRetained(_)
         ));
 
-        // Stake must be reduced (5% slashed from 1_000_000)
+        // Stake must be reduced (8% slashed from 1_000_000)
         let staking = Staking::new(storage.clone());
         let remaining = staking.get_stake(VAL_A).unwrap();
-        let expected = U256::from(1_000_000u64) * U256::from(95u64) / U256::from(100u64);
+        let expected = U256::from(1_000_000u64) * U256::from(92u64) / U256::from(100u64);
         assert_eq!(
             remaining, expected,
-            "stake should be 95% of original after 5% slash"
+            "stake should be 92% of original after 8% slash"
         );
     });
 }
@@ -175,7 +175,7 @@ fn test_felony_stays_jailed_when_slash_drops_below_min_stake() {
     with_storage(|storage| {
         let stake = U256::from(1_000u64);
         register_and_activate_with_stake(storage.clone(), VAL_A, 2, stake);
-        // min_stake == current stake, so the 5% slash lands below it.
+        // min_stake == current stake, so the 8% slash lands below it.
         Staking::new(storage.clone())
             .config_min_stake
             .write(stake)
@@ -187,10 +187,10 @@ fn test_felony_stays_jailed_when_slash_drops_below_min_stake() {
             si.slash_proposer(VAL_A).unwrap();
         }
 
-        // 5% slash of 1_000 = 950 < min_stake(1_000).
+        // 8% slash of 1_000 = 920 < min_stake(1_000).
         assert_eq!(
             Staking::new(storage.clone()).get_stake(VAL_A).unwrap(),
-            U256::from(950u64)
+            U256::from(920u64)
         );
         assert!(
             matches!(
@@ -295,7 +295,7 @@ fn test_felony_count_cumulative() {
         vs.unjail_after_stake_check(VAL_A).unwrap();
         vs.test_activate_validator_canonically(
             VAL_A,
-            StakeProjection::new(U256::from(950_000u64), None),
+            StakeProjection::new(U256::from(920_000u64), None),
             U256::from(1),
         )
         .unwrap();
@@ -370,10 +370,10 @@ fn test_evidence_reward() {
         ));
 
         // Verify evidence reward paid to submitter
-        // slashed = 1_000_000 * 5 / 100 = 50_000
-        // reward  = 50_000 * 10 / 100 = 5_000
+        // slashed = 1_000_000 * 8 / 100 = 80_000
+        // reward  = 80_000 * 10 / 100 = 8_000
         let ctx = storage.clone();
-        assert_eq!(ctx.balance(SUBMITTER).unwrap(), U256::from(5_000u64));
+        assert_eq!(ctx.balance(SUBMITTER).unwrap(), U256::from(8_000u64));
     });
 }
 
@@ -432,10 +432,10 @@ fn test_conflicting_vote_evidence() {
         ));
 
         // Verify evidence reward
-        // slashed = 2_000_000 * 5 / 100 = 100_000
-        // reward  = 100_000 * 10 / 100 = 10_000
+        // slashed = 2_000_000 * 8 / 100 = 160_000
+        // reward  = 160_000 * 10 / 100 = 16_000
         let ctx = storage.clone();
-        assert_eq!(ctx.balance(SUBMITTER).unwrap(), U256::from(10_000u64));
+        assert_eq!(ctx.balance(SUBMITTER).unwrap(), U256::from(16_000u64));
     });
 }
 
@@ -601,8 +601,8 @@ fn test_full_lifecycle_integration() {
         ));
         assert_eq!(si.get_felony_count(validator).unwrap(), 1);
 
-        // Stake reduced by 5%: 10_000 * 95 / 100 = 9_500
-        assert_eq!(staking.get_stake(validator).unwrap(), U256::from(9_500u64));
+        // Stake reduced by 8%: 10_000 * 92 / 100 = 9_200
+        assert_eq!(staking.get_stake(validator).unwrap(), U256::from(9_200u64));
 
         // 7. Reset epoch counters (epoch boundary)
         si.reset_epoch_counters(&[validator]).unwrap();
@@ -626,7 +626,7 @@ fn test_full_lifecycle_integration() {
 
 // ---------------------------------------------------------------------------
 // Voter felony: missed finalize votes are punitive at the felony threshold.
-// Mirrors the proposer-felony path: jail + 5% slash.
+// Mirrors the proposer-felony path: jail + 8% slash.
 // ---------------------------------------------------------------------------
 #[test]
 fn slash_voter_felony_force_exits_and_slashes_at_threshold() {
@@ -645,7 +645,7 @@ fn slash_voter_felony_force_exits_and_slashes_at_threshold() {
             .unwrap()
             .is_active_status());
 
-        // 150th miss crosses the felony threshold -> jail + 5% stake slash.
+        // 150th miss crosses the felony threshold -> jail + 8% stake slash.
         si.slash_voter(VAL_A).unwrap();
         assert_eq!(si.get_voter_miss_count(VAL_A).unwrap(), 150);
         assert_eq!(si.get_felony_count(VAL_A).unwrap(), 1);
@@ -654,9 +654,9 @@ fn slash_voter_felony_force_exits_and_slashes_at_threshold() {
             ValidatorLifecycle::JailRetained(_)
         ));
 
-        // 1_000_000 stake slashed by 5% -> 950_000.
+        // 1_000_000 stake slashed by 8% -> 920_000.
         let staking = Staking::new(storage.clone());
-        assert_eq!(staking.get_stake(VAL_A).unwrap(), U256::from(950_000u64));
+        assert_eq!(staking.get_stake(VAL_A).unwrap(), U256::from(920_000u64));
     });
 }
 
@@ -676,7 +676,7 @@ fn default_thresholds_warn_before_they_punish() {
                 si.slash_amount_percent().unwrap(),
                 si.evidence_reward_percent().unwrap(),
             ),
-            (32, 128, 128, 512, 5, 10)
+            (32, 128, 128, 512, 8, 10)
         );
         assert!(
             si.proposer_misdemeanor_threshold().unwrap() < si.proposer_felony_threshold().unwrap()
@@ -749,7 +749,7 @@ fn default_liveness_thresholds_warn_then_jail_once() {
                     U256::from(if count < felony {
                         1_000_000u64
                     } else {
-                        950_000
+                        920_000
                     })
                 );
             });
@@ -797,7 +797,7 @@ fn default_liveness_thresholds_warn_then_jail_once() {
 }
 
 /// A validator already JAILED for a continuous liveness fault is NOT
-/// re-felonied (re-slashed 5%) when it crosses the next miss threshold. Only the
+/// re-felonied (re-slashed 8%) when it crosses the next miss threshold. Only the
 /// miss counter keeps moving until the next reshare removes it from the set.
 #[test]
 fn already_jailed_voter_is_not_re_slashed() {
@@ -806,7 +806,7 @@ fn already_jailed_voter_is_not_re_slashed() {
         let mut si = SlashIndicator::new(storage.clone());
         si.config_voter_felony_threshold.write(2).unwrap();
 
-        // First felony at count==2: JAIL + 5% slash (1_000_000 -> 950_000).
+        // First felony at count==2: JAIL + 8% slash (1_000_000 -> 920_000).
         si.slash_voter(VAL_A).unwrap();
         si.slash_voter(VAL_A).unwrap();
         let staking = Staking::new(storage.clone());
@@ -815,7 +815,7 @@ fn already_jailed_voter_is_not_re_slashed() {
             test_lifecycle_of(storage.clone(), VAL_A).unwrap(),
             ValidatorLifecycle::JailRetained(_)
         ));
-        assert_eq!(staking.get_stake(VAL_A).unwrap(), U256::from(950_000u64));
+        assert_eq!(staking.get_stake(VAL_A).unwrap(), U256::from(920_000u64));
 
         // Two more misses reach count==4 (another threshold multiple), but the
         // validator is already JAILED -> no second felony, no second slash.
@@ -837,7 +837,7 @@ fn already_jailed_voter_is_not_re_slashed() {
         ));
         assert_eq!(
             staking.get_stake(VAL_A).unwrap(),
-            U256::from(950_000u64),
+            U256::from(920_000u64),
             "stake must not be slashed a second time while JAILED"
         );
     });

@@ -66,7 +66,7 @@ impl SlashIndicator<'_> {
     ///    misbehavior, not for re-litigating BLS quorum or accounting
     ///    binding failures.
     /// 10. Mark dedup BEFORE applying effects, then call
-    ///     `apply_evidence_felony` for jail + 5% slash +
+    ///     `apply_evidence_felony` for jail + 8% slash +
     ///     10% submitter reward. This reuses the existing felony helper. The
     ///     other evidence types share the same economics.
     pub fn submit_invalid_vrf_evidence(
@@ -140,7 +140,7 @@ impl SlashIndicator<'_> {
         self.invalid_vrf_evidence_processed
             .write(&evidence_hash, true)?;
 
-        // (13) Apply felony: jail + 5% slash + 10% submitter
+        // (13) Apply felony: jail + 8% slash + 10% submitter
         // reward. This uses the same helper that the other evidence types call.
         self.apply_evidence_felony(proposer, caller)?;
 
