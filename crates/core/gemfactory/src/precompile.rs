@@ -3,6 +3,7 @@ use alloy_sol_types::SolInterface;
 use outbe_intex::SeriesId;
 use outbe_primitives::dispatch::{dispatch_call, metadata, mutate, mutate_void, view};
 use outbe_primitives::error::Result;
+use outbe_vaultrouter::settlement::SettlementPayment;
 
 use crate::errors::GemFactoryError;
 use crate::runtime;
@@ -60,9 +61,9 @@ pub fn dispatch(
             settleGem(c) => mutate_void(&storage, c, caller, |sender, c| {
                 runtime::settle_gem(
                     &storage,
-                    crate::schema::GemSettlementParams {
-                        caller: sender,
-                        gem_id: c.gemId,
+                    c.gemId,
+                    SettlementPayment {
+                        payer: sender,
                         asset: c.asset,
                         snapshot_id: c.snapshotId,
                     },

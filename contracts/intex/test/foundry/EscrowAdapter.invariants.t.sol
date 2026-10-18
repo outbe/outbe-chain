@@ -51,15 +51,16 @@ contract EscrowAdapterInvariantsTest is Test {
         }
     }
 
+    function _refund(uint32 worldwideDay, address bidder) internal {
+        vm.prank(auction);
+        escrow.releaseRefund(worldwideDay, bidder);
+    }
+
     function _assertSeriesInvariant(uint32 worldwideDay, address[3] memory bidders) internal view {
         uint128 sum = 0;
         for (uint256 i = 0; i < bidders.length; i++) {
-            IEscrowAdapter.BidLock memory lock = escrow.getBidLock(worldwideDay, bidders[i]);
-            if (lock.status == IEscrowAdapter.LockStatus.Locked) {
-                sum += lock.lockedAmount;
-            } else if (lock.status == IEscrowAdapter.LockStatus.Won) {
-                sum += lock.lockedAmount - uint128(BridgeMsgCodec.escrowAmount(lock.quantity, BASIS, CLEARING_RATE));
-            }
+            // A winner's lock holds only its change.
+            sum += escrow.getBidLock(worldwideDay, bidders[i]).lockedAmount;
         }
         (,, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDay);
         assertEq(sum, totalLocked, "per-series totalLocked drift");
@@ -85,7 +86,7 @@ contract EscrowAdapterInvariantsTest is Test {
 
         // Permissionless refund of one lock on s1 after the 72h safety window.
         vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
-        escrow.claimRefund(s1, bidderA);
+        _refund(s1, bidderA);
         _assertSeriesInvariant(s1, bidders);
         _assertSeriesInvariant(s2, bidders);
 
@@ -99,7 +100,7 @@ contract EscrowAdapterInvariantsTest is Test {
         _assertSeriesInvariant(s1, bidders);
         _assertSeriesInvariant(s2, bidders);
 
-        escrow.claimRefund(s1, bidderB);
+        _refund(s1, bidderB);
         _assertSeriesInvariant(s1, bidders);
         _assertSeriesInvariant(s2, bidders);
     }

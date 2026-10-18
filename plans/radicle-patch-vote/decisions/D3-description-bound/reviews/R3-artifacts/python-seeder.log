@@ -1,8 +1,0 @@
-utf8_bytes=255 seeder_accepts=True seeded_entries=13
-utf8_bytes=256 seeder_accepts=True seeded_entries=14
-utf8_bytes=254 seeder_accepts=True seeded_entries=13
-utf8_bytes=255 seeder_accepts=True seeded_entries=13
-utf8_bytes=256 seeder_accepts=True seeded_entries=14
-utf8_bytes=1024 seeder_accepts=True seeded_entries=38
-utf8_bytes=1025 seeder_accepts=False seeded_entries=0
-CONFIRMED current production seeder allows 256..1024 bytes; not bootstrap PASS

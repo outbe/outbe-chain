@@ -12,9 +12,7 @@ use outbe_credis::{CredisContract, CredisState};
 use crate::rules::{self, Forfeit, IssueCredisParams};
 use outbe_gratisfactory::api as pledges;
 use outbe_primitives::{
-    addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS},
-    error::Result,
-    storage::StorageHandle,
+    addresses::CREDIS_FACTORY_ADDRESS, error::Result, storage::StorageHandle,
     units::checked_protocol_to_native,
 };
 use outbe_vaultrouter::LiquidityReservation;
@@ -120,48 +118,6 @@ pub fn issue_credis(
     })
 }
 
-/// Pull `amount` of `asset` from `payer` and deposit it into the VaultRouter.
-fn collect_payment(
-    storage: &StorageHandle<'_>,
-    asset: Address,
-    payer: Address,
-    amount: U256,
-) -> Result<()> {
-    let returned = storage.call(
-        asset,
-        U256::ZERO,
-        IERC20::transferFromCall {
-            from: payer,
-            to: CREDIS_FACTORY_ADDRESS,
-            amount,
-        }
-        .abi_encode()
-        .into(),
-    )?;
-    if !returned.is_empty()
-        && IERC20::transferFromCall::abi_decode_returns_validate(&returned) != Ok(true)
-    {
-        return Err(CredisFactoryError::Erc20TransferFailed.into());
-    }
-    let returned = storage.call(
-        asset,
-        U256::ZERO,
-        IERC20::approveCall {
-            spender: VAULT_ROUTER_ADDRESS,
-            amount,
-        }
-        .abi_encode()
-        .into(),
-    )?;
-    if !returned.is_empty()
-        && IERC20::approveCall::abi_decode_returns_validate(&returned) != Ok(true)
-    {
-        return Err(CredisFactoryError::Erc20ApprovalFailed.into());
-    }
-    outbe_vaultrouter::api::deposit(storage, asset, amount)?;
-    Ok(())
-}
-
 /// What paying `credis_id` off now takes: outstanding principal plus accrued interest.
 /// Zero once it is Settled or Forfeited.
 pub fn quote_settlement(storage: &StorageHandle<'_>, credis_id: U256) -> Result<U256> {
@@ -193,26 +149,29 @@ pub fn settle_credis(
         let before = credis.get_credis(credis_id)?;
         let now = u64::try_from(storage.timestamp()?)
             .map_err(|_| CredisFactoryError::TimestampOverflow)?;
-        let settlement = rules::settle(&mut credis, credis_id, amount, now)?;
+        let repayment = rules::settle(&mut credis, credis_id, amount, now)?;
         let after = credis.get_credis(credis_id)?;
         let released = before
             .outstanding_gratis_minor
             .checked_sub(after.outstanding_gratis_minor)
             .ok_or(CredisFactoryError::CollateralIncreased)?;
-        if released != settlement.gratis_returned_minor {
+        if released != repayment.gratis_returned_minor {
             return Err(CredisFactoryError::CollateralReleaseMismatch.into());
         }
-        let paid = settlement.total_paid;
-        if !paid.is_zero() {
-            collect_payment(&storage, settlement.asset, caller, paid)?;
-        }
+        outbe_vaultrouter::settlement::collect(
+            &storage,
+            CREDIS_FACTORY_ADDRESS,
+            caller,
+            repayment.asset,
+            repayment.total_paid,
+        )?;
         if credis.get_credis(credis_id)? != after {
             return Err(CredisFactoryError::CredisChangedDuringPayment.into());
         }
         if !released.is_zero() {
             pledges::return_from_credis(&storage, credis_id, released)?;
         }
-        Ok((settlement.principal_paid, settlement.interest))
+        Ok((repayment.principal_paid, repayment.interest))
     })
 }
 

@@ -1,4 +1,5 @@
 use super::*;
+use outbe_vaultrouter::settlement::SettlementPayment;
 
 #[test]
 fn settlement_takes_the_rail_the_asset_matched() {
@@ -13,7 +14,7 @@ fn settlement_takes_the_rail_the_asset_matched() {
             840,
         )
         .unwrap();
-        assert_eq!(admitted_at_quote(storage, gem_id, STABLE).0, 840);
+        assert_eq!(admitted_at_quote(storage, gem_id, SETTLEMENT_ASSET).0, 840);
     });
 }
 
@@ -35,7 +36,7 @@ fn erc20_settle_refuses_a_transfer_that_moves_nothing() {
 
         let call = crate::precompile::IGemFactory::settleGemCall {
             gemId: gem_id,
-            asset: STABLE,
+            asset: SETTLEMENT_ASSET,
             snapshotId: U256::ZERO,
         };
         let res = crate::precompile::dispatch(storage.clone(), &call.abi_encode(), BOB, U256::ZERO);
@@ -60,10 +61,10 @@ fn erc20_settle_rejects_a_foreign_currency_asset_before_paying() {
 
         let res = runtime::settle_gem(
             storage,
-            crate::schema::GemSettlementParams {
-                caller: ALICE,
-                gem_id,
-                asset: STABLE_EUR,
+            gem_id,
+            SettlementPayment {
+                payer: ALICE,
+                asset: SETTLEMENT_ASSET_EUR,
                 snapshot_id: U256::ZERO,
             },
         );
@@ -90,15 +91,15 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
         .unwrap();
         // Paying with the EUR asset picks the issuance rail.
         assert_eq!(
-            admitted_at_quote(storage, gem_id, STABLE_EUR),
+            admitted_at_quote(storage, gem_id, SETTLEMENT_ASSET_EUR),
             (978, U256::from(10u64) * six_decimal_unit())
         );
     });
 }
 
 #[test]
-fn the_issuance_rail_floors_the_whole_obligation_in_the_payers_favour() {
-    // Exact obligation 2.5 EUR units: flooring charges 2, rounding up charged 3.
+fn the_issuance_rail_floors_the_whole_cost_in_the_payers_favour() {
+    // Exact cost 2.5 EUR units: flooring charges 2, rounding up charged 3.
     with_storage(Some(U256::from(3_000_000u64)), |storage| {
         register_currency(storage, 978, U256::from(2_500_000u64));
         seed_day_vwap(storage, 840, U256::from(3_000_000u64));
@@ -109,7 +110,7 @@ fn the_issuance_rail_floors_the_whole_obligation_in_the_payers_favour() {
             U256::from(3u64)
         );
         assert_eq!(
-            admitted_at_quote(storage, gem_id, STABLE_EUR).1,
+            admitted_at_quote(storage, gem_id, SETTLEMENT_ASSET_EUR).1,
             U256::from(2u64)
         );
     });
@@ -117,7 +118,7 @@ fn the_issuance_rail_floors_the_whole_obligation_in_the_payers_favour() {
 
 #[test]
 fn a_wider_asset_keeps_what_the_six_decimal_cost_dropped() {
-    // The reference cost floors to 1. The obligation is 1.500001. An
+    // The reference cost floors to 1. The cost is 1.500001. An
     // eighteen-decimal asset carries all of it. Scaling the floored 1 charged 1e12.
     with_storage(Some(U256::from(1_500_001u64)), |storage| {
         let gem_id =
@@ -127,7 +128,7 @@ fn a_wider_asset_keeps_what_the_six_decimal_cost_dropped() {
             U256::ONE
         );
         assert_eq!(
-            admitted_at_quote(storage, gem_id, STABLE_18).1,
+            admitted_at_quote(storage, gem_id, SETTLEMENT_ASSET_18).1,
             U256::from(1_500_001_000_000u64)
         );
     });
@@ -167,7 +168,10 @@ fn a_dust_gem_settles_for_one_minor_unit() {
     with_storage(Some(U256::ONE), |storage| {
         let gem_id =
             issue_at_live_rate(storage, ALICE, GemTypes::Wallet, U256::ONE, 840, 840).unwrap();
-        assert_eq!(admitted_at_quote(storage, gem_id, STABLE).1, U256::ONE);
+        assert_eq!(
+            admitted_at_quote(storage, gem_id, SETTLEMENT_ASSET).1,
+            U256::ONE
+        );
     });
 }
 
@@ -203,10 +207,10 @@ fn settling_on_an_unregistered_issuance_leg_is_refused() {
         .unwrap();
         let res = runtime::settle_gem(
             storage,
-            crate::schema::GemSettlementParams {
-                caller: ALICE,
-                gem_id,
-                asset: STABLE_EUR,
+            gem_id,
+            SettlementPayment {
+                payer: ALICE,
+                asset: SETTLEMENT_ASSET_EUR,
                 snapshot_id: U256::ZERO,
             },
         );
@@ -230,7 +234,7 @@ fn the_reference_currency_settles_without_reading_any_issuance_rate() {
         )
         .unwrap();
         assert_eq!(
-            admitted_at_quote(storage, gem_id, STABLE),
+            admitted_at_quote(storage, gem_id, SETTLEMENT_ASSET),
             (840, U256::from(20u64) * six_decimal_unit())
         );
     });
@@ -258,10 +262,10 @@ fn settle_rejects_an_asset_with_no_registered_vault() {
         .unwrap();
         let res = runtime::settle_gem(
             &storage,
-            crate::schema::GemSettlementParams {
-                caller: ALICE,
-                gem_id,
-                asset: STABLE,
+            gem_id,
+            SettlementPayment {
+                payer: ALICE,
+                asset: SETTLEMENT_ASSET,
                 snapshot_id: U256::ZERO,
             },
         );
@@ -283,7 +287,7 @@ fn settlement_scales_the_cost_to_the_asset_decimals() {
         )
         .unwrap();
         assert_eq!(
-            admitted_at_quote(storage, gem_id, STABLE_18).1,
+            admitted_at_quote(storage, gem_id, SETTLEMENT_ASSET_18).1,
             U256::from(20u64) * six_decimal_unit() * U256::from(1_000_000_000_000u64)
         );
     });
@@ -306,7 +310,7 @@ fn an_unassigned_issuance_code_mints_and_settles_on_the_reference_rail() {
         )
         .unwrap();
         assert_eq!(
-            admitted_at_quote(storage, gem_id, STABLE),
+            admitted_at_quote(storage, gem_id, SETTLEMENT_ASSET),
             (840, U256::from(20u64) * six_decimal_unit())
         );
     });
@@ -372,8 +376,8 @@ fn the_quote_prices_both_rails() {
             840,
         )
         .unwrap();
-        let (ref_iso, ref_amount) = admitted_at_quote(storage, gem_id, STABLE);
-        let (iss_iso, iss_amount) = admitted_at_quote(storage, gem_id, STABLE_EUR);
+        let (ref_iso, ref_amount) = admitted_at_quote(storage, gem_id, SETTLEMENT_ASSET);
+        let (iss_iso, iss_amount) = admitted_at_quote(storage, gem_id, SETTLEMENT_ASSET_EUR);
         assert_eq!(ref_iso, 840);
         assert_eq!(iss_iso, 978);
         assert_eq!(iss_amount, ref_amount / U256::from(2u64));
@@ -400,7 +404,8 @@ fn the_hourly_rollover_at_the_settlement_deadline_grants_no_grace() {
             840,
         )
         .unwrap();
-        let (_, _, quoted) = runtime::quote_settlement(&storage, gem_id, STABLE_EUR).unwrap();
+        let (_, _, quoted) =
+            runtime::quote_settlement(&storage, gem_id, SETTLEMENT_ASSET_EUR).unwrap();
         (gem_id, quoted)
     });
     let deadline = outbe_oracle::api::VwapSnapshotId::from_u256(quoted)
@@ -423,13 +428,14 @@ fn the_hourly_rollover_at_the_settlement_deadline_grants_no_grace() {
     StorageHandle::enter(&mut provider, |storage| {
         let view = gem_view(&storage, gem_id);
         assert_eq!(view.effective_state(deadline), GemState::Called as u8);
-        let (_, _, required) = runtime::quote_settlement(&storage, gem_id, STABLE_EUR).unwrap();
+        let (_, _, required) =
+            runtime::quote_settlement(&storage, gem_id, SETTLEMENT_ASSET_EUR).unwrap();
         let stale = runtime::settle_gem(
             &storage,
-            crate::schema::GemSettlementParams {
-                caller: ALICE,
-                gem_id,
-                asset: STABLE_EUR,
+            gem_id,
+            SettlementPayment {
+                payer: ALICE,
+                asset: SETTLEMENT_ASSET_EUR,
                 snapshot_id: quoted,
             },
         );
@@ -449,13 +455,14 @@ fn the_hourly_rollover_at_the_settlement_deadline_grants_no_grace() {
 
     provider.set_timestamp(U256::from(deadline + 1));
     StorageHandle::enter(&mut provider, |storage| {
-        let (_, _, required) = runtime::quote_settlement(&storage, gem_id, STABLE_EUR).unwrap();
+        let (_, _, required) =
+            runtime::quote_settlement(&storage, gem_id, SETTLEMENT_ASSET_EUR).unwrap();
         let late = runtime::settle_gem(
             &storage,
-            crate::schema::GemSettlementParams {
-                caller: ALICE,
-                gem_id,
-                asset: STABLE_EUR,
+            gem_id,
+            SettlementPayment {
+                payer: ALICE,
+                asset: SETTLEMENT_ASSET_EUR,
                 snapshot_id: required,
             },
         );
@@ -464,7 +471,7 @@ fn the_hourly_rollover_at_the_settlement_deadline_grants_no_grace() {
             format!(
                 "{:?}",
                 outbe_primitives::error::PrecompileError::from(
-                    crate::errors::GemFactoryError::DeadlineExpired
+                    crate::errors::GemFactoryError::SettlementDeadlinePassed
                 )
             )
         );
@@ -491,7 +498,8 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
             840,
         )
         .unwrap();
-        let (_, amount, quoted) = runtime::quote_settlement(&storage, gem_id, STABLE_EUR).unwrap();
+        let (_, amount, quoted) =
+            runtime::quote_settlement(&storage, gem_id, SETTLEMENT_ASSET_EUR).unwrap();
         (gem_id, amount, quoted)
     });
     let cutoff = outbe_oracle::api::VwapSnapshotId::from_u256(quoted)
@@ -502,10 +510,10 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
     StorageHandle::enter(&mut provider, |storage| {
         let res = runtime::settle_gem(
             &storage,
-            crate::schema::GemSettlementParams {
-                caller: ALICE,
-                gem_id,
-                asset: STABLE_EUR,
+            gem_id,
+            SettlementPayment {
+                payer: ALICE,
+                asset: SETTLEMENT_ASSET_EUR,
                 snapshot_id: quoted,
             },
         );
@@ -515,14 +523,14 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
     provider.set_timestamp(U256::from(cutoff + 3_600));
     StorageHandle::enter(&mut provider, |storage| {
         let (_, next_amount, required) =
-            runtime::quote_settlement(&storage, gem_id, STABLE_EUR).unwrap();
+            runtime::quote_settlement(&storage, gem_id, SETTLEMENT_ASSET_EUR).unwrap();
         assert_eq!(next_amount, amount, "the next window holds the same price");
         let res = runtime::settle_gem(
             &storage,
-            crate::schema::GemSettlementParams {
-                caller: ALICE,
-                gem_id,
-                asset: STABLE_EUR,
+            gem_id,
+            SettlementPayment {
+                payer: ALICE,
+                asset: SETTLEMENT_ASSET_EUR,
                 snapshot_id: quoted,
             },
         );
@@ -548,10 +556,10 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
         .unwrap();
         let res = runtime::settle_gem(
             &storage,
-            crate::schema::GemSettlementParams {
-                caller: ALICE,
-                gem_id,
-                asset: STABLE_EUR,
+            gem_id,
+            SettlementPayment {
+                payer: ALICE,
+                asset: SETTLEMENT_ASSET_EUR,
                 snapshot_id: other_policy.to_u256(),
             },
         );
@@ -569,10 +577,10 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
         );
         let reference = runtime::settle_gem(
             &storage,
-            crate::schema::GemSettlementParams {
-                caller: ALICE,
-                gem_id,
-                asset: STABLE,
+            gem_id,
+            SettlementPayment {
+                payer: ALICE,
+                asset: SETTLEMENT_ASSET,
                 snapshot_id: quoted,
             },
         );
@@ -590,15 +598,15 @@ fn a_hundred_dollars_converts_to_ninety_euros_at_every_asset_scale() {
     let eur_18 = address!("0x00000000000000000000000000000000000000E9");
     let usd_rate = U256::from(2u64) * six_decimal_unit();
     let mut provider = test_storage(Some(usd_rate));
-    stub_stablecoin(&mut provider, eur_8, 978, 8);
-    stub_stablecoin(&mut provider, eur_18, 978, 18);
+    stub_settlement_asset(&mut provider, eur_8, 978, 8);
+    stub_settlement_asset(&mut provider, eur_18, 978, 18);
     StorageHandle::enter(&mut provider, |storage| {
         register_currency(&storage, 978, U256::from(1_800_000u64));
         seed_day_vwap(&storage, 840, usd_rate);
         let load = U256::from(50u64) * six_decimal_unit();
         let gem_id = issue_at_live_rate(&storage, ALICE, GemTypes::Wallet, load, 978, 840).unwrap();
         for (asset, expected) in [
-            (STABLE_EUR, U256::from(90_000_000u64)),
+            (SETTLEMENT_ASSET_EUR, U256::from(90_000_000u64)),
             (eur_8, U256::from(9_000_000_000u64)),
             (
                 eur_18,
@@ -622,7 +630,7 @@ fn an_sra_gem_keeps_its_sixty_four_percent_through_the_currency_conversion() {
         let sra = issue_at_live_rate(storage, ALICE, GemTypes::Sra, load, 978, 840).unwrap();
         let wallet = issue_at_live_rate(storage, BOB, GemTypes::Wallet, load, 978, 840).unwrap();
         let quote = |gem_id| {
-            runtime::quote_settlement(storage, gem_id, STABLE_EUR)
+            runtime::quote_settlement(storage, gem_id, SETTLEMENT_ASSET_EUR)
                 .unwrap()
                 .1
         };
@@ -651,7 +659,8 @@ fn the_issuance_rail_converts_at_the_trailing_window_not_the_closed_day() {
             840,
         )
         .unwrap();
-        let (_, before, _) = runtime::quote_settlement(storage, gem_id, STABLE_EUR).unwrap();
+        let (_, before, _) =
+            runtime::quote_settlement(storage, gem_id, SETTLEMENT_ASSET_EUR).unwrap();
         let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), 978)
             .unwrap()
             .unwrap();
@@ -662,8 +671,10 @@ fn the_issuance_rail_converts_at_the_trailing_window_not_the_closed_day() {
                 U256::from(4u64) * six_decimal_unit(),
             )
             .unwrap();
-        let (_, after, _) = runtime::quote_settlement(storage, gem_id, STABLE_EUR).unwrap();
-        let (_, reference, _) = runtime::quote_settlement(storage, gem_id, STABLE).unwrap();
+        let (_, after, _) =
+            runtime::quote_settlement(storage, gem_id, SETTLEMENT_ASSET_EUR).unwrap();
+        let (_, reference, _) =
+            runtime::quote_settlement(storage, gem_id, SETTLEMENT_ASSET).unwrap();
         assert_eq!(after, before);
         assert_eq!(after, reference / U256::from(2u64));
     });
@@ -738,7 +749,7 @@ fn settlement_cost_reads_entry_price_from_the_bucket_body() {
         );
 
         let quoted = |gem_id| {
-            runtime::quote_settlement(storage, gem_id, STABLE)
+            runtime::quote_settlement(storage, gem_id, SETTLEMENT_ASSET)
                 .unwrap()
                 .1
         };

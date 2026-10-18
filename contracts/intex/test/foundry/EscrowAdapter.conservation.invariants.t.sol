@@ -66,7 +66,8 @@ contract EscrowConservationHandler is Test {
     }
 
     function claim(uint256 seriesSeed, uint256 bidderSeed) external {
-        try escrow.claimRefund(_series(seriesSeed), _bidder(bidderSeed)) {} catch {}
+        vm.prank(auction);
+        try escrow.releaseRefund(_series(seriesSeed), _bidder(bidderSeed)) {} catch {}
     }
 
     function lockBond(uint256 seriesSeed, uint256 bidderSeed, uint128 amountSeed) external {
@@ -160,17 +161,12 @@ contract EscrowAdapterConservationInvariantTest is StdInvariant, Test {
         assertEq(sumTotalLocked + sumBonds, pooled, "sum(totalLocked) + sum(bonds) != pooled Compact balance");
     }
 
-    /// @dev A winner's payment left with the proceeds, so its lock still holds only the rest.
+    /// @dev A winner's payment left with the proceeds, so its lock still holds only the change.
     function invariant_totalLockedIsWhatTheLocksStillHold() public view {
         for (uint256 i = 0; i < worldwideDays.length; i++) {
             uint256 held;
             for (uint256 j = 0; j < bidders.length; j++) {
-                IEscrowAdapter.BidLock memory l = escrow.getBidLock(worldwideDays[i], bidders[j]);
-                if (l.status == IEscrowAdapter.LockStatus.Locked) {
-                    held += l.lockedAmount;
-                } else if (l.status == IEscrowAdapter.LockStatus.Won) {
-                    held += l.lockedAmount - BridgeMsgCodec.escrowAmount(l.quantity, BASIS, CLEARING_RATE);
-                }
+                held += escrow.getBidLock(worldwideDays[i], bidders[j]).lockedAmount;
             }
             (,, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDays[i]);
             assertEq(held, totalLocked, "totalLocked != what the day's locks still hold");

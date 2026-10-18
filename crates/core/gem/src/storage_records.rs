@@ -7,12 +7,9 @@ use outbe_primitives::storage::indexed_list::{create_indexed, delete_indexed, In
 impl<'storage> crate::GemContract<'storage> {
     pub fn state_records(
         &self,
-        owner: Option<Address>,
+        owner: Address,
     ) -> outbe_primitives::error::Result<Vec<GemItemState>> {
-        let mut ids = match owner {
-            Some(owner) => self.owner_ids.list(&owner).read_all()?,
-            None => self.all_ids.read_all()?,
-        };
+        let mut ids = self.owner_ids.list(&owner).read_all()?;
         ids.sort_unstable();
         if ids.windows(2).any(|ids| ids[0] == ids[1]) {
             return Err(outbe_primitives::error::PrecompileError::fatal(
@@ -26,7 +23,7 @@ impl<'storage> crate::GemContract<'storage> {
                         "gem index selects a missing record",
                     )
                 })?;
-                if owner.is_some_and(|owner| record.owner != owner) {
+                if record.owner != owner {
                     return Err(outbe_primitives::error::PrecompileError::fatal(
                         "gem owner index does not match its record",
                     ));
@@ -36,14 +33,11 @@ impl<'storage> crate::GemContract<'storage> {
             .collect()
     }
 
-    fn record_indexes(&self, record: &GemItemState) -> [IndexedList<'storage, WwdEntityId>; 2] {
-        [
-            IndexedList::new(
-                self.owner_ids.list(&record.owner),
-                self.owner_id_position.clone(),
-            ),
-            IndexedList::new(self.all_ids.clone(), self.global_id_position.clone()),
-        ]
+    fn record_indexes(&self, record: &GemItemState) -> [IndexedList<'storage, WwdEntityId>; 1] {
+        [IndexedList::new(
+            self.owner_ids.list(&record.owner),
+            self.owner_id_position.clone(),
+        )]
     }
 
     pub fn insert_state_record(

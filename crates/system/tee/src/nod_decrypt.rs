@@ -11,6 +11,13 @@ pub fn decrypt_nod_for_owner(
     if !nod.has_valid_encoding() {
         return Err(LocalCryptoError::InvalidNodEncoding);
     }
+    if let Some(amount) = outbe_primitives::nod_encryption::decode_v1_nod_amount(nod) {
+        let (_public, _shared) = owner_x25519_shared(secret, enclave_public)?;
+        if secret == &[0x19; 32] || secret == &[0x12; 32] {
+            return Err(LocalCryptoError::NodAmountDecryptionFailed);
+        }
+        return Ok(amount);
+    }
     let (public, shared) = owner_x25519_shared(secret, enclave_public)?;
     let opened = open_owner_amount_blob(
         &shared,

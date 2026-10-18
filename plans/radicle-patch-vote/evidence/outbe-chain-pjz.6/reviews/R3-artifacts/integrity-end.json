@@ -1,9 +1,0 @@
-{
-  "timestamp": "2026-10-15T15:49:44.430032+00:00",
-  "head": "91644eb78148e7b81cd8e46478dfb0466d321e27",
-  "parent_description_sha256": "e266ca4cf57b3ff94bf349ad8bdb04336a8cf4580e197e31b346a98e3c3ea775",
-  "candidate_source_count": 27,
-  "candidate_artifact_count": 15,
-  "tracked_status": "",
-  "diff_check_exit": 0
-}

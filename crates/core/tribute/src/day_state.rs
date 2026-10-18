@@ -9,7 +9,7 @@ use outbe_tee::tribute_day::{TributeDayOpRequestV2, TributeDayOperationV2};
 use crate::{day_schema::StoredDayTotals, DayTotals, TributeContract};
 
 impl TributeContract<'_> {
-    pub(crate) fn freeze_day_nominal(&self, totals: &DayTotals) -> Result<()> {
+    pub fn freeze_day_nominal(&self, totals: &DayTotals) -> Result<()> {
         if self
             .day_amount_record(totals.worldwide_day, true)?
             .is_some()

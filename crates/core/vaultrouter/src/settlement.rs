@@ -1,16 +1,17 @@
-//! Settlement pricing and payment that Nod, Gem and Intex share. The asset must have a
-//! vault and carry one of the right's two currencies. The obligation is floored once into
-//! the asset's minor units. The payment lands in the reserve vault through the router.
+//! Settlement pricing that Nod, Gem and Intex share, and the payment Credis collects too.
+//! The asset must have a vault and carry one of the right's two currencies. The cost is
+//! floored once into the asset's minor units. The payment lands in the reserve vault
+//! through the router.
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
-use outbe_common::settlement::{obligation_units, PaymentCurrency};
 use outbe_oracle::api::{settlement_fx_rates, VwapSnapshotId};
 use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::error::Result;
+use outbe_primitives::settlement::{settlement_cost_units, PaymentCurrency};
 use outbe_primitives::storage::StorageHandle;
 
-pub use outbe_common::settlement::Obligation;
+pub use outbe_primitives::settlement::{SettlementCost, SettlementPayment};
 
 pub use crate::errors::SettlementError;
 
@@ -53,13 +54,13 @@ impl Quote {
     }
 }
 
-/// Prices `obligation` in `asset`. The reference currency matches first, so a
+/// Prices `cost` in `asset`. The reference currency matches first, so a
 /// single-currency right takes the no-rate branch.
 pub fn quote(
     storage: &StorageHandle<'_>,
     asset: Address,
     currencies: Currencies,
-    obligation: &Obligation,
+    cost: &SettlementCost,
 ) -> Result<Quote> {
     let currency = accept_payment_asset(storage, asset, currencies)?;
     let asset_decimals = decimals(storage, asset)?;
@@ -73,7 +74,7 @@ pub fn quote(
         Ok((rate, fx.snapshot))
     })?;
     let payment_minor =
-        obligation_units(obligation, rate, asset_decimals).map_err(SettlementError::Rounding)?;
+        settlement_cost_units(cost, rate, asset_decimals).map_err(SettlementError::Rounding)?;
     let settlement_currency = match currency {
         PaymentCurrency::Reference => currencies.reference,
         PaymentCurrency::Issuance => currencies.issuance,

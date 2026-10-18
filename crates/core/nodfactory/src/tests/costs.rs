@@ -1,4 +1,5 @@
 use super::*;
+use outbe_vaultrouter::settlement::SettlementPayment;
 
 #[test]
 fn a_dust_cost_nod_requires_erc20_payment_and_quotes_one_minor_unit() {
@@ -7,35 +8,35 @@ fn a_dust_cost_nod_requires_erc20_payment_and_quotes_one_minor_unit() {
     input.entry_price_minor = U256::from(19);
     input.gratis_load_minor = U256::from(25_629);
     let nod_id = world.issue(&input);
-    world.register_reference_currency_asset(PAYMENT_ASSET);
+    world.register_reference_currency_asset(SETTLEMENT_ASSET);
     assert_eq!(
         public_nod_data(&mut world, nod_id).settlementCostMinor,
         U256::ONE
     );
     let quote = world
-        .enter(|storage| api::quote_settlement(&storage, nod_id, PAYMENT_ASSET))
+        .enter(|storage| api::quote_settlement(&storage, nod_id, SETTLEMENT_ASSET))
         .unwrap();
     assert_eq!(quote, (840, U256::ONE, U256::ZERO));
 
     world.provider.stub_sub_call_at_selector(
-        PAYMENT_ASSET,
+        SETTLEMENT_ASSET,
         IERC20::transferFromCall::SELECTOR,
         Bytes::from(IERC20::transferFromCall::abi_encode_returns(&true)),
     );
     world.provider.stub_sub_call_at_selector(
-        PAYMENT_ASSET,
+        SETTLEMENT_ASSET,
         IERC20::balanceOfCall::SELECTOR,
         Bytes::from(IERC20::balanceOfCall::abi_encode_returns(&U256::ZERO)),
     );
-    // A transfer with no received funds must fail, even for a dust obligation.
+    // A transfer with no received funds must fail, even for a dust cost.
     let error = world
         .enter(|storage| {
             api::settle_nod(
                 &storage,
-                api::SettleNodRequest {
-                    caller: input.owner,
-                    nod_id,
-                    asset: PAYMENT_ASSET,
+                nod_id,
+                SettlementPayment {
+                    payer: input.owner,
+                    asset: SETTLEMENT_ASSET,
                     snapshot_id: U256::ZERO,
                 },
             )
@@ -58,14 +59,14 @@ fn a_cost_that_does_not_divide_evenly_is_floored_in_the_quote() {
         ..params(Address::repeat_byte(0x61))
     };
     let nod_id = world.issue(&input);
-    world.register_reference_currency_asset(PAYMENT_ASSET);
+    world.register_reference_currency_asset(SETTLEMENT_ASSET);
     assert_eq!(cost_of(&input), 500);
     assert_eq!(
         public_nod_data(&mut world, nod_id).settlementCostMinor,
         U256::from(500)
     );
     let quote = world
-        .enter(|storage| api::quote_settlement(&storage, nod_id, PAYMENT_ASSET))
+        .enter(|storage| api::quote_settlement(&storage, nod_id, SETTLEMENT_ASSET))
         .unwrap();
     assert_eq!(quote, (840, U256::from(500), U256::ZERO));
 }
@@ -75,11 +76,11 @@ fn a_wider_asset_quotes_the_cost_scaled_to_its_decimals() {
     let mut world = World::new();
     let input = params(Address::repeat_byte(0x61));
     let nod_id = world.issue(&input);
-    world.register_reference_currency_asset(PAYMENT_ASSET);
-    world.set_asset_decimals(PAYMENT_ASSET, 18);
+    world.register_reference_currency_asset(SETTLEMENT_ASSET);
+    world.set_asset_decimals(SETTLEMENT_ASSET, 18);
     let cost = U256::from(cost_of(&input)) * U256::from(1_000_000_000_000u64);
     let quote = world
-        .enter(|storage| api::quote_settlement(&storage, nod_id, PAYMENT_ASSET))
+        .enter(|storage| api::quote_settlement(&storage, nod_id, SETTLEMENT_ASSET))
         .unwrap();
     assert_eq!(quote, (840, cost, U256::ZERO));
 }
@@ -95,9 +96,9 @@ fn a_nod_cost_above_u128_is_quoted_in_full() {
         ..params(Address::repeat_byte(0x6a))
     };
     let nod_id = world.issue(&input);
-    world.register_reference_currency_asset(PAYMENT_ASSET);
+    world.register_reference_currency_asset(SETTLEMENT_ASSET);
     let quote = world
-        .enter(|storage| api::quote_settlement(&storage, nod_id, PAYMENT_ASSET))
+        .enter(|storage| api::quote_settlement(&storage, nod_id, SETTLEMENT_ASSET))
         .unwrap();
     assert_eq!(quote, (840, cost, U256::ZERO));
 }

@@ -1,3 +1,0 @@
-# P2 Ed compatibility after direct BLS identity verification
-
-Source `b7ee1e16536e80ab4295ca3017303179b8371d47`. Both real peer scenarios PASS: current-to-current and cached legacy `b76a178` author-to-current receiver. Current CLI, remote helper and sidecar rebuilt offline/locked before runs. Reuses the unchanged existing P1 peer driver: actual Ed user/init/clone/content, signed refs, identity, remote-helper ls-remote and bounded disconnect, with temporary processes/users cleaned by driver. Exact source, binary version/hashes, commands/environment/platform/UTC/exit codes and transcripts are preserved. This is compatibility evidence, not P2/full-feature completion or managed authorization proof.

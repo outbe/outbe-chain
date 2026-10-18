@@ -92,6 +92,18 @@ pub enum TributeError {
     #[error("CapacityForfeiture requires an unretired Tribute partition")]
     CapacityForfeitureRequiresUnretiredPartition,
 
+    #[error("invalid league: {0}")]
+    InvalidLeague(u16),
+
+    #[error("Metadosis has not completed for WWD")]
+    MetadosisNotCompleted,
+
+    #[error("Nod creation 7-day window has expired")]
+    NodCreationWindowExpired,
+
+    #[error("caller is not Tribute owner")]
+    CallerNotTributeOwner,
+
     #[error(transparent)]
     CanonicalBody(#[from] outbe_primitives::entity_codec::CanonicalBodyError),
 

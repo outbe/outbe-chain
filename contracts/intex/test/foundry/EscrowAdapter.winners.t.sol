@@ -13,6 +13,7 @@ import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 ///      payment itself.
 contract EscrowAdapterWinnersTest is Test {
     EscrowAdapter internal escrow;
+    MockTheCompact internal compact;
     MockWCOEN internal token;
 
     address internal admin = address(1);
@@ -29,7 +30,7 @@ contract EscrowAdapterWinnersTest is Test {
 
     function setUp() public {
         escrow = DeployProxy.escrowAdapter(admin, relayer);
-        MockTheCompact compact = new MockTheCompact();
+        compact = new MockTheCompact();
         compact.setResetPeriodSeconds(0);
         token = new MockWCOEN();
 
@@ -37,6 +38,11 @@ contract EscrowAdapterWinnersTest is Test {
         escrow.wire(auction, address(compact), address(token));
         escrow.setProceedsRecipient(proceeds);
         vm.stopPrank();
+    }
+
+    function _refund(uint32 worldwideDay, address bidder) internal {
+        vm.prank(auction);
+        escrow.releaseRefund(worldwideDay, bidder);
     }
 
     function _lock(address who, uint32 bidRate, uint16 quantity) internal returns (uint128 amount) {
@@ -190,7 +196,150 @@ contract EscrowAdapterWinnersTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(IEscrowAdapter.RefundNotYetClaimable.selector, claimableAt, uint32(block.timestamp))
         );
-        escrow.claimRefund(DAY, bob);
+        _refund(DAY, bob);
+    }
+
+    function _close(address who) internal returns (uint16) {
+        vm.prank(auction);
+        return escrow.closeWin(DAY, who);
+    }
+
+    function test_ClosingAWinPaysTheChangeAndReturnsTheUnits() public {
+        uint128 aliceLock = _lock(alice, 800_000, 3);
+        _apply(_one(alice), 0, 0, true);
+
+        assertEq(_close(alice), 3, "the units won");
+        assertEq(token.balanceOf(alice), aliceLock - _paid(3), "the change goes with them");
+        assertEq(uint8(escrow.getBidLock(DAY, alice).status), uint8(IEscrowAdapter.LockStatus.None), "lock gone");
+        (,, uint128 totalLocked) = escrow.getAuctionStatus(DAY);
+        assertEq(totalLocked, 0);
+    }
+
+    function test_APartialWinnerClosesWithTheUnitsItWon() public {
+        _lock(alice, 800_000, 1);
+        _lock(bob, 900_000, 5);
+        _apply(_list(alice, bob), 1, 2, true);
+
+        assertEq(_close(bob), 2);
+    }
+
+    function test_AWinRefundedFirstClosesWithoutAnotherWithdrawal() public {
+        uint128 aliceLock = _lock(alice, 800_000, 3);
+        _apply(_one(alice), 0, 0, true);
+        _refund(DAY, alice);
+        assertEq(token.balanceOf(alice), aliceLock - _paid(3), "change refunded");
+        assertEq(escrow.getBidLock(DAY, alice).quantity, 3, "the units still wait");
+
+        vm.expectCall(address(compact), abi.encodeWithSelector(MockTheCompact.forcedWithdrawal.selector), 0);
+        assertEq(_close(alice), 3);
+        assertEq(token.balanceOf(alice), aliceLock - _paid(3), "nothing paid twice");
+    }
+
+    function test_AnExactlyPaidWinClosesWithoutAWithdrawal() public {
+        _lock(alice, uint32(CLEARING_RATE), 2);
+        _apply(_one(alice), 0, 0, true);
+
+        vm.expectCall(address(compact), abi.encodeWithSelector(MockTheCompact.forcedWithdrawal.selector), 0);
+        assertEq(_close(alice), 2);
+    }
+
+    function test_AWinnerWithNoChangeHasNothingToRefund() public {
+        _lock(alice, 800_000, 3);
+        _apply(_one(alice), 0, 0, true);
+        _refund(DAY, alice);
+
+        vm.expectRevert(IEscrowAdapter.NothingToRefund.selector);
+        _refund(DAY, alice);
+    }
+
+    function test_AClosedWinCannotCloseOrRefundAgain() public {
+        _lock(alice, 800_000, 3);
+        _apply(_one(alice), 0, 0, true);
+        _close(alice);
+
+        vm.prank(auction);
+        vm.expectRevert(IEscrowAdapter.LockNotActive.selector);
+        escrow.closeWin(DAY, alice);
+
+        uint256 balance = token.balanceOf(alice);
+        vm.prank(auction);
+        (bool closed, bool finalized) = escrow.releaseRefund(DAY, alice);
+        assertTrue(closed && finalized, "a gone lock on a finalized day reports closed");
+        assertEq(token.balanceOf(alice), balance, "and pays nothing");
+    }
+
+    function test_AGoneLockOnAnOpenDayHasNothingToRelease() public {
+        _lock(alice, 800_000, 1);
+        vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
+        _refund(DAY, alice);
+
+        vm.prank(auction);
+        vm.expectRevert(IEscrowAdapter.LockNotActive.selector);
+        escrow.releaseRefund(DAY, alice);
+    }
+
+    function test_OnlyTheAuctionReleasesARefund() public {
+        _lock(alice, 800_000, 1);
+        _apply(new address[](0), 0, 0, true);
+
+        vm.prank(alice);
+        vm.expectRevert();
+        escrow.releaseRefund(DAY, alice);
+    }
+
+    function test_TheValveWaitsForItsDelayAndPaysOnlyMoney() public {
+        uint128 aliceLock = _lock(alice, 800_000, 3);
+        uint128 bobLock = _lock(bob, 500_000, 1);
+        _apply(_one(alice), 0, 0, true);
+
+        uint32 claimableAt = uint32(block.timestamp) + escrow.REFUND_ABANDON_DELAY();
+        vm.expectRevert(
+            abi.encodeWithSelector(IEscrowAdapter.RefundNotYetAbandoned.selector, claimableAt, uint32(block.timestamp))
+        );
+        escrow.claimAbandonedRefund(DAY, alice);
+
+        vm.warp(claimableAt);
+        escrow.claimAbandonedRefund(DAY, alice);
+        escrow.claimAbandonedRefund(DAY, bob);
+        assertEq(token.balanceOf(alice), aliceLock - _paid(3), "the winner's change");
+        assertEq(token.balanceOf(bob), bobLock, "the loser's principal");
+        assertEq(escrow.getBidLock(DAY, alice).quantity, 3, "the units stay for the auction");
+        assertEq(uint8(escrow.getBidLock(DAY, bob).status), uint8(IEscrowAdapter.LockStatus.None));
+
+        vm.expectRevert(IEscrowAdapter.NothingToRefund.selector);
+        escrow.claimAbandonedRefund(DAY, alice);
+        assertEq(_close(alice), 3, "the win still closes");
+    }
+
+    function test_OnlyTheAuctionClosesAWin() public {
+        _lock(alice, 800_000, 3);
+        _apply(_one(alice), 0, 0, true);
+
+        vm.prank(alice);
+        vm.expectRevert();
+        escrow.closeWin(DAY, alice);
+    }
+
+    /// @dev Only a payment the escrow took makes a win. Every winner the chunk skipped has none.
+    function test_AWinnerTheEscrowCouldNotChargeHasNoWin() public {
+        address carol = address(7);
+        _lock(alice, 500_000, 1); // bid below the clearing rate: the payment exceeds the lock
+        _lock(bob, 900_000, 5); // a partial fill as large as the bid
+        _lock(carol, 800_000, 1); // refunded in full before the chunk arrives
+        vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
+        _refund(DAY, carol);
+
+        address[] memory winners = new address[](3);
+        winners[0] = alice;
+        winners[1] = bob;
+        winners[2] = carol;
+        assertEq(_apply(winners, 1, 5, true), 0, "nobody paid");
+
+        for (uint256 i = 0; i < winners.length; i++) {
+            vm.prank(auction);
+            vm.expectRevert(IEscrowAdapter.LockNotActive.selector);
+            escrow.closeWin(DAY, winners[i]);
+        }
     }
 
     /// @dev The same vectors pin the clearing side's `rate_lock`.

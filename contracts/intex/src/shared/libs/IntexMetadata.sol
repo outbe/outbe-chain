@@ -5,6 +5,7 @@ import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 import {Base64} from "@openzeppelin/contracts/utils/Base64.sol";
 import {IIntexNFT1155} from "../interfaces/IIntexNFT1155.sol";
 import {BridgeMsgCodec} from "./BridgeMsgCodec.sol";
+import {DateKey} from "./DateKey.sol";
 
 /// @title IntexMetadata
 /// @notice JSON + SVG metadata rendering for IntexNFT1155 tokens.
@@ -299,28 +300,23 @@ library IntexMetadata {
         return string(result);
     }
 
-    /// @dev Unix timestamp as "DD.MM.YYYY HH:MM UTC" via Howard Hinnant's civil_from_days.
-    ///      Divide-then-multiply is exact integer date math, not precision loss.
-    // slither-disable-start divide-before-multiply
+    /// @dev Unix timestamp as "DD.MM.YYYY HH:MM UTC".
     function _formatTimestamp(uint256 timestamp) private pure returns (string memory) {
-        uint256 z = timestamp / 86400 + 719468;
-        uint256 era = z / 146097;
-        uint256 doe = z - era * 146097;
-        uint256 yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-        uint256 y = yoe + era * 400;
-        uint256 doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-        uint256 mp = (5 * doy + 2) / 153;
-        uint256 d = doy - (153 * mp + 2) / 5 + 1;
-        uint256 m = mp < 10 ? mp + 3 : mp - 9;
-        if (m <= 2) y += 1;
-
-        uint256 remainder = timestamp % 86400;
-        uint256 h = remainder / 3600;
-        uint256 mi = (remainder % 3600) / 60;
-
-        return string.concat(_pad2(d), ".", _pad2(m), ".", Strings.toString(y), " ", _pad2(h), ":", _pad2(mi), " UTC");
+        uint256 date = DateKey.fromTimestamp(timestamp);
+        uint256 remainder = timestamp % 1 days;
+        return string.concat(
+            _pad2(date % 100),
+            ".",
+            _pad2((date / 100) % 100),
+            ".",
+            Strings.toString(date / 10_000),
+            " ",
+            _pad2(remainder / 1 hours),
+            ":",
+            _pad2((remainder % 1 hours) / 1 minutes),
+            " UTC"
+        );
     }
-    // slither-disable-end divide-before-multiply
 
     function _pad2(uint256 n) private pure returns (string memory) {
         if (n < 10) return string.concat("0", Strings.toString(n));

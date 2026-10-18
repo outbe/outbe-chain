@@ -18,7 +18,7 @@ outbe-tribute.workspace = true
 outbe-teeregistry.workspace = true
 outbe-validatorset.workspace = true
 outbe-staking.workspace = true
-outbe-rewards.workspace = true
+outbe-emissionlimit.workspace = true
 outbe-slashindicator.workspace = true
 
 # Reth
@@ -41,8 +41,6 @@ thiserror.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
-outbe-gem.workspace = true
-outbe-offchain-storage.workspace = true
 tempfile.workspace = true
 commonware-cryptography.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }

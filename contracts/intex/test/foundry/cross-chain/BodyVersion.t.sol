@@ -192,47 +192,6 @@ contract BodyVersionTest is Test {
         this.exposedDecodeBidsBatch(packet);
     }
 
-    function test_BridgeCodec_DecodeIssuance_RejectsArrayLengthMismatch() public {
-        BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
-        payload.seriesId = "20260212-TRY-U";
-        payload.recipients = new address[](3);
-        payload.units = new uint256[](2); // short
-        // Hand-build the body so the encoder's new parity check does not intervene.
-        bytes memory packet = abi.encodePacked(
-            BridgeMsgCodec.BODY_VERSION_V1,
-            BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS,
-            abi.encode(uint32(0), uint16(0), uint16(1), IssuanceBatchLib.one(payload))
-        );
-
-        vm.expectRevert(
-            abi.encodeWithSelector(BridgeMsgCodec.IssuanceArrayLengthMismatch.selector, uint256(3), uint256(2))
-        );
-        this.exposedDecodeIssuanceInstructions(packet);
-    }
-
-    function test_BridgeCodec_DecodeIssuance_RejectsOverCap() public {
-        // The outbound encoder caps recipients at MAX_RECIPIENTS_PER_ISSUANCE, so it cannot build
-        // an over-cap packet. Hand-build the wire body to exercise the inbound decode cap (the
-        // trusted-peer-bug path). Read the cap from the constant.
-        uint256 n = uint256(BridgeMsgCodec.MAX_RECIPIENTS_PER_ISSUANCE) + 1;
-        BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
-        payload.seriesId = "20260212-TRY-U";
-        payload.recipients = new address[](n);
-        payload.units = new uint256[](n);
-        bytes memory packet = abi.encodePacked(
-            BridgeMsgCodec.BODY_VERSION_V1,
-            BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS,
-            abi.encode(uint32(0), uint16(0), uint16(1), IssuanceBatchLib.one(payload))
-        );
-
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                BridgeMsgCodec.IssuanceBatchTooLarge.selector, n, uint256(BridgeMsgCodec.MAX_RECIPIENTS_PER_ISSUANCE)
-            )
-        );
-        this.exposedDecodeIssuanceInstructions(packet);
-    }
-
     function test_BridgeCodec_BidsBatch_BatchIndexTotal_RoundTrips() public view {
         address[] memory bidders = new address[](1);
         bidders[0] = address(0xB1);

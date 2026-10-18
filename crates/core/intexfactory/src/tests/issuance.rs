@@ -1,5 +1,6 @@
 use super::*;
 use outbe_primitives::time::SECONDS_PER_DAY_U32;
+use outbe_vaultrouter::settlement::SettlementPayment;
 
 #[test]
 fn issue_creates_series_in_registry() {
@@ -55,20 +56,19 @@ fn issue_zero_winners_leaves_the_day_untouched() {
 }
 
 #[test]
-fn issuance_legs_route_winners_to_their_own_chain() {
-    // One winner on chain 10, one on chain 20. Chain 30 in the snapshot has none.
-    let other = address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC");
-    let mut p = sample(7);
-    p.recipients = vec![owner(), other];
-    p.units = vec![U256::from(1), U256::from(2)];
-    p.recipient_chains = vec![10, 20];
-    p.snapshot_chains = vec![10, 20, 30];
+fn issue_sends_every_snapshot_chain_the_series() {
+    with_factory(|s| {
+        let mut p = sample(7);
+        p.snapshot_chains = vec![10, 20, 30];
+        let legs = runtime::issue_intex(&s, p).unwrap();
 
-    let legs = runtime::issuance_legs(&p);
-    assert_eq!(legs.len(), 3);
-    assert_eq!(legs[0], (10, vec![owner()], vec![U256::from(1)]));
-    assert_eq!(legs[1], (20, vec![other], vec![U256::from(2)]));
-    assert_eq!(legs[2], (30, vec![], vec![])); // create-only leg
+        let chains: Vec<u32> = legs.iter().map(|leg| leg.chain_id).collect();
+        assert_eq!(chains, vec![10, 20, 30]);
+        for leg in &legs {
+            assert_eq!(SeriesId::from(leg.payload.seriesId), sid(7));
+            assert_eq!(leg.payload.issuedUnits, 100);
+        }
+    });
 }
 
 #[test]
@@ -115,10 +115,10 @@ fn coen_iso_wire_price_preserves_the_six_decimal_integer() {
     assert!(runtime::to_wire_price(U256::from(u64::MAX) + U256::ONE).is_err());
 }
 
-fn leg(chain_id: u32, series: u32, recipients: usize) -> runtime::IssuanceLeg {
-    let mut payload = crate::sol_ext::IOriginRouter::IssuanceInstructionsParams {
+fn leg(chain_id: u32, day: u32, series: u32) -> runtime::IssuanceLeg {
+    let payload = crate::sol_ext::IOriginRouter::IssuanceInstructionsParams {
         seriesId: sid(series).into(),
-        worldwideDay: series,
+        worldwideDay: day,
         issuedAt: ISSUED_AT,
         issuedUnits: 1,
         promisLoadMinor: PROMIS_LOAD_MINOR,
@@ -129,15 +129,7 @@ fn leg(chain_id: u32, series: u32, recipients: usize) -> runtime::IssuanceLeg {
         callWindow: 0,
         callThreshold: 0,
         callPriceMinor: 0,
-        recipients: Vec::new(),
-        units: Vec::new(),
     };
-    for i in 0..recipients {
-        payload
-            .recipients
-            .push(Address::from([(i % 250) as u8 + 1; 20]));
-        payload.units.push(U256::from(1u64));
-    }
     runtime::IssuanceLeg { chain_id, payload }
 }
 
@@ -146,26 +138,21 @@ fn shape(
         u32,
         Vec<crate::sol_ext::IOriginRouter::IssuanceInstructionsParams>,
     )],
-) -> Vec<(u32, usize, usize)> {
+) -> Vec<(u32, usize)> {
     messages
         .iter()
-        .map(|(chain, series)| {
-            (
-                *chain,
-                series.len(),
-                series.iter().map(|s| s.recipients.len()).sum(),
-            )
-        })
+        .map(|(chain, series)| (*chain, series.len()))
         .collect()
 }
 
 #[test]
-fn a_chains_series_travel_together_up_to_the_message_caps() {
-    // Nine empty-recipient series on one chain: the series cap alone splits them.
-    let legs: Vec<_> = (1..=9u32).map(|s| leg(10, s, 0)).collect();
+fn a_chains_series_travel_together_up_to_the_message_cap() {
+    // One series past the cap on one chain: the series cap splits them.
+    let over = MAX_SERIES_PER_MESSAGE as u32 + 1;
+    let legs: Vec<_> = (1..=over).map(|s| leg(10, 1, s)).collect();
     assert_eq!(
         shape(&runtime::pack_issuance_messages(legs)),
-        vec![(10, MAX_SERIES_PER_MESSAGE, 0), (10, 1, 0)]
+        vec![(10, MAX_SERIES_PER_MESSAGE), (10, 1)]
     );
 }
 
@@ -175,10 +162,6 @@ fn the_message_caps_match_the_codec() {
     use outbe_primitives::test_utils::sol_interface::sol_constant;
     const CODEC: &str =
         include_str!("../../../../../contracts/intex/src/shared/libs/BridgeMsgCodec.sol");
-    assert_eq!(
-        sol_constant(CODEC, "MAX_RECIPIENTS_PER_ISSUANCE"),
-        Some(MAX_RECIPIENTS_PER_ISSUANCE)
-    );
     assert_eq!(
         sol_constant(CODEC, "MAX_SERIES_PER_ISSUANCE"),
         Some(MAX_SERIES_PER_MESSAGE)
@@ -194,97 +177,50 @@ fn the_message_caps_match_the_codec() {
 }
 
 #[test]
-fn a_message_never_carries_more_winners_than_the_wire_allows() {
-    // Two series whose winners together exceed the recipient cap: no message may overfill.
-    let per_series = MAX_RECIPIENTS_PER_ISSUANCE - 1;
-    let legs = vec![leg(10, 1, per_series), leg(10, 2, per_series)];
-    let messages = runtime::pack_issuance_messages(legs);
-
-    for (_, _, recipients) in shape(&messages) {
-        assert!(
-            recipients <= MAX_RECIPIENTS_PER_ISSUANCE,
-            "a message carried {recipients} winners, over the wire's cap"
-        );
-    }
-    let total: usize = shape(&messages).iter().map(|(_, _, r)| r).sum();
-    assert_eq!(
-        total,
-        2 * per_series,
-        "every winner is carried exactly once"
-    );
-}
-
-#[test]
-fn one_series_with_more_winners_than_a_message_spans_several() {
-    // One series far past the cap: it spans full messages plus a remainder, and every piece
-    // repeats the series so whichever arrives first can create it.
-    let winners = 5 * MAX_RECIPIENTS_PER_ISSUANCE - 10;
-    let messages = runtime::pack_issuance_messages(vec![leg(10, 1, winners)]);
-
-    let pieces = shape(&messages);
-    assert_eq!(
-        pieces.len(),
-        winners.div_ceil(MAX_RECIPIENTS_PER_ISSUANCE),
-        "one message per full slice plus the remainder"
-    );
-    assert_eq!(
-        pieces.iter().map(|(_, _, r)| r).sum::<usize>(),
-        winners,
-        "every winner is carried exactly once"
-    );
-    for (_, series) in &messages {
-        assert_eq!(SeriesId::from(series[0].seriesId), sid(1));
-    }
-}
-
-#[test]
 fn a_chains_series_batch_even_when_another_chain_comes_between_them() {
     // A day emits its legs series by series, so one chain's legs are never adjacent.
     // Both of chain 10's series still travel together, or the batching would do
     // nothing precisely when a day has several currency pairs.
-    let legs = vec![leg(10, 1, 2), leg(20, 1, 3), leg(10, 2, 1)];
+    let legs = vec![leg(10, 1, 1), leg(20, 1, 1), leg(10, 1, 2)];
     assert_eq!(
         shape(&runtime::pack_issuance_messages(legs)),
-        vec![(10, 2, 3), (20, 1, 3)]
+        vec![(10, 2), (20, 1)]
     );
 }
 
 fn run_shape(runs: &[runtime::IssuanceRun]) -> Vec<((u32, u32), Vec<usize>)> {
     runs.iter()
-        .map(|(key, messages)| {
-            (
-                *key,
-                messages
-                    .iter()
-                    .map(|m| m.iter().map(|s| s.recipients.len()).sum())
-                    .collect(),
-            )
-        })
+        .map(|(key, messages)| (*key, messages.iter().map(Vec::len).collect()))
         .collect()
 }
 
 #[test]
 fn a_chains_chunks_form_one_run_even_when_another_chain_interleaves() {
-    // One day, one chain, winners spanning two messages, with another chain's message in between.
-    let full = MAX_RECIPIENTS_PER_ISSUANCE;
-    let packed =
-        runtime::pack_issuance_messages(vec![leg(10, 1, full), leg(20, 1, 5), leg(10, 1, full)]);
-    let runs = runtime::chunk_issuance_messages(packed);
+    // One day, one chain, series spanning two messages, with another chain's message in between.
+    let full = MAX_SERIES_PER_MESSAGE as u32;
+    let mut legs: Vec<_> = (1..=full).map(|s| leg(10, 1, s)).collect();
+    legs.push(leg(20, 1, 1));
+    legs.push(leg(10, 1, full + 1));
+    let runs = runtime::chunk_issuance_messages(runtime::pack_issuance_messages(legs));
     assert_eq!(
         run_shape(&runs),
-        vec![((10, 1), vec![full, full]), ((20, 1), vec![5])]
+        vec![
+            ((10, 1), vec![MAX_SERIES_PER_MESSAGE, 1]),
+            ((20, 1), vec![1])
+        ]
     );
 }
 
 #[test]
 fn a_chains_days_are_numbered_as_separate_runs() {
-    // `leg`'s series doubles as its worldwide day: each day carries its own chunk numbering.
-    let full = MAX_RECIPIENTS_PER_ISSUANCE;
-    let packed = runtime::pack_issuance_messages(vec![leg(10, 1, full), leg(10, 2, full)]);
+    let packed = vec![
+        (10, vec![leg(10, 1, 1).payload]),
+        (10, vec![leg(10, 2, 2).payload]),
+    ];
     let runs = runtime::chunk_issuance_messages(packed);
     assert_eq!(
         run_shape(&runs),
-        vec![((10, 1), vec![full]), ((10, 2), vec![full])]
+        vec![((10, 1), vec![1]), ((10, 2), vec![1])]
     );
 }
 
@@ -292,7 +228,7 @@ fn a_chains_days_are_numbered_as_separate_runs() {
 fn a_single_message_day_is_chunk_zero_of_one() {
     let runs =
         runtime::chunk_issuance_messages(runtime::pack_issuance_messages(vec![leg(7, 1, 3)]));
-    assert_eq!(run_shape(&runs), vec![((7, 1), vec![3])]);
+    assert_eq!(run_shape(&runs), vec![((7, 1), vec![1])]);
 }
 
 /// Issue a series whose issuance currency differs from its reference, with a
@@ -306,8 +242,12 @@ fn with_dual_currency_series<R>(iso: u64, f: impl FnOnce(StorageHandle) -> R) ->
 /// settlement that reaches the payment fails there with `SettlementAmountMismatch`.
 pub(super) fn stub_token_that_never_credits(storage: &mut HashMapStorageProvider) {
     use crate::sol_ext::IERC20;
-    storage.stub_sub_call_at_selector(payment_token(), IERC20::balanceOfCall::SELECTOR, word(0));
-    storage.stub_sub_call_at_selector(payment_token(), IERC20::transferFromCall::SELECTOR, word(1));
+    storage.stub_sub_call_at_selector(settlement_asset(), IERC20::balanceOfCall::SELECTOR, word(0));
+    storage.stub_sub_call_at_selector(
+        settlement_asset(),
+        IERC20::transferFromCall::SELECTOR,
+        word(1),
+    );
 }
 
 /// The storage behind [`with_dual_currency_series`], for tests that move the clock.
@@ -330,11 +270,11 @@ pub(super) fn dual_currency_series(iso: u64) -> HashMapStorageProvider {
         word(1),
     );
     storage.stub_sub_call_at_selector(
-        payment_token(),
+        settlement_asset(),
         IReferenceCurrency::isoCodeCall::SELECTOR,
         word(iso),
     );
-    storage.stub_sub_call_at_selector(payment_token(), IERC20::decimalsCall::SELECTOR, word(18));
+    storage.stub_sub_call_at_selector(settlement_asset(), IERC20::decimalsCall::SELECTOR, word(18));
 
     StorageHandle::enter(&mut storage, |s| {
         let params = IssuanceParams {
@@ -364,7 +304,7 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
         write_day_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
 
         let (_, cost, _) =
-            runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap();
+            runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE).unwrap();
         assert_eq!(cost, U256::from(500_000_000_000_000_000u64));
     });
 }
@@ -386,7 +326,7 @@ fn the_issuance_rail_converts_at_the_trailing_window_not_the_closed_day() {
             .unwrap();
 
         let (_, cost, _) =
-            runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap();
+            runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE).unwrap();
         assert_eq!(cost, U256::from(500_000_000_000_000_000u64));
     });
 }
@@ -404,7 +344,7 @@ fn issuance_currency_settlement_floors_a_non_divisible_fx_result_once() {
         write_day_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
 
         let (_, cost, _) =
-            runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap();
+            runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE).unwrap();
         assert_eq!(cost, U256::from(333_333_333_333_333_333u64));
     });
 }
@@ -420,7 +360,7 @@ fn an_unpriced_issuance_currency_cannot_be_settled_in() {
             U256::from(2u64) * COEN_ISO_RATE_SCALE,
         );
         // No euro pair at all.
-        let err = runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap_err();
+        let err = runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE).unwrap_err();
         assert!(
             err.to_string().contains("oracle nominal unavailable"),
             "{err}"
@@ -441,7 +381,7 @@ fn a_rate_the_window_never_priced_cannot_be_settled_in() {
         // The euro trades live, but the window it converts at holds no euro price.
         write_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
 
-        let err = runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap_err();
+        let err = runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE).unwrap_err();
         assert!(
             err.to_string().contains("oracle nominal unavailable"),
             "{err}"
@@ -461,7 +401,7 @@ fn issuance_currency_settlement_rejects_fx_overflow() {
             U256::MAX / COEN_ISO_RATE_SCALE,
         );
 
-        let err = runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap_err();
+        let err = runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("overflow"), "{err}");
     });
 }
@@ -471,7 +411,7 @@ fn the_reference_currency_settles_without_reading_any_rate() {
     // No rate is published at all, yet the reference currency still settles.
     with_dual_currency_series(REFERENCE_ISO as u64, |s| {
         let (_, cost, _) =
-            runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap();
+            runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE).unwrap();
         assert_eq!(cost, U256::from(1_000_000_000_000_000_000u64));
     });
 }
@@ -482,7 +422,7 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
     stub_token_that_never_credits(&mut storage);
     let quote = |storage: &mut HashMapStorageProvider| {
         StorageHandle::enter(storage, |s| {
-            runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap()
+            runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE).unwrap()
         })
     };
     let settle = |storage: &mut HashMapStorageProvider, snapshot: U256| {
@@ -492,9 +432,9 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
                 sid(7),
                 owner(),
                 U256::ONE,
-                runtime::SettlementPayment {
-                    settler: owner(),
-                    asset: payment_token(),
+                SettlementPayment {
+                    payer: owner(),
+                    asset: settlement_asset(),
                     snapshot_id: snapshot,
                 },
             )
@@ -566,7 +506,7 @@ fn the_hourly_rollover_at_the_call_deadline_grants_no_grace() {
     stub_token_that_never_credits(&mut storage);
     let quote = |storage: &mut HashMapStorageProvider| {
         StorageHandle::enter(storage, |s| {
-            runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE)
+            runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE)
                 .unwrap()
                 .2
         })
@@ -578,9 +518,9 @@ fn the_hourly_rollover_at_the_call_deadline_grants_no_grace() {
                 sid(7),
                 owner(),
                 U256::ONE,
-                runtime::SettlementPayment {
-                    settler: owner(),
-                    asset: payment_token(),
+                SettlementPayment {
+                    payer: owner(),
+                    asset: settlement_asset(),
                     snapshot_id: snapshot,
                 },
             )
@@ -627,7 +567,7 @@ fn the_hourly_rollover_at_the_call_deadline_grants_no_grace() {
     assert_eq!(
         settle(&mut storage, required),
         outbe_primitives::error::PrecompileError::from(
-            crate::errors::IntexFactoryError::DeadlineExpired
+            crate::errors::IntexFactoryError::SettlementDeadlinePassed
         )
         .to_string()
     );
@@ -643,9 +583,9 @@ fn a_reference_payment_ignores_the_snapshot_it_names() {
             sid(7),
             owner(),
             U256::ONE,
-            runtime::SettlementPayment {
-                settler: owner(),
-                asset: payment_token(),
+            SettlementPayment {
+                payer: owner(),
+                asset: settlement_asset(),
                 snapshot_id: U256::from(7u64),
             },
         )

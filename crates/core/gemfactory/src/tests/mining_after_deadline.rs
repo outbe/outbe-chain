@@ -65,7 +65,7 @@ fn a_settled_gem_mines_after_the_settlement_deadline_while_its_unpaid_twin_is_re
         )
         .unwrap_err();
         assert!(
-            format!("{refused:?}").contains("invalid state for action"),
+            format!("{refused:?}").contains("gem is not settled"),
             "{refused:?}"
         );
         assert!(gem_api::get_item(handle, unpaid).unwrap().is_some());

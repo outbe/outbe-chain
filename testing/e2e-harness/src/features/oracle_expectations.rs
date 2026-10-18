@@ -2,9 +2,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use alloy_primitives::B256;
 use alloy_primitives::{Address, U256};
-use outbe_nod::openings::{entry_price_day, entry_price_slots, pair_index_slots};
+use outbe_nod::openings::entry_price_day;
 use outbe_primitives::addresses::ORACLE_ADDRESS;
 use serde::Serialize;
 
@@ -136,36 +135,18 @@ fn previous_day_entry_price(quotes: &[Quote], requested_at: u64) -> U256 {
     price
 }
 
-fn oracle_word_at(world: &World, port: u16, slot: B256, height: u64) -> U256 {
-    // Share only the storage slot layout, never the production price evaluator.
-    let raw = eth::raw_json_with_params(
-        &world.rpc.url(port),
-        "eth_getStorageAt",
-        serde_json::json!([ORACLE_ADDRESS, slot, format!("0x{height:x}")]),
-    )
-    .expect("historical Oracle word");
-    serde_json::from_value::<U256>(raw).expect("canonical Oracle word")
-}
-
 fn oracle_price_at(world: &World, port: u16, day: u32, iso: u16, height: u64) -> U256 {
-    let mut isos = vec![840, iso];
-    isos.sort_unstable();
-    isos.dedup();
-    let indices = pair_index_slots(&isos)
-        .expect("canonical pair index slots")
-        .into_iter()
-        .map(|slot| {
-            let index = u32::try_from(oracle_word_at(world, port, slot, height))
-                .expect("registered pair index");
-            assert_ne!(index, 0, "entry-price pair is registered");
-            index
-        })
-        .collect::<Vec<_>>();
-    let slots = entry_price_slots(day, &isos, &indices).expect("day VWAP slots");
-    let position = isos
-        .binary_search(&iso)
-        .expect("requested reference currency");
-    oracle_word_at(world, port, slots[isos.len() + position], height)
+    eth::read_call_at_result(
+        &world.rpc.url(port),
+        ORACLE_ADDRESS,
+        &eth::IOracle::getUtcDayVwapCall {
+            base: Address::ZERO,
+            quote: outbe_primitives::asset_type::currency_address(iso),
+            utcDay: day,
+        },
+        height,
+    )
+    .expect("historical reference-currency day VWAP")
 }
 
 pub(super) fn assert_native_entry_price(

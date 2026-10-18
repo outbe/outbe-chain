@@ -748,6 +748,7 @@ fn terminal_shutdown_and_native_fatal_failures_cannot_be_a_clean_audit() {
         "ERROR Radicle integration shutdown failed error=endpoint discovery failed",
         "WARN Radicle endpoint actor stopped error=network closed",
         "ERROR reth::cli: Fatal error in consensus engine",
+        "ERROR fatal node shutdown failure=body commitment mismatch",
     ] {
         let logs = vec![(PathBuf::from("validator-0/node.log"), message.to_owned())];
         assert!(!audit_loaded_logs(&logs).is_clean(), "{message}");

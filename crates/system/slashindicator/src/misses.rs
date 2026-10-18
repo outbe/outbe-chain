@@ -3,8 +3,9 @@
 
 use alloy_primitives::{Address, B256};
 use outbe_primitives::error::Result;
-use outbe_primitives::slashing_journal::{iso8601_now, record as journal_record, JournalRecord};
+use outbe_primitives::slashing_journal::{record as journal_record, JournalRecord};
 use outbe_primitives::storage::types::Mapping;
+use outbe_primitives::time::iso8601_now;
 use outbe_staking::contract::Staking;
 use outbe_validatorset::contract::ValidatorSet;
 use tracing::{info, warn};

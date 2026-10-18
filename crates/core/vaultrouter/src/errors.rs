@@ -106,7 +106,7 @@ pub enum SettlementError {
     #[error("settlement asset isoCode undecodable")]
     AssetIsoCode,
     #[error("{0}")]
-    Rounding(#[source] outbe_common::settlement::RoundingError),
+    Rounding(#[source] outbe_primitives::settlement::RoundingError),
     #[error("oracle nominal unavailable")]
     OracleUnavailable,
     #[error("VWAP snapshot {authorized:#x} does not match the required {required:#x}")]
