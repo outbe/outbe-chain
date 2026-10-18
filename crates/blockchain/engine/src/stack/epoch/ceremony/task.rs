@@ -1,11 +1,11 @@
 //! Freeze a deterministic target and supervise durable DKG ceremonies.
 #[derive(Clone, Copy)]
-pub(super) enum CeremonyAttempt {
+pub(in crate::stack) enum CeremonyAttempt {
     Retry,
     Live { scheduling_height: u64 },
 }
 impl CeremonyAttempt {
-    fn task_label(self) -> &'static str {
+    pub(in crate::stack) fn task_label(self) -> &'static str {
         match self {
             Self::Retry => "dkg_retry",
             Self::Live { .. } => "dkg_live",

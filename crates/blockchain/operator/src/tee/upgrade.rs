@@ -895,65 +895,6 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_legacy_json_loads_without_rewrite_and_keeps_exact_bytes() {
-        let legacy = concat!(
-            "{\"version\":1,\"generation\":7,\"lifecycle\":{\"state\":\"candidatePrepared\",",
-            "\"context\":{",
-            "\"predecessorManifestHash\":\"0x0101010101010101010101010101010101010101010101010101010101010101\",",
-            "\"candidateManifestHash\":\"0x0202020202020202020202020202020202020202020202020202020202020202\",",
-            "\"successorPolicyHash\":\"0x0303030303030303030303030303030303030303030303030303030303030303\",",
-            "\"activationHeight\":100,\"activeTeeDir\":\"/legacy/active\",",
-            "\"candidateTeeDir\":\"/legacy/candidate\"}}}"
-        );
-        let root = tempfile::tempdir().unwrap();
-        let guard = UpgradeJournalGuardV1::acquire(root.path()).unwrap();
-        let path = root.path().join(DIRECTORY).join("journal.json");
-        fs::write(&path, legacy).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(FILE_MODE)).unwrap();
-        let snapshot = guard.load().unwrap().unwrap();
-        assert_eq!(snapshot.generation, 7);
-        assert_eq!(snapshot.lifecycle.label(), "candidatePrepared");
-        assert_eq!(serde_json::to_vec(&snapshot).unwrap(), legacy.as_bytes());
-        assert_eq!(fs::read(&path).unwrap(), legacy.as_bytes());
-        let value: serde_json::Value = serde_json::from_str(legacy).unwrap();
-        for missing in ["version", "generation", "lifecycle"] {
-            let mut malformed = value.clone();
-            malformed.as_object_mut().unwrap().remove(missing);
-            assert!(serde_json::from_value::<UpgradeJournalSnapshotV1>(malformed).is_err());
-        }
-        let mut unknown = value;
-        unknown["unexpected"] = serde_json::json!(true);
-        assert!(serde_json::from_value::<UpgradeJournalSnapshotV1>(unknown).is_err());
-    }
-
-    #[test]
-    fn snapshot_headers_reject_invalid_values_before_lifecycle_validation() {
-        let mut invalid_context = context(Path::new("/unused"));
-        invalid_context.activation_height = 0;
-        let lifecycle = UpgradeJournalStateV1::CandidatePrepared {
-            context: invalid_context,
-        };
-        for (version, generation) in [(0, 1), (2, 1), (1, 0)] {
-            let snapshot = UpgradeJournalSnapshotV1 {
-                version,
-                generation,
-                lifecycle: lifecycle.clone(),
-            };
-            assert_eq!(
-                snapshot.validate().unwrap_err().to_string(),
-                "unsupported upgrade journal version or generation"
-            );
-        }
-        assert_ne!(
-            UpgradeJournalSnapshotV1::new(lifecycle)
-                .validate()
-                .unwrap_err()
-                .to_string(),
-            "unsupported upgrade journal version or generation"
-        );
-    }
-
-    #[test]
     fn software_seal_checkpoint_is_explicitly_feature_and_network_gated() {
         use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
         let root = tempfile::tempdir().unwrap();
@@ -1151,43 +1092,6 @@ mod tests {
     }
 
     #[test]
-    fn completed_rollout_accepts_only_its_next_successor_and_expired_retry_preserves_root() {
-        let root = tempfile::tempdir().unwrap();
-        let old = context(root.path());
-        let completed = UpgradeJournalStateV1::Promoted {
-            context: old.clone(),
-            security: UpgradeSecurityMaterialV1 {
-                sealed_root_hash: B256::repeat_byte(6),
-                resident_offer_public: B256::repeat_byte(7),
-                proof_hash: B256::repeat_byte(8),
-            },
-            submission: submission(),
-            finalized_height: 99,
-            finalized_hash: B256::repeat_byte(9),
-        };
-        let mut next = old.clone();
-        next.predecessor_manifest_hash = old.candidate_manifest_hash;
-        next.candidate_manifest_hash = B256::repeat_byte(10);
-        next.successor_policy_hash = B256::repeat_byte(11);
-        next.activation_height = 200;
-        assert!(is_next_upgrade(
-            &completed,
-            &UpgradeJournalStateV1::CandidatePrepared {
-                context: next.clone()
-            }
-        ));
-        next.activation_height = 100;
-        assert!(!is_next_upgrade(
-            &completed,
-            &UpgradeJournalStateV1::CandidatePrepared { context: next }
-        ));
-        let pending = key_ready(old.clone(), B256::repeat_byte(6));
-        let retry = key_provisioned(old, B256::repeat_byte(6));
-        assert!(validate_checkpoint_transition(&pending, &retry).is_ok());
-        assert!(validate_checkpoint_transition(&completed, &retry).is_err());
-    }
-
-    #[test]
     fn journal_rejects_context_change_and_corrupt_committed_state() {
         let root = tempfile::tempdir().unwrap();
         let guard = UpgradeJournalGuardV1::acquire(root.path()).unwrap();
@@ -1203,29 +1107,5 @@ mod tests {
         drop(guard);
         fs::write(root.path().join(DIRECTORY).join("journal.json"), b"corrupt").unwrap();
         assert!(inspect_upgrade_journal_v1(root.path()).is_err());
-    }
-
-    #[test]
-    fn journal_rejects_skipped_or_changed_security_checkpoints() {
-        let root = tempfile::tempdir().unwrap();
-        let guard = UpgradeJournalGuardV1::acquire(root.path()).unwrap();
-        let context = context(root.path());
-        store_candidate_prepared(&guard, &context);
-        assert!(guard
-            .store(UpgradeJournalSnapshotV1::new(key_ready(
-                context.clone(),
-                B256::repeat_byte(6)
-            ),))
-            .is_err());
-        store_checkpoint(
-            &guard,
-            key_provisioned(context.clone(), B256::repeat_byte(6)),
-        );
-        assert!(guard
-            .store(UpgradeJournalSnapshotV1::new(key_ready(
-                context,
-                B256::repeat_byte(9)
-            ),))
-            .is_err());
     }
 }

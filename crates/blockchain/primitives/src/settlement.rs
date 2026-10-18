@@ -165,12 +165,10 @@ mod tests {
 
     #[test]
     fn the_rate_leg_is_floored_together_with_the_scaling() {
-        // 7.5 at rate 2/3 = 5.0 exactly. Flooring the rate leg on its own first
-        // (7 x 2 / 3 = 4.66) would have lost a unit.
-        assert_eq!(
-            floor_to_asset_units(u(7_500_000) * u(2), u(3), 6, 6),
-            Ok(u(5_000_000))
-        );
+        // 7 / 3 scaled from 0 to 1 decimal: floor(7 * 10 / 3) = floor(70 / 3) = 23.
+        // Prematurely flooring the rate leg before scaling (floor(7 / 3) * 10)
+        // would have produced 20.
+        assert_eq!(floor_to_asset_units(u(7), u(3), 0, 1), Ok(u(23)));
     }
 
     #[test]

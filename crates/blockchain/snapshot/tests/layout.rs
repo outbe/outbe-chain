@@ -89,6 +89,21 @@ fn manifest_rejects_invalid_versions_hashes_and_inconsistent_totals() {
     let mut value = manifest_json();
     value["domains"][0]["entries"][0]["sha256"] = serde_json::Value::Null;
     reject(value);
+    let mut value = manifest_json();
+    value["domains"][0]["id"] = "".into();
+    reject(value);
+    for (size, sha256) in [
+        (1_u64, serde_json::Value::Null),
+        (0_u64, serde_json::Value::String("33".repeat(32))),
+    ] {
+        let mut value = manifest_json();
+        value["domains"][0]["entries"][0]["kind"] = "directory".into();
+        value["domains"][0]["entries"][0]["size"] = size.into();
+        value["domains"][0]["entries"][0]["sha256"] = sha256;
+        value["file_count"] = 0.into();
+        value["total_bytes"] = 0.into();
+        reject(value);
+    }
 }
 
 #[test]

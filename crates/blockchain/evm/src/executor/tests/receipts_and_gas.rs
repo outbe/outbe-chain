@@ -58,12 +58,8 @@ fn priority_fees_credit_rewards_escrow_in_production_fee_path() {
         .execute_transaction(recovered)
         .expect("priority-fee tx should execute");
 
-    let expected_fee = super::validator_fee_for_gas(
-        tx.max_fee_per_gas(),
-        tx.max_priority_fee_per_gas(),
-        executor.receipts()[0].cumulative_gas_used,
-        u128::from(MIN_PROTOCOL_BASE_FEE),
-    );
+    assert_eq!(executor.receipts()[0].cumulative_gas_used, 21_000);
+    let expected_fee = U256::from(21_000u64) * U256::from(MIN_PROTOCOL_BASE_FEE);
     assert_eq!(
         executor.current_execution_summary().validator_fee_sum,
         expected_fee
@@ -287,7 +283,7 @@ fn system_prefix_charges_visible_gas_and_receipt_cumulative_contract() {
 }
 
 #[test]
-fn apply_pre_execution_changes_emits_cycle_tick_event_in_system_receipt() {
+fn cycle_tick_utc_boundary_gas_usage() {
     const GENESIS_TS: u64 = 1_704_067_200;
     use outbe_primitives::time::SECONDS_PER_DAY;
 
@@ -323,80 +319,34 @@ fn apply_pre_execution_changes_emits_cycle_tick_event_in_system_receipt() {
             bootstrap: BootstrapFixture::explicit(Some(tee_bootstrap)),
         },
     );
-    for tx in system_txs {
-        executor
-            .execute_transaction(tx)
-            .expect("begin-zone system tx should execute in tx loop");
-    }
-
-    assert_eq!(executor.receipts().len(), 5);
-    let cycle_event = keccak256("CycleTriggerExecuted(uint32,uint64,uint64,uint64)");
-    assert!(
-        executor.receipts()[0].logs.iter().any(|log| {
-            log.address == CYCLE_ADDRESS && log.data.topics().first() == Some(&cycle_event)
-        }),
-        "CycleTriggerExecuted must be present in the system-tx receipt logs"
-    );
-}
-
-#[test]
-fn cycle_tick_utc_boundary_gas_usage() {
-    const GENESIS_TS: u64 = 1_704_067_200;
-    use outbe_primitives::time::SECONDS_PER_DAY;
-
-    let signer = test_evm_signer();
-    let proposer = signer.address();
-    let mut state =
-        state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
-            seed_cycle_tick_genesis(storage, GENESIS_TS, proposer)
-                .expect("cycle-tick genesis fixture");
-        });
-    let mut evm_env = test_evm_env(1, REWARDS_ADDRESS);
-    let block_timestamp = GENESIS_TS + SECONDS_PER_DAY + 60;
-    let tee_bootstrap = sample_tee_bootstrap_payload_at(1, block_timestamp);
-    evm_env.block_env.timestamp = U256::from(block_timestamp);
-    let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
-    let evm = config.evm_with_env(&mut state, evm_env);
-    let mut executor = config.create_executor(
-        evm,
-        execution_ctx_with_tee_bootstrap(Some(0), Bytes::new(), tee_bootstrap.clone()),
-    );
-
-    executor
-        .apply_pre_execution_changes()
-        .expect("pre-execution changes should apply");
-    let system_txs = begin_system_txs_for_test(
-        &config,
-        BeginBlockFixture {
-            block_number: 1,
-            parent_hash: B256::ZERO,
-            extra_data: &Bytes::new(),
-            parent_consensus_metadata: None,
-            proposer,
-            bootstrap: BootstrapFixture::explicit(Some(tee_bootstrap)),
-        },
-    );
     let mut cycle_tick_visible_gas = None;
     for tx in system_txs {
         let gas_output = executor
             .execute_transaction(tx)
-            .expect("begin-zone system tx should execute");
+            .expect("begin-zone system tx should execute in tx loop");
         if cycle_tick_visible_gas.is_none() {
             cycle_tick_visible_gas = Some(gas_output.tx_gas_used());
         }
     }
 
+    assert_eq!(executor.receipts().len(), 5);
     let visible_gas = cycle_tick_visible_gas.expect("CycleTick visible gas must be captured");
     let cycle_tick_receipt = &executor.receipts()[0];
     assert!(
         cycle_tick_receipt.success,
         "CycleTick must succeed, not OOG"
     );
+    let cycle_event = keccak256("CycleTriggerExecuted(uint32,uint64,uint64,uint64)");
+    assert!(
+        cycle_tick_receipt.logs.iter().any(|log| {
+            log.address == CYCLE_ADDRESS && log.data.topics().first() == Some(&cycle_event)
+        }),
+        "CycleTriggerExecuted must be present in the system-tx receipt logs"
+    );
     assert_eq!(
         cycle_tick_receipt.cumulative_gas_used, visible_gas,
         "system receipt cumulative gas must expose visible envelope gas"
     );
-    eprintln!("CycleTick UTC boundary visible gas: used={visible_gas}, block_limit=30_000_000");
     assert!(
         visible_gas < 30_000_000,
         "CycleTick visible gas {visible_gas} must fit within the block gas limit"

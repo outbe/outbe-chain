@@ -95,9 +95,6 @@ pub(crate) use zero_fee::{ZeroFeeCfgAccess, ZeroFeeCfgSnapshot};
 #[cfg(test)]
 pub(crate) use tests::harness::with_phase1_verify_disabled;
 
-#[cfg(test)]
-use artifacts::validate_execution_summary_artifact;
-
 use context::{build_block_context, validate_genesis_state};
 
 use hooks::run_atomic_storage_hooks;

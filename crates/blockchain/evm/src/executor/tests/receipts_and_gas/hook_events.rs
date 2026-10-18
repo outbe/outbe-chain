@@ -119,53 +119,6 @@ fn apply_pre_execution_changes_emits_phase1_slashing_logs_in_system_receipt() {
 }
 
 #[test]
-fn pre_exec_hooks_emit_whitelisted_update_activation_event() {
-    use alloy_sol_types::SolEvent;
-    use outbe_update::payload::encode_schedule_update_json;
-    use outbe_update::precompile::IUpdate;
-    use serde_json::Value;
-
-    let proposer = test_evm_signer().address();
-    const ACTIVATION_BLOCK: u64 = 101;
-    let protocol_version = outbe_update::constants::PROTOCOL_VERSION;
-
-    let mut state =
-        state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
-            let proposal_id = U256::from(1);
-            let payload: Value = serde_json::from_str(&encode_schedule_update_json(
-                protocol_version,
-                ACTIVATION_BLOCK,
-                "",
-            ))
-            .expect("schedule update JSON should parse");
-            let mut update = outbe_update::schema::Update::new(storage.clone());
-            update
-                .schedule_update_from_propose(proposal_id, &payload, 1)
-                .expect("schedule update");
-        });
-
-    let ctx = BlockContext::new(
-        ACTIVATION_BLOCK,
-        ACTIVATION_BLOCK,
-        CHAIN_ID,
-        proposer,
-        vec![proposer],
-    );
-    let (_, hook_events) = super::run_atomic_storage_hooks(&mut state, ctx, |hook_ctx| {
-        super::run_outbe_pre_execution_hooks(hook_ctx, None)
-    })
-    .expect("pre-exec hooks should run");
-    let (whitelisted, _) = partition_hook_events(&hook_events);
-    let upgrade_activated = IUpdate::UpgradeActivated::SIGNATURE_HASH;
-    assert!(
-        whitelisted.iter().any(|log| {
-            log.address == UPDATE_ADDRESS && log.data.topics().first() == Some(&upgrade_activated)
-        }),
-        "pre-exec hooks must emit whitelisted UpgradeActivated for HookEvents receipt"
-    );
-}
-
-#[test]
 fn hook_events_receipt_carries_whitelisted_update_activation_log() {
     use alloy_sol_types::SolEvent;
     use outbe_update::payload::encode_schedule_update_json;
@@ -203,6 +156,13 @@ fn hook_events_receipt_carries_whitelisted_update_activation_log() {
     })
     .expect("pre-exec hooks should emit activation events");
     let (whitelisted_logs, _) = partition_hook_events(&hook_events);
+    let upgrade_activated = IUpdate::UpgradeActivated::SIGNATURE_HASH;
+    assert!(
+        whitelisted_logs.iter().any(|log| {
+            log.address == UPDATE_ADDRESS && log.data.topics().first() == Some(&upgrade_activated)
+        }),
+        "pre-exec hooks must emit whitelisted UpgradeActivated for HookEvents receipt"
+    );
 
     let config = OutbeEvmConfig::new(test_chain_spec());
     let evm = config.evm_with_env(&mut state, test_evm_env(ACTIVATION_BLOCK, REWARDS_ADDRESS));
@@ -213,7 +173,6 @@ fn hook_events_receipt_carries_whitelisted_update_activation_log() {
 
     let hook_receipt = executor.receipts().last().expect("HookEvents receipt");
     assert!(hook_receipt.success);
-    let upgrade_activated = IUpdate::UpgradeActivated::SIGNATURE_HASH;
     assert!(
         hook_receipt.logs.iter().any(|log| {
             log.address == UPDATE_ADDRESS && log.data.topics().first() == Some(&upgrade_activated)

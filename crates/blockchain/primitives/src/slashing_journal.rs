@@ -319,36 +319,56 @@ mod tests {
 
     #[test]
     fn init_then_record_writes_lines_and_survives_reopen() {
+        const CHILD_DIR_ENV: &str = "OUTBE_SLASHING_JOURNAL_CHILD_DIR";
+        const CHILD_BLOCK_ENV: &str = "OUTBE_SLASHING_JOURNAL_CHILD_BLOCK";
+
+        if let Some(dir) = std::env::var_os(CHILD_DIR_ENV) {
+            let block_number: u64 = std::env::var(CHILD_BLOCK_ENV)
+                .expect("child block env")
+                .parse()
+                .expect("valid block number");
+            let dir = std::path::PathBuf::from(dir);
+            init(&dir).expect("init slashing journal in child");
+            record(JournalRecord::ValidatorUnbonding {
+                wall_clock: iso8601_now(),
+                block_number,
+                validator: "0x2cf6fbd0".into(),
+            });
+            return;
+        }
+
         let dir = tempfile::tempdir().expect("tempdir");
-        // First-time init succeeds. Subsequent inits are no-ops because
-        // the journal uses a process-global OnceLock. Tests share the
-        // recorder, so a second test that initializes a different dir would
-        // see this recorder's file. Therefore this test is the only one that
-        // exercises the writer end-to-end.
-        let path = journal_path(dir.path());
-        // Hand-craft a writer using the same code path so the singleton
-        // limitation does not affect this test:
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .unwrap();
-        let mut writer = std::io::BufWriter::new(file);
-        let rec = JournalRecord::ValidatorUnbonding {
-            wall_clock: iso8601_now(),
-            block_number: 19_200,
-            validator: "0x2cf6fbd0".into(),
-        };
-        writeln!(writer, "{}", serde_json::to_string(&rec).unwrap()).unwrap();
-        writer.flush().unwrap();
-        drop(writer);
+        let nested = dir.path().join("nested");
+        let path = journal_path(&nested);
+        assert_eq!(path, nested.join("slashing-journal.jsonl"));
+        let exe = std::env::current_exe().expect("current test binary");
+
+        for block_number in ["19200", "19201"] {
+            let output = std::process::Command::new(&exe)
+                .arg("--exact")
+                .arg("slashing_journal::tests::init_then_record_writes_lines_and_survives_reopen")
+                .arg("--nocapture")
+                .env(CHILD_DIR_ENV, &nested)
+                .env(CHILD_BLOCK_ENV, block_number)
+                .output()
+                .expect("spawn child process");
+            assert!(
+                output.status.success(),
+                "child failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
 
         let mut content = String::new();
         std::fs::File::open(&path)
             .unwrap()
             .read_to_string(&mut content)
             .unwrap();
-        assert!(content.contains("\"event\":\"validator_unbonding\""));
-        assert!(content.contains("\"block_number\":19200"));
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(lines.len(), 2, "expected old + new JSONL records");
+        assert!(lines[0].contains("\"event\":\"validator_unbonding\""));
+        assert!(lines[0].contains("\"block_number\":19200"));
+        assert!(lines[1].contains("\"event\":\"validator_unbonding\""));
+        assert!(lines[1].contains("\"block_number\":19201"));
     }
 }

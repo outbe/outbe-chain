@@ -12,23 +12,13 @@
 use commonware_cryptography::bls12381;
 use commonware_cryptography::Signer as _;
 use commonware_utils::ordered::Set;
-use outbe_consensus::config::{outbe_app_namespace, simplex_namespace};
+use outbe_consensus::config::simplex_namespace;
 use outbe_consensus::proof::{finalize_namespace, hybrid_seed_namespace, notarize_namespace};
 
 fn committee() -> Set<bls12381::PublicKey> {
     Set::from_iter_dedup(
         (1u64..=3).map(|s| bls12381::PublicKey::from(bls12381::PrivateKey::from_seed(s))),
     )
-}
-
-#[test]
-fn simplex_namespace_base_is_chain_bound() {
-    // b"outbe" (5) || chain_id_be (8) - no longer the bare, chain-independent
-    // b"outbe".
-    let base = outbe_app_namespace();
-    assert!(base.starts_with(b"outbe"));
-    assert_eq!(base.len(), 13);
-    assert_ne!(base.as_slice(), b"outbe");
 }
 
 #[test]

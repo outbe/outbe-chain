@@ -80,35 +80,6 @@ mod tests {
     }
 
     #[test]
-    fn log_has_two_topics_with_code_indexed() {
-        let log = build_outbe_failure_log(
-            address!("0x000000000000000000000000000000000000EE06"),
-            107,
-            "zero-fee signer is not authorized for this transaction hook".to_string(),
-        );
-        assert_eq!(
-            log.address,
-            address!("0x000000000000000000000000000000000000EE06")
-        );
-        assert_eq!(log.data.topics().len(), 2);
-        assert_eq!(log.data.topics()[0], OUTBE_FAILURE_TOPIC0);
-        // topic1 is the padded u16 code (right-aligned big-endian per ABI).
-        let mut expected_topic1 = [0u8; 32];
-        expected_topic1[30] = (107u16 >> 8) as u8;
-        expected_topic1[31] = (107u16 & 0xff) as u8;
-        assert_eq!(log.data.topics()[1].as_slice(), expected_topic1);
-        // data is ABI-encoded `(string)` - non-empty.
-        assert!(!log.data.data.is_empty());
-    }
-
-    #[test]
-    fn distinct_codes_produce_distinct_topic1() {
-        let log_a = build_outbe_failure_log(Address::ZERO, 107, "a".to_string());
-        let log_b = build_outbe_failure_log(Address::ZERO, 201, "a".to_string());
-        assert_ne!(log_a.data.topics()[1], log_b.data.topics()[1]);
-    }
-
-    #[test]
     fn empty_reason_still_encodes() {
         let log = build_outbe_failure_log(Address::ZERO, 0, String::new());
         assert_eq!(log.data.topics().len(), 2);

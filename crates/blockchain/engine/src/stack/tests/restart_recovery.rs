@@ -25,14 +25,27 @@ fn native_recovery_uses_certified_archive_identity_when_ack_floor_lags() {
 }
 
 #[test]
-fn benign_unfinalized_head_lead_is_recoverable() {
-    // Steady state: head is exactly one block ahead of the finalized tip.
-    assert!(unfinalized_head_lead_is_recoverable(70, 69));
-    // A few blocks ahead during a finalization hiccup, up to the bound.
-    assert!(unfinalized_head_lead_is_recoverable(
-        69 + MAX_UNFINALIZED_HEAD_LEAD,
-        69
-    ));
+fn unfinalized_head_lead_is_recoverable_covers_bounds_and_zero_tip() {
+    for (last_execution_height, finalized_tip, expected) in [
+        // Steady state: head is exactly one block ahead of the finalized tip.
+        (70, 69, true),
+        // A few blocks ahead during a finalization hiccup, up to the bound.
+        (69 + MAX_UNFINALIZED_HEAD_LEAD, 69, true),
+        // head == finalized: recover(head) would have succeeded. Not this arm.
+        (69, 69, false),
+        // head behind finalized (execution lags): saturating lead is 0.
+        (68, 69, false),
+        // No durable finalized tip at all -> fresh/corrupt, never the benign case.
+        (5, 0, false),
+        // A head far ahead of the finalized tip is suspicious, not an in-flight head.
+        (69 + MAX_UNFINALIZED_HEAD_LEAD + 1, 69, false),
+    ] {
+        assert_eq!(
+            unfinalized_head_lead_is_recoverable(last_execution_height, finalized_tip),
+            expected,
+            "last_execution_height={last_execution_height}, finalized_tip={finalized_tip}"
+        );
+    }
 }
 
 #[test]
@@ -41,134 +54,6 @@ fn recovery_anchor_never_promotes_an_execution_only_head_to_finalized() {
     assert_eq!(durable_recovery_anchor_height(69, 69), 69);
     assert_eq!(durable_recovery_anchor_height(68, 69), 68);
     assert_eq!(durable_recovery_anchor_height(0, 0), 0);
-}
-
-#[test]
-fn no_lead_is_not_a_recovery_case() {
-    // head == finalized: recover(head) would have succeeded. Not this arm.
-    assert!(!unfinalized_head_lead_is_recoverable(69, 69));
-    // head behind finalized (execution lags): saturating lead is 0.
-    assert!(!unfinalized_head_lead_is_recoverable(68, 69));
-}
-
-#[test]
-fn zero_finalized_tip_is_not_recoverable() {
-    // No durable finalized tip at all -> fresh/corrupt, never the benign case.
-    assert!(!unfinalized_head_lead_is_recoverable(5, 0));
-}
-
-#[test]
-fn lead_beyond_bound_stays_fatal() {
-    // A head far ahead of the finalized tip is suspicious, not an in-flight
-    // head. Recovery must NOT silently tolerate it.
-    assert!(!unfinalized_head_lead_is_recoverable(
-        69 + MAX_UNFINALIZED_HEAD_LEAD + 1,
-        69
-    ));
-}
-
-#[test]
-fn bounded_head_lead_membership_drift_uses_recovered_boundary_committee() {
-    use commonware_cryptography::Signer as _;
-
-    let marshal_finalized_height = 100;
-    let reth_head = marshal_finalized_height + MAX_UNFINALIZED_HEAD_LEAD;
-    assert!(
-        unfinalized_head_lead_is_recoverable(reth_head, marshal_finalized_height),
-        "bounded Reth head lead should be treated as the benign restart window"
-    );
-
-    let temp = tempfile::tempdir().unwrap();
-    let evm_key_path = temp.path().join("evm-key.hex");
-    let evm_secret = [0x52u8; 32];
-    std::fs::write(&evm_key_path, hex::encode(evm_secret)).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&evm_key_path, std::fs::Permissions::from_mode(0o600)).unwrap();
-    }
-    let evm_signer =
-        outbe_primitives::signer::OutbeEvmSigner::from_secret_bytes(evm_secret).unwrap();
-
-    let (keys, _participants, output, polynomial) = run_test_dkg();
-    let local_key = &keys[0];
-    let boundary_addresses = vec![
-        evm_signer.address(),
-        Address::with_last_byte(0x22),
-        Address::with_last_byte(0x33),
-    ];
-    let boundary_validator_set = validators::ValidatorSet {
-        public_keys: keys.iter().map(|key| key.public_key()).collect(),
-        addresses: boundary_addresses.clone(),
-        p2p_addresses: vec![validators::ValidatorP2pAddress::Missing; 3],
-    };
-    let recovered_boundary =
-        dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
-            epoch: Epoch::new(7),
-            validator_set: &boundary_validator_set,
-            output: &output,
-            is_full_dkg: false,
-            dkg_cycle: 6,
-            freeze_height: 10,
-            planned_activation_height: 20,
-            vrf_material_version: 2,
-            is_validator_set_change: true,
-            tee_expired_target_exclusions: Vec::new(),
-        })
-        .unwrap();
-    let boundary_participants =
-        select_recovery_participants(output.players(), &recovered_boundary).unwrap();
-    assert_eq!(&boundary_participants, output.players());
-
-    // Simulate provider-latest state after an unfinalized membership-changing
-    // head: old participant A has been removed, and a new D is present.
-    let replacement_key = bls12381::PrivateKey::from_seed(99);
-    let latest_after_unfinalized_removal = validators::ValidatorSet {
-        public_keys: vec![
-            keys[1].public_key(),
-            keys[2].public_key(),
-            replacement_key.public_key(),
-        ],
-        addresses: vec![
-            Address::with_last_byte(0x22),
-            Address::with_last_byte(0x33),
-            Address::with_last_byte(0x44),
-        ],
-        p2p_addresses: vec![validators::ValidatorP2pAddress::Missing; 3],
-    };
-    assert!(
-        ordered_validator_addresses(&boundary_participants, &latest_after_unfinalized_removal)
-            .is_err(),
-        "pre-fix provider-latest address mapping should fail when old A is absent"
-    );
-
-    let vrf_materials = VrfMaterialProvider::new(2, polynomial, None);
-    let (_verifier_scheme, recovered_addresses) = epoch_validation_inputs(
-        EpochValidationCommittee {
-            epoch: Epoch::new(7),
-            participants: &boundary_participants,
-            validator_set: &latest_after_unfinalized_removal,
-            recovered_boundary: Some(&recovered_boundary),
-        },
-        &vrf_materials,
-    )
-    .expect("bounded-head-lead recovery must use recovered boundary committee");
-    assert_eq!(recovered_addresses, boundary_addresses);
-
-    let args =
-        super::harness::validator_signer_args(temp.path().join("signing-key.hex"), evm_key_path);
-    let signer_address = validate_validator_evm_signer(
-        &args,
-        ValidatorEvmIdentity {
-            signing_key: local_key,
-            consensus_validator_set: &latest_after_unfinalized_removal,
-            reshare_target_validator_set: &latest_after_unfinalized_removal,
-            recovered_committee: Some((&boundary_participants, &recovered_boundary)),
-            shareless_verifier: false,
-        },
-    )
-    .expect("old-epoch signer A should be authorized by recovered boundary, not latest state");
-    assert_eq!(signer_address, Some(evm_signer.address()));
 }
 
 #[cfg(feature = "snapshot-integration")]

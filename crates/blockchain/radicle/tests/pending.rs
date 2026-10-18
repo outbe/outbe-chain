@@ -74,10 +74,16 @@ fn unknown_anchor_lifecycle() {
     body.anchor_hash = alloy_primitives::B256::repeat_byte(0x88);
     body.valid_until = 200;
     let response = outbe_radicle::endpoint::sign_response(body, &signer).unwrap();
+    let expected_bytes =
+        outbe_radicle::endpoint::EndpointFrame::Response(Box::new(response.clone()))
+            .encode()
+            .len();
     assert_eq!(
         protocol.receive(peer, response, 100, None, 1).unwrap(),
         ReceiveOutcome::Queued { anchor_number: 101 }
     );
+    assert_eq!(protocol.stats().queued, 1);
+    assert_eq!(protocol.stats().queued_bytes, expected_bytes);
     assert_eq!(
         protocol.request(peer, 2),
         Err(ProtocolError::AlreadyPending)
@@ -97,6 +103,7 @@ fn unknown_anchor_lifecycle() {
     assert_eq!(resolved.len(), 1);
     assert!(resolved[0].result.is_ok());
     assert_eq!(protocol.stats().queued, 0);
+    assert_eq!(protocol.stats().queued_bytes, 0);
 }
 
 #[test]
@@ -125,21 +132,21 @@ fn queued_id_and_expiry() {
     let mut body = support::body(duplicate, validator, node_id);
     body.anchor_number = 101;
     body.anchor_hash = alloy_primitives::B256::repeat_byte(0x91);
-    protocol
-        .receive(
-            peer,
-            outbe_radicle::endpoint::sign_response(body, &signer).unwrap(),
-            100,
-            None,
-            1,
-        )
-        .unwrap();
+    let response = outbe_radicle::endpoint::sign_response(body, &signer).unwrap();
+    let expected_bytes =
+        outbe_radicle::endpoint::EndpointFrame::Response(Box::new(response.clone()))
+            .encode()
+            .len();
+    protocol.receive(peer, response, 100, None, 1).unwrap();
+    assert_eq!(protocol.stats().queued, 1);
+    assert_eq!(protocol.stats().queued_bytes, expected_bytes);
     assert_eq!(
         protocol.request(support::peer(&support::key(25)), 2),
         Err(ProtocolError::RequestIdExhausted)
     );
     protocol.expire(1 + UNKNOWN_ANCHOR_TIMEOUT_MS);
     assert_eq!(protocol.stats().queued, 0);
+    assert_eq!(protocol.stats().queued_bytes, 0);
 }
 
 #[test]
@@ -229,18 +236,36 @@ fn future_distance_is_terminal() {
     let peer = support::peer(&signer);
     let validator = Address::repeat_byte(0x24);
     let node_id = [0x25; 32];
-    let mut protocol = EndpointProtocol::new(support::chain(), Ids::from([[5; 32], [6; 32]]));
-    protocol.request(peer, 0).unwrap();
+    let max_peer_signer = support::key(220);
+    let max_peer = support::peer(&max_peer_signer);
+    let mut protocol =
+        EndpointProtocol::new(support::chain(), Ids::from([[4; 32], [5; 32], [6; 32]]));
+
+    // Inclusive upper boundary: distance == MAX_FUTURE_ANCHOR_DISTANCE is accepted and queued.
+    protocol.request(max_peer, 0).unwrap();
+    let mut at_max = support::body([4; 32], Address::repeat_byte(0x23), [0x24; 32]);
+    at_max.anchor_number = 100 + MAX_FUTURE_ANCHOR_DISTANCE;
+    at_max.valid_until = at_max.anchor_number + 1;
+    let at_max_response = outbe_radicle::endpoint::sign_response(at_max, &max_peer_signer).unwrap();
+    assert_eq!(
+        protocol.receive(max_peer, at_max_response, 100, None, 1),
+        Ok(ReceiveOutcome::Queued {
+            anchor_number: 100 + MAX_FUTURE_ANCHOR_DISTANCE
+        })
+    );
+
+    // Distance == MAX_FUTURE_ANCHOR_DISTANCE + 1 is rejected as FutureDistance and frees pending slot.
+    protocol.request(peer, 1).unwrap();
     let mut body = support::body([5; 32], validator, node_id);
     body.anchor_number = 100 + MAX_FUTURE_ANCHOR_DISTANCE + 1;
     body.valid_until = body.anchor_number + 1;
     let response = outbe_radicle::endpoint::sign_response(body, &signer).unwrap();
     assert_eq!(
-        protocol.receive(peer, response, 100, None, 1),
+        protocol.receive(peer, response, 100, None, 2),
         Err(ProtocolError::FutureDistance)
     );
     assert_eq!(protocol.stats().pending, 0);
-    assert!(protocol.request(peer, 2).is_ok());
+    assert!(protocol.request(peer, 3).is_ok());
 }
 
 #[test]

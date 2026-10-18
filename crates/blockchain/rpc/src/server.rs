@@ -160,6 +160,160 @@ impl<P> OutbeApiHandler<P> {
         self.tee_enclave_health = channel;
         self
     }
+
+    pub(crate) fn sync_status_info(&self) -> SyncStatusInfo {
+        match &self.bridge {
+            Some(b) => {
+                let consensus = b.consensus_status();
+                SyncStatusInfo {
+                    is_syncing: !consensus.is_active(),
+                    current_block: consensus.last_finalized_block,
+                    highest_block: consensus.last_finalized_block,
+                    consensus_active: consensus.is_active(),
+                    connected_peers: consensus.connected_peers,
+                }
+            }
+            None => {
+                // Full-node mode: DevP2P handles sync (eth_syncing).
+                // Report not syncing because this node has no consensus bridge.
+                SyncStatusInfo {
+                    is_syncing: false,
+                    current_block: 0,
+                    highest_block: 0,
+                    consensus_active: false,
+                    connected_peers: 0,
+                }
+            }
+        }
+    }
+
+    pub(crate) async fn derive_keys_checked(
+        &self,
+        ledger: outbe_tee::protocol::Ledger,
+        account: Address,
+        ephemeral_pubkey: B256,
+        signature: alloy_primitives::Bytes,
+    ) -> RpcResult<GratisKeysSealed> {
+        use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
+
+        // Prove that the caller controls `account` before the enclave derives its
+        // (secret) modify key. Recover the EIP-191 personal_sign signer over
+        // `"outbe/<ledger>/derive-keys/v1" || account || ephemeralPubkey`. Require
+        // the signer to equal `account`.
+        let sig65: [u8; 65] = signature.as_ref().try_into().map_err(|_| {
+            invalid_params_err(
+                crate::errors::RpcInvalidParamsError::InvalidSignatureLength(signature.len()),
+            )
+        })?;
+        // Recover the signer to reject unauthorized requests before the enclave round-trip.
+        // This adds defense in depth. The enclave also verifies the signature.
+        // A compromised host could bypass this check and reach the enclave transport directly.
+        // See the DeriveAccountKeys arm.
+        let prehash = outbe_tee::protocol::eip191_hash(
+            &outbe_tee::protocol::derive_account_keys_message(ledger, account, ephemeral_pubkey),
+        );
+        let recovered = outbe_primitives::tee_signatures::recover_signer(&prehash, &sig65)
+            .map_err(|e| {
+                invalid_params_err(
+                    crate::errors::RpcInvalidParamsError::signature_recovery_failed(e),
+                )
+            })?;
+        if recovered != account {
+            return Err(invalid_params_err(
+                crate::errors::RpcInvalidParamsError::SignatureSignerMismatch {
+                    recovered,
+                    account,
+                },
+            ));
+        }
+
+        // Off-chain key delivery through the process-global enclave client (no state).
+        // Pass `owner_sig` to the enclave so that the enclave enforces ownership in its
+        // own trust domain, not ours.
+        let response = outbe_tee::try_account_query(&EnclaveRequest::DeriveAccountKeys {
+            ledger,
+            account,
+            requester_ephemeral_pubkey: ephemeral_pubkey.0,
+            owner_sig: sig65.to_vec(),
+        })
+        .ok_or_else(|| internal_err(crate::errors::RpcInternalError::TeeEnclaveNotConfigured))?
+        .map_err(|e| {
+            internal_err(crate::errors::RpcInternalError::enclave_derive_account_keys_failed(e))
+        })?;
+        match response {
+            EnclaveResponse::AccountKeysSealed {
+                sealed,
+                nonce,
+                enclave_ephemeral_pubkey,
+                ..
+            } => Ok(GratisKeysSealed {
+                sealed: sealed.into(),
+                nonce: nonce.to_vec().into(),
+                enclave_ephemeral_pubkey: B256::from(enclave_ephemeral_pubkey),
+            }),
+            EnclaveResponse::Error { message } => Err(internal_err(
+                crate::errors::RpcInternalError::EnclaveError(message),
+            )),
+            other => Err(internal_err(
+                crate::errors::RpcInternalError::unexpected_enclave_response(other),
+            )),
+        }
+    }
+
+    pub(crate) async fn derive_gratis_keys_checked(
+        &self,
+        account: Address,
+        ephemeral_pubkey: B256,
+        signature: alloy_primitives::Bytes,
+    ) -> RpcResult<GratisKeysSealed> {
+        self.derive_keys_checked(
+            outbe_tee::protocol::Ledger::Gratis,
+            account,
+            ephemeral_pubkey,
+            signature,
+        )
+        .await
+    }
+
+    pub(crate) async fn finality_proof_for_height(
+        &self,
+        height: u64,
+    ) -> RpcResult<crate::api::AncestorFinalizationProof> {
+        let bridge = self.bridge.as_ref().ok_or_else(|| {
+            internal_err(crate::errors::RpcInternalError::NotServingConsensusFinalizations)
+        })?;
+        let mut ancestors = Vec::new();
+        let mut total_bytes = 0usize;
+        for offset in 0..=64u64 {
+            let next = height.checked_add(offset).ok_or_else(|| {
+                internal_err(crate::errors::RpcInternalError::ProofHeightOverflow)
+            })?;
+            let proof = bridge.request_finalization(next).await.ok_or_else(|| {
+                internal_err(crate::errors::RpcInternalError::NoFinalityEvidenceAvailable(next))
+            })?;
+            total_bytes = total_bytes.saturating_add(proof.block.len());
+            // Hex JSON doubles the block payload. Stay below the default
+            // upstream HTTP client's 10 MiB response bound with envelope room.
+            if total_bytes > 4 * 1024 * 1024 {
+                return Err(internal_err(
+                    crate::errors::RpcInternalError::AncestorFinalityProofExceedsByteLimit,
+                ));
+            }
+            if !proof.finalization.is_empty() {
+                return Ok(crate::api::AncestorFinalizationProof {
+                    certified: FinalizationProof {
+                        finalization_hex: format!("0x{}", hex::encode(proof.finalization)),
+                        block_hex: format!("0x{}", hex::encode(proof.block)),
+                    },
+                    ancestor_blocks_hex: ancestors,
+                });
+            }
+            ancestors.push(format!("0x{}", hex::encode(proof.block)));
+        }
+        Err(internal_err(
+            crate::errors::RpcInternalError::NoDescendantFinalizationWithin64Blocks,
+        ))
+    }
 }
 
 /// Map the canary snapshot into the RPC shape. The function is pure so that unit
@@ -364,70 +518,8 @@ where
         ephemeral_pubkey: B256,
         signature: alloy_primitives::Bytes,
     ) -> RpcResult<GratisKeysSealed> {
-        use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
-
-        // Prove that the caller controls `account` before the enclave derives its
-        // (secret) modify key. Recover the EIP-191 personal_sign signer over
-        // `"outbe/<ledger>/derive-keys/v1" || account || ephemeralPubkey`. Require
-        // the signer to equal `account`.
-        let sig65: [u8; 65] = signature.as_ref().try_into().map_err(|_| {
-            invalid_params_err(
-                crate::errors::RpcInvalidParamsError::InvalidSignatureLength(signature.len()),
-            )
-        })?;
-        // Recover the signer to reject unauthorized requests before the enclave round-trip.
-        // This adds defense in depth. The enclave also verifies the signature.
-        // A compromised host could bypass this check and reach the enclave transport directly.
-        // See the DeriveAccountKeys arm.
-        let prehash = outbe_tee::protocol::eip191_hash(
-            &outbe_tee::protocol::derive_account_keys_message(ledger, account, ephemeral_pubkey),
-        );
-        let recovered = outbe_primitives::tee_signatures::recover_signer(&prehash, &sig65)
-            .map_err(|e| {
-                invalid_params_err(
-                    crate::errors::RpcInvalidParamsError::signature_recovery_failed(e),
-                )
-            })?;
-        if recovered != account {
-            return Err(invalid_params_err(
-                crate::errors::RpcInvalidParamsError::SignatureSignerMismatch {
-                    recovered,
-                    account,
-                },
-            ));
-        }
-
-        // Off-chain key delivery through the process-global enclave client (no state).
-        // Pass `owner_sig` to the enclave so that the enclave enforces ownership in its
-        // own trust domain, not ours.
-        let response = outbe_tee::try_account_query(&EnclaveRequest::DeriveAccountKeys {
-            ledger,
-            account,
-            requester_ephemeral_pubkey: ephemeral_pubkey.0,
-            owner_sig: sig65.to_vec(),
-        })
-        .ok_or_else(|| internal_err(crate::errors::RpcInternalError::TeeEnclaveNotConfigured))?
-        .map_err(|e| {
-            internal_err(crate::errors::RpcInternalError::enclave_derive_account_keys_failed(e))
-        })?;
-        match response {
-            EnclaveResponse::AccountKeysSealed {
-                sealed,
-                nonce,
-                enclave_ephemeral_pubkey,
-                ..
-            } => Ok(GratisKeysSealed {
-                sealed: sealed.into(),
-                nonce: nonce.to_vec().into(),
-                enclave_ephemeral_pubkey: B256::from(enclave_ephemeral_pubkey),
-            }),
-            EnclaveResponse::Error { message } => Err(internal_err(
-                crate::errors::RpcInternalError::EnclaveError(message),
-            )),
-            other => Err(internal_err(
-                crate::errors::RpcInternalError::unexpected_enclave_response(other),
-            )),
-        }
+        self.derive_keys_checked(ledger, account, ephemeral_pubkey, signature)
+            .await
     }
 
     async fn derive_gratis_keys(
@@ -436,14 +528,8 @@ where
         ephemeral_pubkey: B256,
         signature: alloy_primitives::Bytes,
     ) -> RpcResult<GratisKeysSealed> {
-        // Deprecated alias for the Gratis ledger of the unified `deriveKeys`.
-        self.derive_keys(
-            outbe_tee::protocol::Ledger::Gratis,
-            account,
-            ephemeral_pubkey,
-            signature,
-        )
-        .await
+        self.derive_gratis_keys_checked(account, ephemeral_pubkey, signature)
+            .await
     }
 
     async fn get_validators(&self) -> RpcResult<Vec<ValidatorInfo>> {
@@ -638,29 +724,7 @@ where
     }
 
     async fn sync_status(&self) -> RpcResult<SyncStatusInfo> {
-        match &self.bridge {
-            Some(b) => {
-                let consensus = b.consensus_status();
-                Ok(SyncStatusInfo {
-                    is_syncing: !consensus.is_active(),
-                    current_block: consensus.last_finalized_block,
-                    highest_block: consensus.last_finalized_block,
-                    consensus_active: consensus.is_active(),
-                    connected_peers: consensus.connected_peers,
-                })
-            }
-            None => {
-                // Full-node mode: DevP2P handles sync (eth_syncing).
-                // Report not syncing because this node has no consensus bridge.
-                Ok(SyncStatusInfo {
-                    is_syncing: false,
-                    current_block: 0,
-                    highest_block: 0,
-                    consensus_active: false,
-                    connected_peers: 0,
-                })
-            }
-        }
+        Ok(self.sync_status_info())
     }
 
     async fn radicle_status(&self) -> RpcResult<RadicleStatusInfo> {
@@ -736,40 +800,7 @@ where
         &self,
         height: u64,
     ) -> RpcResult<crate::api::AncestorFinalizationProof> {
-        let bridge = self.bridge.as_ref().ok_or_else(|| {
-            internal_err(crate::errors::RpcInternalError::NotServingConsensusFinalizations)
-        })?;
-        let mut ancestors = Vec::new();
-        let mut total_bytes = 0usize;
-        for offset in 0..=64u64 {
-            let next = height.checked_add(offset).ok_or_else(|| {
-                internal_err(crate::errors::RpcInternalError::ProofHeightOverflow)
-            })?;
-            let proof = bridge.request_finalization(next).await.ok_or_else(|| {
-                internal_err(crate::errors::RpcInternalError::NoFinalityEvidenceAvailable(next))
-            })?;
-            total_bytes = total_bytes.saturating_add(proof.block.len());
-            // Hex JSON doubles the block payload. Stay below the default
-            // upstream HTTP client's 10 MiB response bound with envelope room.
-            if total_bytes > 4 * 1024 * 1024 {
-                return Err(internal_err(
-                    crate::errors::RpcInternalError::AncestorFinalityProofExceedsByteLimit,
-                ));
-            }
-            if !proof.finalization.is_empty() {
-                return Ok(crate::api::AncestorFinalizationProof {
-                    certified: FinalizationProof {
-                        finalization_hex: format!("0x{}", hex::encode(proof.finalization)),
-                        block_hex: format!("0x{}", hex::encode(proof.block)),
-                    },
-                    ancestor_blocks_hex: ancestors,
-                });
-            }
-            ancestors.push(format!("0x{}", hex::encode(proof.block)));
-        }
-        Err(internal_err(
-            crate::errors::RpcInternalError::NoDescendantFinalizationWithin64Blocks,
-        ))
+        self.finality_proof_for_height(height).await
     }
 }
 
@@ -796,7 +827,7 @@ fn invalid_params_err(msg: impl std::fmt::Display) -> jsonrpsee::types::ErrorObj
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::B256;
+    use alloy_primitives::{Address, Bytes, B256};
     use commonware_cryptography::{bls12381, Signer as _};
     use outbe_radicle::{
         endpoint::{sign_response, EndpointAddress, EndpointFrame, EndpointResponseBody, PeerId},
@@ -951,5 +982,155 @@ mod tests {
         assert_eq!(info.encoded_frame.as_ref(), evidence.encoded_frame);
         assert_eq!(info.addresses, ["peer.example.com:8776"]);
         assert_eq!(info.valid_until_height, 80);
+    }
+
+    #[tokio::test]
+    async fn derive_keys_and_gratis_alias_reject_invalid_and_mismatched_signatures() {
+        let handler = super::OutbeApiHandler::new(std::sync::Arc::new(()));
+        let account = Address::repeat_byte(0x11);
+        let ephemeral_pubkey = B256::repeat_byte(0x22);
+
+        let short_err = handler
+            .derive_keys_checked(
+                outbe_tee::protocol::Ledger::Gratis,
+                account,
+                ephemeral_pubkey,
+                Bytes::from_static(&[1, 2, 3]),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(
+            short_err.code(),
+            jsonrpsee::types::error::INVALID_PARAMS_CODE
+        );
+        assert_eq!(
+            short_err.message(),
+            "signature must be 65 bytes (r||s||v), got 3"
+        );
+
+        let malformed_err = handler
+            .derive_gratis_keys_checked(account, ephemeral_pubkey, Bytes::from([0xff; 65]))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            malformed_err.code(),
+            jsonrpsee::types::error::INVALID_PARAMS_CODE
+        );
+        assert!(malformed_err
+            .message()
+            .starts_with("signature recovery failed:"));
+
+        let prehash =
+            outbe_tee::protocol::eip191_hash(&outbe_tee::protocol::derive_account_keys_message(
+                outbe_tee::protocol::Ledger::Gratis,
+                account,
+                ephemeral_pubkey,
+            ));
+        let (foreign_sig, recovered) = (1u8..=16)
+            .find_map(|r_byte| {
+                let mut sig = [0u8; 65];
+                sig[31] = r_byte;
+                sig[63] = 1;
+                sig[64] = 27;
+                outbe_primitives::tee_signatures::recover_signer(&prehash, &sig)
+                    .ok()
+                    .filter(|addr| *addr != account)
+                    .map(|addr| (sig, addr))
+            })
+            .expect("should find a recoverable secp256k1 point");
+
+        for err in [
+            handler
+                .derive_keys_checked(
+                    outbe_tee::protocol::Ledger::Gratis,
+                    account,
+                    ephemeral_pubkey,
+                    Bytes::copy_from_slice(&foreign_sig),
+                )
+                .await
+                .unwrap_err(),
+            handler
+                .derive_gratis_keys_checked(
+                    account,
+                    ephemeral_pubkey,
+                    Bytes::copy_from_slice(&foreign_sig),
+                )
+                .await
+                .unwrap_err(),
+        ] {
+            assert_eq!(err.code(), jsonrpsee::types::error::INVALID_PARAMS_CODE);
+            assert_eq!(
+                err.message(),
+                format!("signature signer {recovered} does not control account {account}")
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn get_finality_proof_enforces_bridge_overflow_window_and_byte_limits() {
+        use outbe_primitives::consensus::{ConsensusExecutionBridge, FinalizedBlockBytes};
+
+        let no_bridge = super::OutbeApiHandler::new(std::sync::Arc::new(()));
+        let err = no_bridge.finality_proof_for_height(1).await.unwrap_err();
+        assert_eq!(err.code(), jsonrpsee::types::error::INTERNAL_ERROR_CODE);
+        assert_eq!(err.message(), "node is not serving consensus finalizations");
+
+        // Overflow when walking from u64::MAX without a direct certificate at u64::MAX.
+        let overflow_bridge = ConsensusExecutionBridge::new();
+        let mut overflow_rx = overflow_bridge.set_finalization_fetcher();
+        tokio::spawn(async move {
+            if let Some((height, reply)) = overflow_rx.recv().await {
+                assert_eq!(height, u64::MAX);
+                let _ = reply.send(Some(FinalizedBlockBytes {
+                    finalization: Bytes::new(),
+                    block: Bytes::from_static(&[0xaa]),
+                }));
+            }
+        });
+        let overflow_handler =
+            super::OutbeApiHandler::with_bridge(std::sync::Arc::new(()), overflow_bridge);
+        let err = overflow_handler
+            .finality_proof_for_height(u64::MAX)
+            .await
+            .unwrap_err();
+        assert_eq!(err.message(), "proof height overflow");
+
+        // Exceeds 4 MiB total block payload limit.
+        let oversize_bridge = ConsensusExecutionBridge::new();
+        let mut oversize_rx = oversize_bridge.set_finalization_fetcher();
+        tokio::spawn(async move {
+            if let Some((_, reply)) = oversize_rx.recv().await {
+                let _ = reply.send(Some(FinalizedBlockBytes {
+                    finalization: Bytes::from_static(&[0x01]),
+                    block: Bytes::from(vec![0u8; 4 * 1024 * 1024 + 1]),
+                }));
+            }
+        });
+        let oversize_handler =
+            super::OutbeApiHandler::with_bridge(std::sync::Arc::new(()), oversize_bridge);
+        let err = oversize_handler
+            .finality_proof_for_height(10)
+            .await
+            .unwrap_err();
+        assert_eq!(err.message(), "ancestor finality proof exceeds byte limit");
+
+        // 65 consecutive uncertified blocks (offsets 0..=64) exhaust the 64-block descendant window.
+        let window_bridge = ConsensusExecutionBridge::new();
+        let mut window_rx = window_bridge.set_finalization_fetcher();
+        tokio::spawn(async move {
+            while let Some((_, reply)) = window_rx.recv().await {
+                let _ = reply.send(Some(FinalizedBlockBytes {
+                    finalization: Bytes::new(),
+                    block: Bytes::from_static(&[0xbb]),
+                }));
+            }
+        });
+        let window_handler =
+            super::OutbeApiHandler::with_bridge(std::sync::Arc::new(()), window_bridge);
+        let err = window_handler
+            .finality_proof_for_height(100)
+            .await
+            .unwrap_err();
+        assert_eq!(err.message(), "no descendant finalization within 64 blocks");
     }
 }

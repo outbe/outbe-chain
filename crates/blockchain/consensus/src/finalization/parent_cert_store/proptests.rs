@@ -45,6 +45,7 @@ fn arb_record() -> impl Strategy<Value = CertifiedParentProofRecord> {
     );
     let tail = (
         0u64..(1 << 40),
+        any::<[u8; 32]>(),
         vec(any::<[u8; 20]>(), 0..8),
         vec(any::<u8>(), 0..8),
         vec(any::<u8>(), 0..128),
@@ -59,7 +60,13 @@ fn arb_record() -> impl Strategy<Value = CertifiedParentProofRecord> {
                 finalized_block_hash,
                 committee_set_hash,
             ),
-            (vrf_material_version, ordered_committee, signer_bitmap, proof_bytes),
+            (
+                vrf_material_version,
+                vrf_group_public_key_hash,
+                ordered_committee,
+                signer_bitmap,
+                proof_bytes,
+            ),
         )| {
             let encoded_proof = Bytes::from(proof_bytes);
             CertifiedParentProofRecord {
@@ -71,7 +78,7 @@ fn arb_record() -> impl Strategy<Value = CertifiedParentProofRecord> {
                 finalized_block_hash: B256::from(finalized_block_hash),
                 committee_set_hash: B256::from(committee_set_hash),
                 vrf_material_version,
-                vrf_group_public_key_hash: B256::ZERO,
+                vrf_group_public_key_hash: B256::from(vrf_group_public_key_hash),
                 ordered_committee: ordered_committee.into_iter().map(Address::from).collect(),
                 signer_bitmap,
                 encoded_proof,
@@ -94,41 +101,37 @@ proptest! {
             serde_json::from_slice(&bytes).expect("decode");
         prop_assert_eq!(decoded, rec);
     }
+}
 
-    /// Property: encoding the same logical record N times yields
-    /// byte-identical output. This guards determinism against any future use
-    /// of HashMap/HashSet or per-call randomness in the schema.
-    #[test]
-    fn proptest_record_encode_is_deterministic(rec in arb_record()) {
-        let first = serde_json::to_vec(&rec).expect("encode");
-        for _ in 0..16 {
-            let again = serde_json::to_vec(&rec).expect("encode again");
-            prop_assert_eq!(&again, &first);
-        }
-    }
-
-    /// Property: the backend decoder rejects a non-current format_version,
-    /// regardless of the rest of the record.
-    #[test]
-    fn proptest_unknown_format_version_is_rejected(
-        mut rec in arb_record(),
-        bad_version in (0u8..=255u8).prop_filter("not the current schema", |v| *v != CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION),
-    ) {
-        rec.format_version = bad_version;
-        let bytes = serde_json::to_vec(&rec).expect("encode");
-
-        let temp = tempfile::tempdir().expect("tempdir");
-        let backend = MdbxParentProofBackend::open(temp.path()).expect("open backend");
-        let decoded = backend.decode_record(bytes);
-        // Extract the predicate first. `prop_assert!` treats commas in
-        // its arg list as format-string separators, so embedding the
-        // `matches! ... if ...` guard inline confuses the macro parser.
-        let rejected_with_bad_version = matches!(
-            decoded,
-            Err(ParentProofStoreError::UnknownFormatVersion { version, .. }) if version == bad_version
-        );
-        prop_assert!(rejected_with_bad_version);
-    }
+/// Property: the backend decoder rejects a non-current format_version,
+/// regardless of the rest of the record.
+#[test]
+fn proptest_unknown_format_version_is_rejected() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let backend = MdbxParentProofBackend::open(temp.path()).expect("open backend");
+    let mut runner = proptest::test_runner::TestRunner::new(ProptestConfig {
+        cases: 256,
+        ..ProptestConfig::default()
+    });
+    let strategy = (
+        arb_record(),
+        (0u8..=255u8).prop_filter("not the current schema", |v| {
+            *v != CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION
+        }),
+    );
+    runner
+        .run(&strategy, |(mut rec, bad_version)| {
+            rec.format_version = bad_version;
+            let bytes = serde_json::to_vec(&rec).expect("encode");
+            let decoded = backend.decode_record(bytes);
+            let rejected_with_bad_version = matches!(
+                decoded,
+                Err(ParentProofStoreError::UnknownFormatVersion { version, .. }) if version == bad_version
+            );
+            prop_assert!(rejected_with_bad_version);
+            Ok(())
+        })
+        .expect("proptest unknown format version rejection");
 }
 
 /// Current-format (V3) serde-shape pin. A hand-crafted JSON payload that

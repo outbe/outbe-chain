@@ -134,4 +134,33 @@ mod pledge_tests {
         assert_eq!(convert_to_u256(U512::from(U256::MAX)).unwrap(), U256::MAX);
         assert!(convert_to_u256(U512::from(U256::MAX) + U512::ONE).is_err());
     }
+
+    #[test]
+    fn checked_mul_div_floor_and_ceil_cover_exact_remainder_and_error_paths() {
+        // Exact division: floor and ceil agree.
+        assert_eq!(
+            checked_mul_div_floor(U256::from(6u64), U256::from(4u64), U256::from(3u64)).unwrap(),
+            U256::from(8u64)
+        );
+        assert_eq!(
+            checked_mul_div_ceil(U256::from(6u64), U256::from(4u64), U256::from(3u64)).unwrap(),
+            U256::from(8u64)
+        );
+
+        // Non-zero remainder: 7 * 3 / 4 = 21 / 4 -> floor = 5, ceil = 6.
+        assert_eq!(
+            checked_mul_div_floor(U256::from(7u64), U256::from(3u64), U256::from(4u64)).unwrap(),
+            U256::from(5u64)
+        );
+        assert_eq!(
+            checked_mul_div_ceil(U256::from(7u64), U256::from(3u64), U256::from(4u64)).unwrap(),
+            U256::from(6u64)
+        );
+
+        // Division by zero and product overflow.
+        assert!(checked_mul_div_floor(U256::ONE, U256::ONE, U256::ZERO).is_err());
+        assert!(checked_mul_div_ceil(U256::ONE, U256::ONE, U256::ZERO).is_err());
+        assert!(checked_mul_div_floor(U256::MAX, U256::from(2u64), U256::from(2u64)).is_err());
+        assert!(checked_mul_div_ceil(U256::MAX, U256::from(2u64), U256::from(2u64)).is_err());
+    }
 }

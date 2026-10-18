@@ -352,25 +352,55 @@ mod tests {
 
     #[test]
     fn init_then_record_writes_lines_and_survives_reopen() {
+        const CHILD_DIR_ENV: &str = "OUTBE_GOVERNANCE_JOURNAL_CHILD_DIR";
+        const CHILD_BLOCK_ENV: &str = "OUTBE_GOVERNANCE_JOURNAL_CHILD_BLOCK";
+
+        if let Some(dir) = std::env::var_os(CHILD_DIR_ENV) {
+            let block_number: u64 = std::env::var(CHILD_BLOCK_ENV)
+                .expect("child block env")
+                .parse()
+                .expect("valid block number");
+            let dir = std::path::PathBuf::from(dir);
+            init(&dir).expect("init governance journal in child");
+            record(JournalRecord::proposal_expired(
+                block_number,
+                sample_proposal(),
+                sample_tally(),
+            ));
+            return;
+        }
+
         let dir = tempfile::tempdir().expect("tempdir");
-        let path = journal_path(dir.path());
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .unwrap();
-        let mut writer = std::io::BufWriter::new(file);
-        let rec = JournalRecord::proposal_expired(19_200, sample_proposal(), sample_tally());
-        writeln!(writer, "{}", serde_json::to_string(&rec).unwrap()).unwrap();
-        writer.flush().unwrap();
-        drop(writer);
+        let nested = dir.path().join("nested");
+        let path = journal_path(&nested);
+        let exe = std::env::current_exe().expect("current test binary");
+
+        for block_number in ["19200", "19201"] {
+            let output = std::process::Command::new(&exe)
+                .arg("--exact")
+                .arg("governance_journal::tests::init_then_record_writes_lines_and_survives_reopen")
+                .arg("--nocapture")
+                .env(CHILD_DIR_ENV, &nested)
+                .env(CHILD_BLOCK_ENV, block_number)
+                .output()
+                .expect("spawn child process");
+            assert!(
+                output.status.success(),
+                "child failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
 
         let mut content = String::new();
         std::fs::File::open(&path)
             .unwrap()
             .read_to_string(&mut content)
             .unwrap();
-        assert!(content.contains("\"event\":\"proposal_expired\""));
-        assert!(content.contains("\"block_number\":19200"));
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(lines.len(), 2, "expected old + new JSONL records");
+        assert!(lines[0].contains("\"event\":\"proposal_expired\""));
+        assert!(lines[0].contains("\"block_number\":19200"));
+        assert!(lines[1].contains("\"event\":\"proposal_expired\""));
+        assert!(lines[1].contains("\"block_number\":19201"));
     }
 }

@@ -379,6 +379,16 @@ fn local_boundary_recovery_requires_material_or_explicit_shareless_provisioning(
         .unwrap()
         .to_string();
     assert!(
+        error.contains("startup cannot recover threshold material before sync starts"),
+        "{error}"
+    );
+    assert!(error.contains("--consensus.public-polynomial"), "{error}");
+    assert!(error.contains("--consensus.dkg-output"), "{error}");
+    assert!(
+        error.contains("without --consensus.signing-share"),
+        "{error}"
+    );
+    assert!(
         error.contains("saved and pending DKG material do not match"),
         "{error}"
     );

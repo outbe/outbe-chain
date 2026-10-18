@@ -141,6 +141,20 @@ fn recovery_persists_seed_and_self_ack_before_networking_and_arms_retry_afterwar
             .unwrap();
         assert_eq!(fixture.sender.sent.lock().unwrap().len(), 3);
         assert_eq!(state.roles.acked_players.len(), 1);
+        assert!(
+            state
+                .roles
+                .acked_players
+                .contains(&fixture.keys[0].public_key()),
+            "acked_players must contain only the local self-ack after startup"
+        );
+        assert!(
+            !state
+                .roles
+                .unsent_shares
+                .contains_key(&fixture.keys[0].public_key()),
+            "self share must not remain in unsent_shares"
+        );
         assert_eq!(state.next_retry_tick, clock.current() + RETRY_INTERVAL);
         assert_eq!(state.deadline, clock.current() + DKG_TIMEOUT);
         assert!(state.ack_collection_deadline.is_none());
@@ -161,12 +175,36 @@ fn recovered_remote_ack_confirms_replay_without_counting_a_new_ack() {
             ceremony_id: state.ceremony_id,
             ack: ack.clone(),
         };
+        assert!(
+            state.roles.unsent_shares.contains_key(&from),
+            "unacknowledged remote player must start in unsent_shares"
+        );
+        assert_eq!(state.roles.acked_players.len(), 1);
         assert_eq!(
             state
                 .handle_message(from.clone(), message.clone(), &mut fixture.sender, &None)
                 .await
                 .unwrap(),
             MessageOutcome::Advance
+        );
+        assert_eq!(state.roles.acked_players.len(), 2);
+        assert!(state.roles.acked_players.contains(&from));
+        assert!(
+            !state.roles.unsent_shares.contains_key(&from),
+            "valid remote ACK must remove player from unsent_shares retry set"
+        );
+        // Duplicate remote ACK before restart must not inflate acked_players count.
+        assert_eq!(
+            state
+                .handle_message(from.clone(), message.clone(), &mut fixture.sender, &None)
+                .await
+                .unwrap(),
+            MessageOutcome::Advance
+        );
+        assert_eq!(
+            state.roles.acked_players.len(),
+            2,
+            "duplicate remote ACK must not increment acked_players"
         );
         let persisted = fixture
             .sender
@@ -175,7 +213,6 @@ fn recovered_remote_ack_confirms_replay_without_counting_a_new_ack() {
             .unwrap()
             .unwrap();
         assert_eq!(persisted.accepted_acks[&from].encode(), ack.encode());
-        assert!(!state.roles.unsent_shares.contains_key(&from));
         drop(state);
 
         let mut restarted =

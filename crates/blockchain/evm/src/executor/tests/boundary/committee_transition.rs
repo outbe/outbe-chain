@@ -143,49 +143,121 @@ fn test_committee_size_change_participation_safety() {
     });
 }
 
-/// Task 01 test: re-execution of reshare activation is idempotent.
-///
-/// Calling activate_reshared_set() twice with same hash must not
-/// change state the second time (idempotency guard).
+/// Re-execution of a boundary outcome from the same parent state produces
+/// identical post-state, while a stale repeat on the already-advanced post-state
+/// is rejected without mutating storage, epoch, or active set.
 #[test]
 fn test_reshare_activation_idempotent() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    StorageHandle::enter(&mut storage, |storage| {
+    let mut parent = HashMapStorageProvider::new(CHAIN_ID);
+    let val_a = address!("0x1111111111111111111111111111111111111111");
+    let val_b = address!("0x2222222222222222222222222222222222222222");
+    let val_c = address!("0x3333333333333333333333333333333333333333");
+
+    StorageHandle::enter(&mut parent, |storage| {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(128).unwrap();
         vs.config_is_initialized.write(true).unwrap();
 
-        let val_a = address!("0x1111111111111111111111111111111111111111");
-        let val_b = address!("0x2222222222222222222222222222222222222222");
-
         test_register_active(&mut vs, val_a, &dummy_pubkey(0xA1));
         test_register_active(&mut vs, val_b, &dummy_pubkey(0xB2));
-
-        let hash = vs.active_consensus_set_hash().unwrap();
-
-        // Read state after first activation.
-        let set1 = vs.get_active_consensus_set().unwrap();
-        let hash1 = vs.active_consensus_set_hash().unwrap();
-
-        // Second call with same hash -> idempotency guard in executor.rs
-        // checks `current_hash != reshare.active_set_hash`.
-        // Here: current_hash == hash -> no-op.
-        let current_hash = vs.active_consensus_set_hash().unwrap();
-        assert_eq!(current_hash, hash, "hash must match after first activation");
-
-        // Simulate executor's guard: skip if hash matches.
-        assert_eq!(current_hash, hash);
-        // State unchanged.
-        let set2 = vs.get_active_consensus_set().unwrap();
-        let hash2 = vs.active_consensus_set_hash().unwrap();
-        assert_eq!(
-            set1.len(),
-            set2.len(),
-            "set must be unchanged on re-execution"
-        );
-        assert_eq!(hash1, hash2, "hash must be unchanged on re-execution");
+        test_register_joining(&mut vs, val_c, &dummy_pubkey(0xC3));
     });
+
+    let boundary = boundary_with_epoch(
+        1,
+        true,
+        vec![
+            (val_a, dummy_pubkey(0xA1)),
+            (val_b, dummy_pubkey(0xB2)),
+            (val_c, dummy_pubkey(0xC3)),
+        ],
+    );
+    let activation_block = 61;
+    let activation_ts = TEST_BLOCK_TIMESTAMP_BASE + 60;
+
+    let mut run_a = HashMapStorageProvider::new(CHAIN_ID);
+    run_a.storage = parent.storage.clone();
+    let mut run_b = HashMapStorageProvider::new(CHAIN_ID);
+    run_b.storage = parent.storage.clone();
+
+    for provider in [&mut run_a, &mut run_b] {
+        StorageHandle::enter(provider, |storage| {
+            super::super::apply_boundary_outcome(
+                storage,
+                &boundary,
+                activation_block,
+                activation_ts,
+            )
+            .expect("boundary transition from parent must succeed");
+        });
+    }
+
+    assert_eq!(
+        run_a.storage, run_b.storage,
+        "independent boundary executions from the same parent must reach identical storage"
+    );
+
+    let post_storage_snapshot = run_a.storage.clone();
+    let snapshot_key =
+        outbe_validatorset::committee_snapshot_key(boundary.epoch, boundary.committee_set_hash);
+
+    StorageHandle::enter(&mut run_a, |storage| {
+        let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+        let active_before: Vec<Address> = vs
+            .get_active_consensus_set()
+            .unwrap()
+            .into_iter()
+            .map(|v| v.validator_address)
+            .collect();
+        assert_eq!(active_before, vec![val_a, val_b, val_c]);
+        assert_eq!(
+            vs.active_consensus_set_hash().unwrap(),
+            boundary.reshare.active_set_hash
+        );
+        assert_eq!(vs.epoch_snapshot().unwrap().number, U256::from(1u64));
+        let committed_snapshot =
+            outbe_validatorset::read_committee_snapshot(storage.clone(), snapshot_key)
+                .unwrap()
+                .expect("epoch-1 committee snapshot must be written");
+        assert_eq!(committed_snapshot.committee.len(), 3);
+
+        // Stale repeat of the same epoch-1 boundary on the already-advanced post-state must reject.
+        let err = super::super::apply_boundary_outcome(
+            storage.clone(),
+            &boundary,
+            activation_block + 1,
+            activation_ts + 1,
+        )
+        .expect_err("stale repeat on already-advanced post-state must be rejected");
+        assert!(
+            err.to_string().contains("activate current+1"),
+            "unexpected stale repeat error: {err}"
+        );
+
+        let vs_after = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+        let active_after: Vec<Address> = vs_after
+            .get_active_consensus_set()
+            .unwrap()
+            .into_iter()
+            .map(|v| v.validator_address)
+            .collect();
+        assert_eq!(active_after, active_before);
+        assert_eq!(
+            vs_after.active_consensus_set_hash().unwrap(),
+            boundary.reshare.active_set_hash
+        );
+        assert_eq!(vs_after.epoch_snapshot().unwrap().number, U256::from(1u64));
+        assert_eq!(
+            outbe_validatorset::read_committee_snapshot(storage, snapshot_key).unwrap(),
+            Some(committed_snapshot)
+        );
+    });
+
+    assert_eq!(
+        run_a.storage, post_storage_snapshot,
+        "rejected stale boundary repeat must not mutate storage"
+    );
 }
 
 #[test]

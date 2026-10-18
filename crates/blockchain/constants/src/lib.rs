@@ -417,22 +417,28 @@ mod tests {
             .unwrap();
             assert_eq!(resolved.governance_voting_window_blocks, blocks);
         }
-        for blocks in [
-            json!(0),
-            json!(86_401),
-            json!(u64::MAX),
-            json!(-1),
-            json!("6"),
-        ] {
-            assert!(GenesisProtocolParametersV1::resolve(Some(&json!({
-                "governance": { "votingWindowBlocks": blocks }
-            })))
-            .is_err());
+        for blocks in [0, 86_401, u64::MAX] {
+            assert_eq!(
+                GenesisProtocolParametersV1::resolve(Some(&json!({
+                    "governance": { "votingWindowBlocks": blocks }
+                }))),
+                Err(ProtocolConstantsError::InvalidValue {
+                    field: "governance.votingWindowBlocks",
+                    requirement: "non-zero and no greater than the production default",
+                    actual: blocks,
+                })
+            );
         }
-        assert!(GenesisProtocolParametersV1::resolve(Some(&json!({
-            "governance": { "votingWindowBlock": 6 }
-        })))
-        .is_err());
+        for invalid in [
+            json!({ "governance": { "votingWindowBlocks": -1 } }),
+            json!({ "governance": { "votingWindowBlocks": "6" } }),
+            json!({ "governance": { "votingWindowBlock": 6 } }),
+        ] {
+            assert!(matches!(
+                GenesisProtocolParametersV1::resolve(Some(&invalid)),
+                Err(ProtocolConstantsError::InvalidJson(_))
+            ));
+        }
         assert_eq!(
             GenesisProtocolParametersV1::resolve(Some(&json!({
                 "governance": {}
@@ -445,13 +451,39 @@ mod tests {
 
     #[test]
     fn absent_fields_resolve_once_to_canonical_defaults() {
+        let defaults = GenesisProtocolParametersV1::default();
         assert_eq!(
             GenesisProtocolParametersV1::resolve(None).unwrap(),
-            GenesisProtocolParametersV1::default()
+            defaults
         );
         assert_eq!(
             GenesisProtocolParametersV1::resolve(Some(&json!({}))).unwrap(),
-            GenesisProtocolParametersV1::default()
+            defaults
+        );
+        initialize(None).unwrap();
+        assert_eq!(
+            (
+                get_governance_voting_window_blocks(),
+                get_metadosis_forming_period_seconds(),
+                get_metadosis_lookback_delay_seconds(),
+                get_metadosis_offering_period_seconds(),
+                get_metadosis_waiting_period_seconds(),
+                get_metadosis_advance_interval_seconds(),
+                get_vwap_lookback_seconds(),
+                get_vwap_update_interval_seconds(),
+                get_vwap_policy_version(),
+            ),
+            (
+                defaults.governance_voting_window_blocks,
+                defaults.metadosis_forming_period_seconds,
+                defaults.metadosis_lookback_delay_seconds,
+                defaults.metadosis_offering_period_seconds,
+                defaults.metadosis_waiting_period_seconds,
+                defaults.metadosis_advance_interval_seconds,
+                defaults.vwap_lookback_seconds,
+                defaults.vwap_update_interval_seconds,
+                defaults.vwap_policy_version,
+            )
         );
     }
 
@@ -478,14 +510,30 @@ mod tests {
 
     #[test]
     fn malformed_unknown_and_unsafe_values_are_rejected() {
-        assert!(GenesisProtocolParametersV1::resolve(Some(&json!({
-            "unknown": 1
-        })))
-        .is_err());
-        assert!(GenesisProtocolParametersV1::resolve(Some(&json!({
-            "metadosis": { "formingPeriodSeconds": 0 }
-        })))
-        .is_err());
+        assert!(matches!(
+            GenesisProtocolParametersV1::resolve(Some(&json!({
+                "unknown": 1
+            }))),
+            Err(ProtocolConstantsError::InvalidJson(_))
+        ));
+        for version in [0, 2] {
+            assert_eq!(
+                GenesisProtocolParametersV1::resolve(Some(&json!({
+                    "schemaVersion": version
+                }))),
+                Err(ProtocolConstantsError::UnsupportedSchemaVersion(version))
+            );
+        }
+        assert_eq!(
+            GenesisProtocolParametersV1::resolve(Some(&json!({
+                "metadosis": { "formingPeriodSeconds": 0 }
+            }))),
+            Err(ProtocolConstantsError::InvalidValue {
+                field: "metadosis.formingPeriodSeconds",
+                requirement: "non-zero and no greater than the production default",
+                actual: 0,
+            })
+        );
     }
 
     #[test]
@@ -505,5 +553,13 @@ mod tests {
             GenesisProtocolParametersV1::from_genesis(&genesis).unwrap(),
             expected
         );
+        for invalid in [json!({}), json!({ "config": 1 })] {
+            assert_eq!(
+                GenesisProtocolParametersV1::from_genesis(&invalid),
+                Err(ProtocolConstantsError::InvalidJson(
+                    "genesis config must be a JSON object".to_owned(),
+                ))
+            );
+        }
     }
 }

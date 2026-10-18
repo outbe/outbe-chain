@@ -98,28 +98,36 @@ fn expected_kind_returns_phase_for_each_variant() {
             Some(SystemTxKind::CertifiedParentAccounting),
         ),
         (
-            SystemTxPhase::CycleTick { body_index: 1 },
+            SystemTxPhase::LateFinalizeCredits { body_index: 1 },
+            Some(SystemTxKind::LateFinalizeCredits),
+        ),
+        (
+            SystemTxPhase::CycleTick { body_index: 2 },
             Some(SystemTxKind::CycleTick),
         ),
         (
-            SystemTxPhase::RewardsGemDelivery { body_index: 2 },
+            SystemTxPhase::RewardsGemDelivery { body_index: 3 },
             Some(SystemTxKind::RewardsGemDelivery),
         ),
         (
-            SystemTxPhase::BoundaryOutcomeOptional { body_index: 3 },
+            SystemTxPhase::BoundaryOutcomeOptional { body_index: 4 },
             Some(SystemTxKind::BoundaryOutcome),
         ),
         (
-            SystemTxPhase::TeeBootstrapOptional { body_index: 4 },
+            SystemTxPhase::TeeBootstrapOptional { body_index: 5 },
             Some(SystemTxKind::TeeBootstrap),
         ),
         (
-            SystemTxPhase::OracleSlashWindow { body_index: 5 },
+            SystemTxPhase::OracleSlashWindow { body_index: 6 },
             Some(SystemTxKind::OracleSlashWindow),
         ),
         (
-            SystemTxPhase::HookEvents { body_index: 6 },
+            SystemTxPhase::HookEvents { body_index: 7 },
             Some(SystemTxKind::HookEvents),
+        ),
+        (
+            SystemTxPhase::RadiclePublication { body_index: 8 },
+            Some(SystemTxKind::RadiclePublication),
         ),
         (SystemTxPhase::UserTxs, None),
     ];
@@ -139,18 +147,23 @@ fn body_index_matches_for_every_begin_zone_variant() {
             },
             Some(0),
         ),
-        (SystemTxPhase::CycleTick { body_index: 1 }, Some(1)),
-        (SystemTxPhase::RewardsGemDelivery { body_index: 2 }, Some(2)),
         (
-            SystemTxPhase::BoundaryOutcomeOptional { body_index: 3 },
-            Some(3),
+            SystemTxPhase::LateFinalizeCredits { body_index: 1 },
+            Some(1),
         ),
+        (SystemTxPhase::CycleTick { body_index: 2 }, Some(2)),
+        (SystemTxPhase::RewardsGemDelivery { body_index: 3 }, Some(3)),
         (
-            SystemTxPhase::TeeBootstrapOptional { body_index: 4 },
+            SystemTxPhase::BoundaryOutcomeOptional { body_index: 4 },
             Some(4),
         ),
-        (SystemTxPhase::OracleSlashWindow { body_index: 5 }, Some(5)),
-        (SystemTxPhase::HookEvents { body_index: 6 }, Some(6)),
+        (
+            SystemTxPhase::TeeBootstrapOptional { body_index: 5 },
+            Some(5),
+        ),
+        (SystemTxPhase::OracleSlashWindow { body_index: 6 }, Some(6)),
+        (SystemTxPhase::HookEvents { body_index: 7 }, Some(7)),
+        (SystemTxPhase::RadiclePublication { body_index: 8 }, Some(8)),
         (SystemTxPhase::UserTxs, None),
     ] {
         assert_eq!(phase.body_index(), expected, "phase={phase:?}");

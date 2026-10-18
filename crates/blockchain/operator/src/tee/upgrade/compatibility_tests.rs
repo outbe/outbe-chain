@@ -60,6 +60,20 @@ fn legacy_v1_all_states_load_without_rewriting_the_journal() {
 
 #[test]
 fn legacy_v1_rejects_unknown_missing_and_duplicate_fields() {
+    let snapshot_bytes = format!(
+        r#"{{"version":1,"generation":7,"lifecycle":{}}}"#,
+        legacy_json().unwrap()[0]
+    );
+    let snapshot_value: serde_json::Value = serde_json::from_str(&snapshot_bytes).unwrap();
+    for missing in ["version", "generation", "lifecycle"] {
+        let mut malformed = snapshot_value.clone();
+        malformed.as_object_mut().unwrap().remove(missing);
+        assert!(serde_json::from_value::<UpgradeJournalSnapshotV1>(malformed).is_err());
+    }
+    let mut unknown_snapshot = snapshot_value;
+    unknown_snapshot["unexpected"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<UpgradeJournalSnapshotV1>(unknown_snapshot).is_err());
+
     for json in legacy_json().unwrap() {
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
         for field in value
@@ -135,6 +149,24 @@ fn legacy_v1_transition_matrix_preserves_all_recovery_and_terminal_edges() {
             );
         }
     }
+
+    let completed = &states[6];
+    let mut next = tests::context(Path::new("/legacy"));
+    next.predecessor_manifest_hash = completed.context().candidate_manifest_hash;
+    next.candidate_manifest_hash = B256::repeat_byte(10);
+    next.successor_policy_hash = B256::repeat_byte(11);
+    next.activation_height = 200;
+    assert!(is_next_upgrade(
+        completed,
+        &UpgradeJournalStateV1::CandidatePrepared {
+            context: next.clone(),
+        }
+    ));
+    next.activation_height = 100;
+    assert!(!is_next_upgrade(
+        completed,
+        &UpgradeJournalStateV1::CandidatePrepared { context: next }
+    ));
 }
 
 #[test]
@@ -173,6 +205,30 @@ fn legacy_v1_transition_rejects_each_changed_security_commitment() {
 
 #[test]
 fn legacy_v1_deserialization_and_validation_keep_distinct_error_order() {
+    let mut invalid_context = tests::context(Path::new("/unused"));
+    invalid_context.activation_height = 0;
+    let invalid_lifecycle = UpgradeJournalStateV1::CandidatePrepared {
+        context: invalid_context,
+    };
+    for (version, generation) in [(0, 1), (2, 1), (1, 0)] {
+        let snapshot = UpgradeJournalSnapshotV1 {
+            version,
+            generation,
+            lifecycle: invalid_lifecycle.clone(),
+        };
+        assert_eq!(
+            snapshot.validate().unwrap_err().to_string(),
+            "unsupported upgrade journal version or generation"
+        );
+    }
+    assert_ne!(
+        UpgradeJournalSnapshotV1::new(invalid_lifecycle)
+            .validate()
+            .unwrap_err()
+            .to_string(),
+        "unsupported upgrade journal version or generation"
+    );
+
     for json in legacy_json().unwrap().into_iter().skip(2).take(5) {
         let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
         value["sealed_root_hash"] = serde_json::json!(B256::ZERO);

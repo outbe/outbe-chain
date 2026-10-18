@@ -17,6 +17,12 @@ fn record_error(input: &str, config: &str) -> String {
     .to_string()
 }
 
+fn dispatch_error(input: &str) -> String {
+    generate_dispatch(syn::parse_str(input).unwrap())
+        .unwrap_err()
+        .to_string()
+}
+
 #[test]
 fn contract_shape_and_reserved_field_diagnostics_are_preserved() {
     for (input, expected) in [
@@ -103,5 +109,60 @@ fn record_existence_field_must_be_a_non_key_field() {
             ),
             format!("exists_field `{field}` not found among non-key fields")
         );
+    }
+}
+
+#[test]
+fn dispatch_attribute_and_payable_return_diagnostics_are_enforced() {
+    for (input, expected) in [
+        (
+            "impl C { fn helper(&self) {} }",
+            "#[contract_dispatch] requires at least one method annotated with #[contract_public(\"...\")]",
+        ),
+        (
+            "impl C { #[contract_view] fn get(&self) -> Result<u64> { Ok(0) } }",
+            "#[contract_view] / #[contract_payable] require #[contract_public(\"...\")] on the same method",
+        ),
+        (
+            "impl C { #[contract_payable] fn pay(&mut self, caller: Address, value: U256) -> Result<()> { Ok(()) } }",
+            "#[contract_view] / #[contract_payable] require #[contract_public(\"...\")] on the same method",
+        ),
+        (
+            "impl C { #[contract_public(\"get()\")] #[contract_view] #[contract_payable] fn get(&self) -> Result<()> { Ok(()) } }",
+            "#[contract_view] and #[contract_payable] are mutually exclusive",
+        ),
+        (
+            "impl C { #[contract_public(\"get()\")] #[contract_public(\"get()\")] #[contract_view] fn get(&self) -> Result<()> { Ok(()) } }",
+            "duplicate #[contract_public(\"...\")] on method",
+        ),
+        (
+            "impl C { #[contract_public(\"pay()\")] #[contract_payable] fn pay(&mut self, caller: Address, value: U256) -> Result<u64> { Ok(0) } }",
+            "#[contract_payable] on `pay` requires return type `Result<()>` (no `mutate_payable` helper yet)",
+        ),
+    ] {
+        assert_eq!(dispatch_error(input), expected);
+    }
+}
+
+#[test]
+fn dispatch_signature_grammar_diagnostics_are_enforced() {
+    for (sig, expected) in [
+        ("get", "signature missing '(' - expected `name(types) ...`"),
+        ("()", "signature has invalid or empty function name: ``"),
+        (
+            "1bad(uint64)",
+            "signature has invalid or empty function name: `1bad`",
+        ),
+        (
+            "bad-name(uint64)",
+            "signature has invalid or empty function name: `bad-name`",
+        ),
+        ("get(uint64", "signature missing matching ')'"),
+        ("get((uint64,uint64)", "signature missing matching ')'"),
+    ] {
+        let input = format!(
+            "impl C {{ #[contract_public(\"{sig}\")] #[contract_view] fn get(&self, x: u64) -> Result<()> {{ Ok(()) }} }}"
+        );
+        assert_eq!(dispatch_error(&input), expected);
     }
 }

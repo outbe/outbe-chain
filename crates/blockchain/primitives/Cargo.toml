@@ -52,7 +52,7 @@ zeroize.workspace = true
 hex.workspace = true
 
 [dev-dependencies]
-outbe-primitives = { path = ".", features = ["test-utils"] }
+outbe-primitives = { path = ".", features = ["test-utils", "tee-attestation-v1", "bench-utils"] }
 alloy-primitives = { workspace = true, features = ["rand"] }
 ed25519-dalek.workspace = true
 proptest.workspace = true

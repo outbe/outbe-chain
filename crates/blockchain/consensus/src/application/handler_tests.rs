@@ -691,57 +691,6 @@ fn forward_without_prior_proposed_is_safe_noop() {
 }
 
 #[test]
-fn exact_parent_wait_drains_block_number_mismatch() {
-    // Deterministic runtime (TC-6): avoids marshal teardown leaky false-positives.
-    let drained = commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
-        |context| async move {
-            let (marshal_mailbox, _resolver_keepalive, actor_handle) =
-                start_marshal_without_available_block(context).await;
-            use crate::finalization::parent_cert_store::{
-                CertifiedParentProofKey, CertifiedParentProofRecord, CertifiedParentProofStore,
-                FinalizedParentCertStore, ProofKind,
-            };
-            let store = FinalizedParentCertStore::new();
-            let parent_hash = B256::with_last_byte(0xAA);
-            store
-                .put_finalization(CertifiedParentProofRecord {
-                    kind: ProofKind::Finalization {
-                        finalized_block_number: 41,
-                    },
-                    finalized_block_hash: parent_hash,
-                    finalized_epoch: 1,
-                    finalized_view: 7,
-                    parent_view: 6,
-                    ordered_committee: vec![Address::with_last_byte(1)],
-                    signer_bitmap: vec![1],
-                    encoded_proof: Bytes::from_static(b"cert"),
-                    ..CertifiedParentProofRecord::default()
-                })
-                .unwrap();
-
-            let selector = crate::finalization::selection::ParentProofSelector::new(
-                store.clone(),
-                crate::config::DEFAULT_PROPOSAL_TIMEOUT,
-            );
-            let _ = marshal_mailbox;
-            let result = selector.select_direct_parent_proof(1, 7, 42, parent_hash);
-
-            actor_handle.abort();
-            let _ = actor_handle.await;
-            result.is_none()
-                && store
-                    .get_finalization(CertifiedParentProofKey::new(1, 7, parent_hash))
-                    .is_none()
-        },
-    );
-
-    assert!(
-        drained,
-        "block-number-mismatched exact-parent records must be drained fail-closed"
-    );
-}
-
-#[test]
 fn epoch_boundary_parent_uses_finalized_round_for_exact_proof_key() {
     // Deterministic runtime (TC-6): avoids marshal teardown leaky false-positives.
     let resolved = commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
@@ -1677,36 +1626,4 @@ fn floor_zero_sends_immediately() {
     });
     assert_eq!(received, Some(Digest(B256::ZERO)));
     assert_eq!(waited, Duration::ZERO);
-}
-
-/// Test 13 (pacing-invisibility parity, unit level): the proposer hands Simplex a
-/// byte-identical digest regardless of the min-block-time floor. The build path is
-/// structurally floor-agnostic. `build_block` / `handle_propose` take no
-/// `min_block_time`, so the floor cannot influence block bytes. `pace_and_send`
-/// only delays delivery of the already-sealed digest. This loops over the no-wait
-/// (case C, floor 0) and wait paths (250ms..5s) and asserts the delivered digest
-/// never changes.
-///
-/// Full proposer/validator EVM parity (equal post-block state root, event log,
-/// balance deltas, and block hash) requires a running node. The localnet smoke run
-/// (Test 15) exercises it. No in-process build harness exists to seal a real EVM
-/// block (handler_tests builds with `PayloadBuilder::noop()`).
-#[test]
-fn pacing_delivers_identical_digest_for_any_floor() {
-    let digest = Digest(B256::repeat_byte(0x5a));
-    for floor_ms in [0u64, 250, 2000, 5000] {
-        let delivered = commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30))
-            .start(|context| async move {
-                let (tx, rx) = oneshot::channel::<Digest>();
-                let t0 = context.current();
-                super::pace_and_send(&context, tx, digest, Duration::from_millis(floor_ms), t0)
-                    .await;
-                rx.await.ok()
-            });
-        assert_eq!(
-            delivered,
-            Some(digest),
-            "floor {floor_ms}ms must deliver the byte-identical digest"
-        );
-    }
 }

@@ -983,7 +983,7 @@ mod tests {
             encode_consensus_header_artifact(&ConsensusHeaderArtifact::BoundaryOutcome(artifact))
                 .expect("artifact encoding must succeed");
 
-        let config = test_config(bridge);
+        let config = test_config(bridge.clone());
         let parent = test_parent();
         let provider = DeterministicEmptyStateProvider;
 
@@ -1028,7 +1028,20 @@ mod tests {
             .finish(&provider, None)
             .expect("proposer path must build a block");
         let built_block = outcome.block;
+        let built_hash = built_block.hash();
         let built_root = built_block.header().inner.state_root;
+        let expected_cached_summary = outbe_primitives::consensus::CachedExecutionSummary {
+            summary: outbe_primitives::reshare_artifact::ExecutionSummaryArtifact {
+                validator_fee_sum: alloy_primitives::U256::ZERO,
+            },
+            timestamp: built_block.header().inner.timestamp,
+            state_root: Some(built_root),
+        };
+        assert_eq!(
+            bridge.cached_execution_summary(1, built_hash),
+            Some(expected_cached_summary),
+            "proposer finish must publish the canonical block's execution summary and state root",
+        );
 
         // The block header must carry the artifact.
         assert!(
@@ -1060,13 +1073,16 @@ mod tests {
         );
 
         // Reth validates receipt and state roots only after `execute_one`
-        // returns. Validator execution must therefore publish no speculative execution artifacts,
-        // even when execution itself succeeds for a header that the following
-        // post-execution check rejects.
+        // returns. Because the bridge cache is keyed by `(block_number, block_hash)`,
+        // executing a same-height candidate that fails post-execution receipt or
+        // state-root validation must never overwrite the canonical `built_hash`
+        // summary or state root.
         let mut wrong_receipt_block = built_block.clone().into_block();
         wrong_receipt_block.header.inner.receipts_root = B256::repeat_byte(0x71);
         let wrong_receipt_block =
             RecoveredBlock::new_unhashed(wrong_receipt_block, built_block.senders().to_vec());
+        let wrong_receipt_hash = wrong_receipt_block.header().inner.hash_slow();
+        assert_ne!(wrong_receipt_hash, built_hash);
 
         let receipt_config = config.clone();
         let mut receipt_db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
@@ -1098,6 +1114,8 @@ mod tests {
         wrong_state_block.header.inner.state_root = B256::repeat_byte(0x72);
         let wrong_state_block =
             RecoveredBlock::new_unhashed(wrong_state_block, built_block.senders().to_vec());
+        let wrong_state_hash = wrong_state_block.header().inner.hash_slow();
+        assert_ne!(wrong_state_hash, built_hash);
 
         let state_config = config.clone();
         let mut state_db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
@@ -1119,6 +1137,11 @@ mod tests {
             wrong_state_block.header().inner.state_root,
             actual_state_root,
             "the fixture must reach Reth's state-root rejection seam",
+        );
+        assert_eq!(
+            bridge.cached_execution_summary(1, built_hash),
+            Some(expected_cached_summary),
+            "legitimate built-block execution summary and state root must remain intact in bridge cache",
         );
     }
 }

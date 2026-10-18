@@ -573,3 +573,136 @@ fn canonical_decoded<T>(
     }
     Ok(body)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::nod_encryption::{encode_v1_nod, NodTermsV2};
+    use crate::tribute_encryption::{
+        EncryptedTributeV2, TributeContextV2, TRIBUTE_AMOUNTS_BLOB_LEN, TRIBUTE_PUBLIC_KEY_BLOB_LEN,
+    };
+
+    fn sample_day() -> WorldwideDay {
+        WorldwideDay::new(20_260_101)
+    }
+
+    fn sample_id(day: WorldwideDay) -> WwdEntityId {
+        WwdEntityId::from_day_and_digest(day, B256::repeat_byte(0x11))
+    }
+
+    #[test]
+    fn canonical_v1_and_v2_entity_bodies_roundtrip_and_reject_malformed_wire() {
+        let day = sample_day();
+        let id = sample_id(day);
+        let owner = Address::repeat_byte(0x22);
+
+        // V1 Tribute roundtrip + identity day mismatch rejection.
+        let tribute_v1 = TributeBodyV1 {
+            tribute_id: id,
+            owner,
+            worldwide_day: day,
+            issuance_amount_minor: U256::from(1_000_000u64),
+            issuance_currency: 840,
+            nominal_amount_minor: U256::from(2_000_000u64),
+            reference_currency: 840,
+            tribute_price_minor: U256::from(500_000u64),
+        };
+        let encoded_tribute_v1 = encode_tribute_v1(&tribute_v1).unwrap();
+        assert_eq!(decode_tribute_v1(&encoded_tribute_v1).unwrap(), tribute_v1);
+        let stored_tribute_v1 = StoredBody::new(BODY_SCHEMA_V1, encoded_tribute_v1.clone())
+            .unwrap()
+            .encode();
+        assert_eq!(
+            decode_stored_tribute_v1(&stored_tribute_v1).unwrap(),
+            tribute_v1
+        );
+
+        let mut bad_day_tribute = tribute_v1.clone();
+        bad_day_tribute.worldwide_day = WorldwideDay::new(20_260_102);
+        assert!(matches!(
+            encode_tribute_v1(&bad_day_tribute),
+            Err(CanonicalBodyError::IdentityDayMismatch)
+        ));
+
+        // V2 Tribute roundtrip + invalid blob rejection.
+        let mut pk_blob = vec![0xaa; TRIBUTE_PUBLIC_KEY_BLOB_LEN];
+        pk_blob[..8].copy_from_slice(&1u64.to_be_bytes());
+        let mut amt_blob = vec![0xbb; TRIBUTE_AMOUNTS_BLOB_LEN];
+        amt_blob[..8].copy_from_slice(&1u64.to_be_bytes());
+        let tribute_v2 = EncryptedTributeV2 {
+            context: TributeContextV2 {
+                chain_id: 2026,
+                tribute_id: id,
+                owner,
+                worldwide_day: day,
+                issuance_currency: 840,
+                reference_currency: 840,
+                tribute_price_minor: U256::from(1_000_000u64),
+                offer_input_hash: B256::repeat_byte(0x33),
+            },
+            encrypted_creator_public_key: pk_blob,
+            encrypted_amounts: amt_blob,
+        };
+        let encoded_tribute_v2 = encode_tribute_v2(&tribute_v2).unwrap();
+        assert_eq!(decode_tribute_v2(&encoded_tribute_v2).unwrap(), tribute_v2);
+        let stored_tribute_v2 = StoredBody::new(TRIBUTE_BODY_SCHEMA_V2, encoded_tribute_v2)
+            .unwrap()
+            .encode();
+        assert_eq!(
+            decode_stored_tribute_v2(&stored_tribute_v2).unwrap(),
+            tribute_v2
+        );
+
+        // V2 Nod roundtrip.
+        let nod_v2 = NodItemBodyV2 {
+            encrypted: encode_v1_nod(
+                NodTermsV2 {
+                    chain_id: 2026,
+                    nod_id: id,
+                    owner,
+                    worldwide_day: day,
+                    league_id: 3,
+                    entry_price_minor: U256::from(1_000_000u64),
+                    issuance_currency: 840,
+                    reference_currency: 840,
+                },
+                U256::from(5_000_000u64),
+            ),
+            bucket_key: B256::repeat_byte(0x44),
+            issued_at: 1_700_000_000,
+            is_settled: true,
+        };
+        let encoded_nod_v2 = encode_nod_item_v2(&nod_v2).unwrap();
+        assert_eq!(decode_nod_item_v2(&encoded_nod_v2).unwrap(), nod_v2);
+        let stored_nod_v2 = StoredBody::new(NOD_BODY_SCHEMA_V2, encoded_nod_v2)
+            .unwrap()
+            .encode();
+        assert_eq!(decode_stored_nod_item_v2(&stored_nod_v2).unwrap(), nod_v2);
+
+        // Non-canonical wire rejections on StoredBody:
+        // 1) non-minimal varint tag (0x88, 0x00 instead of 0x08 for field 1 varint)
+        assert!(matches!(
+            decode_stored_body(&[0x88, 0x00, 0x01, 0x12, 0x01, 0xff]),
+            Err(CanonicalBodyError::NonMinimalVarint)
+        ));
+        // 2) non-minimal varint value (0x81, 0x00 for value 1)
+        assert!(matches!(
+            decode_stored_body(&[0x08, 0x81, 0x00, 0x12, 0x01, 0xff]),
+            Err(CanonicalBodyError::NonMinimalVarint)
+        ));
+        // 3) duplicate / non-ascending field tags (duplicate field 1)
+        assert!(matches!(
+            decode_stored_body(&[0x08, 0x01, 0x08, 0x01, 0x12, 0x01, 0xff]),
+            Err(CanonicalBodyError::NonAscendingOrDuplicateField { field: 1 })
+        ));
+        // 4) explicit default scalar on optional field (field 3 = 0 in Tribute V1)
+        let mut with_explicit_zero = Vec::new();
+        encode_bytes_field(1, id.as_slice(), &mut with_explicit_zero);
+        encode_bytes_field(2, owner.as_slice(), &mut with_explicit_zero);
+        encode_varint_field(3, 0, &mut with_explicit_zero);
+        assert!(matches!(
+            decode_tribute_v1(&with_explicit_zero),
+            Err(CanonicalBodyError::ExplicitDefault { field: 3 })
+        ));
+    }
+}
