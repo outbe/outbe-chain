@@ -43,7 +43,6 @@ exclude_patterns = [
   "crates/poseidon/src/poseidon/constants.rs",
   # Codegen scripts. Inline qlty-ignore and [[triage]] do not hide their smells.
   "crates/zk/outbe-zk/build.rs",
-  "crates/core/compressed-entities/vectors/generate_poseidon2.py",
 ]
 
 test_patterns = [

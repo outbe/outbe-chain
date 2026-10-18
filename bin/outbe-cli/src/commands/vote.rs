@@ -337,7 +337,7 @@ mod tests {
             "vote",
             "propose",
             "--target-module",
-            "0x000000000000000000000000000000000000EE0D",
+            "0x000000000000000000000000000000000000EE00",
             "--payload",
             SAMPLE_PAYLOAD,
         ]);
@@ -351,7 +351,7 @@ mod tests {
             "vote",
             "propose",
             "--target-module",
-            "0x000000000000000000000000000000000000EE0D",
+            "0x000000000000000000000000000000000000EE00",
             "--payload-file",
             "proposal.json",
         ]);
@@ -365,7 +365,7 @@ mod tests {
             "vote",
             "propose",
             "--target-module",
-            "0x000000000000000000000000000000000000EE0D",
+            "0x000000000000000000000000000000000000EE00",
             "--payload",
             SAMPLE_PAYLOAD,
             "--payload-file",

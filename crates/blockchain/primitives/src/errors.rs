@@ -326,8 +326,6 @@ pub enum ReshareArtifactError {
     InvalidExecutionSummaryLength { len: usize },
     #[error("timestamp_millis_part payload length: {len} (expected {expected})")]
     InvalidTimestampMillisPartLength { len: usize, expected: usize },
-    #[error("compressed-entities root payload length: {len} (expected {expected})")]
-    InvalidCompressedEntitiesRootLength { len: usize, expected: usize },
     #[error("duplicate execution summary artifact")]
     DuplicateExecutionSummary,
     #[error("duplicate consensus header artifact")]
@@ -336,8 +334,6 @@ pub enum ReshareArtifactError {
     DuplicateTimestampMillisPart,
     #[error("duplicate late finalize credits artifact")]
     DuplicateLateFinalizeCredits,
-    #[error("duplicate compressed-entities root artifact")]
-    DuplicateCompressedEntitiesRoot,
     #[error("unsupported block artifact tag: {tag}")]
     UnsupportedTag { tag: u8 },
 }
