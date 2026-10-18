@@ -12,7 +12,6 @@ same network.yaml, and the identities come from the key directory.
 
 from __future__ import annotations
 
-import json
 import hashlib
 import secrets
 import shutil
@@ -75,20 +74,21 @@ def write_script(path: Path, body: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _point_slope(p1: tuple[int, int], p2: tuple[int, int]) -> int:
+    x1, y1 = p1
+    x2, y2 = p2
+    num, den = (3 * x1 * x1, 2 * y1) if p1 == p2 else (y2 - y1, x2 - x1)
+    return (num * pow(den, -1, SECP256K1_P)) % SECP256K1_P
+
+
 def _point_add(p1, p2):
-    if p1 is None:
-        return p2
-    if p2 is None:
-        return p1
+    if p1 is None or p2 is None:
+        return p2 if p1 is None else p1
     x1, y1 = p1
     x2, y2 = p2
     if x1 == x2 and (y1 + y2) % SECP256K1_P == 0:
         return None
-    if p1 == p2:
-        lam = (3 * x1 * x1) * pow(2 * y1, -1, SECP256K1_P)
-    else:
-        lam = (y2 - y1) * pow(x2 - x1, -1, SECP256K1_P)
-    lam %= SECP256K1_P
+    lam = _point_slope(p1, p2)
     x3 = (lam * lam - x1 - x2) % SECP256K1_P
     y3 = (lam * (x1 - x3) - y1) % SECP256K1_P
     return x3, y3
@@ -106,6 +106,16 @@ def _point_mul(scalar: int, point):
     return result
 
 
+def _mint_secp256k1_hex(path: Path) -> str:
+    while True:
+        candidate = secrets.token_bytes(32)
+        if 1 <= int.from_bytes(candidate, "big") < SECP256K1_N:
+            raw = candidate.hex()
+            path.write_text(raw)
+            path.chmod(0o600)
+            return raw
+
+
 def ensure_reth_p2p_secret(directory: Path) -> str:
     """Return the enode node id, minting a stable p2p identity when absent.
 
@@ -119,17 +129,9 @@ def ensure_reth_p2p_secret(directory: Path) -> str:
         if len(raw) != 64:
             raise ValueError(f"{path} must hold 32 bytes of hex")
     else:
-        while True:
-            candidate = secrets.token_bytes(32)
-            if 1 <= int.from_bytes(candidate, "big") < SECP256K1_N:
-                raw = candidate.hex()
-                break
-        path.write_text(raw)
-        path.chmod(0o600)
+        raw = _mint_secp256k1_hex(path)
     x, y = _point_mul(int(raw, 16), SECP256K1_G)
     return f"{x:064x}{y:064x}"
-
-
 
 
 def format_enode_host(host: str) -> str:
@@ -226,7 +228,6 @@ def radicle_script(
     index: int,
     host: str,
     keys_dir: str,
-    repo_root: str,
 ) -> str:
     port = port_of(config, "radicle_port")
     status_port = port_of(config, "radicle_status_port")
@@ -234,7 +235,7 @@ def radicle_script(
     binary = str(config.get("radicle_binary", "outbe-radicle"))
     validator_set = config.get("validator_set")
     max_validators = int(
-        (validator_set or {}).get("max_validators", DEFAULT_MAX_VALIDATORS)
+        dict(validator_set or {}).get("max_validators", DEFAULT_MAX_VALIDATORS)
     )
     return f"""
 # Validator-owned Radicle sidecar. The node refuses to start as a validator
@@ -269,16 +270,21 @@ exec {quote(binary)} \\
 """
 
 
+def _uses_production_tee_session(config: dict[str, Any]) -> bool:
+    return bool(config.get("enclave_sgx", True)) or (
+        config["tee"]["mode"] == "dcap-required"
+    )
+
+
 def node_script(
     *,
     config: dict[str, Any],
     index: int,
     base_dir: str,
-    keys_dir: str,
-    repo_root: str,
-    consensus_port: int,
-    host: str,
+    p2p_address: str,
 ) -> str:
+    keys_dir = str(config.get("remote_keys_dir", base_dir))
+    host, _, consensus_port = p2p_address.rpartition(":")
     binary = str(config.get("node_binary", "outbe-chain"))
     # Which TEE transport the node must speak. `dcap-required` always uses the
     # authenticated sealed session. `gramine-direct-dev` is ambiguous on its
@@ -289,8 +295,7 @@ def node_script(
     # "development enclave connection failed". Thus state the mode explicitly.
     session_mode = (
         "  --tee-session-mode production-node-host \\\n"
-        if config["tee"]["mode"] == "dcap-required"
-        or config.get("enclave_sgx", True)
+        if _uses_production_tee_session(config)
         else ""
     )
     validator_keys = f"{keys_dir}/validator-{index}"
@@ -318,7 +323,7 @@ exec {quote(binary)} node \\
   --engine.memory-block-buffer-target 0 \\
   --consensus.signing-key "$KEYS/signing-key.hex" \\
   --validator.evm-key "$KEYS/evm-key.hex" \\
-  --consensus.listen-addr 0.0.0.0:{consensus_port} \\
+  --consensus.listen-addr 0.0.0.0:{int(consensus_port)} \\
   --consensus.storage-dir {quote(validator_dir + "/consensus")} \\
   --radicle.control-socket {quote(radicle_home + "/node/outbe-control.sock")} \\
   --radicle.status-address 127.0.0.1:{port_of(config, "radicle_status_port")} \\
@@ -342,12 +347,8 @@ exec {quote(binary)} node \\
 def feeder_pairs(*, config: dict[str, Any]) -> str:
     """The pairs file every validator's feeder.toml names."""
     price_provider = str(config.get("price_provider", "mock_http"))
-    source_quote = str(
-        config.get(
-            "price_source_quote",
-            "840" if price_provider == "mock_http" else "USDT",
-        )
-    )
+    default_quote = {"mock_http": "840"}.get(price_provider, "USDT")
+    source_quote = str(config.get("price_source_quote", default_quote))
     return f"""[[currency_pairs]]
 base = "COEN"
 quote = "840"
@@ -403,7 +404,7 @@ bind_address = "127.0.0.1:{port_of(config, "feeder_health_port")}"
 """
 
 
-def feeder_script(*, config: dict[str, Any], index: int, base_dir: str, repo_root: str) -> str:
+def feeder_script(*, config: dict[str, Any], index: int, base_dir: str) -> str:
     binary = str(config.get("feeder_binary", "outbe-feeder"))
     return f"""
 # Price oracle feeder. Start it once the node serves RPC; oracle votes are
@@ -481,21 +482,6 @@ docker stop outbe-enclave-{index} >/dev/null 2>&1 && echo "stopped enclave" || t
 
 
 # ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-
-
-
-
-
-
-
-
-
-
-
-
-
-# ---------------------------------------------------------------------------
 # Signed enclave
 # ---------------------------------------------------------------------------
 #
@@ -539,9 +525,8 @@ def stage_signed_enclave(*, config: dict[str, Any], output_dir: Path) -> dict[st
             )
         shutil.copy2(origin, staged / name)
     # A private key in the bundle would go to every machine. Refuse it.
-    for stray in source_dir.glob("*.pem"):
-        if (staged / stray.name).exists():
-            (staged / stray.name).unlink()
+    for stray in staged.glob("*.pem"):
+        stray.unlink()
     return {"path": str(staged)}
 
 
@@ -672,9 +657,8 @@ exec {quote(base_dir + "/outbe-cli")} tee renew \\
 
 def systemd_unit(*, role: str, description: str, after: str | None, base_dir: str) -> str:
     """One templated unit per role. %i is the validator index."""
-    dependency = after
-    dependency_suffix = f" {dependency}" if dependency else ""
-    user = "root" if role == "enclave" else "ubuntu"
+    dependency_suffix = f" {after}" if after else ""
+    user = {"enclave": "root"}.get(role, "ubuntu")
     return f"""[Unit]
 Description=Outbe {description} (validator %i)
 After=network-online.target{dependency_suffix}
@@ -737,9 +721,11 @@ WantedBy=timers.target
 """
     )
 
-    renewal_install = ""
-    if enable_tee_renewal:
-        renewal_install = '\nsudo systemctl enable --now "outbe-tee-renew@$INDEX.timer"\n'
+    renewal_install = (
+        '\nsudo systemctl enable --now "outbe-tee-renew@$INDEX.timer"\n'
+        if enable_tee_renewal
+        else ""
+    )
     install = f"""
 # Install and start every Outbe service for validator $1 on this machine.
 INDEX="${{1:?usage: install-systemd.sh <validator-index>}}"
@@ -814,6 +800,33 @@ exit "$fail"
 # not after.
 
 
+def _pack_validator_archive(
+    *, output_dir: Path, dist: Path, keys_dir: Path, index: int
+) -> str:
+    staging = dist / f"validator-{index}"
+    staging.mkdir()
+    for name in ("genesis.json", "reth-bootnodes.txt", "DEPLOY.md", "install-systemd.sh"):
+        item = output_dir / name
+        if item.is_file():
+            shutil.copy2(item, staging / item.name)
+    for folder in ("systemd", "enclave"):
+        src = output_dir / folder
+        if src.is_dir():
+            shutil.copytree(src, staging / folder)
+    # This machine's run scripts and ONLY this machine's key material.
+    shutil.copytree(output_dir / f"validator-{index}", staging / f"validator-{index}")
+    keys_target = staging / "keys" / f"validator-{index}"
+    keys_target.parent.mkdir(exist_ok=True)
+    shutil.copytree(keys_dir / f"validator-{index}", keys_target)
+
+    archive = dist / f"validator-{index}.tgz"
+    with tarfile.open(archive, "w:gz") as tar:
+        for entry in sorted(staging.iterdir()):
+            tar.add(entry, arcname=entry.name)
+    shutil.rmtree(staging)
+    return archive.name
+
+
 def build_distribution(
     *,
     output_dir: Path,
@@ -823,49 +836,22 @@ def build_distribution(
 ) -> list[str]:
     """Pack one self-contained archive per machine. Returns their names."""
     dist = output_dir / "dist"
-    if dist.exists():
-        shutil.rmtree(dist)
+    shutil.rmtree(dist, ignore_errors=True)
     dist.mkdir(parents=True)
 
-    shared = [
-        output_dir / "genesis.json",
-        output_dir / "reth-bootnodes.txt",
-        output_dir / "DEPLOY.md",
-        output_dir / "install-systemd.sh",
+    names = [
+        _pack_validator_archive(
+            output_dir=output_dir, dist=dist, keys_dir=keys_dir, index=index
+        )
+        for index in range(len(validators))
     ]
-    enclave_dir = output_dir / "enclave"
-    systemd_dir = output_dir / "systemd"
-
-    names = []
-    for index in range(len(validators)):
-        staging = dist / f"validator-{index}"
-        staging.mkdir()
-        for item in shared:
-            if item.is_file():
-                shutil.copy2(item, staging / item.name)
-        if systemd_dir.is_dir():
-            shutil.copytree(systemd_dir, staging / "systemd")
-        if enclave_dir.is_dir():
-            shutil.copytree(enclave_dir, staging / "enclave")
-        # This machine's run scripts and ONLY this machine's key material.
-        shutil.copytree(output_dir / f"validator-{index}", staging / f"validator-{index}")
-        keys_target = staging / "keys" / f"validator-{index}"
-        keys_target.parent.mkdir(exist_ok=True)
-        shutil.copytree(keys_dir / f"validator-{index}", keys_target)
-
-        archive = dist / f"validator-{index}.tgz"
-        with tarfile.open(archive, "w:gz") as tar:
-            for entry in sorted(staging.iterdir()):
-                tar.add(entry, arcname=entry.name)
-        shutil.rmtree(staging)
-        names.append(archive.name)
 
     # One manifest over the archives. A truncated copy or a stale archive from
     # an earlier run is then a checksum mismatch, not a mystery at boot.
-    lines = []
-    for name in names:
-        digest = hashlib.sha256((dist / name).read_bytes()).hexdigest()
-        lines.append(f"{digest}  {name}")
+    lines = [
+        f"{hashlib.sha256((dist / name).read_bytes()).hexdigest()}  {name}"
+        for name in names
+    ]
     (dist / "SHA256SUMS").write_text("\n".join(lines) + "\n")
 
     unpack = f"""
@@ -906,11 +892,11 @@ def deploy_markdown(
     *,
     config: dict[str, Any],
     validators: list[dict[str, Any]],
-    base_dir: str,
-    keys_dir: str,
-    local_keys_dir: Path,
+    keys_dir: Path,
     enodes: list[str],
 ) -> str:
+    base_dir = str(config.get("remote_base_dir", keys_dir.parent))
+    remote_keys_dir = str(config.get("remote_keys_dir", keys_dir))
     chain_id = int(config["chain_id"])
     mode = str(config["tee"]["mode"])
     consensus_port = validators[0]["p2p_address"].rsplit(":", 1)[1]
@@ -945,10 +931,10 @@ Every machine gets the shared files plus **only its own** key directory:
 
 ```bash
 # from this directory on the operator workstation, for machine N (0..3):
-ssh <machine-N> "mkdir -p {base_dir} {keys_dir}"
+ssh <machine-N> "mkdir -p {base_dir} {remote_keys_dir}"
 scp genesis.json reth-bootnodes.txt <machine-N>:{base_dir}/
 scp -r validator-N <machine-N>:{base_dir}/
-scp -r {local_keys_dir}/validator-N <machine-N>:{keys_dir}/
+scp -r {keys_dir}/validator-N <machine-N>:{remote_keys_dir}/
 ```
 
 `validator-N/` holds the run scripts; the key directory holds the secrets.
@@ -1057,13 +1043,96 @@ and saves the ready encrypted Nod records. No separate entity datasource is conf
 # ---------------------------------------------------------------------------
 
 
+def _write_validator_scripts(
+    *,
+    config: dict[str, Any],
+    index: int,
+    validator: dict[str, Any],
+    paths: tuple[Path, Path, str, str],
+) -> None:
+    output_dir, keys_dir, base_dir, remote_keys_dir = paths
+    directory = output_dir / f"validator-{index}"
+    host, _, _ = validator["p2p_address"].rpartition(":")
+
+    write_script(
+        directory / "run-enclave.sh",
+        enclave_script(config=config, index=index, base_dir=base_dir),
+    )
+    write_script(
+        directory / "run-radicle.sh",
+        radicle_script(
+            config=config,
+            index=index,
+            host=host,
+            keys_dir=remote_keys_dir,
+        ),
+    )
+    write_script(
+        directory / "run-node.sh",
+        node_script(
+            config=config | {"remote_keys_dir": remote_keys_dir},
+            index=index,
+            base_dir=base_dir,
+            p2p_address=validator["p2p_address"],
+        ),
+    )
+    write_script(
+        directory / "run-feeder.sh",
+        feeder_script(config=config, index=index, base_dir=base_dir),
+    )
+    (directory / "Caddyfile").write_text(caddyfile(config=config, host=host))
+    write_script(
+        directory / "run-tee-renew.sh",
+        tee_renew_script(
+            config=config,
+            index=index,
+            base_dir=base_dir,
+            keys_dir=remote_keys_dir,
+        ),
+    )
+    write_script(
+        directory / "preflight.sh",
+        preflight_script(
+            config=config,
+            base_dir=base_dir,
+            index=index,
+        ),
+    )
+    write_script(
+        directory / "install-caddy.sh",
+        caddy_install_script(config=config, base_dir=base_dir, index=index),
+    )
+    signer_key = (
+        (keys_dir / f"validator-{index}" / "evm-key.hex")
+        .read_text()
+        .strip()
+        .removeprefix("0x")
+    )
+    feeder_path = directory / "feeder.toml"
+    feeder_path.write_text(
+        feeder_config(
+            config=config, index=index, validator=validator, signer_key=signer_key
+        )
+    )
+    feeder_path.chmod(0o600)
+    (directory / "pairs.toml").write_text(feeder_pairs(config=config))
+    write_script(
+        directory / "start-all.sh",
+        start_all_script(
+            config=config,
+            index=index,
+            base_dir=base_dir,
+        ).replace("{TEE_PORT}", str(port_of(config, "tee_enclave_port"))),
+    )
+    write_script(directory / "stop-all.sh", stop_all_script(index=index, base_dir=base_dir))
+
+
 def render(
     *,
     config: dict[str, Any],
     validators: list[dict[str, Any]],
     genesis_path: Path,
     keys_dir: Path,
-    repo_root: Path,
 ) -> None:
     output_dir = genesis_path.parent
     # Paths as they will exist on the target machines. They default to this
@@ -1071,103 +1140,25 @@ def render(
     base_dir = str(config.get("remote_base_dir", output_dir))
     remote_keys_dir = str(config.get("remote_keys_dir", keys_dir))
 
-    enodes = []
-    for index, validator in enumerate(validators):
-        directory = keys_dir / f"validator-{index}"
-        host = validator["p2p_address"].rsplit(":", 1)[0]
-        node_id = ensure_reth_p2p_secret(directory)
-        enodes.append(
-            f"enode://{node_id}@{format_enode_host(host)}:{port_of(config, 'reth_p2p_port')}"
-        )
+    enodes = [
+        f"enode://{ensure_reth_p2p_secret(keys_dir / f'validator-{index}')}@{format_enode_host(validator['p2p_address'].rsplit(':', 1)[0])}:{port_of(config, 'reth_p2p_port')}"
+        for index, validator in enumerate(validators)
+    ]
     (output_dir / "reth-bootnodes.txt").write_text("\n".join(enodes) + "\n")
+    paths = (output_dir, keys_dir, base_dir, remote_keys_dir)
     for index, validator in enumerate(validators):
-        directory = output_dir / f"validator-{index}"
-        host, _, consensus_port = validator["p2p_address"].rpartition(":")
-
-        write_script(
-            directory / "run-enclave.sh",
-            enclave_script(config=config, index=index, base_dir=base_dir),
+        _write_validator_scripts(
+            config=config,
+            index=index,
+            validator=validator,
+            paths=paths,
         )
-        write_script(
-            directory / "run-radicle.sh",
-            radicle_script(
-                config=config,
-                index=index,
-                host=host,
-                keys_dir=remote_keys_dir,
-                repo_root=str(repo_root),
-            ),
-        )
-        write_script(
-            directory / "run-node.sh",
-            node_script(
-                config=config,
-                index=index,
-                base_dir=base_dir,
-                keys_dir=remote_keys_dir,
-                repo_root=str(repo_root),
-                consensus_port=int(consensus_port),
-                host=host,
-            ),
-        )
-        write_script(
-            directory / "run-feeder.sh",
-            feeder_script(config=config, index=index, base_dir=base_dir, repo_root=str(repo_root)),
-        )
-        (directory / "Caddyfile").write_text(caddyfile(config=config, host=host))
-        write_script(
-            directory / "run-tee-renew.sh",
-            tee_renew_script(
-                config=config,
-                index=index,
-                base_dir=base_dir,
-                keys_dir=remote_keys_dir,
-            ),
-        )
-        write_script(
-            directory / "preflight.sh",
-            preflight_script(
-                config=config,
-                base_dir=base_dir,
-                index=index,
-            ),
-        )
-        write_script(
-            directory / "install-caddy.sh",
-            caddy_install_script(config=config, base_dir=base_dir, index=index),
-        )
-        signer_key = (
-            (keys_dir / f"validator-{index}" / "evm-key.hex")
-            .read_text()
-            .strip()
-            .removeprefix("0x")
-        )
-        feeder_path = directory / "feeder.toml"
-        feeder_path.write_text(
-            feeder_config(
-                config=config, index=index, validator=validator, signer_key=signer_key
-            )
-        )
-        feeder_path.chmod(0o600)
-        (directory / "pairs.toml").write_text(feeder_pairs(config=config))
-        write_script(
-            directory / "start-all.sh",
-            start_all_script(
-                config=config,
-                index=index,
-                base_dir=base_dir,
-            ).replace("{TEE_PORT}", str(port_of(config, "tee_enclave_port"))),
-        )
-        write_script(directory / "stop-all.sh", stop_all_script(index=index, base_dir=base_dir))
 
     stage_signed_enclave(config=config, output_dir=output_dir)
     write_systemd_units(
         output_dir=output_dir,
         base_dir=base_dir,
-        enable_tee_renewal=(
-            config["tee"]["mode"] == "dcap-required"
-            or bool(config.get("enclave_sgx", True))
-        ),
+        enable_tee_renewal=_uses_production_tee_session(config),
     )
 
     build_distribution(
@@ -1179,11 +1170,9 @@ def render(
 
     (output_dir / "DEPLOY.md").write_text(
         deploy_markdown(
-            config=config,
+            config=config | {"remote_base_dir": base_dir},
             validators=validators,
-            base_dir=base_dir,
-            keys_dir=remote_keys_dir,
-            local_keys_dir=keys_dir,
+            keys_dir=keys_dir,
             enodes=enodes,
         )
     )

@@ -20,11 +20,7 @@ use outbe_nod::{api, precompile::INod, schema::NodContract};
 /// Returns the Nods burned.
 pub(crate) fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = NodContract::new(ctx.storage.clone());
-    let mut expiry = NodExpiry {
-        storage: &ctx.storage,
-        nod: NodContract::new(ctx.storage.clone()),
-        forfeited: 0,
-    };
+    let mut expiry = NodExpiry::new(ctx);
     let mut budget = SweepBudget::per_block();
     expiry_queue::sweep(
         &ExpiryHours(&queue),
@@ -42,6 +38,16 @@ struct NodExpiry<'a, 's> {
     storage: &'a StorageHandle<'s>,
     nod: NodContract<'s>,
     forfeited: u32,
+}
+
+impl<'a, 's> NodExpiry<'a, 's> {
+    fn new(ctx: &'a BlockRuntimeContext<'s>) -> Self {
+        Self {
+            storage: &ctx.storage,
+            nod: NodContract::new(ctx.storage.clone()),
+            forfeited: 0,
+        }
+    }
 }
 
 /// A bucket's members are its unpaid Nods. Paid ones keep its terms but never burn.

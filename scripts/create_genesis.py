@@ -169,7 +169,6 @@ def main() -> None:
         validators=validators,
         genesis_path=output,
         keys_dir=keys_dir,
-        repo_root=REPO_ROOT,
     )
     identity_path = output.parent / "network-identity.json"
     identity_path.write_text(

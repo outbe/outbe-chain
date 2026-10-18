@@ -69,16 +69,29 @@ impl From<outbe_tee::tribute_source::TributeSourceSubject> for TributeStateProof
 }
 
 impl TributeStateProofSubject {
+    fn checkpoint_is_complete(&self) -> bool {
+        self.checkpoint.block_number != 0
+            && !self.checkpoint.block_hash.is_zero()
+            && !self.checkpoint.state_root.is_zero()
+    }
+
+    fn is_complete(&self) -> bool {
+        self.chain_id != 0 && self.worldwide_day.value() != 0 && self.checkpoint_is_complete()
+    }
+
     fn validate(&self) -> Result<()> {
-        if self.chain_id == 0
-            || self.worldwide_day.value() == 0
-            || self.checkpoint.block_number == 0
-            || self.checkpoint.block_hash.is_zero()
-            || self.checkpoint.state_root.is_zero()
-        {
+        if !self.is_complete() {
             return Err(invalid("incomplete finalized Tribute proof subject"));
         }
         Ok(())
+    }
+
+    fn matches_context(&self, day_index: u32, tribute: &EncryptedTributeV2) -> bool {
+        let context = &tribute.context;
+        day_index < self.tribute_count
+            && tribute.has_valid_encoding()
+            && (context.chain_id, context.worldwide_day) == (self.chain_id, self.worldwide_day)
+            && !context.owner.is_zero()
     }
 }
 
@@ -98,15 +111,9 @@ pub fn expected_record_words(
 ) -> Result<Vec<(B256, U256)>> {
     subject.validate()?;
     let context = &tribute.context;
-    if day_index >= subject.tribute_count
-        || !tribute.has_valid_encoding()
-        || context.chain_id != subject.chain_id
-        || context.worldwide_day != subject.worldwide_day
-        || context.owner.is_zero()
-        || derive_poseidon_entity_id(context.owner, context.worldwide_day)
-            .map_err(|error| invalid(error.to_string()))?
-            != context.tribute_id
-    {
+    let expected_id = derive_poseidon_entity_id(context.owner, context.worldwide_day)
+        .map_err(|error| invalid(error.to_string()))?;
+    if !subject.matches_context(day_index, tribute) || expected_id != context.tribute_id {
         return Err(invalid(
             "Tribute source identity does not match its subject",
         ));

@@ -776,7 +776,6 @@ class LaunchBundleTests(unittest.TestCase):
             validators=self.fake_validators(),
             genesis_path=genesis,
             keys_dir=keys_dir,
-            repo_root=REPO_ROOT,
         )
         return root, keys_dir, output_dir
 
@@ -792,7 +791,6 @@ class LaunchBundleTests(unittest.TestCase):
                 index=0,
                 host="10.0.0.1",
                 keys_dir="/keys",
-                repo_root=str(REPO_ROOT),
             )
 
         self.assertIn(f"--max-validators {LB.DEFAULT_MAX_VALIDATORS}", rendered({}))
@@ -813,7 +811,6 @@ class LaunchBundleTests(unittest.TestCase):
             index=0,
             host="10.0.0.1",
             keys_dir="/keys",
-            repo_root=str(REPO_ROOT),
         )
         self.assertNotIn("config.json", script)
 
@@ -1067,7 +1064,6 @@ class LaunchBundleTests(unittest.TestCase):
                 validators=self.fake_validators(),
                 genesis_path=output_dir / "genesis.json",
                 keys_dir=pathlib.Path(tmp) / "keys",
-                repo_root=REPO_ROOT,
             )
             self.assertEqual(first, (output_dir / "reth-bootnodes.txt").read_text())
             self.assertEqual(len(first.strip().splitlines()), 4)
