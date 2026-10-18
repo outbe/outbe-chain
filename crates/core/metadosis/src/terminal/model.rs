@@ -95,7 +95,6 @@ impl WwdTerminalReceipt {
                 || context.active_memberships != 0
                 || context.closed_memberships != 1
                 || common.block_number == 0
-                || common.retirement != RetirementOutcome::Requested
                 || detail.tribute_count == 0
                 || detail.inputs_hash.is_zero()
                 || detail.result_hash.is_zero()
