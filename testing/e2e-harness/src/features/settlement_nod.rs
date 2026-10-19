@@ -817,8 +817,7 @@ mod tests {
         };
         let group = NodGroupBodyV1 {
             group_key,
-            worldwide_day: day,
-            entry_price_minor: U256::from(9),
+            full_day_after_issue: day,
             reference_currency: 840,
             settled_nods: 0,
         };

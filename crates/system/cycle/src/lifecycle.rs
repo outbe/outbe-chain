@@ -66,6 +66,7 @@ impl BlockLifecycle for CycleLifecycle {
         outbe_credisfactory::called::run_call_slice(&ctx.runtime)?;
         outbe_intexfactory::notify::send_notices(&ctx.runtime)?;
         // Last: deleting what already expired moves no value and decides nothing.
+        outbe_nodfactory::hooks::sweep_cleanup(&ctx.runtime)?;
         outbe_gemfactory::hooks::sweep_cleanup(&ctx.runtime)?;
         outbe_intexfactory::hooks::sweep_cleanup(&ctx.runtime)?;
         Ok(())

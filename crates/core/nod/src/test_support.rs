@@ -78,11 +78,7 @@ pub fn item(f: NodItemFixture, entry_price_minor: U256) -> NodItemState {
 /// Creates an unsettled fixture with a group derived from its encrypted terms.
 pub fn unsettled_item(terms: NodTermsV2, amount: U256, issued_at: u64) -> NodItemState {
     assert_eq!(terms.chain_id, 1, "NOD item fixture requires chain 1");
-    let group_key = crate::identity::group_key(
-        terms.worldwide_day,
-        terms.entry_price_minor,
-        terms.reference_currency,
-    );
+    let group_key = group_key(issued_at, terms.entry_price_minor, terms.reference_currency);
     item(
         NodItemFixture {
             nod_id: terms.nod_id,
@@ -126,6 +122,43 @@ pub fn set_entry_price(item: &mut NodItemState, price: U256) {
     let mut terms = item.encrypted.terms.clone();
     terms.entry_price_minor = price;
     item.encrypted = encrypt(terms, amount);
+}
+
+/// The group NodFactory puts a Nod in under the production call rate the fixtures seal.
+pub fn group_key(issued_at: u64, entry_price_minor: U256, reference_currency: u16) -> B256 {
+    group_key_at(
+        &crate::config::NodParams::PROD,
+        issued_at,
+        entry_price_minor,
+        reference_currency,
+    )
+}
+
+/// The group NodFactory puts a Nod in under the call rate of `params`.
+pub fn group_key_at(
+    params: &crate::config::NodParams,
+    issued_at: u64,
+    entry_price_minor: U256,
+    reference_currency: u16,
+) -> B256 {
+    crate::identity::group_key(
+        issued_at,
+        outbe_primitives::markup::marked_up(entry_price_minor, params.call_rate).unwrap(),
+        reference_currency,
+    )
+}
+
+/// Records `item` as NodFactory issues it: the terms its entry seals and its load.
+pub fn add(
+    storage: &outbe_primitives::storage::StorageHandle<'_>,
+    item: &NodItemState,
+) -> outbe_primitives::error::Result<()> {
+    crate::api::add_nod(
+        storage,
+        item,
+        sealed_terms(storage, item, item.entry_price_minor()),
+        crate::api::calculation_amount(item)?,
+    )
 }
 
 /// The call terms NodFactory seals on a group opened by `item` at `entry_price_minor`,

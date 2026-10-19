@@ -9,7 +9,7 @@ use outbe_primitives::error::Result;
 
 use crate::api;
 use crate::errors::NodError;
-use crate::schema::{NodContract, NodGroupState, NodItemState};
+use crate::schema::{NodContract, NodItemState};
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 /// Selectors on this precompile that accept native value. The route table binds
@@ -90,28 +90,21 @@ fn dispatch_entity(
         tokenURI(c) => view(c, |c| {
             let nod_id = WwdEntityId::from(c.nodId);
             let item = api::get_item(&storage, nod_id)?.ok_or(NodError::NodNotFound)?;
-            let group = api::get_group(&storage, item.group_key)?.ok_or(NodError::GroupNotFound)?;
-            crate::metadata::token_uri(nod, &item, &group, storage.timestamp()?)
+            crate::metadata::token_uri(nod, &item, storage.timestamp()?)
         }),
         tokenByIndex(c) => view(c, |c| {
-            let idx = usize::try_from(c.index).map_err(|_| NodError::IndexOutOfBounds)?;
-            api::list_all(&storage)?
-                .get(idx)
-                .map(|item| item.nod_id.to_u256())
-                .ok_or_else(|| NodError::IndexOutOfBounds.into())
+            let index = u32::try_from(c.index).map_err(|_| NodError::IndexOutOfBounds)?;
+            api::token_by_index(&storage, index)?.ok_or_else(|| NodError::IndexOutOfBounds.into())
         }),
         tokenOfOwnerByIndex(c) => view(c, |c| {
-            let idx = usize::try_from(c.index).map_err(|_| NodError::IndexOutOfBounds)?;
-            api::list_by_owner(&storage, c.owner)?
-                .get(idx)
-                .map(|item| item.nod_id.to_u256())
+            let index = u32::try_from(c.index).map_err(|_| NodError::IndexOutOfBounds)?;
+            api::token_of_owner_by_index(&storage, c.owner, index)?
                 .ok_or_else(|| NodError::IndexOutOfBounds.into())
         }),
         getNod(c) => view(c, |c| {
             let nod_id = WwdEntityId::from(c.nodId);
             let item = api::get_item(&storage, nod_id)?.ok_or(NodError::NodNotFound)?;
-            let group = api::get_group(&storage, item.group_key)?.ok_or(NodError::GroupNotFound)?;
-            to_abi_data(&storage, &item, &group)
+            to_abi_data(&storage, &item)
         }),
         _ => unreachable!("entity route requires an entity call"),
     }
@@ -120,7 +113,6 @@ fn dispatch_entity(
 fn to_abi_data(
     storage: &outbe_primitives::storage::StorageHandle<'_>,
     item: &NodItemState,
-    group: &NodGroupState,
 ) -> Result<INod::NodData> {
     let nod = NodContract::new(storage.clone());
     let called_at = nod.group_called_at.read(&item.group_key)?;
@@ -140,9 +132,9 @@ fn to_abi_data(
         encryptedCreatorPublicKey: item.encrypted.encrypted_creator_public_key.clone().into(),
         encryptionBinding: item.encrypted.encryption_binding,
         chainId: item.encrypted.terms.chain_id,
-        entryPriceMinor: group.entry_price_minor,
+        entryPriceMinor: item.entry_price_minor(),
         settlementCostMinor: api::settlement_cost_minor(
-            group.entry_price_minor,
+            item.entry_price_minor(),
             api::calculation_amount(item)?,
         )?,
         issuanceCurrency: item.issuance_currency,
@@ -157,5 +149,6 @@ fn to_abi_data(
         callThreshold: terms.call_threshold_seconds,
         callNoticePeriod: terms.call_notice_period_seconds,
         settlementDeadline: deadline,
+        groupKey: item.group_key,
     })
 }

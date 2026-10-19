@@ -181,7 +181,12 @@ fn subcall_reaches_nod_in_the_same_evm_state() {
     let owner = Address::repeat_byte(0x11);
     let day = WorldwideDay::new(20_260_715);
     let nod_id = outbe_nod::identity::generate_nod_id(owner, day).unwrap();
-    let group_key = outbe_nod::identity::group_key(day, U256::from(9), 978);
+    let group_key = outbe_nod::test_support::group_key_at(
+        &outbe_nod::config::NodParams::DEV,
+        1_700_000_000,
+        U256::from(9),
+        978,
+    );
     let item = outbe_nod::test_support::item(
         outbe_nod::test_support::NodItemFixture {
             is_settled: false,
@@ -201,13 +206,7 @@ fn subcall_reaches_nod_in_the_same_evm_state() {
     let block = BlockContext::new(1, 1, outbe_primitives::chain::CHAIN_ID, owner, vec![owner]);
     let mut provider = DirectStorageProvider::new(&mut database, block);
     StorageHandle::enter(&mut provider, |storage| {
-        outbe_nod::api::add_nod(
-            &storage,
-            &item,
-            U256::from(9),
-            outbe_nod::test_support::sealed_terms(&storage, &item, U256::from(9)),
-        )
-        .unwrap();
+        outbe_nod::test_support::add(&storage, &item).unwrap();
     });
     provider.flush().unwrap();
 

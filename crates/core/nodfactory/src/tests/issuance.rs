@@ -70,17 +70,17 @@ fn second_same_block_issue_reuses_the_group() {
     let second_id = world.issue(&second);
     assert_ne!(first_id, second_id);
 
-    let group_key = outbe_nod::identity::group_key(
-        first.worldwide_day,
-        first.entry_price_minor,
-        first.reference_currency,
-    );
-    let group_id = group_key;
-    let group = world
-        .enter(|storage| nod_api::get_group(&storage, group_id))
-        .unwrap()
+    let (first_item, second_item) = world
+        .enter(|storage| {
+            outbe_primitives::error::Result::Ok((
+                nod_api::get_item(&storage, first_id)?.unwrap(),
+                nod_api::get_item(&storage, second_id)?.unwrap(),
+            ))
+        })
         .unwrap();
-    assert_eq!(group.entry_price_minor, first.entry_price_minor);
+    let group_key = first_item.group_key;
+    assert_eq!(second_item.group_key, group_key);
+    assert_eq!(first_item.entry_price_minor(), first.entry_price_minor);
     assert_eq!(
         world
             .enter(|storage| NodContract::new(storage).group_nod_count.read(&group_key))
@@ -221,6 +221,11 @@ fn mining_deletes_item_and_last_group_then_emits_burn() {
     let mut world = World::new();
     let input = free(Address::repeat_byte(0x55));
     let nod_id = world.issue(&input);
+    let group_key = world
+        .enter(|storage| nod_api::get_item(&storage, nod_id))
+        .unwrap()
+        .unwrap()
+        .group_key;
     world.provider.clear_events(NOD_ADDRESS);
     world.provider.clear_events(NOD_FACTORY_ADDRESS);
     world.settle(nod_id, input.owner).unwrap();
@@ -238,14 +243,8 @@ fn mining_deletes_item_and_last_group_then_emits_burn() {
         .enter(|storage| nod_api::get_item(&storage, nod_id))
         .unwrap()
         .is_none());
-    let group_key = outbe_nod::identity::group_key(
-        input.worldwide_day,
-        input.entry_price_minor,
-        input.reference_currency,
-    );
-    let group_id = group_key;
     assert!(world
-        .enter(|storage| { nod_api::get_group(&storage, group_id) })
+        .enter(|storage| { nod_api::get_group(&storage, group_key) })
         .unwrap()
         .is_none());
 

@@ -18,8 +18,7 @@ pub fn canonical_group(body: &NodGroupState) -> NodGroupBodyV1 {
     NodGroupBodyV1 {
         settled_nods: body.settled_nods,
         group_key: body.group_key,
-        worldwide_day: body.worldwide_day,
-        entry_price_minor: body.entry_price_minor,
+        full_day_after_issue: body.full_day_after_issue,
         reference_currency: body.reference_currency,
     }
 }
@@ -46,8 +45,7 @@ pub fn from_canonical_group(body: NodGroupBodyV1) -> NodGroupState {
     NodGroupState {
         settled_nods: body.settled_nods,
         group_key: body.group_key,
-        worldwide_day: body.worldwide_day,
-        entry_price_minor: body.entry_price_minor,
+        full_day_after_issue: body.full_day_after_issue,
         reference_currency: body.reference_currency,
     }
 }

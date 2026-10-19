@@ -13,13 +13,7 @@ fn settled_state_is_exposed_in_nod_data_and_metadata() {
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
         let item = item(Address::repeat_byte(0x86), U256::from(20), USD);
-        api::add_nod(
-            &storage,
-            &item,
-            U256::from(20),
-            crate::test_support::sealed_terms(&storage, &item, U256::from(20)),
-        )
-        .unwrap();
+        crate::test_support::add(&storage, &item).unwrap();
         let group_id = item.group_key;
         api::record_settled(
             &storage,
@@ -179,14 +173,8 @@ fn settlement_updates_only_the_settled_nod() {
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
-        for (body, entry) in [(&first, 500_000u64), (&second, 600_000)] {
-            api::add_nod(
-                &storage,
-                body,
-                U256::from(entry),
-                crate::test_support::sealed_terms(&storage, body, U256::from(entry)),
-            )
-            .unwrap();
+        for body in [&first, &second] {
+            crate::test_support::add(&storage, body).unwrap();
         }
         let group_id = first.group_key;
         api::record_settled(
@@ -224,13 +212,7 @@ fn token_uri_renders_the_nod_image_and_metadata() {
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
-        api::add_nod(
-            &storage,
-            &body,
-            U256::from(400_000),
-            crate::test_support::sealed_terms(&storage, &body, U256::from(400_000)),
-        )
-        .unwrap();
+        crate::test_support::add(&storage, &body).unwrap();
         let read = || {
             let data = INod::tokenURICall {
                 nodId: body.nod_id.to_u256(),
@@ -308,13 +290,7 @@ fn nod_card_hides_call_rows_it_cannot_honour() {
     let json = StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
         let item = item(Address::repeat_byte(0x88), U256::from(20), USD);
-        api::add_nod(
-            &storage,
-            &item,
-            U256::from(20),
-            crate::test_support::sealed_terms(&storage, &item, U256::from(20)),
-        )
-        .unwrap();
+        crate::test_support::add(&storage, &item).unwrap();
         let mut nod = NodContract::new(storage.clone());
         nod.seal_group_call_terms(
             item.group_key,
@@ -378,13 +354,7 @@ fn seed_public_lifecycle(
     } = scenario;
     seed_production_nod_genesis(storage);
     let item = item(Address::repeat_byte(0x87), U256::from(20), USD);
-    api::add_nod(
-        storage,
-        &item,
-        U256::from(20),
-        crate::test_support::sealed_terms(storage, &item, U256::from(20)),
-    )
-    .unwrap();
+    crate::test_support::add(storage, &item).unwrap();
     let mut nod = NodContract::new(storage.clone());
     nod.seal_group_call_terms(
         item.group_key,
@@ -433,13 +403,7 @@ fn balance_counts_owned_nods_through_settlement_until_removal() {
             INod::balanceOfCall::abi_decode_returns(&out).unwrap()
         };
         assert_eq!(balance(), U256::ZERO);
-        api::add_nod(
-            &storage,
-            &item,
-            U256::from(20),
-            crate::test_support::sealed_terms(&storage, &item, U256::from(20)),
-        )
-        .unwrap();
+        crate::test_support::add(&storage, &item).unwrap();
         assert_eq!(balance(), U256::from(1));
         api::record_settled(
             &storage,

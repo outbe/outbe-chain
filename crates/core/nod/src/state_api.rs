@@ -71,11 +71,11 @@ pub fn load_group(storage: &StorageHandle<'_>, key: B256) -> Result<Option<Loade
 pub fn add_item(
     storage: &StorageHandle<'_>,
     item: &NodItemState,
-    entry: U256,
     terms: Option<CallTerms>,
+    gratis_load_minor: U256,
 ) -> Result<()> {
     storage.with_checkpoint(|| {
-        NodContract::new(storage.clone()).record_nod_issued_state(item, entry, terms)
+        NodContract::new(storage.clone()).record_nod_issued_state(item, terms, gratis_load_minor)
     })
 }
 pub fn record_settled(
@@ -112,15 +112,18 @@ impl NodContract<'_> {
     fn record_nod_issued_state(
         &mut self,
         item: &NodItemState,
-        entry_price_minor: U256,
         call_terms: Option<CallTerms>,
+        gratis_load_minor: U256,
     ) -> Result<()> {
-        crate::issuance::validate_item(item, entry_price_minor)?;
+        crate::issuance::validate_item(
+            item,
+            call_terms.map_or(U256::ZERO, |terms| terms.call_price_minor),
+        )?;
         if self.records.get(item.nod_id)?.is_some() {
             return Err(NodError::NodAlreadyExists.into());
         }
 
-        let group_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.group_key.0);
+        let group_id = item.group_id();
         let current_group = self.groups.get(item.group_key)?;
         let member_count = self.group_nod_count.read(&item.group_key)?;
         let settled_count = current_group.as_ref().map_or(0, |group| group.settled_nods);
@@ -137,14 +140,9 @@ impl NodContract<'_> {
                 let group = NodGroupState {
                     settled_nods: 0,
                     group_key: item.group_key,
-                    worldwide_day: item.worldwide_day,
-                    entry_price_minor,
+                    full_day_after_issue: item.full_day_after_issue(),
                     reference_currency: item.reference_currency,
                 };
-                self.group_worldwide_day
-                    .write(&item.group_key, item.worldwide_day)?;
-                self.group_issued_at
-                    .write(&item.group_key, item.issued_at)?;
                 if let Some(terms) = call_terms {
                     self.seal_group_call_terms(item.group_key, terms)?;
                     self.insert_call_bin(item.group_key)?;
@@ -159,6 +157,7 @@ impl NodContract<'_> {
             .checked_add(1)
             .ok_or(NodError::TotalSupplyOverflowDuringIssuance)?;
         self.total_supply.write(supply)?;
+        self.add_unpaid_load(item.group_key, gratis_load_minor)?;
         self.insert_group_member(item.group_key, item.nod_id)?;
         self.insert_state_record(&StoredNod::from(item))?;
         if let Some(group) = new_group {
@@ -187,6 +186,7 @@ impl NodContract<'_> {
             .checked_add(1)
             .ok_or(NodError::SettledCountOverflow)?;
         self.remove_group_member(item.group_key, item.nod_id)?;
+        self.take_unpaid_load(item.group_key, crate::api::calculation_amount(&item)?)?;
         item.is_settled = true;
         self.records.update(&StoredNod::from(&item))?;
         self.groups.update(&group)?;
@@ -203,7 +203,7 @@ impl NodContract<'_> {
         let item = item.into_body();
         let mut group = group.into_body();
         check_loaded(self, &item, &group)?;
-        let group_id = WwdEntityId::from_day_and_digest(group.worldwide_day, group.group_key);
+        let group_id = item.group_id();
         let supply = self
             .total_supply
             .read()?
@@ -217,12 +217,12 @@ impl NodContract<'_> {
                 .ok_or(NodError::GroupSettledCountUnderflow { group_id })?;
             self.group_nod_count.read(&item.group_key)?
         } else {
+            // An unpaid Nod leaves only through its forfeited group's cleanup, after the
+            // group's whole unpaid load was returned. So its load stays on the total.
             self.remove_group_member(item.group_key, item.nod_id)?
         };
         self.delete_state_record(item.nod_id)?;
         if remaining == 0 && group.settled_nods == 0 {
-            self.group_worldwide_day.clear(&item.group_key)?;
-            self.group_issued_at.clear(&item.group_key)?;
             self.group_nod_count.clear(&item.group_key)?;
             self.close_group(item.group_key)?;
             self.groups.delete(group.group_key)?;
@@ -359,18 +359,14 @@ mod tests {
                 owner: params.owner,
                 worldwide_day: params.worldwide_day,
                 league_id: params.league_id,
-                group_key: crate::identity::group_key(
-                    params.worldwide_day,
-                    params.entry_price_minor,
-                    params.reference_currency,
-                ),
+                group_key: crate::identity::group_key(1, U256::ZERO, params.reference_currency),
                 issuance_currency: params.issuance_currency,
                 reference_currency: params.reference_currency,
                 issued_at: 1,
                 is_settled: false,
                 encrypted,
             };
-            add_item(&storage, &item, params.entry_price_minor, None).unwrap();
+            add_item(&storage, &item, None, params.gratis_load_minor).unwrap();
             let contract = NodContract::new(storage.clone());
             assert_eq!(contract.total_supply().unwrap(), 1);
             assert_eq!(contract.state_records(Some(item.owner)).unwrap().len(), 1);

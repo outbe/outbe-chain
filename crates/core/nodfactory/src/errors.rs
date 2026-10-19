@@ -41,11 +41,11 @@ pub enum NodFactoryError {
     #[error(transparent)]
     CreateNodForTest(#[from] outbe_tee::TransportError),
 
-    #[error("Nod group {group_key} has an empty member slot during forfeit")]
-    EmptyGroupMemberSlotDuringForfeit { group_key: B256 },
+    #[error("Nod group {group_key} has an empty member slot during cleanup")]
+    EmptyGroupMemberSlotDuringCleanup { group_key: B256 },
 
-    #[error("Nod group {group_key} member {nod_id} has no body during forfeit")]
-    MissingGroupMemberRecordDuringForfeit {
+    #[error("Nod group {group_key} member {nod_id} has no body during cleanup")]
+    MissingGroupMemberRecordDuringCleanup {
         group_key: B256,
         nod_id: WwdEntityId,
     },
@@ -56,8 +56,11 @@ pub enum NodFactoryError {
         nod_id: WwdEntityId,
     },
 
-    #[error("Nod group {group_key} has no body during forfeit")]
-    MissingGroupRecordDuringForfeit { group_key: B256 },
+    #[error("Nod group {group_key} has no body during cleanup")]
+    MissingGroupRecordDuringCleanup { group_key: B256 },
+
+    #[error("Nod group {group_key} has no record to call")]
+    MissingGroupForCall { group_key: B256 },
 
     #[error("closeCallNoticeForTest: group not queued")]
     GroupNotQueuedForTest,

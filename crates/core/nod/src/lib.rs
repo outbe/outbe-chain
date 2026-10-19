@@ -25,7 +25,7 @@ pub mod storage_records;
 #[cfg(any(test, feature = "test-enclave"))]
 pub mod test_support;
 
-pub use schema::{NodContract, NodGroupState, NodIssueParams, NodItemState};
+pub use schema::{EffectiveState, NodContract, NodGroupState, NodIssueParams, NodItemState};
 
 #[cfg(test)]
 mod tests;

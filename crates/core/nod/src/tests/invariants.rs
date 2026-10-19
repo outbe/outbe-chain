@@ -25,7 +25,11 @@ fn item(owner: Address) -> NodItemState {
             gratis_load_minor: U256::from(11),
             worldwide_day,
             league_id: 4,
-            group_key: crate::identity::group_key(worldwide_day, U256::from(5), 978),
+            group_key: crate::test_support::group_key(
+                date_key_to_utc_timestamp(previous_date_key(timestamp_to_date_key(NOW))),
+                U256::from(5),
+                978,
+            ),
             issuance_currency: 840,
             reference_currency: 978,
             // Midnight of the last UTC day closed at `NOW`.
@@ -49,12 +53,7 @@ fn reverted_issuance_rolls_back_nod_state() {
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         let outcome: Result<()> = storage.with_checkpoint(|| {
-            api::add_nod(
-                &storage,
-                &body,
-                U256::from(5),
-                crate::test_support::sealed_terms(&storage, &body, U256::from(5)),
-            )?;
+            crate::test_support::add(&storage, &body)?;
             assert!(api::get_item(&storage, body.nod_id)?.is_some());
             Err(PrecompileError::Revert("nested caller reverted".into()))
         });
@@ -89,25 +88,14 @@ fn group_record_survives_membership_changes_until_last_removal() {
     let group_id = first.group_key;
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
-        api::add_nod(
-            &storage,
-            &first,
-            U256::from(5),
-            crate::test_support::sealed_terms(&storage, &first, U256::from(5)),
-        )
-        .unwrap();
+        super::seed_production_nod_genesis(&storage);
+        crate::test_support::add(&storage, &first).unwrap();
         let original = NodContract::new(storage.clone())
             .groups
             .get(group_id)
             .unwrap()
             .unwrap();
-        api::add_nod(
-            &storage,
-            &second,
-            U256::from(5),
-            crate::test_support::sealed_terms(&storage, &second, U256::from(5)),
-        )
-        .unwrap();
+        crate::test_support::add(&storage, &second).unwrap();
         let after_issue = NodContract::new(storage.clone())
             .groups
             .get(group_id)
@@ -170,25 +158,14 @@ fn member_count_overflow_and_underflow_roll_back_nod_mutations() {
     let group_id = first.group_key;
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
-        api::add_nod(
-            &storage,
-            &first,
-            U256::from(5),
-            crate::test_support::sealed_terms(&storage, &first, U256::from(5)),
-        )
-        .unwrap();
+        super::seed_production_nod_genesis(&storage);
+        crate::test_support::add(&storage, &first).unwrap();
         let nod = NodContract::new(storage.clone());
         let original = nod.groups.get(group_id).unwrap().unwrap();
         nod.group_nod_count
             .write(&first.group_key, u32::MAX)
             .unwrap();
-        let error = api::add_nod(
-            &storage,
-            &second,
-            U256::from(5),
-            crate::test_support::sealed_terms(&storage, &second, U256::from(5)),
-        )
-        .unwrap_err();
+        let error = crate::test_support::add(&storage, &second).unwrap_err();
         assert!(
             matches!(error, PrecompileError::Revert(message) if message.contains("member index overflow"))
         );
@@ -241,36 +218,34 @@ fn nod_contract_slot_layout_is_pinned() {
     StorageHandle::enter(&mut provider, |storage| {
         let nod = NodContract::new(storage);
         assert_eq!(nod.total_supply.slot(), U256::ZERO);
-        assert_eq!(nod.group_worldwide_day.base_slot(), U256::from(1));
-        assert_eq!(nod.group_nod_count.base_slot(), U256::from(2));
-        assert_eq!(nod.group_nods.base_slot(), U256::from(3));
-        assert_eq!(nod.group_nod_index.base_slot(), U256::from(4));
-        assert_eq!(nod.group_call_price_minor.base_slot(), U256::from(5));
-        assert_eq!(nod.group_currency.base_slot(), U256::from(6));
-        assert_eq!(nod.group_called_at.base_slot(), U256::from(7));
-        assert_eq!(nod.group_call_rate.base_slot(), U256::from(8));
-        assert_eq!(nod.group_call_window_seconds.base_slot(), U256::from(9));
-        assert_eq!(nod.group_call_threshold_seconds.base_slot(), U256::from(10));
+        assert_eq!(nod.group_nod_count.base_slot(), U256::from(1));
+        assert_eq!(nod.group_nods.base_slot(), U256::from(2));
+        assert_eq!(nod.group_nod_index.base_slot(), U256::from(3));
+        assert_eq!(nod.group_call_price_minor.base_slot(), U256::from(4));
+        assert_eq!(nod.group_currency.base_slot(), U256::from(5));
+        assert_eq!(nod.group_called_at.base_slot(), U256::from(6));
+        assert_eq!(nod.group_call_rate.base_slot(), U256::from(7));
+        assert_eq!(nod.group_call_window_seconds.base_slot(), U256::from(8));
+        assert_eq!(nod.group_call_threshold_seconds.base_slot(), U256::from(9));
         assert_eq!(
             nod.group_call_notice_period_seconds.base_slot(),
-            U256::from(11)
+            U256::from(10)
         );
-        assert_eq!(nod.max_call_window_seconds.base_slot(), U256::from(12));
-        assert_eq!(nod.group_issued_at.base_slot(), U256::from(13));
-        assert_eq!(nod.call_sweep_day.slot(), U256::from(14));
-        assert_eq!(nod.call_pending_day.slot(), U256::from(15));
-        assert_eq!(nod.call_bin_tree_root.base_slot(), U256::from(16));
-        assert_eq!(nod.call_bin_tree_mid.base_slot(), U256::from(17));
-        assert_eq!(nod.call_bin_tree_leaf.base_slot(), U256::from(18));
-        assert_eq!(nod.call_bin_count.base_slot(), U256::from(19));
-        assert_eq!(nod.call_bin_groups.base_slot(), U256::from(20));
-        assert_eq!(nod.call_group_slot.base_slot(), U256::from(21));
-        assert_eq!(nod.expiry_tree_root.slot(), U256::from(22));
-        assert_eq!(nod.expiry_tree_leaf.base_slot(), U256::from(24));
-        assert_eq!(nod.call_currency_cursor.slot(), U256::from(25));
-        assert_eq!(nod.call_bin_cursor.base_slot(), U256::from(26));
-        assert_eq!(nod.config_profile.slot(), U256::from(27));
-        assert_eq!(nod.expiry_bucket_len.base_slot(), U256::from(28));
-        assert_eq!(nod.expiry_cursor.slot(), U256::from(34));
+        assert_eq!(nod.max_call_window_seconds.base_slot(), U256::from(11));
+        assert_eq!(nod.call_sweep_day.slot(), U256::from(12));
+        assert_eq!(nod.call_pending_day.slot(), U256::from(13));
+        assert_eq!(nod.call_bin_tree_root.base_slot(), U256::from(14));
+        assert_eq!(nod.call_bin_tree_mid.base_slot(), U256::from(15));
+        assert_eq!(nod.call_bin_tree_leaf.base_slot(), U256::from(16));
+        assert_eq!(nod.call_bin_count.base_slot(), U256::from(17));
+        assert_eq!(nod.call_bin_groups.base_slot(), U256::from(18));
+        assert_eq!(nod.call_group_slot.base_slot(), U256::from(19));
+        assert_eq!(nod.expiry_tree_root.slot(), U256::from(20));
+        assert_eq!(nod.expiry_tree_leaf.base_slot(), U256::from(22));
+        assert_eq!(nod.call_currency_cursor.slot(), U256::from(23));
+        assert_eq!(nod.call_bin_cursor.base_slot(), U256::from(24));
+        assert_eq!(nod.config_profile.slot(), U256::from(25));
+        assert_eq!(nod.expiry_bucket_len.base_slot(), U256::from(26));
+        assert_eq!(nod.expiry_cursor.slot(), U256::from(32));
     });
 }

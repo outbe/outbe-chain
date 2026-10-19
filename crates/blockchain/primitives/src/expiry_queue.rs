@@ -210,10 +210,6 @@ pub trait ExpiryHandler<E> {
     fn due(&mut self, entry: E) -> Result<Due>;
     fn member_count(&self, entry: E) -> Result<u32>;
     fn member_at(&self, entry: E, index: u32) -> Result<Self::Member>;
-    /// Takes what expiring one member costs.
-    fn charge(&self, budget: &mut SweepBudget) -> bool {
-        budget.write()
-    }
     /// Expires `member` and takes it out of the entry.
     fn expire_member(&mut self, entry: E, member: Self::Member) -> Result<()>;
     fn classify(&self, error: &PrecompileError) -> SweepFailure {
@@ -224,7 +220,7 @@ pub trait ExpiryHandler<E> {
 }
 
 /// Expires due entries, earliest bucket first. Every slot visited costs a visit,
-/// and the handler charges for each member it expires.
+/// and each member expired costs a write.
 pub fn sweep<'s, Q, H>(
     queue: &Q,
     storage: &StorageHandle<'s>,
@@ -347,7 +343,7 @@ where
         };
         let mut failed = count - index;
         while index > 0 {
-            if !self.handler.charge(self.budget) {
+            if !self.budget.write() {
                 return Ok(Step::Hold(index));
             }
             index -= 1;
@@ -617,7 +613,7 @@ mod tests {
             push(queue, id(1), 10 * HOUR).unwrap();
             push(queue, id(2), 11 * HOUR).unwrap();
             let mut handler = recorder();
-            let mut budget = SweepBudget::new(10, 10, 0);
+            let mut budget = SweepBudget::new(10, 10);
             run(queue, storage, 12 * HOUR + 10, &mut budget, &mut handler);
             assert_eq!(handler.expired, vec![id(1), id(2)]);
             assert_eq!((budget.visits_left(), budget.writes_left()), (8, 8));
@@ -631,7 +627,7 @@ mod tests {
             push(queue, id(1), 10 * HOUR + 100).unwrap();
             push(queue, id(2), 10 * HOUR + 10).unwrap();
             let mut handler = recorder();
-            let mut budget = SweepBudget::new(10, 10, 0);
+            let mut budget = SweepBudget::new(10, 10);
             // At the deadline itself the entry is not due yet.
             run(queue, storage, 10 * HOUR + 100, &mut budget, &mut handler);
             assert_eq!(handler.expired, Vec::<U256>::new());
@@ -654,7 +650,7 @@ mod tests {
                 queue,
                 storage,
                 11 * HOUR,
-                &mut SweepBudget::new(2, 10, 0),
+                &mut SweepBudget::new(2, 10),
                 &mut handler,
             );
             assert_eq!(handler.expired, vec![id(1), id(2)]);
@@ -665,7 +661,7 @@ mod tests {
                 queue,
                 storage,
                 11 * HOUR,
-                &mut SweepBudget::new(2, 10, 0),
+                &mut SweepBudget::new(2, 10),
                 &mut handler,
             );
             assert_eq!(handler.expired, vec![id(1), id(2), id(3)]);
@@ -681,7 +677,7 @@ mod tests {
             push(queue, id(3), 11 * HOUR).unwrap();
             let mut handler = recorder();
             handler.out_of_gas_on.push(id(2));
-            let mut budget = SweepBudget::new(10, 10, 0);
+            let mut budget = SweepBudget::new(10, 10);
             run(queue, storage, 12 * HOUR, &mut budget, &mut handler);
             assert_eq!(handler.expired, vec![id(1)]);
             assert_eq!(queue.sweep_bucket().read().unwrap(), 10);
@@ -705,7 +701,7 @@ mod tests {
                 queue,
                 storage,
                 now,
-                &mut SweepBudget::new(10, 10, 0),
+                &mut SweepBudget::new(10, 10),
                 &mut handler,
             );
             assert_eq!(handler.expired, vec![id(2)]);
@@ -772,7 +768,7 @@ mod tests {
                     queue,
                     storage,
                     11 * HOUR,
-                    &mut SweepBudget::new(10, 2, 0),
+                    &mut SweepBudget::new(10, 2),
                     &mut handler,
                 )
                 .unwrap();
@@ -788,7 +784,7 @@ mod tests {
                 queue,
                 storage,
                 11 * HOUR,
-                &mut SweepBudget::new(10, 2, 0),
+                &mut SweepBudget::new(10, 2),
                 &mut handler,
             )
             .unwrap();
@@ -812,7 +808,7 @@ mod tests {
                 queue,
                 storage,
                 11 * HOUR,
-                &mut SweepBudget::new(10, 10, 0),
+                &mut SweepBudget::new(10, 10),
                 &mut handler,
             );
             assert_eq!(first_bucket(queue).unwrap(), None);
@@ -824,7 +820,7 @@ mod tests {
                 queue,
                 storage,
                 11 * HOUR,
-                &mut SweepBudget::new(10, 10, 0),
+                &mut SweepBudget::new(10, 10),
                 &mut handler,
             );
             assert_eq!(handler.deferred, vec![(id(2), 13 * HOUR)]);
@@ -845,7 +841,7 @@ mod tests {
                 queue,
                 storage,
                 11 * HOUR,
-                &mut SweepBudget::new(10, 10, 0),
+                &mut SweepBudget::new(10, 10),
                 &mut handler,
             );
             assert_eq!(handler.expired, vec![id(1)]);

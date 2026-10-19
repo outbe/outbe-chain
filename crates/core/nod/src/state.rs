@@ -1,31 +1,15 @@
-use alloy_primitives::B256;
+use alloy_primitives::{B256, U256};
 use outbe_primitives::call_bins;
 use outbe_primitives::error::Result;
 use outbe_primitives::expiry_queue;
-use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
-use std::collections::BTreeSet;
 
 use crate::{
     errors::NodError,
-    precompile::INod,
     schema::{CallTerms, NodContract},
 };
 
 impl NodContract<'_> {
-    /// A Nod id carries its Worldwide Day as a prefix, so each day is one id range.
-    pub fn emit_days_metadata_update(&mut self, days: &BTreeSet<u32>) -> Result<()> {
-        for &day in days {
-            let day = WorldwideDay::new(day);
-            self.emit(INod::BatchMetadataUpdate {
-                _fromTokenId: WwdEntityId::from_day_and_digest(day, B256::ZERO).to_u256(),
-                _toTokenId: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(0xff))
-                    .to_u256(),
-            })?;
-        }
-        Ok(())
-    }
-
     // --- ID helpers ---
 
     // --- View functions ---
@@ -184,11 +168,60 @@ impl NodContract<'_> {
         self.group_call_window_seconds.clear(&group_key)?;
         self.group_call_threshold_seconds.clear(&group_key)?;
         self.group_call_notice_period_seconds.clear(&group_key)?;
-        self.group_issued_at.clear(&group_key)?;
         self.group_called_at.clear(&group_key)?;
-        Ok(())
+        self.group_unpaid_load.clear(&group_key)?;
+        expiry_queue::remove(&CleanupHours(self), group_key)
+    }
+
+    // --- Unpaid load ----------------------------------------------------------
+
+    pub(crate) fn add_unpaid_load(&mut self, group_key: B256, load: U256) -> Result<()> {
+        let total = self
+            .group_unpaid_load
+            .read(&group_key)?
+            .checked_add(load)
+            .ok_or(NodError::GroupUnpaidLoadOverflow { group_key })?;
+        self.group_unpaid_load.write(&group_key, total)
+    }
+
+    pub(crate) fn take_unpaid_load(&mut self, group_key: B256, load: U256) -> Result<()> {
+        let total = self
+            .group_unpaid_load
+            .read(&group_key)?
+            .checked_sub(load)
+            .ok_or(NodError::GroupUnpaidLoadUnderflow { group_key })?;
+        self.group_unpaid_load.write(&group_key, total)
+    }
+
+    /// Moves a forfeited group from the expiry queue to the cleanup, which deletes its
+    /// unpaid Nods. Done with the group's credit, so a retry never credits it twice.
+    pub fn hand_to_cleanup(&mut self, group_key: B256) -> Result<()> {
+        let deadline = self.called_deadline.read(&group_key)?;
+        expiry_queue::remove(&ExpiryHours(self), group_key)?;
+        expiry_queue::push(&CleanupHours(self), group_key, deadline)
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn first_cleanup_hour(&self) -> Result<Option<u32>> {
+        expiry_queue::first_bucket(&CleanupHours(self))
     }
 }
+
+/// Forfeited groups whose unpaid Nods wait to be deleted.
+pub struct CleanupHours<'a, 'storage>(pub &'a NodContract<'storage>);
+
+outbe_primitives::impl_expiry_queue!(CleanupHours<B256> {
+    root: cleanup_tree_root,
+    mid: cleanup_tree_mid,
+    leaf: cleanup_tree_leaf,
+    len: cleanup_bucket_len,
+    live: cleanup_bucket_live,
+    at: cleanup_bucket_at,
+    slot: cleanup_group_slot,
+    deadline: cleanup_deadline,
+    sweep_bucket: cleanup_sweep_hour,
+    cursor: cleanup_cursor,
+});
 
 /// One currency's call-price trie, like `outbe_gem::state::CallBins`.
 pub struct CallBins<'a, 'storage>(pub &'a NodContract<'storage>, pub u16);

@@ -39,7 +39,7 @@ fn walk(
     budget: u32,
 ) -> (u32, bool) {
     let ctx = block_ctx(storage);
-    let mut budget = SweepBudget::new(budget, u32::MAX, 0);
+    let mut budget = SweepBudget::new(budget, u32::MAX);
     crate::called::call_currency(
         &ctx,
         USD,

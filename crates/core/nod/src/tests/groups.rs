@@ -11,22 +11,20 @@ fn an_issuable_entry_keeps_the_call_price_at_any_rate_in_range() {
 
 #[test]
 fn group_key_binds_the_reference_currency() {
-    let day = WorldwideDay::new(20_260_715);
-    let entry = U256::from(13);
+    let issued_at = 1_752_534_000;
+    let call_price = U256::from(13);
     assert_ne!(
-        crate::identity::group_key(day, entry, USD),
-        crate::identity::group_key(day, entry, EUR),
-        "same day and entry in two currencies must not share a group"
+        crate::identity::group_key(issued_at, call_price, USD),
+        crate::identity::group_key(issued_at, call_price, EUR),
+        "same day and call price in two currencies must not share a group"
     );
-
-    // The ISO occupies the trailing two bytes of a 38-byte preimage.
-    let mut expected = [0u8; 38];
-    expected[0..4].copy_from_slice(&20_260_715u32.to_be_bytes());
-    expected[4..36].copy_from_slice(&entry.to_be_bytes::<32>());
-    expected[36..38].copy_from_slice(&USD.to_be_bytes());
     assert_eq!(
-        crate::identity::group_key(day, entry, USD),
-        alloy_primitives::keccak256(expected)
+        crate::identity::group_key(issued_at, call_price, USD),
+        outbe_primitives::call_breach::group_key(
+            outbe_primitives::time::first_full_day(issued_at),
+            call_price,
+            USD
+        )
     );
 }
 
@@ -65,20 +63,8 @@ fn same_day_and_entry_in_two_currencies_are_two_groups_in_two_bins() {
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
-        api::add_nod(
-            &storage,
-            &usd,
-            entry,
-            crate::test_support::sealed_terms(&storage, &usd, entry),
-        )
-        .unwrap();
-        api::add_nod(
-            &storage,
-            &eur,
-            entry,
-            crate::test_support::sealed_terms(&storage, &eur, entry),
-        )
-        .unwrap();
+        crate::test_support::add(&storage, &usd).unwrap();
+        crate::test_support::add(&storage, &eur).unwrap();
 
         let nod = NodContract::new(storage.clone());
         let call_price = nod.group_call_price_minor.read(&usd.group_key).unwrap();
@@ -111,28 +97,15 @@ fn same_day_and_currency_at_two_entries_are_two_groups_with_their_own_terms() {
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
-        api::add_nod(
-            &storage,
-            &low,
-            low_entry,
-            crate::test_support::sealed_terms(&storage, &low, low_entry),
-        )
-        .unwrap();
-        api::add_nod(
-            &storage,
-            &high,
-            high_entry,
-            crate::test_support::sealed_terms(&storage, &high, high_entry),
-        )
-        .unwrap();
+        crate::test_support::add(&storage, &low).unwrap();
+        crate::test_support::add(&storage, &high).unwrap();
 
         let nod = NodContract::new(storage.clone());
         for (body, entry, call_price) in [
             (&low, low_entry, 7_120_000u64),
             (&high, high_entry, 10_680_000),
         ] {
-            let group = bucket_of(&storage, body);
-            assert_eq!(group.entry_price_minor, entry);
+            assert_eq!(body.entry_price_minor(), entry);
             assert_eq!(nod.group_nod_count.read(&body.group_key).unwrap(), 1);
             assert_eq!(
                 nod.group_call_price_minor.read(&body.group_key).unwrap(),
@@ -150,13 +123,7 @@ fn zero_reference_currency_is_rejected_at_issuance() {
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
-        let error = api::add_nod(
-            &storage,
-            &body,
-            U256::from(5),
-            crate::test_support::sealed_terms(&storage, &body, U256::from(5)),
-        )
-        .unwrap_err();
+        let error = crate::test_support::add(&storage, &body).unwrap_err();
         assert!(
             error.to_string().contains("reference currency"),
             "unexpected error: {error}"
@@ -169,22 +136,16 @@ fn zero_reference_currency_is_rejected_at_issuance() {
 }
 
 /// The group key is derived, not supplied: a caller whose key disagrees with
-/// `(day, entry, currency)` is rejected, so the on-chain and Lysis derivations
+/// `(full day after issue, call price, currency)` is rejected, so the on-chain and Lysis derivations
 /// cannot drift apart silently.
 #[test]
 fn a_group_key_that_does_not_match_its_inputs_is_rejected() {
     let mut body = item(Address::repeat_byte(0x66), U256::from(5), EUR);
-    body.group_key = crate::identity::group_key(body.worldwide_day, U256::from(5), USD);
+    body.group_key = crate::test_support::group_key(body.issued_at, U256::from(5), USD);
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
-        let error = api::add_nod(
-            &storage,
-            &body,
-            U256::from(5),
-            crate::test_support::sealed_terms(&storage, &body, U256::from(5)),
-        )
-        .unwrap_err();
+        let error = crate::test_support::add(&storage, &body).unwrap_err();
         assert!(
             error.to_string().contains("group identity mismatch"),
             "unexpected error: {error}"

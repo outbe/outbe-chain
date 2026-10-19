@@ -229,25 +229,19 @@ impl Lifecycle for NodLifecycle {
         world.state.entity_lifecycle.pool_before_forfeit = Some((height, pool));
         let id = nod(world, FORFEITED);
         let called = read_nod(world, id);
-        world.state.entity_lifecycle.nod_before_forfeit =
-            Some((height, id, called.encryptedGratisAmount.clone()));
+        world.state.entity_lifecycle.nod_before_forfeit = Some((height, id, called.groupKey));
         let deadline = called.settlementDeadline + NOTICE_MARGIN_SECS;
         poll_until(
             Duration::from_secs(u64::from(called.callNoticePeriod)) + FORFEIT_TIMEOUT,
             || format!("the chain never passed the Nod settlement deadline {deadline}"),
             || head_time(world) > deadline,
         );
-        let group_key = outbe_nod::identity::group_key(
-            outbe_primitives::time::WorldwideDay::new(called.worldwideDay),
-            called.entryPriceMinor,
-            called.referenceCurrency,
-        );
         eth::send_call(
             &url,
             addresses::NOD_FACTORY_ADDR,
             DEPLOYER_KEY,
             &INodFactoryTestArming::closeCallNoticeForTestCall {
-                groupKey: group_key,
+                groupKey: called.groupKey,
                 deadline: head_time(world).saturating_sub(EXPIRY_GROUP_SECS),
             },
             None,
@@ -266,23 +260,22 @@ impl Lifecycle for NodLifecycle {
             .pool_before_forfeit
             .expect("the pool was read before the notice lapsed");
         let height = finalized_checkpoint(world).height;
-        let (captured_height, captured_id, encrypted_amount) = world
+        let (captured_height, captured_id, group) = world
             .state
             .entity_lifecycle
             .nod_before_forfeit
-            .as_ref()
-            .expect("encrypted NOD captured before the notice lapsed");
-        assert_eq!((*captured_height, *captured_id), (from, id));
+            .expect("the Nod group captured before the notice lapsed");
+        assert_eq!((captured_height, captured_id), (from, id));
         let load = U256::from(GRATIS_LOAD_MINOR);
         assert_single_event(
             &url,
             addresses::NOD_ADDR,
             from,
             height,
-            eth::INod::NodForfeited {
-                owner,
-                nodId: id,
-                encryptedGratisAmount: encrypted_amount.clone(),
+            eth::INod::NodGroupForfeited {
+                groupKey: group,
+                nods: 1,
+                gratisLoadMinor: load,
             },
         );
         assert_eq!(

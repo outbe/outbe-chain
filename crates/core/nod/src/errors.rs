@@ -66,6 +66,12 @@ pub enum NodError {
     #[error("Nod total supply overflow during issuance")]
     TotalSupplyOverflowDuringIssuance,
 
+    #[error("Nod group {group_key} unpaid load overflow")]
+    GroupUnpaidLoadOverflow { group_key: alloy_primitives::B256 },
+
+    #[error("Nod group {group_key} unpaid load underflow")]
+    GroupUnpaidLoadUnderflow { group_key: alloy_primitives::B256 },
+
     #[error("Nod total supply underflow during removal")]
     TotalSupplyUnderflowDuringRemoval,
 

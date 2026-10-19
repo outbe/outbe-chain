@@ -17,11 +17,9 @@
 //! denominated in it. Every run recomputes the count from oracle history rather
 //! than carrying it. Gem, Credis and Intex run the same shape from their factories.
 //!
-//! Calls count only days from `first_full_day` of the group's sealed `issued_at`.
+//! Calls count only days from the group's `full_day_after_issue`.
 
-use std::collections::BTreeSet;
-
-use alloy_primitives::B256;
+use alloy_primitives::{B256, U256};
 use outbe_oracle::call_sweep::{self, CallSweep, CALL_SWEEP};
 use outbe_oracle::call_window::CallWindow;
 use outbe_primitives::{
@@ -32,7 +30,6 @@ use outbe_primitives::{
     error::{PrecompileError, Result, SweepFailure},
     storage::dsl::Value,
     sweep_budget::SweepBudget,
-    time::first_full_day,
 };
 
 use outbe_nod::state::CallBins;
@@ -116,9 +113,14 @@ impl<'storage> CallSweep<'storage> for NodCallSweep<'storage> {
     }
 
     fn slice(&mut self, ctx: &BlockRuntimeContext, pinned_day: u32) -> Result<(u32, bool)> {
-        let mut called_days = BTreeSet::new();
-        let (called, finished) = call_slice(ctx, &self.nod, pinned_day, &mut called_days)?;
-        self.nod.emit_days_metadata_update(&called_days)?;
+        let (called, finished) = call_slice(ctx, &self.nod, pinned_day)?;
+        // A group holds Nods of several Worldwide Days, so a call refreshes the whole range.
+        if called != 0 {
+            self.nod.emit(INod::BatchMetadataUpdate {
+                _fromTokenId: U256::ZERO,
+                _toTokenId: U256::MAX,
+            })?;
+        }
         Ok((called, finished))
     }
 }
@@ -137,7 +139,6 @@ fn call_slice(
     ctx: &BlockRuntimeContext,
     nod: &NodContract<'_>,
     pinned_day: u32,
-    called_days: &mut BTreeSet<u32>,
 ) -> Result<(u32, bool)> {
     let params = outbe_nod::config::read(&ctx.storage)?;
     let mut caller = NodContract::new(ctx.storage.clone());
@@ -165,7 +166,7 @@ fn call_slice(
                 window,
                 ceiling,
             };
-            let (calls, finished) = call_currency(ctx, &mut caller, scan, budget, called_days)?;
+            let (calls, finished) = call_currency(ctx, &mut caller, scan, budget)?;
             called = called.saturating_add(calls);
             Ok(finished)
         },
@@ -194,7 +195,6 @@ pub(crate) fn call_currency(
     nod: &mut NodContract<'_>,
     scan: CurrencyScan<'_>,
     budget: &mut SweepBudget,
-    called_days: &mut BTreeSet<u32>,
 ) -> Result<(u32, bool)> {
     let CurrencyScan {
         iso_code,
@@ -213,7 +213,6 @@ pub(crate) fn call_currency(
                     return Ok(0);
                 }
                 called += 1;
-                called_days.insert(nod.group_worldwide_day.read(&group_key)?.value());
                 Ok(1)
             })
         },
@@ -231,13 +230,17 @@ fn call_if_breached(
     if nod.group_nod_count.read(&group_key)? == 0 || nod.group_called_at.read(&group_key)? != 0 {
         return Ok(false);
     }
-    let issued_at = nod.group_issued_at.read(&group_key)?;
+    let start_day = nod
+        .groups
+        .get(group_key)?
+        .ok_or(crate::errors::NodFactoryError::MissingGroupForCall { group_key })?
+        .full_day_after_issue;
     let terms = nod.read_call_terms(group_key)?;
     let breached = window.breached(&BreachTerms {
         call_price: terms.call_price_minor,
         window_seconds: terms.call_window_seconds,
         threshold_seconds: terms.call_threshold_seconds,
-        start_day: first_full_day(issued_at),
+        start_day: start_day.value(),
     });
     if !breached {
         return Ok(false);

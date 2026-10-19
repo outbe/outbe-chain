@@ -43,7 +43,7 @@ fn assert_group_mutation_receipts(receipts: &[Receipt], expected_count: usize) {
             .iter()
             .any(|receipt| receipt.logs.iter().any(|log| {
                 log.address == NOD_ADDRESS
-                    && log.data.topics().first() == Some(&INod::NodForfeited::SIGNATURE_HASH)
+                    && log.data.topics().first() == Some(&INod::NodGroupForfeited::SIGNATURE_HASH)
             })),
         "fixture must forfeit a Nod during the block"
     );
@@ -153,7 +153,12 @@ fn independent_evm_states_produce_identical_full_block_state_receipts_and_balanc
     let proposer = test_evm_signer().address();
     let worldwide_day = WorldwideDay::new(20_241_220);
     let entry_price_minor = U256::from(450_000_000u64);
-    let group_key = outbe_nod::identity::group_key(worldwide_day, entry_price_minor, 840);
+    let group_key = outbe_nod::test_support::group_key_at(
+        &outbe_nod::config::NodParams::DEV,
+        1,
+        entry_price_minor,
+        840,
+    );
     let nod_item = || {
         outbe_nod::test_support::item(
             outbe_nod::test_support::NodItemFixture {
@@ -173,7 +178,6 @@ fn independent_evm_states_produce_identical_full_block_state_receipts_and_balanc
     };
     let fixture = NodBodyFixture {
         proposer,
-        entry_price_minor,
         group_key,
         item: nod_item(),
     };
@@ -191,7 +195,7 @@ fn assert_cycle_tick_receipt_gas(receipts: &[Receipt], gas_used: u64, envelopes:
         .position(|receipt| {
             receipt.logs.iter().any(|log| {
                 log.address == NOD_ADDRESS
-                    && log.data.topics().first() == Some(&INod::NodForfeited::SIGNATURE_HASH)
+                    && log.data.topics().first() == Some(&INod::NodGroupForfeited::SIGNATURE_HASH)
             })
         })
         .expect("CycleTick body mutation receipt");
@@ -229,7 +233,12 @@ fn proposer_validator_state_mints_and_rollbacks_match() {
     let nod_owner = Address::repeat_byte(0x32);
     let nod_id =
         outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(nod_owner, day).unwrap();
-    let group_key = outbe_nod::identity::group_key(day, U256::from(16), 978);
+    let group_key = outbe_nod::test_support::group_key_at(
+        &outbe_nod::config::NodParams::DEV,
+        15,
+        U256::from(16),
+        978,
+    );
     let ctx = BlockContext::new(1, 1, CHAIN_ID, proposer, vec![proposer]);
 
     let tribute_fixture = || TributeData {
@@ -269,16 +278,7 @@ fn proposer_validator_state_mints_and_rollbacks_match() {
                 let mut tribute_contract = TributeContract::new(hook_ctx.storage.clone());
                 tribute_contract.unseal_day(day)?;
                 tribute_contract.issue(&tribute)?;
-                outbe_nod::api::add_nod(
-                    &hook_ctx.storage,
-                    &nod_fixture(),
-                    U256::from(16),
-                    outbe_nod::test_support::sealed_terms(
-                        &hook_ctx.storage,
-                        &nod_fixture(),
-                        U256::from(16),
-                    ),
-                )?;
+                outbe_nod::test_support::add(&hook_ctx.storage, &nod_fixture())?;
                 Ok(())
             })
             .expect("body mint execution must succeed");
@@ -314,16 +314,7 @@ fn proposer_validator_state_mints_and_rollbacks_match() {
         let mut tribute_contract = TributeContract::new(hook_ctx.storage.clone());
         tribute_contract.unseal_day(day)?;
         tribute_contract.issue(&tribute)?;
-        outbe_nod::api::add_nod(
-            &hook_ctx.storage,
-            &nod_fixture(),
-            U256::from(16),
-            outbe_nod::test_support::sealed_terms(
-                &hook_ctx.storage,
-                &nod_fixture(),
-                U256::from(16),
-            ),
-        )?;
+        outbe_nod::test_support::add(&hook_ctx.storage, &nod_fixture())?;
         Err(outbe_primitives::error::PrecompileError::Fatal(
             "later transaction stage failed".into(),
         ))
@@ -342,7 +333,6 @@ fn proposer_validator_state_mints_and_rollbacks_match() {
 
 struct NodBodyFixture {
     proposer: Address,
-    entry_price_minor: U256,
     group_key: B256,
     item: NodItemState,
 }
@@ -362,12 +352,7 @@ fn seed_nod_body_state(fixture: &NodBodyFixture) -> eyre::Result<SeededNodParent
 
 fn seed_called_nod(storage: StorageHandle<'_>, fixture: &NodBodyFixture) -> eyre::Result<()> {
     let group_key = fixture.group_key;
-    outbe_nod::api::add_nod(
-        &storage,
-        &fixture.item,
-        fixture.entry_price_minor,
-        outbe_nod::test_support::sealed_terms(&storage, &fixture.item, fixture.entry_price_minor),
-    )?;
+    outbe_nod::test_support::add(&storage, &fixture.item)?;
     // CycleTick forfeits the lapsed called group and deletes both bodies.
     let nod = NodContract::new(storage.clone());
     nod.group_called_at.write(&group_key, 1)?;

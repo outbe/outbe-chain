@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::NOD_ADDRESS;
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::{first_full_day, WorldwideDay};
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 use serde::{Deserialize, Serialize};
 
@@ -56,6 +56,26 @@ pub struct NodItemState {
     pub is_settled: bool,
 }
 
+impl NodItemState {
+    /// The entry the Nod was issued at, from its authenticated terms.
+    #[must_use]
+    pub fn entry_price_minor(&self) -> U256 {
+        self.encrypted.terms.entry_price_minor
+    }
+
+    /// The first full day the Nod counts call days from. The group key binds it.
+    #[must_use]
+    pub fn full_day_after_issue(&self) -> WorldwideDay {
+        WorldwideDay::new(first_full_day(self.issued_at))
+    }
+
+    /// Identity of the group the Nod belongs to.
+    #[must_use]
+    pub fn group_id(&self) -> WwdEntityId {
+        WwdEntityId::from_day_and_digest(self.full_day_after_issue(), self.group_key.0)
+    }
+}
+
 /// Call terms a group seals at issuance, and the only terms every later check
 /// reads. Grouped rather than passed positionally so five same-typed numbers
 /// cannot silently swap places on the way to storage.
@@ -82,30 +102,29 @@ pub struct CallTerms {
 /// Shared group record. `group_nod_count` tracks unpaid membership.
 /// The record is deleted when both unpaid and settled counts reach zero.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[storage_record(exists_field = worldwide_day)]
+#[storage_record(exists_field = full_day_after_issue)]
 pub struct NodGroupState {
     #[key]
     pub group_key: B256,
+    /// The first full day every member counts call days from.
     #[attribute(order = 0)]
-    pub worldwide_day: WorldwideDay,
-    #[attribute(order = 1)]
-    pub entry_price_minor: U256,
+    pub full_day_after_issue: WorldwideDay,
 
-    /// Denomination of `entry_price_minor`, propagated from the Nods in the
-    /// group. The call index is namespaced by it.
-    #[attribute(order = 2)]
+    /// The currency the group's call price is quoted in. The call index is namespaced
+    /// by it.
+    #[attribute(order = 1)]
     pub reference_currency: u16,
 
     /// Live paid entitlements. The count decreases when one is exercised.
     #[serde(default)]
-    #[attribute(order = 3)]
+    #[attribute(order = 2)]
     pub settled_nods: u64,
 }
 
 /// EVM storage layout for the Nod NFT contract.
 ///
 /// Nod item and group bodies and their indexes live in module-owned storage records.
-/// Group key = keccak256(worldwide_day ++ entry_price_minor ++ reference_currency).
+/// Group key = `call_breach::group_key(full_day_after_issue, call_price, reference_currency)`.
 ///
 /// Uncalled groups wait in a per-currency bitmap trie by call price, see `state::CallBins`.
 ///
@@ -115,10 +134,6 @@ pub struct NodContract {
     // slot 0: total nod items
     #[attribute(order = 0)]
     pub total_supply: outbe_primitives::storage::dsl::Value<u64>,
-
-    // Compact reversible WWD prefix for group identities parked by group_key.
-    #[attribute(order = 18)]
-    pub group_worldwide_day: Map<B256, WorldwideDay>,
 
     // --- Group member index: lets the forfeit sweep enumerate native Nod records.
     // `WwdEntityId` occupies one storage word; IDs require no reconstruction.
@@ -173,11 +188,6 @@ pub struct NodContract {
     /// group whose sealed window outruns the current constant.
     #[attribute(order = 49)]
     pub max_call_window_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
-
-    /// First member's `issued_at`, sealed at group creation. VWAP history counts from its
-    /// `first_full_day`. Later members inherit it, like the call terms.
-    #[attribute(order = 54)]
-    pub group_issued_at: outbe_primitives::storage::dsl::Map<B256, u64>,
 
     // Frozen-day call sweep: 0 = idle. At most one day waits behind the in-flight one.
     /// UTC day an unfinished call sweep is pinned to.
@@ -260,4 +270,30 @@ pub struct NodContract {
     pub global_id_position: outbe_primitives::storage::dsl::Map<WwdEntityId, u32>,
     #[attribute(order = 88)]
     pub owner_id_position: outbe_primitives::storage::dsl::Map<WwdEntityId, u32>,
+
+    /// Gratis load of the group's unpaid Nods, returned at once when it is forfeited.
+    #[attribute(order = 89)]
+    pub group_unpaid_load: outbe_primitives::storage::dsl::Map<B256, U256>,
+
+    // Forfeited groups whose unpaid Nods wait to be deleted, bucketed like the expiry queue.
+    #[attribute(order = 90)]
+    pub cleanup_tree_root: outbe_primitives::storage::dsl::Value<U256>,
+    #[attribute(order = 91)]
+    pub cleanup_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    #[attribute(order = 92)]
+    pub cleanup_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
+    #[attribute(order = 93)]
+    pub cleanup_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    #[attribute(order = 94)]
+    pub cleanup_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    #[attribute(order = 95)]
+    pub cleanup_bucket_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    #[attribute(order = 96)]
+    pub cleanup_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
+    #[attribute(order = 97)]
+    pub cleanup_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
+    #[attribute(order = 98)]
+    pub cleanup_sweep_hour: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 99)]
+    pub cleanup_cursor: outbe_primitives::storage::dsl::Value<u64>,
 }

@@ -9,7 +9,7 @@ fn config_profile_slot_matches_seeder_layout() {
     StorageHandle::enter(&mut provider, |storage| {
         assert_eq!(
             NodContract::new(storage).config_profile.slot(),
-            U256::from(27)
+            U256::from(25)
         );
     });
 }
@@ -43,7 +43,7 @@ fn nod_contract_slot_layout_is_pinned() {
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         let nod = NodContract::new(storage);
-        for (index, actual) in [nod.total_supply.slot(), nod.group_worldwide_day.base_slot()]
+        for (index, actual) in [nod.total_supply.slot(), nod.group_nod_count.base_slot()]
             .into_iter()
             .enumerate()
         {

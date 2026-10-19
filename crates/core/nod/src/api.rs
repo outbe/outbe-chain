@@ -31,9 +31,8 @@ pub fn effective_state(
 /// Price and cost use six-decimal reference-currency precision. The load uses
 /// protocol units (1e6 per whole COEN). Asset payment units are quoted separately.
 ///
-/// The cost is derived rather than stored. The entry price lives on the Nod's
-/// group and the load lives on the Nod itself. Lysis mints the Nod from exactly
-/// this formula.
+/// The cost is derived rather than stored from the entry price and the load the
+/// Nod carries. Lysis mints the Nod from exactly this formula.
 pub use outbe_primitives::nod_rules::settlement_cost_minor;
 
 /// Timestamp by which a called group must be settled, or `0` while it is not
@@ -57,13 +56,15 @@ pub use crate::state_api::{LoadedNodGroup, LoadedNodItem};
 
 /// Inserts a Nod item, increments membership and creates its group if absent atomically.
 /// A new group seals `call_terms`; NodFactory derives them from the live profile.
+/// Records a Nod in its group, opening the group with `call_terms` when it is the first.
+/// `gratis_load_minor` joins the group's unpaid load.
 pub fn add_nod(
     storage: &StorageHandle<'_>,
     item: &NodItemState,
-    entry_price_minor: U256,
     call_terms: Option<CallTerms>,
+    gratis_load_minor: U256,
 ) -> Result<()> {
-    crate::state_api::add_item(storage, item, entry_price_minor, call_terms)
+    crate::state_api::add_item(storage, item, call_terms, gratis_load_minor)
 }
 
 /// Removes a loaded Nod item and decrements membership, deleting the group only if empty.
@@ -96,6 +97,27 @@ pub fn get_item(storage: &StorageHandle<'_>, nod_id: WwdEntityId) -> Result<Opti
 /// Fetches a Nod group state by ID.
 pub fn get_group(storage: &StorageHandle<'_>, group_key: B256) -> Result<Option<NodGroupState>> {
     load_group(storage, group_key).map(|loaded| loaded.map(|loaded| loaded.into_body()))
+}
+
+/// The `index`-th Nod in the global index, read in one slot.
+pub fn token_by_index(storage: &StorageHandle<'_>, index: u32) -> Result<Option<U256>> {
+    Ok(NodContract::new(storage.clone())
+        .all_ids
+        .get(index)?
+        .map(|id| id.to_u256()))
+}
+
+/// The owner's `index`-th Nod in its owner index, read in one slot.
+pub fn token_of_owner_by_index(
+    storage: &StorageHandle<'_>,
+    owner: Address,
+    index: u32,
+) -> Result<Option<U256>> {
+    Ok(NodContract::new(storage.clone())
+        .owner_ids
+        .list(&owner)
+        .get(index)?
+        .map(|id| id.to_u256()))
 }
 
 /// Loads the complete Nod collection.

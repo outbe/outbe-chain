@@ -49,9 +49,8 @@ pub struct NodItemBodyV1 {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NodGroupBodyV1 {
     pub group_key: B256,
-    pub worldwide_day: WorldwideDay,
-    pub entry_price_minor: U256,
-    /// ISO 4217 numeric code denominating `entry_price_minor`, omitted when zero.
+    pub full_day_after_issue: WorldwideDay,
+    /// ISO 4217 numeric code the group's call price is quoted in, omitted when zero.
     pub reference_currency: u16,
     pub settled_nods: u64,
 }
@@ -60,7 +59,7 @@ impl NodGroupBodyV1 {
     /// Returns the canonical group identity `WWD_BE4 || group_key`.
     #[must_use]
     pub fn entity_id(&self) -> WwdEntityId {
-        WwdEntityId::from_day_and_digest(self.worldwide_day, self.group_key)
+        WwdEntityId::from_day_and_digest(self.full_day_after_issue, self.group_key)
     }
 }
 
@@ -246,8 +245,7 @@ pub fn decode_stored_nod_item_v1(bytes: &[u8]) -> Result<NodItemBodyV1, Canonica
 pub fn encode_nod_group_v1(body: &NodGroupBodyV1) -> Result<Vec<u8>, CanonicalBodyError> {
     let mut output = Vec::with_capacity(128);
     encode_bytes_field(1, body.group_key.as_slice(), &mut output);
-    encode_optional_varint_field(2, u64::from(body.worldwide_day.value()), &mut output);
-    encode_bytes_field(3, &body.entry_price_minor.to_be_bytes::<32>(), &mut output);
+    encode_optional_varint_field(2, u64::from(body.full_day_after_issue.value()), &mut output);
     encode_optional_varint_field(4, u64::from(body.reference_currency), &mut output);
     encode_optional_varint_field(5, body.settled_nods, &mut output);
     Ok(output)
@@ -258,8 +256,7 @@ pub fn decode_nod_group_v1(bytes: &[u8]) -> Result<NodGroupBodyV1, CanonicalBody
     let fields = decode_group_fields(bytes)?;
     let body = NodGroupBodyV1 {
         group_key: fields.group_key,
-        worldwide_day: fields.worldwide_day,
-        entry_price_minor: fields.entry_price_minor,
+        full_day_after_issue: fields.full_day_after_issue,
         reference_currency: fields.reference_currency,
         settled_nods: fields.settled,
     };
@@ -544,8 +541,7 @@ pub enum CanonicalBodyError {
 
 struct GroupFields {
     group_key: B256,
-    worldwide_day: WorldwideDay,
-    entry_price_minor: U256,
+    full_day_after_issue: WorldwideDay,
     reference_currency: u16,
     settled: u64,
 }
@@ -554,8 +550,7 @@ fn decode_group_fields(bytes: &[u8]) -> Result<GroupFields, CanonicalBodyError> 
     let mut fields = Fields::new(bytes);
     let body = GroupFields {
         group_key: B256::from(fixed_bytes::<32>(required_bytes(&mut fields, 1)?, 1)?),
-        worldwide_day: WorldwideDay::new(optional_u32(&mut fields, 2)?),
-        entry_price_minor: decode_u256(required_bytes(&mut fields, 3)?, 3)?,
+        full_day_after_issue: WorldwideDay::new(optional_u32(&mut fields, 2)?),
         reference_currency: optional_u16(&mut fields, 4)?,
         settled: optional_varint(&mut fields, 5)?,
     };

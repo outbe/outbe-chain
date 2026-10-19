@@ -14,7 +14,7 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_common::pow;
 use outbe_nod::api as nod_api;
 use outbe_nod::api::{LoadedNodGroup, LoadedNodItem};
-use outbe_nod::schema::{CallTerms, NodContract, NodGroupState, NodItemState};
+use outbe_nod::schema::{CallTerms, NodItemState};
 use outbe_primitives::nod_encryption::EncryptedNodV2;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 
@@ -32,7 +32,7 @@ pub(crate) fn issue_nod_at(
     encrypted: &EncryptedNodV2,
     issued_at: u64,
 ) -> Result<WwdEntityId> {
-    issue_nod_with_cost(storage, encrypted, issued_at, None)
+    issue_nod_with_cost(storage, encrypted, issued_at, None, None)
 }
 
 pub fn issue_lysis_nod(
@@ -45,6 +45,7 @@ pub fn issue_lysis_nod(
         verified.nod(),
         storage.timestamp()?.to::<u64>(),
         Some(verified.settlement_cost_minor()),
+        None,
     )
 }
 
@@ -64,14 +65,17 @@ pub fn issue_tribute_nod(
         encrypted,
         storage.timestamp()?.to::<u64>(),
         Some(cost),
+        Some(gratis_load_minor),
     )
 }
 
+/// `gratis_load_minor` is read through the enclave when the caller does not know it.
 fn issue_nod_with_cost(
     storage: &StorageHandle<'_>,
     encrypted: &EncryptedNodV2,
     issued_at: u64,
     verified_cost: Option<U256>,
+    gratis_load_minor: Option<U256>,
 ) -> Result<WwdEntityId> {
     let terms = &encrypted.terms;
     if terms.owner.is_zero() {
@@ -90,6 +94,8 @@ fn issue_nod_with_cost(
     if !outbe_nod::pricing::is_issuable_entry(terms.entry_price_minor) {
         return Err(NodFactoryError::EntryPriceOutOfBounds.into());
     }
+    let call_terms = call_terms(storage, terms.entry_price_minor, terms.reference_currency)?;
+    let call_price_minor = call_terms.map_or(U256::ZERO, |t| t.call_price_minor);
     let item = NodItemState {
         is_settled: false,
         nod_id,
@@ -98,37 +104,24 @@ fn issue_nod_with_cost(
         worldwide_day: terms.worldwide_day,
         league_id: terms.league_id,
         group_key: outbe_nod::identity::group_key(
-            terms.worldwide_day,
-            terms.entry_price_minor,
+            issued_at,
+            call_price_minor,
             terms.reference_currency,
         ),
         issuance_currency: terms.issuance_currency,
         reference_currency: terms.reference_currency,
         issued_at,
     };
+    let gratis_load_minor = match gratis_load_minor {
+        Some(load) => load,
+        None => nod_api::calculation_amount(&item)?,
+    };
     // Existing settlement pricing remains public in this privacy stage.
     let settlement_cost_minor = match verified_cost {
         Some(cost) => cost,
-        None => nod_api::settlement_cost_minor(
-            terms.entry_price_minor,
-            nod_api::calculation_amount(&item)?,
-        )?,
+        None => nod_api::settlement_cost_minor(terms.entry_price_minor, gratis_load_minor)?,
     };
-    let existing_call_price = NodContract::new(storage.clone())
-        .group_call_price_minor
-        .read(&item.group_key)?;
-    let call_terms = if existing_call_price.is_zero() {
-        call_terms(storage, terms.entry_price_minor, terms.reference_currency)?
-    } else {
-        None
-    };
-    nod_api::add_nod(storage, &item, terms.entry_price_minor, call_terms)?;
-    // The group's sealed terms, which a Nod joining an existing group inherits.
-    let call_price_minor = if existing_call_price.is_zero() {
-        call_terms.map_or(U256::ZERO, |t| t.call_price_minor)
-    } else {
-        existing_call_price
-    };
+    nod_api::add_nod(storage, &item, call_terms, gratis_load_minor)?;
     emit_event(
         storage,
         INodFactory::NodIssued {
@@ -179,7 +172,7 @@ pub fn settle_nod(
         storage,
         asset,
         currencies(item.body()),
-        &settlement_cost(item.body(), group.body())?,
+        &settlement_cost(item.body())?,
     )?;
     quote.require_snapshot(snapshot_id)?;
     storage.clone().with_checkpoint(|| {
@@ -225,10 +218,10 @@ fn currencies(item: &NodItemState) -> Currencies {
     }
 }
 
-/// One Nod: its group's entry price times its Gratis load.
-fn settlement_cost(item: &NodItemState, group: &NodGroupState) -> Result<SettlementCost> {
+/// One Nod: its entry price times its Gratis load.
+fn settlement_cost(item: &NodItemState) -> Result<SettlementCost> {
     Ok(nod_cost(
-        group.entry_price_minor,
+        item.entry_price_minor(),
         nod_api::calculation_amount(item)?,
     ))
 }
@@ -326,12 +319,12 @@ pub fn quote_settlement(
     nod_id: WwdEntityId,
     asset: Address,
 ) -> Result<(u16, U256, U256)> {
-    let (item, group) = load_nod(storage, nod_id)?;
+    let (item, _) = load_nod(storage, nod_id)?;
     let quote = settlement::quote(
         storage,
         asset,
         currencies(item.body()),
-        &settlement_cost(item.body(), group.body())?,
+        &settlement_cost(item.body())?,
     )?;
     Ok((
         quote.settlement_currency,

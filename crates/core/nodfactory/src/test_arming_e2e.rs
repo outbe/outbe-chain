@@ -66,14 +66,11 @@ fn issue(storage: &StorageHandle<'_>, call: INodFactoryTestArming::issueForTestC
         call.gratisLoadMinor,
     )
     .map_err(crate::errors::NodFactoryError::CreateNodForTest)?;
-    runtime::issue_nod(storage, &encrypted)?;
-    if call.issuedAt != 0 {
-        let group_key =
-            outbe_nod::identity::group_key(day, call.entryPriceMinor, call.referenceCurrency);
-        NodContract::new(storage.clone())
-            .group_issued_at
-            .write(&group_key, call.issuedAt)?;
-    }
+    let issued_at = match call.issuedAt {
+        0 => storage.timestamp()?.to::<u64>(),
+        at => at,
+    };
+    runtime::issue_nod_at(storage, &encrypted, issued_at)?;
     Ok(())
 }
 

@@ -28,8 +28,7 @@ fn group(group_id: WwdEntityId) -> NodGroupState {
     NodGroupState {
         settled_nods: 0,
         group_key: group_key_for(group_id),
-        worldwide_day: group_id.worldwide_day(),
-        entry_price_minor: U256::ZERO,
+        full_day_after_issue: group_id.worldwide_day(),
         reference_currency: 978,
     }
 }
@@ -121,12 +120,10 @@ fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
         NodGroupState {
             settled_nods: 0,
             group_key: B256::ZERO,
-            worldwide_day: WorldwideDay::new(0),
-            entry_price_minor: U256::ZERO,
+            full_day_after_issue: WorldwideDay::new(0),
             reference_currency: 0,
         },
         NodGroupState {
-            entry_price_minor: U256::MAX,
             reference_currency: u16::MAX,
             ..group(group_id(
                 B256::repeat_byte(u8::MAX),
@@ -137,8 +134,7 @@ fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
         let stored = stored_group(&body);
         let decoded = from_canonical_group(decode_stored_nod_group_v1(&stored).unwrap());
         assert_eq!(decoded.group_key, body.group_key);
-        assert_eq!(decoded.worldwide_day, body.worldwide_day);
-        assert_eq!(decoded.entry_price_minor, body.entry_price_minor);
+        assert_eq!(decoded.full_day_after_issue, body.full_day_after_issue);
         assert_eq!(decoded.reference_currency, body.reference_currency);
     }
 }
