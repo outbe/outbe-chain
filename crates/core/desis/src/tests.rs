@@ -12,8 +12,7 @@ use outbe_primitives::units::{NATIVE_UNITS_PER_PROTOCOL_UNIT, SCALE_1E6_U128};
 
 use crate::api::{AuctionBriefReceipt, AuctionBriefRejectionReason};
 use crate::constants::{
-    IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, MAX_REFERENCE_PRICES,
-    ORIGIN_ROUTER_ADDRESS,
+    IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, ORIGIN_ROUTER_ADDRESS,
 };
 use crate::runtime;
 use crate::schema::{AuctionConfig, AuctionStage, BidData, DesisContract};
@@ -52,10 +51,6 @@ fn the_bridge_caps_match_the_contracts() {
         include_str!("../../../../contracts/intex/src/shared/libs/BridgeMsgCodec.sol");
     const TARGET_ROUTER: &str =
         include_str!("../../../../contracts/intex/src/target/TargetRouter.sol");
-    assert_eq!(
-        sol_constant(CODEC, "MAX_REFERENCE_PRICES"),
-        Some(MAX_REFERENCE_PRICES)
-    );
     assert_eq!(
         sol_constant(CODEC, "MAX_PAYLOAD_ARRAY_LEN"),
         Some(MAX_BIDS_PER_BATCH)

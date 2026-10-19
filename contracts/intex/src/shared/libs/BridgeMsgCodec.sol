@@ -79,8 +79,6 @@ library BridgeMsgCodec {
     uint16 internal constant MIN_LEN_AUCTION_STAGE_START = 70;
     /// @notice Bytes per reference-price row: [iso(2)][entry(8)][call(8)].
     uint16 internal constant REFERENCE_PRICE_LEN = 18;
-    /// @notice The oracle's reference list is short. A day may not exceed this.
-    uint8 internal constant MAX_REFERENCE_PRICES = 6;
     uint16 internal constant MIN_LEN_AUCTION_STAGE_CLEARING = 6;
     uint16 internal constant MIN_LEN_AUCTION_RESULT = 22;
     // MARK_CALLED: header + abi.encode(worldwideDay, calledAt, seriesIds). One series is 5 words.
@@ -300,8 +298,9 @@ library BridgeMsgCodec {
         uint128 _commitBondMinor,
         uint8 _dayState
     ) internal pure returns (bytes memory) {
-        if (_prices.length > MAX_REFERENCE_PRICES) {
-            revert PayloadArrayTooLong(_prices.length, MAX_REFERENCE_PRICES);
+        // The row count is one byte on the wire.
+        if (_prices.length > type(uint8).max) {
+            revert PayloadArrayTooLong(_prices.length, type(uint8).max);
         }
         // A live day must price something to bid against. A cancelled one is a closed record.
         if (_prices.length == 0 && _dayState != uint8(IIntexAuction.WorldwideDayState.Red)) {
@@ -438,10 +437,6 @@ library BridgeMsgCodec {
         returns (IIntexAuction.ReferenceCurrencyPrice[] memory rows)
     {
         uint256 count = uint8(_msg[69]);
-        // Re-checked inbound: more rows than the quoted gas covers would revert and redeliver.
-        if (count > MAX_REFERENCE_PRICES) {
-            revert PayloadArrayTooLong(count, MAX_REFERENCE_PRICES);
-        }
         if (_msg.length != MIN_LEN_AUCTION_STAGE_START + count * REFERENCE_PRICE_LEN) {
             revert InvalidPayloadLength(MSG_AUCTION_STAGE_START, _msg.length, MIN_LEN_AUCTION_STAGE_START);
         }

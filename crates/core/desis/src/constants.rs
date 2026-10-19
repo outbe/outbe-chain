@@ -66,10 +66,6 @@ pub const MAX_BID_BATCHES: u16 = 256;
 const _: () =
     assert!(MAX_BIDS_PER_BATCH * MAX_BID_BATCHES as usize <= REFUND_CHUNK_LEN * MAX_REFUND_CHUNKS);
 
-/// Reference currencies one day may price. Mirrors the codec's `MAX_REFERENCE_PRICES`:
-/// a day over it could not be started on any chain.
-pub const MAX_REFERENCE_PRICES: usize = 6;
-
 /// `IDesis.InboundIgnored` reason codes; mirrors the routers' `InboundReason` library.
 pub const IGNORED_OBSOLETE: u8 = 2;
 pub const IGNORED_CONFLICT: u8 = 3;
