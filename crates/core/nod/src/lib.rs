@@ -1,4 +1,4 @@
-//! Nod: the terms, profile and data of a Nod. Bodies, buckets, the call bins and the
+//! Nod: the terms, profile and data of a Nod. Bodies, groups, the call bins and the
 //! expiry queue live here, with the read-time state and settlement cost.
 //!
 //! NodFactory applies every rule and runs the call and forfeit sweeps through [`api`].
@@ -25,9 +25,9 @@ pub mod storage_records;
 #[cfg(any(test, feature = "test-enclave"))]
 pub mod test_support;
 
-pub use schema::{NodBucketState, NodContract, NodIssueParams, NodItemState};
+pub use schema::{NodContract, NodGroupState, NodIssueParams, NodItemState};
 
 #[cfg(test)]
 mod tests;
 
-pub use codec::{canonical_bucket, canonical_item, from_canonical_bucket, from_canonical_item};
+pub use codec::{canonical_group, canonical_item, from_canonical_group, from_canonical_item};

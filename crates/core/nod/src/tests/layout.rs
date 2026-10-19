@@ -43,12 +43,9 @@ fn nod_contract_slot_layout_is_pinned() {
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         let nod = NodContract::new(storage);
-        for (index, actual) in [
-            nod.total_supply.slot(),
-            nod.bucket_worldwide_day.base_slot(),
-        ]
-        .into_iter()
-        .enumerate()
+        for (index, actual) in [nod.total_supply.slot(), nod.group_worldwide_day.base_slot()]
+            .into_iter()
+            .enumerate()
         {
             assert_eq!(
                 actual,

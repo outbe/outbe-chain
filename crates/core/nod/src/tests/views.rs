@@ -20,11 +20,11 @@ fn settled_state_is_exposed_in_nod_data_and_metadata() {
             crate::test_support::sealed_terms(&storage, &item, U256::from(20)),
         )
         .unwrap();
-        let bucket_id = item.bucket_key;
+        let group_id = item.group_key;
         api::record_settled(
             &storage,
             api::load_item(&storage, item.nod_id).unwrap().unwrap(),
-            api::load_bucket(&storage, bucket_id).unwrap().unwrap(),
+            api::load_group(&storage, group_id).unwrap().unwrap(),
         )
         .unwrap();
         let data = dispatch(
@@ -79,7 +79,7 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
         let mut provider = HashMapStorageProvider::new(1);
         provider.set_timestamp(U256::from(now));
         StorageHandle::enter(&mut provider, |storage| {
-            let (item, bucket_id) = seed_public_lifecycle(
+            let (item, group_id) = seed_public_lifecycle(
                 &storage,
                 PublicLifecycle {
                     paid,
@@ -114,7 +114,7 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
             api::remove_nod(
                 &storage,
                 api::load_item(&storage, item.nod_id).unwrap().unwrap(),
-                api::load_bucket(&storage, bucket_id).unwrap().unwrap(),
+                api::load_group(&storage, group_id).unwrap().unwrap(),
             )
             .unwrap();
             let error = dispatch(storage, &call.abi_encode(), item.owner, U256::ZERO).unwrap_err();
@@ -188,11 +188,11 @@ fn settlement_updates_only_the_settled_nod() {
             )
             .unwrap();
         }
-        let bucket_id = first.bucket_key;
+        let group_id = first.group_key;
         api::record_settled(
             &storage,
             api::load_item(&storage, first.nod_id).unwrap().unwrap(),
-            api::load_bucket(&storage, bucket_id).unwrap().unwrap(),
+            api::load_group(&storage, group_id).unwrap().unwrap(),
         )
         .unwrap();
     });
@@ -295,7 +295,7 @@ fn token_uri_renders_the_nod_image_and_metadata() {
     });
 }
 
-/// A settled Nod keeps its bucket's call stamp, which must not leak call rows onto the card.
+/// A settled Nod keeps its group's call stamp, which must not leak call rows onto the card.
 #[test]
 fn nod_card_hides_call_rows_it_cannot_honour() {
     use crate::precompile::{dispatch, INod};
@@ -316,8 +316,8 @@ fn nod_card_hides_call_rows_it_cannot_honour() {
         )
         .unwrap();
         let mut nod = NodContract::new(storage.clone());
-        nod.seal_bucket_call_terms(
-            item.bucket_key,
+        nod.seal_group_call_terms(
+            item.group_key,
             CallTerms {
                 call_price_minor: U256::from(937),
                 reference_currency: USD,
@@ -328,14 +328,14 @@ fn nod_card_hides_call_rows_it_cannot_honour() {
             },
         )
         .unwrap();
-        let bucket_id = item.bucket_key;
+        let group_id = item.group_key;
         api::record_settled(
             &storage,
             api::load_item(&storage, item.nod_id).unwrap().unwrap(),
-            api::load_bucket(&storage, bucket_id).unwrap().unwrap(),
+            api::load_group(&storage, group_id).unwrap().unwrap(),
         )
         .unwrap();
-        nod.bucket_called_at.write(&item.bucket_key, 100).unwrap();
+        nod.group_called_at.write(&item.group_key, 100).unwrap();
         let out = dispatch(
             storage.clone(),
             &INod::tokenURICall {
@@ -386,8 +386,8 @@ fn seed_public_lifecycle(
     )
     .unwrap();
     let mut nod = NodContract::new(storage.clone());
-    nod.seal_bucket_call_terms(
-        item.bucket_key,
+    nod.seal_group_call_terms(
+        item.group_key,
         CallTerms {
             call_price_minor: U256::from(937),
             reference_currency: USD,
@@ -398,19 +398,19 @@ fn seed_public_lifecycle(
         },
     )
     .unwrap();
-    let bucket_id = item.bucket_key;
+    let group_id = item.group_key;
     if paid {
         api::record_settled(
             storage,
             api::load_item(storage, item.nod_id).unwrap().unwrap(),
-            api::load_bucket(storage, bucket_id).unwrap().unwrap(),
+            api::load_group(storage, group_id).unwrap().unwrap(),
         )
         .unwrap();
     }
-    nod.bucket_called_at
-        .write(&item.bucket_key, called_at)
+    nod.group_called_at
+        .write(&item.group_key, called_at)
         .unwrap();
-    (item, bucket_id)
+    (item, group_id)
 }
 
 #[test]
@@ -444,18 +444,14 @@ fn balance_counts_owned_nods_through_settlement_until_removal() {
         api::record_settled(
             &storage,
             api::load_item(&storage, item.nod_id).unwrap().unwrap(),
-            api::load_bucket(&storage, item.bucket_key)
-                .unwrap()
-                .unwrap(),
+            api::load_group(&storage, item.group_key).unwrap().unwrap(),
         )
         .unwrap();
         assert_eq!(balance(), U256::from(1));
         api::remove_nod(
             &storage,
             api::load_item(&storage, item.nod_id).unwrap().unwrap(),
-            api::load_bucket(&storage, item.bucket_key)
-                .unwrap()
-                .unwrap(),
+            api::load_group(&storage, item.group_key).unwrap().unwrap(),
         )
         .unwrap();
         assert_eq!(balance(), U256::ZERO);

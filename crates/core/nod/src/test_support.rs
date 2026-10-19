@@ -42,7 +42,7 @@ pub struct NodItemFixture {
     pub gratis_load_minor: U256,
     pub worldwide_day: WorldwideDay,
     pub league_id: u16,
-    pub bucket_key: B256,
+    pub group_key: B256,
     pub issuance_currency: u16,
     pub reference_currency: u16,
     pub issued_at: u64,
@@ -68,17 +68,17 @@ pub fn item(f: NodItemFixture, entry_price_minor: U256) -> NodItemState {
         encrypted,
         worldwide_day: f.worldwide_day,
         league_id: f.league_id,
-        bucket_key: f.bucket_key,
+        group_key: f.group_key,
         issuance_currency: f.issuance_currency,
         reference_currency: f.reference_currency,
         issued_at: f.issued_at,
         is_settled: f.is_settled,
     }
 }
-/// Creates an unsettled fixture with a bucket derived from its encrypted terms.
+/// Creates an unsettled fixture with a group derived from its encrypted terms.
 pub fn unsettled_item(terms: NodTermsV2, amount: U256, issued_at: u64) -> NodItemState {
     assert_eq!(terms.chain_id, 1, "NOD item fixture requires chain 1");
-    let bucket_key = crate::identity::bucket_key(
+    let group_key = crate::identity::group_key(
         terms.worldwide_day,
         terms.entry_price_minor,
         terms.reference_currency,
@@ -90,7 +90,7 @@ pub fn unsettled_item(terms: NodTermsV2, amount: U256, issued_at: u64) -> NodIte
             gratis_load_minor: amount,
             worldwide_day: terms.worldwide_day,
             league_id: terms.league_id,
-            bucket_key,
+            group_key,
             issuance_currency: terms.issuance_currency,
             reference_currency: terms.reference_currency,
             issued_at,
@@ -128,7 +128,7 @@ pub fn set_entry_price(item: &mut NodItemState, price: U256) {
     item.encrypted = encrypt(terms, amount);
 }
 
-/// The call terms NodFactory seals on a bucket opened by `item` at `entry_price_minor`,
+/// The call terms NodFactory seals on a group opened by `item` at `entry_price_minor`,
 /// from the live profile. Fixtures record Nods without the factory.
 pub fn sealed_terms(
     storage: &outbe_primitives::storage::StorageHandle<'_>,

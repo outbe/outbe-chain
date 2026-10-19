@@ -71,10 +71,10 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
             let cycle = Cycle::new(storage.clone());
             let trigger = isolate_nod_call_schedule(&cycle, midnight)?;
             let (oracle, index) = seed_closed_day_prices(&storage, midnight)?;
-            let called_at = |bucket_key| {
+            let called_at = |group_key| {
                 outbe_nod::NodContract::new(storage.clone())
-                    .bucket_called_at
-                    .read(&bucket_key)
+                    .group_called_at
+                    .read(&group_key)
                     .unwrap()
             };
             let first = issue_nod(&storage, Address::repeat_byte(0x51), 13)?;
@@ -160,7 +160,7 @@ fn seed_closed_day_prices<'s>(
 }
 
 /// Issues a Nod of `owner` on the genesis WorldwideDay at entry price `entry`.
-/// Returns its bucket key.
+/// Returns its group key.
 fn issue_nod(
     storage: &StorageHandle<'_>,
     owner: Address,
@@ -175,7 +175,7 @@ fn issue_nod(
             gratis_load_minor: U256::from(11),
             worldwide_day,
             league_id: 4,
-            bucket_key: outbe_nod::identity::bucket_key(worldwide_day, U256::from(entry), 840),
+            group_key: outbe_nod::identity::group_key(worldwide_day, U256::from(entry), 840),
             issuance_currency: 840,
             reference_currency: 840,
             issued_at: GENESIS_TS,
@@ -188,7 +188,7 @@ fn issue_nod(
         U256::from(entry),
         outbe_nod::test_support::sealed_terms(storage, &body, U256::from(entry)),
     )?;
-    Ok(body.bucket_key)
+    Ok(body.group_key)
 }
 
 /// Runs the Cycle dispatcher at `ctx`, then the Nod call slice.

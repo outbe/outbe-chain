@@ -34,7 +34,7 @@ use outbe_nod::{
 const CHAIN_ID: u64 = 1;
 const BLOCK_NUMBER: u64 = 42;
 use outbe_primitives::time::SECONDS_PER_DAY as DAY;
-/// The notice period a bucket seals at issuance, in the width these tests
+/// The notice period a group seals at issuance, in the width these tests
 /// do timestamp arithmetic in.
 const NOTICE: u64 = CALL_NOTICE_PERIOD as u64;
 /// Past a deadline by enough that the hour it falls in has closed.
@@ -50,7 +50,7 @@ const START: u64 = 1_800_000_000;
 /// issuance cutoff.
 const WWD: u32 = 20_270_115;
 
-/// Entry price every bucket here is issued at: 2.0 at scale 1e6. The call price
+/// Entry price every group here is issued at: 2.0 at scale 1e6. The call price
 /// is therefore `2.0 x 3.56 = 7.12`.
 fn entry_price() -> U256 {
     U256::from(2_000_000u64)
@@ -84,8 +84,8 @@ fn nod_item(owner: Address, iso: u16) -> NodItemState {
     nod_item_at(owner, iso, entry_price())
 }
 
-/// A Nod whose bucket is keyed by its entry price, so distinct entries give
-/// distinct buckets on the same worldwide day.
+/// A Nod whose group is keyed by its entry price, so distinct entries give
+/// distinct groups on the same worldwide day.
 fn nod_item_at(owner: Address, iso: u16, entry_price_minor: U256) -> NodItemState {
     nod_item_issued(owner, iso, entry_price_minor, WWD, START)
 }
@@ -106,7 +106,7 @@ fn nod_item_issued(
             gratis_load_minor: U256::from(11),
             worldwide_day,
             league_id: 4,
-            bucket_key: outbe_nod::identity::bucket_key(worldwide_day, entry_price_minor, iso),
+            group_key: outbe_nod::identity::group_key(worldwide_day, entry_price_minor, iso),
             issuance_currency: iso,
             reference_currency: iso,
             issued_at,
@@ -196,10 +196,10 @@ fn block_at<'s>(storage: &StorageHandle<'s>, timestamp: u64) -> BlockRuntimeCont
     )
 }
 
-fn is_queued(storage: &StorageHandle<'_>, bucket_key: B256) -> bool {
+fn is_queued(storage: &StorageHandle<'_>, group_key: B256) -> bool {
     NodContract::new(storage.clone())
-        .called_bucket_slot
-        .read(&bucket_key)
+        .called_group_slot
+        .read(&group_key)
         .unwrap()
         != 0
 }
@@ -211,10 +211,10 @@ fn reserve(storage: &StorageHandle<'_>) -> U256 {
         .unwrap()
 }
 
-fn called_at(storage: &StorageHandle<'_>, bucket_key: B256) -> u64 {
+fn called_at(storage: &StorageHandle<'_>, group_key: B256) -> u64 {
     NodContract::new(storage.clone())
-        .bucket_called_at
-        .read(&bucket_key)
+        .group_called_at
+        .read(&group_key)
         .unwrap()
 }
 
@@ -233,7 +233,7 @@ fn harness(body: impl FnOnce(&StorageHandle<'_>)) {
 
 fn try_forfeit(
     storage: &StorageHandle<'_>,
-    bucket_key: B256,
+    group_key: B256,
     budget: u32,
 ) -> outbe_primitives::error::Result<u32> {
     use outbe_primitives::error::SweepFailure;
@@ -242,14 +242,14 @@ fn try_forfeit(
         let mut nod = NodContract::new(storage.clone());
         let mut burned = 0;
         while burned < budget {
-            let Some(last) = nod.bucket_nod_count.read(&bucket_key)?.checked_sub(1) else {
+            let Some(last) = nod.group_nod_count.read(&group_key)?.checked_sub(1) else {
                 break;
             };
             let nod_id = nod
-                .bucket_nods
-                .read(&outbe_nod::index_keys::bucket_nod_key(bucket_key, last))?;
+                .group_nods
+                .read(&outbe_nod::index_keys::group_nod_key(group_key, last))?;
             let burn = storage.with_checkpoint(|| {
-                crate::expired::forfeit_member(storage, &mut nod, bucket_key, nod_id)
+                crate::expired::forfeit_member(storage, &mut nod, group_key, nod_id)
             });
             match burn {
                 Ok(()) => burned += 1,
@@ -261,7 +261,7 @@ fn try_forfeit(
     })
 }
 
-/// Issues `specs` as (owner-byte, load, paid) into one bucket,
+/// Issues `specs` as (owner-byte, load, paid) into one group,
 /// force-calls it, and leaves the clock past the sealed notice.
 fn arm_lapsed(storage: &StorageHandle<'_>, specs: &[(u8, u64, bool)]) -> (B256, Vec<NodItemState>) {
     let items: Vec<NodItemState> = specs
@@ -280,14 +280,14 @@ fn arm_lapsed(storage: &StorageHandle<'_>, specs: &[(u8, u64, bool)]) -> (B256, 
             item
         })
         .collect();
-    let bucket_key = items[0].bucket_key;
-    let id = bucket_key;
+    let group_key = items[0].group_key;
+    let id = group_key;
     for (item, &(_, _, paid)) in items.iter().zip(specs) {
         if paid {
             api::record_settled(
                 storage,
                 api::load_item(storage, item.nod_id).unwrap().unwrap(),
-                api::load_bucket(storage, id).unwrap().unwrap(),
+                api::load_group(storage, id).unwrap().unwrap(),
             )
             .unwrap();
         }
@@ -301,7 +301,7 @@ fn arm_lapsed(storage: &StorageHandle<'_>, specs: &[(u8, u64, bool)]) -> (B256, 
     );
     assert_eq!(scan(storage, at), 1);
     finalize_through(storage, at + NOTICE + HOUR);
-    (bucket_key, items)
+    (group_key, items)
 }
 
 fn forfeited_event_loads(provider: &HashMapStorageProvider, issued: &[NodItemState]) -> U256 {
@@ -334,17 +334,17 @@ struct SealedCallTerms {
 }
 
 /// Rewrites sealed terms and widens the currency high-water mark as at issuance.
-fn reterm(storage: &StorageHandle<'_>, bucket_key: B256, iso: u16, terms: SealedCallTerms) {
+fn reterm(storage: &StorageHandle<'_>, group_key: B256, iso: u16, terms: SealedCallTerms) {
     let nod = NodContract::new(storage.clone());
     let window = terms.window_days * SECONDS_PER_DAY_U32;
-    nod.bucket_call_window_seconds
-        .write(&bucket_key, window)
+    nod.group_call_window_seconds
+        .write(&group_key, window)
         .unwrap();
-    nod.bucket_call_threshold_seconds
-        .write(&bucket_key, terms.threshold_days * SECONDS_PER_DAY_U32)
+    nod.group_call_threshold_seconds
+        .write(&group_key, terms.threshold_days * SECONDS_PER_DAY_U32)
         .unwrap();
-    nod.bucket_call_notice_period_seconds
-        .write(&bucket_key, terms.notice_days * SECONDS_PER_DAY_U32)
+    nod.group_call_notice_period_seconds
+        .write(&group_key, terms.notice_days * SECONDS_PER_DAY_U32)
         .unwrap();
     outbe_primitives::call_breach::widen_scan_terms(
         &nod.max_call_window_seconds,
@@ -357,9 +357,9 @@ fn reterm(storage: &StorageHandle<'_>, bucket_key: B256, iso: u16, terms: Sealed
 }
 
 /// Issuance seals the terms, reads the constants exactly once, and enrolls the
-/// bucket in the call index.
+/// group in the call index.
 #[test]
-fn issuance_seals_the_call_terms_on_the_bucket() {
+fn issuance_seals_the_call_terms_on_the_group() {
     harness(|storage| {
         let item = nod_item(Address::repeat_byte(0x11), ISO);
         api::add_nod(
@@ -371,33 +371,31 @@ fn issuance_seals_the_call_terms_on_the_bucket() {
         .unwrap();
         let nod = NodContract::new(storage.clone());
         assert_eq!(
-            nod.bucket_call_rate.read(&item.bucket_key).unwrap(),
+            nod.group_call_rate.read(&item.group_key).unwrap(),
             CALL_RATE_PCT
         );
         assert_eq!(
-            nod.bucket_call_window_seconds
-                .read(&item.bucket_key)
-                .unwrap(),
+            nod.group_call_window_seconds.read(&item.group_key).unwrap(),
             CALL_WINDOW
         );
         assert_eq!(
-            nod.bucket_call_threshold_seconds
-                .read(&item.bucket_key)
+            nod.group_call_threshold_seconds
+                .read(&item.group_key)
                 .unwrap(),
             CALL_THRESHOLD
         );
         assert_eq!(
-            nod.bucket_call_notice_period_seconds
-                .read(&item.bucket_key)
+            nod.group_call_notice_period_seconds
+                .read(&item.group_key)
                 .unwrap(),
             CALL_NOTICE_PERIOD
         );
         assert_eq!(nod.max_call_window_seconds.read(&ISO).unwrap(), CALL_WINDOW);
-        assert_eq!(nod.bucket_issued_at.read(&item.bucket_key).unwrap(), START);
+        assert_eq!(nod.group_issued_at.read(&item.group_key).unwrap(), START);
         assert_ne!(
-            nod.call_bucket_slot.read(&item.bucket_key).unwrap(),
+            nod.call_group_slot.read(&item.group_key).unwrap(),
             0,
-            "issuance puts the bucket in its call bin"
+            "issuance puts the group in its call bin"
         );
     });
 }
@@ -421,15 +419,13 @@ fn an_unset_profile_seals_the_dev_terms_off_mainnet() {
         let dev = outbe_nod::config::NodParams::DEV;
         assert_eq!(
             (
-                nod.bucket_call_rate.read(&item.bucket_key).unwrap(),
-                nod.bucket_call_window_seconds
-                    .read(&item.bucket_key)
+                nod.group_call_rate.read(&item.group_key).unwrap(),
+                nod.group_call_window_seconds.read(&item.group_key).unwrap(),
+                nod.group_call_threshold_seconds
+                    .read(&item.group_key)
                     .unwrap(),
-                nod.bucket_call_threshold_seconds
-                    .read(&item.bucket_key)
-                    .unwrap(),
-                nod.bucket_call_notice_period_seconds
-                    .read(&item.bucket_key)
+                nod.group_call_notice_period_seconds
+                    .read(&item.group_key)
                     .unwrap(),
             ),
             (
@@ -445,7 +441,7 @@ fn an_unset_profile_seals_the_dev_terms_off_mainnet() {
 /// Later Nods join the first member's issuance stamp. A delayed second mint
 /// must not move the call-history cutoff.
 #[test]
-fn a_later_member_does_not_reissue_the_bucket_stamp() {
+fn a_later_member_does_not_reissue_the_group_stamp() {
     harness(|storage| {
         let first = nod_item(Address::repeat_byte(0x11), ISO);
         api::add_nod(
@@ -464,31 +460,31 @@ fn a_later_member_does_not_reissue_the_bucket_stamp() {
             crate::runtime::call_terms(storage, entry_price(), second.reference_currency).unwrap(),
         )
         .unwrap();
-        assert_eq!(first.bucket_key, second.bucket_key);
+        assert_eq!(first.group_key, second.group_key);
         assert_eq!(
             NodContract::new(storage.clone())
-                .bucket_issued_at
-                .read(&first.bucket_key)
+                .group_issued_at
+                .read(&first.group_key)
                 .unwrap(),
             START
         );
     });
 }
 
-/// The terms a bucket is called and forfeited under are the ones sealed at
+/// The terms a group is called and forfeited under are the ones sealed at
 /// issuance, not the live constants. A `const` cannot be retuned at
 /// runtime, so this test proves it from the other side. It rewrites what the
-/// bucket holds and checks that the scan follows the bucket rather than the
+/// group holds and checks that the scan follows the group rather than the
 /// constant.
 #[test]
-fn the_scan_follows_the_terms_sealed_on_the_bucket_not_the_constants() {
+fn the_scan_follows_the_terms_sealed_on_the_group_not_the_constants() {
     harness(|storage| {
         let item = issue_owned(storage, Address::repeat_byte(0x11), ISO);
         let at = START + 30 * DAY;
         let latest = last_closed_day(at);
         fill_days(storage, latest, CALL_LOOKBACK_DAYS, below_call());
         // Three breach days at the head - far short of the 21 the constant
-        // demands, and exactly the threshold the bucket will carry.
+        // demands, and exactly the threshold the group will carry.
         fill_days(storage, latest, 3, above_call());
 
         assert_eq!(
@@ -499,7 +495,7 @@ fn the_scan_follows_the_terms_sealed_on_the_bucket_not_the_constants() {
 
         reterm(
             storage,
-            item.bucket_key,
+            item.group_key,
             ISO,
             SealedCallTerms {
                 window_days: 3,
@@ -508,11 +504,11 @@ fn the_scan_follows_the_terms_sealed_on_the_bucket_not_the_constants() {
             },
         );
         assert_eq!(scan(storage, at), 1);
-        assert_eq!(called_at(storage, item.bucket_key), at);
+        assert_eq!(called_at(storage, item.group_key), at);
 
         // And the sealed notice governs the forfeit: one day, not seven.
         assert_eq!(
-            api::settlement_deadline(storage, item.bucket_key).unwrap(),
+            api::settlement_deadline(storage, item.group_key).unwrap(),
             at + DAY,
             "the deadline follows the sealed notice period"
         );
@@ -523,7 +519,7 @@ fn the_scan_follows_the_terms_sealed_on_the_bucket_not_the_constants() {
     });
 }
 
-/// A bucket whose sealed window outruns the current constant still gets its
+/// A group whose sealed window outruns the current constant still gets its
 /// whole span collected. The scan sizes the shared per-currency window off the
 /// `max_call_window_seconds` high-water mark, not off the constant.
 #[test]
@@ -537,7 +533,7 @@ fn a_window_wider_than_the_constant_is_collected_in_full() {
         // 35 of the 40 days must breach, which no 28-day window can supply.
         reterm(
             storage,
-            item.bucket_key,
+            item.group_key,
             ISO,
             SealedCallTerms {
                 window_days: WIDE_DAYS,
@@ -546,7 +542,7 @@ fn a_window_wider_than_the_constant_is_collected_in_full() {
             },
         );
         assert_eq!(scan(storage, at), 1);
-        assert_eq!(called_at(storage, item.bucket_key), at);
+        assert_eq!(called_at(storage, item.group_key), at);
     });
 }
 
@@ -557,8 +553,8 @@ fn the_call_price_is_the_entry_price_times_the_call_rate() {
     harness(|storage| {
         let item = issue_owned(storage, Address::repeat_byte(0x11), ISO);
         let stored = NodContract::new(storage.clone())
-            .bucket_call_price_minor
-            .read(&item.bucket_key)
+            .group_call_price_minor
+            .read(&item.group_key)
             .unwrap();
         assert_eq!(
             stored,
@@ -569,7 +565,7 @@ fn the_call_price_is_the_entry_price_times_the_call_rate() {
 }
 
 #[test]
-fn a_full_window_above_the_call_price_calls_the_bucket() {
+fn a_full_window_above_the_call_price_calls_the_group() {
     harness(|storage| {
         let item = issue_owned(storage, Address::repeat_byte(0x11), ISO);
         let at = START + 30 * DAY;
@@ -581,11 +577,11 @@ fn a_full_window_above_the_call_price_calls_the_bucket() {
         );
 
         assert_eq!(scan(storage, at), 1);
-        assert_eq!(called_at(storage, item.bucket_key), at);
+        assert_eq!(called_at(storage, item.group_key), at);
 
-        // Idempotent: a called bucket is not called twice.
+        // Idempotent: a called group is not called twice.
         assert_eq!(scan(storage, at + DAY), 0);
-        assert_eq!(called_at(storage, item.bucket_key), at);
+        assert_eq!(called_at(storage, item.group_key), at);
     });
 }
 
@@ -599,7 +595,7 @@ fn one_breach_day_short_of_the_threshold_does_not_call() {
         fill_days(storage, latest, CALL_THRESHOLD_DAYS - 1, above_call());
 
         assert_eq!(scan(storage, at), 0);
-        assert_eq!(called_at(storage, item.bucket_key), 0);
+        assert_eq!(called_at(storage, item.group_key), 0);
     });
 }
 
@@ -627,7 +623,7 @@ fn the_window_absorbs_below_call_days_up_to_the_slack() {
         }
 
         assert_eq!(scan(storage, at), 1);
-        assert_eq!(called_at(storage, item.bucket_key), at);
+        assert_eq!(called_at(storage, item.group_key), at);
     });
 }
 
@@ -639,7 +635,7 @@ fn a_day_exactly_at_the_call_price_does_not_count_as_a_breach() {
         fill_days(storage, last_closed_day(at), CALL_LOOKBACK_DAYS, at_call());
 
         assert_eq!(scan(storage, at), 0);
-        assert_eq!(called_at(storage, item.bucket_key), 0);
+        assert_eq!(called_at(storage, item.group_key), 0);
     });
 }
 
@@ -654,12 +650,12 @@ fn missing_days_do_not_count_as_breaches() {
         finalize_through(storage, at);
 
         assert_eq!(scan(storage, at), 0);
-        assert_eq!(called_at(storage, item.bucket_key), 0);
+        assert_eq!(called_at(storage, item.group_key), 0);
     });
 }
 
 #[test]
-fn a_breach_run_that_predates_the_bucket_does_not_call_it() {
+fn a_breach_run_that_predates_the_group_does_not_call_it() {
     harness(|storage| {
         let item = issue_owned(storage, Address::repeat_byte(0x11), ISO);
         // Scan two days after issuance. Only a couple of closed UTC days sit at
@@ -674,7 +670,7 @@ fn a_breach_run_that_predates_the_bucket_does_not_call_it() {
         );
 
         assert_eq!(scan(storage, at), 0);
-        assert_eq!(called_at(storage, item.bucket_key), 0);
+        assert_eq!(called_at(storage, item.group_key), 0);
     });
 }
 
@@ -707,7 +703,7 @@ fn the_issue_day_counts_only_for_a_nod_issued_at_midnight() {
             fill_days(storage, latest, CALL_THRESHOLD_DAYS, above_call());
             assert_eq!(scan(storage, scan_at), expected, "issued at {issued_at}");
             assert_eq!(
-                called_at(storage, item.bucket_key) != 0,
+                called_at(storage, item.group_key) != 0,
                 expected == 1,
                 "issued at {issued_at}"
             );
@@ -740,7 +736,7 @@ fn a_delayed_issuance_does_not_count_pre_issuance_wwd_days() {
         let scan_at = date_key_to_utc_timestamp(first_full_day(START));
         finalize_through(storage, scan_at);
         assert_eq!(scan(storage, scan_at), 0);
-        assert_eq!(called_at(storage, item.bucket_key), 0);
+        assert_eq!(called_at(storage, item.group_key), 0);
     });
 }
 
@@ -759,12 +755,12 @@ fn an_unfinalized_day_skips_the_run_without_touching_state() {
         // Ask a day later than anything the oracle has finalized.
         let ahead = at + 2 * DAY;
         assert_eq!(scan(storage, ahead), 0);
-        assert_eq!(called_at(storage, item.bucket_key), 0);
+        assert_eq!(called_at(storage, item.group_key), 0);
     });
 }
 
 #[test]
-fn each_bucket_reads_its_own_currency_series() {
+fn each_group_reads_its_own_currency_series() {
     harness(|storage| {
         register(storage, OTHER_ISO);
         let usd = issue_owned(storage, Address::repeat_byte(0x11), ISO);
@@ -777,15 +773,15 @@ fn each_bucket_reads_its_own_currency_series() {
         fill_days_for(storage, OTHER_ISO, latest, CALL_LOOKBACK_DAYS, above_call());
 
         assert_eq!(scan(storage, at), 1);
-        assert_eq!(called_at(storage, usd.bucket_key), 0);
-        assert_eq!(called_at(storage, eur.bucket_key), at);
+        assert_eq!(called_at(storage, usd.group_key), 0);
+        assert_eq!(called_at(storage, eur.group_key), at);
     });
 }
 
 // --- Forfeit sweep ---------------------------------------------------------
 
-/// Calls a bucket at `at`, returning the issued Nod.
-fn call_bucket(storage: &StorageHandle<'_>, owner: Address, at: u64) -> NodItemState {
+/// Calls a group at `at`, returning the issued Nod.
+fn call_group(storage: &StorageHandle<'_>, owner: Address, at: u64) -> NodItemState {
     let item = issue_owned(storage, owner, ISO);
     fill_days(
         storage,
@@ -801,7 +797,7 @@ fn call_bucket(storage: &StorageHandle<'_>, owner: Address, at: u64) -> NodItemS
 fn the_notice_period_burns_once_the_hour_of_its_deadline_closes() {
     harness(|storage| {
         let at = START + 30 * DAY;
-        let item = call_bucket(storage, Address::repeat_byte(0x11), at);
+        let item = call_group(storage, Address::repeat_byte(0x11), at);
         let deadline = at + NOTICE;
 
         // At the deadline and through the rest of its hour the Nod survives.
@@ -819,38 +815,38 @@ fn the_notice_period_burns_once_the_hour_of_its_deadline_closes() {
 }
 
 #[test]
-fn forfeiting_the_last_member_drops_the_bucket_from_the_call_index() {
+fn forfeiting_the_last_member_drops_the_group_from_the_call_index() {
     harness(|storage| {
         let at = START + 30 * DAY;
-        let item = call_bucket(storage, Address::repeat_byte(0x11), at);
+        let item = call_group(storage, Address::repeat_byte(0x11), at);
         let nod = NodContract::new(storage.clone());
-        assert!(is_queued(storage, item.bucket_key));
+        assert!(is_queued(storage, item.group_key));
         assert_eq!(
-            nod.call_bucket_slot.read(&item.bucket_key).unwrap(),
+            nod.call_group_slot.read(&item.group_key).unwrap(),
             0,
-            "the call moved the bucket out of its bin"
+            "the call moved the group out of its bin"
         );
 
         let past = at + NOTICE + HOUR;
         finalize_through(storage, past);
         assert_eq!(scan(storage, past), 1);
 
-        assert!(!is_queued(storage, item.bucket_key));
-        assert_eq!(nod.bucket_called_at.read(&item.bucket_key).unwrap(), 0);
-        assert_eq!(nod.bucket_nod_count.read(&item.bucket_key).unwrap(), 0);
+        assert!(!is_queued(storage, item.group_key));
+        assert_eq!(nod.group_called_at.read(&item.group_key).unwrap(), 0);
+        assert_eq!(nod.group_nod_count.read(&item.group_key).unwrap(), 0);
         assert_eq!(nod.total_supply().unwrap(), 0);
-        // The bucket body is gone with its last member.
-        let bucket_id = item.bucket_key;
-        assert!(api::get_bucket(storage, bucket_id).unwrap().is_none());
+        // The group body is gone with its last member.
+        let group_id = item.group_key;
+        assert!(api::get_group(storage, group_id).unwrap().is_none());
     });
 }
 
 // --- Member index ----------------------------------------------------------
 
 #[test]
-fn the_member_index_tracks_issuance_and_removal_in_a_bucket() {
+fn the_member_index_tracks_issuance_and_removal_in_a_group() {
     harness(|storage| {
-        // Two owners on the same worldwide day share one bucket: identical entry
+        // Two owners on the same worldwide day share one group: identical entry
         // price and currency.
         let a = issue_owned(storage, Address::repeat_byte(0x11), ISO);
         let b_item = nod_item(Address::repeat_byte(0x22), ISO);
@@ -861,39 +857,39 @@ fn the_member_index_tracks_issuance_and_removal_in_a_bucket() {
             crate::runtime::call_terms(storage, entry_price(), b_item.reference_currency).unwrap(),
         )
         .unwrap();
-        assert_eq!(a.bucket_key, b_item.bucket_key, "same bucket");
+        assert_eq!(a.group_key, b_item.group_key, "same group");
 
         let nod = NodContract::new(storage.clone());
-        assert_eq!(nod.bucket_nod_count.read(&a.bucket_key).unwrap(), 2);
-        let bucket_id = a.bucket_key;
-        let original = nod.buckets.get(bucket_id).unwrap().unwrap();
+        assert_eq!(nod.group_nod_count.read(&a.group_key).unwrap(), 2);
+        let group_id = a.group_key;
+        let original = nod.groups.get(group_id).unwrap().unwrap();
 
-        // Removing one keeps the bucket unchanged and clears only its own entry.
+        // Removing one keeps the group unchanged and clears only its own entry.
         let item = api::load_item(storage, a.nod_id).unwrap().unwrap();
-        let bucket = api::load_bucket(storage, bucket_id).unwrap().unwrap();
-        api::remove_nod(storage, item, bucket).unwrap();
+        let group = api::load_group(storage, group_id).unwrap().unwrap();
+        api::remove_nod(storage, item, group).unwrap();
 
         let nod = NodContract::new(storage.clone());
-        assert_eq!(nod.bucket_nod_count.read(&a.bucket_key).unwrap(), 1);
-        assert_eq!(nod.buckets.get(bucket_id).unwrap().unwrap(), original);
+        assert_eq!(nod.group_nod_count.read(&a.group_key).unwrap(), 1);
+        assert_eq!(nod.groups.get(group_id).unwrap().unwrap(), original);
         assert_eq!(
-            nod.bucket_nod_index.read(&a.nod_id).unwrap(),
+            nod.group_nod_index.read(&a.nod_id).unwrap(),
             0,
             "the removed Nod's reverse index entry is cleared"
         );
         // The survivor is still reachable at slot 0.
         assert_eq!(
-            nod.bucket_nods
-                .read(&outbe_nod::index_keys::bucket_nod_key(a.bucket_key, 0))
+            nod.group_nods
+                .read(&outbe_nod::index_keys::group_nod_key(a.group_key, 0))
                 .unwrap(),
             b_item.nod_id
         );
     });
 }
 
-/// A bucket is callable from issuance, and its members settle once it is called.
+/// A group is callable from issuance, and its members settle once it is called.
 #[test]
-fn a_bucket_is_callable_from_issuance_and_settles_once_called() {
+fn a_group_is_callable_from_issuance_and_settles_once_called() {
     harness(|storage| {
         let item = nod_item(Address::repeat_byte(0x11), ISO);
         api::add_nod(
@@ -912,23 +908,23 @@ fn a_bucket_is_callable_from_issuance_and_settles_once_called() {
             above_call(),
         );
         assert_eq!(scan(storage, at), 1);
-        assert_eq!(called_at(storage, item.bucket_key), at);
+        assert_eq!(called_at(storage, item.group_key), at);
 
-        let id = item.bucket_key;
-        let bucket = api::load_bucket(storage, id).unwrap().unwrap();
+        let id = item.group_key;
+        let group = api::load_group(storage, id).unwrap().unwrap();
         api::record_settled(
             storage,
             api::load_item(storage, item.nod_id).unwrap().unwrap(),
-            bucket,
+            group,
         )
         .unwrap();
     });
 }
 
 #[test]
-fn every_member_of_a_lapsed_bucket_burns_in_one_pass() {
+fn every_member_of_a_lapsed_group_burns_in_one_pass() {
     harness(|storage| {
-        // Three owners on the same day, entry price and currency share one bucket.
+        // Three owners on the same day, entry price and currency share one group.
         let owners = [0x11u8, 0x22, 0x33].map(Address::repeat_byte);
         let items: Vec<NodItemState> = owners
             .iter()
@@ -971,7 +967,7 @@ fn every_member_of_a_lapsed_bucket_burns_in_one_pass() {
 }
 
 #[test]
-fn a_lapsed_bucket_returns_every_forfeited_load_to_the_promis_reserve() {
+fn a_lapsed_group_returns_every_forfeited_load_to_the_promis_reserve() {
     harness(|storage| {
         let owners = [0x11u8, 0x22, 0x33].map(Address::repeat_byte);
         let items: Vec<NodItemState> = owners
@@ -1015,9 +1011,9 @@ fn a_lapsed_bucket_returns_every_forfeited_load_to_the_promis_reserve() {
 }
 
 #[test]
-fn a_bucket_inside_its_notice_waits_while_its_neighbours_burn() {
+fn a_group_inside_its_notice_waits_while_its_neighbours_burn() {
     harness(|storage| {
-        // Three distinct buckets: distinct entry prices on one worldwide day.
+        // Three distinct groups: distinct entry prices on one worldwide day.
         let items: Vec<NodItemState> = [11u64, 22, 33]
             .into_iter()
             .zip([0x11u8, 0x22, 0x33])
@@ -1043,9 +1039,9 @@ fn a_bucket_inside_its_notice_waits_while_its_neighbours_burn() {
         );
         assert_eq!(scan(storage, at), 3, "all three call");
 
-        // Keep the middle bucket inside its notice. The sweep burns the two around it.
+        // Keep the middle group inside its notice. The sweep burns the two around it.
         let mut nod = NodContract::new(storage.clone());
-        let kept = items[1].bucket_key;
+        let kept = items[1].group_key;
         let past = at + NOTICE + HOUR;
         nod.remove_called(kept).unwrap();
         nod.push_called(kept, past + NOTICE).unwrap();
@@ -1055,21 +1051,21 @@ fn a_bucket_inside_its_notice_waits_while_its_neighbours_burn() {
         for item in &items {
             assert_eq!(
                 api::get_item(storage, item.nod_id).unwrap().is_some(),
-                item.bucket_key == kept,
-                "only the bucket still inside its notice survives"
+                item.group_key == kept,
+                "only the group still inside its notice survives"
             );
-            assert_eq!(is_queued(storage, item.bucket_key), item.bucket_key == kept);
+            assert_eq!(is_queued(storage, item.group_key), item.group_key == kept);
         }
     });
 }
 
 /// A walk that runs out of visits inside a bin resumes there. The walk neither
-/// visits twice nor skips the bucket that a call swap-pops into each hole.
+/// visits twice nor skips the group that a call swap-pops into each hole.
 #[test]
 fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
     harness(|storage| {
         let at = START + 30 * DAY;
-        // One call bin; the last bucket is too young to hold the threshold.
+        // One call bin; the last group is too young to hold the threshold.
         let items: Vec<NodItemState> = [
             (11u64, 0x11u8, START),
             (22, 0x22, START),
@@ -1108,7 +1104,7 @@ fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
         );
         let mut nod = NodContract::new(storage.clone());
 
-        // Two visits: the young bucket on top, then the middle one, which is called.
+        // Two visits: the young group on top, then the middle one, which is called.
         let mut visits = SweepBudget::new(2, u32::MAX, 0);
         assert_eq!(
             crate::called::call_currency(
@@ -1146,9 +1142,9 @@ fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
             SWEEP_VISITS_PER_BLOCK - 1,
             "the resumed walk visits only what was left"
         );
-        assert_eq!(called_at(storage, items[0].bucket_key), at);
-        assert_eq!(called_at(storage, items[1].bucket_key), at);
-        assert_eq!(called_at(storage, items[2].bucket_key), 0);
+        assert_eq!(called_at(storage, items[0].group_key), at);
+        assert_eq!(called_at(storage, items[1].group_key), at);
+        assert_eq!(called_at(storage, items[2].group_key), 0);
         let bin = outbe_primitives::call_bins::price_to_bin(at_call()).unwrap();
         assert_eq!(
             nod.call_bin_count
@@ -1157,12 +1153,12 @@ fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
             1
         );
         assert_eq!(
-            nod.call_bin_buckets
+            nod.call_bin_groups
                 .read(&outbe_primitives::call_bins::bin_index_key(ISO, bin, 0))
                 .unwrap(),
-            items[2].bucket_key
+            items[2].group_key
         );
-        nod.remove_call_bin(items[2].bucket_key).unwrap();
+        nod.remove_call_bin(items[2].group_key).unwrap();
         assert_eq!(
             nod.call_bin_count
                 .read(&outbe_primitives::call_bins::scoped(ISO, bin))
@@ -1178,7 +1174,7 @@ fn slice(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
 }
 
 #[test]
-fn a_bucket_over_the_forfeit_budget_burns_across_slices_of_one_sweep() {
+fn a_group_over_the_forfeit_budget_burns_across_slices_of_one_sweep() {
     harness(|storage| {
         let items: Vec<NodItemState> = (1..=SWEEP_BODY_WRITES_PER_BLOCK + 1)
             .map(|owner| {
@@ -1194,7 +1190,7 @@ fn a_bucket_over_the_forfeit_budget_burns_across_slices_of_one_sweep() {
                 item
             })
             .collect();
-        let bucket_key = items[0].bucket_key;
+        let group_key = items[0].group_key;
         let at = START + 30 * DAY;
         fill_days(
             storage,
@@ -1208,22 +1204,22 @@ fn a_bucket_over_the_forfeit_budget_burns_across_slices_of_one_sweep() {
         finalize_through(storage, past);
         assert_eq!(scan(storage, past), SWEEP_BODY_WRITES_PER_BLOCK);
         let nod = NodContract::new(storage.clone());
-        assert_eq!(nod.bucket_nod_count.read(&bucket_key).unwrap(), 1);
+        assert_eq!(nod.group_nod_count.read(&group_key).unwrap(), 1);
         assert_eq!(slice(storage, past), 1);
-        assert_eq!(nod.bucket_nod_count.read(&bucket_key).unwrap(), 0);
+        assert_eq!(nod.group_nod_count.read(&group_key).unwrap(), 0);
         assert_eq!(nod.call_sweep_day.read().unwrap(), 0);
     });
 }
 
 /// Failing members outnumber a block's forfeit budget. Each block still gets past them,
-/// and the pass ends by deferring the bucket rather than holding the queue on it.
+/// and the pass ends by deferring the group rather than holding the queue on it.
 #[test]
 fn failing_members_over_the_forfeit_budget_do_not_hold_the_queue() {
     harness(|storage| {
         let specs: Vec<(u8, u64, bool)> = (0..SWEEP_BODY_WRITES_PER_BLOCK as u8 + 3)
             .map(|n| (0x60 + n, 5 + u64::from(n), false))
             .collect();
-        let (bucket_key, items) = arm_lapsed(storage, &specs);
+        let (group_key, items) = arm_lapsed(storage, &specs);
         let nod = NodContract::new(storage.clone());
         // The top member slots name Nods with no body, each reverting on its own.
         for index in 3..specs.len() as u32 {
@@ -1231,9 +1227,9 @@ fn failing_members_over_the_forfeit_budget_do_not_hold_the_queue() {
                 items[0].worldwide_day,
                 B256::repeat_byte(index as u8),
             );
-            nod.bucket_nods
+            nod.group_nods
                 .write(
-                    &outbe_nod::index_keys::bucket_nod_key(bucket_key, index),
+                    &outbe_nod::index_keys::group_nod_key(group_key, index),
                     ghost,
                 )
                 .unwrap();
@@ -1245,7 +1241,7 @@ fn failing_members_over_the_forfeit_budget_do_not_hold_the_queue() {
         assert_eq!(crate::expired::sweep_expired(&ctx).unwrap(), 3);
         assert_eq!(reserve(storage), U256::from(5u64 + 6 + 7));
         let (hour, _) = outbe_primitives::expiry_queue::unpack_slot(
-            nod.called_bucket_slot.read(&bucket_key).unwrap(),
+            nod.called_group_slot.read(&group_key).unwrap(),
         );
         assert_eq!(hour, outbe_primitives::expiry_queue::bucket_of(past) + 1);
     });
@@ -1253,9 +1249,9 @@ fn failing_members_over_the_forfeit_budget_do_not_hold_the_queue() {
 
 /// A forfeit burn must not depend on whether this node's enclave was up.
 #[test]
-fn an_unavailable_enclave_fails_the_block_and_keeps_the_bucket_queued() {
+fn an_unavailable_enclave_fails_the_block_and_keeps_the_group_queued() {
     harness(|storage| {
-        let (bucket_key, _) = arm_lapsed(storage, &[(0x61, 5, false)]);
+        let (group_key, _) = arm_lapsed(storage, &[(0x61, 5, false)]);
         let ctx = block_at(storage, START + 30 * DAY + NOTICE + HOUR);
 
         outbe_nod::test_support::uninstall();
@@ -1263,7 +1259,7 @@ fn an_unavailable_enclave_fails_the_block_and_keeps_the_bucket_queued() {
             crate::expired::sweep_expired(&ctx),
             Err(outbe_primitives::error::PrecompileError::EnclaveUnavailable(_))
         ));
-        assert!(is_queued(storage, bucket_key));
+        assert!(is_queued(storage, group_key));
 
         outbe_nod::test_support::install();
         assert_eq!(crate::expired::sweep_expired(&ctx).unwrap(), 1);
@@ -1291,12 +1287,12 @@ fn a_call_slice_out_of_visits_resumes_on_its_currency_without_holding_back_forfe
         .unwrap();
         assert_eq!(scan(storage, at), 1);
 
-        // Settled buckets still take a visit each and use up the budget in the first currency.
+        // Settled groups still take a visit each and use up the budget in the first currency.
         let mut nod = NodContract::new(storage.clone());
         for index in 1..=SWEEP_VISITS_PER_BLOCK {
             let key = B256::left_padding_from(&index.to_be_bytes());
-            nod.bucket_currency.write(&key, ISO).unwrap();
-            nod.bucket_call_price_minor.write(&key, at_call()).unwrap();
+            nod.group_currency.write(&key, ISO).unwrap();
+            nod.group_call_price_minor.write(&key, at_call()).unwrap();
             nod.insert_call_bin(key).unwrap();
         }
         let fresh = nod_item(Address::repeat_byte(0x22), OTHER_ISO);
@@ -1317,17 +1313,17 @@ fn a_call_slice_out_of_visits_resumes_on_its_currency_without_holding_back_forfe
             nod.call_currency_cursor.read().unwrap(),
             u32::from(OTHER_ISO)
         );
-        assert_eq!(called_at(storage, fresh.bucket_key), 0);
-        assert_eq!(nod.bucket_nod_count.read(&lapsed.bucket_key).unwrap(), 0);
+        assert_eq!(called_at(storage, fresh.group_key), 0);
+        assert_eq!(nod.group_nod_count.read(&lapsed.group_key).unwrap(), 0);
 
         assert_eq!(slice(storage, past), 1);
-        assert_eq!(called_at(storage, fresh.bucket_key), past);
+        assert_eq!(called_at(storage, fresh.group_key), past);
         assert_eq!(nod.call_sweep_day.read().unwrap(), 0);
     });
 }
 
 #[test]
-fn mixed_bucket_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_exercise() {
+fn mixed_group_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_exercise() {
     harness(|storage| {
         let items: Vec<_> = [0x91, 0x92, 0x93, 0x95]
             .into_iter()
@@ -1344,31 +1340,31 @@ fn mixed_bucket_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_exerci
                 item
             })
             .collect();
-        let key = items[0].bucket_key;
+        let key = items[0].group_key;
         let id = key;
         let nod = NodContract::new(storage.clone());
         // Settle the middle member, exercising swap-remove of the unpaid tail.
         api::record_settled(
             storage,
             api::load_item(storage, items[1].nod_id).unwrap().unwrap(),
-            api::load_bucket(storage, id).unwrap().unwrap(),
+            api::load_group(storage, id).unwrap().unwrap(),
         )
         .unwrap();
         api::record_settled(
             storage,
             api::load_item(storage, items[3].nod_id).unwrap().unwrap(),
-            api::load_bucket(storage, id).unwrap().unwrap(),
+            api::load_group(storage, id).unwrap().unwrap(),
         )
         .unwrap();
         api::remove_nod(
             storage,
             api::load_item(storage, items[3].nod_id).unwrap().unwrap(),
-            api::load_bucket(storage, id).unwrap().unwrap(),
+            api::load_group(storage, id).unwrap().unwrap(),
         )
         .unwrap();
-        let bucket = api::get_bucket(storage, id).unwrap().unwrap();
-        assert_eq!(bucket.settled_nods, 1);
-        assert_eq!(nod.bucket_nod_count.read(&key).unwrap(), 2);
+        let group = api::get_group(storage, id).unwrap().unwrap();
+        assert_eq!(group.settled_nods, 1);
+        assert_eq!(nod.group_nod_count.read(&key).unwrap(), 2);
         let at = START + 30 * DAY;
         fill_days(
             storage,
@@ -1385,12 +1381,12 @@ fn mixed_bucket_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_exerci
         limit.checked_add_carry_over(U256::MAX).unwrap();
         assert_eq!(scan(storage, past), 0);
         assert_eq!(nod.total_supply().unwrap(), 3);
-        assert_eq!(nod.bucket_nod_count.read(&key).unwrap(), 2);
+        assert_eq!(nod.group_nod_count.read(&key).unwrap(), 2);
         assert!(api::get_item(storage, items[0].nod_id).unwrap().is_some());
         assert!(api::get_item(storage, items[2].nod_id).unwrap().is_some());
         assert_eq!(reserve(storage), U256::MAX);
         limit.checked_take_carry_over_up_to(U256::MAX).unwrap();
-        // The failed bucket retries once the next hour closes.
+        // The failed group retries once the next hour closes.
         let retry = past + 2 * HOUR;
         assert_eq!(scan(storage, retry), 2);
         let expected = outbe_nod::api::calculation_amount(&items[0]).unwrap()
@@ -1399,9 +1395,9 @@ fn mixed_bucket_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_exerci
         assert!(!is_queued(storage, key), "no unpaid member is left to burn");
         assert_eq!(scan(storage, retry), 0);
         assert_eq!(reserve(storage), expected);
-        let bucket = api::get_bucket(storage, id).unwrap().unwrap();
-        assert_eq!(bucket.settled_nods, 1);
-        assert_eq!(nod.bucket_nod_count.read(&key).unwrap(), 0);
+        let group = api::get_group(storage, id).unwrap().unwrap();
+        assert_eq!(group.settled_nods, 1);
+        assert_eq!(nod.group_nod_count.read(&key).unwrap(), 0);
         assert_eq!(nod.total_supply().unwrap(), 1);
         assert_eq!(called_at(storage, key), at);
         assert_eq!(
@@ -1411,10 +1407,10 @@ fn mixed_bucket_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_exerci
         api::remove_nod(
             storage,
             api::load_item(storage, items[1].nod_id).unwrap().unwrap(),
-            api::load_bucket(storage, id).unwrap().unwrap(),
+            api::load_group(storage, id).unwrap().unwrap(),
         )
         .unwrap();
-        assert!(api::get_bucket(storage, id).unwrap().is_none());
+        assert!(api::get_group(storage, id).unwrap().is_none());
         assert_eq!(nod.total_supply().unwrap(), 0);
         assert!(!is_queued(storage, key));
         assert_eq!(reserve(storage), expected);
@@ -1422,14 +1418,14 @@ fn mixed_bucket_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_exerci
 }
 
 #[test]
-fn a_fully_paid_bucket_is_not_called_and_corrupt_paid_membership_is_not_forfeited() {
+fn a_fully_paid_group_is_not_called_and_corrupt_paid_membership_is_not_forfeited() {
     harness(|storage| {
         let item = issue_owned(storage, Address::repeat_byte(0x94), ISO);
-        let id = item.bucket_key;
+        let id = item.group_key;
         api::record_settled(
             storage,
             api::load_item(storage, item.nod_id).unwrap().unwrap(),
-            api::load_bucket(storage, id).unwrap().unwrap(),
+            api::load_group(storage, id).unwrap().unwrap(),
         )
         .unwrap();
         let at = START + 30 * DAY;
@@ -1440,10 +1436,10 @@ fn a_fully_paid_bucket_is_not_called_and_corrupt_paid_membership_is_not_forfeite
             above_call(),
         );
         assert_eq!(scan(storage, at), 0);
-        assert_eq!(called_at(storage, item.bucket_key), 0);
-        // Issuance into a paid-only bucket must retain its committed paid state.
+        assert_eq!(called_at(storage, item.group_key), 0);
+        // Issuance into a paid-only group must retain its committed paid state.
         let newcomer = nod_item(Address::repeat_byte(0x96), ISO);
-        let paid_bucket = api::get_bucket(storage, id).unwrap().unwrap();
+        let paid_group = api::get_group(storage, id).unwrap().unwrap();
         api::add_nod(
             storage,
             &newcomer,
@@ -1453,25 +1449,25 @@ fn a_fully_paid_bucket_is_not_called_and_corrupt_paid_membership_is_not_forfeite
         )
         .unwrap();
         assert_eq!(
-            outbe_nod::canonical_bucket(&api::get_bucket(storage, id).unwrap().unwrap()),
-            outbe_nod::canonical_bucket(&paid_bucket),
+            outbe_nod::canonical_group(&api::get_group(storage, id).unwrap().unwrap()),
+            outbe_nod::canonical_group(&paid_group),
         );
         api::remove_nod(
             storage,
             api::load_item(storage, newcomer.nod_id).unwrap().unwrap(),
-            api::load_bucket(storage, id).unwrap().unwrap(),
+            api::load_group(storage, id).unwrap().unwrap(),
         )
         .unwrap();
         assert_eq!(
-            api::get_bucket(storage, id).unwrap().unwrap().settled_nods,
+            api::get_group(storage, id).unwrap().unwrap().settled_nods,
             1
         );
         let nod = NodContract::new(storage.clone());
-        nod.bucket_called_at.write(&item.bucket_key, at).unwrap();
-        nod.bucket_nod_count.write(&item.bucket_key, 1).unwrap();
-        nod.bucket_nods
+        nod.group_called_at.write(&item.group_key, at).unwrap();
+        nod.group_nod_count.write(&item.group_key, 1).unwrap();
+        nod.group_nods
             .write(
-                &outbe_nod::index_keys::bucket_nod_key(item.bucket_key, 0),
+                &outbe_nod::index_keys::group_nod_key(item.group_key, 0),
                 item.nod_id,
             )
             .unwrap();
@@ -1512,7 +1508,7 @@ fn a_running_call_sweep_keeps_its_day() {
             storage.clone(),
         );
         crate::called::run_call_slice(&ctx).unwrap();
-        assert_eq!(called_at(storage, item.bucket_key), later);
+        assert_eq!(called_at(storage, item.group_key), later);
         assert_eq!(nod.call_sweep_day.read().unwrap(), 0);
     });
 }
@@ -1520,7 +1516,7 @@ fn a_running_call_sweep_keeps_its_day() {
 #[test]
 fn every_cycle_tick_forfeits_without_the_daily_trigger() {
     harness(|storage| {
-        let (bucket_key, _) = arm_lapsed(storage, &[(0x97, 3, false)]);
+        let (group_key, _) = arm_lapsed(storage, &[(0x97, 3, false)]);
         let nod = NodContract::new(storage.clone());
         assert_eq!(
             nod.call_sweep_day.read().unwrap(),
@@ -1532,18 +1528,18 @@ fn every_cycle_tick_forfeits_without_the_daily_trigger() {
         let ctx = block_at(storage, past);
         crate::hooks::sweep_forfeits(&ctx).unwrap();
         crate::called::run_call_slice(&ctx).unwrap();
-        assert_eq!(nod.bucket_nod_count.read(&bucket_key).unwrap(), 0);
-        assert!(!is_queued(storage, bucket_key));
+        assert_eq!(nod.group_nod_count.read(&group_key).unwrap(), 0);
+        assert!(!is_queued(storage, group_key));
         assert_eq!(reserve(storage), U256::from(3u64));
     });
 }
 
 #[test]
-fn a_node_local_failure_while_calling_a_bucket_fails_the_slice() {
+fn a_node_local_failure_while_calling_a_group_fails_the_slice() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
 
     let at = START + 30 * DAY;
-    let bucket_key = StorageHandle::enter(&mut provider, |storage| {
+    let group_key = StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
 
         register(&storage, ISO);
@@ -1558,7 +1554,7 @@ fn a_node_local_failure_while_calling_a_bucket_fails_the_slice() {
             .call_sweep_day
             .write(last_closed_day(at))
             .unwrap();
-        item.bucket_key
+        item.group_key
     });
     provider.fail_after_mutation_at(0);
     let result = StorageHandle::enter(&mut provider, |storage| {
@@ -1574,7 +1570,7 @@ fn a_node_local_failure_while_calling_a_bucket_fails_the_slice() {
         Err(outbe_primitives::error::PrecompileError::Storage(_))
     ));
     StorageHandle::enter(&mut provider, |storage| {
-        assert_eq!(called_at(&storage, bucket_key), 0);
+        assert_eq!(called_at(&storage, group_key), 0);
     });
 }
 
@@ -1647,7 +1643,7 @@ fn forfeit_credits_distinct_unpaid_loads_and_ignores_paid_members() {
         seed_production_nod_genesis(&storage);
 
         register(&storage, ISO);
-        let (bucket_key, items) = arm_lapsed(
+        let (group_key, items) = arm_lapsed(
             &storage,
             &[
                 (0x31, 3, false),
@@ -1665,12 +1661,12 @@ fn forfeit_credits_distinct_unpaid_loads_and_ignores_paid_members() {
             .fold(U256::ZERO, |sum, load| sum + load);
         assert_eq!(unpaid, U256::from(34u64));
         assert_eq!(
-            try_forfeit(&storage, bucket_key, SWEEP_BODY_WRITES_PER_BLOCK,).unwrap(),
+            try_forfeit(&storage, group_key, SWEEP_BODY_WRITES_PER_BLOCK,).unwrap(),
             3
         );
         assert_eq!(reserve(&storage), unpaid);
         assert_eq!(
-            try_forfeit(&storage, bucket_key, SWEEP_BODY_WRITES_PER_BLOCK,).unwrap(),
+            try_forfeit(&storage, group_key, SWEEP_BODY_WRITES_PER_BLOCK,).unwrap(),
             0
         );
         assert_eq!(reserve(&storage), unpaid);
@@ -1690,7 +1686,7 @@ fn forfeit_credits_distinct_unpaid_loads_and_ignores_paid_members() {
 #[test]
 fn a18_forfeit_slices_credit_the_same_total_as_one_pass() {
     harness(|storage| {
-        let (bucket_key, items) = arm_lapsed(
+        let (group_key, items) = arm_lapsed(
             storage,
             &[(0x41, 3, false), (0x42, 5, false), (0x43, 8, false)],
         );
@@ -1698,11 +1694,11 @@ fn a18_forfeit_slices_credit_the_same_total_as_one_pass() {
             .iter()
             .map(|item| outbe_nod::api::calculation_amount(item).unwrap())
             .fold(U256::ZERO, |sum, load| sum + load);
-        assert_eq!(try_forfeit(storage, bucket_key, 1).unwrap(), 1);
-        assert_eq!(try_forfeit(storage, bucket_key, 1).unwrap(), 1);
-        assert_eq!(try_forfeit(storage, bucket_key, 1).unwrap(), 1);
+        assert_eq!(try_forfeit(storage, group_key, 1).unwrap(), 1);
+        assert_eq!(try_forfeit(storage, group_key, 1).unwrap(), 1);
+        assert_eq!(try_forfeit(storage, group_key, 1).unwrap(), 1);
         assert_eq!(reserve(storage), expected);
-        assert_eq!(try_forfeit(storage, bucket_key, 1).unwrap(), 0);
+        assert_eq!(try_forfeit(storage, group_key, 1).unwrap(), 0);
         assert_eq!(reserve(storage), expected);
     });
 }
@@ -1737,7 +1733,7 @@ fn native_storage_out_of_gas_reverts_the_forfeit_transaction_then_retries_once()
 
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
 
-    let (bucket_key, issued) = arm(&mut provider);
+    let (group_key, issued) = arm(&mut provider);
     let before = provider.storage.clone();
     let events = provider.get_ordered_events().to_vec();
     provider.enable_production_storage_gas_metering();
@@ -1761,10 +1757,10 @@ fn native_storage_out_of_gas_reverts_the_forfeit_transaction_then_retries_once()
             3
         );
         let nod = NodContract::new(storage.clone());
-        assert_eq!(nod.bucket_nod_count.read(&bucket_key).unwrap(), 0);
+        assert_eq!(nod.group_nod_count.read(&group_key).unwrap(), 0);
         assert_eq!(nod.total_supply().unwrap(), 0);
         assert_eq!(reserve(&storage), U256::from(16u64));
-        assert!(!is_queued(&storage, bucket_key));
+        assert!(!is_queued(&storage, group_key));
     });
     assert_eq!(forfeited_event_loads(&provider, &issued), U256::from(16u64));
 }
@@ -1815,7 +1811,7 @@ fn configured_forfeit_slice_fits_the_native_storage_gas_limit() {
     let native_gas = StorageHandle::enter(&mut provider, |storage| {
         assert_eq!(scan(&storage, past), SWEEP_BODY_WRITES_PER_BLOCK);
         let nod = NodContract::new(storage.clone());
-        assert_eq!(nod.bucket_nod_count.read(&issued[0].bucket_key).unwrap(), 0);
+        assert_eq!(nod.group_nod_count.read(&issued[0].group_key).unwrap(), 0);
         assert_eq!(nod.call_sweep_day.read().unwrap(), 0);
         assert_eq!(nod.total_supply().unwrap(), 0);
         assert_eq!(reserve(&storage), expected);
@@ -1833,7 +1829,7 @@ fn a_node_local_failure_while_forfeiting_fails_the_slice() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
 
     let past = START + 30 * DAY + NOTICE + HOUR;
-    let bucket_key = StorageHandle::enter(&mut provider, |storage| {
+    let group_key = StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
 
         register(&storage, ISO);
@@ -1851,8 +1847,8 @@ fn a_node_local_failure_while_forfeiting_fails_the_slice() {
     StorageHandle::enter(&mut provider, |storage| {
         assert_eq!(
             NodContract::new(storage.clone())
-                .bucket_nod_count
-                .read(&bucket_key)
+                .group_nod_count
+                .read(&group_key)
                 .unwrap(),
             1
         );
@@ -1897,7 +1893,7 @@ fn every_nod_forfeit_mutation_rolls_back_then_retries_the_same_credit() {
     for operation in 0..mutation_count {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
 
-        let bucket_key = StorageHandle::enter(&mut provider, |storage| {
+        let group_key = StorageHandle::enter(&mut provider, |storage| {
             seed_production_nod_genesis(&storage);
 
             register(&storage, ISO);
@@ -1909,7 +1905,7 @@ fn every_nod_forfeit_mutation_rolls_back_then_retries_the_same_credit() {
 
         provider.fail_after_mutation_at(operation);
         let failed = StorageHandle::enter(&mut provider, |storage| {
-            try_forfeit(&storage, bucket_key, SWEEP_BODY_WRITES_PER_BLOCK)
+            try_forfeit(&storage, group_key, SWEEP_BODY_WRITES_PER_BLOCK)
         });
         assert!(
             failed.is_err(),
@@ -1927,12 +1923,12 @@ fn every_nod_forfeit_mutation_rolls_back_then_retries_the_same_credit() {
         StorageHandle::enter(&mut provider, |storage| {
             assert_eq!(reserve(&storage), U256::ZERO);
             assert_eq!(
-                try_forfeit(&storage, bucket_key, SWEEP_BODY_WRITES_PER_BLOCK,).unwrap(),
+                try_forfeit(&storage, group_key, SWEEP_BODY_WRITES_PER_BLOCK,).unwrap(),
                 3
             );
             assert_eq!(reserve(&storage), expected);
             assert_eq!(
-                try_forfeit(&storage, bucket_key, SWEEP_BODY_WRITES_PER_BLOCK,).unwrap(),
+                try_forfeit(&storage, group_key, SWEEP_BODY_WRITES_PER_BLOCK,).unwrap(),
                 0
             );
             assert_eq!(reserve(&storage), expected);
@@ -1999,7 +1995,7 @@ fn token_uri_turns_forfeited_past_the_settlement_deadline() {
         seed_production_nod_genesis(&storage);
 
         register(&storage, ISO);
-        call_bucket(&storage, Address::repeat_byte(0x71), at)
+        call_group(&storage, Address::repeat_byte(0x71), at)
     });
     let json_at = |provider: &mut HashMapStorageProvider, timestamp: u64| {
         provider.set_timestamp(U256::from(timestamp));
@@ -2032,7 +2028,7 @@ fn token_uri_turns_forfeited_past_the_settlement_deadline() {
 
 #[cfg(feature = "e2e-test")]
 #[test]
-fn static_test_command_is_rejected_before_bucket_validation() {
+fn static_test_command_is_rejected_before_group_validation() {
     use crate::precompile::dispatch;
     use crate::test_arming_e2e::INodFactoryTestArming;
     use alloy_sol_types::SolCall;
@@ -2043,7 +2039,7 @@ fn static_test_command_is_rejected_before_bucket_validation() {
     let result = dispatch(
         outbe_primitives::storage::StorageHandle::new(&mut provider),
         &INodFactoryTestArming::closeCallNoticeForTestCall {
-            bucketKey: alloy_primitives::B256::repeat_byte(1),
+            groupKey: alloy_primitives::B256::repeat_byte(1),
             deadline: 1,
         }
         .abi_encode(),

@@ -4,17 +4,17 @@ use outbe_primitives::error::Result;
 
 use crate::api;
 use crate::constants::{TOKEN_DESCRIPTION, TOKEN_NAME};
-use crate::schema::{EffectiveState, NodBucketState, NodContract, NodItemState};
+use crate::schema::{EffectiveState, NodContract, NodGroupState, NodItemState};
 
-/// The call and the sealed call terms live on the bucket, as in `getNod`.
+/// The call and the sealed call terms live on the group, as in `getNod`.
 pub(crate) fn token_uri(
     nod: &NodContract<'_>,
     item: &NodItemState,
-    bucket: &NodBucketState,
+    group: &NodGroupState,
     now: U256,
 ) -> Result<String> {
-    let called_at = nod.bucket_called_at.read(&item.bucket_key)?;
-    let terms = nod.read_call_terms(item.bucket_key)?;
+    let called_at = nod.group_called_at.read(&item.group_key)?;
+    let terms = nod.read_call_terms(item.group_key)?;
     let deadline = api::settlement_deadline_of(called_at, terms.call_notice_period_seconds);
     let call_price = terms.call_price_minor;
     let called = called_at != 0 && !item.is_settled;
@@ -31,7 +31,7 @@ pub(crate) fn token_uri(
         ("Gratis Load", "Encrypted".into()),
         (
             "Entry Price",
-            nft_card::amount_grouped(bucket.entry_price_minor, PRICE_PRECISION),
+            nft_card::amount_grouped(group.entry_price_minor, PRICE_PRECISION),
         ),
     ];
     rows.push((
@@ -42,7 +42,7 @@ pub(crate) fn token_uri(
         Trait::text("State", state.label),
         Trait::integer("Worldwide Day", item.worldwide_day.value()),
         Trait::integer("League", item.league_id),
-        Trait::amount("Entry Price", bucket.entry_price_minor, PRICE_PRECISION),
+        Trait::amount("Entry Price", group.entry_price_minor, PRICE_PRECISION),
         Trait::amount("Call Price", call_price, PRICE_PRECISION),
     ];
     traits.extend(encrypted_traits(item));

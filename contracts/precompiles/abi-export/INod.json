@@ -525,31 +525,6 @@
   },
   {
     "type": "event",
-    "name": "NodBucketCalled",
-    "inputs": [
-      {
-        "name": "bucketKey",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "calledAt",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      },
-      {
-        "name": "settlementDeadline",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "NodForfeited",
     "inputs": [
       {
@@ -569,6 +544,31 @@
         "type": "bytes",
         "indexed": false,
         "internalType": "bytes"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "NodGroupCalled",
+    "inputs": [
+      {
+        "name": "groupKey",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "calledAt",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "settlementDeadline",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
       }
     ],
     "anonymous": false

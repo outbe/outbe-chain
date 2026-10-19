@@ -1,4 +1,4 @@
-//! What a Nod supplies to the shared lifecycle. One bucket holds five Nods, issued straight
+//! What a Nod supplies to the shared lifecycle. One group holds five Nods, issued straight
 //! to five owners. Two are paid while issued, two are inside the call notice, and one is
 //! forfeited.
 
@@ -35,11 +35,11 @@ alloy_sol_types::sol! {
             uint16 referenceCurrency,
             uint64 issuedAt
         ) external;
-        function closeCallNoticeForTest(bytes32 bucketKey, uint64 deadline) external;
+        function closeCallNoticeForTest(bytes32 groupKey, uint64 deadline) external;
     }
 }
 
-/// A Nod's id derives from its owner and day, so one bucket needs an owner per Nod.
+/// A Nod's id derives from its owner and day, so one group needs an owner per Nod.
 const HOLDER_SEED: u64 = 0x0e0d_0000;
 /// Shared with Gem and Intex, and low enough that the controlled COEN/USD quote clears
 /// the DEV call price.
@@ -56,12 +56,12 @@ const FORFEIT_TIMEOUT: Duration = Duration::from_secs(300);
 const MAX_DEV_NOTICE_SECS: u32 = 3_600;
 /// Slack past the deadline so the sweep has a block to run in.
 const NOTICE_MARGIN_SECS: u64 = 5;
-/// Width of a forfeit-queue bucket. The sweep opens one only once its hour has closed.
-const EXPIRY_BUCKET_SECS: u64 = 3_600;
+/// Width of a forfeit-queue group. The sweep opens one only once its hour has closed.
+const EXPIRY_GROUP_SECS: u64 = 3_600;
 
 pub(crate) struct NodLifecycle;
 
-#[when("five owners are issued Nods in one bucket")]
+#[when("five owners are issued Nods in one group")]
 fn issue_five_nods(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
     let issuance_currency = world
@@ -70,7 +70,7 @@ fn issue_five_nods(world: &mut World) {
         .expect("the Nod scenario prices an issuance market");
     let now = head_time(world);
     let day = outbe_primitives::time::worldwide_day_from_timestamp(now);
-    // The call counts only days after the bucket's stamp: stamp it behind every day
+    // The call counts only days after the group's stamp: stamp it behind every day
     // the scenario seeds.
     let issued_at = now.saturating_sub((u64::from(CALL_WINDOW_SEED_DAYS) + 1) * SECONDS_PER_DAY);
     holders::fund(world, HOLDER_SEED);
@@ -175,7 +175,7 @@ impl Lifecycle for NodLifecycle {
                     dev.call_window_seconds,
                     dev.call_threshold_seconds
                 ),
-                "the bucket did not seal the DEV call terms"
+                "the group did not seal the DEV call terms"
             );
             assert!(
                 data.callNoticePeriod <= MAX_DEV_NOTICE_SECS,
@@ -185,7 +185,7 @@ impl Lifecycle for NodLifecycle {
             assert_eq!(
                 (data.worldwideDay, data.entryPriceMinor),
                 (first.worldwideDay, first.entryPriceMinor),
-                "every Nod must share one bucket"
+                "every Nod must share one group"
             );
         }
     }
@@ -237,7 +237,7 @@ impl Lifecycle for NodLifecycle {
             || format!("the chain never passed the Nod settlement deadline {deadline}"),
             || head_time(world) > deadline,
         );
-        let bucket_key = outbe_nod::identity::bucket_key(
+        let group_key = outbe_nod::identity::group_key(
             outbe_primitives::time::WorldwideDay::new(called.worldwideDay),
             called.entryPriceMinor,
             called.referenceCurrency,
@@ -247,12 +247,12 @@ impl Lifecycle for NodLifecycle {
             addresses::NOD_FACTORY_ADDR,
             DEPLOYER_KEY,
             &INodFactoryTestArming::closeCallNoticeForTestCall {
-                bucketKey: bucket_key,
-                deadline: head_time(world).saturating_sub(EXPIRY_BUCKET_SECS),
+                groupKey: group_key,
+                deadline: head_time(world).saturating_sub(EXPIRY_GROUP_SECS),
             },
             None,
         )
-        .expect("close the expiry bucket the Nod bucket sits in");
+        .expect("close the expiry group the Nod group sits in");
     }
 
     fn assert_forfeited(&self, world: &World) {

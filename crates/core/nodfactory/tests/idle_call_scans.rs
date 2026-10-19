@@ -20,7 +20,7 @@ fn item(owner: Address, day: WorldwideDay) -> NodItemState {
             gratis_load_minor: U256::from(11),
             worldwide_day: day,
             league_id: 4,
-            bucket_key: outbe_nod::identity::bucket_key(day, U256::from(5), 978),
+            group_key: outbe_nod::identity::group_key(day, U256::from(5), 978),
             issuance_currency: 840,
             reference_currency: 978,
             issued_at: 1_752_534_000,
@@ -49,7 +49,7 @@ fn idle_daily_scans_do_not_write_storage() {
         for (owner, entry) in [(0x51, 12u64), (0x52, 13)] {
             let entry = U256::from(entry);
             let mut body = item(Address::repeat_byte(owner), WorldwideDay::new(20260715));
-            body.bucket_key = outbe_nod::identity::bucket_key(body.worldwide_day, entry, 978);
+            body.group_key = outbe_nod::identity::group_key(body.worldwide_day, entry, 978);
             outbe_nod::test_support::set_entry_price(&mut body, entry);
             api::add_nod(
                 &storage,
@@ -69,7 +69,7 @@ fn idle_daily_scans_do_not_write_storage() {
         assert_eq!(
             NodContract::new(storage).call_sweep_day.read().unwrap(),
             0,
-            "both buckets wait below their call price, so the sweep closes at once"
+            "both groups wait below their call price, so the sweep closes at once"
         );
     });
     // An idle CycleTick only continues an in-flight sweep, so it issues no SSTORE.

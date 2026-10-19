@@ -207,29 +207,29 @@ impl Rpc {
         port: u16,
         checkpoint: FinalizedCheckpoint,
         id: outbe_primitives::wwd_entity_id::WwdEntityId,
-    ) -> Result<Option<(outbe_nod::NodItemState, outbe_nod::NodBucketState)>> {
+    ) -> Result<Option<(outbe_nod::NodItemState, outbe_nod::NodGroupState)>> {
         self.read_state_at(port, checkpoint, |storage| {
             let Some(item) = outbe_nod::state_api::load_item(&storage, id)? else {
                 return Ok(None);
             };
-            let bucket = outbe_nod::state_api::load_bucket(&storage, item.body().bucket_key)?
-                .ok_or_else(|| PrecompileError::fatal("Nod bucket is absent"))?;
+            let group = outbe_nod::state_api::load_group(&storage, item.body().group_key)?
+                .ok_or_else(|| PrecompileError::fatal("Nod group is absent"))?;
             Ok(Some((
                 item.body().clone(),
-                snapshot_nod_bucket(bucket.body()),
+                snapshot_nod_group(group.body()),
             )))
         })
     }
 
-    pub fn nod_bucket_state_at(
+    pub fn nod_group_state_at(
         &self,
         port: u16,
         checkpoint: FinalizedCheckpoint,
         key: B256,
-    ) -> Result<Option<outbe_nod::NodBucketState>> {
+    ) -> Result<Option<outbe_nod::NodGroupState>> {
         self.read_state_at(port, checkpoint, |storage| {
-            Ok(outbe_nod::state_api::load_bucket(&storage, key)?
-                .map(|bucket| snapshot_nod_bucket(bucket.body())))
+            Ok(outbe_nod::state_api::load_group(&storage, key)?
+                .map(|group| snapshot_nod_group(group.body())))
         })
     }
 
@@ -250,9 +250,9 @@ impl Rpc {
     }
 }
 
-fn snapshot_nod_bucket(body: &outbe_nod::NodBucketState) -> outbe_nod::NodBucketState {
-    outbe_nod::NodBucketState {
-        bucket_key: body.bucket_key,
+fn snapshot_nod_group(body: &outbe_nod::NodGroupState) -> outbe_nod::NodGroupState {
+    outbe_nod::NodGroupState {
+        group_key: body.group_key,
         worldwide_day: body.worldwide_day,
         entry_price_minor: body.entry_price_minor,
         reference_currency: body.reference_currency,

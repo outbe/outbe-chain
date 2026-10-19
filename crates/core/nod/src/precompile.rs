@@ -9,7 +9,7 @@ use outbe_primitives::error::Result;
 
 use crate::api;
 use crate::errors::NodError;
-use crate::schema::{NodBucketState, NodContract, NodItemState};
+use crate::schema::{NodContract, NodGroupState, NodItemState};
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 /// Selectors on this precompile that accept native value. The route table binds
@@ -90,9 +90,8 @@ fn dispatch_entity(
         tokenURI(c) => view(c, |c| {
             let nod_id = WwdEntityId::from(c.nodId);
             let item = api::get_item(&storage, nod_id)?.ok_or(NodError::NodNotFound)?;
-            let bucket =
-                api::get_bucket(&storage, item.bucket_key)?.ok_or(NodError::BucketNotFound)?;
-            crate::metadata::token_uri(nod, &item, &bucket, storage.timestamp()?)
+            let group = api::get_group(&storage, item.group_key)?.ok_or(NodError::GroupNotFound)?;
+            crate::metadata::token_uri(nod, &item, &group, storage.timestamp()?)
         }),
         tokenByIndex(c) => view(c, |c| {
             let idx = usize::try_from(c.index).map_err(|_| NodError::IndexOutOfBounds)?;
@@ -111,9 +110,8 @@ fn dispatch_entity(
         getNod(c) => view(c, |c| {
             let nod_id = WwdEntityId::from(c.nodId);
             let item = api::get_item(&storage, nod_id)?.ok_or(NodError::NodNotFound)?;
-            let bucket =
-                api::get_bucket(&storage, item.bucket_key)?.ok_or(NodError::BucketNotFound)?;
-            to_abi_data(&storage, &item, &bucket)
+            let group = api::get_group(&storage, item.group_key)?.ok_or(NodError::GroupNotFound)?;
+            to_abi_data(&storage, &item, &group)
         }),
         _ => unreachable!("entity route requires an entity call"),
     }
@@ -122,11 +120,11 @@ fn dispatch_entity(
 fn to_abi_data(
     storage: &outbe_primitives::storage::StorageHandle<'_>,
     item: &NodItemState,
-    bucket: &NodBucketState,
+    group: &NodGroupState,
 ) -> Result<INod::NodData> {
     let nod = NodContract::new(storage.clone());
-    let called_at = nod.bucket_called_at.read(&item.bucket_key)?;
-    let terms = nod.read_call_terms(item.bucket_key)?;
+    let called_at = nod.group_called_at.read(&item.group_key)?;
+    let terms = nod.read_call_terms(item.group_key)?;
     let deadline = if called_at == 0 {
         0
     } else {
@@ -142,9 +140,9 @@ fn to_abi_data(
         encryptedCreatorPublicKey: item.encrypted.encrypted_creator_public_key.clone().into(),
         encryptionBinding: item.encrypted.encryption_binding,
         chainId: item.encrypted.terms.chain_id,
-        entryPriceMinor: bucket.entry_price_minor,
+        entryPriceMinor: group.entry_price_minor,
         settlementCostMinor: api::settlement_cost_minor(
-            bucket.entry_price_minor,
+            group.entry_price_minor,
             api::calculation_amount(item)?,
         )?,
         issuanceCurrency: item.issuance_currency,

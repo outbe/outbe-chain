@@ -181,7 +181,7 @@ fn subcall_reaches_nod_in_the_same_evm_state() {
     let owner = Address::repeat_byte(0x11);
     let day = WorldwideDay::new(20_260_715);
     let nod_id = outbe_nod::identity::generate_nod_id(owner, day).unwrap();
-    let bucket_key = outbe_nod::identity::bucket_key(day, U256::from(9), 978);
+    let group_key = outbe_nod::identity::group_key(day, U256::from(9), 978);
     let item = outbe_nod::test_support::item(
         outbe_nod::test_support::NodItemFixture {
             is_settled: false,
@@ -190,7 +190,7 @@ fn subcall_reaches_nod_in_the_same_evm_state() {
             gratis_load_minor: U256::from(11),
             worldwide_day: day,
             league_id: 3,
-            bucket_key,
+            group_key,
             issuance_currency: 840,
             reference_currency: 978,
             issued_at: 1_700_000_000,

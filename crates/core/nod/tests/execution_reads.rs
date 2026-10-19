@@ -17,7 +17,7 @@ fn item(owner: Address, day: WorldwideDay) -> NodItemState {
             gratis_load_minor: U256::from(11),
             worldwide_day: day,
             league_id: 4,
-            bucket_key: outbe_nod::identity::bucket_key(day, U256::from(5), 978),
+            group_key: outbe_nod::identity::group_key(day, U256::from(5), 978),
             issuance_currency: 840,
             reference_currency: 978,
             issued_at: 1_752_534_000,
@@ -79,10 +79,10 @@ fn removal_checks_loaded_state() {
         )
         .unwrap();
         let loaded_item = api::load_item(&storage, body.nod_id).unwrap().unwrap();
-        let bucket_id = body.bucket_key;
-        let loaded_bucket = api::load_bucket(&storage, bucket_id).unwrap().unwrap();
+        let group_id = body.group_key;
+        let loaded_group = api::load_group(&storage, group_id).unwrap().unwrap();
 
-        api::remove_nod(&storage, loaded_item, loaded_bucket).unwrap();
+        api::remove_nod(&storage, loaded_item, loaded_group).unwrap();
 
         assert!(api::get_item(&storage, body.nod_id).unwrap().is_none());
     });

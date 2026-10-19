@@ -40,21 +40,21 @@ pub(crate) fn validate_item(item: &NodItemState, entry_price_minor: U256) -> Res
     }
     // ISO 0 is not a currency, and its bin namespace aliases the
     // un-namespaced key while never appearing in the oracle's
-    // reference-currency registry — a bucket parked there would be
+    // reference-currency registry — a group parked there would be
     // invisible to the call scan forever.
     if item.reference_currency == 0 {
         return Err(NodError::ZeroReferenceCurrency.into());
     }
 
-    let canonical_bucket_key = crate::identity::bucket_key(
+    let canonical_group_key = crate::identity::group_key(
         item.worldwide_day,
         entry_price_minor,
         item.reference_currency,
     );
-    if item.bucket_key != canonical_bucket_key {
-        return Err(NodError::BucketIdentityMismatch {
-            expected: canonical_bucket_key,
-            found: item.bucket_key,
+    if item.group_key != canonical_group_key {
+        return Err(NodError::GroupIdentityMismatch {
+            expected: canonical_group_key,
+            found: item.group_key,
         }
         .into());
     }

@@ -38,17 +38,17 @@ pub struct NodItemBodyV1 {
     pub gratis_load_minor: U256,
     pub worldwide_day: WorldwideDay,
     pub league_id: u16,
-    pub bucket_key: B256,
+    pub group_key: B256,
     pub issuance_currency: u16,
     pub reference_currency: u16,
     pub issued_at: u64,
     pub is_settled: bool,
 }
 
-/// Canonical v1 Nod bucket payload.
+/// Canonical v1 Nod group payload.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct NodBucketBodyV1 {
-    pub bucket_key: B256,
+pub struct NodGroupBodyV1 {
+    pub group_key: B256,
     pub worldwide_day: WorldwideDay,
     pub entry_price_minor: U256,
     /// ISO 4217 numeric code denominating `entry_price_minor`, omitted when zero.
@@ -56,11 +56,11 @@ pub struct NodBucketBodyV1 {
     pub settled_nods: u64,
 }
 
-impl NodBucketBodyV1 {
-    /// Returns the canonical bucket identity `WWD_BE4 || bucket_key`.
+impl NodGroupBodyV1 {
+    /// Returns the canonical group identity `WWD_BE4 || group_key`.
     #[must_use]
     pub fn entity_id(&self) -> WwdEntityId {
-        WwdEntityId::from_day_and_digest(self.worldwide_day, self.bucket_key)
+        WwdEntityId::from_day_and_digest(self.worldwide_day, self.group_key)
     }
 }
 
@@ -194,7 +194,7 @@ pub fn encode_nod_item_v1(body: &NodItemBodyV1) -> Result<Vec<u8>, CanonicalBody
     encode_bytes_field(3, &body.gratis_load_minor.to_be_bytes::<32>(), &mut output);
     encode_optional_varint_field(4, u64::from(body.worldwide_day.value()), &mut output);
     encode_optional_varint_field(5, u64::from(body.league_id), &mut output);
-    encode_bytes_field(6, body.bucket_key.as_slice(), &mut output);
+    encode_bytes_field(6, body.group_key.as_slice(), &mut output);
     encode_optional_varint_field(7, u64::from(body.issuance_currency), &mut output);
     encode_optional_varint_field(8, u64::from(body.reference_currency), &mut output);
     encode_optional_varint_field(9, body.issued_at, &mut output);
@@ -210,7 +210,7 @@ pub fn decode_nod_item_v1(bytes: &[u8]) -> Result<NodItemBodyV1, CanonicalBodyEr
     let gratis_load_minor = decode_u256(required_bytes(&mut fields, 3)?, 3)?;
     let worldwide_day = WorldwideDay::new(optional_u32(&mut fields, 4)?);
     let league_id = optional_u16(&mut fields, 5)?;
-    let bucket_key = B256::from(fixed_bytes::<32>(required_bytes(&mut fields, 6)?, 6)?);
+    let group_key = B256::from(fixed_bytes::<32>(required_bytes(&mut fields, 6)?, 6)?);
     let issuance_currency = optional_u16(&mut fields, 7)?;
     let reference_currency = optional_u16(&mut fields, 8)?;
     let issued_at = optional_varint(&mut fields, 9)?;
@@ -223,7 +223,7 @@ pub fn decode_nod_item_v1(bytes: &[u8]) -> Result<NodItemBodyV1, CanonicalBodyEr
         gratis_load_minor,
         worldwide_day,
         league_id,
-        bucket_key,
+        group_key,
         issuance_currency,
         reference_currency,
         issued_at,
@@ -242,10 +242,10 @@ pub fn decode_stored_nod_item_v1(bytes: &[u8]) -> Result<NodItemBodyV1, Canonica
     decode_nod_item_v1(stored.payload())
 }
 
-/// Encodes the canonical v1 Nod bucket payload.
-pub fn encode_nod_bucket_v1(body: &NodBucketBodyV1) -> Result<Vec<u8>, CanonicalBodyError> {
+/// Encodes the canonical v1 Nod group payload.
+pub fn encode_nod_group_v1(body: &NodGroupBodyV1) -> Result<Vec<u8>, CanonicalBodyError> {
     let mut output = Vec::with_capacity(128);
-    encode_bytes_field(1, body.bucket_key.as_slice(), &mut output);
+    encode_bytes_field(1, body.group_key.as_slice(), &mut output);
     encode_optional_varint_field(2, u64::from(body.worldwide_day.value()), &mut output);
     encode_bytes_field(3, &body.entry_price_minor.to_be_bytes::<32>(), &mut output);
     encode_optional_varint_field(4, u64::from(body.reference_currency), &mut output);
@@ -253,23 +253,23 @@ pub fn encode_nod_bucket_v1(body: &NodBucketBodyV1) -> Result<Vec<u8>, Canonical
     Ok(output)
 }
 
-/// Strictly decodes one canonical v1 Nod bucket payload.
-pub fn decode_nod_bucket_v1(bytes: &[u8]) -> Result<NodBucketBodyV1, CanonicalBodyError> {
-    let fields = decode_bucket_fields(bytes)?;
-    let body = NodBucketBodyV1 {
-        bucket_key: fields.bucket_key,
+/// Strictly decodes one canonical v1 Nod group payload.
+pub fn decode_nod_group_v1(bytes: &[u8]) -> Result<NodGroupBodyV1, CanonicalBodyError> {
+    let fields = decode_group_fields(bytes)?;
+    let body = NodGroupBodyV1 {
+        group_key: fields.group_key,
         worldwide_day: fields.worldwide_day,
         entry_price_minor: fields.entry_price_minor,
         reference_currency: fields.reference_currency,
         settled_nods: fields.settled,
     };
-    canonical_decoded(body, bytes, encode_nod_bucket_v1)
+    canonical_decoded(body, bytes, encode_nod_group_v1)
 }
 
-/// Decodes a StoredBody and requires its fork-active Nod bucket schema.
-pub fn decode_stored_nod_bucket_v1(bytes: &[u8]) -> Result<NodBucketBodyV1, CanonicalBodyError> {
+/// Decodes a StoredBody and requires its fork-active Nod group schema.
+pub fn decode_stored_nod_group_v1(bytes: &[u8]) -> Result<NodGroupBodyV1, CanonicalBodyError> {
     let stored = decode_active_stored_body(bytes)?;
-    decode_nod_bucket_v1(stored.payload())
+    decode_nod_group_v1(stored.payload())
 }
 
 fn decode_active_stored_body(bytes: &[u8]) -> Result<StoredBody, CanonicalBodyError> {
@@ -542,18 +542,18 @@ pub enum CanonicalBodyError {
     UnsupportedSchema { actual: u32 },
 }
 
-struct BucketFields {
-    bucket_key: B256,
+struct GroupFields {
+    group_key: B256,
     worldwide_day: WorldwideDay,
     entry_price_minor: U256,
     reference_currency: u16,
     settled: u64,
 }
 
-fn decode_bucket_fields(bytes: &[u8]) -> Result<BucketFields, CanonicalBodyError> {
+fn decode_group_fields(bytes: &[u8]) -> Result<GroupFields, CanonicalBodyError> {
     let mut fields = Fields::new(bytes);
-    let body = BucketFields {
-        bucket_key: B256::from(fixed_bytes::<32>(required_bytes(&mut fields, 1)?, 1)?),
+    let body = GroupFields {
+        group_key: B256::from(fixed_bytes::<32>(required_bytes(&mut fields, 1)?, 1)?),
         worldwide_day: WorldwideDay::new(optional_u32(&mut fields, 2)?),
         entry_price_minor: decode_u256(required_bytes(&mut fields, 3)?, 3)?,
         reference_currency: optional_u16(&mut fields, 4)?,
@@ -668,7 +668,7 @@ mod tests {
                 },
                 U256::from(5_000_000u64),
             ),
-            bucket_key: B256::repeat_byte(0x44),
+            group_key: B256::repeat_byte(0x44),
             issued_at: 1_700_000_000,
             is_settled: true,
         };

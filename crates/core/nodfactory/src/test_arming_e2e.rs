@@ -1,6 +1,6 @@
 //! Hooks only a throwaway e2e build answers. Lysis issues a Nod over a certified
 //! generation, so a scenario that needs one asks for it straight. The forfeit sweep opens a
-//! bucket only once its hour has closed, so `closeCallNoticeForTest` moves a lapsed deadline
+//! group only once its hour has closed, so `closeCallNoticeForTest` moves a lapsed deadline
 //! into an hour the sweep opens on the next block.
 
 use alloy_primitives::{Bytes, B256};
@@ -24,7 +24,7 @@ alloy_sol_types::sol! {
             uint16 referenceCurrency,
             uint64 issuedAt
         ) external;
-        function closeCallNoticeForTest(bytes32 bucketKey, uint64 deadline) external;
+        function closeCallNoticeForTest(bytes32 groupKey, uint64 deadline) external;
     }
 }
 
@@ -36,7 +36,7 @@ pub(crate) fn dispatch(storage: &StorageHandle<'_>, data: &[u8]) -> Option<Resul
     }
     if let Ok(call) = closeCallNoticeForTestCall::abi_decode(data) {
         return Some(guarded(storage, || {
-            requeue_called(storage, call.bucketKey, call.deadline)
+            requeue_called(storage, call.groupKey, call.deadline)
         }));
     }
     None
@@ -47,7 +47,7 @@ fn guarded(storage: &StorageHandle<'_>, hook: impl FnOnce() -> Result<()>) -> Re
     hook().map(|()| Bytes::new())
 }
 
-/// Issue one Nod straight to its owner. A non-zero `issuedAt` restamps the bucket,
+/// Issue one Nod straight to its owner. A non-zero `issuedAt` restamps the group,
 /// since calls count only days after it.
 fn issue(storage: &StorageHandle<'_>, call: INodFactoryTestArming::issueForTestCall) -> Result<()> {
     let day = outbe_primitives::time::WorldwideDay::new(call.worldwideDay);
@@ -68,21 +68,21 @@ fn issue(storage: &StorageHandle<'_>, call: INodFactoryTestArming::issueForTestC
     .map_err(crate::errors::NodFactoryError::CreateNodForTest)?;
     runtime::issue_nod(storage, &encrypted)?;
     if call.issuedAt != 0 {
-        let bucket_key =
-            outbe_nod::identity::bucket_key(day, call.entryPriceMinor, call.referenceCurrency);
+        let group_key =
+            outbe_nod::identity::group_key(day, call.entryPriceMinor, call.referenceCurrency);
         NodContract::new(storage.clone())
-            .bucket_issued_at
-            .write(&bucket_key, call.issuedAt)?;
+            .group_issued_at
+            .write(&group_key, call.issuedAt)?;
     }
     Ok(())
 }
 
-/// Moves a called bucket's queue entry onto `deadline`.
-fn requeue_called(storage: &StorageHandle<'_>, bucket_key: B256, deadline: u64) -> Result<()> {
+/// Moves a called group's queue entry onto `deadline`.
+fn requeue_called(storage: &StorageHandle<'_>, group_key: B256, deadline: u64) -> Result<()> {
     let mut nod = NodContract::new(storage.clone());
-    if nod.called_deadline.read(&bucket_key)? == 0 {
-        return Err(crate::errors::NodFactoryError::BucketNotQueuedForTest.into());
+    if nod.called_deadline.read(&group_key)? == 0 {
+        return Err(crate::errors::NodFactoryError::GroupNotQueuedForTest.into());
     }
-    nod.remove_called(bucket_key)?;
-    nod.push_called(bucket_key, deadline)
+    nod.remove_called(group_key)?;
+    nod.push_called(group_key, deadline)
 }
