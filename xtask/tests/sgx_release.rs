@@ -518,10 +518,7 @@ fn assert_cross_region_release_pipeline(workflow: &str) {
         1,
         "one matrix build step must fan out across FR and MUM"
     );
-    let signing = workflow
-        .split_once("  sign:\n")
-        .expect("signing job")
-        .1;
+    let signing = workflow.split_once("  sign:\n").expect("signing job").1;
     assert!(signing.find("needs: build-and-compare") < signing.find("    steps:"));
 }
 
@@ -736,7 +733,9 @@ fn mainnet_release_workflow_requires_a_pinned_genesis_and_closed_profile() {
     // The regional builders and comparison use the existing shared release
     // runner pool. Testnet settings elsewhere in the mainnet workflow still fail.
     assert_eq!(workflow.matches("testnet-release-sgx").count(), 2);
-    assert!(!workflow.replace("testnet-release-sgx", "").contains("testnet"));
+    assert!(!workflow
+        .replace("testnet-release-sgx", "")
+        .contains("testnet"));
     assert!(!workflow.contains("--clobber"));
     assert!(!workflow.contains("gh release upload"));
     assert!(workflow.contains("--draft --prerelease"));
