@@ -17,6 +17,9 @@ alloy-sol-types.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 
+[build-dependencies]
+toml.workspace = true
+
 [dev-dependencies]
 serde_json.workspace = true
 outbe-validatorset = { workspace = true, features = ["test-utils"] }

@@ -31,10 +31,15 @@ come from:
 In `chain` mode `feeder.toml` must not set `currency_pairs`,
 `deviation_thresholds`, `dex_providers` or `onchain_providers`.
 
-The node files are in `crates/system/oracle/sources/<version>.toml`. The node
-serves the file with the highest version that is not above the active
-protocol version. To change the sources, add a new file and add it to
-`SOURCES` in `crates/system/oracle/src/sources.rs`. Do not edit a released file.
+The node files are in `crates/system/oracle/sources/<major>.<minor>.toml`.
+They are for mainnet only. Other networks register pairs in genesis. The node
+serves the file with the highest version that is not above the active protocol
+version. The node also registers the pairs of that file and stops voting on
+pairs that a newer file drops. To change the sources, add a new file named by
+the protocol version of the release. Do not edit a released file.
+
+The feeder votes only pairs that are active vote targets on chain
+(`IOracle.getVoteTargets()`).
 
 The node file has no RPC URLs and no API keys. Set them in `feeder.toml`:
 `[rpc_endpoints]` by `chain_id`, and `[[api_providers]]`.
@@ -111,22 +116,14 @@ markets = [
   { provider = "redstone" },
 ]
 
+# COEN in yen, the same way: COEN/392 = COEN/840 ÷ 392/840.
 [[currency_pairs]]
-base = "392"
-quote = "840"
+base = "COEN"
+quote = "392"
+cross = "840"
 markets = [
-  { provider = "chainlink_eur_usd" },
+  { provider = "chainlink_jpy_usd" },
   { provider = "pyth" },
-  { provider = "redstone" },
-]
-
-[[currency_pairs]]
-base = "392"
-quote = "840"
-markets = [
-  { provider = "chainlink_eur_usd", quote = "840" },
-  { provider = "pyth", quote = "840" },
-  { provider = "redstone", quote = "840" },
 ]
 
 [[deviation_thresholds]]
@@ -144,6 +141,11 @@ pool = { protocol = "uniswap_v3", address = "0x222222222222222222222222222222222
 name = "chainlink_eur_usd"
 chain_id = 1
 contract = "0x4444444444444444444444444444444444444444"   # Chainlink EUR / USD, replace
+
+[[onchain_providers]]
+name = "chainlink_jpy_usd"
+chain_id = 1
+contract = "0x5555555555555555555555555555555555555555"   # Chainlink JPY / USD, replace
 ```
 
 ### Config Fields

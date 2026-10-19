@@ -18,6 +18,9 @@ pub(crate) enum ConfigError {
         /// The pairs file path.
         pairs: String,
     },
+    /// The node has no sources file for its network.
+    #[error("the node has no feeder sources for this network. Set `oracle.sources = \"local\"`")]
+    NoNodeSources,
     /// The local config sets a section that the node supplies in `chain` sources mode.
     #[error(
         "remove `{0}` from the local config: the node supplies it when `oracle.sources` is `chain`"

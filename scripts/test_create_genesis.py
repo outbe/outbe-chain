@@ -744,6 +744,8 @@ class BaselineProfileTests(unittest.TestCase):
         """testnet.yaml is not just a defaults bag: seeding it against itself
         must be a fixed point."""
         config = CG.load_yaml(CG.BASE_PROFILE_PATH)
+        # feeder_pairs adds testnet-only pairs. Other networks do not inherit it.
+        del config["feeder_pairs"]
         self.assertEqual(CG.build_seed(config), CG.build_seed({}))
 
 
@@ -841,6 +843,24 @@ class LaunchBundleTests(unittest.TestCase):
                 self.assertTrue((directory / "feeder.toml").is_file())
 
 
+
+    def test_testnet_feeder_pairs_file_reaches_genesis_and_the_bundle(self):
+        config = {"feeder_pairs": "testnet/pairs.toml"}
+        pairs = CG.build_seed(config)["oracle"]["pairs"]
+        quotes = [str(pair["quote"]) for pair in pairs]
+        self.assertEqual(sorted(quotes), sorted(["840", "978", "392", "826", "156", "344"]))
+        self.assertEqual(pairs[0]["initial_rate"], "1000000")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, output_dir = self.render(tmp, config)
+            directory = output_dir / "validator-0"
+            self.assertEqual(
+                (directory / "pairs.toml").read_text(),
+                (pathlib.Path(LB.__file__).parent / "testnet/pairs.toml").read_text(),
+            )
+            toml = (directory / "feeder.toml").read_text()
+            self.assertIn('[rpc_endpoints]\n1 = "REPLACE_WITH_RPC_URL"', toml)
+            self.assertIn('name = "pyth"', toml)
 
     def test_feeder_provider_name_is_one_the_binary_accepts(self):
         """outbe-feeder validates provider names against a fixed list and

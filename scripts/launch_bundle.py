@@ -18,6 +18,7 @@ import shutil
 import tarfile
 import shlex
 import stat
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -344,8 +345,22 @@ exec {quote(binary)} node \\
 """
 
 
+def feeder_pairs_file(config: dict[str, Any]) -> Path | None:
+    """The committed pairs file that `feeder_pairs` names, relative to scripts/."""
+    name = config.get("feeder_pairs")
+    return Path(__file__).resolve().parent / name if name else None
+
+
+def feeder_pairs_table(config: dict[str, Any]) -> dict[str, Any] | None:
+    path = feeder_pairs_file(config)
+    return tomllib.loads(path.read_text()) if path else None
+
+
 def feeder_pairs(*, config: dict[str, Any]) -> str:
     """The pairs file every validator's feeder.toml names."""
+    path = feeder_pairs_file(config)
+    if path:
+        return path.read_text()
     price_provider = str(config.get("price_provider", "mock_http"))
     default_quote = {"mock_http": "840"}.get(price_provider, "USDT")
     source_quote = str(config.get("price_source_quote", default_quote))
@@ -374,6 +389,7 @@ rest = "{config.get("price_feed_rest", "https://prc.testnet.outbe.net")}"'''
         websocket_line = f'\nwebsocket = "{websocket}"' if websocket else ""
         api_provider = f'''[[api_providers]]
 name = "{price_provider}"{websocket_line}'''
+    api_provider += feeder_pairs_settings(config)
     return f"""# Price oracle feeder for validator-{index}.
 pairs = "pairs.toml"
 
@@ -402,6 +418,30 @@ bind_address = "127.0.0.1:{port_of(config, "feeder_health_port")}"
 # endpoint; exchange providers use live WebSocket market streams.
 {api_provider}
 """
+
+
+def feeder_pairs_settings(config: dict[str, Any]) -> str:
+    """Placeholders for the RPC URLs and the Pyth key that the committed pairs
+    file needs. Each validator replaces them."""
+    table = feeder_pairs_table(config)
+    if not table:
+        return ""
+    chain_ids = sorted(
+        {entry["chain_id"] for entry in table.get("onchain_providers", [])}
+        | {entry["chain_id"] for entry in table.get("dex_providers", [])}
+    )
+    text = ""
+    if chain_ids:
+        text += "\n\n# Each validator sets its own RPC URL for each network.\n[rpc_endpoints]"
+        text += "".join(f'\n{chain_id} = "REPLACE_WITH_RPC_URL"' for chain_id in chain_ids)
+    markets = [
+        market
+        for pair in table.get("currency_pairs", [])
+        for market in pair.get("markets", [])
+    ]
+    if any(market.get("provider") == "pyth" for market in markets):
+        text += '\n\n[[api_providers]]\nname = "pyth"\napi_key = "REPLACE_WITH_PYTH_API_KEY"'
+    return text
 
 
 def feeder_script(*, config: dict[str, Any], index: int, base_dir: str) -> str:
