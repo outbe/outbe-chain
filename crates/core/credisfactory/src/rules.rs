@@ -2,7 +2,6 @@
 //! settle interest first, forfeit a lapsed call. Credis keeps the record and its reads.
 
 use alloy_primitives::{Address, U256};
-use outbe_credis::constants::CALL_RATE_PCT;
 use outbe_credis::errors::CredisError;
 use outbe_credis::runtime::settlement_deadline;
 use outbe_credis::{Credis, CredisContract, CredisState};
@@ -76,9 +75,9 @@ pub struct Forfeit {
     pub principal_written_off: U256,
 }
 
-/// The anchor marked up by the call rate.
-pub fn calc_call_price(price: U256) -> Result<U256> {
-    outbe_primitives::markup::marked_up(price, CALL_RATE_PCT)
+/// The anchor marked up by `rate_pct` percentage points.
+pub fn calc_call_price(price: U256, rate_pct: u16) -> Result<U256> {
+    outbe_primitives::markup::marked_up(price, rate_pct)
         .ok_or_else(|| CredisError::ArithmeticOverflow.into())
 }
 
@@ -139,13 +138,16 @@ pub fn issue(credis: &mut CredisContract<'_>, params: IssueCredisParams) -> Resu
             outstanding_gratis_minor: params.gratis_minor,
             policy_rate: params.policy_rate,
             entry_price_minor: params.entry_price_minor,
-            call_price_minor: calc_call_price(params.call_anchor_price_minor)?,
+            call_price_minor: calc_call_price(
+                params.call_anchor_price_minor,
+                call_terms.call_rate,
+            )?,
             issued_at: params.issued_at,
             last_settled_at: params.issued_at,
             called_at: 0,
             state: CredisState::Issued as u8,
             call_notice_period_seconds: call_terms.call_notice_period_seconds,
-            call_rate: CALL_RATE_PCT,
+            call_rate: call_terms.call_rate,
             call_window_seconds: call_terms.call_window_seconds,
             call_threshold_seconds: call_terms.call_threshold_seconds,
             call_anchor_price_minor: params.call_anchor_price_minor,

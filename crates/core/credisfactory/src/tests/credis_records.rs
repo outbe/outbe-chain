@@ -9,6 +9,7 @@ use outbe_primitives::time::{
 use outbe_primitives::units::SCALE_1E6_U256;
 
 use crate::rules::{self, calc_call_price, IssueCredisParams};
+use outbe_credis::constants::CALL_RATE_PCT;
 use outbe_credis::errors::CredisError;
 use outbe_credis::precompile::{dispatch, ICredis};
 use outbe_credis::runtime::{effective_state, settlement_deadline};
@@ -204,14 +205,18 @@ fn issuance_seals_the_call_price_from_the_call_anchor() {
         assert_eq!(p.call_price_minor, U256::from(1_640_000u64));
         assert_eq!(
             p.call_price_minor,
-            calc_call_price(call_anchor_price()).unwrap()
+            calc_call_price(call_anchor_price(), CALL_RATE_PCT).unwrap()
         );
-        assert_ne!(p.call_price_minor, calc_call_price(entry_price()).unwrap());
+        assert_ne!(
+            p.call_price_minor,
+            calc_call_price(entry_price(), CALL_RATE_PCT).unwrap()
+        );
         assert_eq!(
             p.call_notice_period_seconds,
             outbe_credis::constants::CALL_NOTICE_PERIOD
         );
-        assert_eq!(p.call_rate, outbe_credis::constants::CALL_RATE_PCT);
+        assert_eq!(p.call_rate, CALL_RATE_PCT);
+        assert_eq!(p.call_rate, 64);
         assert_eq!(p.call_window_seconds, outbe_credis::constants::CALL_WINDOW);
         assert_eq!(
             p.call_threshold_seconds,
@@ -2313,6 +2318,13 @@ fn issuance_off_mainnet_seals_the_dev_terms() {
             ),
             (3 * DAY, 2 * DAY, notice)
         );
+        // The DEV call rate is 2, so the anchor 1.00 gives the call price 1.02.
+        assert_eq!(record.call_rate, 2);
+        assert_eq!(
+            record.call_price_minor,
+            call_anchor_price() * U256::from(102u64) / U256::from(100u64)
+        );
+        assert_eq!(record.call_price_minor, U256::from(1_020_000u64));
         id
     });
     assert!(!id.is_zero());

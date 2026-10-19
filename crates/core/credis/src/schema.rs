@@ -142,7 +142,7 @@ pub struct Credis {
     #[attribute(order = 17, default = 0)]
     pub call_notice_period_seconds: u32,
 
-    /// Call-price markup percent (snapshot of `CALL_RATE_PCT` at issuance).
+    /// Call-price markup percent (snapshot of the profile call rate at issuance).
     /// Applied to `call_anchor_price_minor`, not to `entry_price_minor` (64 => 1.64x).
     #[attribute(order = 18, default = 0)]
     pub call_rate: u16,

@@ -99,7 +99,8 @@ fn issue_uses_the_reservation_pledge_once_and_rolls_back_failures() {
         assert_eq!(record.call_anchor_price_minor, oracle_rate());
         assert_eq!(
             record.call_price_minor,
-            crate::rules::calc_call_price(oracle_rate()).unwrap()
+            crate::rules::calc_call_price(oracle_rate(), outbe_credis::constants::CALL_RATE_PCT)
+                .unwrap()
         );
         assert_eq!(
             record.call_notice_period_seconds,
@@ -399,7 +400,11 @@ fn issuance_uses_reserved_terms_across_midnight_and_oracle_changes() {
         );
         assert_eq!(
             record.call_price_minor,
-            crate::rules::calc_call_price(reservation.call_anchor_price_minor).unwrap()
+            crate::rules::calc_call_price(
+                reservation.call_anchor_price_minor,
+                outbe_credis::constants::CALL_RATE_PCT
+            )
+            .unwrap()
         );
         assert_eq!(record.issued_at, midnight + 300);
         assert_eq!(record.last_settled_at, record.issued_at);
