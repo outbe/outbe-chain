@@ -168,6 +168,16 @@ fn a_day_beyond_one_slice_is_credited_over_several_blocks_in_queue_order() {
         assert_eq!(advance_accruals(&ctx).unwrap(), U256::ZERO);
         assert_eq!(claimable(slice - 1), U256::from(1_000u64));
         assert_eq!(claimable(slice), U256::ZERO);
+        let credited = U256::from(slice * 1_000);
+        let contract = AgentRewardContract::new(storage.clone());
+        assert_eq!(
+            contract.pool_claimable_total(RewardPool::Waa).unwrap(),
+            credited
+        );
+        assert_eq!(
+            contract.pool_pending_total(RewardPool::Waa).unwrap(),
+            waa_pool - credited
+        );
         assert_eq!(advance_accruals(&ctx).unwrap(), U256::ZERO);
         assert_eq!(claimable(2 * slice - 1), U256::from(1_000u64));
         assert_eq!(claimable(2 * slice), U256::ZERO);
@@ -188,6 +198,14 @@ fn a_day_beyond_one_slice_is_credited_over_several_blocks_in_queue_order() {
         assert_eq!(
             contract.accrual_head.read().unwrap(),
             contract.accrual_tail.read().unwrap()
+        );
+        assert_eq!(
+            contract.pool_claimable_total(RewardPool::Waa).unwrap(),
+            waa_pool - U256::from(7u64)
+        );
+        assert_eq!(
+            contract.pool_pending_total(RewardPool::Waa).unwrap(),
+            U256::ZERO
         );
         assert!(contract.get_all_waa_counts(waa_day).unwrap().is_empty());
         assert_eq!(contract.waa_total_count.read(&waa_day).unwrap(), 0);
@@ -293,11 +311,19 @@ fn claiming_a_pool_issues_its_gem() {
         contract
             .add_claimable_reward(RewardPool::Waa, alice, load)
             .unwrap();
+        assert_eq!(
+            contract.pool_claimable_total(RewardPool::Waa).unwrap(),
+            load
+        );
 
         let gem_id = contract
             .claim_reward(RewardPool::Waa, alice, U256::ZERO, (USD, USD))
             .unwrap();
         assert!(!gem_id.is_zero());
+        assert_eq!(
+            contract.pool_claimable_total(RewardPool::Waa).unwrap(),
+            U256::ZERO
+        );
 
         let gem = gem_of(&storage, alice);
         assert_eq!(gem.item.gem_type, GemTypes::Wallet as u8);

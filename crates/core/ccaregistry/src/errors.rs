@@ -27,6 +27,8 @@ pub enum CcaError {
     ZeroAddress,
     #[error("CCA active set is full")]
     ActiveSetFull,
+    #[error("CCA registry balance is below the bonded total")]
+    CustodyShortfall,
 }
 
 impl From<CcaError> for PrecompileError {

@@ -75,6 +75,31 @@ impl AgentRewardContract<'_> {
         }
     }
 
+    /// The claimable reward of a pool summed over its addresses.
+    pub fn pool_claimable_total(&self, pool: RewardPool) -> Result<U256> {
+        self.claimable_total_minor.read(&(pool as u8))
+    }
+
+    /// The part of the pool's queued day pools not yet credited.
+    pub fn pool_pending_total(&self, pool: RewardPool) -> Result<U256> {
+        let mut pending = U256::ZERO;
+        let tail = self.accrual_tail.read()?;
+        for seq in self.accrual_head.read()?..tail {
+            let job = self
+                .accrual_jobs
+                .get(seq)?
+                .ok_or(AgentRewardError::AccrualJobMissing(seq))?;
+            if job.pool == pool as u8 {
+                pending = job
+                    .pool_minor
+                    .checked_sub(job.credited_minor)
+                    .and_then(|left| pending.checked_add(left))
+                    .ok_or(AgentRewardError::DistributionOverflow)?;
+            }
+        }
+        Ok(pending)
+    }
+
     /// Adds amount to an address's claimable reward in one pool.
     pub fn add_claimable_reward(
         &mut self,
@@ -95,6 +120,14 @@ impl AgentRewardContract<'_> {
         address: Address,
         amount: U256,
     ) -> Result<()> {
+        let previous = self.get_pool_claimable_reward(pool, address)?;
+        let total = self
+            .claimable_total_minor
+            .read(&(pool as u8))?
+            .checked_sub(previous)
+            .and_then(|rest| rest.checked_add(amount))
+            .ok_or(AgentRewardError::PoolTotalMismatch)?;
+        self.claimable_total_minor.write(&(pool as u8), total)?;
         match pool {
             RewardPool::Waa => self.waa_claimable_minor.write(&address, amount),
             RewardPool::Sra => self.sra_claimable_minor.write(&address, amount),

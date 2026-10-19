@@ -42,6 +42,43 @@ fn bond(storage: &StorageHandle<'_>, who: Address, amount: U256) {
     .unwrap();
 }
 #[test]
+fn the_bonded_total_follows_bonds_and_claims_and_needs_the_registry_balance() {
+    run(|storage| {
+        bond(&storage, ALICE, BOND_REQUIREMENT);
+        bond(&storage, BOB, U256::from(7u64));
+        assert_eq!(
+            api::total_bonded(&storage).unwrap(),
+            BOND_REQUIREMENT + U256::from(7u64)
+        );
+
+        let shortfall = runtime::bond(storage.clone(), BOB, U256::ONE, "Test CCA".into());
+        assert!(shortfall
+            .unwrap_err()
+            .to_string()
+            .contains("below the bonded total"));
+        assert_eq!(
+            api::total_bonded(&storage).unwrap(),
+            BOND_REQUIREMENT + U256::from(7u64)
+        );
+        assert_eq!(
+            api::get_cca(&storage, BOB).unwrap().bondedMinor,
+            U256::from(7u64)
+        );
+
+        runtime::unbond(storage.clone(), ALICE).unwrap();
+        storage
+            .set_block_timestamp(U256::from(NOW + UNBOND_COOLDOWN_SECONDS))
+            .unwrap();
+        runtime::claim_unbonded(storage.clone(), ALICE).unwrap();
+        assert_eq!(api::total_bonded(&storage).unwrap(), U256::from(7u64));
+        assert_eq!(
+            storage.balance(CCA_REGISTRY_ADDRESS).unwrap(),
+            U256::from(7u64)
+        );
+    });
+}
+
+#[test]
 fn active_set_rejects_one_past_the_cap_and_frees_a_slot_on_exit() {
     run(|storage| {
         for id in 1..=MAX_ACTIVE_CCAS {

@@ -80,6 +80,10 @@ pub struct AgentRewardContract {
     // slot 14: sequence number the next queued job takes
     #[attribute(order = 14)]
     pub accrual_tail: outbe_primitives::storage::dsl::Value<u64>,
+
+    // slot 15: claimable reward per pool, summed over its addresses
+    #[attribute(order = 15)]
+    pub claimable_total_minor: outbe_primitives::storage::dsl::Map<u8, U256>,
 }
 
 /// One settled WAA or SRA day pool. Blocks credit its addresses in list order,
