@@ -15,7 +15,7 @@ pub enum GemState {
     Forfeited = 3,
 }
 
-/// Plain issuance inputs. The call terms are not among them: the bucket seals them
+/// Plain issuance inputs. The call terms are not among them: the group seals them
 /// from the live profile when it opens, and every later member inherits that copy.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GemAddParams {
@@ -26,12 +26,12 @@ pub struct GemAddParams {
     pub issuance_currency: u16,
     pub reference_currency: u16,
     pub issued_at: u64,
-    /// The terms the gem's bucket seals if this gem opens it. `None` leaves the bucket
+    /// The terms the gem's group seals if this gem opens it. `None` leaves the group
     /// out of the call index.
     pub call_terms: Option<CallTerms>,
 }
 
-/// One gem record. The entry price and the call terms are the bucket's, read
+/// One gem record. The entry price and the call terms are the group's, read
 /// through [`GemView`].
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[storage_record(exists_field = owner)]
@@ -52,12 +52,12 @@ pub struct GemItemState {
     pub issued_at: u64,
     /// `keccak(wwd ‖ entry_price ‖ reference_currency)`, see `crate::identity`.
     #[attribute(order = 6)]
-    pub bucket_key: B256,
-    /// `GemState::Issued` or `GemState::Settled`. Called is the bucket's.
+    pub group_key: B256,
+    /// `GemState::Issued` or `GemState::Settled`. Called is the group's.
     #[attribute(order = 7)]
     pub state: u8,
-    /// The bucket's `called_at` copied in at settlement, so a settled gem keeps it
-    /// after its bucket is gone. `0` until then.
+    /// The group's `called_at` copied in at settlement, so a settled gem keeps it
+    /// after its group is gone. `0` until then.
     #[attribute(order = 8)]
     pub called_at: u64,
     /// Block timestamp of the settlement. `0` until Settled.
@@ -66,17 +66,17 @@ pub struct GemItemState {
 }
 
 impl GemItemState {
-    /// The worldwide day the gem was issued on. The bucket key binds this day, so a
-    /// gem and its bucket always agree on it.
+    /// The worldwide day the gem was issued on. The group key binds this day, so a
+    /// gem and its group always agree on it.
     #[must_use]
     pub fn worldwide_day(&self) -> WorldwideDay {
         WorldwideDay::new(timestamp_to_date_key(self.issued_at))
     }
 
-    /// Identity of the bucket body this gem belongs to.
+    /// Identity of the group body this gem belongs to.
     #[must_use]
-    pub fn bucket_id(&self) -> WwdEntityId {
-        WwdEntityId::from_day_and_digest(self.worldwide_day(), self.bucket_key)
+    pub fn group_id(&self) -> WwdEntityId {
+        WwdEntityId::from_day_and_digest(self.worldwide_day(), self.group_key)
     }
 
     #[must_use]
@@ -85,13 +85,13 @@ impl GemItemState {
     }
 }
 
-/// Shared bucket record. The record is deleted once both the unpaid count and
+/// Shared group record. The record is deleted once both the unpaid count and
 /// `settled_gems` reach zero.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[storage_record(exists_field = worldwide_day)]
-pub struct GemBucketState {
+pub struct GemGroupState {
     #[key]
-    pub bucket_key: B256,
+    pub group_key: B256,
     /// Worldwide day of the first member. Later members are issued on the same day.
     #[attribute(order = 0)]
     pub worldwide_day: WorldwideDay,
@@ -99,19 +99,19 @@ pub struct GemBucketState {
     pub entry_price_minor: U256,
     #[attribute(order = 2)]
     pub reference_currency: u16,
-    /// Paid members still holding the bucket open.
+    /// Paid members still holding the group open.
     #[attribute(order = 3)]
     pub settled_gems: u64,
 }
 
-impl GemBucketState {
+impl GemGroupState {
     #[must_use]
     pub fn entity_id(&self) -> WwdEntityId {
-        WwdEntityId::from_day_and_digest(self.worldwide_day, self.bucket_key)
+        WwdEntityId::from_day_and_digest(self.worldwide_day, self.group_key)
     }
 }
 
-/// Call terms a bucket seals when it opens, and the only terms every later check
+/// Call terms a group seals when it opens, and the only terms every later check
 /// reads. Grouped so same-typed numbers cannot swap places on the way to storage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CallTerms {
@@ -124,26 +124,26 @@ pub struct CallTerms {
     pub call_notice_period_seconds: u32,
 }
 
-/// Everything a status read needs: the gem body, its bucket body and the terms the
-/// bucket sealed on the EVM.
+/// Everything a status read needs: the gem body, its group body and the terms the
+/// group sealed on the EVM.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GemView {
     pub item: GemItemState,
-    pub bucket: GemBucketState,
+    pub group: GemGroupState,
     pub terms: CallTerms,
-    /// The bucket's call timestamp. `0` while uncalled.
-    pub bucket_called_at: u64,
+    /// The group's call timestamp. `0` while uncalled.
+    pub group_called_at: u64,
 }
 
 impl GemView {
-    /// `called_at` as the ABI reports it: the bucket's while the gem is unpaid, the
+    /// `called_at` as the ABI reports it: the group's while the gem is unpaid, the
     /// gem's own copy once settled.
     #[must_use]
     pub fn called_at(&self) -> u64 {
         if self.item.is_settled() {
             self.item.called_at
         } else {
-            self.bucket_called_at
+            self.group_called_at
         }
     }
 
@@ -164,9 +164,9 @@ impl GemView {
     pub fn effective_state(&self, now: u64) -> u8 {
         if self.item.is_settled() {
             GemState::Settled as u8
-        } else if self.bucket_called_at != 0 && now > self.settlement_deadline() {
+        } else if self.group_called_at != 0 && now > self.settlement_deadline() {
             GemState::Forfeited as u8
-        } else if self.bucket_called_at != 0 {
+        } else if self.group_called_at != 0 {
             GemState::Called as u8
         } else {
             GemState::Issued as u8
@@ -180,39 +180,39 @@ pub struct GemContract {
     #[attribute(order = 0)]
     pub total_supply: outbe_primitives::storage::dsl::Value<u64>,
 
-    // --- Bucket membership: unpaid gems for the forfeit sweep, with a count,
+    // --- Group membership: unpaid gems for the forfeit sweep, with a count,
     // positional map and reverse map for swap removal.
     #[attribute(order = 1)]
-    pub bucket_gem_count: outbe_primitives::storage::dsl::Map<B256, u32>,
-    /// `bucket_member_key(bucket, index)` -> gem id.
+    pub group_gem_count: outbe_primitives::storage::dsl::Map<B256, u32>,
+    /// `group_member_key(group, index)` -> gem id.
     #[attribute(order = 2)]
-    pub bucket_gems: outbe_primitives::storage::dsl::Map<B256, U256>,
-    /// Gem id -> its index in its bucket.
+    pub group_gems: outbe_primitives::storage::dsl::Map<B256, U256>,
+    /// Gem id -> its index in its group.
     #[attribute(order = 3)]
-    pub bucket_gem_index: outbe_primitives::storage::dsl::Map<U256, u32>,
+    pub group_gem_index: outbe_primitives::storage::dsl::Map<U256, u32>,
 
-    // --- Sealed bucket terms, written once when the bucket opens.
+    // --- Sealed group terms, written once when the group opens.
     #[attribute(order = 4)]
-    pub bucket_call_price_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub group_call_price_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
     #[attribute(order = 5)]
-    pub bucket_currency: outbe_primitives::storage::dsl::Map<B256, u16>,
+    pub group_currency: outbe_primitives::storage::dsl::Map<B256, u16>,
     #[attribute(order = 6)]
-    pub bucket_call_rate: outbe_primitives::storage::dsl::Map<B256, u16>,
+    pub group_call_rate: outbe_primitives::storage::dsl::Map<B256, u16>,
     #[attribute(order = 7)]
-    pub bucket_call_window_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub group_call_window_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
     #[attribute(order = 8)]
-    pub bucket_call_threshold_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub group_call_threshold_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
     #[attribute(order = 9)]
-    pub bucket_call_notice_period_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub group_call_notice_period_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
     /// Issuance timestamp of the first member. `first_full_day` of it starts the
-    /// breach count of the whole bucket.
+    /// breach count of the whole group.
     #[attribute(order = 10)]
-    pub bucket_issued_at: outbe_primitives::storage::dsl::Map<B256, u64>,
-    /// Block timestamp the bucket was called. `0` until then.
+    pub group_issued_at: outbe_primitives::storage::dsl::Map<B256, u64>,
+    /// Block timestamp the group was called. `0` until then.
     #[attribute(order = 11)]
-    pub bucket_called_at: outbe_primitives::storage::dsl::Map<B256, u64>,
+    pub group_called_at: outbe_primitives::storage::dsl::Map<B256, u64>,
 
-    // --- Uncalled buckets by call price, one trie per reference currency.
+    // --- Uncalled groups by call price, one trie per reference currency.
     #[attribute(order = 12)]
     pub call_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
     #[attribute(order = 13)]
@@ -221,13 +221,13 @@ pub struct GemContract {
     pub call_bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
     #[attribute(order = 15)]
     pub call_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
-    /// `bin_index_key(currency, bin, index)` -> bucket.
+    /// `bin_index_key(currency, bin, index)` -> group.
     #[attribute(order = 16)]
-    pub call_bin_buckets: outbe_primitives::storage::dsl::Map<B256, B256>,
-    /// Bucket -> `(bin << 32) | (index + 1)` of its place in the trie. 0 once it left.
+    pub call_bin_groups: outbe_primitives::storage::dsl::Map<B256, B256>,
+    /// Group -> `(bin << 32) | (index + 1)` of its place in the trie. 0 once it left.
     #[attribute(order = 17)]
-    pub call_bucket_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
-    /// `(bin << 32) | buckets of that bin still to visit`. 0 = start from the lowest bin.
+    pub call_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
+    /// `(bin << 32) | groups of that bin still to visit`. 0 = start from the lowest bin.
     #[attribute(order = 18)]
     pub call_bin_cursor: outbe_primitives::storage::dsl::Map<u16, u64>,
     /// Day a currency's window price failed to index, so the rest of that day's
@@ -235,7 +235,7 @@ pub struct GemContract {
     #[attribute(order = 19)]
     pub call_scan_failed_day: outbe_primitives::storage::dsl::Map<u16, u32>,
 
-    // --- Called buckets, queued by the hour their notice period closes in. Price
+    // --- Called groups, queued by the hour their notice period closes in. Price
     // drives calling and only time drives expiry, so the two stages stay separate.
     #[attribute(order = 20)]
     pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
@@ -243,17 +243,17 @@ pub struct GemContract {
     pub expiry_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 22)]
     pub expiry_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
-    /// Slots ever used in a bucket. Retired ones are zeroed in place, not compacted.
+    /// Slots ever used in a group. Retired ones are zeroed in place, not compacted.
     #[attribute(order = 23)]
     pub expiry_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 24)]
     pub expiry_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
-    /// `keccak256(hour_be32 ++ slot_be32)` -> a called bucket's key.
+    /// `keccak256(hour_be32 ++ slot_be32)` -> a called group's key.
     #[attribute(order = 25)]
     pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, B256>,
-    /// Bucket key -> `(hour << 32) | slot`. 0 = not queued.
+    /// Group key -> `(hour << 32) | slot`. 0 = not queued.
     #[attribute(order = 26)]
-    pub called_bucket_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
+    pub called_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
     /// Held off the body so the head check costs no body load.
     #[attribute(order = 27)]
     pub called_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
@@ -278,7 +278,7 @@ pub struct GemContract {
     pub config_profile: outbe_primitives::storage::dsl::Value<u8>,
 
     /// Widest window ever sealed in a currency. It only grows, so the span the scan
-    /// collects always covers a bucket whose terms outrun the live profile.
+    /// collects always covers a group whose terms outrun the live profile.
     #[attribute(order = 34)]
     pub max_call_window_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
     /// Lowest sealed `call_threshold_seconds` of at least a day per reference currency.
@@ -288,7 +288,7 @@ pub struct GemContract {
     #[attribute(order = 36)]
     pub records: outbe_primitives::storage::dsl::Map<WwdEntityId, GemItemState>,
     #[attribute(order = 37)]
-    pub buckets: outbe_primitives::storage::dsl::Map<B256, GemBucketState>,
+    pub groups: outbe_primitives::storage::dsl::Map<B256, GemGroupState>,
     #[attribute(order = 39)]
     pub owner_ids: outbe_primitives::storage::dsl::Map<
         Address,

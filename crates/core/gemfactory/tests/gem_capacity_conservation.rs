@@ -25,7 +25,7 @@ const DEADLINE: u64 = CALLED + 7 * DAY;
 // Validator, SRA, Wallet, CCA, Merchant.
 const TYPES: [u8; 5] = [0, 1, 2, 3, 4];
 
-/// The PROD call terms a bucket opened at `entry` seals.
+/// The PROD call terms a group opened at `entry` seals.
 fn prod_terms(entry: U256) -> CallTerms {
     let prod = GemParams::PROD;
     CallTerms {
@@ -177,10 +177,10 @@ fn a_paid_then_mined_gem_returns_no_capacity_while_unpaid_siblings_forfeit() {
     // The completed settlement footprint; payment itself is covered by the
     // settlement tests.
     StorageHandle::enter(&mut p, |s| {
-        let (item, bucket) = api::load_pair(&s, paid).unwrap().unwrap();
-        api::record_settled(&s, item, bucket).unwrap();
-        let (item, bucket) = api::load_pair(&s, paid).unwrap().unwrap();
-        api::remove_gem(&s, item, bucket).unwrap();
+        let (item, group) = api::load_pair(&s, paid).unwrap().unwrap();
+        api::record_settled(&s, item, group).unwrap();
+        let (item, group) = api::load_pair(&s, paid).unwrap().unwrap();
+        api::remove_gem(&s, item, group).unwrap();
         assert_eq!(
             PromisLimitContract::new(s).get_total_unallocated().unwrap(),
             U256::ZERO

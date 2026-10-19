@@ -74,8 +74,8 @@ interface IGemFactory {
 
     // --- Events (emitted by the GemFactory precompile) ---
     /// @notice A new gem was issued (agent reward or merchant flow). `positionId`
-    ///         is the position a merchant gem drew on, 0 otherwise. `bucketKey` names the
-    ///         call bucket that `IGem.GemBucketCalled` reports.
+    ///         is the position a merchant gem drew on, 0 otherwise. `groupKey` names the
+    ///         call group that `IGem.GemGroupCalled` reports.
     event GemIssued(
         uint256 indexed gemId,
         uint8 gemType,
@@ -90,7 +90,7 @@ interface IGemFactory {
         uint32 callThreshold,
         uint32 callNoticePeriod,
         uint256 positionId,
-        bytes32 indexed bucketKey
+        bytes32 indexed groupKey
     );
     /// @notice A merchant sent Intex units into a new position.
     event GemPositionIssued(
@@ -110,9 +110,9 @@ interface IGemFactory {
     );
     /// @notice A settled gem right was exercised: it burned to mine confidential Promis.
     event GemExercised(uint256 indexed gemId, address owner, uint256 promisLoadMinor);
-    /// @notice A due Called bucket was not fully forfeited. The expiry sweep tries its
+    /// @notice A due Called group was not fully forfeited. The expiry sweep tries its
     ///         remaining gems again at `retryAt`.
-    event ExpiryDeferred(bytes32 indexed bucketKey, uint64 retryAt);
+    event ExpiryDeferred(bytes32 indexed groupKey, uint64 retryAt);
     /// @notice A reference currency was left out of one day's Call scan because its
     ///         window price could not be indexed. The next daily pass tries it again.
     event CallScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);

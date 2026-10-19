@@ -1,4 +1,4 @@
-//! The forfeit sweep: called buckets whose notice lapsed burn their unpaid gems and
+//! The forfeit sweep: called groups whose notice lapsed burn their unpaid gems and
 //! return the loads to the Promis reserve, one body at a time under the block budget.
 
 use alloy_primitives::{B256, U256};
@@ -13,7 +13,7 @@ use super::*;
 use outbe_gem::config::GemParams;
 use outbe_gem::schema::{GemContract, GemState};
 
-/// Unix time of the first block past the deadline of a bucket called at `T_NOW`.
+/// Unix time of the first block past the deadline of a group called at `T_NOW`.
 fn first_due_block(storage: &StorageHandle, gem_id: U256) -> u64 {
     let notice = view(storage, gem_id).terms.call_notice_period_seconds;
     GemContract::hour_end(GemContract::deadline_hour(T_NOW + u64::from(notice)))
@@ -96,7 +96,7 @@ fn forfeiting_a_gem_returns_its_load_to_the_pool() {
 fn a_settled_gem_is_never_forfeited() {
     with_storage(|storage| {
         let gem_id = mature_gem(storage);
-        let bucket = bucket_of(storage, gem_id);
+        let group = bucket_of(storage, gem_id);
         call_gem(storage, gem_id, T_NOW);
         settle(storage, gem_id);
 
@@ -106,22 +106,22 @@ fn a_settled_gem_is_never_forfeited() {
         assert_eq!(unallocated(storage), U256::ZERO);
         assert_eq!(
             GemContract::new(storage.clone())
-                .called_bucket_slot
-                .read(&bucket)
+                .called_group_slot
+                .read(&group)
                 .unwrap(),
             0
         );
     });
 }
 
-/// An entry that the sweep cannot retire credits nothing and leaves its bucket, so
+/// An entry that the sweep cannot retire credits nothing and leaves its group, so
 /// the gems behind it still drain. The burn and the credit share a checkpoint.
 #[test]
-fn an_entry_the_sweep_cannot_retire_does_not_hold_up_its_bucket() {
+fn an_entry_the_sweep_cannot_retire_does_not_hold_up_its_group() {
     with_storage(|storage| {
         let live = mature_gem(storage);
         let mut gem = GemContract::new(storage.clone());
-        // A slot naming a bucket that is not there.
+        // A slot naming a group that is not there.
         let ghost = B256::repeat_byte(0xde);
         let deadline = T_NOW + 7 * SECONDS_PER_DAY;
         gem.push_called(ghost, deadline).unwrap();
@@ -140,7 +140,7 @@ fn an_entry_the_sweep_cannot_retire_does_not_hold_up_its_bucket() {
     });
 }
 
-/// Same for a due bucket that was never called: it burns nothing.
+/// Same for a due group that was never called: it burns nothing.
 #[test]
 fn a_due_entry_that_cannot_burn_credits_nothing() {
     with_storage(|storage| {
@@ -188,7 +188,7 @@ fn a_gem_above_the_window_is_not_visited_but_still_expires() {
 }
 
 #[test]
-fn a_bucket_that_outlives_its_hour_is_retired_rather_than_left_in_front() {
+fn a_group_that_outlives_its_hour_is_retired_rather_than_left_in_front() {
     with_storage(|storage| {
         let gem_id = mature_gem(storage);
         let gem = GemContract::new(storage.clone());
@@ -207,7 +207,7 @@ fn a_bucket_that_outlives_its_hour_is_retired_rather_than_left_in_front() {
         assert_eq!(
             gem.first_expiry_day().unwrap(),
             Some(retry),
-            "the bucket moves to its deadline's hour instead of blocking every later one"
+            "the group moves to its deadline's hour instead of blocking every later one"
         );
 
         begin_block_at(storage, GemContract::hour_end(retry));
@@ -215,7 +215,7 @@ fn a_bucket_that_outlives_its_hour_is_retired_rather_than_left_in_front() {
     });
 }
 
-/// Calls a mature gem, fails its first forfeit, and checks its bucket moved to the
+/// Calls a mature gem, fails its first forfeit, and checks its group moved to the
 /// next hour and burned there with its credit. Returns the provider for its events.
 fn forfeit_fails_once() -> (
     outbe_primitives::storage::hashmap::HashMapStorageProvider,
@@ -258,10 +258,10 @@ fn forfeit_fails_once() -> (
     (provider, gem_id)
 }
 
-/// A gem whose forfeit fails is not lost: its bucket moves to the next hour with it,
+/// A gem whose forfeit fails is not lost: its group moves to the next hour with it,
 /// and it burns there.
 #[test]
-fn a_bucket_whose_member_fails_to_burn_is_deferred_and_burned_later() {
+fn a_group_whose_member_fails_to_burn_is_deferred_and_burned_later() {
     let (provider, _) = forfeit_fails_once();
     let deferred = provider
         .get_events(GEM_FACTORY_ADDRESS)
@@ -271,9 +271,9 @@ fn a_bucket_whose_member_fails_to_burn_is_deferred_and_burned_later() {
     assert_eq!(deferred, 1);
 }
 
-/// One member that cannot burn stays in its bucket, deferred. The others burn on time.
+/// One member that cannot burn stays in its group, deferred. The others burn on time.
 #[test]
-fn a_member_that_cannot_burn_does_not_hold_back_its_bucket() {
+fn a_member_that_cannot_burn_does_not_hold_back_its_group() {
     with_storage(|storage| {
         let gems = alice_gems(storage, &[1, 1_000]);
         call_gem(storage, gems[0], T_NOW);
@@ -291,11 +291,11 @@ fn a_member_that_cannot_burn_does_not_hold_back_its_bucket() {
         assert_eq!(gem_state(storage, gems[1]), GemState::Called as u8);
         assert_eq!(
             GemContract::new(storage.clone())
-                .bucket_gem_count
+                .group_gem_count
                 .read(&bucket_of(storage, gems[1]))
                 .unwrap(),
             1,
-            "it stays in its bucket"
+            "it stays in its group"
         );
 
         limit.checked_take_carry_over_up_to(U256::MAX).unwrap();
@@ -308,36 +308,36 @@ fn a_member_that_cannot_burn_does_not_hold_back_its_bucket() {
     });
 }
 
-/// A broken bucket index reverts, so the sweep defers the bucket instead of failing
+/// A broken group index reverts, so the sweep defers the group instead of failing
 /// every block.
 #[test]
-fn a_broken_bucket_index_defers_the_bucket_and_keeps_blocks_going() {
+fn a_broken_group_index_defers_the_group_and_keeps_blocks_going() {
     let mut provider = provider_at(T_NOW);
-    let bucket = StorageHandle::enter(&mut provider, |storage| {
+    let group = StorageHandle::enter(&mut provider, |storage| {
         let gems = alice_gems(&storage, &[1, 2]);
         call_gem(&storage, gems[0], T_NOW);
-        let bucket = bucket_of(&storage, gems[0]);
+        let group = bucket_of(&storage, gems[0]);
         GemContract::new(storage.clone())
-            .bucket_gem_index
+            .group_gem_index
             .write(&gems[1], 7)
             .unwrap();
         begin_block_at(&storage, first_due_block(&storage, gems[0]));
         assert_eq!(gem_state(&storage, gems[1]), GemState::Called as u8);
-        bucket
+        group
     });
     let deferred: Vec<_> = provider
         .get_events(GEM_FACTORY_ADDRESS)
         .iter()
         .filter_map(|log| crate::precompile::IGemFactory::ExpiryDeferred::decode_log_data(log).ok())
-        .map(|event| event.bucketKey)
+        .map(|event| event.groupKey)
         .collect();
-    assert_eq!(deferred, vec![bucket]);
+    assert_eq!(deferred, vec![group]);
 }
 
-/// A called bucket wider than one block's budget burns over several blocks, then
+/// A called group wider than one block's budget burns over several blocks, then
 /// leaves the queue.
 #[test]
-fn a_called_bucket_wider_than_the_budget_burns_over_several_blocks() {
+fn a_called_group_wider_than_the_budget_burns_over_several_blocks() {
     with_storage(|storage| {
         let loads: Vec<u64> = (0..=u64::from(SWEEP_WRITES_PER_BLOCK))
             .map(|n| 1_000 + n)
@@ -400,9 +400,9 @@ fn a_storage_fault_in_a_forfeit_fails_the_block() {
     });
 }
 
-/// The DEV notice is the one a DEV-profile bucket forfeits on.
+/// The DEV notice is the one a DEV-profile group forfeits on.
 #[test]
-fn config_dev_profile_terms_a_new_bucket() {
+fn config_dev_profile_terms_a_new_group() {
     with_storage(|storage| {
         set_profile(storage, outbe_gem::config::PROFILE_DEV);
         let gem_id = add(storage, sample_params(ALICE));

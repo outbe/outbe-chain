@@ -255,8 +255,8 @@ fn force_settled(storage: &StorageHandle<'_>, gem_id: U256) {
 fn record_settled(storage: &StorageHandle<'_>, gem_id: U256) {
     let gem = gem_api::get_view(storage, gem_id).unwrap().unwrap();
     runtime::require_settleable(storage, &gem).unwrap();
-    let (item, bucket) = gem_api::load_pair(storage, gem_id).unwrap().unwrap();
-    gem_api::record_settled(storage, item, bucket).unwrap();
+    let (item, group) = gem_api::load_pair(storage, gem_id).unwrap().unwrap();
+    gem_api::record_settled(storage, item, group).unwrap();
 }
 
 // --- Merchant gems ---
@@ -395,7 +395,7 @@ fn merchant_entry_price(storage: &StorageHandle, source_entry: U256) -> U256 {
         },
     )
     .unwrap();
-    gem_view(storage, gem_id).bucket.entry_price_minor
+    gem_view(storage, gem_id).group.entry_price_minor
 }
 
 mod capacity_conservation;

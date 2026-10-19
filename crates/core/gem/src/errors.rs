@@ -30,9 +30,9 @@ pub enum GemError {
     #[error("unknown gem profile selector: {0}")]
     UnknownProfileSelector(u8),
 
-    #[error("gem bucket {bucket_id} existence disagrees with member count {member_count}")]
-    BucketExistenceMismatch {
-        bucket_id: WwdEntityId,
+    #[error("gem group {group_id} existence disagrees with member count {member_count}")]
+    GroupExistenceMismatch {
+        group_id: WwdEntityId,
         member_count: u32,
     },
 
@@ -45,28 +45,25 @@ pub enum GemError {
     #[error("gem total supply underflow")]
     TotalSupplyUnderflow,
 
-    #[error("gem bucket {bucket_id} settled count underflow")]
-    SettledCountUnderflow { bucket_id: WwdEntityId },
+    #[error("gem group {group_id} settled count underflow")]
+    SettledCountUnderflow { group_id: WwdEntityId },
 
-    #[error("gem bucket {bucket} is empty")]
-    EmptyBucket { bucket: B256 },
+    #[error("gem group {group} is empty")]
+    EmptyGroup { group: B256 },
 
-    #[error("gem {gem_id} is not in bucket {bucket}")]
-    GemNotInBucket { gem_id: U256, bucket: B256 },
+    #[error("gem {gem_id} is not in group {group}")]
+    GemNotInGroup { gem_id: U256, group: B256 },
 
-    #[error("gem bucket {bucket} member slot {slot} is empty during removal")]
-    EmptyBucketSlotOnRemoval { bucket: B256, slot: u32 },
+    #[error("gem group {group} member slot {slot} is empty during removal")]
+    EmptyGroupSlotOnRemoval { group: B256, slot: u32 },
 }
 
 /// Fatal errors that the Gem runtime returns.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum GemFatalError {
-    #[error("gem {gem_id} has no bucket body {bucket_id}")]
-    MissingBucketRecord {
-        gem_id: U256,
-        bucket_id: WwdEntityId,
-    },
+    #[error("gem {gem_id} has no group body {group_id}")]
+    MissingGroupRecord { gem_id: U256, group_id: WwdEntityId },
 
     #[error("metadata route received an entity call")]
     MetadataRouteEntityCall,
@@ -74,8 +71,8 @@ pub enum GemFatalError {
     #[error("entity route received a metadata call")]
     EntityRouteMetadataCall,
 
-    #[error("gem bucket {bucket} member index overflow")]
-    BucketMemberIndexOverflow { bucket: B256 },
+    #[error("gem group {group} member index overflow")]
+    GroupMemberIndexOverflow { group: B256 },
 }
 
 impl From<GemError> for PrecompileError {

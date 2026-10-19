@@ -13,7 +13,7 @@ use outbe_primitives::{
 use outbe_vaultrouter::api::IVaultRouter::StablesSource;
 use settlement::{Quote, Rail, World, ASSET, OWNER, TIMESTAMP};
 
-/// `called_at` stamps the Gem's bucket as called at that time.
+/// `called_at` stamps the Gem's group as called at that time.
 #[derive(Clone, Copy, Debug)]
 struct Gem {
     called_at: Option<u64>,
@@ -56,13 +56,13 @@ impl Rail for Gem {
         let Some(called_at) = self.called_at else {
             return (gem_id, 0);
         };
-        let bucket = outbe_gem::api::get_item(storage, gem_id)
+        let group = outbe_gem::api::get_item(storage, gem_id)
             .unwrap()
             .unwrap()
-            .bucket_key;
+            .group_key;
         outbe_gem::GemContract::new(storage.clone())
-            .bucket_called_at
-            .write(&bucket, called_at)
+            .group_called_at
+            .write(&group, called_at)
             .unwrap();
         let gem = outbe_gem::api::get_view(storage, gem_id).unwrap().unwrap();
         assert_eq!(

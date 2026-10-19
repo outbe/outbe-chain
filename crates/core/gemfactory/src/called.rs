@@ -1,9 +1,9 @@
-//! Daily call sweep: calls the Gem buckets whose reference price breached their call
+//! Daily call sweep: calls the Gem groups whose reference price breached their call
 //! price on enough days of their window. The daily trigger schedules the closed day,
 //! and every CycleTick walks a slice of it.
 
 use alloy_primitives::{B256, U256};
-use outbe_gem::precompile::IGem::{BatchMetadataUpdate, GemBucketCalled};
+use outbe_gem::precompile::IGem::{BatchMetadataUpdate, GemGroupCalled};
 
 use crate::precompile::IGemFactory::{CallScanSkipped, SweepDaySkipped};
 use crate::runtime::emit_event;
@@ -29,14 +29,14 @@ pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
 }
 
 /// Schedules the closed day and walks a slice of the day in flight. Returns the
-/// buckets called.
+/// groups called.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let mut sweep = GemCallSweep::new(ctx);
     call_sweep::schedule(ctx, &mut sweep)?;
     call_sweep::continue_day(ctx, &mut sweep)
 }
 
-/// Walks the next slice of the day in flight. Returns how many buckets were called.
+/// Walks the next slice of the day in flight. Returns how many groups were called.
 pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_sweep::continue_day(ctx, &mut GemCallSweep::new(ctx))
 }
@@ -140,7 +140,7 @@ fn scan_terms(gem: &GemContract<'_>, iso_code: u16, params: &GemParams) -> Resul
     )
 }
 
-/// Walk one currency's bucket bins up to `ceiling`, resuming where it stopped.
+/// Walk one currency's group bins up to `ceiling`, resuming where it stopped.
 /// Returns the calls made and whether the eligible range was walked to the end.
 pub(crate) fn call_currency(
     ctx: &BlockRuntimeContext,
@@ -156,12 +156,12 @@ pub(crate) fn call_currency(
         &CallBins(&index, iso_code),
         ceiling,
         budget,
-        |bucket, budget| {
-            call_sweep::call_entry::<GemCallSweep>(&ctx.storage, budget, bucket, || {
+        |group, budget| {
+            call_sweep::call_entry::<GemCallSweep>(&ctx.storage, budget, group, || {
                 let calls = u32::from(call_if_breached(
                     &mut gem,
                     window,
-                    bucket,
+                    group,
                     ctx.block.timestamp,
                 )?);
                 called += calls;
@@ -172,23 +172,23 @@ pub(crate) fn call_currency(
     Ok((called, finished))
 }
 
-/// Calls an uncalled bucket whose reference-currency daily VWAP exceeded its call price
+/// Calls an uncalled group whose reference-currency daily VWAP exceeded its call price
 /// on at least its threshold days of its trailing window. Returns true if called.
 ///
-/// The terms were sealed when the bucket opened, so a later profile change cannot
+/// The terms were sealed when the group opened, so a later profile change cannot
 /// re-term it. Days before the first full day of the first member never count: the
-/// bucket did not exist yet.
+/// group did not exist yet.
 pub(crate) fn call_if_breached(
     gem: &mut GemContract<'_>,
     window: &CallWindow,
-    bucket: B256,
+    group: B256,
     now: u64,
 ) -> Result<bool> {
-    if gem.bucket_gem_count.read(&bucket)? == 0 || gem.bucket_called_at.read(&bucket)? != 0 {
+    if gem.group_gem_count.read(&group)? == 0 || gem.group_called_at.read(&group)? != 0 {
         return Ok(false);
     }
-    let terms = gem.read_call_terms(bucket)?;
-    let issued_at = gem.bucket_issued_at.read(&bucket)?;
+    let terms = gem.read_call_terms(group)?;
+    let issued_at = gem.group_issued_at.read(&group)?;
     let breached = window.breached(&BreachTerms {
         call_price: terms.call_price_minor,
         window_seconds: terms.call_window_seconds,
@@ -198,22 +198,22 @@ pub(crate) fn call_if_breached(
     if !breached {
         return Ok(false);
     }
-    mark_called(gem, bucket, &terms, now)?;
+    mark_called(gem, group, &terms, now)?;
     Ok(true)
 }
 
-/// `Issued -> Called` for every unpaid member at once: the bucket leaves the trie for the
+/// `Issued -> Called` for every unpaid member at once: the group leaves the trie for the
 /// expiry queue, where it waits on its sealed notice period as one entry.
 pub(crate) fn mark_called(
     gem: &mut GemContract<'_>,
-    bucket: B256,
+    group: B256,
     terms: &CallTerms,
     now: u64,
 ) -> Result<()> {
     let deadline = outbe_gem::api::settlement_deadline_of(now, terms.call_notice_period_seconds);
-    gem.record_bucket_called(bucket, now, deadline)?;
-    gem.emit(GemBucketCalled {
-        bucketKey: bucket,
+    gem.record_group_called(group, now, deadline)?;
+    gem.emit(GemGroupCalled {
+        groupKey: group,
         calledAt: now,
         settlementDeadline: deadline,
     })

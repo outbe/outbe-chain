@@ -1,4 +1,4 @@
-//! Issue, bucket membership, settlement and burn through Gem storage.
+//! Issue, group membership, settlement and burn through Gem storage.
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
@@ -31,7 +31,7 @@ fn initial_state_empty() {
 }
 
 #[test]
-fn add_gem_mints_the_gem_and_its_bucket_and_bumps_counters() {
+fn add_gem_mints_the_gem_and_its_group_and_bumps_counters() {
     with_storage(|storage| {
         let gem_id = add(storage, sample_params(ALICE));
         assert_eq!(GemContract::new(storage.clone()).total_supply().unwrap(), 1);
@@ -41,8 +41,8 @@ fn add_gem_mints_the_gem_and_its_bucket_and_bumps_counters() {
         assert_eq!(stored.state, GemState::Issued as u8);
         assert_eq!(stored.gem_id.to_u256(), gem_id);
         let gem = view(storage, gem_id);
-        assert_eq!(gem.bucket.entry_price_minor, U256::from(500_000u64));
-        assert_eq!(gem.bucket.settled_gems, 0);
+        assert_eq!(gem.group.entry_price_minor, U256::from(500_000u64));
+        assert_eq!(gem.group.settled_gems, 0);
         assert_eq!(gem.terms.call_rate, GemParams::DEV.call_rate);
         assert_eq!(
             gem.terms.call_price_minor,
@@ -143,22 +143,18 @@ fn burn_leaves_the_owners_other_gems_listed() {
     });
 }
 
-/// Gems share a bucket when they were issued on the same worldwide day at the same
+/// Gems share a group when they were issued on the same worldwide day at the same
 /// entry price in the same reference currency. Nothing else is a term.
 #[test]
-fn a_bucket_holds_the_gems_of_one_day_entry_price_and_currency() {
+fn a_group_holds_the_gems_of_one_day_entry_price_and_currency() {
     with_storage(|storage| {
         let gems = alice_gems(storage, &[1, 2]);
-        let bucket = bucket_of(storage, gems[0]);
-        assert!(!bucket.is_zero());
+        let group = bucket_of(storage, gems[0]);
+        assert!(!group.is_zero());
+        assert_eq!(bucket_of(storage, gems[1]), group, "the load is not a term");
         assert_eq!(
-            bucket_of(storage, gems[1]),
-            bucket,
-            "the load is not a term"
-        );
-        assert_eq!(
-            bucket,
-            outbe_gem::identity::bucket_key(
+            group,
+            outbe_gem::identity::group_key(
                 item(storage, gems[0]).unwrap().worldwide_day(),
                 U256::from(500_000u64),
                 USD
@@ -175,24 +171,24 @@ fn a_bucket_holds_the_gems_of_one_day_entry_price_and_currency() {
         };
         assert_ne!(
             apart(&|p| p.issued_at += SECONDS_PER_DAY),
-            bucket,
+            group,
             "another day"
         );
-        assert_eq!(apart(&|p| p.issued_at += 1), bucket, "the same day");
-        assert_ne!(apart(&|p| p.reference_currency = EUR), bucket);
-        assert_ne!(apart(&|p| p.entry_price_minor += U256::from(1u64)), bucket);
+        assert_eq!(apart(&|p| p.issued_at += 1), group, "the same day");
+        assert_ne!(apart(&|p| p.reference_currency = EUR), group);
+        assert_ne!(apart(&|p| p.entry_price_minor += U256::from(1u64)), group);
         set_profile(storage, outbe_gem::config::PROFILE_PROD);
         assert_eq!(
             apart(&|_| {}),
-            bucket,
-            "a profile change does not re-term an open bucket"
+            group,
+            "a profile change does not re-term an open group"
         );
     });
 }
 
-/// A later member inherits the terms the bucket sealed when it opened.
+/// A later member inherits the terms the group sealed when it opened.
 #[test]
-fn profile_change_after_open_does_not_reterm_the_bucket() {
+fn profile_change_after_open_does_not_reterm_the_group() {
     with_storage(|storage| {
         set_profile(storage, outbe_gem::config::PROFILE_DEV);
         let first = add(storage, sample_params(ALICE));
@@ -210,48 +206,48 @@ fn profile_change_after_open_does_not_reterm_the_bucket() {
         assert_eq!(terms.call_rate, GemParams::DEV.call_rate);
         assert_eq!(
             GemContract::new(storage.clone())
-                .bucket_issued_at
+                .group_issued_at
                 .read(&bucket_of(storage, first))
                 .unwrap(),
             T_NOW,
-            "the first member's issuance starts the bucket's breach count"
+            "the first member's issuance starts the group's breach count"
         );
     });
 }
 
 #[test]
-fn leaving_a_bucket_moves_its_last_member_into_the_hole() {
+fn leaving_a_group_moves_its_last_member_into_the_hole() {
     with_storage(|storage| {
         let gems = alice_gems(storage, &[1, 2, 3]);
-        let bucket = bucket_of(storage, gems[0]);
+        let group = bucket_of(storage, gems[0]);
         let gem = GemContract::new(storage.clone());
 
         settle(storage, gems[0]);
-        assert_eq!(gem.bucket_gem_count.read(&bucket).unwrap(), 2);
+        assert_eq!(gem.group_gem_count.read(&group).unwrap(), 2);
         assert_eq!(
-            gem.bucket_gems
-                .read(&GemContract::bucket_member_key(bucket, 0))
+            gem.group_gems
+                .read(&GemContract::group_member_key(group, 0))
                 .unwrap(),
             gems[2]
         );
-        assert_eq!(gem.bucket_gem_index.read(&gems[2]).unwrap(), 0);
-        assert_eq!(gem.bucket_gem_index.read(&gems[0]).unwrap(), 0);
+        assert_eq!(gem.group_gem_index.read(&gems[2]).unwrap(), 0);
+        assert_eq!(gem.group_gem_index.read(&gems[0]).unwrap(), 0);
         assert_eq!(
-            item(storage, gems[0]).unwrap().bucket_key,
-            bucket,
-            "a settled gem still names its bucket"
+            item(storage, gems[0]).unwrap().group_key,
+            group,
+            "a settled gem still names its group"
         );
     });
 }
 
-/// The bucket record and its sealed terms outlive the unpaid membership while a paid
+/// The group record and its sealed terms outlive the unpaid membership while a paid
 /// member exists; the last removal takes everything down.
 #[test]
-fn bucket_and_terms_survive_until_unpaid_and_settled_are_zero() {
+fn group_and_terms_survive_until_unpaid_and_settled_are_zero() {
     with_storage(|storage| {
         let gem_id = add(storage, sample_params(ALICE));
-        let bucket = bucket_of(storage, gem_id);
-        let bucket_id = item(storage, gem_id).unwrap().bucket_key;
+        let group = bucket_of(storage, gem_id);
+        let group_id = item(storage, gem_id).unwrap().group_key;
         let gem = GemContract::new(storage.clone());
         let bin =
             outbe_primitives::call_bins::price_to_bin(view(storage, gem_id).terms.call_price_minor)
@@ -259,57 +255,57 @@ fn bucket_and_terms_survive_until_unpaid_and_settled_are_zero() {
         assert!(tree_math::contains(&outbe_gem::CallBins(&gem, USD), bin).unwrap());
 
         settle(storage, gem_id);
-        assert_eq!(gem.bucket_gem_count.read(&bucket).unwrap(), 0);
-        let body = api::get_bucket(storage, bucket_id)
+        assert_eq!(gem.group_gem_count.read(&group).unwrap(), 0);
+        let body = api::get_group(storage, group_id)
             .unwrap()
-            .expect("the paid member keeps the bucket");
+            .expect("the paid member keeps the group");
         assert_eq!(body.settled_gems, 1);
-        assert!(!gem.bucket_call_price_minor.read(&bucket).unwrap().is_zero());
+        assert!(!gem.group_call_price_minor.read(&group).unwrap().is_zero());
         assert_eq!(
-            view(storage, gem_id).bucket.entry_price_minor,
+            view(storage, gem_id).group.entry_price_minor,
             U256::from(500_000u64)
         );
-        // The bucket keeps its place in the trie while a paid member holds it open; the
-        // scan skips a bucket without unpaid members.
-        assert_ne!(gem.call_bucket_slot.read(&bucket).unwrap(), 0);
+        // The group keeps its place in the trie while a paid member holds it open; the
+        // scan skips a group without unpaid members.
+        assert_ne!(gem.call_group_slot.read(&group).unwrap(), 0);
         let mut scan = GemContract::new(storage.clone());
         let window = breach_window(
             T_NOW,
             view(storage, gem_id).terms.call_price_minor + U256::from(1u64),
             (outbe_gem::constants::CALL_WINDOW / SECONDS_PER_DAY_U32) as usize,
         );
-        assert!(!crate::called::call_if_breached(&mut scan, &window, bucket, T_NOW).unwrap());
+        assert!(!crate::called::call_if_breached(&mut scan, &window, group, T_NOW).unwrap());
 
         burn_settled(storage, gem_id);
         assert_eq!(
-            gem.call_bucket_slot.read(&bucket).unwrap(),
+            gem.call_group_slot.read(&group).unwrap(),
             0,
             "out of the trie"
         );
         assert!(!tree_math::contains(&outbe_gem::CallBins(&gem, USD), bin).unwrap());
-        assert!(api::get_bucket(storage, bucket_id).unwrap().is_none());
-        assert!(gem.bucket_call_price_minor.read(&bucket).unwrap().is_zero());
-        assert_eq!(gem.bucket_issued_at.read(&bucket).unwrap(), 0);
+        assert!(api::get_group(storage, group_id).unwrap().is_none());
+        assert!(gem.group_call_price_minor.read(&group).unwrap().is_zero());
+        assert_eq!(gem.group_issued_at.read(&group).unwrap(), 0);
     });
 }
 
-/// Removing an unpaid gem touches no bucket body; removing a paid one lowers the count.
+/// Removing an unpaid gem touches no group body; removing a paid one lowers the count.
 #[test]
-fn unpaid_removal_preserves_bucket_state_settled_removal_decrements() {
+fn unpaid_removal_preserves_group_state_settled_removal_decrements() {
     let mut provider = provider_at(T_NOW);
     StorageHandle::enter(&mut provider, |storage| {
         let gems = alice_gems(&storage, &[1, 2]);
         call_gem(&storage, gems[0], T_NOW);
         settle(&storage, gems[1]);
-        let bucket_id = item(&storage, gems[1]).unwrap().bucket_key;
+        let group_id = item(&storage, gems[1]).unwrap().group_key;
         assert_eq!(
-            api::get_bucket(&storage, bucket_id)
+            api::get_group(&storage, group_id)
                 .unwrap()
                 .unwrap()
                 .settled_gems,
             1
         );
-        // Forfeit the unpaid one: the bucket body stays as it is.
+        // Forfeit the unpaid one: the group body stays as it is.
         begin_block_at(
             &storage,
             GemContract::hour_end(GemContract::deadline_hour(
@@ -318,14 +314,14 @@ fn unpaid_removal_preserves_bucket_state_settled_removal_decrements() {
         );
         assert!(item(&storage, gems[0]).is_none());
         assert_eq!(
-            api::get_bucket(&storage, bucket_id)
+            api::get_group(&storage, group_id)
                 .unwrap()
                 .unwrap()
                 .settled_gems,
             1
         );
         burn_settled(&storage, gems[1]);
-        assert!(api::get_bucket(&storage, bucket_id).unwrap().is_none());
+        assert!(api::get_group(&storage, group_id).unwrap().is_none());
     });
 }
 
@@ -344,9 +340,9 @@ fn an_issued_gem_settles_once() {
     });
 }
 
-/// Settling one gem of a called bucket keeps its call stamp and leaves the rest called.
+/// Settling one gem of a called group keeps its call stamp and leaves the rest called.
 #[test]
-fn settling_one_gem_of_a_called_bucket_leaves_the_rest_called() {
+fn settling_one_gem_of_a_called_group_leaves_the_rest_called() {
     with_storage(|storage| {
         let gems = alice_gems(storage, &[1, 2]);
         call_gem(storage, gems[0], T_NOW);
@@ -361,11 +357,11 @@ fn settling_one_gem_of_a_called_bucket_leaves_the_rest_called() {
         let entry = bucket_of(storage, gems[1]);
         assert_ne!(
             GemContract::new(storage.clone())
-                .called_bucket_slot
+                .called_group_slot
                 .read(&entry)
                 .unwrap(),
             0,
-            "the bucket still waits for its deadline"
+            "the group still waits for its deadline"
         );
     });
 }
@@ -386,16 +382,16 @@ fn leaving_called_frees_the_expiry_slot() {
     });
 }
 
-/// A stale bucket capability (loaded before a sibling settled) is rejected by the
+/// A stale group capability (loaded before a sibling settled) is rejected by the
 /// generic store, and the gem's own accounting stays untouched.
 #[test]
-fn stale_bucket_capability_is_rejected() {
+fn stale_group_capability_is_rejected() {
     with_storage(|storage| {
         let gems = alice_gems(storage, &[1, 2]);
         call_gem(storage, gems[0], T_NOW);
-        let (first, stale_bucket) = api::load_pair(storage, gems[0]).unwrap().unwrap();
+        let (first, stale_group) = api::load_pair(storage, gems[0]).unwrap().unwrap();
         settle(storage, gems[1]);
-        let error = api::remove_gem(storage, first, stale_bucket).unwrap_err();
+        let error = api::remove_gem(storage, first, stale_group).unwrap_err();
         assert!(!format!("{error:?}").is_empty());
         assert!(item(storage, gems[0]).is_some(), "rolled back");
         assert_eq!(GemContract::new(storage.clone()).total_supply().unwrap(), 2);
@@ -406,9 +402,9 @@ fn stale_bucket_capability_is_rejected() {
 fn member_count_overflow_and_underflow_roll_back_gem_mutations() {
     with_storage(|storage| {
         let gem_id = add(storage, sample_params(ALICE));
-        let bucket = bucket_of(storage, gem_id);
+        let group = bucket_of(storage, gem_id);
         let gem = GemContract::new(storage.clone());
-        gem.bucket_gem_count.write(&bucket, 0).unwrap();
+        gem.group_gem_count.write(&group, 0).unwrap();
         call_gem(storage, gem_id, T_NOW);
         assert!(try_settle(storage, gem_id).is_err());
         assert_eq!(item(storage, gem_id).unwrap().state, GemState::Issued as u8);
@@ -417,7 +413,7 @@ fn member_count_overflow_and_underflow_roll_back_gem_mutations() {
 }
 
 #[test]
-fn a_gem_id_is_its_raw_keccak_and_the_bucket_id_carries_the_day() {
+fn a_gem_id_is_its_raw_keccak_and_the_group_id_carries_the_day() {
     with_storage(|storage| {
         let gem_id = add(storage, sample_params(ALICE));
         assert_eq!(
@@ -431,18 +427,18 @@ fn a_gem_id_is_its_raw_keccak_and_the_bucket_id_carries_the_day() {
         let stored = item(storage, gem_id).unwrap();
         assert_eq!(WwdEntityId::from(gem_id), stored.gem_id);
         assert_eq!(
-            stored.bucket_id(),
-            WwdEntityId::from_day_and_digest(stored.worldwide_day(), stored.bucket_key)
+            stored.group_id(),
+            WwdEntityId::from_day_and_digest(stored.worldwide_day(), stored.group_key)
         );
         assert_eq!(stored.worldwide_day().value(), timestamp_to_date_key(T_NOW));
     });
 }
 
-/// The e2e arming path re-issues the gem on another day: it leaves its bucket, which
-/// closes when it was the only member, and opens the bucket of the new day.
+/// The e2e arming path re-issues the gem on another day: it leaves its group, which
+/// closes when it was the only member, and opens the group of the new day.
 #[cfg(feature = "e2e-test")]
 #[test]
-fn backdate_that_changes_the_day_moves_the_gem_and_opens_a_new_bucket() {
+fn backdate_that_changes_the_day_moves_the_gem_and_opens_a_new_group() {
     use crate::test_arming_e2e::IGemFactoryTestArming;
     use alloy_sol_types::SolCall;
 
@@ -462,29 +458,27 @@ fn backdate_that_changes_the_day_moves_the_gem_and_opens_a_new_bucket() {
 
         let after = item(storage, gem_id).unwrap();
         assert_eq!(after.issued_at, issued_at);
-        assert_ne!(after.bucket_key, before.bucket_key);
+        assert_ne!(after.group_key, before.group_key);
         assert_eq!(
-            after.bucket_key,
-            outbe_gem::identity::bucket_key(after.worldwide_day(), U256::from(500_000u64), USD)
+            after.group_key,
+            outbe_gem::identity::group_key(after.worldwide_day(), U256::from(500_000u64), USD)
         );
         assert!(
-            api::get_bucket(storage, before.bucket_key)
-                .unwrap()
-                .is_none(),
-            "the only member left, so the old bucket body is gone"
+            api::get_group(storage, before.group_key).unwrap().is_none(),
+            "the only member left, so the old group body is gone"
         );
-        let bucket = api::get_bucket(storage, after.bucket_key).unwrap().unwrap();
-        assert_eq!(bucket.worldwide_day, after.worldwide_day());
+        let group = api::get_group(storage, after.group_key).unwrap().unwrap();
+        assert_eq!(group.worldwide_day, after.worldwide_day());
         assert_eq!(GemContract::new(storage.clone()).total_supply().unwrap(), 1);
         assert_eq!(owned(storage, ALICE), vec![gem_id]);
     });
 }
 
 /// A throwaway build gets a paid gem out of thin air: the body reads Settled and the
-/// bucket counts it as paid, with no unpaid member left to sweep.
+/// group counts it as paid, with no unpaid member left to sweep.
 #[cfg(feature = "e2e-test")]
 #[test]
-fn settled_for_test_issues_a_paid_gem_and_counts_it_in_the_bucket() {
+fn settled_for_test_issues_a_paid_gem_and_counts_it_in_the_group() {
     use crate::test_arming_e2e::IGemFactoryTestArming::issueSettledGemForTestCall;
     use alloy_sol_types::SolCall;
 
@@ -502,10 +496,10 @@ fn settled_for_test_issues_a_paid_gem_and_counts_it_in_the_bucket() {
         let gem_id = issueSettledGemForTestCall::abi_decode_returns(&out).unwrap();
         let gem = item(storage, gem_id).unwrap();
         assert!(gem.is_settled());
-        let bucket = api::get_bucket(storage, gem.bucket_key).unwrap().unwrap();
-        assert_eq!(bucket.settled_gems, 1);
+        let group = api::get_group(storage, gem.group_key).unwrap().unwrap();
+        assert_eq!(group.settled_gems, 1);
         let contract = GemContract::new(storage.clone());
-        assert_eq!(contract.bucket_gem_count.read(&gem.bucket_key).unwrap(), 0);
+        assert_eq!(contract.group_gem_count.read(&gem.group_key).unwrap(), 0);
         assert_eq!(contract.total_supply().unwrap(), 1);
     });
 }

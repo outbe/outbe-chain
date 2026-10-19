@@ -60,11 +60,11 @@ interface IGem {
     event ApprovalForAll(address indexed owner, address indexed operator, bool approved);
     /// @notice ERC-4906: emitted when a gem is settled.
     event MetadataUpdate(uint256 _tokenId);
-    /// @notice ERC-4906: emitted over the whole id range when a bucket is called, since
+    /// @notice ERC-4906: emitted over the whole id range when a group is called, since
     ///         gem ids carry no order a narrower range could follow.
     event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
-    /// @notice The daily Call scan force-called every gem in the bucket.
-    event GemBucketCalled(bytes32 indexed bucketKey, uint64 calledAt, uint64 settlementDeadline);
+    /// @notice The daily Call scan force-called every gem in the group.
+    event GemGroupCalled(bytes32 indexed groupKey, uint64 calledAt, uint64 settlementDeadline);
     /// @notice Called gem forfeit-burned after its notice period lapsed.
     event GemForfeited(uint256 indexed gemId, address owner, uint256 promisLoadMinor);
 }

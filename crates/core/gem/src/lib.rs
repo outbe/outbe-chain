@@ -1,4 +1,4 @@
-//! Gem: the terms, profile and data of a Gem. Bodies, buckets, the call bins and the
+//! Gem: the terms, profile and data of a Gem. Bodies, groups, the call bins and the
 //! expiry queue live here, with the read-time state.
 //!
 //! GemFactory applies every rule and runs the call and forfeit sweeps through [`api`].
@@ -17,11 +17,11 @@ pub mod storage_records;
 pub(crate) mod metadata;
 pub(crate) mod state;
 
-pub use api::{LoadedGem, LoadedGemBucket};
+pub use api::{LoadedGem, LoadedGemGroup};
 pub use config::GemParams;
 pub use errors::{GemError, GemFatalError};
 pub use schema::{
-    CallTerms, GemAddParams, GemBucketState, GemContract, GemItemState, GemState, GemView,
+    CallTerms, GemAddParams, GemContract, GemGroupState, GemItemState, GemState, GemView,
 };
 pub use state::{CallBins, ExpiryHours};
 

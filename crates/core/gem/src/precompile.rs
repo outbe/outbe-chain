@@ -115,7 +115,7 @@ fn to_abi_data(gem: &GemView, now: u64) -> IGem::GemData {
         gemType: gem.item.gem_type,
         state: gem.effective_state(now),
         promisLoadMinor: gem.item.promis_load_minor,
-        entryPriceMinor: gem.bucket.entry_price_minor,
+        entryPriceMinor: gem.group.entry_price_minor,
         issuanceCurrency: gem.item.issuance_currency,
         referenceCurrency: gem.item.reference_currency,
         issuedAt: gem.item.issued_at,

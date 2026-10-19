@@ -15,7 +15,7 @@ use crate::errors::GemFactoryError;
 use crate::precompile::IGemFactory::ExpiryDeferred;
 use crate::runtime::emit_event;
 
-/// Forfeit-burn the unpaid gems of the called buckets whose notice period closed.
+/// Forfeit-burn the unpaid gems of the called groups whose notice period closed.
 /// Returns the gems burned.
 pub(crate) fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = GemContract::new(ctx.storage.clone());
@@ -39,28 +39,28 @@ pub(crate) struct GemExpiry<'a, 's> {
     burned: u32,
 }
 
-/// A called bucket's members are its unpaid gems: a settled one has left it.
+/// A called group's members are its unpaid gems: a settled one has left it.
 impl ExpiryHandler<B256> for GemExpiry<'_, '_> {
     type Member = U256;
 
-    fn due(&mut self, bucket: B256) -> Result<Due> {
-        let called = self.gem.bucket_called_at.read(&bucket)? != 0;
+    fn due(&mut self, group: B256) -> Result<Due> {
+        let called = self.gem.group_called_at.read(&group)? != 0;
         Ok(
-            match called && self.gem.bucket_gem_count.read(&bucket)? != 0 {
+            match called && self.gem.group_gem_count.read(&group)? != 0 {
                 true => Due::Expire,
                 false => Due::Drop,
             },
         )
     }
 
-    fn member_count(&self, bucket: B256) -> Result<u32> {
-        self.gem.bucket_gem_count.read(&bucket)
+    fn member_count(&self, group: B256) -> Result<u32> {
+        self.gem.group_gem_count.read(&group)
     }
 
-    fn member_at(&self, bucket: B256, index: u32) -> Result<U256> {
+    fn member_at(&self, group: B256, index: u32) -> Result<U256> {
         self.gem
-            .bucket_gems
-            .read(&GemContract::bucket_member_key(bucket, index))
+            .group_gems
+            .read(&GemContract::group_member_key(group, index))
     }
 
     /// Each forfeit draws from the per-block forfeit limit, separate from slot writes.
@@ -72,18 +72,18 @@ impl ExpiryHandler<B256> for GemExpiry<'_, '_> {
         error.record_sweep_failure()
     }
 
-    fn expire_member(&mut self, bucket: B256, gem_id: U256) -> Result<()> {
-        forfeit_member(self.storage, &mut self.gem, bucket, gem_id)?;
+    fn expire_member(&mut self, group: B256, gem_id: U256) -> Result<()> {
+        forfeit_member(self.storage, &mut self.gem, group, gem_id)?;
         self.burned = self.burned.saturating_add(1);
         Ok(())
     }
 
-    fn deferred(&mut self, bucket: B256, retry_at: u64) -> Result<()> {
-        tracing::warn!(target: "outbe::gemfactory", %bucket, retry_at, "expiry sweep: bucket deferred");
+    fn deferred(&mut self, group: B256, retry_at: u64) -> Result<()> {
+        tracing::warn!(target: "outbe::gemfactory", %group, retry_at, "expiry sweep: group deferred");
         emit_event(
             &self.gem.storage,
             ExpiryDeferred {
-                bucketKey: bucket,
+                groupKey: group,
                 retryAt: retry_at,
             },
         )
@@ -100,27 +100,27 @@ impl<'a, 's> GemExpiry<'a, 's> {
     }
 }
 
-/// Forfeit-burns one unpaid member of a lapsed bucket and returns its load to the
+/// Forfeit-burns one unpaid member of a lapsed group and returns its load to the
 /// Promis reserve. The load came from a daily emission sink and nobody realized it, so
 /// it goes back. The return uses the same checkpoint as the burn, or there is nothing
 /// to recover.
 fn forfeit_member(
     storage: &StorageHandle<'_>,
     gem: &mut GemContract<'_>,
-    bucket_key: B256,
+    group_key: B256,
     gem_id: U256,
 ) -> Result<()> {
     if gem_id.is_zero() {
-        return Err(GemFactoryError::EmptyMemberSlotDuringForfeit { bucket_key }.into());
+        return Err(GemFactoryError::EmptyMemberSlotDuringForfeit { group_key }.into());
     }
-    let (item, bucket) = gem_api::load_pair(storage, gem_id)?
-        .ok_or(GemFactoryError::MissingMemberRecordDuringForfeit { bucket_key, gem_id })?;
-    if item.body().is_settled() || item.body().bucket_key != bucket_key {
-        return Err(GemFactoryError::IneligibleBucketMember { bucket_key, gem_id }.into());
+    let (item, group) = gem_api::load_pair(storage, gem_id)?
+        .ok_or(GemFactoryError::MissingMemberRecordDuringForfeit { group_key, gem_id })?;
+    if item.body().is_settled() || item.body().group_key != group_key {
+        return Err(GemFactoryError::IneligibleGroupMember { group_key, gem_id }.into());
     }
     let owner = item.body().owner;
     let promis_load_minor = item.body().promis_load_minor;
-    gem_api::remove_gem(storage, item, bucket)?;
+    gem_api::remove_gem(storage, item, group)?;
     outbe_promislimit::PromisLimitContract::new(storage.clone())
         .add_to_total_unallocated(promis_load_minor)?;
     gem.emit(GemForfeited {

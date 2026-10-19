@@ -1,4 +1,4 @@
-//! The daily call scan: bucket bins, slices, cursors and the day queue. The scan
+//! The daily call scan: group bins, slices, cursors and the day queue. The scan
 //! reads only compact EVM state; the bodies are untouched until a forfeit.
 
 use alloy_primitives::U256;
@@ -130,7 +130,7 @@ fn a_finished_sweep_closes_itself_and_idle_blocks_do_nothing() {
     });
 }
 
-/// A bin holding more buckets than the budget resumes inside itself on the next slice.
+/// A bin holding more groups than the budget resumes inside itself on the next slice.
 #[test]
 fn a_bin_wider_than_the_budget_resumes_inside_it() {
     with_storage(|storage| {
@@ -143,7 +143,7 @@ fn a_bin_wider_than_the_budget_resumes_inside_it() {
             outbe_primitives::call_bins::price_to_bin(view(storage, id).terms.call_price_minor)
                 .unwrap()
         };
-        assert_eq!(bin(ids[0]), bin(ids[1]), "one bin, two buckets");
+        assert_eq!(bin(ids[0]), bin(ids[1]), "one bin, two groups");
         let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW));
         let window = full_window(last_closed_day, U256::from(300_000u64));
 
@@ -236,10 +236,10 @@ fn the_issue_day_counts_only_for_a_gem_issued_at_midnight() {
     }
 }
 
-/// The breach count of a bucket starts on the first member's first full day, so a
+/// The breach count of a group starts on the first member's first full day, so a
 /// later member issued the same day does not move it.
 #[test]
-fn second_member_with_a_different_issued_at_joins_the_first_members_bucket() {
+fn second_member_with_a_different_issued_at_joins_the_first_members_group() {
     let threshold_days = (outbe_gem::constants::CALL_THRESHOLD / SECONDS_PER_DAY_U32) as usize;
     let mut oldest_breach = timestamp_to_date_key(T_NOW);
     for _ in 1..threshold_days {
@@ -262,7 +262,7 @@ fn second_member_with_a_different_issued_at_joins_the_first_members_bucket() {
         assert!(
             crate::called::call_if_breached(&mut gem, &window, bucket_of(storage, first), T_NOW)
                 .unwrap(),
-            "the bucket counts from its first member's midnight"
+            "the group counts from its first member's midnight"
         );
         assert_eq!(gem_state(storage, second), GemState::Called as u8);
     });
@@ -323,7 +323,7 @@ fn a_wider_window_than_the_live_profile_widens_the_span_the_scan_collects() {
             GemParams::DEV.call_window_seconds
         );
 
-        // A new bucket is sealed on the wider profile.
+        // A new group is sealed on the wider profile.
         set_profile(storage, outbe_gem::config::PROFILE_PROD);
         let mut other = sample_params(BOB);
         other.entry_price_minor = U256::from(600_000u64);
@@ -400,7 +400,7 @@ fn an_unindexable_price_skips_its_currency_for_the_day_and_says_so() {
 }
 
 /// Gem ids carry no order, so a slice refreshes the whole range once, however many
-/// buckets it called.
+/// groups it called.
 #[test]
 fn a_call_slice_refreshes_all_metadata_once() {
     let mut provider = provider_at(T_NOW);
@@ -428,7 +428,7 @@ fn a_call_slice_refreshes_all_metadata_once() {
     assert_eq!(batches, vec![(U256::ZERO, U256::MAX)]);
     let called = events
         .iter()
-        .filter(|log| IGem::GemBucketCalled::decode_log_data(log).is_ok())
+        .filter(|log| IGem::GemGroupCalled::decode_log_data(log).is_ok())
         .count();
     assert_eq!(called, 3);
 }
@@ -593,7 +593,7 @@ fn an_unpriced_currency_does_not_prevent_calling_the_next_currency() {
 }
 
 #[test]
-fn only_a_slice_that_calls_buckets_emits_a_batch_metadata_update() {
+fn only_a_slice_that_calls_groups_emits_a_batch_metadata_update() {
     let mut provider = provider_at(T_NOW);
     StorageHandle::enter(&mut provider, |storage| {
         callable_gem_of(

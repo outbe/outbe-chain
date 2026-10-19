@@ -184,7 +184,7 @@ fn issue_merchant_gem_mints_issued_and_drains_capacity() {
         assert_eq!(item.item.owner, BOB);
         assert_eq!(item.item.gem_type, GemTypes::Merchant as u8);
         assert_eq!(item.item.state, GemState::Issued as u8);
-        assert_eq!(item.bucket.entry_price_minor, rate); // max(coen, source_entry) = coen
+        assert_eq!(item.group.entry_price_minor, rate); // max(coen, source_entry) = coen
         assert_eq!(
             runtime::gem_cost_minor(&item).unwrap(),
             U256::from(20u64) * six_decimal_unit()
@@ -221,7 +221,7 @@ fn issue_merchant_gem_anchors_entry_to_source() {
         )
         .unwrap();
         let item = gem_view(storage, gem_id);
-        assert_eq!(item.bucket.entry_price_minor, source_entry);
+        assert_eq!(item.group.entry_price_minor, source_entry);
     });
 }
 
@@ -388,7 +388,7 @@ fn issue_merchant_gem_prices_at_the_previous_day_vwap() {
         )
         .unwrap();
         let item = gem_view(storage, gem_id);
-        assert_eq!(item.bucket.entry_price_minor, vwap);
+        assert_eq!(item.group.entry_price_minor, vwap);
         assert_eq!(
             item.terms.call_price_minor,
             vwap * U256::from(228u64) / U256::from(100u64)
@@ -465,7 +465,7 @@ fn issue_merchant_gem_takes_the_higher_entry() {
             )
             .unwrap();
             let item = gem_view(storage, gem_id);
-            assert_eq!(item.bucket.entry_price_minor, entry);
+            assert_eq!(item.group.entry_price_minor, entry);
         });
     }
 }
@@ -480,7 +480,7 @@ fn an_agent_gem_prices_cost_and_call_from_the_entry_at_every_rate() {
             let gem_id =
                 issue_at_live_rate(storage, ALICE, GemTypes::Validator, load, 840, 840).unwrap();
             let item = gem_view(storage, gem_id);
-            assert_eq!(item.bucket.entry_price_minor, rate);
+            assert_eq!(item.group.entry_price_minor, rate);
             assert_eq!(
                 item.terms.call_price_minor,
                 rate * U256::from(228u64) / U256::from(100u64)
@@ -510,7 +510,7 @@ fn issue_merchant_gem_rejects_a_missing_previous_day_vwap() {
 
 /// Issuance events carry what an indexer needs to follow a gem through its call.
 #[test]
-fn issuance_events_carry_the_call_terms_the_position_and_the_bucket() {
+fn issuance_events_carry_the_call_terms_the_position_and_the_group() {
     let rate = U256::from(2u64) * six_decimal_unit();
     let mut provider = test_storage(Some(rate));
     let (position, expected) = StorageHandle::enter(&mut provider, |storage| {
@@ -537,7 +537,7 @@ fn issuance_events_carry_the_call_terms_the_position_and_the_bucket() {
         .unwrap();
         let expected = [(merchant_gem, position), (wallet_gem, U256::ZERO)].map(|(gem_id, pos)| {
             let item = gem_view(&storage, gem_id);
-            (item, pos, gem_item(&storage, gem_id).bucket_key)
+            (item, pos, gem_item(&storage, gem_id).group_key)
         });
         (position, expected)
     });
@@ -549,7 +549,7 @@ fn issuance_events_carry_the_call_terms_the_position_and_the_bucket() {
         .map(|log| log.data)
         .collect();
     assert_eq!(issued.len(), 2);
-    for (event, (item, position_id, bucket)) in issued.iter().zip(&expected) {
+    for (event, (item, position_id, group)) in issued.iter().zip(&expected) {
         assert_eq!(event.gemId, item.item.gem_id.to_u256());
         assert_eq!(event.callPriceMinor, item.terms.call_price_minor);
         assert_eq!(event.callWindow, item.terms.call_window_seconds);
@@ -559,8 +559,8 @@ fn issuance_events_carry_the_call_terms_the_position_and_the_bucket() {
             item.terms.call_notice_period_seconds
         );
         assert_eq!(event.positionId, *position_id);
-        assert_eq!(event.bucketKey, *bucket);
-        assert!(!bucket.is_zero());
+        assert_eq!(event.groupKey, *group);
+        assert!(!group.is_zero());
     }
 
     let opened: Vec<_> = events

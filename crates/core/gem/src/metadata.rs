@@ -23,7 +23,7 @@ pub(crate) fn token_uri(view: &GemView, now: u64) -> String {
         ),
         (
             "Entry Price",
-            nft_card::amount_grouped(view.bucket.entry_price_minor, PRICE_PRECISION),
+            nft_card::amount_grouped(view.group.entry_price_minor, PRICE_PRECISION),
         ),
     ];
     rows.push((
@@ -33,11 +33,7 @@ pub(crate) fn token_uri(view: &GemView, now: u64) -> String {
     let mut traits = vec![
         Trait::text("State", state.label),
         gem_type(item.gem_type),
-        Trait::amount(
-            "Entry Price",
-            view.bucket.entry_price_minor,
-            PRICE_PRECISION,
-        ),
+        Trait::amount("Entry Price", view.group.entry_price_minor, PRICE_PRECISION),
         Trait::amount("Call Price", view.terms.call_price_minor, PRICE_PRECISION),
         Trait::amount("Promis Load", item.promis_load_minor, AMOUNT_PRECISION),
         Trait::integer("Issuance Currency", item.issuance_currency),

@@ -414,11 +414,11 @@ fn the_hourly_rollover_at_the_settlement_deadline_grants_no_grace() {
         + 3_600;
     StorageHandle::enter(&mut provider, |storage| {
         let view = gem_view(&storage, gem_id);
-        let bucket = view.item.bucket_key;
+        let group = view.item.group_key;
         GemContract::new(storage.clone())
-            .bucket_called_at
+            .group_called_at
             .write(
-                &bucket,
+                &group,
                 deadline - u64::from(view.terms.call_notice_period_seconds),
             )
             .unwrap();
@@ -638,7 +638,7 @@ fn an_sra_gem_keeps_its_sixty_four_percent_through_the_currency_conversion() {
         assert_eq!(quote(sra), U256::from(57_600_000u64));
         let item = gem_view(storage, sra);
         assert_eq!(
-            (item.bucket.entry_price_minor, item.item.promis_load_minor),
+            (item.group.entry_price_minor, item.item.promis_load_minor),
             (usd_rate, load)
         );
     });
@@ -691,7 +691,7 @@ fn gem_cost_inputs(item: &GemItemState) -> (u8, U256) {
         issuance_currency: _,
         reference_currency: _,
         issued_at: _,
-        bucket_key: _,
+        group_key: _,
         state: _,
         called_at: _,
         settled_at: _,
@@ -710,7 +710,7 @@ fn six_decimal_settlement_cost(entry: U256, load: U256, gem_type: u8) -> U256 {
 }
 
 #[test]
-fn settlement_cost_reads_entry_price_from_the_bucket() {
+fn settlement_cost_reads_entry_price_from_the_group() {
     let rate = U256::from(2u64) * six_decimal_unit();
     let other_entry = U256::from(3u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
@@ -720,7 +720,7 @@ fn settlement_cost_reads_entry_price_from_the_bucket() {
             issue_at_live_rate(storage, ALICE, GemTypes::Wallet, heavy, 840, 840).unwrap();
         let light_id = issue_at_live_rate(storage, BOB, GemTypes::Wallet, light, 840, 840).unwrap();
         // Same load as the heavy gem, so the id needs another owner. A different
-        // entry price opens a second bucket. The gem record still has none.
+        // entry price opens a second group. The gem record still has none.
         let other_owner = address!("0x3333333333333333333333333333333333333333");
         let other_id = runtime::issue_gem(
             storage,
@@ -738,11 +738,11 @@ fn settlement_cost_reads_entry_price_from_the_bucket() {
         let heavy_view = gem_view(storage, heavy_id);
         let light_view = gem_view(storage, light_id);
         let other_view = gem_view(storage, other_id);
-        assert_eq!(heavy_view.item.bucket_key, light_view.item.bucket_key);
-        assert_eq!(heavy_view.bucket.entry_price_minor, rate);
-        assert_eq!(light_view.bucket.entry_price_minor, rate);
-        assert_ne!(other_view.item.bucket_key, heavy_view.item.bucket_key);
-        assert_eq!(other_view.bucket.entry_price_minor, other_entry);
+        assert_eq!(heavy_view.item.group_key, light_view.item.group_key);
+        assert_eq!(heavy_view.group.entry_price_minor, rate);
+        assert_eq!(light_view.group.entry_price_minor, rate);
+        assert_ne!(other_view.item.group_key, heavy_view.item.group_key);
+        assert_eq!(other_view.group.entry_price_minor, other_entry);
         assert_eq!(
             other_view.item.promis_load_minor,
             heavy_view.item.promis_load_minor
@@ -755,7 +755,7 @@ fn settlement_cost_reads_entry_price_from_the_bucket() {
         };
         let expected = |view: &GemView| {
             let (gem_type, load) = gem_cost_inputs(&view.item);
-            six_decimal_settlement_cost(view.bucket.entry_price_minor, load, gem_type)
+            six_decimal_settlement_cost(view.group.entry_price_minor, load, gem_type)
         };
         assert_eq!(quoted(heavy_id), expected(&heavy_view));
         assert_eq!(quoted(light_id), expected(&light_view));

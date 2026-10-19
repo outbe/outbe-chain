@@ -208,7 +208,7 @@ fn claiming_a_pool_mints_its_gem_and_burns_the_backing() {
         let gem = gem_of(&storage, alice);
         assert_eq!(gem.item.gem_type, GemTypes::Wallet as u8);
         assert_eq!(gem.item.promis_load_minor, load);
-        assert_eq!(gem.bucket.entry_price_minor, ONE_COEN);
+        assert_eq!(gem.group.entry_price_minor, ONE_COEN);
 
         // The balance is gone and so is the native COEN that backed it.
         assert_eq!(contract.get_claimable_reward(alice).unwrap(), U256::ZERO);
@@ -288,7 +288,7 @@ fn a_claim_prices_on_the_previous_day_vwap() {
         seed_oracle(&storage, ONE_COEN);
         seed_day_vwap(&storage, day_vwap);
         claim_waa(&storage, contract, alice, native(500)).unwrap();
-        assert_eq!(gem_of(&storage, alice).bucket.entry_price_minor, day_vwap);
+        assert_eq!(gem_of(&storage, alice).group.entry_price_minor, day_vwap);
     });
 }
 
@@ -301,7 +301,7 @@ fn a_claim_ignores_a_spot_above_the_previous_day_vwap() {
         seed_oracle(&storage, U256::from(3u64) * ONE_COEN);
         seed_day_vwap(&storage, day_vwap);
         claim_waa(&storage, contract, alice, native(500)).unwrap();
-        assert_eq!(gem_of(&storage, alice).bucket.entry_price_minor, day_vwap);
+        assert_eq!(gem_of(&storage, alice).group.entry_price_minor, day_vwap);
     });
 }
 
@@ -368,7 +368,7 @@ fn a_claim_issues_the_gem_in_the_callers_currencies() {
         let gem = gem_of(&storage, alice);
         assert_eq!(gem.item.issuance_currency, MYR);
         assert_eq!(gem.item.reference_currency, EUR);
-        assert_eq!(gem.bucket.entry_price_minor, eur_vwap);
+        assert_eq!(gem.group.entry_price_minor, eur_vwap);
     });
 }
 
@@ -455,7 +455,7 @@ fn a_load_whose_cost_rounds_to_zero_still_claims() {
             U256::ZERO
         );
         let gem = gem_of(&storage, alice);
-        assert_eq!(gem.bucket.entry_price_minor, U256::ONE);
+        assert_eq!(gem.group.entry_price_minor, U256::ONE);
         assert_eq!(gem.item.promis_load_minor, U256::ONE);
     });
 }

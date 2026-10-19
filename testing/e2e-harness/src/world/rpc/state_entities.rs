@@ -238,14 +238,14 @@ impl Rpc {
         port: u16,
         checkpoint: FinalizedCheckpoint,
         id: outbe_primitives::wwd_entity_id::WwdEntityId,
-    ) -> Result<Option<(outbe_gem::GemItemState, outbe_gem::GemBucketState)>> {
+    ) -> Result<Option<(outbe_gem::GemItemState, outbe_gem::GemGroupState)>> {
         self.read_state_at(port, checkpoint, |storage| {
             let Some(item) = outbe_gem::state_api::load_item(&storage, id)? else {
                 return Ok(None);
             };
-            let bucket = outbe_gem::state_api::load_bucket(&storage, item.body().bucket_key)?
-                .ok_or_else(|| PrecompileError::fatal("Gem bucket is absent"))?;
-            Ok(Some((item.body().clone(), bucket.body().clone())))
+            let group = outbe_gem::state_api::load_group(&storage, item.body().group_key)?
+                .ok_or_else(|| PrecompileError::fatal("Gem group is absent"))?;
+            Ok(Some((item.body().clone(), group.body().clone())))
         })
     }
 }

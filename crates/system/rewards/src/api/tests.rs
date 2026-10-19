@@ -522,9 +522,9 @@ fn pending_reward_gem_batch_survives_storage_reopen() {
     });
 }
 
-/// A later block reads the first recipient and its bucket from EVM storage.
+/// A later block reads the first recipient and its group from EVM storage.
 #[test]
-fn second_recipient_uses_the_bucket_persisted_by_the_previous_block() {
+fn second_recipient_uses_the_group_persisted_by_the_previous_block() {
     use outbe_primitives::storage::StorageHandle;
 
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
@@ -572,12 +572,12 @@ fn second_recipient_uses_the_bucket_persisted_by_the_previous_block() {
         assert_eq!(first.promis_load_minor, U256::from(100u64));
         assert_eq!(second.promis_load_minor, U256::from(300u64));
         assert_eq!(
-            second.bucket_key, first.bucket_key,
-            "one day, one entry price, one currency: one bucket"
+            second.group_key, first.group_key,
+            "one day, one entry price, one currency: one group"
         );
         let gem = outbe_gem::GemContract::new(ctx.storage.clone());
-        assert_eq!(gem.bucket_gem_count.read(&first.bucket_key).unwrap(), 2);
-        assert!(outbe_gem::api::get_bucket(&ctx.storage, first.bucket_key)
+        assert_eq!(gem.group_gem_count.read(&first.group_key).unwrap(), 2);
+        assert!(outbe_gem::api::get_group(&ctx.storage, first.group_key)
             .unwrap()
             .is_some());
         let rewards = ctx.storage.contract::<Rewards>();

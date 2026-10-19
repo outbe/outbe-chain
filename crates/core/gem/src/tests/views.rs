@@ -435,8 +435,8 @@ fn gem_contract_slot_layout_is_pinned() {
     with_storage(|storage| {
         let gem = GemContract::new(storage.clone());
         assert_eq!(gem.total_supply.slot(), U256::from(0u64));
-        assert_eq!(gem.bucket_gem_count.base_slot(), U256::from(1u64));
-        assert_eq!(gem.bucket_called_at.base_slot(), U256::from(11u64));
+        assert_eq!(gem.group_gem_count.base_slot(), U256::from(1u64));
+        assert_eq!(gem.group_called_at.base_slot(), U256::from(11u64));
         assert_eq!(gem.call_bin_tree_root.base_slot(), U256::from(12u64));
         assert_eq!(gem.expiry_tree_root.slot(), U256::from(20u64));
         assert_eq!(gem.config_profile.slot(), U256::from(33u64));

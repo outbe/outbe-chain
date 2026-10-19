@@ -1,7 +1,7 @@
 //! Hooks only a throwaway e2e build answers. Genesis cannot seed a Gem body, so a scenario
 //! that needs a paid Gem asks for one. A gem is stamped live, so only such a build can move
 //! its issuance back behind the closed days a scenario seeds for the call sweep. The forfeit
-//! sweep opens a bucket only once its hour has closed, so `closeCallNoticeForTest` moves a
+//! sweep opens a group only once its hour has closed, so `closeCallNoticeForTest` moves a
 //! deadline that already lapsed into one the sweep opens on the next block.
 
 use alloy_primitives::{Bytes, U256};
@@ -68,24 +68,22 @@ fn issue_settled(
             call_terms: None,
         },
     )?;
-    let (item, bucket) =
-        gem_api::load_pair(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
-    gem_api::record_settled(storage, item, bucket)?;
+    let (item, group) = gem_api::load_pair(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
+    gem_api::record_settled(storage, item, group)?;
     Ok(gem_id)
 }
 
-/// Re-issues the gem on `issued_at`: it leaves its bucket and joins the bucket of the
-/// new day, which may open a new bucket body on the live terms.
+/// Re-issues the gem on `issued_at`: it leaves its group and joins the group of the
+/// new day, which may open a new group body on the live terms.
 fn backdate(storage: &StorageHandle<'_>, gem_id: U256, issued_at: u64) -> Result<()> {
-    let (item, bucket) =
-        gem_api::load_pair(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
+    let (item, group) = gem_api::load_pair(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
     if item.body().is_settled() {
         return Err(GemFactoryError::GemAlreadySettled.into());
     }
     let mut reissued = item.body().clone();
-    let entry_price_minor = bucket.body().entry_price_minor;
+    let entry_price_minor = group.body().entry_price_minor;
     reissued.issued_at = issued_at;
-    reissued.bucket_key = outbe_gem::identity::bucket_key(
+    reissued.group_key = outbe_gem::identity::group_key(
         reissued.worldwide_day(),
         entry_price_minor,
         reissued.reference_currency,
@@ -96,19 +94,19 @@ fn backdate(storage: &StorageHandle<'_>, gem_id: U256, issued_at: u64) -> Result
         outbe_gem::config::read(storage)?,
     )?;
     storage.clone().with_checkpoint(|| {
-        gem_api::remove_gem(storage, item, bucket)?;
+        gem_api::remove_gem(storage, item, group)?;
         gem_api::record_issued(storage, &reissued, entry_price_minor, terms)
     })
 }
 
-/// Moves the queue entry of a called gem's bucket onto `deadline`.
+/// Moves the queue entry of a called gem's group onto `deadline`.
 fn requeue_called(storage: &StorageHandle<'_>, gem_id: U256, deadline: u64) -> Result<()> {
     let item = gem_api::get_item(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
     let mut gem = GemContract::new(storage.clone());
-    let bucket = item.bucket_key;
-    if gem.called_deadline.read(&bucket)? == 0 {
+    let group = item.group_key;
+    if gem.called_deadline.read(&group)? == 0 {
         return Err(GemFactoryError::GemNotCalled.into());
     }
-    gem.remove_called(bucket)?;
-    gem.push_called(bucket, deadline)
+    gem.remove_called(group)?;
+    gem.push_called(group, deadline)
 }
