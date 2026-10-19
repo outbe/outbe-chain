@@ -961,3 +961,132 @@ fn accrual_and_claim_emit_their_events_for_any_pool() {
         }]
     );
 }
+
+/// One day with recipients in every pool: WAA weights 2 and 1, one SRA, one CCA
+/// and two validators.
+fn every_pool_day() -> HashMapStorageProvider {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_timestamp(U256::from(T_NOW));
+    StorageHandle::enter(&mut provider, |storage| {
+        let day = WorldwideDay::new(timestamp_to_date_key(T_NOW));
+        let mut contract = AgentRewardContract::new(storage.clone());
+        contract
+            .increment_waa_tribute(day, Address::repeat_byte(1))
+            .unwrap();
+        contract
+            .increment_waa_tribute(day, Address::repeat_byte(1))
+            .unwrap();
+        contract
+            .increment_waa_tribute(day, Address::repeat_byte(2))
+            .unwrap();
+        contract
+            .increment_sra_tribute(day, Address::repeat_byte(3))
+            .unwrap();
+
+        let cca = Address::repeat_byte(4);
+        let bond = outbe_ccaregistry::constants::BOND_REQUIREMENT;
+        storage
+            .increase_balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS, bond)
+            .unwrap();
+        outbe_ccaregistry::runtime::bond(storage.clone(), cca, bond, "Test CCA".into()).unwrap();
+        outbe_ccaregistry::api::credis_issued(&storage, cca, day.value(), U256::ONE).unwrap();
+
+        let rewards = outbe_rewards::schema::Rewards::new(storage);
+        rewards.daily_voter_count.write(&day.value(), 2).unwrap();
+        for (index, voter) in [Address::repeat_byte(5), Address::repeat_byte(6)]
+            .into_iter()
+            .enumerate()
+        {
+            rewards
+                .daily_voter_at
+                .get_nested(&day.value())
+                .write(&(index as u32), voter)
+                .unwrap();
+            rewards
+                .daily_participation
+                .get_nested(&day.value())
+                .write(&voter, 1)
+                .unwrap();
+        }
+    });
+    provider
+}
+
+#[test]
+fn a_distribution_that_fails_after_any_write_reverts_and_credits_once_on_retry() {
+    let day = WorldwideDay::new(timestamp_to_date_key(T_NOW));
+    let pool = U256::from(1_000u64);
+    let distribute = |provider: &mut HashMapStorageProvider| {
+        StorageHandle::enter(provider, |storage| {
+            let ctx = outbe_primitives::block::BlockRuntimeContext::new(
+                outbe_primitives::block::BlockContext::empty_for_tests(1, T_NOW, CHAIN_ID),
+                storage,
+            );
+            distribute_daily(
+                &ctx,
+                day,
+                &[
+                    (PoolKind::Waa, pool),
+                    (PoolKind::Sra, pool),
+                    (PoolKind::Cca, pool),
+                    (PoolKind::Validator, pool),
+                ],
+            )
+        })
+    };
+    let expected = [
+        (RewardPool::Waa, Address::repeat_byte(1), 666u64),
+        (RewardPool::Waa, Address::repeat_byte(2), 333),
+        (RewardPool::Sra, Address::repeat_byte(3), 1_000),
+        (RewardPool::Cca, Address::repeat_byte(4), 1_000),
+        (RewardPool::Validator, Address::repeat_byte(5), 500),
+        (RewardPool::Validator, Address::repeat_byte(6), 500),
+    ];
+
+    let mut provider = every_pool_day();
+    provider.clear_mutation_failure();
+    assert_eq!(distribute(&mut provider).unwrap(), U256::ONE);
+    let writes = provider.clear_mutation_failure();
+    assert!(writes > 0);
+
+    for failure_at in 0..writes {
+        let mut provider = every_pool_day();
+        let slots = provider.storage.clone();
+        let events = provider
+            .get_events(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+            .clone();
+        provider.fail_after_mutation_at(failure_at);
+        assert!(distribute(&mut provider).is_err(), "failure {failure_at}");
+        assert_eq!(
+            provider.storage, slots,
+            "a write survived failure {failure_at}"
+        );
+        assert_eq!(
+            provider.get_events(outbe_primitives::addresses::AGENT_REWARD_ADDRESS),
+            &events,
+            "failure {failure_at}"
+        );
+
+        provider.clear_mutation_failure();
+        assert_eq!(distribute(&mut provider).unwrap(), U256::ONE);
+        StorageHandle::enter(&mut provider, |storage| {
+            let contract = AgentRewardContract::new(storage);
+            for (reward_pool, address, credit) in expected {
+                assert_eq!(
+                    contract
+                        .get_pool_claimable_reward(reward_pool, address)
+                        .unwrap(),
+                    U256::from(credit),
+                    "failure {failure_at}"
+                );
+            }
+        });
+        assert_eq!(
+            provider
+                .get_events(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+                .len(),
+            expected.len(),
+            "failure {failure_at}: one accrual event per credit"
+        );
+    }
+}
