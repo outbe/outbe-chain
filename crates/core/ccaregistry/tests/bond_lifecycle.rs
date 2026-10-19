@@ -482,6 +482,84 @@ fn bond_past_the_active_cap_refunds_value_and_leaves_the_set_unchanged() {
 
 alloy_sol_types::sol!("../../../contracts/precompiles/src/IAgentReward.sol");
 
+#[test]
+fn reward_claim_transaction_issues_the_gem_and_clears_the_pool() {
+    let mut db = CacheDB::new(EmptyDB::default());
+    db.insert_account_info(CCA, AccountInfo::default());
+    let code = Bytecode::new_raw(Bytes::from_static(&[0xef]));
+    for address in [
+        AGENT_REWARD_ADDRESS,
+        outbe_primitives::addresses::GEM_ADDRESS,
+        outbe_primitives::addresses::GEM_FACTORY_ADDRESS,
+        outbe_primitives::addresses::ORACLE_ADDRESS,
+    ] {
+        db.insert_account_info(
+            address,
+            AccountInfo {
+                code_hash: code.hash_slow(),
+                code: Some(code.clone()),
+                ..Default::default()
+            },
+        );
+    }
+    let load = U256::from(250);
+    let price = U256::from(2_000_000);
+    with_storage(&mut db, |storage| {
+        seed_oracle(&storage);
+        seed_vwap(
+            &storage,
+            previous_date_key(timestamp_to_date_key(NOW)),
+            price,
+        );
+        AgentRewardContract::new(storage)
+            .add_claimable_reward(RewardPool::Waa, CCA, load)
+            .unwrap();
+    });
+
+    let result = tx_to(
+        &mut db,
+        AGENT_REWARD_ADDRESS,
+        U256::ZERO,
+        IAgentReward::claimRewardCall {
+            pool: RewardPool::Waa as u8,
+            promisLoadMinor: U256::ZERO,
+            issuanceCurrency: 840,
+            referenceCurrency: 840,
+        }
+        .abi_encode(),
+        NOW,
+    );
+    assert!(result.is_success(), "{result:?}");
+    let gem_id =
+        IAgentReward::claimRewardCall::abi_decode_returns(result.output().unwrap()).unwrap();
+    let claimed = result
+        .logs()
+        .iter()
+        .find_map(|log| IAgentReward::RewardsClaimed::decode_log(log).ok())
+        .expect("the claim emits RewardsClaimed")
+        .data;
+    assert_eq!(claimed.account, CCA);
+    assert_eq!(claimed.pool, RewardPool::Waa as u8);
+    assert_eq!(claimed.promisLoadMinor, load);
+    assert_eq!(claimed.gemId, gem_id);
+    with_storage(&mut db, |storage| {
+        let gem = outbe_gem::api::get_view(&storage, gem_id).unwrap().unwrap();
+        assert_eq!(gem.item.owner, CCA);
+        assert_eq!(gem.item.promis_load_minor, load);
+        assert_eq!(gem.bucket.entry_price_minor, price);
+        assert_eq!(
+            AgentRewardContract::new(storage)
+                .get_pool_claimable_reward(RewardPool::Waa, CCA)
+                .unwrap(),
+            U256::ZERO
+        );
+    });
+    assert_eq!(
+        db.cache.accounts[&AGENT_REWARD_ADDRESS].info.balance,
+        U256::ZERO
+    );
+}
+
 fn seed_oracle(storage: &StorageHandle<'_>) {
     outbe_oracle::test_support::publish_day_type_quote(storage, U256::from(3_000_000), 1, NOW)
         .unwrap();
