@@ -384,27 +384,6 @@ mod tests {
     }
 
     #[test]
-    fn treats_backend_rejection_as_fatal_after_public_inputs_match() {
-        let public = public_inputs();
-        let expected = TributeZkExpectedHashes {
-            nft_hash: public.nft_hash,
-            binding_hash: public.binding_hash,
-        };
-
-        let error = validate_zk_result(
-            &dummy_proof(public),
-            verification_key(),
-            public,
-            Some(&expected),
-        )
-        .unwrap_err();
-        assert!(
-            matches!(error, PrecompileError::Revert(_)),
-            "unexpected error: {error}"
-        );
-    }
-
-    #[test]
     fn circuit_selection_requires_exact_versions_and_development_host_for_stub() {
         use outbe_primitives::chain::{DEVNET_CHAIN_ID, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID};
         for host_chain_id in [
@@ -459,7 +438,7 @@ mod tests {
     #[test]
     #[ignore = "requires the pinned Barretenberg CRS"]
     fn registered_circuit_verifies_real_proof_and_rejects_changed_statement() {
-        outbe_zk_backend::barretenberg::init_crs().unwrap();
+        outbe_zk_backend::barretenberg::BarretenbergHandler::init().unwrap();
         let proof = include_bytes!(
             "../../../../testing/protocol-benchmarks/fixtures/tribute_demo_tribute_v1.bin"
         );

@@ -115,11 +115,9 @@ fn shutdown_and_exit_with_code(env: &Environment, code: i32) -> ! {
 pub async fn run() {
     // Parse cucumber's built-in flags (--tags/--name/--input) plus our EnvCli.
     let mut opts = cli::Opts::<_, _, _, EnvCli>::parsed();
-    // Several scenarios prove different circuits in this one process. The
-    // Barretenberg SRS is one-shot, so size it for the largest canonical
-    // circuit before a smaller proof can initialize it first. CRS setup may
-    // block on a file read/download. Keep it off the Tokio runtime.
-    std::thread::spawn(outbe_zk_backend::barretenberg::init_crs)
+    // Initialize the canonical CRS before any scenario. CRS setup may block
+    // on a file read/download. Keep it off the Tokio runtime.
+    std::thread::spawn(outbe_zk_backend::barretenberg::BarretenbergHandler::init)
         .join()
         .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
         .expect("initialize the E2E proving CRS before any scenario");

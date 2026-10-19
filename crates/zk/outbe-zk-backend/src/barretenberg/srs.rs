@@ -1,12 +1,7 @@
-//! SRS (CRS) setup for barretenberg, ported from the reference
-//! `outbe-zk-circuit-noir`/noir_rs: size the SRS to the circuit (gate count via
-//! `circuit_stats` → next power of two) and load just that many G1 points —
-//! from a local cache if present (`$BB_CRS_PATH` or `~/.bb-crs/bn254_g1.dat`,
-//! the file `bb` itself downloads), otherwise range-downloaded from the Aztec
-//! CRS. G2 is a small fixed group, hardcoded. The G1 prefix — cached or
-//! downloaded — is verified against a pinned SHA-256 ([`PINNED_G1_SHA256`])
-//! before bb trusts it, so a poisoned cache or tampered download can't seed a
-//! forged-proof-accepting setup.
+//! Load and validate the fixed CRS when the process-wide handler starts.
+//! Read G1 points from the local cache, or download them when the network feature is enabled.
+//! Verify the G1 prefix against [`PINNED_G1_SHA256`] before native initialization.
+//! G2 is fixed. The handler retains the installed capacity and rejects larger proving circuits.
 
 use std::sync::OnceLock;
 
@@ -15,29 +10,52 @@ use barretenberg_rs::backends::FfiBackend;
 use barretenberg_rs::generated_types::{CircuitInput, ProofSystemSettings};
 use sha2::{Digest, Sha256};
 
+use crate::barretenberg::CANONICAL_SRS_POINTS;
+use crate::errors::{BackendProofError, CrsError};
 use outbe_zk::error::Error;
 
-use crate::errors::BackendProofError;
+/// Capacity of the native CRS installed by the process-wide handler at startup.
+pub(super) struct Crs {
+    points: u32,
+}
 
-/// bb's global CRS is **one-shot**: `srs_init_srs` takes effect once per process
-/// and a later call with more points is ignored. So we init exactly once (to
-/// the first circuit's need, or to `preinit_srs`'s size) and remember it.
-static SRS_POINTS: OnceLock<u32> = OnceLock::new();
+impl Crs {
+    pub fn new(points: u32) -> Self {
+        Self { points }
+    }
+    pub(super) fn ensure_capacity(&self, requested: u32) -> Result<(), Error> {
+        if requested > self.points {
+            return Err(CrsError::SrsAlreadyInitialized {
+                initialized: self.points,
+                requested,
+            }
+            .into());
+        }
+        Ok(())
+    }
 
-/// Explicit path to a BN254 G1 SRS `.dat`, set by the embedding application
-/// (e.g. a mobile wallet pointing at a bundled SRS asset). Consulted *before*
-/// `$BB_CRS_PATH` / `~/.bb-crs` by [`local_g1_path`]. Set once; later sets are
-/// ignored. When built without `with-network-srs` this is the only way to
-/// provide the SRS — there is no network fallback.
-static SRS_PATH_OVERRIDE: OnceLock<std::path::PathBuf> = OnceLock::new();
+    pub(super) fn validate_circuit(
+        &self,
+        api: &mut BarretenbergApi<FfiBackend>,
+        acir: &[u8],
+        settings: &ProofSystemSettings,
+    ) -> Result<(), Error> {
+        self.ensure_capacity(subgroup_size(api, acir, settings)?.saturating_add(1))
+    }
+}
+
+static BB_CRS_PATH_ENV_VAR: &str = "BB_CRS_PATH";
+
+/// Explicit path to a BN254 G1 SRS `.dat`.
+static CRS_PATH_OVERRIDE: OnceLock<std::path::PathBuf> = OnceLock::new();
 
 /// Point the SRS loader at an explicit G1 `.dat` file. The embedding app calls
-/// this **once, before any proof** (e.g. with a bundled SRS asset path) so
+/// this **once, before handler initialization** (e.g. with a bundled SRS asset path) so
 /// the SRS loader reads locally instead of downloading. Required when built
 /// without `with-network-srs`; optional otherwise (it just overrides the cache
 /// location).
 pub fn set_srs_path(path: std::path::PathBuf) {
-    let _ = SRS_PATH_OVERRIDE.set(path);
+    let _ = CRS_PATH_OVERRIDE.set(path);
 }
 
 /// The BN254 G2 point of the SRS (fixed; same every time, so not read from the
@@ -65,7 +83,7 @@ const G1_POINT_SIZE: u32 = 64;
 /// a pinned size that mismatches is rejected (tampered CRS); an unpinned size
 /// is allowed through but its hash is reported so an operator can pin it (pin
 /// every size you deploy, or flip the `None` arm in [`verify_g1`] to fail
-/// closed). The canonical set's [`super::preinit_srs`] size is `(1<<16)+1`.
+/// closed). The handler's canonical capacity is `(1<<16)+1`.
 /// The `(1<<20)+1` prefix stays pinned for future circuits without increasing
 /// the default initialization size. Every digest is a prefix of the canonical
 /// Aztec `g1.dat`.
@@ -80,7 +98,7 @@ const PINNED_G1_SHA256: &[(u32, [u8; 32])] = &[
         ],
     ),
     // (1<<16)+1 — the canonical set's largest domain (ownership, demo tribute,
-    // Niflheim tribute) and the `preinit_srs` size.
+    // Niflheim tribute) and the handler's fixed capacity.
     (
         (1 << 16) + 1,
         [
@@ -113,16 +131,15 @@ fn hex32(b: &[u8; 32]) -> String {
 /// (see [`PINNED_G1_SHA256`]). Called on **both** the cached and the
 /// freshly-downloaded bytes, before they reach `srs_init_srs`.
 #[allow(clippy::print_stderr)] // emits an SRS-not-pinned security warning
-fn verify_g1(num_points: u32, bytes: &[u8]) -> Result<(), Error> {
+fn verify_g1(num_points: u32, bytes: &[u8]) -> Result<(), CrsError> {
     let digest: [u8; 32] = Sha256::digest(bytes).into();
     match PINNED_G1_SHA256.iter().find(|(n, _)| *n == num_points) {
         Some((_, expected)) if &digest == expected => Ok(()),
-        Some((_, expected)) => Err(BackendProofError::SrsChecksumMismatch {
+        Some((_, expected)) => Err(CrsError::SrsChecksumMismatch {
             num_points,
             got: hex32(&digest),
             pinned: hex32(expected),
-        }
-        .into()),
+        }),
         None => {
             eprintln!(
                 "outbe-zk-backend: SRS size {num_points} points is not pinned; \
@@ -140,18 +157,15 @@ const AZTEC_CRS_G1: &str = "https://crs.aztec.network/g1.dat";
 
 /// Next power of two `>= circuit_size` (the SRS subgroup size).
 fn compute_subgroup_size(circuit_size: u32) -> u32 {
-    let log_value = (circuit_size as f64).log2().ceil() as u32;
-    2u32.pow(log_value)
+    circuit_size.checked_next_power_of_two().unwrap_or(u32::MAX)
 }
 
-/// Path to a locally available BN254 G1 SRS: the [`set_srs_path`] override if
-/// set, else `$BB_CRS_PATH`, else `~/.bb-crs/bn254_g1.dat` (the file `bb`
-/// downloads/caches).
+/// Resolves path to CRS file.
 fn local_g1_path() -> std::path::PathBuf {
-    if let Some(p) = SRS_PATH_OVERRIDE.get() {
+    if let Some(p) = CRS_PATH_OVERRIDE.get() {
         return p.clone();
     }
-    if let Ok(p) = std::env::var("BB_CRS_PATH") {
+    if let Ok(p) = std::env::var(BB_CRS_PATH_ENV_VAR) {
         return p.into();
     }
     let home = std::env::var("HOME").unwrap_or_default();
@@ -182,21 +196,20 @@ fn subgroup_size(
 }
 
 /// Load `num_points` G1 points (`num_points * 64` bytes) from the local cache.
-fn local_g1(num_points: u32) -> Result<Vec<u8>, Error> {
+fn local_g1(num_points: u32) -> Result<Vec<u8>, CrsError> {
     let path = local_g1_path();
-    let bytes = std::fs::read(&path).map_err(|source| BackendProofError::ReadSrs {
+    let bytes = std::fs::read(&path).map_err(|source| CrsError::ReadSrs {
         path: path.clone(),
         source,
     })?;
     let need = (num_points * G1_POINT_SIZE) as usize;
     if bytes.len() < need {
-        return Err(BackendProofError::CachedSrsTooShort {
+        return Err(CrsError::CachedSrsTooShort {
             path,
             actual: bytes.len(),
             need,
             num_points,
-        }
-        .into());
+        });
     }
     Ok(bytes[..need].to_vec())
 }
@@ -210,16 +223,16 @@ fn local_g1(num_points: u32) -> Result<Vec<u8>, Error> {
 /// fetch the trusted setup at proving time — `reqwest::blocking` also panics on
 /// the mobile event loop. The SRS is provided via [`set_srs_path`] instead.
 #[cfg(feature = "with-network-srs")]
-fn net_g1(num_points: u32) -> Result<Vec<u8>, Error> {
+fn net_g1(num_points: u32) -> Result<Vec<u8>, CrsError> {
     let g1_end = num_points * G1_POINT_SIZE - 1;
     let resp = reqwest::blocking::Client::new()
         .get(AZTEC_CRS_G1)
         .header(reqwest::header::RANGE, format!("bytes=0-{g1_end}"))
         .send()
-        .map_err(|e| BackendProofError::SrsDownload(e.to_string()))?;
+        .map_err(|e| CrsError::SrsDownload(e.to_string()))?;
     let bytes = resp
         .bytes()
-        .map_err(|e| BackendProofError::SrsDownloadBody(e.to_string()))?
+        .map_err(|e| CrsError::SrsDownloadBody(e.to_string()))?
         .to_vec();
     Ok(bytes)
 }
@@ -236,21 +249,8 @@ fn cache_g1(bytes: &[u8]) {
     let _ = std::fs::write(&path, bytes);
 }
 
-/// Initialize bb's global CRS with `num_points` G1 points (local cache, else
-/// network) + the fixed G2 — **once** per process (one-shot). A later request
-/// for ≤ the init'd size is a no-op; a request for *more* errors, since bb
-/// can't grow the CRS — pre-size with [`super::preinit_srs`].
-pub fn ensure_srs(api: &mut BarretenbergApi<FfiBackend>, num_points: u32) -> Result<(), Error> {
-    if let Some(&n) = SRS_POINTS.get() {
-        if num_points <= n {
-            return Ok(());
-        }
-        return Err(BackendProofError::SrsAlreadyInitialized {
-            initialized: n,
-            requested: num_points,
-        }
-        .into());
-    }
+pub(crate) fn load_srs() -> Result<(Vec<u8>, u32, Vec<u8>), CrsError> {
+    let num_points = CANONICAL_SRS_POINTS;
     // Source the G1 prefix: local first (the set_srs_path override / cache),
     // else the network — except without `with-network-srs`, where a missing local
     // SRS is a hard error (no download). Integrity-check the bytes (whether
@@ -264,11 +264,10 @@ pub fn ensure_srs(api: &mut BarretenbergApi<FfiBackend>, num_points: u32) -> Res
         Err(_local_err) => {
             #[cfg(not(feature = "with-network-srs"))]
             {
-                return Err(BackendProofError::SrsUnavailableWithoutNetwork {
+                return Err(CrsError::SrsUnavailableWithoutNetwork {
                     path: local_g1_path(),
                     reason: _local_err.to_string(),
-                }
-                .into());
+                });
             }
             #[cfg(feature = "with-network-srs")]
             {
@@ -279,24 +278,8 @@ pub fn ensure_srs(api: &mut BarretenbergApi<FfiBackend>, num_points: u32) -> Res
             }
         }
     };
-    api.srs_init_srs(&g1, num_points, &G2)
-        .map_err(|e| BackendProofError::SrsInit(e.to_string()))?;
-    let _ = SRS_POINTS.set(num_points);
-    Ok(())
-}
 
-/// Ensure the CRS is sized for `acir`: `circuit_stats` dyadic domain `+ 1`
-/// points (≥ the prover's need, which is `circuit_size` + ZK padding).
-pub fn ensure_srs_for(
-    api: &mut BarretenbergApi<FfiBackend>,
-    acir_uncompressed: &[u8],
-    settings: &ProofSystemSettings,
-) -> Result<(), Error> {
-    let num_points = subgroup_size(api, acir_uncompressed, settings)? + 1;
-    // bb's SRS is process-global and cannot grow. A small canonical circuit
-    // may run before a larger one (PayNote spend, then merge), so reserve the
-    // already-pinned canonical capacity at the first operation.
-    ensure_srs(api, num_points.max(super::CANONICAL_SRS_POINTS))
+    Ok((g1, num_points, G2.to_vec()))
 }
 
 #[cfg(test)]
