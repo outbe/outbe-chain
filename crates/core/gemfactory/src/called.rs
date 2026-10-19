@@ -147,6 +147,9 @@ pub(crate) fn call_currency(
         budget,
         |group, budget| {
             call_sweep::call_entry::<GemCallSweep>(&ctx.storage, budget, group, || {
+                if retire_paid_group(&mut gem, group, ctx.block.timestamp)? {
+                    return Ok(1);
+                }
                 let calls = u32::from(call_if_breached(
                     &mut gem,
                     window,
@@ -159,6 +162,25 @@ pub(crate) fn call_currency(
         },
     )?;
     Ok((called, finished))
+}
+
+/// Takes a group every gem of which is paid out of its bin once its first full day has
+/// begun: no gem can join it after that, so it has nothing left to call. Returns whether
+/// it did.
+fn retire_paid_group(gem: &mut GemContract<'_>, group: B256, now: u64) -> Result<bool> {
+    if gem.group_gem_count.read(&group)? != 0 || gem.group_called_at.read(&group)? != 0 {
+        return Ok(false);
+    }
+    let start_day = gem
+        .groups
+        .get(group)?
+        .ok_or(GemFactoryError::MissingGroupForCall { group })?
+        .full_day_after_issue;
+    if now < outbe_primitives::time::date_key_to_utc_timestamp(start_day.value()) {
+        return Ok(false);
+    }
+    gem.remove_call_bin(group)?;
+    Ok(true)
 }
 
 /// Calls an uncalled group whose reference-currency daily VWAP exceeded its call price

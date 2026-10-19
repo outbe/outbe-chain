@@ -1428,6 +1428,35 @@ fn a_fully_paid_group_is_not_called_and_corrupt_paid_membership_is_not_forfeited
     });
 }
 
+/// A group paid in full leaves its bin once no Nod can join it, so later walks do not
+/// visit it again. Its paid Nod stays with the group until exercised.
+#[test]
+fn a_group_paid_in_full_leaves_its_call_bin() {
+    harness(|storage| {
+        let item = issue_owned(storage, Address::repeat_byte(0x31), ISO);
+        api::record_settled(
+            storage,
+            api::load_item(storage, item.nod_id).unwrap().unwrap(),
+            api::load_group(storage, item.group_key).unwrap().unwrap(),
+        )
+        .unwrap();
+        let nod = NodContract::new(storage.clone());
+        assert_ne!(nod.call_group_slot.read(&item.group_key).unwrap(), 0);
+
+        let at = START + 30 * DAY;
+        fill_days(
+            storage,
+            last_closed_day(at),
+            CALL_LOOKBACK_DAYS,
+            above_call(),
+        );
+        assert_eq!(scan(storage, at), 0);
+        assert_eq!(nod.call_group_slot.read(&item.group_key).unwrap(), 0);
+        assert_eq!(called_at(storage, item.group_key), 0);
+        assert!(api::get_group(storage, item.group_key).unwrap().is_some());
+    });
+}
+
 /// An unfinished call sweep keeps the day it opened on: a later clock whose
 /// own window would not call still force-calls against the pinned day's
 /// trailing VWAP.

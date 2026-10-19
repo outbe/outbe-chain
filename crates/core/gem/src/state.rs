@@ -238,7 +238,7 @@ impl GemContract<'_> {
     }
 
     /// No-op for a group the trie no longer holds.
-    pub(crate) fn remove_call_bin(&mut self, group: B256) -> Result<()> {
+    pub fn remove_call_bin(&mut self, group: B256) -> Result<()> {
         let iso = self.group_currency.read(&group)?;
         call_bins::remove(&CallBins(self, iso), group)?;
         Ok(())

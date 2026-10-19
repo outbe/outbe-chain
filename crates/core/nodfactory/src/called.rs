@@ -5,8 +5,8 @@
 //! A group is called, walking each currency's call-price trie, when the reference
 //! price exceeded its call price on at least its `call_threshold_seconds` of the
 //! trailing `call_window_seconds`. The call queues it on its deadline, and every
-//! CycleTick forfeit-burns the unpaid Nods of the groups whose
-//! `call_notice_period_seconds` lapsed (`expired::sweep_expired`).
+//! CycleTick forfeits the groups whose `call_notice_period_seconds` lapsed
+//! (`expired::sweep_expired`).
 //!
 //! Issuance seals all four terms onto the group, and this scan reads them back
 //! from it. Retuning a constant therefore leaves every issued group on the
@@ -198,6 +198,9 @@ pub(crate) fn call_currency(
         budget,
         |group_key, budget| {
             call_sweep::call_entry::<NodCallSweep>(&ctx.storage, budget, group_key, || {
+                if retire_paid_group(nod, group_key, ctx.block.timestamp)? {
+                    return Ok(1);
+                }
                 if !call_if_breached(nod, window, group_key, ctx.block.timestamp)? {
                     return Ok(0);
                 }
@@ -207,6 +210,25 @@ pub(crate) fn call_currency(
         },
     )?;
     Ok((called, finished))
+}
+
+/// Takes a group every Nod of which is paid out of its bin once its first full day has
+/// begun: no Nod can join it after that, so it has nothing left to call. Returns whether
+/// it did.
+fn retire_paid_group(nod: &mut NodContract<'_>, group_key: B256, now: u64) -> Result<bool> {
+    if nod.group_nod_count.read(&group_key)? != 0 || nod.group_called_at.read(&group_key)? != 0 {
+        return Ok(false);
+    }
+    let start_day = nod
+        .groups
+        .get(group_key)?
+        .ok_or(crate::errors::NodFactoryError::MissingGroupForCall { group_key })?
+        .full_day_after_issue;
+    if now < outbe_primitives::time::date_key_to_utc_timestamp(start_day.value()) {
+        return Ok(false);
+    }
+    nod.remove_call_bin(group_key)?;
+    Ok(true)
 }
 
 /// Calls the group if the window breached its sealed terms. Returns whether it did.

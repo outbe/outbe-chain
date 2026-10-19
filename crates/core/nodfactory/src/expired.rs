@@ -67,6 +67,7 @@ impl ExpiryHandler<B256> for NodExpiry<'_, '_> {
             outbe_promislimit::PromisLimitContract::new(self.storage.clone())
                 .add_to_total_unallocated(load)?;
         }
+        self.nod.group_unpaid_load.clear(&group)?;
         self.nod.hand_to_cleanup(group)?;
         self.nod.emit(INod::NodGroupForfeited {
             groupKey: group,
