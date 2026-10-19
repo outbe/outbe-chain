@@ -53,9 +53,7 @@ struct TargetRouterStorage {
     ///      - the span that the first applied chunk declared. A chunk that claims another total is
     ///        a conflict, so an under-totaled header cannot close the day early.
     ///      - the number of chunks that landed.
-    ///      - the proceeds accrued so far. The router routes them as one transfer once every chunk
-    ///        has arrived, so the day pays one bridge fee.
-    ///      Twenty bytes, so one slot rather than three.
+    ///      Each chunk routes its own proceeds, so nothing accrues here.
     mapping(uint32 worldwideDay => RefundProgress) refundProgress;
     /// @dev Bit per applied refund chunk, so a redelivered one neither re-counts nor
     ///      completes the day. One word covers `MAX_CHUNKS`.

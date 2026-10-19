@@ -396,8 +396,7 @@ library TargetInbound {
         // Counted before settling: the escrow refuses instructions once the day is closed.
         $.refundChunksApplied[worldwideDay] |= bit;
         uint16 seen = progress.chunksSeen + 1;
-        // `>=` rather than `==`: an overshoot would otherwise leave the day's proceeds
-        // accrued in this contract with nothing left to release them.
+        // `>=` rather than `==`: an overshoot would otherwise never close the day in the escrow.
         bool completesDay = seen >= totalChunks;
 
         uint128 totalPaid = $.escrowAdapter
