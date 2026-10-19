@@ -52,6 +52,12 @@ macro_rules! impl_proposal_ops {
         /// Submits a new proposal in `Draft`, open to any caller.
         pub fn $submit(&mut self, author: Address, text: &str) -> Result<U256> {
             validate_text(text)?;
+            // Refuse the submit before any write when the author index is full.
+            // A wrapped counter would overwrite index slot 0.
+            let acount = self.$author_count.read(&author)?;
+            let next_acount = acount
+                .checked_add(1)
+                .ok_or(GovernanceError::AuthorIndexFull)?;
             let block = self.storage.block_number()?;
             let next = self.$counter.read()? + 1;
             let id = U256::from(next);
@@ -68,10 +74,9 @@ macro_rules! impl_proposal_ops {
             self.$map.create(&record)?;
             self.$counter.write(next)?;
             // author index (append-only): append id to the author's list.
-            let acount = self.$author_count.read(&author)?;
             self.$author_ids
                 .write(&author_index_key(author, acount), id)?;
-            self.$author_count.write(&author, acount + 1)?;
+            self.$author_count.write(&author, next_acount)?;
             // status index: a new proposal joins the Draft bucket.
             self.$by_status.get_set(&status::DRAFT).insert(id)?;
             self.emit($submitted_event {

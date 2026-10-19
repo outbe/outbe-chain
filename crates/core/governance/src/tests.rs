@@ -6,6 +6,7 @@ use outbe_primitives::error::PrecompileError;
 use outbe_validatorset::contract::ValidatorSet;
 
 use crate::errors::GovernanceError;
+use crate::state::author_index_key;
 use crate::status;
 use crate::GovernanceContract;
 
@@ -455,6 +456,67 @@ fn author_index_is_per_kind() {
     });
 }
 
+fn assert_author_index_full<T: std::fmt::Debug>(result: outbe_primitives::error::Result<T>) {
+    let expected = GovernanceError::AuthorIndexFull.to_string();
+    assert!(
+        matches!(&result, Err(PrecompileError::Revert(msg)) if *msg == expected),
+        "expected AuthorIndexFull, got {result:?}"
+    );
+}
+
+#[test]
+fn oip_submit_refuses_full_author_index() {
+    with_governance(|gov| {
+        let first = gov.submit_oip(AUTHOR, "a").unwrap();
+        gov.oip_author_count.write(&AUTHOR, u32::MAX).unwrap();
+
+        assert_author_index_full(gov.submit_oip(AUTHOR, "b"));
+
+        // No partial state: the counter, slot 0 and the id counter stay unchanged.
+        assert_eq!(gov.oip_author_count.read(&AUTHOR).unwrap(), u32::MAX);
+        let slot0 = gov.oip_author_ids.read(&author_index_key(AUTHOR, 0));
+        assert_eq!(slot0.unwrap(), first);
+        assert_eq!(gov.oip_count().unwrap(), 1);
+    });
+}
+
+#[test]
+fn gip_submit_refuses_full_author_index() {
+    with_governance(|gov| {
+        let first = gov.submit_gip(AUTHOR, "a").unwrap();
+        gov.gip_author_count.write(&AUTHOR, u32::MAX).unwrap();
+
+        assert_author_index_full(gov.submit_gip(AUTHOR, "b"));
+
+        assert_eq!(gov.gip_author_count.read(&AUTHOR).unwrap(), u32::MAX);
+        let slot0 = gov.gip_author_ids.read(&author_index_key(AUTHOR, 0));
+        assert_eq!(slot0.unwrap(), first);
+        assert_eq!(gov.gip_count().unwrap(), 1);
+    });
+}
+
+fn ids(rows: Vec<crate::state::ProposalMeta>) -> Vec<U256> {
+    rows.into_iter().map(|m| m.id).collect()
+}
+
+#[test]
+fn author_listing_skips_empty_index_slot() {
+    with_governance(|gov| {
+        // The count says 2, but only slot 0 holds an id.
+        let oip = gov.submit_oip(AUTHOR, "o").unwrap();
+        gov.oip_author_count.write(&AUTHOR, 2).unwrap();
+        let gip = gov.submit_gip(AUTHOR, "g").unwrap();
+        gov.gip_author_count.write(&AUTHOR, 2).unwrap();
+
+        let page = U256::from(1000);
+        let oips = gov.oips_by_author(AUTHOR, U256::ZERO, page).unwrap();
+        assert_eq!(ids(oips), vec![oip]);
+        let gips = gov.gips_by_author(AUTHOR, U256::ZERO, page).unwrap();
+        assert_eq!(ids(gips), vec![gip]);
+        assert!(!oip.is_zero() && !gip.is_zero());
+    });
+}
+
 // -------------------------------------------------- indexes: by status ---
 
 fn all(g: &GovernanceContract, status: u8) -> Vec<U256> {
@@ -463,6 +525,24 @@ fn all(g: &GovernanceContract, status: u8) -> Vec<U256> {
         .into_iter()
         .map(|m| m.id)
         .collect()
+}
+
+#[test]
+fn author_and_draft_listings_agree_for_single_author() {
+    with_governance(|gov| {
+        for i in 0..3u32 {
+            gov.submit_oip(AUTHOR, &format!("p{i}")).unwrap();
+        }
+        let by_author = gov
+            .oips_by_author(AUTHOR, U256::ZERO, U256::from(1000))
+            .unwrap();
+        let mut author_ids = ids(by_author);
+        let mut draft_ids = all(gov, status::DRAFT);
+        author_ids.sort();
+        draft_ids.sort();
+        assert_eq!(author_ids.len(), 3);
+        assert_eq!(author_ids, draft_ids);
+    });
 }
 
 #[test]
