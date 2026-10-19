@@ -343,6 +343,11 @@
           "internalType": "uint32"
         },
         {
+          "name": "chunkIndex",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
           "name": "amount",
           "type": "uint128",
           "internalType": "uint128"
@@ -554,6 +559,11 @@
           "name": "worldwideDay",
           "type": "uint32",
           "internalType": "uint32"
+        },
+        {
+          "name": "chunkIndex",
+          "type": "uint16",
+          "internalType": "uint16"
         },
         {
           "name": "amount",
@@ -1085,6 +1095,12 @@
           "internalType": "uint32"
         },
         {
+          "name": "chunkIndex",
+          "type": "uint16",
+          "indexed": false,
+          "internalType": "uint16"
+        },
+        {
           "name": "amount",
           "type": "uint256",
           "indexed": false,
@@ -1127,6 +1143,12 @@
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
+        },
+        {
+          "name": "chunkIndex",
+          "type": "uint16",
+          "indexed": false,
+          "internalType": "uint16"
         },
         {
           "name": "amount",

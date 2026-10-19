@@ -20,11 +20,10 @@ struct ChunkProgress {
     uint16 chunksSeen;
 }
 
-/// @notice As {ChunkProgress}, plus the proceeds a refund run has accrued so far.
+/// @notice Progress of a day's refund run: the declared span and the number of chunks that landed.
 struct RefundProgress {
     uint16 totalChunks;
     uint16 chunksSeen;
-    uint128 proceedsAccrued;
 }
 
 /// @custom:storage-location erc7201:outbe.intex.TargetRouter
@@ -54,9 +53,7 @@ struct TargetRouterStorage {
     ///      - the span that the first applied chunk declared. A chunk that claims another total is
     ///        a conflict, so an under-totaled header cannot close the day early.
     ///      - the number of chunks that landed.
-    ///      - the proceeds accrued so far. The router routes them as one transfer once every chunk
-    ///        has arrived, so the day pays one bridge fee.
-    ///      Twenty bytes, so one slot rather than three.
+    ///      Each chunk routes its own proceeds, so nothing accrues here.
     mapping(uint32 worldwideDay => RefundProgress) refundProgress;
     /// @dev Bit per applied refund chunk, so a redelivered one neither re-counts nor
     ///      completes the day. One word covers `MAX_CHUNKS`.
@@ -69,9 +66,10 @@ struct TargetRouterStorage {
 
 /// @notice A proceeds route parked because its outbound send reverted (e.g. relay float too low).
 ///         `resendParkedProceeds` retries it. The router already holds the WCOEN, so the record
-///         snapshots only series+amount.
+///         snapshots only the chunk and its amount.
 struct ParkedProceeds {
     uint32 worldwideDay;
+    uint16 chunkIndex;
     uint128 amount;
     bool exists;
     bool done;
