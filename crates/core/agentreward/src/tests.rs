@@ -133,6 +133,27 @@ fn test_address_list_deduplication() {
     });
 }
 
+#[test]
+fn the_day_total_counts_every_tribute_and_clears_with_the_day() {
+    let alice = address!("0x1111111111111111111111111111111111111111");
+    let bob = address!("0x2222222222222222222222222222222222222222");
+    let wwd = WorldwideDay::new(5);
+
+    with_contract_mut(|_storage, contract| {
+        contract.increment_waa_tribute(wwd, alice).unwrap();
+        contract.increment_waa_tribute(wwd, alice).unwrap();
+        contract.increment_waa_tribute(wwd, bob).unwrap();
+        contract.increment_sra_tribute(wwd, bob).unwrap();
+        assert_eq!(contract.waa_total_count.read(&wwd).unwrap(), 3);
+        assert_eq!(contract.sra_total_count.read(&wwd).unwrap(), 1);
+
+        contract.clear_waa_counts(wwd).unwrap();
+        contract.clear_sra_counts(wwd).unwrap();
+        assert_eq!(contract.waa_total_count.read(&wwd).unwrap(), 0);
+        assert_eq!(contract.sra_total_count.read(&wwd).unwrap(), 0);
+    });
+}
+
 /// Registers COEN/840 with `price` as its spot and previous-day VWAP.
 fn seed_oracle(storage: &StorageHandle<'_>, price: U256) {
     outbe_oracle::test_support::publish_day_type_quote(storage, price, 1, T_NOW).unwrap();

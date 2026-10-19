@@ -24,6 +24,8 @@ impl AgentRewardContract<'_> {
             self.waa_addresses.write(&idx_key, address)?;
             self.waa_address_count.write(&day, addr_count + 1)?;
         }
+        let total = self.waa_total_count.read(&day)?;
+        self.waa_total_count.write(&day, total + 1)?;
         self.waa_tribute_counts.write(&key, count + 1)
     }
 
@@ -42,6 +44,8 @@ impl AgentRewardContract<'_> {
             self.sra_addresses.write(&idx_key, address)?;
             self.sra_address_count.write(&day, addr_count + 1)?;
         }
+        let total = self.sra_total_count.read(&day)?;
+        self.sra_total_count.write(&day, total + 1)?;
         self.sra_tribute_counts.write(&key, count + 1)
     }
 
@@ -187,7 +191,7 @@ impl AgentRewardContract<'_> {
             }
         }
         self.waa_address_count.write(&day, 0)?;
-        Ok(())
+        self.waa_total_count.write(&day, 0)
     }
 
     /// Clears SRA tribute counts and address list for a day. The distribution
@@ -204,7 +208,7 @@ impl AgentRewardContract<'_> {
             }
         }
         self.sra_address_count.write(&day, 0)?;
-        Ok(())
+        self.sra_total_count.write(&day, 0)
     }
 }
 

@@ -59,6 +59,14 @@ pub struct AgentRewardContract {
     // slot 9: claimable validator reward per address
     #[attribute(order = 9)]
     pub validator_claimable_minor: outbe_primitives::storage::dsl::Map<Address, U256>,
+
+    // slot 10: WAA tribute count per day, summed over its addresses
+    #[attribute(order = 10)]
+    pub waa_total_count: outbe_primitives::storage::dsl::Map<WorldwideDay, u64>,
+
+    // slot 11: SRA tribute count per day, summed over its addresses
+    #[attribute(order = 11)]
+    pub sra_total_count: outbe_primitives::storage::dsl::Map<WorldwideDay, u64>,
 }
 
 /// Pool a claimable balance belongs to. The pool decides the Gem class a
