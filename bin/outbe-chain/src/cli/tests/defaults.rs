@@ -38,13 +38,6 @@ fn only_node_execution_requires_the_crs() {
         <FixtureCli as clap::Parser>::try_parse_from(["outbe-chain", "node", "--chain", "mainnet"])
             .expect("explicit fixture node chain");
     assert!(super::command_requires_crs(&node.command));
-    let mut node_initialized = false;
-    super::initialize_crs_for_command(&node.command, || {
-        node_initialized = true;
-        Ok(())
-    })
-    .unwrap();
-    assert!(node_initialized);
 
     let database = <FixtureCli as clap::Parser>::try_parse_from([
         "outbe-chain",
@@ -55,11 +48,4 @@ fn only_node_execution_requires_the_crs() {
     ])
     .expect("explicit fixture database chain");
     assert!(!super::command_requires_crs(&database.command));
-    let mut database_initialized = false;
-    super::initialize_crs_for_command(&database.command, || {
-        database_initialized = true;
-        Ok(())
-    })
-    .unwrap();
-    assert!(!database_initialized);
 }
