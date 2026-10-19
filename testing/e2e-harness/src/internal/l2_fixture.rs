@@ -38,7 +38,7 @@ use outbe_zk::protocol::imt::Imt;
 use outbe_zk::protocol::key::{NftSecret, Signer};
 use outbe_zk::protocol::zk::{Circuit, ProofGenerator};
 use outbe_zk::INCLUSION_DEPTH;
-use outbe_zk_backend::barretenberg::{init_crs, Barretenberg};
+use outbe_zk_backend::barretenberg::{Barretenberg, BarretenbergHandler};
 use rand::{rngs::StdRng, SeedableRng};
 
 /// Must match `outbe_l2registry::api::ZK_MERKLE_ROOT_NAMESPACE`. Kept as a
@@ -214,7 +214,7 @@ pub(crate) fn prove_tribute_offer(statement: TributeOfferStatement<'_>) -> Tribu
     // rather than inside cucumber's Tokio runtime.
     let started = std::time::Instant::now();
     let zk = std::thread::spawn(move || {
-        init_crs().expect("pinned CRS initializes for e2e proof generation");
+        BarretenbergHandler::init().expect("pinned CRS initializes for e2e proof generation");
 
         let mut rng = StdRng::from_seed([9; 32]);
         let (secret, public_key) = signature::keypair(&mut rng);
