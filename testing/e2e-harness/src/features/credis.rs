@@ -268,7 +268,7 @@ fn reserve(world: &mut World) {
             VAULT_ROUTER_ADDRESS,
             &eth::IVaultRouter::hasLiquidityCall {
                 asset: f.currency.asset,
-                amount: PRINCIPAL
+                amountMinor: PRINCIPAL
             }
         ),
         Some(true)
@@ -281,7 +281,7 @@ fn reserve(world: &mut World) {
             credisOwner: f.owner,
             source: f.user,
             asset: f.currency.asset,
-            amount: PRINCIPAL,
+            amountMinor: PRINCIPAL,
             referenceCurrency: USD,
         },
         None,
@@ -291,7 +291,7 @@ fn reserve(world: &mut World) {
     assert_eq!(reserved.cca, f.cca);
     assert_eq!(reserved.asset, f.currency.asset);
     assert_eq!(reserved.vault, f.currency.vault);
-    assert_eq!(reserved.amount, PRINCIPAL);
+    assert_eq!(reserved.amountMinor, PRINCIPAL);
     assert!(reserved.expiresAt > receipt_timestamp(&url, &receipt));
     assert_pledge_valued_on_the_window(&url, &receipt, reserved.id);
     world.state.credis.as_mut().expect("fixture").reservation = reserved.id;
