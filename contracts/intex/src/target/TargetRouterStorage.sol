@@ -20,11 +20,10 @@ struct ChunkProgress {
     uint16 chunksSeen;
 }
 
-/// @notice As {ChunkProgress}, plus the proceeds a refund run has accrued so far.
+/// @notice Progress of a day's refund run: the declared span and the number of chunks that landed.
 struct RefundProgress {
     uint16 totalChunks;
     uint16 chunksSeen;
-    uint128 proceedsAccrued;
 }
 
 /// @custom:storage-location erc7201:outbe.intex.TargetRouter
@@ -69,9 +68,10 @@ struct TargetRouterStorage {
 
 /// @notice A proceeds route parked because its outbound send reverted (e.g. relay float too low).
 ///         `resendParkedProceeds` retries it. The router already holds the WCOEN, so the record
-///         snapshots only series+amount.
+///         snapshots only the chunk and its amount.
 struct ParkedProceeds {
     uint32 worldwideDay;
+    uint16 chunkIndex;
     uint128 amount;
     bool exists;
     bool done;

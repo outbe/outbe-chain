@@ -23,7 +23,7 @@ interface ITargetRouterShims {
     function relayBidsToOutbe(uint32 worldwideDay) external;
     function reportBidsRemaining(uint32 worldwideDay) external;
     function applyMarkOne(bytes14 seriesId, uint32 calledAt) external;
-    function routeProceedsExt(uint32 worldwideDay, uint128 amount) external;
+    function routeProceedsExt(uint32 worldwideDay, uint16 chunkIndex, uint128 amount) external;
 }
 
 /// @title TargetInbound
@@ -404,14 +404,10 @@ library TargetInbound {
             .finalizeAuction(
                 worldwideDay, receiveId, winners, partialIndex, partialWon, clearingRate, basis, completesDay
             );
-        uint128 accrued = progress.proceedsAccrued + totalPaid;
-
-        // One transfer per day, so the day pays one bridge fee.
-        uint128 proceeds = completesDay ? accrued : 0;
-        $.refundProgress[worldwideDay] =
-            RefundProgress({totalChunks: totalChunks, chunksSeen: seen, proceedsAccrued: accrued - proceeds});
-        if (proceeds > 0) {
-            _routeOrParkProceeds($, worldwideDay, proceeds);
+        $.refundProgress[worldwideDay] = RefundProgress({totalChunks: totalChunks, chunksSeen: seen});
+        // Each chunk sends its own payments, so a chunk that never lands holds back no other.
+        if (totalPaid > 0) {
+            _routeOrParkProceeds($, worldwideDay, chunkIndex, totalPaid);
         }
 
         emit ITargetRouter.RefundInstructionsReceived(srcChainId, worldwideDay, winners.length);
@@ -474,17 +470,20 @@ library TargetInbound {
         }
     }
 
-    /// @dev Route proceeds to Outbe. On failure, park series+amount, so a transport/float hiccup never
-    ///      rolls back the finalization (the WCOEN is already held here). Retried via
-    ///      `resendParkedProceeds`.
-    function _routeOrParkProceeds(TargetRouterStorage storage $, uint32 worldwideDay, uint128 amount) private {
+    /// @dev Route a chunk's proceeds to Outbe. On failure, park the chunk and its amount, so a
+    ///      transport/float hiccup never rolls back the finalization (the WCOEN is already held here).
+    ///      Retried via `resendParkedProceeds`.
+    function _routeOrParkProceeds(TargetRouterStorage storage $, uint32 worldwideDay, uint16 chunkIndex, uint128 amount)
+        private
+    {
         // solhint-disable-next-line no-empty-blocks
-        try ITargetRouterShims(address(this)).routeProceedsExt(worldwideDay, amount) {}
+        try ITargetRouterShims(address(this)).routeProceedsExt(worldwideDay, chunkIndex, amount) {}
         catch (bytes memory reason) {
             uint256 idx = $.nextParkedProceedsIdx++;
-            $.parkedProceeds[idx] =
-                ParkedProceeds({worldwideDay: worldwideDay, amount: amount, exists: true, done: false});
-            emit ITargetRouter.ProceedsParked(idx, worldwideDay, amount, reason);
+            $.parkedProceeds[idx] = ParkedProceeds({
+                worldwideDay: worldwideDay, chunkIndex: chunkIndex, amount: amount, exists: true, done: false
+            });
+            emit ITargetRouter.ProceedsParked(idx, worldwideDay, chunkIndex, amount, reason);
         }
     }
 }
