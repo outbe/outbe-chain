@@ -165,7 +165,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         let record = api::get_cca(&s, CCA).unwrap();
         assert_eq!(record.state, ICcaRegistry::State::Bonding);
         assert_eq!(record.name, "Test CCA");
-        assert_eq!(record.bondedAmount, BOND_REQUIREMENT - U256::ONE);
+        assert_eq!(record.bondedMinor, BOND_REQUIREMENT - U256::ONE);
     });
     let bonded = tx(
         &mut db,
@@ -182,7 +182,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     assert_eq!(log.address, CCA_REGISTRY_ADDRESS);
     let event = ICcaRegistry::Bonded::decode_log(log).unwrap().data;
     assert_eq!(event.cca, CCA);
-    assert_eq!(event.amount, U256::ONE);
+    assert_eq!(event.amountMinor, U256::ONE);
     assert_eq!(event.state, ICcaRegistry::State::Active);
     assert_eq!(
         db.cache.accounts[&CCA].info.balance,
@@ -242,7 +242,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     with_storage(&mut db, |s| {
         let record = api::get_cca(&s, CCA).unwrap();
         assert_eq!(record.state as u8, ICcaRegistry::State::Deregistering as u8);
-        assert_eq!(record.bondedAmount, BOND_REQUIREMENT);
+        assert_eq!(record.bondedMinor, BOND_REQUIREMENT);
         assert_eq!(record.unbondUnlocksAfter, NOW + UNBOND_COOLDOWN_SECONDS);
         assert!(!api::is_active(&s, CCA).unwrap());
         assert!(api::credis_issued(&s, CCA, 20231115, U256::ONE).is_err());
@@ -377,7 +377,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
             assert_eq!(gem.item.reference_currency, 840);
             assert_eq!(gem.item.issued_at, claim_time);
             assert_eq!(
-                api::get_cca(&storage, CCA).unwrap().bondedAmount,
+                api::get_cca(&storage, CCA).unwrap().bondedMinor,
                 BOND_REQUIREMENT
             );
         });
@@ -421,7 +421,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     with_storage(&mut db, |s| {
         let record = api::get_cca(&s, CCA).unwrap();
         assert_eq!(record.state as u8, ICcaRegistry::State::Deregistered as u8);
-        assert_eq!(record.bondedAmount, U256::ZERO);
+        assert_eq!(record.bondedMinor, U256::ZERO);
         assert_eq!(record.name, "Test CCA");
         assert_eq!(
             api::reward_weight(&s, CCA, 20231115).unwrap(),
