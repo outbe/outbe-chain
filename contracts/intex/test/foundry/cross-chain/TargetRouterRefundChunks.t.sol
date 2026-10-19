@@ -138,7 +138,7 @@ contract TargetRouterRefundChunksTest is CrossChainTest {
             token.mint(bidders[i], 1e18);
             vm.prank(bidders[i]);
             token.approve(address(escrow), type(uint256).max);
-            escrow.lockFunds(DAY, bidders[i], 1e18, 1_000_000, 1);
+            escrow.lockFunds(DAY, bidders[i], 1e6, 1_000_000, 1);
         }
 
         _deliverChunkFor(bidders[0], 0, 2);

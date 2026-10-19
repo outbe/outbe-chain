@@ -7,9 +7,7 @@ use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, SECONDS_PER_DAY};
-use outbe_primitives::units::{
-    NATIVE_UNITS_PER_PROTOCOL_UNIT, PROTOCOL_AMOUNT_DECIMALS, SCALE_1E6_U64,
-};
+use outbe_primitives::units::{PROTOCOL_AMOUNT_DECIMALS, SCALE_1E6_U64};
 use outbe_promislimit::PromisLimitContract;
 
 use outbe_intexfactory::schema::IssuanceParams;

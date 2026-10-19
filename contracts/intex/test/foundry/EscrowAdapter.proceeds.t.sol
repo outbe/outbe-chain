@@ -42,7 +42,7 @@ contract EscrowAdapterProceedsTest is Test {
         // of it.
         paymentToken.mint(bidder1, 1e18);
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, 1e18, 1_000_000, 1);
+        escrow.lockFunds(worldwideDay1, bidder1, 1e6, 1_000_000, 1);
 
         address[] memory winners = new address[](1);
         winners[0] = bidder1;

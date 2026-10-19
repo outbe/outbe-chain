@@ -7,6 +7,7 @@ import {IERC6909} from "@openzeppelin/contracts/interfaces/IERC6909.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
+import {MockERC20} from "@test-mocks/MockERC20.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
 /// @dev Runs against the canonical Compact, set up from the genesis predeploy code. Its lock id
@@ -16,7 +17,9 @@ contract EscrowAdapterAssetVersionTest is Test {
     address internal constant COMPACT_2 = address(0xC0DE2);
     uint32 internal constant DAY_1 = 20260501;
     uint32 internal constant DAY_2 = 20260502;
-    uint128 internal constant LOCK = 1000e18;
+    uint128 internal constant LOCK_UNITS = 1000e6;
+    // MockWCOEN has 18 decimals: 1e12 token units per protocol unit.
+    uint128 internal constant LOCK = LOCK_UNITS * 1e12;
 
     EscrowAdapter internal escrow;
     MockWCOEN internal tokenA;
@@ -43,7 +46,7 @@ contract EscrowAdapterAssetVersionTest is Test {
         deal(address(token), who, LOCK);
         vm.prank(who);
         token.approve(address(escrow), type(uint256).max);
-        escrow.lockFunds(day, who, LOCK, 1_000_000, 1);
+        escrow.lockFunds(day, who, LOCK_UNITS, 1_000_000, 1);
     }
 
     function _positionOf(address compactAt, uint256 lockId) internal view returns (uint256) {
@@ -109,6 +112,18 @@ contract EscrowAdapterAssetVersionTest is Test {
         assertEq(tokenB.balanceOf(proceeds), 0, "not in the rotated token");
     }
 
+    function test_ADayLockedBeforeARotationPaysAtItsOwnScale() public {
+        _lock(DAY_1, bob, tokenA);
+        escrow.wire(admin, COMPACT, address(new MockERC20("Token", "TKN", 6)));
+        vm.warp(block.timestamp + 5 minutes);
+
+        address[] memory winners = new address[](1);
+        winners[0] = bob;
+        escrow.finalizeAuction(DAY_1, bytes32(uint256(1)), winners, 0, 0, 500_000, 1000e6, true);
+
+        assertEq(tokenA.balanceOf(proceeds), LOCK / 2, "paid at the day's 18-decimal scale");
+    }
+
     function test_ADayAfterARotationLocksUnderTheNewAsset() public {
         _lock(DAY_1, alice, tokenA);
         uint256 lockIdA = escrow.lockId();
@@ -132,14 +147,14 @@ contract EscrowAdapterAssetVersionTest is Test {
         vm.prank(bob);
         tokenB.approve(address(escrow), type(uint256).max);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.DayAssetRetired.selector, DAY_1, uint8(0)));
-        escrow.lockFunds(DAY_1, bob, LOCK, 1_000_000, 1);
+        escrow.lockFunds(DAY_1, bob, LOCK_UNITS, 1_000_000, 1);
     }
 
     function test_ACommitBondTakenBeforeARotationIsReleasedInItsOwnAsset() public {
         deal(address(tokenA), alice, LOCK);
         vm.prank(alice);
         tokenA.approve(address(escrow), type(uint256).max);
-        escrow.lockCommitBond(DAY_1, alice, LOCK);
+        escrow.lockCommitBond(DAY_1, alice, LOCK_UNITS);
         assertEq(escrow.getCommitBond(DAY_1, alice).assetVersion, 0, "bond remembers its asset");
 
         escrow.wire(admin, COMPACT, address(tokenB));

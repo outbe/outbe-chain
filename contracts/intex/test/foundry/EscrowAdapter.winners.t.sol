@@ -4,7 +4,6 @@ pragma solidity 0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
-import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
@@ -12,6 +11,13 @@ import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 /// @dev A refund chunk names a day's winners and its clearing terms. The escrow computes each
 ///      payment itself.
 contract EscrowAdapterWinnersTest is Test {
+    /// @dev The escrow's lock for `q` Intexes at rate `r` of the protocol basis `b`.
+    function _protocol(uint256 q, uint256 b, uint256 r) internal pure returns (uint256) {
+        return q * b * r / 1e6;
+    }
+
+    // MockWCOEN has 18 decimals: 1e12 token units per protocol unit.
+    uint256 internal constant WCOEN_SCALE = 1e12;
     EscrowAdapter internal escrow;
     MockTheCompact internal compact;
     MockWCOEN internal token;
@@ -46,16 +52,16 @@ contract EscrowAdapterWinnersTest is Test {
     }
 
     function _lock(address who, uint32 bidRate, uint16 quantity) internal returns (uint128 amount) {
-        amount = uint128(BridgeMsgCodec.escrowAmount(quantity, BASIS, bidRate));
+        amount = uint128(_protocol(quantity, BASIS, bidRate) * WCOEN_SCALE);
         token.mint(who, amount);
         vm.prank(who);
         token.approve(address(escrow), type(uint256).max);
         vm.prank(auction);
-        escrow.lockFunds(DAY, who, amount, bidRate, quantity);
+        escrow.lockFunds(DAY, who, BASIS, bidRate, quantity);
     }
 
     function _paid(uint16 quantity) internal pure returns (uint128) {
-        return uint128(BridgeMsgCodec.escrowAmount(quantity, BASIS, CLEARING_RATE));
+        return uint128(_protocol(quantity, BASIS, CLEARING_RATE) * WCOEN_SCALE);
     }
 
     function _list(address a, address b) internal pure returns (address[] memory winners) {
@@ -343,12 +349,27 @@ contract EscrowAdapterWinnersTest is Test {
     }
 
     /// @dev The same vectors pin the clearing side's `rate_lock`.
-    function test_TheFormulaMatchesTheClearingSide() public pure {
-        assertEq(BridgeMsgCodec.escrowAmount(1, 1, 999_999), 0);
-        assertEq(BridgeMsgCodec.escrowAmount(3, 333_333, 1), 0);
-        assertEq(BridgeMsgCodec.escrowAmount(7, 123_456_789, 987_654), 853_528_140e12);
-        assertEq(BridgeMsgCodec.escrowAmount(2, 1_500_001, 333_333), 999_999e12);
-        assertEq(BridgeMsgCodec.escrowAmount(40, 99_999_999, 600_001), 2_400_003_975e12);
-        assertEq(BridgeMsgCodec.escrowAmount(65_535, 100_000e6, 1_000_000), 6_553_500_000_000_000e12);
+    function test_TheLockMatchesTheClearingSide() public {
+        uint256[4][6] memory vectors = [
+            [uint256(1), 1, 999_999, 0],
+            [uint256(3), 333_333, 1, 0],
+            [uint256(7), 123_456_789, 987_654, 853_528_140],
+            [uint256(2), 1_500_001, 333_333, 999_999],
+            [uint256(40), 99_999_999, 600_001, 2_400_003_975],
+            [uint256(65_535), 100_000e6, 1_000_000, 6_553_500_000_000_000]
+        ];
+        for (uint256 i = 0; i < vectors.length; ++i) {
+            (uint16 quantity, uint128 basis, uint32 rate) =
+                (uint16(vectors[i][0]), uint128(vectors[i][1]), uint32(vectors[i][2]));
+            address who = address(uint160(0xF00 + i));
+            uint256 expected = vectors[i][3] * WCOEN_SCALE;
+            token.mint(who, expected);
+            vm.prank(who);
+            token.approve(address(escrow), type(uint256).max);
+            vm.prank(auction);
+            if (expected == 0) vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroValue.selector, "amount"));
+            escrow.lockFunds(DAY, who, basis, rate, quantity);
+            if (expected != 0) assertEq(escrow.getBidLock(DAY, who).lockedAmount, expected);
+        }
     }
 }

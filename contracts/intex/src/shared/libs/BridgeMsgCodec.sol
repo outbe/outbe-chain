@@ -57,20 +57,6 @@ library BridgeMsgCodec {
     /// @notice Decimals of protocol amounts and COEN/ISO prices.
     uint8 internal constant PROTOCOL_DECIMALS = 6;
 
-    /// @notice Decimals of native COEN and wCOEN.
-    uint8 internal constant NATIVE_DECIMALS = 18;
-
-    /// @notice 18-decimal wCOEN units in one six-decimal protocol unit.
-    uint256 internal constant NATIVE_UNITS_PER_PROTOCOL_UNIT = 10 ** (NATIVE_DECIMALS - PROTOCOL_DECIMALS);
-
-    /// @notice `quantity` Intexes at `rate` of the six-decimal `basis`, in 18-decimal payment
-    ///         units: the lock a bid takes and the payment a winner makes. Mirrors the clearing
-    ///         side's `rate_lock` bit for bit. The six-decimal product is floored before it is
-    ///         scaled.
-    function escrowAmount(uint256 quantity, uint256 basis, uint256 rate) internal pure returns (uint256) {
-        return quantity * basis * rate / SCALE_1E6 * NATIVE_UNITS_PER_PROTOCOL_UNIT;
-    }
-
     // --- Minimum encoded lengths ---
     // Header is fixed at 2 bytes: [bodyVersion(1)][msgType(1)].
     uint16 internal constant HEADER_LEN = 2;

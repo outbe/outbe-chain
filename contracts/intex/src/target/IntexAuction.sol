@@ -304,7 +304,7 @@ contract IntexAuction is
         emit BidCommitted(worldwideDay, msg.sender, commitHash);
 
         // Interactions: take the entry bond. CEI: the commit state is already recorded, and a
-        // lock revert reverts the whole tx. Requires prior WCOEN approval on the escrow.
+        // lock revert reverts the whole tx. Requires prior payment-token approval on the escrow.
         uint128 bond = a.params.commitBondMinor;
         if (bond > 0) {
             $.escrowContract.lockCommitBond(worldwideDay, msg.sender, bond);
@@ -367,12 +367,6 @@ contract IntexAuction is
         if (issuanceCurrency == 0 || issuanceCurrency > 999) revert InvalidIssuanceCurrency(issuanceCurrency);
         _requirePriced(a.params.prices, worldwideDay, referenceCurrency);
 
-        // Escrow basis and bid rate stay at six decimals. Convert their six-decimal
-        // result exactly once into 18-decimal WCOEN before locking funds.
-        // 256-bit math so an over-range product reverts typed, not via Panic(0x11).
-        uint256 lockAmount = BridgeMsgCodec.escrowAmount(quantity, a.params.promisLoadMinor, bidRate);
-        if (lockAmount > type(uint128).max) revert BidAmountOverflow(quantity, bidRate);
-
         // Verify the signature against the stored commit hash.
         _verifyRevealSignature(
             worldwideDay, quantity, bidRate, issuanceCurrency, referenceCurrency, signature, committedHash
@@ -404,9 +398,7 @@ contract IntexAuction is
         if (a.params.commitBondMinor > 0) {
             $.escrowContract.releaseCommitBond(worldwideDay, msg.sender);
         }
-        // A winner's payment is computed with the same formula, so it never exceeds this lock.
-        // forge-lint: disable-next-line(unsafe-typecast) -- bounded by the type(uint128).max check above
-        $.escrowContract.lockFunds(worldwideDay, msg.sender, uint128(lockAmount), bidRate, quantity);
+        $.escrowContract.lockFunds(worldwideDay, msg.sender, a.params.promisLoadMinor, bidRate, quantity);
     }
 
     /// @inheritdoc IIntexAuction

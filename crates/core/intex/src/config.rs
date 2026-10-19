@@ -6,7 +6,7 @@
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::SECONDS_PER_DAY_U32;
-use outbe_primitives::units::SCALE_1E18_U128;
+use outbe_primitives::units::SCALE_1E6_U128;
 
 use crate::constants::{
     CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW, COMMIT_BOND_MINOR,
@@ -24,7 +24,7 @@ pub struct IntexParams {
     pub call_threshold_seconds: u32,
     pub call_notice_period_seconds: u32,
     pub call_rate: u16,
-    /// Commit-entry bond on the target-chain auction in 18-decimal WCOEN units.
+    /// Commit-entry bond on the target-chain auction in protocol units.
     pub commit_bond_minor: u128,
 }
 
@@ -49,7 +49,7 @@ impl IntexParams {
         #[cfg(feature = "e2e-test")]
         call_notice_period_seconds: 600,
         call_rate: 10,
-        commit_bond_minor: 100 * SCALE_1E18_U128,
+        commit_bond_minor: 100 * SCALE_1E6_U128,
     };
 
     pub fn from_selector(selector: u8, chain_id: u64) -> Result<Self> {

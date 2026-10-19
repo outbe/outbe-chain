@@ -57,9 +57,6 @@ contract EscrowAdapter is
     ///         MUST exceed `UNFINALIZED_REFUND_DELAY`.
     uint32 public constant REFUND_ABANDON_DELAY = 30 days;
 
-    /// @notice Decimals every payment token must report.
-    uint8 public constant PAYMENT_TOKEN_DECIMALS = BridgeMsgCodec.NATIVE_DECIMALS;
-
     /// @custom:storage-location erc7201:outbe.intex.EscrowAdapter
     struct EscrowAdapterStorage {
         /// @dev IntexAuction contract address.
@@ -90,6 +87,8 @@ contract EscrowAdapter is
         mapping(uint32 worldwideDay => DayClearing) dayClearing;
         /// @dev Wins the auction has not closed yet, across all days. A win may hold no money.
         uint256 openWins;
+        /// @dev Payment-token units in one protocol unit for the active asset.
+        uint256 paymentScale;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.EscrowAdapter")) - 1)) & ~bytes32(uint256(0xff))
@@ -183,7 +182,7 @@ contract EscrowAdapter is
         if (_paymentToken == address(0)) revert ZeroAddress("paymentToken");
 
         uint8 tokenDecimals = IERC20Metadata(_paymentToken).decimals();
-        if (tokenDecimals != PAYMENT_TOKEN_DECIMALS) revert PaymentTokenDecimals(tokenDecimals);
+        if (tokenDecimals < BridgeMsgCodec.PROTOCOL_DECIMALS) revert PaymentTokenDecimals(tokenDecimals);
 
         EscrowAdapterStorage storage $ = _s();
 
@@ -194,8 +193,12 @@ contract EscrowAdapter is
         bool rotatingCompact = address($.compact) != address(0) && _compact != address($.compact);
         if (rotatingPaymentToken || rotatingCompact) {
             uint8 retired = $.currentAssetVersion;
-            $.assetVersions[retired] =
-                AssetVersion({compact: address($.compact), paymentToken: $.paymentToken, lockId: $.lockId});
+            $.assetVersions[retired] = AssetVersion({
+                compact: address($.compact),
+                paymentToken: $.paymentToken,
+                lockId: $.lockId,
+                paymentScale: $.paymentScale
+            });
             $.currentAssetVersion = retired + 1;
             emit AssetRetired(retired, address($.compact), address($.paymentToken), $.lockId);
             $.lockId = 0;
@@ -221,6 +224,7 @@ contract EscrowAdapter is
         $.intexAuctionContract = _intexAuction;
         $.compact = ITheCompact(_compact);
         $.paymentToken = IERC20(_paymentToken);
+        $.paymentScale = 10 ** (tokenDecimals - BridgeMsgCodec.PROTOCOL_DECIMALS);
 
         _grantRole(AUCTION_ROLE, _intexAuction);
         $.paymentToken.forceApprove(_compact, 0);
@@ -277,15 +281,16 @@ contract EscrowAdapter is
 
     // --- Auction Integration ---
     /// @inheritdoc IEscrowAdapter
-    function lockFunds(uint32 worldwideDay, address bidder, uint128 amount, uint32 bidRate, uint16 quantity)
+    function lockFunds(uint32 worldwideDay, address bidder, uint128 basis, uint32 bidRate, uint16 quantity)
         external
         override
         onlyRole(AUCTION_ROLE)
         nonReentrant
     {
-        _validateLockInputs(worldwideDay, bidder, amount);
         if (bidRate == 0) revert ZeroValue("bidRate");
         if (quantity == 0) revert ZeroValue("quantity");
+        uint128 amount = _toPayment(_protocolAmount(quantity, basis, bidRate), _s().currentAssetVersion);
+        _validateLockInputs(worldwideDay, bidder, amount);
         _executeLock(worldwideDay, bidder, amount, bidRate, quantity);
     }
 
@@ -304,6 +309,7 @@ contract EscrowAdapter is
         if (amount == 0) revert ZeroValue("amount");
         EscrowAdapterStorage storage $ = _s();
         if ($.commitBonds[worldwideDay][bidder].amount != 0) revert CommitBondAlreadyLocked();
+        amount = _toPayment(amount, $.currentAssetVersion);
 
         // CEI deviation mirrors `_executeLock`: the one-time lockId bootstrap inside
         // `_depositToCompact` needs depositERC20's return. nonReentrant covers the deviation.
@@ -399,7 +405,7 @@ contract EscrowAdapter is
                 quantity = partialWon;
             }
             uint128 locked = lock.lockedAmount;
-            uint256 paid = BridgeMsgCodec.escrowAmount(quantity, basis, clearingRate);
+            uint256 paid = _protocolAmount(quantity, basis, clearingRate) * _scaleOf(state.assetVersion);
             if (paid > locked) {
                 emit BidderRefundFailed(
                     receiveId, worldwideDay, bidder, abi.encodeWithSelector(PaymentExceedsLock.selector, locked, paid)
@@ -603,7 +609,12 @@ contract EscrowAdapter is
     function getAssetVersion(uint8 version) external view override returns (AssetVersion memory) {
         EscrowAdapterStorage storage $ = _s();
         if (version == $.currentAssetVersion) {
-            return AssetVersion({compact: address($.compact), paymentToken: $.paymentToken, lockId: $.lockId});
+            return AssetVersion({
+                compact: address($.compact),
+                paymentToken: $.paymentToken,
+                lockId: $.lockId,
+                paymentScale: $.paymentScale
+            });
         }
         return $.assetVersions[version];
     }
@@ -705,6 +716,26 @@ contract EscrowAdapter is
     function _tokenOf(uint8 version) internal view returns (IERC20) {
         EscrowAdapterStorage storage $ = _s();
         return version == $.currentAssetVersion ? $.paymentToken : $.assetVersions[version].paymentToken;
+    }
+
+    /// @dev Payment-token units in one protocol unit for the asset `version` refers to.
+    function _scaleOf(uint8 version) internal view returns (uint256) {
+        EscrowAdapterStorage storage $ = _s();
+        return version == $.currentAssetVersion ? $.paymentScale : $.assetVersions[version].paymentScale;
+    }
+
+    /// @dev `quantity` Intexes at `rate` of the protocol `basis`: the lock a bid takes and the
+    ///      payment a winner makes. Floored at six decimals, like the clearing side's `rate_lock`.
+    function _protocolAmount(uint256 quantity, uint256 basis, uint256 rate) private pure returns (uint256) {
+        return quantity * basis * rate / BridgeMsgCodec.SCALE_1E6;
+    }
+
+    /// @dev A protocol `amount` in units of the asset `version` refers to.
+    function _toPayment(uint256 amount, uint8 version) internal view returns (uint128) {
+        uint256 scaled = amount * _scaleOf(version);
+        if (scaled > type(uint128).max) revert PaymentAmountOverflow(scaled);
+        // forge-lint: disable-next-line(unsafe-typecast) -- bounded just above
+        return uint128(scaled);
     }
 
     /// @dev Build the lock tag for The Compact deposits.

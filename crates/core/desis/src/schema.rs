@@ -68,7 +68,7 @@ pub struct AuctionConfig {
     /// Minimum bid quantity in Intex units. The floor rescales 4% of the prior issued count
     /// by the prior PROMIS load divided by today's load.
     pub min_intex_bid_quantity: u16,
-    /// Commit-entry bond in 18-decimal WCOEN units. A value of 0 disables the bond.
+    /// Commit-entry bond in protocol units. A value of 0 disables the bond.
     pub commit_bond_minor: u128,
     /// One row per reference currency the oracle could price for this day.
     pub reference_prices: Vec<ReferenceCurrencyPrice>,
@@ -207,7 +207,7 @@ pub struct DesisContract {
     #[attribute(order = 15)]
     pub config_call_notice_period_seconds: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
 
-    /// worldwide_day -> commit-entry bond (payment-token minor units).
+    /// worldwide_day -> commit-entry bond (protocol units).
     #[attribute(order = 16)]
     pub config_commit_bond_minor: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
 

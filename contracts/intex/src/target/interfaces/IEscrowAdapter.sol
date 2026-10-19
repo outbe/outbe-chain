@@ -86,6 +86,8 @@ interface IEscrowAdapter {
         IERC20 paymentToken;
         /// @notice The Compact resource lock id of the position.
         uint256 lockId;
+        /// @notice Payment-token units in one protocol unit, fixed when the token was wired.
+        uint256 paymentScale;
     }
 
     // --- Events ---
@@ -192,9 +194,12 @@ interface IEscrowAdapter {
     /// @notice Zero value provided where non-zero is required.
     /// @param f Field name.
     error ZeroValue(string f);
-    /// @notice Payment token does not report 18 decimals.
+    /// @notice Payment token reports fewer decimals than the protocol amounts carry.
     /// @param actual Decimals the token reports.
     error PaymentTokenDecimals(uint8 actual);
+    /// @notice A protocol amount does not fit `uint128` once scaled to the payment token.
+    /// @param amount The scaled amount.
+    error PaymentAmountOverflow(uint256 amount);
     /// @notice Bidder already has locked funds for this series.
     error BidAlreadyLocked();
     /// @notice Lock is not in the active state required for this operation.
@@ -265,20 +270,21 @@ interface IEscrowAdapter {
     // --- Auction Integration ---
 
     /// @notice Lock funds for a bid during the reveal stage. Callable only by the IntexAuction contract.
-    /// @dev The bidder must approve this contract to spend `paymentToken` beforehand.
+    /// @dev The bidder must approve this contract to spend `paymentToken` beforehand. The escrow
+    ///      locks `quantity * basis * bidRate / 1e6`, scaled to the active payment token.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder address.
-    /// @param amount Amount to lock (`intexQuantity * intexBidPrice`).
-    /// @param bidRate Bid rate the amount was computed at.
+    /// @param basis Per-Intex escrow basis: the day's PROMIS load, in protocol units.
+    /// @param bidRate Bid rate (1e6 fixed-point).
     /// @param quantity Intex units the bid asked for.
-    function lockFunds(uint32 worldwideDay, address bidder, uint128 amount, uint32 bidRate, uint16 quantity) external;
+    function lockFunds(uint32 worldwideDay, address bidder, uint128 basis, uint32 bidRate, uint16 quantity) external;
 
     /// @notice Lock the commit-entry bond at `commitBid`. Callable only by the IntexAuction contract.
     /// @dev The bidder must approve this contract to spend `paymentToken` beforehand. The Compact
     ///      holds the bond under the same lock id as bid escrow.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder address the bond is taken from (and later returned to).
-    /// @param amount Bond amount (the series' `commitBondMinor`).
+    /// @param amount Protocol bond amount (the day's `commitBondMinor`), scaled to the active payment token.
     function lockCommitBond(uint32 worldwideDay, address bidder, uint128 amount) external;
 
     /// @notice Return a live commit bond to its owner. Callable only by the IntexAuction contract
@@ -412,6 +418,6 @@ interface IEscrowAdapter {
 
     /// @notice The asset a version refers to. The active version reads the live wiring.
     /// @param version Asset version.
-    /// @return asset The Compact, payment token and lock id of that version.
+    /// @return asset The Compact, payment token, lock id and payment scale of that version.
     function getAssetVersion(uint8 version) external view returns (AssetVersion memory asset);
 }

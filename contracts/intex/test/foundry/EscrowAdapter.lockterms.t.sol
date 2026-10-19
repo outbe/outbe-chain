@@ -21,7 +21,9 @@ contract EscrowAdapterLockTermsTest is Test {
     address internal bidder = address(5);
 
     uint32 internal constant DAY = 1;
-    uint128 internal constant LOCK = 1000e18;
+    uint128 internal constant BASIS = 1000e6;
+    // 30 Intexes at 80% of the basis; MockWCOEN has 18 decimals, 1e12 token units per protocol unit.
+    uint128 internal constant LOCK = uint128(uint256(30) * BASIS * 800_000 / 1e6) * 1e12;
 
     function setUp() public {
         escrow = DeployProxy.escrowAdapter(admin, relayer);
@@ -38,7 +40,7 @@ contract EscrowAdapterLockTermsTest is Test {
 
     function test_TheLockKeepsTheBidRateAndQuantity() public {
         vm.prank(auction);
-        escrow.lockFunds(DAY, bidder, LOCK, 800_000, 30);
+        escrow.lockFunds(DAY, bidder, BASIS, 800_000, 30);
 
         IEscrowAdapter.BidLock memory lock = escrow.getBidLock(DAY, bidder);
         assertEq(lock.bidRate, 800_000, "bid rate");
@@ -50,7 +52,7 @@ contract EscrowAdapterLockTermsTest is Test {
     ///      storage write.
     function test_TheWholeLockFitsOneWord() public {
         vm.prank(auction);
-        escrow.lockFunds(DAY, bidder, LOCK, 800_000, 30);
+        escrow.lockFunds(DAY, bidder, BASIS, 800_000, 30);
 
         bytes32 dayMap = keccak256(abi.encode(uint256(DAY), uint256(STORAGE_SLOT) + 5));
         uint256 word = uint256(vm.load(address(escrow), keccak256(abi.encode(bidder, dayMap))));
@@ -66,12 +68,12 @@ contract EscrowAdapterLockTermsTest is Test {
     function test_AZeroBidRateIsRejected() public {
         vm.prank(auction);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroValue.selector, "bidRate"));
-        escrow.lockFunds(DAY, bidder, LOCK, 0, 30);
+        escrow.lockFunds(DAY, bidder, BASIS, 0, 30);
     }
 
     function test_AZeroQuantityIsRejected() public {
         vm.prank(auction);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroValue.selector, "quantity"));
-        escrow.lockFunds(DAY, bidder, LOCK, 800_000, 0);
+        escrow.lockFunds(DAY, bidder, BASIS, 800_000, 0);
     }
 }

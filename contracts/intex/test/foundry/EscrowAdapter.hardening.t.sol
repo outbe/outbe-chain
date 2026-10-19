@@ -97,11 +97,12 @@ contract EscrowAdapterHardeningTest is Test {
     }
 
     function test_Boundary_LockFunds_AcceptsUint64Max() public {
-        uint128 max = type(uint128).max;
+        uint128 units = type(uint128).max / 1e12;
+        uint128 max = units * 1e12;
         _fund(bidderA, max);
 
         vm.prank(auction);
-        escrow.lockFunds(SERIES, bidderA, max, 1_000_000, 1);
+        escrow.lockFunds(SERIES, bidderA, units, 1_000_000, 1);
 
         (,, uint128 totalLocked) = escrow.getAuctionStatus(SERIES);
         assertEq(totalLocked, max, "totalLocked");
@@ -109,13 +110,22 @@ contract EscrowAdapterHardeningTest is Test {
         assertEq(compact.balanceOf(address(escrow), escrow.lockId()), max, "pooled balance");
     }
 
-    function test_Boundary_TotalLockedOverflow_Reverts() public {
-        uint128 max = type(uint128).max;
-        _fund(bidderA, max);
-        _fund(bidderB, 1);
+    function test_Boundary_LockFunds_RejectsAnAmountPastUint128OnceScaled() public {
+        uint128 units = type(uint128).max / 1e12 + 1;
 
         vm.prank(auction);
-        escrow.lockFunds(SERIES, bidderA, max, 1_000_000, 1);
+        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.PaymentAmountOverflow.selector, uint256(units) * 1e12));
+        escrow.lockFunds(SERIES, bidderA, units, 1_000_000, 1);
+    }
+
+    function test_Boundary_TotalLockedOverflow_Reverts() public {
+        uint128 units = type(uint128).max / 1e12;
+        uint128 max = units * 1e12;
+        _fund(bidderA, max);
+        _fund(bidderB, 1e12);
+
+        vm.prank(auction);
+        escrow.lockFunds(SERIES, bidderA, units, 1_000_000, 1);
 
         vm.prank(auction);
         vm.expectRevert(abi.encodeWithSignature("Panic(uint256)", 0x11));
@@ -135,7 +145,7 @@ contract EscrowAdapterHardeningTest is Test {
         feeEscrow.wire(auction, address(feeCompact), address(feeToken));
         feeCompact.setResetPeriodSeconds(0);
 
-        feeToken.mint(bidderA, 1_000e6);
+        feeToken.mint(bidderA, 1_000e18);
         vm.prank(bidderA);
         feeToken.approve(address(feeEscrow), type(uint256).max);
 
