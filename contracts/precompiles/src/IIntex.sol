@@ -70,9 +70,7 @@ interface IIntex {
 
     /// @notice The call group was force-called. Each of its series settles until
     ///         `settlementDeadline`, inclusive.
-    event IntexGroupCalled(
-        bytes32 indexed groupKey, bytes14[] seriesIds, uint32 calledAt, uint64 settlementDeadline
-    );
+    event IntexGroupCalled(bytes32 indexed groupKey, bytes14[] seriesIds, uint32 calledAt, uint64 settlementDeadline);
 
     /// @notice The group's settlement window closed. Both are zero when every unit
     ///         was realized in time.
