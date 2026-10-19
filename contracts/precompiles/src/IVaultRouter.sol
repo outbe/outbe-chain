@@ -18,7 +18,7 @@ interface IVaultRouter {
 
     struct LiquidityReservation {
         address asset;
-        /// @dev In `asset`'s own minor units, like every `...Minor` asset amount below.
+        /// @dev In `asset`'s own minor units.
         uint256 amountMinor;
         address credisOwner;
         address cca;
