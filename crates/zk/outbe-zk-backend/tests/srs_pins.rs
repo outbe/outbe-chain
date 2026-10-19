@@ -84,6 +84,10 @@ fn pin_row(label: &str, n: u32) -> String {
     format!("    // {label}\n    ({n}, [{}]),", body.join(", "))
 }
 
+/// Use this command:
+/// ```sh
+/// cargo test -p outbe-zk-backend --test srs_pins print_srs_pins -- --ignored --nocapture
+/// ```
 #[test]
 #[ignore = "regen helper: needs valid local CRS + libbb; run with --ignored --nocapture"]
 fn print_srs_pins() {
