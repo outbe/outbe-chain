@@ -114,8 +114,8 @@ pub struct WwdProjection {
     pub offering_end: u64,
     pub scheduled_process_time: u64,
     pub metadosis_limit_minor: U256,
-    pub previous_vwap: U256,
-    pub current_vwap: U256,
+    pub previous_vwap_minor: U256,
+    pub current_vwap_minor: U256,
 }
 
 impl WwdProjection {
@@ -139,8 +139,8 @@ impl WwdProjection {
             offering_end: record.offering_end,
             scheduled_process_time: record.scheduled_process_time,
             metadosis_limit_minor: record.metadosis_limit_minor,
-            previous_vwap: record.previous_vwap,
-            current_vwap: record.current_vwap,
+            previous_vwap_minor: record.previous_vwap_minor,
+            current_vwap_minor: record.current_vwap_minor,
         }
     }
 }

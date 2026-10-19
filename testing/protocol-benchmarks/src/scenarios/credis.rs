@@ -174,7 +174,7 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<U256, String> {
         .create(&LiquidityReservation {
             id: reservation_id,
             asset: ASSET,
-            amount: pledge_stables(),
+            amount_minor: pledge_stables(),
             credis_owner: ALICE,
             cca: CCA,
             vault: Address::repeat_byte(0x77),

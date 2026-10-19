@@ -18,7 +18,8 @@ interface IVaultRouter {
 
     struct LiquidityReservation {
         address asset;
-        uint256 amount;
+        /// @dev In `asset`'s own minor units.
+        uint256 amountMinor;
         address credisOwner;
         address cca;
         address vault;
@@ -49,13 +50,13 @@ interface IVaultRouter {
     error SameVaultRebalance();
     error InvalidRebalanceAmount();
     error RebalanceVaultNotRegistered(address vault);
-    error RebalanceInputExceedsMax(uint256 required, uint256 maxAmountTo);
+    error RebalanceInputExceedsMax(uint256 requiredMinor, uint256 maxAssetsToMinor);
     error UnsupportedAssetDecimals(uint8 decimals);
     error ReservationExists(uint256 id);
     error ReservationNotFound(uint256 id);
     error ReservationExpired(uint256 id);
     error CredisOwnerMismatch();
-    error ReservationInsufficient(uint256 available, uint256 required);
+    error ReservationInsufficient(uint256 availableMinor, uint256 requiredMinor);
     error InvalidReservationAmount();
 
     event VaultAdded(uint16 indexed isoCode, address indexed asset, address indexed vault);
@@ -66,18 +67,14 @@ interface IVaultRouter {
     event LiquidityTargetRemoved(address indexed targetAddress, StablesTarget targetType);
 
     event LiquidityDeposited(
-        address indexed source,
-        address indexed vault,
-        uint256 assetsAmount,
-        uint256 sharesAmount,
-        StablesSource sourceType
+        address indexed source, address indexed vault, uint256 assetsMinor, uint256 shares, StablesSource sourceType
     );
 
     event LiquidityWithdrawn(
         address indexed target,
         address indexed receiver,
         address indexed vault,
-        uint256 assetsAmount,
+        uint256 assetsMinor,
         uint256 burnedShares,
         StablesTarget targetType
     );
@@ -86,9 +83,9 @@ interface IVaultRouter {
         address indexed cca,
         address indexed vaultFrom,
         address indexed vaultTo,
-        uint256 assetsWithdrawn,
+        uint256 assetsWithdrawnMinor,
         uint256 burnedShares,
-        uint256 assetsDeposited,
+        uint256 assetsDepositedMinor,
         uint256 mintedShares
     );
 
@@ -98,12 +95,12 @@ interface IVaultRouter {
         address indexed cca,
         address asset,
         address vault,
-        uint256 amount,
+        uint256 amountMinor,
         uint64 expiresAt
     );
-    event ReservationReleased(uint256 indexed id, address indexed asset, address indexed receiver, uint256 amount);
+    event ReservationReleased(uint256 indexed id, address indexed asset, address indexed receiver, uint256 amountMinor);
     event ReservationReturned(
-        uint256 indexed id, address indexed asset, address indexed vault, uint256 amount, uint256 mintedShares
+        uint256 indexed id, address indexed asset, address indexed vault, uint256 amountMinor, uint256 mintedShares
     );
 
     /// @notice Returns the number of assets.
@@ -167,13 +164,13 @@ interface IVaultRouter {
     /// @notice Deregisters a previously registered liquidity target. Reverts if not found.
     function removeLiquidityTarget(address targetAddress) external;
 
-    /// @notice Deposits `assetsAmount` of `asset` into the asset's vault on behalf of the
+    /// @notice Deposits `assetsMinor` of `asset` into the asset's vault on behalf of the
     ///         caller. The caller (`msg.sender`) must be a registered liquidity source.
-    function deposit(address asset, uint256 assetsAmount) external returns (uint256 sharesAmount);
+    function deposit(address asset, uint256 assetsMinor) external returns (uint256 shares);
 
-    /// @notice Redeems `amount` of `asset` from the vault and tops it up into `receiver`.
+    /// @notice Redeems `amountMinor` of `asset` from the vault and tops it up into `receiver`.
     ///         The caller (`msg.sender`) must be a registered liquidity target.
-    function withdraw(address asset, uint256 amount, address receiver) external returns (uint256 burnedShares);
+    function withdraw(address asset, uint256 amountMinor, address receiver) external returns (uint256 burnedShares);
 
     // TODO remove after implementation governance
     /// @notice Returns the current owner (admin) of the vault router.
@@ -182,28 +179,28 @@ interface IVaultRouter {
     /// @notice Returns vault shares currently held by this provider.
     function sharesBalance(address vault) external view returns (uint256);
 
-    /// @notice Moves `assetsAmount` of liquidity from `vaultFrom` to `vaultTo`. The caller
+    /// @notice Moves `assetsMinor` of liquidity from `vaultFrom` to `vaultTo`. The caller
     ///         supplies the destination asset at the oracle cross rate and receives the source
     ///         asset in exchange. The caller must have approved this router for at least the
-    ///         required amount. `maxAmountTo` bounds what the router may pull if the rate
+    ///         required amount. `maxAssetsToMinor` bounds what the router may pull if the rate
     ///         moved since the caller quoted it. Caller must be an active CCA.
-    function rebalance(address vaultFrom, address vaultTo, uint256 assetsAmount, uint256 maxAmountTo)
+    function rebalance(address vaultFrom, address vaultTo, uint256 assetsMinor, uint256 maxAssetsToMinor)
         external
-        returns (uint256 amountTo);
+        returns (uint256 assetsToMinor);
 
-    /// @notice What a {rebalance} of `assetsAmount` would require the caller to supply, so it
+    /// @notice What a {rebalance} of `assetsMinor` would require the caller to supply, so it
     ///         can approve exactly that before calling.
-    function previewRebalance(address vaultFrom, address vaultTo, uint256 assetsAmount)
+    function previewRebalance(address vaultFrom, address vaultTo, uint256 assetsMinor)
         external
         view
-        returns (address assetFrom, address assetTo, uint256 amountTo);
+        returns (address assetFrom, address assetTo, uint256 assetsToMinor);
 
     /// @notice Whether the asset's reserve vault can currently fund a withdrawal of
-    ///         `amount` of `asset`. `withdraw` and `reserveStables` enforce the same
+    ///         `amountMinor` of `asset`. `withdraw` and `reserveStables` enforce the same
     ///         predicate. Returns false rather than reverting when `asset` has no vault.
-    function hasLiquidity(address asset, uint256 amount) external view returns (bool sufficient);
+    function hasLiquidity(address asset, uint256 amountMinor) external view returns (bool sufficient);
 
-    /// @notice Redeems `amount` of `asset` from its origin vault and holds it in this
+    /// @notice Redeems `amountMinor` of `asset` from its origin vault and holds it in this
     ///         router's custody for `credisOwner`, guaranteeing it can later be
     ///         delivered for 15 minutes. Caller must be an active CCA. Only `source`
     ///         may pledge the Gratis collateral for this reservation. The quote fixes the
@@ -213,18 +210,20 @@ interface IVaultRouter {
         address credisOwner,
         address source,
         address asset,
-        uint256 amount,
+        uint256 amountMinor,
         uint16 referenceCurrency
     ) external returns (uint256 reservationId);
 
-    /// @notice Validates `receiver` as the reservation's Credis owner, pays `amount` to
+    /// @notice Validates `receiver` as the reservation's Credis owner, pays `amountMinor` to
     ///         the recorded CCA to cover COEN delivered to that owner, and
     ///         returns any unused remainder to the origin vault. Caller must be a
     ///         registered liquidity target. `receiver` must be the Credis
     ///         owner. Reverts if the reservation is missing, expired, or too small.
     /// @dev Only CredisFactory may call. `receiver` binds the Credis owner.
     ///      `receiver` cannot redirect the payout.
-    function releaseReservation(uint256 id, address receiver, uint256 amount) external returns (uint256 delivered);
+    function releaseReservation(uint256 id, address receiver, uint256 amountMinor)
+        external
+        returns (uint256 deliveredMinor);
 
     /// @notice Deposits an unused reservation back into its origin vault and deletes it.
     ///         The originating CCA may call at any time. After expiry, anyone may call.

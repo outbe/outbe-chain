@@ -135,7 +135,7 @@ impl BenchmarkScenario for CredisVaultBoundaryScenario {
 
         let calldata = IVaultRouter::withdrawCall {
             asset: ASSET,
-            amount: U256::from(AMOUNT),
+            amountMinor: U256::from(AMOUNT),
             receiver: RECEIVER,
         }
         .abi_encode();

@@ -104,11 +104,11 @@ fn apply_owner_movement(
     let event = match operation {
         GratisOp::Mint => SolEvent::encode_log_data(&IGratis::GratisMinted {
             account,
-            amount: result.event_amount,
+            gratisMinor: result.event_amount,
         }),
         GratisOp::Burn => SolEvent::encode_log_data(&IGratis::GratisBurned {
             account,
-            amount: result.event_amount,
+            gratisMinor: result.event_amount,
         }),
         _ => return Err(GratisFatalError::InvalidOwnerMovement.into()),
     };
@@ -293,7 +293,10 @@ pub(crate) fn burn_pledged(
         )?;
         storage.emit_event(
             GRATIS_ADDRESS,
-            SolEvent::encode_log_data(&IGratis::GratisBurned { account, amount }),
+            SolEvent::encode_log_data(&IGratis::GratisBurned {
+                account,
+                gratisMinor: amount,
+            }),
         )
     })
 }

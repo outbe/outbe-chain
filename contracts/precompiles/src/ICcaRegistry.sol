@@ -14,16 +14,18 @@ interface ICcaRegistry {
         address cca;
         string name;
         State state;
-        uint256 bondedAmount;
+        /// @dev Native COEN, 18 decimals.
+        uint256 bondedMinor;
         uint64 unbondUnlocksAfter;
     }
 
     /// @notice Thrown when a CCA is not in Active standing.
     error CcaNotActive(address cca, State state);
 
-    event Bonded(address indexed cca, uint256 amount, State state);
-    event UnbondRequested(address indexed cca, uint256 amount, uint64 unbondUnlocksAfter);
-    event UnbondClaimed(address indexed cca, uint256 amount);
+    /// @notice Bond and unbond amounts are native COEN, 18 decimals.
+    event Bonded(address indexed cca, uint256 amountMinor, State state);
+    event UnbondRequested(address indexed cca, uint256 amountMinor, uint64 unbondUnlocksAfter);
+    event UnbondClaimed(address indexed cca, uint256 amountMinor);
 
     /// @notice Bond COEN and set a nonempty CCA name.
     function bond(string calldata name) external payable;

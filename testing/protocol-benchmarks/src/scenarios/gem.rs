@@ -233,12 +233,12 @@ fn measure(prepared: &PreparedGem) -> Result<Observation, String> {
             outbe_gemfactory::GemIssueParams {
                 owner: ALICE,
                 gem_type,
-                promis_load: U256::from(10) * six_decimal_unit(),
+                promis_load_minor: U256::from(10) * six_decimal_unit(),
                 issuance_currency: 840,
                 reference_currency: 840,
                 // The reward path resolves the price for the gem's own day. The
                 // benchmark measures the mint, so the seeded rate stands in for it.
-                entry_price: U256::from(2) * six_decimal_unit(),
+                entry_price_minor: U256::from(2) * six_decimal_unit(),
             },
         )
         .map_err(|error| error.to_string()),
@@ -255,7 +255,7 @@ fn measure(prepared: &PreparedGem) -> Result<Observation, String> {
                 caller: ALICE,
                 position_id,
                 owner: BOB,
-                promis_load: U256::from(10) * six_decimal_unit(),
+                promis_load_minor: U256::from(10) * six_decimal_unit(),
             },
         )
         .map_err(|error| error.to_string()),

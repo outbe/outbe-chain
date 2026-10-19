@@ -19,7 +19,7 @@ pub fn deposit(storage: &StorageHandle<'_>, asset: Address, amount: U256) -> Res
         storage,
         IVaultRouter::depositCall {
             asset,
-            assetsAmount: amount,
+            assetsMinor: amount,
         },
     )
 }
@@ -63,7 +63,7 @@ pub fn release_reservation(
         IVaultRouter::releaseReservationCall {
             id,
             receiver,
-            amount,
+            amountMinor: amount,
         },
     )
 }
@@ -86,7 +86,7 @@ pub fn withdraw(
         storage,
         IVaultRouter::withdrawCall {
             asset,
-            amount,
+            amountMinor: amount,
             receiver,
         },
     )

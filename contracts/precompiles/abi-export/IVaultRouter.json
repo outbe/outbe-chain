@@ -133,14 +133,14 @@
         "internalType": "address"
       },
       {
-        "name": "assetsAmount",
+        "name": "assetsMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
     ],
     "outputs": [
       {
-        "name": "sharesAmount",
+        "name": "shares",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -157,7 +157,7 @@
         "internalType": "address"
       },
       {
-        "name": "amount",
+        "name": "amountMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -273,7 +273,7 @@
         "internalType": "address"
       },
       {
-        "name": "assetsAmount",
+        "name": "assetsMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -290,7 +290,7 @@
         "internalType": "address"
       },
       {
-        "name": "amountTo",
+        "name": "assetsToMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -312,19 +312,19 @@
         "internalType": "address"
       },
       {
-        "name": "assetsAmount",
+        "name": "assetsMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "maxAmountTo",
+        "name": "maxAssetsToMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
     ],
     "outputs": [
       {
-        "name": "amountTo",
+        "name": "assetsToMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -408,14 +408,14 @@
         "internalType": "address"
       },
       {
-        "name": "amount",
+        "name": "amountMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
     ],
     "outputs": [
       {
-        "name": "delivered",
+        "name": "deliveredMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -483,7 +483,7 @@
             "internalType": "address"
           },
           {
-            "name": "amount",
+            "name": "amountMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -582,7 +582,7 @@
         "internalType": "address"
       },
       {
-        "name": "amount",
+        "name": "amountMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -668,7 +668,7 @@
         "internalType": "address"
       },
       {
-        "name": "amount",
+        "name": "amountMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -704,13 +704,13 @@
         "internalType": "address"
       },
       {
-        "name": "assetsAmount",
+        "name": "assetsMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "sharesAmount",
+        "name": "shares",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -747,7 +747,7 @@
         "internalType": "address"
       },
       {
-        "name": "assetsWithdrawn",
+        "name": "assetsWithdrawnMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -759,7 +759,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "assetsDeposited",
+        "name": "assetsDepositedMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -872,7 +872,7 @@
         "internalType": "address"
       },
       {
-        "name": "assetsAmount",
+        "name": "assetsMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -927,7 +927,7 @@
         "internalType": "address"
       },
       {
-        "name": "amount",
+        "name": "amountMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -964,7 +964,7 @@
         "internalType": "address"
       },
       {
-        "name": "amount",
+        "name": "amountMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -995,7 +995,7 @@
         "internalType": "address"
       },
       {
-        "name": "amount",
+        "name": "amountMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -1115,12 +1115,12 @@
     "name": "RebalanceInputExceedsMax",
     "inputs": [
       {
-        "name": "required",
+        "name": "requiredMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "maxAmountTo",
+        "name": "maxAssetsToMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -1164,12 +1164,12 @@
     "name": "ReservationInsufficient",
     "inputs": [
       {
-        "name": "available",
+        "name": "availableMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "required",
+        "name": "requiredMinor",
         "type": "uint256",
         "internalType": "uint256"
       }

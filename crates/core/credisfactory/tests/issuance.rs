@@ -152,7 +152,7 @@ fn seed_issuance_liquidity(storage: StorageHandle<'_>) -> eyre::Result<()> {
     router.reservations.create(&LiquidityReservation {
         id: U256::ONE,
         asset: ASSET,
-        amount: U256::from(2_000_000),
+        amount_minor: U256::from(2_000_000),
         credis_owner: ACCOUNT,
         cca: CCA,
         vault: VAULT,
@@ -385,7 +385,7 @@ fn assert_issuance_state(evm: &mut EvmWorld, failure: u64, stake: U256) -> eyre:
     );
     let held = IVaultRouter::reservationOfCall::abi_decode_returns(&reservation.returndata)?;
     assert_eq!(
-        held.amount,
+        held.amountMinor,
         if failure == 0 {
             U256::ZERO
         } else {
@@ -621,7 +621,7 @@ fn assert_issuance_payout_events(evm: &EvmWorld, failure: u64) -> eyre::Result<(
     assert_eq!(payouts.len(), usize::from(failure == 0));
     if failure == 0 {
         assert_eq!(payouts[0].receiver, CCA);
-        assert_eq!(payouts[0].amount, U256::from(2_000_000));
+        assert_eq!(payouts[0].amountMinor, U256::from(2_000_000));
     }
 
     Ok(())

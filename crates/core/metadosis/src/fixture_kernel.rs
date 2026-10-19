@@ -42,8 +42,8 @@ pub(crate) trait FixtureKernelExt {
         &mut self,
         wwd: WorldwideDay,
         day_limit: U256,
-        previous_vwap: U256,
-        current_vwap: U256,
+        previous_vwap_minor: U256,
+        current_vwap_minor: U256,
     ) -> PrecompileResult<()>;
 
     #[cfg(test)]
@@ -113,8 +113,8 @@ impl FixtureKernelExt for MetadosisContract<'_> {
             offering_end,
             scheduled_process_time,
             metadosis_limit_minor: U256::ZERO,
-            previous_vwap: U256::ZERO,
-            current_vwap: U256::ZERO,
+            previous_vwap_minor: U256::ZERO,
+            current_vwap_minor: U256::ZERO,
         })
     }
 
@@ -170,8 +170,8 @@ impl FixtureKernelExt for MetadosisContract<'_> {
         &mut self,
         wwd: WorldwideDay,
         day_limit: U256,
-        previous_vwap: U256,
-        current_vwap: U256,
+        previous_vwap_minor: U256,
+        current_vwap_minor: U256,
     ) -> PrecompileResult<()> {
         self.worldwide_days.create(&WorldwideDayRecord {
             wwd,
@@ -183,8 +183,8 @@ impl FixtureKernelExt for MetadosisContract<'_> {
             offering_end: 4,
             scheduled_process_time: 5,
             metadosis_limit_minor: day_limit,
-            previous_vwap,
-            current_vwap,
+            previous_vwap_minor,
+            current_vwap_minor,
         })
     }
 
