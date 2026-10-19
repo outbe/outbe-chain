@@ -233,7 +233,7 @@ fn nod_contract_slot_layout_is_pinned() {
         );
         assert_eq!(nod.max_call_window_seconds.base_slot(), U256::from(11));
         assert_eq!(nod.call_sweep_day.slot(), U256::from(12));
-        assert_eq!(nod.call_pending_day.slot(), U256::from(13));
+        assert_eq!(nod.call_latest_day.slot(), U256::from(13));
         assert_eq!(nod.call_bin_tree_root.base_slot(), U256::from(14));
         assert_eq!(nod.call_bin_tree_mid.base_slot(), U256::from(15));
         assert_eq!(nod.call_bin_tree_leaf.base_slot(), U256::from(16));

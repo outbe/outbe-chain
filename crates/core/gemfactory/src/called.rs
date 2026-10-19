@@ -6,11 +6,11 @@ use alloy_primitives::{B256, U256};
 use outbe_gem::precompile::IGem::{BatchMetadataUpdate, GemGroupCalled};
 
 use crate::errors::GemFactoryError;
-use crate::precompile::IGemFactory::{CallScanSkipped, SweepDaySkipped};
+use crate::precompile::IGemFactory::CallScanSkipped;
 use crate::runtime::emit_event;
 use outbe_gem::{CallBins, CallTerms, GemContract, GemParams};
 use outbe_oracle::{
-    call_sweep::{self, CallSweep, CALL_SWEEP},
+    call_sweep::{self, CallSweep},
     call_window::CallWindow,
 };
 use outbe_primitives::{
@@ -64,7 +64,7 @@ impl<'storage> CallSweep<'storage> for GemCallSweep<'storage> {
     fn days(&self) -> PinnedDay<'_, 'storage> {
         PinnedDay {
             current: &self.gem.call_sweep_day,
-            pending: &self.gem.call_pending_day,
+            latest: &self.gem.call_latest_day,
         }
     }
 
@@ -78,17 +78,6 @@ impl<'storage> CallSweep<'storage> for GemCallSweep<'storage> {
 
     fn classify(error: &PrecompileError) -> SweepFailure {
         error.record_sweep_failure()
-    }
-
-    fn day_skipped(&mut self, skipped: u32, in_flight: u32) -> Result<()> {
-        emit_event(
-            &self.gem.storage,
-            SweepDaySkipped {
-                sweep: CALL_SWEEP,
-                skippedDay: skipped,
-                inFlightDay: in_flight,
-            },
-        )
     }
 
     fn slice(&mut self, ctx: &BlockRuntimeContext, pinned_day: u32) -> Result<(u32, bool)> {

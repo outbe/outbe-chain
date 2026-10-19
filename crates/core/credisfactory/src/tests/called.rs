@@ -392,6 +392,11 @@ fn a_breach_run_that_predates_the_credis_does_not_call_it() {
             CALL_LOOKBACK_DAYS,
             above_call(),
         );
+        // The daily triggers in between walked their own days.
+        sweep_state(&storage)
+            .call_latest_day
+            .write(previous_date_key(last_closed_day(later)))
+            .unwrap();
         assert_eq!(scan(&storage, later), 1);
         assert_eq!(state_of(&storage, credis_id), CredisState::Called);
     });
@@ -695,7 +700,7 @@ fn sweep_days(storage: &StorageHandle<'_>) -> (u32, u32) {
     let state = sweep_state(storage);
     (
         state.call_sweep_day.read().unwrap(),
-        state.call_pending_day.read().unwrap(),
+        state.call_latest_day.read().unwrap(),
     )
 }
 
@@ -785,22 +790,25 @@ fn a_newer_closed_day_waits_for_the_pass_in_flight() {
 
         assert_eq!(slice(&storage, next), 2, "the pinned day finishes first");
         assert_eq!(state_of(&storage, ids[2]), CredisState::Issued);
-        assert_eq!(sweep_days(&storage), (last_closed_day(next), 0));
+        assert_eq!(
+            sweep_days(&storage),
+            (last_closed_day(next), last_closed_day(next))
+        );
         assert_eq!(cursor_of(&storage), 0);
 
         assert_eq!(slice(&storage, next), 1);
         assert_eq!(state_of(&storage, ids[2]), CredisState::Called);
-        assert_eq!(sweep_days(&storage), (0, 0));
+        assert_eq!(sweep_days(&storage), (0, last_closed_day(next)));
     });
     teardown();
 }
 
+/// Days that closed while a pass was in flight are walked after it, in order, none
+/// skipped.
 #[test]
-fn a_third_closed_day_replaces_the_waiting_one_and_names_it() {
-    use alloy_sol_types::SolEvent;
-
+fn days_closed_behind_a_pass_in_flight_are_walked_in_order() {
     let mut provider = env();
-    let (in_flight, skipped) = StorageHandle::enter(&mut provider, |storage| {
+    StorageHandle::enter(&mut provider, |storage| {
         let ids = open_three(&storage);
         let at = CREATED_AT + AFTER_WINDOW;
         let later = at + 2 * DAY;
@@ -813,31 +821,37 @@ fn a_third_closed_day_replaces_the_waiting_one_and_names_it() {
         );
         pin_sweep(&storage, last_closed_day(at), ids[0], 2);
         sweep_state(&storage)
-            .call_pending_day
-            .write(last_closed_day(at + DAY))
+            .call_latest_day
+            .write(last_closed_day(at))
             .unwrap();
 
+        // Only the newest day's trigger fires.
         schedule(&storage, later);
         assert_eq!(
             sweep_days(&storage),
             (last_closed_day(at), last_closed_day(later))
         );
         assert_eq!(cursor_of(&storage), 2, "the pass in flight keeps its place");
-        (last_closed_day(at), last_closed_day(at + DAY))
+
+        let mut walked = vec![last_closed_day(at)];
+        while walked.last() != Some(&0) && walked.len() < 8 {
+            slice(&storage, later);
+            let day = sweep_days(&storage).0;
+            if walked.last() != Some(&day) {
+                walked.push(day);
+            }
+        }
+        assert_eq!(
+            walked,
+            vec![
+                last_closed_day(at),
+                last_closed_day(at + DAY),
+                last_closed_day(later),
+                0
+            ]
+        );
     });
     teardown();
-
-    let events: Vec<_> = provider
-        .get_events(outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS)
-        .iter()
-        .filter_map(|log| {
-            crate::precompile::ICredisFactory::SweepDaySkipped::decode_log_data(log).ok()
-        })
-        .collect();
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].sweep, 1);
-    assert_eq!(events[0].skippedDay, skipped);
-    assert_eq!(events[0].inFlightDay, in_flight);
 }
 
 #[test]
@@ -849,7 +863,7 @@ fn an_empty_book_opens_no_sweep() {
         finalize_through(&storage, at);
 
         assert_eq!(scan(&storage, at), 0);
-        assert_eq!(sweep_days(&storage), (0, 0));
+        assert_eq!(sweep_days(&storage), (0, last_closed_day(at)));
     });
     teardown();
 }

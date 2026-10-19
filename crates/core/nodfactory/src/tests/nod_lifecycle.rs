@@ -12,7 +12,7 @@ use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::time::SECONDS_PER_DAY_U32;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_primitives::{
-    addresses::{NOD_ADDRESS, NOD_FACTORY_ADDRESS},
+    addresses::NOD_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
     math::constants::MAX_BIN_ID,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
@@ -1260,6 +1260,10 @@ fn a_call_slice_out_of_visits_resumes_on_its_currency_without_holding_back_forfe
         let latest = last_closed_day(past);
         fill_days(storage, latest, CALL_LOOKBACK_DAYS, above_call());
         fill_days_for(storage, OTHER_ISO, latest, CALL_LOOKBACK_DAYS, above_call());
+        // The daily triggers in between walked their own days.
+        nod.call_latest_day
+            .write(previous_date_key(latest))
+            .unwrap();
 
         assert_eq!(scan(storage, past), 1, "the forfeit does not wait");
         assert_eq!(
@@ -1514,17 +1518,12 @@ fn a_node_local_failure_while_calling_a_group_fails_the_slice() {
     });
 }
 
-/// A closed day behind a running call sweep waits, and a newer one takes its
-/// place and names the day it pushed out.
+/// Days that closed while a call sweep was stalled are walked in order after it,
+/// none skipped.
 #[test]
-fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
-    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-
-    let (in_flight, skipped) = StorageHandle::enter(&mut provider, |storage| {
-        seed_production_nod_genesis(&storage);
-
-        register(&storage, ISO);
-        issue_owned(&storage, Address::repeat_byte(0x22), ISO);
+fn days_closed_behind_a_stalled_call_sweep_are_walked_in_order() {
+    harness(|storage| {
+        issue_owned(storage, Address::repeat_byte(0x22), ISO);
 
         let at = START + 30 * DAY;
         let closed = [
@@ -1532,43 +1531,29 @@ fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
             last_closed_day(at + DAY),
             last_closed_day(at + 2 * DAY),
         ];
-        fill_days(&storage, closed[2], CALL_LOOKBACK_DAYS, below_call());
+        fill_days(storage, closed[2], CALL_LOOKBACK_DAYS, below_call());
 
         let nod = NodContract::new(storage.clone());
         nod.call_sweep_day.write(closed[0]).unwrap();
+        nod.call_latest_day.write(closed[0]).unwrap();
         nod.call_bin_cursor.write(&ISO, 1).unwrap();
 
-        crate::called::run_daily(&BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(BLOCK_NUMBER, at + DAY, CHAIN_ID),
-            storage.clone(),
-        ))
-        .unwrap();
-        crate::called::run_daily(&BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(BLOCK_NUMBER, at + 2 * DAY, CHAIN_ID),
-            storage.clone(),
-        ))
-        .unwrap();
+        // Only the newest day's trigger fires.
+        crate::called::run_daily(&block_at(storage, at + 2 * DAY)).unwrap();
         assert_eq!(nod.call_sweep_day.read().unwrap(), closed[0]);
-        assert_eq!(nod.call_pending_day.read().unwrap(), closed[2]);
+        assert_eq!(nod.call_latest_day.read().unwrap(), closed[2]);
         assert_eq!(
             nod.call_bin_cursor.read(&ISO).unwrap(),
             1,
             "the walk in flight was not restarted"
         );
-        (closed[0], closed[1])
-    });
 
-    let events: Vec<_> = provider
-        .get_events(NOD_FACTORY_ADDRESS)
-        .iter()
-        .filter_map(|log| {
-            crate::precompile::INodFactory::SweepDaySkipped::decode_log_data(log).ok()
-        })
-        .collect();
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].sweep, outbe_oracle::call_sweep::CALL_SWEEP);
-    assert_eq!(events[0].skippedDay, skipped);
-    assert_eq!(events[0].inFlightDay, in_flight);
+        for next in [closed[1], closed[2], 0] {
+            slice(storage, at + 2 * DAY);
+            assert_eq!(nod.call_sweep_day.read().unwrap(), next);
+        }
+        assert_eq!(nod.call_latest_day.read().unwrap(), closed[2]);
+    });
 }
 
 /// Promis Limit moves by the unpaid loads, not by reaching

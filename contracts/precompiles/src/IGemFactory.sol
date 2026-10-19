@@ -118,9 +118,6 @@ interface IGemFactory {
     /// @notice A reference currency was left out of one day's Call scan because its
     ///         window price could not be indexed. The next daily pass tries it again.
     event CallScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);
-    /// @notice The daily call sweep (`sweep` = 1) fell two days behind: `skippedDay`
-    ///         gave its place to a newer day and will not be walked.
-    event SweepDaySkipped(uint8 indexed sweep, uint32 skippedDay, uint32 inFlightDay);
     /// @notice The `positions` positions whose validity ended in `expiryHour` (unix time
     ///         / 3600) returned the capacity they never issued, and the cleanup deletes them.
     event GemPositionGroupExpired(uint64 indexed expiryHour, uint32 positions, uint256 returnedCapacityMinor);

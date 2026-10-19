@@ -18,9 +18,6 @@ use crate::api::get_all_reference_currencies;
 use crate::call_window::{CallWindow, CallWindows};
 use crate::schema::OracleContract;
 
-/// `SweepDaySkipped.sweep` of the call sweep, the same in every right's ABI.
-pub const CALL_SWEEP: u8 = 1;
-
 /// One right's call sweep.
 pub trait CallSweep<'storage> {
     /// Names the right in the logs of a day the Oracle has not finalized.
@@ -62,13 +59,12 @@ pub trait CallSweep<'storage> {
         Ok(())
     }
 
-    /// Emits `SweepDaySkipped` for a waiting day a newer one pushed out.
-    fn day_skipped(&mut self, skipped: u32, in_flight: u32) -> Result<()>;
     /// Walks one slice of `pinned_day`. Returns the calls made and whether the day ended.
     fn slice(&mut self, ctx: &BlockRuntimeContext, pinned_day: u32) -> Result<(u32, bool)>;
 }
 
-/// Opens the day the Oracle has just finalized, or queues it behind the one in flight.
+/// Opens the first closed day not yet walked, or queues the one the Oracle has just
+/// finalized behind the day in flight.
 pub fn schedule<'s, S: CallSweep<'s>>(ctx: &BlockRuntimeContext, sweep: &mut S) -> Result<()> {
     let Some(day) = crate::closed_day::finalized_closed_day(
         ctx.storage.clone(),
@@ -79,15 +75,13 @@ pub fn schedule<'s, S: CallSweep<'s>>(ctx: &BlockRuntimeContext, sweep: &mut S) 
         return Ok(());
     };
     if sweep.days().current.read()? == 0 && !sweep.has_work(ctx)? {
-        return Ok(());
+        return sweep.days().pass(day);
     }
-    let scheduled = sweep.days().schedule(day)?;
-    match scheduled {
+    match sweep.days().schedule(day)? {
         (next, Scheduled::Opened) => {
             sweep.days().open(next)?;
             sweep.reset_cursors(ctx)
         }
-        (next, Scheduled::Replaced { skipped }) => sweep.day_skipped(skipped, next.current),
         (_, Scheduled::Queued | Scheduled::Ignored) => Ok(()),
     }
 }

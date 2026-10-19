@@ -11,8 +11,6 @@ interface ICredisFactory {
         uint256 gratisMinor,
         uint256 callPriceMinor
     );
-    /// A newer closed day replaced `skippedDay` while `inFlightDay` was still being swept.
-    event SweepDaySkipped(uint8 indexed sweep, uint32 skippedDay, uint32 inFlightDay);
     /// A reference currency was left out of one day's Call scan because its window
     /// price could not be indexed. The next daily pass tries it again.
     event CallScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);

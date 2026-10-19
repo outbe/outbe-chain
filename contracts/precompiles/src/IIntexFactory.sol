@@ -92,10 +92,6 @@ interface IIntexFactory {
     ///         window price could not be indexed. The next day's pass tries it again.
     event CallScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);
 
-    /// @notice The daily call sweep (`sweep` = 1) fell two days behind: `skippedDay`
-    ///         gave its place to a newer day and will not be walked.
-    event SweepDaySkipped(uint8 indexed sweep, uint32 skippedDay, uint32 inFlightDay);
-
     /// @notice The expiry sweep could not expire a called group and parked it for
     ///         another pass at `retryAt`.
     event ExpiryDeferred(bytes32 indexed groupKey, uint64 retryAt);

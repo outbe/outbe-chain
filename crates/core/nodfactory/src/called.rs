@@ -20,7 +20,7 @@
 //! Calls count only days from the group's `full_day_after_issue`.
 
 use alloy_primitives::{B256, U256};
-use outbe_oracle::call_sweep::{self, CallSweep, CALL_SWEEP};
+use outbe_oracle::call_sweep::{self, CallSweep};
 use outbe_oracle::call_window::CallWindow;
 use outbe_primitives::{
     block::BlockRuntimeContext,
@@ -85,7 +85,7 @@ impl<'storage> CallSweep<'storage> for NodCallSweep<'storage> {
     fn days(&self) -> PinnedDay<'_, 'storage> {
         PinnedDay {
             current: &self.nod.call_sweep_day,
-            pending: &self.nod.call_pending_day,
+            latest: &self.nod.call_latest_day,
         }
     }
 
@@ -99,17 +99,6 @@ impl<'storage> CallSweep<'storage> for NodCallSweep<'storage> {
 
     fn classify(error: &PrecompileError) -> SweepFailure {
         error.record_sweep_failure()
-    }
-
-    fn day_skipped(&mut self, skipped: u32, in_flight: u32) -> Result<()> {
-        emit_event(
-            &self.nod.storage,
-            INodFactory::SweepDaySkipped {
-                sweep: CALL_SWEEP,
-                skippedDay: skipped,
-                inFlightDay: in_flight,
-            },
-        )
     }
 
     fn slice(&mut self, ctx: &BlockRuntimeContext, pinned_day: u32) -> Result<(u32, bool)> {

@@ -272,7 +272,7 @@ pub struct GemContract {
     #[attribute(order = 31)]
     pub call_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 32)]
-    pub call_pending_day: outbe_primitives::storage::dsl::Value<u32>,
+    pub call_latest_day: outbe_primitives::storage::dsl::Value<u32>,
 
     /// Genesis parameter-profile selector (0 = auto, 1 = dev, 2 = prod). See crate::config.
     #[attribute(order = 33)]

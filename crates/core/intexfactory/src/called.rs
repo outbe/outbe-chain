@@ -7,7 +7,7 @@
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
 use outbe_intex::SeriesId;
-use outbe_oracle::call_sweep::{self, CallSweep, CALL_SWEEP};
+use outbe_oracle::call_sweep::{self, CallSweep};
 use outbe_oracle::call_window::CallWindow;
 use outbe_primitives::daily_sweep::PinnedDay;
 use outbe_primitives::time::WorldwideDay;
@@ -70,7 +70,7 @@ impl<'storage> CallSweep<'storage> for IntexCallSweep<'storage> {
     fn days(&self) -> PinnedDay<'_, 'storage> {
         PinnedDay {
             current: &self.intex.call_sweep_day,
-            pending: &self.intex.call_pending_day,
+            latest: &self.intex.call_latest_day,
         }
     }
 
@@ -80,17 +80,6 @@ impl<'storage> CallSweep<'storage> for IntexCallSweep<'storage> {
 
     fn currency_cursor(&self) -> &Value<'storage, u32> {
         &self.intex.call_currency_cursor
-    }
-
-    fn day_skipped(&mut self, skipped: u32, in_flight: u32) -> Result<()> {
-        crate::runtime::emit_event(
-            &self.intex.storage,
-            crate::precompile::IIntexFactory::SweepDaySkipped {
-                sweep: CALL_SWEEP,
-                skippedDay: skipped,
-                inFlightDay: in_flight,
-            },
-        )
     }
 
     fn slice(&mut self, ctx: &BlockRuntimeContext, pinned_day: u32) -> Result<(u32, bool)> {

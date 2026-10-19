@@ -20,7 +20,7 @@ use outbe_credis::config::CredisParams;
 use outbe_credis::precompile::ICredis;
 use outbe_credis::{CallBins, CredisContract};
 
-use outbe_oracle::call_sweep::{self, CallSweep, CALL_SWEEP};
+use outbe_oracle::call_sweep::{self, CallSweep};
 use outbe_oracle::call_window::CallWindow;
 use outbe_primitives::{
     addresses::CREDIS_FACTORY_ADDRESS,
@@ -32,7 +32,7 @@ use outbe_primitives::{
     storage::{dsl::Value, StorageHandle},
 };
 
-use crate::precompile::ICredisFactory::{CallScanSkipped, SweepDaySkipped};
+use crate::precompile::ICredisFactory::CallScanSkipped;
 
 /// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
 pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
@@ -76,7 +76,7 @@ impl<'storage> CallSweep<'storage> for CredisCallSweep<'storage> {
     fn days(&self) -> PinnedDay<'_, 'storage> {
         PinnedDay {
             current: &self.credis.call_sweep_day,
-            pending: &self.credis.call_pending_day,
+            latest: &self.credis.call_latest_day,
         }
     }
 
@@ -86,17 +86,6 @@ impl<'storage> CallSweep<'storage> for CredisCallSweep<'storage> {
 
     fn currency_cursor(&self) -> &Value<'storage, u32> {
         &self.credis.call_currency_cursor
-    }
-
-    fn day_skipped(&mut self, skipped: u32, in_flight: u32) -> Result<()> {
-        emit(
-            &self.credis.storage,
-            &SweepDaySkipped {
-                sweep: CALL_SWEEP,
-                skippedDay: skipped,
-                inFlightDay: in_flight,
-            },
-        )
     }
 
     fn slice(&mut self, ctx: &BlockRuntimeContext, pinned_day: u32) -> Result<(u32, bool)> {

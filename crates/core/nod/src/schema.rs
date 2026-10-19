@@ -189,12 +189,12 @@ pub struct NodContract {
     #[attribute(order = 49)]
     pub max_call_window_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
 
-    // Frozen-day call sweep: 0 = idle. At most one day waits behind the in-flight one.
+    // Frozen-day call sweep: 0 = idle. Every closed day up to the newest scheduled is walked.
     /// UTC day an unfinished call sweep is pinned to.
     #[attribute(order = 59)]
     pub call_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 60)]
-    pub call_pending_day: outbe_primitives::storage::dsl::Value<u32>,
+    pub call_latest_day: outbe_primitives::storage::dsl::Value<u32>,
 
     // Call-price bin index, keyed like Gem's and Intex's.
     #[attribute(order = 61)]

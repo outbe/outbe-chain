@@ -281,9 +281,9 @@ pub struct CredisContract {
     /// UTC day the unfinished call sweep is pinned to. 0 = none in flight.
     #[attribute(order = 29)]
     pub call_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
-    /// UTC day waiting behind it. 0 = none.
+    /// Newest closed day scheduled. Every day up to it is walked in order.
     #[attribute(order = 30)]
-    pub call_pending_day: outbe_primitives::storage::dsl::Value<u32>,
+    pub call_latest_day: outbe_primitives::storage::dsl::Value<u32>,
 
     /// Profile selector (0 = by network, 1 = dev, 2 = prod). See `crate::config`.
     #[attribute(order = 31)]

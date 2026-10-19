@@ -465,7 +465,7 @@ fn a_trigger_during_a_running_call_sweep_queues_its_day() {
         let next = block_ctx_at(storage, next_ts);
         run_daily(&next).unwrap();
         assert_eq!(gem.call_sweep_day.read().unwrap(), day);
-        assert_eq!(gem.call_pending_day.read().unwrap(), next_day);
+        assert_eq!(gem.call_latest_day.read().unwrap(), next_day);
         assert_eq!(
             gem.call_bin_cursor.read(&USD).unwrap(),
             cursor,
@@ -476,21 +476,20 @@ fn a_trigger_during_a_running_call_sweep_queues_its_day() {
         run_call_slice(&next).unwrap();
         assert_eq!(gem_state(storage, above), GemState::Called as u8);
         assert_eq!(gem.call_sweep_day.read().unwrap(), next_day);
-        assert_eq!(gem.call_pending_day.read().unwrap(), 0);
+        assert_eq!(gem.call_latest_day.read().unwrap(), next_day);
     });
 }
 
-/// With a day already waiting, a newer one takes its place, and the day that will
-/// never be walked is named.
+/// Days that closed while the sweep was still walking an older one are walked after it,
+/// in order, none skipped.
 #[test]
-fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
-    let mut provider = provider_at(T_NOW);
-    let (in_flight, skipped) = StorageHandle::enter(&mut provider, |storage| {
-        set_profile(&storage, outbe_gem::config::PROFILE_PROD);
-        let pair = seed_currency(&storage, USD, Some(U256::from(600_000u64)));
+fn days_closed_behind_a_running_call_sweep_are_walked_in_order() {
+    with_storage(|storage| {
+        set_profile(storage, outbe_gem::config::PROFILE_PROD);
+        let pair = seed_currency(storage, USD, Some(U256::from(600_000u64)));
         for nonce in 0..=u64::from(SWEEP_VISITS_PER_BLOCK) {
             callable_gem_of(
-                &storage,
+                storage,
                 USD,
                 nonce,
                 T_NOW - 100 * SECONDS_PER_DAY,
@@ -501,9 +500,9 @@ fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
         for offset in 0..3u64 {
             let ts = T_NOW + offset * SECONDS_PER_DAY;
             let day = previous_date_key(timestamp_to_date_key(ts));
-            priced_window(&storage, pair, day, U256::from(300_000u64));
+            priced_window(storage, pair, day, U256::from(300_000u64));
             // Only the first trigger's block walks: the later days arrive meanwhile.
-            let ctx = block_ctx_at(&storage, ts);
+            let ctx = block_ctx_at(storage, ts);
             match offset {
                 0 => scan_and_call(&ctx).map(drop),
                 _ => run_daily(&ctx),
@@ -513,21 +512,19 @@ fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
         }
         let gem = GemContract::new(storage.clone());
         assert_eq!(gem.call_sweep_day.read().unwrap(), closed[0]);
-        assert_eq!(gem.call_pending_day.read().unwrap(), closed[2]);
-        (closed[0], closed[1])
-    });
+        assert_eq!(gem.call_latest_day.read().unwrap(), closed[2]);
 
-    let events: Vec<_> = provider
-        .get_events(GEM_FACTORY_ADDRESS)
-        .iter()
-        .filter_map(|log| {
-            crate::precompile::IGemFactory::SweepDaySkipped::decode_log_data(log).ok()
-        })
-        .collect();
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].sweep, outbe_oracle::call_sweep::CALL_SWEEP);
-    assert_eq!(events[0].skippedDay, skipped);
-    assert_eq!(events[0].inFlightDay, in_flight);
+        let ctx = block_ctx_at(storage, T_NOW + 2 * SECONDS_PER_DAY);
+        let mut walked = vec![closed[0]];
+        while walked.last() != Some(&0) && walked.len() < 8 {
+            run_call_slice(&ctx).unwrap();
+            let day = gem.call_sweep_day.read().unwrap();
+            if walked.last() != Some(&day) {
+                walked.push(day);
+            }
+        }
+        assert_eq!(walked, vec![closed[0], closed[1], closed[2], 0]);
+    });
 }
 
 /// A sweep walks each currency once. Take two currencies that each hold more

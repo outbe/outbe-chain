@@ -412,7 +412,7 @@ pub struct IntexContract {
     #[attribute(order = 55)]
     pub expiry_cursor: outbe_primitives::storage::dsl::Value<u64>,
     #[attribute(order = 56)]
-    pub call_pending_day: outbe_primitives::storage::dsl::Value<u32>,
+    pub call_latest_day: outbe_primitives::storage::dsl::Value<u32>,
 
     /// UTC day the call sweep could not price a reference currency on. The rest of that
     /// day's pass passes it by.

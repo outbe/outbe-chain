@@ -81,7 +81,7 @@ fn intex_lifecycle_slot_layout_is_pinned() {
             intex.called_group_slot.base_slot(),
             intex.expiry_sweep_hour.slot(),
             intex.expiry_cursor.slot(),
-            intex.call_pending_day.slot(),
+            intex.call_latest_day.slot(),
             intex.call_scan_failed_day.base_slot(),
             intex.call_group_currency.base_slot(),
             intex.call_group_called_at.base_slot(),

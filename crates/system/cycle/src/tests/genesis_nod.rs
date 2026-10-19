@@ -92,8 +92,8 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
             dispatch_and_call(&ctx)?;
             assert_eq!(called_at(second), 0);
 
-            // A multi-day halt runs once against the latest completed day,
-            // rather than replaying the same latest price on subsequent blocks.
+            // A multi-day halt walks every day it missed, one per block, and then stops
+            // rather than replaying the latest price on subsequent blocks.
             let late = midnight + 3 * SECONDS_PER_DAY;
             let previous = previous_date_key(timestamp_to_date_key(late));
             // The sealed test terms call on 2 breach days out of a 3-day window.
@@ -107,6 +107,14 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
             oracle.utc_day_vwap_last_finalized.write(previous)?;
             let ctx = BlockRuntimeContext::new(block_ctx(5, late), storage.clone());
             dispatch_and_call(&ctx)?;
+            let nod = outbe_nod::NodContract::new(storage.clone());
+            for _ in 0..8 {
+                if nod.call_sweep_day.read()? == 0 {
+                    break;
+                }
+                outbe_nodfactory::called::run_call_slice(&ctx)?;
+            }
+            assert_eq!(nod.call_sweep_day.read()?, 0);
             assert_eq!(called_at(second), late);
             assert_eq!(cycle.last_executed_at.read(&trigger)?, late);
             let third = issue_nod(&storage, Address::repeat_byte(0x53), 15)?;

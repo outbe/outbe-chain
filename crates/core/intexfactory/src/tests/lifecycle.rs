@@ -958,9 +958,15 @@ mod call_sweep {
                 s.clone(),
             );
             called::scan_and_call(&later).unwrap();
-            for _ in 0..4 {
+            // The in-flight day finishes, then every day up to the new one is walked.
+            let factory = IntexContract::new(s.clone());
+            for _ in 0..64 {
+                if factory.call_sweep_day.read().unwrap() == 0 {
+                    break;
+                }
                 called::run_call_slice(&later).unwrap();
             }
+            assert_eq!(factory.call_sweep_day.read().unwrap(), 0);
 
             assert_eq!(
                 called_count(&s, young..young + 1),
@@ -1087,7 +1093,7 @@ mod call_sweep {
             );
             called::run_daily(&next).unwrap();
             assert_eq!(factory.call_sweep_day.read().unwrap(), day);
-            assert_eq!(factory.call_pending_day.read().unwrap(), next_day);
+            assert_eq!(factory.call_latest_day.read().unwrap(), next_day);
             assert_eq!(
                 factory.call_bin_cursor.read(&REFERENCE_ISO).unwrap(),
                 cursor,
@@ -1098,21 +1104,15 @@ mod call_sweep {
             called::run_call_slice(&next).unwrap();
             assert_eq!(called_count(&s, days), groups);
             assert_eq!(factory.call_sweep_day.read().unwrap(), next_day);
-            assert_eq!(factory.call_pending_day.read().unwrap(), 0);
+            assert_eq!(factory.call_latest_day.read().unwrap(), next_day);
         });
     }
 
-    /// With a day already waiting, a newer one takes its place, and the day that will
-    /// never be walked is named.
+    /// Days that closed while the sweep was still walking an older one are walked after
+    /// it, in order, none skipped.
     #[test]
-    fn a_newer_day_pushes_out_the_waiting_one_and_names_it() {
-        use alloy_sol_types::SolEvent;
-        use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
-
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-        storage.set_timestamp(U256::from(ISSUED_AT as u64));
-        let (in_flight, skipped) = StorageHandle::enter(&mut storage, |s| {
-            crate::tests::select_prod_profile(&s);
+    fn days_closed_behind_a_running_call_sweep_are_walked_in_order() {
+        with_factory(|s| {
             let oracle = OracleContract::new(s.clone());
             let pair = setup_pair(&oracle);
             for d in 20260101..20260101 + SWEEP_WRITES_PER_BLOCK + 1 {
@@ -1137,21 +1137,22 @@ mod call_sweep {
             }
             let factory = IntexContract::new(s.clone());
             assert_eq!(factory.call_sweep_day.read().unwrap(), closed[0]);
-            assert_eq!(factory.call_pending_day.read().unwrap(), closed[2]);
-            (closed[0], closed[1])
-        });
+            assert_eq!(factory.call_latest_day.read().unwrap(), closed[2]);
 
-        let events: Vec<_> = storage
-            .get_events(INTEX_FACTORY_ADDRESS)
-            .iter()
-            .filter_map(|log| {
-                crate::precompile::IIntexFactory::SweepDaySkipped::decode_log_data(log).ok()
-            })
-            .collect();
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].sweep, outbe_oracle::call_sweep::CALL_SWEEP);
-        assert_eq!(events[0].skippedDay, skipped);
-        assert_eq!(events[0].inFlightDay, in_flight);
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(4, ISSUED_AT as u64 + 62 * DAY, CHAIN_ID),
+                s.clone(),
+            );
+            let mut walked = vec![closed[0]];
+            while walked.last() != Some(&0) && walked.len() < 8 {
+                called::run_call_slice(&ctx).unwrap();
+                let day = factory.call_sweep_day.read().unwrap();
+                if walked.last() != Some(&day) {
+                    walked.push(day);
+                }
+            }
+            assert_eq!(walked, vec![closed[0], closed[1], closed[2], 0]);
+        });
     }
 
     /// Each currency is walked once a sweep. Assume the sweep walked the ones closed
