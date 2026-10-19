@@ -18,7 +18,6 @@ outbe-emissionlimit.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 thiserror.workspace = true
-tracing.workspace = true
 
 [package.metadata.cargo-machete]
 # Used only through sol!-generated code in schema.rs; cargo-machete cannot see
