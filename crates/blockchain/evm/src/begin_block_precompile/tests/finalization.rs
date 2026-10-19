@@ -94,7 +94,7 @@ fn dispatch_finalization_uses_preloaded_summary_not_calldata_money() {
         }
         .encode()
         .unwrap();
-        with_preloaded_system_tx_context(context.clone(), || {
+        with_preloaded_system_tx_context(context, || {
             dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO)
         })
         .unwrap();

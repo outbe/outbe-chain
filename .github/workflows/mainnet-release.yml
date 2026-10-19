@@ -33,10 +33,10 @@ env:
   OUTBE_RELEASE_TAG: ${{ inputs.release_tag }}
 
 jobs:
-  build-and-compare:
-    name: two independent ELF and unsigned SGX builds
-    runs-on: testnet-release-sgx
-    timeout-minutes: 120
+  release-identity:
+    name: bind the signed tag and approved genesis
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     outputs:
       verified_commit: ${{ steps.identity.outputs.verified_commit }}
       verified_tag_object: ${{ steps.identity.outputs.verified_tag_object }}
@@ -45,9 +45,6 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ inputs.release_tag }}
-
-      - name: Install pinned Noir build tools
-        run: scripts/release/install-zk-build-tools.sh
 
       - name: Bind workflow, tag and source identity
         id: identity
@@ -107,15 +104,131 @@ jobs:
           test "$(jq -r '.config | has("teeAttestationV1")' \
             "${RUNNER_TEMP}/release-inputs/mainnet-seeded-genesis.json")" = 'false'
 
-      - name: Build the exact ELF matrix twice without cache
+      - name: Upload the approved seeded Mainnet genesis
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: approved-mainnet-seeded-genesis
+          path: ${{ runner.temp }}/release-inputs
+          if-no-files-found: error
+          retention-days: 1
+
+  build:
+    name: clean release build (${{ matrix.region }})
+    needs: release-identity
+    runs-on: [self-hosted, testnet-release-sgx, "${{ matrix.runner_label }}"]
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - region: fr
+            runner_label: release-fr
+          - region: mum
+            runner_label: release-mum
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.release-identity.outputs.verified_commit }}
+
+      - name: Install pinned Noir build tools
+        run: scripts/release/install-zk-build-tools.sh
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: approved-mainnet-seeded-genesis
+          path: ${{ runner.temp }}/release-inputs
+
+      - name: Build the exact ELF matrix without cache
         run: |
           set -euo pipefail
+          rm -rf "${RUNNER_TEMP}/elf" "${RUNNER_TEMP}/unsigned" \
+            "${RUNNER_TEMP}/builder-output"
           scripts/release/reproducible-build.sh \
             --no-cache --release-tag "${OUTBE_RELEASE_TAG}" \
-            --output "${RUNNER_TEMP}/elf-a"
-          scripts/release/reproducible-build.sh \
-            --no-cache --release-tag "${OUTBE_RELEASE_TAG}" \
-            --output "${RUNNER_TEMP}/elf-b"
+            --output "${RUNNER_TEMP}/elf"
+
+      - name: Prepare the unsigned Gramine bundle
+        run: |
+          set -euo pipefail
+          cargo xtask release sgx prepare \
+            --network mainnet \
+            --genesis "${RUNNER_TEMP}/release-inputs/mainnet-seeded-genesis.json" \
+            --elf-output "${RUNNER_TEMP}/elf" \
+            --output "${RUNNER_TEMP}/unsigned"
+
+      - name: Package the regional build without losing Unix modes
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/builder-output"
+          epoch="$(jq -r .build.source_date_epoch "${RUNNER_TEMP}/elf/release-manifest.json")"
+          tar --sort=name --format=gnu --mtime="@${epoch}" \
+            --owner=0 --group=0 --numeric-owner \
+            -cf "${RUNNER_TEMP}/builder-output/elf.tar" \
+            -C "${RUNNER_TEMP}/elf" .
+          tar --sort=name --format=gnu --mtime="@${epoch}" \
+            --owner=0 --group=0 --numeric-owner \
+            -cf "${RUNNER_TEMP}/builder-output/unsigned.tar" \
+            -C "${RUNNER_TEMP}/unsigned" .
+          cd "${RUNNER_TEMP}/builder-output"
+          sha256sum elf.tar unsigned.tar > SHA256SUMS
+
+      - name: Upload the regional release candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: reproducible-builder-${{ matrix.region }}
+          path: ${{ runner.temp }}/builder-output
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+  build-and-compare:
+    name: compare FR and MUM release candidates
+    needs: [release-identity, build]
+    runs-on: testnet-release-sgx
+    timeout-minutes: 45
+    outputs:
+      verified_commit: ${{ needs.release-identity.outputs.verified_commit }}
+      verified_tag_object: ${{ needs.release-identity.outputs.verified_tag_object }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.release-identity.outputs.verified_commit }}
+
+      - name: Install pinned Noir build tools
+        run: scripts/release/install-zk-build-tools.sh
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: approved-mainnet-seeded-genesis
+          path: ${{ runner.temp }}/release-inputs
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: reproducible-builder-fr
+          path: ${{ runner.temp }}/builder-fr
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: reproducible-builder-mum
+          path: ${{ runner.temp }}/builder-mum
+
+      - name: Verify and unpack both regional candidates
+        run: |
+          set -euo pipefail
+          for region in fr mum; do
+            (
+              cd "${RUNNER_TEMP}/builder-${region}"
+              sha256sum --check SHA256SUMS
+            )
+            mkdir -p "${RUNNER_TEMP}/elf-${region}" \
+              "${RUNNER_TEMP}/unsigned-${region}"
+            tar -xf "${RUNNER_TEMP}/builder-${region}/elf.tar" \
+              -C "${RUNNER_TEMP}/elf-${region}"
+            tar -xf "${RUNNER_TEMP}/builder-${region}/unsigned.tar" \
+              -C "${RUNNER_TEMP}/unsigned-${region}"
+          done
 
       - name: Independently verify byte-for-byte ELF reproducibility
         run: |
@@ -123,49 +236,31 @@ jobs:
           python3 -m venv "${RUNNER_TEMP}/release-verifier"
           "${RUNNER_TEMP}/release-verifier/bin/pip" install \
             --require-hashes -r release/reproducible-verifier-requirements.txt
-          mkdir -p "${RUNNER_TEMP}/release-inputs"
           "${RUNNER_TEMP}/release-verifier/bin/python" \
             scripts/release/verify_reproducible_elf.py \
-            --first "${RUNNER_TEMP}/elf-a" \
-            --second "${RUNNER_TEMP}/elf-b" \
+            --first "${RUNNER_TEMP}/elf-fr" \
+            --second "${RUNNER_TEMP}/elf-mum" \
             --repo-root . \
             --output "${RUNNER_TEMP}/release-inputs/elf-reproducibility.json"
 
-      - name: Prepare and compare two unsigned Gramine bundles
+      - name: Compare both unsigned Gramine bundles
         run: |
           set -euo pipefail
-          cargo xtask release sgx prepare \
-            --network mainnet \
-            --genesis "${RUNNER_TEMP}/release-inputs/mainnet-seeded-genesis.json" \
-            --elf-output "${RUNNER_TEMP}/elf-a" \
-            --output "${RUNNER_TEMP}/unsigned-a"
-          cargo xtask release sgx prepare \
-            --network mainnet \
-            --genesis "${RUNNER_TEMP}/release-inputs/mainnet-seeded-genesis.json" \
-            --elf-output "${RUNNER_TEMP}/elf-b" \
-            --output "${RUNNER_TEMP}/unsigned-b"
           cargo xtask release sgx compare \
-            --first "${RUNNER_TEMP}/unsigned-a" \
-            --second "${RUNNER_TEMP}/unsigned-b" \
+            --first "${RUNNER_TEMP}/unsigned-fr" \
+            --second "${RUNNER_TEMP}/unsigned-mum" \
             --output "${RUNNER_TEMP}/release-inputs/sgx-reproducibility.json"
-          epoch="$(jq -r .build.source_date_epoch "${RUNNER_TEMP}/elf-a/release-manifest.json")"
-          tar --sort=name --format=gnu --mtime="@${epoch}" \
-            --owner=0 --group=0 --numeric-owner \
-            -cf "${RUNNER_TEMP}/release-inputs/unsigned-sgx-bundle.tar" \
-            -C "${RUNNER_TEMP}/unsigned-a" .
-          cp "${RUNNER_TEMP}/elf-a/release-manifest.json" \
+          cp "${RUNNER_TEMP}/builder-fr/unsigned.tar" \
+            "${RUNNER_TEMP}/release-inputs/unsigned-sgx-bundle.tar"
+          cp "${RUNNER_TEMP}/elf-fr/release-manifest.json" \
             "${RUNNER_TEMP}/release-inputs/elf-release-manifest.json"
 
       - name: Package the reproducible binaries and deployment assets
         run: |
           set -euo pipefail
-          epoch="$(jq -r .build.source_date_epoch "${RUNNER_TEMP}/elf-a/release-manifest.json")"
-          # Every artifact of release/reproducible-elf-build-v1.json, plus
-          # the SHA256SUMS and manifest that bind them.
-          tar --sort=name --format=gnu --mtime="@${epoch}" \
-            --owner=0 --group=0 --numeric-owner \
-            -cf "${RUNNER_TEMP}/release-inputs/outbe-linux-x86_64.tar" \
-            -C "${RUNNER_TEMP}/elf-a" .
+          epoch="$(jq -r .build.source_date_epoch "${RUNNER_TEMP}/elf-fr/release-manifest.json")"
+          cp "${RUNNER_TEMP}/builder-fr/elf.tar" \
+            "${RUNNER_TEMP}/release-inputs/outbe-linux-x86_64.tar"
           tar -tf "${RUNNER_TEMP}/release-inputs/outbe-linux-x86_64.tar" \
             | grep -qx './bin/outbe-chain'
           tar --sort=name --format=gnu --mtime="@${epoch}" \
