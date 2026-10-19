@@ -86,7 +86,7 @@ pub fn schedule<'s, S: CallSweep<'s>>(ctx: &BlockRuntimeContext, sweep: &mut S) 
     }
 }
 
-/// Walks the pinned day's next slice, and opens the waiting day once it ends.
+/// Walks the pinned day's next slice, and opens the next closed day once it ends.
 /// Returns the calls made.
 pub fn continue_day<'s, S: CallSweep<'s>>(ctx: &BlockRuntimeContext, sweep: &mut S) -> Result<u32> {
     let pinned_day = sweep.days().current.read()?;

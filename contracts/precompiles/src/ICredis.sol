@@ -40,7 +40,8 @@ interface ICredis {
         Forfeited
     }
 
-    /// Call terms, sealed at issuance in the reference currency.
+    /// Call terms in the reference currency. A live Credis is called and forfeited on the
+    /// window, threshold and notice its group's first Credis sealed.
     struct CallTerms {
         /// Call anchor price, scale 1e6: the previous closed UTC-day VWAP, fixed by the reservation.
         uint256 callAnchorPriceMinor;

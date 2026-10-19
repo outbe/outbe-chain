@@ -42,7 +42,8 @@ interface ICredisFactory {
     /// grows by whole days, so a payment landing a day later needs that day more;
     /// `settleCredis` takes only what is owed, so paying more is safe.
     function quoteSettlement(uint256 credisId) external view returns (uint256 payoffMinor);
-    /// The owner gives up an Issued or Called Credis: its remaining Gratis burns, the principal is written off.
+    /// The owner gives up an Issued or Called Credis before its settlement deadline: its remaining
+    /// Gratis burns, the principal is written off and the Credis is deleted.
     function forfeitCredis(uint256 credisId)
         external
         returns (uint256 gratisBurnedMinor, uint256 principalWrittenOffMinor);

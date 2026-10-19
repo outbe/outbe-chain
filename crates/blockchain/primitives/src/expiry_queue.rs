@@ -1,4 +1,4 @@
-//! Deadline queue shared by the rights' forfeit sweeps.
+//! Deadline queue shared by the rights' forfeit and cleanup sweeps.
 //!
 //! Entries wait in hour buckets by deadline. A bitmap trie over the bucket ids finds
 //! the earliest bucket, and a cursor resumes a bucket that one block could not finish.

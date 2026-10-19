@@ -38,7 +38,7 @@ impl NodContract<'_> {
 
     // --- Group member index ------------------------------------------------
     //
-    // The forfeit sweep enumerates unpaid members with a count, positional map
+    // The cleanup enumerates unpaid members with a count, positional map
     // and reverse map for O(1) swap removal.
 
     /// Appends `nod_id` and increments the group's authoritative unpaid count.

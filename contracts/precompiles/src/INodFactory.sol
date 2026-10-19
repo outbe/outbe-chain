@@ -24,8 +24,8 @@ interface INodFactory {
     ///         window price could not be indexed. The next daily pass tries it again.
     event CallScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);
 
-    /// @notice A lapsed group kept a Nod that could not burn, or its Nods were still
-    ///         landing. The forfeit sweep comes back to it at `retryAt`.
+    /// @notice A lapsed group could not be forfeited. The forfeit sweep comes back to it
+    ///         at `retryAt`.
     event ExpiryDeferred(bytes32 indexed groupKey, uint64 retryAt);
 
     /// @notice Pay an uncalled Nod, or a called one at or before its settlement

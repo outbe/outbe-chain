@@ -140,7 +140,7 @@ pub struct Credis {
 
     /// Call Notice Period in seconds: a called Credis whose remainder is
     /// still outstanding at `called_at + call_notice_period_seconds` is forfeited.
-    /// Sealed from the parameter profile at issuance.
+    /// Snapshotted from the profile at issuance; a live Credis reads its group's.
     #[attribute(order = 17, default = 0)]
     pub call_notice_period_seconds: u32,
 
@@ -149,14 +149,14 @@ pub struct Credis {
     #[attribute(order = 18, default = 0)]
     pub call_rate: u16,
 
-    /// Call-trigger evaluation window in seconds, sealed from the parameter
-    /// profile at issuance. This is the trailing span the daily scan reads for
-    /// Call Price breaches. Divided by 86400 to get the day count.
+    /// Call-trigger evaluation window in seconds, snapshotted from the profile at
+    /// issuance; a live Credis reads its group's. This is the trailing span the daily
+    /// scan reads for Call Price breaches. Divided by 86400 to get the day count.
     #[attribute(order = 19, default = 0)]
     pub call_window_seconds: u32,
 
-    /// Breach threshold in seconds, sealed from the parameter profile at
-    /// issuance. Divided by 86400 to get the required breach-day count.
+    /// Breach threshold in seconds, snapshotted from the profile at issuance; a live
+    /// Credis reads its group's. Divided by 86400 to get the required breach-day count.
     #[attribute(order = 20, default = 0)]
     pub call_threshold_seconds: u32,
 

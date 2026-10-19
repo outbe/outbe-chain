@@ -8,7 +8,6 @@ pub mod api;
 pub mod config;
 pub mod constants;
 pub mod errors;
-pub mod identity;
 pub mod precompile;
 pub mod schema;
 pub mod state_api;

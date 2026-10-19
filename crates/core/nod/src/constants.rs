@@ -39,5 +39,6 @@ pub const CALL_WINDOW: u32 = CALL_LOOKBACK_DAYS * SECONDS_PER_DAY_U32;
 pub const CALL_THRESHOLD: u32 = CALL_THRESHOLD_DAYS * SECONDS_PER_DAY_U32;
 
 /// Seconds after `called_at` within which the owner must settle. Once the
-/// period elapses, the CycleTick forfeit sweep burns the group's remaining Nods.
+/// period elapses, the CycleTick forfeit sweep forfeits the group's unpaid Nods and
+/// the cleanup deletes them.
 pub const CALL_NOTICE_PERIOD: u32 = 7 * SECONDS_PER_DAY_U32;

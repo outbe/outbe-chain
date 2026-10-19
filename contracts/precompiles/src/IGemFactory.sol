@@ -112,8 +112,8 @@ interface IGemFactory {
     );
     /// @notice A settled gem right was exercised: it burned to mine confidential Promis.
     event GemExercised(uint256 indexed gemId, address owner, uint256 promisLoadMinor);
-    /// @notice A due Called group was not fully forfeited. The expiry sweep tries its
-    ///         remaining gems again at `retryAt`.
+    /// @notice A lapsed group could not be forfeited. The expiry sweep comes back to it
+    ///         at `retryAt`.
     event ExpiryDeferred(bytes32 indexed groupKey, uint64 retryAt);
     /// @notice A reference currency was left out of one day's Call scan because its
     ///         window price could not be indexed. The next daily pass tries it again.

@@ -92,8 +92,8 @@ pub fn calc_call_price(price: U256) -> Result<U256> {
 ///
 /// - The call price derives from `call_anchor_price_minor`.
 /// - `policy_rate` is pinned.
-/// - The call terms are snapshotted from the profile, so a later profile change
-///   cannot re-term a live Credis.
+/// - The call terms are snapshotted from the profile. The Credis's group seals its
+///   first member's, so a later profile change cannot re-term a live Credis.
 ///
 /// Collateral starts fully locked and the interest anchor starts at issuance.
 /// Entry price, call anchor, and call price are not written again.

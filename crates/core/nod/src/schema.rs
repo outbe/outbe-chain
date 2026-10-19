@@ -135,7 +135,7 @@ pub struct NodContract {
     #[attribute(order = 0)]
     pub total_supply: outbe_primitives::storage::dsl::Value<u64>,
 
-    // --- Group member index: lets the forfeit sweep enumerate native Nod records.
+    // --- Group member index: lets the cleanup enumerate a group's unpaid Nods.
     // `WwdEntityId` occupies one storage word; IDs require no reconstruction.
     /// Authoritative unpaid member count, stored outside the shared group body.
     #[attribute(order = 35)]
