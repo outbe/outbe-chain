@@ -28,8 +28,8 @@ pub(super) fn worldwide_day(
         day.lookback_end,
         day.offering_end,
         day.scheduled_process_time,
-        day.previous_vwap,
-        day.current_vwap,
+        day.previous_vwap_minor,
+        day.current_vwap_minor,
     )
         .into())
 }

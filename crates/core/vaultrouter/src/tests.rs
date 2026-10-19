@@ -591,7 +591,7 @@ fn withdraw_happy_path_and_rejects_unknown_target() {
             target_account(),
             IVaultRouter::withdrawCall {
                 asset: asset(),
-                amount: U256::from(10),
+                amountMinor: U256::from(10),
                 receiver: Address::ZERO,
             },
             IVaultRouter::StablesTarget::Credis,
@@ -605,7 +605,7 @@ fn withdraw_happy_path_and_rejects_unknown_target() {
             target_account(),
             IVaultRouter::withdrawCall {
                 asset: asset(),
-                amount: U256::from(10),
+                amountMinor: U256::from(10),
                 receiver: receiver(),
             },
             IVaultRouter::StablesTarget::Unknown,
@@ -632,7 +632,7 @@ fn withdraw_happy_path_and_rejects_unknown_target() {
             target_account(),
             IVaultRouter::withdrawCall {
                 asset: asset(),
-                amount: U256::from(10),
+                amountMinor: U256::from(10),
                 receiver: receiver(),
             },
             IVaultRouter::StablesTarget::Credis,
@@ -661,7 +661,7 @@ fn withdraw_transfers_to_an_undeployed_receiver() {
             target_account(),
             IVaultRouter::withdrawCall {
                 asset: asset(),
-                amount: U256::from(10),
+                amountMinor: U256::from(10),
                 receiver: receiver(),
             },
             IVaultRouter::StablesTarget::Credis,
@@ -718,7 +718,7 @@ fn withdraw_rejects_a_false_transfer() {
             target_account(),
             IVaultRouter::withdrawCall {
                 asset: asset(),
-                amount: U256::from(10),
+                amountMinor: U256::from(10),
                 receiver: receiver(),
             },
             IVaultRouter::StablesTarget::Credis,
@@ -745,7 +745,7 @@ fn abi_deposit_gates_msg_sender_against_registry() {
 
         let calldata = IVaultRouter::depositCall {
             asset: asset(),
-            assetsAmount: U256::from(10),
+            assetsMinor: U256::from(10),
         }
         .abi_encode();
 
@@ -785,7 +785,7 @@ fn abi_withdraw_gates_msg_sender_against_registry() {
 
         let calldata = IVaultRouter::withdrawCall {
             asset: asset(),
-            amount: U256::from(10),
+            amountMinor: U256::from(10),
             receiver: receiver(),
         }
         .abi_encode();
@@ -913,8 +913,8 @@ fn rebalance_rejects_same_vault() {
             IVaultRouter::rebalanceCall {
                 vaultFrom: vault_from(),
                 vaultTo: vault_from(),
-                assetsAmount: U256::from(10),
-                maxAmountTo: U256::MAX,
+                assetsMinor: U256::from(10),
+                maxAssetsToMinor: U256::MAX,
             },
         )
         .unwrap_err();
@@ -933,8 +933,8 @@ fn rebalance_rejects_zero_amount() {
             IVaultRouter::rebalanceCall {
                 vaultFrom: vault_from(),
                 vaultTo: vault_to(),
-                assetsAmount: U256::ZERO,
-                maxAmountTo: U256::MAX,
+                assetsMinor: U256::ZERO,
+                maxAssetsToMinor: U256::MAX,
             },
         )
         .unwrap_err();
@@ -969,8 +969,8 @@ fn rebalance_rejects_an_unregistered_source_vault() {
             IVaultRouter::rebalanceCall {
                 vaultFrom: vault_from(),
                 vaultTo: vault_to(),
-                assetsAmount: U256::from(10),
-                maxAmountTo: U256::MAX,
+                assetsMinor: U256::from(10),
+                maxAssetsToMinor: U256::MAX,
             },
         )
         .unwrap_err();
@@ -1002,8 +1002,8 @@ fn rebalance_rejects_an_unregistered_destination_vault() {
             IVaultRouter::rebalanceCall {
                 vaultFrom: vault_from(),
                 vaultTo: vault_to(),
-                assetsAmount: U256::from(10),
-                maxAmountTo: U256::MAX,
+                assetsMinor: U256::from(10),
+                maxAssetsToMinor: U256::MAX,
             },
         )
         .unwrap_err();
@@ -1061,8 +1061,8 @@ fn rebalance_accepts_a_vault_whose_reference_currency_index_is_unset() {
             IVaultRouter::rebalanceCall {
                 vaultFrom: vault_from(),
                 vaultTo: vault_to(),
-                assetsAmount: amount,
-                maxAmountTo: U256::MAX,
+                assetsMinor: amount,
+                maxAssetsToMinor: U256::MAX,
             },
         )
         .unwrap();
@@ -1105,8 +1105,8 @@ fn rebalance_rejects_insufficient_source_shares() {
             IVaultRouter::rebalanceCall {
                 vaultFrom: vault_from(),
                 vaultTo: vault_to(),
-                assetsAmount: U256::from(10),
-                maxAmountTo: U256::MAX,
+                assetsMinor: U256::from(10),
+                maxAssetsToMinor: U256::MAX,
             },
         )
         .unwrap_err();
@@ -1142,8 +1142,8 @@ fn rebalance_rejects_when_the_required_input_exceeds_max() {
             IVaultRouter::rebalanceCall {
                 vaultFrom: vault_from(),
                 vaultTo: vault_to(),
-                assetsAmount: amount,
-                maxAmountTo: amount - U256::from(1),
+                assetsMinor: amount,
+                maxAssetsToMinor: amount - U256::from(1),
             },
         )
         .unwrap_err();
@@ -1184,8 +1184,8 @@ fn rebalance_prices_an_identical_asset_pair_one_to_one() {
             IVaultRouter::rebalanceCall {
                 vaultFrom: vault_from(),
                 vaultTo: vault_to(),
-                assetsAmount: amount,
-                maxAmountTo: U256::MAX,
+                assetsMinor: amount,
+                maxAssetsToMinor: U256::MAX,
             },
         )
         .unwrap();
@@ -1249,8 +1249,8 @@ fn rebalance_prices_a_same_currency_pair_one_to_one() {
             IVaultRouter::rebalanceCall {
                 vaultFrom: vault_from(),
                 vaultTo: vault_to(),
-                assetsAmount: amount,
-                maxAmountTo: U256::MAX,
+                assetsMinor: amount,
+                maxAssetsToMinor: U256::MAX,
             },
         )
         .unwrap();
@@ -1329,8 +1329,8 @@ fn rebalance_prices_a_cross_currency_pair_from_the_oracle() {
             IVaultRouter::rebalanceCall {
                 vaultFrom: vault_from(),
                 vaultTo: vault_to(),
-                assetsAmount: amount,
-                maxAmountTo: U256::MAX,
+                assetsMinor: amount,
+                maxAssetsToMinor: U256::MAX,
             },
         )
         .unwrap();
@@ -1390,8 +1390,8 @@ fn rebalance_scales_across_asset_decimals() {
                 IVaultRouter::rebalanceCall {
                     vaultFrom: vault_from(),
                     vaultTo: vault_to(),
-                    assetsAmount: U256::from(10u64),
-                    maxAmountTo: U256::MAX,
+                    assetsMinor: U256::from(10u64),
+                    maxAssetsToMinor: U256::MAX,
                 },
             )
             .unwrap();
@@ -1454,8 +1454,8 @@ fn rebalance_scales_across_asset_decimals() {
                 IVaultRouter::rebalanceCall {
                     vaultFrom: vault_from(),
                     vaultTo: vault_to(),
-                    assetsAmount: amount,
-                    maxAmountTo: U256::MAX,
+                    assetsMinor: amount,
+                    maxAssetsToMinor: U256::MAX,
                 },
             )
             .unwrap();
@@ -1501,8 +1501,8 @@ fn rebalance_rejects_assets_with_more_than_eighteen_decimals() {
             IVaultRouter::rebalanceCall {
                 vaultFrom: vault_from(),
                 vaultTo: vault_to(),
-                assetsAmount: U256::from(10),
-                maxAmountTo: U256::MAX,
+                assetsMinor: U256::from(10),
+                maxAssetsToMinor: U256::MAX,
             },
         )
         .unwrap_err();
@@ -1564,8 +1564,8 @@ fn rebalance_reverts_when_the_caller_has_not_approved_the_destination_asset() {
             IVaultRouter::rebalanceCall {
                 vaultFrom: vault_from(),
                 vaultTo: vault_to(),
-                assetsAmount: U256::from(10),
-                maxAmountTo: U256::MAX,
+                assetsMinor: U256::from(10),
+                maxAssetsToMinor: U256::MAX,
             },
         )
         .unwrap_err();
@@ -1603,8 +1603,8 @@ fn rebalance_rolls_back_when_the_destination_deposit_fails() {
             IVaultRouter::rebalanceCall {
                 vaultFrom: vault_from(),
                 vaultTo: vault_to(),
-                assetsAmount: U256::from(10),
-                maxAmountTo: U256::MAX,
+                assetsMinor: U256::from(10),
+                maxAssetsToMinor: U256::MAX,
             },
         )
         .unwrap_err();
@@ -1657,8 +1657,8 @@ fn rebalance_rolls_back_when_the_source_withdraw_fails() {
             IVaultRouter::rebalanceCall {
                 vaultFrom: vault_from(),
                 vaultTo: vault_to(),
-                assetsAmount: U256::from(10),
-                maxAmountTo: U256::MAX,
+                assetsMinor: U256::from(10),
+                maxAssetsToMinor: U256::MAX,
             },
         )
         .unwrap_err();
@@ -1696,8 +1696,8 @@ fn rebalance_rejects_an_unregistered_stranger() {
             IVaultRouter::rebalanceCall {
                 vaultFrom: vault_from(),
                 vaultTo: vault_to(),
-                assetsAmount: amount,
-                maxAmountTo: U256::MAX,
+                assetsMinor: amount,
+                maxAssetsToMinor: U256::MAX,
             },
         )
         .unwrap_err();
@@ -1779,8 +1779,8 @@ fn preview_rebalance_matches_what_rebalance_pulls() {
             IVaultRouter::rebalanceCall {
                 vaultFrom: vault_from(),
                 vaultTo: vault_to(),
-                assetsAmount: amount,
-                maxAmountTo: U256::MAX,
+                assetsMinor: amount,
+                maxAssetsToMinor: U256::MAX,
             },
         )
         .unwrap();
@@ -1796,8 +1796,8 @@ fn rebalance_selectors_reject_native_value() {
         let call = IVaultRouter::rebalanceCall {
             vaultFrom: vault_from(),
             vaultTo: vault_to(),
-            assetsAmount: U256::from(10),
-            maxAmountTo: U256::MAX,
+            assetsMinor: U256::from(10),
+            maxAssetsToMinor: U256::MAX,
         };
         let err = dispatch(storage.clone(), &call.abi_encode(), cca(), U256::from(1)).unwrap_err();
         assert!(err.to_string().contains("non-payable"), "{err}");
@@ -1805,7 +1805,7 @@ fn rebalance_selectors_reject_native_value() {
         let preview = IVaultRouter::previewRebalanceCall {
             vaultFrom: vault_from(),
             vaultTo: vault_to(),
-            assetsAmount: U256::from(10),
+            assetsMinor: U256::from(10),
         };
         let err =
             dispatch(storage.clone(), &preview.abi_encode(), cca(), U256::from(1)).unwrap_err();
@@ -1900,8 +1900,8 @@ fn rebalance_emits_liquidity_rebalanced_with_both_legs() {
             IVaultRouter::rebalanceCall {
                 vaultFrom: vault_from(),
                 vaultTo: vault_to(),
-                assetsAmount: amount,
-                maxAmountTo: U256::MAX,
+                assetsMinor: amount,
+                maxAssetsToMinor: U256::MAX,
             },
         )
         .unwrap();
@@ -1913,9 +1913,9 @@ fn rebalance_emits_liquidity_rebalanced_with_both_legs() {
     assert_eq!(decoded.cca, cca());
     assert_eq!(decoded.vaultFrom, vault_from());
     assert_eq!(decoded.vaultTo, vault_to());
-    assert_eq!(decoded.assetsWithdrawn, amount);
+    assert_eq!(decoded.assetsWithdrawnMinor, amount);
     assert_eq!(decoded.burnedShares, burned);
-    assert_eq!(decoded.assetsDeposited, U256::from(20u64));
+    assert_eq!(decoded.assetsDepositedMinor, U256::from(20u64));
     assert_eq!(decoded.mintedShares, minted);
 }
 
@@ -1975,8 +1975,8 @@ fn rebalance_rejects_invalid_live_reference_currencies() {
                 IVaultRouter::rebalanceCall {
                     vaultFrom: vault_from(),
                     vaultTo: vault_to(),
-                    assetsAmount: U256::from(10),
-                    maxAmountTo: U256::MAX,
+                    assetsMinor: U256::from(10),
+                    maxAssetsToMinor: U256::MAX,
                 },
             )
             .unwrap_err();
@@ -2052,7 +2052,7 @@ fn reserve_stables_rejects_an_inactive_caller() {
                 credisOwner: receiver(),
                 source: pledger(),
                 asset: asset(),
-                amount: U256::from(10),
+                amountMinor: U256::from(10),
                 referenceCurrency: USD_ISO_CODE,
             },
         )
@@ -2075,7 +2075,7 @@ fn reserve_stables_requires_a_pledge_source() {
                 credisOwner: receiver(),
                 source: Address::ZERO,
                 asset: asset(),
-                amount: U256::from(10),
+                amountMinor: U256::from(10),
                 referenceCurrency: USD_ISO_CODE,
             },
         )
@@ -2095,7 +2095,7 @@ fn reserve_in(
             credisOwner: receiver(),
             source: pledger(),
             asset: asset(),
-            amount: U256::from(10),
+            amountMinor: U256::from(10),
             referenceCurrency: reference_currency,
         },
     )
@@ -2196,7 +2196,7 @@ fn reserve_stables_requires_a_credis_owner() {
                 credisOwner: Address::ZERO,
                 source: receiver(),
                 asset: asset(),
-                amount: U256::from(10),
+                amountMinor: U256::from(10),
                 referenceCurrency: USD_ISO_CODE,
             },
         )
@@ -2215,14 +2215,14 @@ fn a_reservation_holds_then_releases_once() {
                 credisOwner: receiver(),
                 source: pledger(),
                 asset: asset(),
-                amount: U256::from(10),
+                amountMinor: U256::from(10),
                 referenceCurrency: USD_ISO_CODE,
             },
         )
         .unwrap();
         let held = runtime::reservation_of(&storage, id).unwrap();
         assert_eq!(held.asset, asset());
-        assert_eq!(held.amount, U256::from(10));
+        assert_eq!(held.amount_minor, U256::from(10));
         assert_eq!(held.credis_owner, receiver());
         assert_eq!(held.cca, cca());
         assert_eq!(held.source, pledger());
@@ -2272,7 +2272,7 @@ fn release_rejects_a_different_receiver_and_returns_excess_to_the_origin_vault()
                 credisOwner: receiver(),
                 source: pledger(),
                 asset: asset(),
-                amount: U256::from(50),
+                amountMinor: U256::from(50),
                 referenceCurrency: USD_ISO_CODE,
             },
         )
@@ -2288,7 +2288,7 @@ fn release_rejects_a_different_receiver_and_returns_excess_to_the_origin_vault()
         .unwrap_err();
         assert!(err.to_string().contains("Credis owner mismatch"), "{err}");
         assert_eq!(
-            runtime::reservation_of(&storage, id).unwrap().amount,
+            runtime::reservation_of(&storage, id).unwrap().amount_minor,
             U256::from(50),
             "failed release must leave the hold intact"
         );
@@ -2319,7 +2319,7 @@ fn an_unspent_reservation_returns_to_the_origin_vault() {
                 credisOwner: receiver(),
                 source: pledger(),
                 asset: asset(),
-                amount: U256::from(10),
+                amountMinor: U256::from(10),
                 referenceCurrency: USD_ISO_CODE,
             },
         )
@@ -2347,7 +2347,7 @@ fn a_stranger_cannot_return_a_live_reservation() {
                 credisOwner: receiver(),
                 source: pledger(),
                 asset: asset(),
-                amount: U256::from(10),
+                amountMinor: U256::from(10),
                 referenceCurrency: USD_ISO_CODE,
             },
         )
@@ -2355,7 +2355,7 @@ fn a_stranger_cannot_return_a_live_reservation() {
         let err = runtime::return_reservation(storage.clone(), stranger(), id).unwrap_err();
         assert!(err.to_string().contains("unauthorized"), "{err}");
         assert_eq!(
-            runtime::reservation_of(&storage, id).unwrap().amount,
+            runtime::reservation_of(&storage, id).unwrap().amount_minor,
             U256::from(10)
         );
     });
@@ -2368,7 +2368,7 @@ fn seed_expired_reservation(storage: &StorageHandle<'_>) -> U256 {
         .create(&LiquidityReservation {
             id,
             asset: asset(),
-            amount: U256::from(10),
+            amount_minor: U256::from(10),
             credis_owner: receiver(),
             cca: cca(),
             vault: vault(),
@@ -2406,7 +2406,7 @@ fn release_rejects_an_expired_reservation() {
         .unwrap_err();
         assert!(err.to_string().contains("reservation expired"), "{err}");
         assert_eq!(
-            runtime::reservation_of(&storage, id).unwrap().amount,
+            runtime::reservation_of(&storage, id).unwrap().amount_minor,
             U256::from(10)
         );
     });
@@ -2420,7 +2420,7 @@ fn reservations_are_gated_like_a_withdrawal() {
             credisOwner: receiver(),
             source: pledger(),
             asset: asset(),
-            amount: U256::from(10),
+            amountMinor: U256::from(10),
         }
         .abi_encode();
         let out = dispatch(storage.clone(), &reserve_call, cca(), U256::ZERO).unwrap();
@@ -2429,7 +2429,7 @@ fn reservations_are_gated_like_a_withdrawal() {
         let release_call = IVaultRouter::releaseReservationCall {
             id,
             receiver: receiver(),
-            amount: U256::from(10),
+            amountMinor: U256::from(10),
         }
         .abi_encode();
         let err = dispatch(storage.clone(), &release_call, stranger(), U256::ZERO).unwrap_err();
@@ -2475,7 +2475,7 @@ fn a_reservation_cannot_exceed_the_vaults_shares() {
                 credisOwner: receiver(),
                 source: pledger(),
                 asset: asset(),
-                amount: U256::from(10),
+                amountMinor: U256::from(10),
                 referenceCurrency: USD_ISO_CODE,
             },
         )
@@ -2512,7 +2512,7 @@ fn reservation_expiry_boundary_and_repeated_permissionless_return() {
                 credisOwner: receiver(),
                 source: pledger(),
                 asset: asset(),
-                amount: U256::from(10),
+                amountMinor: U256::from(10),
                 referenceCurrency: USD_ISO_CODE,
             },
         )
@@ -2521,7 +2521,7 @@ fn reservation_expiry_boundary_and_repeated_permissionless_return() {
         storage.set_block_timestamp(U256::from(expiry)).unwrap();
         assert!(runtime::return_reservation(storage.clone(), stranger(), id).is_err());
         assert_eq!(
-            runtime::reservation_of(&storage, id).unwrap().amount,
+            runtime::reservation_of(&storage, id).unwrap().amount_minor,
             U256::from(10)
         );
         storage.set_block_timestamp(U256::from(expiry + 1)).unwrap();

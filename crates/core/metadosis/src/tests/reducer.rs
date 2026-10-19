@@ -31,8 +31,8 @@ fn projection_for_day_type(status: WwdStatus, day_type: WwdDayType) -> WwdProjec
         offering_end: OFFERING_END,
         scheduled_process_time: PROCESS_AT,
         metadosis_limit_minor: U256::from(10),
-        previous_vwap: U256::ZERO,
-        current_vwap: U256::ZERO,
+        previous_vwap_minor: U256::ZERO,
+        current_vwap_minor: U256::ZERO,
     }
 }
 

@@ -134,7 +134,7 @@ pub fn dispatch(
             // --- liquidity flow (source/target-gated against the registry) ---
             deposit(c) => mutate(&storage, c, caller, |sender, c| {
                 let source = runtime::registered_liquidity_source(&storage, sender)?;
-                runtime::deposit(storage.clone(), sender, c.asset, c.assetsAmount, source)
+                runtime::deposit(storage.clone(), sender, c.asset, c.assetsMinor, source)
             }),
             withdraw(c) => mutate(&storage, c, caller, |sender, c| {
                 let target = runtime::registered_liquidity_target(&storage, sender)?;
@@ -143,7 +143,9 @@ pub fn dispatch(
 
             // --- views over external state ---
             sharesBalance(c) => view(c, |c| runtime::shares_balance(&storage, c.vault)),
-            hasLiquidity(c) => view(c, |c| runtime::has_liquidity(&storage, c.asset, c.amount)),
+            hasLiquidity(c) => view(c, |c| {
+                runtime::has_liquidity(&storage, c.asset, c.amountMinor)
+            }),
             reservationOf(c) => view(c, |c| {
                 let record = runtime::reservation_of(&storage, c.id)?;
                 Ok(record.into())
@@ -158,7 +160,13 @@ pub fn dispatch(
                     return Err(crate::errors::VaultRouterError::Unauthorized.into());
                 }
                 let target = runtime::registered_liquidity_target(&storage, sender)?;
-                runtime::release_reservation(storage.clone(), c.id, c.receiver, c.amount, target)
+                runtime::release_reservation(
+                    storage.clone(),
+                    c.id,
+                    c.receiver,
+                    c.amountMinor,
+                    target,
+                )
             }),
             returnReservation(c) => mutate(&storage, c, caller, |sender, c| {
                 runtime::return_reservation(storage.clone(), sender, c.id)
@@ -170,11 +178,11 @@ pub fn dispatch(
             }),
             previewRebalance(c) => view(c, |c| {
                 let (asset_from, asset_to, amount_to) =
-                    runtime::preview_rebalance(&storage, c.vaultFrom, c.vaultTo, c.assetsAmount)?;
+                    runtime::preview_rebalance(&storage, c.vaultFrom, c.vaultTo, c.assetsMinor)?;
                 Ok(IVaultRouter::previewRebalanceReturn {
                     assetFrom: asset_from,
                     assetTo: asset_to,
-                    amountTo: amount_to,
+                    assetsToMinor: amount_to,
                 })
             }),
         }

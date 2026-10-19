@@ -165,7 +165,7 @@ pub fn seed_reservation(
         .create(&LiquidityReservation {
             id,
             asset: settlement_asset(),
-            amount,
+            amount_minor: amount,
             credis_owner,
             cca: cca(),
             vault: address!("0x0000000000000000000000000000000000000777"),

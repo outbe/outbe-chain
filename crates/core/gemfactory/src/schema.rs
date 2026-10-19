@@ -21,10 +21,10 @@ pub enum GemTypes {
 pub struct GemIssueParams {
     pub owner: Address,
     pub gem_type: GemTypes,
-    pub promis_load: U256,
+    pub promis_load_minor: U256,
     pub issuance_currency: u16,
     pub reference_currency: u16,
-    pub entry_price: U256,
+    pub entry_price_minor: U256,
 }
 
 /// One merchant issuance, authorized by the position owner.
@@ -33,7 +33,7 @@ pub struct MerchantGemIssueParams {
     pub caller: Address,
     pub position_id: U256,
     pub owner: Address,
-    pub promis_load: U256,
+    pub promis_load_minor: U256,
 }
 
 /// The proof of work submitted for a settled Gem.
@@ -58,7 +58,7 @@ pub struct GemPosition {
     #[attribute(order = 1)]
     pub source_intex_id: SeriesId,
 
-    /// Remaining Promis capacity. Each issue drains it by `promis_load`.
+    /// Remaining Promis capacity. Each issue drains it by `promis_load_minor`.
     #[attribute(order = 2)]
     pub remaining_capacity_minor: U256,
 

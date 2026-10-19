@@ -364,7 +364,7 @@
         "internalType": "uint32"
       },
       {
-        "name": "amount",
+        "name": "proceedsMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

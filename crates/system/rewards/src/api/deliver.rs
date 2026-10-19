@@ -73,10 +73,10 @@ fn deliver_oldest_reward_gem_batch_inner(
         outbe_gemfactory::GemIssueParams {
             owner,
             gem_type: GemTypes::Validator,
-            promis_load: load,
+            promis_load_minor: load,
             issuance_currency: batch.issuance_currency,
             reference_currency: batch.reference_currency,
-            entry_price,
+            entry_price_minor: entry_price,
         },
     )?;
     let delivered_recipients = delivered.checked_add(1).ok_or_else(|| {

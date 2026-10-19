@@ -259,7 +259,7 @@ pub(crate) fn snapshot(world: &World) -> Snapshot {
             ),
             reservation: (
                 reservation.asset,
-                reservation.amount,
+                reservation.amountMinor,
                 reservation.credisOwner,
                 reservation.cca,
                 reservation.vault,

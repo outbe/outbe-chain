@@ -27,7 +27,7 @@ pub fn distribute(
         crate::precompile::IIntexFactory::ProceedsBurned {
             worldwideDay: worldwide_day.value(),
             srcChainId: src_chain_id,
-            amount,
+            proceedsMinor: amount,
             creditedPromisMinor: credited,
         },
     )

@@ -17,7 +17,7 @@ pub struct LiquidityReservation {
     #[attribute(order = 0)]
     pub asset: Address,
     #[attribute(order = 1)]
-    pub amount: U256,
+    pub amount_minor: U256,
     #[attribute(order = 2)]
     pub credis_owner: Address,
     #[attribute(order = 3)]
@@ -125,7 +125,7 @@ impl From<LiquidityReservation> for crate::api::IVaultRouter::LiquidityReservati
     fn from(r: LiquidityReservation) -> Self {
         Self {
             asset: r.asset,
-            amount: r.amount,
+            amountMinor: r.amount_minor,
             credisOwner: r.credis_owner,
             cca: r.cca,
             vault: r.vault,

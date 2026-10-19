@@ -63,7 +63,7 @@ pub(crate) fn quote(
         .ok_or(VaultRouterError::PreviousDayVwapUnavailable)?;
     Ok(LiquidityReservation {
         asset,
-        amount,
+        amount_minor: amount,
         gratis_minor,
         snapshot_id: snapshot.to_u256(),
         entry_price_minor,

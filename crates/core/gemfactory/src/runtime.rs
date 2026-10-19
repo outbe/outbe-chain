@@ -24,10 +24,10 @@ pub fn issue_gem(storage: &StorageHandle<'_>, params: GemIssueParams) -> Result<
     let GemIssueParams {
         owner,
         gem_type,
-        promis_load,
+        promis_load_minor: promis_load,
         issuance_currency,
         reference_currency,
-        entry_price,
+        entry_price_minor: entry_price,
     } = params;
     if owner.is_zero() {
         return Err(GemFactoryError::InvalidOwner.into());
@@ -265,7 +265,7 @@ pub fn issue_merchant_gem(
         caller,
         position_id,
         owner,
-        promis_load,
+        promis_load_minor: promis_load,
     } = params;
     if owner.is_zero() {
         return Err(GemFactoryError::InvalidOwner.into());

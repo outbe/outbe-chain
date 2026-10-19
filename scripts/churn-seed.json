@@ -15,8 +15,8 @@
         "lookback_end": 1734674400,
         "offering_end": 4000000000,
         "scheduled_process_time": 4100000000,
-        "previous_vwap": "0",
-        "current_vwap": "1000000",
+        "previous_vwap_minor": "0",
+        "current_vwap_minor": "1000000",
         "day_limit": "500000000"
       }
     ]
