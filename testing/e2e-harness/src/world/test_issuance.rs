@@ -48,8 +48,7 @@ pub const INTEX_FACTORY: Address =
 sol! {
     interface IIntexFactoryTestArming {
         function seedDayVwapsForTest(uint16 isoCode, uint32 days, uint256 value) external;
-        function closeCallNoticeForTest(uint16 isoCode, uint32 worldwideDay, uint64 deadline)
-            external;
+        function closeCallNoticeForTest(bytes14 seriesId, uint64 deadline) external;
         function issueForTest(
             bytes14[] seriesIds,
             uint16[] issuanceCurrencies,
@@ -381,13 +380,13 @@ pub fn seed_day_vwaps(
     )
 }
 
-/// Re-queue a called group on a deadline already behind a closed expiry bucket, so
-/// the sweep reaches it on the next block instead of idling out the rest of the hour.
+/// Re-queue the called group of `series` on a deadline already behind a closed expiry
+/// bucket, so the sweep reaches it on the next block instead of idling out the rest of
+/// the hour.
 pub fn close_call_notice(
     url: &str,
     sender_key: &str,
-    iso_code: u16,
-    worldwide_day: u32,
+    series: alloy_primitives::FixedBytes<14>,
     deadline: u64,
 ) -> Result<()> {
     send_checked(
@@ -395,8 +394,7 @@ pub fn close_call_notice(
         INTEX_FACTORY,
         sender_key,
         &IIntexFactoryTestArming::closeCallNoticeForTestCall {
-            isoCode: iso_code,
-            worldwideDay: worldwide_day,
+            seriesId: series,
             deadline,
         },
         "closeCallNoticeForTest",

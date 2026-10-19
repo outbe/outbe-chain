@@ -45,7 +45,7 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
         select_prod_profile(&s);
         runtime::issue_intex(&s, sample(7)).unwrap();
         outbe_intex::api::record_settled_units(&s, sid(7), 1).unwrap();
-        outbe_intex::api::record_called(&s, sid(7), ISSUED_AT).unwrap();
+        outbe_intex::api::call_group_of(&s, sid(7), ISSUED_AT).unwrap();
         let promis_minor = outbe_intex::api::read_series(&s, sid(7))
             .unwrap()
             .promis_load_minor;
@@ -59,7 +59,10 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
 
     StorageHandle::enter(&mut storage, |s| {
         let series = outbe_intex::api::read_series(&s, sid(7)).unwrap();
-        assert_eq!(series.called_at, ISSUED_AT);
+        assert_eq!(
+            outbe_intex::api::call_stamp(&s, &series).unwrap().called_at,
+            ISSUED_AT
+        );
         assert!(
             s.timestamp().unwrap().to::<u64>() > deadline,
             "the fixture sits past the settlement deadline"
@@ -97,7 +100,10 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
         )
         .unwrap();
         assert_eq!(minted, promis_minor);
-        assert_eq!(outbe_intex::api::exercised_units(&s, sid(7)).unwrap(), 1);
+        assert!(
+            !outbe_intex::api::series_exists(&s, sid(7)).unwrap(),
+            "its last settled unit mined, the expired series is spent and deleted"
+        );
 
         // The Promis landed on the owner's confidential ledger and consumed one op nonce.
         let sk = outbe_promis::enclave_client::test_enclave::state_key();

@@ -240,16 +240,10 @@
     "name": "ExpiryDeferred",
     "inputs": [
       {
-        "name": "referenceCurrency",
-        "type": "uint16",
+        "name": "groupKey",
+        "type": "bytes32",
         "indexed": true,
-        "internalType": "uint16"
-      },
-      {
-        "name": "worldwideDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
+        "internalType": "bytes32"
       },
       {
         "name": "retryAt",

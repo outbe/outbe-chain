@@ -23,6 +23,7 @@ base64 = "0.22"
 
 [dev-dependencies]
 outbe-gem = { workspace = true, features = ["test-utils"] }
+outbe-intex = { workspace = true, features = ["test-utils"] }
 outbe-oracle = { workspace = true, features = ["test-utils"] }
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 alloy-primitives = { workspace = true, features = ["rand"] }

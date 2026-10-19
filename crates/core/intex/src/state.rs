@@ -4,17 +4,15 @@
 //! writes) constructed via `IntexContract::new(storage)`. They only
 //! touch local storage. Orchestration and validation live in `api.rs`.
 
-use alloy_primitives::{B256, U256};
+use alloy_primitives::B256;
 use outbe_primitives::call_bins;
 use outbe_primitives::call_breach::{self, ScanTerms};
 use outbe_primitives::error::Result;
 use outbe_primitives::expiry_queue;
-use outbe_primitives::storage::dsl::Map;
-use outbe_primitives::storage::types::Storable;
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::storage::indexed_list::IndexedList;
 
 use crate::errors::IntexError;
-use crate::schema::{IntexContract, SeriesId, SeriesRecord};
+use crate::schema::{CallStamp, IntexContract, SeriesId, SeriesRecord};
 
 impl IntexContract<'_> {
     // ---------------------------------------------------------------------
@@ -35,71 +33,137 @@ impl IntexContract<'_> {
             .ok_or_else(|| IntexError::SeriesNotFound.into())
     }
 
-    /// Create a new series record and append it to the global enumeration.
+    /// Create a new series record and list it for enumeration.
     /// The underlying record `create` rejects a duplicate `series_id`.
     pub(crate) fn create_series_record(&mut self, record: &SeriesRecord) -> Result<()> {
         self.series.create(record)?;
-        self.append_to_global_index(record.series_id)
+        self.series_index().insert(record.series_id)
     }
 
+    #[cfg(any(test, feature = "test-utils"))]
     pub(crate) fn update_series_record(&mut self, record: &SeriesRecord) -> Result<()> {
         self.series.update(record)
     }
 
-    // ---------------------------------------------------------------------
-    // Global dense index for enumeration
-    // ---------------------------------------------------------------------
-
-    fn append_to_global_index(&mut self, series_id: SeriesId) -> Result<()> {
-        let total = self.total_series.read()?;
-        self.series_id_at_index.write(&total, series_id.to_word())?;
-        self.total_series.write(total + 1)?;
-        Ok(())
+    /// Deletes a spent series: its record, its place in the enumeration and its ledgers.
+    pub(crate) fn delete_series_record(&mut self, series_id: SeriesId) -> Result<()> {
+        self.series_index().remove(series_id)?;
+        self.settled_units.clear(&series_id)?;
+        self.gem_factory_units.clear(&series_id)?;
+        self.exercised_units.clear(&series_id)?;
+        self.series.delete(series_id)
     }
 
-    pub(crate) fn read_total_series(&self) -> Result<u64> {
-        self.total_series.read()
+    pub(crate) fn read_total_series(&self) -> Result<u32> {
+        self.series_ids.len()
     }
 
-    pub(crate) fn read_series_id_at(&self, index: u64) -> Result<SeriesId> {
-        Ok(SeriesId::from_word(self.series_id_at_index.read(&index)?))
+    pub(crate) fn read_series_id_at(&self, index: u32) -> Result<SeriesId> {
+        self.series_ids
+            .get(index)?
+            .ok_or_else(|| IntexError::SeriesIndexOutOfRange.into())
+    }
+}
+
+impl<'storage> IntexContract<'storage> {
+    fn series_index(&self) -> IndexedList<'storage, SeriesId> {
+        IndexedList::new(self.series_ids.clone(), self.series_position.clone())
+    }
+
+    fn group_index(&self, group: B256) -> IndexedList<'storage, SeriesId> {
+        IndexedList::new(
+            self.call_group_members.list(&group),
+            self.call_group_position.clone(),
+        )
     }
 }
 
 // ---------------------------------------------------------------------
-// Call lifecycle: price bins of worldwide-day groups and the called-group queue
+// Call lifecycle: the price bins of call groups, the called-group queue and the
+// cleanup queue of expired groups
 // ---------------------------------------------------------------------
 
 impl IntexContract<'_> {
-    // --- bin keys ---
-
-    pub fn bin_index_key(reference_currency: u16, bin_id: u32, index: u32) -> B256 {
-        call_bins::bin_index_key(reference_currency, bin_id, index)
+    /// Enrolls a series in its call group, opening the group in its call-price bin
+    /// when it is the first member.
+    pub fn join_call_group(&mut self, record: &SeriesRecord) -> Result<()> {
+        let group = record.group_key();
+        if self.call_group_members.list(&group).len()? == 0 {
+            let iso = record.reference_currency;
+            self.call_group_currency.write(&group, iso)?;
+            let bin = call_bins::price_to_bin(record.call_price_minor)?;
+            call_bins::insert(&CallBins(&*self, iso), group, bin)?;
+        }
+        self.group_index(group).insert(record.series_id)
     }
 
-    /// Composite key for a group's member list. It uses the layout of `bin_index_key`,
-    /// over a separate column keyed by worldwide day instead of bin id.
-    pub fn group_member_key(
-        reference_currency: u16,
-        worldwide_day: WorldwideDay,
-        index: u32,
-    ) -> B256 {
-        Self::bin_index_key(reference_currency, worldwide_day.value(), index)
+    /// Takes a series out of its group, and closes the group with its last member.
+    pub fn leave_call_group(&mut self, group: B256, series_id: SeriesId) -> Result<()> {
+        self.group_index(group).remove(series_id)?;
+        if self.call_group_members.list(&group).len()? == 0 {
+            self.close_call_group(group)?;
+        }
+        Ok(())
     }
 
-    /// Enroll a series in its call-price bin. Its day's group is created with the first member.
-    pub fn insert_call_bin(
+    /// Forgets a group nothing is left in: its bin, its queues and its call.
+    fn close_call_group(&mut self, group: B256) -> Result<()> {
+        let iso = self.call_group_currency.read(&group)?;
+        call_bins::remove(&CallBins(&*self, iso), group)?;
+        expiry_queue::remove(&ExpiryHours(self), group)?;
+        expiry_queue::remove(&CleanupHours(self), group)?;
+        self.call_group_currency.clear(&group)?;
+        self.call_group_called_at.clear(&group)
+    }
+
+    pub fn group_members(&self, group: B256) -> Result<Vec<SeriesId>> {
+        self.call_group_members.list(&group).read_all()
+    }
+
+    pub fn group_member_count(&self, group: B256) -> Result<u32> {
+        self.call_group_members.list(&group).len()
+    }
+
+    pub fn group_member(&self, group: B256, index: u32) -> Result<SeriesId> {
+        self.call_group_members
+            .list(&group)
+            .get(index)?
+            .ok_or_else(|| IntexError::CalledGroupMemberOutOfRange.into())
+    }
+
+    pub fn group_currency(&self, group: B256) -> Result<u16> {
+        self.call_group_currency.read(&group)
+    }
+
+    /// The series' call, read from its group.
+    pub fn call_stamp(&self, record: &SeriesRecord) -> Result<CallStamp> {
+        let called_at = self.call_group_called_at.read(&record.group_key())?;
+        Ok(record.call_stamp(called_at))
+    }
+
+    /// Calls the group: it leaves its bin and waits on `deadline` in the expiry queue.
+    pub fn record_group_called(
         &mut self,
-        series_id: SeriesId,
-        reference_currency: u16,
-        call_price: U256,
+        group: B256,
+        called_at: u32,
+        deadline: u64,
     ) -> Result<()> {
-        let bin_id = call_bins::price_to_bin(call_price)?;
-        self.call_bin_index(reference_currency).insert(
-            &CallBins(&*self, reference_currency),
-            series_id,
-            bin_id,
-        )
+        // A second call would orphan the first slot and return the load twice.
+        if self.call_group_called_at.read(&group)? != 0 {
+            return Err(IntexError::GroupAlreadyCalled.into());
+        }
+        let iso = self.call_group_currency.read(&group)?;
+        call_bins::remove(&CallBins(&*self, iso), group)?;
+        self.call_group_called_at.write(&group, called_at)?;
+        expiry_queue::push(&ExpiryHours(self), group, deadline)
+    }
+
+    /// Moves an expired group from the expiry queue to the cleanup, which deletes its
+    /// spent series. Done with the group's credit, so a retry never credits it twice.
+    pub fn hand_to_cleanup(&mut self, group: B256) -> Result<()> {
+        let deadline = self.called_deadline.read(&group)?;
+        expiry_queue::remove(&ExpiryHours(self), group)?;
+        expiry_queue::push(&CleanupHours(self), group, deadline)
     }
 
     /// Widen the currency's stored terms to cover a newly issued series.
@@ -134,76 +198,12 @@ impl IntexContract<'_> {
         )
     }
 
-    // --- call-price bin index the Called scan walks ---
-
-    pub fn remove_call_bin(
-        &mut self,
-        reference_currency: u16,
-        worldwide_day: WorldwideDay,
-    ) -> Result<()> {
-        self.call_bin_index(reference_currency)
-            .remove_group(&CallBins(&*self, reference_currency), worldwide_day)
-    }
-
     #[cfg(any(test, feature = "test-utils"))]
-    pub fn call_bin_groups(
-        &self,
-        reference_currency: u16,
-        bin_id: u32,
-    ) -> Result<Vec<WorldwideDay>> {
+    pub fn call_bin_groups(&self, reference_currency: u16, bin_id: u32) -> Result<Vec<B256>> {
         let bins = CallBins(self, reference_currency);
         (0..call_bins::len(&bins, bin_id)?)
-            .map(|index| {
-                let group = call_bins::entry_at(&bins, bin_id, index)?;
-                Ok(Self::unscoped(group).1)
-            })
+            .map(|index| call_bins::entry_at(&bins, bin_id, index))
             .collect()
-    }
-
-    pub fn call_bin_group_members(
-        &self,
-        reference_currency: u16,
-        worldwide_day: WorldwideDay,
-    ) -> Result<Vec<SeriesId>> {
-        self.call_bin_index(reference_currency)
-            .members(worldwide_day)
-    }
-
-    pub fn call_bin_group(
-        &self,
-        reference_currency: u16,
-        worldwide_day: WorldwideDay,
-    ) -> Result<Group> {
-        Ok(Group {
-            iso_code: reference_currency,
-            worldwide_day,
-            members: self.call_bin_group_members(reference_currency, worldwide_day)?,
-        })
-    }
-
-    // --- called groups awaiting their deadline ---
-
-    /// Queues a called group on its deadline. It has left the bins, and its members stay
-    /// in the group until each one expires.
-    pub fn push_called(
-        &mut self,
-        reference_currency: u16,
-        worldwide_day: WorldwideDay,
-        deadline: u64,
-    ) -> Result<()> {
-        let key = Self::scoped(reference_currency, worldwide_day.value());
-        if self.call_group_count.read(&key)? == 0 {
-            return Ok(());
-        }
-        // A second push would orphan the first slot and credit the members twice.
-        if self.called_deadline.read(&key)? != 0 {
-            return Err(IntexError::GroupAlreadyIndexed {
-                iso: reference_currency,
-                worldwide_day,
-            }
-            .into());
-        }
-        expiry_queue::push(&ExpiryHours(self), key, deadline)
     }
 
     /// Hour since the epoch a deadline falls in: plain UTC, not a WorldwideDay.
@@ -227,141 +227,23 @@ impl IntexContract<'_> {
         expiry_queue::first_bucket(&ExpiryHours(self))
     }
 
-    /// Takes a called group off the queue. Its members stay.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn first_cleanup_hour(&self) -> Result<Option<u32>> {
+        expiry_queue::first_bucket(&CleanupHours(self))
+    }
+
+    /// Moves a called group onto `deadline` in the expiry queue.
     #[cfg(feature = "e2e-test")]
-    pub fn remove_called(
-        &mut self,
-        reference_currency: u16,
-        worldwide_day: WorldwideDay,
-    ) -> Result<()> {
-        let key = Self::scoped(reference_currency, worldwide_day.value());
-        expiry_queue::remove(&ExpiryHours(self), key)
-    }
-
-    /// The `index`-th member of a group.
-    pub fn group_member(
-        &self,
-        reference_currency: u16,
-        worldwide_day: WorldwideDay,
-        index: u32,
-    ) -> Result<SeriesId> {
-        Ok(SeriesId::from_word(self.call_group_members.read(
-            &Self::group_member_key(reference_currency, worldwide_day, index),
-        )?))
-    }
-
-    /// Swap-removes the `index`-th member of a called group, so a re-walk never meets a
-    /// series whose load already went back to the pool.
-    pub fn remove_group_member(
-        &mut self,
-        reference_currency: u16,
-        worldwide_day: WorldwideDay,
-        index: u32,
-    ) -> Result<()> {
-        let key = Self::scoped(reference_currency, worldwide_day.value());
-        let last = self
-            .call_group_count
-            .read(&key)?
-            .checked_sub(1)
-            .filter(|last| index <= *last)
-            .ok_or(IntexError::CalledGroupMemberOutOfRange)?;
-        let last_key = Self::group_member_key(reference_currency, worldwide_day, last);
-        if index != last {
-            let moved = self.call_group_members.read(&last_key)?;
-            self.call_group_members.write(
-                &Self::group_member_key(reference_currency, worldwide_day, index),
-                moved,
-            )?;
-        }
-        self.call_group_members.clear(&last_key)?;
-        self.call_group_count.write(&key, last)
-    }
-}
-
-impl<'storage> IntexContract<'storage> {
-    fn call_bin_index(&self, reference_currency: u16) -> GroupIndex<'storage> {
-        GroupIndex {
-            group_count: self.call_group_count.clone(),
-            group_members: self.call_group_members.clone(),
-            iso: reference_currency,
-        }
-    }
-}
-
-/// One day's series in one reference currency: the unit a lifecycle decision is
-/// taken over, since all of them share the inputs it reads.
-pub struct Group {
-    pub iso_code: u16,
-    pub worldwide_day: WorldwideDay,
-    pub members: Vec<SeriesId>,
-}
-
-/// One currency's two-level index: price bins hold worldwide-day groups, and
-/// each group holds the series that share its decision inputs.
-struct GroupIndex<'storage> {
-    group_count: Map<'storage, u64, u32>,
-    group_members: Map<'storage, B256, U256>,
-    iso: u16,
-}
-
-impl GroupIndex<'_> {
-    fn group_key(&self, worldwide_day: WorldwideDay) -> u64 {
-        IntexContract::scoped(self.iso, worldwide_day.value())
-    }
-
-    fn member_key(&self, worldwide_day: WorldwideDay, index: u32) -> B256 {
-        IntexContract::group_member_key(self.iso, worldwide_day, index)
-    }
-
-    fn members(&self, worldwide_day: WorldwideDay) -> Result<Vec<SeriesId>> {
-        let count = self.group_count.read(&self.group_key(worldwide_day))?;
-        let mut members = Vec::with_capacity(count as usize);
-        for index in 0..count {
-            members.push(SeriesId::from_word(
-                self.group_members
-                    .read(&self.member_key(worldwide_day, index))?,
-            ));
-        }
-        Ok(members)
-    }
-
-    /// Append `series_id` to its day's group, creating it in `bin_id` when first.
-    /// A member priced into another bin would split the group's decision: refused.
-    fn insert(&self, bins: &CallBins<'_, '_>, series_id: SeriesId, bin_id: u32) -> Result<()> {
-        let worldwide_day = series_id.worldwide_day();
-        let group_key = self.group_key(worldwide_day);
-        let count = self.group_count.read(&group_key)?;
-        if count == 0 {
-            call_bins::insert(bins, group_key, bin_id)?;
-        } else {
-            let expected = call_bins::bin_of(bins, group_key)?.unwrap_or_default();
-            if expected != bin_id {
-                return Err(IntexError::GroupBinMismatch {
-                    iso: self.iso,
-                    worldwide_day,
-                    expected,
-                    got: bin_id,
-                }
-                .into());
-            }
-        }
-        self.group_members
-            .write(&self.member_key(worldwide_day, count), series_id.to_word())?;
-        self.group_count.write(&group_key, count + 1)?;
-        Ok(())
-    }
-
-    /// Takes the group out of its bin. Its members stay for the expiry sweep.
-    fn remove_group(&self, bins: &CallBins<'_, '_>, worldwide_day: WorldwideDay) -> Result<()> {
-        call_bins::remove(bins, self.group_key(worldwide_day))?;
-        Ok(())
+    pub fn requeue_called(&mut self, group: B256, deadline: u64) -> Result<()> {
+        expiry_queue::remove(&ExpiryHours(self), group)?;
+        expiry_queue::push(&ExpiryHours(self), group, deadline)
     }
 }
 
 /// Buckets holding a called group whose settlement window has not closed yet.
 pub struct ExpiryHours<'a, 'b>(pub &'a IntexContract<'b>);
 
-outbe_primitives::impl_expiry_queue!(ExpiryHours<u64> {
+outbe_primitives::impl_expiry_queue!(ExpiryHours<B256> {
     root: expiry_tree_root,
     mid: expiry_tree_mid,
     leaf: expiry_tree_leaf,
@@ -374,10 +256,26 @@ outbe_primitives::impl_expiry_queue!(ExpiryHours<u64> {
     cursor: expiry_cursor,
 });
 
-/// The call-price bins of one reference currency, holding its worldwide-day groups.
+/// Buckets holding an expired group whose spent series wait to be deleted.
+pub struct CleanupHours<'a, 'b>(pub &'a IntexContract<'b>);
+
+outbe_primitives::impl_expiry_queue!(CleanupHours<B256> {
+    root: cleanup_tree_root,
+    mid: cleanup_tree_mid,
+    leaf: cleanup_tree_leaf,
+    len: cleanup_bucket_len,
+    live: cleanup_bucket_live,
+    at: cleanup_bucket_at,
+    slot: cleanup_group_slot,
+    deadline: cleanup_deadline,
+    sweep_bucket: cleanup_sweep_hour,
+    cursor: cleanup_cursor,
+});
+
+/// The call-price bins of one reference currency, holding its call groups.
 pub struct CallBins<'a, 'b>(pub &'a IntexContract<'b>, pub u16);
 
-outbe_primitives::impl_call_bins!(CallBins<u64> {
+outbe_primitives::impl_call_bins!(CallBins<B256> {
     root: call_bin_tree_root,
     mid: call_bin_tree_mid,
     leaf: call_bin_tree_leaf,

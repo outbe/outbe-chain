@@ -467,11 +467,7 @@ impl Lifecycle for IntexLifecycle {
         test_issuance::close_call_notice(
             &url,
             DEPLOYER_KEY,
-            USD_ISO,
-            world
-                .state
-                .lifecycle_day
-                .expect("the lifecycle series were issued into a day"),
+            series,
             head_time(world).saturating_sub(EXPIRY_BUCKET_SECS),
         )
         .expect("close the expiry bucket the group sits in");
@@ -546,19 +542,27 @@ impl Lifecycle for IntexLifecycle {
             || world.rpc.promis_limit_total_unallocated_on(port) == Some(want),
         );
         let height = finalized_checkpoint(world).height;
-        for (series, unrealized, returned) in expired {
-            assert_single_event(
-                &url,
-                addresses::INTEX_ADDR,
-                from,
-                height,
-                eth::IIntex::IntexSeriesExpired {
-                    seriesId: series,
-                    forfeitedUnits: unrealized,
-                    returnedPromisMinor: returned,
-                },
-            );
-        }
+        // Both series were issued into one call group, which expires as one.
+        let [series, _] = expiring_series(world);
+        let group = eth::read_call_at(
+            &url,
+            addresses::INTEX_ADDR,
+            &eth::IIntex::getIntexSeriesCall { seriesId: series },
+            from,
+        )
+        .expect("the expiring series was live before the notice lapsed")
+        .groupKey;
+        assert_single_event(
+            &url,
+            addresses::INTEX_ADDR,
+            from,
+            height,
+            eth::IIntex::IntexGroupExpired {
+                groupKey: group,
+                forfeitedUnits: expired.iter().map(|(_, units, _)| *units).sum(),
+                returnedPromisMinor: want - before,
+            },
+        );
         assert_eq!(
             eth::read_call_at(
                 &url,

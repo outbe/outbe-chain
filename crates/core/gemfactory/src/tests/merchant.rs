@@ -40,9 +40,9 @@ fn an_issued_series_is_sent_once_without_a_promis_limit_credit() {
             capacity
         );
         assert_eq!(factory.total_capacity_minor.read().unwrap(), capacity);
-        assert_eq!(
-            outbe_intex::api::gem_factory_units(storage, source_intex_id()).unwrap(),
-            SENT_UNITS as u32
+        assert!(
+            !outbe_intex::api::series_exists(storage, source_intex_id()).unwrap(),
+            "every unit went into the position, so the source series is spent"
         );
         assert_eq!(unallocated(storage), promis_limit);
     });
@@ -70,15 +70,11 @@ fn issue_gem_position_burns_sends_and_issues_nft() {
 }
 
 #[test]
-fn sending_marks_the_units_realized_on_the_source_series() {
+fn sending_every_unit_deletes_the_spent_source_series() {
     with_storage(None, |storage| {
         seed_and_send(storage, six_decimal_unit(), six_decimal_u128());
-        // Their load lives in the position now, so the source series can no
-        // longer forfeit them.
-        assert_eq!(
-            outbe_intex::api::gem_factory_units(storage, source_intex_id()).unwrap(),
-            SENT_UNITS as u32
-        );
+        // Their load lives in the position now, so nothing is left in the source series.
+        assert!(!outbe_intex::api::series_exists(storage, source_intex_id()).unwrap());
     });
 }
 

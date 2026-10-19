@@ -96,9 +96,9 @@ interface IIntexFactory {
     ///         gave its place to a newer day and will not be walked.
     event SweepDaySkipped(uint8 indexed sweep, uint32 skippedDay, uint32 inFlightDay);
 
-    /// @notice The expiry sweep left members of a called group unretired and
-    ///         parked it for another pass at `retryAt`.
-    event ExpiryDeferred(uint16 indexed referenceCurrency, uint32 indexed worldwideDay, uint64 retryAt);
+    /// @notice The expiry sweep could not expire a called group and parked it for
+    ///         another pass at `retryAt`.
+    event ExpiryDeferred(bytes32 indexed groupKey, uint64 retryAt);
 
     /// @notice `amount` native COEN of `worldwideDay`'s auction proceeds from `srcChainId`
     ///         was burned and `creditedPromisMinor` was added to the Promis limit pool.

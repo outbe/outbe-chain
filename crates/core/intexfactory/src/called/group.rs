@@ -1,5 +1,6 @@
+use alloy_primitives::B256;
 use outbe_intex::precompile::IIntex;
-use outbe_intex::{Group, IntexContract, IntexState, SeriesId};
+use outbe_intex::IntexContract;
 
 use crate::errors::IntexFactoryError;
 use outbe_oracle::call_window::CallWindow;
@@ -16,11 +17,11 @@ pub(crate) struct GroupCall<'a, 'storage> {
     pub(crate) factory: &'a IntexFactoryContract<'storage>,
 }
 
-/// Force-call a whole group: its series share trigger, issue time and call
-/// parameters, so one read decides them all. Returns how many were called.
+/// Force-call a whole group: its series count from the same day against the same call
+/// price, so its first member decides them all. Returns how many series were called.
 pub(crate) fn call_if_breached(
     call: GroupCall<'_, '_>,
-    group: &Group,
+    group: B256,
     window: &CallWindow,
     now_ts: u64,
 ) -> Result<u32> {
@@ -29,13 +30,11 @@ pub(crate) fn call_if_breached(
         intex,
         factory,
     } = call;
-    let Some(&first) = group.members.first() else {
+    let members = intex.group_members(group)?;
+    let Some(&first) = members.first() else {
         return Ok(0);
     };
     let series = outbe_intex::api::read_series(storage, first)?;
-    if series.lifecycle_state()? != IntexState::Issued {
-        return Ok(0);
-    }
     let breached = window.breached(&BreachTerms {
         call_price: series.call_price_minor,
         window_seconds: series.call_window_seconds,
@@ -49,48 +48,22 @@ pub(crate) fn call_if_breached(
     // u32 timestamp. It is bounded until 2106 (matches issued_at).
     let called_at =
         u32::try_from(now_ts).map_err(|_| IntexFactoryError::BlockTimestampExceedsU32)?;
-    for &series_id in &group.members {
-        mark_called(storage, series_id, called_at)?;
-    }
-    let settlement_deadline = outbe_primitives::settlement::settlement_deadline_of(
-        u64::from(called_at),
-        series.call_notice_period_seconds,
-    );
-    intex.remove_call_bin(group.iso_code, group.worldwide_day)?;
-    intex.push_called(group.iso_code, group.worldwide_day, settlement_deadline)?;
+    let settlement_deadline = series.call_stamp(called_at).deadline;
+    intex.record_group_called(group, called_at, settlement_deadline)?;
 
-    // The notices leave after the slice, once every group of the block is decided. Each
-    // notice carries its own series: members may have expired by the time it is sent.
-    for &series_id in &group.members {
+    // The notices leave after the slice, once every group of the block is decided.
+    for &series_id in &members {
         crate::notify::enqueue_notice(
             factory,
             crate::notify::pack_called_notice(series_id, called_at),
         )?;
     }
 
-    for &series_id in &group.members {
-        IntexContract::new(storage.clone()).emit(IIntex::IntexSeriesCalled {
-            seriesId: series_id.into(),
-            calledAt: called_at,
-            settlementDeadline: settlement_deadline,
-        })?;
-    }
-    Ok(group.members.len() as u32)
-}
-
-/// `Issued -> Called`. Mirrors `markCalled`: only an Issued series is called.
-pub(crate) fn mark_called(
-    storage: &StorageHandle<'_>,
-    series_id: SeriesId,
-    called_at: u32,
-) -> Result<()> {
-    let series = outbe_intex::api::read_series(storage, series_id)?;
-    if series.lifecycle_state()? != IntexState::Issued {
-        return Err(IntexFactoryError::InvalidState {
-            expected: IntexState::Issued as u8,
-            actual: series.state,
-        }
-        .into());
-    }
-    outbe_intex::api::record_called(storage, series_id, called_at)
+    intex.emit(IIntex::IntexGroupCalled {
+        groupKey: group,
+        seriesIds: members.iter().map(|id| (*id).into()).collect(),
+        calledAt: called_at,
+        settlementDeadline: settlement_deadline,
+    })?;
+    Ok(members.len() as u32)
 }

@@ -161,7 +161,7 @@ pub fn issue_gem_position(
 
     let series = outbe_intex::api::get_series(storage, source_intex_id)?
         .ok_or(GemFactoryError::SourceIntexNotFound)?;
-    if series.effective_state(storage.timestamp()?.to::<u64>())? != IntexState::Issued {
+    if outbe_intex::api::state(storage, &series)? != IntexState::Issued {
         return Err(GemFactoryError::SourceIntexNotIssued.into());
     }
 
@@ -187,6 +187,7 @@ pub fn issue_gem_position(
         caller,
         gem_factory_units,
     )?;
+    outbe_intex::api::release_if_spent(storage, source_intex_id, storage.timestamp()?.to::<u64>())?;
 
     let issued_at = storage.timestamp()?.to::<u64>();
     let position_id =

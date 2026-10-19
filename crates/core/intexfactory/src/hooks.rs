@@ -7,3 +7,9 @@ pub fn sweep_forfeits(ctx: &BlockRuntimeContext) -> Result<()> {
     crate::expired::sweep_expired(ctx)?;
     Ok(())
 }
+
+/// Deletes the spent series of the expired groups.
+pub fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<()> {
+    crate::cleanup::sweep_cleanup(ctx)?;
+    Ok(())
+}

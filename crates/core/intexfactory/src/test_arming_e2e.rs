@@ -24,30 +24,22 @@ sol! {
             uint16 referenceCurrency,
             uint32[] snapshotChains
         ) external;
-        function closeCallNoticeForTest(uint16 isoCode, uint32 worldwideDay, uint64 deadline) external;
+        function closeCallNoticeForTest(bytes14 seriesId, uint64 deadline) external;
     }
 }
 
-/// Move a called group onto `deadline`, and with it into that deadline's bucket. The
-/// sweep opens a bucket only once its hour has closed, so a notice that lapsed minutes
-/// ago would otherwise idle out the rest of the hour.
-fn requeue_called(
-    storage: &StorageHandle<'_>,
-    iso_code: u16,
-    worldwide_day: u32,
-    deadline: u64,
-) -> Result<()> {
+/// Move the called group of `series_id` onto `deadline`, and with it into that deadline's
+/// bucket. The sweep opens a bucket only once its hour has closed, so a notice that lapsed
+/// minutes ago would otherwise idle out the rest of the hour.
+fn requeue_called(storage: &StorageHandle<'_>, series_id: SeriesId, deadline: u64) -> Result<()> {
     use outbe_intex::IntexContract;
-    use outbe_primitives::time::WorldwideDay;
 
     let mut intex = IntexContract::new(storage.clone());
-    let worldwide_day = WorldwideDay::from(worldwide_day);
-    let key = IntexContract::scoped(iso_code, worldwide_day.value());
-    if intex.called_deadline.read(&key)? == 0 {
+    let group = outbe_intex::api::read_series(storage, series_id)?.group_key();
+    if intex.called_deadline.read(&group)? == 0 {
         return Err(crate::errors::IntexFactoryError::NoCalledGroupForTest.into());
     }
-    intex.remove_called(iso_code, worldwide_day)?;
-    intex.push_called(iso_code, worldwide_day, deadline)
+    intex.requeue_called(group, deadline)
 }
 
 /// Runs a test-arming call, or returns `None` for any other calldata.
@@ -61,7 +53,7 @@ pub(crate) fn dispatch(storage: &StorageHandle<'_>, data: &[u8]) -> Option<Resul
     }
     if let Ok(call) = closeCallNoticeForTestCall::abi_decode(data) {
         return Some(guarded(storage, || {
-            requeue_called(storage, call.isoCode, call.worldwideDay, call.deadline)
+            requeue_called(storage, SeriesId::from(call.seriesId), call.deadline)
         }));
     }
     None

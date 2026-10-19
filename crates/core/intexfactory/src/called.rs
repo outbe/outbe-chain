@@ -147,19 +147,17 @@ fn call_currency(
         &CallBins(&index, iso_code),
         ceiling,
         budget,
-        |key, budget| {
-            let (_, worldwide_day) = IntexContract::unscoped(key);
-            let group = intex.call_bin_group(iso_code, worldwide_day)?;
-            if !budget.fits_writes(group.members.len() as u32) {
+        |group, budget| {
+            if !budget.fits_writes(intex.group_member_count(group)?) {
                 return Ok(Visit::Stop);
             }
-            call_sweep::call_entry::<IntexCallSweep>(&ctx.storage, budget, key, || {
+            call_sweep::call_entry::<IntexCallSweep>(&ctx.storage, budget, group, || {
                 let call = GroupCall {
                     storage: &ctx.storage,
                     intex: &mut intex,
                     factory: &factory,
                 };
-                let applied = call_if_breached(call, &group, window, ctx.block.timestamp)?;
+                let applied = call_if_breached(call, group, window, ctx.block.timestamp)?;
                 called += applied;
                 Ok(applied)
             })
