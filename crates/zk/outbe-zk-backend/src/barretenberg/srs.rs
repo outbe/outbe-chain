@@ -10,9 +10,9 @@ use barretenberg_rs::backends::FfiBackend;
 use barretenberg_rs::generated_types::{CircuitInput, ProofSystemSettings};
 use sha2::{Digest, Sha256};
 
-use outbe_zk::error::Error;
 use crate::barretenberg::CANONICAL_SRS_POINTS;
 use crate::errors::{BackendProofError, CrsError};
+use outbe_zk::error::Error;
 
 /// Capacity of the native CRS installed by the process-wide handler at startup.
 pub(super) struct Crs {
