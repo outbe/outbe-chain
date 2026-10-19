@@ -83,7 +83,7 @@ impl BarretenbergHandler {
         let backend = FfiBackend::new()
             .map_err(|error| command_error(BackendProofError::BbInit(error.to_string()).into()))?;
         let mut api = BarretenbergApi::new(backend);
-        api.srs_init_srs(&points_buf, num_points, &g2_point)
+        api.srs_init_srs(points_buf, num_points, g2_point)
             .map_err(|e| HandlerError::Initialization(CrsError::SrsInit(e.to_string())))?;
         Ok(Self {
             api: Mutex::new(api),
