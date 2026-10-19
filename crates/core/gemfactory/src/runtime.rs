@@ -15,7 +15,6 @@ use crate::errors::GemFactoryError;
 use crate::precompile::IGemFactory::{GemExercised, GemIssued, GemPositionIssued, GemSettled};
 use crate::schema::{GemFactoryContract, GemIssueParams, GemPosition, GemTypes};
 use crate::sol_ext::IIntexNFT1155;
-use outbe_gem::constants::SRA_RATE;
 use outbe_vaultrouter::settlement::{self, Currencies, SettlementCost, SettlementPayment};
 
 /// Issues one agent-class gem priced at `entry_price`, the COEN rate in
@@ -400,13 +399,12 @@ fn currencies(gem: &GemView) -> Currencies {
     }
 }
 
-/// One gem: its bucket's entry price times its Promis load, at its type's cost rate.
+/// One gem: its bucket's entry price times its Promis load.
 pub(crate) fn settlement_cost(gem: &GemView) -> SettlementCost {
     SettlementCost {
         entry_price_minor: gem.bucket.entry_price_minor,
         load_minor: gem.item.promis_load_minor,
         units: U256::ONE,
-        cost_rate_pct: cost_rate(gem.item.gem_type),
     }
 }
 
@@ -424,15 +422,6 @@ pub(crate) fn settlement_units(
 #[cfg(test)]
 pub(crate) fn gem_cost_minor(gem: &GemView) -> Result<U256> {
     settlement_units(gem, None, outbe_primitives::units::PROTOCOL_AMOUNT_DECIMALS)
-}
-
-/// Share of the full agent cost this gem type pays, in percent.
-fn cost_rate(gem_type: u8) -> u64 {
-    if gem_type == GemTypes::Sra as u8 {
-        SRA_RATE
-    } else {
-        100
-    }
 }
 
 /// What settling `gem_id` with `asset` costs, in which currency, and the VWAP

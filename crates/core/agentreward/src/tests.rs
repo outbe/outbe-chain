@@ -204,7 +204,7 @@ fn claiming_a_pool_issues_its_gem() {
 }
 
 #[test]
-fn the_sra_pool_issues_an_sra_gem_at_the_discounted_cost() {
+fn the_sra_pool_issues_an_sra_gem() {
     let alice = address!("0x1111111111111111111111111111111111111111");
     let load = U256::from(1_000_000u64);
 
@@ -218,8 +218,6 @@ fn the_sra_pool_issues_an_sra_gem_at_the_discounted_cost() {
             .claim_reward(RewardPool::Sra, alice, U256::ZERO, (USD, USD))
             .unwrap();
         let sra_gem = gem_of(&storage, alice);
-        // The SRA share of the cost is derived, not stored. gemfactory pins the 64%
-        // coefficient. What this pool owes is the Sra type and the whole load.
         assert_eq!(sra_gem.item.gem_type, GemTypes::Sra as u8);
         assert_eq!(sra_gem.item.promis_load_minor, load);
     });

@@ -176,20 +176,6 @@ fn a_dust_gem_settles_for_one_minor_unit() {
 }
 
 #[test]
-fn the_settlement_minimum_ignores_the_sra_discount() {
-    with_storage(Some(U256::ONE), |storage| {
-        let gem_id =
-            issue_at_live_rate(storage, ALICE, GemTypes::Sra, U256::ONE, 840, 840).unwrap();
-        let item = gem_view(storage, gem_id);
-
-        assert_eq!(
-            runtime::settlement_units(&item, None, 6).unwrap(),
-            U256::ONE
-        );
-    });
-}
-
-#[test]
 fn settling_on_an_unregistered_issuance_leg_is_refused() {
     let usd_rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(usd_rate), |storage| {
@@ -620,14 +606,13 @@ fn a_hundred_dollars_converts_to_ninety_euros_at_every_asset_scale() {
 }
 
 #[test]
-fn an_sra_gem_keeps_its_sixty_four_percent_through_the_currency_conversion() {
+fn a_gem_cost_converts_to_the_issuance_currency() {
     // 100 USD standard basis (entry 2.00 x load 50) at R = 2.00, I = 1.80.
     let usd_rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(usd_rate), |storage| {
         register_currency(storage, 978, U256::from(1_800_000u64));
         seed_day_vwap(storage, 840, usd_rate);
         let load = U256::from(50u64) * six_decimal_unit();
-        let sra = issue_at_live_rate(storage, ALICE, GemTypes::Sra, load, 978, 840).unwrap();
         let wallet = issue_at_live_rate(storage, BOB, GemTypes::Wallet, load, 978, 840).unwrap();
         let quote = |gem_id| {
             runtime::quote_settlement(storage, gem_id, SETTLEMENT_ASSET_EUR)
@@ -635,8 +620,7 @@ fn an_sra_gem_keeps_its_sixty_four_percent_through_the_currency_conversion() {
                 .1
         };
         assert_eq!(quote(wallet), U256::from(90_000_000u64));
-        assert_eq!(quote(sra), U256::from(57_600_000u64));
-        let item = gem_view(storage, sra);
+        let item = gem_view(storage, wallet);
         assert_eq!(
             (item.bucket.entry_price_minor, item.item.promis_load_minor),
             (usd_rate, load)
@@ -680,13 +664,13 @@ fn the_issuance_rail_converts_at_the_trailing_window_not_the_closed_day() {
     });
 }
 
-/// The gem record carries the load and the type. It has no entry-price field:
-/// adding one fails this destructure.
-fn gem_cost_inputs(item: &GemItemState) -> (u8, U256) {
+/// The gem record carries the load. It has no entry-price field: adding one fails
+/// this destructure.
+fn gem_cost_load(item: &GemItemState) -> U256 {
     let GemItemState {
         gem_id: _,
         owner: _,
-        gem_type,
+        gem_type: _,
         promis_load_minor,
         issuance_currency: _,
         reference_currency: _,
@@ -696,17 +680,12 @@ fn gem_cost_inputs(item: &GemItemState) -> (u8, U256) {
         called_at: _,
         settled_at: _,
     } = item;
-    (*gem_type, *promis_load_minor)
+    *promis_load_minor
 }
 
-/// `entry x load x cost_rate / 100`, in six-decimal reference units.
-fn six_decimal_settlement_cost(entry: U256, load: U256, gem_type: u8) -> U256 {
-    let cost_rate = if gem_type == GemTypes::Sra as u8 {
-        outbe_gem::constants::SRA_RATE
-    } else {
-        100
-    };
-    entry * load * U256::from(cost_rate) / U256::from(100) / six_decimal_unit()
+/// `entry x load`, in six-decimal reference units.
+fn six_decimal_settlement_cost(entry: U256, load: U256) -> U256 {
+    entry * load / six_decimal_unit()
 }
 
 #[test]
@@ -754,8 +733,7 @@ fn settlement_cost_reads_entry_price_from_the_bucket() {
                 .1
         };
         let expected = |view: &GemView| {
-            let (gem_type, load) = gem_cost_inputs(&view.item);
-            six_decimal_settlement_cost(view.bucket.entry_price_minor, load, gem_type)
+            six_decimal_settlement_cost(view.bucket.entry_price_minor, gem_cost_load(&view.item))
         };
         assert_eq!(quoted(heavy_id), expected(&heavy_view));
         assert_eq!(quoted(light_id), expected(&light_view));

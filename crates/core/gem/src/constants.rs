@@ -29,7 +29,3 @@ pub const POSITION_VALIDITY_SECONDS: u64 = 365 * SECONDS_PER_DAY;
 /// Call-price markup rate: call price = `entry x (100 + CALL_RATE_PCT) / 100`.
 /// Its breach arms a Call Event.
 pub const CALL_RATE_PCT: u16 = 128;
-
-/// SRA cost rate (share of the full agent cost): cost = `full x SRA_RATE / 100`
-/// (64 => 0.64x).
-pub const SRA_RATE: u64 = 64;

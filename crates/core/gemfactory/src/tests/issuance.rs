@@ -65,21 +65,7 @@ fn issue_charges_one_minor_unit_when_the_six_decimal_cost_rounds_to_zero() {
 }
 
 #[test]
-fn issue_sra_applies_64_percent_discount() {
-    let rate = U256::from(2u64) * six_decimal_unit();
-    with_storage(Some(rate), |storage| {
-        let load = U256::from(10u64) * six_decimal_unit();
-        let gem_id = issue_at_live_rate(storage, ALICE, GemTypes::Sra, load, 840, 840).unwrap();
-
-        let item = gem_view(storage, gem_id);
-        // entry = rate = 2; cost = 2 * 10 * 64 / 100 = 12.8 (six-decimal)
-        let expected = rate * load * U256::from(64u64) / U256::from(100u64) / six_decimal_unit();
-        assert_eq!(runtime::gem_cost_minor(&item).unwrap(), expected);
-    });
-}
-
-#[test]
-fn issue_cca_no_discount() {
+fn issue_cca_charges_entry_times_load() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         let load = U256::from(7u64) * six_decimal_unit();
