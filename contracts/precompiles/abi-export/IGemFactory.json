@@ -464,25 +464,19 @@
   },
   {
     "type": "event",
-    "name": "GemPositionExpired",
+    "name": "GemPositionGroupExpired",
     "inputs": [
       {
-        "name": "positionId",
-        "type": "uint256",
+        "name": "expiryHour",
+        "type": "uint64",
         "indexed": true,
-        "internalType": "uint256"
+        "internalType": "uint64"
       },
       {
-        "name": "merchant",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "sourceIntexId",
-        "type": "bytes14",
+        "name": "positions",
+        "type": "uint32",
         "indexed": false,
-        "internalType": "bytes14"
+        "internalType": "uint32"
       },
       {
         "name": "returnedCapacityMinor",

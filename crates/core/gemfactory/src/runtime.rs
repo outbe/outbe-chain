@@ -207,8 +207,6 @@ pub fn issue_gem_position(
     };
     factory.add_position(&position)?;
 
-    factory.push_live_position(position_id)?;
-
     let prev_sent = factory.total_capacity_minor.read()?;
     let new_sent = prev_sent
         .checked_add(capacity)
@@ -313,10 +311,7 @@ pub fn issue_merchant_gem(
 
     record.remaining_capacity_minor = remaining;
     factory.positions.update(&record)?;
-    // Nothing left to return: it leaves the queue instead of sitting at the head.
-    if remaining.is_zero() {
-        factory.remove_live_position(position_id)?;
-    }
+    factory.take_hour_capacity(record.expiry_hour(), promis_load)?;
 
     let prev_total = factory.total_gems_issued.read()?;
     let new_total = prev_total
@@ -456,7 +451,8 @@ pub fn position_data(
     storage: &StorageHandle<'_>,
     position_id: U256,
 ) -> Result<crate::precompile::IGemFactory::PositionData> {
-    let record = GemFactoryContract::new(storage.clone())
+    let factory = GemFactoryContract::new(storage.clone());
+    let record = factory
         .positions
         .get(position_id)?
         .ok_or(GemFactoryError::PositionNotFound)?;
@@ -464,7 +460,7 @@ pub fn position_data(
         positionId: record.position_id,
         merchant: record.merchant,
         sourceIntexId: record.source_intex_id.into(),
-        remainingCapacityMinor: record.remaining_capacity_minor,
+        remainingCapacityMinor: factory.remaining_capacity(&record)?,
         sourceEntryPriceMinor: record.source_entry_price_minor,
         issuanceCurrency: record.issuance_currency,
         referenceCurrency: record.reference_currency,

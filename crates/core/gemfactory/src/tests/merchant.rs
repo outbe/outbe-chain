@@ -78,30 +78,44 @@ fn sending_every_unit_deletes_the_spent_source_series() {
     });
 }
 
-/// The position stays visible afterwards, as the spent object it is.
+/// When the hour of `at` has closed.
+fn hour_closed(at: u64) -> u64 {
+    (at / 3_600 + 1) * 3_600
+}
+
+/// An expired position reads empty at once, returns its remainder with its hour and is
+/// then deleted.
 #[test]
 fn an_expired_position_returns_its_remainder() {
     with_storage(None, |storage| {
         let id = seed_and_send(storage, six_decimal_unit(), six_decimal_u128());
         let capacity = sent_capacity(six_decimal_u128());
+        let expires = T_NOW + POSITION_VALIDITY_SECONDS;
 
-        let ctx = block_ctx(storage, T_NOW + POSITION_VALIDITY_SECONDS - 1);
+        let ctx = block_ctx(storage, expires);
         assert_eq!(positions_expired::sweep_expired_positions(&ctx).unwrap(), 0);
         assert_eq!(unallocated(storage), U256::ZERO);
+        storage.set_block_timestamp(U256::from(expires)).unwrap();
+        assert_eq!(
+            runtime::position_data(storage, id)
+                .unwrap()
+                .remainingCapacityMinor,
+            U256::ZERO
+        );
 
-        // At the instant issuing starts reverting, the sweep takes it.
-        let ctx = block_ctx(storage, T_NOW + POSITION_VALIDITY_SECONDS);
+        let ctx = block_ctx(storage, hour_closed(expires));
         assert_eq!(positions_expired::sweep_expired_positions(&ctx).unwrap(), 1);
         assert_eq!(unallocated(storage), capacity);
+        assert_eq!(positions_expired::sweep_position_cleanup(&ctx).unwrap(), 1);
 
         let factory = GemFactoryContract::new(storage.clone());
-        let record = factory.positions.get(id).unwrap().unwrap();
-        assert_eq!(record.remaining_capacity_minor, U256::ZERO);
-        assert_eq!(factory.owner_of(id).unwrap(), ALICE);
+        assert!(factory.positions.get(id).unwrap().is_none());
+        assert_eq!(factory.balance_of(ALICE).unwrap(), 0);
+        assert!(runtime::position_data(storage, id).is_err());
     });
 }
 
-/// A storage fault is this node's own: it fails the block instead of skipping the position.
+/// A storage fault is this node's own: it fails the block instead of skipping the hour.
 #[test]
 fn a_storage_fault_in_the_position_sweep_fails_the_block() {
     let mut provider = test_storage(None);
@@ -111,22 +125,25 @@ fn a_storage_fault_in_the_position_sweep_fails_the_block() {
 
     provider.fail_mutation_at_address(outbe_primitives::addresses::PROMIS_LIMIT_ADDRESS);
     StorageHandle::enter(&mut provider, |storage| {
-        let ctx = block_ctx(&storage, T_NOW + POSITION_VALIDITY_SECONDS);
+        let ctx = block_ctx(&storage, hour_closed(T_NOW + POSITION_VALIDITY_SECONDS));
         assert!(matches!(
             positions_expired::sweep_expired_positions(&ctx).unwrap_err(),
             outbe_primitives::error::PrecompileError::Storage(_)
         ));
-        let record = GemFactoryContract::new(storage.clone())
-            .positions
-            .get(id)
-            .unwrap()
-            .unwrap();
-        assert_ne!(record.remaining_capacity_minor, U256::ZERO);
+        let factory = GemFactoryContract::new(storage.clone());
+        let record = factory.positions.get(id).unwrap().unwrap();
+        assert_ne!(
+            factory
+                .hour_capacity_minor
+                .read(&record.expiry_hour())
+                .unwrap(),
+            U256::ZERO
+        );
     });
 }
 
 #[test]
-fn a_drained_position_leaves_the_queue() {
+fn a_drained_position_returns_nothing_and_is_deleted() {
     with_storage(Some(six_decimal_unit()), |storage| {
         seed_day_vwap(storage, 840, six_decimal_unit());
         let id = seed_and_send(storage, six_decimal_unit(), six_decimal_u128());
@@ -141,12 +158,15 @@ fn a_drained_position_leaves_the_queue() {
         )
         .unwrap();
 
-        let factory = GemFactoryContract::new(storage.clone());
-        assert!(factory.live_queue_slot(0).unwrap().is_none());
-
-        let ctx = block_ctx(storage, T_NOW + POSITION_VALIDITY_SECONDS);
-        assert_eq!(positions_expired::sweep_expired_positions(&ctx).unwrap(), 0);
+        let ctx = block_ctx(storage, hour_closed(T_NOW + POSITION_VALIDITY_SECONDS));
+        assert_eq!(positions_expired::sweep_expired_positions(&ctx).unwrap(), 1);
         assert_eq!(unallocated(storage), U256::ZERO);
+        assert_eq!(positions_expired::sweep_position_cleanup(&ctx).unwrap(), 1);
+        assert!(GemFactoryContract::new(storage.clone())
+            .positions
+            .get(id)
+            .unwrap()
+            .is_none());
     });
 }
 
@@ -367,7 +387,7 @@ fn a_merchant_gem_issues_until_the_second_its_position_expires() {
 
     let (expired, after) = issue(expires_at, six_decimal_unit());
     assert!(err_msg(expired).contains("position expired"));
-    assert_eq!(after, remaining);
+    assert_eq!(after, U256::ZERO, "an expired position reads empty");
 }
 
 #[test]

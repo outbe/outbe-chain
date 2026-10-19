@@ -573,11 +573,10 @@ fn position_returns_capacity(world: &mut World) {
     let url = world_url(world);
     let position_id = world.state.gem_position.expect("a position was parked");
 
-    // A retired position keeps its record and drops its capacity to zero. Only
-    // the sweep's live queue forgets it.
+    // An expired position's hour returns its capacity, and the cleanup deletes it.
     poll_until(
         Duration::from_secs(POSITION_SWEEP_TIMEOUT_SECS),
-        || format!("position {position_id} is past its deadline; the sweep has not retired it"),
+        || format!("position {position_id} is past its deadline; the cleanup has not deleted it"),
         || {
             eth::read_call(
                 &url,
@@ -586,9 +585,7 @@ fn position_returns_capacity(world: &mut World) {
                     positionId: position_id,
                 },
             )
-            .expect("the position reads back after its deadline")
-            .remainingCapacityMinor
-            .is_zero()
+            .is_none()
         },
     );
 
@@ -609,22 +606,21 @@ fn assert_expiry_returns(world: &World, height: u64, require_position_expiry: bo
         .entity_lifecycle
         .pool_before_forfeit
         .expect("the pool was read before either return");
-    let merchant = crate::world::origin_venue::deployer_address();
     let position_id = world.state.gem_position.expect("parked position");
-    let position = eth::read_call_at(
+    let expiry_hour = eth::read_call_at(
         &url,
         addresses::GEM_FACTORY_ADDR,
         &eth::IGemFactory::getPositionCall {
             positionId: position_id,
         },
-        height,
+        from,
     )
-    .expect("finalized position after return");
-    let position_expired = position.remainingCapacityMinor.is_zero();
+    .expect("the position before either return")
+    .expiresAt
+        / 3_600;
+    let position_expired = hour_expired(&url, expiry_hour, from, height);
     if require_position_expiry {
         assert!(position_expired, "position retained unissued capacity");
-    } else if !position_expired {
-        assert_eq!(position.remainingCapacityMinor, unissued_capacity());
     }
     let group = eth::read_call_at(
         &url,
@@ -653,10 +649,9 @@ fn assert_expiry_returns(world: &World, height: u64, require_position_expiry: bo
             addresses::GEM_FACTORY_ADDR,
             from,
             height,
-            eth::IGemFactory::GemPositionExpired {
-                positionId: position_id,
-                merchant,
-                sourceIntexId: source_series(world),
+            eth::IGemFactory::GemPositionGroupExpired {
+                expiryHour: expiry_hour,
+                positions: 1,
                 returnedCapacityMinor: unissued_capacity(),
             },
         );
@@ -674,6 +669,25 @@ fn assert_expiry_returns(world: &World, height: u64, require_position_expiry: bo
         Some(before + returned),
         "expiry returns did not credit the exact unallocated load"
     );
+}
+
+/// Whether the positions of `hour` returned their capacity within the blocks.
+fn hour_expired(url: &str, hour: u64, from: u64, to: u64) -> bool {
+    use alloy_sol_types::SolEvent;
+    let logs = eth::raw_json_result(
+        url,
+        "eth_getLogs",
+        serde_json::json!([{
+            "address": addresses::GEM_FACTORY_ADDR,
+            "fromBlock": format!("0x{from:x}"), "toBlock": format!("0x{to:x}"),
+            "topics": [
+                eth::IGemFactory::GemPositionGroupExpired::SIGNATURE_HASH,
+                alloy_primitives::B256::from(alloy_primitives::U256::from(hour)),
+            ],
+        }]),
+    )
+    .expect("position expiry logs");
+    logs.as_array().is_some_and(|logs| !logs.is_empty())
 }
 
 alloy_sol_types::sol! {
