@@ -1,117 +1,66 @@
-//! Barretenberg backend: UltraHonkKeccak proving and
-//! verification over the canonical circuits, via `barretenberg-rs`'s FFI
-//! (`libbb-external`) — no `bb` subprocess, so it runs on-device.
+//! This Barretenberg backend generates and verifies UltraHonkKeccak proofs for the canonical circuits.
+//! It uses the `barretenberg-rs` foreign function interface (FFI) with `libbb-external`.
+//! It executes on the device without a `bb` subprocess.
 //!
-//! Mirrors the reference `outbe-zk-circuit-noir` backend: keccak oracle hash for
-//! on-chain (EVM) verification and an optional
-//! **low-memory mode** that file-backs barretenberg's
-//! polynomials (~2× slower, much less RAM — for proving on constrained
-//! devices). Bytecode and witness are handed to bb **uncompressed** (the
-//! committed bytecode and `WitnessStack::serialize()` are gzipped; bb wants raw
-//! msgpack).
+//! Like the reference `outbe-zk-circuit-noir` backend, this backend uses the keccak oracle hash for on-chain EVM verification.
+//! Its optional low-memory mode stores polynomials in files.
+//! This mode uses much less RAM but takes approximately twice as long to generate proofs.
+//! The committed bytecode and the output from `WitnessStack::serialize()` use gzip compression.
+//! The native API requires uncompressed msgpack bytecode and witness data.
 //!
-//! Thin shell: [`witness::solved_witness`]
-//! produces the ACVM-solved witness, this hands it to `circuit_prove` with the
-//! circuit's committed bytecode + VK ([`CircuitId`]);
-//! verification re-derives the public inputs from the claim and calls
-//! `circuit_verify`. Pinned to `barretenberg-rs` =5.0.0-nightly.20260522,
-//! matching the `bb` that writes the committed VKs (`-t evm-no-zk`).
+//! [`witness::solved_witness`] solves the witness with ACVM.
+//! This backend sends the solved witness, committed bytecode, and verification key (VK) to `circuit_prove`.
+//! [`CircuitId`] supplies the bytecode and VK.
+//! For verification, this backend derives the public inputs from the claim and calls `circuit_verify`.
+//! The pinned `barretenberg-rs` version is `5.0.0-nightly.20260522`.
+//! This version matches the `bb` version that writes the committed VKs with `-t evm-no-zk`.
 
-use std::io::Read;
-use std::sync::{Mutex, MutexGuard, OnceLock};
-
-use barretenberg_rs::api::BarretenbergApi;
-use barretenberg_rs::backends::FfiBackend;
 use barretenberg_rs::generated_types::{CircuitInput, ProofSystemSettings};
 use base64::Engine;
 use flate2::read::GzDecoder;
+use std::io::Read;
 
 use outbe_zk::error::Error;
 use outbe_zk::protocol::zk::{Circuit, CircuitId, ProofGenerator, ProofVerifier};
 
-use crate::errors::{BackendProofError, CrsInitError};
+use crate::errors::BackendProofError;
 use crate::witness;
 
+mod handler;
 mod srs;
 
-/// Point the SRS loader at an explicit G1 `.dat` (e.g. a mobile wallet's bundled
-/// SRS asset). Call once before proving; required when built without
-/// `with-network-srs` (there is no network fallback then). See
-/// [`srs::set_srs_path`].
+pub use handler::BarretenbergHandler;
+
+/// Select an explicit G1 `.dat` file for the SRS loader.
+/// For example, a mobile wallet can select its bundled SRS file.
+/// Call once before handler initialization.
+/// Builds without `with-network-srs` require this setting because they cannot download SRS data.
+/// See [`srs::set_srs_path`].
 pub use srs::set_srs_path;
 
-/// Largest CRS required by the canonical circuit set: ownership, the Demo
-/// Tribute proof, and the Niflheim tribute all prove in a 2^16 domain, so the
-/// SRS needs `2^16 + 1` G1 points (domain + one). Emit mint and Paynote spend are
-/// smaller (2^14 domain); PayNote merge uses a 2^15 domain.
+/// The largest CRS capacity that the canonical circuits require.
+/// Ownership, Demo Tribute, and Niflheim tribute use a `2^16` proving domain.
+/// Their SRS requires `2^16 + 1` G1 points.
+/// Emit mint and Paynote spend use a `2^14` domain. PayNote merge uses a `2^15` domain.
 pub const CANONICAL_SRS_POINTS: u32 = (1 << 16) + 1;
-
-/// Barretenberg's CRS factory, low-memory globals, and prover are **process-
-/// global** C++ state, and the API is not reentrant — so every bb operation
-/// (SRS init through prove/verify) must be serialized. This lock makes the
-/// backend safe to call from multiple threads: concurrent callers block here
-/// instead of racing the global CRS. Poison is recovered (a panicked prior call
-/// leaves the global state to be reset by the next `setup_srs` anyway).
-static BB_LOCK: Mutex<()> = Mutex::new(());
-
-fn bb_lock() -> MutexGuard<'static, ()> {
-    BB_LOCK.lock().unwrap_or_else(|poison| poison.into_inner())
-}
-
-/// Pre-initialize bb's (one-shot, process-global) CRS to `num_points` G1 points.
-/// Call once at startup with the largest circuit's size when a process proves
-/// circuits of *different* sizes — otherwise the first, smaller circuit fixes
-/// the CRS and larger ones fail. For our canonical set that is
-/// [`CANONICAL_SRS_POINTS`] (`(1 << 16) + 1`). Single-circuit callers can skip
-/// this; the first prove reserves at least the canonical set's capacity.
-pub fn preinit_srs(num_points: u32) -> Result<(), Error> {
-    let _bb = bb_lock();
-    let mut api = Barretenberg::api()?;
-    srs::ensure_srs(&mut api, num_points)
-}
-
-/// Initialize the process-global CRS once for every canonical circuit.
-///
-/// `OUTBE_BB_SRS_PATH`, when set, selects a pre-staged G1 SRS file. Panics from
-/// the FFI boundary become proof errors so startup callers can fail cleanly.
-pub fn init_crs() -> Result<(), Error> {
-    static INIT: OnceLock<Result<(), CrsInitError>> = OnceLock::new();
-    Ok(INIT
-        .get_or_init(|| {
-            let srs_path = std::env::var("OUTBE_BB_SRS_PATH").ok();
-            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                if let Some(path) = srs_path {
-                    set_srs_path(path.into());
-                }
-                preinit_srs(CANONICAL_SRS_POINTS)
-            }));
-            match outcome {
-                Ok(Ok(())) => Ok(()),
-                Ok(Err(error)) => Err(CrsInitError::from(error)),
-                Err(_) => Err(CrsInitError::Panicked),
-            }
-        })
-        .clone()?)
-}
 
 /// Verify a decoded combined proof against its compile-time circuit identity.
 ///
-/// The owning protocol decoder must validate the public words before this
-/// backend call.
+/// The protocol decoder must validate the public words before this backend call.
 pub fn verify_circuit<C: CircuitId>(combined_proof: &[u8]) -> Result<bool, Error> {
     Barretenberg::default().verify_combined(C::VK_BYTES, combined_proof)
 }
 
-/// UltraHonkKeccak proof, as bb's field encoding (`Vec<Vec<u8>>`). The public
-/// inputs are not carried here — verification re-derives them from the claim.
+/// An UltraHonkKeccak proof in the native field encoding (`Vec<Vec<u8>>`).
+/// This type does not contain public inputs. Verification derives them from the claim.
 #[derive(Clone, Debug)]
 pub struct Proof {
     /// The proof fields.
     pub proof: Vec<Vec<u8>>,
 }
 
-/// UltraHonk + keccak oracle settings (EVM/on-chain verification), matching how
-/// the committed VKs are generated (`bb write_vk -t evm-no-zk`).
+/// Return UltraHonk settings with the keccak oracle hash for on-chain EVM verification.
+/// These settings match the committed VKs from `bb write_vk -t evm-no-zk`.
 fn settings_ultra_honk_keccak(disable_zk: bool) -> ProofSystemSettings {
     ProofSystemSettings {
         ipa_accumulation: false,
@@ -121,9 +70,10 @@ fn settings_ultra_honk_keccak(disable_zk: bool) -> ProofSystemSettings {
     }
 }
 
-/// Toggle barretenberg's low-memory mode (file-backed polynomial storage): much
-/// less RAM at ~2× proving time, for constrained devices. Sets the env vars bb
-/// reads (`BB_SLOW_LOW_MEMORY` / `BB_STORAGE_BUDGET`) before prove/VK ops.
+/// Configure low-memory mode, which stores polynomials in files.
+/// This mode uses much less RAM but takes approximately twice as long to generate proofs.
+/// Set `BB_SLOW_LOW_MEMORY` before native proof or VK operations.
+/// Set `BB_STORAGE_BUDGET` if the caller supplies a budget.
 fn configure_memory(enabled: bool, max_storage_usage: Option<u64>) {
     std::env::set_var("BB_SLOW_LOW_MEMORY", if enabled { "1" } else { "0" });
     if let Some(budget) = max_storage_usage {
@@ -131,8 +81,8 @@ fn configure_memory(enabled: bool, max_storage_usage: Option<u64>) {
     }
 }
 
-/// Base64-decode then gunzip a circuit's committed bytecode into the raw ACIR
-/// buffer bb's FFI consumes.
+/// Decode the circuit's committed bytecode from base64.
+/// Decompress the gzip data to produce the raw ACIR buffer for the native API.
 fn acir_buffer_uncompressed<C: CircuitId>() -> Result<Vec<u8>, Error> {
     let compressed = base64::engine::general_purpose::STANDARD
         .decode(C::BYTECODE_B64)
@@ -144,15 +94,19 @@ fn acir_buffer_uncompressed<C: CircuitId>() -> Result<Vec<u8>, Error> {
     Ok(raw)
 }
 
-/// The barretenberg prover/verifier. Carries the proof-mode knobs the reference
-/// exposes: `disable_zk` (off by default — keep ZK for secret-bearing witnesses)
-/// and `low_memory` (+ optional storage budget) for on-device proving.
+/// Settings for Barretenberg proof generation and verification on the device.
+/// Like the reference backend, this type supports `disable_zk`, `low_memory`, and an optional storage budget.
+/// The default for `disable_zk` is `false` to protect witnesses that contain secrets.
+/// This type stores settings. It does not own a native engine.
+/// All native operations use the same process-wide [`BarretenbergHandler`] and block the caller.
 #[derive(Clone, Copy, Debug)]
 pub struct Barretenberg {
-    /// Disable zero-knowledge blinding (faster, but not ZK — only for
-    /// public-input-only statements). Default `false`.
+    /// Disable zero-knowledge blinding. The default is `false`.
+    /// This option is faster but does not provide zero knowledge.
+    /// Use it only for statements that contain public inputs and no secrets.
     pub disable_zk: bool,
-    /// File-back polynomial memory: less RAM, ~2× slower.
+    /// Store polynomials in files to reduce RAM use.
+    /// Proof generation takes approximately twice as long.
     pub low_memory: bool,
     /// Optional storage budget (bytes) for low-memory mode.
     pub max_storage_usage: Option<u64>,
@@ -161,21 +115,15 @@ pub struct Barretenberg {
 #[allow(clippy::derivable_impls)] // manual impl documents the security-critical disable_zk = false default
 impl Default for Barretenberg {
     fn default() -> Self {
-        // Zero-knowledge ON: the ownership/demo tribute witnesses carry a secret
-        // key, so the proof must not leak it. `disable_zk = true` is faster but
-        // not ZK — opt into it only for public-input-only statements.
+        // Ownership and Demo Tribute witnesses contain a secret key.
+        // Keep zero knowledge enabled to protect this key.
+        // `disable_zk = true` is faster but does not provide zero knowledge.
+        // Use it only for statements that contain public inputs and no secrets.
         Self {
             disable_zk: false,
             low_memory: false,
             max_storage_usage: None,
         }
-    }
-}
-
-impl Barretenberg {
-    fn api() -> Result<BarretenbergApi<FfiBackend>, Error> {
-        let backend = FfiBackend::new().map_err(|e| BackendProofError::BbInit(e.to_string()))?;
-        Ok(BarretenbergApi::new(backend))
     }
 }
 
@@ -190,26 +138,16 @@ where
         witness: &C::Witness,
         public: &C::PublicInputs,
     ) -> Result<Self::Proof, Error> {
-        // Pure (ACVM solve + decode) — no bb global state, so outside the lock.
+        // Solve the witness and decode ACIR before acquiring the native API mutex.
         let solved = witness::solved_witness::<C>(witness, public)?;
         let acir = acir_buffer_uncompressed::<C>()?;
-        let settings = settings_ultra_honk_keccak(self.disable_zk);
-
-        // Everything below touches bb's process-global CRS / memory / prover.
-        let _bb = bb_lock();
-        configure_memory(self.low_memory, self.max_storage_usage);
-        let mut api = Self::api()?;
-        srs::ensure_srs_for(&mut api, &acir, &settings)?;
         let circuit = CircuitInput {
             name: C::LABEL.to_string(),
             bytecode: acir,
             verification_key: C::VK_BYTES.to_vec(),
         };
-        let response = api
-            .circuit_prove(circuit, &solved, settings)
-            .map_err(|e| BackendProofError::BbProve(e.to_string()))?;
         Ok(Proof {
-            proof: response.proof,
+            proof: BarretenbergHandler::global().prove(circuit, solved, *self)?,
         })
     }
 }
@@ -222,30 +160,27 @@ where
 
     fn verify(&self, public: &C::PublicInputs, proof: &Self::Proof) -> Result<bool, Error> {
         let public_inputs = witness::public_inputs::<C>(public);
-        let acir = acir_buffer_uncompressed::<C>()?;
         let settings = settings_ultra_honk_keccak(self.disable_zk);
 
-        // bb's global CRS / prover — serialize against concurrent prove/verify.
-        let _bb = bb_lock();
-        let mut api = Self::api()?;
-        srs::ensure_srs_for(&mut api, &acir, &settings)?;
-        let response = api
-            .circuit_verify(C::VK_BYTES, public_inputs, proof.proof.clone(), settings)
-            .map_err(|e| BackendProofError::BbVerify(e.to_string()))?;
-        Ok(response.verified)
+        Ok(BarretenbergHandler::global().verify(
+            C::VK_BYTES.to_vec(),
+            public_inputs,
+            proof.proof.clone(),
+            false,
+            settings,
+        )?)
     }
 }
 
-/// Verify an UltraHonkKeccak proof against a raw verification key — without a
-/// compile-time [`Circuit`] type.
+/// Verify an UltraHonkKeccak proof against a raw verification key without a compile-time [`Circuit`] type.
 ///
-/// Where [`ProofVerifier`] needs the concrete circuit type `C` (to supply
-/// `C::VK_BYTES` and reshape a typed `C::PublicInputs` into field words), this
-/// takes the verification key and the proof as opaque bytes. That makes it the
-/// right seam for a circuit-agnostic consumer such as the chain's `zk_verify`
-/// precompile, which only has a `vk_bytes` looked up at runtime from the
-/// canonical registry plus the proof the caller submitted — and must stay
-/// decoupled from every circuit's public-input layout.
+/// [`ProofVerifier`] requires a concrete circuit type `C`.
+/// That type supplies `C::VK_BYTES` and defines how to convert `C::PublicInputs` to field words.
+/// This interface instead accepts the verification key and proof as opaque bytes.
+///
+/// The chain's `zk_verify` precompile uses this interface without a concrete circuit type.
+/// The precompile obtains `vk_bytes` from the canonical registry at runtime and accepts the caller's proof.
+/// It does not need each circuit's public-input layout.
 pub trait RawVerifier {
     /// Verify the self-describing EVM "combined" proof against `vk_bytes`.
     ///
@@ -255,14 +190,17 @@ pub trait RawVerifier {
     /// [4B BE num_public_inputs][32B × num_public_inputs][proof fields …]
     /// ```
     ///
-    /// i.e. a big-endian `u32` count, then that many 32-byte public-input
-    /// words, then the proof as concatenated 32-byte field elements. The split
-    /// is recovered from the header alone — no VK introspection needed.
+    /// The buffer contains these sections in order:
+    /// - A big-endian `u32` count of public inputs.
+    /// - That number of 32-byte public-input words.
+    /// - The proof as consecutive 32-byte field elements.
     ///
-    /// The global bb CRS must already be initialized (see [`preinit_srs`]);
-    /// this neither sizes nor fetches it. Returns `Ok(false)` for a
-    /// well-formed-but-invalid proof and `Err` only for a malformed blob or an
-    /// FFI failure.
+    /// The header identifies the section boundaries. The parser does not inspect the VK.
+    ///
+    /// Call [`BarretenbergHandler::init`] during launch before this call.
+    /// This method never initializes or downloads CRS data.
+    /// It returns `Ok(false)` for a correctly formatted but invalid proof.
+    /// It returns `Err` for malformed data or a backend failure.
     fn verify_combined(&self, vk_bytes: &[u8], combined_proof: &[u8]) -> Result<bool, Error>;
 }
 
@@ -272,10 +210,13 @@ impl RawVerifier for Barretenberg {
         let header = combined_proof
             .get(..4)
             .ok_or(BackendProofError::CombinedProofHeaderTooShort)?;
-        let num_public = u32::from_be_bytes(header.try_into().expect("4 bytes")) as usize;
+        let num_public = u32::from_be_bytes([header[0], header[1], header[2], header[3]]) as usize;
 
         // [4 .. 4 + 32·N] public-input words.
-        let pub_end = 4 + num_public * 32;
+        let pub_end = num_public
+            .checked_mul(32)
+            .and_then(|n| n.checked_add(4))
+            .ok_or(BackendProofError::CombinedProofTruncatedPublicInputs)?;
         let pub_bytes = combined_proof
             .get(4..pub_end)
             .ok_or(BackendProofError::CombinedProofTruncatedPublicInputs)?;
@@ -300,13 +241,13 @@ impl RawVerifier for Barretenberg {
 
         let settings = settings_ultra_honk_keccak(self.disable_zk);
 
-        // bb's global CRS / prover — serialize against concurrent prove/verify.
-        let _bb = bb_lock();
-        let mut api = Self::api()?;
-        let response = api
-            .circuit_verify(vk_bytes, public_inputs, proof, settings)
-            .map_err(|e| BackendProofError::BbRawVerify(e.to_string()))?;
-        Ok(response.verified)
+        Ok(BarretenbergHandler::global().verify(
+            vk_bytes.to_vec(),
+            public_inputs,
+            proof,
+            true,
+            settings,
+        )?)
     }
 }
 
@@ -314,10 +255,10 @@ impl RawVerifier for Barretenberg {
 mod raw_verifier_tests {
     use super::*;
 
-    // These exercise `verify_combined`'s blob-parsing guards, which all return
-    // before the FFI `circuit_verify` call — so they need neither a CRS nor a
-    // real proof. A well-formed blob would reach bb and is covered by the
-    // integration tests that stand up the SRS.
+    // These tests check the parsing guards in `verify_combined`.
+    // Each guard returns before the native `circuit_verify` call.
+    // These tests require neither CRS data nor a real proof.
+    // Integration tests initialize the SRS and check correctly formatted data.
 
     #[test]
     fn rejects_header_shorter_than_4_bytes() {

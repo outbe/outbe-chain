@@ -2,7 +2,6 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_zk::demo_tribute::PROOF_WORDS as DEMO_TRIBUTE_PROOF_WORDS;
 
 use crate::zk::{dispatch_groth16, groth16_base_gas, zk_verify, ZK_VERIFY_GAS};
 
@@ -25,28 +24,29 @@ fn abi_encode(circuit_hash: &[u8; 32], proof: &[u8]) -> Vec<u8> {
     out
 }
 
-fn combined_demo_tribute_proof(public_inputs: [[u8; 32]; 4], proof_words: usize) -> Vec<u8> {
-    let mut out = Vec::with_capacity(4 + 32 * (4 + proof_words));
-    out.extend_from_slice(&4u32.to_be_bytes());
-    for public_input in public_inputs {
-        out.extend_from_slice(&public_input);
-    }
-    out.resize(out.len() + proof_words * 32, 0);
-    out
-}
-
 #[test]
-fn demo_tribute_with_invalid_curve_points_returns_backend_error() {
+#[ignore = "requires the pinned Barretenberg CRS"]
+fn zk_verify_real_proof_and_changed_statement() {
     use outbe_zk::noir::demo_tribute::DemoTribute;
     use outbe_zk::CircuitId as _;
 
-    let proof = combined_demo_tribute_proof([[0u8; 32]; 4], DEMO_TRIBUTE_PROOF_WORDS);
-    let input = abi_encode(&DemoTribute::CIRCUIT_HASH, &proof);
-    assert!(matches!(
-        zk_verify(&input),
-        Err(PrecompileError::Revert(message))
-            if message.starts_with("zk verification backend failed: ")
-    ));
+    outbe_zk_backend::barretenberg::BarretenbergHandler::init().unwrap();
+    let proof = include_bytes!(
+        "../../../../testing/protocol-benchmarks/fixtures/tribute_demo_tribute_v1.bin"
+    );
+    let mut valid = [0u8; 32];
+    valid[31] = 1;
+    assert_eq!(
+        zk_verify(&abi_encode(&DemoTribute::CIRCUIT_HASH, proof)).unwrap(),
+        valid
+    );
+
+    let mut tampered = proof.to_vec();
+    tampered[100..132].fill(0);
+    assert_eq!(
+        zk_verify(&abi_encode(&DemoTribute::CIRCUIT_HASH, &tampered)).unwrap(),
+        [0u8; 32]
+    );
 }
 
 #[test]
