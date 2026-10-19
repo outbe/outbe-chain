@@ -8,7 +8,6 @@ fn settlement_takes_the_rail_the_asset_matched() {
         let gem_id = issue_at_live_rate(
             storage,
             ALICE,
-            GemTypes::Wallet,
             U256::from(10u64) * six_decimal_unit(),
             949,
             840,
@@ -27,7 +26,6 @@ fn erc20_settle_refuses_a_transfer_that_moves_nothing() {
         let gem_id = issue_at_live_rate(
             storage,
             ALICE,
-            GemTypes::Wallet,
             U256::from(10u64) * six_decimal_unit(),
             840,
             840,
@@ -52,7 +50,6 @@ fn erc20_settle_rejects_a_foreign_currency_asset_before_paying() {
         let gem_id = issue_at_live_rate(
             storage,
             ALICE,
-            GemTypes::Wallet,
             U256::from(10u64) * six_decimal_unit(),
             840,
             840,
@@ -83,7 +80,6 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
         let gem_id = issue_at_live_rate(
             storage,
             ALICE,
-            GemTypes::Wallet,
             U256::from(10u64) * six_decimal_unit(),
             978,
             840,
@@ -103,8 +99,7 @@ fn the_issuance_rail_floors_the_whole_cost_in_the_payers_favour() {
     with_storage(Some(U256::from(3_000_000u64)), |storage| {
         register_currency(storage, 978, U256::from(2_500_000u64));
         seed_day_vwap(storage, 840, U256::from(3_000_000u64));
-        let gem_id =
-            issue_at_live_rate(storage, ALICE, GemTypes::Wallet, U256::ONE, 978, 840).unwrap();
+        let gem_id = issue_at_live_rate(storage, ALICE, U256::ONE, 978, 840).unwrap();
         assert_eq!(
             runtime::gem_cost_minor(&gem_view(storage, gem_id)).unwrap(),
             U256::from(3u64)
@@ -121,8 +116,7 @@ fn a_wider_asset_keeps_what_the_six_decimal_cost_dropped() {
     // The reference cost floors to 1. The cost is 1.500001. An
     // eighteen-decimal asset carries all of it. Scaling the floored 1 charged 1e12.
     with_storage(Some(U256::from(1_500_001u64)), |storage| {
-        let gem_id =
-            issue_at_live_rate(storage, ALICE, GemTypes::Wallet, U256::ONE, 840, 840).unwrap();
+        let gem_id = issue_at_live_rate(storage, ALICE, U256::ONE, 840, 840).unwrap();
         assert_eq!(
             runtime::gem_cost_minor(&gem_view(storage, gem_id)).unwrap(),
             U256::ONE
@@ -137,8 +131,7 @@ fn a_wider_asset_keeps_what_the_six_decimal_cost_dropped() {
 #[test]
 fn the_settlement_minimum_precedes_asset_and_currency_conversion() {
     with_storage(Some(U256::ONE), |storage| {
-        let gem_id =
-            issue_at_live_rate(storage, ALICE, GemTypes::Wallet, U256::ONE, 840, 840).unwrap();
+        let gem_id = issue_at_live_rate(storage, ALICE, U256::ONE, 840, 840).unwrap();
         let item = gem_view(storage, gem_id);
         let fx = |to: u64, from: u64| Some((U256::from(to), U256::from(from)));
 
@@ -166,8 +159,7 @@ fn the_settlement_minimum_precedes_asset_and_currency_conversion() {
 #[test]
 fn a_dust_gem_settles_for_one_minor_unit() {
     with_storage(Some(U256::ONE), |storage| {
-        let gem_id =
-            issue_at_live_rate(storage, ALICE, GemTypes::Wallet, U256::ONE, 840, 840).unwrap();
+        let gem_id = issue_at_live_rate(storage, ALICE, U256::ONE, 840, 840).unwrap();
         assert_eq!(
             admitted_at_quote(storage, gem_id, SETTLEMENT_ASSET).1,
             U256::ONE
@@ -182,15 +174,7 @@ fn settling_on_an_unregistered_issuance_leg_is_refused() {
         // The EUR asset is a valid vault asset, but COEN/978 was never registered,
         // so the pivot has no leg to convert through.
         seed_day_vwap(storage, 840, usd_rate);
-        let gem_id = issue_at_live_rate(
-            storage,
-            ALICE,
-            GemTypes::Wallet,
-            six_decimal_unit(),
-            978,
-            840,
-        )
-        .unwrap();
+        let gem_id = issue_at_live_rate(storage, ALICE, six_decimal_unit(), 978, 840).unwrap();
         let res = runtime::settle_gem(
             storage,
             gem_id,
@@ -213,7 +197,6 @@ fn the_reference_currency_settles_without_reading_any_issuance_rate() {
         let gem_id = issue_at_live_rate(
             storage,
             ALICE,
-            GemTypes::Wallet,
             U256::from(10u64) * six_decimal_unit(),
             978,
             840,
@@ -240,7 +223,6 @@ fn settle_rejects_an_asset_with_no_registered_vault() {
         let gem_id = issue_at_live_rate(
             &storage,
             ALICE,
-            GemTypes::Wallet,
             U256::from(10u64) * six_decimal_unit(),
             840,
             840,
@@ -266,7 +248,6 @@ fn settlement_scales_the_cost_to_the_asset_decimals() {
         let gem_id = issue_at_live_rate(
             storage,
             ALICE,
-            GemTypes::Wallet,
             U256::from(10u64) * six_decimal_unit(),
             840,
             840,
@@ -289,7 +270,6 @@ fn an_unassigned_issuance_code_mints_and_settles_on_the_reference_rail() {
         let gem_id = issue_at_live_rate(
             storage,
             ALICE,
-            GemTypes::Wallet,
             U256::from(10u64) * six_decimal_unit(),
             899,
             840,
@@ -307,14 +287,7 @@ fn issue_rejects_an_issuance_code_outside_the_three_digit_range() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         for iso in [0u16, 1000u16] {
-            let res = issue_at_live_rate(
-                storage,
-                ALICE,
-                GemTypes::Wallet,
-                six_decimal_unit(),
-                iso,
-                840,
-            );
+            let res = issue_at_live_rate(storage, ALICE, six_decimal_unit(), iso, 840);
             assert!(err_msg(res).contains("is not an ISO 4217 currency code"));
         }
     });
@@ -356,7 +329,6 @@ fn the_quote_prices_both_rails() {
         let gem_id = issue_at_live_rate(
             storage,
             ALICE,
-            GemTypes::Wallet,
             U256::from(10u64) * six_decimal_unit(),
             978,
             840,
@@ -384,7 +356,6 @@ fn the_hourly_rollover_at_the_settlement_deadline_grants_no_grace() {
         let gem_id = issue_at_live_rate(
             &storage,
             ALICE,
-            GemTypes::Wallet,
             U256::from(10u64) * six_decimal_unit(),
             978,
             840,
@@ -478,7 +449,6 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
         let gem_id = issue_at_live_rate(
             &storage,
             ALICE,
-            GemTypes::Wallet,
             U256::from(10u64) * six_decimal_unit(),
             978,
             840,
@@ -590,7 +560,7 @@ fn a_hundred_dollars_converts_to_ninety_euros_at_every_asset_scale() {
         register_currency(&storage, 978, U256::from(1_800_000u64));
         seed_day_vwap(&storage, 840, usd_rate);
         let load = U256::from(50u64) * six_decimal_unit();
-        let gem_id = issue_at_live_rate(&storage, ALICE, GemTypes::Wallet, load, 978, 840).unwrap();
+        let gem_id = issue_at_live_rate(&storage, ALICE, load, 978, 840).unwrap();
         for (asset, expected) in [
             (SETTLEMENT_ASSET_EUR, U256::from(90_000_000u64)),
             (eur_8, U256::from(9_000_000_000u64)),
@@ -613,7 +583,7 @@ fn a_gem_cost_converts_to_the_issuance_currency() {
         register_currency(storage, 978, U256::from(1_800_000u64));
         seed_day_vwap(storage, 840, usd_rate);
         let load = U256::from(50u64) * six_decimal_unit();
-        let wallet = issue_at_live_rate(storage, BOB, GemTypes::Wallet, load, 978, 840).unwrap();
+        let wallet = issue_at_live_rate(storage, BOB, load, 978, 840).unwrap();
         let quote = |gem_id| {
             runtime::quote_settlement(storage, gem_id, SETTLEMENT_ASSET_EUR)
                 .unwrap()
@@ -637,7 +607,6 @@ fn the_issuance_rail_converts_at_the_trailing_window_not_the_closed_day() {
         let gem_id = issue_at_live_rate(
             storage,
             ALICE,
-            GemTypes::Wallet,
             U256::from(10u64) * six_decimal_unit(),
             978,
             840,
@@ -670,7 +639,6 @@ fn gem_cost_load(item: &GemItemState) -> U256 {
     let GemItemState {
         gem_id: _,
         owner: _,
-        gem_type: _,
         promis_load_minor,
         issuance_currency: _,
         reference_currency: _,
@@ -695,9 +663,8 @@ fn settlement_cost_reads_entry_price_from_the_bucket() {
     with_storage(Some(rate), |storage| {
         let heavy = U256::from(10u64) * six_decimal_unit();
         let light = U256::from(4u64) * six_decimal_unit();
-        let heavy_id =
-            issue_at_live_rate(storage, ALICE, GemTypes::Wallet, heavy, 840, 840).unwrap();
-        let light_id = issue_at_live_rate(storage, BOB, GemTypes::Wallet, light, 840, 840).unwrap();
+        let heavy_id = issue_at_live_rate(storage, ALICE, heavy, 840, 840).unwrap();
+        let light_id = issue_at_live_rate(storage, BOB, light, 840, 840).unwrap();
         // Same load as the heavy gem, so the id needs another owner. A different
         // entry price opens a second bucket. The gem record still has none.
         let other_owner = address!("0x3333333333333333333333333333333333333333");
@@ -705,7 +672,6 @@ fn settlement_cost_reads_entry_price_from_the_bucket() {
             storage,
             GemIssueParams {
                 owner: other_owner,
-                gem_type: GemTypes::Wallet,
                 promis_load_minor: heavy,
                 issuance_currency: 840,
                 reference_currency: 840,

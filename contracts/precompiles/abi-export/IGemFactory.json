@@ -382,12 +382,6 @@
         "internalType": "uint256"
       },
       {
-        "name": "gemType",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      },
-      {
         "name": "owner",
         "type": "address",
         "indexed": false,

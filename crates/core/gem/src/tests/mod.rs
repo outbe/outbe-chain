@@ -33,7 +33,6 @@ pub(crate) fn with_storage<R>(f: impl FnOnce(&StorageHandle) -> R) -> R {
 pub(crate) fn sample_params(owner: Address) -> GemAddParams {
     GemAddParams {
         owner,
-        gem_type: 1, // SRA
         promis_load_minor: U256::from(1_000_000u64),
         entry_price_minor: U256::from(500_000u64),
         issuance_currency: USD,

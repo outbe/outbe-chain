@@ -32,7 +32,6 @@ impl Rail for Gem {
             storage,
             GemAddParams {
                 owner: OWNER,
-                gem_type: outbe_gemfactory::schema::GemTypes::Wallet as u8,
                 promis_load_minor: U256::from(1_500_000),
                 entry_price_minor: entry_price,
                 issuance_currency,

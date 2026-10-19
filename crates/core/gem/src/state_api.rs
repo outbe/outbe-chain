@@ -226,7 +226,6 @@ mod tests {
             let item = GemItemState {
                 gem_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(7)),
                 owner: Address::repeat_byte(1),
-                gem_type: 0,
                 promis_load_minor: U256::from(5_000_000),
                 issuance_currency: 840,
                 reference_currency: 840,
@@ -278,7 +277,6 @@ mod tests {
             let item = GemItemState {
                 gem_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(7)),
                 owner: Address::ZERO,
-                gem_type: 0,
                 promis_load_minor: U256::from(5_000_000),
                 issuance_currency: 840,
                 reference_currency: 840,

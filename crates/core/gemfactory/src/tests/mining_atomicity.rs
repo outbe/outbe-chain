@@ -5,12 +5,11 @@ use outbe_primitives::addresses::GEM_FACTORY_ADDRESS;
 
 use crate::precompile::IGemFactory;
 
-/// One settled Validator Gem of `load` Promis owned by Alice, priced at 2 COEN/USD.
+/// One settled Gem of `load` Promis owned by Alice, priced at 2 COEN/USD.
 fn settled_gem(load: U256) -> (HashMapStorageProvider, U256) {
     let mut provider = test_storage(Some(U256::from(2u64) * six_decimal_unit()));
     let gem_id = StorageHandle::enter(&mut provider, |storage| {
-        let gem_id =
-            issue_at_live_rate(&storage, ALICE, GemTypes::Validator, load, 840, 840).unwrap();
+        let gem_id = issue_at_live_rate(&storage, ALICE, load, 840, 840).unwrap();
         force_settled(&storage, gem_id);
         gem_id
     });

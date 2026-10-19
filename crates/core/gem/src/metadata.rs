@@ -32,7 +32,6 @@ pub(crate) fn token_uri(view: &GemView, now: u64) -> String {
     ));
     let mut traits = vec![
         Trait::text("State", state.label),
-        gem_type(item.gem_type),
         Trait::amount(
             "Entry Price",
             view.bucket.entry_price_minor,
@@ -63,17 +62,4 @@ pub(crate) fn token_uri(view: &GemView, now: u64) -> String {
         &card,
         &traits,
     )
-}
-
-// Mirrors `outbe_gemfactory::schema::GemTypes`, which this crate cannot depend on.
-fn gem_type(gem_type: u8) -> Trait {
-    let label = match gem_type {
-        0 => "Validator",
-        1 => "SRA",
-        2 => "Wallet",
-        3 => "CCA",
-        4 => "Merchant",
-        other => return Trait::integer("Gem Type", other),
-    };
-    Trait::text("Gem Type", label)
 }

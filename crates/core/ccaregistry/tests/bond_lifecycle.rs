@@ -351,10 +351,6 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         with_storage(&mut db, |storage| {
             let gem = outbe_gem::api::get_view(&storage, gem_id).unwrap().unwrap();
             assert_eq!(gem.item.owner, CCA);
-            assert_eq!(
-                gem.item.gem_type,
-                outbe_gemfactory::schema::GemTypes::Cca as u8
-            );
             assert_eq!(gem.item.promis_load_minor, U256::from(load));
             assert_eq!(gem.bucket.entry_price_minor, price);
             assert_eq!(gem.item.issuance_currency, 840);

@@ -22,8 +22,7 @@ const ISSUED: u64 = 1_704_067_200;
 use outbe_primitives::time::SECONDS_PER_DAY as DAY;
 const CALLED: u64 = ISSUED + 29 * DAY;
 const DEADLINE: u64 = CALLED + 7 * DAY;
-// Validator, SRA, Wallet, CCA, Merchant.
-const TYPES: [u8; 5] = [0, 1, 2, 3, 4];
+const GEMS: u8 = 5;
 
 /// The PROD call terms a bucket opened at `entry` seals.
 fn prod_terms(entry: U256) -> CallTerms {
@@ -47,16 +46,13 @@ fn world() -> (HashMapStorageProvider, Vec<(U256, U256)>) {
             .config_profile
             .write(PROFILE_PROD)
             .unwrap();
-        let rights = TYPES
-            .into_iter()
-            .enumerate()
-            .map(|(i, kind)| {
+        let rights = (0..GEMS)
+            .map(|i| {
                 let load = U256::from(1_000_001 + i as u64);
                 let id = api::add_gem(
                     &s,
                     GemAddParams {
-                        owner: Address::repeat_byte(i as u8 + 1),
-                        gem_type: kind,
+                        owner: Address::repeat_byte(i + 1),
                         promis_load_minor: load,
                         entry_price_minor: U256::from(1_000_000),
                         issuance_currency: 840,

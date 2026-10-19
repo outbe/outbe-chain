@@ -78,7 +78,6 @@ interface IGemFactory {
     ///         call bucket that `IGem.GemBucketCalled` reports.
     event GemIssued(
         uint256 indexed gemId,
-        uint8 gemType,
         address owner,
         uint256 promisLoadMinor,
         uint256 entryPriceMinor,

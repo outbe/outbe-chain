@@ -302,7 +302,7 @@ fn token_uri_renders_the_gem_card() {
         assert_eq!(json["description"], crate::constants::TOKEN_DESCRIPTION);
         assert!(!json.to_string().contains("https://"));
         assert_eq!(trait_value(&json, "State").unwrap(), "Issued");
-        assert_eq!(trait_value(&json, "Gem Type").unwrap(), "SRA");
+        assert!(trait_value(&json, "Gem Type").is_none());
         assert_eq!(trait_value(&json, "Entry Price").unwrap(), 0.5);
         assert!(trait_value(&json, "Floor Price").is_none());
         assert_eq!(trait_value(&json, "Call Price").unwrap(), 1.14);

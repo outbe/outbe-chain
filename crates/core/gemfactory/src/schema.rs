@@ -6,21 +6,10 @@ use outbe_primitives::error::Result;
 
 use crate::constants::MAX_POSITION_EXPIRIES_PER_RUN;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum GemTypes {
-    Validator = 0,
-    Sra = 1,
-    Wallet = 2,
-    Cca = 3,
-    Merchant = 4,
-}
-
-/// The terms an agent-class gem is issued on.
+/// The terms a reward gem is issued on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GemIssueParams {
     pub owner: Address,
-    pub gem_type: GemTypes,
     pub promis_load_minor: U256,
     pub issuance_currency: u16,
     pub reference_currency: u16,

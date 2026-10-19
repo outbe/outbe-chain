@@ -17,7 +17,7 @@ pub(crate) mod runtime;
 pub(crate) mod sol_ext;
 pub(crate) mod state;
 
-pub use schema::{GemFactoryContract, GemIssueParams, GemTypes};
+pub use schema::{GemFactoryContract, GemIssueParams};
 
 #[cfg(test)]
 mod tests;

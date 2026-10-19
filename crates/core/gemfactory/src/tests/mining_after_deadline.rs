@@ -7,13 +7,13 @@ use outbe_primitives::addresses::GEM_FACTORY_ADDRESS;
 
 use crate::precompile::IGemFactory;
 
-/// Alice's and Bob's Validator Gems of `load` share a bucket called at `T_NOW`;
+/// Alice's and Bob's Gems of `load` share a bucket called at `T_NOW`;
 /// Alice's is settled after the call, so it keeps that `called_at`.
 fn called_bucket(load: U256) -> (HashMapStorageProvider, U256, U256) {
     let mut provider = test_storage(Some(U256::from(2u64) * six_decimal_unit()));
     let ids = StorageHandle::enter(&mut provider, |handle| {
-        let paid = issue_at_live_rate(&handle, ALICE, GemTypes::Validator, load, 840, 840).unwrap();
-        let unpaid = issue_at_live_rate(&handle, BOB, GemTypes::Validator, load, 840, 840).unwrap();
+        let paid = issue_at_live_rate(&handle, ALICE, load, 840, 840).unwrap();
+        let unpaid = issue_at_live_rate(&handle, BOB, load, 840, 840).unwrap();
         let bucket = gem_item(&handle, paid).bucket_key;
         assert_eq!(gem_item(&handle, unpaid).bucket_key, bucket);
         assert!(!bucket.is_zero());

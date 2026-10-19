@@ -39,8 +39,6 @@ const PARKED_UNITS: u32 = 6;
 const GEM_LOAD_MINOR: u128 = 100_003;
 /// USD (840) as the reference, spelled `U` in the series id.
 const REFERENCE_BYTE: u8 = b'U';
-/// `GemTypes::Merchant`.
-const MERCHANT_GEM_TYPE: u8 = 4;
 /// `getGem` states: Issued, Called, Settled, Forfeited. Forfeited is derived on read.
 const ISSUED: u8 = 0;
 const CALLED: u8 = 1;
@@ -376,10 +374,6 @@ impl Lifecycle for GemLifecycle {
                 data.owner,
                 owner_address(index),
                 "gem {id} went to the wrong owner"
-            );
-            assert_eq!(
-                data.gemType, MERCHANT_GEM_TYPE,
-                "a gem issued from a parked position is a Merchant gem"
             );
             assert_eq!(data.promisLoadMinor, U256::from(GEM_LOAD_MINOR));
             assert_eq!(
