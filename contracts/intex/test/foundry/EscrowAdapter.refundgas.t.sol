@@ -245,8 +245,8 @@ contract RefundClaimFinalizedGasTest is RefundGasBase {
     }
 }
 
-/// @notice A day of 200 bidders that reaches a target chain in one chunk. The chunk carries its
-///         winners, closes the day and routes its proceeds. The last winner is filled in part.
+/// @notice A day of 200 bidders that reaches a target chain in chunks. Each chunk settles its
+///         winners and routes their proceeds. The last winner of a chunk is filled in part.
 contract RefundDayGasTest is RefundGasBase {
     uint256 internal constant BIDDERS = 200;
 
@@ -293,12 +293,17 @@ contract RefundDayGasTest is RefundGasBase {
         emit log_named_uint("day_chunk_40w", _deliverClosingChunk(40));
     }
 
-    /// @dev A chunk that does not close the day pays for its winners, its withdrawal and the day's
-    ///      clearing snapshot, and routes nothing. This is the base every chunk carries.
+    /// @dev A chunk that does not close the day still routes its own proceeds, so the widest one
+    ///      must fit the same quote as the day's last chunk.
     function test_AChunkThatDoesNotCloseTheDay() public {
-        emit log_named_uint("day_chunk_40w_open", _deliverChunk(40, 0, 2));
+        uint256 spent = _deliverChunk(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN, 0, 2);
+        emit log_named_uint("day_chunk_64w_open", spent);
         (, bool finalized,) = escrow.getAuctionStatus(DAY);
         assertFalse(finalized, "an unfinished day stays open");
+        assertEq(token.balanceOf(address(router)), 0, "the chunk's proceeds left with it");
+        assertLt(
+            spent, IntexGas.refund(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN, true), "an open-day chunk must fit its quote"
+        );
     }
 
     function test_AWidestChunkFitsItsQuote() public {
