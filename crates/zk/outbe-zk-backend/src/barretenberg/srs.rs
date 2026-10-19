@@ -11,7 +11,7 @@ use barretenberg_rs::generated_types::{CircuitInput, ProofSystemSettings};
 use sha2::{Digest, Sha256};
 
 use outbe_zk::error::Error;
-
+use crate::barretenberg::CANONICAL_SRS_POINTS;
 use crate::errors::{BackendProofError, CrsError};
 
 /// Capacity of the native CRS installed by the process-wide handler at startup.
@@ -44,12 +44,10 @@ impl Crs {
     }
 }
 
-/// Explicit path to a BN254 G1 SRS `.dat`, set by the embedding application
-/// (e.g. a mobile wallet pointing at a bundled SRS asset). Consulted *before*
-/// `$BB_CRS_PATH` / `~/.bb-crs` by [`local_g1_path`]. Set once; later sets are
-/// ignored. When built without `with-network-srs` this is the only way to
-/// provide the SRS — there is no network fallback.
-static SRS_PATH_OVERRIDE: OnceLock<std::path::PathBuf> = OnceLock::new();
+static BB_CRS_PATH_ENV_VAR: &str = "BB_CRS_PATH";
+
+/// Explicit path to a BN254 G1 SRS `.dat`.
+static CRS_PATH_OVERRIDE: OnceLock<std::path::PathBuf> = OnceLock::new();
 
 /// Point the SRS loader at an explicit G1 `.dat` file. The embedding app calls
 /// this **once, before handler initialization** (e.g. with a bundled SRS asset path) so
@@ -57,7 +55,7 @@ static SRS_PATH_OVERRIDE: OnceLock<std::path::PathBuf> = OnceLock::new();
 /// without `with-network-srs`; optional otherwise (it just overrides the cache
 /// location).
 pub fn set_srs_path(path: std::path::PathBuf) {
-    let _ = SRS_PATH_OVERRIDE.set(path);
+    let _ = CRS_PATH_OVERRIDE.set(path);
 }
 
 /// The BN254 G2 point of the SRS (fixed; same every time, so not read from the
@@ -162,14 +160,12 @@ fn compute_subgroup_size(circuit_size: u32) -> u32 {
     circuit_size.checked_next_power_of_two().unwrap_or(u32::MAX)
 }
 
-/// Path to a locally available BN254 G1 SRS: the [`set_srs_path`] override if
-/// set, else `$BB_CRS_PATH`, else `~/.bb-crs/bn254_g1.dat` (the file `bb`
-/// downloads/caches).
+/// Resolves path to CRS file.
 fn local_g1_path() -> std::path::PathBuf {
-    if let Some(p) = SRS_PATH_OVERRIDE.get() {
+    if let Some(p) = CRS_PATH_OVERRIDE.get() {
         return p.clone();
     }
-    if let Ok(p) = std::env::var("BB_CRS_PATH") {
+    if let Ok(p) = std::env::var(BB_CRS_PATH_ENV_VAR) {
         return p.into();
     }
     let home = std::env::var("HOME").unwrap_or_default();
@@ -253,7 +249,8 @@ fn cache_g1(bytes: &[u8]) {
     let _ = std::fs::write(&path, bytes);
 }
 
-pub(crate) fn load_srs(num_points: u32) -> Result<(Vec<u8>, u32, Vec<u8>), CrsError> {
+pub(crate) fn load_srs() -> Result<(Vec<u8>, u32, Vec<u8>), CrsError> {
+    let num_points = CANONICAL_SRS_POINTS;
     // Source the G1 prefix: local first (the set_srs_path override / cache),
     // else the network — except without `with-network-srs`, where a missing local
     // SRS is a hard error (no download). Integrity-check the bytes (whether

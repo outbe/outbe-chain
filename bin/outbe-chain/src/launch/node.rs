@@ -27,13 +27,10 @@ pub(crate) fn run_node() -> eyre::Result<()> {
     // CRS initialization blocks this thread and can use reqwest::blocking.
     // Initialize before starting the execution runtime.
     if command_requires_crs(&cli.command) {
-        let srs_path = std::env::var("BB_CRS_PATH").ok();
-        outbe_zk_backend::barretenberg::BarretenbergHandler::init().map_err(eyre::Report::from)?;
-        tracing::info!(
-            num_points = outbe_zk_backend::barretenberg::CANONICAL_SRS_POINTS,
-            path = ?srs_path,
-            "Barretenberg handler and CRS initialized"
-        );
+        use outbe_zk_backend::barretenberg::BarretenbergHandler;
+        BarretenbergHandler::init().map_err(eyre::Report::from)?;
+        // double-check that the bb was initialized
+        _ = BarretenbergHandler::global();
     }
 
     let bridge = ConsensusExecutionBridge::new();

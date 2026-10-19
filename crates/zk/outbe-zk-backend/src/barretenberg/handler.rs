@@ -5,7 +5,7 @@
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Mutex, OnceLock};
 
-use super::{configure_memory, srs, Barretenberg, CANONICAL_SRS_POINTS};
+use super::{configure_memory, srs, Barretenberg};
 use crate::barretenberg::srs::load_srs;
 use crate::errors::{BackendProofError, CrsError, HandlerError};
 use barretenberg_rs::api::BarretenbergApi;
@@ -55,7 +55,9 @@ impl BarretenbergHandler {
         catch_unwind(AssertUnwindSafe(|| {
             let _initialization = INITIALIZATION.lock().map_err(|_| HandlerError::Terminal)?;
             if HANDLER.get().is_none() {
-                let handler = Self::new_instance()?;
+                let (points_buf, num_points, g2_point) =
+                    load_srs().map_err(HandlerError::Initialization)?;
+                let handler = Self::new_instance(&points_buf, num_points, &g2_point)?;
                 let _ = HANDLER.set(handler);
             }
             Ok(())
@@ -73,24 +75,20 @@ impl BarretenbergHandler {
             .expect("BarretenbergHandler::init must complete during launch before global access")
     }
 
-    fn new_instance() -> Result<Self, HandlerError> {
-        let points = CANONICAL_SRS_POINTS;
+    fn new_instance(
+        points_buf: &[u8],
+        num_points: u32,
+        g2_point: &[u8],
+    ) -> Result<Self, HandlerError> {
         let backend = FfiBackend::new()
             .map_err(|error| command_error(BackendProofError::BbInit(error.to_string()).into()))?;
         let mut api = BarretenbergApi::new(backend);
-        let (points_buf, num_points, g2_point) =
-            load_srs(points).map_err(HandlerError::Initialization)?;
         api.srs_init_srs(&points_buf, num_points, &g2_point)
             .map_err(|e| HandlerError::Initialization(CrsError::SrsInit(e.to_string())))?;
         Ok(Self {
             api: Mutex::new(api),
-            crs: srs::Crs::new(points),
+            crs: srs::Crs::new(num_points),
         })
-    }
-
-    /// Check the fixed native CRS capacity. This method cannot increase the capacity.
-    pub fn ensure_capacity(&self, points: u32) -> Result<(), HandlerError> {
-        self.crs.ensure_capacity(points).map_err(command_error)
     }
 
     /// Calculate native circuit statistics on the calling thread.
