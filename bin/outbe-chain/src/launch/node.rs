@@ -27,7 +27,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
     // CRS initialization blocks this thread and can use reqwest::blocking.
     // Initialize before starting the execution runtime.
     if command_requires_crs(&cli.command) {
-        let srs_path = std::env::var("OUTBE_BB_SRS_PATH").ok();
+        let srs_path = std::env::var("BB_CRS_PATH").ok();
         outbe_zk_backend::barretenberg::BarretenbergHandler::init().map_err(eyre::Report::from)?;
         tracing::info!(
             num_points = outbe_zk_backend::barretenberg::CANONICAL_SRS_POINTS,

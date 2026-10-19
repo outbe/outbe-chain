@@ -75,9 +75,6 @@ impl BarretenbergHandler {
 
     fn new_instance() -> Result<Self, HandlerError> {
         let points = CANONICAL_SRS_POINTS;
-        if let Ok(path) = std::env::var("OUTBE_BB_SRS_PATH") {
-            srs::set_srs_path(path.into());
-        }
         let backend = FfiBackend::new()
             .map_err(|error| command_error(BackendProofError::BbInit(error.to_string()).into()))?;
         let mut api = BarretenbergApi::new(backend);
