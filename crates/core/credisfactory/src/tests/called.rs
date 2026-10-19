@@ -5,7 +5,7 @@
 //! and later blocks' slices through `slice`, against a seeded finalized daily
 //! series. This series is the only price source the production trigger reads.
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 
 use outbe_credis::constants::{CALL_LOOKBACK_DAYS, CALL_THRESHOLD_DAYS};
 use outbe_credis::{CallBins, CredisContract, CredisState};
@@ -13,7 +13,6 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::previous_date_key;
 use outbe_primitives::time::SECONDS_PER_DAY_U32;
 
-use crate::rules;
 use crate::tests::*;
 
 /// Enough headroom before `CREATED_AT` that a full lookback window never reaches
@@ -29,6 +28,19 @@ fn state_of(storage: &StorageHandle<'_>, credis_id: U256) -> CredisState {
         .unwrap()
         .lifecycle_state()
         .unwrap()
+}
+
+fn is_deleted(storage: &StorageHandle<'_>, credis_id: U256) -> bool {
+    !CredisContract::new(storage.clone())
+        .credis_exists(credis_id)
+        .unwrap()
+}
+
+fn group_of(storage: &StorageHandle<'_>, credis_id: U256) -> B256 {
+    CredisContract::new(storage.clone())
+        .get_credis(credis_id)
+        .unwrap()
+        .group_key()
 }
 
 /// The `n`th closed day back from the one closed at `at` (0 = the newest).
@@ -49,7 +61,7 @@ fn open_with_series(storage: &StorageHandle<'_>, at: u64, days: u32, price: U256
     credis_id
 }
 
-/// Rewrites the call terms sealed on a Credis, the way a switched profile
+/// Rewrites the call terms sealed on a Credis's group, the way a switched profile
 /// would have if the terms were still read live. Widens the currency's
 /// high-water mark alongside, exactly as `issue` does.
 fn reterm(
@@ -60,26 +72,36 @@ fn reterm(
     notice_days: u32,
 ) {
     let credis = CredisContract::new(storage.clone());
-    let mut record = credis.get_credis(credis_id).unwrap();
-    record.call_window_seconds = window_days * SECONDS_PER_DAY_U32;
-    record.call_threshold_seconds = threshold_days * SECONDS_PER_DAY_U32;
-    record.call_notice_period_seconds = notice_days * SECONDS_PER_DAY_U32;
-    credis.records.update(&record).unwrap();
+    let group = group_of(storage, credis_id);
+    let window = window_days * SECONDS_PER_DAY_U32;
+    let threshold = threshold_days * SECONDS_PER_DAY_U32;
+    credis
+        .group_call_window_seconds
+        .write(&group, window)
+        .unwrap();
+    credis
+        .group_call_threshold_seconds
+        .write(&group, threshold)
+        .unwrap();
+    credis
+        .group_call_notice_period_seconds
+        .write(&group, notice_days * SECONDS_PER_DAY_U32)
+        .unwrap();
     outbe_primitives::call_breach::widen_scan_terms(
         &credis.max_call_window_seconds,
         &credis.min_call_threshold_seconds,
         REFERENCE_ISO,
-        record.call_window_seconds,
-        record.call_threshold_seconds,
+        window,
+        threshold,
     )
     .unwrap();
 }
 
-/// The terms a Credis is called and forfeited under are the ones sealed at
-/// issuance, not the live profile: rewrite what the record holds and watch the
-/// scan follow the record rather than the profile.
+/// The terms a group is called and forfeited under are the ones sealed at
+/// issuance, not the live profile: rewrite what the group holds and watch the
+/// scan follow the group rather than the profile.
 #[test]
-fn the_scan_follows_the_terms_sealed_on_the_credis_not_the_profile() {
+fn the_scan_follows_the_terms_sealed_on_the_group_not_the_profile() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
@@ -113,7 +135,7 @@ fn the_scan_follows_the_terms_sealed_on_the_credis_not_the_profile() {
         let lapsed = at + DAY + HOUR;
         advance_to(&storage, lapsed);
         assert_eq!(expire(&storage, lapsed), 1);
-        assert_eq!(state_of(&storage, credis_id), CredisState::Forfeited);
+        assert!(is_deleted(&storage, credis_id));
     });
     teardown();
 }
@@ -442,6 +464,7 @@ fn the_call_and_the_forfeit_compose_across_runs() {
         bootstrap(&storage, pledge_cost());
         let at = CREATED_AT + AFTER_WINDOW;
         let credis_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, above_call());
+        let group = group_of(&storage, credis_id);
 
         assert_eq!(scan(&storage, at), 1);
         assert_eq!(state_of(&storage, credis_id), CredisState::Called);
@@ -461,7 +484,7 @@ fn the_call_and_the_forfeit_compose_across_runs() {
         let lapsed = at + NOTICE + HOUR;
         advance_to(&storage, lapsed);
         assert_eq!(expire(&storage, lapsed), 1);
-        assert_eq!(state_of(&storage, credis_id), CredisState::Forfeited);
+        assert!(is_deleted(&storage, credis_id));
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(storage.clone())
@@ -470,8 +493,9 @@ fn the_call_and_the_forfeit_compose_across_runs() {
             pledge_cost()
         );
 
-        // The forfeit left the deadline queue.
-        assert_eq!(queued_at(&storage, credis_id), 0);
+        // The forfeit left the deadline queue and the cleanup closed the group.
+        assert_eq!(queued_at(&storage, group), 0);
+        assert_eq!(cleanup_queued_at(&storage, group), 0);
     });
     teardown();
 }
@@ -484,17 +508,17 @@ fn each_reference_currency_prices_off_its_own_daily_series() {
         let at = CREATED_AT + AFTER_WINDOW;
         let credis_id = open(&storage, 1);
 
-        // Re-point the stored Credis's ANCHOR at an unregistered currency, so it
-        // prices off a series that does not exist, and index it there.
+        // Re-point the Credis's group at an unregistered currency, so it prices off a
+        // series that does not exist, and index it there.
         {
             use outbe_primitives::call_bins;
             let credis = CredisContract::new(storage.clone());
-            let mut record = credis.get_credis(credis_id).unwrap();
+            let record = credis.get_credis(credis_id).unwrap();
+            let group = record.group_key();
             let bin = call_bins::price_to_bin(record.call_price_minor).unwrap();
-            call_bins::remove(&CallBins(&credis, REFERENCE_ISO), credis_id).unwrap();
-            call_bins::insert(&CallBins(&credis, UNPRICED_ISO), credis_id, bin).unwrap();
-            record.reference_currency = UNPRICED_ISO;
-            credis.records.update(&record).unwrap();
+            call_bins::remove(&CallBins(&credis, REFERENCE_ISO), group).unwrap();
+            call_bins::insert(&CallBins(&credis, UNPRICED_ISO), group, bin).unwrap();
+            credis.group_currency.write(&group, UNPRICED_ISO).unwrap();
         }
 
         // The seeded reference series is a full breach window, but this Credis is
@@ -572,8 +596,8 @@ fn the_call_follows_the_reference_series_and_ignores_the_issuance_one() {
     teardown();
 }
 
-/// Opens one Credis for each of three distinct owners, so none of them trips
-/// the called-Credis gate. Returns the ids in call-index order.
+/// Opens one Credis for each of three distinct owners, each in a group of its own in
+/// one call bin. Returns the ids in call-index order.
 fn open_three(storage: &StorageHandle<'_>) -> Vec<U256> {
     let owners: [Address; 3] = [alice(), bob(), cca()];
     for owner in owners {
@@ -585,7 +609,22 @@ fn open_three(storage: &StorageHandle<'_>) -> Vec<U256> {
         .collect()
 }
 
-/// Credis of the reference currency's walk in flight still to visit in its bin.
+/// Opens a Credis on the fixture's own call anchor, which every such Credis of the
+/// day shares a group on.
+fn open_on_fixture_anchor(storage: &StorageHandle<'_>, owner: Address, nonce: u64) -> U256 {
+    let reservation_id = seed_reservation(storage, owner, owner, pledge_stables());
+    let router = outbe_vaultrouter::VaultRouterContract::new(storage.clone());
+    let mut reservation = router.reservations.get(reservation_id).unwrap().unwrap();
+    reservation.call_anchor_price_minor = oracle_rate();
+    router.reservations.update(&reservation).unwrap();
+    pledge(storage, owner, reservation_id, nonce);
+    fund_stake(storage, pledge_stake());
+    crate::runtime::issue_credis(storage.clone(), cca(), reservation_id, pledge_stake())
+        .unwrap()
+        .0
+}
+
+/// Groups of the reference currency's walk in flight still to visit in its bin.
 fn cursor_of(storage: &StorageHandle<'_>) -> u32 {
     let packed = CredisContract::new(storage.clone())
         .call_bin_cursor
@@ -594,10 +633,10 @@ fn cursor_of(storage: &StorageHandle<'_>) -> u32 {
     outbe_primitives::call_bins::unpack_cursor(packed).1
 }
 
-fn is_indexed(storage: &StorageHandle<'_>, credis_id: U256) -> bool {
+fn is_indexed(storage: &StorageHandle<'_>, group: B256) -> bool {
     CredisContract::new(storage.clone())
-        .call_credis_slot
-        .read(&credis_id)
+        .call_group_slot
+        .read(&group)
         .unwrap()
         != 0
 }
@@ -609,8 +648,8 @@ fn a_completed_pass_resets_the_cursor() {
         let ids = open_three(&storage);
         for id in &ids {
             assert!(
-                is_indexed(&storage, *id),
-                "an open Credis waits for its call"
+                is_indexed(&storage, group_of(&storage, *id)),
+                "an open group waits for its call"
             );
         }
 
@@ -636,7 +675,7 @@ fn sweep_state<'storage>(storage: &StorageHandle<'storage>) -> CredisContract<'s
     CredisContract::new(storage.clone())
 }
 
-/// Pins `day` as the sweep in flight, stopped with `remaining` Credis of the
+/// Pins `day` as the sweep in flight, stopped with `remaining` groups of the
 /// bin `sample` sits in still to visit.
 fn pin_sweep(storage: &StorageHandle<'_>, day: u32, sample: U256, remaining: u32) {
     sweep_state(storage).call_sweep_day.write(day).unwrap();
@@ -673,7 +712,7 @@ fn a_resumed_pass_starts_at_the_cursor_and_walks_down() {
             CALL_LOOKBACK_DAYS,
             above_call(),
         );
-        // Two Credis of the bin are left to visit: indices 1 and 0.
+        // Two groups of the bin are left to visit: indices 1 and 0.
         pin_sweep(&storage, last_closed_day(at), ids[0], 2);
 
         assert_eq!(slice(&storage, at), 2);
@@ -709,11 +748,12 @@ fn an_owner_forfeit_mid_pass_leaves_the_rest_of_the_bin_to_the_scan() {
         );
         pin_sweep(&storage, last_closed_day(at), ids[0], 2);
 
+        let group = group_of(&storage, ids[0]);
         crate::runtime::forfeit_by_owner(storage.clone(), alice(), ids[0]).unwrap();
-        assert!(!is_indexed(&storage, ids[0]));
+        assert!(!is_indexed(&storage, group));
 
         assert_eq!(slice(&storage, at), 2);
-        assert_eq!(state_of(&storage, ids[0]), CredisState::Forfeited);
+        assert!(is_deleted(&storage, ids[0]));
         assert_eq!(state_of(&storage, ids[1]), CredisState::Called);
         assert_eq!(state_of(&storage, ids[2]), CredisState::Called);
     });
@@ -832,18 +872,24 @@ fn a_pinned_day_the_oracle_has_not_finalized_holds_the_sweep() {
     teardown();
 }
 
-/// Calls `ids` by hand at `called_at`, which queues them on their deadline.
+/// Calls the groups of `ids` by hand at `called_at`, which queues them on their deadline.
 fn call_by_hand(storage: &StorageHandle<'_>, ids: &[U256], called_at: u64) {
-    let mut credis = CredisContract::new(storage.clone());
     for id in ids {
-        assert!(rules::mark_called(&mut credis, *id, called_at).unwrap());
+        call_credis(storage, *id, called_at);
     }
 }
 
-fn queued_at(storage: &StorageHandle<'_>, credis_id: U256) -> u64 {
+fn queued_at(storage: &StorageHandle<'_>, group: B256) -> u64 {
     CredisContract::new(storage.clone())
-        .called_credis_slot
-        .read(&credis_id)
+        .called_group_slot
+        .read(&group)
+        .unwrap()
+}
+
+fn cleanup_queued_at(storage: &StorageHandle<'_>, group: B256) -> u64 {
+    CredisContract::new(storage.clone())
+        .cleanup_group_slot
+        .read(&group)
         .unwrap()
 }
 
@@ -852,6 +898,7 @@ fn forfeiting_several_credis_in_one_block_skips_none() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         let ids = open_three(&storage);
+        let groups: Vec<B256> = ids.iter().map(|id| group_of(&storage, *id)).collect();
         call_by_hand(&storage, &ids, CREATED_AT);
 
         let lapsed = CREATED_AT + NOTICE + HOUR;
@@ -859,12 +906,12 @@ fn forfeiting_several_credis_in_one_block_skips_none() {
         assert_eq!(
             expire(&storage, lapsed),
             3,
-            "all three forfeited in one block"
+            "all three groups forfeited in one block"
         );
 
-        for id in &ids {
-            assert_eq!(state_of(&storage, *id), CredisState::Forfeited);
-            assert_eq!(queued_at(&storage, *id), 0);
+        for (id, group) in ids.iter().zip(&groups) {
+            assert!(is_deleted(&storage, *id));
+            assert_eq!(queued_at(&storage, *group), 0);
         }
     });
     teardown();
@@ -889,7 +936,7 @@ fn a_forfeit_waits_for_the_hour_its_deadline_falls_in_to_close() {
 
         advance_to(&storage, hour_end);
         assert_eq!(expire(&storage, hour_end), 1);
-        assert_eq!(state_of(&storage, ids[0]), CredisState::Forfeited);
+        assert!(is_deleted(&storage, ids[0]));
     });
     teardown();
 }
@@ -904,7 +951,7 @@ fn every_cycle_tick_forfeits_without_the_daily_trigger() {
         let lapsed = CREATED_AT + NOTICE + HOUR;
         advance_to(&storage, lapsed);
         tick(&storage, lapsed);
-        assert_eq!(state_of(&storage, ids[0]), CredisState::Forfeited);
+        assert!(is_deleted(&storage, ids[0]));
         assert_eq!(state_of(&storage, ids[1]), CredisState::Issued);
     });
     teardown();
@@ -918,9 +965,9 @@ fn settling_a_called_credis_in_full_leaves_the_queue() {
         let credis_id = open(&storage, 1);
         call_by_hand(&storage, &[credis_id], CREATED_AT);
         assert_ne!(
-            queued_at(&storage, credis_id),
+            queued_at(&storage, group_of(&storage, credis_id)),
             0,
-            "a call queues the Credis"
+            "a call queues the group"
         );
 
         let outstanding = CredisContract::new(storage.clone())
@@ -932,7 +979,7 @@ fn settling_a_called_credis_in_full_leaves_the_queue() {
     settle_principal(&mut storage, alice(), credis_id, outstanding);
     StorageHandle::enter(&mut storage, |storage| {
         assert_eq!(state_of(&storage, credis_id), CredisState::Settled);
-        assert_eq!(queued_at(&storage, credis_id), 0);
+        assert_eq!(queued_at(&storage, group_of(&storage, credis_id)), 0);
 
         let lapsed = CREATED_AT + NOTICE + HOUR;
         advance_to(&storage, lapsed);
@@ -949,84 +996,103 @@ fn settling_a_called_credis_in_full_leaves_the_queue() {
     teardown();
 }
 
+/// A group forfeits in one credit, and its cleanup deletes up to the block's write budget,
+/// leaving the rest to the next block.
 #[test]
-fn the_forfeit_budget_bounds_one_block_and_the_next_block_drains_the_rest() {
+fn the_cleanup_budget_bounds_one_block_and_the_next_block_drains_the_rest() {
     let mut provider = env();
     let budget = outbe_primitives::sweep_budget::SWEEP_WRITES_PER_BLOCK;
     let total = budget + 1;
     StorageHandle::enter(&mut provider, |storage| {
         bootstrap_for(&storage, alice(), pledge_cost() * U256::from(total));
     });
-    // Open identical owner/CCA/asset tuples in successive blocks before calling.
+    // Identical owner/CCA/asset tuples in successive blocks of one day share one group.
     let ids: Vec<U256> = (1..=u64::from(total))
         .map(|nonce| {
             provider.set_block_number(BLOCK_NUMBER + nonce);
-            StorageHandle::enter(&mut provider, |storage| open_for(&storage, alice(), nonce))
+            StorageHandle::enter(&mut provider, |storage| {
+                open_on_fixture_anchor(&storage, alice(), nonce)
+            })
         })
         .collect();
     StorageHandle::enter(&mut provider, |storage| {
-        call_by_hand(&storage, &ids, CREATED_AT);
-        let lapsed = CREATED_AT + NOTICE + HOUR;
-        advance_to(&storage, lapsed);
-
-        assert_eq!(expire(&storage, lapsed), budget);
-        assert_eq!(
-            ids.iter()
-                .filter(|id| queued_at(&storage, **id) != 0)
-                .count(),
-            1
-        );
-        assert_eq!(expire(&storage, lapsed), 1);
-        for id in &ids {
-            assert_eq!(state_of(&storage, *id), CredisState::Forfeited);
-        }
-    });
-    teardown();
-}
-
-#[test]
-fn a_failed_forfeit_fails_the_block_and_keeps_the_credis_queued() {
-    let mut storage = env();
-    StorageHandle::enter(&mut storage, |storage| {
-        let ids = open_three(&storage);
+        let group = group_of(&storage, ids[0]);
+        assert!(ids.iter().all(|id| group_of(&storage, *id) == group));
         call_by_hand(&storage, &ids[..1], CREATED_AT);
         let lapsed = CREATED_AT + NOTICE + HOUR;
         advance_to(&storage, lapsed);
 
-        outbe_gratis::enclave_client::test_enclave::uninstall();
+        assert_eq!(expire(&storage, lapsed), 1);
+        let reserve = outbe_promislimit::PromisLimitContract::new(storage.clone())
+            .get_total_unallocated()
+            .unwrap();
+        assert_eq!(reserve, pledge_cost() * U256::from(total));
+        assert_eq!(
+            ids.iter().filter(|id| !is_deleted(&storage, **id)).count(),
+            1
+        );
+        assert_eq!(expire(&storage, lapsed), 0);
+        assert!(ids.iter().all(|id| is_deleted(&storage, *id)));
+        assert_eq!(cleanup_queued_at(&storage, group), 0);
+        assert_eq!(
+            outbe_promislimit::PromisLimitContract::new(storage.clone())
+                .get_total_unallocated()
+                .unwrap(),
+            reserve,
+            "the cleanup credits nothing"
+        );
+    });
+    teardown();
+}
+
+/// The forfeit needs no enclave. A cleanup that cannot burn on this node fails the block
+/// and keeps the Credis.
+#[test]
+fn a_failed_cleanup_fails_the_block_and_keeps_the_credis_queued() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        let ids = open_three(&storage);
+        let group = group_of(&storage, ids[0]);
+        call_by_hand(&storage, &ids[..1], CREATED_AT);
+        let lapsed = CREATED_AT + NOTICE + HOUR;
+        advance_to(&storage, lapsed);
+
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
             outbe_primitives::block::BlockContext::empty_for_tests(BLOCK_NUMBER, lapsed, CHAIN_ID),
             storage.clone(),
         );
+        assert_eq!(crate::expired::sweep_expired(&ctx).unwrap(), 1);
+        outbe_gratis::enclave_client::test_enclave::uninstall();
         assert!(matches!(
-            crate::expired::sweep_expired(&ctx),
+            crate::cleanup::sweep_cleanup(&ctx),
             Err(outbe_primitives::error::PrecompileError::EnclaveUnavailable(_))
         ));
-        assert_eq!(state_of(&storage, ids[0]), CredisState::Called);
-        assert_ne!(queued_at(&storage, ids[0]), 0);
+        assert!(!is_deleted(&storage, ids[0]));
+        assert_ne!(cleanup_queued_at(&storage, group), 0);
     });
     teardown();
 }
 
-/// A failure every node hits alike, here a broken pledged-supply total, defers the forfeit.
+/// A failure every node hits alike, here a broken pledged-supply total, defers the cleanup.
 #[test]
-fn a_deterministic_forfeit_failure_defers_the_credis() {
+fn a_deterministic_cleanup_failure_defers_the_group() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         let ids = open_three(&storage);
+        let group = group_of(&storage, ids[0]);
         call_by_hand(&storage, &ids[..1], CREATED_AT);
         let lapsed = CREATED_AT + NOTICE + HOUR;
         advance_to(&storage, lapsed);
-        let queued = queued_at(&storage, ids[0]);
 
         outbe_gratis::schema::Gratis::new(storage.clone())
             .pledged_total_supply
             .write(U256::ZERO)
             .unwrap();
-        assert_eq!(expire(&storage, lapsed), 0);
-        assert_eq!(state_of(&storage, ids[0]), CredisState::Called);
-        assert_ne!(queued_at(&storage, ids[0]), 0);
-        assert_ne!(queued_at(&storage, ids[0]), queued);
+        assert_eq!(expire(&storage, lapsed), 1);
+        assert!(!is_deleted(&storage, ids[0]));
+        let (hour, _) =
+            outbe_primitives::expiry_queue::unpack_slot(cleanup_queued_at(&storage, group));
+        assert_eq!(hour, outbe_primitives::expiry_queue::bucket_of(lapsed) + 1);
     });
     teardown();
 }

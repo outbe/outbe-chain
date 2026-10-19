@@ -2,20 +2,23 @@
 //! VWAPs. The Cycle daily trigger schedules the closed UTC day, and every CycleTick
 //! walks a slice of it.
 //!
-//! A Credis moves `Issued -> Called` when the COEN price in its REFERENCE currency
-//! sat strictly above the call price on `call_threshold_seconds` of the trailing
-//! `call_window_seconds`. Both terms are sealed onto the Credis at issuance. The
-//! issuance currency the Credis is denominated in never enters the threshold.
+//! A group of Credis moves `Issued -> Called` when the COEN price in its REFERENCE
+//! currency sat strictly above its call price on `call_threshold_seconds` of the
+//! trailing `call_window_seconds`, counted from the group's first full day. Both terms
+//! are sealed onto the group by its first member. The issuance currency a Credis is
+//! denominated in never enters the threshold.
 //!
-//! The breach rule needs no per-Credis streak state. The daily series is
+//! The breach rule needs no per-group streak state. The daily series is
 //! global per currency, so one trailing window per reference currency decides
-//! every Credis anchored to it. Every run recomputes the count from oracle
+//! every group anchored to it. Every run recomputes the count from oracle
 //! history and does not carry it. Mirrors the Gem, Intex and Nod call sweeps.
 
+use alloy_primitives::{B256, U256};
 use alloy_sol_types::SolEvent;
 
 use outbe_credis::config::CredisParams;
-use outbe_credis::{CallBins, Credis, CredisContract, CredisState};
+use outbe_credis::precompile::ICredis;
+use outbe_credis::{CallBins, CredisContract};
 
 use outbe_oracle::call_sweep::{self, CallSweep, CALL_SWEEP};
 use outbe_oracle::call_window::CallWindow;
@@ -27,11 +30,9 @@ use outbe_primitives::{
     daily_sweep::PinnedDay,
     error::Result,
     storage::{dsl::Value, StorageHandle},
-    time::first_full_day,
 };
 
 use crate::precompile::ICredisFactory::{CallScanSkipped, SweepDaySkipped};
-use crate::rules;
 
 /// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
 pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
@@ -39,7 +40,7 @@ pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
 }
 
 /// Schedules the closed day and walks a slice of the day in flight. Returns the
-/// Credis called.
+/// groups called.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let mut sweep = CredisCallSweep::new(ctx);
     call_sweep::schedule(ctx, &mut sweep)?;
@@ -47,7 +48,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
 }
 
 /// Walks the next slice of the day in flight, pinned to the day it opened on so
-/// later blocks decide against the same prices. Returns the Credis called.
+/// later blocks decide against the same prices. Returns the groups called.
 pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_sweep::continue_day(ctx, &mut CredisCallSweep::new(ctx))
 }
@@ -125,13 +126,12 @@ impl<'storage> CallSweep<'storage> for CredisCallSweep<'storage> {
                     &CallBins(index, iso_code),
                     ceiling,
                     budget,
-                    |credis_id, budget| {
-                        call_sweep::call_entry::<Self>(&ctx.storage, budget, credis_id, || {
-                            let record = caller.get_credis(credis_id)?;
+                    |group, budget| {
+                        call_sweep::call_entry::<Self>(&ctx.storage, budget, group, || {
                             let calls = u32::from(call_if_breached(
                                 &mut caller,
                                 window,
-                                &record,
+                                group,
                                 ctx.block.timestamp,
                             )?);
                             called += calls;
@@ -141,6 +141,13 @@ impl<'storage> CallSweep<'storage> for CredisCallSweep<'storage> {
                 )
             },
         )?;
+        // A group holds Credis of any id, so a call refreshes the whole range.
+        if called != 0 {
+            self.credis.emit(ICredis::BatchMetadataUpdate {
+                _fromTokenId: U256::ZERO,
+                _toTokenId: U256::MAX,
+            })?;
+        }
         Ok((called, finished))
     }
 }
@@ -149,21 +156,29 @@ pub(crate) fn emit(storage: &StorageHandle<'_>, event: &impl SolEvent) -> Result
     storage.emit_event(CREDIS_FACTORY_ADDRESS, SolEvent::encode_log_data(event))
 }
 
-/// Calls an Issued Credis whose breach window filled. Returns whether it moved.
+/// Calls a group whose breach window filled. Returns whether it was called.
 fn call_if_breached(
     credis: &mut CredisContract<'_>,
     window: &CallWindow,
-    record: &Credis,
+    group: B256,
     now: u64,
 ) -> Result<bool> {
-    Ok(record.lifecycle_state()? == CredisState::Issued
-        && window.breached(&BreachTerms {
-            call_price: record.call_price_minor,
-            window_seconds: record.call_window_seconds,
-            threshold_seconds: record.call_threshold_seconds,
-            start_day: first_full_day(record.issued_at),
-        })
-        && rules::mark_called(credis, record.credis_id, now)?)
+    let breached = window.breached(&BreachTerms {
+        call_price: credis.group_call_price_minor.read(&group)?,
+        window_seconds: credis.group_call_window_seconds.read(&group)?,
+        threshold_seconds: credis.group_call_threshold_seconds.read(&group)?,
+        start_day: credis.group_full_day.read(&group)?,
+    });
+    if !breached {
+        return Ok(false);
+    }
+    let deadline = credis.record_group_called(group, now)?;
+    credis.emit(ICredis::CredisGroupCalled {
+        groupKey: group,
+        calledAt: now,
+        settlementDeadline: deadline,
+    })?;
+    Ok(true)
 }
 
 /// The live profile is the terms the next Credis is issued with.

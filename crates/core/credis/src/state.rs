@@ -1,19 +1,20 @@
-//! Storage CRUD and per-address index helpers for the Credis contract.
+//! Storage CRUD, the live lists and the call groups of the Credis contract.
 //!
 //! All functions take a short-lived `&mut CredisContract` (or `&CredisContract`
 //! for reads) constructed via `CredisContract::new(storage)`. They only touch
 //! local storage. The rules that drive them live in CredisFactory.
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 
 use outbe_primitives::call_bins;
 use outbe_primitives::error::Result;
 use outbe_primitives::expiry_queue;
+use outbe_primitives::storage::indexed_list::{create_indexed, delete_indexed, IndexedList};
 
 use crate::errors::CredisError;
-use crate::schema::{Credis, CredisContract};
+use crate::schema::{Credis, CredisContract, CredisState};
 
-impl CredisContract<'_> {
+impl<'storage> CredisContract<'storage> {
     // ---------------------------------------------------------------------
     // Credis CRUD
     // ---------------------------------------------------------------------
@@ -22,18 +23,49 @@ impl CredisContract<'_> {
         self.records.exists(credis_id)
     }
 
+    /// Loads a Credis as its group sees it: a live Credis reads its call and call terms
+    /// from the group. Reverts on missing.
     pub fn load_credis(&self, credis_id: U256) -> Result<Credis> {
-        self.records
+        let mut record = self
+            .records
             .get(credis_id)?
-            .ok_or_else(|| CredisError::CredisNotFound.into())
+            .ok_or(CredisError::CredisNotFound)?;
+        if record.lifecycle_state()? != CredisState::Settled {
+            let group = record.group_key();
+            record.call_window_seconds = self.group_call_window_seconds.read(&group)?;
+            record.call_threshold_seconds = self.group_call_threshold_seconds.read(&group)?;
+            record.call_notice_period_seconds =
+                self.group_call_notice_period_seconds.read(&group)?;
+            record.called_at = self.group_called_at.read(&group)?;
+            if record.called_at != 0 {
+                record.state = CredisState::Called as u8;
+            }
+        }
+        Ok(record)
     }
 
+    /// Records a new Credis, lists it and puts it in its group.
     pub fn create_credis_record(&mut self, record: &Credis) -> Result<()> {
-        self.records.create(record)
+        create_indexed(&self.records, record, self.record_indexes(record.owner))?;
+        self.join_group(record)
     }
 
     pub fn update_credis_record(&mut self, record: &Credis) -> Result<()> {
         self.records.update(record)
+    }
+
+    /// Deletes a Credis and unlists it. Its group is the caller's.
+    pub fn delete_credis_record(&mut self, credis_id: U256) -> Result<()> {
+        delete_indexed(&self.records, credis_id, |record: &Credis| {
+            self.record_indexes(record.owner)
+        })
+    }
+
+    fn record_indexes(&self, owner: Address) -> [IndexedList<'storage, U256>; 2] {
+        [
+            IndexedList::new(self.owner_ids.list(&owner), self.owner_id_position.clone()),
+            IndexedList::new(self.all_ids.clone(), self.global_id_position.clone()),
+        ]
     }
 
     /// Widens the currency's scan terms to cover a newly opened Credis.
@@ -48,104 +80,198 @@ impl CredisContract<'_> {
     }
 
     // ---------------------------------------------------------------------
-    // Per-address dense index (mirrors outbe-nod owner_nod_* shape)
+    // Live lists
     // ---------------------------------------------------------------------
 
-    pub fn append_to_owner_index(&mut self, account: Address, credis_id: U256) -> Result<()> {
-        let count = self.owner_credis_counts.read(&account)?;
-        let key = CredisContract::address_index_key(account, count);
-        self.owner_credis_ids.write(&key, credis_id)?;
-        self.owner_credis_counts.write(&account, count + 1)?;
-        Ok(())
+    pub fn owner_credis_count(&self, account: Address) -> Result<u32> {
+        self.owner_ids.list(&account).len()
     }
 
-    pub fn read_owner_credis_count(&self, account: Address) -> Result<u32> {
-        self.owner_credis_counts.read(&account)
+    pub fn owner_credis_id(&self, account: Address, index: u32) -> Result<U256> {
+        self.owner_ids
+            .list(&account)
+            .get(index)?
+            .ok_or_else(|| CredisError::IndexOutOfBounds.into())
     }
 
-    pub fn read_owner_credis_id(&self, account: Address, index: u32) -> Result<U256> {
-        let key = CredisContract::address_index_key(account, index);
-        self.owner_credis_ids.read(&key)
+    pub fn owner_credis_ids(&self, account: Address) -> Result<Vec<U256>> {
+        self.owner_ids.list(&account).read_all()
     }
 
-    // ---------------------------------------------------------------------
-    // Global dense index backing `totalSupply` / `tokenByIndex`
-    // ---------------------------------------------------------------------
-
-    pub fn append_to_global_index(&mut self, credis_id: U256) -> Result<()> {
-        let total = self.total_credis.read()?;
-        self.credis_id_at_index.write(&total, credis_id)?;
-        self.total_credis.write(total + 1)?;
-        Ok(())
+    pub fn live_credis_count(&self) -> Result<u32> {
+        self.all_ids.len()
     }
 
-    pub fn read_total_credis(&self) -> Result<u64> {
-        self.total_credis.read()
-    }
-
-    pub fn read_credis_id_at(&self, index: u64) -> Result<U256> {
-        self.credis_id_at_index.read(&index)
+    pub fn live_credis_id(&self, index: u32) -> Result<U256> {
+        self.all_ids
+            .get(index)?
+            .ok_or_else(|| CredisError::IndexOutOfBounds.into())
     }
 
     // ---------------------------------------------------------------------
-    // Call-price index (Issued Credis only)
+    // Call groups
     // ---------------------------------------------------------------------
 
-    /// Puts an Issued Credis in the bin of its sealed call price.
-    pub fn insert_call_bin(&mut self, record: &Credis) -> Result<()> {
-        let bin = call_bins::price_to_bin(record.call_price_minor)?;
-        call_bins::insert(
-            &CallBins(self, record.reference_currency),
-            record.credis_id,
-            bin,
+    fn group_index(&self, group: B256) -> IndexedList<'storage, U256> {
+        IndexedList::new(
+            self.group_members.list(&group),
+            self.group_member_position.clone(),
         )
     }
 
-    /// No-op for a Credis the call index no longer holds.
-    pub fn remove_call_bin(&mut self, record: &Credis) -> Result<()> {
-        call_bins::remove(&CallBins(self, record.reference_currency), record.credis_id)?;
+    /// Puts a Credis in its group. The first member opens the group with its terms and
+    /// puts it in the call bin of its call price.
+    fn join_group(&mut self, record: &Credis) -> Result<()> {
+        let group = record.group_key();
+        if self.group_member_count(group)? == 0 {
+            self.group_currency
+                .write(&group, record.reference_currency)?;
+            self.group_full_day.write(
+                &group,
+                outbe_primitives::time::first_full_day(record.issued_at),
+            )?;
+            self.group_call_price_minor
+                .write(&group, record.call_price_minor)?;
+            self.group_call_window_seconds
+                .write(&group, record.call_window_seconds)?;
+            self.group_call_threshold_seconds
+                .write(&group, record.call_threshold_seconds)?;
+            self.group_call_notice_period_seconds
+                .write(&group, record.call_notice_period_seconds)?;
+            let bin = call_bins::price_to_bin(record.call_price_minor)?;
+            call_bins::insert(&CallBins(self, record.reference_currency), group, bin)?;
+        }
+        self.add_group_gratis(group, record.outstanding_gratis_minor)?;
+        self.group_index(group).insert(record.credis_id)
+    }
+
+    /// Takes a Credis out of its group, and closes the group with its last member.
+    pub fn leave_group(&mut self, group: B256, credis_id: U256) -> Result<()> {
+        self.group_index(group).remove(credis_id)?;
+        if self.group_member_count(group)? == 0 {
+            self.close_group(group)?;
+        }
         Ok(())
     }
 
-    // ---------------------------------------------------------------------
-    // Settlement-deadline queue
-    // ---------------------------------------------------------------------
-
-    pub fn push_called(&mut self, credis_id: U256, deadline: u64) -> Result<()> {
-        expiry_queue::push(&ExpiryHours(self), credis_id, deadline)
+    /// Forgets a group nothing is left in: its bin, its queues, its call and its terms.
+    fn close_group(&mut self, group: B256) -> Result<()> {
+        let currency = self.group_currency.read(&group)?;
+        call_bins::remove(&CallBins(self, currency), group)?;
+        expiry_queue::remove(&ExpiryHours(self), group)?;
+        expiry_queue::remove(&CleanupHours(self), group)?;
+        self.group_currency.clear(&group)?;
+        self.group_full_day.clear(&group)?;
+        self.group_call_price_minor.clear(&group)?;
+        self.group_call_window_seconds.clear(&group)?;
+        self.group_call_threshold_seconds.clear(&group)?;
+        self.group_call_notice_period_seconds.clear(&group)?;
+        self.group_called_at.clear(&group)?;
+        self.group_outstanding_gratis.clear(&group)
     }
 
-    pub fn remove_called(&mut self, credis_id: U256) -> Result<()> {
-        expiry_queue::remove(&ExpiryHours(self), credis_id)
+    pub fn group_member_count(&self, group: B256) -> Result<u32> {
+        self.group_members.list(&group).len()
+    }
+
+    pub fn group_member(&self, group: B256, index: u32) -> Result<U256> {
+        self.group_members
+            .list(&group)
+            .get(index)?
+            .ok_or_else(|| CredisError::IndexOutOfBounds.into())
+    }
+
+    pub fn add_group_gratis(&mut self, group: B256, gratis: U256) -> Result<()> {
+        let total = self
+            .group_outstanding_gratis
+            .read(&group)?
+            .checked_add(gratis)
+            .ok_or(CredisError::ArithmeticOverflow)?;
+        self.group_outstanding_gratis.write(&group, total)
+    }
+
+    pub fn take_group_gratis(&mut self, group: B256, gratis: U256) -> Result<()> {
+        let total = self
+            .group_outstanding_gratis
+            .read(&group)?
+            .checked_sub(gratis)
+            .ok_or(CredisError::ArithmeticOverflow)?;
+        self.group_outstanding_gratis.write(&group, total)
+    }
+
+    /// Calls every member at once: the group leaves its bin for the expiry queue, where
+    /// it waits on its settlement deadline as one entry. Returns the deadline.
+    pub fn record_group_called(&mut self, group: B256, now: u64) -> Result<u64> {
+        let currency = self.group_currency.read(&group)?;
+        call_bins::remove(&CallBins(self, currency), group)?;
+        self.group_called_at.write(&group, now)?;
+        let deadline = outbe_primitives::settlement::settlement_deadline_of(
+            now,
+            self.group_call_notice_period_seconds.read(&group)?,
+        );
+        expiry_queue::push(&ExpiryHours(self), group, deadline)?;
+        Ok(deadline)
+    }
+
+    /// Moves a forfeited group from the expiry queue to the cleanup, which deletes its
+    /// Credis. Done with the group's credit, so a retry never credits it twice.
+    pub fn hand_to_cleanup(&mut self, group: B256) -> Result<()> {
+        let deadline = self.called_deadline.read(&group)?;
+        expiry_queue::remove(&ExpiryHours(self), group)?;
+        expiry_queue::push(&CleanupHours(self), group, deadline)
+    }
+
+    pub fn push_called(&mut self, group: B256, deadline: u64) -> Result<()> {
+        expiry_queue::push(&ExpiryHours(self), group, deadline)
+    }
+
+    pub fn remove_called(&mut self, group: B256) -> Result<()> {
+        expiry_queue::remove(&ExpiryHours(self), group)
     }
 }
 
-/// Called Credis, queued by the hour their settlement deadline falls in.
+/// Called groups, queued by the hour their settlement deadline falls in.
 pub struct ExpiryHours<'a, 'storage>(pub &'a CredisContract<'storage>);
 
-outbe_primitives::impl_expiry_queue!(ExpiryHours<U256> {
+outbe_primitives::impl_expiry_queue!(ExpiryHours<B256> {
     root: expiry_tree_root,
     mid: expiry_tree_mid,
     leaf: expiry_tree_leaf,
     len: expiry_bucket_len,
     live: expiry_bucket_live,
     at: expiry_bucket_at,
-    slot: called_credis_slot,
+    slot: called_group_slot,
     deadline: called_deadline,
     sweep_bucket: expiry_sweep_hour,
     cursor: expiry_cursor,
 });
 
-/// One reference currency's Issued Credis, by call price.
+/// Forfeited groups whose Credis wait to be deleted.
+pub struct CleanupHours<'a, 'storage>(pub &'a CredisContract<'storage>);
+
+outbe_primitives::impl_expiry_queue!(CleanupHours<B256> {
+    root: cleanup_tree_root,
+    mid: cleanup_tree_mid,
+    leaf: cleanup_tree_leaf,
+    len: cleanup_bucket_len,
+    live: cleanup_bucket_live,
+    at: cleanup_bucket_at,
+    slot: cleanup_group_slot,
+    deadline: cleanup_deadline,
+    sweep_bucket: cleanup_sweep_hour,
+    cursor: cleanup_cursor,
+});
+
+/// One reference currency's uncalled groups, by call price.
 pub struct CallBins<'a, 'storage>(pub &'a CredisContract<'storage>, pub u16);
 
-outbe_primitives::impl_call_bins!(CallBins<U256> {
+outbe_primitives::impl_call_bins!(CallBins<B256> {
     root: call_bin_tree_root,
     mid: call_bin_tree_mid,
     leaf: call_bin_tree_leaf,
     count: call_bin_count,
-    at: call_bin_credis,
-    slot: call_credis_slot,
+    at: call_bin_groups,
+    slot: call_group_slot,
     cursor: call_bin_cursor,
     failed: call_scan_failed_day,
 });

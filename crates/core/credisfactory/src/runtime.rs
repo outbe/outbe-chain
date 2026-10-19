@@ -175,25 +175,30 @@ pub fn settle_credis(
     })
 }
 
-/// Forfeit a Credis whose call lapsed.
-pub fn forfeit_credis(storage: StorageHandle<'_>, credis_id: U256) -> Result<()> {
-    let now =
-        u64::try_from(storage.timestamp()?).map_err(|_| CredisFactoryError::TimestampOverflow)?;
-    burn_forfeited_collateral(storage, credis_id, |credis| {
-        rules::forfeit(credis, credis_id, now)
+/// Deletes a Credis of a forfeited group. Its group's forfeit already returned the
+/// collateral to the Promis Reserve.
+pub(crate) fn delete_forfeited_credis(storage: StorageHandle<'_>, credis_id: U256) -> Result<()> {
+    burn_forfeited_collateral(storage, credis_id, |credis, record| {
+        rules::delete_forfeited(credis, record)
     })?;
     Ok(())
 }
 
-/// The owner forfeits an Issued or Called Credis.
+/// The owner forfeits an Issued or Called Credis. Its collateral returns to the Promis
+/// Reserve here.
 pub fn forfeit_by_owner(
     storage: StorageHandle<'_>,
     caller: Address,
     credis_id: U256,
 ) -> Result<Forfeit> {
-    burn_forfeited_collateral(storage, credis_id, |credis| {
+    let forfeit = burn_forfeited_collateral(storage.clone(), credis_id, |credis, _| {
         rules::forfeit_by_owner(credis, credis_id, caller)
-    })
+    })?;
+    if !forfeit.gratis_burned_minor.is_zero() {
+        outbe_promislimit::PromisLimitContract::new(storage)
+            .add_to_total_unallocated(forfeit.gratis_burned_minor)?;
+    }
+    Ok(forfeit)
 }
 
 /// Burn only this Credis's remaining collateral from the source's pledged
@@ -201,24 +206,18 @@ pub fn forfeit_by_owner(
 fn burn_forfeited_collateral(
     storage: StorageHandle<'_>,
     credis_id: U256,
-    forfeit: impl FnOnce(&mut CredisContract<'_>) -> Result<Forfeit>,
+    forfeit: impl FnOnce(&mut CredisContract<'_>, outbe_credis::Credis) -> Result<Forfeit>,
 ) -> Result<Forfeit> {
     storage.with_checkpoint(|| {
         let mut credis = CredisContract::new(storage.clone());
         let before = credis.get_credis(credis_id)?;
-        let forfeit = forfeit(&mut credis)?;
-        let after = credis.get_credis(credis_id)?;
-        let only_state_moved = outbe_credis::Credis {
-            state: outbe_credis::CredisState::Forfeited as u8,
-            ..before.clone()
-        } == after;
-        if forfeit.gratis_burned_minor != before.outstanding_gratis_minor || !only_state_moved {
+        let pledged = before.outstanding_gratis_minor;
+        let forfeit = forfeit(&mut credis, before)?;
+        if forfeit.gratis_burned_minor != pledged || credis.credis_exists(credis_id)? {
             return Err(CredisFactoryError::ForfeitureCollateralMismatch.into());
         }
         if !forfeit.gratis_burned_minor.is_zero() {
             pledges::burn_from_credis(&storage, credis_id, forfeit.gratis_burned_minor)?;
-            outbe_promislimit::PromisLimitContract::new(storage.clone())
-                .add_to_total_unallocated(forfeit.gratis_burned_minor)?;
         }
         Ok(forfeit)
     })

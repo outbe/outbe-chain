@@ -4,22 +4,28 @@ pragma solidity ^0.8.30;
 /// @notice Principal and interest amounts are in the Credis asset's atomic units. Gratis
 ///         amounts and prices are at scale 1e6.
 interface ICredis {
-    /// Emitted once, when a Credis opens: Credis are never burned.
+    /// Emitted when a Credis opens, and to address(0) when a forfeited Credis is deleted.
     event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);
     // Declared for ERC-721 shape only. A Credis is bound to its owner, so these two
     // are never emitted.
     event Approval(address indexed owner, address indexed approved, uint256 indexed tokenId);
     event ApprovalForAll(address indexed owner, address indexed operator, bool approved);
-    /// ERC-4906: emitted when a Credis is called, on every settlement, and when it is
-    ///         forfeited. A lapsed Credis reads Forfeited before the sweep reaches it.
+    /// ERC-4906: emitted on every settlement. A lapsed Credis reads Forfeited until the
+    ///         cleanup deletes it.
     event MetadataUpdate(uint256 _tokenId);
-    /// ERC-4906, declared for the standard's shape only: never emitted.
+    /// ERC-4906: emitted over the whole id range when groups are called.
     event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
 
-    event CredisCalled(uint256 indexed credisId, uint64 calledAt, uint64 settlementDeadline);
+    /// Every unsettled Credis of the group is called.
+    event CredisGroupCalled(bytes32 indexed groupKey, uint64 calledAt, uint64 settlementDeadline);
 
-    /// @notice Forfeiture after a lapsed call or by the owner. Records the principal written off.
-    ///         Unpaid interest is left out of this event and out of `interestPaidMinor`.
+    /// The group's settlement deadline passed: `gratisBurnedMinor` of its `credis` unsettled
+    /// Credis returns to the Promis reserve, and the cleanup deletes them.
+    event CredisGroupForfeited(bytes32 indexed groupKey, uint32 credis, uint256 gratisBurnedMinor);
+
+    /// @notice A forfeited Credis is deleted: by its owner, or by the cleanup after its group's
+    ///         deadline. Records the principal written off. Unpaid interest is left out of this
+    ///         event and out of `interestPaidMinor`.
     event CredisForfeited(
         uint256 indexed credisId, address indexed cca, uint256 gratisBurnedMinor, uint256 principalWrittenOffMinor
     );
@@ -94,7 +100,7 @@ interface ICredis {
         /// settlement charges. It may differ from the last settlement's time.
         uint64 lastSettledAt;
         /// See {State}. Read-time: a Called Credis past its settlement deadline reads
-        /// Forfeited, with its outcome, before the forfeit sweep reaches it.
+        /// Forfeited, with its outcome, until the cleanup deletes it.
         uint8 state;
         /// Lifetime interest collected, in asset minor units. The sum of successful
         /// `ICredisFactory.SettlementApplied.interestPaidMinor` payments. Current-period accrual is
@@ -102,6 +108,8 @@ interface ICredis {
         uint256 interestPaidMinor;
         CallTerms call;
         Outcome outcome;
+        /// The call group the Credis is called and forfeited with.
+        bytes32 groupKey;
     }
 
     function name() external view returns (string memory);
@@ -125,7 +133,8 @@ interface ICredis {
 
     function credisExists(uint256 credisId) external view returns (bool);
 
-    // ERC-721 Enumerable: ids in issuance order, globally and per owner.
+    // ERC-721 Enumerable over the live Credis, globally and per owner. Deleting one moves
+    // the last into its place.
     function tokenByIndex(uint256 index) external view returns (uint256);
     function balanceOf(address owner) external view returns (uint256 balance);
     function tokenOfOwnerByIndex(address owner, uint256 index) external view returns (uint256);
@@ -144,7 +153,7 @@ interface ICredis {
     function interestPaidMinor(uint256 credisId) external view returns (uint256);
 
     /// @notice Sum of `principalMinor` and `outstandingPrincipalMinor` across the account's
-    ///         Credis.
+    ///         live Credis.
     function credisPrincipalAndOutstandingOf(address owner)
         external
         view

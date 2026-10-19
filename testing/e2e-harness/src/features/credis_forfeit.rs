@@ -1,6 +1,7 @@
-//! A called Credis left unpaid past its notice: it reads Forfeited at once, and the
-//! forfeit sweep burns the rest of its pledge into the Promis Limit pool. An owner may
-//! forfeit their Credis themselves, with the same burn.
+//! A called Credis left unpaid past its notice: it reads Forfeited at once, its group's
+//! forfeit returns the rest of its pledge to the Promis Limit pool, and the cleanup burns
+//! the pledge and deletes the Credis. An owner may forfeit their Credis themselves, with
+//! the same burn.
 
 use std::time::Duration;
 
@@ -89,8 +90,8 @@ fn called(world: &mut World) {
         CREDIS_ADDRESS,
         0,
         height,
-        ICredis::CredisCalled {
-            credisId: record.credisId,
+        ICredis::CredisGroupCalled {
+            groupKey: record.groupKey,
             calledAt: terms.calledAt,
             settlementDeadline: terms.settlementDeadline,
         },
@@ -179,12 +180,27 @@ fn deadline_passes(world: &mut World) {
         || format!("the chain never passed the settlement deadline {deadline}"),
         || head_time(world) > deadline,
     );
+    // The cleanup deletes it once the deadline's hour closes: read it before that.
+    let height = world
+        .rpc
+        .head(world.validators.primary_port())
+        .expect("primary head");
+    let lapsed = eth::read_call_at(
+        &url(world),
+        CREDIS_ADDRESS,
+        &ICredis::getCredisCall {
+            credisId: fixture(world).credis_id,
+        },
+        height,
+    )
+    .expect("the lapsed Credis before the cleanup");
+    world.state.credis.as_mut().expect("fixture").lapsed = Some(lapsed);
 }
 
 #[then("the Credis reads Forfeited with its remainders written off")]
 fn reads_forfeited(world: &mut World) {
     let f = fixture(world);
-    let lapsed = latest(world);
+    let lapsed = f.lapsed.clone().expect("lapsed Credis");
     assert_eq!(lapsed.state, FORFEITED);
     assert_eq!(
         (
@@ -201,34 +217,24 @@ fn reads_forfeited(world: &mut World) {
         f.gratis_minor
     );
     assert!(outcome.gratisBurnedMinor > U256::ZERO);
-    assert_eq!(
-        eth::read_call(
-            &url(world),
-            CREDIS_ADDRESS,
-            &ICredis::interestAccruedMinorCall {
-                credisId: f.credis_id
-            }
-        ),
-        Some(U256::ZERO)
-    );
-    // The sweep may already have reached it, if the deadline's hour closed at once.
+    // The cleanup may already have deleted it, if the deadline's hour closed at once.
     let (reason, height) = settlement_revert(world, f);
     let swept = forfeit_block(&url(world), f.credis_id).is_some_and(|block| block <= height);
     let expected = if swept {
-        "Credis is closed"
+        "Credis not found"
     } else {
         "settlement deadline has passed"
     };
     assert_eq!(reason, expected);
-    world.state.credis.as_mut().expect("fixture").lapsed = Some(lapsed);
 }
 
-/// The sweep opens an hour only once it has closed: move the deadline into a closed one.
+/// The sweep opens an hour only once it has closed: move the group's deadline into a
+/// closed one.
 #[when("the forfeit sweep reaches the lapsed Credis")]
 fn sweep_reaches(world: &mut World) {
     let url = url(world);
     let credis_id = fixture(world).credis_id;
-    // The deadline's hour may have closed already, and the sweep forfeited it.
+    // The deadline's hour may have closed already, and the cleanup deleted it.
     if forfeit_block(&url, credis_id).is_some() {
         return;
     }
@@ -253,7 +259,7 @@ fn burned(world: &mut World) {
     let burned = lapsed.outcome.gratisBurnedMinor;
     poll_until(
         FORFEIT_TIMEOUT,
-        || "the forfeit sweep never burned the lapsed Credis's pledge".into(),
+        || "the cleanup never burned the lapsed Credis's pledge".into(),
         || forfeit_block(&url, f.credis_id).is_some(),
     );
     let height = finalized_checkpoint(world).height;
@@ -272,13 +278,20 @@ fn burned(world: &mut World) {
             principalWrittenOffMinor: lapsed.outcome.principalWrittenOffMinor,
         },
     );
+    assert_single_event(
+        &url,
+        CREDIS_ADDRESS,
+        from,
+        height,
+        ICredis::CredisGroupForfeited {
+            groupKey: lapsed.groupKey,
+            credis: 1,
+            gratisBurnedMinor: burned,
+        },
+    );
     assert_no_event::<ICredisFactory::ExpiryDeferred>(&url, CREDIS_FACTORY_ADDRESS, from, height);
     let state = snapshot(world);
-    assert_eq!(
-        state.record.as_ref(),
-        Some(&lapsed),
-        "the sweep moved the projection"
-    );
+    assert!(state.record.is_none(), "the cleanup deletes the Credis");
     assert_eq!(state.pledged, U256::ZERO);
     assert_eq!(
         state.liquid,
@@ -289,7 +302,7 @@ fn burned(world: &mut World) {
         LIQUIDITY - PRINCIPAL + PART + f.interest_paid
     );
     assert_eq!(state.cca_stables, PRINCIPAL);
-    assert_eq!(settlement_revert(world, f).0, "Credis is closed");
+    assert_eq!(settlement_revert(world, f).0, "Credis not found");
 }
 
 #[when("the owner forfeits the Credis")]
@@ -325,23 +338,15 @@ fn owner_forfeit_burned(world: &mut World) {
     let forfeited_at = forfeit_block(&url, f.credis_id).expect("forfeit block");
     assert_pool_credited(&url, forfeited_at, f.gratis_minor);
     let state = snapshot(world);
-    let record = state.record.as_ref().expect("forfeited Credis");
-    assert_eq!(record.state, FORFEITED);
-    assert_eq!(record.call.calledAt, 0);
-    assert_eq!(
-        record.outcome,
-        ICredis::Outcome {
-            principalPaidMinor: U256::ZERO,
-            principalWrittenOffMinor: PRINCIPAL,
-            gratisReturnedMinor: U256::ZERO,
-            gratisBurnedMinor: f.gratis_minor,
-        }
+    assert!(
+        state.record.is_none(),
+        "the owner's forfeit deletes the Credis"
     );
     assert_eq!(state.pledged, U256::ZERO);
     assert_eq!(state.liquid, INITIAL_GRATIS - f.gratis_minor);
     assert_eq!(state.vault_stables, LIQUIDITY - PRINCIPAL);
     assert_eq!(state.cca_stables, PRINCIPAL);
-    assert_eq!(settlement_revert(world, f).0, "Credis is closed");
+    assert_eq!(settlement_revert(world, f).0, "Credis not found");
 }
 
 /// Other modules credit the pool too: only the forfeit's own block is attributable.

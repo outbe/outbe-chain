@@ -16,8 +16,8 @@ interface ICredisFactory {
     /// A reference currency was left out of one day's Call scan because its window
     /// price could not be indexed. The next daily pass tries it again.
     event CallScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);
-    /// A forfeit that failed left the Credis queued until `retryAt`.
-    event ExpiryDeferred(uint256 indexed credisId, uint64 retryAt);
+    /// A forfeit that failed left the group queued until `retryAt`.
+    event ExpiryDeferred(bytes32 indexed groupKey, uint64 retryAt);
     /// @notice One successful settlement. `interestPaidMinor` is this payment's interest.
     ///         The Credis's `interestPaidMinor` is the sum of these payments
     ///         across successful settlements. A reverted settlement emits nothing
