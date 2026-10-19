@@ -141,6 +141,8 @@ interface ITargetRouter {
     error NoParkedMark(bytes14 seriesId);
     /// @notice The parked entry at `idx` was already resolved. Another retry would repeat its effect.
     error AlreadyResolved(uint256 idx);
+    /// @notice A day's proceeds are in a token the proceeds bridge does not move.
+    error ProceedsTokenNotBridged(address dayToken, address bridgeToken);
 
     // --- Admin ---
     /// @notice Wire contract dependencies.

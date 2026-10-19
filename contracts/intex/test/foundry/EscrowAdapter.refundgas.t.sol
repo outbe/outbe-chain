@@ -55,6 +55,10 @@ contract LocalWcoenTokenBridge {
         _remoteBridge = InteroperableAddress.formatEvmV1(2, address(0xB21D6E));
     }
 
+    function token() external view returns (IERC20) {
+        return TOKEN;
+    }
+
     function quoteSend(uint32, address to, uint256 amount, bytes calldata extraData, uint256 gasLimit)
         external
         view
@@ -87,6 +91,13 @@ contract LocalWcoenTokenBridge {
 ///         genesis predeploy's runtime code, so it needs no RPC. Each test takes one measurement,
 ///         with state seeded in `setUp`. Run with `--isolate`.
 abstract contract RefundGasBase is CrossChainTest {
+    /// @dev The escrow's lock for `q` Intexes at rate `r` of the protocol basis `b`.
+    function _protocol(uint256 q, uint256 b, uint256 r) internal pure returns (uint256) {
+        return q * b * r / 1e6;
+    }
+
+    // MockWCOEN has 18 decimals: 1e12 token units per protocol unit.
+    uint256 internal constant WCOEN_SCALE = 1e12;
     address internal constant COMPACT = 0x00000000000000171ede64904551eeDF3C6C9788;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     uint32 internal constant DAY = 20260501;
@@ -123,13 +134,13 @@ abstract contract RefundGasBase is CrossChainTest {
     /// @dev `held` stays on each bidder's balance after locking, so a refund lands on a balance
     ///      already in use.
     function _lock(uint256 from, uint256 count, uint32 bidRate, uint128 held) internal {
-        uint128 amount = uint128(BridgeMsgCodec.escrowAmount(QUANTITY, BASIS, bidRate));
+        uint256 amount = _protocol(QUANTITY, BASIS, bidRate) * WCOEN_SCALE;
         for (uint256 i = from; i < from + count; ++i) {
             address who = _bidder(i);
-            deal(address(token), who, uint256(amount) + held);
+            deal(address(token), who, amount + held);
             vm.prank(who);
             token.approve(address(escrow), type(uint256).max);
-            escrow.lockFunds(DAY, who, amount, bidRate, QUANTITY);
+            escrow.lockFunds(DAY, who, BASIS, bidRate, QUANTITY);
         }
     }
 

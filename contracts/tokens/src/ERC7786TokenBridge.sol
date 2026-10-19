@@ -3,6 +3,7 @@ pragma solidity ^0.8.30;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {IERC7786GatewaySource, IERC7786Recipient} from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
@@ -31,6 +32,8 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
     IERC20 public immutable token;
     IERC7786GatewaySource public immutable bridge;
     TokenBridgeMode public immutable mode;
+    /// @notice Decimals of `token`. A transfer moves raw amounts, so both sides must agree on them.
+    uint8 public immutable tokenDecimals;
 
     mapping(uint32 domain => bytes recipient) public remoteBridges;
 
@@ -52,6 +55,7 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
     error DomainTooLarge(uint256 chainId);
     error UnauthorizedBridge(address caller);
     error UnauthorizedRemoteBridge(bytes sender);
+    error DecimalsMismatch(uint8 sourceDecimals, uint8 localDecimals);
 
     /// @dev `executionGasLimit(uint256)` ERC-7786 attribute understood by the bridge hub's gateways.
     bytes4 private constant GAS_LIMIT_ATTR = bytes4(keccak256("executionGasLimit(uint256)"));
@@ -63,6 +67,7 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
         token = IERC20(token_);
         bridge = IERC7786GatewaySource(bridge_);
         mode = mode_;
+        tokenDecimals = IERC20Metadata(token_).decimals();
     }
 
     function setRemoteBridge(uint32 domain, bytes calldata recipient) external onlyOwner {
@@ -134,8 +139,9 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
         bytes memory expectedSender = _remoteBridge(sourceDomain);
         if (keccak256(sender) != keccak256(expectedSender)) revert UnauthorizedRemoteBridge(sender);
 
-        (bytes memory from, address to, uint256 amount, bytes memory extraData) =
-            abi.decode(payload, (bytes, address, uint256, bytes));
+        (bytes memory from, address to, uint256 amount, uint8 sourceDecimals, bytes memory extraData) =
+            abi.decode(payload, (bytes, address, uint256, uint8, bytes));
+        if (sourceDecimals != tokenDecimals) revert DecimalsMismatch(sourceDecimals, tokenDecimals);
         _requireRecipient(to);
         _onReceive(to, amount);
 
@@ -164,7 +170,7 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
         view
         returns (bytes memory)
     {
-        return abi.encode(InteroperableAddress.formatEvmV1(block.chainid, from), to, amount, extraData);
+        return abi.encode(InteroperableAddress.formatEvmV1(block.chainid, from), to, amount, tokenDecimals, extraData);
     }
 
     function _gasAttributes(uint256 gasLimit) internal pure returns (bytes[] memory attrs) {

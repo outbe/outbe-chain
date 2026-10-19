@@ -182,8 +182,6 @@ def _seed_oracle_currencies(storage, config):
         [156, 344, 392, 826, 840, 978],
     )
     reference_currencies = [parse_int(iso_code) for iso_code in reference_currencies]
-    if len(reference_currencies) > 6:
-        raise ValueError("oracle reference currency count exceeds 6")
     if any(iso_code == 0 for iso_code in reference_currencies):
         raise ValueError("oracle reference iso_code must be non-zero")
     if reference_currencies != sorted(set(reference_currencies)):

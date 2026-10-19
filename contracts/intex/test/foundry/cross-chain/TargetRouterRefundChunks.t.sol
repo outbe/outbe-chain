@@ -19,6 +19,10 @@ contract SummingEscrowAdapter {
         paymentToken = token;
     }
 
+    function dayPaymentToken(uint32) external view returns (IERC20) {
+        return paymentToken;
+    }
+
     function finalizeAuction(uint32, bytes32, address[] calldata winners, uint16, uint16, uint64, uint128 basis, bool)
         external
         pure
@@ -38,7 +42,13 @@ contract SummingEscrowAdapter {
 
 /// @dev Counts proceeds transfers and remembers the last amount.
 contract CountingTokenBridge {
+    IERC20 public token;
     uint256 public calls;
+
+    constructor(IERC20 token_) {
+        token = token_;
+    }
+
     uint256 public lastAmount;
 
     function quoteSend(uint32, address, uint256, bytes calldata, uint256) external pure returns (uint256) {
@@ -71,7 +81,7 @@ contract TargetRouterRefundChunksTest is CrossChainTest {
 
         MockWCOEN wcoen = new MockWCOEN();
         SummingEscrowAdapter escrow = new SummingEscrowAdapter(IERC20(address(wcoen)));
-        tokenBridge = new CountingTokenBridge();
+        tokenBridge = new CountingTokenBridge(IERC20(address(wcoen)));
 
         target.wire(makeAddr("auction"), makeAddr("intex"), address(escrow));
         target.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originSender));
@@ -138,7 +148,7 @@ contract TargetRouterRefundChunksTest is CrossChainTest {
             token.mint(bidders[i], 1e18);
             vm.prank(bidders[i]);
             token.approve(address(escrow), type(uint256).max);
-            escrow.lockFunds(DAY, bidders[i], 1e18, 1_000_000, 1);
+            escrow.lockFunds(DAY, bidders[i], 1e6, 1_000_000, 1);
         }
 
         _deliverChunkFor(bidders[0], 0, 2);

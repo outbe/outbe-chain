@@ -42,8 +42,12 @@ const generateCommitHashAction = async (args: GenerateCommitHashTaskArgs) => {
   const bidder = account.address;
   const quantity = BigInt(toOptional(args.quantity) || "5");
   const bidRate = BigInt(toOptional(args.bidRate) || "800000");
-  const issuanceCurrency = Number(toOptional(args.issuanceCurrency) || "840");
-  const referenceCurrency = Number(toOptional(args.referenceCurrency) || "840");
+  const issuanceCurrency = Number(toOptional(args.issuanceCurrency));
+  const referenceCurrency = Number(toOptional(args.referenceCurrency));
+  if (!issuanceCurrency || !referenceCurrency) {
+    console.error("Error: pass --issuance-currency and --reference-currency (ISO 4217 numeric codes)");
+    process.exit(1);
+  }
   const chainId = BigInt(toOptional(args.chainId) || "97");
 
   // The EIP-712 domain binds the deployment address. The signature is invalid against any
@@ -128,8 +132,8 @@ const generateCommitHash = task(
   })
   .addOption({ name: "quantity", description: "Intex quantity", defaultValue: "5" })
   .addOption({ name: "bidRate", description: "Bid rate (1e6 fixed-point, % of strike)", defaultValue: "800000" })
-  .addOption({ name: "issuanceCurrency", description: "Issuance ISO currency code", defaultValue: "840" })
-  .addOption({ name: "referenceCurrency", description: "Priced reference ISO currency code", defaultValue: "840" })
+  .addOption({ name: "issuanceCurrency", description: "Issuance ISO currency code", defaultValue: "" })
+  .addOption({ name: "referenceCurrency", description: "Priced reference ISO currency code", defaultValue: "" })
   .addOption({ name: "chainId", description: "Chain ID", defaultValue: "97" })
   .addOption({
     name: "auctionContract",

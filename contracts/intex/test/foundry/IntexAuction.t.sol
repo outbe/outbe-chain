@@ -174,15 +174,9 @@ contract AuctionTest is Test {
         _reveal(worldwideDay, iba1, 30, 80, iba1PrivateKey);
         _reveal(worldwideDay, iba2, 40, 70, iba2PrivateKey);
 
-        // Protocol-scale lock converted into 18-decimal WCOEN.
-        assertEq(
-            uint256(escrow.lockedFunds(worldwideDay, iba1)),
-            uint256(30) * PROMIS_LOAD_MINOR * 80 / SCALE_1E6 * BridgeMsgCodec.NATIVE_UNITS_PER_PROTOCOL_UNIT
-        );
-        assertEq(
-            uint256(escrow.lockedFunds(worldwideDay, iba2)),
-            uint256(40) * PROMIS_LOAD_MINOR * 70 / SCALE_1E6 * BridgeMsgCodec.NATIVE_UNITS_PER_PROTOCOL_UNIT
-        );
+        // The auction hands the escrow the day's basis; the escrow sizes the lock.
+        assertEq(uint256(escrow.lockedFunds(worldwideDay, iba1)), PROMIS_LOAD_MINOR);
+        assertEq(uint256(escrow.lockedFunds(worldwideDay, iba2)), PROMIS_LOAD_MINOR);
 
         (, IIntexAuction.SubmittedBidData[] memory bids) = auction.getAuctionDetails(worldwideDay);
         (, uint32 revealedBidsCount) = auction.auctionRunningCounts(worldwideDay);
@@ -385,10 +379,7 @@ contract AuctionTest is Test {
         _reveal(worldwideDay, iba1, qty, rate, iba1PrivateKey);
 
         assertTrue(auction.revealedBidsByBidder(worldwideDay, iba1));
-        assertEq(
-            uint256(escrow.lockedFunds(worldwideDay, iba1)),
-            uint256(qty) * PROMIS_LOAD_MINOR * rate / SCALE_1E6 * BridgeMsgCodec.NATIVE_UNITS_PER_PROTOCOL_UNIT
-        );
+        assertEq(uint256(escrow.lockedFunds(worldwideDay, iba1)), PROMIS_LOAD_MINOR);
     }
 
     function test_Reveal_WithoutCommit() public {

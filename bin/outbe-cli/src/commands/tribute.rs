@@ -85,9 +85,12 @@ pub struct TributeOfferArgs {
     /// Six-decimal raw remainder (`amount_micro`, 0..999999)
     #[arg(long, default_value = "0", value_parser = canonical_amount_micro)]
     amount_micro: String,
-    /// ISO 4217 currency code (840 = USD)
-    #[arg(long, default_value_t = 840)]
-    currency: u16,
+    /// Issuance (tribute) currency, ISO 4217 numeric (e.g. 840 = USD)
+    #[arg(long, value_parser = clap::value_parser!(u16).range(1..=999))]
+    issuance_currency: u16,
+    /// Reference currency the rights are priced in, ISO 4217 numeric
+    #[arg(long, value_parser = clap::value_parser!(u16).range(1..=999))]
+    reference_currency: u16,
     /// L2 zkMerkleRoot bytes (`0x`-hex).
     #[arg(long)]
     zk_merkle_root: String,
@@ -274,7 +277,8 @@ async fn offer(
         worldwide_day,
         amount: amount_base,
         amount_micro,
-        currency,
+        issuance_currency,
+        reference_currency,
         zk_merkle_root,
         zk_proof,
         l2_chain_id,
@@ -348,8 +352,8 @@ async fn offer(
         nonce: nonce.to_vec().into(),
         ephemeralPubkey: U256::from_be_bytes(eph_pub),
         worldwideDay: wwd,
-        tributeCurrency: currency,
-        referenceCurrency: currency,
+        tributeCurrency: issuance_currency,
+        referenceCurrency: reference_currency,
         zkProof: zk_proof,
         chainId: l2_chain_id,
         version: circuit_version,
@@ -371,7 +375,7 @@ async fn offer(
 
     println!("offerTribute tx: {tx_hash}");
     println!(
-        "  creator={creator:?} worldwide_day={wwd} currency={currency} amount_base={amount_base} amount_micro={amount_micro}"
+        "  creator={creator:?} worldwide_day={wwd} issuance_currency={issuance_currency} reference_currency={reference_currency} amount_base={amount_base} amount_micro={amount_micro}"
     );
     println!("Verify once mined: outbe-cli tribute by-owner {creator:?}");
     println!(
@@ -566,7 +570,11 @@ mod tests {
     }
 
     /// Required proof inputs, in `flag, value` pairs; the L2 is selected below.
-    const REQUIRED_OFFER_FLAGS: [&str; 12] = [
+    const REQUIRED_OFFER_FLAGS: [&str; 16] = [
+        "--issuance-currency",
+        "949",
+        "--reference-currency",
+        "840",
         "--creator-public-key",
         "0x3333333333333333333333333333333333333333333333333333333333333333",
         "--zk-proof",
@@ -596,6 +604,8 @@ mod tests {
     #[test]
     fn offer_cli_requires_the_zk_offer_inputs() {
         for missing in [
+            "--issuance-currency",
+            "--reference-currency",
             "--creator-public-key",
             "--zk-proof",
             "--zk-merkle-root",
@@ -616,6 +626,33 @@ mod tests {
             );
         }
         assert!(TributeHarness::try_parse_from(offer_argv(&[])).is_ok());
+    }
+
+    #[test]
+    fn offer_cli_keeps_the_issuance_and_reference_currencies_apart() {
+        let parsed = TributeHarness::try_parse_from(offer_argv(&[])).unwrap();
+        let TributeCmd::Offer(args) = parsed.command else {
+            panic!("expected offer command");
+        };
+        let TributeOfferArgs {
+            issuance_currency,
+            reference_currency,
+            ..
+        } = *args;
+        assert_eq!((issuance_currency, reference_currency), (949, 840));
+
+        for code in ["0", "1000"] {
+            let mut argv = offer_argv(&[]);
+            let index = argv
+                .iter()
+                .position(|arg| arg == "--issuance-currency")
+                .unwrap();
+            argv[index + 1] = code.to_owned();
+            assert!(
+                TributeHarness::try_parse_from(argv).is_err(),
+                "{code} is not an ISO 4217 code"
+            );
+        }
     }
 
     #[test]

@@ -6,8 +6,6 @@ use super::{OracleGenesisConfig, PolicyRate};
 use crate::constants::{DAY_TYPE_ISO, MAX_SNAPSHOT_RETENTION_SECONDS};
 use crate::errors::OracleError;
 
-const MAX_REFERENCE_CURRENCIES: usize = 6;
-
 /// Checks the config parameters, then the reference-currency and policy-rate
 /// registries, in that order.
 pub(super) fn validate_genesis_config(config: &OracleGenesisConfig) -> Result<()> {
@@ -25,9 +23,6 @@ pub(super) fn validate_genesis_config(config: &OracleGenesisConfig) -> Result<()
 }
 
 fn validate_reference_currencies(reference_currencies: &[u16]) -> Result<()> {
-    if reference_currencies.len() > MAX_REFERENCE_CURRENCIES {
-        return Err(OracleError::ReferenceCurrencyCountExceedsMax.into());
-    }
     let mut previous = None;
     for iso_code in reference_currencies {
         if *iso_code == 0 {

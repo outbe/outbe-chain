@@ -5,7 +5,6 @@ import {Test} from "forge-std/Test.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
-import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
@@ -107,9 +106,7 @@ contract EscrowAdapterInvariantsTest is Test {
 
     function _lock(uint32 worldwideDay, address bidder, uint32 bidRate, uint16 quantity) internal {
         vm.prank(auction);
-        escrow.lockFunds(
-            worldwideDay, bidder, uint128(BridgeMsgCodec.escrowAmount(quantity, BASIS, bidRate)), bidRate, quantity
-        );
+        escrow.lockFunds(worldwideDay, bidder, BASIS, bidRate, quantity);
     }
 
     function _finalize(uint32 worldwideDay, address winner) internal {

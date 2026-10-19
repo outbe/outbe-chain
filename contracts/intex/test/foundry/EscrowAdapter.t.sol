@@ -8,11 +8,17 @@ import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {IAllocator} from "@contracts/vendor/the-compact/interfaces/IAllocator.sol";
-import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
 contract EscrowAdapterTest is Test {
+    /// @dev The escrow's lock for `q` Intexes at rate `r` of the protocol basis `b`.
+    function _protocol(uint256 q, uint256 b, uint256 r) internal pure returns (uint256) {
+        return q * b * r / 1e6;
+    }
+
+    // MockWCOEN has 18 decimals: 1e12 token units per protocol unit.
+    uint256 internal constant WCOEN_SCALE = 1e12;
     EscrowAdapter escrow;
     MockTheCompact compact;
     MockWCOEN paymentToken;
@@ -28,7 +34,8 @@ contract EscrowAdapterTest is Test {
     uint32 worldwideDay1 = 1;
     uint32 worldwideDay2 = 2;
 
-    uint128 constant LOCK_AMOUNT = 1000 * 10 ** 6;
+    uint128 constant LOCK_UNITS = 1000e6;
+    uint128 constant LOCK_AMOUNT = uint128(LOCK_UNITS * WCOEN_SCALE);
     uint128 constant BASIS = 1_000_000;
     uint32 constant CLEARING_RATE = 600_000;
 
@@ -56,8 +63,8 @@ contract EscrowAdapterTest is Test {
         compact.setResetPeriodSeconds(0);
 
         // Fund bidders
-        paymentToken.mint(bidder1, 10000 * 10 ** 6);
-        paymentToken.mint(bidder2, 10000 * 10 ** 6);
+        paymentToken.mint(bidder1, 10000e18);
+        paymentToken.mint(bidder2, 10000e18);
 
         // Approve escrow to spend bidder tokens
         vm.prank(bidder1);
@@ -114,7 +121,7 @@ contract EscrowAdapterTest is Test {
     function test_HasOutstandingLocks_ReflectsLockState() public {
         assertFalse(escrow.hasOutstandingLocks());
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
         assertTrue(escrow.hasOutstandingLocks());
     }
 
@@ -173,7 +180,7 @@ contract EscrowAdapterTest is Test {
         uint256 balanceBefore = paymentToken.balanceOf(bidder1);
 
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
 
         // Check bidder balance decreased
         assertEq(paymentToken.balanceOf(bidder1), balanceBefore - LOCK_AMOUNT);
@@ -194,10 +201,10 @@ contract EscrowAdapterTest is Test {
 
     function test_LockFunds_MultipleBidders() public {
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
 
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder2, LOCK_AMOUNT * 2, 1_000_000, 1);
+        escrow.lockFunds(worldwideDay1, bidder2, LOCK_UNITS * 2, 1_000_000, 1);
 
         // Check auction stats
         (bool hasLocks, bool isFinalized, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDay1);
@@ -210,7 +217,7 @@ contract EscrowAdapterTest is Test {
     function test_LockFunds_ZeroBidder() public {
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "bidder"));
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, address(0), LOCK_AMOUNT, 1_000_000, 1);
+        escrow.lockFunds(worldwideDay1, address(0), LOCK_UNITS, 1_000_000, 1);
     }
 
     function test_LockFunds_ZeroAmount() public {
@@ -225,30 +232,30 @@ contract EscrowAdapterTest is Test {
     function test_LockFunds_ZeroWorldwideDay() public {
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroValue.selector, "worldwideDay"));
         vm.prank(auction);
-        escrow.lockFunds(0, bidder1, LOCK_AMOUNT, 1_000_000, 1);
+        escrow.lockFunds(0, bidder1, LOCK_UNITS, 1_000_000, 1);
     }
 
     function test_LockFunds_AlreadyLocked() public {
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
 
         vm.expectRevert(IEscrowAdapter.BidAlreadyLocked.selector);
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
     }
 
     function test_LockFunds_OnlyAuctionRole() public {
         vm.expectRevert();
         vm.prank(outsider);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
 
         vm.expectRevert();
         vm.prank(admin);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
 
         vm.expectRevert();
         vm.prank(bridger);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
     }
 
     // --- FinalizeAuction Tests ---
@@ -256,14 +263,14 @@ contract EscrowAdapterTest is Test {
     /// @dev Lock a bid the way the auction sizes it, so the day's clearing terms can compute its
     ///      payment.
     function _lockBid(address bidder, uint32 bidRate, uint16 quantity) internal returns (uint128 amount) {
-        amount = uint128(BridgeMsgCodec.escrowAmount(quantity, BASIS, bidRate));
+        amount = uint128(_protocol(quantity, BASIS, bidRate) * WCOEN_SCALE);
         paymentToken.mint(bidder, amount);
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder, amount, bidRate, quantity);
+        escrow.lockFunds(worldwideDay1, bidder, BASIS, bidRate, quantity);
     }
 
     function _paidAtClearing(uint16 quantity) internal pure returns (uint128) {
-        return uint128(BridgeMsgCodec.escrowAmount(quantity, BASIS, CLEARING_RATE));
+        return uint128(_protocol(quantity, BASIS, CLEARING_RATE) * WCOEN_SCALE);
     }
 
     function _winners(address a) internal pure returns (address[] memory winners) {
@@ -501,7 +508,7 @@ contract EscrowAdapterTest is Test {
     function test_Attest_ValidLockId() public {
         // First lock some funds to set lockId
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
 
         uint256 lockId = escrow.lockId();
         bytes4 result = escrow.attest(address(0), address(0), address(0), lockId, 0);
@@ -511,7 +518,7 @@ contract EscrowAdapterTest is Test {
     function test_Attest_InvalidLockId() public {
         // First lock some funds to set lockId
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
 
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.UnexpectedLockId.selector, uint256(999)));
         escrow.attest(address(0), address(0), address(0), 999, 0);
@@ -532,7 +539,7 @@ contract EscrowAdapterTest is Test {
     // --- View Functions Tests ---
     function test_GetBidLock() public {
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
 
         IEscrowAdapter.BidLock memory lock = escrow.getBidLock(worldwideDay1, bidder1);
         assertEq(lock.lockedAmount, LOCK_AMOUNT);
@@ -554,7 +561,7 @@ contract EscrowAdapterTest is Test {
 
         // After lock
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
 
         (hasLocks, isFinalized, totalLocked) = escrow.getAuctionStatus(worldwideDay1);
         assertTrue(hasLocks);
@@ -573,7 +580,7 @@ contract EscrowAdapterTest is Test {
         emit IEscrowAdapter.FundsLocked(worldwideDay1, bidder1, LOCK_AMOUNT);
 
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
     }
 
     function test_Events_FundsRefunded() public {
@@ -606,7 +613,7 @@ contract EscrowAdapterTest is Test {
 
     function test_Wire_RewireSameDependenciesStaysAllowedWithLocks() public {
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
 
         vm.prank(admin);
         escrow.wire(auction, address(compact), address(paymentToken));
@@ -637,7 +644,7 @@ contract EscrowAdapterTest is Test {
 
     function test_ClaimRefund_AfterDelay_Succeeds() public {
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
 
         uint256 balanceBefore = paymentToken.balanceOf(bidder1);
 
@@ -655,7 +662,7 @@ contract EscrowAdapterTest is Test {
     function test_ClaimRefund_BeforeDelay_Reverts() public {
         uint32 lockedAt = uint32(block.timestamp);
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
 
         // One second before the delay elapses.
         uint32 claimableAt = lockedAt + escrow.UNFINALIZED_REFUND_DELAY();
@@ -675,7 +682,7 @@ contract EscrowAdapterTest is Test {
 
     function test_ClaimRefund_DoubleClaim_Reverts() public {
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
         vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
 
         _refund(worldwideDay1, bidder1);
@@ -691,7 +698,7 @@ contract EscrowAdapterTest is Test {
 
     function test_ClaimRefund_ForcedWithdrawalReturnsFalse_Reverts() public {
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
         vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
 
         // The Compact's forced withdrawal returns false (e.g. reset period not elapsed). The

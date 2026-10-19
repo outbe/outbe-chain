@@ -96,10 +96,6 @@ mod tests {
             sol_constant(CODEC, "PROTOCOL_DECIMALS"),
             Some(PROTOCOL_AMOUNT_DECIMALS)
         );
-        assert_eq!(
-            sol_constant(CODEC, "NATIVE_DECIMALS"),
-            Some(NATIVE_TOKEN_DECIMALS)
-        );
         assert_eq!(sol_constant(CODEC, "SCALE_1E6"), Some(SCALE_1E6_U128));
     }
 

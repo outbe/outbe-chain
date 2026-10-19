@@ -8,12 +8,11 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
-use outbe_primitives::units::{NATIVE_UNITS_PER_PROTOCOL_UNIT, SCALE_1E6_U128};
+use outbe_primitives::units::SCALE_1E6_U128;
 
 use crate::api::{AuctionBriefReceipt, AuctionBriefRejectionReason};
 use crate::constants::{
-    IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, MAX_REFERENCE_PRICES,
-    ORIGIN_ROUTER_ADDRESS,
+    IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, ORIGIN_ROUTER_ADDRESS,
 };
 use crate::runtime;
 use crate::schema::{AuctionConfig, AuctionStage, BidData, DesisContract};
@@ -38,10 +37,6 @@ const ENTRY_PRICE: u128 = 2_000_000; // 2.0 on the COEN/840 scale; escrow basis 
 /// The load any first priced brief picks, pinned by `the_fixture_load_is_the_one_the_ladder_picks`.
 const LOAD_MINOR: u128 = 1_000_000 * PROMIS_LOAD_MINOR;
 
-fn wcoen(protocol_units: u128) -> u128 {
-    protocol_units * NATIVE_UNITS_PER_PROTOCOL_UNIT.to::<u128>()
-}
-
 #[test]
 fn the_bridge_caps_match_the_contracts() {
     use crate::constants::{
@@ -52,10 +47,6 @@ fn the_bridge_caps_match_the_contracts() {
         include_str!("../../../../contracts/intex/src/shared/libs/BridgeMsgCodec.sol");
     const TARGET_ROUTER: &str =
         include_str!("../../../../contracts/intex/src/target/TargetRouter.sol");
-    assert_eq!(
-        sol_constant(CODEC, "MAX_REFERENCE_PRICES"),
-        Some(MAX_REFERENCE_PRICES)
-    );
     assert_eq!(
         sol_constant(CODEC, "MAX_PAYLOAD_ARRAY_LEN"),
         Some(MAX_BIDS_PER_BATCH)
@@ -1183,8 +1174,8 @@ fn schedule_starts_a_green_brief() {
         let cfg = contract.read_auction_config(WORLDWIDE_DAY).unwrap();
         assert_eq!(
             cfg.commit_bond_minor,
-            100_000_000u128 * 1_000_000_000_000_000_000u128,
-            "production commit bond is denominated in WCOEN-unit"
+            100_000_000u128 * 1_000_000u128,
+            "production commit bond is in protocol units"
         );
     });
 }
@@ -2018,12 +2009,12 @@ fn clear_refunds_equal_locked_minus_paid() {
             .unwrap();
         assert_eq!(
             result.paid_amounts[w_idx],
-            wcoen(LOAD_MINOR * 300 / SCALE_1E6_U128)
+            LOAD_MINOR * 300 / SCALE_1E6_U128
         );
         assert_eq!(result.refunded_amounts[w_idx], 0);
         assert_eq!(
             result.refunded_amounts[l_idx],
-            wcoen(LOAD_MINOR * 200 / SCALE_1E6_U128)
+            LOAD_MINOR * 200 / SCALE_1E6_U128
         );
         assert_eq!(supply, result.issued_units);
     });
@@ -2080,21 +2071,21 @@ fn clear_rate_escrow_scales_by_basis() {
         let idx = |a: Address| result.all_bidders.iter().position(|&x| x == a).unwrap();
         assert_eq!(
             result.paid_amounts[idx(bidder(0))],
-            wcoen(LOAD_MINOR * 600_000 / SCALE_1E6_U128)
+            LOAD_MINOR * 600_000 / SCALE_1E6_U128
         );
         assert_eq!(
             result.refunded_amounts[idx(bidder(0))],
-            wcoen(LOAD_MINOR * 200_000 / SCALE_1E6_U128)
+            LOAD_MINOR * 200_000 / SCALE_1E6_U128
         );
         assert_eq!(
             result.paid_amounts[idx(bidder(1))],
-            wcoen(LOAD_MINOR * 600_000 / SCALE_1E6_U128)
+            LOAD_MINOR * 600_000 / SCALE_1E6_U128
         );
         assert_eq!(result.refunded_amounts[idx(bidder(1))], 0);
         assert_eq!(result.paid_amounts[idx(bidder(2))], 0);
         assert_eq!(
             result.refunded_amounts[idx(bidder(2))],
-            wcoen(LOAD_MINOR * 400_000 / SCALE_1E6_U128)
+            LOAD_MINOR * 400_000 / SCALE_1E6_U128
         );
     });
 }
@@ -2662,23 +2653,17 @@ fn clearing_marks_the_bid_supply_ran_out_in() {
     });
 }
 
-/// The same vectors pin the escrow's `IntexUnits.escrowAmount`.
+/// The same vectors pin the lock `EscrowAdapter.lockFunds` takes.
 #[test]
 fn rate_lock_matches_the_escrow_vectors() {
     assert_eq!(runtime::rate_lock(1, 1, 999_999), 0);
     assert_eq!(runtime::rate_lock(3, 333_333, 1), 0);
-    assert_eq!(
-        runtime::rate_lock(7, 123_456_789, 987_654),
-        wcoen(853_528_140)
-    );
-    assert_eq!(runtime::rate_lock(2, 1_500_001, 333_333), wcoen(999_999));
-    assert_eq!(
-        runtime::rate_lock(40, 99_999_999, 600_001),
-        wcoen(2_400_003_975)
-    );
+    assert_eq!(runtime::rate_lock(7, 123_456_789, 987_654), 853_528_140);
+    assert_eq!(runtime::rate_lock(2, 1_500_001, 333_333), 999_999);
+    assert_eq!(runtime::rate_lock(40, 99_999_999, 600_001), 2_400_003_975);
     assert_eq!(
         runtime::rate_lock(65_535, 100_000_000_000, 1_000_000),
-        wcoen(6_553_500_000_000_000)
+        6_553_500_000_000_000
     );
 }
 

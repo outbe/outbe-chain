@@ -87,8 +87,8 @@ interface IIntexAuction {
         /// @notice One row per currency the day can clear in. The bid's reference
         ///         currency must appear here.
         ReferenceCurrencyPrice[] prices;
-        /// @notice Entry bond (payment-token minor units) taken at `commitBid` and returned on
-        ///         reveal/cancel. 0 disables the bond.
+        /// @notice Entry bond in protocol units (1e6), scaled to the payment token by the escrow.
+        ///         Taken at `commitBid` and returned on reveal/cancel. 0 disables the bond.
         uint128 commitBondMinor;
     }
 
@@ -208,8 +208,6 @@ interface IIntexAuction {
     error BidRateAboveMax(uint32 bidRate);
     /// @notice Bid quantity is below `minIntexBidQuantity`.
     error BidBelowMinIntexBidQuantity();
-    /// @notice The 18-decimal WCOEN lock derived from protocol-scale inputs exceeds uint128.
-    error BidAmountOverflow(uint16 quantity, uint32 bidRate);
     /// @notice `issuedUnits * promisLoadMinor` exceeds the uint128 loaded-Promis range.
     error IssuedPromisOverflow(uint32 issuedUnits, uint128 promisLoadMinor);
     /// @notice Auction does not exist.

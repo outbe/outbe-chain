@@ -415,7 +415,9 @@ contract TargetRouter is
         TargetRouterStorage storage $ = _ts();
         address to = $.originRouter;
         bytes memory extraData = abi.encode(worldwideDay);
-        IERC20 token = $.escrowAdapter.paymentToken();
+        IERC20 token = $.escrowAdapter.dayPaymentToken(worldwideDay);
+        IERC20 bridgeToken = $.tokenBridge.token();
+        if (token != bridgeToken) revert ProceedsTokenNotBridged(address(token), address(bridgeToken));
 
         token.forceApprove(address($.tokenBridge), amount);
         uint256 fee = $.tokenBridge.quoteSend(OUTBE_CHAIN_ID, to, amount, extraData, IntexGas.PROCEEDS_COMPOSE);

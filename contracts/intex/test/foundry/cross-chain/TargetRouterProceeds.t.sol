@@ -20,6 +20,10 @@ contract MockEscrowAdapter {
         paymentToken = token;
     }
 
+    function dayPaymentToken(uint32) external view returns (IERC20) {
+        return paymentToken;
+    }
+
     function setTotalPaid(uint128 v) external {
         totalPaidToReturn = v;
     }
@@ -40,6 +44,7 @@ contract MockEscrowAdapter {
 /// @dev Records the composed-transfer send. A test can toggle it to revert, to exercise the park
 ///      path.
 contract MockTokenBridge {
+    IERC20 public token;
     bool public shouldRevert;
     uint256 public fee = 0.001 ether;
 
@@ -50,6 +55,10 @@ contract MockTokenBridge {
     bytes public lastExtraData;
     uint256 public lastGas;
     uint256 public valueReceived;
+
+    constructor(IERC20 token_) {
+        token = token_;
+    }
 
     function setShouldRevert(bool v) external {
         shouldRevert = v;
@@ -98,7 +107,7 @@ contract TargetRouterProceedsTest is CrossChainTest {
 
         wcoen = new MockWCOEN();
         escrow = new MockEscrowAdapter(IERC20(address(wcoen)));
-        tokenBridge = new MockTokenBridge();
+        tokenBridge = new MockTokenBridge(IERC20(address(wcoen)));
 
         target.wire(makeAddr("auction"), makeAddr("intex"), address(escrow));
         target.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originSender));
@@ -154,6 +163,21 @@ contract TargetRouterProceedsTest is CrossChainTest {
 
         // Finalization still settled. The router parked the send instead of rolling back.
         assertEq(tokenBridge.calls(), 0);
+        (uint32 s, uint128 a, bool exists, bool done) = target.parkedProceeds(0);
+        assertEq(s, SERIES_ID);
+        assertEq(a, AMOUNT);
+        assertTrue(exists);
+        assertFalse(done);
+    }
+
+    function test_RefundInstructions_ParksProceedsTheBridgeDoesNotMove() public {
+        escrow.setTotalPaid(AMOUNT);
+        MockTokenBridge otherBridge = new MockTokenBridge(IERC20(address(new MockWCOEN())));
+        target.setProceedsRoute(address(otherBridge), originRouter);
+
+        _deliverRefund(SERIES_ID);
+
+        assertEq(otherBridge.calls(), 0, "nothing sent in a token the bridge does not move");
         (uint32 s, uint128 a, bool exists, bool done) = target.parkedProceeds(0);
         assertEq(s, SERIES_ID);
         assertEq(a, AMOUNT);
