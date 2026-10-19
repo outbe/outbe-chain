@@ -22,7 +22,7 @@ use crate::{
 use commonware_cryptography::bls12381::{
     dkg::feldman_desmedt::Output, primitives::variant::MinSig,
 };
-use outbe_radicleregistry::{payload::PatchVotePayloadV1, PatchApprovalRecord};
+use outbe_coderegistry::{payload::PatchVotePayloadV1, PatchApprovalRecord};
 use radicle::cob::{self, patch::Patches, store::access::WriteAs};
 use std::os::unix::fs::PermissionsExt as _;
 use std::sync::{Arc, Mutex};
@@ -168,7 +168,7 @@ pub(super) async fn assert_review_socket(
         },
         checkpoint: root.clone(),
         material: root.clone(),
-        stage: outbe_radicleregistry::schema::PATCH_EXECUTION_PENDING,
+        stage: outbe_coderegistry::schema::PATCH_EXECUTION_PENDING,
         anchor: crate::manager::FinalizedBlock {
             number: 16,
             hash: B256::repeat_byte(16),
@@ -499,7 +499,7 @@ pub(super) async fn assert_review_socket(
             number: 19,
             hash: B256::repeat_byte(19),
         },
-        receipt: outbe_radicleregistry::publication::PublicationReceipt {
+        receipt: outbe_coderegistry::publication::PublicationReceipt {
             body: package.body().clone(),
             receipt_hash: package.body().receipt_hash(),
             accepted_height: 18,

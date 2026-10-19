@@ -1,7 +1,7 @@
 //! Native Review preparation for an exact finalized Vote decision.
 
 use commonware_cryptography::{Hasher as _, Sha256};
-use outbe_radicleregistry::payload::PatchVotePayloadV1;
+use outbe_coderegistry::payload::PatchVotePayloadV1;
 use radicle::storage::refs::{
     sigrefs::{git::Committer, write::PreparedSignedRefs},
     Refs, SIGREFS_PARENT,
@@ -72,7 +72,7 @@ pub struct PreparedPatchReview {
 pub struct CheckpointPreparedReview {
     review: PreparedPatchReview,
     snapshot: CheckpointOwnerSnapshot,
-    approval: outbe_radicleregistry::PatchApprovalRecord,
+    approval: outbe_coderegistry::PatchApprovalRecord,
 }
 
 impl std::ops::Deref for CheckpointPreparedReview {
@@ -83,7 +83,7 @@ impl std::ops::Deref for CheckpointPreparedReview {
 }
 
 impl CheckpointPreparedReview {
-    pub(crate) fn approval(&self) -> &outbe_radicleregistry::PatchApprovalRecord {
+    pub(crate) fn approval(&self) -> &outbe_coderegistry::PatchApprovalRecord {
         &self.approval
     }
     pub(crate) fn snapshot(&self) -> &CheckpointOwnerSnapshot {
@@ -114,7 +114,7 @@ impl CheckpointPreparedReview {
 pub struct CheckpointPreparedReviewRefs {
     refs: PreparedReviewRefs,
     snapshot: CheckpointOwnerSnapshot,
-    approval: outbe_radicleregistry::PatchApprovalRecord,
+    approval: outbe_coderegistry::PatchApprovalRecord,
 }
 
 impl std::ops::Deref for CheckpointPreparedReviewRefs {
@@ -125,7 +125,7 @@ impl std::ops::Deref for CheckpointPreparedReviewRefs {
 }
 
 impl CheckpointPreparedReviewRefs {
-    pub(crate) fn approval(&self) -> &outbe_radicleregistry::PatchApprovalRecord {
+    pub(crate) fn approval(&self) -> &outbe_coderegistry::PatchApprovalRecord {
         &self.approval
     }
     pub(crate) fn snapshot(&self) -> &CheckpointOwnerSnapshot {

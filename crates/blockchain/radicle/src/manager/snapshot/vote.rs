@@ -59,7 +59,7 @@ impl<P: StateProviderFactory + ReceiptProvider> RethSnapshotReader<P> {
             self.chain_id,
             self.genesis_hash,
         );
-        let registry = RadicleRegistry::new(StorageHandle::new(&mut storage));
+        let registry = CodeRegistry::new(StorageHandle::new(&mut storage));
         let network_repository = registry.network_repository.read().map_err(snapshot_error)?;
         let mut proposals = Vec::new();
         for id in &ids[start..end] {
@@ -69,12 +69,11 @@ impl<P: StateProviderFactory + ReceiptProvider> RethSnapshotReader<P> {
                         "Vote event and approval disagree".into(),
                     ));
                 }
-                let subject = outbe_radicleregistry::payload::PatchVotePayloadV1::decode(
+                let subject = outbe_coderegistry::payload::PatchVotePayloadV1::decode(
                     approval.payload.as_bytes(),
                 )
                 .map_err(snapshot_error)?;
-                if outbe_radicleregistry::repo_id_storage_key(subject.repo_id) == network_repository
-                {
+                if outbe_coderegistry::repo_id_storage_key(subject.repo_id) == network_repository {
                     proposals.push(*id);
                 }
             }

@@ -1,10 +1,10 @@
 use super::*;
 use alloy_primitives::U256;
+use outbe_coderegistry::schema::{PATCH_EXECUTION_MERGED, PATCH_EXECUTION_REVIEWED};
 use outbe_radicle::integration::{
     publication::review::{prepare_review_publication, verify_accepted_review_publication},
     review::prepare_patch_review_from_checkpoint,
 };
-use outbe_radicleregistry::schema::{PATCH_EXECUTION_MERGED, PATCH_EXECUTION_REVIEWED};
 use std::fs;
 
 enum Prepared {

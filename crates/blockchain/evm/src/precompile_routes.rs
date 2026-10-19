@@ -336,7 +336,7 @@ define_exact_routes! {
     HYPERLANE_CONTROLLER_ADDRESS => (outbe_hyperlanecontroller::precompile::dispatch, default_base_gas, ValuePolicy::Payable, outbe_hyperlanecontroller::precompile::PAYABLE_SELECTORS),
     STABLECOIN_FACTORY_ADDRESS => (stablecoin_factory_dispatch, default_base_gas, ValuePolicy::Reject, outbe_stablecoinfactory::precompile::PAYABLE_SELECTORS),
     STABLECOIN_POLICY_REGISTRY_ADDRESS => (stablecoin_policy_dispatch, default_base_gas, ValuePolicy::Reject, outbe_stablecoinpolicy::precompile::PAYABLE_SELECTORS),
-    RADICLE_REGISTRY_ADDRESS => (outbe_radicleregistry::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_radicleregistry::precompile::PAYABLE_SELECTORS),
+    CODE_REGISTRY_ADDRESS => (outbe_coderegistry::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_coderegistry::precompile::PAYABLE_SELECTORS),
     GOVERNANCE_ADDRESS => (outbe_governance::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_governance::precompile::PAYABLE_SELECTORS),
     VOTE_ADDRESS => (vote_dispatch, default_base_gas, ValuePolicy::Payable, outbe_vote::precompile::PAYABLE_SELECTORS),
     UPDATE_ADDRESS => (outbe_update::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_update::precompile::PAYABLE_SELECTORS),
@@ -479,8 +479,8 @@ mod tests {
     }
 
     #[test]
-    fn radicle_registry_route_uses_standard_base_gas() {
-        let route = lookup(&RADICLE_REGISTRY_ADDRESS).expect("RadicleRegistry route");
+    fn code_registry_route_uses_standard_base_gas() {
+        let route = lookup(&CODE_REGISTRY_ADDRESS).expect("CodeRegistry route");
         assert_eq!(route.base_gas(&[]), PRECOMPILE_BASE_GAS);
         assert_eq!(
             route.base_gas(&[0xde, 0xad, 0xbe, 0xef]),

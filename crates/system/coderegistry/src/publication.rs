@@ -14,14 +14,14 @@ use outbe_primitives::{
 use outbe_validatorset::{contract::ValidatorSet, state::CommitteeSnapshot};
 
 use crate::{
-    errors::RadicleRegistryError::InvalidPublication,
+    errors::CodeRegistryError::InvalidPublication,
     payload::PatchVotePayloadV1,
     repo_id_storage_key,
     schema::{
         PublicationReceiptRecord, PublicationReceiptRecordEntryExt, PATCH_EXECUTION_MERGED,
         PATCH_EXECUTION_PENDING, PATCH_EXECUTION_REVIEWED,
     },
-    RadicleRegistry,
+    CodeRegistry,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -50,7 +50,7 @@ fn pending_generation(body: &PublicationBody, committee: &CommitteeSnapshot) -> 
     .into()
 }
 
-impl RadicleRegistry<'_> {
+impl CodeRegistry<'_> {
     /// Read current-generation delivery progress only; this grants no publication permission.
     pub fn pending_publication_attesters(&self, body: &PublicationBody) -> Result<Vec<u32>> {
         if body.chain_id != self.storage.chain_id()?

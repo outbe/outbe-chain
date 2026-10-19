@@ -214,7 +214,7 @@ mod tests {
         package.authorize_current(&state, &material).unwrap();
         let receipt = FinalizedPublicationReceipt {
             block: state.authority.block,
-            receipt: outbe_radicleregistry::publication::PublicationReceipt {
+            receipt: outbe_coderegistry::publication::PublicationReceipt {
                 accepted_height: state.authority.block.number,
                 receipt_hash: package.body.receipt_hash(),
                 body: package.body.clone(),

@@ -41,9 +41,10 @@ from genesis_seed_alloc import (
     _validate_reserved_balance,
     seed_external_contracts,
     seed_protocol_constants,
-    seed_radicle_registry,
+    seed_code_registry,
     validate_stablecoin_namespace_alloc,
 )
+from genesis_network import SEED_SECTIONS
 from genesis_seed_economy import clear_seeded_metadosis_days, override_worldwide_day
 from genesis_seed_codec import (
     ACCOUNTING_PROGRESS_ADDRESS,
@@ -83,7 +84,7 @@ from genesis_seed_codec import (
     PROMIS_LIMIT_ADDRESS,
     PROTECTED_PROTOCOL_ADDRESSES,
     PROTOCOL_ACCUMULATOR_ADDRESSES,
-    RADICLE_REGISTRY_ADDRESS,
+    CODE_REGISTRY_ADDRESS,
     REWARDS_ADDRESS,
     SECONDS_PER_DAY,
     SLASH_INDICATOR_ADDRESS,
@@ -260,6 +261,15 @@ def apply_seed(
             )
     if "intex_factory" in seed:
         raise ValueError("intex_factory was renamed to intex_profile")
+    # A section that no seeder reads would be dropped silently, so a misspelled
+    # or stale key fails here instead of leaving its precompile unseeded.
+    allowed = set(SEED_SECTIONS) | {"hyperlane_controller"}
+    unknown = sorted(set(seed) - allowed)
+    if unknown:
+        raise ValueError(
+            f"unknown key(s): {', '.join(unknown)}; "
+            f"allowed: {', '.join(sorted(allowed))}"
+        )
 
     _seed_economic_state(seed, alloc)
 

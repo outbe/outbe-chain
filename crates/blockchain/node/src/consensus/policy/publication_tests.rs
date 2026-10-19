@@ -2,7 +2,7 @@ use super::*;
 use alloy_consensus::Header;
 use alloy_primitives::{B256, U256};
 use outbe_primitives::{
-    addresses::RADICLE_REGISTRY_ADDRESS,
+    addresses::CODE_REGISTRY_ADDRESS,
     radicle_genesis::{
         GovernmentsDescriptor, GENESIS_GOVERNMENTS_FIELD, GOVERNMENTS_DESCRIPTOR_HASH_SLOT,
     },
@@ -26,7 +26,7 @@ fn policy(enabled: bool) -> OutbeConsensusPolicy<ChainSpec<OutbeHeader>> {
         );
         spec.genesis
             .alloc
-            .entry(RADICLE_REGISTRY_ADDRESS)
+            .entry(CODE_REGISTRY_ADDRESS)
             .or_default()
             .storage
             .get_or_insert_default()
@@ -73,7 +73,7 @@ fn unseeded_missing_or_mismatched_genesis_descriptor_does_not_enable_publication
     Arc::make_mut(&mut unseeded.chain_spec)
         .genesis
         .alloc
-        .remove(&RADICLE_REGISTRY_ADDRESS);
+        .remove(&CODE_REGISTRY_ADDRESS);
     assert!(unseeded.validate_header(&header(true)).is_err());
     let mut missing = policy(true);
     Arc::make_mut(&mut missing.chain_spec)

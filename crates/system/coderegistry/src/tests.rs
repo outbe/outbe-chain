@@ -6,9 +6,9 @@ use outbe_primitives::{
 };
 
 use crate::{
-    precompile::{dispatch, IRadicleRegistry},
+    precompile::{dispatch, ICodeRegistry},
     repo_id_from_storage_key, repo_id_storage_key,
-    schema::RadicleRegistry,
+    schema::CodeRegistry,
 };
 
 const CHAIN_ID: u64 = 1;
@@ -21,10 +21,10 @@ fn repo(byte: u8) -> FixedBytes<20> {
     FixedBytes::repeat_byte(byte)
 }
 
-fn with_registry<R>(maximum: u32, f: impl FnOnce(&mut RadicleRegistry<'_>) -> R) -> R {
+fn with_registry<R>(maximum: u32, f: impl FnOnce(&mut CodeRegistry<'_>) -> R) -> R {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut provider, |storage| {
-        let mut registry = RadicleRegistry::new(storage);
+        let mut registry = CodeRegistry::new(storage);
         registry.config_max_repositories.write(maximum).unwrap();
         f(&mut registry)
     })
@@ -160,19 +160,19 @@ fn every_mutation_failure_rolls_back_the_whole_registration() {
     for operation in 0..=5 {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
         provider.enter(|storage| {
-            RadicleRegistry::new(storage)
+            CodeRegistry::new(storage)
                 .config_max_repositories
                 .write(1)
                 .unwrap();
         });
         provider.fail_after_mutation_at(operation);
         let result = provider.enter(|storage| {
-            RadicleRegistry::new(storage).register_repository(repo(7), Address::repeat_byte(7))
+            CodeRegistry::new(storage).register_repository(repo(7), Address::repeat_byte(7))
         });
         assert!(result.is_err(), "operation {operation} must fail");
         provider.clear_mutation_failure();
         provider.enter(|storage| {
-            let registry = RadicleRegistry::new(storage);
+            let registry = CodeRegistry::new(storage);
             assert_eq!(registry.repository_count.read().unwrap(), 0);
             assert_eq!(registry.registry_generation.read().unwrap(), 0);
             assert_eq!(
@@ -190,66 +190,66 @@ fn every_mutation_failure_rolls_back_the_whole_registration() {
 fn precompile_exposes_mutation_views_event_and_rejects_value() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.enter(|storage| {
-        RadicleRegistry::new(storage)
+        CodeRegistry::new(storage)
             .config_max_repositories
             .write(3)
             .unwrap();
     });
     let caller = Address::repeat_byte(0x33);
-    let data = IRadicleRegistry::registerRepositoryCall { repoId: repo(9) }.abi_encode();
+    let data = ICodeRegistry::registerRepositoryCall { repoId: repo(9) }.abi_encode();
     provider
         .enter(|storage| dispatch(storage, &data, caller, U256::ZERO))
         .unwrap();
-    let events = provider.get_events(outbe_primitives::addresses::RADICLE_REGISTRY_ADDRESS);
+    let events = provider.get_events(outbe_primitives::addresses::CODE_REGISTRY_ADDRESS);
     assert_eq!(events.len(), 1);
-    let event = IRadicleRegistry::RepositoryRegistered::decode_log_data(&events[0]).unwrap();
+    let event = ICodeRegistry::RepositoryRegistered::decode_log_data(&events[0]).unwrap();
     assert_eq!(event.repoId, repo(9));
     assert_eq!(event.registrant, caller);
     assert_eq!(event.index, 0);
     assert_eq!(event.generation, 1);
 
-    let count = IRadicleRegistry::repositoryCountCall {}.abi_encode();
+    let count = ICodeRegistry::repositoryCountCall {}.abi_encode();
     let output = provider
         .enter(|storage| dispatch(storage, &count, Address::ZERO, U256::ZERO))
         .unwrap();
     assert_eq!(
-        IRadicleRegistry::repositoryCountCall::abi_decode_returns(&output).unwrap(),
+        ICodeRegistry::repositoryCountCall::abi_decode_returns(&output).unwrap(),
         1
     );
 
-    let at = IRadicleRegistry::repositoryAtCall { index: 0 }.abi_encode();
+    let at = ICodeRegistry::repositoryAtCall { index: 0 }.abi_encode();
     let output = provider
         .enter(|storage| dispatch(storage, &at, Address::ZERO, U256::ZERO))
         .unwrap();
     assert_eq!(
-        IRadicleRegistry::repositoryAtCall::abi_decode_returns(&output).unwrap(),
+        ICodeRegistry::repositoryAtCall::abi_decode_returns(&output).unwrap(),
         repo(9)
     );
 
-    let registrant = IRadicleRegistry::repositoryRegistrantCall { repoId: repo(9) }.abi_encode();
+    let registrant = ICodeRegistry::repositoryRegistrantCall { repoId: repo(9) }.abi_encode();
     let output = provider
         .enter(|storage| dispatch(storage, &registrant, Address::ZERO, U256::ZERO))
         .unwrap();
     assert_eq!(
-        IRadicleRegistry::repositoryRegistrantCall::abi_decode_returns(&output).unwrap(),
+        ICodeRegistry::repositoryRegistrantCall::abi_decode_returns(&output).unwrap(),
         caller
     );
 
-    let generation = IRadicleRegistry::registryGenerationCall {}.abi_encode();
+    let generation = ICodeRegistry::registryGenerationCall {}.abi_encode();
     let output = provider
         .enter(|storage| dispatch(storage, &generation, Address::ZERO, U256::ZERO))
         .unwrap();
     assert_eq!(
-        IRadicleRegistry::registryGenerationCall::abi_decode_returns(&output).unwrap(),
+        ICodeRegistry::registryGenerationCall::abi_decode_returns(&output).unwrap(),
         1
     );
 
-    let maximum = IRadicleRegistry::maxRepositoriesCall {}.abi_encode();
+    let maximum = ICodeRegistry::maxRepositoriesCall {}.abi_encode();
     let output = provider
         .enter(|storage| dispatch(storage, &maximum, Address::ZERO, U256::ZERO))
         .unwrap();
     assert_eq!(
-        IRadicleRegistry::maxRepositoriesCall::abi_decode_returns(&output).unwrap(),
+        ICodeRegistry::maxRepositoriesCall::abi_decode_returns(&output).unwrap(),
         3
     );
     assert!(provider

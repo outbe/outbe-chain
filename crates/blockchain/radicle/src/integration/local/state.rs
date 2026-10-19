@@ -7,14 +7,14 @@ use crate::manager::{
 use alloy_primitives::{Address, B256, U256};
 use commonware_codec::DecodeExt as _;
 use commonware_cryptography::bls12381;
-use outbe_primitives::radicle_publication::{
-    players_commitment, PublicationAction, PublicationBody, PUBLICATION_BODY_LEN,
-};
-use outbe_radicleregistry::{
+use outbe_coderegistry::{
     payload::{PatchVotePayloadV1, MAX_PATCH_VOTE_PAYLOAD_BYTES},
     publication::PublicationReceipt,
     schema::{PATCH_EXECUTION_MERGED, PATCH_EXECUTION_PENDING, PATCH_EXECUTION_REVIEWED},
     PatchApprovalRecord,
+};
+use outbe_primitives::radicle_publication::{
+    players_commitment, PublicationAction, PublicationBody, PUBLICATION_BODY_LEN,
 };
 use outbe_validatorset::state::{CommitteeEntry, CommitteeSnapshot};
 

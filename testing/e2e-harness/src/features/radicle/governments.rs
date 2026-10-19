@@ -3,6 +3,7 @@
 use super::*;
 use alloy_primitives::U256;
 use eyre::{ensure, eyre, Result};
+use outbe_coderegistry::payload::PatchVotePayloadV1;
 use outbe_primitives::{
     radicle_genesis::GovernmentsDescriptor, radicle_publication::PublicationAction,
 };
@@ -20,7 +21,6 @@ use outbe_radicle::{
     },
     manager::FinalizedPublicationReceipt,
 };
-use outbe_radicleregistry::payload::PatchVotePayloadV1;
 use radicle::{
     cob::{patch, store::access::ReadOnly},
     crypto::{BlsPublicKey, RepositoryKey},
@@ -136,7 +136,7 @@ fn vote(world: &mut World) {
         crate::internal::addresses::VOTE_ADDR,
         &world.validators.get(0).evm_key().unwrap(),
         &eth::IVote::createProposalWithVotingWindowCall {
-            targetModule: outbe_primitives::addresses::RADICLE_REGISTRY_ADDRESS,
+            targetModule: outbe_primitives::addresses::CODE_REGISTRY_ADDRESS,
             payload: payload.clone(),
             votingWindowBlocks: 24,
         },

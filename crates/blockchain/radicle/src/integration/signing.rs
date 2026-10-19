@@ -93,7 +93,7 @@ impl RepositorySigningMaterial {
     fn authorize_current_review(
         &self,
         state: &FinalizedPatchSigningState,
-        approval: &outbe_radicleregistry::PatchApprovalRecord,
+        approval: &outbe_coderegistry::PatchApprovalRecord,
         snapshot: &CheckpointOwnerSnapshot,
         context: &ReviewSigningContext,
         owner: RepositoryKey,
@@ -104,14 +104,14 @@ impl RepositorySigningMaterial {
             snapshot,
             context,
             owner,
-            outbe_radicleregistry::schema::PATCH_EXECUTION_PENDING,
+            outbe_coderegistry::schema::PATCH_EXECUTION_PENDING,
         )
     }
 
     fn authorize_current_patch(
         &self,
         state: &FinalizedPatchSigningState,
-        approval: &outbe_radicleregistry::PatchApprovalRecord,
+        approval: &outbe_coderegistry::PatchApprovalRecord,
         snapshot: &CheckpointOwnerSnapshot,
         context: &ReviewSigningContext,
         owner: RepositoryKey,
@@ -134,14 +134,14 @@ impl RepositorySigningMaterial {
     fn authorize_current_merge(
         &self,
         state: &FinalizedPatchSigningState,
-        approval: &outbe_radicleregistry::PatchApprovalRecord,
+        approval: &outbe_coderegistry::PatchApprovalRecord,
         snapshot: &CheckpointOwnerSnapshot,
         context: &ReviewSigningContext,
         owner: RepositoryKey,
         review: &crate::manager::FinalizedPublicationReceipt,
     ) -> Result<(), Error> {
         let decision =
-            outbe_radicleregistry::payload::PatchVotePayloadV1::decode(approval.payload.as_bytes())
+            outbe_coderegistry::payload::PatchVotePayloadV1::decode(approval.payload.as_bytes())
                 .map_err(|_| Error::Context)?;
         let body = &review.receipt().body;
         if body.action != outbe_primitives::radicle_publication::PublicationAction::Review
@@ -160,7 +160,7 @@ impl RepositorySigningMaterial {
             snapshot,
             context,
             owner,
-            outbe_radicleregistry::schema::PATCH_EXECUTION_REVIEWED,
+            outbe_coderegistry::schema::PATCH_EXECUTION_REVIEWED,
         )
     }
 

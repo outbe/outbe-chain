@@ -3,7 +3,7 @@
 use outbe_primitives::error::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::{errors::RadicleRegistryError, RepoId};
+use crate::{errors::CodeRegistryError, RepoId};
 
 pub const MAX_PATCH_VOTE_PAYLOAD_BYTES: usize = 512;
 
@@ -34,13 +34,13 @@ impl PatchVotePayloadV1 {
 
     pub fn decode(payload: &[u8]) -> Result<Self> {
         if payload.len() > MAX_PATCH_VOTE_PAYLOAD_BYTES {
-            return Err(RadicleRegistryError::InvalidPatchPayload.into());
+            return Err(CodeRegistryError::InvalidPatchPayload.into());
         }
-        let decoded: Self = serde_json::from_slice(payload)
-            .map_err(|_| RadicleRegistryError::InvalidPatchPayload)?;
+        let decoded: Self =
+            serde_json::from_slice(payload).map_err(|_| CodeRegistryError::InvalidPatchPayload)?;
         // One byte representation excludes alternate field orders, escapes and OID encodings.
         if decoded.encode()? != payload {
-            return Err(RadicleRegistryError::InvalidPatchPayload.into());
+            return Err(CodeRegistryError::InvalidPatchPayload.into());
         }
         Ok(decoded)
     }
@@ -54,9 +54,9 @@ impl PatchVotePayloadV1 {
             || self.revision_id.is_zero()
             || self.expected_target_head.is_zero()
         {
-            return Err(RadicleRegistryError::InvalidPatchPayload.into());
+            return Err(CodeRegistryError::InvalidPatchPayload.into());
         }
-        serde_json::to_vec(self).map_err(|_| RadicleRegistryError::InvalidPatchPayload.into())
+        serde_json::to_vec(self).map_err(|_| CodeRegistryError::InvalidPatchPayload.into())
     }
 }
 

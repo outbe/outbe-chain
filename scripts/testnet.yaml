@@ -134,8 +134,8 @@ validator_set:
   max_validators: 128
   reregistration_cooldown_blocks: 151200
 
-# Radicle repository registry. -1 means unlimited.
-radicle_registry:
+# CodeRegistry: capacity of the Radicle repository list. -1 means unlimited.
+code_registry:
   max_repositories: -1
 
 # Price oracle: vote window, seeded pairs and S-curve seeds.

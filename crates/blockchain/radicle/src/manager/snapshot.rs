@@ -10,11 +10,11 @@ use bytes::Bytes;
 use commonware_codec::DecodeExt;
 use commonware_cryptography::bls12381;
 use futures::StreamExt as _;
+use outbe_coderegistry::CodeRegistry;
 use outbe_primitives::storage::{
     readonly::{ReadOnlyStorageProvider, StorageReader},
     StorageHandle,
 };
-use outbe_radicleregistry::RadicleRegistry;
 use outbe_validatorset::contract::ValidatorSet;
 use reth_chain_state::ForkChoiceSubscriptions;
 use reth_provider::{BlockIdReader, StateProviderFactory};
@@ -88,7 +88,7 @@ impl<P: StateProviderFactory + reth_provider::ReceiptProvider + Send + Sync + 's
             self.chain_id,
             self.genesis_hash,
         );
-        RadicleRegistry::new(StorageHandle::new(&mut storage))
+        CodeRegistry::new(StorageHandle::new(&mut storage))
             .governments_descriptor()
             .map_err(snapshot_error)
     }
@@ -141,7 +141,7 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
             self.chain_id,
             self.genesis_hash,
         );
-        let registry = RadicleRegistry::new(StorageHandle::new(&mut storage));
+        let registry = CodeRegistry::new(StorageHandle::new(&mut storage));
         let receipt = registry
             .publication_receipt(body.sequence)
             .map_err(snapshot_error)?;
@@ -214,7 +214,7 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
             self.chain_id,
             self.genesis_hash,
         );
-        let registry = RadicleRegistry::new(StorageHandle::new(&mut storage));
+        let registry = CodeRegistry::new(StorageHandle::new(&mut storage));
         if !registry
             .network_repository
             .read()
@@ -277,7 +277,7 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
             self.chain_id,
             self.genesis_hash,
         );
-        let registry = RadicleRegistry::new(StorageHandle::new(&mut storage));
+        let registry = CodeRegistry::new(StorageHandle::new(&mut storage));
         let approval = registry
             .patch_approval(proposal_id)
             .map_err(snapshot_error)?
@@ -288,9 +288,9 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
             ));
         }
         let subject =
-            outbe_radicleregistry::payload::PatchVotePayloadV1::decode(approval.payload.as_bytes())
+            outbe_coderegistry::payload::PatchVotePayloadV1::decode(approval.payload.as_bytes())
                 .map_err(snapshot_error)?;
-        let binding = outbe_radicleregistry::repo_id_from_storage_key(
+        let binding = outbe_coderegistry::repo_id_from_storage_key(
             registry.network_repository.read().map_err(snapshot_error)?,
         )
         .map_err(snapshot_error)?;
@@ -389,9 +389,9 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
             .map_err(snapshot_error)?;
         if !matches!(
             stage,
-            outbe_radicleregistry::schema::PATCH_EXECUTION_PENDING
-                | outbe_radicleregistry::schema::PATCH_EXECUTION_REVIEWED
-                | outbe_radicleregistry::schema::PATCH_EXECUTION_MERGED
+            outbe_coderegistry::schema::PATCH_EXECUTION_PENDING
+                | outbe_coderegistry::schema::PATCH_EXECUTION_REVIEWED
+                | outbe_coderegistry::schema::PATCH_EXECUTION_MERGED
         ) {
             return Err(ManagerError::Snapshot(
                 "unknown patch execution stage".into(),
@@ -467,7 +467,7 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
             self.genesis_hash,
         );
         let handle = StorageHandle::new(&mut storage);
-        let registry = RadicleRegistry::new(handle);
+        let registry = CodeRegistry::new(handle);
         let latest_sequence = registry
             .publication_sequence
             .read()
@@ -617,7 +617,7 @@ fn read_patch_approval_from_storage(
 ) -> Result<Option<FinalizedPatchApproval>, ManagerError> {
     let mut storage =
         ReadOnlyStorageProvider::new_with_chain_identity(reader, chain_id, genesis_hash);
-    let approval = RadicleRegistry::new(StorageHandle::new(&mut storage))
+    let approval = CodeRegistry::new(StorageHandle::new(&mut storage))
         .patch_approval(proposal_id)
         .map_err(snapshot_error)?;
     match approval {
@@ -693,7 +693,7 @@ fn read_snapshot_from_storage(
         validators
     };
     let (registry_generation, repositories) = {
-        let registry = RadicleRegistry::new(StorageHandle::new(&mut storage));
+        let registry = CodeRegistry::new(StorageHandle::new(&mut storage));
         let count = registry.repository_count.read().map_err(snapshot_error)?;
         let generation = registry
             .registry_generation
@@ -801,8 +801,8 @@ where
 mod tests {
     use super::*;
     use commonware_cryptography::{bls12381, Signer as _};
+    use outbe_coderegistry::RepoId;
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
-    use outbe_radicleregistry::RepoId;
 
     struct MapReader(HashMapStorageProvider);
 
@@ -845,7 +845,7 @@ mod tests {
                 .unwrap();
             validators.activate_validator(validator).unwrap();
 
-            let mut registry = RadicleRegistry::new(storage);
+            let mut registry = CodeRegistry::new(storage);
             registry.config_max_repositories.write(4).unwrap();
             registry.register_repository(repository, validator).unwrap();
         });

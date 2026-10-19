@@ -4,7 +4,7 @@ use super::{
     review::{self, PreparedPatchReview, PreparedReviewRefs, ReviewSigningContext},
 };
 use crate::manager::{FinalizedPatchApproval, FinalizedPublicationReceipt};
-use outbe_radicleregistry::{payload::PatchVotePayloadV1, PatchApprovalRecord};
+use outbe_coderegistry::{payload::PatchVotePayloadV1, PatchApprovalRecord};
 use radicle::{
     cob::{self, object, patch},
     crypto::{BlsEnvelope, RepositoryKey},

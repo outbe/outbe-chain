@@ -2,7 +2,7 @@ use crate::endpoint::{
     AnchorError, AnchorSnapshot, AuthorityRecord, EndpointAddress, PeerId, VerifiedEndpoint,
 };
 use alloy_primitives::{Address, B256};
-use outbe_radicleregistry::RepoId;
+use outbe_coderegistry::RepoId;
 use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 use tokio::sync::mpsc;
 
@@ -17,21 +17,21 @@ pub struct FinalizedBlock {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FinalizedPatchApproval {
     pub block: FinalizedBlock,
-    pub approval: outbe_radicleregistry::PatchApprovalRecord,
+    pub approval: outbe_coderegistry::PatchApprovalRecord,
 }
 
 /// A receipt read from an exact local canonical finalized state, not a peer certificate.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FinalizedPublicationReceipt {
     pub(crate) block: FinalizedBlock,
-    pub(crate) receipt: outbe_radicleregistry::publication::PublicationReceipt,
+    pub(crate) receipt: outbe_coderegistry::publication::PublicationReceipt,
 }
 
 impl FinalizedPublicationReceipt {
     pub fn block(&self) -> FinalizedBlock {
         self.block
     }
-    pub fn receipt(&self) -> &outbe_radicleregistry::publication::PublicationReceipt {
+    pub fn receipt(&self) -> &outbe_coderegistry::publication::PublicationReceipt {
         &self.receipt
     }
 }

@@ -27,7 +27,7 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
             self.genesis_hash,
         );
         let storage = StorageHandle::new(&mut storage);
-        let registry = RadicleRegistry::new(storage.clone());
+        let registry = CodeRegistry::new(storage.clone());
         let sequence = registry
             .publication_sequence
             .read()
@@ -53,7 +53,7 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
             .publication_receipt(bound)
             .map_err(snapshot_error)?
             .ok_or_else(|| ManagerError::Snapshot("bound material missing".into()))?;
-        let repository = outbe_radicleregistry::repo_id_from_storage_key(
+        let repository = outbe_coderegistry::repo_id_from_storage_key(
             registry.network_repository.read().map_err(snapshot_error)?,
         )
         .map_err(snapshot_error)?;

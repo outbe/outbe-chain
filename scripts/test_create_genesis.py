@@ -536,6 +536,51 @@ class SeedStageTests(unittest.TestCase):
                     ),
                 )
 
+    def test_a_seed_carrying_an_unknown_section_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = minimal_config(tmp)
+            validators = self.fake_validators()
+            base_genesis = CG.build_base_genesis(config)
+            CG.prefund_validators(base_genesis, config, validators)
+            seed = CG.build_seed(config) | {"vault_routr": {}}
+            with self.assertRaisesRegex(
+                ValueError, r"^unknown key\(s\): vault_routr; allowed: balance, "
+            ):
+                CG.run_seed_stage(
+                    module=SEED_GENESIS,
+                    work_dir=pathlib.Path(tmp),
+                    config=config,
+                    quiet=True,
+                    inputs=CG.SeedInputs(
+                        base_genesis=base_genesis, seed=seed, validators=validators
+                    ),
+                )
+
+    def test_apply_seed_lists_every_unknown_section_and_the_allowed_set(self):
+        genesis = {"config": {"chainId": 1}, "alloc": {}, "timestamp": "0x0"}
+        allowed = set(CG.SEED_SECTIONS) | {"hyperlane_controller"}
+        with self.assertRaises(ValueError) as caught:
+            SEED_GENESIS.apply_seed(genesis, {"zeta": {}, "alpha": {}})
+        self.assertEqual(
+            str(caught.exception),
+            "unknown key(s): alpha, zeta; allowed: " + ", ".join(sorted(allowed)),
+        )
+
+    def test_the_named_legacy_checks_keep_their_own_messages(self):
+        genesis = {"config": {"chainId": 1}, "alloc": {}, "timestamp": "0x0"}
+        with self.assertRaisesRegex(ValueError, "renamed to intex_profile"):
+            SEED_GENESIS.apply_seed(genesis, {"intex_factory": {}, "vault_routr": {}})
+        with self.assertRaisesRegex(ValueError, "gems is no longer supported"):
+            SEED_GENESIS.apply_seed(genesis, {"gems": [], "vault_routr": {}})
+
+    def test_the_shipped_seed_files_use_only_known_sections(self):
+        allowed = set(CG.SEED_SECTIONS) | {"hyperlane_controller"}
+        for name in ("seed-testnet.json", "seed-testnet-lowstake.json"):
+            seed = json.loads(MODULE_PATH.with_name(name).read_text())
+            with self.subTest(seed=name):
+                self.assertEqual(sorted(set(seed) - allowed), [])
+                self.assertIn("code_registry", seed)
+
     def test_production_seed_stage_preserves_oracle_orientation_and_wire_scales(self):
         token = "0x1111111111111111111111111111111111111111"
         pairs = [
@@ -696,7 +741,7 @@ class ExampleFileTests(unittest.TestCase):
             "staking",
             "rewards",
             "validator_set",
-            "radicle_registry",
+            "code_registry",
             "intex_profile",
             "vault_router",
             "oracle",
