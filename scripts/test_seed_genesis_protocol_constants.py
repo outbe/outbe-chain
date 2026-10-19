@@ -118,7 +118,7 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
                     self.assertNotIn("metadosis", seed)
                 else:
                     day = seed["metadosis"]["worldwide_days"][0]
-                    self.assertEqual(day["current_vwap"], "1000000")
+                    self.assertEqual(day["current_vwap_minor"], "1000000")
                     self.assertEqual(day["day_limit"], "500000000")
                 self.assertEqual(
                     seed["staking"]["min_stake"], staking_expected["min_stake"]

@@ -71,7 +71,7 @@ fn test_offering_entry_captures_vwap_unblocks_and_exit_reblocks() {
             metadosis
                 .worldwide_days
                 .entry(wwd)
-                .previous_vwap()
+                .previous_vwap_minor()
                 .read()
                 .unwrap(),
             U256::from(100u64)
@@ -80,7 +80,7 @@ fn test_offering_entry_captures_vwap_unblocks_and_exit_reblocks() {
             metadosis
                 .worldwide_days
                 .entry(wwd)
-                .current_vwap()
+                .current_vwap_minor()
                 .read()
                 .unwrap(),
             U256::from(110u64)
@@ -95,7 +95,7 @@ fn test_offering_entry_captures_vwap_unblocks_and_exit_reblocks() {
             metadosis
                 .worldwide_days
                 .entry(wwd)
-                .previous_vwap()
+                .previous_vwap_minor()
                 .read()
                 .unwrap(),
             U256::from(100u64)
@@ -104,7 +104,7 @@ fn test_offering_entry_captures_vwap_unblocks_and_exit_reblocks() {
             metadosis
                 .worldwide_days
                 .entry(wwd)
-                .current_vwap()
+                .current_vwap_minor()
                 .read()
                 .unwrap(),
             U256::from(110u64)
@@ -170,7 +170,7 @@ fn test_missing_previous_vwap_results_in_red_day() {
             metadosis
                 .worldwide_days
                 .entry(wwd)
-                .previous_vwap()
+                .previous_vwap_minor()
                 .read()
                 .unwrap(),
             U256::ZERO
@@ -179,7 +179,7 @@ fn test_missing_previous_vwap_results_in_red_day() {
             metadosis
                 .worldwide_days
                 .entry(wwd)
-                .current_vwap()
+                .current_vwap_minor()
                 .read()
                 .unwrap(),
             U256::from(110u64)

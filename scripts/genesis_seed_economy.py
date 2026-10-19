@@ -170,7 +170,7 @@ def seed_metadosis(storage: StorageBuilder, config: dict):
                      5 lookback_end(u64)      6 offering_end(u64)
                      7 scheduled_process_time(u64)
                      8 metadosis_limit_minor(U256)
-                     9 previous_vwap(U256)   10 current_vwap(U256)
+                     9 previous_vwap_minor(U256)   10 current_vwap_minor(U256)
       slot 11:     active_wwd_count (Value<u16>)
       slots 12-13: active_wwd (Set<WorldwideDayKey>) - OZ enumerable set:
                      12 = length + value array at keccak256(be32(12))+i
@@ -200,13 +200,13 @@ def seed_metadosis(storage: StorageBuilder, config: dict):
         storage.set_mapping(6, wwd_key, entry.get("offering_end", 0))
         storage.set_mapping(7, wwd_key, entry.get("scheduled_process_time", 0))
 
-        # slot 8 = metadosis_limit_minor (per-day mint cap), 9 = previous_vwap,
-        # 10 = current_vwap - schema field order.
+        # slot 8 = metadosis_limit_minor (per-day mint cap), 9 = previous_vwap_minor,
+        # 10 = current_vwap_minor - schema field order.
         day_limit = parse_int(entry.get("day_limit", "0"))
         if day_limit > 0:
             storage.set_mapping(8, wwd_key, day_limit)
-        storage.set_mapping(9, wwd_key, parse_int(entry.get("previous_vwap", "0")))
-        storage.set_mapping(10, wwd_key, parse_int(entry.get("current_vwap", "0")))
+        storage.set_mapping(9, wwd_key, parse_int(entry.get("previous_vwap_minor", "0")))
+        storage.set_mapping(10, wwd_key, parse_int(entry.get("current_vwap_minor", "0")))
 
         # Insert into the active_wwd Set: value-array entry + 1-indexed position.
         storage.set_slot(data_slot(ACTIVE_WWD_BASE) + idx, wwd)

@@ -366,8 +366,8 @@ fn seed_public_measurement_day(
             offering_end: day.offering_end,
             scheduled_process_time: day.offering_end,
             metadosis_limit_minor: day_limit,
-            previous_vwap: stored_previous,
-            current_vwap: stored_current,
+            previous_vwap_minor: stored_previous,
+            current_vwap_minor: stored_current,
         })
         .apply(storage.clone())?;
     outbe_tribute::TributeContract::new(storage).unseal_day(worldwide_day)?;
@@ -382,8 +382,8 @@ fn write_measurement_vwaps(
     day: &MeasurementDay,
 ) -> PrecompileResult<()> {
     let pair = outbe_oracle::api::DAY_TYPE_PAIR;
-    let previous_vwap = U256::ONE;
-    let current_vwap = U256::from(2);
+    let previous_vwap_minor = U256::ONE;
+    let current_vwap_minor = U256::from(2);
     let previous_day = day.worldwide_day.previous_date_key();
     let previous_sample_time = day
         .forming_start
@@ -398,8 +398,8 @@ fn write_measurement_vwaps(
         )
         .ok_or_else(|| fatal("native Tribute fixture S-curve expiry overflow"))?;
     outbe_oracle::scurve::evict_expired_scurves(&mut oracle, inherited_scurve_expiry)?;
-    oracle.write_snapshot(previous_sample_time, &[(pair, previous_vwap, volume)])?;
-    oracle.write_snapshot(day.forming_start, &[(pair, current_vwap, volume)])?;
+    oracle.write_snapshot(previous_sample_time, &[(pair, previous_vwap_minor, volume)])?;
+    oracle.write_snapshot(day.forming_start, &[(pair, current_vwap_minor, volume)])?;
     let pair_index = oracle.pair_index_of(pair)?;
     if pair_index == 0 {
         return Err(fatal(
@@ -407,8 +407,8 @@ fn write_measurement_vwaps(
         ));
     }
     for (vwap_day, vwap) in [
-        (previous_day, previous_vwap),
-        (day.worldwide_day, current_vwap),
+        (previous_day, previous_vwap_minor),
+        (day.worldwide_day, current_vwap_minor),
     ] {
         let start = vwap_day.start_timestamp();
         let end = start
