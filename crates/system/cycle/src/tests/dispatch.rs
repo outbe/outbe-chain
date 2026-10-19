@@ -166,10 +166,8 @@ fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
         // (GENESIS_TS + 86_400), not the block timestamp.
         assert_eq!(last_executed_at(&ctx_fire), GENESIS_TS + SECONDS_PER_DAY);
 
-        // No tributes for any AgentReward pool, so all three
-        // WAA/SRA/CCA amounts are accounted for.
-        // Empty WAA/SRA pools burn their backing. An empty CCA pool mints
-        // nothing. All three allocations return to terminal Metadosis.
+        // No tributes for any AgentReward pool: all three WAA/SRA/CCA
+        // allocations return to terminal Metadosis and no native COEN moves.
         let agent_reward_balance = ctx_fire
             .storage
             .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
@@ -211,14 +209,8 @@ fn next_day_cycle_settlement_pays_previous_utc_day_agent_activity() {
         let sra_claimable = agent_reward.get_claimable_reward(sra).unwrap();
         let waa_pool = day_zero_allocation(EmissionSinkId::Waa);
         let sra_pool = day_zero_allocation(EmissionSinkId::Sra);
-        assert_eq!(
-            wallet_claimable,
-            outbe_primitives::units::checked_protocol_to_native(waa_pool).unwrap()
-        );
-        assert_eq!(
-            sra_claimable,
-            outbe_primitives::units::checked_protocol_to_native(sra_pool).unwrap()
-        );
+        assert_eq!(wallet_claimable, waa_pool);
+        assert_eq!(sra_claimable, sra_pool);
         let receipt =
             outbe_metadosis::api::day_limit_formation_receipt(ctx_fire.storage.clone(), reward_day)
                 .unwrap()
@@ -231,18 +223,15 @@ fn next_day_cycle_settlement_pays_previous_utc_day_agent_activity() {
         ]);
         assert_eq!(formed.base_limit, terminal);
         assert_eq!(
-            wallet_claimable
-                + sra_claimable
-                + outbe_primitives::units::checked_protocol_to_native(formed.base_limit).unwrap(),
-            outbe_primitives::units::checked_protocol_to_native(day_zero_allocation_sum(&[
+            wallet_claimable + sra_claimable + formed.base_limit,
+            day_zero_allocation_sum(&[
                 EmissionSinkId::Waa,
                 EmissionSinkId::Sra,
                 EmissionSinkId::Cca,
                 EmissionSinkId::Validator,
                 EmissionSinkId::Metadosis,
-            ]))
-            .unwrap(),
-            "credited backing plus Metadosis must conserve the allocation",
+            ]),
+            "credited claims plus Metadosis must conserve the allocation",
         );
         assert!(
             agent_reward
@@ -263,8 +252,8 @@ fn next_day_cycle_settlement_pays_previous_utc_day_agent_activity() {
                 .storage
                 .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
                 .unwrap(),
-            wallet_claimable + sra_claimable,
-            "the AgentReward native balance must back every new claim"
+            U256::ZERO,
+            "AgentReward holds no native COEN"
         );
     });
 }
@@ -496,12 +485,14 @@ fn retry_after_failed_terminal_dispatch_settles_once() {
             "CCA custody holds only the bond"
         );
         assert_eq!(
-            retry
-                .storage
-                .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+            outbe_agentreward::AgentRewardContract::new(retry.storage.clone())
+                .get_pool_claimable_reward(
+                    outbe_agentreward::schema::RewardPool::Cca,
+                    Address::repeat_byte(0xc1)
+                )
                 .unwrap(),
-            outbe_primitives::units::checked_protocol_to_native(cca_pool).unwrap(),
-            "retry must credit CCA backing to AgentReward exactly once"
+            cca_pool,
+            "retry must credit the CCA pool exactly once"
         );
         let gem = outbe_gem::GemContract::new(retry.storage.clone());
         assert_eq!(
@@ -592,7 +583,7 @@ fn open_day_preserves_an_already_delivered_validator_batch_without_reminting() {
 }
 
 /// a second `run_emission_limit_daily` invocation for an already-settled
-/// `prev_day` is a no-op. The handler does NOT mint the CCA agent pool (and
+/// `prev_day` is a no-op. The handler does NOT credit the CCA agent pool (and
 /// terminal Metadosis) twice. Guards the per-day idempotency added on top of the
 /// C-01 timestamp drift band.
 #[test]
@@ -606,17 +597,22 @@ fn emission_dispatch_is_idempotent_per_prev_day() {
         let ctx = BlockRuntimeContext::new(block_ctx(2, GENESIS_TS + SECONDS_PER_DAY + 60), handle);
         account_parent(&ctx, 2);
 
-        // First settlement of prev_day = 20240101: mints the pools + seals.
+        // First settlement of prev_day = 20240101: credits the pools + seals.
         run_emission_limit_daily(&ctx).unwrap();
         let rewards = ctx.storage.contract::<outbe_rewards::schema::Rewards<'_>>();
         assert!(
             rewards.daily_settled.read(&20_240_101).unwrap(),
             "first fire must seal prev_day"
         );
-        let cca_after_first = ctx
-            .storage
-            .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
-            .unwrap();
+        let cca_claimable = || {
+            outbe_agentreward::AgentRewardContract::new(ctx.storage.clone())
+                .get_pool_claimable_reward(
+                    outbe_agentreward::schema::RewardPool::Cca,
+                    Address::repeat_byte(0xc1),
+                )
+                .unwrap()
+        };
+        let cca_after_first = cca_claimable();
         let metadosis_after_first = ctx
             .storage
             .balance(outbe_primitives::addresses::METADOSIS_ADDRESS)
@@ -624,14 +620,12 @@ fn emission_dispatch_is_idempotent_per_prev_day() {
         assert!(!cca_after_first.is_zero(), "first fire credited CCA");
 
         // Second invocation for the SAME prev_day: the idempotency guard sees
-        // `daily_settled[20240101] == true` and returns early. No double-mint occurs.
+        // `daily_settled[20240101] == true` and returns early. No double credit occurs.
         run_emission_limit_daily(&ctx).unwrap();
         assert_eq!(
-            ctx.storage
-                .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
-                .unwrap(),
+            cca_claimable(),
             cca_after_first,
-            "CCA pool must not be minted twice for the same prev_day"
+            "CCA pool must not be credited twice for the same prev_day"
         );
         assert_eq!(
             ctx.storage

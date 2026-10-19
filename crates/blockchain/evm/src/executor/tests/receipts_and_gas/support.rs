@@ -249,8 +249,8 @@ pub(super) fn assert_dense_agent_settlement(
     );
     assert_eq!(
         storage.balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)?,
-        claimable_total,
-        "GAS-05: AgentReward backing balance must match dense claimable total"
+        U256::ZERO,
+        "GAS-05: AgentReward holds no native COEN"
     );
     Ok(())
 }

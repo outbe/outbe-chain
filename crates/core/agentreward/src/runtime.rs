@@ -7,7 +7,6 @@ use outbe_primitives::error::Result;
 use outbe_primitives::storage::dsl::Map;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
-use outbe_primitives::units::{checked_protocol_to_native, native_to_protocol_floor};
 
 impl AgentRewardContract<'_> {
     /// Increments WAA (wallet) tribute count for an address on `day`.
@@ -59,9 +58,9 @@ impl AgentRewardContract<'_> {
     /// Gets the claimable reward balance an address holds in one pool.
     pub fn get_pool_claimable_reward(&self, pool: RewardPool, address: Address) -> Result<U256> {
         match pool {
-            RewardPool::Waa => self.waa_claimable_rewards.read(&address),
-            RewardPool::Sra => self.sra_claimable_rewards.read(&address),
-            RewardPool::Cca => self.cca_claimable_rewards.read(&address),
+            RewardPool::Waa => self.waa_claimable_minor.read(&address),
+            RewardPool::Sra => self.sra_claimable_minor.read(&address),
+            RewardPool::Cca => self.cca_claimable_minor.read(&address),
         }
     }
 
@@ -86,17 +85,14 @@ impl AgentRewardContract<'_> {
         amount: U256,
     ) -> Result<()> {
         match pool {
-            RewardPool::Waa => self.waa_claimable_rewards.write(&address, amount),
-            RewardPool::Sra => self.sra_claimable_rewards.write(&address, amount),
-            RewardPool::Cca => self.cca_claimable_rewards.write(&address, amount),
+            RewardPool::Waa => self.waa_claimable_minor.write(&address, amount),
+            RewardPool::Sra => self.sra_claimable_minor.write(&address, amount),
+            RewardPool::Cca => self.cca_claimable_minor.write(&address, amount),
         }
     }
 
-    /// Claims `amount` of the pool's balance as a Gem, or all of it when `amount`
-    /// is zero. The function issues the Gem, burns the native COEN that backed it,
-    /// and clears the converted amount. The Gem load is not that COEN. The load
-    /// becomes Promis at mining time. Leaving the backing in place would therefore
-    /// let one emission exist twice.
+    /// Claims `amount` of the pool's balance as a Gem of that Promis load, or all
+    /// of it when `amount` is zero. Balances and loads are protocol units.
     ///
     /// The balance is the safe form of the reward. The Gem is not: an unsettled
     /// Gem can be Called and forfeited. Sizing the claim is therefore the agent's
@@ -130,30 +126,19 @@ impl AgentRewardContract<'_> {
             if requested > balance {
                 return Err(AgentRewardError::InsufficientClaimableBalance.into());
             }
-            // The balance is native COEN. A Gem load is a protocol amount. The claim
-            // mints and burns only the part that survives the conversion, so a
-            // sub-unit remainder keeps accumulating instead of being lost.
-            let gem_load = native_to_protocol_floor(requested);
-            if gem_load.is_zero() {
-                return Err(AgentRewardError::ClaimBelowProtocolUnit.into());
-            }
-            let burned = checked_protocol_to_native(gem_load)
-                .ok_or(AgentRewardError::NativeClaimOverflow)?;
             let gem_type = match pool {
                 RewardPool::Waa => GemTypes::Wallet,
                 RewardPool::Sra => GemTypes::Sra,
                 RewardPool::Cca => GemTypes::Cca,
             };
             let gem_id =
-                issue_reward_gem(&self.storage, (address, gem_load), gem_type, currencies)?;
-            self.storage
-                .decrease_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, burned)?;
-            self.write_pool_claimable_reward(pool, address, balance - burned)?;
+                issue_reward_gem(&self.storage, (address, requested), gem_type, currencies)?;
+            self.write_pool_claimable_reward(pool, address, balance - requested)?;
 
             if pool == RewardPool::Cca {
                 self.emit(IAgentReward::RewardsClaimed {
                     cca: address,
-                    amount: burned,
+                    amount: requested,
                 })?;
             }
             Ok(gem_id)

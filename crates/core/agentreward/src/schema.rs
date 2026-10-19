@@ -28,9 +28,9 @@ pub struct AgentRewardContract {
     #[attribute(order = 1)]
     pub sra_tribute_counts: outbe_primitives::storage::dsl::Map<B256, u64>,
 
-    // slot 2: claimable WAA reward per address
+    // slot 2: claimable WAA reward per address, in protocol units like every pool
     #[attribute(order = 2)]
-    pub waa_claimable_rewards: outbe_primitives::storage::dsl::Map<Address, U256>,
+    pub waa_claimable_minor: outbe_primitives::storage::dsl::Map<Address, U256>,
 
     // slot 3: WAA address count per day
     #[attribute(order = 3)]
@@ -50,11 +50,11 @@ pub struct AgentRewardContract {
 
     // slot 7: claimable SRA reward per address
     #[attribute(order = 7)]
-    pub sra_claimable_rewards: outbe_primitives::storage::dsl::Map<Address, U256>,
+    pub sra_claimable_minor: outbe_primitives::storage::dsl::Map<Address, U256>,
 
-    // slot 8: claimable CCA reward per address, in native COEN atomic units.
+    // slot 8: claimable CCA reward per address
     #[attribute(order = 8)]
-    pub cca_claimable_rewards: outbe_primitives::storage::dsl::Map<Address, U256>,
+    pub cca_claimable_minor: outbe_primitives::storage::dsl::Map<Address, U256>,
 }
 
 /// Pool a claimable balance belongs to. The pool decides the Gem class a

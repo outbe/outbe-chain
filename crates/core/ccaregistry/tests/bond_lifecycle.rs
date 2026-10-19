@@ -21,7 +21,6 @@ use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
     storage::{direct::DirectStorageProvider, StorageHandle},
     time::{previous_date_key, timestamp_to_date_key},
-    units::checked_protocol_to_native,
 };
 use reth_ethereum::evm::primitives::EvmEnv;
 use revm::{
@@ -123,14 +122,16 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     );
     // Same marker as fresh genesis and the block executor, preserving empty-balance state.
     let code = Bytecode::new_raw(Bytes::from_static(&[0xef]));
-    db.insert_account_info(
-        CCA_REGISTRY_ADDRESS,
-        AccountInfo {
-            code_hash: code.hash_slow(),
-            code: Some(code),
-            ..Default::default()
-        },
-    );
+    for address in [CCA_REGISTRY_ADDRESS, AGENT_REWARD_ADDRESS] {
+        db.insert_account_info(
+            address,
+            AccountInfo {
+                code_hash: code.hash_slow(),
+                code: Some(code.clone()),
+                ..Default::default()
+            },
+        );
+    }
 
     assert!(!tx(
         &mut db,
@@ -212,12 +213,20 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
             U256::ZERO
         );
     });
+    with_storage(&mut db, |s| {
+        assert_eq!(
+            AgentRewardContract::new(s)
+                .get_pool_claimable_reward(RewardPool::Cca, CCA)
+                .unwrap(),
+            U256::from(1000)
+        )
+    });
     assert_eq!(
         db.cache.accounts[&AGENT_REWARD_ADDRESS].info.balance,
-        checked_protocol_to_native(U256::from(1000)).unwrap()
+        U256::ZERO
     );
-    // Claim cases use a fixed balance so remainder handling stays independent of the pool split.
-    let reward = checked_protocol_to_native(U256::from(320)).unwrap();
+    // Claim cases use a fixed balance independent of the pool split.
+    let reward = U256::from(320);
     assert_eq!(
         db.cache.accounts[&CCA_REGISTRY_ADDRESS].info.balance,
         BOND_REQUIREMENT
@@ -311,37 +320,13 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
             .write(U256::ZERO)
             .unwrap();
     });
-    // Force failure after successful issuance, when burning its backing.
     with_storage(&mut db, |storage| {
-        let backing = storage.balance(AGENT_REWARD_ADDRESS).unwrap();
-        storage
-            .decrease_balance(AGENT_REWARD_ADDRESS, backing)
-            .unwrap();
-    });
-    let before_failure = snapshot(&mut db);
-    let failed = claim_reward(&mut db, claim(U256::ZERO), claim_time).unwrap_err();
-    assert!(failed.contains("insufficient balance for burn"), "{failed}");
-    assert_eq!(snapshot(&mut db), before_failure);
-    with_storage(&mut db, |storage| {
-        storage
-            .increase_balance(AGENT_REWARD_ADDRESS, reward)
-            .unwrap();
-        // Preserve an existing native remainder too.
-        storage
-            .increase_balance(AGENT_REWARD_ADDRESS, U256::from(7))
-            .unwrap();
         AgentRewardContract::new(storage)
-            .cca_claimable_rewards
-            .write(&CCA, reward + U256::from(7))
+            .cca_claimable_minor
+            .write(&CCA, reward)
             .unwrap();
     });
-    for (load, requested) in [
-        (
-            100,
-            checked_protocol_to_native(U256::from(100)).unwrap() + U256::from(3),
-        ),
-        (220, U256::ZERO),
-    ] {
+    for (load, requested) in [(100, U256::from(100)), (220, U256::ZERO)] {
         let (output, logs) = claim_reward(&mut db, claim(requested), claim_time).unwrap();
         let gem_id = IAgentReward::claimRewardCall::abi_decode_returns(&output).unwrap();
         let claimed = logs
@@ -352,10 +337,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         assert_eq!(claimed.cca, CCA);
         assert!(logs.iter().any(|log| log.address == AGENT_REWARD_ADDRESS
             && IAgentReward::RewardsClaimed::decode_log(log).is_ok()));
-        assert_eq!(
-            claimed.amount,
-            checked_protocol_to_native(U256::from(load)).unwrap()
-        );
+        assert_eq!(claimed.amount, U256::from(load));
         let issued = logs
             .iter()
             .find_map(|log| {
@@ -391,7 +373,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
             AgentRewardContract::new(storage)
                 .get_pool_claimable_reward(RewardPool::Cca, CCA)
                 .unwrap(),
-            U256::from(7)
+            U256::ZERO
         )
     });
     assert!(claim_reward(&mut db, claim(U256::ZERO), claim_time).is_err());

@@ -191,10 +191,10 @@ fn day_settlement(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<DaySettlem
         return Err(CycleError::SettlementBeforeParticipationWindowsClose.into());
     }
 
-    // Idempotency guard. This handler mints the CCA agent pool and sends
+    // Idempotency guard. This handler credits the agent pools and sends
     // terminal Metadosis with no per-mint day guard. Only the validator top-up
     // is idempotent through `daily_topup_settled`. A second call for the same
-    // `prev_day` would mint those pools again. `run_protocol_cycle` advances
+    // `prev_day` would credit those pools again. `run_protocol_cycle` advances
     // `active_utc_day` in the same checkpoint as this settlement. A later
     // CycleTick does not select that `prev_day` again. `daily_settled[prev_day]`
     // remains the defensive guard. Each day still settles once.

@@ -71,8 +71,8 @@ fn submit_reward_bearing_tribute(world: &mut World) {
         reward_utc_day: None,
         escrow_before_settlement_coen_units: None,
         cca_before_settlement_coen_units: None,
-        waa_claimable_coen_units: None,
-        sra_claimable_coen_units: None,
+        waa_claimable_minor: None,
+        sra_claimable_minor: None,
         claim_finalized_height: None,
         before_settlement_checkpoint: None,
         economic_check: None,
@@ -205,10 +205,6 @@ fn observe_agent_rewards(world: &mut World) {
             .expect("offer execution time"),
     );
     let (expected_waa, expected_sra) = economic_reference::single_beneficiary_rewards(emission_day);
-    let expected_escrow = escrow_before
-        .checked_add(expected_waa)
-        .and_then(|amount| amount.checked_add(expected_sra))
-        .expect("expected AgentReward escrow fits U256");
     let before = observation
         .before_settlement_checkpoint
         .expect("pre-settlement checkpoint");
@@ -257,8 +253,8 @@ fn observe_agent_rewards(world: &mut World) {
         "SRA differs from independent full daily pool"
     );
     assert_eq!(
-        balances.escrow, expected_escrow,
-        "AgentReward escrow differs from expected rewards"
+        balances.escrow, escrow_before,
+        "AgentReward settlement moved native COEN"
     );
     // This WAA/SRA scenario has no registered CCA or originated positions.
     // Its CCA allocation therefore goes to terminal Metadosis.
@@ -280,13 +276,13 @@ fn observe_agent_rewards(world: &mut World) {
         .agent_reward
         .as_mut()
         .expect("AgentReward beneficiary fixture");
-    observation.waa_claimable_coen_units = Some(waa_claimable);
-    observation.sra_claimable_coen_units = Some(sra_claimable);
+    observation.waa_claimable_minor = Some(waa_claimable);
+    observation.sra_claimable_minor = Some(sra_claimable);
     observation.economic_check = Some(AgentRewardEconomicCheckV1 {
         genesis_rewards_timestamp,
         emission_day,
-        expected_waa_coen_units: expected_waa,
-        expected_sra_coen_units: expected_sra,
+        expected_waa_minor: expected_waa,
+        expected_sra_minor: expected_sra,
         expected_cca_delta_coen_units: expected_cca_delta,
         checkpoint,
         validator_ports: ports,
@@ -314,8 +310,8 @@ fn beneficiaries_claim_agent_rewards(
             .as_ref()
             .expect("settled AgentReward observation");
         (
-            observation.waa_claimable_coen_units.expect("WAA claimable"),
-            observation.sra_claimable_coen_units.expect("SRA claimable"),
+            observation.waa_claimable_minor.expect("WAA claimable"),
+            observation.sra_claimable_minor.expect("SRA claimable"),
             native_balance(
                 world,
                 world.validators.primary_port(),
@@ -331,18 +327,6 @@ fn beneficiaries_claim_agent_rewards(
         waa_claimable,
         (waa_issuance, waa_reference),
     );
-    let escrow_after_waa = native_balance(
-        world,
-        world.validators.primary_port(),
-        addresses::AGENT_REWARD_ADDR,
-    );
-    assert_eq!(
-        escrow_after_waa,
-        escrow_before
-            .checked_sub(waa_claimable)
-            .expect("WAA escrow debit")
-    );
-
     let sra_block_number = claim_gem_and_assert_gas_only_cost(
         world,
         SRA_BENEFICIARY_KEY,
@@ -350,16 +334,14 @@ fn beneficiaries_claim_agent_rewards(
         sra_claimable,
         (sra_issuance, sra_reference),
     );
-    let escrow_after_sra = native_balance(
-        world,
-        world.validators.primary_port(),
-        addresses::AGENT_REWARD_ADDR,
-    );
     assert_eq!(
-        escrow_after_sra,
-        escrow_after_waa
-            .checked_sub(sra_claimable)
-            .expect("SRA escrow debit")
+        native_balance(
+            world,
+            world.validators.primary_port(),
+            addresses::AGENT_REWARD_ADDR,
+        ),
+        escrow_before,
+        "AgentReward claims moved native COEN"
     );
 
     let finalized_height = waa_block_number.max(sra_block_number);
@@ -379,7 +361,7 @@ fn beneficiaries_claim_agent_rewards(
         .claim_finalized_height = Some(finalized_height);
 }
 
-#[then("the paid Gem claims clear both claimables and debit the AgentReward escrow exactly")]
+#[then("the paid Gem claims clear both claimables and move no AgentReward native COEN")]
 fn claims_clear_agent_reward_state(world: &mut World) {
     let observation = world
         .state
@@ -409,7 +391,7 @@ fn claims_clear_agent_reward_state(world: &mut World) {
         assert_eq!(
             native_balance(world, port, addresses::AGENT_REWARD_ADDR),
             expected_escrow,
-            "AgentReward escrow was not debited exactly on validator port {port}"
+            "AgentReward native balance changed on validator port {port}"
         );
     }
 }
@@ -499,7 +481,7 @@ fn claim_gem_and_assert_gas_only_cost(
             claim_gem_terms_at(&url, height, reference_currency),
             "Gem inputs changed within claim block"
         );
-        let expected_load = claimable / U256::from(1_000_000_000_000u64);
+        let expected_load = claimable;
         assert!(!expected_load.is_zero());
         assert!(!issued.bucketKey.is_zero());
         let expected = eth::IGemFactory::GemIssued {

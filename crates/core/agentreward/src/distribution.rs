@@ -4,7 +4,6 @@ use crate::schema::{AgentRewardContract, RewardPool};
 use alloy_primitives::{Address, U256, U512};
 use outbe_primitives::error::Result as PrecompileResult;
 use outbe_primitives::time::WorldwideDay;
-use outbe_primitives::units::checked_protocol_to_native;
 
 // ------------------------------------------------------------------------
 // New daily orchestrator surface
@@ -41,8 +40,7 @@ pub enum PoolKind {
 /// Excess is rounding residue, or the whole pool when no positive eligible
 /// weight exists. Shares are not capped per address.
 ///
-/// The function mints backing at AGENT_REWARD_ADDRESS only for credited rewards.
-/// Claimable balances use native units; returned excess uses protocol units.
+/// Claimable balances and the returned excess are protocol units.
 pub fn distribute_daily(
     ctx: &outbe_primitives::block::BlockRuntimeContext,
     prev_day: WorldwideDay,
@@ -60,8 +58,7 @@ pub fn distribute_daily(
     })
 }
 
-/// Allocates one agent pool proportionally to its weights. One conversion to
-/// native COEN backs each credited share.
+/// Allocates one agent pool proportionally to its weights.
 /// The function returns the undistributed protocol units.
 fn distribute_pool(
     ctx: &outbe_primitives::block::BlockRuntimeContext,
@@ -100,16 +97,12 @@ fn distribute_pool(
         if reward.reward_amount.is_zero() {
             continue;
         }
-        let native = checked_protocol_to_native(reward.reward_amount)
-            .ok_or(AgentRewardError::NativeShareOverflow)?;
-        contract.add_claimable_reward(reward_pool, reward.address, native)?;
-        ctx.storage
-            .increase_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, native)?;
+        contract.add_claimable_reward(reward_pool, reward.address, reward.reward_amount)?;
         if reward_pool == RewardPool::Cca {
             contract.emit(IAgentReward::RewardAccrued {
                 cca: reward.address,
                 utcDay: prev_day.value(),
-                amount: native,
+                amount: reward.reward_amount,
             })?;
         }
     }
