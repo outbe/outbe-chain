@@ -90,7 +90,7 @@ where
         };
         // An EVM result failure (`Revert` / `Halt`) in a phase where
         // `revert_fails_block()` is true fails the whole block. In a soft phase
-        // (RewardsGemDelivery, OracleSlashWindow), the failure becomes a
+        // (OracleSlashWindow, HookEvents), the failure becomes a
         // `status=0` synthetic receipt with one `OutbeFailure(code, reason)`
         // log emitted from `OUTBE_SYSTEM_TX_ADDRESS`. revm did not commit the call, so
         // no state change leaks. Raw `Err` from the system-call engine remains fatal
@@ -248,8 +248,8 @@ where
         // emission/reshare, unrecorded parent accounting). The revert is a
         // deterministic function of committed chain state, so every
         // validator rejects the same block identically. There is no
-        // state-root split. Non-critical phases (RewardsGemDelivery,
-        // OracleSlashWindow) keep the soft-receipt skip for failures that fit within the
+        // state-root split. Non-critical phases (OracleSlashWindow,
+        // HookEvents) keep the soft-receipt skip for failures that fit within the
         // aggregate internal-work budget. An OOG consumes the full
         // system-call gas limit and therefore remains a hard aggregate
         // budget failure once earlier mandatory phases have run.

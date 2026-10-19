@@ -17,7 +17,7 @@
 //! The same hourly slot does not retry on the next block.
 //! At a contiguous day transition the slot remains pending until the prior
 //! day's last late-vote inclusion window closes. Canonical late participants
-//! receive the same daily GEM participation weight as base-certificate voters,
+//! receive the same daily reward participation weight as base-certificate voters,
 //! once per block and for that block's UTC day. Fee decay remains independent.
 //!
 //! Each completed-day settlement preserves the existing 5-pool + Metadosis
@@ -25,16 +25,14 @@
 //!
 //! 1. Compute `day_emission_limit(day_number_since_genesis(prev_day))`.
 //! 2. Allocate over the 5-sink table from `outbe-emissionlimit`.
-//! 3. Validator pool: read `outbe_rewards::api::read_daily_fee_sum_raw`
-//!    and `read_voters_for_day`. If fees >= cap or no voters, return
-//!    the validator amount as excess. Otherwise, prepare one exact immutable
-//!    Rewards Gem batch. The planned total becomes a durable liability and
-//!    the undistributed rounding residue becomes terminal excess. The later
-//!    `RewardsGemDelivery` system transaction owns delivery.
-//! 4. WAA / SRA / CCA: call
-//!    `outbe_agentreward::distribute_daily`.
-//! 5. Metadosis terminal credit = metadosis_amount + validator_excess +
-//!    agent_excess, dispatched through
+//! 3. Validator top-up: the validator share minus
+//!    `outbe_rewards::api::read_daily_fee_sum_raw`. The fee-covered part
+//!    becomes terminal excess.
+//! 4. WAA / SRA / CCA / validator top-up: call
+//!    `outbe_agentreward::distribute_daily`. Each pool credits claimable
+//!    balances; the undistributed residue becomes terminal excess.
+//! 5. Metadosis terminal credit = metadosis_amount + fee-covered validator
+//!    share + pool excess, dispatched through
 //!    `outbe_emissionlimit::block::dispatch_terminal_remainder_at` at
 //!    the previous-day midnight timestamp.
 //! 6. Mark `Rewards.daily_settled[prev_day] = true` to prevent redispatch.

@@ -64,7 +64,7 @@ fn active_lifecycle_proposer_and_replay_match_receipts_roots_and_header_artifact
     let proposer = run(false);
     let replay = run(true);
     assert_eq!(proposer, replay);
-    assert_eq!(proposer.0.len(), 6);
+    assert_eq!(proposer.0.len(), 5);
 }
 
 /// Determinism gate: a block carries a valid BLS late-finalize credit. The block executes on two
@@ -487,7 +487,6 @@ fn read_late_credit_settlement(
         assert_eq!(participation.read(voter)?, 1);
     }
     assert_eq!(participation.read(&addrs[3])?, 0);
-    assert_eq!(r.daily_total_participation.read(&reward_day)?, 4);
     let voter_balance = storage.balance(settle_voter)?;
     let rewards_balance = storage.balance(REWARDS_ADDRESS)?;
     // `addrs[3]` is a committee member absent for the settled block

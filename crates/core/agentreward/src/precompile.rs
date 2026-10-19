@@ -24,8 +24,8 @@ impl AgentRewardContract<'_> {
         currencies: (u16, u16),
     ) -> Result<U256> {
         let pool = RewardPool::from_abi(pool)?;
-        // A zero amount claims the whole pool balance. Empty WAA and SRA pools permit no-op
-        // claims.
+        // A zero amount claims the whole pool balance. Empty WAA, SRA and validator pools
+        // permit no-op claims.
         // CCA claims still require registration history and revert when the balance is zero.
         if pool != RewardPool::Cca
             && amount.is_zero()

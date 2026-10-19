@@ -1,7 +1,5 @@
 use super::*;
 
-mod reward_delivery;
-
 fn test_reserved_system_address_tx() -> reth_ethereum::TransactionSigned {
     TxEip1559 {
         chain_id: CHAIN_ID,
@@ -65,11 +63,6 @@ fn executor_rejects_user_tx_to_reserved_system_address() {
         "unexpected reserved-address rejection error: {err}"
     );
     assert!(executor.receipts().is_empty());
-}
-
-#[test]
-fn reward_gem_delivery_mints_one_recipient_per_block_while_cycle_appends_the_next() {
-    reward_delivery::run();
 }
 
 #[test]
@@ -248,46 +241,14 @@ fn gas_03_without_commit_reserved_system_tx_must_not_use_user_lane_admission() {
 fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_lane_clean() {
     let signer = test_evm_signer();
     let proposer = signer.address();
-    let reward_owner_a = Address::repeat_byte(0x71);
-    let reward_owner_b = Address::repeat_byte(0x72);
     let user_tx = test_regular_tx()
         .try_into_recovered()
         .expect("regular tx signer should recover");
     let mut state =
         state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
             let seed_context = BlockContext::new(0, 1, CHAIN_ID, proposer, vec![proposer]);
-            let ctx = BlockRuntimeContext::new(seed_context, storage.clone());
+            let ctx = BlockRuntimeContext::new(seed_context, storage);
             outbe_rewards::runtime::ensure_genesis_anchor(&ctx).unwrap();
-            outbe_oracle::api::set_exchange_rate(
-                storage.clone(),
-                Address::ZERO,
-                outbe_oracle::api::DAY_TYPE_PAIR,
-                outbe_oracle::api::RateObservation {
-                    rate: U256::from(1_000_000u64),
-                    block_number: 1,
-                    timestamp: TEST_BLOCK_TIMESTAMP_BASE + 1,
-                },
-            )
-            .unwrap();
-            seed_previous_day_vwap(
-                &storage,
-                TEST_BLOCK_TIMESTAMP_BASE + 1,
-                U256::from(1_000_000u64),
-            );
-            // The retry block below runs at timestamp 2.
-            seed_previous_day_vwap(&storage, 2, U256::from(1_000_000u64));
-            outbe_rewards::api::prepare_daily_validator_gem_batch(
-                &ctx,
-                20_240_101,
-                U256::from(200u64),
-                &[(reward_owner_a, 1), (reward_owner_b, 1)],
-            )
-            .unwrap();
-            // One mint per block: the very first issuance must overflow the counter.
-            outbe_gemfactory::schema::GemFactoryContract::new(storage)
-                .total_gems_issued
-                .write(U256::MAX)
-                .unwrap();
         });
     state.database.insert_account_info(
         Address::from(*user_tx.signer()),
@@ -296,25 +257,6 @@ fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_la
             ..Default::default()
         },
     );
-    {
-        let read_context = BlockContext::new(0, 1, CHAIN_ID, proposer, vec![proposer]);
-        let mut provider =
-            outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, read_context);
-        StorageHandle::enter(&mut provider, |storage| {
-            let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
-            assert_eq!(rewards.reward_gem_queue_head.read()?, 0);
-            assert_eq!(rewards.reward_gem_queue_tail.read()?, 1);
-            assert_eq!(rewards.reward_gem_pending_batch_count.read()?, 1);
-            assert_eq!(
-                outbe_gemfactory::schema::GemFactoryContract::new(storage)
-                    .total_gems_issued
-                    .read()?,
-                U256::MAX
-            );
-            Ok::<_, outbe_primitives::error::PrecompileError>(())
-        })
-        .expect("seed one retryable Rewards Gem batch");
-    }
     let chain_spec = test_chain_spec();
     let receipt_builder = reth_ethereum::evm::RethReceiptBuilder::default();
     let config = OutbeEvmConfig::new(chain_spec.clone()).with_evm_signer(signer.clone());
@@ -343,9 +285,6 @@ fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_la
     let cycle_tx = system_txs
         .next()
         .expect("CycleTick system tx should be present");
-    let rewards_tx = system_txs
-        .next()
-        .expect("RewardsGemDelivery system tx should be present");
     let tee_bootstrap_tx = system_txs
         .next()
         .expect("TeeBootstrap system tx should be present");
@@ -355,38 +294,42 @@ fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_la
     let hook_events_tx = system_txs
         .next()
         .expect("HookEvents system tx should be present");
-    let rewards_signed_gas = rewards_tx.tx().gas_limit();
-    let rewards_intrinsic_gas =
-        outbe_primitives::system_tx::system_tx_intrinsic_gas(rewards_tx.tx().input())
-            .expect("RewardsGemDelivery intrinsic gas computes");
+    let oracle_signed_gas = oracle_tx.tx().gas_limit();
+    let oracle_intrinsic_gas =
+        outbe_primitives::system_tx::system_tx_intrinsic_gas(oracle_tx.tx().input())
+            .expect("OracleSlashWindow intrinsic gas computes");
 
-    // CycleTick is consensus-critical. RewardsGemDelivery is deliberately
-    // retryable, so an ordinary revert records a soft failure and later
+    // CycleTick and TeeBootstrap are consensus-critical. OracleSlashWindow is
+    // soft, so an ordinary revert records a failure receipt and later
     // begin-zone/user transactions still execute.
     let cycle_gas = executor
         .execute_transaction(cycle_tx)
         .expect("CycleTick should execute successfully")
         .tx_gas_used();
-    let revert_gas = executor
-        .execute_transaction(rewards_tx)
-        .expect("RewardsGemDelivery revert should soft-fail")
+    let tee_bootstrap_gas = executor
+        .execute_transaction(tee_bootstrap_tx)
+        .expect("mandatory TeeBootstrap should execute before the non-critical phase")
         .tx_gas_used();
-    // The delivery envelope signs only its intrinsic gas, and its failure receipt charges exactly that.
-    assert_eq!(rewards_signed_gas, rewards_intrinsic_gas);
+    let revert_gas = crate::factory::with_forced_outbe_system_call_revert(|| {
+        executor.execute_transaction(oracle_tx)
+    })
+    .expect("OracleSlashWindow revert should soft-fail")
+    .tx_gas_used();
+    // The envelope signs only its intrinsic gas, and its failure receipt charges exactly that.
+    assert_eq!(oracle_signed_gas, oracle_intrinsic_gas);
     assert_eq!(
-        revert_gas, rewards_intrinsic_gas,
-        "GAS-11: reverted delivery charges {revert_gas}, expected {rewards_intrinsic_gas}"
+        revert_gas, oracle_intrinsic_gas,
+        "GAS-11: reverted OracleSlashWindow charges {revert_gas}, expected {oracle_intrinsic_gas}"
     );
     let failure_receipt = executor
         .receipts()
-        .get(1)
-        .expect("reverted delivery must emit a failure receipt");
-    assert!(
-        !failure_receipt.success,
-        "seeded delivery unexpectedly succeeded: logs={:?}",
-        failure_receipt.logs
+        .get(2)
+        .expect("reverted OracleSlashWindow must emit a failure receipt");
+    assert!(!failure_receipt.success);
+    assert_eq!(
+        failure_receipt.cumulative_gas_used,
+        cycle_gas + tee_bootstrap_gas + revert_gas
     );
-    assert_eq!(failure_receipt.cumulative_gas_used, cycle_gas + revert_gas);
     assert_eq!(failure_receipt.logs.len(), 1);
     assert_eq!(failure_receipt.logs[0].address, OUTBE_SYSTEM_TX_ADDRESS);
     assert_eq!(
@@ -402,74 +345,19 @@ fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_la
         "GAS-11: system revert soft-failure receipt must use OutbeFailure code 201"
     );
 
-    let tee_bootstrap_gas = executor
-        .execute_transaction(tee_bootstrap_tx)
-        .expect("mandatory TeeBootstrap should execute before the non-critical phase")
-        .tx_gas_used();
-    let oracle_gas = executor
-        .execute_transaction(oracle_tx)
-        .expect("OracleSlashWindow should execute after delivery")
-        .tx_gas_used();
     let hook_events_gas = executor
         .execute_transaction(hook_events_tx)
-        .expect("HookEvents should execute after delivery")
+        .expect("HookEvents should execute after the soft failure")
         .tx_gas_used();
-
     let user_gas = executor
         .execute_transaction(user_tx)
         .expect("user txs must execute after a soft-failed non-critical begin-zone system tx")
         .tx_gas_used();
     assert_eq!(
         executor.inner.cumulative_tx_gas_used,
-        cycle_gas + revert_gas + tee_bootstrap_gas + oracle_gas + hook_events_gas + user_gas,
+        cycle_gas + tee_bootstrap_gas + revert_gas + hook_events_gas + user_gas,
         "GAS-11: soft-failed system tx must charge only its published visible gas"
     );
-    drop(executor);
-
-    let retry_context = BlockContext::new(2, 2, CHAIN_ID, proposer, vec![proposer]);
-    let mut retry_provider = outbe_primitives::storage::direct::DirectStorageProvider::new(
-        &mut state,
-        retry_context.clone(),
-    );
-    StorageHandle::enter(&mut retry_provider, |storage| {
-        let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
-        let gem = outbe_gem::GemContract::new(storage.clone());
-        assert_eq!(rewards.reward_gem_queue_head.read()?, 0);
-        assert_eq!(rewards.reward_gem_queue_tail.read()?, 1);
-        assert_eq!(rewards.reward_gem_pending_batch_count.read()?, 1);
-        assert_eq!(gem.total_supply()?, 0);
-
-        outbe_gemfactory::schema::GemFactoryContract::new(storage.clone())
-            .total_gems_issued
-            .write(U256::ZERO)?;
-        let retry_ctx = BlockRuntimeContext::new(retry_context, storage.clone());
-        // Retry the unchanged FIFO head against the persisted EVM state.
-
-        assert!(matches!(
-            outbe_rewards::api::deliver_oldest_reward_gem_batch(
-                &retry_ctx)?,
-            outbe_rewards::api::RewardGemDeliveryOutcome::Delivered {
-                reward_utc_day: 20_240_101,
-                recipient_count: 2,
-                delivered_promis_load_amount,
-                delivered_recipients: 1,
-                batch_complete: false,
-            } if delivered_promis_load_amount == U256::from(100u64)
-        ));
-        // One Gem per block. The head stays until its second recipient.
-        assert_eq!(rewards.reward_gem_queue_head.read()?, 0);
-        assert_eq!(rewards.reward_gem_queue_tail.read()?, 1);
-        assert_eq!(rewards.reward_gem_pending_batch_count.read()?, 1);
-        assert_eq!(rewards.reward_gem_delivered_count.read(&20_240_101)?, 1);
-        assert_eq!(gem.total_supply()?, 1);
-        assert_eq!(
-            outbe_gem::api::list_by_owner(&storage, reward_owner_a)?.len(),
-            1
-        );
-        assert!(outbe_gem::api::list_by_owner(&storage, reward_owner_b)?.is_empty());
-        Ok::<_, outbe_primitives::error::PrecompileError>(())
-    })
-    .expect("the unchanged FIFO head must deliver on a later retry");
 }
 
 enum CriticalCycleFault {
@@ -539,11 +427,10 @@ fn critical_cycle_tick_revert_fails_block() {
     );
 }
 
-/// A stale reward price at the UTC-day boundary defers only Gem delivery:
-/// CycleTick seals the allocation, RewardsGemDelivery leaves the FIFO head
-/// pending, and the user-lane feeder vote still executes.
+/// With a stale reward price at the UTC-day boundary, CycleTick credits the
+/// validator pool and the user-lane feeder vote executes.
 #[test]
-fn stale_oracle_cycle_stages_reward_batch_and_allows_later_feeder_vote() {
+fn stale_oracle_cycle_credits_validator_reward_and_allows_later_feeder_vote() {
     const GENESIS_TS: u64 = 1_704_067_200;
     use outbe_primitives::time::SECONDS_PER_DAY;
     const PREVIOUS_DAY: u32 = 20_240_101;
@@ -553,10 +440,7 @@ fn stale_oracle_cycle_stages_reward_batch_and_allows_later_feeder_vote() {
         active_day: u32,
         last_executed_at: u64,
         day_settled: bool,
-        topup_prepared: bool,
-        topup_settled: bool,
-        queue_head: u64,
-        queue_tail: u64,
+        voter_claimable: U256,
         voter_gems: u64,
         feeder_vote_exists: bool,
         formation_exists: bool,
@@ -602,10 +486,6 @@ fn stale_oracle_cycle_stages_reward_batch_and_allows_later_feeder_vote() {
                     .daily_participation
                     .get_nested(&PREVIOUS_DAY)
                     .write(&voter, 1)
-                    .unwrap();
-                rewards
-                    .daily_total_participation
-                    .write(&PREVIOUS_DAY, 1)
                     .unwrap();
 
                 let mut validator_set =
@@ -658,7 +538,7 @@ fn stale_oracle_cycle_stages_reward_batch_and_allows_later_feeder_vote() {
         for tx in body {
             executor
                 .execute_transaction(tx)
-                .expect("stale reward price must defer only Gem delivery");
+                .expect("stale reward price must not fail the block");
         }
         drop(executor);
 
@@ -674,10 +554,12 @@ fn stale_oracle_cycle_stages_reward_batch_and_allows_later_feeder_vote() {
                 active_day: cycle.active_utc_day.read().unwrap(),
                 last_executed_at: cycle.last_executed_at.read(&emission_trigger).unwrap(),
                 day_settled: rewards.daily_settled.read(&PREVIOUS_DAY).unwrap(),
-                topup_prepared: rewards.daily_topup_prepared.read(&PREVIOUS_DAY).unwrap(),
-                topup_settled: rewards.daily_topup_settled.read(&PREVIOUS_DAY).unwrap(),
-                queue_head: rewards.reward_gem_queue_head.read().unwrap(),
-                queue_tail: rewards.reward_gem_queue_tail.read().unwrap(),
+                voter_claimable: outbe_agentreward::AgentRewardContract::new(storage.clone())
+                    .get_pool_claimable_reward(
+                        outbe_agentreward::schema::RewardPool::Validator,
+                        voter,
+                    )
+                    .unwrap(),
                 voter_gems: gem.total_supply().unwrap(),
                 feeder_vote_exists: oracle.vote_exists.read(&proposer).unwrap(),
                 formation_exists: outbe_metadosis::api::day_limit_formation_receipt(
@@ -694,10 +576,7 @@ fn stale_oracle_cycle_stages_reward_batch_and_allows_later_feeder_vote() {
     assert_eq!(first.active_day, 20_240_102);
     assert_eq!(first.last_executed_at, GENESIS_TS + SECONDS_PER_DAY);
     assert!(first.day_settled);
-    assert!(first.topup_prepared);
-    assert!(!first.topup_settled);
-    assert_eq!(first.queue_head, 0);
-    assert_eq!(first.queue_tail, 1);
+    assert!(!first.voter_claimable.is_zero());
     assert_eq!(first.voter_gems, 0);
     assert!(first.feeder_vote_exists);
     assert!(first.formation_exists);
@@ -803,17 +682,9 @@ fn verifier_rejects_boundary_outcome_system_tx_artifact_mismatch() {
         SystemTxInputV2::CycleTick.encode().unwrap(),
     )
     .unwrap();
-    let rewards_unsigned = build_unsigned_system_tx(
-        SystemTxKind::RewardsGemDelivery,
-        1,
-        1,
-        CHAIN_ID,
-        SystemTxInputV2::RewardsGemDelivery.encode().unwrap(),
-    )
-    .unwrap();
     let boundary_unsigned = build_unsigned_system_tx(
         SystemTxKind::BoundaryOutcome,
-        2,
+        1,
         1,
         CHAIN_ID,
         SystemTxInputV2::BoundaryOutcome {
@@ -824,19 +695,12 @@ fn verifier_rejects_boundary_outcome_system_tx_artifact_mismatch() {
     )
     .unwrap();
     let cycle_signed = signer.sign_unsigned(cycle_unsigned).unwrap();
-    let rewards_signed = signer.sign_unsigned(rewards_unsigned).unwrap();
     let boundary_signed = signer.sign_unsigned(boundary_unsigned).unwrap();
     let cycle_recovered = reth_primitives_traits::Recovered::new_unchecked(cycle_signed, proposer);
-    let rewards_recovered =
-        reth_primitives_traits::Recovered::new_unchecked(rewards_signed, proposer);
     let boundary_recovered =
         reth_primitives_traits::Recovered::new_unchecked(boundary_signed, proposer);
-    let mut ctx = execution_ctx(Some(3), extra_data);
-    ctx.expected_begin_system_txs = vec![
-        cycle_recovered.clone(),
-        rewards_recovered,
-        boundary_recovered.clone(),
-    ];
+    let mut ctx = execution_ctx(Some(2), extra_data);
+    ctx.expected_begin_system_txs = vec![cycle_recovered.clone(), boundary_recovered.clone()];
     ctx.proposer_evm_address = Some(proposer);
 
     let mut executor = config.create_executor(evm, ctx);

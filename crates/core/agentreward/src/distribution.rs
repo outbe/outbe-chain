@@ -4,19 +4,12 @@ use crate::schema::{AgentRewardContract, RewardPool};
 use alloy_primitives::{Address, U256, U512};
 use outbe_primitives::error::Result as PrecompileResult;
 use outbe_primitives::time::WorldwideDay;
-use outbe_primitives::units::checked_protocol_to_native;
 
 // ------------------------------------------------------------------------
 // New daily orchestrator surface
 // ------------------------------------------------------------------------
 
-/// One of the three reward pools that AgentReward owns end-to-end. The
-/// validator pool is intentionally NOT part of this enum. The EmissionLimit
-/// Cycle handler orchestrates validator emission directly against
-/// `outbe_rewards::api` for two reasons:
-/// * the natural dependency direction is `emissionlimit -> rewards`;
-/// * this avoids an `agentreward -> rewards -> emissionlimit -> agentreward`
-///   crate cycle.
+/// One of the reward pools that AgentReward owns end-to-end.
 ///
 /// The EmissionLimit daily handler splits the emission between pool kinds.
 /// This enum is the protocol contract between that orchestrator and
@@ -31,6 +24,9 @@ pub enum PoolKind {
     Sra,
     /// CCA rewards weighted by net origination recorded in the CCA registry.
     Cca,
+    /// Validator top-up weighted by the day's finalized-block participation
+    /// recorded in Rewards.
+    Validator,
 }
 
 /// Daily orchestrator entrypoint called by the EmissionLimit Cycle
@@ -41,8 +37,7 @@ pub enum PoolKind {
 /// Excess is rounding residue, or the whole pool when no positive eligible
 /// weight exists. Shares are not capped per address.
 ///
-/// The function mints backing at AGENT_REWARD_ADDRESS only for credited rewards.
-/// Claimable balances use native units; returned excess uses protocol units.
+/// Claimable balances and the returned excess are protocol units.
 pub fn distribute_daily(
     ctx: &outbe_primitives::block::BlockRuntimeContext,
     prev_day: WorldwideDay,
@@ -60,8 +55,7 @@ pub fn distribute_daily(
     })
 }
 
-/// Allocates one agent pool proportionally to its weights. One conversion to
-/// native COEN backs each credited share.
+/// Allocates one agent pool proportionally to its weights.
 /// The function returns the undistributed protocol units.
 fn distribute_pool(
     ctx: &outbe_primitives::block::BlockRuntimeContext,
@@ -94,29 +88,31 @@ fn distribute_pool(
             RewardPool::Cca,
             outbe_ccaregistry::api::active_reward_weights(&ctx.storage, prev_day.value())?,
         ),
+        PoolKind::Validator => (
+            RewardPool::Validator,
+            outbe_rewards::api::read_voters_for_day(ctx, prev_day.value())?
+                .into_iter()
+                .map(|(address, count)| (address, U256::from(count)))
+                .collect(),
+        ),
     };
     let (rewards, excess) = calculate_proportional_distribution(amount, &weights)?;
     for reward in rewards {
         if reward.reward_amount.is_zero() {
             continue;
         }
-        let native = checked_protocol_to_native(reward.reward_amount)
-            .ok_or(AgentRewardError::NativeShareOverflow)?;
-        contract.add_claimable_reward(reward_pool, reward.address, native)?;
-        ctx.storage
-            .increase_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, native)?;
-        if reward_pool == RewardPool::Cca {
-            contract.emit(IAgentReward::RewardAccrued {
-                cca: reward.address,
-                utcDay: prev_day.value(),
-                amount: native,
-            })?;
-        }
+        contract.add_claimable_reward(reward_pool, reward.address, reward.reward_amount)?;
+        contract.emit(IAgentReward::RewardAccrued {
+            account: reward.address,
+            pool: reward_pool as u8,
+            utcDay: prev_day.value(),
+            promisLoadMinor: reward.reward_amount,
+        })?;
     }
     match kind {
         PoolKind::Waa => contract.clear_waa_counts(prev_day)?,
         PoolKind::Sra => contract.clear_sra_counts(prev_day)?,
-        PoolKind::Cca => {}
+        PoolKind::Cca | PoolKind::Validator => {}
     }
     Ok(excess)
 }

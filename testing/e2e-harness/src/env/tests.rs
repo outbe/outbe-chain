@@ -203,7 +203,7 @@ fn ordinary_oracle_and_zerofee_rollover_steps_remain_available_without_integrati
 }
 
 #[test]
-fn settlement_and_nod_redemption_keep_all_three_executable_scenarios() {
+fn settlement_and_nod_redemption_keep_both_executable_scenarios() {
     let env = Environment {
         tee_mode: TeeMode::SgxNoAttest,
         validators: 4,
@@ -235,7 +235,6 @@ fn settlement_and_nod_redemption_keep_all_three_executable_scenarios() {
         checked,
         [
             "A zero-balance validator redeems its reward Gem through ZeroFee",
-            "A stale Oracle rate defers validator Gem delivery and later recovers",
             "A public Tribute becomes an encrypted Nod and its owner receives COEN",
         ]
     );

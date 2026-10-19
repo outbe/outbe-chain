@@ -19,7 +19,6 @@ fn protocol_cycle_forfeits_every_completed_day_after_a_multi_day_halt() {
         let rewards = fire.storage.contract::<Rewards<'_>>();
         for day in [20_240_101, 20_240_102, 20_240_103] {
             assert!(!rewards.daily_settled.read(&day).unwrap());
-            assert!(!rewards.daily_topup_settled.read(&day).unwrap());
             assert!(
                 outbe_metadosis::api::day_limit_formation_receipt(
                     fire.storage.clone(),
@@ -179,10 +178,6 @@ fn a_multi_day_halt_issues_no_emission_and_credits_no_capacity_or_native_balance
             assert!(
                 !rewards.daily_settled.read(&day).unwrap(),
                 "day {day}: no daily emission settlement"
-            );
-            assert!(
-                !rewards.daily_topup_settled.read(&day).unwrap(),
-                "day {day}: no validator top-up"
             );
         }
         assert_eq!(

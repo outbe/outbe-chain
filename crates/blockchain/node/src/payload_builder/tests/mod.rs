@@ -453,7 +453,6 @@ fn bootstrap_payload_builder_ignores_nonempty_pool_and_replays_exactly() {
         layout.begin_block_kinds().expect("begin inputs decode"),
         vec![
             SystemTxKind::CycleTick,
-            SystemTxKind::RewardsGemDelivery,
             SystemTxKind::BoundaryOutcome,
             SystemTxKind::TeeBootstrap,
             SystemTxKind::OracleSlashWindow,
@@ -468,7 +467,7 @@ fn bootstrap_payload_builder_ignores_nonempty_pool_and_replays_exactly() {
         .expect("builder exposes the exact executed payload");
     let receipts = &executed.execution_output.result.receipts;
     assert_eq!(receipts.len(), body.len());
-    assert_eq!(receipts.len(), 6);
+    assert_eq!(receipts.len(), 5);
     assert_eq!(case.rejected.load(Ordering::Relaxed), 0);
 
     let replay = case
@@ -527,7 +526,6 @@ fn bootstrap_payload_survives_repeated_block_one_proposal_attempts() {
             .expect("retry begin inputs decode"),
         vec![
             SystemTxKind::CycleTick,
-            SystemTxKind::RewardsGemDelivery,
             SystemTxKind::BoundaryOutcome,
             SystemTxKind::TeeBootstrap,
             SystemTxKind::OracleSlashWindow,

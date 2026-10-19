@@ -4,8 +4,8 @@
 //!
 //! - the executor rejects a transaction outside the EVM (zero-fee policy
 //!   classification or stateful authorization).
-//! - a soft begin-zone system transaction (`RewardsGemDelivery` or
-//!   `OracleSlashWindow`) fails to execute.
+//! - a soft begin-zone system transaction (`OracleSlashWindow` or
+//!   `HookEvents`) fails to execute.
 //!
 //! A revert or halt in the other system-tx phases (for example
 //! `CertifiedParentAccounting`, `LateFinalizeCredits`, `CycleTick`,

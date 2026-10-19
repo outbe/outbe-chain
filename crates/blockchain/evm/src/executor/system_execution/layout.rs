@@ -131,11 +131,6 @@ where
                 SystemTxKind::CycleTick => {
                     self.append_begin_input(&mut system_txs, *kind, || SystemTxInputV2::CycleTick)?
                 }
-                SystemTxKind::RewardsGemDelivery => {
-                    self.append_begin_input(&mut system_txs, *kind, || {
-                        SystemTxInputV2::RewardsGemDelivery
-                    })?
-                }
                 SystemTxKind::OracleSlashWindow => {
                     // Keep late OST3 rejection after boundary, before decoding Oracle.
                     if block_number != 1 && self.pending_tee_bootstrap.is_some() {

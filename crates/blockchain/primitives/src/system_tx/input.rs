@@ -30,7 +30,6 @@ pub enum SystemTxInputV2 {
         artifact: LateFinalizeCreditsArtifact,
     },
     CycleTick,
-    RewardsGemDelivery,
     BoundaryOutcome {
         artifact: DkgBoundaryArtifact,
     },
@@ -50,7 +49,6 @@ impl SystemTxInputV2 {
             Self::CertifiedParentAccounting { .. } => SystemTxKind::CertifiedParentAccounting,
             Self::LateFinalizeCredits { .. } => SystemTxKind::LateFinalizeCredits,
             Self::CycleTick => SystemTxKind::CycleTick,
-            Self::RewardsGemDelivery => SystemTxKind::RewardsGemDelivery,
             Self::BoundaryOutcome { .. } => SystemTxKind::BoundaryOutcome,
             Self::TeeBootstrap { .. } => SystemTxKind::TeeBootstrap,
             Self::OracleSlashWindow => SystemTxKind::OracleSlashWindow,
@@ -74,10 +72,7 @@ impl SystemTxInputV2 {
                         .as_ref(),
                 );
             }
-            Self::CycleTick
-            | Self::RewardsGemDelivery
-            | Self::OracleSlashWindow
-            | Self::HookEvents => {}
+            Self::CycleTick | Self::OracleSlashWindow | Self::HookEvents => {}
             Self::LateFinalizeCredits { artifact } => {
                 // Empty batches encode to empty bytes. The mandatory tx then
                 // carries an empty body and still drives the window-close settle.
@@ -130,9 +125,6 @@ impl SystemTxInputV2 {
                     .unwrap_or_default(),
             }),
             SystemTxKind::CycleTick => Self::decode_empty_body(kind, body, Self::CycleTick),
-            SystemTxKind::RewardsGemDelivery => {
-                Self::decode_empty_body(kind, body, Self::RewardsGemDelivery)
-            }
             SystemTxKind::OracleSlashWindow => {
                 Self::decode_empty_body(kind, body, Self::OracleSlashWindow)
             }

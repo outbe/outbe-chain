@@ -8,8 +8,6 @@ use thiserror::Error;
 pub enum AgentRewardError {
     #[error("agentreward distribute_daily overflow")]
     DistributeDailyOverflow,
-    #[error("native AgentReward share overflow")]
-    NativeShareOverflow,
     #[error("reward distribution arithmetic overflow")]
     DistributionOverflow,
     #[error("agentreward claimable total overflow")]
@@ -20,10 +18,6 @@ pub enum AgentRewardError {
     NoClaimableBalance,
     #[error("insufficient claimable balance")]
     InsufficientClaimableBalance,
-    #[error("claimed amount is below one protocol unit")]
-    ClaimBelowProtocolUnit,
-    #[error("native AgentReward claim overflow")]
-    NativeClaimOverflow,
     #[error("agentreward has no previous-day COEN price in {0}")]
     MissingPreviousDayPrice(u16),
     #[error("reward timestamp overflow")]

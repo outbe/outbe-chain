@@ -168,9 +168,6 @@ pub(super) fn seed_dense_voter_participation(
     rewards
         .daily_voter_count
         .write(&prev_day, validator_count)?;
-    rewards
-        .daily_total_participation
-        .write(&prev_day, u64::from(validator_count))?;
     for index in 0..validator_count {
         let voter = numbered_test_address(0x12, u64::from(index));
         rewards
@@ -249,9 +246,27 @@ pub(super) fn assert_dense_agent_settlement(
     );
     assert_eq!(
         storage.balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)?,
-        claimable_total,
-        "GAS-05: AgentReward backing balance must match dense claimable total"
+        U256::ZERO,
+        "GAS-05: AgentReward holds no native COEN"
     );
+    Ok(())
+}
+
+/// Every dense voter holds a nonzero validator claimable and no Gem.
+pub(super) fn assert_dense_validator_settlement(
+    storage: StorageHandle<'_>,
+    validator_count: u32,
+) -> outbe_primitives::error::Result<()> {
+    let agent_reward = outbe_agentreward::AgentRewardContract::new(storage);
+    for index in 0..validator_count {
+        let voter = numbered_test_address(0x12, u64::from(index));
+        let claimable = agent_reward
+            .get_pool_claimable_reward(outbe_agentreward::schema::RewardPool::Validator, voter)?;
+        assert!(
+            !claimable.is_zero(),
+            "GAS-05: dense validator {voter} received zero claimable reward"
+        );
+    }
     Ok(())
 }
 

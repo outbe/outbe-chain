@@ -21,7 +21,6 @@ use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
     storage::{direct::DirectStorageProvider, StorageHandle},
     time::{previous_date_key, timestamp_to_date_key},
-    units::checked_protocol_to_native,
 };
 use reth_ethereum::evm::primitives::EvmEnv;
 use revm::{
@@ -123,14 +122,16 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     );
     // Same marker as fresh genesis and the block executor, preserving empty-balance state.
     let code = Bytecode::new_raw(Bytes::from_static(&[0xef]));
-    db.insert_account_info(
-        CCA_REGISTRY_ADDRESS,
-        AccountInfo {
-            code_hash: code.hash_slow(),
-            code: Some(code),
-            ..Default::default()
-        },
-    );
+    for address in [CCA_REGISTRY_ADDRESS, AGENT_REWARD_ADDRESS] {
+        db.insert_account_info(
+            address,
+            AccountInfo {
+                code_hash: code.hash_slow(),
+                code: Some(code.clone()),
+                ..Default::default()
+            },
+        );
+    }
 
     assert!(!tx(
         &mut db,
@@ -212,12 +213,20 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
             U256::ZERO
         );
     });
+    with_storage(&mut db, |s| {
+        assert_eq!(
+            AgentRewardContract::new(s)
+                .get_pool_claimable_reward(RewardPool::Cca, CCA)
+                .unwrap(),
+            U256::from(1000)
+        )
+    });
     assert_eq!(
         db.cache.accounts[&AGENT_REWARD_ADDRESS].info.balance,
-        checked_protocol_to_native(U256::from(1000)).unwrap()
+        U256::ZERO
     );
-    // Claim cases use a fixed balance so remainder handling stays independent of the pool split.
-    let reward = checked_protocol_to_native(U256::from(320)).unwrap();
+    // Claim cases use a fixed balance independent of the pool split.
+    let reward = U256::from(320);
     assert_eq!(
         db.cache.accounts[&CCA_REGISTRY_ADDRESS].info.balance,
         BOND_REQUIREMENT
@@ -250,7 +259,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     let claim = |amount| {
         IAgentReward::claimRewardCall {
             pool: 2,
-            amount,
+            promisLoadMinor: amount,
             issuanceCurrency: 840,
             referenceCurrency: 840,
         }
@@ -311,37 +320,13 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
             .write(U256::ZERO)
             .unwrap();
     });
-    // Force failure after successful issuance, when burning its backing.
     with_storage(&mut db, |storage| {
-        let backing = storage.balance(AGENT_REWARD_ADDRESS).unwrap();
-        storage
-            .decrease_balance(AGENT_REWARD_ADDRESS, backing)
-            .unwrap();
-    });
-    let before_failure = snapshot(&mut db);
-    let failed = claim_reward(&mut db, claim(U256::ZERO), claim_time).unwrap_err();
-    assert!(failed.contains("insufficient balance for burn"), "{failed}");
-    assert_eq!(snapshot(&mut db), before_failure);
-    with_storage(&mut db, |storage| {
-        storage
-            .increase_balance(AGENT_REWARD_ADDRESS, reward)
-            .unwrap();
-        // Preserve an existing native remainder too.
-        storage
-            .increase_balance(AGENT_REWARD_ADDRESS, U256::from(7))
-            .unwrap();
         AgentRewardContract::new(storage)
-            .cca_claimable_rewards
-            .write(&CCA, reward + U256::from(7))
+            .cca_claimable_minor
+            .write(&CCA, reward)
             .unwrap();
     });
-    for (load, requested) in [
-        (
-            100,
-            checked_protocol_to_native(U256::from(100)).unwrap() + U256::from(3),
-        ),
-        (220, U256::ZERO),
-    ] {
+    for (load, requested) in [(100, U256::from(100)), (220, U256::ZERO)] {
         let (output, logs) = claim_reward(&mut db, claim(requested), claim_time).unwrap();
         let gem_id = IAgentReward::claimRewardCall::abi_decode_returns(&output).unwrap();
         let claimed = logs
@@ -349,13 +334,11 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
             .find_map(|log| IAgentReward::RewardsClaimed::decode_log(log).ok())
             .unwrap()
             .data;
-        assert_eq!(claimed.cca, CCA);
+        assert_eq!(claimed.account, CCA);
+        assert_eq!(claimed.pool, 2);
         assert!(logs.iter().any(|log| log.address == AGENT_REWARD_ADDRESS
             && IAgentReward::RewardsClaimed::decode_log(log).is_ok()));
-        assert_eq!(
-            claimed.amount,
-            checked_protocol_to_native(U256::from(load)).unwrap()
-        );
+        assert_eq!(claimed.promisLoadMinor, U256::from(load));
         let issued = logs
             .iter()
             .find_map(|log| {
@@ -364,6 +347,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
             .unwrap()
             .data;
         assert_eq!(issued.gemId, gem_id);
+        assert_eq!(claimed.gemId, gem_id);
         with_storage(&mut db, |storage| {
             let gem = outbe_gem::api::get_view(&storage, gem_id).unwrap().unwrap();
             assert_eq!(gem.item.owner, CCA);
@@ -391,7 +375,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
             AgentRewardContract::new(storage)
                 .get_pool_claimable_reward(RewardPool::Cca, CCA)
                 .unwrap(),
-            U256::from(7)
+            U256::ZERO
         )
     });
     assert!(claim_reward(&mut db, claim(U256::ZERO), claim_time).is_err());
@@ -497,6 +481,84 @@ fn bond_past_the_active_cap_refunds_value_and_leaves_the_set_unchanged() {
 }
 
 alloy_sol_types::sol!("../../../contracts/precompiles/src/IAgentReward.sol");
+
+#[test]
+fn reward_claim_transaction_issues_the_gem_and_clears_the_pool() {
+    let mut db = CacheDB::new(EmptyDB::default());
+    db.insert_account_info(CCA, AccountInfo::default());
+    let code = Bytecode::new_raw(Bytes::from_static(&[0xef]));
+    for address in [
+        AGENT_REWARD_ADDRESS,
+        outbe_primitives::addresses::GEM_ADDRESS,
+        outbe_primitives::addresses::GEM_FACTORY_ADDRESS,
+        outbe_primitives::addresses::ORACLE_ADDRESS,
+    ] {
+        db.insert_account_info(
+            address,
+            AccountInfo {
+                code_hash: code.hash_slow(),
+                code: Some(code.clone()),
+                ..Default::default()
+            },
+        );
+    }
+    let load = U256::from(250);
+    let price = U256::from(2_000_000);
+    with_storage(&mut db, |storage| {
+        seed_oracle(&storage);
+        seed_vwap(
+            &storage,
+            previous_date_key(timestamp_to_date_key(NOW)),
+            price,
+        );
+        AgentRewardContract::new(storage)
+            .add_claimable_reward(RewardPool::Waa, CCA, load)
+            .unwrap();
+    });
+
+    let result = tx_to(
+        &mut db,
+        AGENT_REWARD_ADDRESS,
+        U256::ZERO,
+        IAgentReward::claimRewardCall {
+            pool: RewardPool::Waa as u8,
+            promisLoadMinor: U256::ZERO,
+            issuanceCurrency: 840,
+            referenceCurrency: 840,
+        }
+        .abi_encode(),
+        NOW,
+    );
+    assert!(result.is_success(), "{result:?}");
+    let gem_id =
+        IAgentReward::claimRewardCall::abi_decode_returns(result.output().unwrap()).unwrap();
+    let claimed = result
+        .logs()
+        .iter()
+        .find_map(|log| IAgentReward::RewardsClaimed::decode_log(log).ok())
+        .expect("the claim emits RewardsClaimed")
+        .data;
+    assert_eq!(claimed.account, CCA);
+    assert_eq!(claimed.pool, RewardPool::Waa as u8);
+    assert_eq!(claimed.promisLoadMinor, load);
+    assert_eq!(claimed.gemId, gem_id);
+    with_storage(&mut db, |storage| {
+        let gem = outbe_gem::api::get_view(&storage, gem_id).unwrap().unwrap();
+        assert_eq!(gem.item.owner, CCA);
+        assert_eq!(gem.item.promis_load_minor, load);
+        assert_eq!(gem.bucket.entry_price_minor, price);
+        assert_eq!(
+            AgentRewardContract::new(storage)
+                .get_pool_claimable_reward(RewardPool::Waa, CCA)
+                .unwrap(),
+            U256::ZERO
+        );
+    });
+    assert_eq!(
+        db.cache.accounts[&AGENT_REWARD_ADDRESS].info.balance,
+        U256::ZERO
+    );
+}
 
 fn seed_oracle(storage: &StorageHandle<'_>) {
     outbe_oracle::test_support::publish_day_type_quote(storage, U256::from(3_000_000), 1, NOW)

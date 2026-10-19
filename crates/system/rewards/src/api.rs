@@ -13,25 +13,15 @@
 //!   pool to Metadosis, or emit a topup.
 //! * [`read_voters_for_day`] - ordered (Address, participation count)
 //!   pairs for a UTC day. The first-seen-on-day order is deterministic.
-//! * [`prepare_daily_validator_gem_batch`] - freezes the exact validator Gem
-//!   obligations for a UTC day without consulting Oracle state.
-//! * [`deliver_oldest_reward_gem_batch`] - delivers one complete FIFO batch
-//!   when a fresh canonical price exists.
+//!   AgentReward weights the validator pool by it.
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, U256};
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
 use crate::schema::Rewards;
 
-mod batch;
-mod deliver;
-mod prepare;
-mod replay;
 #[cfg(test)]
 mod tests;
-
-pub use deliver::deliver_oldest_reward_gem_batch;
-pub use prepare::prepare_daily_validator_gem_batch;
 
 /// Returns the raw fee total accumulated for the given UTC day. This is
 /// the value `on_finalized_metadata` writes per finalized block via
@@ -66,46 +56,6 @@ pub fn read_voters_for_day(ctx: &BlockRuntimeContext, day: u32) -> Result<Vec<(A
     Ok(out)
 }
 
-/// Immutable summary of one UTC day's prepared validator reward Gem batch.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct PreparedRewardGemBatch {
-    pub reward_utc_day: u32,
-    /// Exact COEN-denominated Gem load amount reserved by the daily allocation.
-    pub planned_promis_load_amount: U256,
-    pub recipient_count: u32,
-    pub digest: B256,
-}
-
-/// Result of preparing a validator reward Gem obligation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RewardGemPreparationOutcome {
-    Prepared(PreparedRewardGemBatch),
-    AlreadyPrepared(PreparedRewardGemBatch),
-    NoPayableShares(PreparedRewardGemBatch),
-}
-
-/// Result of attempting to deliver the oldest prepared reward Gem batch.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RewardGemDeliveryOutcome {
-    Empty,
-    PendingRate {
-        reward_utc_day: u32,
-    },
-    /// One recipient of the FIFO head received its Gem in this block. The system
-    /// envelope delivers one recipient per block, so a batch of `recipient_count`
-    /// recipients takes that many blocks.
-    Delivered {
-        reward_utc_day: u32,
-        recipient_count: u32,
-        /// Exact COEN-denominated Gem load amount minted by this delivery.
-        delivered_promis_load_amount: U256,
-        /// Recipients of the head delivered so far, this one included.
-        delivered_recipients: u32,
-        /// The head retired with this delivery.
-        batch_complete: bool,
-    },
-}
-
 /// Whether every known block's participation window for a UTC day has closed.
 /// LateFinalizeCredits runs before CycleTick in the same block.
 /// At `block_number == last_close`, those close-height credits have already run.
@@ -126,6 +76,13 @@ pub fn day_participation_complete(ctx: &BlockRuntimeContext, utc_day: u32) -> Re
 pub fn mark_day_settled(ctx: &BlockRuntimeContext, day: u32) -> Result<()> {
     let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
     rewards.daily_settled.write(&day, true)
+}
+
+/// Freezes the participation of `day` once its validator pool is credited.
+/// A later participant of `day` is refused.
+pub fn close_day_participation(ctx: &BlockRuntimeContext, day: u32) -> Result<()> {
+    let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
+    rewards.daily_participation_closed.write(&day, true)
 }
 
 /// Whether the daily Cycle orchestrator already settled `day` fully

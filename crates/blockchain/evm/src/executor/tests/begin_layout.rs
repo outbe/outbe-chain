@@ -228,11 +228,7 @@ fn assert_begin_phase_order(proposer: &BeginInputs, height: u64) {
     let kinds: Vec<_> = proposer.iter().map(|(kind, _, _)| *kind).collect();
     assert_eq!(kinds.last(), Some(&SystemTxKind::HookEvents));
     assert_eq!(kinds.contains(&SystemTxKind::TeeBootstrap), height == 1);
-    let cycle = kinds
-        .iter()
-        .position(|kind| *kind == SystemTxKind::CycleTick)
-        .unwrap();
-    assert_eq!(kinds[cycle + 1], SystemTxKind::RewardsGemDelivery);
+    assert!(kinds.contains(&SystemTxKind::CycleTick));
     if height >= 2 {
         assert_eq!(
             &kinds[..2],

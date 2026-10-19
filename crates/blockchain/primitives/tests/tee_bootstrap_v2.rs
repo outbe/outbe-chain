@@ -437,7 +437,7 @@ fn decoder_rejects_full_calldata_cap_plus_one_before_parsing() {
 }
 
 #[test]
-fn thirty_two_validator_near_cap_bootstrap_fits_six_transaction_block() {
+fn thirty_two_validator_near_cap_bootstrap_fits_five_transaction_block() {
     use outbe_primitives::system_tx::{split_system_layout, validate_active_system_tx_set};
     use reth_ethereum::TransactionSigned;
 
@@ -478,7 +478,6 @@ fn thirty_two_validator_near_cap_bootstrap_fits_six_transaction_block() {
     };
     let inputs = vec![
         SystemTxInputV2::CycleTick,
-        SystemTxInputV2::RewardsGemDelivery,
         SystemTxInputV2::BoundaryOutcome { artifact },
         SystemTxInputV2::TeeBootstrap { payload },
         SystemTxInputV2::OracleSlashWindow,
@@ -510,10 +509,10 @@ fn thirty_two_validator_near_cap_bootstrap_fits_six_transaction_block() {
             .into()
         })
         .collect();
-    assert_eq!(transactions.len(), 6);
+    assert_eq!(transactions.len(), 5);
     let layout = split_system_layout(&transactions).expect("block-1 bootstrap layout splits");
     validate_active_system_tx_set(&layout, 1, true, true)
-        .expect("canonical six-transaction block-1 bootstrap layout validates");
+        .expect("canonical five-transaction block-1 bootstrap layout validates");
 
     let exact_transactions_rlp_len = transactions
         .iter()
@@ -530,7 +529,7 @@ fn thirty_two_validator_near_cap_bootstrap_fits_six_transaction_block() {
     );
     assert!(
         exact_transactions_rlp_len < outbe_primitives::consensus::OUTBE_MAX_BLOCK_SIZE,
-        "the exact six block-1 transaction encodings must fit the P2P block cap"
+        "the exact five block-1 transaction encodings must fit the P2P block cap"
     );
 }
 

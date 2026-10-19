@@ -7887,6 +7887,7 @@ dependencies = [
  "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",
+ "outbe-rewards",
  "thiserror 2.0.18",
 ]
 
@@ -9141,8 +9142,6 @@ dependencies = [
  "commonware-cryptography",
  "outbe-consensus",
  "outbe-emissionlimit",
- "outbe-gem",
- "outbe-gemfactory",
  "outbe-macros",
  "outbe-metadosis",
  "outbe-oracle",
@@ -9154,7 +9153,6 @@ dependencies = [
  "rand_chacha 0.3.1",
  "tempfile",
  "thiserror 2.0.18",
- "tracing",
 ]
 
 [[package]]
