@@ -7,9 +7,7 @@ use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, SECONDS_PER_DAY};
-use outbe_primitives::units::{
-    NATIVE_UNITS_PER_PROTOCOL_UNIT, PROTOCOL_AMOUNT_DECIMALS, SCALE_1E6_U64,
-};
+use outbe_primitives::units::{PROTOCOL_AMOUNT_DECIMALS, SCALE_1E6_U64};
 use outbe_promislimit::PromisLimitContract;
 
 use outbe_intexfactory::schema::IssuanceParams;
@@ -19,7 +17,7 @@ use crate::constants::{
     BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, CLEARING_BIDS_PER_CHUNK, CLEARING_BID_GAS,
     CLEARING_CHUNK_GAS, CLEARING_FIXED_GAS, CLEARING_HISTORY_DAYS, CLEARING_MIN_BIDS,
     COMMIT_WINDOW_SECONDS, DAY_STATE_GREEN, DAY_STATE_RED, IGNORED_CONFLICT, IGNORED_NOT_FOUND,
-    IGNORED_OBSOLETE, MAX_BIDS_PER_BATCH, MAX_BID_BATCHES, MAX_REFERENCE_PRICES, MAX_REFUND_CHUNKS,
+    IGNORED_OBSOLETE, MAX_BIDS_PER_BATCH, MAX_BID_BATCHES, MAX_REFUND_CHUNKS,
     MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS, PROMIS_LOAD_LAUNCH_EXPONENT,
     PROMIS_LOAD_OVERRIDE, REFUND_CHUNK_LEN, REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
 };
@@ -239,8 +237,7 @@ pub(crate) fn step_promis_load(
     Ok(promis_load_minor(exponent))
 }
 
-/// The currencies a day will actually price: one per series-id letter, at most
-/// `MAX_REFERENCE_PRICES`. Ordered by currency first, so the two brief paths - which
+/// The currencies a day will actually price: one per series-id letter. Ordered by currency first, so the two brief paths - which
 /// collect prices in different orders - resolve a day to the same table.
 fn choose_reference_prices(
     contract: &mut DesisContract<'_>,
@@ -260,14 +257,6 @@ fn choose_reference_prices(
                 worldwideDay: worldwide_day.into(),
                 isoCode: row.iso_code,
                 takenBy: taken.iso_code,
-            })?;
-            continue;
-        }
-        if kept.len() == MAX_REFERENCE_PRICES {
-            contract.emit(IDesis::ReferenceCurrencyOverCap {
-                worldwideDay: worldwide_day.into(),
-                isoCode: row.iso_code,
-                cap: MAX_REFERENCE_PRICES as u8,
             })?;
             continue;
         }

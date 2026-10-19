@@ -208,7 +208,8 @@ def main() -> None:
         default="0",
         help="Micro-unit remainder in [0,999999] (10^6 units per whole unit); must match the proof",
     )
-    parser.add_argument("--currency", default="840", help="ISO currency code")
+    parser.add_argument("--issuance-currency", required=True, help="Issuance ISO 4217 numeric code")
+    parser.add_argument("--reference-currency", required=True, help="Reference ISO 4217 numeric code")
     parser.add_argument(
         "--zk-proof",
         required=True,
@@ -323,8 +324,8 @@ def main() -> None:
         print(f"NONCE={nonce}")
         print(f"EPHEMERAL={ephemeral_pubkey}")
         print(f"WORLDWIDE_DAY={int(args.wwd)}")
-        print(f"TRIBUTE_CURRENCY={int(args.currency)}")
-        print(f"REFERENCE_CURRENCY={int(args.currency)}")
+        print(f"TRIBUTE_CURRENCY={int(args.issuance_currency)}")
+        print(f"REFERENCE_CURRENCY={int(args.reference_currency)}")
         print(f"ZK_PROOF=0x{args.zk_proof.hex()}")
         print(f"L2_CHAIN_ID={args.chain_id}")
         print(f"CIRCUIT_VERSION={args.version}")
@@ -341,8 +342,8 @@ def main() -> None:
         nonce,
         ephemeral_pubkey,
         str(args.wwd),
-        str(args.currency),
-        str(args.currency),
+        str(args.issuance_currency),
+        str(args.reference_currency),
         "0x" + args.zk_proof.hex(),
         str(args.chain_id),
         args.version,

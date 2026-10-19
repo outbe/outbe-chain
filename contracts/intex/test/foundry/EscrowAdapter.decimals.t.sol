@@ -22,32 +22,42 @@ contract EscrowAdapterDecimalsTest is Test {
         compact = new MockTheCompact();
     }
 
-    function test_wire_acceptsEighteenDecimals() public {
+    function _scale() internal view returns (uint256) {
+        return escrow.getAssetVersion(escrow.currentAssetVersion()).paymentScale;
+    }
+
+    function test_wire_scalesAnEighteenDecimalToken() public {
         MockWCOEN token = new MockWCOEN();
         vm.prank(admin);
         escrow.wire(auction, address(compact), address(token));
         assertEq(address(escrow.paymentToken()), address(token));
+        assertEq(_scale(), 1e12);
     }
 
-    function test_wire_rejectsNonEighteenDecimals() public {
+    function test_wire_scalesASixDecimalToken() public {
         MockERC20 token = new MockERC20("Token", "TKN", 6);
         vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.PaymentTokenDecimals.selector, uint8(6)));
+        escrow.wire(auction, address(compact), address(token));
+        assertEq(_scale(), 1);
+    }
+
+    function test_wire_rejectsFewerDecimalsThanTheProtocol() public {
+        MockERC20 token = new MockERC20("Token", "TKN", 5);
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.PaymentTokenDecimals.selector, uint8(5)));
         escrow.wire(auction, address(compact), address(token));
     }
 
-    function test_wire_rejectsNonEighteenDecimalsOnRotation() public {
+    function test_rotation_keepsTheRetiredScale() public {
         MockWCOEN token = new MockWCOEN();
         vm.prank(admin);
         escrow.wire(auction, address(compact), address(token));
 
         MockERC20 rotated = new MockERC20("Token", "TKN", 6);
         vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.PaymentTokenDecimals.selector, uint8(6)));
         escrow.wire(auction, address(compact), address(rotated));
-    }
 
-    function test_paymentTokenDecimals_isEighteen() public view {
-        assertEq(escrow.PAYMENT_TOKEN_DECIMALS(), 18);
+        assertEq(escrow.getAssetVersion(0).paymentScale, 1e12, "retired scale");
+        assertEq(_scale(), 1, "active scale");
     }
 }

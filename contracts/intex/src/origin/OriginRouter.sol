@@ -359,16 +359,14 @@ contract OriginRouter is
             BridgeMsgCodec.encodeRefundInstructions(
                 worldwideDay, chunkIndex, totalChunks, clearingRate, basis, winners, partialIndex, partialWon
             ),
-            IntexGas.refund(winners.length, _routesProceeds(totalChunks, winners.length))
+            IntexGas.refund(winners.length, _routesProceeds(winners.length))
         );
         emit RefundInstructionsSent(sendId, worldwideDay, winners.length);
     }
 
-    /// @dev A chain's proceeds leave with whichever of its chunks lands last. Chunks land in any
-    ///      order, so every chunk of a chain with winners carries the leg. A run longer than one
-    ///      always has winners.
-    function _routesProceeds(uint16 totalChunks, uint256 winners) private pure returns (bool) {
-        return totalChunks > 1 || winners != 0;
+    /// @dev Each chunk with winners routes its own proceeds, so it carries the leg.
+    function _routesProceeds(uint256 winners) private pure returns (bool) {
+        return winners != 0;
     }
 
     /// @inheritdoc IOriginRouter
