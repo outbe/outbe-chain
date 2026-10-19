@@ -58,21 +58,18 @@ pub fn state(storage: &StorageHandle<'_>, record: &SeriesRecord) -> Result<Intex
     Ok(call_stamp(storage, record)?.state(now))
 }
 
-/// Deletes the series once nothing in it is left to settle or exercise as of `now`: no
-/// unpaid units (all realized, or forfeited by its expiry) and no settled ones still
+/// Deletes the series once nothing in it is left to settle or exercise: no unpaid
+/// units (all realized, or returned by its group's expiry) and no settled ones still
 /// to exercise. Returns whether it was deleted.
-pub fn release_if_spent(
-    storage: &StorageHandle<'_>,
-    series_id: SeriesId,
-    now: u64,
-) -> Result<bool> {
+pub fn release_if_spent(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<bool> {
     let mut registry = IntexContract::new(storage.clone());
     let Some(record) = registry.get_series(series_id)? else {
         return Ok(false);
     };
     let unpaid = forfeitable_units(storage, &record)?.units;
-    let expired = registry.call_stamp(&record)?.state(now) == IntexState::Expired;
-    if registry.settled_units.read(&series_id)? != 0 || (unpaid != 0 && !expired) {
+    // Past the deadline the unpaid units still wait for the group's expiry to return them.
+    let returned = registry.group_forfeited(record.group_key())?;
+    if registry.settled_units.read(&series_id)? != 0 || (unpaid != 0 && !returned) {
         return Ok(false);
     }
     registry.leave_call_group(record.group_key(), series_id)?;
@@ -340,9 +337,9 @@ pub fn call_group_of(
     called_at: u32,
 ) -> Result<()> {
     let mut registry = IntexContract::new(storage.clone());
-    let record = registry.load_series(series_id)?;
-    let deadline = record.call_stamp(called_at).deadline;
-    registry.record_group_called(record.group_key(), called_at, deadline)
+    let group = registry.load_series(series_id)?.group_key();
+    let deadline = registry.group_stamp(group, called_at)?.deadline;
+    registry.record_group_called(group, called_at, deadline)
 }
 
 /// Read a series record; errors if the series does not exist.

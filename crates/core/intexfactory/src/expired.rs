@@ -56,14 +56,12 @@ impl ExpiryHandler<B256> for IntexExpiry<'_, '_> {
 
     /// Returns the group's unrealized load to the pool in one credit.
     fn expire_member(&mut self, group: B256, _member: B256) -> Result<()> {
-        let mut forfeited_units: u32 = 0;
+        let mut forfeited_units: u64 = 0;
         let mut returned = U256::ZERO;
         for series_id in self.intex.group_members(group)? {
             let series = outbe_intex::api::read_series(self.storage, series_id)?;
             let forfeited = outbe_intex::api::forfeitable_units(self.storage, &series)?;
-            forfeited_units = forfeited_units
-                .checked_add(forfeited.units)
-                .ok_or(IntexFactoryError::ForfeitedPromisLoadOverflow)?;
+            forfeited_units = forfeited_units.saturating_add(u64::from(forfeited.units));
             returned = forfeited
                 .promis_load_minor
                 .checked_mul(U256::from(forfeited.units))

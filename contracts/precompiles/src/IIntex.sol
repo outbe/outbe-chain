@@ -74,5 +74,5 @@ interface IIntex {
 
     /// @notice The group's settlement window closed. Both are zero when every unit
     ///         was realized in time.
-    event IntexGroupExpired(bytes32 indexed groupKey, uint32 forfeitedUnits, uint256 returnedPromisMinor);
+    event IntexGroupExpired(bytes32 indexed groupKey, uint64 forfeitedUnits, uint256 returnedPromisMinor);
 }

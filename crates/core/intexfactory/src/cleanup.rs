@@ -16,7 +16,6 @@ pub fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = IntexContract::new(ctx.storage.clone());
     let mut cleanup = IntexCleanup {
         storage: &ctx.storage,
-        now: ctx.block.timestamp,
         intex: IntexContract::new(ctx.storage.clone()),
         deleted: 0,
     };
@@ -26,7 +25,6 @@ pub fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
 
 struct IntexCleanup<'a, 'storage> {
     storage: &'a StorageHandle<'storage>,
-    now: u64,
     intex: IntexContract<'storage>,
     deleted: u32,
 }
@@ -52,7 +50,7 @@ impl ExpiryHandler<B256> for IntexCleanup<'_, '_> {
     }
 
     fn expire_member(&mut self, _group: B256, series_id: SeriesId) -> Result<()> {
-        if outbe_intex::api::release_if_spent(self.storage, series_id, self.now)? {
+        if outbe_intex::api::release_if_spent(self.storage, series_id)? {
             self.deleted = self.deleted.saturating_add(1);
         }
         Ok(())

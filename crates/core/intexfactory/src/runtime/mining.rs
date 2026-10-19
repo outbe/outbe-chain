@@ -61,7 +61,7 @@ pub fn mine_promis(
         let exercised =
             u32::try_from(units).map_err(|_| IntexFactoryError::ExercisedUnitsExceedSeries)?;
         outbe_intex::api::record_exercised_units(storage, series_id, owner, exercised)?;
-        outbe_intex::api::release_if_spent(storage, series_id, storage.timestamp()?.to::<u64>())?;
+        outbe_intex::api::release_if_spent(storage, series_id)?;
 
         // Promis is confidential: the mint runs inside the enclave, authorized by the
         // owner's Promis modify key (the `mac`/`opNonce` must bind `promis_minor`).

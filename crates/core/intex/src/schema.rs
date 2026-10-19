@@ -5,7 +5,6 @@ use alloy_primitives::{keccak256, Address, FixedBytes, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::INTEX_ADDRESS;
 use outbe_primitives::call_breach::group_key;
-use outbe_primitives::settlement::settlement_deadline_of;
 use outbe_primitives::stablecoin::iso_4217_alpha;
 use outbe_primitives::storage::types::{Storable, StorableType, StorageKey};
 use outbe_primitives::time::{first_full_day, WorldwideDay};
@@ -275,17 +274,7 @@ impl SeriesRecord {
         )
     }
 
-    /// The series' call as its group recorded it.
-    pub fn call_stamp(&self, called_at: u32) -> CallStamp {
-        CallStamp {
-            called_at,
-            deadline: match called_at {
-                0 => 0,
-                _ => settlement_deadline_of(u64::from(called_at), self.call_notice_period_seconds),
-            },
-        }
-    }
-
+    /// The call terms the series was issued with.
     pub fn call_trigger(&self) -> IntexCallTrigger {
         IntexCallTrigger {
             call_window_seconds: self.call_window_seconds,
@@ -446,6 +435,15 @@ pub struct IntexContract {
     pub cleanup_sweep_hour: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 69)]
     pub cleanup_cursor: outbe_primitives::storage::dsl::Value<u64>,
+
+    /// The call terms a group's first series sealed: every member is called and
+    /// expires on them.
+    #[attribute(order = 70)]
+    pub call_group_window_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
+    #[attribute(order = 71)]
+    pub call_group_threshold_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
+    #[attribute(order = 72)]
+    pub call_group_notice_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
 }
 
 impl IntexContract<'_> {

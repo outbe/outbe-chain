@@ -187,7 +187,7 @@ pub fn issue_gem_position(
         caller,
         gem_factory_units,
     )?;
-    outbe_intex::api::release_if_spent(storage, source_intex_id, storage.timestamp()?.to::<u64>())?;
+    outbe_intex::api::release_if_spent(storage, source_intex_id)?;
 
     let issued_at = storage.timestamp()?.to::<u64>();
     let position_id =

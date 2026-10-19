@@ -559,7 +559,7 @@ impl Lifecycle for IntexLifecycle {
             height,
             eth::IIntex::IntexGroupExpired {
                 groupKey: group,
-                forfeitedUnits: expired.iter().map(|(_, units, _)| *units).sum(),
+                forfeitedUnits: expired.iter().map(|(_, units, _)| u64::from(*units)).sum(),
                 returnedPromisMinor: want - before,
             },
         );

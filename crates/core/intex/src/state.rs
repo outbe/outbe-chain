@@ -84,13 +84,19 @@ impl<'storage> IntexContract<'storage> {
 // ---------------------------------------------------------------------
 
 impl IntexContract<'_> {
-    /// Enrolls a series in its call group, opening the group in its call-price bin
-    /// when it is the first member.
+    /// Enrolls a series in its call group. The first member opens the group in its
+    /// call-price bin and seals its call terms.
     pub fn join_call_group(&mut self, record: &SeriesRecord) -> Result<()> {
         let group = record.group_key();
         if self.call_group_members.list(&group).len()? == 0 {
             let iso = record.reference_currency;
             self.call_group_currency.write(&group, iso)?;
+            self.call_group_window_seconds
+                .write(&group, record.call_window_seconds)?;
+            self.call_group_threshold_seconds
+                .write(&group, record.call_threshold_seconds)?;
+            self.call_group_notice_seconds
+                .write(&group, record.call_notice_period_seconds)?;
             let bin = call_bins::price_to_bin(record.call_price_minor)?;
             call_bins::insert(&CallBins(&*self, iso), group, bin)?;
         }
@@ -113,6 +119,9 @@ impl IntexContract<'_> {
         expiry_queue::remove(&ExpiryHours(self), group)?;
         expiry_queue::remove(&CleanupHours(self), group)?;
         self.call_group_currency.clear(&group)?;
+        self.call_group_window_seconds.clear(&group)?;
+        self.call_group_threshold_seconds.clear(&group)?;
+        self.call_group_notice_seconds.clear(&group)?;
         self.call_group_called_at.clear(&group)
     }
 
@@ -137,8 +146,29 @@ impl IntexContract<'_> {
 
     /// The series' call, read from its group.
     pub fn call_stamp(&self, record: &SeriesRecord) -> Result<CallStamp> {
-        let called_at = self.call_group_called_at.read(&record.group_key())?;
-        Ok(record.call_stamp(called_at))
+        let group = record.group_key();
+        self.group_stamp(group, self.call_group_called_at.read(&group)?)
+    }
+
+    /// The group's call at `called_at`, on the notice period it sealed.
+    pub fn group_stamp(&self, group: B256, called_at: u32) -> Result<CallStamp> {
+        let deadline = match called_at {
+            0 => 0,
+            _ => outbe_primitives::settlement::settlement_deadline_of(
+                u64::from(called_at),
+                self.call_group_notice_seconds.read(&group)?,
+            ),
+        };
+        Ok(CallStamp {
+            called_at,
+            deadline,
+        })
+    }
+
+    /// Whether the group's expiry already returned what its members left unpaid.
+    pub fn group_forfeited(&self, group: B256) -> Result<bool> {
+        Ok(self.call_group_called_at.read(&group)? != 0
+            && self.called_group_slot.read(&group)? == 0)
     }
 
     /// Calls the group: it leaves its bin and waits on `deadline` in the expiry queue.

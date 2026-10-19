@@ -101,8 +101,8 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
         .unwrap();
         assert_eq!(minted, promis_minor);
         assert!(
-            !outbe_intex::api::series_exists(&s, sid(7)).unwrap(),
-            "its last settled unit mined, the expired series is spent and deleted"
+            outbe_intex::api::series_exists(&s, sid(7)).unwrap(),
+            "its unpaid unit waits for the group's expiry to return it"
         );
 
         // The Promis landed on the owner's confidential ledger and consumed one op nonce.

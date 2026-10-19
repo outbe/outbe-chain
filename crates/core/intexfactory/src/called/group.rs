@@ -17,8 +17,8 @@ pub(crate) struct GroupCall<'a, 'storage> {
     pub(crate) factory: &'a IntexFactoryContract<'storage>,
 }
 
-/// Force-call a whole group: its series count from the same day against the same call
-/// price, so its first member decides them all. Returns how many series were called.
+/// Force-call a whole group on the terms it sealed: its series count from the same day
+/// against the same call price. Returns how many series were called.
 pub(crate) fn call_if_breached(
     call: GroupCall<'_, '_>,
     group: B256,
@@ -37,8 +37,8 @@ pub(crate) fn call_if_breached(
     let series = outbe_intex::api::read_series(storage, first)?;
     let breached = window.breached(&BreachTerms {
         call_price: series.call_price_minor,
-        window_seconds: series.call_window_seconds,
-        threshold_seconds: series.call_threshold_seconds,
+        window_seconds: intex.call_group_window_seconds.read(&group)?,
+        threshold_seconds: intex.call_group_threshold_seconds.read(&group)?,
         start_day: first_full_day(u64::from(series.issued_at)),
     });
     if !breached {
@@ -48,7 +48,7 @@ pub(crate) fn call_if_breached(
     // u32 timestamp. It is bounded until 2106 (matches issued_at).
     let called_at =
         u32::try_from(now_ts).map_err(|_| IntexFactoryError::BlockTimestampExceedsU32)?;
-    let settlement_deadline = series.call_stamp(called_at).deadline;
+    let settlement_deadline = intex.group_stamp(group, called_at)?.deadline;
     intex.record_group_called(group, called_at, settlement_deadline)?;
 
     // The notices leave after the slice, once every group of the block is decided.
