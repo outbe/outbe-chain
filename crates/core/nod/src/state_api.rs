@@ -10,29 +10,30 @@ use outbe_primitives::{
     wwd_entity_id::WwdEntityId,
 };
 
+/// A Nod item exactly as stored when it was loaded; mutation re-checks storage against it.
+/// `StoredNod -> NodItemState -> StoredNod` is lossless, so the stored record is not kept twice.
 pub struct LoadedNodItem {
     body: NodItemState,
-    current: StoredNod,
 }
 impl LoadedNodItem {
     pub const fn body(&self) -> &NodItemState {
         &self.body
     }
-    pub(crate) fn into_parts(self) -> (NodItemState, StoredNod) {
-        (self.body, self.current)
+    pub(crate) fn into_body(self) -> NodItemState {
+        self.body
     }
 }
 
+/// A Nod bucket exactly as stored when it was loaded; mutation re-checks storage against it.
 pub struct LoadedNodBucket {
     body: NodBucketState,
-    current: NodBucketState,
 }
 impl LoadedNodBucket {
     pub const fn body(&self) -> &NodBucketState {
         &self.body
     }
-    pub(crate) fn into_parts(self) -> (NodBucketState, NodBucketState) {
-        (self.body, self.current)
+    pub(crate) fn into_body(self) -> NodBucketState {
+        self.body
     }
 }
 
@@ -53,24 +54,18 @@ pub fn load_item(storage: &StorageHandle<'_>, id: WwdEntityId) -> Result<Option<
             "invalid stored Nod ciphertext length",
         ));
     }
-    let current = entry.load()?.ok_or(NodError::NodNotFound)?;
-    let body: NodItemState = current.clone().into();
+    let body: NodItemState = entry.load()?.ok_or(NodError::NodNotFound)?.into();
     if !body.encrypted.has_valid_encoding() {
         return Err(NodError::EncryptedTermsMismatch.into());
     }
-    Ok(Some(LoadedNodItem { body, current }))
+    Ok(Some(LoadedNodItem { body }))
 }
 pub fn load_bucket(storage: &StorageHandle<'_>, key: B256) -> Result<Option<LoadedNodBucket>> {
     let contract = NodContract::new(storage.clone());
     contract
         .buckets
         .get(key)?
-        .map(|current| {
-            Ok(LoadedNodBucket {
-                body: current.clone(),
-                current,
-            })
-        })
+        .map(|body| Ok(LoadedNodBucket { body }))
         .transpose()
 }
 pub fn add_item(
@@ -101,14 +96,14 @@ pub fn remove_item(
         NodContract::new(storage.clone()).record_nod_removed_state(item, bucket)
     })
 }
+/// Must run before `item` or `bucket` is mutated: both are compared with storage as loaded.
 fn check_loaded(
     contract: &NodContract<'_>,
     item: &NodItemState,
-    current: &StoredNod,
     bucket: &NodBucketState,
 ) -> Result<()> {
     if item.bucket_key != bucket.bucket_key
-        || contract.records.get(item.nod_id)?.as_ref() != Some(current)
+        || contract.records.get(item.nod_id)? != Some(StoredNod::from(item))
         || contract.buckets.get(bucket.bucket_key)?.as_ref() != Some(bucket)
     {
         return Err(PrecompileError::revert("Nod state changed after loading"));
@@ -185,9 +180,9 @@ impl NodContract<'_> {
         item: LoadedNodItem,
         bucket: LoadedNodBucket,
     ) -> Result<()> {
-        let (mut item, current_item) = item.into_parts();
-        let (mut bucket, current_bucket) = bucket.into_parts();
-        check_loaded(self, &item, &current_item, &current_bucket)?;
+        let mut item = item.into_body();
+        let mut bucket = bucket.into_body();
+        check_loaded(self, &item, &bucket)?;
         if item.is_settled {
             return Err(NodError::AlreadySettled.into());
         }
@@ -209,13 +204,10 @@ impl NodContract<'_> {
         item: LoadedNodItem,
         bucket: LoadedNodBucket,
     ) -> Result<()> {
-        let (item, current_item) = item.into_parts();
-        let (mut bucket, current_bucket) = bucket.into_parts();
-        check_loaded(self, &item, &current_item, &current_bucket)?;
-        let bucket_id = WwdEntityId::from_day_and_digest(
-            current_bucket.worldwide_day,
-            current_bucket.bucket_key,
-        );
+        let item = item.into_body();
+        let mut bucket = bucket.into_body();
+        check_loaded(self, &item, &bucket)?;
+        let bucket_id = WwdEntityId::from_day_and_digest(bucket.worldwide_day, bucket.bucket_key);
         let supply = self
             .total_supply
             .read()?
@@ -266,6 +258,29 @@ mod tests {
         record.encrypted_creator_public_key[..8].copy_from_slice(&1u64.to_be_bytes());
         record.encrypted_gratis_amount = record.encrypted_creator_public_key.clone();
         record
+    }
+
+    #[test]
+    fn stored_nod_survives_the_item_state_round_trip_exactly() {
+        let day = WorldwideDay::new(20261015);
+        let stored = StoredNod {
+            nod_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(7)),
+            owner: Address::repeat_byte(1),
+            chain_id: 2,
+            worldwide_day: day,
+            league_id: 3,
+            entry_price_minor: U256::from(4),
+            issuance_currency: 5,
+            reference_currency: 6,
+            bucket_key: B256::repeat_byte(8),
+            issued_at: 9,
+            is_settled: true,
+            encryption_binding: B256::repeat_byte(10),
+            encrypted_creator_public_key: vec![11; NOD_BLOB_LEN],
+            encrypted_gratis_amount: vec![12; NOD_BLOB_LEN],
+        };
+        let item = NodItemState::from(stored.clone());
+        assert_eq!(StoredNod::from(&item), stored);
     }
 
     #[test]

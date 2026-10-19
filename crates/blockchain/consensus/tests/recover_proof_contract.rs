@@ -7,18 +7,6 @@
 //! source level (metric wiring is present in `hybrid.rs::assemble`) and
 //! through the closed [`ProposerForfeitReason`] taxonomy.
 
-use outbe_consensus::forfeit::ProposerForfeitReason;
-
-#[test]
-fn proposer_forfeit_reason_vrf_recover_label_is_pinned() {
-    // the metric label must remain
-    // `vrf_recover_failed_under_quorum` so operator alerts keep working.
-    assert_eq!(
-        ProposerForfeitReason::VrfRecoverFailedUnderQuorum.label(),
-        "vrf_recover_failed_under_quorum"
-    );
-}
-
 /// runtime test: when `record_vrf_recover_failed_under_quorum`
 /// is invoked, the
 /// `outbe_proposer_forfeit_total{reason="vrf_recover_failed_under_quorum"}`

@@ -23,7 +23,7 @@ Feature: Gem from a parked Intex to Promis and COEN
   # against.
   @gem-lifecycle @myr-issuance
   Scenario: Five gems from one position are paid by owners and third parties in both currencies, one forfeits, and the paid ones end in COEN
-    Given a fresh localnet with a 20-block voting window
+    Given a fresh Gem lifecycle localnet with a 20-block voting window
     When the intex engine is deployed on the committee chain
     Then the committee chain hosts the intex engine
     When the settlement currencies are registered on the committee chain

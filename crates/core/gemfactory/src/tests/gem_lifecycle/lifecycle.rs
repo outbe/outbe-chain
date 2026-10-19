@@ -1,4 +1,4 @@
-//! Issue, bucket membership, settlement and burn through the compressed-body store.
+//! Issue, bucket membership, settlement and burn through Gem storage.
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
@@ -31,7 +31,7 @@ fn initial_state_empty() {
 }
 
 #[test]
-fn add_gem_mints_the_body_and_its_bucket_and_bumps_counters() {
+fn add_gem_mints_the_gem_and_its_bucket_and_bumps_counters() {
     with_storage(|storage| {
         let gem_id = add(storage, sample_params(ALICE));
         assert_eq!(GemContract::new(storage.clone()).total_supply().unwrap(), 1);
@@ -244,10 +244,10 @@ fn leaving_a_bucket_moves_its_last_member_into_the_hole() {
     });
 }
 
-/// The bucket body and its sealed terms outlive the unpaid membership while a paid
+/// The bucket record and its sealed terms outlive the unpaid membership while a paid
 /// member exists; the last removal takes everything down.
 #[test]
-fn bucket_body_and_terms_survive_until_unpaid_and_settled_are_zero() {
+fn bucket_and_terms_survive_until_unpaid_and_settled_are_zero() {
     with_storage(|storage| {
         let gem_id = add(storage, sample_params(ALICE));
         let bucket = bucket_of(storage, gem_id);
@@ -439,10 +439,10 @@ fn a_gem_id_is_its_raw_keccak_and_the_bucket_id_carries_the_day() {
 }
 
 /// The e2e arming path re-issues the gem on another day: it leaves its bucket, which
-/// closes when it was the only member, and opens the bucket body of the new day.
+/// closes when it was the only member, and opens the bucket of the new day.
 #[cfg(feature = "e2e-test")]
 #[test]
-fn backdate_that_changes_the_day_moves_the_gem_and_mints_a_new_bucket_body() {
+fn backdate_that_changes_the_day_moves_the_gem_and_opens_a_new_bucket() {
     use crate::test_arming_e2e::IGemFactoryTestArming;
     use alloy_sol_types::SolCall;
 
@@ -484,7 +484,7 @@ fn backdate_that_changes_the_day_moves_the_gem_and_mints_a_new_bucket_body() {
 /// bucket counts it as paid, with no unpaid member left to sweep.
 #[cfg(feature = "e2e-test")]
 #[test]
-fn settled_for_test_issues_a_paid_body_and_counts_it_in_the_bucket() {
+fn settled_for_test_issues_a_paid_gem_and_counts_it_in_the_bucket() {
     use crate::test_arming_e2e::IGemFactoryTestArming::issueSettledGemForTestCall;
     use alloy_sol_types::SolCall;
 

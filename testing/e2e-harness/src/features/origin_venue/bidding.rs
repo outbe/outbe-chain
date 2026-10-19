@@ -11,7 +11,9 @@ use super::auction::{
     settled_day, venue_side, venue_sides, VenueSide, AUCTION_STAGE_TIMEOUT, AUCTION_START_TIMEOUT,
 };
 use crate::internal::eth;
-use crate::world::venue_probes::{IAuctionStage, IIssuedSeries, IPaymentToken, IRefundClaim};
+use crate::world::venue_probes::{
+    IAuctionStage, IIssuedSeries, IPaymentToken, IRefundClaim, IWinClaim,
+};
 use crate::world::{bidders, origin_venue, venue_probes, World};
 
 const BIDDER_ALLOWANCE: u128 = 1_000_000_000 * 1_000_000_000_000_000_000;
@@ -149,11 +151,16 @@ fn cleared_day_issues_intex(world: &mut World) {
     // The day issues to every chain it opened on, so every chain has to show the
     // series and the units its own bidders won.
     for side in venue_sides(world) {
-        issuances_landed_on(&side, &bidders, worldwide_day);
+        issuances_landed_on(world, &side, &bidders, worldwide_day);
     }
 }
 
-fn issuances_landed_on(side: &VenueSide, bidders: &[bidders::Bidder], worldwide_day: u32) {
+fn issuances_landed_on(
+    world: &World,
+    side: &VenueSide,
+    bidders: &[bidders::Bidder],
+    worldwide_day: u32,
+) {
     let url = side.url.clone();
     let deadline = Instant::now() + AUCTION_STAGE_TIMEOUT;
     let series = loop {
@@ -176,6 +183,10 @@ fn issuances_landed_on(side: &VenueSide, bidders: &[bidders::Bidder], worldwide_
         exists,
         "series {series} was instructed but never created on {url}"
     );
+    // A win exists once the refund instructions settled it, and each winner then
+    // issues its own units.
+    refunds_landed_on(world, side);
+    issue_wins_on(side, bidders, worldwide_day);
     let token_id = eth::read_call(
         &url,
         side.intex_nft,
@@ -198,9 +209,39 @@ fn issuances_landed_on(side: &VenueSide, bidders: &[bidders::Bidder], worldwide_
         .sum();
     assert!(
         !minted.is_zero(),
-        "series {series} exists on {url} but no bidder holds any Intex ({} issuances were deferred)",
-        venue_probes::deferred_issuances(&url, side.target_router)
+        "series {series} exists on {url} but no bidder holds any Intex"
     );
+}
+
+/// Lock status of a bid the escrow charged.
+const WON: u8 = 2;
+
+fn issue_wins_on(side: &VenueSide, bidders: &[bidders::Bidder], worldwide_day: u32) {
+    for bidder in bidders {
+        let lock = eth::read_call(
+            &side.url,
+            side.escrow,
+            &IWinClaim::getBidLockCall {
+                worldwideDay: worldwide_day,
+                bidder: bidder.address,
+            },
+        )
+        .expect("read the bidder's lock");
+        if lock.status != WON {
+            continue;
+        }
+        eth::send_call(
+            &side.url,
+            side.auction,
+            &bidder.key,
+            &IWinClaim::issueIntexCall {
+                worldwideDay: worldwide_day,
+                bidder: bidder.address,
+            },
+            None,
+        )
+        .expect("issue the winner's units");
+    }
 }
 
 #[then("each escrow settles the day and returns what the bids did not buy")]
@@ -236,7 +277,7 @@ fn claim_refunds_on(world: &World, side: &VenueSide) {
         }
         eth::send_call(
             &side.url,
-            side.escrow,
+            side.auction,
             &bidder.key,
             &IRefundClaim::claimRefundCall {
                 worldwideDay: worldwide_day,

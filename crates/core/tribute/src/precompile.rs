@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolInterface;
-use outbe_primitives::dispatch::{dispatch_call, metadata, view};
+use outbe_primitives::dispatch::{dispatch_call, metadata, mutate, view};
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::error::Result;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
@@ -25,12 +25,12 @@ pub use abi::ITribute;
 pub fn dispatch(
     storage: outbe_primitives::storage::StorageHandle,
     data: &[u8],
-    _caller: Address,
+    caller: Address,
     value: U256,
 ) -> Result<Bytes> {
     outbe_primitives::dispatch::reject_value(&value)?;
     dispatch_call(data, ITribute::ITributeCalls::abi_decode, |call| {
-        let tribute = TributeContract::new(storage);
+        let mut tribute = TributeContract::new(storage.clone());
         use ITribute::ITributeCalls::*;
         match call {
             name(_) => metadata::<ITribute::nameCall>(|| Ok("tribute".to_string())),
@@ -69,6 +69,14 @@ pub fn dispatch(
                     .into_iter()
                     .map(|id| id.to_u256())
                     .collect::<Vec<_>>())
+            }),
+            getLeague(c) => view(c, |c| tribute.get_league(WwdEntityId::from(c.tributeId))),
+            getDayLeagueFraction(c) => view(c, |c| {
+                tribute.get_day_league_fraction(c.worldwideDay.into(), c.league)
+            }),
+            createNod(c) => mutate(&storage, c, caller, |sender, c| {
+                let nod_id = tribute.create_nod(sender, WwdEntityId::from(c.tributeId))?;
+                Ok(nod_id.to_u256())
             }),
             supportsInterface(c) => view(c, |c| {
                 let id: [u8; 4] = c.interfaceId.0;

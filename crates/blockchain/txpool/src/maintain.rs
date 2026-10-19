@@ -224,15 +224,17 @@ mod tests {
     #[test]
     fn mined_transactions_vanish_without_eviction() {
         let mut tracker = PendingStalenessTracker::new(10);
-        tracker.check_and_update(set(&[1]), 100);
-        // Mined before the boundary: absent from the next snapshot.
-        let stale = tracker.check_and_update(set(&[]), 110);
-        assert!(stale.is_empty());
+        // Empty initial snapshots are no-ops.
+        assert!(tracker.check_and_update(set(&[]), 90).is_empty());
+        assert!(tracker.check_and_update(set(&[1]), 100).is_empty());
+        // Mined before the boundary: absent from the next snapshot, and consecutive empty snapshot is a no-op.
+        assert!(tracker.check_and_update(set(&[]), 110).is_empty());
+        assert!(tracker.check_and_update(set(&[]), 120).is_empty());
         // Re-added later (reorg re-injection): starts a FRESH cycle...
-        let stale = tracker.check_and_update(set(&[1]), 120);
+        let stale = tracker.check_and_update(set(&[1]), 130);
         assert!(stale.is_empty(), "re-added tx is fresh again");
         // ...and is evicted one interval later.
-        assert_eq!(tracker.check_and_update(set(&[1]), 130), vec![hash(1)]);
+        assert_eq!(tracker.check_and_update(set(&[1]), 140), vec![hash(1)]);
     }
 
     #[test]
@@ -245,15 +247,6 @@ mod tests {
         assert!(tracker.check_and_update(set(&[1]), 95).is_empty());
         // Boundary reached: 1 was present in the seed snapshot and survived.
         assert_eq!(tracker.check_and_update(set(&[1]), 110), vec![hash(1)]);
-    }
-
-    #[test]
-    fn empty_pool_and_empty_snapshots_are_no_ops() {
-        let mut tracker = PendingStalenessTracker::new(10);
-        assert!(tracker.check_and_update(set(&[]), 100).is_empty());
-        assert!(tracker.check_and_update(set(&[]), 110).is_empty());
-        assert!(tracker.check_and_update(set(&[1]), 120).is_empty());
-        assert_eq!(tracker.check_and_update(set(&[1]), 130), vec![hash(1)]);
     }
 
     /// End-to-end against a real pool. The tick removes a transaction that

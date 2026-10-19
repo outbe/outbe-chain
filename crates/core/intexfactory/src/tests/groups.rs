@@ -57,9 +57,6 @@ mod group_scans {
             entry_price_minor: U256::from(ENTRY_PRICE),
             issuance_currency,
             reference_currency: REFERENCE_ISO,
-            recipients: vec![],
-            units: vec![],
-            recipient_chains: vec![],
             snapshot_chains: vec![1],
         }
     }

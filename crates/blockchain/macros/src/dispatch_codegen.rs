@@ -20,7 +20,7 @@ use signature::parse_signature;
 
 pub fn expand_dispatch(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemImpl);
-    match generate(input) {
+    match generate_dispatch(input) {
         Ok(ts) => ts.into(),
         Err(e) => e.to_compile_error().into(),
     }
@@ -43,7 +43,7 @@ struct DispatchMethod {
     returns_unit: bool,
 }
 
-fn generate(mut input: ItemImpl) -> syn::Result<TokenStream2> {
+pub(crate) fn generate_dispatch(mut input: ItemImpl) -> syn::Result<TokenStream2> {
     let (contract_name, methods) = parse_methods(&mut input)?;
     emit_dispatch(input, contract_name, methods)
 }

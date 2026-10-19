@@ -106,19 +106,6 @@ fn tee_lease_sweep_reexecution_and_timestamp_jump_are_deterministic() {
 }
 
 #[test]
-fn dispatch_boundary_outcome_roundtrip_noop() {
-    let mut provider = configured_storage(2, 2);
-    provider.enter(|storage| {
-        let input = SystemTxInputV2::BoundaryOutcome {
-            artifact: boundary_noop(),
-        }
-        .encode()
-        .unwrap();
-        dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO).unwrap();
-    });
-}
-
-#[test]
 fn boundary_outcome_records_announced_tee_recipient_pubkeys() {
     let mut provider = configured_storage(2, 2);
     let recipient = B256::repeat_byte(0x7A);
@@ -157,16 +144,42 @@ fn boundary_outcome_records_announced_tee_recipient_pubkeys() {
 
 /// The bridge sync at the boundary is best effort: with no sub-call driver
 /// (this provider stubs nothing) the controller call fails, and the boundary
-/// still commits. A bridge outage must never block epoch activation.
+/// still commits epoch 1, its active-set hash, and the epoch-1 committee snapshot.
 #[test]
 fn boundary_outcome_survives_unavailable_hyperlane_sync() {
     let mut provider = configured_storage(2, 2);
+    let artifact = boundary_noop();
+    let expected_committee_hash = artifact.committee_set_hash;
+    let expected_active_set_hash = artifact.reshare.active_set_hash;
+
     provider.enter(|storage| {
-        let input = SystemTxInputV2::BoundaryOutcome {
-            artifact: boundary_noop(),
-        }
-        .encode()
-        .unwrap();
+        assert!(
+            storage
+                .call(Address::ZERO, U256::ZERO, Bytes::new())
+                .is_err(),
+            "HashMapStorageProvider has no sub-call driver, so Hyperlane sync sub-calls fail"
+        );
+        let vs_before = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+        assert_eq!(vs_before.epoch_snapshot().unwrap().number, U256::ZERO);
+
+        let input = SystemTxInputV2::BoundaryOutcome { artifact }
+            .encode()
+            .unwrap();
         dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO).unwrap();
+    });
+
+    provider.enter(|storage| {
+        let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+        assert_eq!(vs.epoch_snapshot().unwrap().number, U256::from(1u64));
+        assert_eq!(
+            vs.active_consensus_set_hash().unwrap(),
+            expected_active_set_hash
+        );
+        let snapshot_key = outbe_validatorset::committee_snapshot_key(1, expected_committee_hash);
+        let snapshot = outbe_validatorset::read_committee_snapshot(storage, snapshot_key)
+            .unwrap()
+            .expect("epoch-1 committee snapshot must be committed despite unavailable sub-call");
+        assert_eq!(snapshot.vrf_material_version, 1);
+        assert_eq!(snapshot.vrf_group_public_key_bytes, vec![0x42u8; 96]);
     });
 }

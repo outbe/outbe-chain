@@ -1,5 +1,5 @@
-//! The MCP server builds deriveKeys requests, opens sealed keys and computes modify MACs in
-//! TypeScript. These vectors are the same JSON its tests read, checked here against the enclave.
+//! Check historical TypeScript MCP client vectors against the enclave.
+//! The fixture preserves the JSON from commit 6c6cb705 before MCP moved to outbe-mcp.
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::tee_signatures::recover_signer;
@@ -12,7 +12,7 @@ use outbe_tee_enclave::{gratis, promis};
 use serde_json::Value;
 use x25519_dalek::{PublicKey, StaticSecret};
 
-const VECTORS: &str = include_str!("../../../mcp/src/confidential/vectors.json");
+const VECTORS: &str = include_str!("fixtures/mcp_client_vectors.json");
 
 fn vectors() -> Value {
     serde_json::from_str(VECTORS).unwrap()

@@ -92,8 +92,17 @@ pub enum TributeError {
     #[error("CapacityForfeiture requires an unretired Tribute partition")]
     CapacityForfeitureRequiresUnretiredPartition,
 
-    #[error(transparent)]
-    CanonicalBody(#[from] outbe_primitives::entity_codec::CanonicalBodyError),
+    #[error("invalid league: {0}")]
+    InvalidLeague(u16),
+
+    #[error("Metadosis has not completed for WWD")]
+    MetadosisNotCompleted,
+
+    #[error("Nod creation 7-day window has expired")]
+    NodCreationWindowExpired,
+
+    #[error("caller is not Tribute owner")]
+    CallerNotTributeOwner,
 
     #[error(transparent)]
     DayAmountCodec(#[from] postcard::Error),
@@ -138,7 +147,6 @@ impl From<TributeError> for PrecompileError {
             | TributeError::TotalSupplyUnderflowDuringCapacityForfeiture
             | TributeError::CapacityForfeitureRequiresSealedPartition
             | TributeError::CapacityForfeitureRequiresUnretiredPartition
-            | TributeError::CanonicalBody(_)
             | TributeError::DayAmountCodec(_) => PrecompileError::BodyReadCorruption(message),
             _ => PrecompileError::Revert(message),
         }

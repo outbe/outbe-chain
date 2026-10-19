@@ -52,7 +52,10 @@ pub(crate) fn call_if_breached(
     for &series_id in &group.members {
         mark_called(storage, series_id, called_at)?;
     }
-    let settlement_deadline = u64::from(called_at) + u64::from(series.call_notice_period_seconds);
+    let settlement_deadline = outbe_primitives::settlement::settlement_deadline_of(
+        u64::from(called_at),
+        series.call_notice_period_seconds,
+    );
     intex.remove_call_bin(group.iso_code, group.worldwide_day)?;
     intex.push_called(group.iso_code, group.worldwide_day, settlement_deadline)?;
 

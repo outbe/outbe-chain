@@ -365,8 +365,6 @@ pub enum BeginBlockPrecompileError {
     ValueExceedsU64 { name: &'static str, value: U256 },
     #[error("Cycle execution body read authority was not supplied")]
     MissingCycleBodyReadAuthority,
-    #[error("RewardsGemDelivery execution body read authority was not supplied")]
-    MissingRewardsGemDeliveryBodyReadAuthority,
     #[error("proposer is not a current consensus participant: {proposer}")]
     ProposerNotConsensusParticipant { proposer: Address },
     #[error(
@@ -548,7 +546,6 @@ impl From<BeginBlockPrecompileError> for PrecompileError {
         match error {
             BeginBlockPrecompileError::MissingPreloadedExecutionSummary { .. }
             | BeginBlockPrecompileError::MissingCycleBodyReadAuthority
-            | BeginBlockPrecompileError::MissingRewardsGemDeliveryBodyReadAuthority
             | BeginBlockPrecompileError::MissingVerifiedParentStateRoot => {
                 Self::BodyReadUnavailable(error.to_string())
             }

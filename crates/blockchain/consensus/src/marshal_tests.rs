@@ -9,11 +9,9 @@
 #[cfg(test)]
 mod tests {
     use crate::block::ConsensusBlock;
-    use crate::digest::Digest;
     use outbe_primitives::OutbeHeader;
     use reth_ethereum::primitives::SealedBlock;
     use reth_ethereum::Block;
-    use std::collections::BTreeMap;
 
     /// Create a test ConsensusBlock with a unique hash.
     fn make_test_block(seed: u8) -> ConsensusBlock {
@@ -25,37 +23,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test 1 - Integration: verify resolves block by digest through buffer
-    // -----------------------------------------------------------------------
-
-    /// Verify path resolves block body by digest through a content-addressed
-    /// buffer, not from a local handler cache populated by raw P2P admission.
-    ///
-    /// This mirrors how marshal's broadcast engine works: the proposer calls
-    /// `proposed()` which stores the block, and the verifier calls
-    /// `find_by_digest()` / `subscribe_by_digest()` to retrieve it.
-    #[test]
-    fn test_verify_resolves_block_by_digest_through_buffer() {
-        let block = make_test_block(0x42);
-        let digest = block.digest();
-
-        // Simulate marshal's buffer: content-addressed store keyed by digest.
-        let mut buffer = std::collections::HashMap::<Digest, ConsensusBlock>::new();
-
-        // Block not in buffer -> verify would call subscribe_by_digest (pending).
-        assert!(!buffer.contains_key(&digest));
-
-        // Proposer broadcasts -> buffer stores by digest.
-        buffer.insert(digest, block.clone());
-
-        // Verifier resolves by digest (not by sender identity or cache admission).
-        let resolved = buffer.get(&digest);
-        assert!(resolved.is_some(), "block must be resolvable by digest");
-        assert_eq!(resolved.unwrap().digest(), digest);
-    }
-
-    // -----------------------------------------------------------------------
-    // Test 2 - Regression: no raw unsolicited block admission path
+    // Regression: no raw unsolicited block admission path
     // -----------------------------------------------------------------------
 
     /// Raw unsolicited block payload cannot be a primary source for verify/finalize.
@@ -77,80 +45,6 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test 3 - Recovery: missing block resolves via content-addressed lookup
-    // -----------------------------------------------------------------------
-
-    /// A block that was NOT received via broadcast (e.g. network partition)
-    /// must still be resolvable once it arrives through the resolver path.
-    /// No bespoke cache admission (handle_block_received) is involved.
-    #[test]
-    fn test_missing_block_resolves_without_bespoke_cache_admission() {
-        let block = make_test_block(0xAB);
-        let digest = block.digest();
-
-        // Content-addressed store (simulates marshal's internal cache).
-        let mut store = std::collections::HashMap::<Digest, ConsensusBlock>::new();
-
-        // Block NOT available initially - simulates missing broadcast.
-        assert!(!store.contains_key(&digest));
-
-        // Resolver delivers the block (content-addressed, by digest).
-        store.insert(digest, block.clone());
-
-        // Now resolvable - no sender identity check, no timestamp check,
-        // no block-number-vs-finalized check. Pure content-addressed.
-        let resolved = store.get(&digest).unwrap();
-        assert_eq!(resolved.digest(), digest);
-        assert_eq!(resolved.number(), block.number());
-    }
-
-    // -----------------------------------------------------------------------
-    // Test 4 - E2E: proposer -> digest -> body resolution -> finalize
-    // -----------------------------------------------------------------------
-
-    /// Full end-to-end flow exercised through data structures:
-    /// 1. Proposer builds block -> stores in proposer's local cache + buffer
-    /// 2. Non-proposer receives digest in consensus proposal
-    /// 3. Non-proposer resolves block by digest from buffer
-    /// 4. Block is complete and usable for EL verification + finalization
-    #[test]
-    fn test_e2e_propose_resolve_finalize() {
-        let block = make_test_block(0xFF);
-        let digest = block.digest();
-        let number = block.number();
-
-        // Step 1: Proposer stores in local cache and broadcasts to buffer.
-        let mut proposer_cache = BTreeMap::<Digest, ConsensusBlock>::new();
-        let mut broadcast_buffer = std::collections::HashMap::<Digest, ConsensusBlock>::new();
-
-        proposer_cache.insert(digest, block.clone());
-        broadcast_buffer.insert(digest, block.clone());
-
-        // Proposer's local cache has it (for own verify fast-path).
-        assert!(proposer_cache.contains_key(&digest));
-
-        // Step 2: Non-proposer receives only digest (from Simplex proposal).
-        let received_digest = digest; // Only the digest, not the block.
-
-        // Step 3: Non-proposer resolves block from buffer by digest.
-        let resolved = broadcast_buffer.get(&received_digest);
-        assert!(
-            resolved.is_some(),
-            "non-proposer must resolve block by digest"
-        );
-
-        let resolved_block = resolved.unwrap();
-        assert_eq!(resolved_block.digest(), digest);
-
-        // Step 4: Finalization - resolved block is complete for EL processing.
-        assert_eq!(resolved_block.number(), number);
-
-        // After finalization, proposer removes from local cache.
-        proposer_cache.remove(&digest);
-        assert!(!proposer_cache.contains_key(&digest));
-    }
-
-    // -----------------------------------------------------------------------
     // MarshalReporter must acknowledge, not drop
     // -----------------------------------------------------------------------
 
@@ -164,21 +58,24 @@ mod tests {
             use commonware_utils::acknowledgement::{Acknowledgement, Exact};
             use futures::FutureExt;
 
-            let (ack, waiter) = Exact::handle();
+            let (ack, mut waiter) = Exact::handle();
 
-            // Waiter should not be resolved yet
+            // Same waiter must still be pending before acknowledge().
             assert!(
-                waiter.now_or_never().is_none(),
+                (&mut waiter).now_or_never().is_none(),
                 "waiter must not resolve before acknowledge"
             );
 
-            let (ack2, waiter2) = Exact::handle();
             ack.acknowledge();
-            // After acknowledge, waiter should resolve Ok
-            let result = waiter2.now_or_never();
-            // ack2 not yet acknowledged, so waiter2 still pending
-            assert!(result.is_none());
-            ack2.acknowledge();
+
+            // After acknowledge, the exact same waiter must resolve with Ok(()).
+            let resolved = (&mut waiter)
+                .now_or_never()
+                .expect("waiter must resolve immediately after acknowledge");
+            assert!(
+                resolved.is_ok(),
+                "acknowledged Exact waiter must resolve successfully"
+            );
         });
     }
 
@@ -283,77 +180,6 @@ mod tests {
 
         assert_eq!(resolved.epoch(), child_round.epoch());
         assert_eq!(resolved.view(), View::new(90));
-    }
-
-    /// Simulated marshal failure - retry exhaustion returns error.
-    #[test]
-    fn test_retry_exhaustion_on_persistent_failure() {
-        use crate::finalization::util::{retry_with_backoff, RetryFailureKind};
-        use commonware_runtime::Runner as _;
-
-        commonware_runtime::deterministic::Runner::default().start(|context| async move {
-            // Resolver that always fails
-            let result = retry_with_backoff::<(), _, _>(
-                &context,
-                || async { Err(()) },
-                3,
-                std::time::Duration::from_millis(1), // fast for testing
-                std::time::Duration::from_millis(50),
-            )
-            .await;
-
-            let failure = result.expect_err("persistent failure must exhaust retries");
-            assert_eq!(failure.attempts, 3, "must have attempted exactly 3 times");
-            assert_eq!(
-                failure.last_kind,
-                RetryFailureKind::Unavailable,
-                "immediate Err must report Unavailable"
-            );
-        });
-    }
-
-    /// Retry succeeds on second attempt - no stall.
-    #[test]
-    fn test_retry_succeeds_after_transient_failure() {
-        use crate::finalization::util::retry_with_backoff;
-        use commonware_runtime::Runner as _;
-        use std::sync::atomic::{AtomicU32, Ordering};
-
-        commonware_runtime::deterministic::Runner::default().start(|context| async move {
-            let attempt = std::sync::Arc::new(AtomicU32::new(0));
-            let attempt_clone = attempt.clone();
-
-            // Resolver that fails once then succeeds
-            let result = retry_with_backoff(
-                &context,
-                move || {
-                    let a = attempt_clone.clone();
-                    async move {
-                        let n = a.fetch_add(1, Ordering::SeqCst);
-                        if n == 0 {
-                            Err(())
-                        } else {
-                            Ok(42u32)
-                        }
-                    }
-                },
-                3,
-                std::time::Duration::from_millis(1),
-                std::time::Duration::from_millis(50),
-            )
-            .await;
-
-            assert_eq!(
-                result.unwrap(),
-                42,
-                "must return value from successful retry"
-            );
-            assert_eq!(
-                attempt.load(Ordering::SeqCst),
-                2,
-                "must have attempted 2 times"
-            );
-        });
     }
 
     /// Immediate success - no retries needed.

@@ -35,8 +35,8 @@ pub enum NodFactoryError {
     #[error("insufficient proof of work")]
     InsufficientProofOfWork,
 
-    #[error("nod call settlement deadline has expired")]
-    CallDeadlineExpired,
+    #[error("settlement deadline has passed")]
+    SettlementDeadlinePassed,
 
     #[error(transparent)]
     CreateNodForTest(#[from] outbe_tee::TransportError),
@@ -45,7 +45,7 @@ pub enum NodFactoryError {
     EmptyBucketMemberSlotDuringForfeit { bucket_key: B256 },
 
     #[error("Nod bucket {bucket_key} member {nod_id} has no body during forfeit")]
-    MissingBucketMemberBodyDuringForfeit {
+    MissingBucketMemberRecordDuringForfeit {
         bucket_key: B256,
         nod_id: WwdEntityId,
     },
@@ -57,7 +57,7 @@ pub enum NodFactoryError {
     },
 
     #[error("Nod bucket {bucket_key} has no body during forfeit")]
-    MissingBucketBodyDuringForfeit { bucket_key: B256 },
+    MissingBucketRecordDuringForfeit { bucket_key: B256 },
 
     #[error("closeCallNoticeForTest: bucket not queued")]
     BucketNotQueuedForTest,

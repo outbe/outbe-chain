@@ -105,9 +105,9 @@ pub(crate) enum LauncherExitCause {
 ///
 /// Reth owns the process signal handler and may cancel the complete node launcher
 /// future. This guard therefore performs the same cancellation and synchronous
-/// join from `Drop` as the ordinary completion path. This prevents Reth's ExEx and
-/// Engine resources from disappearing while consensus still holds an exact
-/// application acknowledgement.
+/// join from `Drop` as the ordinary completion path. This prevents Reth's Engine
+/// resources from disappearing while consensus still holds an exact application
+/// acknowledgement.
 pub(crate) struct ConsensusThreadGuard {
     shutdown: tokio_util::sync::CancellationToken,
     handle: Option<thread::JoinHandle<eyre::Result<()>>>,

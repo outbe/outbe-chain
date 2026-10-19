@@ -32,6 +32,38 @@ fn shared_diagnostics_match_original_node_snapshots() {
             validate_boundary_outcome_binding(layout, artifacts).map_err(|error| error.to_string())
         },
     );
+    cases::assert_diagnostics(
+        false,
+        |body, header| {
+            validate_system_layout(body, header)
+                .map(|_| ())
+                .map_err(|error| match error {
+                    LayoutBindingError::Artifacts(err) => {
+                        format!("decode Outbe block artifacts for system tx validation: {err}")
+                    }
+                    LayoutBindingError::Layout(err) => {
+                        format!("invalid system tx layout for leader binding: {err}")
+                    }
+                    other => other.to_string(),
+                })
+        },
+        |layout, header| {
+            validate_parent_accounting_binding(layout, header).map_err(|error| match error {
+                ParentAccountingBindingError::Decode(err) => {
+                    format!("decode CertifiedParentAccounting system tx input: {err}")
+                }
+                other => other.to_string(),
+            })
+        },
+        |layout, artifacts| {
+            validate_boundary_outcome_binding(layout, artifacts).map_err(|error| match error {
+                BoundaryBindingError::Decode(err) => {
+                    format!("decode system transaction input: {err}")
+                }
+                other => other.to_string(),
+            })
+        },
+    );
 }
 
 #[test]

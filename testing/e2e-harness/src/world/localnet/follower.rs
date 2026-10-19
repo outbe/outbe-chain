@@ -708,8 +708,5 @@ mod tests {
             exact_restore, original,
             "validator restart must retain byte-for-byte original argv"
         );
-        assert!(!follower
-            .iter()
-            .any(|arg| arg.starts_with("--projection.storage-config")));
     }
 }

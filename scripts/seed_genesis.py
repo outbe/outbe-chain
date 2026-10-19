@@ -250,9 +250,7 @@ def apply_seed(
 
     # Gratis and Promis use TEE encryption at rest. Per-account balances are
     # ciphertext that uses enclave state keys. Genesis cannot seed plaintext balances.
-    # Gem bodies are compressed entities: they live in the authenticated body store,
-    # not in flat Gem slots, so genesis cannot seed a Gem either. A demo account gets
-    # its Gem through a runtime issuance and mines Gem -> Promis -> Gratis through the
+    # A Gem is issued at runtime and mined Gem -> Promis -> Gratis through the
     # enclave. Fail loudly if a stale seed still carries these keys.
     for _unsupported_key in ("gratis_balances", "promis_balances", "gems"):
         if _unsupported_key in seed:

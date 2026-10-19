@@ -1,4 +1,5 @@
 use crate::world::rpc::*;
+use alloy_sol_types::SolEvent;
 
 impl Rpc {
     /// Metadosis worldwide-day status byte (field 1 of `getWorldwideDay`).
@@ -130,6 +131,43 @@ impl Rpc {
         })
     }
 
+    /// Canonical successful Lysis events through an already finalized checkpoint.
+    pub fn finalized_metadosis_lysis_completion_blocks_on(
+        &self,
+        port: u16,
+        day: u32,
+        height: u64,
+    ) -> Option<Vec<(u64, B256)>> {
+        let rpc_url = self.url(port);
+        if height == 0 || eth::finalized_number(&rpc_url)? < height {
+            return None;
+        }
+        let logs = eth::raw_json_with_params(
+            &rpc_url,
+            "eth_getLogs",
+            serde_json::json!([{
+                "address": format!("{:#x}", addresses::WWD_ADDR),
+                "fromBlock": "0x1",
+                "toBlock": format!("0x{height:x}"),
+                "topics": [
+                    format!("{:#x}", IMetadosis::MetadosisExecuted::SIGNATURE_HASH),
+                    format!("0x{day:064x}")
+                ]
+            }]),
+        )?;
+        logs.as_array()?
+            .iter()
+            .map(|log| {
+                let block_number = decode_lysis_completion_block(log, day)?;
+                if block_number > height {
+                    return None;
+                }
+                let block_hash = canonical_rpc_log_block_hash(&rpc_url, log, block_number)?;
+                Some((block_number, block_hash))
+            })
+            .collect()
+    }
+
     pub fn finalized_metadosis_wwd_status_changes_on(
         &self,
         port: u16,
@@ -211,4 +249,90 @@ pub struct MetadosisWorldwideDayTerminalReceiptV1 {
     pub carry_over_after: U256,
     pub retirement_outcome: u8,
     pub block_number: u64,
+}
+
+fn decode_lysis_completion_block(log: &serde_json::Value, day: u32) -> Option<u64> {
+    if log.get("address")?.as_str()?.parse::<Address>().ok()? != addresses::WWD_ADDR
+        || log.get("removed").and_then(serde_json::Value::as_bool) == Some(true)
+    {
+        return None;
+    }
+    let topics = log
+        .get("topics")?
+        .as_array()?
+        .iter()
+        .map(|topic| topic.as_str()?.parse::<B256>().ok())
+        .collect::<Option<Vec<_>>>()?;
+    if topics.len() != 2 {
+        return None;
+    }
+    let data = hex::decode(log.get("data")?.as_str()?.strip_prefix("0x")?).ok()?;
+    let event = IMetadosis::MetadosisExecuted::decode_raw_log_validate(topics, &data).ok()?;
+    let block_number = rpc_log_block_number(log)?;
+    (event.worldwideDay == day
+        && event.status == "COMPLETED"
+        && event.blockNumber == block_number
+        && block_number > 0)
+        .then_some(block_number)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn completion_log(day: u32, status: &str, block_number: u64) -> serde_json::Value {
+        let event = IMetadosis::MetadosisExecuted {
+            worldwideDay: day,
+            tributeNominalTotalMinor: U256::ZERO,
+            gratisDemandMinor: U256::ZERO,
+            dayGratisLimitMinor: U256::ZERO,
+            lysisLimitMinor: U256::ZERO,
+            unusedLysisLimitMinor: U256::ZERO,
+            lysisAllocationMinor: U256::ZERO,
+            promisLimitReturnedMinor: U256::ZERO,
+            status: status.into(),
+            blockNumber: block_number,
+        };
+        let encoded = event.encode_log_data();
+        serde_json::json!({
+            "address": addresses::WWD_ADDR,
+            "topics": encoded.topics(),
+            "data": format!("0x{}", hex::encode(encoded.data)),
+            "blockNumber": format!("0x{block_number:x}"),
+            "removed": false
+        })
+    }
+
+    #[test]
+    fn native_lysis_completion_decodes_the_semantic_success_event() {
+        let log = completion_log(20261017, "COMPLETED", 70);
+        assert_eq!(decode_lysis_completion_block(&log, 20261017), Some(70));
+    }
+
+    #[test]
+    fn native_lysis_completion_rejects_wrong_identity_status_and_malformed_logs() {
+        let day = 20261017;
+        let valid = completion_log(day, "COMPLETED", 70);
+        assert_eq!(decode_lysis_completion_block(&valid, day + 1), None);
+        assert_eq!(
+            decode_lysis_completion_block(&completion_log(day, "FAILED", 70), day),
+            None
+        );
+        assert_eq!(
+            decode_lysis_completion_block(&completion_log(day, "COMPLETED", 0), day),
+            None
+        );
+        for (field, value) in [
+            ("address", serde_json::json!(Address::ZERO)),
+            ("removed", serde_json::json!(true)),
+            ("blockNumber", serde_json::json!("0x47")),
+            ("data", serde_json::json!("0x00")),
+            ("topics", serde_json::json!([])),
+            ("topics", serde_json::json!([B256::ZERO, B256::ZERO])),
+        ] {
+            let mut log = valid.clone();
+            log[field] = value;
+            assert_eq!(decode_lysis_completion_block(&log, day), None, "{field}");
+        }
+    }
 }

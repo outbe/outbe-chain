@@ -33,7 +33,8 @@ pub(crate) fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
 
 /// One block's burns across the due hours.
 pub(crate) struct GemExpiry<'a, 's> {
-    bodies: Bodies<'a, 's>,
+    /// The EVM state used to load and remove Gems during forfeiture.
+    storage: &'a StorageHandle<'s>,
     gem: GemContract<'s>,
     burned: u32,
 }
@@ -62,17 +63,17 @@ impl ExpiryHandler<B256> for GemExpiry<'_, '_> {
             .read(&GemContract::bucket_member_key(bucket, index))
     }
 
-    /// A forfeit loads a body and deletes it, which costs more than a slot write.
+    /// Each forfeit draws from the per-block forfeit limit, separate from slot writes.
     fn charge(&self, budget: &mut SweepBudget) -> bool {
         budget.body_write()
     }
 
     fn classify(&self, error: &PrecompileError) -> SweepFailure {
-        error.body_sweep_failure()
+        error.record_sweep_failure()
     }
 
     fn expire_member(&mut self, bucket: B256, gem_id: U256) -> Result<()> {
-        forfeit_member(&self.bodies, &mut self.gem, bucket, gem_id)?;
+        forfeit_member(self.storage, &mut self.gem, bucket, gem_id)?;
         self.burned = self.burned.saturating_add(1);
         Ok(())
     }
@@ -92,18 +93,11 @@ impl ExpiryHandler<B256> for GemExpiry<'_, '_> {
 impl<'a, 's> GemExpiry<'a, 's> {
     pub(crate) fn new(ctx: &'a BlockRuntimeContext<'s>) -> Self {
         Self {
-            bodies: Bodies {
-                storage: &ctx.storage,
-            },
+            storage: &ctx.storage,
             gem: GemContract::new(ctx.storage.clone()),
             burned: 0,
         }
     }
-}
-
-/// The EVM state used to load and remove Gems during forfeiture.
-struct Bodies<'a, 's> {
-    storage: &'a StorageHandle<'s>,
 }
 
 /// Forfeit-burns one unpaid member of a lapsed bucket and returns its load to the
@@ -111,17 +105,16 @@ struct Bodies<'a, 's> {
 /// it goes back. The return uses the same checkpoint as the burn, or there is nothing
 /// to recover.
 fn forfeit_member(
-    bodies: &Bodies<'_, '_>,
+    storage: &StorageHandle<'_>,
     gem: &mut GemContract<'_>,
     bucket_key: B256,
     gem_id: U256,
 ) -> Result<()> {
-    let Bodies { storage } = *bodies;
     if gem_id.is_zero() {
         return Err(GemFactoryError::EmptyMemberSlotDuringForfeit { bucket_key }.into());
     }
     let (item, bucket) = gem_api::load_pair(storage, gem_id)?
-        .ok_or(GemFactoryError::MissingMemberBodyDuringForfeit { bucket_key, gem_id })?;
+        .ok_or(GemFactoryError::MissingMemberRecordDuringForfeit { bucket_key, gem_id })?;
     if item.body().is_settled() || item.body().bucket_key != bucket_key {
         return Err(GemFactoryError::IneligibleBucketMember { bucket_key, gem_id }.into());
     }

@@ -37,9 +37,9 @@ fn expiry_waits_until_the_deadline_hour_has_closed() {
     });
 }
 
-/// The body is deleted and the load goes back to the reserve in one transition.
+/// The gem is deleted and the load goes back to the reserve in one transition.
 #[test]
-fn forfeit_deletes_the_gem_body_and_returns_promis_load() {
+fn forfeit_deletes_the_gem_and_returns_promis_load() {
     let mut provider = provider_at(T_NOW);
     let (gem_id, load) = StorageHandle::enter(&mut provider, |storage| {
         let gem_id = mature_gem(&storage);
@@ -423,9 +423,9 @@ fn config_dev_profile_terms_a_new_bucket() {
     });
 }
 
-/// A corrupt gem body is this node's store: the forfeit sweep fails the block.
+/// A corrupt gem record read is this node's store: the forfeit sweep fails the block.
 #[test]
-fn a_corrupt_body_fails_the_forfeit_sweep() {
+fn a_corrupt_record_read_fails_the_forfeit_sweep() {
     use outbe_primitives::error::{PrecompileError, SweepFailure};
     use outbe_primitives::expiry_queue::ExpiryHandler;
     with_storage(|storage| {

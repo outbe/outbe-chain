@@ -6,36 +6,34 @@ fn radicle_channel_is_frozen_before_network_start() {
 }
 
 #[test]
-fn testnet_clock_offset_is_rejected_for_unregistered_networks() {
-    let unknown_production_chain = 1_000_000_001;
-    let error = validate_testnet_only_flags(false, Some(1), unknown_production_chain)
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("--testnet.unix-time-offset-secs"));
-}
-
-#[test]
 fn testnet_clock_offset_is_allowed_only_on_explicit_test_networks() {
     for chain_id in [
         outbe_primitives::chain::DEVNET_CHAIN_ID,
         outbe_primitives::chain::TESTNET_CHAIN_ID,
     ] {
-        validate_testnet_only_flags(false, Some(-60), chain_id).unwrap();
+        validate_testnet_only_flags(true, Some(-60), chain_id).unwrap();
     }
 }
 
 #[test]
-fn every_testnet_only_flag_is_rejected_for_unregistered_networks() {
-    let chain_id = 1_000_000_001;
-    assert!(validate_testnet_only_flags(true, None, chain_id).is_err());
-    assert!(validate_testnet_only_flags(false, Some(0), chain_id).is_err());
-}
+fn every_testnet_only_flag_is_rejected_for_non_test_networks() {
+    for chain_id in [outbe_primitives::chain::MAINNET_CHAIN_ID, 1_000_000_001] {
+        let trust_err = validate_testnet_only_flags(true, None, chain_id)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            trust_err.contains("--testnet.trust-el-head"),
+            "chain_id {chain_id}: {trust_err}"
+        );
 
-#[test]
-fn every_testnet_only_flag_is_rejected_for_mainnet() {
-    let chain_id = outbe_primitives::chain::MAINNET_CHAIN_ID;
-    assert!(validate_testnet_only_flags(true, None, chain_id).is_err());
-    assert!(validate_testnet_only_flags(false, Some(0), chain_id).is_err());
+        let offset_err = validate_testnet_only_flags(false, Some(0), chain_id)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            offset_err.contains("--testnet.unix-time-offset-secs"),
+            "chain_id {chain_id}: {offset_err}"
+        );
+    }
 }
 
 #[test]
@@ -61,21 +59,25 @@ fn test_build_peer_map_from_bootnodes() {
 }
 
 #[test]
-fn test_parse_consensus_peers_rejects_invalid_entries() {
-    let err = parse_consensus_peers(&["not-a-peer".to_string()])
-        .unwrap_err()
-        .to_string();
-    assert!(err.contains("expected <hex_bls_pubkey>@<host:port>"));
+fn test_parse_consensus_peers_accepts_valid_and_rejects_invalid_entries() {
+    let valid_addr: std::net::SocketAddr = "127.0.0.1:30400".parse().unwrap();
+    let parsed = parse_consensus_peers(&["deadbeef@127.0.0.1:30400".to_string()]).unwrap();
+    assert_eq!(parsed.get(&vec![0xde, 0xad, 0xbe, 0xef]), Some(&valid_addr));
 
-    let err = parse_consensus_peers(&["zz@127.0.0.1:30400".to_string()])
-        .unwrap_err()
-        .to_string();
-    assert!(err.contains("public key is not hex"));
-
-    let err = parse_consensus_peers(&["aa@not-a-socket".to_string()])
-        .unwrap_err()
-        .to_string();
-    assert!(err.contains("invalid socket address"));
+    for (invalid_entry, expected_substring) in [
+        ("not-a-peer", "expected <hex_bls_pubkey>@<host:port>"),
+        ("@127.0.0.1:30400", "public key is empty"),
+        ("zz@127.0.0.1:30400", "public key is not hex"),
+        ("aa@not-a-socket", "invalid socket address"),
+    ] {
+        let err = parse_consensus_peers(&[invalid_entry.to_string()])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains(expected_substring),
+            "entry {invalid_entry:?}: {err}"
+        );
+    }
 }
 
 #[test]
@@ -226,6 +228,14 @@ fn engine_spawn_labels_pass_commonware_validate_label() {
     for label in ENGINE_SPAWN_LABELS {
         commonware_runtime::telemetry::metrics::validate_label(label);
     }
+    for attempt in [
+        super::epoch::ceremony::CeremonyAttempt::Retry,
+        super::epoch::ceremony::CeremonyAttempt::Live {
+            scheduling_height: 1,
+        },
+    ] {
+        commonware_runtime::telemetry::metrics::validate_label(attempt.task_label());
+    }
 }
 
 /// Guard the guard: prove `validate_label` actually rejects the dotted form that
@@ -265,40 +275,25 @@ fn marshal_init_option_height_maps_none_to_genesis_zero() {
 // Block-timing genesis reader / validation (Phase 0/3 of min-block-time).
 // ---------------------------------------------------------------------------
 
-/// Test 8: absent genesis key falls back to the supplied default.
+/// `read_ms` falls back to default when absent, returns present values verbatim
+/// (including 0, which `validate_timing` rejects), and reports malformed values
+/// with the offending genesis key name.
 #[test]
-fn read_ms_uses_default_when_absent() {
-    assert_eq!(
-        read_ms::<String>(None, "minBlockTimeMs", 2000).unwrap(),
-        2000
-    );
-    assert_eq!(
-        read_ms::<String>(None, "leaderTimeoutMs", 4000).unwrap(),
-        4000
-    );
-    assert_eq!(
-        read_ms::<String>(None, "certificationTimeoutMs", 8000).unwrap(),
-        8000
-    );
-}
+fn read_ms_handles_absent_present_and_malformed_values() {
+    for (input, key, default_ms, expected) in [
+        (None, "minBlockTimeMs", 2000, 2000),
+        (None, "leaderTimeoutMs", 4000, 4000),
+        (None, "certificationTimeoutMs", 8000, 8000),
+        (Some(Ok(0)), "minBlockTimeMs", 2000, 0),
+        (Some(Ok(1500)), "minBlockTimeMs", 2000, 1500),
+    ] {
+        assert_eq!(
+            read_ms::<String>(input, key, default_ms).unwrap(),
+            expected,
+            "key {key}"
+        );
+    }
 
-/// Test 9: `read_ms` returns a present value verbatim, including 0. The value is
-/// only read here. `validate_timing` enforces the `> 0` rule (see Test 11).
-#[test]
-fn read_ms_accepts_present_value() {
-    assert_eq!(
-        read_ms::<String>(Some(Ok(0)), "minBlockTimeMs", 2000).unwrap(),
-        0
-    );
-    assert_eq!(
-        read_ms::<String>(Some(Ok(1500)), "minBlockTimeMs", 2000).unwrap(),
-        1500
-    );
-}
-
-/// Test 10: a malformed value surfaces a structured error naming the key.
-#[test]
-fn read_ms_reports_malformed_value() {
     let err = read_ms(
         Some(Err("expected u64".to_string())),
         "minBlockTimeMs",

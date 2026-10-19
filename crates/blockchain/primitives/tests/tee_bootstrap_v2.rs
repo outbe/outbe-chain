@@ -437,7 +437,10 @@ fn decoder_rejects_full_calldata_cap_plus_one_before_parsing() {
 }
 
 #[test]
-fn thirty_two_validator_near_cap_bootstrap_fits_five_transaction_block() {
+fn thirty_two_validator_near_cap_bootstrap_fits_six_transaction_block() {
+    use outbe_primitives::system_tx::{split_system_layout, validate_active_system_tx_set};
+    use reth_ethereum::TransactionSigned;
+
     let payload = production_shaped_payload(32);
     let logical_evidence_len = payload
         .logical_evidence(0)
@@ -475,6 +478,7 @@ fn thirty_two_validator_near_cap_bootstrap_fits_five_transaction_block() {
     };
     let inputs = vec![
         SystemTxInputV2::CycleTick,
+        SystemTxInputV2::RewardsGemDelivery,
         SystemTxInputV2::BoundaryOutcome { artifact },
         SystemTxInputV2::TeeBootstrap { payload },
         SystemTxInputV2::OracleSlashWindow,
@@ -484,10 +488,10 @@ fn thirty_two_validator_near_cap_bootstrap_fits_five_transaction_block() {
         .into_iter()
         .map(|input| (input.kind(), input.encode().unwrap()))
         .collect::<Vec<_>>();
-    let bootstrap_len = encoded[2].1.len();
+    let bootstrap_len = encoded[3].1.len();
     assert!(bootstrap_len <= MAX_TEE_BOOTSTRAP_BYTES);
     let gas_plan = SystemTxVisibleGasPlan::new(BOOTSTRAP_BLOCK_GAS_LIMIT, &encoded).unwrap();
-    let transactions = encoded
+    let transactions: Vec<TransactionSigned> = encoded
         .into_iter()
         .enumerate()
         .map(|(ordinal, (kind, calldata))| {
@@ -503,8 +507,14 @@ fn thirty_two_validator_near_cap_bootstrap_fits_five_transaction_block() {
             )
             .unwrap()
             .into_signed(Signature::test_signature())
+            .into()
         })
-        .collect::<Vec<_>>();
+        .collect();
+    assert_eq!(transactions.len(), 6);
+    let layout = split_system_layout(&transactions).expect("block-1 bootstrap layout splits");
+    validate_active_system_tx_set(&layout, 1, true, true)
+        .expect("canonical six-transaction block-1 bootstrap layout validates");
+
     let exact_transactions_rlp_len = transactions
         .iter()
         .map(|transaction| {
@@ -515,12 +525,12 @@ fn thirty_two_validator_near_cap_bootstrap_fits_five_transaction_block() {
         .sum::<usize>();
 
     assert!(
-        gas_plan.gas_limit(2).unwrap() < BOOTSTRAP_BLOCK_GAS_LIMIT,
-        "OST3 must leave gas for the other four mandatory system transactions"
+        gas_plan.gas_limit(3).unwrap() < BOOTSTRAP_BLOCK_GAS_LIMIT,
+        "OST3 must leave gas for the other five mandatory system transactions"
     );
     assert!(
         exact_transactions_rlp_len < outbe_primitives::consensus::OUTBE_MAX_BLOCK_SIZE,
-        "the exact five block-1 transaction encodings must fit the P2P block cap"
+        "the exact six block-1 transaction encodings must fit the P2P block cap"
     );
 }
 

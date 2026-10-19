@@ -278,7 +278,7 @@ pub struct Rewards {
     pub late_residue_dust_native: Slot<U256>,
 
     /// UTC reward day -> recipients of the pending FIFO head already delivered. Delivery
-    /// mints one compressed Gem body per block; the head retires when this reaches the
+    /// mints one reward Gem per block; the head retires when this reaches the
     /// recipient count. Cleared with the head.
     pub reward_gem_delivered_count: Mapping<u32, u32>,
 }

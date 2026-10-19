@@ -51,13 +51,43 @@ impl core::fmt::Display for TimeError {
     }
 }
 
+/// Returns the linear UTC day index (`timestamp / SECONDS_PER_DAY`) for a unix timestamp.
+pub const fn utc_day_from_timestamp(timestamp: u64) -> u64 {
+    timestamp / SECONDS_PER_DAY
+}
+
 /// Converts a unix timestamp to a yyyymmdd date key in UTC.
 pub fn timestamp_to_date_key(timestamp: u64) -> u32 {
     // `timestamp / SECONDS_PER_DAY` is at most `u64::MAX / 86_400` ~= 2.1e14, far
     // below `i64::MAX`, so this never saturates. `try_from` (not `as`) keeps the
     // conversion non-narrowing and deterministic on the consensus date path.
-    let days = i64::try_from(timestamp / SECONDS_PER_DAY).unwrap_or(i64::MAX);
+    let days = i64::try_from(utc_day_from_timestamp(timestamp)).unwrap_or(i64::MAX);
     civil_date_from_days(days)
+}
+
+/// The local wall-clock time as `YYYY-MM-DDTHH:MM:SS.mmmZ`, for off-chain journals only.
+pub fn iso8601_now() -> String {
+    iso8601(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default(),
+    )
+}
+
+fn iso8601(since_epoch: std::time::Duration) -> String {
+    let secs = since_epoch.as_secs();
+    let date = timestamp_to_date_key(secs);
+    let rem = secs % SECONDS_PER_DAY;
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        date / 10_000,
+        date / 100 % 100,
+        date % 100,
+        rem / 3600,
+        rem / 60 % 60,
+        rem % 60,
+        since_epoch.subsec_millis()
+    )
 }
 
 /// Returns the worldwide day key for a unix timestamp (UTC+14).
@@ -135,7 +165,10 @@ fn civil_date_from_days(days_since_epoch: i64) -> u32 {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
-    (y as u32) * 10000 + m * 100 + d
+    u32::try_from(y)
+        .unwrap_or(u32::MAX)
+        .saturating_mul(10000)
+        .saturating_add(m * 100 + d)
 }
 
 fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
@@ -266,6 +299,19 @@ impl StorageKey for WorldwideDay {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn iso8601_renders_utc_with_milliseconds() {
+        let at = std::time::Duration::from_millis(
+            (date_key_to_utc_timestamp(20241231) + 23 * 3600 + 59 * 60 + 58) * 1000 + 7,
+        );
+        assert_eq!(iso8601(at), "2024-12-31T23:59:58.007Z");
+        assert_eq!(
+            iso8601(std::time::Duration::ZERO),
+            "1970-01-01T00:00:00.000Z"
+        );
+        assert_eq!(iso8601_now().len(), 24);
+    }
 
     #[test]
     fn a_midnight_issuance_keeps_its_own_day_and_a_later_one_waits() {

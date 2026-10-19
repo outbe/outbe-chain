@@ -12,11 +12,17 @@ pub enum GemFactoryError {
     #[error("gem not found")]
     GemNotFound,
 
-    #[error("invalid state for action")]
-    InvalidState,
+    #[error("gem is already settled")]
+    GemAlreadySettled,
 
-    #[error("call notice period expired")]
-    DeadlineExpired,
+    #[error("gem is not settled")]
+    GemNotSettled,
+
+    #[error("gem bucket is not called")]
+    GemNotCalled,
+
+    #[error("settlement deadline has passed")]
+    SettlementDeadlinePassed,
 
     #[error("unsupported gem type")]
     UnsupportedGemType,
@@ -70,7 +76,7 @@ pub enum GemFactoryError {
     EmptyMemberSlotDuringForfeit { bucket_key: B256 },
 
     #[error("gem bucket {bucket_key} member {gem_id} has no body during forfeit")]
-    MissingMemberBodyDuringForfeit { bucket_key: B256, gem_id: U256 },
+    MissingMemberRecordDuringForfeit { bucket_key: B256, gem_id: U256 },
 
     #[error("gem bucket {bucket_key} indexes an ineligible member {gem_id}")]
     IneligibleBucketMember { bucket_key: B256, gem_id: U256 },

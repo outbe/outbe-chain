@@ -1,8 +1,8 @@
 //! Shared fixtures for the Nod tests.
 
-mod adr006;
 mod buckets;
 mod cost;
+mod invariants;
 mod layout;
 mod nft;
 mod views;

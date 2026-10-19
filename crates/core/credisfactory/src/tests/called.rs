@@ -913,7 +913,7 @@ fn every_cycle_tick_forfeits_without_the_daily_trigger() {
 #[test]
 fn settling_a_called_credis_in_full_leaves_the_queue() {
     let mut storage = env();
-    StorageHandle::enter(&mut storage, |storage| {
+    let (credis_id, outstanding) = StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let credis_id = open(&storage, 1);
         call_by_hand(&storage, &[credis_id], CREATED_AT);
@@ -927,7 +927,10 @@ fn settling_a_called_credis_in_full_leaves_the_queue() {
             .get_credis(credis_id)
             .unwrap()
             .outstanding_principal_minor;
-        settle_principal(&storage, alice(), credis_id, outstanding);
+        (credis_id, outstanding)
+    });
+    settle_principal(&mut storage, alice(), credis_id, outstanding);
+    StorageHandle::enter(&mut storage, |storage| {
         assert_eq!(state_of(&storage, credis_id), CredisState::Settled);
         assert_eq!(queued_at(&storage, credis_id), 0);
 

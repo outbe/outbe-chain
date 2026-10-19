@@ -586,6 +586,21 @@ sol! {
             external view returns (uint128 amount, uint32 claimableAt);
         function claimRefund(uint32 worldwideDay, address bidder) external;
     }
+
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    struct BidLock {
+        uint128 lockedAmount;
+        uint32 lockedAt;
+        uint8 status;
+        uint32 bidRate;
+        uint16 quantity;
+    }
+
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IWinClaim {
+        function getBidLock(uint32 worldwideDay, address bidder) external view returns (BidLock memory);
+        function issueIntex(uint32 worldwideDay, address bidder) external;
+    }
 }
 /// The series the target chain was told to issue, read back from its own log so
 /// the identifier comes from the chain rather than from a rebuilt guess.
@@ -593,9 +608,8 @@ pub(crate) fn issued_series(
     url: &str,
     venue_router: Address,
 ) -> Option<alloy_primitives::FixedBytes<14>> {
-    let topic0 = alloy_primitives::keccak256(
-        b"IssuanceInstructionsReceived(uint32,bytes14,uint256)".as_slice(),
-    );
+    let topic0 =
+        alloy_primitives::keccak256(b"IssuanceInstructionsReceived(uint32,bytes14)".as_slice());
     let logs = logs_of(
         url,
         venue_router,
@@ -606,17 +620,6 @@ pub(crate) fn issued_series(
     Some(alloy_primitives::FixedBytes::<14>::from_slice(
         &word.0[..14],
     ))
-}
-
-pub(crate) fn deferred_issuances(url: &str, venue_router: Address) -> usize {
-    let topic0 =
-        alloy_primitives::keccak256(b"IssuanceParked(uint256,bytes14,address,bytes)".as_slice());
-    logs_of(
-        url,
-        venue_router,
-        vec![serde_json::json!(format!("{topic0:?}"))],
-    )
-    .map_or(0, |e| e.len())
 }
 /// Whether Desis issued anything at all. Absent issuance means one of two very
 /// different things, and only the clearing event tells them apart.

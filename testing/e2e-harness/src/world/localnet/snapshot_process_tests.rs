@@ -130,14 +130,6 @@ fn snapshot_ordinary_restart_preserves_actual_final_options_environment_and_data
             net.validator_launch_observation(0)
         }
         .unwrap();
-        assert_eq!(
-            before
-                .argv
-                .iter()
-                .filter(|a| *a == "--projection.storage-config")
-                .count(),
-            0
-        );
         assert!(before
             .argv
             .contains(&"--custom=value with spaces".to_owned()));

@@ -582,7 +582,6 @@ fn assert_native_transfer_identity(inspect: bool) {
         Bytecode::new_legacy([0xef].into()).hash_slow()
     );
     assert_eq!(storage_writes(&actual, ZEROFEE_ADDRESS), 0);
-    eprintln!("normalization_control inspect={inspect} case=transfer_gas_marker_identity passed");
 }
 
 fn assert_nested_delegation_opcodes(inspect: bool, forwarder: Address) -> eyre::Result<()> {
@@ -640,7 +639,6 @@ fn assert_nested_delegation_opcodes(inspect: bool, forwarder: Address) -> eyre::
             U256::from(if opcode == 0xf1 { 11 } else { 1 })
         );
         assert_eq!(storage_writes(&actual, ZEROFEE_ADDRESS), 0);
-        eprintln!("normalization_control inspect={inspect} case=opcode_{opcode:x} passed");
     }
     Ok(())
 }
@@ -661,7 +659,6 @@ fn assert_outer_delegation_revert(inspect: bool, forwarder: Address) {
     assert!(matches!(actual.result, ExecutionResult::Revert { .. }));
     assert_eq!(balance_of(&actual, BORROWER), U256::from(1));
     assert_eq!(balance_of(&actual, forwarder), U256::ZERO);
-    eprintln!("normalization_control inspect={inspect} case=outer_revert passed");
 }
 
 fn assert_ordinary_delegation(inspect: bool, ordinary: Address) -> eyre::Result<()> {
@@ -702,7 +699,6 @@ fn assert_ordinary_delegation(inspect: bool, ordinary: Address) -> eyre::Result<
         } => assert_eq!(U256::from_be_slice(&data), U256::from(42)),
         other => eyre::bail!("ordinary delegation: {other:?}"),
     }
-    eprintln!("normalization_control inspect={inspect} case=ordinary_delegation passed");
 
     Ok(())
 }
@@ -739,7 +735,6 @@ fn assert_single_delegation_hop(inspect: bool, ordinary: Address) {
     );
     assert_eq!(actual.result, baseline.result);
     assert!(format!("{:?}", actual.result).contains("OpcodeNotFound"));
-    eprintln!("normalization_control inspect={inspect} case=one_hop_only passed");
 }
 
 fn assert_ethereum_precompile(inspect: bool) {
@@ -765,7 +760,6 @@ fn assert_ethereum_precompile(inspect: bool) {
         true,
     );
     assert_eq!(actual.result, baseline.result);
-    eprintln!("normalization_control inspect={inspect} case=ethereum_precompile passed");
 }
 
 fn assert_direct_native_value_rejection(inspect: bool) {
@@ -791,7 +785,6 @@ fn assert_direct_native_value_rejection(inspect: bool) {
     );
     assert_eq!(actual.result, baseline.result);
     assert!(matches!(actual.result, ExecutionResult::Revert { .. }));
-    eprintln!("normalization_control inspect={inspect} case=direct_native_value_rejection passed");
 }
 
 #[test]

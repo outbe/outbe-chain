@@ -20,7 +20,6 @@
 //!    If the SenderCreator we pre-deploy lives at a different address than
 //!    the one EntryPoint expects, UserOperation `initCode` flows would
 //!    silently revert.
-//!  * `handleops_end_to_end` (`#[ignore]`) - a tracked stretch goal.
 
 use alloy_primitives::Address;
 use outbe_primitives::addresses::{

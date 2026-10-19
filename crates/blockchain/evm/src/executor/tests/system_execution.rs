@@ -161,14 +161,21 @@ fn gas_02_phase1_preexec_failure_must_consume_body0_or_abort() {
     );
 
     let block_artifacts = OutbeBlockArtifacts::default();
-    let preexec = crate::factory::with_forced_outbe_system_call_error(|| {
+    let preexec_err = crate::factory::with_forced_outbe_system_call_error(|| {
         executor.apply_phase1_commit_in_preexec(2, &block_artifacts)
-    });
-    if preexec.is_err() {
-        return;
-    }
+    })
+    .expect_err("GAS-02: forced system-call error in Phase 1 pre-exec must abort with Err");
+    assert!(
+        preexec_err
+            .to_string()
+            .contains("forced Outbe system-call error"),
+        "GAS-02: unexpected pre-exec error: {preexec_err}"
+    );
+    assert!(
+        executor.receipts().is_empty(),
+        "GAS-02: failed Phase 1 pre-exec must not emit a receipt"
+    );
 
-    let receipt_count_after_preexec_failure = executor.receipts().len();
     let phase1_tx = begin_system_txs_for_test(
         &config,
         BeginBlockFixture {
@@ -183,15 +190,19 @@ fn gas_02_phase1_preexec_failure_must_consume_body0_or_abort() {
     .into_iter()
     .next()
     .expect("Phase 1 system tx should be present");
-    let _ = crate::factory::with_forced_outbe_system_call_error(|| {
+    let body0_err = crate::factory::with_forced_outbe_system_call_error(|| {
         executor.execute_transaction(phase1_tx)
-    });
-
-    assert_eq!(
-        executor.receipts().len(),
-        receipt_count_after_preexec_failure,
-        "GAS-02: Phase 1 pre-exec failure returned Ok and body[0] created another \
-         receipt instead of being consumed or making pre-exec fatal"
+    })
+    .expect_err("GAS-02: forced system-call error on body[0] must also abort with Err");
+    assert!(
+        body0_err
+            .to_string()
+            .contains("forced Outbe system-call error"),
+        "GAS-02: unexpected body[0] error: {body0_err}"
+    );
+    assert!(
+        executor.receipts().is_empty(),
+        "GAS-02: Phase 1 failure must never leave a synthetic receipt"
     );
 }
 
@@ -344,7 +355,7 @@ fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_la
     let hook_events_tx = system_txs
         .next()
         .expect("HookEvents system tx should be present");
-    let rewards_visible_gas = rewards_tx.tx().gas_limit();
+    let rewards_signed_gas = rewards_tx.tx().gas_limit();
     let rewards_intrinsic_gas =
         outbe_primitives::system_tx::system_tx_intrinsic_gas(rewards_tx.tx().input())
             .expect("RewardsGemDelivery intrinsic gas computes");
@@ -360,11 +371,11 @@ fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_la
         .execute_transaction(rewards_tx)
         .expect("RewardsGemDelivery revert should soft-fail")
         .tx_gas_used();
-    // A failure receipt publishes the visible base plus the state-operation gas actually spent,
-    // never the unused state-operation reserve of the signed envelope.
-    assert!(
-        (rewards_intrinsic_gas..rewards_visible_gas).contains(&revert_gas),
-        "GAS-11: reverted delivery charges {revert_gas}, expected within [{rewards_intrinsic_gas}, {rewards_visible_gas})"
+    // The delivery envelope signs only its intrinsic gas, and its failure receipt charges exactly that.
+    assert_eq!(rewards_signed_gas, rewards_intrinsic_gas);
+    assert_eq!(
+        revert_gas, rewards_intrinsic_gas,
+        "GAS-11: reverted delivery charges {revert_gas}, expected {rewards_intrinsic_gas}"
     );
     let failure_receipt = executor
         .receipts()

@@ -4,6 +4,9 @@ use outbe_primitives::nod_encryption::EncryptedNodV2;
 use outbe_tee::TransportError;
 
 pub(crate) fn read_amount(record: &EncryptedNodV2) -> Result<U256, TransportError> {
+    if let Some(amount) = outbe_primitives::nod_encryption::decode_v1_nod_amount(record) {
+        return Ok(amount);
+    }
     #[cfg(any(test, feature = "test-enclave"))]
     if test_enclave::enabled() {
         return outbe_tee_enclave::nod_encryption::decrypt_nod(

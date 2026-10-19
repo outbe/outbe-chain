@@ -8,9 +8,9 @@
 // registered that sub-channel on its end, the receiver muxer drops the
 // message. There is no replay path back into the late registrant.
 //
-// These two tests pin the Muxer contract for the pinned commonware-p2p tag
-// (v2026.3.0). The purpose is that any future bump to a tag with different
-// semantics fails loudly and does not silently change the boundary-race surface.
+// These tests pin the Muxer contract for the pinned commonware-p2p dependency.
+// The purpose is that any future bump to a version with different semantics
+// fails loudly and does not silently change the boundary-race surface.
 // =============================================================================
 
 use commonware_consensus::types::Epoch;
@@ -38,6 +38,9 @@ const PHYSICAL_CHANNEL: Channel = 0;
 /// Sub-channel id used in the test, modelling an epoch sub-channel id in
 /// production code.
 const EPOCH_SUBCHANNEL: Channel = 42;
+/// Already-registered control sub-channel used to prove physical transport and
+/// receiver muxer delivery are operational before checking late registration.
+const CONTROL_SUBCHANNEL: Channel = 41;
 
 fn pk(seed: u64) -> PublicKey {
     Ed25519PrivateKey::from_seed(seed).public_key()
@@ -148,9 +151,6 @@ fn same_epoch_routes_are_reacquired_only_after_old_receivers_drop() {
 fn mux_drops_messages_to_unregistered_subchannel() {
     let executor = deterministic::Runner::timed(Duration::from_secs(10));
     executor.start(|context| async move {
-        // 2026.5.0: `deterministic::Context` is no longer `Clone`. Pass a
-        // child context to the network and keep `context` for the test body
-        // (labels via `child` need `Supervisor` in scope).
         let mut oracle = start_network(context.child("network_owner"));
 
         let pk_sender = pk(0);
@@ -166,8 +166,8 @@ fn mux_drops_messages_to_unregistered_subchannel() {
             Muxer::new(context.child("sender_mux"), s_sender, s_receiver, CAPACITY);
         s_mux.start();
 
-        // Receiver peer: register the physical channel only - sub-channel
-        // is *not* registered yet.
+        // Receiver peer: register the physical channel and a control sub-channel,
+        // while `EPOCH_SUBCHANNEL` is *not* registered yet.
         let (r_sender, r_receiver) = oracle
             .control(pk_receiver.clone())
             .register(PHYSICAL_CHANNEL, TEST_QUOTA)
@@ -183,18 +183,41 @@ fn mux_drops_messages_to_unregistered_subchannel() {
 
         link_bidirectional(&mut oracle, pk_sender.clone(), pk_receiver.clone()).await;
 
+        {
+            use commonware_p2p::Manager as _;
+            let peers = commonware_utils::ordered::Set::from_iter_dedup([
+                pk_sender.clone(),
+                pk_receiver.clone(),
+            ]);
+            let _ = oracle.manager().track(0, peers);
+        }
+
+        let (mut control_tx, _) = s_handle.register(CONTROL_SUBCHANNEL).await.unwrap();
+        let (_, mut control_rx) = r_handle.register(CONTROL_SUBCHANNEL).await.unwrap();
+
         // Sender registers and sends a message on the epoch sub-channel
         // *before* the receiver has registered it.
         let (mut tx, _) = s_handle.register(EPOCH_SUBCHANNEL).await.unwrap();
         let payload = IoBuf::copy_from_slice(b"early-vote");
-        // 2026.5.0: `Sender::send` is SYNC and returns `Vec<PublicKey>` (the
-        // recipients we attempted to deliver to), not a future/Result.
-        let _ = tx.send(Recipients::One(pk_receiver.clone()), payload.clone(), false);
+        let sent = tx.send(Recipients::One(pk_receiver.clone()), payload.clone(), false);
+        assert_eq!(sent, vec![pk_receiver.clone()]);
 
-        // Wait for the simulated network to drain the message into the
-        // receiver muxer (which will drop it, since the sub-channel is
-        // not registered there).
-        context.sleep(Duration::from_millis(100)).await;
+        // Send a control message on the same physical channel and wait for the
+        // receiver muxer to deliver it, proving the earlier unrouted packet has
+        // already reached and been processed by the receiver muxer boundary.
+        let control_payload = IoBuf::copy_from_slice(b"routing-barrier");
+        let sent_control = control_tx.send(
+            Recipients::One(pk_receiver.clone()),
+            control_payload.clone(),
+            false,
+        );
+        assert_eq!(sent_control, vec![pk_receiver.clone()]);
+        let (control_from, received_control) = control_rx
+            .recv()
+            .await
+            .expect("registered control sub-channel must receive barrier message");
+        assert_eq!(control_from, pk_sender);
+        assert_eq!(received_control.as_ref(), control_payload.as_ref());
 
         // Now the receiver registers the sub-channel - too late.
         let (_, mut rx) = r_handle.register(EPOCH_SUBCHANNEL).await.unwrap();
@@ -227,8 +250,6 @@ fn mux_drops_messages_to_unregistered_subchannel() {
 fn mux_with_backup_captures_unrouted_message_but_does_not_replay() {
     let executor = deterministic::Runner::timed(Duration::from_secs(10));
     executor.start(|context| async move {
-        // 2026.5.0: `deterministic::Context` is no longer `Clone`. Pass a
-        // child context to the network and keep `context` for the test body.
         let mut oracle = start_network(context.child("network_owner"));
 
         let pk_sender = pk(0);
@@ -260,22 +281,19 @@ fn mux_with_backup_captures_unrouted_message_but_does_not_replay() {
 
         link_bidirectional(&mut oracle, pk_sender.clone(), pk_receiver.clone()).await;
 
-        // commonware 2026.4.0: routing requires a tracked peer set, not just
-        // a link. Track both peers so the Recipients::One send resolves.
         {
             use commonware_p2p::Manager as _;
             let peers = commonware_utils::ordered::Set::from_iter_dedup([
                 pk_sender.clone(),
                 pk_receiver.clone(),
             ]);
-            // 2026.5.0: `Manager::track` is SYNC and returns `Feedback`.
             let _ = oracle.manager().track(0, peers);
         }
 
         let (mut tx, _) = s_handle.register(EPOCH_SUBCHANNEL).await.unwrap();
         let payload = IoBuf::copy_from_slice(b"early-vote");
-        // 2026.5.0: `Sender::send` is SYNC and returns `Vec<PublicKey>`.
-        let _ = tx.send(Recipients::One(pk_receiver.clone()), payload.clone(), false);
+        let sent = tx.send(Recipients::One(pk_receiver.clone()), payload.clone(), false);
+        assert_eq!(sent, vec![pk_receiver.clone()]);
 
         // Drain into backup channel.
         let timed = context.sleep(Duration::from_secs(2));
@@ -310,8 +328,8 @@ fn mux_with_backup_captures_unrouted_message_but_does_not_replay() {
             received = rx.recv() => {
                 let _ = received;
                 panic!(
-                    "muxer with backup auto-replayed into the late registrant; this is \
-                     not the v2026.3.0 contract - production fix design must change"
+                    "muxer with backup auto-replayed into the late registrant; \
+                     production fix design must change"
                 );
             }
             _ = &mut timed_late => {

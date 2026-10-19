@@ -38,7 +38,6 @@ fastrand = { workspace = true, features = ["std"] }
 git2 = { workspace = true, features = ["vendored-libgit2"] }
 indexmap = { workspace = true, features = ["serde"] }
 log = { workspace = true, features = ["std"] }
-multibase = { workspace = true, features = ["std"] }
 nonempty = { workspace = true, features = ["serialize"] }
 qcheck = { workspace = true, optional = true }
 radicle-cob = { workspace = true, features = ["git2"] }
@@ -76,3 +75,6 @@ radicle-cob = { workspace = true, features = ["stable-commit-ids", "test"] }
 radicle-core = {workspace = true, features = ["qcheck"] }
 radicle-crypto = { workspace = true, features = ["test"] }
 tempfile = { workspace = true }
+
+[package.metadata.cargo-machete]
+ignored = ["multibase"]

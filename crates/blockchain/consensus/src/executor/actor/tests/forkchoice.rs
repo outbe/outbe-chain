@@ -27,21 +27,6 @@ fn update_head_flip_flop_at_same_height_is_observable() {
 }
 
 #[test]
-fn update_finalized_same_height_different_digest_is_noop() {
-    let genesis = B256::repeat_byte(0x01);
-    let state = LastCanonicalized::new(genesis);
-    let state = state.update_finalized(Height::new(9), Digest(B256::repeat_byte(0x90)));
-
-    let conflicting = state.update_finalized(Height::new(9), Digest(B256::repeat_byte(0x99)));
-
-    assert_eq!(conflicting.finalized_height, Height::new(9));
-    assert_eq!(
-        conflicting.forkchoice.finalized_block_hash,
-        B256::repeat_byte(0x90)
-    );
-}
-
-#[test]
 fn update_finalized_same_height_conflict_does_not_mutate_head() {
     let genesis = B256::repeat_byte(0x01);
     let state = LastCanonicalized::new(genesis);
@@ -50,23 +35,9 @@ fn update_finalized_same_height_conflict_does_not_mutate_head() {
     assert_eq!(state.forkchoice.head_block_hash, finalized_hash);
 
     let conflicting = state.update_finalized(Height::new(9), Digest(B256::repeat_byte(0x99)));
+    assert_eq!(conflicting.finalized_height, Height::new(9));
     assert_eq!(conflicting.forkchoice.finalized_block_hash, finalized_hash);
     assert_eq!(conflicting.forkchoice.head_block_hash, finalized_hash);
-}
-
-#[test]
-fn update_finalized_lower_height_is_noop() {
-    let genesis = B256::repeat_byte(0x01);
-    let state = LastCanonicalized::new(genesis);
-    let state = state.update_finalized(Height::new(20), Digest(B256::repeat_byte(0x20)));
-
-    let stale = state.update_finalized(Height::new(10), Digest(B256::repeat_byte(0x10)));
-
-    assert_eq!(stale.finalized_height, Height::new(20));
-    assert_eq!(
-        stale.forkchoice.finalized_block_hash,
-        B256::repeat_byte(0x20)
-    );
 }
 
 #[test]

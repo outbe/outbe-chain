@@ -77,7 +77,7 @@ impl<'storage> CallSweep<'storage> for GemCallSweep<'storage> {
     }
 
     fn classify(error: &PrecompileError) -> SweepFailure {
-        error.body_sweep_failure()
+        error.record_sweep_failure()
     }
 
     fn day_skipped(&mut self, skipped: u32, in_flight: u32) -> Result<()> {

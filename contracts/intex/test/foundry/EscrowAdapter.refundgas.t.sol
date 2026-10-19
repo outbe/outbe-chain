@@ -196,7 +196,7 @@ contract RefundClaimUnfinalizedGasTest is RefundGasBase {
 
     function test_ClaimOnADayThatNeverFinalized() public {
         uint256 before = gasleft();
-        escrow.claimRefund(DAY, _bidder(0));
+        escrow.releaseRefund(DAY, _bidder(0));
         emit log_named_uint("claim_unfinalized", before - gasleft());
     }
 }
@@ -215,20 +215,33 @@ contract RefundClaimFinalizedGasTest is RefundGasBase {
 
     function test_ClaimAsAWinner() public {
         uint256 before = gasleft();
-        escrow.claimRefund(DAY, _bidder(0));
+        escrow.releaseRefund(DAY, _bidder(0));
         emit log_named_uint("claim_finalized_winner", before - gasleft());
     }
 
     function test_ClaimAsAWinnerHoldingTheToken() public {
         uint256 before = gasleft();
-        escrow.claimRefund(DAY, _bidder(1));
+        escrow.releaseRefund(DAY, _bidder(1));
         emit log_named_uint("claim_finalized_winner_held", before - gasleft());
     }
 
     function test_ClaimAsALoser() public {
         uint256 before = gasleft();
-        escrow.claimRefund(DAY, _bidder(2));
+        escrow.releaseRefund(DAY, _bidder(2));
         emit log_named_uint("claim_finalized_loser", before - gasleft());
+    }
+
+    function test_CloseAWinWithItsChange() public {
+        uint256 before = gasleft();
+        escrow.closeWin(DAY, _bidder(0));
+        emit log_named_uint("close_win_with_change", before - gasleft());
+    }
+
+    function test_CloseAWinWhoseChangeWasRefunded() public {
+        escrow.releaseRefund(DAY, _bidder(0));
+        uint256 before = gasleft();
+        escrow.closeWin(DAY, _bidder(0));
+        emit log_named_uint("close_win_without_change", before - gasleft());
     }
 }
 

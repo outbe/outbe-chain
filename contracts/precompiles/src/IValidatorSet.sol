@@ -25,8 +25,6 @@ interface IValidatorSet {
     /// PENDING (then ACTIVE via the next reshare).
     event ValidatorUnjailed(address indexed validator, uint64 atHeight);
 
-
-
     /// Emitted on epoch transition.
     event EpochTransition(uint256 indexed newEpochNumber, uint64 timestamp, uint32 activeValidatorCount);
 

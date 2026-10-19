@@ -40,7 +40,7 @@ contract EscrowAdapter is
     /// @notice Role identifier for auction contract integration.
     bytes32 public constant AUCTION_ROLE = keccak256("AUCTION_ROLE");
 
-    /// @notice Safety window before the bidder of a never-finalized series can `claimRefund` the
+    /// @notice Safety window before the bidder of a never-finalized series can claim the
     ///         full principal, anchored at the lock's `lockedAt`. MUST exceed the longest
     ///         legitimate finalization latency (settlement window + cross-chain delivery).
     uint32 public constant UNFINALIZED_REFUND_DELAY = 72 hours;
@@ -51,6 +51,11 @@ contract EscrowAdapter is
     ///         (`revealEnd + UNREVEALED_BOND_LOCK_PERIOD`), which holds while auction schedules
     ///         span less than 29 days (daily series span ~2).
     uint32 public constant COMMIT_BOND_ABANDON_DELAY = 30 days;
+
+    /// @notice Escrow-local safety window on `claimAbandonedRefund`, anchored at the lock's
+    ///         `lockedAt`. Time-only, so the money survives an auction that no longer works.
+    ///         MUST exceed `UNFINALIZED_REFUND_DELAY`.
+    uint32 public constant REFUND_ABANDON_DELAY = 30 days;
 
     /// @notice Decimals every payment token must report.
     uint8 public constant PAYMENT_TOKEN_DECIMALS = BridgeMsgCodec.NATIVE_DECIMALS;
@@ -83,6 +88,8 @@ contract EscrowAdapter is
         uint8 currentAssetVersion;
         /// @dev Clearing terms each day's winners paid at, recorded by its first refund chunk.
         mapping(uint32 worldwideDay => DayClearing) dayClearing;
+        /// @dev Wins the auction has not closed yet, across all days. A win may hold no money.
+        uint256 openWins;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.EscrowAdapter")) - 1)) & ~bytes32(uint256(0xff))
@@ -200,8 +207,9 @@ contract EscrowAdapter is
             }
         }
 
-        // Revoke role from the previous auction if rewiring.
-        if ($.intexAuctionContract != address(0)) {
+        // The bidders of a previous auction claim through it, so it stays until nothing is left.
+        if ($.intexAuctionContract != address(0) && _intexAuction != $.intexAuctionContract) {
+            if (_hasOutstandingLocks()) revert LocksOutstanding();
             _revokeRole(AUCTION_ROLE, $.intexAuctionContract);
         }
 
@@ -400,18 +408,14 @@ contract EscrowAdapter is
             }
 
             // forge-lint: disable-next-line(unsafe-typecast) -- bounded by `locked` just above
-            totalPaid += uint128(paid);
-            if (paid == locked) {
-                delete $.bidLocks[worldwideDay][bidder];
-            } else {
-                // The claim computes the payment again from the lock, so it has to read the units
-                // actually won.
-                lock.status = LockStatus.Won;
-                lock.quantity = quantity;
-                // forge-lint: disable-next-line(unsafe-typecast) -- below `locked` just above
-                totalOwed += locked - uint128(paid);
-            }
+            uint128 change = locked - uint128(paid);
+            totalPaid += locked - change;
+            lock.status = LockStatus.Won;
+            lock.quantity = quantity;
+            lock.lockedAmount = change;
+            totalOwed += change;
             ++settled;
+            ++$.openWins;
         }
 
         if (totalPaid > 0) state.totalLocked -= totalPaid;
@@ -441,45 +445,97 @@ contract EscrowAdapter is
     }
 
     /// @inheritdoc IEscrowAdapter
-    function claimRefund(uint32 worldwideDay, address bidder) external override nonReentrant {
+    function releaseRefund(uint32 worldwideDay, address bidder)
+        external
+        override
+        onlyRole(AUCTION_ROLE)
+        nonReentrant
+        returns (bool closed, bool finalized)
+    {
         if (bidder == address(0)) revert ZeroAddress("bidder");
 
         EscrowAdapterStorage storage $ = _s();
         BidLock storage lock = $.bidLocks[worldwideDay][bidder];
-        LockStatus status = lock.status;
-        if (status != LockStatus.Locked && status != LockStatus.Won) revert LockNotActive();
-
         AuctionEscrowState storage state = $.auctionEscrowState[worldwideDay];
-        (uint128 refund, uint32 claimableAt) = _claimable(worldwideDay, state, lock);
-        if (block.timestamp < claimableAt) revert RefundNotYetClaimable(claimableAt, uint32(block.timestamp));
-
-        uint8 version = state.assetVersion;
-        delete $.bidLocks[worldwideDay][bidder];
-        // A winner's payment already left with the day's proceeds, so the refund is all the lock
-        // still holds.
-        state.totalLocked -= refund;
-
-        _withdrawFromCompact(version, refund);
-        if (refund > 0) {
-            _tokenOf(version).safeTransfer(bidder, refund);
-            emit FundsRefunded(bytes32(0), worldwideDay, bidder, refund);
+        finalized = state.finalized;
+        LockStatus status = lock.status;
+        if (status == LockStatus.None) {
+            // The escrow-local valve already paid it out.
+            if (!finalized) revert LockNotActive();
+            return (true, true);
         }
+
+        (uint128 refund, uint32 claimableAt) = _claimable(state, lock);
+        if (block.timestamp < claimableAt) revert RefundNotYetClaimable(claimableAt, uint32(block.timestamp));
+        closed = _release(worldwideDay, state, lock, bidder, refund);
     }
 
-    /// @dev What a live lock is owed and from when. A winner is owed the rest of its lock at once.
+    /// @inheritdoc IEscrowAdapter
+    function claimAbandonedRefund(uint32 worldwideDay, address bidder) external override nonReentrant {
+        EscrowAdapterStorage storage $ = _s();
+        BidLock storage lock = $.bidLocks[worldwideDay][bidder];
+        if (lock.status == LockStatus.None) revert LockNotActive();
+        uint32 claimableAt = lock.lockedAt + REFUND_ABANDON_DELAY;
+        if (block.timestamp < claimableAt) revert RefundNotYetAbandoned(claimableAt, uint32(block.timestamp));
+        _release(worldwideDay, $.auctionEscrowState[worldwideDay], lock, bidder, lock.lockedAmount);
+    }
+
+    /// @dev Pay `refund` out of the lock. A winner's lock keeps its units, any other lock is deleted.
+    function _release(
+        uint32 worldwideDay,
+        AuctionEscrowState storage state,
+        BidLock storage lock,
+        address bidder,
+        uint128 refund
+    ) private returns (bool closed) {
+        if (lock.status == LockStatus.Won) {
+            if (refund == 0) revert NothingToRefund();
+            lock.lockedAmount = 0;
+        } else {
+            delete _s().bidLocks[worldwideDay][bidder];
+            closed = true;
+        }
+        _payOut(worldwideDay, state, bidder, refund);
+    }
+
+    /// @inheritdoc IEscrowAdapter
+    function closeWin(uint32 worldwideDay, address bidder)
+        external
+        override
+        onlyRole(AUCTION_ROLE)
+        nonReentrant
+        returns (uint16 units)
+    {
+        EscrowAdapterStorage storage $ = _s();
+        BidLock storage lock = $.bidLocks[worldwideDay][bidder];
+        if (lock.status != LockStatus.Won) revert LockNotActive();
+        units = lock.quantity;
+        uint128 change = lock.lockedAmount;
+        delete $.bidLocks[worldwideDay][bidder];
+        --$.openWins;
+        emit WinClosed(worldwideDay, bidder, units);
+        if (change > 0) _payOut(worldwideDay, $.auctionEscrowState[worldwideDay], bidder, change);
+    }
+
+    /// @dev Withdraw `amount` of the day's escrow from The Compact and pay it to `bidder`.
+    function _payOut(uint32 worldwideDay, AuctionEscrowState storage state, address bidder, uint128 amount) private {
+        // A winner's payment already left with the day's proceeds, so this is all the lock held.
+        state.totalLocked -= amount;
+        uint8 version = state.assetVersion;
+        _withdrawFromCompact(version, amount);
+        _tokenOf(version).safeTransfer(bidder, amount);
+        emit FundsRefunded(bytes32(0), worldwideDay, bidder, amount);
+    }
+
+    /// @dev What a live lock is owed and from when. A winner is owed its change at once.
     ///      A bidder the finalized day never named lost and is owed its principal at once. A day
     ///      that never finalized owes the principal after the delay.
-    function _claimable(uint32 worldwideDay, AuctionEscrowState storage state, BidLock storage lock)
+    function _claimable(AuctionEscrowState storage state, BidLock storage lock)
         private
         view
         returns (uint128 refund, uint32 claimableAt)
     {
-        if (lock.status == LockStatus.Won) {
-            DayClearing storage clearing = _s().dayClearing[worldwideDay];
-            uint256 paid = BridgeMsgCodec.escrowAmount(lock.quantity, clearing.basis, clearing.clearingRate);
-            // forge-lint: disable-next-line(unsafe-typecast) -- a winner's payment stayed below its lock
-            return (lock.lockedAmount - uint128(paid), 0);
-        }
+        if (lock.status == LockStatus.Won) return (lock.lockedAmount, 0);
         if (!state.finalized) return (lock.lockedAmount, lock.lockedAt + UNFINALIZED_REFUND_DELAY);
         return (lock.lockedAmount, 0);
     }
@@ -500,7 +556,7 @@ contract EscrowAdapter is
         EscrowAdapterStorage storage $ = _s();
         BidLock storage lock = $.bidLocks[worldwideDay][bidder];
         if (lock.status != LockStatus.Locked && lock.status != LockStatus.Won) return (0, 0);
-        return _claimable(worldwideDay, $.auctionEscrowState[worldwideDay], lock);
+        return _claimable($.auctionEscrowState[worldwideDay], lock);
     }
 
     /// @inheritdoc IEscrowAdapter
@@ -521,9 +577,21 @@ contract EscrowAdapter is
 
     /// @inheritdoc IEscrowAdapter
     function hasOutstandingLocks() external view override returns (bool) {
+        return _hasOutstandingLocks();
+    }
+
+    /// @dev Whether any win is open or any asset version still holds money in its Compact.
+    function _hasOutstandingLocks() private view returns (bool) {
         EscrowAdapterStorage storage $ = _s();
-        if ($.lockId == 0) return false;
-        return IERC6909(address($.compact)).balanceOf(address(this), $.lockId) != 0;
+        if ($.openWins != 0) return true;
+        if ($.lockId != 0 && IERC6909(address($.compact)).balanceOf(address(this), $.lockId) != 0) return true;
+        for (uint8 v = 0; v < $.currentAssetVersion; ++v) {
+            AssetVersion storage retired = $.assetVersions[v];
+            if (retired.lockId != 0 && IERC6909(retired.compact).balanceOf(address(this), retired.lockId) != 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /// @inheritdoc IEscrowAdapter

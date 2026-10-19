@@ -2,6 +2,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolInterface;
 use outbe_primitives::dispatch::{dispatch_call, mutate, view};
 use outbe_primitives::error::Result;
+use outbe_vaultrouter::settlement::SettlementPayment;
 
 use crate::runtime;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
@@ -39,9 +40,9 @@ pub fn dispatch(
             settleNod(c) => mutate(&storage, c, caller, |sender, c| {
                 runtime::settle_nod(
                     &storage,
-                    runtime::SettleNodRequest {
-                        caller: sender,
-                        nod_id: WwdEntityId::from(c.nodId),
+                    WwdEntityId::from(c.nodId),
+                    SettlementPayment {
+                        payer: sender,
                         asset: c.asset,
                         snapshot_id: c.snapshotId,
                     },

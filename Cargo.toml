@@ -12,7 +12,6 @@ members = [
     "crates/blockchain/rpc",
     "crates/blockchain/txpool",
     "crates/blockchain/node",
-    "crates/blockchain/offchain-storage",
     "crates/blockchain/operator",
     "crates/blockchain/radicle",
     "crates/blockchain/snapshot",
@@ -114,7 +113,6 @@ outbe-engine = { path = "crates/blockchain/engine" }
 outbe-rpc = { path = "crates/blockchain/rpc" }
 outbe-txpool = { path = "crates/blockchain/txpool" }
 outbe-node = { path = "crates/blockchain/node" }
-outbe-offchain-storage = { path = "crates/blockchain/offchain-storage" }
 outbe-operator = { path = "crates/blockchain/operator" }
 outbe-radicle = { path = "crates/blockchain/radicle" }
 outbe-snapshot = { path = "crates/blockchain/snapshot" }
@@ -230,7 +228,6 @@ reth-primitives-traits = { version = "0.7.1", default-features = false }
 reth-codecs = { version = "0.7.0", default-features = false, features = [
     "alloy",
 ] }
-reth-storage-overlay = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.6.0" }
 reth-stages-types = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.6.0" }
 reth-storage-api = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.6.0" }
 reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.6.0" }
@@ -286,7 +283,6 @@ postcard = { version = "1", features = ["use-std"] }
 # CLI / IO
 clap = { version = "4", features = ["derive"] }
 jsonrpsee = { version = "0.26", features = ["server", "macros"] }
-rocksdb = { version = "0.24.0", default-features = false, features = ["lz4", "bindgen-runtime"] }
 reqwest = { version = "0.12", features = ["json"] }
 
 # Runtime

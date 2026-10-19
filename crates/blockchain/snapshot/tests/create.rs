@@ -209,6 +209,15 @@ fn archive_reader_rejects_metadata_and_member_mismatches_before_contents() {
             .to_string(),
         "undeclared archive payload"
     );
+    let mut corrupted = original.clone();
+    corrupted[positions[3] + 512] ^= 1;
+    assert_eq!(
+        read_archive_index(corrupted.as_slice(), None)
+            .err()
+            .unwrap()
+            .to_string(),
+        "payload checksum mismatch: z.data"
+    );
     let mut padded = original;
     padded.extend_from_slice(&[0; 4097]);
     read_archive_index(padded.as_slice(), None).unwrap();

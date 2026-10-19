@@ -4,6 +4,7 @@
 use alloy_primitives::{keccak256, Address, FixedBytes, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::INTEX_ADDRESS;
+use outbe_primitives::settlement::settlement_deadline_of;
 use outbe_primitives::stablecoin::iso_4217_alpha;
 use outbe_primitives::storage::types::{Storable, StorableType, StorageKey};
 use outbe_primitives::time::WorldwideDay;
@@ -260,11 +261,15 @@ impl SeriesRecord {
     /// deadline to write it.
     pub fn effective_state(&self, now: u64) -> Result<IntexState, IntexError> {
         let stored = self.lifecycle_state()?;
-        let deadline = u64::from(self.called_at) + u64::from(self.call_notice_period_seconds);
-        match stored == IntexState::Called && now > deadline {
+        match stored == IntexState::Called && now > self.settlement_deadline() {
             true => Ok(IntexState::Expired),
             false => Ok(stored),
         }
+    }
+
+    /// The last second this series may still be settled once called.
+    pub fn settlement_deadline(&self) -> u64 {
+        settlement_deadline_of(u64::from(self.called_at), self.call_notice_period_seconds)
     }
 
     pub fn call_trigger(&self) -> IntexCallTrigger {

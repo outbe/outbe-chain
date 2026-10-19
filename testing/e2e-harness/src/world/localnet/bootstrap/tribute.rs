@@ -10,7 +10,7 @@ use outbe_primitives::{
 use std::str::FromStr as _;
 
 impl Localnet {
-    pub(crate) fn prepare_lysis_entry_price(&self) -> Result<()> {
+    pub(crate) fn prepare_lysis_entry_price(&self, worldwide_day: u32) -> Result<()> {
         let path = self.cfg.dir.join("genesis.json");
         let mut genesis: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
         let mut provider = HashMapStorageProvider::new(genesis_chain_id(&genesis)?);
@@ -20,16 +20,50 @@ impl Localnet {
                 .as_str()
                 .ok_or_else(|| eyre!("genesis timestamp"))?,
         )?)?;
-        StorageHandle::enter(&mut provider, |storage| {
-            let mut oracle = outbe_oracle::schema::OracleContract::new(storage);
-            oracle.write_snapshot(
-                WorldwideDay::from_timestamp(timestamp).start_timestamp() - 60,
-                &[(
-                    outbe_oracle::api::DAY_TYPE_PAIR,
-                    U256::from(1_000_000),
-                    U256::from(1_000_000),
-                )],
-            )
+        StorageHandle::enter(&mut provider, |storage| -> Result<()> {
+            let projection = outbe_metadosis::api::worldwide_day(
+                storage.clone(),
+                WorldwideDay::new(worldwide_day),
+            )?
+            .ok_or_else(|| eyre!("native Lysis fixture WorldwideDay is missing"))?;
+            eyre::ensure!(
+                projection.status == WwdStatus::Offering,
+                "native Lysis fixture WorldwideDay must be Offering"
+            );
+            let price_day = outbe_nod::openings::entry_price_day(projection.scheduled_process_time);
+            let last_closed_day = outbe_nod::openings::entry_price_day(timestamp);
+            eyre::ensure!(
+                price_day <= last_closed_day,
+                "native Lysis entry-price day must close before genesis"
+            );
+            let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+            let finalized = oracle.utc_day_vwap_last_finalized.read()?;
+            eyre::ensure!(
+                finalized <= last_closed_day,
+                "Oracle fixture must not finalize a day after genesis"
+            );
+            let prices = [(840, U256::from(1_000_000)), (978, U256::from(250_000))];
+            for (iso, price) in prices {
+                let index =
+                    oracle.pair_index_of(outbe_oracle::types::AddressPair::new_coen_to(iso))?;
+                eyre::ensure!(
+                    index != 0,
+                    "native Lysis entry-price pair is not registered"
+                );
+                oracle.record_utc_day_vwap(price_day, index, price)?;
+            }
+            oracle
+                .utc_day_vwap_last_finalized
+                .write(finalized.max(price_day))?;
+            for (iso, price) in prices {
+                let actual =
+                    outbe_oracle::api::get_utc_day_vwap_for_iso(storage.clone(), price_day, iso)?;
+                eyre::ensure!(
+                    actual == Some(price),
+                    "native Lysis entry price differs from the fixture"
+                );
+            }
+            Ok(())
         })?;
         write_measurement_accounts(&mut genesis, &provider, keys)?;
         replace_json_atomically(&path, &genesis)
@@ -189,7 +223,7 @@ fn schedule_public_measurement_day(
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| eyre::eyre!("generated genesis has no timestamp"))
         .and_then(|encoded| u64::try_from(parse_hex_word(encoded)?).map_err(Into::into))?;
-    let worldwide_day = WorldwideDay::from_timestamp(genesis_timestamp);
+    let worldwide_day = measurement_worldwide_day(genesis_timestamp);
     let forming_start = worldwide_day.start_timestamp();
     eyre::ensure!(
         forming_start < genesis_timestamp,
@@ -213,6 +247,15 @@ fn schedule_public_measurement_day(
     })?;
     write_measurement_accounts(genesis, &provider, account_keys)?;
     Ok((changed, worldwide_day))
+}
+
+/// Keep the synthetic funded Offering outside future Cycle allocations. Rewards
+/// still use the actual offer execution UTC date, independently of this WWD.
+fn measurement_worldwide_day(genesis_timestamp: u64) -> WorldwideDay {
+    WorldwideDay::new(outbe_primitives::time::timestamp_to_date_key(
+        genesis_timestamp,
+    ))
+    .previous_date_key()
 }
 
 /// The public measurement WorldwideDay, offering from genesis until its end.
@@ -532,4 +575,28 @@ pub(super) fn fund_capacity_tribute_accounts(
         }
     }
     Ok(changed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn synthetic_measurement_day_precedes_cycle_utc_day_at_date_boundaries() {
+        for (utc_day, seconds, expected) in [
+            (20260101, 0, 20251231),
+            (20261017, 35_999, 20261016),
+            (20261017, 36_000, 20261016),
+            (20261017, 86_399, 20261016),
+            (20261018, 0, 20261017),
+            (20260301, 0, 20260228),
+            (20240301, 36_000, 20240229),
+        ] {
+            let execution_day = WorldwideDay::new(utc_day);
+            let timestamp = execution_day.to_timestamp_utc() + seconds;
+            let fixture_day = measurement_worldwide_day(timestamp);
+            assert_eq!(fixture_day.value(), expected);
+            assert!(fixture_day < execution_day);
+        }
+    }
 }

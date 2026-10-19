@@ -102,43 +102,11 @@ contract BridgeMsgCodecHardeningTest is Test {
         harness.encodeBidsBatch(1, 1, 0, 1, bidders, BidPackLib.pack(quantities, rates, timestamps));
     }
 
-    function test_encodeIssuanceInstructions_arrayLengthMismatch_reverts() public {
-        // recipients.length must match quantities.length. The encoder reverts before encoding.
-        address[] memory recipients = new address[](2);
-        recipients[0] = address(0xA1);
-        recipients[1] = address(0xA2);
-        uint256[] memory quantities = new uint256[](1);
-        quantities[0] = 1;
-
-        BridgeMsgCodec.IssuanceInstructionsPayload memory payload = BridgeMsgCodec.IssuanceInstructionsPayload({
-            seriesId: "20260212-TRY-U",
-            worldwideDay: 2,
-            issuedAt: uint32(block.timestamp),
-            issuedUnits: 1,
-            promisLoadMinor: 1,
-            entryPriceMinor: 1,
-            callNoticePeriod: 0,
-            issuanceCurrency: 840,
-            referenceCurrency: 840,
-            callWindow: 0,
-            callThreshold: 0,
-            callPriceMinor: 0,
-            recipients: recipients,
-            units: quantities
-        });
-        vm.expectRevert(
-            abi.encodeWithSelector(BridgeMsgCodec.IssuanceArrayLengthMismatch.selector, uint256(2), uint256(1))
-        );
-        harness.encodeIssuanceInstructions(IssuanceBatchLib.one(payload));
-    }
-
     function test_encodeIssuanceInstructions_dayMismatch_reverts() public {
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
         payload.seriesId = "20260212-TRY-U";
         payload.worldwideDay = 20_260_212;
         payload.issuedAt = uint32(block.timestamp);
-        payload.recipients = new address[](0);
-        payload.units = new uint256[](0);
         vm.expectRevert(
             abi.encodeWithSelector(
                 BridgeMsgCodec.IssuanceDayMismatch.selector, payload.seriesId, uint32(20_260_212), uint32(20_260_213)

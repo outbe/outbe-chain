@@ -50,3 +50,59 @@ where
         protocol_version: version.to(),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_consensus::Header;
+    use alloy_primitives::Sealable as _;
+    use outbe_primitives::OutbePrimitives;
+    use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
+
+    #[test]
+    fn read_typed_handles_genesis_fallback_missing_header_and_version_overflow() {
+        let chain_id = 54_322_345;
+        let genesis_header = OutbeHeader::new(Header {
+            number: 0,
+            timestamp: 1_700_000_000,
+            ..Default::default()
+        });
+        let genesis_hash = genesis_header.hash_slow();
+        let provider = MockEthProvider::<OutbePrimitives>::new();
+
+        assert!(matches!(
+            read_typed(&provider, chain_id, genesis_hash),
+            Err(TeeCallContextError::HeaderUnavailable)
+        ));
+
+        provider.add_header(genesis_hash, genesis_header);
+        provider.add_account(
+            UPDATE_ADDRESS,
+            ExtendedAccount::new(0, U256::ZERO).extend_storage([(B256::ZERO, U256::from(7_u64))]),
+        );
+
+        let context = read(&provider, chain_id, genesis_hash).unwrap();
+        assert_eq!(
+            context,
+            EnclaveCallContextV1 {
+                kind: EnclaveContextKindV1::Snapshot,
+                chain_id,
+                genesis_hash,
+                block_number: 0,
+                block_timestamp: 1_700_000_000,
+                protocol_version: 7,
+            }
+        );
+
+        provider.add_account(
+            UPDATE_ADDRESS,
+            ExtendedAccount::new(0, U256::ZERO)
+                .extend_storage([(B256::ZERO, U256::from(u64::from(u32::MAX) + 1))]),
+        );
+
+        assert!(matches!(
+            read_typed(&provider, chain_id, genesis_hash),
+            Err(TeeCallContextError::ProtocolVersionOverflow)
+        ));
+    }
+}

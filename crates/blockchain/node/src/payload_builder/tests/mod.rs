@@ -267,6 +267,28 @@ struct ActivePayloadCase {
     rejected: Arc<AtomicUsize>,
 }
 
+fn narrow_user_stage_fixture() -> (OutbeEvmConfig, TestProvider) {
+    let mut chain_spec = ChainSpecBuilder::mainnet()
+        .with_fork(EthereumHardfork::Paris, ForkCondition::Block(0))
+        .build();
+    chain_spec.chain = GRAMINE_DIRECT_DEV_CHAIN_ID.into();
+    chain_spec.genesis.config.chain_id = GRAMINE_DIRECT_DEV_CHAIN_ID;
+    let chain_spec: Arc<ChainSpec<OutbeHeader>> = chain_spec.map_header(OutbeHeader::new).into();
+    let signer =
+        Arc::new(OutbeEvmSigner::from_secret_bytes([1u8; 32]).expect("test proposer key is valid"));
+    let proposer = signer.address();
+    let evm_config =
+        OutbeEvmConfig::new_with_bridge(chain_spec.clone(), ConsensusExecutionBridge::new())
+            .with_evm_signer(signer);
+    let provider = active_native_provider(
+        &chain_spec,
+        proposer,
+        alloy_primitives::Address::ZERO,
+        B256::ZERO,
+    );
+    (evm_config, provider)
+}
+
 fn build_active_payload_case(
     user_gas_over_boundary: u64,
     proposal_attempts: usize,

@@ -96,60 +96,82 @@ fn precompile_addresses_match_eth_call_targets() {
 
 #[test]
 fn eth_call_active_version_reflects_the_selected_state_snapshot() {
-    let data = IUpdate::getActiveVersionCall {}.abi_encode();
-
-    let mut before_provider = HashMapStorageProvider::new(1);
-    let before = {
-        let storage = StorageHandle::new(&mut before_provider);
-        let ret = eth_call_update(storage, &data);
-        IUpdate::getActiveVersionCall::abi_decode_returns(&ret).unwrap()
+    use outbe_primitives::storage::{
+        readonly::{ReadOnlyBlockContext, ReadOnlyStorageProvider, StorageReader},
+        PrecompileStorageProvider,
     };
+    use std::collections::{BTreeMap, HashMap};
 
-    let mut activation_provider = HashMapStorageProvider::new(1);
-    let at_activation = {
-        let storage = StorageHandle::new(&mut activation_provider);
-        Update::new(storage.clone())
-            .set_active_version(V1_2, 500)
-            .unwrap();
-        let ret = eth_call_update(storage, &data);
-        IUpdate::getActiveVersionCall::abi_decode_returns(&ret).unwrap()
-    };
+    struct SnapshotReader<'a>(&'a HashMap<(Address, U256), U256>);
 
-    let mut after_provider = HashMapStorageProvider::new(1);
-    let after_activation = {
-        let storage = StorageHandle::new(&mut after_provider);
-        Update::new(storage.clone())
-            .set_active_version(V1_2, 500)
-            .unwrap();
-        let ret = eth_call_update(storage, &data);
-        IUpdate::getActiveVersionCall::abi_decode_returns(&ret).unwrap()
-    };
+    impl StorageReader for SnapshotReader<'_> {
+        fn read_storage(
+            &self,
+            address: Address,
+            key: alloy_primitives::B256,
+        ) -> outbe_primitives::error::Result<U256> {
+            Ok(self
+                .0
+                .get(&(address, U256::from_be_bytes(key.0)))
+                .copied()
+                .unwrap_or_default())
+        }
+    }
 
-    assert_eq!(before, ProtocolVersion::ZERO.raw());
-    assert_eq!(at_activation, V1_2.raw());
-    assert_eq!(after_activation, V1_2.raw());
-}
+    let mut live = HashMapStorageProvider::new(1);
+    let chain_id = live.chain_id();
+    let genesis_hash = live.genesis_hash();
+    let mut snapshots = BTreeMap::new();
 
-#[test]
-fn eth_call_get_update_active_version() {
-    with_storage(|storage| {
-        let mut update = Update::new(storage.clone());
-        update.set_active_version(V1_2, 500).unwrap();
+    live.set_block_number(499);
+    snapshots.insert(499u64, live.storage.clone());
 
-        let data = IUpdate::getActiveVersionCall {}.abi_encode();
-        let ret = eth_call_update(storage.clone(), &data);
+    live.set_block_number(500);
+    StorageHandle::enter(&mut live, |storage| {
+        Update::new(storage).set_active_version(V1_2, 500).unwrap();
+    });
+    snapshots.insert(500, live.storage.clone());
+
+    live.set_block_number(600);
+    StorageHandle::enter(&mut live, |storage| {
+        Update::new(storage).set_active_version(V1_3, 600).unwrap();
+    });
+    snapshots.insert(600, live.storage);
+
+    let version_call = IUpdate::getActiveVersionCall {}.abi_encode();
+    let height_call = IUpdate::getActiveVersionHeightCall {}.abi_encode();
+
+    for (block_number, expected_version, expected_height) in [
+        (499u64, ProtocolVersion::ZERO.raw(), 0u64),
+        (500, V1_2.raw(), 500),
+        (600, V1_3.raw(), 600),
+    ] {
+        let snapshot = snapshots
+            .get(&block_number)
+            .expect("snapshot for block height should exist");
+        let mut provider = ReadOnlyStorageProvider::new_with_block_context(
+            SnapshotReader(snapshot),
+            ReadOnlyBlockContext {
+                chain_id,
+                genesis_hash,
+                block_number,
+                timestamp: block_number,
+            },
+        );
+        let storage = StorageHandle::new(&mut provider);
+
+        let version_ret = eth_call_update(storage.clone(), &version_call);
         assert_eq!(
-            IUpdate::getActiveVersionCall::abi_decode_returns(&ret).unwrap(),
-            V1_2.raw()
+            IUpdate::getActiveVersionCall::abi_decode_returns(&version_ret).unwrap(),
+            expected_version
         );
 
-        let height_data = IUpdate::getActiveVersionHeightCall {}.abi_encode();
-        let height_ret = eth_call_update(storage, &height_data);
+        let height_ret = eth_call_update(storage, &height_call);
         assert_eq!(
             IUpdate::getActiveVersionHeightCall::abi_decode_returns(&height_ret).unwrap(),
-            500
+            expected_height
         );
-    });
+    }
 }
 
 #[test]

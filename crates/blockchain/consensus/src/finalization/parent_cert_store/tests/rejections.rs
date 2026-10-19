@@ -10,8 +10,9 @@ fn write_invalid_record(dir: &Path, key: B256, record: &CertifiedParentProofReco
 }
 
 #[test]
-fn proof_store_record_format_version_is_two_and_rejects_unknown() {
-    // The store must reject format_version != 2 on read.
+fn proof_store_record_format_version_is_current_and_rejects_unknown() {
+    // The store must reject format_version != CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION on read.
+    assert_eq!(CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION, 4);
     let temp = tempfile::tempdir().unwrap();
     let dir = temp.path().join("records");
     let mut bad = finalization_record(0xCA, 100);

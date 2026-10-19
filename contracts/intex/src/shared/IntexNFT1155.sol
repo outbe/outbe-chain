@@ -24,9 +24,10 @@ import {IntexMetadata} from "./libs/IntexMetadata.sol";
  *      settled = the same with bit 112 set.
  */
 contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgradeable, IIntexNFT1155 {
-    /// @notice Bridge relayer role. It gates series lifecycle, issue, and
-    ///         bridge crosschainBurn/crosschainMint.
+    /// @notice Bridge relayer role. It gates series lifecycle and bridge crosschainBurn/crosschainMint.
     bytes32 public constant RELAYER_ROLE = keccak256("RELAYER_ROLE");
+    /// @notice Auction role. It can call `issueIntex` for a winner.
+    bytes32 public constant AUCTION_ROLE = keccak256("AUCTION_ROLE");
     /// @notice Settlement contract role. It can call `settleIntex` (burn Issued + mint Settled).
     bytes32 public constant SETTLEMENT_ROLE = keccak256("SETTLEMENT_ROLE");
     /// @notice Promis facade role. It can call `burnSettled`.
@@ -51,6 +52,11 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         uint256[] allSeries;
         /// @dev Series ids issued per worldwide day.
         mapping(uint32 worldwideDay => bytes14[] seriesIds) seriesOfDay;
+        /// @dev The series a day's currency pair was created under.
+        mapping(
+            uint32 worldwideDay
+                => mapping(uint16 issuanceCurrency => mapping(uint16 referenceCurrency => bytes14 seriesId))
+        ) seriesOfPair;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.IntexNFT1155")) - 1)) & ~bytes32(uint256(0xff))
@@ -92,6 +98,15 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     /// @inheritdoc IIntexNFT1155
     function seriesIdsByWorldwideDay(uint32 worldwideDay) external view returns (bytes14[] memory) {
         return _s().seriesOfDay[worldwideDay];
+    }
+
+    /// @inheritdoc IIntexNFT1155
+    function seriesIdOf(uint32 worldwideDay, uint16 issuanceCurrency, uint16 referenceCurrency)
+        external
+        view
+        returns (bytes14)
+    {
+        return _s().seriesOfPair[worldwideDay][issuanceCurrency][referenceCurrency];
     }
 
     /// @inheritdoc IIntexNFT1155
@@ -138,12 +153,13 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // enumerated. Clients derive the Settled id via `settledTokenId(seriesId)`.
         $.allSeries.push(iTok);
         $.seriesOfDay[params.worldwideDay].push(params.seriesId);
+        $.seriesOfPair[params.worldwideDay][params.issuanceCurrency][params.referenceCurrency] = params.seriesId;
 
         emit MetadataUpdate(iTok);
     }
 
     /// @inheritdoc IIntexNFT1155
-    function issueIntex(address to, uint256 units, bytes14 seriesId) external onlyRole(RELAYER_ROLE) {
+    function issueIntex(address to, uint256 units, bytes14 seriesId) external onlyRole(AUCTION_ROLE) {
         if (to == address(0)) {
             revert ZeroAddress("to", to);
         }

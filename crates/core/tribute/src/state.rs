@@ -7,6 +7,7 @@ use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 use crate::errors::TributeError;
 use crate::schema::{DayTotals, TributeContract, TributeData};
+use crate::storage_records::StoredTributeEntryExt;
 use crate::TributeRecord;
 
 impl TributeContract<'_> {
@@ -15,10 +16,14 @@ impl TributeContract<'_> {
     }
 
     pub fn owner_of(&self, tribute_id: WwdEntityId) -> Result<Address> {
-        let tribute = self
-            .get_record(tribute_id)?
-            .ok_or(TributeError::TributeNotFound)?;
-        Ok(tribute.owner)
+        if self.retired_days.read(&tribute_id.worldwide_day())? {
+            return Err(TributeError::TributeNotFound.into());
+        }
+        let owner = self.records.entry(tribute_id).owner().read()?;
+        if owner.is_zero() {
+            return Err(TributeError::TributeNotFound.into());
+        }
+        Ok(owner)
     }
 
     pub fn balance_of(&self, owner: Address) -> Result<u64> {
@@ -171,6 +176,81 @@ impl TributeContract<'_> {
             .into_iter()
             .map(|record| crate::record::from_encrypted(record.into()))
             .collect())
+    }
+
+    pub fn get_league(&self, tribute_id: WwdEntityId) -> Result<u16> {
+        if self.retired_days.read(&tribute_id.worldwide_day())?
+            || !self.records.exists(tribute_id)?
+        {
+            return Err(TributeError::TributeNotFound.into());
+        }
+        let league = self.tribute_leagues.read(&tribute_id)?;
+        Ok(league.max(1))
+    }
+
+    pub fn get_day_league_fraction(&self, day: WorldwideDay, league: u16) -> Result<u64> {
+        self.day_fractions
+            .read(&crate::schema::day_league_key(day, league))
+    }
+
+    pub fn get_fi_groups(
+        &self,
+        day: WorldwideDay,
+    ) -> Result<std::collections::BTreeMap<u16, (u32, alloy_primitives::U256)>> {
+        let mut groups = std::collections::BTreeMap::new();
+        for league in self.day_active_leagues.list(&day).read_all()? {
+            let key = crate::schema::day_league_key(day, league);
+            let count = (self.fi_group_counts.read(&key)? & 0xFFFF_FFFF) as u32;
+            if count > 0 {
+                let nominal = self.fi_group_nominals.read(&key)?;
+                groups.insert(league, (count, nominal));
+            }
+        }
+        Ok(groups)
+    }
+
+    pub(crate) fn adjust_fi_group(
+        &mut self,
+        day: WorldwideDay,
+        league: u16,
+        nominal: alloy_primitives::U256,
+        add: bool,
+    ) -> Result<()> {
+        const IN_ACTIVE_LIST_BIT: u64 = 1u64 << 32;
+        let key = crate::schema::day_league_key(day, league);
+        let packed = self.fi_group_counts.read(&key)?;
+        let prev_count = (packed & 0xFFFF_FFFF) as u32;
+        if add {
+            if (packed & IN_ACTIVE_LIST_BIT) == 0 {
+                self.day_active_leagues.list(&day).push(league)?;
+            }
+            let next_count = prev_count
+                .checked_add(1)
+                .ok_or(TributeError::DayCountOverflowOrUnderflow)?;
+            let prev_nom = if prev_count == 0 {
+                alloy_primitives::U256::ZERO
+            } else {
+                self.fi_group_nominals.read(&key)?
+            };
+            let next_nom = prev_nom
+                .checked_add(nominal)
+                .ok_or(TributeError::DayCountOverflowOrUnderflow)?;
+            self.fi_group_counts
+                .write(&key, IN_ACTIVE_LIST_BIT | u64::from(next_count))?;
+            self.fi_group_nominals.write(&key, next_nom)?;
+        } else {
+            let next_count = prev_count
+                .checked_sub(1)
+                .ok_or(TributeError::DayCountOverflowOrUnderflow)?;
+            let prev_nom = self.fi_group_nominals.read(&key)?;
+            let next_nom = prev_nom
+                .checked_sub(nominal)
+                .ok_or(TributeError::DayCountOverflowOrUnderflow)?;
+            self.fi_group_counts
+                .write(&key, (packed & IN_ACTIVE_LIST_BIT) | u64::from(next_count))?;
+            self.fi_group_nominals.write(&key, next_nom)?;
+        }
+        Ok(())
     }
 }
 

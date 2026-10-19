@@ -776,7 +776,6 @@ class LaunchBundleTests(unittest.TestCase):
             validators=self.fake_validators(),
             genesis_path=genesis,
             keys_dir=keys_dir,
-            repo_root=REPO_ROOT,
         )
         return root, keys_dir, output_dir
 
@@ -792,7 +791,6 @@ class LaunchBundleTests(unittest.TestCase):
                 index=0,
                 host="10.0.0.1",
                 keys_dir="/keys",
-                repo_root=str(REPO_ROOT),
             )
 
         self.assertIn(f"--max-validators {LB.DEFAULT_MAX_VALIDATORS}", rendered({}))
@@ -813,7 +811,6 @@ class LaunchBundleTests(unittest.TestCase):
             index=0,
             host="10.0.0.1",
             keys_dir="/keys",
-            repo_root=str(REPO_ROOT),
         )
         self.assertNotIn("config.json", script)
 
@@ -842,24 +839,6 @@ class LaunchBundleTests(unittest.TestCase):
                     )
                     subprocess.run(["bash", "-n", str(script)], check=True)
                 self.assertTrue((directory / "feeder.toml").is_file())
-
-
-
-    def test_bundle_uses_evm_state_without_entity_datasource_configuration(self):
-        import tarfile
-
-        with tempfile.TemporaryDirectory() as tmp:
-            _, _, output_dir = self.render(tmp)
-            for index in range(4):
-                directory = output_dir / f"validator-{index}"
-                for old in ["offchain-storage.toml", "run-storage.sh", "run-mongodb.sh"]:
-                    self.assertFalse((directory / old).exists())
-                node = (directory / "run-node.sh").read_text()
-                self.assertNotIn("--projection.", node)
-                with tarfile.open(output_dir / "dist" / f"validator-{index}.tgz") as archive:
-                    names = archive.getnames()
-                    self.assertNotIn("offchain_storage.py", names)
-                    self.assertNotIn(f"validator-{index}/offchain-storage.toml", names)
 
 
 
@@ -1085,7 +1064,6 @@ class LaunchBundleTests(unittest.TestCase):
                 validators=self.fake_validators(),
                 genesis_path=output_dir / "genesis.json",
                 keys_dir=pathlib.Path(tmp) / "keys",
-                repo_root=REPO_ROOT,
             )
             self.assertEqual(first, (output_dir / "reth-bootnodes.txt").read_text())
             self.assertEqual(len(first.strip().splitlines()), 4)

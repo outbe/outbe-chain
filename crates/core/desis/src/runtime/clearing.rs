@@ -364,21 +364,13 @@ fn issuance_groups(
                     entry_price_minor,
                     issuance_currency,
                     reference_currency,
-                    recipients: Vec::new(),
-                    units: Vec::new(),
-                    recipient_chains: Vec::new(),
                     snapshot_chains: snapshot.to_vec(),
                 });
                 groups.len() - 1
             }
         };
 
-        let units = result.winner_quantities[i];
-        let group = &mut groups[at];
-        group.issued_units += units.saturating_to::<u32>();
-        group.recipients.push(result.winners[i]);
-        group.units.push(units);
-        group.recipient_chains.push(result.winner_chains[i]);
+        groups[at].issued_units += result.winner_quantities[i].saturating_to::<u32>();
     }
     Ok(groups)
 }

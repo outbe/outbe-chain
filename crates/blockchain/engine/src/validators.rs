@@ -725,7 +725,8 @@ mod tests {
         }
     }
 
-    fn tee_expiry_state_with_leases(valid_until: [u64; 4]) -> (TestStateAccess, Vec<Address>) {
+    #[test]
+    fn frozen_target_uses_validator_lifecycle_and_emits_empty_tee_compatibility_list() {
         let validators = vec![
             Address::with_last_byte(0x21),
             Address::with_last_byte(0x22),
@@ -734,77 +735,21 @@ mod tests {
         ];
         let mut provider = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut provider, |storage| {
-            let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage);
             vs.config_owner.write(OWNER).unwrap();
             vs.config_is_initialized.write(true).unwrap();
             vs.set_config_max_validators(128).unwrap();
-            let registry = outbe_teeregistry::TeeRegistry::new(storage);
-
-            for (index, (&validator, &lease_end)) in
-                validators.iter().zip(valid_until.iter()).enumerate()
-            {
+            for (index, &validator) in validators.iter().enumerate() {
                 let consensus_pubkey = valid_consensus_pubkey((index + 1) as u8);
                 vs.register_validator(OWNER, validator, &consensus_pubkey)
                     .unwrap();
                 vs.activate_validator_via_boundary_for_test(validator)
                     .unwrap();
-
-                let node_hash = NodeIdV1 {
-                    reth_p2p_public: k256::ecdsa::SigningKey::from_bytes(
-                        (&[(index + 1) as u8; 32]).into(),
-                    )
-                    .unwrap()
-                    .verifying_key()
-                    .to_encoded_point(true)
-                    .as_bytes()
-                    .try_into()
-                    .unwrap(),
-                }
-                .node_id_hash()
-                .unwrap();
-                registry
-                    .validator_v1_node_hash
-                    .write(&validator, node_hash)
-                    .unwrap();
-                registry
-                    .v1_node_enclave_id
-                    .write(&node_hash, B256::with_last_byte((index + 1) as u8))
-                    .unwrap();
-                registry
-                    .v1_node_binding_id
-                    .write(&node_hash, B256::with_last_byte((index + 11) as u8))
-                    .unwrap();
-                registry
-                    .v1_node_intent_hash
-                    .write(&node_hash, B256::with_last_byte((index + 21) as u8))
-                    .unwrap();
-                registry
-                    .v1_node_valid_until
-                    .write(&node_hash, lease_end)
-                    .unwrap();
             }
         });
-        (
-            TestStateAccess {
-                data: provider.storage.clone(),
-            },
-            validators,
-        )
-    }
-
-    fn tee_expiry_state(freeze_timestamp: u64) -> (TestStateAccess, Vec<Address>) {
-        tee_expiry_state_with_leases([
-            freeze_timestamp.saturating_sub(1),
-            freeze_timestamp,
-            freeze_timestamp.saturating_add(1),
-            freeze_timestamp.saturating_add(500),
-        ])
-    }
-
-    #[test]
-    fn frozen_target_uses_validator_lifecycle_and_emits_empty_tee_compatibility_list() {
-        let freeze_timestamp = 1_800_000_000;
-        let (access, validators) = tee_expiry_state(freeze_timestamp);
+        let access = TestStateAccess {
+            data: provider.storage,
+        };
         let frozen = read_reshare_target_with_empty_tee_exclusions_from_state(&access).unwrap();
 
         assert_eq!(frozen.validator_set.addresses, validators);
@@ -1079,21 +1024,39 @@ mod tests {
     }
 
     #[test]
-    fn test_read_validators_from_state_empty() {
+    fn test_read_validators_from_state_handles_empty_known_and_invalid_p2p_entries() {
         let mut provider = HashMapStorageProvider::new(1);
-
         StorageHandle::enter(&mut provider, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage);
             vs.config_is_initialized.write(true).unwrap();
             vs.set_config_max_validators(128).unwrap();
         });
-
-        let access = TestStateAccess {
-            data: provider.storage.clone(),
+        let empty_access = TestStateAccess {
+            data: provider.storage,
         };
-        let result = read_validators_from_state(&access).unwrap();
-        assert!(result.public_keys.is_empty());
-        assert!(result.addresses.is_empty());
+        let empty = read_validators_from_state(&empty_access).unwrap();
+        assert!(empty.public_keys.is_empty());
+        assert!(empty.addresses.is_empty());
+
+        let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 30400);
+        let encoded = encode_v1(&P2pAddress::Symmetric(socket));
+        let known_access = populated_p2p_state(|vs, validator| {
+            vs.set_p2p_address(validator, validator, P2P_ADDRESS_VERSION_V1, &encoded)
+                .unwrap();
+        });
+        let known = read_validators_from_state(&known_access).unwrap();
+        assert_eq!(
+            known.p2p_addresses,
+            vec![ValidatorP2pAddress::Known(CommonwareAddress::Symmetric(
+                socket
+            ))]
+        );
+
+        let invalid_access = populated_p2p_state(|vs, validator| {
+            vs.test_corrupt_p2p_storage(validator, 99, &[0]).unwrap();
+        });
+        let invalid = read_validators_from_state(&invalid_access).unwrap();
+        assert_eq!(invalid.p2p_addresses, vec![ValidatorP2pAddress::Invalid]);
     }
 
     #[test]
@@ -1130,34 +1093,6 @@ mod tests {
     }
 
     #[test]
-    fn test_read_validators_from_state_decodes_registry_p2p_address() {
-        let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 30400);
-        let encoded = encode_v1(&P2pAddress::Symmetric(socket));
-        let access = populated_p2p_state(|vs, validator| {
-            vs.set_p2p_address(validator, validator, P2P_ADDRESS_VERSION_V1, &encoded)
-                .unwrap();
-        });
-
-        let validators = read_validators_from_state(&access).unwrap();
-        assert_eq!(
-            validators.p2p_addresses,
-            vec![ValidatorP2pAddress::Known(CommonwareAddress::Symmetric(
-                socket
-            ))]
-        );
-    }
-
-    #[test]
-    fn test_read_validators_from_state_marks_invalid_registry_entry() {
-        let access = populated_p2p_state(|vs, validator| {
-            vs.test_corrupt_p2p_storage(validator, 99, &[0]).unwrap();
-        });
-
-        let validators = read_validators_from_state(&access).unwrap();
-        assert_eq!(validators.p2p_addresses, vec![ValidatorP2pAddress::Invalid]);
-    }
-
-    #[test]
     fn test_load_signing_key_roundtrip() {
         let key = bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
             rand_commonware::rngs::SysRng,
@@ -1182,37 +1117,21 @@ mod tests {
     }
 
     #[test]
-    fn test_has_pending_set_change_false_by_default() {
-        let mut provider = HashMapStorageProvider::new(1);
-
-        StorageHandle::enter(&mut provider, |storage| {
-            let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage);
-            vs.config_is_initialized.write(true).unwrap();
-            vs.set_config_max_validators(128).unwrap();
-        });
-
-        let access = TestStateAccess {
-            data: provider.storage.clone(),
-        };
-        let result = has_pending_set_change(&access).unwrap();
-        assert!(!result);
-    }
-
-    #[test]
-    fn test_has_pending_set_change_true_when_set() {
-        let mut provider = HashMapStorageProvider::new(1);
-
-        StorageHandle::enter(&mut provider, |storage| {
-            let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage);
-            vs.config_is_initialized.write(true).unwrap();
-            vs.set_config_max_validators(128).unwrap();
-            vs.test_set_pending_set_change(true).unwrap();
-        });
-
-        let access = TestStateAccess {
-            data: provider.storage.clone(),
-        };
-        let result = has_pending_set_change(&access).unwrap();
-        assert!(result);
+    fn test_has_pending_set_change_reflects_contract_flag() {
+        for expected in [false, true] {
+            let mut provider = HashMapStorageProvider::new(1);
+            StorageHandle::enter(&mut provider, |storage| {
+                let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage);
+                vs.config_is_initialized.write(true).unwrap();
+                vs.set_config_max_validators(128).unwrap();
+                if expected {
+                    vs.test_set_pending_set_change(true).unwrap();
+                }
+            });
+            let access = TestStateAccess {
+                data: provider.storage,
+            };
+            assert_eq!(has_pending_set_change(&access).unwrap(), expected);
+        }
     }
 }

@@ -761,7 +761,7 @@ impl Localnet {
         } else {
             self.validators.insert(index, guard);
         }
-        // Capture actual final argv again. Projection option handling is idempotent.
+        // Capture the final argv again: an ordinary restart reuses the exact launch options.
         let observed = self.captured_node_recipe(index, pid)?.observation;
         eyre::ensure!(
             observed.argv == stopped.recipe.observation.argv
@@ -799,28 +799,13 @@ fn extend_real_sgx_process_environment(mode: crate::env::TeeMode, cmd: &mut Comm
 
 /// The chain's current worldwide-day key (`YYYYMMDD`), matching how
 /// `bootstrap-testnet.sh` seeds genesis: `date_key(now + UTC_PLUS_14_OFFSET)`
-/// (lib.sh:33-34). Pure-Rust civil-date conversion so no `date(1)` shell-out.
+/// (lib.sh:33-34).
 pub fn worldwide_day() -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    ymd_utc(now + 50_400)
-}
-
-/// `YYYYMMDD` for a UTC epoch second (Howard Hinnant's `civil_from_days`).
-pub(crate) fn ymd_utc(secs: u64) -> String {
-    let z = (secs / 86_400) as i64 + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    format!("{y:04}{m:02}{d:02}")
+    outbe_primitives::time::worldwide_day_from_timestamp(now).to_string()
 }
 
 #[cfg(test)]

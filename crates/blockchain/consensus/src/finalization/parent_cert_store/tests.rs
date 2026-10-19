@@ -119,25 +119,16 @@ fn put_certified_notarization_get_certified_notarization_exact_key_only() {
 }
 
 #[test]
-fn put_finalization_get_best_parent_proof_returns_finalization_first() {
-    // best-proof finalization-first.
-    let store = FinalizedParentCertStore::new();
-    store
-        .put_certified_notarization(notarization_record(0xAA, 100))
-        .unwrap();
-    store
-        .put_finalization(finalization_record(0xAA, 100))
-        .unwrap();
-    let best = store.get_best_parent_proof(key(0xAA)).unwrap();
-    assert_eq!(best.proof_kind(), ParentParticipationProof::Finalization);
-}
-
-#[test]
 fn get_best_for_parent_is_single_snapshot_and_reports_cn_promotion_need() {
     let store = FinalizedParentCertStore::new();
     let witness = notarization_record(0xAA, 0);
     store.put_certified_notarization(witness).unwrap();
 
+    let best_record = store.get_best_parent_proof(key(0xAA)).unwrap();
+    assert_eq!(
+        best_record.proof_kind(),
+        ParentParticipationProof::CertifiedNotarization
+    );
     let best = store.get_best_for_parent(key(0xAA), 100).unwrap();
     assert!(matches!(
         best,
@@ -147,21 +138,13 @@ fn get_best_for_parent_is_single_snapshot_and_reports_cn_promotion_need() {
     store
         .put_finalization(finalization_record(0xAA, 100))
         .unwrap();
+    let best_record = store.get_best_parent_proof(key(0xAA)).unwrap();
+    assert_eq!(
+        best_record.proof_kind(),
+        ParentParticipationProof::Finalization
+    );
     let best = store.get_best_for_parent(key(0xAA), 100).unwrap();
     assert!(matches!(best, ParentProofSelection::Finalization(_)));
-}
-
-#[test]
-fn get_best_parent_proof_falls_back_to_certified_notarization() {
-    let store = FinalizedParentCertStore::new();
-    store
-        .put_certified_notarization(notarization_record(0xAA, 100))
-        .unwrap();
-    let best = store.get_best_parent_proof(key(0xAA)).unwrap();
-    assert_eq!(
-        best.proof_kind(),
-        ParentParticipationProof::CertifiedNotarization
-    );
 }
 
 #[test]

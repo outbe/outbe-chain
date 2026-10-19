@@ -9,8 +9,9 @@ use outbe_consensus::proof::{
 use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::protocol_schedule::OutbeProtocolSchedule;
-use outbe_primitives::slashing_journal::{iso8601_now, record as journal_record, JournalRecord};
+use outbe_primitives::slashing_journal::{record as journal_record, JournalRecord};
 use outbe_primitives::system_tx::{recover_phase1_proposer, SystemTxInputV2};
+use outbe_primitives::time::iso8601_now;
 use outbe_validatorset::contract::ValidatorSet;
 use outbe_validatorset::state::{committee_snapshot_key, read_committee_snapshot};
 use tracing::warn;
@@ -65,7 +66,7 @@ impl SlashIndicator<'_> {
     ///    misbehavior, not for re-litigating BLS quorum or accounting
     ///    binding failures.
     /// 10. Mark dedup BEFORE applying effects, then call
-    ///     `apply_evidence_felony` for jail + 5% slash +
+    ///     `apply_evidence_felony` for jail + 8% slash +
     ///     10% submitter reward. This reuses the existing felony helper. The
     ///     other evidence types share the same economics.
     pub fn submit_invalid_vrf_evidence(
@@ -139,7 +140,7 @@ impl SlashIndicator<'_> {
         self.invalid_vrf_evidence_processed
             .write(&evidence_hash, true)?;
 
-        // (13) Apply felony: jail + 5% slash + 10% submitter
+        // (13) Apply felony: jail + 8% slash + 10% submitter
         // reward. This uses the same helper that the other evidence types call.
         self.apply_evidence_felony(proposer, caller)?;
 

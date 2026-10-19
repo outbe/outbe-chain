@@ -3,8 +3,7 @@
 //! forfeited.
 
 use outbe_primitives::time::SECONDS_PER_DAY;
-use std::thread::sleep;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
@@ -12,7 +11,7 @@ use cucumber::when;
 use outbe_nod::config::NodParams;
 
 use crate::features::entity_lifecycle::chain::{
-    assert_single_event, finalized_checkpoint, head_time, poll_until, settlement_read,
+    assert_single_event, finalized_checkpoint, head_time, poll_until,
 };
 use crate::features::entity_lifecycle::entity::{Item, Lifecycle, Phase, Target, Terms};
 use crate::features::entity_lifecycle::holders::{self, FORFEITED, HOLDERS, UNPAID_AT_CALL};
@@ -51,10 +50,6 @@ const GRATIS_LOAD_MINOR: u64 = 5_000_003;
 const ISSUED: u8 = 0;
 const CALLED: u8 = 1;
 const SETTLED: u8 = 2;
-/// Issuance goes through the compressed-body projection before the index shows it.
-const ISSUANCE_TIMEOUT: Duration = Duration::from_secs(120);
-/// How long a Nod view may trail the block that wrote it.
-const READ_TIMEOUT: Duration = Duration::from_secs(60);
 /// After the notice lapses, the next sweep burns the unpaid Nod.
 const FORFEIT_TIMEOUT: Duration = Duration::from_secs(300);
 /// A DEV notice is minutes long. Anything longer means the profile is not active.
@@ -101,7 +96,7 @@ fn issue_five_nods(world: &mut World) {
         )
         .expect("submit test Nod issuance");
         assert_mined_success(&outcome, "test Nod issuance");
-        nods.push(wait_for_nod_of(&url, owner));
+        nods.push(nod_of(&url, owner));
     }
     world.state.lifecycle_nods = nods;
 }
@@ -126,26 +121,18 @@ impl Lifecycle for NodLifecycle {
         let Item::Nod(id) = target.item else {
             unreachable!("a Nod scenario pays only for Nods")
         };
-        let url = world.rpc.url(world.validators.primary_port());
         let expected_state = match phase {
             Phase::Issued => ISSUED,
             Phase::Called => CALLED,
         };
-        let data = settlement_read(|| {
-            let data = eth::read_call_result(
-                &url,
-                addresses::NOD_ADDR,
-                &eth::INod::getNodCall { nodId: id },
-            )?;
-            if data.owner != target.owner || data.isSettled || data.effectiveState != expected_state {
-                return Err(format!(
-                    "Nod {id} is not ready for {phase:?} settlement: owner={}, settled={}, state={}",
-                    data.owner, data.isSettled, data.effectiveState
-                ));
-            }
-            Ok(data)
-        })
-        .unwrap_or_else(|error| panic!("Nod {id}: {error}"));
+        let data = read_nod(world, id);
+        assert!(
+            data.owner == target.owner && !data.isSettled && data.effectiveState == expected_state,
+            "Nod {id} is not ready for {phase:?} settlement: owner={}, settled={}, state={}",
+            data.owner,
+            data.isSettled,
+            data.effectiveState
+        );
         Terms {
             entry_price: data.entryPriceMinor,
             load: crate::internal::nod_keys::decrypt(world, &data),
@@ -329,7 +316,7 @@ impl Lifecycle for NodLifecycle {
                 )
                 .expect("submit Gratis mining");
                 assert_mined_success(&outcome, "mine Gratis from the paid Nod");
-                assert_burned(world, owner, id, READ_TIMEOUT);
+                assert_burned(world, owner, id, Duration::ZERO);
                 Mined {
                     owner,
                     owner_key: key,
@@ -389,44 +376,28 @@ fn read_nod(world: &World, id: U256) -> eth::INod::NodData {
     read_nod_view(world, &eth::INod::getNodCall { nodId: id }, "Nod data")
 }
 
-/// Nod views read through the compressed-body projection. The projection trails the block
-/// that wrote the body, so a fresh write can answer an error for a moment.
 fn read_nod_view<C>(world: &World, call: &C, what: &str) -> C::Return
 where
     C: SolCall,
     C::Return: Send + 'static,
 {
     let url = world.rpc.url(world.validators.primary_port());
-    let deadline = Instant::now() + READ_TIMEOUT;
-    loop {
-        match eth::read_call_result(&url, addresses::NOD_ADDR, call) {
-            Ok(value) => return value,
-            Err(error) => {
-                assert!(Instant::now() < deadline, "{what}: {error}");
-                sleep(Duration::from_secs(1));
-            }
-        }
-    }
+    eth::read_call_result(&url, addresses::NOD_ADDR, call)
+        .unwrap_or_else(|error| panic!("{what}: {error}"))
 }
 
-fn wait_for_nod_of(url: &str, owner: Address) -> U256 {
-    let mut id = None;
-    poll_until(
-        ISSUANCE_TIMEOUT,
-        || format!("the Nod issued to {owner} never reached its owner's index"),
-        || {
-            id = eth::read_call(
-                url,
-                addresses::NOD_ADDR,
-                &eth::INod::tokenOfOwnerByIndexCall {
-                    owner,
-                    index: U256::ZERO,
-                },
-            );
-            id.is_some()
+fn nod_of(url: &str, owner: Address) -> U256 {
+    eth::read_call_result(
+        url,
+        addresses::NOD_ADDR,
+        &eth::INod::tokenOfOwnerByIndexCall {
+            owner,
+            index: U256::ZERO,
         },
-    );
-    id.expect("owner's Nod id")
+    )
+    .unwrap_or_else(|error| {
+        panic!("the Nod issued to {owner} is not in its owner's index: {error}")
+    })
 }
 
 fn paid_nod_mining_call(

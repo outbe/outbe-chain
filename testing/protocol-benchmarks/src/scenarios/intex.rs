@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Bytes, U256};
 use outbe_intex::SeriesId;
 use outbe_intexfactory::constants::ORIGIN_ROUTER_ADDRESS;
 use outbe_intexfactory::{bench_support::IssuanceLeg, IssuanceParams};
@@ -14,7 +14,6 @@ const CHAIN_ID: u64 = 1;
 const BLOCK_GAS_LIMIT: u64 = 30_000_000;
 const T_NOW: u64 = 1_700_000_000;
 const TARGET_WWD: WorldwideDay = WorldwideDay::new(20_260_730);
-const RECIPIENT: Address = Address::repeat_byte(0x31);
 const SERIES_CODES: [[u8; 3]; 10] = [
     *b"USD", *b"EUR", *b"GBP", *b"JPY", *b"CAD", *b"AUD", *b"CHF", *b"CNY", *b"SEK", *b"NZD",
 ];
@@ -72,9 +71,6 @@ fn params(index: usize) -> IssuanceParams {
         entry_price_minor: U256::from(1_000_000),
         issuance_currency: 840,
         reference_currency: 840,
-        recipients: vec![RECIPIENT],
-        units: vec![U256::from(100)],
-        recipient_chains: vec![1],
         snapshot_chains: vec![1],
     }
 }

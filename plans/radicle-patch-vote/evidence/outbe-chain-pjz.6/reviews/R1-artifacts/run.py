@@ -1,6 +1,0 @@
-import pathlib,json,subprocess,os,hashlib,datetime
-root=pathlib.Path.cwd();c=root/'plans/radicle-patch-vote/evidence/outbe-chain-pjz.6/candidate';a=pathlib.Path(__file__).resolve().parent;s=json.loads((c/'commands.json').read_text());extra=json.loads((c/'targeted-clippy-command.json').read_text());commands=s['commands']+[extra];env=os.environ.copy();env.update(s['environment']);out=[]
-for x in commands:
- name=x.get('name','targeted-clippy');start=datetime.datetime.now(datetime.timezone.utc).isoformat();r=subprocess.run(x['argv'],cwd=x.get('cwd',root),env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT);log=a/(name+'.log');log.write_bytes(r.stdout);row={'name':name,'argv':x['argv'],'cwd':str(x.get('cwd',root)),'environment':s['environment'],'start_utc':start,'end_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'exit_code':r.returncode,'log':str(log.relative_to(root)),'log_sha256':hashlib.sha256(r.stdout).hexdigest()};out.append(row);(a/'commands.json').write_text(json.dumps(out,indent=2)+'\n');print(name,r.returncode,flush=True)
- if name=='abi' and r.returncode==0:
-  assert json.loads(r.stdout)==json.loads((root/'contracts/precompiles/abi-export/IRadicleRegistry.json').read_text())

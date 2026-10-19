@@ -317,14 +317,6 @@ pub trait OutbeApi {
         tribute_id: outbe_primitives::wwd_entity_id::WwdEntityId,
     ) -> jsonrpsee::core::RpcResult<outbe_tee::tribute_source::TributeStateSource>;
 
-    /// Proves day length and optionally one physical day index at a fixed finalized state.
-    #[method(name = "getTributeDayStateProof")]
-    async fn get_tribute_day_state_proof(
-        &self,
-        subject: outbe_tee::tribute_source::TributeSourceSubject,
-        day_index: Option<u32>,
-    ) -> jsonrpsee::core::RpcResult<outbe_tribute::state_proof::TributeDayStateProof>;
-
     /// Export the network key only for a finalized upgrade candidate.
     #[method(name = "upgradeKeyV1")]
     async fn upgrade_key_v1(
@@ -503,7 +495,7 @@ mod tests {
 
     #[test]
     fn test_consensus_status_info_serialization_camel_case() {
-        let info = ConsensusStatusInfo {
+        let validator_info = ConsensusStatusInfo {
             current_view: 42,
             connected_peers: 3,
             is_active: true,
@@ -520,71 +512,33 @@ mod tests {
             enclave: EnclaveHealthInfo::default(),
         };
 
-        let json = serde_json::to_string(&info).unwrap();
+        let json = serde_json::to_string(&validator_info).unwrap();
 
-        // Verify camelCase field names (not snake_case).
-        assert!(
-            json.contains("\"currentView\""),
-            "must use camelCase: {json}"
-        );
-        assert!(
-            json.contains("\"connectedPeers\""),
-            "must use camelCase: {json}"
-        );
-        assert!(json.contains("\"isActive\""), "must use camelCase: {json}");
-        assert!(
-            json.contains("\"hasThresholdShares\""),
-            "must use camelCase: {json}"
-        );
-        assert!(
-            json.contains("\"lastFinalizedBlock\""),
-            "must use camelCase: {json}"
-        );
-        assert!(
-            json.contains("\"lastVrfSeed\""),
-            "must use camelCase: {json}"
-        );
-        assert!(
-            json.contains("\"randomnessStatus\""),
-            "must use camelCase: {json}"
-        );
-        assert!(
-            json.contains("\"vrfMaterialVersion\""),
-            "must use camelCase: {json}"
-        );
-        assert!(
-            json.contains("\"lastDkgActivationHeight\""),
-            "must use camelCase: {json}"
-        );
-        assert!(
-            json.contains("\"nextPlannedActivationHeight\""),
-            "must use camelCase: {json}"
-        );
-        assert!(
-            json.contains("\"vrfExpiryHeight\""),
-            "must use camelCase: {json}"
-        );
-        assert!(
-            json.contains("\"isValidator\""),
-            "must use camelCase: {json}"
-        );
-        assert!(
-            json.contains("\"phase1VerificationMode\""),
-            "must use camelCase: {json}"
-        );
-        assert!(
-            json.contains("\"validatorEnforced\""),
-            "validator-mode status must expose enforced Phase-1 verification: {json}"
-        );
-
-        // Must NOT contain snake_case.
+        for expected_field in [
+            "\"currentView\"",
+            "\"connectedPeers\"",
+            "\"isActive\"",
+            "\"hasThresholdShares\"",
+            "\"lastFinalizedBlock\"",
+            "\"lastVrfSeed\"",
+            "\"randomnessStatus\"",
+            "\"vrfMaterialVersion\"",
+            "\"lastDkgActivationHeight\"",
+            "\"nextPlannedActivationHeight\"",
+            "\"vrfExpiryHeight\"",
+            "\"isValidator\"",
+            "\"phase1VerificationMode\"",
+            "\"validatorEnforced\"",
+        ] {
+            assert!(
+                json.contains(expected_field),
+                "must contain {expected_field}: {json}"
+            );
+        }
         assert!(!json.contains("current_view"), "must not use snake_case");
         assert!(!json.contains("connected_peers"), "must not use snake_case");
-    }
 
-    #[test]
-    fn test_consensus_status_info_roundtrip() {
-        let info = ConsensusStatusInfo {
+        let follower_info = ConsensusStatusInfo {
             current_view: 100,
             connected_peers: 5,
             is_active: false,
@@ -601,8 +555,8 @@ mod tests {
             enclave: EnclaveHealthInfo::default(),
         };
 
-        let json = serde_json::to_string(&info).unwrap();
-        let deserialized: ConsensusStatusInfo = serde_json::from_str(&json).unwrap();
+        let follower_json = serde_json::to_string(&follower_info).unwrap();
+        let deserialized: ConsensusStatusInfo = serde_json::from_str(&follower_json).unwrap();
 
         assert_eq!(deserialized.current_view, 100);
         assert_eq!(deserialized.connected_peers, 5);
@@ -624,19 +578,45 @@ mod tests {
 
     #[test]
     fn test_sync_status_info_full_node_semantics() {
-        // Full node: is_syncing may be true, consensus_active = false.
-        let info = SyncStatusInfo {
-            is_syncing: true,
-            current_block: 50,
-            highest_block: 100,
-            consensus_active: false,
-            connected_peers: 3,
+        use outbe_primitives::consensus::{
+            ConsensusExecutionBridge, ConsensusStatus, RandomnessStatus,
         };
+        use std::sync::Arc;
 
-        let json = serde_json::to_string(&info).unwrap();
+        // Plain EL full node (no consensus bridge): reports not syncing and consensus_active = false.
+        let full_node = crate::server::OutbeApiHandler::new(Arc::new(()));
+        let full_node_status = full_node.sync_status_info();
+        assert!(!full_node_status.is_syncing);
+        assert!(!full_node_status.consensus_active);
+        assert_eq!(full_node_status.current_block, 0);
+        assert_eq!(full_node_status.highest_block, 0);
+        assert_eq!(full_node_status.connected_peers, 0);
+
+        // Bridge-backed node before first finalization (inactive consensus): is_syncing = true, consensus_active = false.
+        let inactive_bridge = ConsensusExecutionBridge::new();
+        let syncing_node =
+            crate::server::OutbeApiHandler::with_follower_bridge(Arc::new(()), inactive_bridge);
+        let syncing_status = syncing_node.sync_status_info();
+        assert!(syncing_status.is_syncing);
+        assert!(!syncing_status.consensus_active);
+
+        // Active bridge-backed node: is_syncing = false, consensus_active = true, finalized height reflected.
+        let active_bridge = ConsensusExecutionBridge::new();
+        active_bridge.set_consensus_status(ConsensusStatus {
+            current_view: 12,
+            connected_peers: 4,
+            last_finalized_block: 88,
+            randomness_status: RandomnessStatus::Healthy,
+            ..Default::default()
+        });
+        let active_node = crate::server::OutbeApiHandler::with_bridge(Arc::new(()), active_bridge);
+        let active_status = active_node.sync_status_info();
+        let json = serde_json::to_string(&active_status).unwrap();
         let deserialized: SyncStatusInfo = serde_json::from_str(&json).unwrap();
-
-        assert!(!deserialized.consensus_active);
-        assert!(deserialized.is_syncing);
+        assert!(!deserialized.is_syncing);
+        assert!(deserialized.consensus_active);
+        assert_eq!(deserialized.current_block, 88);
+        assert_eq!(deserialized.highest_block, 88);
+        assert_eq!(deserialized.connected_peers, 4);
     }
 }

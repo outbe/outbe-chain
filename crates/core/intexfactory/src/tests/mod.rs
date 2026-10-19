@@ -13,7 +13,7 @@ use outbe_primitives::time::SECONDS_PER_DAY_U32;
 use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key};
 
 use crate::called;
-use crate::constants::{MAX_RECIPIENTS_PER_ISSUANCE, MAX_SERIES_PER_MESSAGE};
+use crate::constants::MAX_SERIES_PER_MESSAGE;
 use crate::precompile::{self, IIntexFactory};
 use crate::runtime;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
@@ -28,7 +28,7 @@ fn owner() -> Address {
     address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
 }
 
-fn payment_token() -> Address {
+fn settlement_asset() -> Address {
     address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC")
 }
 
@@ -119,10 +119,7 @@ fn sample(worldwide_day: u32) -> IssuanceParams {
         entry_price_minor: U256::from(ENTRY_PRICE),
         issuance_currency: 840,
         reference_currency: 840,
-        recipients: vec![],
-        units: vec![],
-        recipient_chains: vec![],
-        // One target in the snapshot exercises the per-chain ISSUANCE loop (empty recipients).
+        // One target in the snapshot exercises the per-chain ISSUANCE loop.
         snapshot_chains: vec![1],
     }
 }

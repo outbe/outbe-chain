@@ -91,18 +91,17 @@ impl WwdTerminalReceipt {
                 .and_then(|credit| common.carry_over_before.checked_add(credit))
                 .and_then(|available| available.checked_sub(detail.desis_limit))
                 .and_then(|remaining| remaining.checked_add(detail.unused));
-            if context.status != status::COMPLETED
-                || context.active_memberships != 0
-                || context.closed_memberships != 1
-                || common.block_number == 0
-                || common.retirement != RetirementOutcome::Requested
-                || detail.tribute_count == 0
-                || detail.inputs_hash.is_zero()
-                || detail.result_hash.is_zero()
-                || detail.used.checked_add(detail.unused) != Some(detail.lysis_limit)
-                || common.value_routed != context.expected_value_routed
-                || after != Some(common.carry_over_after)
-            {
+            let terminal_membership = context.status == status::COMPLETED
+                && context.active_memberships == 0
+                && context.closed_memberships == 1;
+            let completion_evidence = common.block_number != 0
+                && detail.tribute_count != 0
+                && !detail.inputs_hash.is_zero()
+                && !detail.result_hash.is_zero();
+            let conserved = detail.used.checked_add(detail.unused) == Some(detail.lysis_limit)
+                && common.value_routed == context.expected_value_routed
+                && after == Some(common.carry_over_after);
+            if !terminal_membership || !completion_evidence || !conserved {
                 return Err(MetadosisStorageCorruptionError::WwdTerminalReceiptInvalid.into());
             }
             return Ok(());

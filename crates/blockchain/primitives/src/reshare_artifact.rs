@@ -1075,7 +1075,7 @@ mod tests {
             ..Default::default()
         })
         .expect("encode late credits");
-        assert_eq!(encoded[4], super::VERSION, "artifact version is 0x08");
+        assert_eq!(encoded[4], super::VERSION, "artifact version is 0x0B");
         assert!(encoded.len() <= super::OUTBE_MAX_EXTRA_DATA_SIZE);
         let decoded = decode_outbe_block_artifacts(&encoded).expect("decode");
         assert_eq!(decoded.late_finalize_credits, Some(artifact));

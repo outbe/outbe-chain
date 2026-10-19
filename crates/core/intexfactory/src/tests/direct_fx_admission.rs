@@ -3,6 +3,7 @@
 
 use super::issuance::{dual_currency_series, stub_token_that_never_credits, COEN_ISO_RATE_SCALE};
 use super::*;
+use outbe_vaultrouter::settlement::SettlementPayment;
 
 /// The euro trades live and the reference leg is priced in the window, but the
 /// window holds no euro price: the direct settlement is refused as oracle
@@ -34,9 +35,9 @@ fn a_direct_settlement_in_a_currency_the_window_never_priced_is_refused_without_
             sid(7),
             owner(),
             U256::ONE,
-            runtime::SettlementPayment {
-                settler: owner(),
-                asset: payment_token(),
+            SettlementPayment {
+                payer: owner(),
+                asset: settlement_asset(),
                 snapshot_id: required,
             },
         )

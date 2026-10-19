@@ -9,29 +9,29 @@ use outbe_primitives::{
     wwd_entity_id::WwdEntityId,
 };
 
+/// A gem exactly as stored when it was loaded; mutation re-checks storage against it.
 pub struct LoadedGem {
     body: GemItemState,
-    current: GemItemState,
 }
 impl LoadedGem {
     pub const fn body(&self) -> &GemItemState {
         &self.body
     }
-    pub(crate) fn into_parts(self) -> (GemItemState, GemItemState) {
-        (self.body, self.current)
+    pub(crate) fn into_body(self) -> GemItemState {
+        self.body
     }
 }
 
+/// A gem bucket exactly as stored when it was loaded; mutation re-checks storage against it.
 pub struct LoadedGemBucket {
     body: GemBucketState,
-    current: GemBucketState,
 }
 impl LoadedGemBucket {
     pub const fn body(&self) -> &GemBucketState {
         &self.body
     }
-    pub(crate) fn into_parts(self) -> (GemBucketState, GemBucketState) {
-        (self.body, self.current)
+    pub(crate) fn into_body(self) -> GemBucketState {
+        self.body
     }
 }
 
@@ -40,12 +40,7 @@ pub fn load_item(storage: &StorageHandle<'_>, id: WwdEntityId) -> Result<Option<
     contract
         .records
         .get(id)?
-        .map(|current| {
-            Ok(LoadedGem {
-                body: current.clone(),
-                current,
-            })
-        })
+        .map(|body| Ok(LoadedGem { body }))
         .transpose()
 }
 pub fn load_bucket(storage: &StorageHandle<'_>, key: B256) -> Result<Option<LoadedGemBucket>> {
@@ -53,12 +48,7 @@ pub fn load_bucket(storage: &StorageHandle<'_>, key: B256) -> Result<Option<Load
     contract
         .buckets
         .get(key)?
-        .map(|current| {
-            Ok(LoadedGemBucket {
-                body: current.clone(),
-                current,
-            })
-        })
+        .map(|body| Ok(LoadedGemBucket { body }))
         .transpose()
 }
 pub fn add_item(
@@ -89,14 +79,14 @@ pub fn remove_item(
         GemContract::new(storage.clone()).record_gem_removed_state(item, bucket)
     })
 }
+/// Must run before `item` or `bucket` is mutated: both are compared with storage as loaded.
 fn check_loaded(
     contract: &GemContract<'_>,
     item: &GemItemState,
-    current: &GemItemState,
     bucket: &GemBucketState,
 ) -> Result<()> {
     if item.bucket_key != bucket.bucket_key
-        || contract.records.get(item.gem_id)?.as_ref() != Some(current)
+        || contract.records.get(item.gem_id)?.as_ref() != Some(item)
         || contract.buckets.get(bucket.bucket_key)?.as_ref() != Some(bucket)
     {
         return Err(PrecompileError::revert("Gem state changed after loading"));
@@ -110,6 +100,9 @@ impl GemContract<'_> {
         entry_price_minor: U256,
         call_terms: Option<CallTerms>,
     ) -> Result<()> {
+        if item.owner.is_zero() {
+            return Err(GemError::ZeroOwner.into());
+        }
         if self.records.get(item.gem_id)?.is_some() {
             return Err(GemError::AlreadyExists.into());
         }
@@ -164,11 +157,11 @@ impl GemContract<'_> {
     }
 
     fn record_gem_settled_state(&mut self, item: LoadedGem, bucket: LoadedGemBucket) -> Result<()> {
-        let (mut item, current_item) = item.into_parts();
-        let (mut bucket, current_bucket) = bucket.into_parts();
-        check_loaded(self, &item, &current_item, &current_bucket)?;
+        let mut item = item.into_body();
+        let mut bucket = bucket.into_body();
+        check_loaded(self, &item, &bucket)?;
         if item.is_settled() {
-            return Err(GemError::InvalidState.into());
+            return Err(GemError::AlreadySettled.into());
         }
         bucket.settled_gems = bucket
             .settled_gems
@@ -186,13 +179,10 @@ impl GemContract<'_> {
     }
 
     fn record_gem_removed_state(&mut self, item: LoadedGem, bucket: LoadedGemBucket) -> Result<()> {
-        let (item, current_item) = item.into_parts();
-        let (mut bucket, current_bucket) = bucket.into_parts();
-        check_loaded(self, &item, &current_item, &current_bucket)?;
-        let bucket_id = WwdEntityId::from_day_and_digest(
-            current_bucket.worldwide_day,
-            current_bucket.bucket_key,
-        );
+        let item = item.into_body();
+        let mut bucket = bucket.into_body();
+        check_loaded(self, &item, &bucket)?;
+        let bucket_id = WwdEntityId::from_day_and_digest(bucket.worldwide_day, bucket.bucket_key);
         let supply = self
             .total_supply
             .read()?
@@ -275,7 +265,35 @@ mod tests {
             )
             .unwrap();
             assert_eq!(contract.total_supply.read().unwrap(), 0);
-            assert!(contract.state_records(None).unwrap().is_empty());
+            assert!(contract.state_records(item.owner).unwrap().is_empty());
+            assert!(contract.buckets.get(item.bucket_key).unwrap().is_none());
+        });
+    }
+
+    #[test]
+    fn a_gem_without_an_owner_is_rejected_before_any_write() {
+        let mut provider = HashMapStorageProvider::new(1);
+        StorageHandle::enter(&mut provider, |storage| {
+            let day = WorldwideDay::new(20261015);
+            let item = GemItemState {
+                gem_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(7)),
+                owner: Address::ZERO,
+                gem_type: 0,
+                promis_load_minor: U256::from(5_000_000),
+                issuance_currency: 840,
+                reference_currency: 840,
+                issued_at: day.start_timestamp(),
+                bucket_key: crate::identity::bucket_key(day, U256::from(1_000_000), 840),
+                state: GemState::Issued as u8,
+                called_at: 0,
+                settled_at: 0,
+            };
+            assert!(matches!(
+                add_item(&storage, &item, U256::from(1_000_000), None),
+                Err(PrecompileError::Revert(reason)) if reason == GemError::ZeroOwner.to_string()
+            ));
+            let contract = GemContract::new(storage.clone());
+            assert_eq!(contract.total_supply.read().unwrap(), 0);
             assert!(contract.buckets.get(item.bucket_key).unwrap().is_none());
         });
     }

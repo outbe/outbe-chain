@@ -80,10 +80,7 @@ fn dispatch_entity(
 ) -> Result<Bytes> {
     use INod::INodCalls::*;
     match call {
-        balanceOf(c) => view(c, |c| {
-            let count = api::list_by_owner(&storage, c.owner)?.len();
-            Ok(U256::from(count))
-        }),
+        balanceOf(c) => view(c, |c| api::balance_of(&storage, c.owner).map(U256::from)),
         ownerOf(c) => view(c, |c| {
             let nod_id = WwdEntityId::from(c.nodId);
             Ok(api::get_item(&storage, nod_id)?

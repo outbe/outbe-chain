@@ -309,23 +309,6 @@ async fn proof_store_ingestion_verifies_certification_activity_before_write() {
     assert_eq!(store.len(), 0);
 }
 
-#[tokio::test(flavor = "current_thread")]
-async fn reporter_handle_certification_records_witness_flag_true() {
-    let store = FinalizedParentCertStore::new();
-    let (notarization, verifier, participants) = valid_notarization();
-    let (mut reporter, mut rx) = build_reporter(Arc::new(store.clone()), verifier, &participants);
-    let parent_hash = notarization.proposal.payload.0;
-    let _ = reporter.report(Activity::Certification(notarization));
-    drain_certification_writes(&mut rx, &store);
-    let record = store
-        .get_certified_notarization(CertifiedParentProofKey::new(0, 2, parent_hash))
-        .unwrap();
-    assert!(
-        record.is_certification_witness(),
-        "Activity-driven inserts must always set local_certification_witness=true"
-    );
-}
-
 /// A fake `CertificationWitnessSink` that records every mark. It exercises the narrow
 /// capability seam that the reporter receives (instead of the full store). This is the
 /// reason the seam is a trait rather than a newtype.

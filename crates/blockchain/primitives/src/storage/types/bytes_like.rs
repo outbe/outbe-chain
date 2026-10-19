@@ -187,21 +187,18 @@ fn data_slot(base_slot: U256) -> U256 {
 mod tests {
     use super::*;
     use crate::storage::hashmap::HashMapStorageProvider;
-    use crate::storage::StorageHandle;
     use alloy_primitives::address;
-
-    fn with_storage<F: FnOnce(StorageHandle)>(f: F) {
-        let mut provider = HashMapStorageProvider::new(1);
-        let storage = StorageHandle::new(&mut provider);
-        f(storage);
-    }
 
     const ADDR: Address = address!("0x0000000000000000000000000000000000001003");
 
+    fn with_storage_bytes<F: FnOnce(StorageBytes)>(f: F) {
+        let mut provider = HashMapStorageProvider::new(1);
+        provider.enter(|storage| f(StorageBytes::new(U256::ZERO, ADDR, storage)));
+    }
+
     #[test]
     fn exact_length_checks_short_and_long_metadata() {
-        with_storage(|storage| {
-            let sb = StorageBytes::new(U256::ZERO, ADDR, storage);
+        with_storage_bytes(|sb| {
             for length in [0, 1, 31, 32, 56, 88] {
                 sb.write(&vec![0xab; length]).unwrap();
                 assert!(sb.has_exact_length(length).unwrap());
@@ -212,10 +209,9 @@ mod tests {
 
     #[test]
     fn exact_length_rejects_oversized_and_invalid_short_metadata() {
-        with_storage(|storage| {
-            let sb = StorageBytes::new(U256::ZERO, ADDR, storage.clone());
+        with_storage_bytes(|sb| {
             for raw in [U256::MAX, U256::from(112), U256::from(176), U256::from(63)] {
-                storage.sstore(ADDR, U256::ZERO, raw).unwrap();
+                sb.storage.sstore(ADDR, U256::ZERO, raw).unwrap();
                 assert!(!sb.has_exact_length(56).unwrap());
                 assert!(!sb.has_exact_length(88).unwrap());
             }
@@ -223,64 +219,23 @@ mod tests {
     }
 
     #[test]
-    fn test_empty() {
-        with_storage(|storage| {
-            let sb = StorageBytes::new(U256::ZERO, ADDR, storage);
+    fn short_and_long_roundtrips_and_clear() {
+        with_storage_bytes(|sb| {
             assert_eq!(sb.len().unwrap(), 0);
             assert!(sb.is_empty().unwrap());
-        });
-    }
 
-    #[test]
-    fn test_short_string() {
-        with_storage(|storage| {
-            let sb = StorageBytes::new(U256::ZERO, ADDR, storage);
             sb.write_string("hello").unwrap();
             assert_eq!(sb.len().unwrap(), 5);
             assert_eq!(sb.read_string().unwrap(), "hello");
-        });
-    }
-
-    #[test]
-    fn test_short_31_bytes() {
-        with_storage(|storage| {
-            let sb = StorageBytes::new(U256::ZERO, ADDR, storage);
-            let data = vec![0xABu8; 31];
-            sb.write(&data).unwrap();
-            assert_eq!(sb.len().unwrap(), 31);
-            assert_eq!(sb.read().unwrap(), data);
-        });
-    }
-
-    #[test]
-    fn test_long_32_bytes() {
-        with_storage(|storage| {
-            let sb = StorageBytes::new(U256::ZERO, ADDR, storage);
-            let data = vec![0xCDu8; 32];
-            sb.write(&data).unwrap();
-            assert_eq!(sb.len().unwrap(), 32);
-            assert_eq!(sb.read().unwrap(), data);
-        });
-    }
-
-    #[test]
-    fn test_long_100_bytes() {
-        with_storage(|storage| {
-            let sb = StorageBytes::new(U256::ZERO, ADDR, storage);
-            let data: Vec<u8> = (0..100).map(|i| i as u8).collect();
-            sb.write(&data).unwrap();
-            assert_eq!(sb.len().unwrap(), 100);
-            assert_eq!(sb.read().unwrap(), data);
-        });
-    }
-
-    #[test]
-    fn test_clear() {
-        with_storage(|storage| {
-            let sb = StorageBytes::new(U256::ZERO, ADDR, storage);
-            sb.write_string("hello").unwrap();
             sb.clear().unwrap();
             assert!(sb.is_empty().unwrap());
+
+            let cases: [Vec<u8>; 3] = [vec![0xABu8; 31], vec![0xCDu8; 32], (0..100u8).collect()];
+            for expected in cases {
+                sb.write(&expected).unwrap();
+                assert_eq!(sb.len().unwrap(), expected.len());
+                assert_eq!(sb.read().unwrap(), expected);
+            }
         });
     }
 
@@ -288,8 +243,7 @@ mod tests {
     fn test_shrink_clears_stale_tail() {
         // A long value overwritten by a shorter one must leave no dead data in
         // the tail data-run slots.
-        with_storage(|storage| {
-            let sb = StorageBytes::new(U256::ZERO, ADDR, storage);
+        with_storage_bytes(|sb| {
             let long: Vec<u8> = (0..100u16).map(|i| i as u8).collect();
             sb.write(&long).unwrap();
             let long_slots = 100usize.div_ceil(32);
@@ -308,8 +262,7 @@ mod tests {
 
     #[test]
     fn test_long_to_shorter_long_clears_extra_tail() {
-        with_storage(|storage| {
-            let sb = StorageBytes::new(U256::ZERO, ADDR, storage);
+        with_storage_bytes(|sb| {
             let long: Vec<u8> = (0..200u16).map(|i| i as u8).collect(); // 7 slots
             sb.write(&long).unwrap();
             let mid: Vec<u8> = (0..64u16).map(|i| i as u8).collect(); // 2 slots
@@ -326,8 +279,7 @@ mod tests {
 
     #[test]
     fn test_clear_zeroes_long_data_run() {
-        with_storage(|storage| {
-            let sb = StorageBytes::new(U256::ZERO, ADDR, storage);
+        with_storage_bytes(|sb| {
             let long: Vec<u8> = vec![0xEE; 128];
             sb.write(&long).unwrap();
             sb.clear().unwrap();
@@ -343,12 +295,33 @@ mod tests {
 
     #[test]
     fn test_write_if_changed_skips_equal() {
-        with_storage(|storage| {
+        let mut provider = HashMapStorageProvider::new(1);
+        provider.enable_production_storage_gas_metering();
+
+        provider.enter(|storage| {
             let sb = StorageBytes::new(U256::ZERO, ADDR, storage);
             assert!(sb.write_if_changed(b"hello").unwrap()); // first write
+        });
+        assert_eq!(provider.clear_mutation_failure(), 1);
+        assert_eq!(provider.metered_storage_operations().1, 1);
+
+        provider.enter(|storage| {
+            let sb = StorageBytes::new(U256::ZERO, ADDR, storage);
             assert!(!sb.write_if_changed(b"hello").unwrap()); // unchanged -> skip
+        });
+        assert_eq!(
+            provider.clear_mutation_failure(),
+            0,
+            "equal-value write_if_changed must not emit any sstore"
+        );
+        assert_eq!(provider.metered_storage_operations().1, 1);
+
+        provider.enter(|storage| {
+            let sb = StorageBytes::new(U256::ZERO, ADDR, storage);
             assert!(sb.write_if_changed(b"world").unwrap()); // changed -> write
             assert_eq!(sb.read().unwrap(), b"world");
         });
+        assert_eq!(provider.clear_mutation_failure(), 1);
+        assert_eq!(provider.metered_storage_operations().1, 2);
     }
 }

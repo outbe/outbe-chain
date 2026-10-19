@@ -65,5 +65,4 @@ interface INodFactory {
     function mineGratis(uint256 nodId, uint64 nonce, bytes32 mac, uint64 opNonce)
         external
         returns (bytes memory encryptedBalance);
-
 }

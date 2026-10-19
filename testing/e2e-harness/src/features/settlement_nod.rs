@@ -400,10 +400,14 @@ fn assert_mined_nod_rejection<C: alloy_sol_types::SolCall>(
     let height = outcome
         .block_number()
         .expect("Nod rejection receipt height");
-    let checkpoint = world
+    world
         .rpc
         .wait_finalized_checkpoint(&ports, height, 120)
         .expect("Nod rejection finalized on every validator");
+    let checkpoint = world
+        .rpc
+        .checkpoint_at(primary, height)
+        .expect("exact Nod rejection checkpoint");
     assert_eq!(
         outcome.receipt["blockHash"],
         serde_json::json!(format!("{:#x}", checkpoint.block_hash))
@@ -411,6 +415,14 @@ fn assert_mined_nod_rejection<C: alloy_sol_types::SolCall>(
     assert_eq!(tx["blockHash"], outcome.receipt["blockHash"]);
     assert_eq!(tx["blockNumber"], outcome.receipt["blockNumber"]);
     for &port in &ports {
+        assert_eq!(
+            world
+                .rpc
+                .checkpoint_at(port, height)
+                .expect("Nod rejection checkpoint on every validator"),
+            checkpoint,
+            "same Nod rejection canonical block and state root"
+        );
         let receipt = eth::raw_json_result(
             &world.rpc.url(port),
             "eth_getTransactionReceipt",

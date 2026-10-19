@@ -112,9 +112,6 @@ pub const fn protocol_block_gas_limit(block_number: u64) -> u64 {
 /// block gas limit.
 pub const SYSTEM_TX_ARTIFACT_GAS_LIMIT: u64 = 10_000_000_000;
 
-/// Visible execution gas reserved for one validator reward Gem delivery.
-pub const REWARD_GEM_DELIVERY_GAS_RESERVE: u64 = 200_000;
-
 /// Minimum visible gas charged by a system transaction envelope.
 pub const SYSTEM_TX_VISIBLE_GAS_FLOOR: u64 = 21_000;
 

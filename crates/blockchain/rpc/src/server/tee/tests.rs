@@ -160,8 +160,9 @@ fn upgrade_candidate_preserves_order_repeated_binding_read_and_short_circuit() {
     let mut provider = candidate_storage(&context);
     let (result, reads) = check(&provider, &context, false, None);
     assert_eq!(result, Ok(true));
-    // Independent trace from the old predicate: context, expiry, source, binding,
-    // binding again, successor, offer key, key epoch, offer epoch.
+    // CHARACTERIZATION: independent trace from the predicate (context, expiry,
+    // source, binding, binding again, successor, offer key, key epoch, offer epoch)
+    // pins the current duplicate `v1_node_binding_id` SLOAD until intentional refactor.
     let tail = &reads[reads.len() - 9..];
     assert_eq!(tail[3], tail[4]);
     for fail_at in 1..=reads.len() {

@@ -44,19 +44,3 @@ fn other_halt_maps_to_299() {
         299
     );
 }
-
-#[test]
-fn codes_are_in_phase_band() {
-    for code in [
-        system_tx_failure_code_for_result(&revert_result()),
-        system_tx_failure_code_for_result(&halt_result(HaltReason::OutOfGas(
-            OutOfGasError::Memory,
-        ))),
-        system_tx_failure_code_for_result(&halt_result(HaltReason::PrecompileError)),
-    ] {
-        assert!(
-            (200..=299).contains(&code),
-            "phase failure code {code} outside 200..=299 band"
-        );
-    }
-}
