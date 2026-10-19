@@ -61,6 +61,11 @@ fn requeue_called(storage: &StorageHandle<'_>, credis_id: U256, deadline: u64) -
     if credis.called_deadline.read(&group)? == 0 {
         return Err(CredisFactoryError::NotCalled.into());
     }
+    // Members read the deadline from the call, so the call moves with the queue.
+    let notice = u64::from(credis.group_call_notice_period_seconds.read(&group)?);
+    credis
+        .group_called_at
+        .write(&group, deadline.saturating_sub(notice).max(1))?;
     credis.remove_called(group)?;
     credis.push_called(group, deadline)
 }

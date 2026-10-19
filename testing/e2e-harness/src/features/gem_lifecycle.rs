@@ -57,8 +57,8 @@ const FORFEIT_TIMEOUT: Duration = Duration::from_secs(120);
 const EXPIRY_GROUP_SECS: u64 = 3_600;
 /// Slack past the deadline so the notice is spent before the group is closed.
 const EXPIRY_MARGIN_SECS: u64 = 30;
-/// The position sweep runs after its deadline, on the same cadence.
-const POSITION_SWEEP_TIMEOUT_SECS: u64 = 300;
+/// Once the position's hour is closed the sweep reaches it in the next block or two.
+const POSITION_SWEEP_TIMEOUT_SECS: u64 = 120;
 /// The DEV validity (15 minutes) runs from parking, and most of it is spent
 /// waiting out the call notice before this step is reached.
 const POSITION_DEADLINE_TIMEOUT_SECS: u64 = 900;
@@ -573,7 +573,20 @@ fn position_returns_capacity(world: &mut World) {
     let url = world_url(world);
     let position_id = world.state.gem_position.expect("a position was parked");
 
-    // An expired position's hour returns its capacity, and the cleanup deletes it.
+    // An expired position's hour returns its capacity, and the cleanup deletes it. The
+    // sweep opens an hour only once it has closed, so move it into a closed one.
+    let closed = eth::send_call_outcome(
+        &url,
+        addresses::GEM_FACTORY_ADDR,
+        DEPLOYER_KEY,
+        &IGemFactoryTestArming::closePositionHourForTestCall {
+            positionId: position_id,
+            deadline: head_time(world).saturating_sub(EXPIRY_GROUP_SECS),
+        },
+        None,
+    )
+    .expect("close the expiry hour the position sits in");
+    assert_mined_success(&closed, "close the expiry hour the position sits in");
     poll_until(
         Duration::from_secs(POSITION_SWEEP_TIMEOUT_SECS),
         || format!("position {position_id} is past its deadline; the cleanup has not deleted it"),
@@ -694,6 +707,7 @@ alloy_sol_types::sol! {
     interface IGemFactoryTestArming {
         function backdateGemForTest(uint256 gemId, uint64 issuedAt) external;
         function closeCallNoticeForTest(uint256 gemId, uint64 deadline) external;
+        function closePositionHourForTest(uint256 positionId, uint64 deadline) external;
     }
 }
 

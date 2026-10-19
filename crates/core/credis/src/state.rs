@@ -37,9 +37,10 @@ impl<'storage> CredisContract<'storage> {
             record.call_notice_period_seconds =
                 self.group_call_notice_period_seconds.read(&group)?;
             record.called_at = self.group_called_at.read(&group)?;
-            if record.called_at != 0 {
-                record.state = CredisState::Called as u8;
-            }
+            record.state = match record.called_at {
+                0 => CredisState::Issued,
+                _ => CredisState::Called,
+            } as u8;
         }
         Ok(record)
     }

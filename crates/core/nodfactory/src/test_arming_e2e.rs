@@ -74,12 +74,16 @@ fn issue(storage: &StorageHandle<'_>, call: INodFactoryTestArming::issueForTestC
     Ok(())
 }
 
-/// Moves a called group's queue entry onto `deadline`.
+/// Moves a called group onto `deadline`: its call and its queue entry.
 fn requeue_called(storage: &StorageHandle<'_>, group_key: B256, deadline: u64) -> Result<()> {
     let mut nod = NodContract::new(storage.clone());
     if nod.called_deadline.read(&group_key)? == 0 {
         return Err(crate::errors::NodFactoryError::GroupNotQueuedForTest.into());
     }
+    // Members read the deadline from the call, so the call moves with the queue.
+    let notice = u64::from(nod.group_call_notice_period_seconds.read(&group_key)?);
+    nod.group_called_at
+        .write(&group_key, deadline.saturating_sub(notice).max(1))?;
     nod.remove_called(group_key)?;
     nod.push_called(group_key, deadline)
 }

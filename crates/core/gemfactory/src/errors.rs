@@ -78,6 +78,9 @@ pub enum GemFactoryError {
     #[error("gem group {group_key} member {gem_id} has no record during cleanup")]
     MissingMemberRecordDuringCleanup { group_key: B256, gem_id: U256 },
 
+    #[error("position has not expired")]
+    PositionNotExpired,
+
     #[error("gem group {group} has no record to call")]
     MissingGroupForCall { group: B256 },
 

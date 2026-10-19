@@ -39,6 +39,11 @@ fn requeue_called(storage: &StorageHandle<'_>, series_id: SeriesId, deadline: u6
     if intex.called_deadline.read(&group)? == 0 {
         return Err(crate::errors::IntexFactoryError::NoCalledGroupForTest.into());
     }
+    // Members read the deadline from the call, so the call moves with the queue.
+    let notice = u64::from(intex.call_group_notice_seconds.read(&group)?);
+    let called_at = u32::try_from(deadline.saturating_sub(notice).max(1))
+        .map_err(|_| crate::errors::IntexFactoryError::BlockTimestampExceedsU32)?;
+    intex.call_group_called_at.write(&group, called_at)?;
     intex.requeue_called(group, deadline)
 }
 

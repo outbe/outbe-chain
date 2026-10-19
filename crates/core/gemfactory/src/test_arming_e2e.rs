@@ -2,7 +2,8 @@
 //! that needs a paid Gem asks for one. A gem is stamped live, so only such a build can move
 //! its issuance back behind the closed days a scenario seeds for the call sweep. The forfeit
 //! sweep opens a group only once its hour has closed, so `closeCallNoticeForTest` moves a
-//! deadline that already lapsed into one the sweep opens on the next block.
+//! deadline that already lapsed into one the sweep opens on the next block, and
+//! `closePositionHourForTest` does the same for an expired position's hour.
 
 use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::SolCall;
@@ -18,6 +19,7 @@ alloy_sol_types::sol! {
         function issueSettledGemForTest(address owner, uint256 promisLoadMinor, uint16 currency) external returns (uint256 gemId);
         function backdateGemForTest(uint256 gemId, uint64 issuedAt) external;
         function closeCallNoticeForTest(uint256 gemId, uint64 deadline) external;
+        function closePositionHourForTest(uint256 positionId, uint64 deadline) external;
     }
 }
 
@@ -40,7 +42,33 @@ pub(crate) fn dispatch(storage: &StorageHandle<'_>, data: &[u8]) -> Option<Resul
             requeue_called(storage, call.gemId, call.deadline).map(|()| Bytes::new())
         }));
     }
+    if let Ok(call) = closePositionHourForTestCall::abi_decode(data) {
+        return Some(guarded(storage, || {
+            requeue_position_hour(storage, call.positionId, call.deadline).map(|()| Bytes::new())
+        }));
+    }
     None
+}
+
+/// Moves the queue entry of an expired position's hour onto `deadline`.
+fn requeue_position_hour(
+    storage: &StorageHandle<'_>,
+    position_id: U256,
+    deadline: u64,
+) -> Result<()> {
+    use outbe_primitives::expiry_queue;
+    let factory = crate::GemFactoryContract::new(storage.clone());
+    let position = factory
+        .positions
+        .get(position_id)?
+        .ok_or(GemFactoryError::PositionNotFound)?;
+    let now = storage.timestamp()?.to::<u64>();
+    if now < position.expires_at {
+        return Err(GemFactoryError::PositionNotExpired.into());
+    }
+    let hours = crate::state::PositionExpiryHours(&factory);
+    expiry_queue::remove(&hours, position.expiry_hour())?;
+    expiry_queue::push(&hours, position.expiry_hour(), deadline)
 }
 
 fn guarded(storage: &StorageHandle<'_>, hook: impl FnOnce() -> Result<Bytes>) -> Result<Bytes> {
@@ -98,7 +126,7 @@ fn backdate(storage: &StorageHandle<'_>, gem_id: U256, issued_at: u64) -> Result
     })
 }
 
-/// Moves the queue entry of a called gem's group onto `deadline`.
+/// Moves a called gem's group onto `deadline`: its call and its queue entry.
 fn requeue_called(storage: &StorageHandle<'_>, gem_id: U256, deadline: u64) -> Result<()> {
     let item = gem_api::get_item(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
     let mut gem = GemContract::new(storage.clone());
@@ -106,6 +134,10 @@ fn requeue_called(storage: &StorageHandle<'_>, gem_id: U256, deadline: u64) -> R
     if gem.called_deadline.read(&group)? == 0 {
         return Err(GemFactoryError::GemNotCalled.into());
     }
+    // Members read the deadline from the call, so the call moves with the queue.
+    let notice = u64::from(gem.group_call_notice_period_seconds.read(&group)?);
+    gem.group_called_at
+        .write(&group, deadline.saturating_sub(notice).max(1))?;
     gem.remove_called(group)?;
     gem.push_called(group, deadline)
 }
