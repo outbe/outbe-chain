@@ -19,8 +19,6 @@ pub enum RewardsError {
     DailyVoterCountOverflow,
     #[error("daily_participation overflow")]
     DailyParticipationOverflow,
-    #[error("daily_total_participation overflow")]
-    DailyTotalParticipationOverflow,
     #[error("reward credit outside inclusion window")]
     CreditOutsideInclusionWindow,
     #[error("late reward credit has no canonical UTC day")]

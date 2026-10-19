@@ -168,9 +168,6 @@ pub(super) fn seed_dense_voter_participation(
     rewards
         .daily_voter_count
         .write(&prev_day, validator_count)?;
-    rewards
-        .daily_total_participation
-        .write(&prev_day, u64::from(validator_count))?;
     for index in 0..validator_count {
         let voter = numbered_test_address(0x12, u64::from(index));
         rewards

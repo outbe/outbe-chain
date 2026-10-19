@@ -4,19 +4,14 @@
 //! The call follows the fingerprint check and `record_finalized_participation`.
 //! The hook does the idempotent per-finalized-block work:
 //!
-//! 1. On the first finalized day, write `last_settled_utc_day` once.
-//!    The hook does not advance that slot again.
-//! 2. Add `validator_fee_sum` into `daily_fee_sum_raw`, guarded by
-//!    `block_metadata_counted[fb_hash]`. This hook does not write
-//!    `daily_fee_dust`.
-//! 3. Per-block fee ESCROW + participation count, guarded by `fb_hash` /
+//! 1. Add `validator_fee_sum` into `daily_fee_sum_raw`, guarded by
+//!    `block_metadata_counted[fb_hash]`.
+//! 2. Per-block fee ESCROW + participation count, guarded by `fb_hash` /
 //!    `(fb_hash, voter)` composite keys. The hook does NOT pay fees eagerly.
 //!    `late_settlement::escrow_block_fee` escrows the `validator_fee_sum` of the
 //!    block (`pending_fees[fb_hash]`, base 2f+1 seeded at `k=0`). The fee settles
 //!    at `N+K` over the inclusion-window voter set. The daily emission top-up
-//!    lands later at the day-boundary settle (step 11).
-//! 4. Advance `max_observed_finalized_day` (monotonic).
-//!
+//!    lands later at the day-boundary settle.
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::{
@@ -24,26 +19,26 @@ use outbe_primitives::{
     consensus_metadata::CertifiedParentAccountingMetadata,
     error::Result,
     storage::finalized_guard_ring::{FinalizedGuardRing, FINALIZED_GUARD_RETAIN},
-    time::{previous_date_key, timestamp_to_date_key},
+    time::timestamp_to_date_key,
 };
 
 use crate::errors::RewardsError;
 use crate::schema::Rewards;
 
 /// Number of recent finalized blocks whose per-`fb_hash` guard maps
-/// (`block_metadata_counted`, `metadata_fingerprint_for_block`,
-/// `fee_dust_counted_for_block`, `fee_settled`) stay live. The replay/settle
+/// (`block_metadata_counted`, `metadata_fingerprint_for_block`, `fee_settled`)
+/// stay live. The replay/settle
 /// horizon is the K-block late-finalize window
 /// ([`LATE_FINALIZE_WINDOW_K`](outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K) = 3).
 /// Thus, a retention of the last 64 finalized blocks is generous. [`prune_block_guards`]
 /// prunes older guard flags. A change to this value is a hard fork.
 pub const BLOCK_GUARD_RETAIN: u64 = FINALIZED_GUARD_RETAIN;
 
-/// Record `fb_hash` in the prune ring and clear the four per-`fb_hash` guard
+/// Record `fb_hash` in the prune ring and clear the three per-`fb_hash` guard
 /// maps of the finalized block evicted `BLOCK_GUARD_RETAIN` records ago.
 ///
 /// Without this, `block_metadata_counted`, `metadata_fingerprint_for_block`,
-/// `fee_dust_counted_for_block`, and `fee_settled` grow by one entry per
+/// and `fee_settled` grow by one entry per
 /// finalized block forever. The evicted block is `BLOCK_GUARD_RETAIN` >> K
 /// blocks old, so nothing can re-count or settle it. Thus, clearing its
 /// guards cannot weaken replay protection for any block still in the window.
@@ -62,7 +57,6 @@ fn prune_block_guards(rewards: &Rewards<'_>, fb_hash: B256) -> Result<()> {
             rewards
                 .metadata_fingerprint_for_block
                 .write(&evicted, B256::ZERO)?;
-            rewards.fee_dust_counted_for_block.write(&evicted, false)?;
             rewards.fee_settled.write(&evicted, false)
         },
         || RewardsError::BlockGuardRingSeqOverflow.into(),
@@ -102,13 +96,6 @@ pub fn on_finalized_metadata(
     // durable per-`fb_hash` first-seen signal. Thus, the prune ring advances exactly
     // once per finalized block, even if the hook runs again for the same hash.
     let first_seen = !rewards.block_metadata_counted.read(&fb_hash)?;
-
-    // 1. Lazy init of `last_settled_utc_day` on first finalized day observed.
-    if rewards.last_settled_utc_day.read()? == 0 {
-        rewards
-            .last_settled_utc_day
-            .write(previous_date_key(fb_day))?;
-    }
 
     // The per-day raw fee accumulation still feeds the daily-emission cap.
     // But the hook now ESCROWS the fees per finalized block (it does not pay them
@@ -155,12 +142,6 @@ pub fn on_finalized_metadata(
         record_reward_participation(ctx, fb_hash, fb_day, *voter)?;
     }
 
-    // 4. Advance max observed finalized day (monotonic).
-    let prev_max = rewards.max_observed_finalized_day.read()?;
-    if fb_day > prev_max {
-        rewards.max_observed_finalized_day.write(fb_day)?;
-    }
-
     // Bound finalized-block replay guards, well beyond the late-credit window.
     if first_seen {
         prune_block_guards(&rewards, fb_hash)?;
@@ -201,14 +182,6 @@ pub(crate) fn record_reward_participation(
             .checked_add(1)
             .ok_or(RewardsError::DailyParticipationOverflow)?;
         day_participation.write(&voter, next_count)?;
-
-        let prev_total = rewards.daily_total_participation.read(&fb_day)?;
-        let next_total = prev_total
-            .checked_add(1)
-            .ok_or(RewardsError::DailyTotalParticipationOverflow)?;
-        rewards
-            .daily_total_participation
-            .write(&fb_day, next_total)?;
 
         participation_guard.write(&voter, true)?;
     }
@@ -308,10 +281,6 @@ mod tests {
             let day_participation = rewards.daily_participation.get_nested(&20240101);
             assert_eq!(day_participation.read(&VAL_X).unwrap(), 1);
             assert_eq!(day_participation.read(&VAL_Y).unwrap(), 1);
-            assert_eq!(
-                rewards.daily_total_participation.read(&20240101).unwrap(),
-                2
-            );
             assert_eq!(rewards.daily_voter_count.read(&20240101).unwrap(), 2);
 
             let day_voter_at = rewards.daily_voter_at.get_nested(&20240101);
@@ -350,8 +319,12 @@ mod tests {
                 "replay must not double-count raw fees"
             );
             assert_eq!(
-                rewards.daily_total_participation.read(&20240101).unwrap(),
-                2,
+                rewards
+                    .daily_participation
+                    .get_nested(&20240101)
+                    .read(&VAL_X)
+                    .unwrap(),
+                1,
                 "replay must not double-count participation"
             );
         });
@@ -381,11 +354,6 @@ mod tests {
             // No eager payouts - fees stay escrowed until settle.
             assert_eq!(ctx.storage.balance(VAL_X).unwrap(), U256::ZERO);
             assert_eq!(ctx.storage.balance(VAL_Y).unwrap(), U256::ZERO);
-            // Participation: 2 blocks x 2 voters = 4.
-            assert_eq!(
-                rewards.daily_total_participation.read(&20240101).unwrap(),
-                4
-            );
             assert_eq!(
                 rewards
                     .daily_participation
@@ -394,27 +362,6 @@ mod tests {
                     .unwrap(),
                 2
             );
-        });
-    }
-
-    #[test]
-    fn first_call_initializes_last_settled_utc_day_to_previous_day() {
-        with_genesis_block(|ctx| {
-            let rewards = ctx.storage.contract::<Rewards>();
-            assert_eq!(rewards.last_settled_utc_day.read().unwrap(), 0);
-
-            on_finalized_metadata(
-                &ctx,
-                &meta_with_hash(FB_HASH_A, 1),
-                U256::ZERO,
-                GENESIS_TS, // fb_day = 20240101
-                &[VAL_X],
-            )
-            .unwrap();
-
-            // Initialized to previous_date_key(20240101) = 20231231.
-            assert_eq!(rewards.last_settled_utc_day.read().unwrap(), 20231231);
-            assert_eq!(rewards.max_observed_finalized_day.read().unwrap(), 20240101);
         });
     }
 
@@ -462,20 +409,15 @@ mod tests {
                 U256::from(100u64)
             );
             assert_eq!(rewards.late_voter_count.read(&FB_HASH_A).unwrap(), 0);
-            assert_eq!(
-                rewards.daily_total_participation.read(&20240101).unwrap(),
-                0
-            );
+            assert_eq!(rewards.daily_voter_count.read(&20240101).unwrap(), 0);
         });
     }
 
     #[test]
-    fn cross_day_block_advances_max_observed_without_settle() {
-        // on_finalized_metadata does not trigger day-boundary
-        // settlement. The hook only updates the per-day fee
-        // accumulators, per-voter participation, and the monotonic
-        // `max_observed_finalized_day` watermark. The new Cycle orchestrator owns
-        // the day-boundary settle, not this hook.
+    fn cross_day_block_does_not_settle() {
+        // on_finalized_metadata does not trigger day-boundary settlement. The
+        // hook only updates the per-day fee accumulators and per-voter
+        // participation. The Cycle orchestrator owns the day-boundary settle.
         with_funded_genesis_block(200, |ctx| {
             // Block from day D=20240101.
             record_parent_xy(&ctx, FB_HASH_A, 1);
@@ -490,18 +432,11 @@ mod tests {
             .unwrap();
 
             let rewards = ctx.storage.contract::<Rewards>();
-            // max_observed_finalized_day still advances monotonically:
-            // it is the watermark consumed by the orchestrator.
-            assert_eq!(rewards.max_observed_finalized_day.read().unwrap(), 20240103);
             // No settle: every day's marker stays false until the
             // orchestrator runs.
             assert!(!rewards.daily_settled.read(&20240101).unwrap());
             assert!(!rewards.daily_settled.read(&20240102).unwrap());
             assert!(!rewards.daily_settled.read(&20240103).unwrap());
-            // The hook lazy-initializes `last_settled_utc_day` on the very
-            // first observed finalized day to `previous_date_key(fb_day)`.
-            // The hook no longer advances it.
-            assert_eq!(rewards.last_settled_utc_day.read().unwrap(), 20231231);
         });
     }
 
@@ -526,14 +461,9 @@ mod tests {
     /// contract the watermark-removal proof relies on.
     #[derive(Debug, PartialEq, Eq)]
     struct ReplaySnapshot {
-        last_settled_utc_day: u32,
-        max_observed_finalized_day: u32,
         rewards_balance: U256,
         // Per-day aggregates.
         daily_fee_sum_raw: std::collections::BTreeMap<u32, U256>,
-        daily_fees_paid: std::collections::BTreeMap<u32, U256>,
-        daily_fee_dust: std::collections::BTreeMap<u32, U256>,
-        daily_total_participation: std::collections::BTreeMap<u32, u64>,
         daily_voter_count: std::collections::BTreeMap<u32, u32>,
         daily_voter_at: std::collections::BTreeMap<(u32, u32), Address>,
         daily_participation_per_voter: std::collections::BTreeMap<(u32, Address), u64>,
@@ -551,18 +481,11 @@ mod tests {
     ) -> ReplaySnapshot {
         let rewards = ctx.storage.contract::<Rewards>();
         let mut daily_fee_sum_raw = std::collections::BTreeMap::new();
-        let mut daily_fees_paid = std::collections::BTreeMap::new();
-        let mut daily_fee_dust = std::collections::BTreeMap::new();
-        let mut daily_total_participation = std::collections::BTreeMap::new();
         let mut daily_voter_count = std::collections::BTreeMap::new();
         let mut daily_voter_at = std::collections::BTreeMap::new();
         let mut daily_participation_per_voter = std::collections::BTreeMap::new();
         for &d in days {
             daily_fee_sum_raw.insert(d, rewards.daily_fee_sum_raw.read(&d).unwrap());
-            daily_fees_paid.insert(d, rewards.daily_fees_paid.read(&d).unwrap());
-            daily_fee_dust.insert(d, rewards.daily_fee_dust.read(&d).unwrap());
-            daily_total_participation
-                .insert(d, rewards.daily_total_participation.read(&d).unwrap());
             let count = rewards.daily_voter_count.read(&d).unwrap();
             daily_voter_count.insert(d, count);
             let voter_at = rewards.daily_voter_at.get_nested(&d);
@@ -583,13 +506,8 @@ mod tests {
             voter_balances.insert(v, ctx.storage.balance(v).unwrap());
         }
         ReplaySnapshot {
-            last_settled_utc_day: rewards.last_settled_utc_day.read().unwrap(),
-            max_observed_finalized_day: rewards.max_observed_finalized_day.read().unwrap(),
             rewards_balance: ctx.storage.balance(REWARDS_ADDRESS).unwrap(),
             daily_fee_sum_raw,
-            daily_fees_paid,
-            daily_fee_dust,
-            daily_total_participation,
             daily_voter_count,
             daily_voter_at,
             daily_participation_per_voter,
@@ -735,18 +653,17 @@ mod tests {
     /// The fingerprint that the seeded guards of a block carry.
     const SEEDED_FINGERPRINT: B256 = B256::repeat_byte(0xFE);
 
-    /// The four per-block guards of one block and the ring position.
+    /// The three per-block guards of one block and the ring position.
     #[derive(Debug, PartialEq)]
     struct BlockRingView {
         metadata_counted: bool,
         fingerprint: B256,
-        dust_counted: bool,
         settled: bool,
         ring: RingPosition,
     }
 
     /// The guards of a block in `guards_live` state, with `entry` and `seq`.
-    fn block_ring_view(guards_live: [bool; 4], entry: B256, seq: u64) -> BlockRingView {
+    fn block_ring_view(guards_live: [bool; 3], entry: B256, seq: u64) -> BlockRingView {
         BlockRingView {
             metadata_counted: guards_live[0],
             fingerprint: if guards_live[1] {
@@ -754,14 +671,13 @@ mod tests {
             } else {
                 B256::ZERO
             },
-            dust_counted: guards_live[2],
-            settled: guards_live[3],
+            settled: guards_live[2],
             ring: RingPosition { entry, seq },
         }
     }
 
     /// Storage after seeding the ring cursor `seq`, the entry at
-    /// `seq % RETAIN` and the four guards of every block in `guarded`.
+    /// `seq % RETAIN` and the three guards of every block in `guarded`.
     fn seeded_block_ring(seq: u64, entry: B256, guarded: &[B256]) -> HashMapStorageProvider {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
         provider.enter(|storage| {
@@ -774,10 +690,6 @@ mod tests {
                 rewards
                     .metadata_fingerprint_for_block
                     .write(hash, SEEDED_FINGERPRINT)
-                    .unwrap();
-                rewards
-                    .fee_dust_counted_for_block
-                    .write(hash, true)
                     .unwrap();
                 rewards.fee_settled.write(hash, true).unwrap();
             }
@@ -798,7 +710,6 @@ mod tests {
                     .metadata_fingerprint_for_block
                     .read(&guarded)
                     .unwrap(),
-                dust_counted: rewards.fee_dust_counted_for_block.read(&guarded).unwrap(),
                 settled: rewards.fee_settled.read(&guarded).unwrap(),
                 ring: block_guard_ring(&rewards).position_for_test(idx).unwrap(),
             }
@@ -835,15 +746,14 @@ mod tests {
             views,
             MutationPrefixViews {
                 before_mutation: vec![
-                    block_ring_view([true, true, true, true], evicted, seq),
-                    block_ring_view([false, true, true, true], evicted, seq),
-                    block_ring_view([false, false, true, true], evicted, seq),
-                    block_ring_view([false, false, false, true], evicted, seq),
-                    block_ring_view([false, false, false, false], evicted, seq),
-                    block_ring_view([false, false, false, false], fb_hash, seq),
+                    block_ring_view([true, true, true], evicted, seq),
+                    block_ring_view([false, true, true], evicted, seq),
+                    block_ring_view([false, false, true], evicted, seq),
+                    block_ring_view([false, false, false], evicted, seq),
+                    block_ring_view([false, false, false], fb_hash, seq),
                 ],
-                complete: block_ring_view([false, false, false, false], fb_hash, seq + 1),
-                mutations: 6,
+                complete: block_ring_view([false, false, false], fb_hash, seq + 1),
+                mutations: 5,
             }
         );
     }
@@ -867,7 +777,7 @@ mod tests {
         );
         assert_eq!(
             read_block_ring(&mut provider, evicted, u64::MAX % BLOCK_GUARD_RETAIN),
-            block_ring_view([false, false, false, false], fb_hash, u64::MAX)
+            block_ring_view([false, false, false], fb_hash, u64::MAX)
         );
     }
 }

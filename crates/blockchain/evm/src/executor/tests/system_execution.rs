@@ -488,10 +488,6 @@ fn stale_oracle_cycle_credits_validator_reward_and_allows_later_feeder_vote() {
                     .get_nested(&PREVIOUS_DAY)
                     .write(&voter, 1)
                     .unwrap();
-                rewards
-                    .daily_total_participation
-                    .write(&PREVIOUS_DAY, 1)
-                    .unwrap();
 
                 let mut validator_set =
                     outbe_validatorset::contract::ValidatorSet::new(storage.clone());
