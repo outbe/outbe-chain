@@ -100,8 +100,6 @@ pub enum OracleError {
     DuplicateReferenceIsoCode { iso_code: u16 },
     #[error("reference currencies must be sorted in ascending ISO order")]
     ReferenceCurrenciesNotSorted,
-    #[error("reference currency count exceeds 6")]
-    ReferenceCurrencyCountExceedsMax,
     #[error("reference currencies must include USD 840")]
     MissingUsdReferenceCurrency,
     #[error("policy iso_code must be non-zero")]
@@ -191,7 +189,6 @@ impl From<OracleError> for PrecompileError {
             | ReferenceIsoCodeZero
             | DuplicateReferenceIsoCode { .. }
             | ReferenceCurrenciesNotSorted
-            | ReferenceCurrencyCountExceedsMax
             | MissingUsdReferenceCurrency
             | PolicyIsoCodeZero
             | DuplicatePolicyIsoCode { .. }

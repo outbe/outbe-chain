@@ -188,10 +188,10 @@ fn issue_at_live_rate(
         GemIssueParams {
             owner,
             gem_type,
-            promis_load,
+            promis_load_minor: promis_load,
             issuance_currency,
             reference_currency,
-            entry_price: price,
+            entry_price_minor: price,
         },
     )
 }
@@ -391,7 +391,7 @@ fn merchant_entry_price(storage: &StorageHandle, source_entry: U256) -> U256 {
             caller: ALICE,
             position_id: id,
             owner: BOB,
-            promis_load: six_decimal_unit(),
+            promis_load_minor: six_decimal_unit(),
         },
     )
     .unwrap();

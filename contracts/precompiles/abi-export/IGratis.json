@@ -264,7 +264,7 @@
         "internalType": "address"
       },
       {
-        "name": "amount",
+        "name": "gratisMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -308,7 +308,7 @@
         "internalType": "address"
       },
       {
-        "name": "amount",
+        "name": "gratisMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

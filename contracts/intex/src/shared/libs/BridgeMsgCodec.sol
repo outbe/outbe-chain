@@ -57,20 +57,6 @@ library BridgeMsgCodec {
     /// @notice Decimals of protocol amounts and COEN/ISO prices.
     uint8 internal constant PROTOCOL_DECIMALS = 6;
 
-    /// @notice Decimals of native COEN and wCOEN.
-    uint8 internal constant NATIVE_DECIMALS = 18;
-
-    /// @notice 18-decimal wCOEN units in one six-decimal protocol unit.
-    uint256 internal constant NATIVE_UNITS_PER_PROTOCOL_UNIT = 10 ** (NATIVE_DECIMALS - PROTOCOL_DECIMALS);
-
-    /// @notice `quantity` Intexes at `rate` of the six-decimal `basis`, in 18-decimal payment
-    ///         units: the lock a bid takes and the payment a winner makes. Mirrors the clearing
-    ///         side's `rate_lock` bit for bit. The six-decimal product is floored before it is
-    ///         scaled.
-    function escrowAmount(uint256 quantity, uint256 basis, uint256 rate) internal pure returns (uint256) {
-        return quantity * basis * rate / SCALE_1E6 * NATIVE_UNITS_PER_PROTOCOL_UNIT;
-    }
-
     // --- Minimum encoded lengths ---
     // Header is fixed at 2 bytes: [bodyVersion(1)][msgType(1)].
     uint16 internal constant HEADER_LEN = 2;
@@ -79,8 +65,6 @@ library BridgeMsgCodec {
     uint16 internal constant MIN_LEN_AUCTION_STAGE_START = 70;
     /// @notice Bytes per reference-price row: [iso(2)][entry(8)][call(8)].
     uint16 internal constant REFERENCE_PRICE_LEN = 18;
-    /// @notice The oracle's reference list is short. A day may not exceed this.
-    uint8 internal constant MAX_REFERENCE_PRICES = 6;
     uint16 internal constant MIN_LEN_AUCTION_STAGE_CLEARING = 6;
     uint16 internal constant MIN_LEN_AUCTION_RESULT = 22;
     // MARK_CALLED: header + abi.encode(worldwideDay, calledAt, seriesIds). One series is 5 words.
@@ -300,8 +284,9 @@ library BridgeMsgCodec {
         uint128 _commitBondMinor,
         uint8 _dayState
     ) internal pure returns (bytes memory) {
-        if (_prices.length > MAX_REFERENCE_PRICES) {
-            revert PayloadArrayTooLong(_prices.length, MAX_REFERENCE_PRICES);
+        // The row count is one byte on the wire.
+        if (_prices.length > type(uint8).max) {
+            revert PayloadArrayTooLong(_prices.length, type(uint8).max);
         }
         // A live day must price something to bid against. A cancelled one is a closed record.
         if (_prices.length == 0 && _dayState != uint8(IIntexAuction.WorldwideDayState.Red)) {
@@ -438,10 +423,6 @@ library BridgeMsgCodec {
         returns (IIntexAuction.ReferenceCurrencyPrice[] memory rows)
     {
         uint256 count = uint8(_msg[69]);
-        // Re-checked inbound: more rows than the quoted gas covers would revert and redeliver.
-        if (count > MAX_REFERENCE_PRICES) {
-            revert PayloadArrayTooLong(count, MAX_REFERENCE_PRICES);
-        }
         if (_msg.length != MIN_LEN_AUCTION_STAGE_START + count * REFERENCE_PRICE_LEN) {
             revert InvalidPayloadLength(MSG_AUCTION_STAGE_START, _msg.length, MIN_LEN_AUCTION_STAGE_START);
         }

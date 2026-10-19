@@ -4,6 +4,7 @@ pragma solidity 0.8.30;
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
@@ -17,6 +18,10 @@ contract SummingEscrowAdapter {
 
     constructor(IERC20 token) {
         paymentToken = token;
+    }
+
+    function dayPaymentToken(uint32) external view returns (IERC20) {
+        return paymentToken;
     }
 
     function finalizeAuction(uint32, bytes32, address[] calldata winners, uint16, uint16, uint64, uint128 basis, bool)
@@ -38,7 +43,13 @@ contract SummingEscrowAdapter {
 
 /// @dev Counts proceeds transfers and remembers the last amount.
 contract CountingTokenBridge {
+    IERC20 public token;
     uint256 public calls;
+
+    constructor(IERC20 token_) {
+        token = token_;
+    }
+
     uint256 public lastAmount;
 
     function quoteSend(uint32, address, uint256, bytes calldata, uint256) external pure returns (uint256) {
@@ -52,8 +63,8 @@ contract CountingTokenBridge {
     }
 }
 
-/// A chain's refunds arrive as a run of chunks. But the day's proceeds leave as one transfer, so the
-/// day pays one bridge fee.
+/// A chain's refunds arrive as a run of chunks, and each chunk sends its own proceeds home. A chunk
+/// that never lands holds back no other chunk's proceeds.
 contract TargetRouterRefundChunksTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     uint32 internal constant DAY = 20_260_713;
@@ -71,7 +82,7 @@ contract TargetRouterRefundChunksTest is CrossChainTest {
 
         MockWCOEN wcoen = new MockWCOEN();
         SummingEscrowAdapter escrow = new SummingEscrowAdapter(IERC20(address(wcoen)));
-        tokenBridge = new CountingTokenBridge();
+        tokenBridge = new CountingTokenBridge(IERC20(address(wcoen)));
 
         target.wire(makeAddr("auction"), makeAddr("intex"), address(escrow));
         target.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originSender));
@@ -86,38 +97,57 @@ contract TargetRouterRefundChunksTest is CrossChainTest {
         _deliver(OUTBE_CHAIN_ID, originSender, address(target), packet);
     }
 
-    function test_ProceedsLeaveOnceTheLastChunkLands() public {
+    function test_EachChunkSendsItsOwnProceeds() public {
+        vm.expectEmit(true, false, false, true, address(target));
+        emit ITargetRouter.ProceedsRouted(DAY, 0, 40e6);
         _deliverChunk(0, 2, 40e6);
-        assertEq(tokenBridge.calls(), 0, "an unfinished day must not route");
+        assertEq(tokenBridge.calls(), 1, "the first chunk routes at once");
+        assertEq(tokenBridge.lastAmount(), 40e6);
 
+        vm.expectEmit(true, false, false, true, address(target));
+        emit ITargetRouter.ProceedsRouted(DAY, 1, 60e6);
         _deliverChunk(1, 2, 60e6);
-        assertEq(tokenBridge.calls(), 1, "one transfer for the day");
-        assertEq(tokenBridge.lastAmount(), 100e6, "the whole day's proceeds");
+        assertEq(tokenBridge.calls(), 2, "the second chunk routes its own part");
+        assertEq(tokenBridge.lastAmount(), 60e6);
     }
 
     function test_RedeliveredChunkNeitherRoutesNorRecounts() public {
         _deliverChunk(0, 2, 40e6);
         _deliverChunk(0, 2, 40e6); // the bridge may deliver the same chunk twice
-        assertEq(tokenBridge.calls(), 0, "a repeat must not complete the day");
+        assertEq(tokenBridge.calls(), 1, "a repeat must not route again");
+        (uint16 seen,) = target.refundChunks(DAY);
+        assertEq(seen, 1, "a repeat must not be counted");
+    }
 
-        _deliverChunk(1, 2, 60e6);
-        assertEq(tokenBridge.calls(), 1);
-        assertEq(tokenBridge.lastAmount(), 100e6, "the repeat must not be counted twice");
+    function test_AMissingChunkHoldsBackNoOtherProceeds() public {
+        _deliverChunk(0, 3, 40e6);
+        _deliverChunk(2, 3, 30e6);
+        assertEq(tokenBridge.calls(), 2, "both landed chunks routed while chunk 1 is missing");
+        assertEq(tokenBridge.lastAmount(), 30e6);
+
+        _deliverChunk(1, 3, 60e6);
+        assertEq(tokenBridge.calls(), 3, "the late chunk routes its own part");
+        assertEq(tokenBridge.lastAmount(), 60e6);
+        (uint16 seen, uint16 total) = target.refundChunks(DAY);
+        assertEq(seen, total, "the day completes");
     }
 
     function test_ChunksMayArriveInAnyOrder() public {
         _deliverChunk(1, 2, 60e6);
-        assertEq(tokenBridge.calls(), 0);
-
         _deliverChunk(0, 2, 40e6);
-        assertEq(tokenBridge.calls(), 1);
-        assertEq(tokenBridge.lastAmount(), 100e6);
+        assertEq(tokenBridge.calls(), 2);
+        assertEq(tokenBridge.lastAmount(), 40e6);
     }
 
     function test_SingleChunkDayRoutesImmediately() public {
         _deliverChunk(0, 1, 25e6);
         assertEq(tokenBridge.calls(), 1);
         assertEq(tokenBridge.lastAmount(), 25e6);
+    }
+
+    function test_AChunkWithoutPaymentsRoutesNothing() public {
+        _deliverChunk(0, 2, 0);
+        assertEq(tokenBridge.calls(), 0);
     }
 
     /// This test drives the real adapter. The rule that matters is that a finalized day refuses
@@ -138,7 +168,7 @@ contract TargetRouterRefundChunksTest is CrossChainTest {
             token.mint(bidders[i], 1e18);
             vm.prank(bidders[i]);
             token.approve(address(escrow), type(uint256).max);
-            escrow.lockFunds(DAY, bidders[i], 1e18, 1_000_000, 1);
+            escrow.lockFunds(DAY, bidders[i], 1e6, 1_000_000, 1);
         }
 
         _deliverChunkFor(bidders[0], 0, 2);

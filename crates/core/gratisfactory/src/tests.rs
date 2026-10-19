@@ -281,7 +281,7 @@ fn fund_and_reserve(storage: &StorageHandle<'_>, source: Address) -> U256 {
         .create(&outbe_vaultrouter::schema::LiquidityReservation {
             id,
             asset: address!("0x0000000000000000000000000000000000000888"),
-            amount: U256::from(2 * RESERVED),
+            amount_minor: U256::from(2 * RESERVED),
             gratis_minor: U256::from(RESERVED),
             expires_at: CREATED_AT + 900,
             source,

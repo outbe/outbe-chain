@@ -1574,20 +1574,6 @@ fn init_from_genesis_rejects_unsorted_reference_currencies() {
 }
 
 #[test]
-fn init_from_genesis_rejects_more_than_six_reference_currencies() {
-    with_bare_oracle(|_storage, oracle| {
-        let config = crate::genesis::OracleGenesisConfig {
-            reference_currencies: vec![36, 124, 156, 344, 392, 826, 840],
-            ..crate::genesis::OracleGenesisConfig::default_config()
-        };
-        let error = crate::genesis::init_from_genesis(oracle, &config).unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("reference currency count exceeds 6"));
-    });
-}
-
-#[test]
 fn init_from_genesis_requires_usd_in_reference_currencies() {
     with_bare_oracle(|_storage, oracle| {
         let config = crate::genesis::OracleGenesisConfig {

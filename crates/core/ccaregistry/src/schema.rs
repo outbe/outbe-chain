@@ -18,7 +18,7 @@ pub struct CcaRecord {
     pub state: ICcaRegistry::State,
     /// Native COEN atomic units, retained during deregistration until claimed.
     #[attribute(order = 2)]
-    pub bonded_amount: U256,
+    pub bonded_minor: U256,
     /// Unix seconds. The value comes from a checked conversion of the execution timestamp.
     #[attribute(order = 3)]
     pub unbond_unlocks_after: u64,
@@ -33,10 +33,10 @@ pub struct CcaContract {
     pub active: outbe_primitives::storage::dsl::Set<Address>,
     /// Six-decimal net GRATIS per UTC day. At most one of weight/deficit is nonzero.
     #[attribute(order = 2)]
-    pub gratis_sum_per_utc_day: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub gratis_minor_per_utc_day: outbe_primitives::storage::dsl::Map<B256, U256>,
     /// Excess burns offset later openings for the same CCA and UTC day only.
     #[attribute(order = 3)]
-    pub gratis_deficits_per_utc_day: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub gratis_deficit_minor_per_utc_day: outbe_primitives::storage::dsl::Map<B256, U256>,
 }
 
 pub(crate) fn address_day_key(cca: Address, day: u32) -> B256 {
