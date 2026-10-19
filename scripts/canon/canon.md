@@ -135,7 +135,7 @@ Each term lists forbidden words/phrases and the permitted anchor. When a forbidd
 
 **Vault** - Forbidden: pool, reserve, fund, treasury, accumulated balance, lender, national infrastructure, unlimited capacity, on-demand liquidity source. Permitted: near-empty global pass-through funded by settlement Cost Amounts; drains via Credis; capacity at any moment is bounded by the rate of fresh investor settlements; Bundle availability for consumers is rationed when global demand exceeds available Vault capacity.
 
-**Emission Limit** - Forbidden: target, soft cap, market-responsive supply. Permitted: fixed daily issuance budget that follows a fixed curve: it increases from 2^28 COEN on day 0 to 581,610,154 COEN on day 1,024, then decreases to 2^26 COEN on day 3,072, and stays at 2^26 COEN from then on.
+**Emission Limit** - Forbidden: target, soft cap, market-responsive supply. Permitted: fixed daily issuance budget, decaying over time.
 
 **Metadosis** - Forbidden: distributor, secondary mechanism, optional layer. Permitted: top-tier allocator splitting the daily Emission Limit between Nod and Intex paths.
 
