@@ -100,9 +100,10 @@ interface IIntexFactory {
     ///         parked it for another pass at `retryAt`.
     event ExpiryDeferred(uint16 indexed referenceCurrency, uint32 indexed worldwideDay, uint64 retryAt);
 
-    /// @notice `amount` native COEN of `worldwideDay`'s auction proceeds from `srcChainId`
-    ///         was burned and `creditedPromisMinor` was added to the Promis limit pool.
+    /// @notice `proceedsMinor` native COEN (18 decimals) of `worldwideDay`'s auction proceeds from
+    ///         `srcChainId` was burned and `creditedPromisMinor` (6 decimals) was added to the Promis
+    ///         limit pool.
     event ProceedsBurned(
-        uint32 indexed worldwideDay, uint32 indexed srcChainId, uint256 amount, uint256 creditedPromisMinor
+        uint32 indexed worldwideDay, uint32 indexed srcChainId, uint256 proceedsMinor, uint256 creditedPromisMinor
     );
 }

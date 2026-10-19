@@ -54,7 +54,7 @@ fn proceeds_burn_into_the_promis_limit_pool() {
         vec![IIntexFactory::ProceedsBurned {
             worldwideDay: 7,
             srcChainId: 10,
-            amount,
+            proceedsMinor: amount,
             creditedPromisMinor: U256::from(3u64),
         }]
     );
