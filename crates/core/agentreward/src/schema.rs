@@ -28,7 +28,7 @@ pub struct AgentRewardContract {
     #[attribute(order = 1)]
     pub sra_tribute_counts: outbe_primitives::storage::dsl::Map<B256, u64>,
 
-    // slot 2: claimable WAA reward per address, in protocol units like every pool
+    // slot 2: claimable WAA reward per address
     #[attribute(order = 2)]
     pub waa_claimable_minor: outbe_primitives::storage::dsl::Map<Address, U256>,
 

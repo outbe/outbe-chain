@@ -663,7 +663,6 @@ mod distribute_daily_tests {
             let excess =
                 distribute_daily(ctx, DAY, &[(PoolKind::Waa, U256::from(500u64))]).unwrap();
             assert_eq!(excess, U256::from(500u64));
-            // No eligible rewards: distribution mints no load.
             assert_eq!(
                 ctx.storage
                     .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)

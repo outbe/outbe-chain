@@ -427,9 +427,8 @@ fn critical_cycle_tick_revert_fails_block() {
     );
 }
 
-/// A stale reward price at the UTC-day boundary does not hold settlement back:
-/// CycleTick credits the validator pool, and the user-lane feeder vote still
-/// executes. The price matters only when the validator claims.
+/// With a stale reward price at the UTC-day boundary, CycleTick credits the
+/// validator pool and the user-lane feeder vote executes.
 #[test]
 fn stale_oracle_cycle_credits_validator_reward_and_allows_later_feeder_vote() {
     const GENESIS_TS: u64 = 1_704_067_200;
