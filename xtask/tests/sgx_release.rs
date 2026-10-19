@@ -502,6 +502,26 @@ fn cli_exposes_typed_sgx_release_commands() {
     assert!(!manifest_help.contains("--platform-dcap-evidence"));
 }
 
+fn assert_cross_region_release_pipeline(workflow: &str) {
+    for required in [
+        "runner_label: release-fr",
+        "runner_label: release-mum",
+        "${{ matrix.runner_label }}",
+        "needs: [release-identity, build]",
+    ] {
+        assert!(workflow.contains(required), "missing {required}");
+    }
+    assert_eq!(
+        workflow
+            .matches("scripts/release/reproducible-build.sh")
+            .count(),
+        1,
+        "one matrix build step must fan out across FR and MUM"
+    );
+    let signing = workflow.split_once("  sign:\n").expect("signing job").1;
+    assert!(signing.find("needs: build-and-compare") < signing.find("    steps:"));
+}
+
 #[test]
 fn privileged_release_workflow_pins_source_and_never_replaces_assets() {
     let root = repo_root();
@@ -526,7 +546,8 @@ fn privileged_release_workflow_pins_source_and_never_replaces_assets() {
     assert!(workflow.contains("[.tag, .object.sha] | @tsv"));
     assert!(workflow.contains("test \"${signed_tag_name}\" = \"${RELEASE_TAG}\""));
     assert!(workflow.contains("runs-on: testnet-release-sgx"));
-    assert_eq!(workflow.matches("--network testnet").count(), 10);
+    assert_cross_region_release_pipeline(&workflow);
+    assert_eq!(workflow.matches("--network testnet").count(), 9);
     assert!(workflow.contains("--genesis \"${TESTNET_SEEDED_GENESIS}\""));
     assert!(workflow.contains("--expected-pck-ca processor"));
     assert!(workflow.contains("--processor-dcap-archive"));
@@ -540,8 +561,8 @@ fn privileged_release_workflow_pins_source_and_never_replaces_assets() {
         workflow
             .matches("--genesis \"${TESTNET_SEEDED_GENESIS}\"")
             .count(),
-        2,
-        "both reproducible bundle builds must consume the immutable seeded Testnet genesis"
+        1,
+        "the FR/MUM matrix must feed the same immutable seeded Testnet genesis to each build"
     );
     assert!(workflow.contains(
         "--seeded-genesis \"${RUNNER_TEMP}/release-inputs/testnet-seeded-genesis.json\""
@@ -615,6 +636,10 @@ fn release_preflight_rehearses_critical_paths_without_release_authority() {
         "source_ref:",
         "ref: ${{ inputs.source_ref }}",
         "persist-credentials: false",
+        "runner_label: release-fr",
+        "runner_label: release-mum",
+        "${{ matrix.runner_label }}",
+        "needs: [identity, build]",
         "RUSTFLAGS=-D warnings",
         "--features release-sgx-e2e --bin outbe-release-sgx-e2e",
         "--bin outbe-release-dcap-evidence",
@@ -635,8 +660,8 @@ fn release_preflight_rehearses_critical_paths_without_release_authority() {
         workflow
             .matches("scripts/release/reproducible-build.sh")
             .count(),
-        2,
-        "preflight must perform two independent clean builds"
+        1,
+        "one matrix build step must fan out across FR and MUM"
     );
     for forbidden in [
         "packages: write",
@@ -704,22 +729,18 @@ fn mainnet_release_workflow_requires_a_pinned_genesis_and_closed_profile() {
         "test \"$(jq -er '.config.chainId' \\\n",
         "            \"${RUNNER_TEMP}/release-inputs/mainnet-seeded-genesis.json\")\" = '676'"
     )));
-    // The unsigned build uses the shared SGX runner. Keep the exception scoped
-    // to that job. Testnet settings elsewhere in the mainnet workflow still fail.
-    let unsigned_build_runner = concat!(
-        "  build-and-compare:\n",
-        "    name: two independent ELF and unsigned SGX builds\n",
-        "    runs-on: testnet-release-sgx\n",
-    );
-    assert!(workflow.contains(unsigned_build_runner));
+    assert_cross_region_release_pipeline(&workflow);
+    // The regional builders and comparison use the existing shared release
+    // runner pool. Testnet settings elsewhere in the mainnet workflow still fail.
+    assert_eq!(workflow.matches("testnet-release-sgx").count(), 2);
     assert!(!workflow
-        .replacen(unsigned_build_runner, "", 1)
+        .replace("testnet-release-sgx", "")
         .contains("testnet"));
     assert!(!workflow.contains("--clobber"));
     assert!(!workflow.contains("gh release upload"));
     assert!(workflow.contains("--draft --prerelease"));
     assert!(workflow.contains("cmp --silent"));
-    assert_eq!(workflow.matches("--network mainnet").count(), 10);
+    assert_eq!(workflow.matches("--network mainnet").count(), 9);
 
     let release_assets = workflow
         .split_once("          assets=(")
