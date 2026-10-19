@@ -172,7 +172,6 @@ pub(super) fn input_for(kind: SystemTxKind) -> SystemTxInputV2 {
             artifact: LateFinalizeCreditsArtifact::default(),
         },
         SystemTxKind::CycleTick => SystemTxInputV2::CycleTick,
-        SystemTxKind::RewardsGemDelivery => SystemTxInputV2::RewardsGemDelivery,
         SystemTxKind::BoundaryOutcome => SystemTxInputV2::BoundaryOutcome {
             artifact: sample_boundary(),
         },

@@ -70,9 +70,9 @@ fn apply_pre_execution_changes_emits_phase1_slashing_logs_in_system_receipt() {
             .expect("Phase 1 slashing system tx should execute");
     }
 
-    // CPA(0) + LateFinalizeCredits(1) + CycleTick(2) + RewardsGemDelivery(3)
-    // + OracleSlashWindow(4) + HookEvents(5).
-    assert_eq!(executor.receipts().len(), 6);
+    // CPA(0) + LateFinalizeCredits(1) + CycleTick(2) + OracleSlashWindow(3)
+    // + HookEvents(4).
+    assert_eq!(executor.receipts().len(), 5);
     let phase1_logs = &executor.receipts()[0].logs;
     let voter_misdemeanor = keccak256("VoterMisdemeanor(address,uint64)");
     let voter_felony = keccak256("VoterFelony(address,uint64,uint64)");

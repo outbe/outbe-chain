@@ -33,7 +33,6 @@ fn cross_version_system_tx_phase_variant_set_is_exactly_v2() {
         },
         SystemTxPhase::LateFinalizeCredits { body_index: 0 },
         SystemTxPhase::CycleTick { body_index: 0 },
-        SystemTxPhase::RewardsGemDelivery { body_index: 0 },
         SystemTxPhase::BoundaryOutcomeOptional { body_index: 0 },
         SystemTxPhase::TeeBootstrapOptional { body_index: 0 },
         SystemTxPhase::OracleSlashWindow { body_index: 0 },
@@ -48,7 +47,6 @@ fn cross_version_system_tx_phase_variant_set_is_exactly_v2() {
             SystemTxPhase::Phase1Preexecuted { .. } => {}
             SystemTxPhase::LateFinalizeCredits { .. } => {}
             SystemTxPhase::CycleTick { .. } => {}
-            SystemTxPhase::RewardsGemDelivery { .. } => {}
             SystemTxPhase::BoundaryOutcomeOptional { .. } => {}
             SystemTxPhase::TeeBootstrapOptional { .. } => {}
             SystemTxPhase::OracleSlashWindow { .. } => {}
@@ -57,7 +55,7 @@ fn cross_version_system_tx_phase_variant_set_is_exactly_v2() {
             SystemTxPhase::UserTxs => {}
         }
     }
-    assert_eq!(variants.len(), 10, "V2 SystemTxPhase contract: 10 variants");
+    assert_eq!(variants.len(), 9, "V2 SystemTxPhase contract: 9 variants");
 }
 
 /// Block 0 is the genesis block: no begin-zone system txs. The cursor must
@@ -131,7 +129,6 @@ proptest! {
                 SystemTxPhase::Phase1Preexecuted { .. } => Some(SystemTxKind::CertifiedParentAccounting),
                 SystemTxPhase::LateFinalizeCredits { .. } => Some(SystemTxKind::LateFinalizeCredits),
                 SystemTxPhase::CycleTick { .. } => Some(SystemTxKind::CycleTick),
-                SystemTxPhase::RewardsGemDelivery { .. } => Some(SystemTxKind::RewardsGemDelivery),
                 SystemTxPhase::BoundaryOutcomeOptional { .. } => Some(SystemTxKind::BoundaryOutcome),
                 SystemTxPhase::TeeBootstrapOptional { .. } => Some(SystemTxKind::TeeBootstrap),
                 SystemTxPhase::OracleSlashWindow { .. } => Some(SystemTxKind::OracleSlashWindow),

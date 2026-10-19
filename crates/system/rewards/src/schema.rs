@@ -9,12 +9,10 @@ use outbe_primitives::storage::types::{Mapping, Slot};
 /// - the genesis UTC-day anchor of the chain.
 /// - the per-finalized-block and per-day accumulators for the idempotent fee-distribution path
 ///   and the day-boundary settle formula.
-/// - the FIFO of exact validator Gem obligations.
 ///
 /// Per-block fees are escrowed (`pending_fees`) and settled at `N+K` over the
-/// inclusion-window voter set. [`crate::api::prepare_daily_validator_gem_batch`] prepares the
-/// daily emission top-ups, and [`crate::api::deliver_oldest_reward_gem_batch`] delivers them
-/// (validator emission is paid in gems, not a claimable native balance).
+/// inclusion-window voter set. The daily emission top-up is credited to the
+/// validator pool of AgentReward, weighted by [`crate::api::read_voters_for_day`].
 ///
 /// Storage slots:
 ///   0:  genesis_utc_day                    - uint32 (yyyymmdd of block 0; 0 = uninit)
@@ -32,37 +30,23 @@ use outbe_primitives::storage::types::{Mapping, Slot};
 ///  12:  block_metadata_counted             - mapping(B256 => bool)
 ///  13:  metadata_fingerprint_for_block     - mapping(B256 => B256)
 ///  14:  fee_dust_counted_for_block         - mapping(B256 => bool)
-///  15:  daily_topup_settled                - mapping(uint32 => bool)
-///  16:  pending_fees                       - mapping(B256 => uint256)
-///  17:  fee_settled                        - mapping(B256 => bool)
-///  18:  late_voter_k_plus1                 - mapping(B256 => mapping(address => uint8))
-///  19:  late_voter_count                   - mapping(B256 => uint32)
-///  20:  late_voter_at                      - mapping(B256 => mapping(uint32 => address))
-///  21:  pending_fb_hash_at                 - mapping(uint64 => B256)    (number -> fb_hash)
-///  22:  pending_committee_size_at          - mapping(uint64 => uint32)
-///  23:  pending_epoch_at                   - mapping(uint64 => uint64)
-///  24:  pending_committee_set_hash_at      - mapping(uint64 => B256)
-///  25:  pending_view_at                    - mapping(uint64 => uint64)
-///  26:  pending_parent_view_at             - mapping(uint64 => uint64)
-/// 27: block_guard_ring - mapping(uint64 => B256) (prune ring of fb_hash)
-/// 28: block_guard_ring_seq - uint64 (ring write cursor)
-/// 29: reward_gem_queue_head - uint64 (inclusive FIFO sequence)
-/// 30: reward_gem_queue_tail - uint64 (exclusive FIFO sequence)
-/// 31: reward_gem_utc_day_by_sequence - mapping(uint64 => uint32)
-/// 32: reward_gem_queue_sequence_plus_one - mapping(uint32 => uint64)
-/// 33: daily_topup_prepared - mapping(uint32 => bool)
-/// 34: reward_gem_batch_digest - mapping(uint32 => B256)
-/// 35: reward_gem_planned_load_amount - mapping(uint32 => uint256)
-/// 36: reward_gem_recipient_count - mapping(uint32 => uint32)
-/// 37: reward_gem_owner_at - mapping(uint32 => mapping(uint32 => address))
-/// 38: reward_promis_load_at - mapping(uint32 => mapping(uint32 => uint256))
-/// 39: reward_gem_issuance_currency - mapping(uint32 => uint16)
-/// 40: reward_gem_reference_currency - mapping(uint32 => uint16)
-/// 41: reward_gem_pending_batch_count - uint64
-/// 42: pending_reward_day - mapping(B256 => uint32)
-/// 43: daily_last_window_close - mapping(uint32 => uint64)
-/// 44: late_residue_dust_native - uint256
-/// 45: reward_gem_delivered_count - mapping(uint32 => uint32)
+///  15:  pending_fees                       - mapping(B256 => uint256)
+///  16:  fee_settled                        - mapping(B256 => bool)
+///  17:  late_voter_k_plus1                 - mapping(B256 => mapping(address => uint8))
+///  18:  late_voter_count                   - mapping(B256 => uint32)
+///  19:  late_voter_at                      - mapping(B256 => mapping(uint32 => address))
+///  20:  pending_fb_hash_at                 - mapping(uint64 => B256)    (number -> fb_hash)
+///  21:  pending_committee_size_at          - mapping(uint64 => uint32)
+///  22:  pending_epoch_at                   - mapping(uint64 => uint64)
+///  23:  pending_committee_set_hash_at      - mapping(uint64 => B256)
+///  24:  pending_view_at                    - mapping(uint64 => uint64)
+///  25:  pending_parent_view_at             - mapping(uint64 => uint64)
+///  26:  block_guard_ring                   - mapping(uint64 => B256) (prune ring of fb_hash)
+///  27:  block_guard_ring_seq               - uint64 (ring write cursor)
+///  28:  pending_reward_day                 - mapping(B256 => uint32)
+///  29:  daily_last_window_close            - mapping(uint32 => uint64)
+///  30:  late_residue_dust_native           - uint256
+///  31:  daily_participation_closed         - mapping(uint32 => bool)
 #[contract(addr = REWARDS_ADDRESS)]
 pub struct Rewards {
     /// UTC day of block 0 (yyyymmdd). 0 means uninitialized. `RewardsLifecycle::begin_block`
@@ -149,11 +133,6 @@ pub struct Rewards {
     /// The prune ring still clears it. It does not guard a dust write.
     pub fee_dust_counted_for_block: Mapping<B256, bool>,
 
-    /// Completion guard for actual Gem delivery. A prepared pending batch keeps
-    /// this false even after the day's allocation is sealed; delivery flips it
-    /// only when the entire FIFO batch has minted atomically.
-    pub daily_topup_settled: Mapping<u32, bool>,
-
     // -- per-block fee escrow + inclusion-window credits ----------
     /// Escrowed fees of a finalized block (key `fb_hash`), recorded instead of
     /// the eager per-voter transfer. Settled at `N+K` across the credited voter
@@ -226,59 +205,17 @@ pub struct Rewards {
     /// `block_guard_ring_seq % BLOCK_GUARD_RETAIN`.
     pub block_guard_ring_seq: Slot<u64>,
 
-    // -- deferred validator reward Gem delivery -------------------
-    /// Inclusive sequence of the oldest pending validator reward Gem batch.
-    pub reward_gem_queue_head: Slot<u64>,
-
-    /// Exclusive sequence for the next validator reward Gem batch append.
-    pub reward_gem_queue_tail: Slot<u64>,
-
-    /// FIFO sequence -> UTC reward day. Zero denotes a cleared queue slot.
-    pub reward_gem_utc_day_by_sequence: Mapping<u64, u32>,
-
-    /// UTC reward day -> FIFO sequence plus one. Zero denotes no live queue item.
-    pub reward_gem_queue_sequence_plus_one: Mapping<u32, u64>,
-
-    /// The exact validator Gem obligation for this day has been calculated.
-    pub daily_topup_prepared: Mapping<u32, bool>,
-
-    /// Permanent digest of the exact prepared batch, retained after delivery.
-    pub reward_gem_batch_digest: Mapping<u32, B256>,
-
-    /// Permanent sum of all non-zero Gem loads prepared for the reward day.
-    pub reward_gem_planned_load_amount: Mapping<u32, U256>,
-
-    /// Number of live pending recipients. Cleared after successful delivery.
-    pub reward_gem_recipient_count: Mapping<u32, u32>,
-
-    /// UTC reward day -> pending recipient index -> owner.
-    pub reward_gem_owner_at: Mapping<u32, Mapping<u32, Address>>,
-
-    /// UTC reward day -> pending recipient index -> exact Gem load.
-    pub reward_promis_load_at: Mapping<u32, Mapping<u32, U256>>,
-
-    /// Reward Gem issuance currency, frozen at preparation time.
-    pub reward_gem_issuance_currency: Mapping<u32, u16>,
-
-    /// Reward Gem reference currency, frozen at preparation time.
-    pub reward_gem_reference_currency: Mapping<u32, u16>,
-
-    /// Live FIFO batch count. It must equal `queue_tail - queue_head`.
-    pub reward_gem_pending_batch_count: Slot<u64>,
-
     /// Canonical UTC day of an open finalized-block window. Cleared with escrow.
     pub pending_reward_day: Mapping<B256, u32>,
 
     /// Last inclusion-window close height for each day's finalized blocks.
     /// LateFinalizeCredits runs before CycleTick in the same block.
-    /// Preparation still requires a height above this close.
+    /// Day settlement still requires a height above this close.
     pub daily_last_window_close: Mapping<u32, u64>,
 
     /// Native late-settlement residue below one protocol unit, carried to the next settlement.
     pub late_residue_dust_native: Slot<U256>,
 
-    /// UTC reward day -> recipients of the pending FIFO head already delivered. Delivery
-    /// mints one reward Gem per block; the head retires when this reaches the
-    /// recipient count. Cleared with the head.
-    pub reward_gem_delivered_count: Mapping<u32, u32>,
+    /// The day's validator pool has been credited; its participation is final.
+    pub daily_participation_closed: Mapping<u32, bool>,
 }

@@ -165,7 +165,9 @@ fn prepare(world: &mut World) -> SponsoredGem {
         .evm_key()
         .expect("validator 1 sponsorship payer key");
     let payer = eth::address_of(&payer_key).expect("validator 1 payer address");
-    let (owner, gem_id, gem) = wait_for_validator_reward_gem(world);
+    let ValidatorRewardGem {
+        owner, gem_id, gem, ..
+    } = validator_reward_gem(world);
     let fixture = deploy_settlement_fixture(world);
     let url = world.rpc.url(world.validators.primary_port());
     // The cost is derived, so the amount to fund is the factory's own quote. That quote

@@ -170,6 +170,8 @@ sol!("../../contracts/precompiles/src/IAgentReward.sol");
 pub(crate) const WAA_POOL: u8 = 0;
 /// `claimReward` pool selector for the SRA pool.
 pub(crate) const SRA_POOL: u8 = 1;
+/// `claimReward` pool selector for the validator pool.
+pub(crate) const VALIDATOR_POOL: u8 = 3;
 /// Currency the canonical reward call names on both axes.
 const REWARD_CALL_ISO: u16 = 840;
 sol!("../../contracts/precompiles/src/ITeeRegistryV1.sol");
@@ -779,36 +781,6 @@ pub(crate) fn canonical_nonce(url: &str, address: Address) -> Option<u64> {
 pub(crate) fn gas_price(url: &str) -> Option<u128> {
     let value = raw_json(url, "eth_gasPrice")?;
     u128::from_str_radix(value.as_str()?.trim_start_matches("0x"), 16).ok()
-}
-
-/// Fetch a bounded inclusive block range with full public transactions through
-/// one shared HTTP provider. Scenario evidence must not spend one connection
-/// setup/poll interval per block and accidentally consume the result window it
-/// is trying to observe.
-pub(crate) fn blocks_with_transactions(
-    url: &str,
-    from_height: u64,
-    to_height: u64,
-    max_blocks: usize,
-) -> Option<Vec<serde_json::Value>> {
-    let count = to_height
-        .checked_sub(from_height)?
-        .checked_add(1)
-        .and_then(|value| usize::try_from(value).ok())?;
-    if count > max_blocks {
-        return None;
-    }
-    let url = url.to_string();
-    block_on(async move {
-        let provider = ProviderBuilder::new().connect_http(url.parse().ok()?);
-        let requests = (from_height..=to_height).map(|height| {
-            provider.raw_request::<_, serde_json::Value>(
-                "eth_getBlockByNumber".into(),
-                serde_json::json!([format!("0x{height:x}"), true]),
-            )
-        });
-        futures::future::try_join_all(requests).await.ok()
-    })
 }
 
 /// Sign and send a contract call from `key`, and wait for its receipt. Returns

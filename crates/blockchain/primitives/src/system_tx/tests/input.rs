@@ -6,7 +6,6 @@ fn input_roundtrips_every_system_tx_kind() {
         SystemTxKind::CertifiedParentAccounting,
         SystemTxKind::LateFinalizeCredits,
         SystemTxKind::CycleTick,
-        SystemTxKind::RewardsGemDelivery,
         SystemTxKind::BoundaryOutcome,
         SystemTxKind::TeeBootstrap,
         SystemTxKind::OracleSlashWindow,

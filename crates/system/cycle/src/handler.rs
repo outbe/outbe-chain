@@ -94,8 +94,8 @@ fn gas(ctx: &BlockRuntimeContext) -> u64 {
 }
 
 /// Applies raw 18-decimal gas fees to a six-decimal validator emission budget,
-/// then floors only the remaining native amount back to Gem-load precision.
-fn validator_gem_topup_protocol(validator_amount: U256, fees_native: U256) -> Result<U256> {
+/// then floors only the remaining native amount back to protocol precision.
+fn validator_topup_protocol(validator_amount: U256, fees_native: U256) -> Result<U256> {
     let native_budget = checked_protocol_to_native(validator_amount)
         .ok_or(CycleError::NativeValidatorBudgetOverflow)?;
     Ok(native_to_protocol_floor(
@@ -133,17 +133,25 @@ pub fn settle_emission_day(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<(
     let g1 = gas(ctx);
     tracing::debug!(target: "outbe::cycle::gas", step_gas = g1 - g0, cumulative = g1, "after allocate_emission");
 
-    let validator_pool = prepare_validator_pool(ctx, prev_day, shares.validator)?;
+    let validator_topup = validator_topup(ctx, prev_day, shares.validator)?;
+    wrap(
+        "close_day_participation",
+        outbe_rewards::api::close_day_participation(ctx, prev_day),
+    )?;
+    let fee_covered = shares
+        .validator
+        .checked_sub(validator_topup)
+        .ok_or(CycleError::ValidatorTopupExceedsAllocation)?;
 
     let g2 = gas(ctx);
-    tracing::debug!(target: "outbe::cycle::gas", step_gas = g2 - g1, cumulative = g2, voters = validator_pool.voter_count, "after validator pool");
+    tracing::debug!(target: "outbe::cycle::gas", step_gas = g2 - g1, cumulative = g2, "after validator top-up");
 
-    let agent_excess = distribute_agent_pools(ctx, prev_day, &shares)?;
+    let pool_excess = distribute_reward_pools(ctx, prev_day, &shares, validator_topup)?;
 
     let g3 = gas(ctx);
-    tracing::debug!(target: "outbe::cycle::gas", step_gas = g3 - g2, cumulative = g3, "after agent distribute");
+    tracing::debug!(target: "outbe::cycle::gas", step_gas = g3 - g2, cumulative = g3, "after reward distribute");
 
-    let metadosis_total = shares.terminal_total(validator_pool.excess, agent_excess)?;
+    let metadosis_total = shares.terminal_total(fee_covered, pool_excess)?;
     dispatch_terminal_remainder(ctx, prev_day, metadosis_total)?;
 
     let g4 = gas(ctx);
@@ -163,8 +171,8 @@ pub fn settle_emission_day(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<(
         day_number,
         cap = %cap,
         validator_amount = %shares.validator,
-        validator_excess = %validator_pool.excess,
-        agent_excess = %agent_excess,
+        validator_topup = %validator_topup,
+        pool_excess = %pool_excess,
         metadosis_total = %metadosis_total,
         total_gas = g5 - g0,
         "emission_limit_daily handler completed"
@@ -191,10 +199,9 @@ fn day_settlement(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<DaySettlem
         return Err(CycleError::SettlementBeforeParticipationWindowsClose.into());
     }
 
-    // Idempotency guard. This handler credits the agent pools and sends
-    // terminal Metadosis with no per-mint day guard. Only the validator top-up
-    // is idempotent through `daily_topup_settled`. A second call for the same
-    // `prev_day` would credit those pools again. `run_protocol_cycle` advances
+    // Idempotency guard. This handler credits the reward pools and sends
+    // terminal Metadosis with no per-credit day guard. A second call for the
+    // same `prev_day` would credit those pools again. `run_protocol_cycle` advances
     // `active_utc_day` in the same checkpoint as this settlement. A later
     // CycleTick does not select that `prev_day` again. `daily_settled[prev_day]`
     // remains the defensive guard. Each day still settles once.
@@ -279,80 +286,39 @@ impl EmissionShares {
     }
 
     /// Returns the terminal Metadosis amount: the Metadosis share plus the
-    /// validator and agent excess.
-    fn terminal_total(&self, validator_excess: U256, agent_excess: U256) -> Result<U256> {
+    /// fee-covered validator share and the undistributed pool excess.
+    fn terminal_total(&self, fee_covered: U256, pool_excess: U256) -> Result<U256> {
         self.metadosis
-            .checked_add(validator_excess)
-            .and_then(|v| v.checked_add(agent_excess))
+            .checked_add(fee_covered)
+            .and_then(|v| v.checked_add(pool_excess))
             .ok_or_else(|| CycleError::MetadosisTerminalOverflow.into())
     }
 }
 
-/// Result of the validator pool step of one settlement.
-struct ValidatorPool {
-    /// Validator share that the reward Gem plan does not load.
-    excess: U256,
-    /// Number of voters of the settled day.
-    voter_count: usize,
-}
-
-/// Prepares the daily validator reward Gem batch for `prev_day`.
-///
-/// The top-up is the validator share minus the day's raw fees. It is zero when
-/// the share is zero or the day has no voters.
-fn prepare_validator_pool(
+/// The validator top-up of `prev_day`: the validator share minus the day's raw
+/// fees, in protocol units. AgentReward credits it to the validator pool.
+fn validator_topup(
     ctx: &BlockRuntimeContext,
     prev_day: u32,
     validator_amount: U256,
-) -> Result<ValidatorPool> {
-    let fees = outbe_rewards::api::read_daily_fee_sum_raw(ctx, prev_day)
-        .map_err(|e| {
-            tracing::error!(target: "outbe::cycle", step = "read_daily_fee_sum_raw", error = ?e, "emission_limit_daily step failed");
-            let _bt = std::backtrace::Backtrace::force_capture();
-            tracing::error!(target: "outbe::cycle", backtrace = %_bt, "stacktrace");
-            e
-        })?;
-    let voters = outbe_rewards::api::read_voters_for_day(ctx, prev_day)
-        .map_err(|e| {
-            tracing::error!(target: "outbe::cycle", step = "read_voters_for_day", error = ?e, "emission_limit_daily step failed");
-            let _bt = std::backtrace::Backtrace::force_capture();
-            tracing::error!(target: "outbe::cycle", backtrace = %_bt, "stacktrace");
-            e
-        })?;
-    let topup = if validator_amount.is_zero() || voters.is_empty() {
-        U256::ZERO
-    } else {
-        validator_gem_topup_protocol(validator_amount, fees)?
-    };
-    let preparation = outbe_rewards::api::prepare_daily_validator_gem_batch(
-        ctx, prev_day, topup, &voters,
-    )
-    .map_err(|e| {
-        tracing::error!(target: "outbe::cycle", step = "prepare_daily_validator_gem_batch", error = ?e, "emission_limit_daily step failed");
+) -> Result<U256> {
+    if validator_amount.is_zero() {
+        return Ok(U256::ZERO);
+    }
+    let fees = outbe_rewards::api::read_daily_fee_sum_raw(ctx, prev_day).map_err(|e| {
+        tracing::error!(target: "outbe::cycle", step = "read_daily_fee_sum_raw", error = ?e, "emission_limit_daily step failed");
         e
     })?;
-    let planned_promis_load_amount = match preparation {
-        outbe_rewards::api::RewardGemPreparationOutcome::Prepared(batch)
-        | outbe_rewards::api::RewardGemPreparationOutcome::AlreadyPrepared(batch)
-        | outbe_rewards::api::RewardGemPreparationOutcome::NoPayableShares(batch) => {
-            batch.planned_promis_load_amount
-        }
-    };
-    let excess = validator_amount
-        .checked_sub(planned_promis_load_amount)
-        .ok_or(CycleError::ValidatorRewardGemPlanExceedsAllocation)?;
-    Ok(ValidatorPool {
-        excess,
-        voter_count: voters.len(),
-    })
+    validator_topup_protocol(validator_amount, fees)
 }
 
-/// Distributes the WAA, SRA and CCA agent pools of `prev_day`. Returns the
-/// agent excess.
-fn distribute_agent_pools(
+/// Distributes the WAA, SRA, CCA and validator pools of `prev_day`. Returns the
+/// undistributed excess.
+fn distribute_reward_pools(
     ctx: &BlockRuntimeContext,
     prev_day: u32,
     shares: &EmissionShares,
+    validator_topup: U256,
 ) -> Result<U256> {
     distribute_daily(
         ctx,
@@ -361,6 +327,7 @@ fn distribute_agent_pools(
             (PoolKind::Waa, shares.waa),
             (PoolKind::Sra, shares.sra),
             (PoolKind::Cca, shares.cca),
+            (PoolKind::Validator, validator_topup),
         ],
     )
     .map_err(|e| {
@@ -470,15 +437,15 @@ mod unit_tests {
         let one_protocol_unit_native = NATIVE_UNITS_PER_PROTOCOL_UNIT;
 
         assert_eq!(
-            validator_gem_topup_protocol(allocation, one_protocol_unit_native - U256::ONE).unwrap(),
+            validator_topup_protocol(allocation, one_protocol_unit_native - U256::ONE).unwrap(),
             U256::ONE
         );
         assert_eq!(
-            validator_gem_topup_protocol(allocation, one_protocol_unit_native + U256::ONE).unwrap(),
+            validator_topup_protocol(allocation, one_protocol_unit_native + U256::ONE).unwrap(),
             U256::ZERO
         );
         assert_eq!(
-            validator_gem_topup_protocol(allocation, one_protocol_unit_native * U256::from(2u64))
+            validator_topup_protocol(allocation, one_protocol_unit_native * U256::from(2u64))
                 .unwrap(),
             U256::ZERO
         );

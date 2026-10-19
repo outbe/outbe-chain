@@ -22,4 +22,5 @@ Feature: Confidential Lysis called by Metadosis
     Then every validator observes the same nonzero WAA and SRA AgentReward
     When both beneficiaries claim their complete AgentReward as Gems with paid transactions, WAA issued in 458 against 840 and SRA issued in 978 against 840
     Then the paid Gem claims clear both claimables and move no AgentReward native COEN
+    And validator 0 claims its validator reward as a Gem
     And validator 0 settles its protocol reward Gem and redeems its exact Promis into COEN

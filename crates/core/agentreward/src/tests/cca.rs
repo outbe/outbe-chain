@@ -235,7 +235,7 @@ fn cca_pool_queries_and_claims_are_isolated() {
         }
         assert!(dispatch(storage.clone(), &claim, ALICE, U256::ONE).is_err());
         assert_eq!(claimable(&storage, ALICE), U256::from(1000));
-        for pool in [3, 255] {
+        for pool in [4, 255] {
             assert!(dispatch(
                 storage.clone(),
                 &IAgentReward::claimRewardCall {

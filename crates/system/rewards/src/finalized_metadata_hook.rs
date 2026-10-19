@@ -183,8 +183,8 @@ pub(crate) fn record_reward_participation(
     let day_voter_at = rewards.daily_voter_at.get_nested(&fb_day);
 
     if !participation_guard.read(&voter)? {
-        if rewards.daily_topup_prepared.read(&fb_day)? {
-            return Err(RewardsError::ParticipationAfterGemBatchPreparation.into());
+        if rewards.daily_participation_closed.read(&fb_day)? {
+            return Err(RewardsError::ParticipationAfterDayClosed.into());
         }
         let prev_count = day_participation.read(&voter)?;
         if prev_count == 0 {
@@ -475,8 +475,7 @@ mod tests {
         // settlement. The hook only updates the per-day fee
         // accumulators, per-voter participation, and the monotonic
         // `max_observed_finalized_day` watermark. The new Cycle orchestrator owns
-        // the day-boundary settle. The settle fires via
-        // `crate::api::prepare_daily_validator_gem_batch`, not from this hook.
+        // the day-boundary settle, not this hook.
         with_funded_genesis_block(200, |ctx| {
             // Block from day D=20240101.
             record_parent_xy(&ctx, FB_HASH_A, 1);

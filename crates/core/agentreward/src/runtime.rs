@@ -45,14 +45,20 @@ impl AgentRewardContract<'_> {
         self.sra_tribute_counts.write(&key, count + 1)
     }
 
-    /// Gets the total claimable reward balance for an address across all three pools.
+    /// Gets the total claimable reward balance for an address across all pools.
     pub fn get_claimable_reward(&self, address: Address) -> Result<U256> {
-        let waa = self.get_pool_claimable_reward(RewardPool::Waa, address)?;
-        let sra = self.get_pool_claimable_reward(RewardPool::Sra, address)?;
-        let cca = self.get_pool_claimable_reward(RewardPool::Cca, address)?;
-        waa.checked_add(sra)
-            .and_then(|subtotal| subtotal.checked_add(cca))
-            .ok_or_else(|| AgentRewardError::ClaimableTotalOverflow.into())
+        [
+            RewardPool::Waa,
+            RewardPool::Sra,
+            RewardPool::Cca,
+            RewardPool::Validator,
+        ]
+        .into_iter()
+        .try_fold(U256::ZERO, |total, pool| {
+            total
+                .checked_add(self.get_pool_claimable_reward(pool, address)?)
+                .ok_or_else(|| AgentRewardError::ClaimableTotalOverflow.into())
+        })
     }
 
     /// Gets the claimable reward balance an address holds in one pool.
@@ -61,6 +67,7 @@ impl AgentRewardContract<'_> {
             RewardPool::Waa => self.waa_claimable_minor.read(&address),
             RewardPool::Sra => self.sra_claimable_minor.read(&address),
             RewardPool::Cca => self.cca_claimable_minor.read(&address),
+            RewardPool::Validator => self.validator_claimable_minor.read(&address),
         }
     }
 
@@ -88,6 +95,7 @@ impl AgentRewardContract<'_> {
             RewardPool::Waa => self.waa_claimable_minor.write(&address, amount),
             RewardPool::Sra => self.sra_claimable_minor.write(&address, amount),
             RewardPool::Cca => self.cca_claimable_minor.write(&address, amount),
+            RewardPool::Validator => self.validator_claimable_minor.write(&address, amount),
         }
     }
 
@@ -130,6 +138,7 @@ impl AgentRewardContract<'_> {
                 RewardPool::Waa => GemTypes::Wallet,
                 RewardPool::Sra => GemTypes::Sra,
                 RewardPool::Cca => GemTypes::Cca,
+                RewardPool::Validator => GemTypes::Validator,
             };
             let gem_id =
                 issue_reward_gem(&self.storage, (address, requested), gem_type, currencies)?;
@@ -223,7 +232,7 @@ fn read_tribute_counts(
     Ok(result)
 }
 
-/// Shared issuance economics and claim-day pricing for WAA, SRA and CCA rewards.
+/// Shared issuance economics and claim-day pricing for every reward pool.
 pub(crate) fn issue_reward_gem(
     storage: &StorageHandle<'_>,
 

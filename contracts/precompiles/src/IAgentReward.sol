@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
-/// Agent-reward distribution surface. A claim issues the reward as a Gem:
-/// the WAA pool issues a Wallet Gem, SRA an Sra Gem, and CCA a Cca Gem. The `#[contract_dispatch]`
+/// Reward distribution surface. A claim issues the reward as a Gem:
+/// the WAA pool issues a Wallet Gem, SRA an Sra Gem, CCA a Cca Gem and the
+/// validator pool a Validator Gem. The `#[contract_dispatch]`
 /// macro pilot synthesizes the Rust dispatch at compile time from `#[contract_public(...)]`
 /// annotations in `crates/core/agentreward/src/precompile.rs`. The drift test in that crate
 /// keeps the two in sync.
@@ -12,7 +13,7 @@ interface IAgentReward {
 
     function getClaimableBalance(address account) external view returns (uint256);
     function getPoolClaimableBalance(address account, uint8 pool) external view returns (uint256);
-    /// @notice Issues `amount` of the caller's balance in `pool` (0 = WAA, 1 = SRA, 2 = CCA)
+    /// @notice Issues `amount` of the caller's balance in `pool` (0 = WAA, 1 = SRA, 2 = CCA, 3 = Validator)
     /// as a Gem in the caller's `issuanceCurrency` and `referenceCurrency` (ISO 4217 numeric).
     /// `referenceCurrency` must be an Oracle reference currency, and the entry price is the
     /// previous UTC day's COEN VWAP in it. `issuanceCurrency` is any code in 1..=999.

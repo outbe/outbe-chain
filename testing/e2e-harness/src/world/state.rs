@@ -373,16 +373,8 @@ pub struct FixtureState {
     pub zerofee_new_day_receipt: Option<serde_json::Value>,
     pub zerofee_new_day_balance_before: Option<alloy_primitives::U256>,
     pub zerofee_new_day_balance_after: Option<alloy_primitives::U256>,
-    /// Validator-0 Gem balance captured before the stale daily boundary.
-    pub reward_gem_balance_before_delivery: Option<alloy_primitives::U256>,
-    /// Exact UTC reward day durably stored at the pending Rewards FIFO head.
-    pub pending_reward_gem_utc_day: Option<u32>,
-    /// Finalized EVM block captured before restarting with a pending Gem batch.
-    pub pending_reward_gem_restart_block_number: Option<u64>,
-    /// Canonical block that delivered the saved batch through OSG2.
-    pub reward_gem_delivery_block_number: Option<u64>,
-    /// Exact validator-0 Gem id created by the recovered delivery.
-    pub delivered_reward_gem_id: Option<alloy_primitives::U256>,
+    /// Validator 0's claimed reward Gem, shared by the settlement steps.
+    pub(crate) validator_reward_gem: Option<crate::features::settlement::ValidatorRewardGem>,
 
     // ---- Stablecoin Factory V1 live scenario ----
     pub stablecoin: Option<StablecoinFixture>,
@@ -539,11 +531,7 @@ impl Default for FixtureState {
             zerofee_new_day_receipt: None,
             zerofee_new_day_balance_before: None,
             zerofee_new_day_balance_after: None,
-            reward_gem_balance_before_delivery: None,
-            pending_reward_gem_utc_day: None,
-            pending_reward_gem_restart_block_number: None,
-            reward_gem_delivery_block_number: None,
-            delivered_reward_gem_id: None,
+            validator_reward_gem: None,
             stablecoin: None,
             target_contracts: None,
             origin_contracts: None,

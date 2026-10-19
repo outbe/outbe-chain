@@ -5,7 +5,7 @@ use super::{
     SystemTxError, SystemTxInputV2, BOUNDARY_OUTCOME_SELECTOR,
     CERTIFIED_PARENT_ACCOUNTING_SELECTOR, CYCLE_TICK_SELECTOR, HOOK_EVENTS_SELECTOR,
     LATE_FINALIZE_CREDITS_SELECTOR, ORACLE_SLASH_WINDOW_SELECTOR, OUTBE_SYSTEM_TX_ADDRESS,
-    RADICLE_PUBLICATION_SELECTOR, REWARDS_GEM_DELIVERY_SELECTOR, TEE_BOOTSTRAP_SELECTOR,
+    RADICLE_PUBLICATION_SELECTOR, TEE_BOOTSTRAP_SELECTOR,
 };
 
 /// Body-zone position of a system tx.
@@ -24,8 +24,6 @@ pub enum SystemTxKind {
     /// matured per-block fee escrows. Ordered immediately after Phase 1 (CPA).
     LateFinalizeCredits,
     CycleTick,
-    /// Mandatory Rewards-owned retryable delivery of one prepared UTC-day Gem batch.
-    RewardsGemDelivery,
     BoundaryOutcome,
     /// Phase 3b: one-time TEE registry bootstrap. It is present only in the
     /// bootstrap block. It reads the same-block `CommitteeSnapshotStore` that
@@ -43,7 +41,6 @@ impl SystemTxKind {
             Self::CertifiedParentAccounting => CERTIFIED_PARENT_ACCOUNTING_SELECTOR,
             Self::LateFinalizeCredits => LATE_FINALIZE_CREDITS_SELECTOR,
             Self::CycleTick => CYCLE_TICK_SELECTOR,
-            Self::RewardsGemDelivery => REWARDS_GEM_DELIVERY_SELECTOR,
             Self::BoundaryOutcome => BOUNDARY_OUTCOME_SELECTOR,
             Self::TeeBootstrap => TEE_BOOTSTRAP_SELECTOR,
             Self::OracleSlashWindow => ORACLE_SLASH_WINDOW_SELECTOR,
@@ -57,7 +54,6 @@ impl SystemTxKind {
             Self::CertifiedParentAccounting
             | Self::LateFinalizeCredits
             | Self::CycleTick
-            | Self::RewardsGemDelivery
             | Self::BoundaryOutcome
             | Self::TeeBootstrap
             | Self::OracleSlashWindow
@@ -89,9 +85,7 @@ impl SystemTxKind {
     ///
     /// `TeeBootstrap` is mandatory at block 1: a revert would commit a genesis
     /// committee that cannot execute confidential transactions, so it fails the
-    /// block. `RewardsGemDelivery` is deliberately soft so its durable FIFO
-    /// head retries in a later block. `OracleSlashWindow` and `HookEvents` also
-    /// remain soft.
+    /// block. `OracleSlashWindow` and `HookEvents` remain soft.
     pub const fn revert_fails_block(self) -> bool {
         match self {
             Self::CertifiedParentAccounting
@@ -100,7 +94,7 @@ impl SystemTxKind {
             | Self::BoundaryOutcome
             | Self::TeeBootstrap
             | Self::RadiclePublication => true,
-            Self::RewardsGemDelivery | Self::OracleSlashWindow | Self::HookEvents => false,
+            Self::OracleSlashWindow | Self::HookEvents => false,
         }
     }
 
@@ -109,12 +103,11 @@ impl SystemTxKind {
             Self::CertifiedParentAccounting => Some(0),
             Self::LateFinalizeCredits => Some(1),
             Self::CycleTick => Some(2),
-            Self::RewardsGemDelivery => Some(3),
-            Self::BoundaryOutcome => Some(4),
-            Self::TeeBootstrap => Some(5),
-            Self::OracleSlashWindow => Some(6),
-            Self::HookEvents => Some(7),
-            Self::RadiclePublication => Some(8),
+            Self::BoundaryOutcome => Some(3),
+            Self::TeeBootstrap => Some(4),
+            Self::OracleSlashWindow => Some(5),
+            Self::HookEvents => Some(6),
+            Self::RadiclePublication => Some(7),
         }
     }
 
@@ -123,7 +116,6 @@ impl SystemTxKind {
             Self::CertifiedParentAccounting
             | Self::LateFinalizeCredits
             | Self::CycleTick
-            | Self::RewardsGemDelivery
             | Self::BoundaryOutcome
             | Self::TeeBootstrap
             | Self::OracleSlashWindow
@@ -145,7 +137,6 @@ pub fn system_tx_kind_from_selector(selector: [u8; 4]) -> Result<SystemTxKind, S
         CERTIFIED_PARENT_ACCOUNTING_SELECTOR => Ok(SystemTxKind::CertifiedParentAccounting),
         LATE_FINALIZE_CREDITS_SELECTOR => Ok(SystemTxKind::LateFinalizeCredits),
         CYCLE_TICK_SELECTOR => Ok(SystemTxKind::CycleTick),
-        REWARDS_GEM_DELIVERY_SELECTOR => Ok(SystemTxKind::RewardsGemDelivery),
         BOUNDARY_OUTCOME_SELECTOR => Ok(SystemTxKind::BoundaryOutcome),
         TEE_BOOTSTRAP_SELECTOR => Ok(SystemTxKind::TeeBootstrap),
         ORACLE_SLASH_WINDOW_SELECTOR => Ok(SystemTxKind::OracleSlashWindow),

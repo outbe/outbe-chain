@@ -39,32 +39,6 @@ fn visible_gas_plan_assigns_only_cycle_the_block_remainder() {
 }
 
 #[test]
-fn reward_delivery_takes_only_its_intrinsic_gas() {
-    let delivery = input_for(SystemTxKind::RewardsGemDelivery)
-        .encode()
-        .expect("RewardsGemDelivery input encodes");
-    let cycle = input_for(SystemTxKind::CycleTick)
-        .encode()
-        .expect("CycleTick input encodes");
-    let entries = [
-        (SystemTxKind::CycleTick, cycle.clone()),
-        (SystemTxKind::RewardsGemDelivery, delivery.clone()),
-    ];
-    let intrinsic_total = system_tx_intrinsic_gas(&cycle).expect("Cycle intrinsic gas computes")
-        + system_tx_intrinsic_gas(&delivery).expect("delivery intrinsic gas computes");
-    let cycle_remainder = 50_000;
-    let block_gas_limit = intrinsic_total + cycle_remainder;
-
-    let plan = SystemTxVisibleGasPlan::new(block_gas_limit, &entries)
-        .expect("system gas plan fits the block");
-
-    assert_eq!(plan.execution_gas_limit(1), Some(0));
-    assert_eq!(plan.gas_limit(1), Some(plan.intrinsic_gas(1).unwrap()));
-    assert_eq!(plan.execution_gas_limit(0), Some(cycle_remainder));
-    assert_eq!(plan.total_envelope_gas(), block_gas_limit);
-}
-
-#[test]
 fn visible_gas_plan_rejects_system_intrinsic_gas_above_the_block_limit() {
     let cycle = input_for(SystemTxKind::CycleTick)
         .encode()

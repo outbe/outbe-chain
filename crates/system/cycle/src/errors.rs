@@ -23,8 +23,8 @@ pub enum CycleError {
     MetadosisReceiptWithoutDailySettled,
     #[error("metadosis terminal overflow")]
     MetadosisTerminalOverflow,
-    #[error("validator reward Gem plan exceeds allocation")]
-    ValidatorRewardGemPlanExceedsAllocation,
+    #[error("validator top-up exceeds allocation")]
+    ValidatorTopupExceedsAllocation,
     #[error("Cycle allocation committed without a Metadosis day-limit receipt")]
     AllocationWithoutMetadosisReceipt,
     #[error("Cycle allocation disagrees with the Metadosis day-limit receipt")]
@@ -46,7 +46,7 @@ impl From<CycleError> for PrecompileError {
             | CycleError::DailySettledWithoutMetadosisReceipt
             | CycleError::MetadosisReceiptWithoutDailySettled
             | CycleError::MetadosisTerminalOverflow
-            | CycleError::ValidatorRewardGemPlanExceedsAllocation
+            | CycleError::ValidatorTopupExceedsAllocation
             | CycleError::AllocationWithoutMetadosisReceipt
             | CycleError::AllocationDisagreesWithMetadosisReceipt
             | CycleError::ActiveUtcDayNotInitialized
@@ -85,7 +85,7 @@ mod tests {
             CycleError::DailySettledWithoutMetadosisReceipt,
             CycleError::MetadosisReceiptWithoutDailySettled,
             CycleError::MetadosisTerminalOverflow,
-            CycleError::ValidatorRewardGemPlanExceedsAllocation,
+            CycleError::ValidatorTopupExceedsAllocation,
             CycleError::AllocationWithoutMetadosisReceipt,
             CycleError::AllocationDisagreesWithMetadosisReceipt,
             CycleError::ActiveUtcDayNotInitialized,

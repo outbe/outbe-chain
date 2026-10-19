@@ -37,10 +37,6 @@ pub enum SystemTxPhase {
     CycleTick {
         body_index: u8,
     },
-    /// Mandatory Rewards-owned delivery phase immediately after `CycleTick`.
-    RewardsGemDelivery {
-        body_index: u8,
-    },
     /// Next expected begin-zone tx is the optional Phase 3
     /// (`BoundaryOutcome`). It is emitted only when the header carries a
     /// boundary outcome artifact.
@@ -89,7 +85,6 @@ impl SystemTxPhase {
             Self::Phase1Preexecuted { .. } => Some(SystemTxKind::CertifiedParentAccounting),
             Self::LateFinalizeCredits { .. } => Some(SystemTxKind::LateFinalizeCredits),
             Self::CycleTick { .. } => Some(SystemTxKind::CycleTick),
-            Self::RewardsGemDelivery { .. } => Some(SystemTxKind::RewardsGemDelivery),
             Self::BoundaryOutcomeOptional { .. } => Some(SystemTxKind::BoundaryOutcome),
             Self::TeeBootstrapOptional { .. } => Some(SystemTxKind::TeeBootstrap),
             Self::OracleSlashWindow { .. } => Some(SystemTxKind::OracleSlashWindow),
@@ -106,7 +101,6 @@ impl SystemTxPhase {
             Self::Phase1Preexecuted { body_index, .. }
             | Self::LateFinalizeCredits { body_index }
             | Self::CycleTick { body_index }
-            | Self::RewardsGemDelivery { body_index }
             | Self::BoundaryOutcomeOptional { body_index }
             | Self::TeeBootstrapOptional { body_index }
             | Self::OracleSlashWindow { body_index }
@@ -137,10 +131,7 @@ impl SystemTxPhase {
             Self::LateFinalizeCredits { body_index } => Self::CycleTick {
                 body_index: body_index + 1,
             },
-            Self::CycleTick { body_index } => Self::RewardsGemDelivery {
-                body_index: body_index + 1,
-            },
-            Self::RewardsGemDelivery { body_index } => {
+            Self::CycleTick { body_index } => {
                 if has_boundary_outcome {
                     Self::BoundaryOutcomeOptional {
                         body_index: body_index + 1,

@@ -2,45 +2,35 @@ use super::*;
 
 #[test]
 fn advance_after_commit_interleaves_optional_phase3b() {
-    // CycleTick -> RewardsGemDelivery -> BoundaryOutcome -> TeeBootstrap -> OracleSlashWindow.
+    // CycleTick -> BoundaryOutcome -> TeeBootstrap -> OracleSlashWindow.
     let cycle = SystemTxPhase::CycleTick { body_index: 1 };
-    let rewards = cycle.advance_after_commit(true, true);
-    assert_eq!(rewards, SystemTxPhase::RewardsGemDelivery { body_index: 2 });
-    let bo = rewards.advance_after_commit(true, true);
-    assert_eq!(bo, SystemTxPhase::BoundaryOutcomeOptional { body_index: 3 });
+    let bo = cycle.advance_after_commit(true, true);
+    assert_eq!(bo, SystemTxPhase::BoundaryOutcomeOptional { body_index: 2 });
     let tee = bo.advance_after_commit(true, true);
-    assert_eq!(tee, SystemTxPhase::TeeBootstrapOptional { body_index: 4 });
+    assert_eq!(tee, SystemTxPhase::TeeBootstrapOptional { body_index: 3 });
     let oracle = tee.advance_after_commit(true, true);
-    assert_eq!(oracle, SystemTxPhase::OracleSlashWindow { body_index: 5 });
+    assert_eq!(oracle, SystemTxPhase::OracleSlashWindow { body_index: 4 });
     let hook_events = oracle.advance_after_commit(true, true);
-    assert_eq!(hook_events, SystemTxPhase::HookEvents { body_index: 6 });
+    assert_eq!(hook_events, SystemTxPhase::HookEvents { body_index: 5 });
     assert_eq!(
         hook_events.advance_after_commit(true, true),
         SystemTxPhase::UserTxs
     );
 
-    // No boundary, bootstrap present: CycleTick -> RewardsGemDelivery -> TeeBootstrap.
+    // No boundary, bootstrap present: CycleTick -> TeeBootstrap.
     assert_eq!(
         SystemTxPhase::CycleTick { body_index: 1 }.advance_after_commit(false, true),
-        SystemTxPhase::RewardsGemDelivery { body_index: 2 }
-    );
-    assert_eq!(
-        SystemTxPhase::RewardsGemDelivery { body_index: 2 }.advance_after_commit(false, true),
-        SystemTxPhase::TeeBootstrapOptional { body_index: 3 }
+        SystemTxPhase::TeeBootstrapOptional { body_index: 2 }
     );
 
-    // Neither: CycleTick -> RewardsGemDelivery -> OracleSlashWindow.
+    // Neither: CycleTick -> OracleSlashWindow.
     assert_eq!(
         SystemTxPhase::CycleTick { body_index: 1 }.advance_after_commit(false, false),
-        SystemTxPhase::RewardsGemDelivery { body_index: 2 }
+        SystemTxPhase::OracleSlashWindow { body_index: 2 }
     );
     assert_eq!(
-        SystemTxPhase::RewardsGemDelivery { body_index: 2 }.advance_after_commit(false, false),
-        SystemTxPhase::OracleSlashWindow { body_index: 3 }
-    );
-    assert_eq!(
-        SystemTxPhase::OracleSlashWindow { body_index: 3 }.advance_after_commit(false, false),
-        SystemTxPhase::HookEvents { body_index: 4 }
+        SystemTxPhase::OracleSlashWindow { body_index: 2 }.advance_after_commit(false, false),
+        SystemTxPhase::HookEvents { body_index: 3 }
     );
 }
 
@@ -106,10 +96,6 @@ fn expected_kind_returns_phase_for_each_variant() {
             Some(SystemTxKind::CycleTick),
         ),
         (
-            SystemTxPhase::RewardsGemDelivery { body_index: 3 },
-            Some(SystemTxKind::RewardsGemDelivery),
-        ),
-        (
             SystemTxPhase::BoundaryOutcomeOptional { body_index: 4 },
             Some(SystemTxKind::BoundaryOutcome),
         ),
@@ -152,7 +138,6 @@ fn body_index_matches_for_every_begin_zone_variant() {
             Some(1),
         ),
         (SystemTxPhase::CycleTick { body_index: 2 }, Some(2)),
-        (SystemTxPhase::RewardsGemDelivery { body_index: 3 }, Some(3)),
         (
             SystemTxPhase::BoundaryOutcomeOptional { body_index: 4 },
             Some(4),

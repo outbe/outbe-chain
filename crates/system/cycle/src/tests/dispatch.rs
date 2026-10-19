@@ -129,16 +129,17 @@ fn protocol_cycle_keeps_midnight_slot_pending_until_late_reward_window_closes() 
                 .unwrap(),
             14
         );
-        let rewards = ctx.storage.contract::<outbe_rewards::schema::Rewards>();
-        assert_eq!(
-            rewards.reward_gem_recipient_count.read(&20240101).unwrap(),
-            2
-        );
-        let loads = rewards.reward_promis_load_at.get_nested(&20240101);
-        assert_eq!(loads.read(&0).unwrap(), loads.read(&1).unwrap());
-        assert!(loads.read(&1).unwrap() > U256::ZERO);
+        let validator_claimable = |voter| {
+            outbe_agentreward::AgentRewardContract::new(ctx.storage.clone())
+                .get_pool_claimable_reward(outbe_agentreward::schema::RewardPool::Validator, voter)
+                .unwrap()
+        };
+        // The late voter counts the same as the base-certificate voter.
+        assert_eq!(validator_claimable(early), validator_claimable(late));
+        assert!(validator_claimable(late) > U256::ZERO);
+        let credited = validator_claimable(early);
         dispatch_triggers(&ctx).unwrap();
-        assert_eq!(rewards.reward_gem_queue_tail.read().unwrap(), 1);
+        assert_eq!(validator_claimable(early), credited);
     });
 }
 
@@ -283,16 +284,21 @@ fn prepared_validator_topup_and_terminal_residue_conserve_the_allocation() {
             EmissionSinkId::Sra,
             EmissionSinkId::Cca,
         ]);
-        let rewards = ctx.storage.contract::<outbe_rewards::schema::Rewards<'_>>();
-        let planned = rewards
-            .reward_gem_planned_load_amount
-            .read(&20_240_101)
-            .unwrap();
+        let agent_reward = outbe_agentreward::AgentRewardContract::new(ctx.storage.clone());
+        let planned = voters.iter().fold(U256::ZERO, |total, voter| {
+            total
+                + agent_reward
+                    .get_pool_claimable_reward(
+                        outbe_agentreward::schema::RewardPool::Validator,
+                        *voter,
+                    )
+                    .unwrap()
+        });
         let gem = outbe_gem::GemContract::new(ctx.storage.clone());
         assert_eq!(
             gem.total_supply().unwrap(),
             0,
-            "Cycle prepares the batch but does not mint Gems"
+            "Cycle credits claims but does not mint Gems"
         );
         let formation = outbe_metadosis::api::day_limit_formation_receipt(
             ctx.storage.clone(),
@@ -310,7 +316,7 @@ fn prepared_validator_topup_and_terminal_residue_conserve_the_allocation() {
         assert_eq!(
             planned.checked_add(validator_terminal).unwrap(),
             validator_amount,
-            "prepared Gem liability plus terminal residue must conserve the validator allocation"
+            "credited claims plus terminal residue must conserve the validator allocation"
         );
     });
 }
@@ -328,13 +334,19 @@ fn zero_total_validator_participation_routes_the_pool_without_halting() {
         run_emission_limit_daily(&ctx).unwrap();
 
         let rewards = ctx.storage.contract::<outbe_rewards::schema::Rewards<'_>>();
-        assert!(rewards.daily_topup_prepared.read(&20_240_101).unwrap());
-        assert!(rewards.daily_topup_settled.read(&20_240_101).unwrap());
         assert!(rewards.daily_settled.read(&20_240_101).unwrap());
-        assert_eq!(rewards.reward_gem_queue_head.read().unwrap(), 0);
-        assert_eq!(rewards.reward_gem_queue_tail.read().unwrap(), 0);
-        let gem = outbe_gem::GemContract::new(ctx.storage.clone());
-        assert_eq!(gem.total_supply().unwrap(), 0, "no Gem may be minted");
+        let agent_reward = outbe_agentreward::AgentRewardContract::new(ctx.storage.clone());
+        for voter in voters {
+            assert_eq!(
+                agent_reward
+                    .get_pool_claimable_reward(
+                        outbe_agentreward::schema::RewardPool::Validator,
+                        voter
+                    )
+                    .unwrap(),
+                U256::ZERO
+            );
+        }
 
         let expected_terminal = day_zero_allocation_sum(&[
             EmissionSinkId::Metadosis,
@@ -389,6 +401,16 @@ fn failed_terminal_dispatch() -> (
     (storage, error)
 }
 
+fn topup_voters_claimable(ctx: &BlockRuntimeContext<'_>) -> U256 {
+    let agent_reward = outbe_agentreward::AgentRewardContract::new(ctx.storage.clone());
+    TOPUP_VOTERS.iter().fold(U256::ZERO, |total, voter| {
+        total
+            + agent_reward
+                .get_pool_claimable_reward(outbe_agentreward::schema::RewardPool::Validator, *voter)
+                .unwrap()
+    })
+}
+
 #[test]
 fn failed_terminal_dispatch_rolls_back_validator_topup() {
     let (mut storage, error) = failed_terminal_dispatch();
@@ -403,19 +425,18 @@ fn failed_terminal_dispatch_rolls_back_validator_topup() {
         let rewards = fire
             .storage
             .contract::<outbe_rewards::schema::Rewards<'_>>();
-        assert!(!rewards.daily_topup_prepared.read(&20_240_101).unwrap());
-        assert!(!rewards.daily_topup_settled.read(&20_240_101).unwrap());
         assert!(!rewards.daily_settled.read(&20_240_101).unwrap());
-        assert_eq!(rewards.reward_gem_queue_head.read().unwrap(), 0);
-        assert_eq!(rewards.reward_gem_queue_tail.read().unwrap(), 0);
+        assert_eq!(
+            topup_voters_claimable(&fire),
+            U256::ZERO,
+            "validator credit must roll back"
+        );
         assert!(outbe_metadosis::api::day_limit_formation_receipt(
             fire.storage.clone(),
             outbe_primitives::time::WorldwideDay::new(20_240_101),
         )
         .unwrap()
         .is_none());
-        let gem = outbe_gem::GemContract::new(fire.storage.clone());
-        assert_eq!(gem.total_supply().unwrap(), 0, "Gem mint must roll back");
         assert_eq!(
             fire.storage
                 .balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS)
@@ -450,11 +471,7 @@ fn retry_after_failed_terminal_dispatch_settles_once() {
         let rewards = retry
             .storage
             .contract::<outbe_rewards::schema::Rewards<'_>>();
-        assert!(rewards.daily_topup_prepared.read(&20_240_101).unwrap());
-        assert!(!rewards.daily_topup_settled.read(&20_240_101).unwrap());
         assert!(rewards.daily_settled.read(&20_240_101).unwrap());
-        assert_eq!(rewards.reward_gem_queue_head.read().unwrap(), 0);
-        assert_eq!(rewards.reward_gem_queue_tail.read().unwrap(), 1);
         let receipt = outbe_metadosis::api::day_limit_formation_receipt(
             retry.storage.clone(),
             outbe_primitives::time::WorldwideDay::new(20_240_101),
@@ -498,87 +515,14 @@ fn retry_after_failed_terminal_dispatch_settles_once() {
         assert_eq!(
             gem.total_supply().unwrap(),
             0,
-            "Cycle retry prepares exactly once; delivery owns Gem creation"
+            "Cycle credits claims; validators mint their own Gems"
         );
         assert_eq!(
-            rewards
-                .reward_gem_planned_load_amount
-                .read(&20_240_101)
-                .unwrap(),
-            expected_promis_load * U256::from(TOPUP_VOTERS.len())
+            topup_voters_claimable(&retry),
+            expected_promis_load * U256::from(TOPUP_VOTERS.len()),
+            "retry must credit the validator pool exactly once"
         );
         assert_eq!(last_executed_at(&retry), GENESIS_TS + SECONDS_PER_DAY);
-    });
-}
-
-#[test]
-fn open_day_preserves_an_already_delivered_validator_batch_without_reminting() {
-    let mut storage = cycle_storage();
-    storage.enter(|handle| {
-        genesis_block(handle.clone(), GENESIS_TS + 60);
-        let ctx = BlockRuntimeContext::new(block_ctx(2, GENESIS_TS + SECONDS_PER_DAY + 60), handle);
-
-        let voter = Address::repeat_byte(0x41);
-        seed_fresh_reward_oracle(&ctx);
-        seed_daily_voters(&ctx, 20_240_101, &[(voter, 1)]);
-
-        let validator_amount = outbe_emissionlimit::allocation::allocate_emission(
-            outbe_emissionlimit::day_emission::day_emission_limit(0),
-        )
-        .unwrap()
-        .into_iter()
-        .find(|allocation| allocation.id == EmissionSinkId::Validator)
-        .unwrap()
-        .amount;
-        let outcome = outbe_rewards::api::prepare_daily_validator_gem_batch(
-            &ctx,
-            20_240_101,
-            validator_amount,
-            &[(voter, 1)],
-        )
-        .unwrap();
-        assert!(matches!(
-            outcome,
-            outbe_rewards::api::RewardGemPreparationOutcome::Prepared(_)
-        ));
-        let gem = outbe_gem::GemContract::new(ctx.storage.clone());
-        let load_before = std::cell::Cell::new(U256::ZERO);
-        (|| {
-            outbe_rewards::api::deliver_oldest_reward_gem_batch(&ctx)?;
-            let owned = outbe_gem::api::list_by_owner(&ctx.storage, voter)?;
-            assert_eq!(owned.len(), 1);
-            load_before.set(owned[0].promis_load_minor);
-            Ok::<_, outbe_primitives::error::PrecompileError>(())
-        })()
-        .unwrap();
-        assert_eq!(gem.total_supply().unwrap(), 1);
-
-        let rewards = ctx.storage.contract::<outbe_rewards::schema::Rewards<'_>>();
-        run_emission_limit_daily(&ctx).unwrap();
-
-        assert_eq!(gem.total_supply().unwrap(), 1, "top-up must not remint");
-        assert!(
-            !load_before.get().is_zero(),
-            "the prior Gem carried its load"
-        );
-        assert!(rewards.daily_settled.read(&20_240_101).unwrap());
-        let receipt = outbe_metadosis::api::day_limit_formation_receipt(
-            ctx.storage.clone(),
-            outbe_primitives::time::WorldwideDay::new(20_240_101),
-        )
-        .unwrap()
-        .unwrap();
-        let expected_terminal = day_zero_allocation_sum(&[
-            EmissionSinkId::Metadosis,
-            EmissionSinkId::Waa,
-            EmissionSinkId::Sra,
-            EmissionSinkId::Cca,
-        ]);
-        let outbe_metadosis::DayLimitFormationReceipt::Formed(formed) = receipt;
-        assert_eq!(
-            formed.base_limit, expected_terminal,
-            "AlreadySettled must contribute no second validator top-up to the terminal sink"
-        );
     });
 }
 

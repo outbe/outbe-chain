@@ -7,7 +7,7 @@
 //!
 //! - reads the closed-form `day_emission_limit`
 //! - calls [`crate::allocation::allocate_emission`] with the 5-sink active table
-//! - hands non-validator pools to `outbe_agentreward::distribute_daily`
+//! - hands the reward pools to `outbe_agentreward::distribute_daily`
 //! - forwards the Metadosis terminal portion through [`dispatch_terminal_remainder_at`] below.
 //!
 //! This file is intentionally tiny. It owns the purpose-bound terminal dispatch calls that
