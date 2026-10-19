@@ -256,10 +256,10 @@ pub(crate) fn issue_reward_gem(
         outbe_gemfactory::GemIssueParams {
             owner,
             gem_type,
-            promis_load: load,
+            promis_load_minor: load,
             issuance_currency,
             reference_currency,
-            entry_price,
+            entry_price_minor: entry_price,
         },
     )
 }
