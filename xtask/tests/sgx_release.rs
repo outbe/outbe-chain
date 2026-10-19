@@ -639,6 +639,10 @@ fn release_preflight_rehearses_critical_paths_without_release_authority() {
         "source_ref:",
         "ref: ${{ inputs.source_ref }}",
         "persist-credentials: false",
+        "runner_label: release-fr",
+        "runner_label: release-mum",
+        "${{ matrix.runner_label }}",
+        "needs: [identity, build]",
         "RUSTFLAGS=-D warnings",
         "--features release-sgx-e2e --bin outbe-release-sgx-e2e",
         "--bin outbe-release-dcap-evidence",
@@ -659,8 +663,8 @@ fn release_preflight_rehearses_critical_paths_without_release_authority() {
         workflow
             .matches("scripts/release/reproducible-build.sh")
             .count(),
-        2,
-        "preflight must perform two independent clean builds"
+        1,
+        "one matrix build step must fan out across FR and MUM"
     );
     for forbidden in [
         "packages: write",

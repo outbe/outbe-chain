@@ -40,10 +40,12 @@ env:
   PREFLIGHT_TOOLCHAIN_IMAGE: outbe-release-toolchain:${{ github.run_id }}-${{ github.run_attempt }}
 
 jobs:
-  preflight:
-    name: clean reproducible release candidate
-    runs-on: testnet-release-sgx
-    timeout-minutes: 180
+  identity:
+    name: bind source and approved genesis
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -72,26 +74,11 @@ jobs:
               ;;
           esac
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
-          PREFLIGHT_ROOT="${RUNNER_TEMP}/${PREFLIGHT_NAME}"
-          CARGO_TARGET_DIR="${PREFLIGHT_ROOT}/cargo-target"
-          test ! -e "${PREFLIGHT_ROOT}"
-          mkdir -p "${PREFLIGHT_ROOT}/evidence"
+          mkdir -p "${RUNNER_TEMP}/preflight-inputs"
           printf 'source_ref=%s\nsource_sha=%s\nnetwork=%s\n' \
             "${SOURCE_REF_INPUT}" "${source_sha}" "${NETWORK}" \
-            > "${PREFLIGHT_ROOT}/evidence/source-identity.txt"
-          echo "PREFLIGHT_ROOT=${PREFLIGHT_ROOT}" >> "${GITHUB_ENV}"
-          echo "CARGO_TARGET_DIR=${CARGO_TARGET_DIR}" >> "${GITHUB_ENV}"
+            > "${RUNNER_TEMP}/preflight-inputs/source-identity.txt"
           echo "source_sha=${source_sha}" >> "${GITHUB_OUTPUT}"
-
-      - name: Install and verify pinned Noir build tools
-        run: scripts/release/install-zk-build-tools.sh
-
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
-        with:
-          version: v0.35.0
-          driver: docker-container
-          driver-opts: |
-            image=moby/buildkit@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec
 
       - name: Fetch and verify the seeded genesis
         env:
@@ -129,13 +116,151 @@ jobs:
             echo "seeded genesis SHA-256 must be 64 lowercase hexadecimal characters" >&2
             exit 2
           }
-          genesis_path="${PREFLIGHT_ROOT}/${NETWORK}-seeded-genesis.json"
+          genesis_path="${RUNNER_TEMP}/preflight-inputs/${NETWORK}-seeded-genesis.json"
           curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
             --output "${genesis_path}" "${genesis_url}"
           printf '%s  %s\n' "${genesis_sha256}" "${genesis_path}" | sha256sum --check
           test "$(jq -er '.config.chainId' "${genesis_path}")" = "${chain_id}"
           test "$(jq -r '.config | has("teeAttestationV1")' "${genesis_path}")" = false
-          echo "GENESIS_PATH=${genesis_path}" >> "${GITHUB_ENV}"
+
+      - name: Upload source identity and approved genesis
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: preflight-release-inputs
+          path: ${{ runner.temp }}/preflight-inputs
+          if-no-files-found: error
+          retention-days: 1
+
+  build:
+    name: clean preflight build (${{ matrix.region }})
+    needs: identity
+    runs-on: [self-hosted, testnet-release-sgx, "${{ matrix.runner_label }}"]
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - region: fr
+            runner_label: release-fr
+          - region: mum
+            runner_label: release-mum
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ needs.identity.outputs.source_sha }}
+
+      - name: Install and verify pinned Noir build tools
+        run: scripts/release/install-zk-build-tools.sh
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: preflight-release-inputs
+          path: ${{ runner.temp }}/preflight-inputs
+
+      - name: Build the exact production ELF matrix without cache
+        run: |
+          set -euo pipefail
+          root="${RUNNER_TEMP}/preflight-build-${{ matrix.region }}"
+          rm -rf "${root}"
+          scripts/release/reproducible-build.sh \
+            --no-cache --output "${root}/elf"
+          cargo xtask release sgx prepare \
+            --network "${NETWORK}" \
+            --genesis "${RUNNER_TEMP}/preflight-inputs/${NETWORK}-seeded-genesis.json" \
+            --elf-output "${root}/elf" \
+            --output "${root}/unsigned"
+          mkdir -p "${root}/output"
+          epoch="$(jq -r .build.source_date_epoch "${root}/elf/release-manifest.json")"
+          tar --sort=name --format=gnu --mtime="@${epoch}" \
+            --owner=0 --group=0 --numeric-owner \
+            -cf "${root}/output/elf.tar" -C "${root}/elf" .
+          tar --sort=name --format=gnu --mtime="@${epoch}" \
+            --owner=0 --group=0 --numeric-owner \
+            -cf "${root}/output/unsigned.tar" -C "${root}/unsigned" .
+          cd "${root}/output"
+          sha256sum elf.tar unsigned.tar > SHA256SUMS
+
+      - name: Upload the regional preflight candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: preflight-builder-${{ matrix.region }}
+          path: ${{ runner.temp }}/preflight-build-${{ matrix.region }}/output
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+      - name: Remove regional temporary outputs
+        if: always()
+        run: rm -rf "${RUNNER_TEMP}/preflight-build-${{ matrix.region }}"
+
+  preflight:
+    name: compare and exercise the release candidate
+    needs: [identity, build]
+    runs-on: testnet-release-sgx
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ needs.identity.outputs.source_sha }}
+
+      - name: Initialize isolated preflight outputs
+        run: |
+          set -euo pipefail
+          PREFLIGHT_ROOT="${RUNNER_TEMP}/${PREFLIGHT_NAME}"
+          CARGO_TARGET_DIR="${PREFLIGHT_ROOT}/cargo-target"
+          rm -rf "${PREFLIGHT_ROOT}"
+          mkdir -p "${PREFLIGHT_ROOT}/evidence"
+          echo "PREFLIGHT_ROOT=${PREFLIGHT_ROOT}" >> "${GITHUB_ENV}"
+          echo "CARGO_TARGET_DIR=${CARGO_TARGET_DIR}" >> "${GITHUB_ENV}"
+          echo "GENESIS_PATH=${RUNNER_TEMP}/preflight-inputs/${NETWORK}-seeded-genesis.json" \
+            >> "${GITHUB_ENV}"
+
+      - name: Install and verify pinned Noir build tools
+        run: scripts/release/install-zk-build-tools.sh
+
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+        with:
+          version: v0.35.0
+          driver: docker-container
+          driver-opts: |
+            image=moby/buildkit@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: preflight-release-inputs
+          path: ${{ runner.temp }}/preflight-inputs
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: preflight-builder-fr
+          path: ${{ runner.temp }}/preflight-builder-fr
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: preflight-builder-mum
+          path: ${{ runner.temp }}/preflight-builder-mum
+
+      - name: Verify and unpack both regional candidates
+        run: |
+          set -euo pipefail
+          cp "${RUNNER_TEMP}/preflight-inputs/source-identity.txt" \
+            "${PREFLIGHT_ROOT}/evidence/"
+          for region in fr mum; do
+            (
+              cd "${RUNNER_TEMP}/preflight-builder-${region}"
+              sha256sum --check SHA256SUMS
+            )
+            mkdir -p "${PREFLIGHT_ROOT}/elf-${region}" \
+              "${PREFLIGHT_ROOT}/unsigned-${region}"
+            tar -xf "${RUNNER_TEMP}/preflight-builder-${region}/elf.tar" \
+              -C "${PREFLIGHT_ROOT}/elf-${region}"
+            tar -xf "${RUNNER_TEMP}/preflight-builder-${region}/unsigned.tar" \
+              -C "${PREFLIGHT_ROOT}/unsigned-${region}"
+          done
 
       - name: Deny warnings in release hardware e2e entrypoints
         run: |
@@ -176,14 +301,6 @@ jobs:
             '
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
 
-      - name: Build the exact production ELF matrix twice without cache
-        run: |
-          set -euo pipefail
-          scripts/release/reproducible-build.sh \
-            --no-cache --output "${PREFLIGHT_ROOT}/elf-a"
-          scripts/release/reproducible-build.sh \
-            --no-cache --output "${PREFLIGHT_ROOT}/elf-b"
-
       - name: Independently verify byte-for-byte ELF reproducibility
         run: |
           set -euo pipefail
@@ -192,27 +309,17 @@ jobs:
             --require-hashes -r release/reproducible-verifier-requirements.txt
           "${PREFLIGHT_ROOT}/release-verifier/bin/python" \
             scripts/release/verify_reproducible_elf.py \
-            --first "${PREFLIGHT_ROOT}/elf-a" \
-            --second "${PREFLIGHT_ROOT}/elf-b" \
+            --first "${PREFLIGHT_ROOT}/elf-fr" \
+            --second "${PREFLIGHT_ROOT}/elf-mum" \
             --repo-root . \
             --output "${PREFLIGHT_ROOT}/evidence/elf-reproducibility.json"
 
-      - name: Prepare and compare two unsigned SGX bundles
+      - name: Compare both unsigned SGX bundles
         run: |
           set -euo pipefail
-          cargo xtask release sgx prepare \
-            --network "${NETWORK}" \
-            --genesis "${GENESIS_PATH}" \
-            --elf-output "${PREFLIGHT_ROOT}/elf-a" \
-            --output "${PREFLIGHT_ROOT}/unsigned-a"
-          cargo xtask release sgx prepare \
-            --network "${NETWORK}" \
-            --genesis "${GENESIS_PATH}" \
-            --elf-output "${PREFLIGHT_ROOT}/elf-b" \
-            --output "${PREFLIGHT_ROOT}/unsigned-b"
           cargo xtask release sgx compare \
-            --first "${PREFLIGHT_ROOT}/unsigned-a" \
-            --second "${PREFLIGHT_ROOT}/unsigned-b" \
+            --first "${PREFLIGHT_ROOT}/unsigned-fr" \
+            --second "${PREFLIGHT_ROOT}/unsigned-mum" \
             --output "${PREFLIGHT_ROOT}/evidence/sgx-reproducibility.json"
 
       - name: Exercise signing, genesis finalization and archive with an ephemeral key
@@ -227,7 +334,7 @@ jobs:
           openssl genrsa -3 -out "${key}" 3072
           cargo xtask release sgx sign \
             --network "${NETWORK}" \
-            --unsigned "${PREFLIGHT_ROOT}/unsigned-a" \
+            --unsigned "${PREFLIGHT_ROOT}/unsigned-fr" \
             --key-file "${key}" \
             --output "${PREFLIGHT_ROOT}/signed"
           cargo xtask release sgx finalize-genesis \
@@ -260,7 +367,7 @@ jobs:
       - name: Publish preflight evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: release-preflight-${{ inputs.network }}-${{ steps.source.outputs.source_sha }}
+          name: release-preflight-${{ inputs.network }}-${{ needs.identity.outputs.source_sha }}
           path: ${{ env.PREFLIGHT_ROOT }}/evidence
           if-no-files-found: error
           retention-days: 7
@@ -270,10 +377,10 @@ jobs:
           {
             echo '## Release preflight passed'
             echo
-            echo '- Source: `${{ steps.source.outputs.source_sha }}`'
+            echo '- Source: `${{ needs.identity.outputs.source_sha }}`'
             echo '- Network: `${{ inputs.network }}`'
             echo '- Production warnings: denied'
-            echo '- ELF and unsigned SGX reproducibility: verified'
+            echo '- FR/MUM ELF and unsigned SGX reproducibility: verified'
             echo '- Ephemeral signing, genesis finalization and archive: verified'
             echo '- Local OCI image: verified'
             echo '- Production credentials and publication: not used'
@@ -289,4 +396,7 @@ jobs:
             docker image rm --force "${PREFLIGHT_TOOLCHAIN_IMAGE}" >/dev/null 2>&1 || true
           fi
           root="${PREFLIGHT_ROOT:-${RUNNER_TEMP}/${PREFLIGHT_NAME}}"
-          rm -rf "${root}"
+          rm -rf "${root}" \
+            "${RUNNER_TEMP}/preflight-inputs" \
+            "${RUNNER_TEMP}/preflight-builder-fr" \
+            "${RUNNER_TEMP}/preflight-builder-mum"
