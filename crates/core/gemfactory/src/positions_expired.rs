@@ -6,7 +6,6 @@ use outbe_primitives::{
     error::{PrecompileError, Result, SweepFailure},
     expiry_queue::{self, Due, ExpiryHandler},
     storage::StorageHandle,
-    sweep_budget::SweepBudget,
 };
 
 use crate::errors::GemFactoryError;
@@ -17,39 +16,25 @@ use alloy_primitives::U256;
 
 /// Returns the unissued capacity of the hours whose positions expired. Returns the
 /// hours expired.
-pub(crate) fn sweep_expired_positions(ctx: &BlockRuntimeContext) -> Result<u32> {
+pub fn sweep_expired_positions(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = GemFactoryContract::new(ctx.storage.clone());
     let mut expiry = PositionExpiry {
         storage: &ctx.storage,
         factory: GemFactoryContract::new(ctx.storage.clone()),
         expired: 0,
     };
-    let mut budget = SweepBudget::per_block();
-    expiry_queue::sweep(
-        &PositionExpiryHours(&queue),
-        &ctx.storage,
-        ctx.block.timestamp,
-        &mut budget,
-        &mut expiry,
-    )?;
+    expiry_queue::sweep_block(&PositionExpiryHours(&queue), ctx, &mut expiry)?;
     Ok(expiry.expired)
 }
 
 /// Deletes the positions of the expired hours. Returns the positions deleted.
-pub(crate) fn sweep_position_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
+pub fn sweep_position_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = GemFactoryContract::new(ctx.storage.clone());
     let mut cleanup = PositionCleanup {
         factory: GemFactoryContract::new(ctx.storage.clone()),
         deleted: 0,
     };
-    let mut budget = SweepBudget::per_block();
-    expiry_queue::sweep(
-        &PositionCleanupHours(&queue),
-        &ctx.storage,
-        ctx.block.timestamp,
-        &mut budget,
-        &mut cleanup,
-    )?;
+    expiry_queue::sweep_block(&PositionCleanupHours(&queue), ctx, &mut cleanup)?;
     Ok(cleanup.deleted)
 }
 

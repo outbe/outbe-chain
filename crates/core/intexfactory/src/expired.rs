@@ -8,7 +8,6 @@ use outbe_primitives::{
     error::Result,
     expiry_queue::{self, Due, ExpiryHandler},
     storage::StorageHandle,
-    sweep_budget::SweepBudget,
 };
 
 use outbe_intex::precompile::IIntex;
@@ -19,21 +18,14 @@ use crate::runtime::emit_event;
 
 /// Expire every group whose settlement window has closed, earliest bucket first.
 /// Returns the groups expired.
-pub(crate) fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
+pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = IntexContract::new(ctx.storage.clone());
     let mut expiry = IntexExpiry {
         storage: &ctx.storage,
         intex: IntexContract::new(ctx.storage.clone()),
         expired: 0,
     };
-    let mut budget = SweepBudget::per_block();
-    expiry_queue::sweep(
-        &ExpiryHours(&queue),
-        &ctx.storage,
-        ctx.block.timestamp,
-        &mut budget,
-        &mut expiry,
-    )?;
+    expiry_queue::sweep_block(&ExpiryHours(&queue), ctx, &mut expiry)?;
     Ok(expiry.expired)
 }
 

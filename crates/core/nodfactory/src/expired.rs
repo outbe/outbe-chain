@@ -7,7 +7,6 @@ use outbe_primitives::{
     error::{PrecompileError, Result, SweepFailure},
     expiry_queue::{self, Due, ExpiryHandler},
     storage::StorageHandle,
-    sweep_budget::SweepBudget,
 };
 
 use crate::precompile::INodFactory;
@@ -16,21 +15,14 @@ use outbe_nod::state::ExpiryHours;
 use outbe_nod::{precompile::INod, schema::NodContract};
 
 /// Forfeits the called groups whose notice period lapsed. Returns the groups forfeited.
-pub(crate) fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
+pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = NodContract::new(ctx.storage.clone());
     let mut expiry = NodExpiry {
         storage: &ctx.storage,
         nod: NodContract::new(ctx.storage.clone()),
         forfeited: 0,
     };
-    let mut budget = SweepBudget::per_block();
-    expiry_queue::sweep(
-        &ExpiryHours(&queue),
-        &ctx.storage,
-        ctx.block.timestamp,
-        &mut budget,
-        &mut expiry,
-    )?;
+    expiry_queue::sweep_block(&ExpiryHours(&queue), ctx, &mut expiry)?;
     Ok(expiry.forfeited)
 }
 

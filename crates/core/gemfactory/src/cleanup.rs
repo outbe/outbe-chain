@@ -8,27 +8,19 @@ use outbe_primitives::{
     error::{PrecompileError, Result, SweepFailure},
     expiry_queue::{self, Due, ExpiryHandler},
     storage::StorageHandle,
-    sweep_budget::SweepBudget,
 };
 
 use crate::errors::GemFactoryError;
 
 /// Deletes the unpaid gems of the forfeited groups. Returns the gems deleted.
-pub(crate) fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
+pub fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = GemContract::new(ctx.storage.clone());
     let mut cleanup = GemCleanup {
         storage: &ctx.storage,
         gem: GemContract::new(ctx.storage.clone()),
         deleted: 0,
     };
-    let mut budget = SweepBudget::per_block();
-    expiry_queue::sweep(
-        &CleanupHours(&queue),
-        &ctx.storage,
-        ctx.block.timestamp,
-        &mut budget,
-        &mut cleanup,
-    )?;
+    expiry_queue::sweep_block(&CleanupHours(&queue), ctx, &mut cleanup)?;
     Ok(cleanup.deleted)
 }
 

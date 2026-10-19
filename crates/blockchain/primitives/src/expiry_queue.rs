@@ -219,6 +219,25 @@ pub trait ExpiryHandler<E> {
     fn deferred(&mut self, entry: E, retry_at: u64) -> Result<()>;
 }
 
+/// One block's [`sweep`] at the block's time, under the per-block budget.
+pub fn sweep_block<'s, Q, H>(
+    queue: &Q,
+    ctx: &crate::block::BlockRuntimeContext<'s>,
+    handler: &mut H,
+) -> Result<()>
+where
+    Q: ExpiryQueueStore<'s>,
+    H: ExpiryHandler<Q::Entry>,
+{
+    sweep(
+        queue,
+        &ctx.storage,
+        ctx.block.timestamp,
+        &mut SweepBudget::per_block(),
+        handler,
+    )
+}
+
 /// Expires due entries, earliest bucket first. Every slot visited costs a visit,
 /// and each member expired costs a write.
 pub fn sweep<'s, Q, H>(

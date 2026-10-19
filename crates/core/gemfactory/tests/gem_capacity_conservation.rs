@@ -110,7 +110,8 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
         let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, at, 1), s);
         hooks::sweep_forfeits(&ctx)?;
         called::run_call_slice(&ctx)?;
-        hooks::sweep_cleanup(&ctx)
+        hooks::sweep_cleanup(&ctx)?;
+        Ok(())
     })
 }
 

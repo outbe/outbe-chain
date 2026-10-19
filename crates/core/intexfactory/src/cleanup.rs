@@ -8,12 +8,11 @@ use outbe_primitives::{
     error::Result,
     expiry_queue::{self, Due, ExpiryHandler},
     storage::StorageHandle,
-    sweep_budget::SweepBudget,
 };
 
 /// Walks the expired groups and deletes each series nothing is left in. Returns the
 /// series deleted.
-pub(crate) fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
+pub fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = IntexContract::new(ctx.storage.clone());
     let mut cleanup = IntexCleanup {
         storage: &ctx.storage,
@@ -21,14 +20,7 @@ pub(crate) fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
         intex: IntexContract::new(ctx.storage.clone()),
         deleted: 0,
     };
-    let mut budget = SweepBudget::per_block();
-    expiry_queue::sweep(
-        &CleanupHours(&queue),
-        &ctx.storage,
-        ctx.block.timestamp,
-        &mut budget,
-        &mut cleanup,
-    )?;
+    expiry_queue::sweep_block(&CleanupHours(&queue), ctx, &mut cleanup)?;
     Ok(cleanup.deleted)
 }
 

@@ -10,27 +10,19 @@ use outbe_primitives::{
     error::{PrecompileError, Result, SweepFailure},
     expiry_queue::{self, Due, ExpiryHandler},
     storage::StorageHandle,
-    sweep_budget::SweepBudget,
 };
 
 use crate::errors::NodFactoryError;
 
 /// Deletes the unpaid Nods of the forfeited groups. Returns the Nods deleted.
-pub(crate) fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
+pub fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = NodContract::new(ctx.storage.clone());
     let mut cleanup = NodCleanup {
         storage: &ctx.storage,
         nod: NodContract::new(ctx.storage.clone()),
         deleted: 0,
     };
-    let mut budget = SweepBudget::per_block();
-    expiry_queue::sweep(
-        &CleanupHours(&queue),
-        &ctx.storage,
-        ctx.block.timestamp,
-        &mut budget,
-        &mut cleanup,
-    )?;
+    expiry_queue::sweep_block(&CleanupHours(&queue), ctx, &mut cleanup)?;
     Ok(cleanup.deleted)
 }
 

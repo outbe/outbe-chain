@@ -8,25 +8,17 @@ use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result, SweepFailure},
     expiry_queue::{self, Due, ExpiryHandler},
-    sweep_budget::SweepBudget,
 };
 
 /// Deletes the Credis of the forfeited groups. Returns the Credis deleted.
-pub(crate) fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
+pub fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = CredisContract::new(ctx.storage.clone());
     let mut cleanup = CredisCleanup {
         ctx,
         credis: CredisContract::new(ctx.storage.clone()),
         deleted: 0,
     };
-    let mut budget = SweepBudget::per_block();
-    expiry_queue::sweep(
-        &CleanupHours(&queue),
-        &ctx.storage,
-        ctx.block.timestamp,
-        &mut budget,
-        &mut cleanup,
-    )?;
+    expiry_queue::sweep_block(&CleanupHours(&queue), ctx, &mut cleanup)?;
     Ok(cleanup.deleted)
 }
 

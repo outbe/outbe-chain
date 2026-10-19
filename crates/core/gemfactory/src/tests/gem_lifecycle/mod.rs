@@ -202,7 +202,8 @@ pub(crate) fn block_ctx<'s>(storage: &StorageHandle<'s>) -> BlockRuntimeContext<
 pub(crate) fn continue_sweeps(ctx: &BlockRuntimeContext) -> Result<()> {
     crate::hooks::sweep_forfeits(ctx)?;
     crate::called::run_call_slice(ctx)?;
-    crate::hooks::sweep_cleanup(ctx)
+    crate::hooks::sweep_cleanup(ctx)?;
+    Ok(())
 }
 
 pub(crate) fn begin_block_at(storage: &StorageHandle, ts: u64) {
