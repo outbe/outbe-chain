@@ -55,6 +55,10 @@ contract LocalWcoenTokenBridge {
         _remoteBridge = InteroperableAddress.formatEvmV1(2, address(0xB21D6E));
     }
 
+    function token() external view returns (IERC20) {
+        return TOKEN;
+    }
+
     function quoteSend(uint32, address to, uint256 amount, bytes calldata extraData, uint256 gasLimit)
         external
         view

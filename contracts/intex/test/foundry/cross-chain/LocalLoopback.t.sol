@@ -113,6 +113,10 @@ contract SyncTokenBridge {
         TOKEN = token;
     }
 
+    function token() external view returns (IERC20) {
+        return TOKEN;
+    }
+
     function quoteSend(uint32, address, uint256, bytes calldata, uint256) external pure returns (uint256) {
         return 0;
     }

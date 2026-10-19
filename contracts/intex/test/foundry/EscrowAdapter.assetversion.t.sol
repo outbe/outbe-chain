@@ -124,6 +124,14 @@ contract EscrowAdapterAssetVersionTest is Test {
         assertEq(tokenA.balanceOf(proceeds), LOCK / 2, "paid at the day's 18-decimal scale");
     }
 
+    function test_ADayKeepsItsPaymentTokenAcrossARotation() public {
+        _lock(DAY_1, alice, tokenA);
+        escrow.wire(admin, COMPACT, address(tokenB));
+
+        assertEq(address(escrow.dayPaymentToken(DAY_1)), address(tokenA), "the day's own token");
+        assertEq(address(escrow.paymentToken()), address(tokenB), "the active token moved on");
+    }
+
     function test_ADayAfterARotationLocksUnderTheNewAsset() public {
         _lock(DAY_1, alice, tokenA);
         uint256 lockIdA = escrow.lockId();

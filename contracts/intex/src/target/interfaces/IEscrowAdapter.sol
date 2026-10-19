@@ -303,6 +303,10 @@ interface IEscrowAdapter {
     /// @notice Active payment token used for bid escrow (WCOEN).
     function paymentToken() external view returns (IERC20);
 
+    /// @notice Payment token of the asset a day locked under. Its proceeds leave in this token.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
+    function dayPaymentToken(uint32 worldwideDay) external view returns (IERC20);
+
     /// @notice Recipient of finalized auction proceeds (the router routing them cross-chain).
     function proceedsRecipient() external view returns (address);
 

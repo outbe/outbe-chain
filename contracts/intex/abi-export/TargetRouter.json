@@ -1505,6 +1505,22 @@
     },
     {
       "type": "error",
+      "name": "ProceedsTokenNotBridged",
+      "inputs": [
+        {
+          "name": "dayToken",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "bridgeToken",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "ReentrancyGuardReentrantCall",
       "inputs": []
     },

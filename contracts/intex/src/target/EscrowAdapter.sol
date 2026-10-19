@@ -141,6 +141,11 @@ contract EscrowAdapter is
     }
 
     /// @inheritdoc IEscrowAdapter
+    function dayPaymentToken(uint32 worldwideDay) external view override returns (IERC20) {
+        return _tokenOf(_s().auctionEscrowState[worldwideDay].assetVersion);
+    }
+
+    /// @inheritdoc IEscrowAdapter
     function proceedsRecipient() external view override returns (address) {
         return _s().proceedsRecipient;
     }
