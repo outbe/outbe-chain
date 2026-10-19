@@ -497,7 +497,8 @@ fn validator_reward_gem(world: &mut World) -> ValidatorRewardGem {
     let key = world.validators.get(0).evm_key().expect("validator 0 key");
     let owner = validator_reward_owner(world);
     let deadline = Instant::now() + Duration::from_secs(REWARD_GEM_TIMEOUT_SECS);
-    loop {
+    // The claim prices on the previous UTC day's VWAP, which can land after the credit.
+    let receipt = loop {
         let claimable = eth::read_call(
             &url,
             addresses::AGENT_REWARD_ADDR,
@@ -506,21 +507,25 @@ fn validator_reward_gem(world: &mut World) -> ValidatorRewardGem {
                 pool: eth::VALIDATOR_POOL,
             },
         );
-        if claimable.is_some_and(|claimable| !claimable.is_zero()) {
-            break;
-        }
+        let last_error = if claimable.is_some_and(|claimable| !claimable.is_zero()) {
+            match world
+                .rpc
+                .claim_agent_reward_gem(&key, eth::VALIDATOR_POOL, USD_ISO, USD_ISO)
+            {
+                Ok(receipt) => break receipt,
+                Err(error) => Some(error),
+            }
+        } else {
+            None
+        };
         assert!(
             Instant::now() < deadline,
-            "validator 0 has no claimable validator reward; head={:?} finalized={:?}",
+            "validator 0 did not claim its validator reward; last_error={last_error:?} head={:?} finalized={:?}",
             world.rpc.head(port),
             world.rpc.finalized(port)
         );
         sleep(Duration::from_millis(500));
-    }
-    let receipt = world
-        .rpc
-        .claim_agent_reward_gem(&key, eth::VALIDATOR_POOL, USD_ISO, USD_ISO)
-        .expect("validator 0 claims its validator reward as a Gem");
+    };
     let issued =
         eth::receipt_event::<eth::IGemFactory::GemIssued>(&receipt, addresses::GEM_FACTORY_ADDR);
     let block_number = receipt
@@ -640,6 +645,14 @@ fn successful_receipt(url: &str, tx: &str, label: &str) -> serde_json::Value {
     }
 }
 
+pub(crate) struct SettlementFunding<'a> {
+    pub(crate) asset: Address,
+    pub(crate) owner_key: &'a str,
+    pub(crate) owner: Address,
+    pub(crate) spender: Address,
+    pub(crate) amount: U256,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -678,12 +691,4 @@ mod tests {
         })
         .is_err());
     }
-}
-
-pub(crate) struct SettlementFunding<'a> {
-    pub(crate) asset: Address,
-    pub(crate) owner_key: &'a str,
-    pub(crate) owner: Address,
-    pub(crate) spender: Address,
-    pub(crate) amount: U256,
 }
