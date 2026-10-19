@@ -1,7 +1,7 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::GEM_ADDRESS;
-use outbe_primitives::time::{timestamp_to_date_key, WorldwideDay};
+use outbe_primitives::time::{first_full_day, timestamp_to_date_key, WorldwideDay};
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 use serde::{Deserialize, Serialize};
 
@@ -11,7 +11,7 @@ pub enum GemState {
     Issued = 0,
     Called = 1,
     Settled = 2,
-    /// Read-time only: a Called gem past its notice period, until the sweep burns it.
+    /// Read-time only: a Called gem past its notice period, until the cleanup deletes it.
     Forfeited = 3,
 }
 
@@ -31,8 +31,7 @@ pub struct GemAddParams {
     pub call_terms: Option<CallTerms>,
 }
 
-/// One gem record. The entry price and the call terms are the group's, read
-/// through [`GemView`].
+/// One gem record. The call terms are its group's, read through [`GemView`].
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[storage_record(exists_field = owner)]
 pub struct GemItemState {
@@ -50,7 +49,7 @@ pub struct GemItemState {
     pub reference_currency: u16,
     #[attribute(order = 5)]
     pub issued_at: u64,
-    /// `keccak(wwd ‖ entry_price ‖ reference_currency)`, see `crate::identity`.
+    /// `call_breach::group_key(full_day_after_issue, call_price, reference_currency)`.
     #[attribute(order = 6)]
     pub group_key: B256,
     /// `GemState::Issued` or `GemState::Settled`. Called is the group's.
@@ -63,20 +62,28 @@ pub struct GemItemState {
     /// Block timestamp of the settlement. `0` until Settled.
     #[attribute(order = 9)]
     pub settled_at: u64,
+    #[attribute(order = 10)]
+    pub entry_price_minor: U256,
 }
 
 impl GemItemState {
-    /// The worldwide day the gem was issued on. The group key binds this day, so a
-    /// gem and its group always agree on it.
+    /// The worldwide day the gem was issued on.
     #[must_use]
     pub fn worldwide_day(&self) -> WorldwideDay {
         WorldwideDay::new(timestamp_to_date_key(self.issued_at))
     }
 
+    /// The first full day the gem counts call days from. The group key binds it, so a
+    /// gem and its group always agree on it.
+    #[must_use]
+    pub fn full_day_after_issue(&self) -> WorldwideDay {
+        WorldwideDay::new(first_full_day(self.issued_at))
+    }
+
     /// Identity of the group body this gem belongs to.
     #[must_use]
     pub fn group_id(&self) -> WwdEntityId {
-        WwdEntityId::from_day_and_digest(self.worldwide_day(), self.group_key)
+        WwdEntityId::from_day_and_digest(self.full_day_after_issue(), self.group_key)
     }
 
     #[must_use]
@@ -88,26 +95,24 @@ impl GemItemState {
 /// Shared group record. The record is deleted once both the unpaid count and
 /// `settled_gems` reach zero.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[storage_record(exists_field = worldwide_day)]
+#[storage_record(exists_field = full_day_after_issue)]
 pub struct GemGroupState {
     #[key]
     pub group_key: B256,
-    /// Worldwide day of the first member. Later members are issued on the same day.
+    /// The first full day every member counts call days from.
     #[attribute(order = 0)]
-    pub worldwide_day: WorldwideDay,
+    pub full_day_after_issue: WorldwideDay,
     #[attribute(order = 1)]
-    pub entry_price_minor: U256,
-    #[attribute(order = 2)]
     pub reference_currency: u16,
     /// Paid members still holding the group open.
-    #[attribute(order = 3)]
+    #[attribute(order = 2)]
     pub settled_gems: u64,
 }
 
 impl GemGroupState {
     #[must_use]
     pub fn entity_id(&self) -> WwdEntityId {
-        WwdEntityId::from_day_and_digest(self.worldwide_day, self.group_key)
+        WwdEntityId::from_day_and_digest(self.full_day_after_issue, self.group_key)
     }
 }
 
@@ -180,7 +185,7 @@ pub struct GemContract {
     #[attribute(order = 0)]
     pub total_supply: outbe_primitives::storage::dsl::Value<u64>,
 
-    // --- Group membership: unpaid gems for the forfeit sweep, with a count,
+    // --- Group membership: unpaid gems for the cleanup, with a count,
     // positional map and reverse map for swap removal.
     #[attribute(order = 1)]
     pub group_gem_count: outbe_primitives::storage::dsl::Map<B256, u32>,
@@ -204,10 +209,6 @@ pub struct GemContract {
     pub group_call_threshold_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
     #[attribute(order = 9)]
     pub group_call_notice_period_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
-    /// Issuance timestamp of the first member. `first_full_day` of it starts the
-    /// breach count of the whole group.
-    #[attribute(order = 10)]
-    pub group_issued_at: outbe_primitives::storage::dsl::Map<B256, u64>,
     /// Block timestamp the group was called. `0` until then.
     #[attribute(order = 11)]
     pub group_called_at: outbe_primitives::storage::dsl::Map<B256, u64>,
@@ -296,6 +297,33 @@ pub struct GemContract {
     >,
     #[attribute(order = 41)]
     pub owner_id_position: outbe_primitives::storage::dsl::Map<WwdEntityId, u32>,
+
+    /// Promis load of the group's unpaid gems, returned at once when it is forfeited.
+    #[attribute(order = 42)]
+    pub group_unpaid_load: outbe_primitives::storage::dsl::Map<B256, U256>,
+
+    // --- Forfeited groups whose unpaid gems wait to be deleted, bucketed like the
+    // expiry queue.
+    #[attribute(order = 43)]
+    pub cleanup_tree_root: outbe_primitives::storage::dsl::Value<U256>,
+    #[attribute(order = 44)]
+    pub cleanup_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    #[attribute(order = 45)]
+    pub cleanup_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
+    #[attribute(order = 46)]
+    pub cleanup_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    #[attribute(order = 47)]
+    pub cleanup_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    #[attribute(order = 48)]
+    pub cleanup_bucket_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    #[attribute(order = 49)]
+    pub cleanup_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
+    #[attribute(order = 50)]
+    pub cleanup_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
+    #[attribute(order = 51)]
+    pub cleanup_sweep_hour: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 52)]
+    pub cleanup_cursor: outbe_primitives::storage::dsl::Value<u64>,
 }
 
 impl GemContract<'_> {

@@ -153,9 +153,30 @@ impl GemContract<'_> {
         self.group_call_window_seconds.clear(&group)?;
         self.group_call_threshold_seconds.clear(&group)?;
         self.group_call_notice_period_seconds.clear(&group)?;
-        self.group_issued_at.clear(&group)?;
         self.group_called_at.clear(&group)?;
+        self.group_unpaid_load.clear(&group)?;
+        expiry_queue::remove(&CleanupHours(self), group)?;
         self.group_gem_count.clear(&group)
+    }
+
+    // --- Unpaid load ----------------------------------------------------------------
+
+    pub(crate) fn add_unpaid_load(&mut self, group: B256, load: U256) -> Result<()> {
+        let total = self
+            .group_unpaid_load
+            .read(&group)?
+            .checked_add(load)
+            .ok_or(GemFatalError::UnpaidLoadOverflow { group })?;
+        self.group_unpaid_load.write(&group, total)
+    }
+
+    pub(crate) fn take_unpaid_load(&mut self, group: B256, load: U256) -> Result<()> {
+        let total = self
+            .group_unpaid_load
+            .read(&group)?
+            .checked_sub(load)
+            .ok_or(GemFatalError::UnpaidLoadUnderflow { group })?;
+        self.group_unpaid_load.write(&group, total)
     }
 
     // --- Expiry queue -------------------------------------------------------------
@@ -166,6 +187,19 @@ impl GemContract<'_> {
 
     pub fn remove_called(&mut self, group: B256) -> Result<()> {
         expiry_queue::remove(&ExpiryHours(self), group)
+    }
+
+    /// Moves a forfeited group from the expiry queue to the cleanup, which deletes its
+    /// unpaid gems. Done with the group's credit, so a retry never credits it twice.
+    pub fn hand_to_cleanup(&mut self, group: B256) -> Result<()> {
+        let deadline = self.called_deadline.read(&group)?;
+        expiry_queue::remove(&ExpiryHours(self), group)?;
+        expiry_queue::push(&CleanupHours(self), group, deadline)
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn first_cleanup_hour(&self) -> Result<Option<u32>> {
+        expiry_queue::first_bucket(&CleanupHours(self))
     }
 
     /// Hour since the epoch a deadline falls in: plain UTC, not a WorldwideDay.
@@ -225,6 +259,22 @@ outbe_primitives::impl_expiry_queue!(ExpiryHours<B256> {
     deadline: called_deadline,
     sweep_bucket: expiry_sweep_hour,
     cursor: expiry_cursor,
+});
+
+/// Forfeited groups whose unpaid gems wait to be deleted.
+pub struct CleanupHours<'a, 'storage>(pub &'a GemContract<'storage>);
+
+outbe_primitives::impl_expiry_queue!(CleanupHours<B256> {
+    root: cleanup_tree_root,
+    mid: cleanup_tree_mid,
+    leaf: cleanup_tree_leaf,
+    len: cleanup_bucket_len,
+    live: cleanup_bucket_live,
+    at: cleanup_bucket_at,
+    slot: cleanup_group_slot,
+    deadline: cleanup_deadline,
+    sweep_bucket: cleanup_sweep_hour,
+    cursor: cleanup_cursor,
 });
 
 /// The uncalled groups of one reference currency, by call price.

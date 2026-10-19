@@ -805,6 +805,7 @@ mod claim_tests {
             callWindow: 0,
             callThreshold: 0,
             settlementDeadline: 0,
+            groupKey: Default::default(),
         }
     }
 

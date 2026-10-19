@@ -2,7 +2,7 @@ use crate::errors::GemError;
 use crate::precompile::IGem;
 use crate::schema::{CallTerms, GemContract, GemGroupState, GemItemState};
 use crate::GemState;
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256};
 use outbe_primitives::{
     error::{PrecompileError, Result},
     storage::StorageHandle,
@@ -54,12 +54,10 @@ pub fn load_group(storage: &StorageHandle<'_>, key: B256) -> Result<Option<Loade
 pub fn add_item(
     storage: &StorageHandle<'_>,
     item: &GemItemState,
-    entry: U256,
     terms: Option<CallTerms>,
 ) -> Result<()> {
-    storage.with_checkpoint(|| {
-        GemContract::new(storage.clone()).record_gem_issued_state(item, entry, terms)
-    })
+    storage
+        .with_checkpoint(|| GemContract::new(storage.clone()).record_gem_issued_state(item, terms))
 }
 pub fn record_settled(
     storage: &StorageHandle<'_>,
@@ -95,7 +93,6 @@ impl GemContract<'_> {
     fn record_gem_issued_state(
         &mut self,
         item: &GemItemState,
-        entry_price_minor: U256,
         call_terms: Option<CallTerms>,
     ) -> Result<()> {
         if item.owner.is_zero() {
@@ -119,20 +116,19 @@ impl GemContract<'_> {
         let new_group = match current_group {
             Some(_) => None,
             None => {
-                self.group_issued_at.write(&group_key, item.issued_at)?;
                 if let Some(terms) = call_terms {
                     self.seal_group_call_terms(group_key, terms)?;
                     self.insert_call_bin(group_key)?;
                 }
                 Some(GemGroupState {
                     group_key,
-                    worldwide_day: item.worldwide_day(),
-                    entry_price_minor,
+                    full_day_after_issue: item.full_day_after_issue(),
                     reference_currency: item.reference_currency,
                     settled_gems: 0,
                 })
             }
         };
+        self.add_unpaid_load(group_key, item.promis_load_minor)?;
 
         let supply = self
             .total_supply
@@ -164,6 +160,7 @@ impl GemContract<'_> {
             .checked_add(1)
             .ok_or(GemError::SettledCountOverflow)?;
         self.remove_group_member(item.group_key, item.gem_id.to_u256())?;
+        self.take_unpaid_load(item.group_key, item.promis_load_minor)?;
         item.called_at = self.group_called_at.read(&item.group_key)?;
         item.settled_at = self.storage.timestamp()?.to::<u64>();
         item.state = GemState::Settled as u8;
@@ -178,7 +175,7 @@ impl GemContract<'_> {
         let item = item.into_body();
         let mut group = group.into_body();
         check_loaded(self, &item, &group)?;
-        let group_id = WwdEntityId::from_day_and_digest(group.worldwide_day, group.group_key);
+        let group_id = group.entity_id();
         let supply = self
             .total_supply
             .read()?
@@ -192,6 +189,7 @@ impl GemContract<'_> {
                 .ok_or(GemError::SettledCountUnderflow { group_id })?;
             self.group_gem_count.read(&item.group_key)?
         } else {
+            self.take_unpaid_load(item.group_key, item.promis_load_minor)?;
             self.remove_group_member(item.group_key, item.gem_id.to_u256())?
         };
         self.delete_state_record(item.gem_id)?;
@@ -212,6 +210,7 @@ impl GemContract<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::U256;
     use outbe_primitives::{storage::hashmap::HashMapStorageProvider, time::WorldwideDay};
 
     #[test]
@@ -227,12 +226,17 @@ mod tests {
                 issuance_currency: 840,
                 reference_currency: 840,
                 issued_at: day.start_timestamp(),
-                group_key: crate::identity::group_key(day, U256::from(1_000_000), 840),
+                group_key: outbe_primitives::call_breach::group_key(
+                    day.value(),
+                    U256::from(2_280_000),
+                    840,
+                ),
                 state: GemState::Issued as u8,
                 called_at: 0,
                 settled_at: 0,
+                entry_price_minor: U256::from(1_000_000),
             };
-            add_item(&storage, &item, U256::from(1_000_000), None).unwrap();
+            add_item(&storage, &item, None).unwrap();
             let contract = GemContract::new(storage.clone());
             assert_eq!(contract.total_supply.read().unwrap(), 1);
             let stale_item = load_item(&storage, item.gem_id).unwrap().unwrap();
@@ -279,13 +283,18 @@ mod tests {
                 issuance_currency: 840,
                 reference_currency: 840,
                 issued_at: day.start_timestamp(),
-                group_key: crate::identity::group_key(day, U256::from(1_000_000), 840),
+                group_key: outbe_primitives::call_breach::group_key(
+                    day.value(),
+                    U256::from(2_280_000),
+                    840,
+                ),
                 state: GemState::Issued as u8,
                 called_at: 0,
                 settled_at: 0,
+                entry_price_minor: U256::from(1_000_000),
             };
             assert!(matches!(
-                add_item(&storage, &item, U256::from(1_000_000), None),
+                add_item(&storage, &item, None),
                 Err(PrecompileError::Revert(reason)) if reason == GemError::ZeroOwner.to_string()
             ));
             let contract = GemContract::new(storage.clone());

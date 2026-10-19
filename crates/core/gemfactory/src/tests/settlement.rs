@@ -638,7 +638,7 @@ fn an_sra_gem_keeps_its_sixty_four_percent_through_the_currency_conversion() {
         assert_eq!(quote(sra), U256::from(57_600_000u64));
         let item = gem_view(storage, sra);
         assert_eq!(
-            (item.group.entry_price_minor, item.item.promis_load_minor),
+            (item.item.entry_price_minor, item.item.promis_load_minor),
             (usd_rate, load)
         );
     });
@@ -680,8 +680,8 @@ fn the_issuance_rail_converts_at_the_trailing_window_not_the_closed_day() {
     });
 }
 
-/// The gem record carries the load and the type. It has no entry-price field:
-/// adding one fails this destructure.
+/// The gem record carries the load and the type. Adding a field fails this
+/// destructure, so a new cost input cannot slip past the cost checks.
 fn gem_cost_inputs(item: &GemItemState) -> (u8, U256) {
     let GemItemState {
         gem_id: _,
@@ -695,6 +695,7 @@ fn gem_cost_inputs(item: &GemItemState) -> (u8, U256) {
         state: _,
         called_at: _,
         settled_at: _,
+        entry_price_minor: _,
     } = item;
     (*gem_type, *promis_load_minor)
 }
@@ -739,10 +740,10 @@ fn settlement_cost_reads_entry_price_from_the_group() {
         let light_view = gem_view(storage, light_id);
         let other_view = gem_view(storage, other_id);
         assert_eq!(heavy_view.item.group_key, light_view.item.group_key);
-        assert_eq!(heavy_view.group.entry_price_minor, rate);
-        assert_eq!(light_view.group.entry_price_minor, rate);
+        assert_eq!(heavy_view.item.entry_price_minor, rate);
+        assert_eq!(light_view.item.entry_price_minor, rate);
         assert_ne!(other_view.item.group_key, heavy_view.item.group_key);
-        assert_eq!(other_view.group.entry_price_minor, other_entry);
+        assert_eq!(other_view.item.entry_price_minor, other_entry);
         assert_eq!(
             other_view.item.promis_load_minor,
             heavy_view.item.promis_load_minor
@@ -755,7 +756,7 @@ fn settlement_cost_reads_entry_price_from_the_group() {
         };
         let expected = |view: &GemView| {
             let (gem_type, load) = gem_cost_inputs(&view.item);
-            six_decimal_settlement_cost(view.group.entry_price_minor, load, gem_type)
+            six_decimal_settlement_cost(view.item.entry_price_minor, load, gem_type)
         };
         assert_eq!(quoted(heavy_id), expected(&heavy_view));
         assert_eq!(quoted(light_id), expected(&light_view));

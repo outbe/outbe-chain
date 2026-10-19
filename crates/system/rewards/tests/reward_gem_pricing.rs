@@ -36,16 +36,11 @@ fn prepare(ctx: &BlockRuntimeContext) {
     prepare_daily_validator_gem_batch(ctx, REWARD_DAY, U256::from(LOAD), &[(VOTER, 1)]).unwrap();
 }
 
-/// The entry price the voter's delivered gem carries. It lives on the group.
+/// The entry price the voter's delivered gem carries.
 fn delivered_entry_price(ctx: &BlockRuntimeContext) -> U256 {
     let mut owned = outbe_gem::api::list_by_owner(&ctx.storage, VOTER).unwrap();
     assert_eq!(owned.len(), 1);
-    let item = owned.pop().unwrap();
-    outbe_gem::api::get_view(&ctx.storage, item.gem_id.to_u256())
-        .unwrap()
-        .unwrap()
-        .group
-        .entry_price_minor
+    owned.pop().unwrap().entry_price_minor
 }
 
 /// Anchors genesis on the reward day, then runs `f` in a block three days later.

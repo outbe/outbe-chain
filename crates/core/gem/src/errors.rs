@@ -73,6 +73,12 @@ pub enum GemFatalError {
 
     #[error("gem group {group} member index overflow")]
     GroupMemberIndexOverflow { group: B256 },
+
+    #[error("gem group {group} unpaid load overflow")]
+    UnpaidLoadOverflow { group: B256 },
+
+    #[error("gem group {group} unpaid load underflow")]
+    UnpaidLoadUnderflow { group: B256 },
 }
 
 impl From<GemError> for PrecompileError {

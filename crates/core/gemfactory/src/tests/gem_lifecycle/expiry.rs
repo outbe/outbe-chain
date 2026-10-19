@@ -1,11 +1,12 @@
-//! The forfeit sweep: called groups whose notice lapsed burn their unpaid gems and
-//! return the loads to the Promis reserve, one body at a time under the block budget.
+//! The forfeit sweep: a called group whose notice lapsed returns its unpaid load to the
+//! Promis reserve in one credit, and the cleanup deletes its unpaid gems under the
+//! block budget.
 
 use alloy_primitives::{B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_primitives::addresses::{GEM_ADDRESS, GEM_FACTORY_ADDRESS, PROMIS_LIMIT_ADDRESS};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::sweep_budget::{SWEEP_BODY_WRITES_PER_BLOCK, SWEEP_WRITES_PER_BLOCK};
+use outbe_primitives::sweep_budget::SWEEP_WRITES_PER_BLOCK;
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
@@ -66,14 +67,11 @@ fn forfeit_deletes_the_gem_and_returns_promis_load() {
         })
         .expect("the burn is announced");
     assert_eq!((burned.from, burned.tokenId), (ALICE, gem_id));
-    let expired = events
+    let forfeited = events
         .iter()
-        .find_map(|log| IGem::GemForfeited::decode_log_data(log).ok())
+        .find_map(|log| IGem::GemGroupForfeited::decode_log_data(log).ok())
         .unwrap();
-    assert_eq!(
-        (expired.gemId, expired.owner, expired.promisLoadMinor),
-        (gem_id, ALICE, load)
-    );
+    assert_eq!((forfeited.gems, forfeited.promisLoadMinor), (1, load));
 }
 
 #[test]
@@ -271,73 +269,66 @@ fn a_group_whose_member_fails_to_burn_is_deferred_and_burned_later() {
     assert_eq!(deferred, 1);
 }
 
-/// One member that cannot burn stays in its group, deferred. The others burn on time.
+/// A group whose credit fails is deferred whole: none of its gems is credited or
+/// deleted until the credit fits, and then all of them at once.
 #[test]
-fn a_member_that_cannot_burn_does_not_hold_back_its_group() {
+fn a_group_whose_credit_fails_is_deferred_whole() {
     with_storage(|storage| {
         let gems = alice_gems(storage, &[1, 1_000]);
         call_gem(storage, gems[0], T_NOW);
         let now = first_due_block(storage, gems[0]);
-        // Room for the small load's credit only.
+        // Room for the small load's credit only, not the group's.
         let mut limit = outbe_promislimit::PromisLimitContract::new(storage.clone());
         limit.checked_take_carry_over_up_to(U256::MAX).unwrap();
         limit
             .checked_add_carry_over(U256::MAX - U256::from(500u64))
             .unwrap();
 
-        // The failing member sits on top, where the sweep starts.
         begin_block_at(storage, now);
-        assert!(item(storage, gems[0]).is_none(), "burned");
-        assert_eq!(gem_state(storage, gems[1]), GemState::Called as u8);
-        assert_eq!(
-            GemContract::new(storage.clone())
-                .group_gem_count
-                .read(&bucket_of(storage, gems[1]))
-                .unwrap(),
-            1,
-            "it stays in its group"
-        );
+        for gem_id in &gems {
+            assert_eq!(gem_state(storage, *gem_id), GemState::Called as u8);
+        }
 
         limit.checked_take_carry_over_up_to(U256::MAX).unwrap();
         begin_block_at(
             storage,
             GemContract::hour_end(GemContract::deadline_hour(now) + 1),
         );
-        assert!(item(storage, gems[1]).is_none());
-        assert_eq!(unallocated(storage), U256::from(1_000u64));
+        assert!(gems.iter().all(|gem_id| item(storage, *gem_id).is_none()));
+        assert_eq!(unallocated(storage), U256::from(1_001u64));
     });
 }
 
-/// A broken group index reverts, so the sweep defers the group instead of failing
-/// every block.
+/// A broken group index cannot stop the forfeit, which reads only the group's totals.
+/// The cleanup keeps the gem it cannot delete and tries it again later.
 #[test]
-fn a_broken_group_index_defers_the_group_and_keeps_blocks_going() {
+fn a_broken_group_index_holds_back_only_the_cleanup() {
     let mut provider = provider_at(T_NOW);
-    let group = StorageHandle::enter(&mut provider, |storage| {
+    StorageHandle::enter(&mut provider, |storage| {
         let gems = alice_gems(&storage, &[1, 2]);
         call_gem(&storage, gems[0], T_NOW);
-        let group = bucket_of(&storage, gems[0]);
         GemContract::new(storage.clone())
             .group_gem_index
             .write(&gems[1], 7)
             .unwrap();
         begin_block_at(&storage, first_due_block(&storage, gems[0]));
-        assert_eq!(gem_state(&storage, gems[1]), GemState::Called as u8);
-        group
+        assert_eq!(unallocated(&storage), U256::from(3u64));
+        assert!(item(&storage, gems[1]).is_some());
+        assert!(GemContract::new(storage.clone())
+            .first_cleanup_hour()
+            .unwrap()
+            .is_some());
     });
-    let deferred: Vec<_> = provider
+    assert!(provider
         .get_events(GEM_FACTORY_ADDRESS)
         .iter()
-        .filter_map(|log| crate::precompile::IGemFactory::ExpiryDeferred::decode_log_data(log).ok())
-        .map(|event| event.groupKey)
-        .collect();
-    assert_eq!(deferred, vec![group]);
+        .all(|log| crate::precompile::IGemFactory::ExpiryDeferred::decode_log_data(log).is_err()));
 }
 
-/// A called group wider than one block's budget burns over several blocks, then
-/// leaves the queue.
+/// A called group wider than one block's budget is credited at once, and its gems are
+/// deleted over the next blocks.
 #[test]
-fn a_called_group_wider_than_the_budget_burns_over_several_blocks() {
+fn a_called_group_wider_than_the_budget_is_cleaned_up_over_several_blocks() {
     with_storage(|storage| {
         let loads: Vec<u64> = (0..=u64::from(SWEEP_WRITES_PER_BLOCK))
             .map(|n| 1_000 + n)
@@ -352,27 +343,17 @@ fn a_called_group_wider_than_the_budget_burns_over_several_blocks() {
         };
 
         begin_block_at(storage, now);
+        assert_eq!(unallocated(storage), U256::from(loads.iter().sum::<u64>()));
         assert_eq!(
             live(),
-            gems.len() - SWEEP_BODY_WRITES_PER_BLOCK as usize,
-            "one block burns its body budget"
+            gems.len() - SWEEP_WRITES_PER_BLOCK as usize,
+            "one block deletes its write budget"
         );
-        let mut blocks = 1;
-        while live() > 0 {
-            assert!(
-                blocks < 16,
-                "the queue drains within a bounded number of blocks"
-            );
-            begin_block_at(storage, now + blocks);
-            blocks += 1;
-        }
+        begin_block_at(storage, now + 1);
         assert_eq!(live(), 0);
-        assert_eq!(
-            GemContract::new(storage.clone())
-                .first_expiry_day()
-                .unwrap(),
-            None
-        );
+        let gem = GemContract::new(storage.clone());
+        assert_eq!(gem.first_expiry_day().unwrap(), None);
+        assert_eq!(gem.first_cleanup_hour().unwrap(), None);
         assert_eq!(unallocated(storage), U256::from(loads.iter().sum::<u64>()));
     });
 }

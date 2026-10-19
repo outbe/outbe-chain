@@ -72,11 +72,14 @@ pub enum GemFactoryError {
     #[error("{0} undecodable")]
     UndecodableReturn(&'static str),
 
-    #[error("gem group {group_key} has an empty member slot during forfeit")]
-    EmptyMemberSlotDuringForfeit { group_key: B256 },
+    #[error("gem group {group_key} has an empty member slot during cleanup")]
+    EmptyMemberSlotDuringCleanup { group_key: B256 },
 
-    #[error("gem group {group_key} member {gem_id} has no body during forfeit")]
-    MissingMemberRecordDuringForfeit { group_key: B256, gem_id: U256 },
+    #[error("gem group {group_key} member {gem_id} has no record during cleanup")]
+    MissingMemberRecordDuringCleanup { group_key: B256, gem_id: U256 },
+
+    #[error("gem group {group} has no record to call")]
+    MissingGroupForCall { group: B256 },
 
     #[error("gem group {group_key} indexes an ineligible member {gem_id}")]
     IneligibleGroupMember { group_key: B256, gem_id: U256 },

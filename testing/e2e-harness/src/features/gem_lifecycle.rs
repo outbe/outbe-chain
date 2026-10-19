@@ -333,7 +333,7 @@ fn gem_bodies_match_on_every_committee_port(world: &mut World) {
         assert_eq!(item.promis_load_minor, view.promisLoadMinor);
         assert_eq!(item.issued_at, view.issuedAt);
         assert_eq!(group.group_key, item.group_key);
-        assert_eq!(group.entry_price_minor, view.entryPriceMinor);
+        assert_eq!(item.entry_price_minor, view.entryPriceMinor);
         assert_eq!(group.reference_currency, item.reference_currency);
     }
 }
@@ -626,14 +626,24 @@ fn assert_expiry_returns(world: &World, height: u64, require_position_expiry: bo
     } else if !position_expired {
         assert_eq!(position.remainingCapacityMinor, unissued_capacity());
     }
+    let group = eth::read_call_at(
+        &url,
+        addresses::GEM_ADDR,
+        &eth::IGem::getGemCall {
+            gemId: gem(world, FORFEITED),
+        },
+        from,
+    )
+    .expect("the forfeited gem was live before its group was forfeited")
+    .groupKey;
     assert_single_event(
         &url,
         addresses::GEM_ADDR,
         from,
         height,
-        eth::IGem::GemForfeited {
-            gemId: gem(world, FORFEITED),
-            owner: owner_address(FORFEITED),
+        eth::IGem::GemGroupForfeited {
+            groupKey: group,
+            gems: 1,
             promisLoadMinor: U256::from(GEM_LOAD_MINOR),
         },
     );

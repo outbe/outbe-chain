@@ -1,9 +1,10 @@
 //! Cross-module API for the Gem entity store.
 
 use alloy_primitives::{Address, B256, U256};
+use outbe_primitives::call_breach::group_key;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::{timestamp_to_date_key, WorldwideDay};
+use outbe_primitives::time::first_full_day;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 use crate::schema::{
@@ -12,7 +13,7 @@ use crate::schema::{
 
 pub use crate::state_api::{LoadedGem, LoadedGemGroup};
 
-/// Records a gem in the group of its day, entry price and reference currency,
+/// Records a gem in the group of its first full day, call price and reference currency,
 /// opening that group if it is the first. Returns the gem id. GemFactory decides the issue.
 pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256> {
     let gem_id = GemContract::generate_gem_id(
@@ -20,7 +21,9 @@ pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256
         params.promis_load_minor,
         storage.block_number()?,
     );
-    let worldwide_day = WorldwideDay::new(timestamp_to_date_key(params.issued_at));
+    let call_price = params
+        .call_terms
+        .map_or(U256::ZERO, |terms| terms.call_price_minor);
     let item = GemItemState {
         gem_id: WwdEntityId::from(gem_id),
         owner: params.owner,
@@ -29,16 +32,17 @@ pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256
         issuance_currency: params.issuance_currency,
         reference_currency: params.reference_currency,
         issued_at: params.issued_at,
-        group_key: crate::identity::group_key(
-            worldwide_day,
-            params.entry_price_minor,
+        group_key: group_key(
+            first_full_day(params.issued_at),
+            call_price,
             params.reference_currency,
         ),
         state: GemState::Issued as u8,
         called_at: 0,
         settled_at: 0,
+        entry_price_minor: params.entry_price_minor,
     };
-    record_issued(storage, &item, params.entry_price_minor, params.call_terms)?;
+    record_issued(storage, &item, params.call_terms)?;
     Ok(gem_id)
 }
 
@@ -46,10 +50,9 @@ pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256
 pub fn record_issued(
     storage: &StorageHandle<'_>,
     item: &GemItemState,
-    entry_price_minor: U256,
     call_terms: Option<CallTerms>,
 ) -> Result<()> {
-    crate::state_api::add_item(storage, item, entry_price_minor, call_terms)
+    crate::state_api::add_item(storage, item, call_terms)
 }
 
 /// Loads a gem while retaining its exact stored state for mutation.
@@ -121,6 +124,19 @@ pub fn balance_of(storage: &StorageHandle<'_>, owner: Address) -> Result<u32> {
         .owner_ids
         .list(&owner)
         .len()
+}
+
+/// The owner's `index`-th gem in its owner index, read in one slot.
+pub fn token_of_owner_by_index(
+    storage: &StorageHandle<'_>,
+    owner: Address,
+    index: u32,
+) -> Result<Option<U256>> {
+    Ok(GemContract::new(storage.clone())
+        .owner_ids
+        .list(&owner)
+        .get(index)?
+        .map(|id| id.to_u256()))
 }
 
 /// One owner's gems, read through the owner index.

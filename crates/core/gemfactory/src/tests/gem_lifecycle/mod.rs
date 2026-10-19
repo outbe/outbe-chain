@@ -201,7 +201,8 @@ pub(crate) fn block_ctx<'s>(storage: &StorageHandle<'s>) -> BlockRuntimeContext<
 /// One block of the Gem sweeps as CycleTick runs them: what fell due, then a slice.
 pub(crate) fn continue_sweeps(ctx: &BlockRuntimeContext) -> Result<()> {
     crate::hooks::sweep_forfeits(ctx)?;
-    crate::called::run_call_slice(ctx).map(drop)
+    crate::called::run_call_slice(ctx)?;
+    crate::hooks::sweep_cleanup(ctx)
 }
 
 pub(crate) fn begin_block_at(storage: &StorageHandle, ts: u64) {

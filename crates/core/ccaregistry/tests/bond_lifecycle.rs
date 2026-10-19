@@ -372,7 +372,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
                 outbe_gemfactory::schema::GemTypes::Cca as u8
             );
             assert_eq!(gem.item.promis_load_minor, U256::from(load));
-            assert_eq!(gem.group.entry_price_minor, price);
+            assert_eq!(gem.item.entry_price_minor, price);
             assert_eq!(gem.item.issuance_currency, 840);
             assert_eq!(gem.item.reference_currency, 840);
             assert_eq!(gem.item.issued_at, claim_time);

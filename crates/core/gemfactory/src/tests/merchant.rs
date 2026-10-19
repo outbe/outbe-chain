@@ -184,7 +184,7 @@ fn issue_merchant_gem_mints_issued_and_drains_capacity() {
         assert_eq!(item.item.owner, BOB);
         assert_eq!(item.item.gem_type, GemTypes::Merchant as u8);
         assert_eq!(item.item.state, GemState::Issued as u8);
-        assert_eq!(item.group.entry_price_minor, rate); // max(coen, source_entry) = coen
+        assert_eq!(item.item.entry_price_minor, rate); // max(coen, source_entry) = coen
         assert_eq!(
             runtime::gem_cost_minor(&item).unwrap(),
             U256::from(20u64) * six_decimal_unit()
@@ -221,7 +221,7 @@ fn issue_merchant_gem_anchors_entry_to_source() {
         )
         .unwrap();
         let item = gem_view(storage, gem_id);
-        assert_eq!(item.group.entry_price_minor, source_entry);
+        assert_eq!(item.item.entry_price_minor, source_entry);
     });
 }
 
@@ -388,7 +388,7 @@ fn issue_merchant_gem_prices_at_the_previous_day_vwap() {
         )
         .unwrap();
         let item = gem_view(storage, gem_id);
-        assert_eq!(item.group.entry_price_minor, vwap);
+        assert_eq!(item.item.entry_price_minor, vwap);
         assert_eq!(
             item.terms.call_price_minor,
             vwap * U256::from(228u64) / U256::from(100u64)
@@ -465,7 +465,7 @@ fn issue_merchant_gem_takes_the_higher_entry() {
             )
             .unwrap();
             let item = gem_view(storage, gem_id);
-            assert_eq!(item.group.entry_price_minor, entry);
+            assert_eq!(item.item.entry_price_minor, entry);
         });
     }
 }
@@ -480,7 +480,7 @@ fn an_agent_gem_prices_cost_and_call_from_the_entry_at_every_rate() {
             let gem_id =
                 issue_at_live_rate(storage, ALICE, GemTypes::Validator, load, 840, 840).unwrap();
             let item = gem_view(storage, gem_id);
-            assert_eq!(item.group.entry_price_minor, rate);
+            assert_eq!(item.item.entry_price_minor, rate);
             assert_eq!(
                 item.terms.call_price_minor,
                 rate * U256::from(228u64) / U256::from(100u64)

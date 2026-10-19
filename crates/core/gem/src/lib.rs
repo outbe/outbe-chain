@@ -23,7 +23,7 @@ pub use errors::{GemError, GemFatalError};
 pub use schema::{
     CallTerms, GemAddParams, GemContract, GemGroupState, GemItemState, GemState, GemView,
 };
-pub use state::{CallBins, ExpiryHours};
+pub use state::{CallBins, CleanupHours, ExpiryHours};
 
 #[cfg(test)]
 mod tests;

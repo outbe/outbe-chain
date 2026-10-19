@@ -145,6 +145,11 @@
             "name": "settlementDeadline",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "groupKey",
+            "type": "bytes32",
+            "internalType": "bytes32"
           }
         ]
       }
@@ -458,31 +463,6 @@
   },
   {
     "type": "event",
-    "name": "GemForfeited",
-    "inputs": [
-      {
-        "name": "gemId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "owner",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "promisLoadMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "GemGroupCalled",
     "inputs": [
       {
@@ -502,6 +482,31 @@
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "GemGroupForfeited",
+    "inputs": [
+      {
+        "name": "groupKey",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "gems",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "promisLoadMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false

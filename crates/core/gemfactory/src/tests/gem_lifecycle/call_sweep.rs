@@ -236,10 +236,10 @@ fn the_issue_day_counts_only_for_a_gem_issued_at_midnight() {
     }
 }
 
-/// The breach count of a group starts on the first member's first full day, so a
-/// later member issued the same day does not move it.
+/// A gem issued at midnight counts that day, and one issued later that day does not:
+/// they sit in different groups, so the later one is never called a day early.
 #[test]
-fn second_member_with_a_different_issued_at_joins_the_first_members_group() {
+fn a_later_gem_of_a_midnight_gems_day_does_not_count_the_partial_day() {
     let threshold_days = (outbe_gem::constants::CALL_THRESHOLD / SECONDS_PER_DAY_U32) as usize;
     let mut oldest_breach = timestamp_to_date_key(T_NOW);
     for _ in 1..threshold_days {
@@ -254,7 +254,7 @@ fn second_member_with_a_different_issued_at_joins_the_first_members_group() {
         let mut second = sample_params(BOB);
         second.issued_at = midnight + 3_600;
         let second = add(storage, second);
-        assert_eq!(bucket_of(storage, first), bucket_of(storage, second));
+        assert_ne!(bucket_of(storage, first), bucket_of(storage, second));
 
         let threshold = view(storage, first).terms.call_price_minor;
         let window = breach_window(T_NOW, threshold + U256::from(1u64), threshold_days);
@@ -262,9 +262,14 @@ fn second_member_with_a_different_issued_at_joins_the_first_members_group() {
         assert!(
             crate::called::call_if_breached(&mut gem, &window, bucket_of(storage, first), T_NOW)
                 .unwrap(),
-            "the group counts from its first member's midnight"
+            "the midnight gem counts its whole first day"
         );
-        assert_eq!(gem_state(storage, second), GemState::Called as u8);
+        assert!(
+            !crate::called::call_if_breached(&mut gem, &window, bucket_of(storage, second), T_NOW)
+                .unwrap(),
+            "the later gem counts from the next day, one short"
+        );
+        assert_eq!(gem_state(storage, second), GemState::Issued as u8);
     });
 }
 

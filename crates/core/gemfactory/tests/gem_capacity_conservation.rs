@@ -109,21 +109,30 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
     StorageHandle::enter(p, |s| {
         let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, at, 1), s);
         hooks::sweep_forfeits(&ctx)?;
-        called::run_call_slice(&ctx).map(drop)
+        called::run_call_slice(&ctx)?;
+        hooks::sweep_cleanup(&ctx)
     })
 }
 
+/// Every load is either still live or returned once, and every gem is either still
+/// live or counted by its group's forfeit. A forfeited gem waiting for the cleanup is
+/// no longer live: its load was returned with its group.
 fn conserved(p: &mut HashMapStorageProvider, rights: &[(U256, U256)]) {
-    let (live, returned, count) = StorageHandle::enter(p, |s| {
+    let (live, live_count, returned) = StorageHandle::enter(p, |s| {
+        let gem = GemContract::new(s.clone());
         let live = rights
             .iter()
             .filter_map(|(id, _)| api::get_item(&s, *id).unwrap())
-            .map(|gem| gem.promis_load_minor)
-            .sum::<U256>();
+            .filter(|item| gem.cleanup_group_slot.read(&item.group_key).unwrap() == 0)
+            .collect::<Vec<_>>();
         let returned = PromisLimitContract::new(s.clone())
             .get_total_unallocated()
             .unwrap();
-        (live, returned, GemContract::new(s).total_supply().unwrap())
+        (
+            live.iter().map(|item| item.promis_load_minor).sum::<U256>(),
+            live.len() as u64,
+            returned,
+        )
     });
     assert_eq!(
         live + returned,
@@ -132,9 +141,18 @@ fn conserved(p: &mut HashMapStorageProvider, rights: &[(U256, U256)]) {
     let expired = p
         .get_events(GEM_ADDRESS)
         .iter()
-        .filter_map(|event| outbe_gem::precompile::IGem::GemForfeited::decode_log_data(event).ok())
+        .filter_map(|event| {
+            outbe_gem::precompile::IGem::GemGroupForfeited::decode_log_data(event).ok()
+        })
         .collect::<Vec<_>>();
-    assert_eq!(expired.len() as u64 + count, rights.len() as u64);
+    assert_eq!(
+        expired
+            .iter()
+            .map(|event| u64::from(event.gems))
+            .sum::<u64>()
+            + live_count,
+        rights.len() as u64
+    );
     assert_eq!(
         expired
             .iter()

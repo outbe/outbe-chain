@@ -395,7 +395,7 @@ fn merchant_entry_price(storage: &StorageHandle, source_entry: U256) -> U256 {
         },
     )
     .unwrap();
-    gem_view(storage, gem_id).group.entry_price_minor
+    gem_view(storage, gem_id).item.entry_price_minor
 }
 
 mod capacity_conservation;

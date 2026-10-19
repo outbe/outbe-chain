@@ -5,6 +5,7 @@
 use alloy_primitives::{B256, U256};
 use outbe_gem::precompile::IGem::{BatchMetadataUpdate, GemGroupCalled};
 
+use crate::errors::GemFactoryError;
 use crate::precompile::IGemFactory::{CallScanSkipped, SweepDaySkipped};
 use crate::runtime::emit_event;
 use outbe_gem::{CallBins, CallTerms, GemContract, GemParams};
@@ -20,7 +21,6 @@ use outbe_primitives::{
     error::{PrecompileError, Result, SweepFailure},
     storage::dsl::Value,
     sweep_budget::SweepBudget,
-    time::first_full_day,
 };
 
 /// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
@@ -176,8 +176,7 @@ pub(crate) fn call_currency(
 /// on at least its threshold days of its trailing window. Returns true if called.
 ///
 /// The terms were sealed when the group opened, so a later profile change cannot
-/// re-term it. Days before the first full day of the first member never count: the
-/// group did not exist yet.
+/// re-term it. Days before the group's first full day never count: no member existed yet.
 pub(crate) fn call_if_breached(
     gem: &mut GemContract<'_>,
     window: &CallWindow,
@@ -188,12 +187,16 @@ pub(crate) fn call_if_breached(
         return Ok(false);
     }
     let terms = gem.read_call_terms(group)?;
-    let issued_at = gem.group_issued_at.read(&group)?;
+    let start_day = gem
+        .groups
+        .get(group)?
+        .ok_or(GemFactoryError::MissingGroupForCall { group })?
+        .full_day_after_issue;
     let breached = window.breached(&BreachTerms {
         call_price: terms.call_price_minor,
         window_seconds: terms.call_window_seconds,
         threshold_seconds: terms.call_threshold_seconds,
-        start_day: first_full_day(issued_at),
+        start_day: start_day.value(),
     });
     if !breached {
         return Ok(false);

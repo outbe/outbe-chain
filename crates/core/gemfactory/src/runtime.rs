@@ -127,7 +127,7 @@ fn emit_gem_issued(storage: &StorageHandle<'_>, gem_id: U256, position_id: U256)
             gemType: gem.item.gem_type,
             owner: gem.item.owner,
             promisLoadMinor: gem.item.promis_load_minor,
-            entryPriceMinor: gem.group.entry_price_minor,
+            entryPriceMinor: gem.item.entry_price_minor,
             issuanceCurrency: gem.item.issuance_currency,
             referenceCurrency: gem.item.reference_currency,
             issuedAt: gem.item.issued_at,
@@ -400,10 +400,10 @@ fn currencies(gem: &GemView) -> Currencies {
     }
 }
 
-/// One gem: its group's entry price times its Promis load, at its type's cost rate.
+/// One gem: its entry price times its Promis load, at its type's cost rate.
 pub(crate) fn settlement_cost(gem: &GemView) -> SettlementCost {
     SettlementCost {
-        entry_price_minor: gem.group.entry_price_minor,
+        entry_price_minor: gem.item.entry_price_minor,
         load_minor: gem.item.promis_load_minor,
         units: U256::ONE,
         cost_rate_pct: cost_rate(gem.item.gem_type),

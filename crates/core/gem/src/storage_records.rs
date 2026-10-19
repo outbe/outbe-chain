@@ -106,7 +106,7 @@ mod tests {
             let contract = crate::GemContract::new(storage);
             let key = B256::repeat_byte(2);
             let mut record = crate::GemGroupState::with_key(key);
-            record.worldwide_day = WorldwideDay::new(20261015);
+            record.full_day_after_issue = WorldwideDay::new(20261015);
             contract.groups.create(&record).unwrap();
             assert_eq!(contract.groups.get(key).unwrap(), Some(record));
             contract.groups.delete(key).unwrap();

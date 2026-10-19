@@ -41,7 +41,7 @@ fn add_gem_mints_the_gem_and_its_group_and_bumps_counters() {
         assert_eq!(stored.state, GemState::Issued as u8);
         assert_eq!(stored.gem_id.to_u256(), gem_id);
         let gem = view(storage, gem_id);
-        assert_eq!(gem.group.entry_price_minor, U256::from(500_000u64));
+        assert_eq!(gem.item.entry_price_minor, U256::from(500_000u64));
         assert_eq!(gem.group.settled_gems, 0);
         assert_eq!(gem.terms.call_rate, GemParams::DEV.call_rate);
         assert_eq!(
@@ -143,10 +143,10 @@ fn burn_leaves_the_owners_other_gems_listed() {
     });
 }
 
-/// Gems share a group when they were issued on the same worldwide day at the same
-/// entry price in the same reference currency. Nothing else is a term.
+/// Gems share a group when they count call days from the same first full day against
+/// the same call price in the same reference currency. Nothing else is a term.
 #[test]
-fn a_group_holds_the_gems_of_one_day_entry_price_and_currency() {
+fn a_group_holds_the_gems_of_one_first_full_day_call_price_and_currency() {
     with_storage(|storage| {
         let gems = alice_gems(storage, &[1, 2]);
         let group = bucket_of(storage, gems[0]);
@@ -154,9 +154,9 @@ fn a_group_holds_the_gems_of_one_day_entry_price_and_currency() {
         assert_eq!(bucket_of(storage, gems[1]), group, "the load is not a term");
         assert_eq!(
             group,
-            outbe_gem::identity::group_key(
-                item(storage, gems[0]).unwrap().worldwide_day(),
-                U256::from(500_000u64),
+            outbe_primitives::call_breach::group_key(
+                outbe_primitives::time::first_full_day(T_NOW),
+                view(storage, gems[0]).terms.call_price_minor,
                 USD
             )
         );
@@ -178,15 +178,47 @@ fn a_group_holds_the_gems_of_one_day_entry_price_and_currency() {
         assert_ne!(apart(&|p| p.reference_currency = EUR), group);
         assert_ne!(apart(&|p| p.entry_price_minor += U256::from(1u64)), group);
         set_profile(storage, outbe_gem::config::PROFILE_PROD);
-        assert_eq!(
+        assert_ne!(
             apart(&|_| {}),
             group,
-            "a profile change does not re-term an open group"
+            "a retuned call rate prices a new group"
         );
     });
 }
 
-/// A later member inherits the terms the group sealed when it opened.
+/// A gem issued exactly at midnight counts that whole day. One issued later the same
+/// day starts the next day, so it never borrows the midnight gem's extra day.
+#[test]
+fn a_midnight_gem_and_a_later_one_that_day_are_in_different_groups() {
+    with_storage(|storage| {
+        let midnight = (T_NOW / SECONDS_PER_DAY + 1) * SECONDS_PER_DAY;
+        let mut first = sample_params(ALICE);
+        first.issued_at = midnight;
+        let mut later = sample_params(BOB);
+        later.issued_at = midnight + 2;
+        let first = add(storage, first);
+        let later = add(storage, later);
+
+        assert_ne!(bucket_of(storage, first), bucket_of(storage, later));
+        let group_day = |gem_id| {
+            api::get_group(storage, bucket_of(storage, gem_id))
+                .unwrap()
+                .unwrap()
+                .full_day_after_issue
+                .value()
+        };
+        assert_eq!(
+            group_day(first),
+            outbe_primitives::time::timestamp_to_date_key(midnight)
+        );
+        assert_eq!(
+            group_day(later),
+            outbe_primitives::time::first_full_day(midnight + 2)
+        );
+    });
+}
+
+/// A retuned call rate opens a new group, and the open one keeps the terms it sealed.
 #[test]
 fn profile_change_after_open_does_not_reterm_the_group() {
     with_storage(|storage| {
@@ -197,20 +229,16 @@ fn profile_change_after_open_does_not_reterm_the_group() {
         p.issued_at += 3_600;
         let second = add(storage, p);
 
-        assert_eq!(bucket_of(storage, first), bucket_of(storage, second));
-        let terms = view(storage, second).terms;
+        assert_ne!(bucket_of(storage, first), bucket_of(storage, second));
+        let terms = view(storage, first).terms;
         assert_eq!(
             terms.call_window_seconds,
             GemParams::DEV.call_window_seconds
         );
         assert_eq!(terms.call_rate, GemParams::DEV.call_rate);
         assert_eq!(
-            GemContract::new(storage.clone())
-                .group_issued_at
-                .read(&bucket_of(storage, first))
-                .unwrap(),
-            T_NOW,
-            "the first member's issuance starts the group's breach count"
+            view(storage, second).terms.call_rate,
+            GemParams::PROD.call_rate
         );
     });
 }
@@ -262,7 +290,7 @@ fn group_and_terms_survive_until_unpaid_and_settled_are_zero() {
         assert_eq!(body.settled_gems, 1);
         assert!(!gem.group_call_price_minor.read(&group).unwrap().is_zero());
         assert_eq!(
-            view(storage, gem_id).group.entry_price_minor,
+            view(storage, gem_id).item.entry_price_minor,
             U256::from(500_000u64)
         );
         // The group keeps its place in the trie while a paid member holds it open; the
@@ -285,7 +313,7 @@ fn group_and_terms_survive_until_unpaid_and_settled_are_zero() {
         assert!(!tree_math::contains(&outbe_gem::CallBins(&gem, USD), bin).unwrap());
         assert!(api::get_group(storage, group_id).unwrap().is_none());
         assert!(gem.group_call_price_minor.read(&group).unwrap().is_zero());
-        assert_eq!(gem.group_issued_at.read(&group).unwrap(), 0);
+        assert!(gem.group_unpaid_load.read(&group).unwrap().is_zero());
     });
 }
 
@@ -428,7 +456,7 @@ fn a_gem_id_is_its_raw_keccak_and_the_group_id_carries_the_day() {
         assert_eq!(WwdEntityId::from(gem_id), stored.gem_id);
         assert_eq!(
             stored.group_id(),
-            WwdEntityId::from_day_and_digest(stored.worldwide_day(), stored.group_key)
+            WwdEntityId::from_day_and_digest(stored.full_day_after_issue(), stored.group_key)
         );
         assert_eq!(stored.worldwide_day().value(), timestamp_to_date_key(T_NOW));
     });
@@ -461,14 +489,18 @@ fn backdate_that_changes_the_day_moves_the_gem_and_opens_a_new_group() {
         assert_ne!(after.group_key, before.group_key);
         assert_eq!(
             after.group_key,
-            outbe_gem::identity::group_key(after.worldwide_day(), U256::from(500_000u64), USD)
+            outbe_primitives::call_breach::group_key(
+                after.full_day_after_issue().value(),
+                view(storage, gem_id).terms.call_price_minor,
+                USD
+            )
         );
         assert!(
             api::get_group(storage, before.group_key).unwrap().is_none(),
             "the only member left, so the old group body is gone"
         );
         let group = api::get_group(storage, after.group_key).unwrap().unwrap();
-        assert_eq!(group.worldwide_day, after.worldwide_day());
+        assert_eq!(group.full_day_after_issue, after.full_day_after_issue());
         assert_eq!(GemContract::new(storage.clone()).total_supply().unwrap(), 1);
         assert_eq!(owned(storage, ALICE), vec![gem_id]);
     });

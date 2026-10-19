@@ -73,29 +73,28 @@ fn issue_settled(
     Ok(gem_id)
 }
 
-/// Re-issues the gem on `issued_at`: it leaves its group and joins the group of the
-/// new day, which may open a new group body on the live terms.
+/// Re-issues the gem on `issued_at`: it leaves its group and joins the group of its new
+/// first full day, which may open a new group on the live terms.
 fn backdate(storage: &StorageHandle<'_>, gem_id: U256, issued_at: u64) -> Result<()> {
     let (item, group) = gem_api::load_pair(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
     if item.body().is_settled() {
         return Err(GemFactoryError::GemAlreadySettled.into());
     }
     let mut reissued = item.body().clone();
-    let entry_price_minor = group.body().entry_price_minor;
-    reissued.issued_at = issued_at;
-    reissued.group_key = outbe_gem::identity::group_key(
-        reissued.worldwide_day(),
-        entry_price_minor,
-        reissued.reference_currency,
-    );
     let terms = crate::runtime::derived_call_terms(
-        entry_price_minor,
+        reissued.entry_price_minor,
         reissued.reference_currency,
         outbe_gem::config::read(storage)?,
     )?;
+    reissued.issued_at = issued_at;
+    reissued.group_key = outbe_primitives::call_breach::group_key(
+        outbe_primitives::time::first_full_day(issued_at),
+        terms.map_or(U256::ZERO, |terms| terms.call_price_minor),
+        reissued.reference_currency,
+    );
     storage.clone().with_checkpoint(|| {
         gem_api::remove_gem(storage, item, group)?;
-        gem_api::record_issued(storage, &reissued, entry_price_minor, terms)
+        gem_api::record_issued(storage, &reissued, terms)
     })
 }
 
