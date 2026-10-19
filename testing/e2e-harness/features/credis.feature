@@ -1,4 +1,4 @@
-@ocomp @tee @price-oracle @min-validators-4 @credis-lifecycle
+@tee @price-oracle @min-validators-4 @credis-lifecycle
 Feature: Credis happy flow and payments
   Scenario: Credis issuance happy path and three payments by the owner
     Given a prepared Credis localnet with funded actors and vault liquidity

@@ -5,6 +5,7 @@ use outbe_primitives::{addresses::ORACLE_ADDRESS, time::WorldwideDay};
 
 use crate::{internal::eth, world::World};
 
+#[cfg(test)]
 pub(crate) fn amount_minor(base: &str, remainder: &str) -> U256 {
     let base: u64 = base.parse().expect("fixture whole amount");
     let remainder: u64 = remainder.parse().expect("fixture six-decimal remainder");
@@ -134,5 +135,24 @@ mod tests {
                 (U256::from(nominal), U256::from(price))
             );
         }
+    }
+
+    #[test]
+    fn tribute_v1_mechanics_selectors_match_solidity_interface() {
+        use alloy_primitives::keccak256;
+        use alloy_sol_types::SolCall;
+
+        assert_eq!(
+            eth::ITribute::getLeagueCall::SELECTOR,
+            &keccak256(b"getLeague(uint256)")[..4]
+        );
+        assert_eq!(
+            eth::ITribute::getDayLeagueFractionCall::SELECTOR,
+            &keccak256(b"getDayLeagueFraction(uint32,uint16)")[..4]
+        );
+        assert_eq!(
+            eth::ITribute::createNodCall::SELECTOR,
+            &keccak256(b"createNod(uint256)")[..4]
+        );
     }
 }

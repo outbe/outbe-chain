@@ -1,4 +1,6 @@
-use outbe_ocomp_protocol::test_utils::{account_mpt_with_proofs as account_trie, storage_trie};
+use outbe_primitives::test_utils::state_proof::{
+    account_mpt_with_proofs as account_trie, storage_trie,
+};
 #[path = "../../../../testing/support/block_num_reader.rs"]
 mod block_num_reader;
 
@@ -6,7 +8,7 @@ use alloy_consensus::{Header, Sealable as _};
 use alloy_eips::{BlockNumHash, BlockNumberOrTag};
 use alloy_primitives::{BlockHash, BlockNumber, Bytes, B256, U256};
 use alloy_trie::{TrieAccount, KECCAK_EMPTY};
-use outbe_node::ocomp::finality::{PublicAccountProofV1, PublicStorageProofV1};
+use outbe_node::state_proof::{PublicAccountProofV1, PublicStorageProofV1};
 use outbe_node::tee_remote_session::{
     admit_anchored_remote_session_v1, admit_local_finalized_remote_session_v1,
     authorize_local_finalized_remote_session_v1,
@@ -598,21 +600,21 @@ fn current_finalized_registry_constructs_exact_replacement_authorization() {
     assert_eq!(authorized.view.block_number, 90);
     assert_eq!(authorized.view.block_hash, block_hash);
     assert_eq!(authorized.successor_activation_height, None);
-    let authorization = construct_local_finalized_replacement_authorization_v1(
-        &finalized,
-        RegistryChainIdentity {
-            chain_id,
-            genesis_hash,
-        },
-        ReplacementAuthorizationRequest {
-            node_data_dir: &node_data_dir,
-            node_id: &node_id,
-        },
-    )
-    .unwrap();
-    assert_eq!(authorization, authorized.authorization);
+    let successor_status =
+        outbe_node::tee_remote_session::inspect_local_finalized_successor_status_v1(
+            &finalized,
+            RegistryChainIdentity {
+                chain_id,
+                genesis_hash,
+            },
+        )
+        .unwrap();
+    assert_eq!(successor_status.view, authorized.view);
+    assert_eq!(successor_status.staged_proposal_id, None);
+    assert_eq!(successor_status.staged_policy, None);
+    assert_eq!(successor_status.retirement_height, 0);
     assert_eq!(
-        promote_replacement_candidate(&node_data_dir, &authorization).unwrap(),
+        promote_replacement_candidate(&node_data_dir, &authorized.authorization).unwrap(),
         candidate
     );
 }

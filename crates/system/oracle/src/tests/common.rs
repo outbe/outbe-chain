@@ -87,16 +87,15 @@ pub(super) const ATOMIC_DAY_START: u64 = 1_753_228_800;
 pub(super) type OracleFixture = fn(&mut HashMapStorageProvider);
 pub(super) type OracleMutation = for<'a> fn(StorageHandle<'a>) -> PrecompileResult<()>;
 
-pub(super) fn seed_ocomp_oracle(provider: &mut HashMapStorageProvider) {
+pub(super) fn seed_native_oracle(provider: &mut HashMapStorageProvider) {
     StorageHandle::enter(provider, |storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
-        crate::api::initialize_fresh_ocomp_profile(storage).unwrap();
     });
 }
 
-pub(super) fn seed_ocomp_oracle_with_snapshot(provider: &mut HashMapStorageProvider) {
-    seed_ocomp_oracle(provider);
+pub(super) fn seed_native_oracle_with_snapshot(provider: &mut HashMapStorageProvider) {
+    seed_native_oracle(provider);
     StorageHandle::enter(provider, |storage| {
         OracleContract::new(storage)
             .write_snapshot(
@@ -109,16 +108,10 @@ pub(super) fn seed_ocomp_oracle_with_snapshot(provider: &mut HashMapStorageProvi
 
 pub(super) const SCURVE_CURRENT_DAY: u64 = ATOMIC_DAY_START + 3 * SECONDS_PER_DAY;
 
-pub(super) fn seed_oracle_with_peak_history(
-    provider: &mut HashMapStorageProvider,
-    initialize_ocomp: bool,
-) {
+pub(super) fn seed_oracle_with_peak_history(provider: &mut HashMapStorageProvider) {
     StorageHandle::enter(provider, |storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
-        if initialize_ocomp {
-            crate::api::initialize_fresh_ocomp_profile(storage).unwrap();
-        }
         for (day, price) in [
             (SCURVE_CURRENT_DAY - 3 * SECONDS_PER_DAY, 100_u64),
             (SCURVE_CURRENT_DAY - 2 * SECONDS_PER_DAY, 150_u64),
@@ -134,25 +127,8 @@ pub(super) fn seed_oracle_with_peak_history(
     });
 }
 
-pub(super) fn seed_ocomp_oracle_with_peak_history(provider: &mut HashMapStorageProvider) {
-    seed_oracle_with_peak_history(provider, true);
-}
-
-pub(super) fn seed_prefork_oracle_with_peak_history(provider: &mut HashMapStorageProvider) {
-    seed_oracle_with_peak_history(provider, false);
-}
-
-pub(super) fn seed_prefork_oracle_with_snapshot(provider: &mut HashMapStorageProvider) {
-    StorageHandle::enter(provider, |storage| {
-        let mut oracle = OracleContract::new(storage);
-        oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
-        oracle
-            .write_snapshot(
-                ATOMIC_DAY_START + 100,
-                &[(pair_key(COEN, usd()), coen_iso(125), coen_iso(2))],
-            )
-            .unwrap();
-    });
+pub(super) fn seed_native_oracle_with_peak_history(provider: &mut HashMapStorageProvider) {
+    seed_oracle_with_peak_history(provider);
 }
 
 pub(super) fn write_snapshot_mutation(storage: StorageHandle<'_>) -> PrecompileResult<()> {
@@ -240,33 +216,6 @@ pub(super) fn assert_oracle_mutation_is_atomic(
             "{label}: events changed after mutation {operation}"
         );
     }
-}
-
-pub(super) fn run_prefork_with_last_mutation_failure(
-    fixture: OracleFixture,
-    mutation: OracleMutation,
-) -> HashMapStorageProvider {
-    let mutation_count = {
-        let mut provider = HashMapStorageProvider::new(1);
-        fixture(&mut provider);
-        provider.clear_mutation_failure();
-        StorageHandle::enter(&mut provider, mutation).unwrap();
-        provider.clear_mutation_failure()
-    };
-    assert!(mutation_count > 1);
-
-    let mut provider = HashMapStorageProvider::new(1);
-    fixture(&mut provider);
-    provider.clear_mutation_failure();
-    let events_before = provider.events.clone();
-    provider.fail_mutation_at(mutation_count - 1);
-    StorageHandle::enter(&mut provider, mutation).unwrap();
-    assert_eq!(provider.clear_mutation_failure(), mutation_count - 1);
-    assert_eq!(
-        provider.events, events_before,
-        "pre-fork best-effort event failure must not synthesize an event"
-    );
-    provider
 }
 
 // -----------------------------------------------------------------------

@@ -30,6 +30,10 @@ contract SummingEscrowAdapter {
     function getAuctionStatus(uint32) external pure returns (bool, bool, uint128) {
         return (false, false, 0);
     }
+
+    function hasOutstandingLocks() external pure returns (bool) {
+        return false;
+    }
 }
 
 /// @dev Counts proceeds transfers and remembers the last amount.

@@ -7,9 +7,7 @@ use alloy_primitives::U256;
 use outbe_primitives::{error::Result, time::WorldwideDay};
 use outbe_tribute::runtime::RetirementOutcome;
 mod failure;
-pub(crate) use failure::{
-    fail_expired_ocomp_day, fail_worldwide_day, ExpiredFailure, FailureSettlement,
-};
+pub(crate) use failure::fail_worldwide_day;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct TerminalReceiptValidationContext {

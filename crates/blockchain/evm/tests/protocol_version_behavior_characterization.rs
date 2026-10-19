@@ -81,6 +81,9 @@ fn context_with_push0() -> alloy_evm::eth::EthEvmContext<CacheDB<EmptyDB>> {
 
 #[test]
 fn canonical_block_env_keeps_chain_spec_behavior_across_an_outbe_activation_boundary() {
+    // CHARACTERIZATION: `OutbeEvmConfig::evm_env` delegates `cfg_env.spec`
+    // derivation to the underlying `EthEvmConfig` chain spec and does not
+    // alter the EVM `SpecId` at an Outbe protocol-update activation height.
     let config = OutbeEvmConfig::new(test_chain_spec());
     let activation = 30_100_u64;
     let mut observed = Vec::new();
@@ -100,6 +103,8 @@ fn canonical_block_env_keeps_chain_spec_behavior_across_an_outbe_activation_boun
 
 #[test]
 fn payload_builder_env_keeps_chain_spec_behavior_across_the_same_boundary() {
+    // CHARACTERIZATION: `OutbeEvmConfig::next_evm_env` preserves the same
+    // chain-spec `SpecId` across an Outbe activation height as `evm_env`.
     let config = OutbeEvmConfig::new(test_chain_spec());
     let activation = 30_100_u64;
     let mut observed = Vec::new();
@@ -125,6 +130,9 @@ fn payload_builder_env_keeps_chain_spec_behavior_across_the_same_boundary() {
 
 #[test]
 fn validation_payload_env_matches_canonical_header_env_at_h_minus_one_h_and_h_plus_one() {
+    // CHARACTERIZATION: `ConfigureEngineEvm::evm_env_for_payload` produces the
+    // same `cfg_env.spec` as `ConfigureEvm::evm_env` around an Outbe activation
+    // boundary for these supplied header/payload inputs.
     let config = OutbeEvmConfig::new(test_chain_spec());
     let activation = 30_100_u64;
 
@@ -138,6 +146,11 @@ fn validation_payload_env_matches_canonical_header_env_at_h_minus_one_h_and_h_pl
 
 #[test]
 fn nested_call_currently_executes_push0_under_both_parent_spec_ids() {
+    // CHARACTERIZATION: `sub_call::run` currently executes bytecode against the
+    // supplied `Context::mainnet()` instruction table rather than rebuilding the
+    // opcode table from `parent_env.spec_id`, so `PUSH0` succeeds even when the
+    // caller passes `SpecId::LONDON` in `fresh_environment`. Do not treat this
+    // characterization as a normative Ethereum fork rule.
     let input = SubCallInput {
         target: TARGET,
         value: U256::ZERO,

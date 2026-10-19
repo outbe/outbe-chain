@@ -61,6 +61,18 @@ struct CohortState {
     sold: Vec<(U256, u64, u64)>,
 }
 
+fn read_u64_be(bytes: &[u8]) -> u64 {
+    let mut buf = [0u8; 8];
+    buf.copy_from_slice(&bytes[..8]);
+    u64::from_be_bytes(buf)
+}
+
+fn read_u32_be(bytes: &[u8]) -> usize {
+    let mut buf = [0u8; 4];
+    buf.copy_from_slice(&bytes[..4]);
+    u32::from_be_bytes(buf) as usize
+}
+
 impl CohortState {
     /// Decode a blob interior. Empty interior = fresh account. Trailing bytes
     /// beyond the declared entries are padding and ignored.
@@ -71,42 +83,45 @@ impl CohortState {
         if interior.len() < HEADER_LEN {
             return Err(FidelityEnclaveError::CohortInteriorShorterThanHeader.into());
         }
-        let mut u64buf = [0u8; 8];
-        u64buf.copy_from_slice(&interior[..8]);
-        let qualified_start = u64::from_be_bytes(u64buf);
-        let mut u32buf = [0u8; 4];
-        u32buf.copy_from_slice(&interior[8..12]);
-        let active_count = u32::from_be_bytes(u32buf) as usize;
-        u32buf.copy_from_slice(&interior[12..16]);
-        let sold_count = u32::from_be_bytes(u32buf) as usize;
+        let qualified_start = read_u64_be(&interior[..8]);
+        let active_count = read_u32_be(&interior[8..12]);
+        let sold_count = read_u32_be(&interior[12..16]);
 
-        let need = active_count
+        let active_bytes = active_count
             .checked_mul(ACTIVE_ENTRY_LEN)
-            .zip(sold_count.checked_mul(SOLD_ENTRY_LEN))
-            .and_then(|(a, s)| a.checked_add(s))
-            .and_then(|e| e.checked_add(HEADER_LEN))
+            .ok_or(FidelityEnclaveError::CohortCountsOverflow)?;
+        let sold_bytes = sold_count
+            .checked_mul(SOLD_ENTRY_LEN)
+            .ok_or(FidelityEnclaveError::CohortCountsOverflow)?;
+        let sold_start = HEADER_LEN
+            .checked_add(active_bytes)
+            .ok_or(FidelityEnclaveError::CohortCountsOverflow)?;
+        let need = sold_start
+            .checked_add(sold_bytes)
             .ok_or(FidelityEnclaveError::CohortCountsOverflow)?;
         if interior.len() < need {
             return Err(FidelityEnclaveError::CohortInteriorTruncated.into());
         }
 
-        let mut offset = HEADER_LEN;
-        let mut active = Vec::with_capacity(active_count);
-        for _ in 0..active_count {
-            let size = U256::from_be_slice(&interior[offset..offset + 32]);
-            u64buf.copy_from_slice(&interior[offset + 32..offset + 40]);
-            active.push((size, u64::from_be_bytes(u64buf)));
-            offset += ACTIVE_ENTRY_LEN;
-        }
-        let mut sold = Vec::with_capacity(sold_count);
-        for _ in 0..sold_count {
-            let size = U256::from_be_slice(&interior[offset..offset + 32]);
-            u64buf.copy_from_slice(&interior[offset + 32..offset + 40]);
-            let acquired_at = u64::from_be_bytes(u64buf);
-            u64buf.copy_from_slice(&interior[offset + 40..offset + 48]);
-            sold.push((size, acquired_at, u64::from_be_bytes(u64buf)));
-            offset += SOLD_ENTRY_LEN;
-        }
+        let active = interior[HEADER_LEN..sold_start]
+            .chunks_exact(ACTIVE_ENTRY_LEN)
+            .map(|chunk| {
+                (
+                    U256::from_be_slice(&chunk[..32]),
+                    read_u64_be(&chunk[32..40]),
+                )
+            })
+            .collect();
+        let sold = interior[sold_start..need]
+            .chunks_exact(SOLD_ENTRY_LEN)
+            .map(|chunk| {
+                (
+                    U256::from_be_slice(&chunk[..32]),
+                    read_u64_be(&chunk[32..40]),
+                    read_u64_be(&chunk[40..48]),
+                )
+            })
+            .collect();
         Ok(Self {
             qualified_start,
             active,
@@ -144,71 +159,97 @@ impl CohortState {
         Ok(out)
     }
 
-    /// ACQUISITION: push a new active cohort. Returns `Some(timestamp)` when
-    /// this is the account's first qualified acquisition.
-    fn cohort_in(&mut self, amount: U256, timestamp: u64) -> Option<u64> {
+    /// ACQUISITION: push or coalesce an active cohort for `utc_day`. Returns
+    /// `Some(utc_day)` when this is the account's first qualified acquisition.
+    fn cohort_in(&mut self, amount: U256, utc_day: u64) -> Option<u64> {
         if amount.is_zero() {
             return None;
         }
-        let initialized = if self.qualified_start == 0 {
-            self.qualified_start = timestamp;
-            Some(timestamp)
+        let initialized = (self.qualified_start == 0).then(|| {
+            self.qualified_start = utc_day;
+            utc_day
+        });
+        if let Some((last_size, _)) = self.active.last_mut().filter(|(_, day)| *day == utc_day) {
+            *last_size = last_size.saturating_add(amount);
         } else {
-            None
-        };
-        self.active.push((amount, timestamp));
+            self.active.push((amount, utc_day));
+        }
         initialized
     }
 
-    /// SALE: consume active cohorts LIFO (youngest first). This function splits
-    /// the boundary cohort proportionally. The sold slice keeps the ORIGINAL
-    /// `acquired_at`, and the remainder stays active. Clamps when the stack runs
-    /// out (mirrors the on-chain defensive clamp).
-    fn cohort_out(&mut self, amount: U256, timestamp: u64) {
-        let mut remaining = amount;
-        while !remaining.is_zero() {
-            let Some((size, acquired_at)) = self.active.last().copied() else {
-                break;
-            };
-            if size <= remaining {
-                self.active.pop();
-                self.sold.push((size, acquired_at, timestamp));
-                remaining -= size;
-            } else {
-                self.sold.push((remaining, acquired_at, timestamp));
-                if let Some(last) = self.active.last_mut() {
-                    last.0 = size - remaining;
-                }
-                remaining = U256::ZERO;
-            }
+    fn consume_top_active(&mut self, remaining: &mut U256) -> Option<(U256, u64)> {
+        let (size, acquired_day) = *self.active.last()?;
+        if size <= *remaining {
+            self.active.pop();
+            *remaining -= size;
+            return Some((size, acquired_day));
+        }
+        self.active.last_mut().expect("non-empty active").0 = size - *remaining;
+        let consumed = *remaining;
+        *remaining = U256::ZERO;
+        Some((consumed, acquired_day))
+    }
+
+    fn record_sold_slice(&mut self, slice: U256, acquired_day: u64, utc_day: u64) {
+        if acquired_day >= utc_day {
+            return;
+        }
+        if let Some((last_size, _, _)) = self
+            .sold
+            .last_mut()
+            .filter(|(_, acq, sold)| *acq == acquired_day && *sold == utc_day)
+        {
+            *last_size = last_size.saturating_add(slice);
+        } else {
+            self.sold.push((slice, acquired_day, utc_day));
         }
     }
 
-    /// `(rcfi, efficiency, league)` at `timestamp` - the same
-    /// `RcfiAccumulator` + `league_from_rcfi` pipeline the chain historically
-    /// ran over plaintext cohort slots.
-    fn rcfi_triple(&self, timestamp: u64) -> Result<(U256, U256, U256)> {
+    /// SALE: consume active cohorts LIFO (youngest first) at `utc_day`. Splits
+    /// the boundary cohort proportionally. Same-day acquisitions (`acquired_day == utc_day`)
+    /// have zero held decay duration and are annihilated directly; older slices
+    /// keep their original `acquired_day` and coalesce into `sold`.
+    fn cohort_out(&mut self, amount: U256, utc_day: u64) {
+        let mut remaining = amount;
+        while !remaining.is_zero() {
+            let Some((slice, acquired_day)) = self.consume_top_active(&mut remaining) else {
+                break;
+            };
+            self.record_sold_slice(slice, acquired_day, utc_day);
+        }
+        if self.active.is_empty() && self.sold.is_empty() {
+            self.qualified_start = 0;
+        }
+    }
+
+    /// `(rcfi, efficiency, d_dec_age)` at `eval_day` (UTC day index).
+    fn rcfi_triple(&self, eval_day: u64) -> Result<(U256, U256, U256)> {
         let mut acc = RcfiAccumulator::default();
-        for (size, acquired_at) in &self.active {
-            acc.add_active(*size, *acquired_at, timestamp)
+        for (size, acquired_day) in &self.active {
+            acc.add_active(*size, *acquired_day, eval_day)
                 .ok_or(FidelityEnclaveError::RcfiArithmeticOverflow)?;
         }
-        for (size, acquired_at, sold_at) in &self.sold {
-            acc.add_sold(*size, *acquired_at, *sold_at, timestamp)
-                .ok_or(FidelityEnclaveError::RcfiArithmeticOverflow)?;
+        for (size, acquired_day, sold_day) in &self.sold {
+            if *sold_day <= eval_day {
+                acc.add_sold(*size, *acquired_day, *sold_day, eval_day)
+                    .ok_or(FidelityEnclaveError::RcfiArithmeticOverflow)?;
+            } else if *acquired_day < eval_day {
+                acc.add_active(*size, *acquired_day, eval_day)
+                    .ok_or(FidelityEnclaveError::RcfiArithmeticOverflow)?;
+            }
         }
-        acc.finish(self.qualified_start, timestamp)
+        acc.finish(self.qualified_start, eval_day)
             .ok_or_else(|| FidelityEnclaveError::RcfiArithmeticOverflow.into())
     }
 
-    /// `(rcfi, efficiency, league)` at `timestamp`. `first_qualified_start = 0`
-    /// means no account has qualified (league floor).
-    fn evaluate(&self, timestamp: u64, first_qualified_start: u64) -> Result<(U256, U256, u16)> {
-        let (rcfi, efficiency, _) = self.rcfi_triple(timestamp)?;
-        let max = if first_qualified_start == 0 {
-            U256::ZERO
+    /// `(rcfi, efficiency, league)` at `eval_day` (UTC day index).
+    /// `first_qualified_start = 0` means no account has qualified (league floor).
+    fn evaluate(&self, eval_day: u64, first_qualified_start: u64) -> Result<(U256, U256, u16)> {
+        let (rcfi, efficiency, _) = self.rcfi_triple(eval_day)?;
+        let max = if first_qualified_start != 0 {
+            t_dec(eval_day.saturating_sub(first_qualified_start))
         } else {
-            t_dec(timestamp.saturating_sub(first_qualified_start))
+            U256::ZERO
         };
         let league =
             league_from_rcfi(rcfi, max).ok_or(FidelityEnclaveError::LeagueArithmeticOverflow)?;
@@ -225,7 +266,7 @@ fn read_state(view_key: &[u8; 32], account: Address, blob: &[u8]) -> Result<(u64
 /// Apply the Fidelity section of a Gratis op:
 ///
 /// 1. Decrypt the account's cohort blob.
-/// 2. Mutate it (or only probe it).
+/// 2. Mutate it (or only probe it) at the UTC day of `section.timestamp`.
 /// 3. Re-encrypt it.
 /// 4. Report the plaintext receipt.
 ///
@@ -238,25 +279,26 @@ pub fn apply_cohort_section(
 ) -> Result<FidelityOpOutcome> {
     let view_key = Zeroizing::new(FIDELITY.account_keys.derive_view_key(state_key, account)?);
     let (version, mut state) = read_state(&view_key, account, &section.current_blob)?;
+    let utc_day = outbe_primitives::time::utc_day_from_timestamp(section.timestamp);
 
     let mut qualified_start_initialized = None;
     match section.op {
         FidelityCohortOp::In => {
-            qualified_start_initialized = state.cohort_in(amount, section.timestamp);
+            qualified_start_initialized = state.cohort_in(amount, utc_day);
         }
-        FidelityCohortOp::Out => state.cohort_out(amount, section.timestamp),
+        FidelityCohortOp::Out => state.cohort_out(amount, utc_day),
         FidelityCohortOp::Probe => {}
     }
 
     // If this very op qualified the account first on the whole chain, the host
-    // will set the global scalar to the section timestamp. Evaluate the league
+    // will set the global scalar to the section UTC day. Evaluate the league
     // against that same anchor.
     let effective_first = if section.first_qualified_start != 0 {
         section.first_qualified_start
     } else {
         qualified_start_initialized.unwrap_or(0)
     };
-    let (_, _, league) = state.evaluate(section.timestamp, effective_first)?;
+    let (_, _, league) = state.evaluate(utc_day, effective_first)?;
 
     let new_blob = match section.op {
         // Probe never rewrites the ledger. An empty blob means "nothing to write".
@@ -305,6 +347,7 @@ pub fn snapshot_leagues(
     state_key: &[u8; 32],
     req: &FidelitySnapshotRequest,
 ) -> Result<Vec<FidelityLeagueEntry>> {
+    let eval_day = outbe_primitives::time::utc_day_from_timestamp(req.timestamp);
     let mut leagues = Vec::with_capacity(req.entries.len());
     for entry in &req.entries {
         let view_key = Zeroizing::new(
@@ -313,35 +356,18 @@ pub fn snapshot_leagues(
                 .derive_view_key(state_key, entry.owner)?,
         );
         let (_, state) = read_state(&view_key, entry.owner, &entry.cohort_blob)?;
-        let (_, _, league) = state.evaluate(req.timestamp, req.first_qualified_start)?;
+        let (rcfi, _, league) = state.evaluate(eval_day, req.first_qualified_start)?;
         leagues.push(FidelityLeagueEntry {
             owner: entry.owner,
             league,
+            rcfi,
         });
     }
     Ok(leagues)
 }
 
 /// Owner-authorized RCFI/league read. Verifies the signed authorization INSIDE
-/// the enclave, then decrypts and evaluates. The enclave is the trust boundary:
-/// a compromised host reaches this transport directly. The dispatch passes
-/// `resident_chain_id`, the enclave's own boot-bound chain id. This function does
-/// NOT take it from the host-controlled request.
-///
-/// Chain binding: the auth message embeds a chain id, but the state key is
-/// derived from `resident_chain_id`. Thus a signature made for a different chain
-/// (same reused EOA on devnet/testnet) must not authorize a read here. We reject
-/// unless `req.chain_id == resident_chain_id`, and only then hash the signed
-/// message. Otherwise the host could set `req.chain_id` to whatever the
-/// captured signature covered and defeat the scoping.
-///
-/// Freshness caveat: this function checks `expiry` against the host-supplied
-/// `block_timestamp`. The enclave has no trusted clock on this non-consensus
-/// `eth_call` path. Thus expiry only bounds a leaked signature for requests
-/// that an HONEST host forwards. A fully compromised host can pass
-/// `block_timestamp = 0` and reuse a stale (but genuine) signature indefinitely.
-/// Such a host can still never forge a signature or decrypt raw cohorts. It can
-/// only re-read the derived index/league that the owner already exposed by signing.
+/// the enclave, then decrypts and evaluates.
 pub fn query_index(
     state_key: &[u8; 32],
     resident_chain_id: B256,
@@ -372,8 +398,8 @@ pub fn query_index(
             .derive_view_key(state_key, req.account)?,
     );
     let (_, state) = read_state(&view_key, req.account, &req.cohort_blob)?;
-    let (rcfi, efficiency, league) =
-        state.evaluate(req.query_timestamp, req.first_qualified_start)?;
+    let query_day = outbe_primitives::time::utc_day_from_timestamp(req.query_timestamp);
+    let (rcfi, efficiency, league) = state.evaluate(query_day, req.first_qualified_start)?;
     Ok(FidelityQueryResult {
         rcfi,
         efficiency,
@@ -422,6 +448,8 @@ mod tests {
     /// - any change to the auth message
     ///
     /// Regenerate only on an intentional, reviewed format change.
+    const FIRST_DAY: u64 = outbe_primitives::time::utc_day_from_timestamp(1_000_000);
+
     #[test]
     fn divergent_cohort_transitions_rederive_independent_keys() {
         let key = state_key();
@@ -430,13 +458,13 @@ mod tests {
         let base = section(
             FidelityCohortOp::In,
             1_000_000 + DAY,
-            1_000_000,
+            FIRST_DAY,
             first.new_blob,
         );
         let one = apply_cohort_section(&key, alice(), U256::from(500), &base).unwrap();
         let amount = apply_cohort_section(&key, alice(), U256::from(501), &base).unwrap();
         let mut other_time = base.clone();
-        other_time.timestamp += 1;
+        other_time.timestamp += DAY;
         let time = apply_cohort_section(&key, alice(), U256::from(500), &other_time).unwrap();
         assert_eq!(
             one,
@@ -590,25 +618,43 @@ mod tests {
     }
 
     #[test]
+    fn same_utc_day_cohorts_coalesce_and_same_day_sale_annihilates() {
+        let mut state = CohortState::default();
+        state.cohort_in(U256::from(400u64), 100);
+        state.cohort_in(U256::from(600u64), 100);
+        assert_eq!(state.active, vec![(U256::from(1_000u64), 100)]);
+
+        // Same-day acquisition and partial sale on day 150 annihilates without
+        // polluting `sold`.
+        state.cohort_in(U256::from(500u64), 150);
+        state.cohort_out(U256::from(300u64), 150);
+        assert_eq!(
+            state.active,
+            vec![(U256::from(1_000u64), 100), (U256::from(200u64), 150)]
+        );
+        assert!(state.sold.is_empty());
+    }
+
+    #[test]
     fn evaluate_matches_direct_accumulator() {
         let mut state = CohortState::default();
-        state.cohort_in(U256::from(1_000u64), 1_000_000);
-        state.cohort_in(U256::from(500u64), 1_000_000 + 100 * DAY);
-        state.cohort_out(U256::from(700u64), 1_000_000 + 200 * DAY);
-        let now = 1_000_000 + 400 * DAY;
+        state.cohort_in(U256::from(1_000u64), FIRST_DAY);
+        state.cohort_in(U256::from(500u64), FIRST_DAY + 100);
+        state.cohort_out(U256::from(700u64), FIRST_DAY + 200);
+        let now_day = FIRST_DAY + 400;
 
         let mut acc = RcfiAccumulator::default();
         for (s, a) in &state.active {
-            acc.add_active(*s, *a, now).unwrap();
+            acc.add_active(*s, *a, now_day).unwrap();
         }
         for (s, a, so) in &state.sold {
-            acc.add_sold(*s, *a, *so, now).unwrap();
+            acc.add_sold(*s, *a, *so, now_day).unwrap();
         }
-        let (rcfi, eff, _) = acc.finish(state.qualified_start, now).unwrap();
-        let max = t_dec(now - 1_000_000);
+        let (rcfi, eff, _) = acc.finish(state.qualified_start, now_day).unwrap();
+        let max = t_dec(now_day - FIRST_DAY);
         let expected_league = league_from_rcfi(rcfi, max).unwrap();
 
-        let (got_rcfi, got_eff, got_league) = state.evaluate(now, 1_000_000).unwrap();
+        let (got_rcfi, got_eff, got_league) = state.evaluate(now_day, FIRST_DAY).unwrap();
         assert_eq!(got_rcfi, rcfi);
         assert_eq!(got_eff, eff);
         assert_eq!(got_league, expected_league);
@@ -620,7 +666,7 @@ mod tests {
         let sk = state_key();
         let s_in = section(FidelityCohortOp::In, 1_000_000, 0, Vec::new());
         let out_in = apply_cohort_section(&sk, alice(), U256::from(1_000u64), &s_in).unwrap();
-        assert_eq!(out_in.qualified_start_initialized, Some(1_000_000));
+        assert_eq!(out_in.qualified_start_initialized, Some(FIRST_DAY));
         assert!(!out_in.new_blob.is_empty());
         // Global anchor was just set by this op -> league floor.
         assert_eq!(out_in.league, MIN_LEAGUE);
@@ -629,7 +675,7 @@ mod tests {
         let s_in2 = section(
             FidelityCohortOp::In,
             1_000_000 + 100 * DAY,
-            1_000_000,
+            FIRST_DAY,
             out_in.new_blob.clone(),
         );
         let out_in2 = apply_cohort_section(&sk, alice(), U256::from(500u64), &s_in2).unwrap();
@@ -641,7 +687,7 @@ mod tests {
         let s_probe = section(
             FidelityCohortOp::Probe,
             1_000_000 + 100 * DAY,
-            1_000_000,
+            FIRST_DAY,
             out_in2.new_blob.clone(),
         );
         let probe = apply_cohort_section(&sk, alice(), U256::ZERO, &s_probe).unwrap();
@@ -652,7 +698,7 @@ mod tests {
         let s_out = section(
             FidelityCohortOp::Out,
             1_000_000 + 200 * DAY,
-            1_000_000,
+            FIRST_DAY,
             out_in2.new_blob.clone(),
         );
         let out_out = apply_cohort_section(&sk, alice(), U256::from(1_200u64), &s_out).unwrap();
@@ -672,7 +718,7 @@ mod tests {
 
         let req = FidelitySnapshotRequest {
             timestamp: 1_000_000 + 50 * DAY,
-            first_qualified_start: 1_000_000,
+            first_qualified_start: FIRST_DAY,
             entries: vec![
                 outbe_tee::protocol::FidelitySnapshotEntry {
                     owner: alice(),
@@ -732,6 +778,7 @@ mod tests {
 
         for s in samples {
             let ts = s["ts"].as_u64().unwrap();
+            let sample_day = outbe_primitives::time::utc_day_from_timestamp(ts);
             let want_rcfi = s["rcfi"].as_f64().unwrap();
             let want_eff = s["efficiency"].as_f64().unwrap();
             let want_dage = s["d_age"].as_f64().unwrap();
@@ -741,14 +788,15 @@ mod tests {
             let mut state = CohortState::default();
             for (t_ts, deposit, amount) in &txs {
                 if *t_ts <= ts {
+                    let tx_day = outbe_primitives::time::utc_day_from_timestamp(*t_ts);
                     if *deposit {
-                        state.cohort_in(*amount, *t_ts);
+                        state.cohort_in(*amount, tx_day);
                     } else {
-                        state.cohort_out(*amount, *t_ts);
+                        state.cohort_out(*amount, tx_day);
                     }
                 }
             }
-            let (rcfi_fp, eff_fp, dage_fp) = state.rcfi_triple(ts).unwrap();
+            let (rcfi_fp, eff_fp, dage_fp) = state.rcfi_triple(sample_day).unwrap();
             assert!(
                 (fp_to_f64(rcfi_fp) - want_rcfi).abs() <= 1.0,
                 "rcfi at ts={ts}: got {}, want {want_rcfi}",
@@ -800,7 +848,7 @@ mod tests {
             cohort_blob: blob,
             query_timestamp: 1_000_000 + 100 * DAY,
             block_timestamp: 1_500_000,
-            first_qualified_start: 1_000_000,
+            first_qualified_start: FIRST_DAY,
             expiry: 2_000_000,
             owner_sig: Vec::new(),
         }

@@ -621,9 +621,9 @@ fn only_a_slice_that_calls_buckets_emits_a_batch_metadata_update() {
     assert_eq!(updates[0]._toTokenId, U256::MAX);
 }
 
-/// Idle daily scans read the oracle and write nothing to the body store.
+/// Idle daily scans read the oracle and emit no Gem events.
 #[test]
-fn idle_daily_scans_do_not_write_bodies() {
+fn idle_daily_scans_emit_nothing() {
     let mut provider = provider_at(T_NOW);
     StorageHandle::enter(&mut provider, |storage| {
         mature_gem(&storage);
@@ -636,9 +636,9 @@ fn idle_daily_scans_do_not_write_bodies() {
     assert_eq!(provider.get_events(GEM_ADDRESS).len(), before);
 }
 
-/// A corrupt gem body is this node's store: the call sweep fails the block.
+/// A corrupt gem record read is this node's store: the call sweep fails the block.
 #[test]
-fn a_corrupt_body_fails_the_call_sweep() {
+fn a_corrupt_record_read_fails_the_call_sweep() {
     use outbe_oracle::call_sweep::CallSweep;
     use outbe_primitives::error::{PrecompileError, SweepFailure};
     assert_eq!(

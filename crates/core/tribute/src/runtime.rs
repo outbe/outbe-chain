@@ -18,7 +18,7 @@ pub enum RetirementOutcome {
     Requested,
 }
 
-/// Constant-size owner receipt for a sealed Tribute generation forfeited by
+/// Constant-size owner receipt for a sealed Tribute partition forfeited by
 /// Metadosis retained-cap policy.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TributeForfeitureReceipt {
@@ -41,6 +41,22 @@ pub struct TributeLysisReceipt {
 }
 
 impl TributeContract<'_> {
+    fn is_valid_lysis_partition(
+        &self,
+        day: WorldwideDay,
+        totals: &crate::schema::DayTotals,
+        verified_count: u32,
+        verified_nominal: U256,
+    ) -> Result<bool> {
+        if self.retired_days.read(&day)? {
+            return Ok(false);
+        }
+        let ready = totals.initialized && totals.is_sealed && verified_count > 0;
+        let matches = totals.tribute_count == verified_count
+            && totals.tribute_nominal_total_minor == verified_nominal;
+        Ok(ready && matches)
+    }
+
     pub fn consume_and_retire_lysis_partition(
         &mut self,
         day: WorldwideDay,
@@ -51,33 +67,15 @@ impl TributeContract<'_> {
         storage.require_metadosis_process_ready()?;
         storage.with_checkpoint(|| {
             let totals = self.get_day_totals(day)?;
-            let mut admission = self.read_day_pre_admission(day)?;
-            if !self.ocomp_profile_ready.read()?
-                || self.retired_days.read(&day)?
-                || admission.source_generation != 0
-                || !totals.initialized
-                || !totals.is_sealed
-                || verified_count == 0
-                || totals.tribute_count != verified_count
-                || totals.tribute_nominal_total_minor != verified_nominal
-                || (admission.is_sealed
-                    && (admission.sealed_tribute_count != verified_count
-                        || admission.sealed_tribute_nominal_total_minor != verified_nominal))
-            {
+            if !self.is_valid_lysis_partition(day, &totals, verified_count, verified_nominal)? {
                 return Err(TributeError::LysisInputMismatch.into());
             }
-            admission.initialized = true;
-            admission.is_sealed = true;
-            admission.sealed_tribute_count = verified_count;
-            admission.sealed_tribute_nominal_total_minor = verified_nominal;
-            self.store_day_pre_admission(&admission)?;
+            self.freeze_day_nominal(&totals)?;
             self.consume_lysis_partition_inner(day, verified_count, verified_nominal)?;
             let retirement_outcome = self.retire_completed_partition_inner(day)?;
             if retirement_outcome != RetirementOutcome::Requested {
                 return Err(TributeError::LysisInputMismatch.into());
             }
-            admission.source_generation = 1;
-            self.store_day_pre_admission(&admission)?;
             Ok(TributeLysisReceipt {
                 worldwide_day: day,
                 consumed_count: verified_count,
@@ -97,9 +95,6 @@ impl TributeContract<'_> {
         verified_count: u32,
         verified_nominal: alloy_primitives::U256,
     ) -> Result<()> {
-        if self.ocomp_profile_ready.read()? {
-            return Err(TributeError::PopulatedOcompInputRequiresCertifiedRetirement.into());
-        }
         self.consume_lysis_partition_inner(day, verified_count, verified_nominal)
     }
 
@@ -131,14 +126,6 @@ impl TributeContract<'_> {
 
     /// Retires a sealed empty day in the same state checkpoint as completion.
     pub fn retire_completed_partition(&mut self, day: WorldwideDay) -> Result<RetirementOutcome> {
-        if self.ocomp_profile_ready.read()?
-            && self
-                .day_pre_admission
-                .get(day)?
-                .is_some_and(|admission| admission.is_sealed && admission.sealed_tribute_count != 0)
-        {
-            return Err(TributeError::PopulatedOcompInputRequiresCertifiedRetirement.into());
-        }
         let storage = self.storage_handle();
         storage.with_checkpoint(|| self.retire_completed_partition_inner(day))
     }
@@ -162,7 +149,7 @@ impl TributeContract<'_> {
         })
     }
 
-    /// Forfeits one sealed generation from its frozen state aggregates.
+    /// Forfeits one sealed partition from its frozen state aggregates.
     /// The operation retains all ciphertext records and indexes.
     pub fn forfeit_sealed_partition(
         &mut self,
@@ -222,12 +209,8 @@ impl TributeContract<'_> {
     }
 
     pub fn unseal_day(&mut self, day: WorldwideDay) -> Result<()> {
-        if self
-            .day_pre_admission
-            .get(day)?
-            .is_some_and(|admission| admission.is_sealed)
-        {
-            return Err(TributeError::PreAdmissionSealed.into());
+        if self.retired_days.read(&day)? || self.day_amount_record(day, true)?.is_some() {
+            return Err(TributeError::WorldwideDaySealed.into());
         }
         self.set_day_sealed(day, false)?;
         self.emit(ITribute::TributeWorldwideDaySealed {
@@ -237,31 +220,188 @@ impl TributeContract<'_> {
         Ok(())
     }
 
-    /// Freezes the Tribute aggregates after the day is sealed.
-    /// Callers cannot replace an already sealed value.
-    pub fn seal_pre_admission(
+    /// Records the Stage 3 Metadosis league fractions and lysis limit for `day`.
+    pub fn record_metadosis_fractions(
         &mut self,
         day: WorldwideDay,
-    ) -> Result<crate::TributePreAdmissionProjection> {
+        lysis_limit_minor: U256,
+        fractions: &std::collections::BTreeMap<u16, u64>,
+        completed_at: u64,
+    ) -> Result<()> {
+        self.day_lysis_limit_minor.write(&day, lysis_limit_minor)?;
+        self.day_metadosis_completed_at.write(&day, completed_at)?;
+        for (&league, &fraction) in fractions {
+            let key = crate::schema::day_league_key(day, league);
+            self.day_fractions.write(&key, fraction)?;
+        }
+        Ok(())
+    }
+
+    fn sum_allocated_gratis_from_groups(
+        fi_groups: &std::collections::BTreeMap<u16, (u32, U256)>,
+        u256_fractions: &std::collections::BTreeMap<u16, U256>,
+        lysis_limit_minor: U256,
+    ) -> U256 {
+        let nod_max: U256 = lysis_limit_minor >> 10usize;
+        if nod_max.is_zero() {
+            return U256::ZERO;
+        }
+        let scale = U256::from(1_000_000u64);
+        let mut total_allocated = U256::ZERO;
+        for (&league, &(count, nominal_sum)) in fi_groups {
+            if count == 0 || nominal_sum.is_zero() {
+                continue;
+            }
+            let fraction = u256_fractions.get(&league).copied().unwrap_or(U256::ZERO);
+            if fraction.is_zero() {
+                continue;
+            }
+            let league_cap = nod_max.saturating_mul(U256::from(count));
+            let league_raw = outbe_primitives::math::scaled_math::checked_mul_div_floor(
+                nominal_sum,
+                fraction,
+                scale,
+            )
+            .unwrap_or(league_cap);
+            total_allocated = total_allocated.saturating_add(league_raw.min(league_cap));
+        }
+        total_allocated.min(lysis_limit_minor)
+    }
+
+    /// Computes league fractions from `fi_groups[day]` and `lysis_limit_minor`,
+    /// stores them along with `completed_at`, and returns `(fractions, total_allocated_minor)`.
+    pub fn compute_and_record_metadosis_fractions(
+        &mut self,
+        day: WorldwideDay,
+        lysis_limit_minor: U256,
+        completed_at: u64,
+    ) -> Result<(std::collections::BTreeMap<u16, u64>, U256)> {
+        let fi_groups = self.get_fi_groups(day)?;
+        let mut tribute_count = 0u32;
+        let mut total_interest = U256::ZERO;
+        for &(count, nom) in fi_groups.values() {
+            tribute_count = tribute_count
+                .checked_add(count)
+                .ok_or(TributeError::DayCountOverflowOrUnderflow)?;
+            total_interest = total_interest
+                .checked_add(nom)
+                .ok_or(TributeError::DayCountOverflowOrUnderflow)?;
+        }
+        let u256_fractions = if tribute_count == 0 || total_interest.is_zero() {
+            std::collections::BTreeMap::new()
+        } else {
+            outbe_lysis::program_v1::compute_fraction_map_from_groups(
+                &fi_groups,
+                tribute_count,
+                total_interest,
+                lysis_limit_minor,
+            )
+            .map_err(|e| outbe_primitives::error::PrecompileError::revert(e.to_string()))?
+        };
+        let fractions: std::collections::BTreeMap<u16, u64> = u256_fractions
+            .iter()
+            .map(|(&league, &frac)| (league, u64::try_from(frac).unwrap_or(u64::MAX)))
+            .collect();
+        self.record_metadosis_fractions(day, lysis_limit_minor, &fractions, completed_at)?;
+        let allocated =
+            Self::sum_allocated_gratis_from_groups(&fi_groups, &u256_fractions, lysis_limit_minor);
+        Ok((fractions, allocated))
+    }
+
+    /// Stage 5: Creates a `Nod` for `tribute_id` within 7 days after `Metadosis`
+    /// and atomically burns the `Tribute`.
+    pub fn create_nod(
+        &mut self,
+        caller: alloy_primitives::Address,
+        tribute_id: WwdEntityId,
+    ) -> Result<WwdEntityId> {
         let storage = self.storage_handle();
+        let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&storage)?;
         storage.with_checkpoint(|| {
-            if !self.ocomp_profile_ready.read()? {
-                return Err(TributeError::OcompProfileNotReady.into());
+            let day = tribute_id.worldwide_day();
+            if self.retired_days.read(&day)? {
+                return Err(TributeError::TributeNotFound.into());
             }
-            let totals = self.get_day_totals(day)?;
-            if !totals.initialized || !totals.is_sealed {
-                return Err(TributeError::WorldwideDaySealed.into());
+            let completed_at = self.day_metadosis_completed_at.read(&day)?;
+            if completed_at == 0 {
+                return Err(TributeError::MetadosisNotCompleted.into());
             }
-            let mut admission = self.read_day_pre_admission(day)?;
-            if admission.is_sealed {
-                return Err(TributeError::PreAdmissionSealed.into());
+            let now = u64::try_from(storage.timestamp()?).unwrap_or(u64::MAX);
+            if now < completed_at
+                || now > completed_at.saturating_add(7 * outbe_primitives::time::SECONDS_PER_DAY)
+            {
+                return Err(TributeError::NodCreationWindowExpired.into());
             }
-            admission.initialized = true;
-            admission.is_sealed = true;
-            admission.sealed_tribute_count = totals.tribute_count;
-            admission.sealed_tribute_nominal_total_minor = totals.tribute_nominal_total_minor;
-            self.store_day_pre_admission(&admission)?;
-            self.pre_admission_projection(day)
+            let record = crate::state_api::get_retained_record(&storage, tribute_id)?
+                .ok_or(TributeError::TributeNotFound)?;
+            if record.owner != caller {
+                return Err(TributeError::CallerNotTributeOwner.into());
+            }
+            let raw_league = self.tribute_leagues.read(&tribute_id)?;
+            let league = raw_league.max(1);
+            let fraction = U256::from(
+                self.day_fractions
+                    .read(&crate::schema::day_league_key(day, league))?,
+            );
+            let lysis_limit = self.day_lysis_limit_minor.read(&day)?;
+            let nominal = record
+                .calculation_view()
+                .map_err(TributeError::private_amount_read_failed)?
+                .nominal_amount_minor;
+            let nod_max: U256 = lysis_limit >> 10usize;
+            let gratis_load_minor =
+                outbe_lysis::program_v1::calculate_gratis_load(nominal, fraction, nod_max, 0)
+                    .map_err(|e| outbe_primitives::error::PrecompileError::revert(e.to_string()))?;
+
+            let price_day = outbe_nod::openings::entry_price_day(completed_at);
+            let gratis_day_price = outbe_oracle::api::get_utc_day_vwap_for_iso(
+                storage.clone(),
+                price_day,
+                record.reference_currency,
+            )?
+            .filter(|p| !p.is_zero())
+            .unwrap_or_else(|| {
+                if !record.tribute_price_minor.is_zero() {
+                    record.tribute_price_minor
+                } else {
+                    U256::from(1_000_000u64)
+                }
+            });
+
+            let encrypted_nod = outbe_primitives::nod_encryption::encode_v1_nod(
+                outbe_primitives::nod_encryption::NodTermsV2 {
+                    chain_id: storage.chain_id()?,
+                    nod_id: tribute_id,
+                    owner: record.owner,
+                    worldwide_day: day,
+                    league_id: league,
+                    issuance_currency: record.issuance_currency,
+                    reference_currency: record.reference_currency,
+                    entry_price_minor: gratis_day_price,
+                },
+                gratis_load_minor,
+            );
+            outbe_nodfactory::api::issue_tribute_nod(&storage, &encrypted_nod, gratis_load_minor)?;
+
+            // Atomically burn the Tribute upon Nod creation, keeping partition accounting consistent.
+            self.bump_day_bucket_record(&record, false)?;
+            if raw_league != 0 {
+                self.adjust_fi_group(day, raw_league, nominal, false)?;
+                self.tribute_leagues.clear(&tribute_id)?;
+            }
+            let supply = self
+                .total_supply
+                .read()?
+                .checked_sub(1)
+                .ok_or(TributeError::TotalSupplyUnderflowDuringBurn)?;
+            self.total_supply.write(supply)?;
+            self.delete_loaded_state_record(&record)?;
+            self.emit(ITribute::TributeBurned {
+                tributeId: tribute_id.to_u256(),
+                owner: record.owner,
+                worldwideDay: day.into(),
+            })?;
+            Ok(tribute_id)
         })
     }
 }

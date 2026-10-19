@@ -70,7 +70,7 @@ SECP256K1_G = (
 
 SEED_SECTIONS = (
     # Protocol timings. seed_genesis copies these into config.outbeProtocol.
-    # The runtime reads the Metadosis day windows and the OCOMP vote window
+    # The runtime reads the Metadosis day windows
     # from there. If they are absent, the chain runs on its built-in defaults.
     # A devnet or a test network rarely wants those defaults.
     "protocol_constants",
@@ -119,7 +119,6 @@ TOP_LEVEL_KEYS = {
     "signed_enclave_dir",
     "allow_stale_timestamp",
     "node_binary",
-    "ocomp_binary",
     "radicle_binary",
     "radicle_external_inbound_reserve",
     "feeder_binary",
@@ -164,7 +163,6 @@ def validate_config(config: dict[str, Any]) -> None:
             f"unknown key(s): {', '.join(unknown)}; "
             f"allowed: {', '.join(sorted(TOP_LEVEL_KEYS))}"
         )
-    launch_bundle.storage_settings(config)
     _validate_founders(config)
     _validate_tee(config)
     _validate_ports(config)
@@ -175,7 +173,7 @@ def _validate_founders(config):
     if not isinstance(hosts, list) or len(hosts) != FOUNDER_COUNT:
         raise ValueError(
             f"`validators` must list exactly {FOUNDER_COUNT} hosts "
-            f"(OCOMP V1 fixes the founding committee at four)"
+            f"(the bootstrap network profile uses four founders)"
         )
     for index, host in enumerate(hosts):
         if not isinstance(host, str) or not host.strip():
@@ -227,9 +225,6 @@ def _validate_ports(config):
     }
     consensus_port = int(config.get("consensus_p2p_port", DEFAULT_CONSENSUS_P2P_PORT))
     ports["consensus_p2p_port"] = consensus_port
-    ports["ocomp_embedded_port"] = launch_bundle.embedded_ocomp_endpoint_port(
-        config, consensus_port
-    )
     seen: dict[int, str] = {}
     for name, port_value in sorted(ports.items()):
         if not 1 <= port_value <= 65535:

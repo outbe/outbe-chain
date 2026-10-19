@@ -174,17 +174,4 @@ pub mod update {
     pub fn registry() -> &'static UpgradeHandlerRegistry {
         &REGISTRY
     }
-
-    #[cfg(test)]
-    mod tests {
-        use outbe_update::ProtocolVersion;
-
-        #[test]
-        fn ocomp_genesis_activation_registers_no_generic_update_handler() {
-            assert!(super::registry()
-                .lookup(ProtocolVersion::from_raw(1))
-                .next()
-                .is_none());
-        }
-    }
 }

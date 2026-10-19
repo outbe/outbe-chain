@@ -96,7 +96,6 @@ pub(crate) fn consensus_shutdown_result(
 pub(crate) enum LauncherExitCause {
     NodeExited,
     ConsensusExited,
-    OcompRequested,
     UpgradeRequested,
     TeeLeaseRejected,
     CtrlC,
@@ -106,9 +105,9 @@ pub(crate) enum LauncherExitCause {
 ///
 /// Reth owns the process signal handler and may cancel the complete node launcher
 /// future. This guard therefore performs the same cancellation and synchronous
-/// join from `Drop` as the ordinary completion path. This prevents Reth's ExEx and
-/// Engine resources from disappearing while consensus still holds an exact
-/// application acknowledgement.
+/// join from `Drop` as the ordinary completion path. This prevents Reth's Engine
+/// resources from disappearing while consensus still holds an exact application
+/// acknowledgement.
 pub(crate) struct ConsensusThreadGuard {
     shutdown: tokio_util::sync::CancellationToken,
     handle: Option<thread::JoinHandle<eyre::Result<()>>>,
@@ -166,32 +165,9 @@ impl Drop for ConsensusThreadGuard {
     }
 }
 
-pub(crate) fn record_ocomp_exit(
-    exit: Option<crate::ocomp_exex::OcompExExExitV1>,
-    shutdown: &outbe_node::shutdown::NodeShutdown,
-) {
-    if let Some(exit) = exit {
-        tracing::error!(
-            failure_class = ?exit.failure.class,
-            failure = %exit.failure.message,
-            "embedded OCOMP requested node shutdown"
-        );
-        shutdown.record_failure(
-            LaunchError::EmbeddedOcompFailure {
-                class: exit.failure.class,
-                message: exit.failure.message,
-            }
-            .into(),
-        );
-    } else {
-        shutdown.record_failure(LaunchError::EmbeddedOcompExitChannelClosed.into());
-    }
-}
-
 pub(crate) async fn wait_for_launcher_exit(
     shutdown: &outbe_node::shutdown::NodeShutdown,
     consensus_dead_rx: Option<&mut oneshot::Receiver<()>>,
-    ocomp_exit_rx: &mut tokio::sync::mpsc::UnboundedReceiver<crate::ocomp_exex::OcompExExExitV1>,
     upgrade_promotion: &tokio::sync::Notify,
     tee_lease_exit_rx: &mut tokio::sync::mpsc::UnboundedReceiver<eyre::Result<String>>,
 ) -> LauncherExitCause {
@@ -212,10 +188,6 @@ pub(crate) async fn wait_for_launcher_exit(
         () = consensus_dead => {
             info!("consensus node exited");
             LauncherExitCause::ConsensusExited
-        }
-        exit = ocomp_exit_rx.recv() => {
-            record_ocomp_exit(exit, shutdown);
-            LauncherExitCause::OcompRequested
         }
         () = upgrade_promotion.notified() => {
             info!("finalized enclave upgrade requested execution restart");

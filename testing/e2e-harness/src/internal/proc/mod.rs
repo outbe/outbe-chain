@@ -170,10 +170,9 @@ impl ChildGuard {
     ///
     /// SIGTERM first, SIGKILL only if the process will not leave. A node killed
     /// outright never closes its database. On the next launch, reth heals the
-    /// torn static-file write by dropping the newest block. That strands the
-    /// offchain-data projection one block short of the finalized head. Execution
-    /// then waits forever for a projected parent that can never arrive. A stop
-    /// that follows the operator path is what makes a restart reproducible.
+    /// torn static-file write by dropping the newest block, so the node restarts
+    /// from a different state than the one that was stopped. A stop that follows
+    /// the operator path is what makes a restart reproducible.
     pub(crate) fn stop(&mut self) {
         self.stop_with_signal("TERM");
     }

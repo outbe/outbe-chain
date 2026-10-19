@@ -23,11 +23,6 @@ fn delegated_key_resolves_only_for_its_assigned_role() {
                 .unwrap(),
             Some(VALIDATOR_A)
         );
-        assert_eq!(
-            vs.resolve_validator_for_role(DELEGATE, ValidatorDelegateRole::Ocomp)
-                .unwrap(),
-            None
-        );
     });
 }
 
@@ -35,37 +30,32 @@ fn delegated_key_resolves_only_for_its_assigned_role() {
 fn rotation_and_revoke_remove_the_previous_capability() {
     with_vs_configured(10, |vs| {
         register_active(vs, VALIDATOR_A, 1);
-        vs.set_delegate(VALIDATOR_A, ValidatorDelegateRole::Ocomp, DELEGATE)
+        vs.set_delegate(VALIDATOR_A, ValidatorDelegateRole::Oracle, DELEGATE)
             .unwrap();
         assert_eq!(
-            vs.resolve_validator_for_role(VALIDATOR_A, ValidatorDelegateRole::Ocomp)
+            vs.resolve_validator_for_role(VALIDATOR_A, ValidatorDelegateRole::Oracle)
                 .unwrap(),
             None,
             "explicit delegation disables validator-address fallback for that role"
         );
-        vs.set_delegate(VALIDATOR_A, ValidatorDelegateRole::Ocomp, ROTATED)
+        vs.set_delegate(VALIDATOR_A, ValidatorDelegateRole::Oracle, ROTATED)
             .unwrap();
 
         assert_eq!(
-            vs.resolve_validator_for_role(DELEGATE, ValidatorDelegateRole::Ocomp)
-                .unwrap(),
-            None
-        );
-        assert_eq!(
-            vs.resolve_validator_for_role(ROTATED, ValidatorDelegateRole::Ocomp)
+            vs.resolve_validator_for_role(ROTATED, ValidatorDelegateRole::Oracle)
                 .unwrap(),
             Some(VALIDATOR_A)
         );
 
-        vs.revoke_delegate(VALIDATOR_A, ValidatorDelegateRole::Ocomp)
+        vs.revoke_delegate(VALIDATOR_A, ValidatorDelegateRole::Oracle)
             .unwrap();
         assert_eq!(
-            vs.resolve_validator_for_role(ROTATED, ValidatorDelegateRole::Ocomp)
+            vs.resolve_validator_for_role(ROTATED, ValidatorDelegateRole::Oracle)
                 .unwrap(),
             None
         );
         assert_eq!(
-            vs.resolve_validator_for_role(VALIDATOR_A, ValidatorDelegateRole::Ocomp)
+            vs.resolve_validator_for_role(VALIDATOR_A, ValidatorDelegateRole::Oracle)
                 .unwrap(),
             Some(VALIDATOR_A),
             "revocation restores validator-address fallback"
@@ -109,7 +99,7 @@ fn registered_validator_address_cannot_be_used_as_another_validators_delegate() 
 fn operational_delegate_cannot_later_register_as_a_validator() {
     with_vs_configured(10, |vs| {
         register_active(vs, VALIDATOR_A, 1);
-        vs.set_delegate(VALIDATOR_A, ValidatorDelegateRole::Ocomp, DELEGATE)
+        vs.set_delegate(VALIDATOR_A, ValidatorDelegateRole::Oracle, DELEGATE)
             .unwrap();
 
         let err = vs
@@ -120,14 +110,9 @@ fn operational_delegate_cannot_later_register_as_a_validator() {
         );
         assert!(!vs.is_validator(DELEGATE).unwrap());
         assert_eq!(
-            vs.get_delegate(VALIDATOR_A, ValidatorDelegateRole::Ocomp)
+            vs.get_delegate(VALIDATOR_A, ValidatorDelegateRole::Oracle)
                 .unwrap(),
             DELEGATE
-        );
-        assert_eq!(
-            vs.resolve_validator_for_role(DELEGATE, ValidatorDelegateRole::Ocomp)
-                .unwrap(),
-            Some(VALIDATOR_A)
         );
     });
 }
@@ -153,16 +138,11 @@ fn one_address_can_hold_independent_roles_for_the_same_validator() {
         register_active(vs, VALIDATOR_A, 1);
         vs.set_delegate(VALIDATOR_A, ValidatorDelegateRole::Oracle, DELEGATE)
             .unwrap();
-        vs.set_delegate(VALIDATOR_A, ValidatorDelegateRole::Ocomp, DELEGATE)
+        vs.set_delegate(VALIDATOR_A, ValidatorDelegateRole::Oracle, DELEGATE)
             .unwrap();
 
         assert_eq!(
             vs.resolve_validator_for_role(DELEGATE, ValidatorDelegateRole::Oracle)
-                .unwrap(),
-            Some(VALIDATOR_A)
-        );
-        assert_eq!(
-            vs.resolve_validator_for_role(DELEGATE, ValidatorDelegateRole::Ocomp)
                 .unwrap(),
             Some(VALIDATOR_A)
         );
@@ -172,13 +152,10 @@ fn one_address_can_hold_independent_roles_for_the_same_validator() {
 #[test]
 fn unknown_role_ids_fail_closed() {
     assert!(ValidatorDelegateRole::try_from(0).is_err());
+    assert!(ValidatorDelegateRole::try_from(2).is_err());
     assert!(ValidatorDelegateRole::try_from(3).is_err());
     assert_eq!(
         ValidatorDelegateRole::try_from(1).unwrap(),
         ValidatorDelegateRole::Oracle
-    );
-    assert_eq!(
-        ValidatorDelegateRole::try_from(2).unwrap(),
-        ValidatorDelegateRole::Ocomp
     );
 }

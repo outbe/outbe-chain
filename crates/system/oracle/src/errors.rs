@@ -1,17 +1,9 @@
 //! Module-local error types for the Oracle.
 //!
-//! [`OracleError`] covers ordinary oracle failures: pair registry, votes,
-//! VWAP/TWAP computation, genesis import/export. [`OracleOcompError`] covers
-//! everything OCOMP: the fixed projection profile, its state-version stream, and
-//! the raw-storage opening plans evaluated off-chain by `outbe-ocomp`.
-//!
-//! Both `From` impls below are exhaustive on purpose. A new variant must pick
-//! its severity explicitly instead of defaulting to a revert through a wildcard
-//! arm. Errors that are not oracle-specific (out-of-gas, storage faults) keep
-//! coming from `outbe_primitives::error::PrecompileError`.
+//! Oracle errors cover pair registration, votes, VWAP/TWAP, and genesis operations.
 
 use crate::schema::PairIndex;
-use alloy_primitives::{B256, U256};
+use alloy_primitives::U256;
 use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
@@ -219,98 +211,6 @@ impl From<OracleError> for PrecompileError {
     }
 }
 
-/// Every OCOMP-related Oracle failure: the fixed projection profile, its
-/// state-version stream, and the raw-storage opening plan/evaluation.
-#[derive(Clone, Debug, Eq, PartialEq, Error)]
-#[non_exhaustive]
-pub enum OracleOcompError {
-    // -- projection profile -------------------------------------------------
-    #[error("Oracle OCOMP day-type pair is not registered")]
-    DayTypePairNotRegistered,
-    #[error("Oracle OCOMP profile is ready with zero state version")]
-    ProfileReadyWithZeroVersion,
-    #[error("Oracle OCOMP profile contains partial pre-fork state")]
-    PartialPreForkState,
-    /// Read-path sighting of the same broken invariant as
-    /// [`Self::ProfileReadyWithZeroVersion`]. It is a separate variant because a
-    /// read is recoverable state corruption, not a failed fork activation.
-    #[error("Oracle OCOMP profile is ready with zero state version")]
-    StateVersionZero,
-    #[error("Oracle OCOMP state version overflow")]
-    StateVersionOverflow,
-    #[error("Oracle S-curve oldest index exceeds write count")]
-    ScurveOldestExceedsWriteCount,
-
-    // -- opening slot plan --------------------------------------------------
-    #[error("reference ISO list does not contain mandatory 840")]
-    MissingMandatoryUsdReference,
-    #[error("reference ISO list is not strictly ascending")]
-    NonCanonicalReferenceIsos,
-    #[error("reference ISO count {actual} exceeds cap {cap}")]
-    ReferenceIsoCountExceedsCap { actual: usize, cap: usize },
-    #[error("on-chain reference currency count {actual} exceeds cap {cap}")]
-    ReferenceCurrencyCountExceedsCap { actual: u32, cap: u32 },
-    #[error("pair index count {actual} does not match {expected} reference ISOs")]
-    PairIndexCountMismatch { actual: usize, expected: usize },
-    #[error("S-curve oldest index {oldest} exceeds count {count}")]
-    ScurveOldestExceedsCount { oldest: u32, count: u32 },
-    #[error("active S-curve count {actual} exceeds cap {cap}")]
-    ActiveScurveCountExceedsCap { actual: u32, cap: u32 },
-
-    // -- opening evaluation -------------------------------------------------
-    #[error("duplicate Oracle opening slot {0}")]
-    DuplicateSlot(B256),
-    #[error("missing Oracle opening slot {0}")]
-    MissingSlot(B256),
-    #[error("Oracle opening slots do not match the canonical plan")]
-    NonCanonicalSlotSequence,
-    #[error("Oracle opening {0} does not fit its runtime type")]
-    IntegerOverflow(&'static str),
-    #[error("invalid Oracle WorldwideDay exists flag {0}")]
-    InvalidWorldwideDayExists(U256),
-    #[error("Oracle ISO {iso} names an unregistered pair")]
-    PairNotRegistered { iso: u16 },
-    #[error("Oracle ISO {iso} is not an on-chain reference currency")]
-    IsoNotAReferenceCurrency { iso: u16 },
-}
-
-impl From<OracleOcompError> for PrecompileError {
-    fn from(err: OracleOcompError) -> Self {
-        use OracleOcompError::*;
-        match err {
-            // Fork activation reached a state the profile cannot be built from.
-            DayTypePairNotRegistered | ProfileReadyWithZeroVersion | PartialPreForkState => {
-                PrecompileError::Revert(err.to_string())
-            }
-
-            // Stored OCOMP state or an opening does not match what the protocol
-            // requires. The opening variants are produced for the off-chain
-            // `outbe-ocomp` worker and do not reach the EVM boundary in
-            // practice. They still classify the same way: the body being read is
-            // not the body the plan describes.
-            StateVersionZero
-            | StateVersionOverflow
-            | ScurveOldestExceedsWriteCount
-            | MissingMandatoryUsdReference
-            | NonCanonicalReferenceIsos
-            | ReferenceIsoCountExceedsCap { .. }
-            | ReferenceCurrencyCountExceedsCap { .. }
-            | PairIndexCountMismatch { .. }
-            | ScurveOldestExceedsCount { .. }
-            | ActiveScurveCountExceedsCap { .. }
-            | DuplicateSlot(_)
-            | MissingSlot(_)
-            | NonCanonicalSlotSequence
-            | IntegerOverflow(_)
-            | InvalidWorldwideDayExists(_)
-            | PairNotRegistered { .. }
-            | IsoNotAReferenceCurrency { .. } => {
-                PrecompileError::BodyReadCorruption(err.to_string())
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -330,33 +230,6 @@ mod tests {
             let message = err.to_string();
             assert!(
                 matches!(PrecompileError::from(err), PrecompileError::Revert(m) if m == message)
-            );
-        }
-    }
-
-    #[test]
-    fn ocomp_activation_breaches_revert_and_the_rest_is_corruption() {
-        for err in [
-            OracleOcompError::DayTypePairNotRegistered,
-            OracleOcompError::ProfileReadyWithZeroVersion,
-            OracleOcompError::PartialPreForkState,
-        ] {
-            let message = err.to_string();
-            assert!(
-                matches!(PrecompileError::from(err), PrecompileError::Revert(m) if m == message)
-            );
-        }
-
-        for err in [
-            OracleOcompError::StateVersionZero,
-            OracleOcompError::StateVersionOverflow,
-            OracleOcompError::ScurveOldestExceedsWriteCount,
-            OracleOcompError::NonCanonicalSlotSequence,
-            OracleOcompError::IsoNotAReferenceCurrency { iso: 826 },
-        ] {
-            let message = err.to_string();
-            assert!(
-                matches!(PrecompileError::from(err), PrecompileError::BodyReadCorruption(m) if m == message)
             );
         }
     }
@@ -382,14 +255,6 @@ mod tests {
         assert_eq!(
             OracleError::NotReferenceCurrency { iso_code: 978 }.to_string(),
             "iso_code 978 is not a registered reference currency"
-        );
-        assert_eq!(
-            OracleOcompError::ScurveOldestExceedsCount {
-                oldest: 3,
-                count: 2
-            }
-            .to_string(),
-            "S-curve oldest index 3 exceeds count 2"
         );
     }
 }

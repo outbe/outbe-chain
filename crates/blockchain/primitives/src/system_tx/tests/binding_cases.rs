@@ -7,7 +7,7 @@ use super::primitives::{
     reshare_artifact::{
         encode_outbe_block_artifacts, ConsensusHeaderArtifact, OutbeBlockArtifacts,
     },
-    system_tx::{OcompLifecycleActivation, SystemTxInputV2, SystemTxLayout},
+    system_tx::{SystemTxInputV2, SystemTxLayout},
     OutbeBlockBody, OutbeHeader,
 };
 use alloy_consensus::{Header, SignableTransaction, TxLegacy};
@@ -15,7 +15,7 @@ use alloy_primitives::{Address, Bytes, Signature, TxKind, B256, U256};
 use reth_ethereum::TransactionSigned;
 
 pub(super) enum Check {
-    Layout(OcompLifecycleActivation),
+    Layout,
     Parent,
     Boundary,
 }
@@ -118,76 +118,36 @@ fn boundary() -> DkgBoundaryArtifact {
     }
 }
 
-fn steady_inputs(lifecycle: bool) -> Vec<Bytes> {
+fn steady_inputs() -> Vec<Bytes> {
     let mut inputs = vec![
         parent(B256::repeat_byte(0x41)),
         encoded(SystemTxInputV2::LateFinalizeCredits {
             artifact: Default::default(),
         }),
     ];
-    if lifecycle {
-        inputs.push(encoded(SystemTxInputV2::OcompLifecycleBegin));
-    }
     inputs.extend([
         encoded(SystemTxInputV2::CycleTick),
         encoded(SystemTxInputV2::RewardsGemDelivery),
         encoded(SystemTxInputV2::OracleSlashWindow),
         encoded(SystemTxInputV2::HookEvents),
     ]);
-    if lifecycle {
-        inputs.push(encoded(SystemTxInputV2::OcompTerminalRequest));
-    }
     inputs
 }
 
 pub(super) fn cases() -> Vec<Case> {
-    use OcompLifecycleActivation::{AtBlock, Disabled};
     let cycle = encoded(SystemTxInputV2::CycleTick);
     let malformed = Bytes::from_static(b"OSA3\x02");
     let mut cases = vec![
-        Case::new("genesis_empty", Check::Layout(Disabled), 0, vec![]),
-        Case::new(
-            "block1_requires_boundary",
-            Check::Layout(Disabled),
-            1,
-            vec![],
-        ),
-        Case::new(
-            "steady_disabled",
-            Check::Layout(Disabled),
-            2,
-            steady_inputs(false),
-        ),
-        Case::new(
-            "steady_active",
-            Check::Layout(AtBlock(2)),
-            2,
-            steady_inputs(true),
-        ),
-        Case::new(
-            "lifecycle_before_activation",
-            Check::Layout(Disabled),
-            2,
-            steady_inputs(true),
-        ),
-        Case::new(
-            "missing_lifecycle_after_activation",
-            Check::Layout(AtBlock(2)),
-            2,
-            steady_inputs(false),
-        ),
+        Case::new("genesis_empty", Check::Layout, 0, vec![]),
+        Case::new("block1_requires_boundary", Check::Layout, 1, vec![]),
+        Case::new("steady_disabled", Check::Layout, 2, steady_inputs()),
         Case::new(
             "wrong_order",
-            Check::Layout(Disabled),
+            Check::Layout,
             2,
             vec![cycle.clone(), parent(B256::repeat_byte(0x41))],
         ),
-        Case::new(
-            "malformed_layout",
-            Check::Layout(Disabled),
-            2,
-            vec![Bytes::new()],
-        ),
+        Case::new("malformed_layout", Check::Layout, 2, vec![Bytes::new()]),
         Case::new(
             "genesis_skips_parent",
             Check::Parent,
@@ -230,7 +190,7 @@ pub(super) fn cases() -> Vec<Case> {
     ];
     let mut bad_artifacts = Case::new(
         "artifacts_before_layout",
-        Check::Layout(Disabled),
+        Check::Layout,
         2,
         vec![Bytes::new()],
     );
@@ -267,9 +227,9 @@ pub(super) fn cases() -> Vec<Case> {
     }
     let mut layout_mismatch = Case::new(
         "boundary_header_missing_body",
-        Check::Layout(Disabled),
+        Check::Layout,
         2,
-        steady_inputs(false),
+        steady_inputs(),
     );
     layout_mismatch.artifacts.consensus_header_artifact =
         Some(ConsensusHeaderArtifact::BoundaryOutcome(artifact));
@@ -283,11 +243,7 @@ pub(super) fn cases() -> Vec<Case> {
 /// Golden diagnostics captured from both layers before extracting the bindings.
 pub(super) fn assert_diagnostics(
     node: bool,
-    validate_layout: impl Fn(
-        &OutbeBlockBody,
-        &OutbeHeader,
-        OcompLifecycleActivation,
-    ) -> Result<(), String>,
+    validate_layout: impl Fn(&OutbeBlockBody, &OutbeHeader) -> Result<(), String>,
     validate_parent: impl Fn(&SystemTxLayout<'_>, &OutbeHeader) -> Result<(), String>,
     validate_boundary: impl Fn(&SystemTxLayout<'_>, &OutbeBlockArtifacts) -> Result<(), String>,
 ) {
@@ -295,9 +251,6 @@ pub(super) fn assert_diagnostics(
         ("genesis_empty", None, None),
         ("block1_requires_boundary", Some("invalid system tx set: V2 genesis bootstrap: block 1 must carry a BoundaryOutcome system tx (got has_boundary_outcome = false)"), Some("invalid system tx set: V2 genesis bootstrap: block 1 must carry a BoundaryOutcome system tx (got has_boundary_outcome = false)")),
         ("steady_disabled", None, None),
-        ("steady_active", None, None),
-        ("lifecycle_before_activation", Some("invalid system tx set: active system tx set mismatch: expected begin [CertifiedParentAccounting, LateFinalizeCredits, CycleTick, RewardsGemDelivery, OracleSlashWindow, HookEvents], expected end [], actual begin [CertifiedParentAccounting, LateFinalizeCredits, OcompLifecycleBegin, CycleTick, RewardsGemDelivery, OracleSlashWindow, HookEvents], actual end [OcompTerminalRequest]"), Some("invalid system tx set: active system tx set mismatch: expected begin [CertifiedParentAccounting, LateFinalizeCredits, CycleTick, RewardsGemDelivery, OracleSlashWindow, HookEvents], expected end [], actual begin [CertifiedParentAccounting, LateFinalizeCredits, OcompLifecycleBegin, CycleTick, RewardsGemDelivery, OracleSlashWindow, HookEvents], actual end [OcompTerminalRequest]")),
-        ("missing_lifecycle_after_activation", Some("invalid system tx set: active system tx set mismatch: expected begin [CertifiedParentAccounting, LateFinalizeCredits, OcompLifecycleBegin, CycleTick, RewardsGemDelivery, OracleSlashWindow, HookEvents], expected end [OcompTerminalRequest], actual begin [CertifiedParentAccounting, LateFinalizeCredits, CycleTick, RewardsGemDelivery, OracleSlashWindow, HookEvents], actual end []"), Some("invalid system tx set: active system tx set mismatch: expected begin [CertifiedParentAccounting, LateFinalizeCredits, OcompLifecycleBegin, CycleTick, RewardsGemDelivery, OracleSlashWindow, HookEvents], expected end [OcompTerminalRequest], actual begin [CertifiedParentAccounting, LateFinalizeCredits, CycleTick, RewardsGemDelivery, OracleSlashWindow, HookEvents], actual end []")),
         ("wrong_order", Some("invalid system tx layout: system tx kind order violation in BeginBlock: previous CycleTick, current CertifiedParentAccounting"), Some("invalid system tx layout for leader binding: system tx kind order violation in BeginBlock: previous CycleTick, current CertifiedParentAccounting")),
         ("malformed_layout", Some("invalid system tx layout: system tx input too short: 0 bytes"), Some("invalid system tx layout for leader binding: system tx input too short: 0 bytes")),
         ("genesis_skips_parent", None, None),
@@ -322,7 +275,7 @@ pub(super) fn assert_diagnostics(
     for (case, (name, node_error, leader_error)) in cases.iter().zip(expected) {
         let layout = case.layout();
         let result = match case.check {
-            Check::Layout(activation) => validate_layout(&case.body, &case.header, activation),
+            Check::Layout => validate_layout(&case.body, &case.header),
             Check::Parent => validate_parent(&layout, &case.header),
             Check::Boundary => validate_boundary(&layout, &case.artifacts),
         };

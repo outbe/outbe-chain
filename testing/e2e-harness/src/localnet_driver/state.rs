@@ -330,10 +330,8 @@ impl Drop for StartLock {
     }
 }
 
-#[cfg(feature = "ocomp-integration")]
 pub(super) struct StateGuard(pub(super) PathBuf);
 
-#[cfg(feature = "ocomp-integration")]
 impl Drop for StateGuard {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.0);

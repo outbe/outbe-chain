@@ -208,6 +208,8 @@ contract LocalLoopbackTest is Test {
         target.setProceedsRoute(address(tokenBridge), address(origin));
 
         auction.wire(address(escrow));
+        auction.setIntexContract(address(intex));
+        intex.grantRole(intex.AUCTION_ROLE(), address(auction));
         auction.grantRole(auction.RELAYER_ROLE(), address(target));
         intex.grantRole(intex.RELAYER_ROLE(), address(target));
         escrow.grantRole(escrow.RELAYER_ROLE(), address(target));
@@ -310,8 +312,8 @@ contract LocalLoopbackTest is Test {
 
         assertEq(uint8(escrow.getBidLock(DAY, iba1).status), uint8(IEscrowAdapter.LockStatus.Won), "iba1 not won");
         assertEq(escrow.getBidLock(DAY, iba2).quantity, 20, "iba2 partial");
-        escrow.claimRefund(DAY, iba1);
-        escrow.claimRefund(DAY, iba2);
+        auction.claimRefund(DAY, iba1);
+        auction.claimRefund(DAY, iba2);
         assertEq(wcoen.balanceOf(iba1), INITIAL_WCOEN_BALANCE - 24e18 + 3e18, "iba1 refund"); // paid 30*1*0.7
         assertEq(wcoen.balanceOf(iba2), INITIAL_WCOEN_BALANCE - 28e18 + 14e18, "iba2 refund"); // paid 20*1*0.7
         assertEq(factory.calls(), 1, "proceeds not distributed");
@@ -320,13 +322,7 @@ contract LocalLoopbackTest is Test {
         assertEq(factory.lastDay(), DAY, "proceeds day");
         assertEq(address(origin).balance, 0, "native stranded on origin");
 
-        // 7. ISSUANCE_INSTRUCTIONS: winners minted on the canonical NFT via the loopback leg.
-        address[] memory winners = new address[](2);
-        winners[0] = iba1;
-        winners[1] = iba2;
-        uint256[] memory amounts = new uint256[](2);
-        amounts[0] = 30;
-        amounts[1] = 20;
+        // 7. ISSUANCE_INSTRUCTIONS: the series lands on the canonical NFT via the loopback leg.
         IOriginRouter.IssuanceInstructionsParams[] memory issuance = new IOriginRouter.IssuanceInstructionsParams[](1);
         issuance[0] = IOriginRouter.IssuanceInstructionsParams({
             seriesId: CreateSeriesLib.seriesId(DAY),
@@ -340,22 +336,24 @@ contract LocalLoopbackTest is Test {
             referenceCurrency: 840,
             callWindow: 30,
             callThreshold: 21,
-            callPriceMinor: 200,
-            recipients: winners,
-            units: amounts
+            callPriceMinor: 200
         });
         vm.prank(address(factory));
         origin.sendIssuanceInstructions(local, DAY, 0, 1, issuance);
+        assertTrue(intex.seriesExists(CreateSeriesLib.seriesId(DAY)), "series created");
+
+        // Each winner issues its own units through the auction.
+        auction.issueIntex(DAY, iba1);
+        auction.issueIntex(DAY, iba2);
         uint256 tokenId = intex.issuedTokenId(CreateSeriesLib.seriesId(DAY));
-        assertEq(intex.balanceOf(iba1, tokenId), 30, "iba1 mint");
-        assertEq(intex.balanceOf(iba2, tokenId), 20, "iba2 mint");
+        assertEq(intex.balanceOf(iba1, tokenId), 30, "iba1 issued");
+        assertEq(intex.balanceOf(iba2, tokenId), 20, "iba2 issued");
 
         // 8. Every leg executed within its IntexGas budget: nothing parked anywhere.
         (,, bool bidsRelayed) = target.bidsRelay(DAY);
         assertTrue(bidsRelayed, "bids relay finished");
         (,, bool proceedsParked,) = target.parkedProceeds(0);
         assertFalse(proceedsParked, "proceeds route parked");
-        assertEq(target.parkedIssuanceCount(), 0, "issuance mint parked");
         assertEq(origin.parkedMessage(0).payload.length, 0, "origin leg parked");
     }
 }

@@ -2,14 +2,11 @@
 pragma solidity ^0.8.30;
 
 interface IMetadosis {
-    error OcompActivationRejected(uint16 code);
-    error OcompResultVoteRejected(uint16 code);
-
     event MetadosisAccumulation(
         uint32 indexed date, uint256 metadosisLimitMinor, uint256 totalAccumulatedMinor, uint64 blockNumber
     );
 
-    event OcompDayLimitFormed(
+    event DayLimitFormed(
         uint32 indexed worldwideDay,
         uint256 baseLimitMinor,
         uint256 promisLimitBeforeMinor,
@@ -83,34 +80,6 @@ interface IMetadosis {
     /// `finalStatus` is the day's terminal status (COMPLETED or FAILED).
     event WorldwideDayCleanedUp(uint32 indexed worldwideDay, uint8 finalStatus);
 
-    event OffchainJobRequested(
-        bytes32 indexed intentId,
-        uint32 indexed wwd,
-        uint64 pendingNonce,
-        uint32 attempt,
-        bytes32 activationPreconditionsHash
-    );
-
-    event OffchainJobExpired(bytes32 indexed intentId, uint32 indexed wwd, uint64 expiredAtHeight);
-
-    event OcompVoteMissed(
-        address indexed validator,
-        bytes32 indexed jobId,
-        uint64 missCount,
-        uint256 slashedBondedMinor,
-        uint64 recoveryDeadline,
-        bool firstInWindow
-    );
-
-    event LysisActivated(
-        bytes32 indexed intentId,
-        bytes32 indexed jobId,
-        bytes32 activationCallId,
-        bytes32 resultDigest,
-        bytes32 terminalReceiptHash,
-        uint32 wwd
-    );
-
     function getWorldwideDay(uint32 wwd)
         external
         view
@@ -161,22 +130,4 @@ interface IMetadosis {
             uint8 retirementOutcome,
             uint64 blockNumber
         );
-
-    /// @notice Return the canonical OCB1 record for one off-chain computation job.
-    /// @param intentId Canonical JobIntent identifier.
-    /// @return ocompJobRecordV1 Canonically encoded OcompJobRecordV1 bytes.
-    function getOffchainJob(bytes32 intentId) external view returns (bytes memory ocompJobRecordV1);
-
-    /// @notice Submit one canonical node-attested ResultVoteV1.
-    function submitLysisResult(bytes calldata resultVoteV1) external;
-
-    /// @notice Return the pinned ValidatorSet vote slots, immutable quorum and
-    /// optional closed accountability summary for one finalized JobId.
-    function getOffchainVoteAccountability(bytes32 jobId) external view returns (bytes memory ocompVoteAccountabilityV1);
-
-    /// @notice Return the canonical active generation selected by Metadosis state.
-    function getActiveLysisGeneration(uint32 wwd) external view returns (bytes memory activeGenerationV1);
-
-    /// @notice Return the canonical aggregate terminal receipt for an activation attempt.
-    function getLysisTerminalReceipt(bytes32 intentId) external view returns (bytes memory aggregateActivationReceiptV1);
 }

@@ -25,15 +25,9 @@ pub mod storage_records;
 #[cfg(any(test, feature = "test-enclave"))]
 pub mod test_support;
 
-pub use schema::{
-    NodBucketState, NodCertifiedGenerationProjection, NodContract, NodIssueParams, NodItemState,
-    NodOcompTargetProjection,
-};
+pub use schema::{NodBucketState, NodContract, NodIssueParams, NodItemState};
 
 #[cfg(test)]
 mod tests;
 
-pub use codec::{
-    canonical_bucket, canonical_bucket_id, canonical_item, from_canonical_bucket,
-    from_canonical_item,
-};
+pub use codec::{canonical_bucket, canonical_item, from_canonical_bucket, from_canonical_item};

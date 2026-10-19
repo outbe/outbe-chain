@@ -6,12 +6,12 @@
 //! message reads as a diagnosis instead of a mismatch.
 
 use alloy_primitives::Address;
-#[cfg(feature = "ocomp-integration")]
+
 use alloy_primitives::U256;
 use alloy_sol_types::sol;
 
 use crate::internal::eth;
-#[cfg(feature = "ocomp-integration")]
+
 use crate::world::{origin_venue, World};
 
 sol! {
@@ -78,7 +78,6 @@ sol! {
 }
 /// Every probe below asks the chain the same question: "what did this contract
 /// emit for this day?". The query shape lives here once.
-#[cfg_attr(not(feature = "ocomp-integration"), allow(dead_code))]
 fn logs_of(
     url: &str,
     address: Address,
@@ -99,7 +98,6 @@ fn logs_of(
     .cloned()
 }
 
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn frozen_targets(url: &str, router: Address, worldwide_day: u32) -> String {
     match eth::read_call(
         url,
@@ -113,7 +111,7 @@ pub(crate) fn frozen_targets(url: &str, router: Address, worldwide_day: u32) -> 
         None => "the router did not answer".to_owned(),
     }
 }
-#[cfg(feature = "ocomp-integration")]
+
 pub(crate) fn desis_stage(url: &str, worldwide_day: u32) -> String {
     let desis = origin_venue::DESIS
         .parse()
@@ -133,7 +131,7 @@ pub(crate) fn desis_stage(url: &str, worldwide_day: u32) -> String {
         None => "Desis did not answer".to_owned(),
     }
 }
-#[cfg(feature = "ocomp-integration")]
+
 pub(crate) fn day_colour(world: &World, worldwide_day: u32) -> String {
     match world
         .rpc
@@ -143,7 +141,7 @@ pub(crate) fn day_colour(world: &World, worldwide_day: u32) -> String {
         None => "day state unreadable".to_owned(),
     }
 }
-#[cfg(feature = "ocomp-integration")]
+
 pub(crate) fn day_closure(world: &World, worldwide_day: u32) -> String {
     match world
         .rpc
@@ -158,7 +156,7 @@ pub(crate) fn day_closure(world: &World, worldwide_day: u32) -> String {
         _ => "Metadosis never closed the day, so nothing ever briefed Desis".to_owned(),
     }
 }
-#[cfg(feature = "ocomp-integration")]
+
 pub(crate) fn venue_schedule(url: &str, venue: Address, worldwide_day: u32) -> String {
     let now = eth::latest_block_timestamp(url).unwrap_or_default();
     match eth::read_call(
@@ -177,7 +175,6 @@ pub(crate) fn venue_schedule(url: &str, venue: Address, worldwide_day: u32) -> S
 }
 /// Both sides swallow a failed send by parking it, so the parked entry is the
 /// only trace of work that never left.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn parked_work(
     url: &str,
     venue_url: &str,
@@ -244,13 +241,9 @@ pub(crate) fn parked_work(
     };
     format!("{parked_note}, {relay_note}")
 }
-/// The venue emits this at the end of every inbound stage handler, so its
-/// absence separates a message that never arrived from one that did nothing.
-#[cfg(feature = "ocomp-integration")]
 /// Split the relay in two: what left the venue, and what the origin took in.
 /// A gap between them is the transport losing the message, not either side
 /// refusing it.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn bid_relay_traffic(
     url: &str,
     venue_url: &str,
@@ -298,7 +291,6 @@ pub(crate) fn bid_relay_traffic(
 }
 /// Desis drops inbound work of its own, with its own reason codes, and those
 /// never appear in either router's ignore log.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn ignored_by_desis(url: &str, worldwide_day: u32) -> String {
     let desis: Address = origin_venue::DESIS
         .parse()
@@ -337,7 +329,6 @@ pub(crate) fn ignored_by_desis(url: &str, worldwide_day: u32) -> String {
 }
 /// A router may accept a message and drop it on purpose, naming a reason. That
 /// reason is the only record of work that arrived and did nothing.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn ignored_inbound(url: &str, router: Address, side: &str) -> String {
     let topic0 = alloy_primitives::keccak256(
         b"InboundMessageIgnored(uint32,uint8,bytes32,uint8)".as_slice(),
@@ -389,7 +380,7 @@ pub(crate) fn ignored_inbound(url: &str, router: Address, side: &str) -> String 
         .collect();
     format!("{side} ignored {}", described.join(", "))
 }
-#[cfg(feature = "ocomp-integration")]
+
 pub(crate) fn stages_received(url: &str, venue_router: Address, worldwide_day: u32) -> String {
     let topic0 =
         alloy_primitives::keccak256(b"AuctionStageReceived(uint32,uint32,uint8)".as_slice());
@@ -409,7 +400,7 @@ pub(crate) fn stages_received(url: &str, venue_router: Address, worldwide_day: u
         None => "the venue stage log is unreadable".to_owned(),
     }
 }
-#[cfg(feature = "ocomp-integration")]
+
 pub(crate) fn venue_bid_counts(url: &str, venue: Address, worldwide_day: u32) -> String {
     match eth::read_call(
         url,
@@ -425,7 +416,7 @@ pub(crate) fn venue_bid_counts(url: &str, venue: Address, worldwide_day: u32) ->
         None => "venue did not report its bid counts".to_owned(),
     }
 }
-#[cfg(feature = "ocomp-integration")]
+
 pub(crate) fn relayed_bids(url: &str, worldwide_day: u32, chain_id: u32) -> String {
     let desis = origin_venue::DESIS
         .parse()
@@ -455,7 +446,6 @@ pub(crate) fn relayed_bids(url: &str, worldwide_day: u32, chain_id: u32) -> Stri
 /// The loopback adapter delivers inside the send and swallows a failure. It
 /// parks the delivery with the revert reason and still reports the send as
 /// done. That reason is the only place a refused message explains itself.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn parked_deliveries(world: &World) -> String {
     let url = world.rpc.url(world.validators.primary_port());
     let Some(contracts) = world.state.origin_contracts.clone() else {
@@ -500,7 +490,6 @@ pub(crate) fn parked_deliveries(world: &World) -> String {
 }
 /// Did Desis get as far as handing the refunds to the router? Separates "the
 /// clearing never sent them" from "the target chain refused them".
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn refunds_were_sent(world: &World, worldwide_day: u32) -> bool {
     let url = world.rpc.url(world.validators.primary_port());
     let Some(contracts) = world.state.origin_contracts.clone() else {
@@ -523,7 +512,6 @@ pub(crate) fn refunds_were_sent(world: &World, worldwide_day: u32) -> bool {
 /// back to back. A router that cannot pay the bridge fee parks the tail of that
 /// burst instead of reverting. When a message never lands, look at a parked send
 /// first. Counting only: a run must not need a nudge.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn parked_origin_sends(world: &World) -> u32 {
     let url = world.rpc.url(world.validators.primary_port());
     let Some(contracts) = world.state.origin_contracts.clone() else {
@@ -598,17 +586,30 @@ sol! {
             external view returns (uint128 amount, uint32 claimableAt);
         function claimRefund(uint32 worldwideDay, address bidder) external;
     }
+
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    struct BidLock {
+        uint128 lockedAmount;
+        uint32 lockedAt;
+        uint8 status;
+        uint32 bidRate;
+        uint16 quantity;
+    }
+
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IWinClaim {
+        function getBidLock(uint32 worldwideDay, address bidder) external view returns (BidLock memory);
+        function issueIntex(uint32 worldwideDay, address bidder) external;
+    }
 }
 /// The series the target chain was told to issue, read back from its own log so
 /// the identifier comes from the chain rather than from a rebuilt guess.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn issued_series(
     url: &str,
     venue_router: Address,
 ) -> Option<alloy_primitives::FixedBytes<14>> {
-    let topic0 = alloy_primitives::keccak256(
-        b"IssuanceInstructionsReceived(uint32,bytes14,uint256)".as_slice(),
-    );
+    let topic0 =
+        alloy_primitives::keccak256(b"IssuanceInstructionsReceived(uint32,bytes14)".as_slice());
     let logs = logs_of(
         url,
         venue_router,
@@ -620,20 +621,8 @@ pub(crate) fn issued_series(
         &word.0[..14],
     ))
 }
-#[cfg(feature = "ocomp-integration")]
-pub(crate) fn deferred_issuances(url: &str, venue_router: Address) -> usize {
-    let topic0 =
-        alloy_primitives::keccak256(b"IssuanceParked(uint256,bytes14,address,bytes)".as_slice());
-    logs_of(
-        url,
-        venue_router,
-        vec![serde_json::json!(format!("{topic0:?}"))],
-    )
-    .map_or(0, |e| e.len())
-}
 /// Whether Desis issued anything at all. Absent issuance means one of two very
 /// different things, and only the clearing event tells them apart.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn cleared_empty(url: &str, worldwide_day: u32) -> Option<bool> {
     let desis: Address = origin_venue::DESIS.parse().ok()?;
     let day_topic = format!("0x{worldwide_day:064x}");
@@ -659,7 +648,6 @@ pub(crate) fn cleared_empty(url: &str, worldwide_day: u32) -> Option<bool> {
 }
 
 /// What `owner` owns of `series`: units still issued, and units already settled.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn series_balances(
     url: &str,
     nft: Address,
@@ -696,7 +684,6 @@ pub(crate) fn series_balances(
 }
 
 /// Whether the collection knows the series at all.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn series_exists(
     url: &str,
     nft: Address,
@@ -712,7 +699,6 @@ pub(crate) fn series_exists(
 
 /// A series' lifecycle state as the collection reads it: 0 Issued, 1 Called,
 /// 2 Expired.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn series_state(
     url: &str,
     nft: Address,
@@ -724,7 +710,6 @@ pub(crate) fn series_state(
 
 /// Units the series was issued across every chain. A forfeit is measured against
 /// this, not against what one chain happens to hold.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn series_issued_count(
     url: &str,
     nft: Address,
@@ -735,7 +720,6 @@ pub(crate) fn series_issued_count(
 }
 
 /// When the series was Called, as both chains recorded it.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn series_called_at(
     url: &str,
     nft: Address,
@@ -747,7 +731,6 @@ pub(crate) fn series_called_at(
 
 /// When the notice a Called series was given runs out. Expiry is derived against
 /// this, never stored, so a scenario has to wait past it rather than watch a flag.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn series_call_deadline(
     url: &str,
     nft: Address,
@@ -758,7 +741,6 @@ pub(crate) fn series_call_deadline(
 }
 
 /// The prices the engine derived at issuance: entry and call.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn series_prices(
     url: &str,
     nft: Address,
@@ -769,7 +751,6 @@ pub(crate) fn series_prices(
 }
 
 /// PROMIS-units the series carries per Intex unit.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn series_promis_load(
     url: &str,
     nft: Address,
@@ -780,7 +761,6 @@ pub(crate) fn series_promis_load(
 }
 
 /// The Issued token id of `series`, which the bridge moves.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn issued_token_id(
     url: &str,
     nft: Address,

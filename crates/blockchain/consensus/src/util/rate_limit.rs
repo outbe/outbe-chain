@@ -58,11 +58,24 @@ mod tests {
 
     #[test]
     fn suppresses_within_window_and_reports_count() {
-        let limiter = LogRateLimiter::new(Duration::from_secs(60));
+        let window = Duration::from_secs(60);
+        let limiter = LogRateLimiter::new(window);
 
         assert_eq!(limiter.check(), Some(0));
         assert_eq!(limiter.check(), None);
         assert_eq!(limiter.check(), None);
+
+        {
+            let mut state = limiter.state.lock().unwrap();
+            state.last_emit = state.last_emit.map(|t| t - window);
+        }
+        assert_eq!(limiter.check(), Some(2));
+
+        {
+            let mut state = limiter.state.lock().unwrap();
+            state.last_emit = state.last_emit.map(|t| t - window);
+        }
+        assert_eq!(limiter.check(), Some(0));
     }
 
     #[test]

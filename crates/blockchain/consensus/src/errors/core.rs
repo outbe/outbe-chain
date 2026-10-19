@@ -4,7 +4,6 @@ use alloy_primitives::{Address, B256};
 use commonware_consensus::types::{Epoch, Height, Round};
 use outbe_primitives::{
     error::PrecompileError,
-    projection::ProjectionFailureClass,
     system_tx::{
         binding::{BoundaryBindingError, LayoutBindingError, ParentAccountingBindingError},
         SystemTxError, SystemTxKind,
@@ -386,11 +385,6 @@ pub enum ApplicationError {
     ClockMillisOverflow,
     #[error("Unix time offset {0} moves timestamp outside u64")]
     UnixTimeOffsetOverflow(i64),
-    #[error("projection readiness failed ({class:?}): {message}")]
-    ProjectionReadiness {
-        class: ProjectionFailureClass,
-        message: std::sync::Arc<str>,
-    },
     #[error("{0}")]
     EncodeBlockArtifacts(String),
     #[error("canonicalize_and_build failed: {0}")]
@@ -501,17 +495,6 @@ pub enum ExecutorError {
         "executor canonicalize response dropped for finalized block at height {height} digest {digest}"
     )]
     CanonicalizeResponseDropped { height: Height, digest: Digest },
-    #[error("finalized parent projection wait expired without a request budget")]
-    FinalizedParentWaitExpired,
-    #[error("projection is ahead of finalized parent {block_hash} at height {block_number}")]
-    ProjectionAheadOfFinalizedParent { block_hash: B256, block_number: u64 },
-    #[error("projection readiness failed ({class:?}): {message}")]
-    ProjectionReadinessFailed {
-        class: ProjectionFailureClass,
-        message: std::sync::Arc<str>,
-    },
-    #[error("FullNode OCOMP readiness failed: {0}")]
-    FullNodeOcompReadinessFailed(#[source] eyre::Report),
     #[error("consensus parent forkchoice failed: {0}")]
     ParentForkchoiceFailed(String),
     #[error("consensus parent forkchoice must be VALID: {0}")]

@@ -56,9 +56,6 @@ fn assert_expiry_budget(receipt: &Receipt, cycle_gas: u64, cycle_internal_gas: u
             .count(),
         ACTIVE_COUNT
     );
-    eprintln!(
-        "TEE expiry CycleTick gas: active={ACTIVE_COUNT}, visible={cycle_gas}, internal={cycle_internal_gas}, limit=30000000"
-    );
     assert!(cycle_gas < 30_000_000);
     assert!(cycle_internal_gas < 30_000_000);
 }

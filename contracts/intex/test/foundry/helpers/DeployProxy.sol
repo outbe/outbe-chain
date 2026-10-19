@@ -19,9 +19,12 @@ library DeployProxy {
         IntexNFT1155 impl = new IntexNFT1155();
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), abi.encodeCall(IntexNFT1155.initialize, (defaultAdmin)));
         IntexNFT1155 nft = IntexNFT1155(address(proxy));
-        bytes32 role = nft.RELAYER_ROLE();
-        vm.prank(defaultAdmin);
-        nft.grantRole(role, bridger);
+        bytes32 relayer = nft.RELAYER_ROLE();
+        bytes32 auction = nft.AUCTION_ROLE();
+        vm.startPrank(defaultAdmin);
+        nft.grantRole(relayer, bridger);
+        nft.grantRole(auction, bridger);
+        vm.stopPrank();
         return nft;
     }
 

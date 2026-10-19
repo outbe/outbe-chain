@@ -574,20 +574,6 @@ mod tests {
     }
 
     #[test]
-    fn test_share_roundtrip_file() {
-        let result = bootstrap_dkg(3).unwrap();
-        let share = &result.shares[0];
-        let backend = KeyBackend::Plaintext;
-
-        let file = NamedTempFile::new().unwrap();
-        save_signing_share(file.path(), share, &backend).unwrap();
-        let loaded = load_signing_share(file.path(), &backend).unwrap();
-
-        assert_eq!(share.index, loaded.index);
-        assert!(validate_share(&loaded, &result.polynomial).unwrap());
-    }
-
-    #[test]
     fn test_individual_key_roundtrip_file() {
         use commonware_math::algebra::Random;
         let key = bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
@@ -632,44 +618,6 @@ mod tests {
         }
     }
 
-    // P2-7: Encrypted backend tests
-
-    #[test]
-    fn test_encrypted_share_roundtrip() {
-        let result = bootstrap_dkg(3).unwrap();
-        let share = &result.shares[0];
-        let backend = KeyBackend::Encrypted("test-passphrase-123".into());
-
-        let file = NamedTempFile::new().unwrap();
-        save_signing_share(file.path(), share, &backend).unwrap();
-
-        // File should start with magic bytes (not hex)
-        let raw = std::fs::read(file.path()).unwrap();
-        assert!(
-            raw.starts_with(ENC_MAGIC),
-            "encrypted file must have magic header"
-        );
-
-        let loaded = load_signing_share(file.path(), &backend).unwrap();
-        assert_eq!(share.index, loaded.index);
-        assert!(validate_share(&loaded, &result.polynomial).unwrap());
-    }
-
-    #[test]
-    fn test_encrypted_wrong_passphrase() {
-        let result = bootstrap_dkg(3).unwrap();
-        let share = &result.shares[0];
-        let backend = KeyBackend::Encrypted("correct-password".into());
-
-        let file = NamedTempFile::new().unwrap();
-        save_signing_share(file.path(), share, &backend).unwrap();
-
-        // Load with wrong passphrase -> should fail
-        let wrong_backend = KeyBackend::Encrypted("wrong-password".into());
-        let err = load_signing_share(file.path(), &wrong_backend);
-        assert!(err.is_err(), "wrong passphrase should fail");
-    }
-
     #[test]
     fn encrypted_backend_atomically_replaces_existing_secret() {
         let dir = tempfile::tempdir().unwrap();
@@ -709,6 +657,14 @@ mod tests {
 
         let loaded = load_signing_share(file.path(), &backend).unwrap();
         assert_eq!(share.index, loaded.index);
+        assert!(validate_share(&loaded, &result.polynomial).unwrap());
+
+        // Legacy raw hex string without trailing newline also loads cleanly.
+        let legacy_file = NamedTempFile::new().unwrap();
+        std::fs::write(legacy_file.path(), hex::encode(share.encode())).unwrap();
+        let legacy_loaded = load_signing_share(legacy_file.path(), &KeyBackend::Plaintext).unwrap();
+        assert_eq!(share.index, legacy_loaded.index);
+        assert!(validate_share(&legacy_loaded, &result.polynomial).unwrap());
     }
 
     #[cfg(unix)]
@@ -726,35 +682,6 @@ mod tests {
 
         let mode = std::fs::metadata(file.path()).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
-    }
-
-    #[test]
-    fn test_legacy_plaintext_load() {
-        // Simulate a legacy file: just hex-encoded bytes
-        let result = bootstrap_dkg(3).unwrap();
-        let share = &result.shares[0];
-        let hex_str = hex::encode(share.encode());
-
-        let file = NamedTempFile::new().unwrap();
-        std::fs::write(file.path(), &hex_str).unwrap();
-
-        // Load with Plaintext backend -> should work
-        let loaded = load_signing_share(file.path(), &KeyBackend::Plaintext).unwrap();
-        assert_eq!(share.index, loaded.index);
-    }
-
-    #[test]
-    fn test_encrypted_polynomial_roundtrip() {
-        let result = bootstrap_dkg(3).unwrap();
-        let backend = KeyBackend::Encrypted("poly-secret".into());
-
-        let file = NamedTempFile::new().unwrap();
-        save_public_polynomial(file.path(), &result.polynomial, &backend).unwrap();
-        let loaded = load_public_polynomial(file.path(), &backend).unwrap();
-
-        for share in &result.shares {
-            assert!(validate_share(share, &loaded).unwrap());
-        }
     }
 
     #[test]
@@ -802,9 +729,12 @@ mod tests {
         let loaded_share = load_signing_share(&share_path, &backend).unwrap();
         let loaded_poly = load_public_polynomial(&poly_path, &backend).unwrap();
 
-        // Validate roundtrip.
+        // Validate roundtrip across all shares.
         assert_eq!(result.shares[0].index, loaded_share.index);
         assert!(validate_share(&loaded_share, &loaded_poly).unwrap());
+        for share in &result.shares {
+            assert!(validate_share(share, &loaded_poly).unwrap());
+        }
 
         // Cannot load with wrong passphrase.
         let wrong_backend = KeyBackend::Encrypted("wrong-password".into());

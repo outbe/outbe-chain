@@ -16,7 +16,7 @@ use crate::precompile::IGemFactory::{GemExercised, GemIssued, GemPositionIssued,
 use crate::schema::{GemFactoryContract, GemIssueParams, GemPosition, GemTypes};
 use crate::sol_ext::IIntexNFT1155;
 use outbe_gem::constants::SRA_RATE;
-use outbe_vaultrouter::settlement::{self, Currencies, Obligation};
+use outbe_vaultrouter::settlement::{self, Currencies, SettlementCost, SettlementPayment};
 
 /// Issues one agent-class gem priced at `entry_price`, the COEN rate in
 /// `reference_currency` that the caller resolved for the gem's own day.
@@ -328,23 +328,23 @@ pub fn issue_merchant_gem(
     Ok(gem_id)
 }
 
-/// Settles a gem paying its cost from `caller` in `asset` by ERC20 transfer. Anyone
+/// Settles a gem paying its cost from `payer` in `asset` by ERC20 transfer. Anyone
 /// may pay for a gem. It stays with its owner. An issuance-currency payment must
 /// name the VWAP snapshot required at this block.
 pub fn settle_gem(
     storage: &StorageHandle<'_>,
-    params: crate::schema::GemSettlementParams,
+    gem_id: U256,
+    payment: SettlementPayment,
 ) -> Result<()> {
-    let crate::schema::GemSettlementParams {
-        caller,
-        gem_id,
+    let SettlementPayment {
+        payer,
         asset,
         snapshot_id,
-    } = params;
+    } = payment;
     let gem = load_view(storage, gem_id)?;
     require_settleable(storage, &gem)?;
 
-    let quote = settlement::quote(storage, asset, currencies(&gem), &obligation(&gem))?;
+    let quote = settlement::quote(storage, asset, currencies(&gem), &settlement_cost(&gem))?;
     quote.require_snapshot(snapshot_id)?;
     storage.clone().with_checkpoint(|| {
         // Settle before payment so a token callback cannot settle the gem twice.
@@ -355,7 +355,7 @@ pub fn settle_gem(
         settlement::collect(
             storage,
             GEM_FACTORY_ADDRESS,
-            caller,
+            payer,
             asset,
             quote.payment_minor,
         )?;
@@ -375,10 +375,10 @@ pub fn settle_gem(
 /// A gem the owner may pay for: an uncalled one, or a called one until its deadline.
 pub(crate) fn require_settleable(storage: &StorageHandle<'_>, gem: &GemView) -> Result<()> {
     if gem.item.is_settled() {
-        return Err(GemFactoryError::InvalidState.into());
+        return Err(GemFactoryError::GemAlreadySettled.into());
     }
     if gem.bucket_called_at != 0 && storage.timestamp()?.to::<u64>() > gem.settlement_deadline() {
-        return Err(GemFactoryError::DeadlineExpired.into());
+        return Err(GemFactoryError::SettlementDeadlinePassed.into());
     }
     Ok(())
 }
@@ -388,7 +388,7 @@ pub(crate) fn burn_settled(storage: &StorageHandle<'_>, gem_id: U256) -> Result<
     let (item, bucket) =
         gem_api::load_pair(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
     if !item.body().is_settled() {
-        return Err(GemFactoryError::InvalidState.into());
+        return Err(GemFactoryError::GemNotSettled.into());
     }
     gem_api::remove_gem(storage, item, bucket)
 }
@@ -401,8 +401,8 @@ fn currencies(gem: &GemView) -> Currencies {
 }
 
 /// One gem: its bucket's entry price times its Promis load, at its type's cost rate.
-pub(crate) fn obligation(gem: &GemView) -> Obligation {
-    Obligation {
+pub(crate) fn settlement_cost(gem: &GemView) -> SettlementCost {
+    SettlementCost {
         entry_price_minor: gem.bucket.entry_price_minor,
         load_minor: gem.item.promis_load_minor,
         units: U256::ONE,
@@ -416,7 +416,7 @@ pub(crate) fn settlement_units(
     rate: Option<(U256, U256)>,
     asset_decimals: u8,
 ) -> Result<U256> {
-    outbe_common::settlement::obligation_units(&obligation(gem), rate, asset_decimals)
+    outbe_primitives::settlement::settlement_cost_units(&settlement_cost(gem), rate, asset_decimals)
         .map_err(|e| settlement::SettlementError::Rounding(e).into())
 }
 
@@ -443,7 +443,7 @@ pub fn quote_settlement(
     asset: Address,
 ) -> Result<(u16, U256, U256)> {
     let gem = load_view(storage, gem_id)?;
-    let quote = settlement::quote(storage, asset, currencies(&gem), &obligation(&gem))?;
+    let quote = settlement::quote(storage, asset, currencies(&gem), &settlement_cost(&gem))?;
     Ok((
         quote.settlement_currency,
         quote.payment_minor,
@@ -482,7 +482,7 @@ pub fn mine_promis(
     let item = gem_api::get_item(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
     // Anyone may submit. The owner's modify key authorizes the mint.
     if !item.is_settled() {
-        return Err(GemFactoryError::InvalidState.into());
+        return Err(GemFactoryError::GemNotSettled.into());
     }
 
     validate_pow(gem_id, item.owner, nonce)?;

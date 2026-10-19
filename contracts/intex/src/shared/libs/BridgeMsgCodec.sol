@@ -40,13 +40,9 @@ library BridgeMsgCodec {
     ///      live.
     uint16 internal constant MAX_PAYLOAD_ARRAY_LEN = 64;
 
-    /// @notice Series one ISSUANCE_INSTRUCTIONS message may carry. With `MAX_RECIPIENTS_PER_ISSUANCE`
-    ///         recipients split across them the worst case stays inside the 10_000-byte send cap.
-    uint16 internal constant MAX_SERIES_PER_ISSUANCE = 8;
-
-    /// @notice Recipients one ISSUANCE_INSTRUCTIONS may carry across all its series. Narrower than
-    ///         `MAX_PAYLOAD_ARRAY_LEN`: a recipient costs a mint, so a wider day spans several messages.
-    uint16 internal constant MAX_RECIPIENTS_PER_ISSUANCE = 24;
+    /// @notice Series one ISSUANCE_INSTRUCTIONS message may carry. A wider day spans several messages.
+    /// @dev A series encodes to 384 bytes, so the 10_000-byte send cap fits 25. This keeps headroom.
+    uint16 internal constant MAX_SERIES_PER_ISSUANCE = 24;
 
     /// @notice Series one MARK_CALLED message may carry. A batch is one day's series called
     ///         together.
@@ -100,12 +96,11 @@ library BridgeMsgCodec {
     //     4 static head words + 2 dynamic head offsets + 2 empty length words = 8x32 = 256
     //   REFUND_INSTRUCTIONS(uint32, uint16, uint16, uint64, uint128, address[], uint16, uint16):
     //     7 static head words + 1 dynamic offset + 1 empty length word = 9x32 = 288
-    //   ISSUANCE_INSTRUCTIONS(3 static head words + dynamic array of a struct with 12 static + 2 dynamic fields):
-    //     3 head words + array offset(32) + array length(32) + one element's offset(32) + 12 static
-    //     + 2 inner offsets + 2 empty length words = 22x32 = 704
+    //   ISSUANCE_INSTRUCTIONS(3 static head words + dynamic array of a 12-field static struct):
+    //     3 head words + array offset(32) + array length(32) + one element(12x32) = 17x32 = 544
     uint16 internal constant MIN_LEN_BIDS_BATCH = HEADER_LEN + 256;
     uint16 internal constant MIN_LEN_REFUND_INSTRUCTIONS = HEADER_LEN + 288;
-    uint16 internal constant MIN_LEN_ISSUANCE_INSTRUCTIONS = HEADER_LEN + 704;
+    uint16 internal constant MIN_LEN_ISSUANCE_INSTRUCTIONS = HEADER_LEN + 544;
 
     /// @notice Per-message cap on inbound BIDS_BATCH entries. Bounds the crosschainMint/storage loop the
     ///         receiver runs so one oversized batch cannot exceed the inbound gas limit and stall
@@ -151,16 +146,6 @@ library BridgeMsgCodec {
     /// @param bidders Length of the bidder-addresses array.
     /// @param packedBids Length of the packed-bid array.
     error BidsArrayLengthMismatch(uint256 bidders, uint256 packedBids);
-
-    /// @notice ISSUANCE_INSTRUCTIONS parallel arrays decoded to unequal lengths.
-    /// @param recipients Length of the recipients array.
-    /// @param units Length of the units array.
-    error IssuanceArrayLengthMismatch(uint256 recipients, uint256 units);
-
-    /// @notice Inbound ISSUANCE_INSTRUCTIONS exceeds the per-message recipient cap.
-    /// @param count Decoded number of recipients.
-    /// @param max Maximum permitted recipients per message.
-    error IssuanceBatchTooLarge(uint256 count, uint256 max);
 
     /// @notice A mark message carries no series. There is nothing for the target to apply.
     error EmptyMarkBatch();
@@ -376,11 +361,9 @@ library BridgeMsgCodec {
         );
     }
 
-    /// @notice Issuance instructions payload. It is grouped into a struct to keep the
+    /// @notice One series of the issuance instructions. It is grouped into a struct to keep the
     ///         encoder/decoder API resilient against EVM stack depth limits.
-    /// @dev `issuedUnits` mirrors the auction-cleared count. The destination chain
-    ///      pins it on `SeriesData`, and `IntexNFT1155.issueIntex` rejects any issue
-    ///      that would push `totalSupply` past it.
+    /// @dev `issuedUnits` mirrors the auction-cleared count across all chains.
     struct IssuanceInstructionsPayload {
         bytes14 seriesId;
         /// @notice Worldwide day the series was derived from. It is carried so the destination
@@ -398,8 +381,6 @@ library BridgeMsgCodec {
         uint32 callWindow;
         uint32 callThreshold;
         uint64 callPriceMinor;
-        address[] recipients;
-        uint256[] units;
     }
 
     /// @notice Decode AUCTION_STAGE_START straight into the auction schedule + params structs.
@@ -476,8 +457,8 @@ library BridgeMsgCodec {
     }
 
     /// @notice Encodes one chunk of the ISSUANCE_INSTRUCTIONS a chain receives from one day.
-    /// @dev Capped at `MAX_SERIES_PER_ISSUANCE` series and `MAX_RECIPIENTS_PER_ISSUANCE`
-    ///      recipients. The sender splits a larger set into `_totalChunks` numbered messages.
+    /// @dev Capped at `MAX_SERIES_PER_ISSUANCE` series. The sender splits a larger set into
+    ///      `_totalChunks` numbered messages.
     /// @param _worldwideDay The worldwide day (yyyymmdd) every series in the message belongs to.
     /// @param _chunkIndex Position of this chunk in the chain-day's run of issuance messages.
     /// @param _totalChunks How many chunks the chain-day's issuance spans.
@@ -495,7 +476,7 @@ library BridgeMsgCodec {
         );
     }
 
-    /// @dev Chunk header sanity, per-series day and array parity, plus the series and recipient counts.
+    /// @dev Chunk header sanity, the series count and each series' day.
     function _assertIssuanceLimits(
         uint32 _worldwideDay,
         uint16 _chunkIndex,
@@ -509,18 +490,10 @@ library BridgeMsgCodec {
         if (_series.length > MAX_SERIES_PER_ISSUANCE) {
             revert IssuanceSeriesBatchTooLarge(_series.length, MAX_SERIES_PER_ISSUANCE);
         }
-        uint256 recipients;
         for (uint256 i = 0; i < _series.length; i++) {
             if (_series[i].worldwideDay != _worldwideDay) {
                 revert IssuanceDayMismatch(_series[i].seriesId, _series[i].worldwideDay, _worldwideDay);
             }
-            if (_series[i].recipients.length != _series[i].units.length) {
-                revert IssuanceArrayLengthMismatch(_series[i].recipients.length, _series[i].units.length);
-            }
-            recipients += _series[i].recipients.length;
-        }
-        if (recipients > MAX_RECIPIENTS_PER_ISSUANCE) {
-            revert IssuanceBatchTooLarge(recipients, MAX_RECIPIENTS_PER_ISSUANCE);
         }
     }
 
@@ -756,8 +729,6 @@ library BridgeMsgCodec {
     ///      - `UnsupportedBodyVersion` on a stale version byte.
     ///      - `InvalidIssuanceChunk` on a bad chunk header.
     ///      - `IssuanceDayMismatch` if a series names another day.
-    ///      - `IssuanceArrayLengthMismatch` if `recipients` and `units` differ in length.
-    ///      - `IssuanceBatchTooLarge` if `recipients` exceeds `MAX_RECIPIENTS_PER_ISSUANCE`.
     /// @param _msg The wire-encoded ISSUANCE_INSTRUCTIONS message.
     /// @return worldwideDay The worldwide day (yyyymmdd) every series in the message belongs to.
     /// @return chunkIndex Position of this chunk in the chain-day's run of issuance messages.
@@ -778,7 +749,7 @@ library BridgeMsgCodec {
         }
         _assertBodyVersion(_msg);
         // Decode in a dedicated frame so the struct ABI-decoder's locals don't share this
-        // function's stack. This keeps the 14-field payload within bounds under via_ir.
+        // function's stack. This keeps the 12-field payload within bounds under via_ir.
         (worldwideDay, chunkIndex, totalChunks, series) = _decodeIssuancePayload(_msg[2:]);
         // Re-checked inbound against a bad peer, as every variable-length decode here is.
         _assertIssuanceLimits(worldwideDay, chunkIndex, totalChunks, series);

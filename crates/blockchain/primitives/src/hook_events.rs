@@ -57,6 +57,17 @@ mod tests {
 
     #[test]
     fn partition_keeps_only_whitelisted_addresses_for_receipt() {
+        use crate::addresses::TEE_REGISTRY_ADDRESS;
+        use crate::tee_registry_abi_v1::ITeeRegistryV1;
+
+        let upgrade_missed_log = Log {
+            address: TEE_REGISTRY_ADDRESS,
+            data: LogData::new(
+                vec![ITeeRegistryV1::EnclaveUpgradeMissedV1::SIGNATURE_HASH],
+                Bytes::new(),
+            )
+            .expect("test log data"),
+        };
         let (whitelisted, tracing_only) = partition_hook_events(&[
             log_at(REWARDS_ADDRESS),
             log_at(VOTE_ADDRESS),
@@ -64,15 +75,20 @@ mod tests {
             log_at(NOD_ADDRESS),
             log_at(GOVERNANCE_ADDRESS),
             log_at(STABLECOIN_FACTORY_ADDRESS),
+            log_at(TEE_REGISTRY_ADDRESS),
+            upgrade_missed_log.clone(),
         ]);
-        assert_eq!(whitelisted.len(), 4);
+        assert_eq!(whitelisted.len(), 5);
         assert_eq!(whitelisted[0].address, VOTE_ADDRESS);
         assert_eq!(whitelisted[1].address, UPDATE_ADDRESS);
         assert_eq!(whitelisted[2].address, GOVERNANCE_ADDRESS);
         assert_eq!(whitelisted[3].address, STABLECOIN_FACTORY_ADDRESS);
-        // The rights' sweeps run in CycleTick, so a hook never emits for them.
-        assert_eq!(tracing_only.len(), 2);
+        assert_eq!(whitelisted[4], upgrade_missed_log);
+        // The rights' sweeps run in CycleTick, so a hook never emits for them;
+        // non-EnclaveUpgradeMissedV1 TEE_REGISTRY_ADDRESS events stay tracing-only.
+        assert_eq!(tracing_only.len(), 3);
         assert_eq!(tracing_only[0].address, REWARDS_ADDRESS);
         assert_eq!(tracing_only[1].address, NOD_ADDRESS);
+        assert_eq!(tracing_only[2].address, TEE_REGISTRY_ADDRESS);
     }
 }

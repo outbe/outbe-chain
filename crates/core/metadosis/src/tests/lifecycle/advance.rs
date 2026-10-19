@@ -23,7 +23,7 @@ fn seed_forming_day_for_advance(
     wwd: outbe_primitives::time::WorldwideDay,
 ) -> u64 {
     StorageHandle::enter(provider, |storage| {
-        arm_genesis_ocomp(&storage, CHAIN_ID);
+        install_test_enclaves();
         let mut metadosis = MetadosisContract::new(storage.clone());
         metadosis
             .create_worldwide_day(
@@ -120,7 +120,7 @@ fn normal_advance_command_rolls_back_every_mutation_and_retries_with_ordered_edg
 #[test]
 fn advance_active_worldwide_days_advances_status_without_creating_or_settling() {
     with_storage(|storage| {
-        arm_genesis_ocomp(&storage, CHAIN_ID);
+        install_test_enclaves();
         let wwd = outbe_primitives::time::WorldwideDay::new(20260302u32);
         let forming_start = wwd.start_timestamp();
         let forming_end = forming_start + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR;
@@ -186,7 +186,7 @@ fn technical_desis_refusal_rolls_back_the_metadosis_cycle_command() {
         let wwd = outbe_primitives::time::WorldwideDay::new(2026_0322);
         let day_limit = U256::from(777_u64);
         let scheduled = create_waiting_day(&storage, wwd, day_type::GREEN, day_limit);
-        arm_genesis_ocomp(&storage, CHAIN_ID);
+        install_test_enclaves();
         assert_eq!(
             outbe_desis::api::dispatch_auction_brief(
                 storage.clone(),
@@ -206,9 +206,7 @@ fn technical_desis_refusal_rolls_back_the_metadosis_cycle_command() {
             BlockContext::empty_for_tests(2, scheduled + SECONDS_PER_HOUR, CHAIN_ID),
             storage.clone(),
         );
-        (|| {
-            assert!(crate::commands::start_metadosis(&ctx).is_err());
-        })();
+        assert!(crate::commands::start_metadosis(&ctx).is_err());
 
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), WwdStatus::Waiting);
@@ -241,7 +239,7 @@ fn test_events_emitted_for_accumulation_and_lifecycle() {
     let contract_addr = outbe_primitives::addresses::METADOSIS_ADDRESS;
 
     StorageHandle::enter(&mut storage, |storage| {
-        arm_genesis_ocomp(&storage, CHAIN_ID);
+        install_test_enclaves();
         let timestamp = outbe_primitives::time::WorldwideDay::new(20260302).start_timestamp()
             + 2 * SECONDS_PER_HOUR;
         let ctx = BlockRuntimeContext::new(
@@ -249,7 +247,7 @@ fn test_events_emitted_for_accumulation_and_lifecycle() {
             storage.clone(),
         );
         crate::emission_sink::apply(&ctx, U256::from(10u64)).unwrap();
-        (|| crate::commands::start_metadosis(&ctx))().unwrap();
+        crate::commands::start_metadosis(&ctx).unwrap();
     });
 
     let events = storage.get_events(contract_addr);

@@ -30,9 +30,7 @@ mod metrics;
 #[cfg(feature = "native-dcap")]
 pub mod native_qvl;
 pub mod nod_decrypt;
-pub mod nod_materialization;
 pub mod nod_mine;
-pub mod nod_state_materialization;
 pub mod nod_transport;
 pub mod node_host;
 pub mod offer_encrypt;
@@ -41,6 +39,7 @@ pub mod protocol;
 pub mod quote;
 pub mod release_dcap_artifacts;
 pub mod remote_session;
+pub mod response_auth;
 pub mod session;
 pub mod tee_dkg;
 #[cfg(any(test, feature = "test-utils"))]

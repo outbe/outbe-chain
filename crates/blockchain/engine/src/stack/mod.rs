@@ -86,19 +86,16 @@ use outbe_consensus::{
     reporter::{OutbeReporter, ReporterContinuity},
     vrf_safety::VrfSafetyGate,
 };
-use outbe_node::ocomp::retention::SharedOcompRetentionSelector;
 use outbe_radicle::integration::{RadicleVotingGate, RadicleVotingGateError};
 
 use outbe_node::OutbeFullNode;
-use outbe_ocomp_protocol::profile::poc_schema_limits;
 use outbe_primitives::{
     consensus::{ConsensusExecutionBridge, DkgBoundaryArtifact},
-    projection::{ProjectionCheckpoint, ProjectionReadinessHandle},
+    projection::ProjectionCheckpoint,
     reshare_artifact::{
         decode_boundary_artifact, decode_outbe_block_artifacts, encode_boundary_artifact,
         ConsensusHeaderArtifact,
     },
-    system_tx::OcompLifecycleActivation,
     OutbeHeader, OutbePayloadTypes,
 };
 use reth_ethereum::storage::{BlockNumReader, BlockReader, TransactionVariant};
@@ -188,7 +185,7 @@ use recovery::anchor::{
 
 use recovery::forkchoice::{
     confirm_recovered_forkchoice, read_reth_recovery_forkchoice,
-    recover_application_finalized_round, wait_for_recovered_projection,
+    recover_application_finalized_round,
 };
 
 use services::EngineHandle;
@@ -197,8 +194,8 @@ use shutdown::{supervise_epoch_loop_result, EpochLoopAction, EpochLoopOutcome};
 
 use startup::{
     block_timing_from_genesis, epoch_length_blocks_from_genesis, genesis_consensus_block,
-    genesis_hash, nonzero_u16, nonzero_u64, nonzero_usize, ocomp_p2p_namespace,
-    parse_consensus_peers, validate_testnet_only_flags,
+    genesis_hash, nonzero_u16, nonzero_u64, nonzero_usize, parse_consensus_peers,
+    validate_testnet_only_flags,
 };
 
 #[cfg(test)]
@@ -216,8 +213,8 @@ use dkg::persistence::{
 #[cfg(test)]
 use dkg::startup::{
     genesis_formation_gate_decision, genesis_formation_required_remote_peers,
-    missing_current_threshold_material_error, vrf_material_matches_recovered_boundary,
-    GenesisFormationGate, RethGenesisPeerEvidence, RethGenesisPeerStatus, StartupDkgContext,
+    vrf_material_matches_recovered_boundary, GenesisFormationGate, RethGenesisPeerEvidence,
+    RethGenesisPeerStatus, StartupDkgContext,
 };
 
 #[cfg(test)]

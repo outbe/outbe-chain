@@ -108,7 +108,7 @@ fn test_unjail_after_exclusion_returns_to_unconfirmed_pending() {
             .iter()
             .any(|r| r.validator_address == v));
         vs.admit_validator_for_boundary_for_test(v)
-            .expect("unjail replays the pinned OCOMP registration");
+            .expect("unjail restores native validator readiness");
         assert!(vs
             .get_reshare_target_set()
             .unwrap()

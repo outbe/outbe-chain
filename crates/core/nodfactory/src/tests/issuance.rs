@@ -62,7 +62,7 @@ fn issue_is_immediately_readable_and_keeps_product_event_order() {
 }
 
 #[test]
-fn second_same_block_issue_reuses_the_pending_bucket_without_parent_projection() {
+fn second_same_block_issue_reuses_the_bucket() {
     let mut world = World::new();
     let first = params(Address::repeat_byte(0x18));
     let second = params(Address::repeat_byte(0x19));
@@ -336,21 +336,4 @@ fn a_stranger_can_mine_with_the_owners_auth() {
         .expect("NodExercised event");
     assert_eq!(exercised.owner, input.owner);
     assert_eq!(exercised.nodId, nod_id.to_u256());
-}
-
-#[test]
-fn certified_generation_has_no_public_installation_selector() {
-    let mut world = World::new();
-    let selector_hash = alloy_primitives::keccak256("installCertifiedGeneration(bytes)".as_bytes());
-    let calldata = selector_hash[..4].to_vec();
-    let storage_before = world.provider.storage.clone();
-    let events_before = world.provider.get_ordered_events().to_vec();
-
-    let result = world.enter(|storage| {
-        crate::precompile::dispatch(storage, &calldata, Address::repeat_byte(0x91), U256::ZERO)
-    });
-
-    assert!(result.is_err());
-    assert_eq!(world.provider.storage, storage_before);
-    assert_eq!(world.provider.get_ordered_events(), events_before);
 }

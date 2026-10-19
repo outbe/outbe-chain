@@ -7,24 +7,20 @@ publish.workspace = true
 
 [features]
 default = []
-test-utils = ["outbe-ocomp-protocol/test-utils"]
+test-utils = ["outbe-primitives/test-utils"]
 
 [dependencies]
 # Internal
 outbe-evm.workspace = true
 outbe-primitives.workspace = true
 outbe-txpool.workspace = true
-outbe-consensus.workspace = true
-outbe-metadosis.workspace = true
-outbe-ocomp-protocol.workspace = true
 outbe-oracle.workspace = true
-outbe-nod.workspace = true
 outbe-tee.workspace = true
 outbe-teeregistry.workspace = true
 outbe-validatorset.workspace = true
 
 # Reth
-reth-ethereum = { workspace = true, features = ["node", "cli", "exex"] }
+reth-ethereum = { workspace = true, features = ["node", "cli"] }
 reth-chainspec.workspace = true
 reth-basic-payload-builder.workspace = true
 reth-consensus-common.workspace = true
@@ -54,7 +50,6 @@ alloy-genesis.workspace = true
 alloy-primitives.workspace = true
 alloy-rlp.workspace = true
 alloy-rpc-types-engine.workspace = true
-alloy-sol-types.workspace = true
 eyre.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
@@ -62,18 +57,15 @@ tracing.workspace = true
 futures.workspace = true
 metrics.workspace = true
 x25519-dalek.workspace = true
-serde.workspace = true
 thiserror.workspace = true
 k256.workspace = true
 
 [dev-dependencies]
-outbe-ocomp-protocol = { workspace = true, features = ["test-utils"] }
 reth-engine-tree = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.6.0" }
 reth-stages-api = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.6.0" }
 reth-static-file = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.6.0" }
 outbe-chain-constants.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
-outbe-metadosis = { workspace = true, features = ["test-utils"] }
 outbe-tee-enclave = { workspace = true, features = ["mock"] }
 alloy-provider.workspace = true
 alloy-trie.workspace = true
@@ -101,7 +93,6 @@ outbe-vaultrouter.workspace = true
 rand-commonware.workspace = true
 rand-core-commonware.workspace = true
 outbe-tribute = { workspace = true, features = ["test-enclave"] }
-outbe-nod = { workspace = true, features = ["test-utils", "test-enclave"] }
 outbe-validatorset = { workspace = true, features = ["test-utils"] }
 reth-trie = { workspace = true, features = ["test-utils"] }
 outbe-oracle = { workspace = true, features = ["test-utils"] }

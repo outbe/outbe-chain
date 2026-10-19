@@ -1,9 +1,6 @@
 use super::*;
-use outbe_ocomp_protocol::transaction_call::TransactionCallFields;
 
-mod deadline;
 mod reward_delivery;
-mod terminal_writer;
 
 fn test_reserved_system_address_tx() -> reth_ethereum::TransactionSigned {
     TxEip1559 {
@@ -19,70 +16,6 @@ fn test_reserved_system_address_tx() -> reth_ethereum::TransactionSigned {
     }
     .into_signed(Signature::test_signature())
     .into()
-}
-
-fn test_ocomp_submit_result_vote_tx() -> reth_ethereum::TransactionSigned {
-    use outbe_ocomp_protocol::{
-        abi::{METADOSIS_ADDRESS, SUBMIT_LYSIS_RESULT_SELECTOR},
-        encode_envelope,
-        profile::poc_schema_limits,
-        registry::ObjectKind,
-    };
-
-    let mut body = Vec::new();
-    body.extend_from_slice(B256::repeat_byte(0x31).as_slice());
-    body.extend_from_slice(B256::repeat_byte(0x32).as_slice());
-    body.extend_from_slice(&3_u32.to_be_bytes());
-    body.extend_from_slice(&7_u64.to_be_bytes());
-    body.extend_from_slice(B256::repeat_byte(0x33).as_slice());
-    body.extend_from_slice(B256::repeat_byte(0x34).as_slice());
-    body.extend_from_slice(B256::repeat_byte(0x35).as_slice());
-    body.extend_from_slice(&1_u64.to_be_bytes());
-    body.resize(180, 0);
-    let payload = encode_envelope(ObjectKind::ResultVoteV1, &body, poc_schema_limits().codec)
-        .expect("canonical OCOMP prefix must encode");
-    let padded_len = (payload.len() + 31) & !31;
-    let mut input = vec![0_u8; 68 + padded_len];
-    input[..4].copy_from_slice(&SUBMIT_LYSIS_RESULT_SELECTOR);
-    input[4..36].copy_from_slice(&U256::from(32).to_be_bytes::<32>());
-    input[36..68].copy_from_slice(&U256::from(payload.len()).to_be_bytes::<32>());
-    input[68..68 + payload.len()].copy_from_slice(&payload);
-
-    TxEip1559 {
-        chain_id: CHAIN_ID,
-        nonce: 0,
-        gas_limit: outbe_ocomp_protocol::system_carrier::OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
-        max_fee_per_gas:
-            outbe_ocomp_protocol::system_carrier::MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
-        max_priority_fee_per_gas: 0,
-        to: TxKind::Call(METADOSIS_ADDRESS),
-        value: U256::ZERO,
-        input: input.into(),
-        access_list: Default::default(),
-    }
-    .into_signed(Signature::test_signature())
-    .into()
-}
-
-#[test]
-fn executor_adapter_classifies_the_canonical_ocomp_system_carrier_prefix() {
-    let tx = test_ocomp_submit_result_vote_tx();
-    let candidate = outbe_ocomp_protocol::system_carrier::classify_ocomp_system_carrier(
-        outbe_ocomp_protocol::system_carrier::OcompSystemCarrierView {
-            is_eip1559: true,
-            call: TransactionCallFields::from_transaction(&tx),
-        },
-        &outbe_ocomp_protocol::profile::poc_schema_limits(),
-    )
-    .expect("canonical OCOMP envelope must classify")
-    .expect("canonical OCOMP envelope must select the system carrier");
-
-    let outbe_ocomp_protocol::system_carrier::OcompSystemCarrierCandidate::ResultVote { prefix } =
-        candidate
-    else {
-        panic!("expected result-vote carrier")
-    };
-    assert_eq!(prefix.ocomp_key_hash, B256::repeat_byte(0x35));
 }
 
 #[test]
@@ -132,16 +65,6 @@ fn executor_rejects_user_tx_to_reserved_system_address() {
         "unexpected reserved-address rejection error: {err}"
     );
     assert!(executor.receipts().is_empty());
-}
-
-#[test]
-fn active_terminal_request_is_last_semantic_writer_and_rejects_later_transactions() {
-    terminal_writer::run();
-}
-
-#[test]
-fn whole_committee_ocomp_deadline_and_successor_blocks_execute() {
-    deadline::run();
 }
 
 #[test]
@@ -238,14 +161,21 @@ fn gas_02_phase1_preexec_failure_must_consume_body0_or_abort() {
     );
 
     let block_artifacts = OutbeBlockArtifacts::default();
-    let preexec = crate::factory::with_forced_outbe_system_call_error(|| {
+    let preexec_err = crate::factory::with_forced_outbe_system_call_error(|| {
         executor.apply_phase1_commit_in_preexec(2, &block_artifacts)
-    });
-    if preexec.is_err() {
-        return;
-    }
+    })
+    .expect_err("GAS-02: forced system-call error in Phase 1 pre-exec must abort with Err");
+    assert!(
+        preexec_err
+            .to_string()
+            .contains("forced Outbe system-call error"),
+        "GAS-02: unexpected pre-exec error: {preexec_err}"
+    );
+    assert!(
+        executor.receipts().is_empty(),
+        "GAS-02: failed Phase 1 pre-exec must not emit a receipt"
+    );
 
-    let receipt_count_after_preexec_failure = executor.receipts().len();
     let phase1_tx = begin_system_txs_for_test(
         &config,
         BeginBlockFixture {
@@ -260,15 +190,19 @@ fn gas_02_phase1_preexec_failure_must_consume_body0_or_abort() {
     .into_iter()
     .next()
     .expect("Phase 1 system tx should be present");
-    let _ = crate::factory::with_forced_outbe_system_call_error(|| {
+    let body0_err = crate::factory::with_forced_outbe_system_call_error(|| {
         executor.execute_transaction(phase1_tx)
-    });
-
-    assert_eq!(
-        executor.receipts().len(),
-        receipt_count_after_preexec_failure,
-        "GAS-02: Phase 1 pre-exec failure returned Ok and body[0] created another \
-         receipt instead of being consumed or making pre-exec fatal"
+    })
+    .expect_err("GAS-02: forced system-call error on body[0] must also abort with Err");
+    assert!(
+        body0_err
+            .to_string()
+            .contains("forced Outbe system-call error"),
+        "GAS-02: unexpected body[0] error: {body0_err}"
+    );
+    assert!(
+        executor.receipts().is_empty(),
+        "GAS-02: Phase 1 failure must never leave a synthetic receipt"
     );
 }
 
@@ -421,7 +355,7 @@ fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_la
     let hook_events_tx = system_txs
         .next()
         .expect("HookEvents system tx should be present");
-    let rewards_visible_gas = rewards_tx.tx().gas_limit();
+    let rewards_signed_gas = rewards_tx.tx().gas_limit();
     let rewards_intrinsic_gas =
         outbe_primitives::system_tx::system_tx_intrinsic_gas(rewards_tx.tx().input())
             .expect("RewardsGemDelivery intrinsic gas computes");
@@ -437,11 +371,11 @@ fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_la
         .execute_transaction(rewards_tx)
         .expect("RewardsGemDelivery revert should soft-fail")
         .tx_gas_used();
-    // A failure receipt publishes the visible base plus the state-operation gas actually spent,
-    // never the unused state-operation reserve of the signed envelope.
-    assert!(
-        (rewards_intrinsic_gas..rewards_visible_gas).contains(&revert_gas),
-        "GAS-11: reverted delivery charges {revert_gas}, expected within [{rewards_intrinsic_gas}, {rewards_visible_gas})"
+    // The delivery envelope signs only its intrinsic gas, and its failure receipt charges exactly that.
+    assert_eq!(rewards_signed_gas, rewards_intrinsic_gas);
+    assert_eq!(
+        revert_gas, rewards_intrinsic_gas,
+        "GAS-11: reverted delivery charges {revert_gas}, expected {rewards_intrinsic_gas}"
     );
     let failure_receipt = executor
         .receipts()

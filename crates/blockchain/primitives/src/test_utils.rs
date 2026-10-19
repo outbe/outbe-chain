@@ -1,6 +1,7 @@
 //! Shared artifact construction for tests and protocol benchmarks.
 
 pub mod sol_interface;
+pub mod state_proof;
 
 use crate::consensus::{DkgBoundaryArtifact, ReshareResult};
 use crate::radicle_publication::{

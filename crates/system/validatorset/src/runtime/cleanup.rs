@@ -43,10 +43,6 @@ impl ValidatorSet<'_> {
                 continue;
             }
 
-            if self.val_ocomp_recovery_deadline.read(&addr)? != 0 {
-                i += 1;
-                continue;
-            }
             debug_assert_eq!(state_machine::cleanup(inactive), ValidatorLifecycle::Absent);
             // Clear all per-validator storage
             self.clear_validator_storage(&addr)?;
@@ -99,13 +95,9 @@ impl ValidatorSet<'_> {
         self.val_p2p_address_payload.get_bytes(addr).clear()?;
         // Also clear the stale-join + jail per-validator state, so a future
         // re-registration at the same address starts clean. A leaked
-        // `val_join_confirmed = true` would bypass the stale-join guard. The
-        // admitted V1 OCOMP key and reverse reservation deliberately survive:
-        // key_epoch=1 has no rotation, loss, or recovery path.
+        // `val_join_confirmed = true` would bypass the stale-join guard.
         self.val_join_confirmed.write(addr, false)?;
         self.val_jailed_at_height.write(addr, 0)?;
-        self.val_ocomp_miss_count.write(addr, 0)?;
-        self.val_ocomp_recovery_deadline.write(addr, 0)?;
         Ok(())
     }
 }

@@ -19,7 +19,7 @@ use outbe_primitives::system_tx::{SystemTxKind, SystemTxPhase, GENESIS_BOOTSTRAP
 use proptest::prelude::*;
 
 /// The full set of `SystemTxPhase` variants must equal the V2 contract:
-/// 11 variants, including the opt-in publication phase.
+/// 10 variants, including the opt-in publication phase.
 #[test]
 fn cross_version_system_tx_phase_variant_set_is_exactly_v2() {
     // Construct one of each variant. If someone adds a new variant without
@@ -32,7 +32,6 @@ fn cross_version_system_tx_phase_variant_set_is_exactly_v2() {
             receipt_index: 0,
         },
         SystemTxPhase::LateFinalizeCredits { body_index: 0 },
-        SystemTxPhase::OcompLifecycleBegin { body_index: 0 },
         SystemTxPhase::CycleTick { body_index: 0 },
         SystemTxPhase::RewardsGemDelivery { body_index: 0 },
         SystemTxPhase::BoundaryOutcomeOptional { body_index: 0 },
@@ -48,7 +47,6 @@ fn cross_version_system_tx_phase_variant_set_is_exactly_v2() {
         match variant {
             SystemTxPhase::Phase1Preexecuted { .. } => {}
             SystemTxPhase::LateFinalizeCredits { .. } => {}
-            SystemTxPhase::OcompLifecycleBegin { .. } => {}
             SystemTxPhase::CycleTick { .. } => {}
             SystemTxPhase::RewardsGemDelivery { .. } => {}
             SystemTxPhase::BoundaryOutcomeOptional { .. } => {}
@@ -59,7 +57,7 @@ fn cross_version_system_tx_phase_variant_set_is_exactly_v2() {
             SystemTxPhase::UserTxs => {}
         }
     }
-    assert_eq!(variants.len(), 11, "V2 SystemTxPhase contract: 11 variants");
+    assert_eq!(variants.len(), 10, "V2 SystemTxPhase contract: 10 variants");
 }
 
 /// Block 0 is the genesis block: no begin-zone system txs. The cursor must
@@ -114,27 +112,45 @@ proptest! {
         prop_assert_eq!(a, b);
     }
 
-    /// Cursor's `expected_kind` is uniquely determined by the variant. No
-    /// drift between calls.
+    /// Cursor's `expected_kind` is uniquely determined by the variant across
+    /// the entire reachable phase walk, including optional boundary,
+    /// bootstrap, and publication branches.
     #[test]
     fn proptest_expected_kind_is_stable_per_variant(
         block_number in 0u64..1000,
+        has_boundary_outcome in any::<bool>(),
+        has_tee_bootstrap in any::<bool>(),
+        has_publication_batch in any::<bool>(),
     ) {
-        let cursor = SystemTxPhase::initial_for_block(block_number, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
-        let a = cursor.expected_kind();
-        let b = cursor.expected_kind();
-        prop_assert_eq!(a, b);
-        // Sanity: kind is well-defined for every non-UserTxs variant.
-        if let Some(kind) = cursor.expected_kind() {
-            prop_assert!(matches!(
-                kind,
-                SystemTxKind::CertifiedParentAccounting
-                    | SystemTxKind::CycleTick
-                    | SystemTxKind::BoundaryOutcome
-                    | SystemTxKind::OracleSlashWindow
-                    | SystemTxKind::HookEvents,
-            ));
+        let mut cursor = SystemTxPhase::initial_for_block(block_number, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
+        for _ in 0..10 {
+            let a = cursor.expected_kind();
+            let b = cursor.expected_kind();
+            prop_assert_eq!(a, b);
+            let expected_for_variant = match cursor {
+                SystemTxPhase::Phase1Preexecuted { .. } => Some(SystemTxKind::CertifiedParentAccounting),
+                SystemTxPhase::LateFinalizeCredits { .. } => Some(SystemTxKind::LateFinalizeCredits),
+                SystemTxPhase::CycleTick { .. } => Some(SystemTxKind::CycleTick),
+                SystemTxPhase::RewardsGemDelivery { .. } => Some(SystemTxKind::RewardsGemDelivery),
+                SystemTxPhase::BoundaryOutcomeOptional { .. } => Some(SystemTxKind::BoundaryOutcome),
+                SystemTxPhase::TeeBootstrapOptional { .. } => Some(SystemTxKind::TeeBootstrap),
+                SystemTxPhase::OracleSlashWindow { .. } => Some(SystemTxKind::OracleSlashWindow),
+                SystemTxPhase::HookEvents { .. } => Some(SystemTxKind::HookEvents),
+                SystemTxPhase::RadiclePublication { .. } => Some(SystemTxKind::RadiclePublication),
+                SystemTxPhase::UserTxs => None,
+            };
+            prop_assert_eq!(a, expected_for_variant);
+            if matches!(cursor, SystemTxPhase::UserTxs) {
+                break;
+            }
+            cursor = cursor.advance_after_commit_with_publication(
+                has_boundary_outcome,
+                has_tee_bootstrap,
+                has_publication_batch,
+            );
         }
+        prop_assert_eq!(cursor, SystemTxPhase::UserTxs);
+        prop_assert_eq!(cursor.expected_kind(), None);
     }
 }
 

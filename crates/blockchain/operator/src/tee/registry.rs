@@ -569,17 +569,6 @@ mod tests {
         assert_ne!(node, validator);
     }
 
-    #[test]
-    fn legacy_dcap_reader_gate_stays_dcap_only() {
-        assert!(require_dcap_renewal_mode_v1(AttestationMode::DcapRequired).is_ok());
-        assert!(
-            require_dcap_renewal_mode_v1(AttestationMode::GramineDirectDev)
-                .unwrap_err()
-                .to_string()
-                .contains("DCAP renewal is disabled")
-        );
-    }
-
     #[tokio::test]
     async fn public_readers_keep_mode_neutral_binding_and_legacy_dcap_error_order() {
         let selector = NodeBindingSelectorV1::NodeHost([2; 33]);

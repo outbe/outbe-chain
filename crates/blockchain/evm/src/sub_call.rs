@@ -16,9 +16,7 @@
 //! The driver itself does NOT take an extra checkpoint. `make_call_frame`
 //! handles per-frame journal checkpoints internally.
 
-use crate::precompiles::{
-    OcompActivationBlockMeter, OutbePrecompileExecutionContext, OutbePrecompileRuntime,
-};
+use crate::precompiles::{OutbePrecompileExecutionContext, OutbePrecompileRuntime};
 use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Address, B256, U256};
 use core::fmt::Debug;
@@ -42,7 +40,6 @@ use revm::{
     state::Bytecode,
     Database,
 };
-use std::sync::Arc;
 
 /// Execution environment shared by a sub-call's child frame and precompiles.
 pub struct SubCallEnvironment {
@@ -69,14 +66,13 @@ where
         outer_is_static,
         spec,
     } = environment;
-    run_with_ocomp_context(
+    run_with_context(
         ctx,
         SubCallContext {
             self_address,
             outer_is_static,
             execution: OutbePrecompileExecutionContext::new(spec, B256::ZERO),
-            runtime: OutbePrecompileRuntime::new(None, false),
-            activation_meter: Arc::new(OcompActivationBlockMeter),
+            runtime: OutbePrecompileRuntime::new(),
         },
         input,
     )
@@ -87,10 +83,9 @@ pub(crate) struct SubCallContext {
     pub(crate) outer_is_static: bool,
     pub(crate) execution: OutbePrecompileExecutionContext,
     pub(crate) runtime: OutbePrecompileRuntime,
-    pub(crate) activation_meter: Arc<OcompActivationBlockMeter>,
 }
 
-pub(crate) fn run_with_ocomp_context<DB>(
+pub(crate) fn run_with_context<DB>(
     ctx: &mut EthEvmContext<DB>,
     context: SubCallContext,
     input: SubCallInput,
@@ -172,11 +167,8 @@ where
             context.execution.spec_id(),
         );
     crate::create_guard::install(&mut instructions);
-    let precompiles = crate::precompiles::OutbeSubCallPrecompiles::<DB>::new(
-        context.execution,
-        context.runtime,
-        context.activation_meter,
-    );
+    let precompiles =
+        crate::precompiles::OutbeSubCallPrecompiles::<DB>::new(context.execution, context.runtime);
     // A precompile resolves contract-originated calldata through `ctx.local()`, so the child
     // frame has to carve its memory out of that buffer.
     let mut caller_memory = CallerMemory(SharedMemory::new_with_buffer(

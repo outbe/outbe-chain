@@ -32,25 +32,19 @@ alloy_sol_types::sol! {
     }
 }
 
-/// The first Gem of `owner`, once the compressed-body projection serves it.
-fn wait_for_gem_of(url: &str, owner: Address) -> U256 {
-    let mut id = None;
-    crate::features::entity_lifecycle::chain::poll_until(
-        Duration::from_secs(120),
-        || format!("the Gem issued to {owner} never reached its owner's index"),
-        || {
-            id = eth::read_call(
-                url,
-                addresses::GEM_ADDR,
-                &eth::IGem::tokenOfOwnerByIndexCall {
-                    owner,
-                    index: U256::ZERO,
-                },
-            );
-            id.is_some()
+/// The first Gem of `owner`.
+fn gem_of(url: &str, owner: Address) -> U256 {
+    eth::read_call_result(
+        url,
+        addresses::GEM_ADDR,
+        &eth::IGem::tokenOfOwnerByIndexCall {
+            owner,
+            index: U256::ZERO,
         },
-    );
-    id.expect("owner's Gem id")
+    )
+    .unwrap_or_else(|error| {
+        panic!("the Gem issued to {owner} is not in its owner's index: {error}")
+    })
 }
 
 #[given("a prepared Credis localnet with funded actors and vault liquidity")]
@@ -142,8 +136,7 @@ fn prepare(world: &mut World) {
     let keys =
         eth::derive_account_keys(&url, DEPLOYER_KEY, Ledger::Gratis).expect("user Gratis keys");
     let chain = chain_id_b256(world);
-    // Genesis carries no Gem bodies: a throwaway build hands the user a paid Gem, and
-    // the owner index answers once the body projection caught up with the block.
+    // Genesis carries no Gems: a throwaway build hands the user a paid Gem.
     send(
         &url,
         addresses::GEM_FACTORY_ADDR,
@@ -155,7 +148,7 @@ fn prepare(world: &mut World) {
         },
         None,
     );
-    let gem = wait_for_gem_of(&url, user);
+    let gem = gem_of(&url, user);
     let promis_nonce = eth::read_call(
         &url,
         addresses::PROMIS_ADDR,
@@ -532,8 +525,8 @@ fn repay(world: &mut World) {
         let p = before.record.as_ref().expect("Credis before payment");
         // An hour of slack keeps transaction inclusion well away from the next day boundary.
         let target = p.lastSettledAt + DAY + 3_600;
-        let (_, _, _, pending) =
-            crate::features::ocomp::restart_committee_at_logical_time(world, target);
+        let (_, pending) =
+            crate::features::common::restart_committee_at_logical_time(world, target);
         let deadline = Instant::now() + Duration::from_secs(300);
         loop {
             let time_ready = world

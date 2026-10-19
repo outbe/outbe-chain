@@ -8,13 +8,13 @@ use alloy_sol_types::SolValue as _;
 use cucumber::{then, when};
 use outbe_primitives::time::timestamp_to_date_key;
 
-use crate::features::ocomp::restart_committee_at_logical_time;
+use crate::features::common::restart_committee_at_logical_time;
 use crate::internal::addresses;
 use crate::internal::economic_reference;
 use crate::internal::eth::{self, IAgentReward, SRA_POOL, WAA_POOL};
 use crate::world::rpc::FinalizedCheckpoint;
 use crate::world::state::{
-    AgentRewardCheckpointV1, AgentRewardEconomicCheckV1, OcompAgentRewardObservationV1,
+    AgentRewardCheckpointV1, AgentRewardEconomicCheckV1, AgentRewardObservationV1,
 };
 use crate::world::World;
 
@@ -30,7 +30,7 @@ use outbe_primitives::time::SECONDS_PER_DAY;
 #[when("a user of the registered L2 submits an encrypted Tribute with ZKP and WAA and SRA beneficiaries")]
 fn submit_reward_bearing_tribute(world: &mut World) {
     assert!(
-        world.state.ocomp_agent_reward.is_none(),
+        world.state.agent_reward.is_none(),
         "single reward-bearing offer fixture"
     );
     let wwd = world.state.wwd.clone().expect("WorldwideDay set at setup");
@@ -63,7 +63,7 @@ fn submit_reward_bearing_tribute(world: &mut World) {
         .expect("submit real encrypted reward-bearing Tribute");
 
     world.state.tribute_tx_hash = Some(transaction_hash);
-    world.state.ocomp_agent_reward = Some(OcompAgentRewardObservationV1 {
+    world.state.agent_reward = Some(AgentRewardObservationV1 {
         waa_beneficiary,
         sra_beneficiary,
         offer_execution_block_number: None,
@@ -98,7 +98,7 @@ fn reward_is_not_available_before_utc_settlement(world: &mut World) {
     let reward_utc_day = timestamp_to_date_key(block_timestamp);
     let (waa_beneficiary, sra_beneficiary) = world
         .state
-        .ocomp_agent_reward
+        .agent_reward
         .as_ref()
         .map(|observation| (observation.waa_beneficiary, observation.sra_beneficiary))
         .expect("AgentReward beneficiary fixture");
@@ -115,7 +115,7 @@ fn reward_is_not_available_before_utc_settlement(world: &mut World) {
     let checkpoint = reward_checkpoint(world, checkpoint);
     let observation = world
         .state
-        .ocomp_agent_reward
+        .agent_reward
         .as_mut()
         .expect("AgentReward beneficiary fixture");
     observation.offer_execution_block_number = Some(block_number);
@@ -135,7 +135,7 @@ fn reward_is_not_available_before_utc_settlement(world: &mut World) {
 fn advance_to_agent_reward_settlement(world: &mut World) {
     let execution_timestamp = world
         .state
-        .ocomp_agent_reward
+        .agent_reward
         .as_ref()
         .and_then(|observation| observation.offer_execution_timestamp)
         .expect("reward-bearing Tribute execution timestamp");
@@ -152,7 +152,7 @@ fn advance_to_agent_reward_settlement(world: &mut World) {
         .expect("canonical timestamp before AgentReward settlement");
 
     if current_timestamp < settlement_timestamp {
-        let (_, _, minimum_height, pending_publication) =
+        let (minimum_height, pending_publication) =
             restart_committee_at_logical_time(world, settlement_timestamp);
         for port in world.validators.committee_ports() {
             assert!(
@@ -172,7 +172,7 @@ fn advance_to_agent_reward_settlement(world: &mut World) {
 fn observe_agent_rewards(world: &mut World) {
     let observation = world
         .state
-        .ocomp_agent_reward
+        .agent_reward
         .as_ref()
         .expect("AgentReward beneficiary fixture");
     let escrow_before = observation
@@ -277,7 +277,7 @@ fn observe_agent_rewards(world: &mut World) {
 
     let observation = world
         .state
-        .ocomp_agent_reward
+        .agent_reward
         .as_mut()
         .expect("AgentReward beneficiary fixture");
     observation.waa_claimable_coen_units = Some(waa_claimable);
@@ -310,7 +310,7 @@ fn beneficiaries_claim_agent_rewards(
     let (waa_claimable, sra_claimable, escrow_before) = {
         let observation = world
             .state
-            .ocomp_agent_reward
+            .agent_reward
             .as_ref()
             .expect("settled AgentReward observation");
         (
@@ -373,7 +373,7 @@ fn beneficiaries_claim_agent_rewards(
     }
     world
         .state
-        .ocomp_agent_reward
+        .agent_reward
         .as_mut()
         .expect("AgentReward observation")
         .claim_finalized_height = Some(finalized_height);
@@ -383,7 +383,7 @@ fn beneficiaries_claim_agent_rewards(
 fn claims_clear_agent_reward_state(world: &mut World) {
     let observation = world
         .state
-        .ocomp_agent_reward
+        .agent_reward
         .as_ref()
         .expect("claimed AgentReward observation");
     let expected_escrow = observation
@@ -427,7 +427,7 @@ fn claim_gem_and_assert_gas_only_cost(
     let beneficiary = beneficiary_address(world, key);
     let primary = world.validators.primary_port();
     let before = native_balance(world, primary, beneficiary);
-    let inventory_before = observe_gem_projection(world, primary, || {
+    let inventory_before = observe_gem_state(world, primary, || {
         gem_inventory(world, primary, beneficiary).map(Some)
     });
     let receipt = world
@@ -462,7 +462,7 @@ fn claim_gem_and_assert_gas_only_cost(
         eth::receipt_event::<eth::IGemFactory::GemIssued>(&receipt, addresses::GEM_FACTORY_ADDR);
     let mut expected_body = None;
     for port in ports {
-        let (after, gem) = observe_gem_projection(world, port, || {
+        let (after, gem) = observe_gem_state(world, port, || {
             let after = gem_inventory(world, port, beneficiary)?;
             if after.len() < inventory_before.len() + 1 {
                 return Ok(None);
@@ -539,7 +539,8 @@ fn claim_gem_and_assert_gas_only_cost(
     height
 }
 
-fn observe_gem_projection<T>(
+/// Sample a Gem read until it lands within one unchanged head on `port`.
+fn observe_gem_state<T>(
     world: &World,
     port: u16,
     mut read: impl FnMut() -> Result<Option<T>, String>,
@@ -567,7 +568,7 @@ fn observe_gem_projection<T>(
         Instant::now,
         || sleep(Duration::from_secs(2).min(deadline.saturating_duration_since(Instant::now()))),
     )
-    .unwrap_or_else(|error| panic!("Gem projection on port {port}: {error:#}"))
+    .unwrap_or_else(|error| panic!("Gem state on port {port}: {error:#}"))
 }
 
 fn gem_inventory(world: &World, port: u16, owner: Address) -> Result<Vec<U256>, String> {

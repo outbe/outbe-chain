@@ -8,7 +8,8 @@ use outbe_primitives::consensus_p2p::{
     decode_versioned, MAX_P2P_ADDRESS_ENCODED_LEN, P2P_ADDRESS_VERSION_V1,
 };
 use outbe_primitives::error::Result;
-use outbe_primitives::slashing_journal::{iso8601_now, record as journal_record, JournalRecord};
+use outbe_primitives::slashing_journal::{record as journal_record, JournalRecord};
+use outbe_primitives::time::iso8601_now;
 use outbe_primitives::validators::{validator_registration_message, VALIDATOR_REGISTRATION_DST};
 use std::num::NonZeroU64;
 use tracing::info;
@@ -266,7 +267,7 @@ impl ValidatorSet<'_> {
     ///
     /// The checks run in this order: INACTIVE status, kept Radicle NodeId,
     /// consistent reverse binding, cooldown, consensus key, transition, and
-    /// no open OCOMP recovery window.
+    /// the configured cooldown.
     fn reregistered_state(
         &self,
         request: &RegistrationRequest<'_>,
@@ -295,9 +296,6 @@ impl ValidatorSet<'_> {
             target.block_number,
         )?);
         let after = existing_state.clone().with_lifecycle(lifecycle)?;
-        if self.val_ocomp_recovery_deadline.read(&validator_addr)? != 0 {
-            return Err(ValidatorSetError::CannotReregisterDuringOpenOcompWindow.into());
-        }
         Ok((after, old_pk_hash))
     }
 

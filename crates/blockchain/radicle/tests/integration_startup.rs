@@ -130,71 +130,6 @@ fn gate(
     })
 }
 
-#[test]
-fn voting_gate_exact_binding_precedes_health_phase() {
-    use ExactBindingState::{ActiveMatching, ActiveMismatch, ActiveMissing, SelfAbsent};
-    use RadicleVotingGate::{Fatal, SignerAllowed, Verifier};
-
-    assert_eq!(
-        gate(SelfAbsent, ManagerPhase::JoiningUnbound, None, false),
-        Verifier
-    );
-    assert_eq!(
-        gate(ActiveMatching, ManagerPhase::Ready, None, false),
-        SignerAllowed
-    );
-    assert_eq!(
-        gate(ActiveMatching, ManagerPhase::RuntimeDegraded, None, true),
-        SignerAllowed
-    );
-    assert_eq!(
-        gate(SelfAbsent, ManagerPhase::RuntimeDegraded, None, true),
-        Verifier
-    );
-
-    for (binding, error) in [
-        (ActiveMissing, RadicleVotingGateError::ActiveBindingMissing),
-        (ActiveMismatch, RadicleVotingGateError::BindingMismatch),
-    ] {
-        for phase in [
-            ManagerPhase::JoiningUnbound,
-            ManagerPhase::Ready,
-            ManagerPhase::RuntimeDegraded,
-        ] {
-            assert_eq!(gate(binding, phase, None, true), Fatal(error));
-        }
-    }
-}
-
-#[test]
-fn voting_gate_distinguishes_pre_ready_from_runtime_degraded() {
-    use ExactBindingState::{ActiveMatching, SelfAbsent};
-    use RadicleVotingGate::{Fatal, SignerAllowed};
-
-    assert_eq!(
-        gate(
-            SelfAbsent,
-            ManagerPhase::JoiningUnbound,
-            Some(PhaseError::SidecarUnavailable),
-            false
-        ),
-        Fatal(RadicleVotingGateError::SidecarUnavailable)
-    );
-    assert_eq!(
-        gate(
-            ActiveMatching,
-            ManagerPhase::JoiningUnbound,
-            Some(PhaseError::LocalNodeIdUnavailable),
-            false
-        ),
-        Fatal(RadicleVotingGateError::LocalNodeIdUnavailable)
-    );
-    assert_eq!(
-        gate(ActiveMatching, ManagerPhase::RuntimeDegraded, None, true),
-        SignerAllowed
-    );
-}
-
 fn sidecar_startup_cases() -> [(bool, bool, ManagerPhase, Option<PhaseError>); 4] {
     [
         (
@@ -246,6 +181,50 @@ fn voting_gate_matrix() {
         }
     }
 
+    assert_eq!(
+        gate(ActiveMatching, ManagerPhase::Ready, None, false),
+        SignerAllowed
+    );
+    assert_eq!(
+        gate(ActiveMatching, ManagerPhase::RuntimeDegraded, None, true),
+        SignerAllowed
+    );
+    assert_eq!(
+        gate(SelfAbsent, ManagerPhase::RuntimeDegraded, None, true),
+        Verifier
+    );
+    assert_eq!(
+        gate(
+            SelfAbsent,
+            ManagerPhase::JoiningUnbound,
+            Some(PhaseError::SidecarUnavailable),
+            false,
+        ),
+        sidecar_unavailable
+    );
+    assert_eq!(
+        gate(
+            ActiveMatching,
+            ManagerPhase::JoiningUnbound,
+            Some(PhaseError::LocalNodeIdUnavailable),
+            false,
+        ),
+        Fatal(RadicleVotingGateError::LocalNodeIdUnavailable)
+    );
+
+    for (binding, error) in [
+        (ActiveMissing, RadicleVotingGateError::ActiveBindingMissing),
+        (ActiveMismatch, RadicleVotingGateError::BindingMismatch),
+    ] {
+        for phase in [
+            ManagerPhase::JoiningUnbound,
+            ManagerPhase::Ready,
+            ManagerPhase::RuntimeDegraded,
+        ] {
+            assert_eq!(gate(binding, phase, None, true), Fatal(error));
+        }
+    }
+
     for ever_ready in [false, true] {
         assert_eq!(
             gate(
@@ -254,7 +233,7 @@ fn voting_gate_matrix() {
                 Some(PhaseError::BindingMismatch),
                 ever_ready,
             ),
-            Fatal(RadicleVotingGateError::BindingMismatch)
+            binding_mismatch
         );
     }
 }

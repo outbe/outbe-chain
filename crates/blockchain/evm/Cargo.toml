@@ -37,8 +37,6 @@ outbe-update.workspace = true
 outbe-agentreward.workspace = true
 outbe-ccaregistry.workspace = true
 outbe-metadosis.workspace = true
-outbe-ocomp-protocol.workspace = true
-outbe-ocompregistry.workspace = true
 outbe-validatorset.workspace = true
 outbe-consensus.workspace = true
 outbe-slashindicator.workspace = true
@@ -96,7 +94,6 @@ outbe-nod = { workspace = true, features = ["test-utils", "test-enclave"] }
 outbe-gem = { workspace = true, features = ["test-utils"] }
 outbe-gratis = { workspace = true, features = ["test-enclave"] }
 alloy-sol-types.workspace = true
-outbe-offchain-storage.workspace = true
 outbe-oracle = { workspace = true, features = ["test-utils"] }
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-validatorset = { workspace = true, features = ["test-utils"] }

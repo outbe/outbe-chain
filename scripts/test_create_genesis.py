@@ -261,17 +261,6 @@ class ConfigValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unknown Outbe chain id"):
             CG.validate_config(config)
 
-    def test_mainnet_requires_preexisting_ocomp_registrations(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            keys = pathlib.Path(tmp)
-            for index in range(4):
-                (keys / f"validator-{index}").mkdir()
-            with self.assertRaisesRegex(ValueError, "Mainnet.*OCOMP registration"):
-                CG.validate_ocomp_registration_inventory(
-                    keys_dir=keys,
-                    validator_count=4,
-                    allow_generation=False,
-                )
 
     def test_port_collisions_are_rejected(self):
         config = minimal_config("./keys") | {"rpc_port": 9101}  # same as metrics
@@ -287,7 +276,7 @@ class ConfigValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "mrenclave"):
             CG.run_tee_stage(
                 chain_binary="/nonexistent",
-                ocomp_genesis=pathlib.Path("/nonexistent"),
+                seeded_genesis=pathlib.Path("/nonexistent"),
                 output=pathlib.Path("/nonexistent"),
                 config=config,
             )
@@ -457,7 +446,7 @@ class SeedMergeTests(unittest.TestCase):
 
 class SeedStageTests(unittest.TestCase):
     """The python half of the pipeline runs for real: base genesis, prefund,
-    and seed_genesis.py storage seeding. The OCOMP and TEE stages need the node
+    and seed_genesis.py storage seeding. The TEE stage needs the node
     binary; the smoke run covers those."""
 
     def fake_validators(self) -> list[dict]:
@@ -630,7 +619,7 @@ class SeedStageTests(unittest.TestCase):
             self.assertEqual(CG.build_seed(config)["rewards"], baseline["rewards"])
 
     def test_seeded_genesis_is_reproducible_for_a_pinned_timestamp(self):
-        """The OCOMP registrations sign the seeded genesis hash, so the same
+        """The TEE policy binds the seeded genesis hash, so the same
         yaml must always seed byte-identical state."""
         with (
             tempfile.TemporaryDirectory() as first,
@@ -780,34 +769,13 @@ class LaunchBundleTests(unittest.TestCase):
             directory.mkdir(parents=True)
             (directory / "evm-key.hex").write_text(f"{index + 1:064x}\n")
         genesis = output_dir / "genesis.json"
-        # render() reads the OCOMP identity out of the install document and
-        # locates the bundle hash by anchoring on the genesis hash. So the
-        # fixture has to carry a well-formed one.
-        genesis_hash = "0x" + "ab" * 32
-        canonical = ("00" * 33) + "ab" * 32 + "01" * 32 + "cd" * 32 + "0c" * 32
-        genesis.write_text(
-            json.dumps(
-                {
-                    "config": {
-                        "chainId": 424242,
-                        "ocompForkInstallV1": {
-                            "canonicalBytes": "0x" + canonical,
-                            "installHash": "0x" + "ee" * 32,
-                        },
-                    },
-                }
-            )
-        )
-        marker = keys_dir / "validator-0" / "ocomp-registration-v1.genesis-hash"
-        marker.write_text(genesis_hash + "\n")
-        (output_dir / "protocol-bundle-v1.ocb1").write_bytes(b"canonical-ocomp-v1")
+        genesis.write_text(json.dumps({"config": {"chainId": 424242}}))
         config = minimal_config(str(keys_dir)) | (config_overrides or {})
         LB.render(
             config=config,
             validators=self.fake_validators(),
             genesis_path=genesis,
             keys_dir=keys_dir,
-            repo_root=REPO_ROOT,
         )
         return root, keys_dir, output_dir
 
@@ -823,7 +791,6 @@ class LaunchBundleTests(unittest.TestCase):
                 index=0,
                 host="10.0.0.1",
                 keys_dir="/keys",
-                repo_root=str(REPO_ROOT),
             )
 
         self.assertIn(f"--max-validators {LB.DEFAULT_MAX_VALIDATORS}", rendered({}))
@@ -844,7 +811,6 @@ class LaunchBundleTests(unittest.TestCase):
             index=0,
             host="10.0.0.1",
             keys_dir="/keys",
-            repo_root=str(REPO_ROOT),
         )
         self.assertNotIn("config.json", script)
 
@@ -863,8 +829,6 @@ class LaunchBundleTests(unittest.TestCase):
                     "run-node.sh",
                     "run-feeder.sh",
                     "run-tee-renew.sh",
-                    "run-ocomp-exporter.sh",
-                    "run-ocomp-worker.sh",
                     "start-all.sh",
                     "stop-all.sh",
                 ):
@@ -874,113 +838,9 @@ class LaunchBundleTests(unittest.TestCase):
                         script.stat().st_mode & 0o111, f"{name} not executable"
                     )
                     subprocess.run(["bash", "-n", str(script)], check=True)
-                self.assertEqual(
-                    {path.name for path in directory.glob("run-ocomp-*.sh")},
-                    {
-                        "run-ocomp-exporter.sh",
-                        "run-ocomp-worker.sh",
-                        "run-ocomp-successor-worker.sh",
-                    },
-                )
                 self.assertTrue((directory / "feeder.toml").is_file())
 
-    def test_ocomp_identity_is_read_from_the_install_document(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            _, _, output_dir = self.render(tmp)
-            script = (output_dir / "validator-2" / "run-ocomp-worker.sh").read_text()
-            # The bundle hash sits after the genesis hash and the fork id.
-            self.assertIn(
-                '--protocol-bundle-hash "$OCOMP_ACTIVE_PROTOCOL_BUNDLE_HASH"', script
-            )
-            self.assertIn("ocomp-active.env", script)
-            self.assertIn("--chain-id 424242", script)
-            self.assertIn("--genesis-hash 0x" + "ab" * 32, script)
-            # Each host gets a distinct boot nonce, ordinal in the low bytes.
-            self.assertIn("--boot-nonce 0x03" + "00" * 27 + "00000000", script)
 
-    def test_every_ocomp_role_gets_the_shared_environment(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            _, _, output_dir = self.render(tmp)
-            for role in ("exporter", "worker", "successor-worker"):
-                script = (
-                    output_dir / "validator-0" / f"run-ocomp-{role}.sh"
-                ).read_text()
-                for var in (
-                    "OUTBE_OCOMP_BASE_PATH",
-                    "OCOMP_VALIDATOR_INDEX",
-                    "OCOMP_CHAIN_ID",
-                    "OCOMP_GENESIS_HASH",
-                    "OCOMP_BOOT_NONCE",
-                    "OCOMP_PROTOCOL_BUNDLE_HASH",
-                    "OCOMP_REGISTRY_GENERATION",
-                ):
-                    self.assertIn(var, script, f"{role} script is missing {var}")
-
-    def test_bundle_uses_evm_state_without_entity_datasource_configuration(self):
-        import tarfile
-
-        with tempfile.TemporaryDirectory() as tmp:
-            _, _, output_dir = self.render(tmp)
-            for index in range(4):
-                directory = output_dir / f"validator-{index}"
-                for old in ["offchain-storage.toml", "run-storage.sh", "run-mongodb.sh"]:
-                    self.assertFalse((directory / old).exists())
-                node = (directory / "run-node.sh").read_text()
-                exporter = (directory / "run-ocomp-exporter.sh").read_text()
-                self.assertNotIn("--projection.", node)
-                self.assertNotIn("OUTBE_OCOMP_STORAGE_CONFIG", exporter)
-                with tarfile.open(output_dir / "dist" / f"validator-{index}.tgz") as archive:
-                    names = archive.getnames()
-                    self.assertNotIn("offchain_storage.py", names)
-                    self.assertNotIn(f"validator-{index}/offchain-storage.toml", names)
-
-    def test_successor_bundle_catalog_and_dormant_worker_are_release_ready(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            _, _, output_dir = self.render(tmp)
-            bundle_hash = "cd" * 32
-            catalog_bundle = output_dir / "protocol-bundles-v1" / f"{bundle_hash}.ocb1"
-            self.assertEqual(
-                catalog_bundle.read_bytes(),
-                (output_dir / "protocol-bundle-v1.ocb1").read_bytes(),
-            )
-            node = (output_dir / "validator-0" / "run-node.sh").read_text()
-            self.assertIn("protocol-bundles-v1/${BUNDLE_HASH#0x}.ocb1", node)
-            self.assertIn("ocomp-bundles.env", node)
-            active = output_dir / "validator-0" / "ocomp-active.env"
-            self.assertEqual(
-                active.read_text(),
-                "OCOMP_ACTIVE_PROTOCOL_BUNDLE_HASH=0x" + bundle_hash + "\n",
-            )
-            exporter = (
-                output_dir / "validator-0" / "run-ocomp-exporter.sh"
-            ).read_text()
-            self.assertIn("ocomp-bundles.env", exporter)
-            successor = (
-                output_dir / "validator-0" / "run-ocomp-successor-worker.sh"
-            ).read_text()
-            self.assertIn("OCOMP_SUCCESSOR_PROTOCOL_BUNDLE_HASH", successor)
-            self.assertIn("--supervisor-address 127.0.0.1:30407", successor)
-            unit = output_dir / "systemd" / "outbe-ocomp-successor-worker@.service"
-            self.assertTrue(unit.is_file())
-            installer = (output_dir / "install-systemd.sh").read_text()
-            self.assertNotIn(
-                "for role in enclave radicle node ocomp-exporter ocomp-worker "
-                "ocomp-successor-worker feeder",
-                installer,
-            )
-
-    def test_start_all_waits_for_the_node_owned_endpoint_before_the_worker(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            _, _, output_dir = self.render(tmp)
-            start = (output_dir / "validator-0" / "start-all.sh").read_text()
-            self.assertLess(
-                start.index("/dev/tcp/127.0.0.1/30401"),
-                start.index("run-ocomp-worker.sh"),
-                "the worker must not start before the embedded Supervisor endpoint",
-            )
-            self.assertIn("did not become ready", start)
-            stop = (output_dir / "validator-0" / "stop-all.sh").read_text()
-            self.assertIn("ocomp-worker", stop)
 
     def test_feeder_provider_name_is_one_the_binary_accepts(self):
         """outbe-feeder validates provider names against a fixed list and
@@ -1118,9 +978,6 @@ class LaunchBundleTests(unittest.TestCase):
                 "enclave",
                 "radicle",
                 "node",
-                "ocomp-exporter",
-                "ocomp-worker",
-                "ocomp-successor-worker",
                 "feeder",
             ):
                 unit = unit_dir / f"outbe-{role}@.service"
@@ -1136,9 +993,6 @@ class LaunchBundleTests(unittest.TestCase):
                     "outbe-enclave@.service",
                     "outbe-radicle@.service",
                     "outbe-node@.service",
-                    "outbe-ocomp-exporter@.service",
-                    "outbe-ocomp-worker@.service",
-                    "outbe-ocomp-successor-worker@.service",
                     "outbe-feeder@.service",
                     "outbe-tee-renew@.service",
                 },
@@ -1151,9 +1005,6 @@ class LaunchBundleTests(unittest.TestCase):
             dependencies = {
                 "radicle": "outbe-enclave@%i.service",
                 "node": "outbe-radicle@%i.service",
-                "ocomp-exporter": "outbe-node@%i.service",
-                "ocomp-worker": "outbe-node@%i.service",
-                "ocomp-successor-worker": "outbe-node@%i.service",
                 "feeder": "outbe-node@%i.service",
             }
             for role, dependency in dependencies.items():
@@ -1213,7 +1064,6 @@ class LaunchBundleTests(unittest.TestCase):
                 validators=self.fake_validators(),
                 genesis_path=output_dir / "genesis.json",
                 keys_dir=pathlib.Path(tmp) / "keys",
-                repo_root=REPO_ROOT,
             )
             self.assertEqual(first, (output_dir / "reth-bootnodes.txt").read_text())
             self.assertEqual(len(first.strip().splitlines()), 4)
@@ -1224,15 +1074,6 @@ class LaunchBundleTests(unittest.TestCase):
                 self.assertTrue(line.startswith("enode://"))
                 self.assertTrue(line.endswith(f"@{host}:30303"))
 
-    def test_ocomp_evm_key_defaults_to_the_validator_key(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            _, keys_dir, _ = self.render(tmp)
-            for index in range(4):
-                directory = keys_dir / f"validator-{index}"
-                self.assertEqual(
-                    (directory / "ocomp-evm-key.hex").read_text().strip(),
-                    (directory / "evm-key.hex").read_text().strip(),
-                )
 
     def test_remote_paths_are_used_in_the_scripts(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1298,8 +1139,6 @@ class LaunchBundleTests(unittest.TestCase):
             # the dev genesis profile. Only a mock enclave uses the development
             # transport, and that is what `enclave_sgx: false` selects.
             self.assertIn("--tee-session-mode production-node-host", node)
-            # All three OCOMP roles read the bundle from the domain directory.
-            self.assertIn("protocol-bundle-v1.ocb1", node)
 
     def test_a_mock_enclave_keeps_the_development_transport(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -101,7 +101,6 @@ fn run_patch_vote_case(approve_second: bool) {
         votingWindowBlocks: 2,
     }
     .abi_encode();
-    println!("Patch proposal calldata=0x{}", hex::encode(&create));
     let created = call(&mut state, 7, validators[0].0, 1, VOTE_ADDRESS, create);
     assert!(created.is_success(), "{created:?}");
     assert_eq!(

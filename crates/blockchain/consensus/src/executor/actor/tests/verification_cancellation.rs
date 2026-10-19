@@ -182,57 +182,34 @@ fn cancelled_body_read_retires_verification_before_response_receiver_closes() {
 }
 
 #[test]
-fn out_of_gas_marks_candidate_invalid_without_stopping_actor() {
-    deterministic::Runner::default().start(|clock| async move {
-        let mut engine = EngineStub::new();
-        let mut work = VerificationWork::default();
-        let block = linked(1, B256::ZERO, 33);
-        let (receiver, _budget) = enqueue(&mut work, request(block, None));
-        work.schedule(&engine.handle);
-        assert!(work.next_event().now_or_never().is_none());
-        let BeaconEngineMessage::NewPayload { tx, .. } = engine.rx.try_recv().unwrap() else {
-            panic!("expected new_payload");
-        };
-        tx.send(Err(
-            reth_ethereum::node::api::BeaconOnNewPayloadError::internal(
-                outbe_primitives::error::PrecompileError::OutOfGas,
-            ),
-        ))
-        .unwrap();
-        let event = work.next_event().await;
-        assert!(work
-            .handle_event(event, &clock, (Height::zero(), Digest::ZERO))
-            .unwrap()
-            .is_none());
-        assert_eq!(receiver.await.unwrap(), VerificationOutcome::Invalid);
-    });
-}
-
-#[test]
-fn revert_precompile_error_marks_candidate_invalid_without_stopping_actor() {
-    deterministic::Runner::default().start(|clock| async move {
-        let mut engine = EngineStub::new();
-        let mut work = VerificationWork::default();
-        let block = linked(1, B256::ZERO, 37);
-        let (receiver, _budget) = enqueue(&mut work, request(block, None));
-        work.schedule(&engine.handle);
-        assert!(work.next_event().now_or_never().is_none());
-        let BeaconEngineMessage::NewPayload { tx, .. } = engine.rx.try_recv().unwrap() else {
-            panic!("expected new_payload");
-        };
-        tx.send(Err(
-            reth_ethereum::node::api::BeaconOnNewPayloadError::internal(
-                outbe_primitives::error::PrecompileError::Revert(
-                    "candidate hook reverted".to_string(),
-                ),
-            ),
-        ))
-        .unwrap();
-        let event = work.next_event().await;
-        assert!(work
-            .handle_event(event, &clock, (Height::zero(), Digest::ZERO))
-            .unwrap()
-            .is_none());
-        assert_eq!(receiver.await.unwrap(), VerificationOutcome::Invalid);
-    });
+fn precompile_errors_mark_candidate_invalid_without_stopping_actor() {
+    for (salt, precompile_err) in [
+        (33u8, outbe_primitives::error::PrecompileError::OutOfGas),
+        (
+            37u8,
+            outbe_primitives::error::PrecompileError::Revert("candidate hook reverted".to_string()),
+        ),
+    ] {
+        deterministic::Runner::default().start(move |clock| async move {
+            let mut engine = EngineStub::new();
+            let mut work = VerificationWork::default();
+            let block = linked(1, B256::ZERO, salt);
+            let (receiver, _budget) = enqueue(&mut work, request(block, None));
+            work.schedule(&engine.handle);
+            assert!(work.next_event().now_or_never().is_none());
+            let BeaconEngineMessage::NewPayload { tx, .. } = engine.rx.try_recv().unwrap() else {
+                panic!("expected new_payload");
+            };
+            tx.send(Err(
+                reth_ethereum::node::api::BeaconOnNewPayloadError::internal(precompile_err),
+            ))
+            .unwrap();
+            let event = work.next_event().await;
+            assert!(work
+                .handle_event(event, &clock, (Height::zero(), Digest::ZERO))
+                .unwrap()
+                .is_none());
+            assert_eq!(receiver.await.unwrap(), VerificationOutcome::Invalid);
+        });
+    }
 }

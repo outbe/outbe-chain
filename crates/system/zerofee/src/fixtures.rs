@@ -2,8 +2,8 @@
 
 use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
 use alloy_primitives::{Address, U256};
-use outbe_ocomp_protocol::transaction_call::TransactionCallFields;
 use outbe_primitives::addresses::AGENT_REWARD_ADDRESS;
+use outbe_primitives::transaction_call::TransactionCallFields;
 
 use crate::ZeroFeeTransaction;
 

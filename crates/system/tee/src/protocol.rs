@@ -423,7 +423,7 @@ pub struct FidelitySnapshotEntry {
 /// snapshot over the day's tribute owners. The host reads each owner's cohort
 /// blob from committed storage and forwards it verbatim. The enclave decrypts and
 /// returns one plaintext league word per owner. Consensus path (called from the
-/// OCOMP prepare step in begin-block, re-executed by every validator).
+/// Metadosis preparation step in begin-block, re-executed by every validator).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FidelitySnapshotRequest {
     /// League evaluation time (the WWD's intent-bound snapshot timestamp).
@@ -433,11 +433,13 @@ pub struct FidelitySnapshotRequest {
     pub entries: Vec<FidelitySnapshotEntry>,
 }
 
-/// One owner's plaintext league in a snapshot result, in request order.
+/// One owner's plaintext league and RCFI in a snapshot result, in request order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FidelityLeagueEntry {
     pub owner: Address,
     pub league: u16,
+    #[serde(default)]
+    pub rcfi: U256,
 }
 
 /// Inputs for a `QueryFidelityIndex`: an owner-authorized read of one account's
@@ -753,8 +755,8 @@ pub enum EnclaveRequest {
     },
 
     /// Batch-decrypt cohort blobs and return one plaintext league per owner. This
-    /// is metadosis's once-per-WWD Fidelity snapshot. Consensus path (OCOMP
-    /// prepare step in begin-block, re-executed by every validator).
+    /// is metadosis's once-per-WWD Fidelity snapshot. Consensus path (Metadosis
+    /// preparation step in begin-block, re-executed by every validator).
     SnapshotFidelityLeagues {
         request: Box<FidelitySnapshotRequest>,
     },
@@ -876,13 +878,6 @@ pub enum EnclaveRequest {
     ExecuteLysis {
         request: Box<crate::lysis::LysisRequest>,
     },
-    PrepareStateNods {
-        request: Box<crate::nod_state_materialization::PrepareStateNodsRequest>,
-    },
-    OpenStateNods {
-        authority: crate::nod_state_materialization::StateNodAuthority,
-        carrier: Vec<u8>,
-    },
 }
 
 impl EnclaveRequest {
@@ -892,8 +887,6 @@ impl EnclaveRequest {
         match self {
             Self::CreateNodForTestV2 { .. } => "create_nod_for_test_v2",
             Self::ExecuteLysis { .. } => "execute_lysis",
-            Self::PrepareStateNods { .. } => "prepare_state_nods",
-            Self::OpenStateNods { .. } => "open_state_nods",
             Self::MineEncryptedNodV2 { .. } => "mine_encrypted_nod_v2",
             Self::ReadNodAmountV2 { .. } => "read_nod_amount_v2",
             Self::NodTransferChunkV2 { .. } => "nod_transfer_chunk_v2",
@@ -974,8 +967,6 @@ impl EnclaveRequest {
             Self::CreateNodForTestV2 { .. } => true,
             Self::GetQuote { .. }
             | Self::ExecuteLysis { .. }
-            | Self::PrepareStateNods { .. }
-            | Self::OpenStateNods { .. }
             | Self::MineEncryptedNodV2 { .. }
             | Self::ReadNodAmountV2 { .. }
             | Self::NodTransferChunkV2 { .. }
@@ -1427,21 +1418,6 @@ pub enum EnclaveResponse {
         inputs_canonical_hash: B256,
         attestation_tag: Vec<u8>,
     },
-    EncryptedNodsPreparedV2 {
-        carrier: Vec<u8>,
-        inputs_canonical_hash: B256,
-        attestation_tag: Vec<u8>,
-    },
-    EncryptedNodsRejectedV2 {
-        reason: String,
-        inputs_canonical_hash: B256,
-        attestation_tag: Vec<u8>,
-    },
-    EncryptedNodsCapacityExceededV2 {
-        reason: String,
-        inputs_canonical_hash: B256,
-        attestation_tag: Vec<u8>,
-    },
     EncryptedNodMintRejectedV2 {
         reason: String,
         inputs_canonical_hash: B256,
@@ -1453,11 +1429,6 @@ pub enum EnclaveResponse {
     },
     LysisExecuted {
         result: Box<crate::lysis::LysisResult>,
-        inputs_canonical_hash: B256,
-        attestation_tag: Vec<u8>,
-    },
-    EncryptedNodsOpenedV2 {
-        nods: Vec<outbe_primitives::nod_encryption::EncryptedNodV2>,
         inputs_canonical_hash: B256,
         attestation_tag: Vec<u8>,
     },
@@ -1510,11 +1481,6 @@ pub enum EnclaveResponse {
     /// or an expired session. Unlike `Error`, it reports this enclave's state, not the request's content.
     NotReady {
         message: String,
-    },
-    TributeSourcesRequested {
-        lookup: crate::nod_state_materialization::TributeSourceLookup,
-        inputs_canonical_hash: B256,
-        attestation_tag: Vec<u8>,
     },
 }
 

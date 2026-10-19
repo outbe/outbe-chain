@@ -570,9 +570,10 @@ mod tests {
     fn reth_node_id_is_uncompressed_public_key_without_prefix() {
         let key = SigningKey::from_bytes((&[7u8; 32]).into()).unwrap();
         let node_id = reth_node_id_hex(key.verifying_key()).unwrap();
-
-        assert_eq!(node_id.len(), 128);
-        assert_eq!(hex::decode(node_id).unwrap().len(), 64);
+        let expected_point = key.verifying_key().to_encoded_point(false);
+        let expected_bytes = expected_point.as_bytes();
+        assert_eq!(expected_bytes[0], 0x04);
+        assert_eq!(node_id, hex::encode(&expected_bytes[1..]));
     }
 
     #[test]
@@ -604,7 +605,14 @@ mod tests {
                 .join(LOCALNET_RETH_P2P_SECRET_FILE);
             let secret = std::fs::read_to_string(secret_path).unwrap();
             assert_eq!(secret.len(), 64);
-            assert_eq!(hex::decode(secret).unwrap().len(), 32);
+            let secret_bytes = hex::decode(secret).unwrap();
+            assert_eq!(secret_bytes.len(), 32);
+            let signing_key = SigningKey::from_slice(&secret_bytes).unwrap();
+            let expected_node_id = reth_node_id_hex(signing_key.verifying_key()).unwrap();
+            assert_eq!(
+                node_id, expected_node_id,
+                "bootnode node_id must match validator-{i} secret key"
+            );
         }
     }
 }

@@ -14,6 +14,17 @@ use crate::world::{rpc::Rpc, World};
 
 const FOLLOWERS: [(&str, usize); 2] = [("follower", 14), ("follower2", 15)];
 
+fn handoff_deadline(world: &World) -> Instant {
+    let genesis = std::fs::read(world.localnet.scenario_dir().join("genesis.json"))
+        .expect("read executed handoff scenario genesis");
+    let genesis = serde_json::from_slice(&genesis).expect("decode handoff scenario genesis");
+    let timeout = super::follower::reshare_wait_budget(&genesis)
+        .expect("handoff wait budget from executed genesis");
+    Instant::now()
+        .checked_add(timeout)
+        .expect("handoff deadline fits the monotonic clock")
+}
+
 fn all_ports(world: &World) -> Vec<u16> {
     let mut ports = world.validators.committee_ports();
     ports.extend(FOLLOWERS.map(|(_, slot)| world.validators.http_port(slot)));
@@ -250,7 +261,7 @@ fn pin_live_handoff(world: &mut World) {
         .wait_finalized_checkpoint(&ports, 2, 90)
         .expect("initial exact checkpoint on all six nodes");
     let history = authenticated_baseline(world, &ports);
-    let deadline = Instant::now() + Duration::from_secs(360);
+    let deadline = handoff_deadline(world);
     let pinned = select_pinned_handoff(world, history, pids, deadline);
     witness_pinned_carrier(world, &pinned, pids, deadline);
     // Keep the authenticated verifier and immutable carrier for the later
@@ -312,7 +323,7 @@ fn confirm_pinned_boundary(world: &mut World) {
         .take()
         .expect("live pinned handoff");
     let primary = world.validators.primary_port();
-    let deadline = Instant::now() + Duration::from_secs(360);
+    let deadline = handoff_deadline(world);
     while pinned.boundary.is_none() {
         assert!(
             Instant::now() < deadline,

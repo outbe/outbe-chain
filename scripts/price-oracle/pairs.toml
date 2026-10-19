@@ -1,7 +1,7 @@
 [[currency_pairs]]
 base = "COEN"
 quote = "840"
-markets = [{ provider = "mock_http", quote = "840" }]
+markets = [{ provider = "mock_http" }]
 
 [[deviation_thresholds]]
 base = "COEN"

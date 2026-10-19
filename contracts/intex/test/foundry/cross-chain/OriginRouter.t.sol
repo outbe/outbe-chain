@@ -110,11 +110,7 @@ contract OriginRouterTest is CrossChainTest {
         });
     }
 
-    function _baseIssuanceParams(address[] memory recipients, uint256[] memory quantities)
-        internal
-        view
-        returns (IOriginRouter.IssuanceInstructionsParams[] memory batch)
-    {
+    function _baseIssuanceParams() internal view returns (IOriginRouter.IssuanceInstructionsParams[] memory batch) {
         batch = new IOriginRouter.IssuanceInstructionsParams[](1);
         batch[0] = IOriginRouter.IssuanceInstructionsParams({
             seriesId: SERIES_ID,
@@ -128,9 +124,7 @@ contract OriginRouterTest is CrossChainTest {
             referenceCurrency: 840,
             callWindow: 30,
             callThreshold: 5,
-            callPriceMinor: 25e6,
-            recipients: recipients,
-            units: quantities
+            callPriceMinor: 25e6
         });
     }
 
@@ -185,15 +179,10 @@ contract OriginRouterTest is CrossChainTest {
     }
 
     function test_sendIssuanceInstructions_revert_unauthorized() public {
-        address[] memory recipients = new address[](1);
-        recipients[0] = address(0x1);
-        uint256[] memory quantities = new uint256[](1);
-        quantities[0] = 1;
-
         vm.prank(user);
         vm.expectRevert();
         originRouter.sendIssuanceInstructions{value: 0.1 ether}(
-            BNB_CHAIN_ID, WORLDWIDE_DAY, 0, 1, _baseIssuanceParams(recipients, quantities)
+            BNB_CHAIN_ID, WORLDWIDE_DAY, 0, 1, _baseIssuanceParams()
         );
     }
 
@@ -209,37 +198,13 @@ contract OriginRouterTest is CrossChainTest {
     }
 
     // --- Validation Tests ---
-    function test_sendIssuanceInstructions_emptyRecipients_ok() public {
-        // Empty recipients is valid: a snapshot chain with no local winners still gets its series created.
+    function test_sendIssuanceInstructions_ok() public {
         // Fire STAGE_START first so the day's target snapshot exists for the membership check.
         vm.prank(desis);
         originRouter.sendAuctionStageStart(_baseStageStartParams());
 
-        address[] memory recipients = new address[](0);
-        uint256[] memory quantities = new uint256[](0);
-
         vm.prank(intexFactory);
-        originRouter.sendIssuanceInstructions(
-            BNB_CHAIN_ID, WORLDWIDE_DAY, 0, 1, _baseIssuanceParams(recipients, quantities)
-        );
-    }
-
-    function test_sendIssuanceInstructions_revert_array_length_mismatch() public {
-        vm.prank(desis);
-        originRouter.sendAuctionStageStart(_baseStageStartParams());
-
-        address[] memory recipients = new address[](2);
-        uint256[] memory quantities = new uint256[](1); // Mismatch
-
-        recipients[0] = address(0x1);
-        recipients[1] = address(0x2);
-        quantities[0] = 10;
-
-        vm.prank(intexFactory);
-        vm.expectRevert(IOriginRouter.ArrayLengthMismatch.selector);
-        originRouter.sendIssuanceInstructions{value: 0.1 ether}(
-            BNB_CHAIN_ID, WORLDWIDE_DAY, 0, 1, _baseIssuanceParams(recipients, quantities)
-        );
+        originRouter.sendIssuanceInstructions(BNB_CHAIN_ID, WORLDWIDE_DAY, 0, 1, _baseIssuanceParams());
     }
 
     function test_sendRefundInstructions_emptyWinners_ok() public {

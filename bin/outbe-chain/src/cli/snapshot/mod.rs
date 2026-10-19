@@ -15,7 +15,7 @@ pub(crate) struct SnapshotCli {
 
 #[derive(clap::Subcommand)]
 pub(crate) enum SnapshotCommand {
-    /// Package native files while outbe-chain, OCOMP and CE writers are stopped.
+    /// Package native files while outbe-chain is stopped.
     Create(create::CreateArgs),
     /// Independently audit selected native data without starting the node.
     Validate(validate::ValidateArgs),

@@ -11,10 +11,8 @@ use cucumber::tag::Ext as _;
 use crate::artifacts::ArtifactLedger;
 use crate::env::{self, unmet, Environment};
 use crate::evidence;
-use crate::ocomp_capacity::OcompCapacityResourceMeterV1;
 use crate::watchdog::WatchdogHandle;
 use crate::world::localnet::{ExpectedTeeFailures, LogAudit};
-use crate::world::ocomp::OcompScenarioTopologyV1;
 use crate::world::World;
 
 pub(crate) struct BeforeScenario {
@@ -37,7 +35,7 @@ impl BeforeScenario {
             Duration::from_secs(env::scenario_timeout_secs(&self.env)),
         );
         world.localnet.set_scenario_deadline(deadline);
-        #[cfg(feature = "ocomp-integration")]
+
         crate::features::entity_lifecycle::markets::configure(world, &scenario.tags);
         // Only reachable for unmet scenarios in `--all` mode (the filter
         // excludes them otherwise). Panic so they count as failures.
@@ -89,10 +87,16 @@ pub(crate) fn finish_scenario(
     world: &mut World,
 ) -> LogAudit {
     let price_oracle = world.price_oracle.evidence_snapshot();
+    if matches!(event, ScenarioFinished::StepPassed) && !price_oracle.feeder_processes.is_empty() {
+        crate::world::price_oracle::verify_price_oracle_evidence(
+            &price_oracle,
+            world.validators.size(),
+        )
+        .expect("validate native Oracle evidence");
+    }
     world.price_oracle.teardown();
     // Drain node-facing clients while their node is still alive,
     // then collect every cleanup result before auditing final logs.
-    let ocomp_cleanup = world.ocomp.stop_clients_for_teardown();
     let node_cleanup = world.localnet.teardown_with_expected_exits(
         &expected_failed_slots(world),
         &world.state.expected_dkg_expiry_exits,
@@ -103,22 +107,8 @@ pub(crate) fn finish_scenario(
             panic!("E2E log-safety audit could not run: {error:#}");
         }
     };
-    for error in [ocomp_cleanup.err(), node_cleanup.err()]
-        .into_iter()
-        .flatten()
-    {
+    for error in [node_cleanup.err()].into_iter().flatten() {
         audit.record_cleanup_failure(error);
-    }
-    let ocomp = match world.ocomp.evidence_snapshot() {
-        Ok(snapshot) => snapshot,
-        Err(error) => {
-            let _ = world.localnet.teardown();
-            panic!("OCOMP topology evidence could not be captured: {error:#}");
-        }
-    };
-    let mut ocomp_public = world.state.ocomp_public_scenario_evidence();
-    if let Some(meter) = world.capacity_meter.take() {
-        ocomp_public.capacity_resources = Some(capacity_resources(world, scenario, meter, &ocomp));
     }
     if let Err(error) = evidence::write_scenario(evidence::ScenarioEvidence {
         env,
@@ -130,8 +120,6 @@ pub(crate) fn finish_scenario(
         elapsed: world.started_at.elapsed(),
         audit: &audit,
         gramine_image_id: world.localnet.enclave_image_id(),
-        ocomp: &ocomp,
-        ocomp_public: &ocomp_public,
         price_oracle: &price_oracle,
         radicle: &world.state.radicle,
         tee_lease: &world.state.tee_lease,
@@ -146,9 +134,6 @@ fn expected_failed_slots(world: &World) -> Vec<usize> {
     let mut slots = Vec::new();
     if world.state.allow_unsupported_update_fatal && world.state.proposed_version.is_some() {
         slots.extend(0..world.localnet.committee_size());
-    }
-    if world.state.ocomp_full_node_mismatch_job_id.is_some() {
-        slots.push(world.localnet.committee_size());
     }
     slots.extend(world.state.expected_tee_lease_guard_shutdown_validator);
     if let Some(proof) = &world.state.expected_tee_lease_guard_shutdown_full_node {
@@ -165,7 +150,6 @@ fn audit_scenario_logs(world: &World) -> eyre::Result<LogAudit> {
             .then_some(world.state.proposed_version)
             .flatten(),
         world.state.expected_dkg_reveal.as_deref(),
-        world.state.ocomp_full_node_mismatch_job_id,
         ExpectedTeeFailures {
             lease_guard_validator: world.state.expected_tee_lease_guard_shutdown_validator,
             sidecar_outage: world
@@ -179,25 +163,4 @@ fn audit_scenario_logs(world: &World) -> eyre::Result<LogAudit> {
                 .as_ref(),
         },
     )
-}
-
-fn capacity_resources(
-    world: &mut World,
-    scenario: &Scenario,
-    meter: OcompCapacityResourceMeterV1,
-    ocomp: &OcompScenarioTopologyV1,
-) -> crate::ocomp_capacity::OcompCapacityResourceObservationV1 {
-    if !scenario.tags.iter().any(|tag| tag == "ocomp-capacity") {
-        let _ = world.localnet.teardown();
-        panic!("dedicated OCOMP capacity meter was used for a non-capacity scenario");
-    }
-    let cas_roots = ocomp
-        .domain_roots
-        .iter()
-        .map(|root| std::path::PathBuf::from(root).join("cas-v1"))
-        .collect::<Vec<_>>();
-    meter.finish(&cas_roots).unwrap_or_else(|error| {
-        let _ = world.localnet.teardown();
-        panic!("OCOMP capacity resource evidence failed: {error:#}");
-    })
 }

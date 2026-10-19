@@ -11,11 +11,7 @@ use outbe_primitives::{
     OutbePrimitives, OutbeTxEnvelope,
 };
 use reth_errors::{BlockExecutionError, BlockValidationError};
-use reth_evm::{
-    block::StateDB,
-    execute::{BlockBuilder, BlockExecutor},
-    Evm,
-};
+use reth_evm::execute::BlockBuilder;
 use reth_payload_primitives::PayloadBuilderError;
 use reth_primitives_traits::Recovered;
 use reth_revm::cancelled::CancelOnDrop;
@@ -23,12 +19,9 @@ use reth_transaction_pool::{
     error::{Eip4844PoolTransactionError, InvalidPoolTransactionError},
     BestTransactions, PoolTransaction, TransactionPool, ValidPoolTransaction,
 };
-use tracing::{debug, trace, warn};
+use tracing::{debug, trace};
 
 use super::{
-    carrier_admission::{
-        self, CarrierBlock, CarrierDecision, DeferredResultVoteCarrier, InvalidResultVoteCarrier,
-    },
     execution::{PayloadBuildState, StageOutcome},
     payload_execution_failure_kind,
     size_budget::SizeRejection,
@@ -54,7 +47,6 @@ pub(super) struct UserTransactions<'a, Pool, Txs> {
     pub(super) state: &'a mut PayloadBuildState,
     pub(super) cancel: &'a CancelOnDrop,
     pub(super) payload_id: PayloadId,
-    pub(super) carrier_block: Option<CarrierBlock>,
 }
 
 impl<Pool, Txs> UserTransactions<'_, Pool, Txs>
@@ -68,7 +60,6 @@ where
     ) -> Result<StageOutcome, PayloadBuilderError>
     where
         B: BlockBuilder<Primitives = OutbePrimitives>,
-        <<B::Executor as BlockExecutor>::Evm as Evm>::DB: StateDB,
     {
         while let Some(pool_tx) = self.best_txs.next() {
             // Preserve gas-before-cancel ordering: a gas-rejected candidate
@@ -88,9 +79,6 @@ where
                 BlobAdmission::Accepted(sidecar) => sidecar,
                 BlobAdmission::Rejected => continue,
             };
-            if !self.admit_carrier(builder.evm_mut().db_mut(), &pool_tx, &tx)? {
-                continue;
-            }
             let accounting = UserAccounting {
                 rlp_length: tx_rlp_len,
                 miner_fee: tx.effective_tip_per_gas(self.state.base_fee),
@@ -130,7 +118,6 @@ where
             .state
             .cumulative_gas_used
             .saturating_add(pool_tx.gas_limit())
-            .saturating_add(self.state.reserved_end_gas)
             > self.state.block_gas_limit
         {
             self.best_txs.mark_invalid(
@@ -223,57 +210,6 @@ where
         }
 
         Ok(BlobAdmission::Accepted(blob_tx_sidecar))
-    }
-
-    fn admit_carrier<DB: StateDB>(
-        &mut self,
-        db: &mut DB,
-        pool_tx: &Arc<ValidPoolTransaction<Pool::Transaction>>,
-        tx: &Recovered<OutbeTxEnvelope>,
-    ) -> Result<bool, PayloadBuilderError> {
-        if let Some(block) = self.carrier_block {
-            match carrier_admission::admit(db, block, tx.inner(), tx.signer()) {
-                CarrierDecision::Execute => {}
-                CarrierDecision::Skip => {
-                    debug!(
-                        target: "payload_builder",
-                        payload_id = %self.payload_id,
-                        tx_hash = ?tx.tx_hash(),
-                        "skipping result-vote carrier that is invalid on this block state"
-                    );
-                    self.best_txs.mark_invalid(
-                        pool_tx,
-                        InvalidPoolTransactionError::Other(Box::new(InvalidResultVoteCarrier)),
-                    );
-                    return Ok(false);
-                }
-                CarrierDecision::Defer => {
-                    debug!(
-                        target: "payload_builder",
-                        payload_id = %self.payload_id,
-                        tx_hash = ?tx.tx_hash(),
-                        "deferring result-vote carrier whose due window is not closed yet"
-                    );
-                    self.best_txs.mark_invalid(
-                        pool_tx,
-                        InvalidPoolTransactionError::Other(Box::new(DeferredResultVoteCarrier)),
-                    );
-                    return Ok(false);
-                }
-                CarrierDecision::Abort(reason) => {
-                    warn!(
-                        target: "payload_builder",
-                        payload_id = %self.payload_id,
-                        tx_hash = ?tx.tx_hash(),
-                        %reason,
-                        "result-vote carrier check cannot decide; abandoning this build"
-                    );
-                    return Err(PayloadBuilderError::other(reason));
-                }
-            }
-        }
-
-        Ok(true)
     }
 
     fn execute_transaction<B: BlockBuilder<Primitives = OutbePrimitives>>(

@@ -4,7 +4,8 @@ use commonware_cryptography::bls12381;
 use commonware_utils::ordered::Set;
 use outbe_consensus::proof::V2VerifyError;
 use outbe_primitives::error::{PrecompileError, Result};
-use outbe_primitives::slashing_journal::{iso8601_now, record as journal_record, JournalRecord};
+use outbe_primitives::slashing_journal::{record as journal_record, JournalRecord};
+use outbe_primitives::time::iso8601_now;
 use outbe_staking::contract::Staking;
 use outbe_validatorset::contract::ValidatorSet;
 use outbe_validatorset::state::read_committee_snapshot_for_epoch;
@@ -83,7 +84,7 @@ impl SlashIndicator<'_> {
     /// The next reshare removes a validator that is already JAILED or EXITING
     /// from the consensus set. While it stays in the committee snapshot, do not
     /// apply another felony for the same continuous liveness fault.
-    /// Repeated jail and 5% slash penalties at subsequent miss thresholds would
+    /// Repeated jail and 8% slash penalties at subsequent miss thresholds would
     /// compound to far more than the intended single-felony penalty.
     pub(crate) fn validator_already_penalized(&self, validator: Address) -> Result<bool> {
         let vs = ValidatorSet::new(self.storage.clone());

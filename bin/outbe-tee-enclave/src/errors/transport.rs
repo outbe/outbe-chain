@@ -74,24 +74,15 @@ pub enum TransportDispatchError {
     /// The resident chain ID does not fit in u64.
     #[error("resident chain id exceeds u64")]
     ResidentChainIdExceedsU64,
-    /// The NOD materialization request chain ID does not match the resident chain.
-    #[error("NOD materialization chain mismatch")]
-    NodMaterializationChainMismatch,
-    /// Hashing the NOD prepare request inputs failed.
+    /// The Lysis request chain ID does not match the resident chain.
+    #[error("Lysis chain mismatch")]
+    LysisChainMismatch,
+    /// Hashing the Lysis request inputs failed.
     #[error("invalid NOD prepare inputs")]
-    InvalidNodPrepareInputs,
-    /// Encoding the protected NOD materialization carrier failed.
-    #[error("invalid protected NOD carrier")]
-    InvalidProtectedNodCarrier,
-    /// Building the NOD prepare attestation preimage failed.
+    InvalidLysisInputs,
+    /// Building the Lysis result attestation preimage failed.
     #[error("invalid NOD prepare result")]
-    InvalidNodPrepareResult,
-    /// Hashing the NOD open request inputs failed.
-    #[error("invalid NOD open inputs")]
-    InvalidNodOpenInputs,
-    /// Building the NOD open attestation preimage failed.
-    #[error("invalid NOD open result")]
-    InvalidNodOpenResult,
+    InvalidLysisResult,
     /// The NOD mine request chain ID does not match the resident chain.
     #[error("NOD mine chain mismatch")]
     NodMineChainMismatch,
@@ -134,12 +125,6 @@ pub enum TransportDispatchError {
     /// Building the NOD test fixture attestation preimage failed.
     #[error("invalid NOD fixture result")]
     InvalidNodFixtureResult,
-    /// Building the NOD capacity attestation preimage failed.
-    #[error("invalid NOD capacity result")]
-    InvalidNodCapacityResult,
-    /// Protected NOD materialization failed with a fatal enclave error.
-    #[error("protected NOD materialization failed")]
-    ProtectedNodMaterializationFailed,
     /// The NOD transfer total size or payload is out of bounds.
     #[error("invalid NOD transfer bounds")]
     InvalidNodTransferBounds,

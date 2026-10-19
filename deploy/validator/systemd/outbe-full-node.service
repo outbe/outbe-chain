@@ -2,7 +2,6 @@
 Description=Outbe certified FullNode
 After=network-online.target outbe-enclave.service
 Wants=network-online.target outbe-enclave.service
-Wants=outbe-ocomp-exporter.service outbe-ocomp-worker@0.service
 Conflicts=outbe-validator.service
 StartLimitIntervalSec=0
 
@@ -11,9 +10,6 @@ Type=simple
 User=outbe
 Group=outbe
 EnvironmentFile=/opt/outbe-chain/validator.env
-Environment=OUTBE_OCOMP_BASE_PATH=/opt/outbe-chain
-Environment=OCOMP_VALIDATOR_INDEX=0
-Environment=OUTBE_OCOMP_RPC_URL=http://127.0.0.1:8545
 Environment=RUST_MIN_STACK=16777216
 ExecStartPre=/opt/outbe-chain/deploy/validator/outbe-validator-service.py wait-enclave
 ExecStart=/opt/outbe-chain/outbe-chain node \
@@ -24,7 +20,6 @@ ExecStart=/opt/outbe-chain/outbe-chain node \
   --engine.memory-block-buffer-target 0 \
   --consensus.storage-dir /opt/outbe-chain/validator-0/consensus \
   --tee-enclave-socket 127.0.0.1:17000 \
-  --projection.storage-config /opt/outbe-chain/offchain-storage.toml \
   --http \
   --http.addr 127.0.0.1 \
   --http.port 8545 \

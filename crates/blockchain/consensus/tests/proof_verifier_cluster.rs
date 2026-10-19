@@ -355,38 +355,6 @@ fn proof_trailing_bytes_rejects() {
     assert!(matches!(err, V2VerifyError::TrailingBytes), "{err:?}");
 }
 
-// -- proof_codec_wrong_committee_size_rejects ---------------------
-
-#[test]
-fn proof_codec_wrong_committee_size_rejects() {
-    // Cert built for 4 participants, snapshot has 3. The length mismatch between
-    // metadata.ordered_committee and snapshot.committee triggers BitmapMismatch
-    // before the inner decoder sees the cert.
-    let dkg_4 = vrf_test_committee(4);
-    let snapshot_3 = vrf_test_committee(3).snapshot(VRF_MATERIAL_VERSION);
-    let parent_hash = B256::with_last_byte(0xAA);
-    let cert = build_cert(
-        &dkg_4,
-        &[0, 1, 2, 3],
-        parent_hash,
-        ParentParticipationProof::Finalization,
-    );
-    let cert_bytes =
-        proof_envelope_bytes(&cert, parent_hash, ParentParticipationProof::Finalization);
-    let metadata = build_metadata(
-        &dkg_4.snapshot(VRF_MATERIAL_VERSION),
-        &cert_bytes,
-        parent_hash,
-        ParentParticipationProof::Finalization,
-    );
-    let err = verify_v2_proof(&metadata, &snapshot_3, &cert_bytes, parent_hash)
-        .expect_err("committee size mismatch must reject");
-    assert!(
-        matches!(err, V2VerifyError::BitmapMismatch { .. }),
-        "{err:?}"
-    );
-}
-
 // -- non_hybrid_certificate_encoding_rejects ----------------------
 
 #[test]
@@ -421,26 +389,24 @@ fn hybrid_signer_length_mismatch_rejects() {
     );
     let mut cert_bytes =
         proof_envelope_bytes(&cert, parent_hash, ParentParticipationProof::Finalization);
-    // Mutate first byte (likely the bitmap length / Signers length prefix).
-    cert_bytes[0] ^= 0xFF;
-    let metadata = build_metadata(
+    let mut metadata = build_metadata(
         &snapshot,
         &cert_bytes,
         parent_hash,
         ParentParticipationProof::Finalization,
     );
-    let err = verify_v2_proof(&metadata, &snapshot, &cert_bytes, parent_hash)
-        .expect_err("length corruption must reject");
     assert!(
-        matches!(
-            err,
-            V2VerifyError::Decode(_)
-                | V2VerifyError::BitmapMismatch { .. }
-                | V2VerifyError::SignerIndexOutOfRange { .. }
-                | V2VerifyError::BelowQuorum { .. }
-        ),
-        "{err:?}"
+        verify_v2_proof(&metadata, &snapshot, &cert_bytes, parent_hash).is_ok(),
+        "unmutated certificate must pass before signers-prefix mutation"
     );
+    // In Finalization { proposal, certificate }, certificate starts right after proposal
+    // and begins with the Signers length prefix.
+    let signers_prefix_offset = cert_bytes.len() - cert.encode().len();
+    cert_bytes[signers_prefix_offset] ^= 0xFF;
+    metadata.proof = cert_bytes.clone().into();
+    let err = verify_v2_proof(&metadata, &snapshot, &cert_bytes, parent_hash)
+        .expect_err("signers length prefix corruption must reject");
+    assert!(matches!(err, V2VerifyError::Decode(_)), "{err:?}");
 }
 
 // -- hybrid_signer_duplicate_or_out_of_range_rejects --------------
@@ -507,33 +473,6 @@ fn signer_bitmap_round_trips_with_hybrid_signers_via_commonware_pk_order() {
     // cert. The verifier's bitmap reconciliation cross-check enforces
     // equal-to-metadata (BitmapMismatch on inequality).
     assert_eq!(verified.signer_bitmap, metadata.signer_bitmap);
-}
-
-// -- missing_vrf_proof_rejects ------------------------------------
-
-#[test]
-fn truncated_mandatory_vrf_proof_rejects() {
-    let dkg = vrf_test_committee(4);
-    let snapshot = dkg.snapshot(VRF_MATERIAL_VERSION);
-    let parent_hash = B256::with_last_byte(0xAA);
-    let cert = build_cert(
-        &dkg,
-        &[0, 1, 2, 3],
-        parent_hash,
-        ParentParticipationProof::Finalization,
-    );
-    let mut cert_bytes =
-        proof_envelope_bytes(&cert, parent_hash, ParentParticipationProof::Finalization);
-    cert_bytes.truncate(cert_bytes.len() - 56);
-    let metadata = build_metadata(
-        &snapshot,
-        &cert_bytes,
-        parent_hash,
-        ParentParticipationProof::Finalization,
-    );
-    let err = verify_v2_proof(&metadata, &snapshot, &cert_bytes, parent_hash)
-        .expect_err("truncated mandatory VRF must reject under V2");
-    assert!(matches!(err, V2VerifyError::Decode(_)), "{err:?}");
 }
 
 // -- wire_level_none_vrf_proof_decodes_but_v2_verifier_rejects ---

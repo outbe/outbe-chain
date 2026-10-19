@@ -12,7 +12,6 @@ validators:
   - validator-3.mainnet.example
 
 # Must already contain validator-N consensus/EVM/Radicle keys and the
-# genesis-bound ocomp-registration-v1.ocb1 for every founder. Mainnet tooling
 # never generates missing production identity material.
 keys_dir: /secure/operator-owned/outbe-mainnet-keys
 

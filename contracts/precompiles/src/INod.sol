@@ -60,27 +60,6 @@ interface INod {
         uint64 settlementDeadline;
     }
 
-    /// Finalized on-chain commitment to one activated OCOMP Nod generation.
-    ///
-    /// Individual Nod bodies remain in content-addressed storage and are
-    /// accepted only with a Merkle proof against `nodRoot`.
-    struct CertifiedGenerationData {
-        bool exists;
-        uint32 worldwideDay;
-        uint64 generation;
-        bytes32 nodRoot;
-        bytes32 bucketRoot;
-        bytes32 outputManifestRoot;
-        uint32 tributeCount;
-        uint32 nodCount;
-        uint32 bucketCount;
-        /// Sum of the generation's Nod settlementCostMinor.
-        uint256 totalSettlementCostMinor;
-        /// Actual Lysis Allocation: sum of Nod gratisLoadMinor, not the Lysis Limit.
-        uint256 lysisAllocationMinor;
-        uint64 issuedAt;
-    }
-
     // ERC-165
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 
@@ -110,5 +89,4 @@ interface INod {
 
     // outbe-specific
     function getNod(uint256 nodId) external view returns (NodData memory);
-    function certifiedGeneration(uint32 worldwideDay) external view returns (CertifiedGenerationData memory);
 }

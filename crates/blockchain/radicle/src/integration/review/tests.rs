@@ -1586,42 +1586,42 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
     for encoded in &bundles {
         let witness = RepositoryWitnessBundle::from_bytes(encoded).unwrap();
         witness.verify(&material, &actual).unwrap();
-        accepted_verifier.verify_native(&actual).unwrap();
-        let insufficient = RepositoryWitnessBundle::new(
-            material.canonical_output(),
-            vec![
-                contributions[..2]
-                    .iter()
-                    .map(|(_, frame)| frame.clone())
-                    .collect(),
-                refs_contributions[..3]
-                    .iter()
-                    .map(|(_, frame)| frame.clone())
-                    .collect(),
-            ],
-        )
-        .unwrap();
-        assert!(insufficient.verify(&material, &actual).is_err());
-        for future in [false, true] {
-            let mut invalid = checkpoint.clone();
-            if future {
-                invalid.receipt.accepted_height = invalid.block.number + 1;
-            } else {
-                invalid.receipt.receipt_hash = B256::ZERO;
-            }
-            assert!(
-                crate::integration::signing::accepted::AcceptedPublicationVerifier::from_receipt(
-                    invalid,
-                    review_manifest.clone()
-                )
-                .is_err()
-            );
-        }
-        assert!(accepted_verifier.verify_native(&actual[..1]).is_err());
-        let mut reordered = actual.clone();
-        reordered.swap(0, 1);
-        assert!(accepted_verifier.verify_native(&reordered).is_err());
     }
+    accepted_verifier.verify_native(&actual).unwrap();
+    let insufficient = RepositoryWitnessBundle::new(
+        material.canonical_output(),
+        vec![
+            contributions[..2]
+                .iter()
+                .map(|(_, frame)| frame.clone())
+                .collect(),
+            refs_contributions[..3]
+                .iter()
+                .map(|(_, frame)| frame.clone())
+                .collect(),
+        ],
+    )
+    .unwrap();
+    assert!(insufficient.verify(&material, &actual).is_err());
+    for future in [false, true] {
+        let mut invalid = checkpoint.clone();
+        if future {
+            invalid.receipt.accepted_height = invalid.block.number + 1;
+        } else {
+            invalid.receipt.receipt_hash = B256::ZERO;
+        }
+        assert!(
+            crate::integration::signing::accepted::AcceptedPublicationVerifier::from_receipt(
+                invalid,
+                review_manifest.clone()
+            )
+            .is_err()
+        );
+    }
+    assert!(accepted_verifier.verify_native(&actual[..1]).is_err());
+    let mut reordered = actual.clone();
+    reordered.swap(0, 1);
+    assert!(accepted_verifier.verify_native(&reordered).is_err());
     let fake_subject = RepositorySubject::cob(
         rid.into_sha1().unwrap(),
         context,
@@ -1843,23 +1843,53 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
         .with_namespace((&owner).into())
         .to_string();
     let review_name = git::refs::storage::cob(&owner, &patch::TYPENAME, &patch_id);
-    for encoded in &bundles {
-        let witness = RepositoryWitnessBundle::from_bytes(encoded).unwrap();
-        witness.verify(&material, &actual).unwrap();
-        accepted_verifier.verify_native(&actual).unwrap();
-        let historical =
-            crate::integration::publication::review::verify_accepted_review_publication(
-                &receiver,
-                current_state.approval(),
-                &accepted_predecessor,
-                &accepted_verifier,
-            )
-            .unwrap();
-        assert_eq!(historical.manifest(), &review_manifest);
-        assert_eq!(historical.receipt(), accepted_verifier.receipt());
+    let historical = crate::integration::publication::review::verify_accepted_review_publication(
+        &receiver,
+        current_state.approval(),
+        &accepted_predecessor,
+        &accepted_verifier,
+    )
+    .unwrap();
+    assert_eq!(historical.manifest(), &review_manifest);
+    assert_eq!(historical.receipt(), accepted_verifier.receipt());
+    receiver
+        .raw()
+        .reference(&main_name, head.into(), true, "Conflicting local target")
+        .unwrap();
+    let before = receiver.references_of(&owner).unwrap();
+    assert!(matches!(
+        historical.install(&receiver),
+        Err(crate::integration::publication::Error::RefConflict)
+    ));
+    assert_eq!(receiver.references_of(&owner).unwrap(), before);
+    receiver
+        .raw()
+        .reference(&main_name, base.into(), true, "Restore accepted target")
+        .unwrap();
+    let extra = git::fmt::qualified!("refs/heads/unaccepted")
+        .with_namespace((&owner).into())
+        .to_string();
+    receiver
+        .raw()
+        .reference(&extra, head.into(), false, "Unaccepted owner ref")
+        .unwrap();
+    let before = receiver.references_of(&owner).unwrap();
+    assert!(matches!(
+        historical.install(&receiver),
+        Err(crate::integration::publication::Error::RefConflict)
+    ));
+    assert_eq!(receiver.references_of(&owner).unwrap(), before);
+    receiver
+        .raw()
+        .find_reference(&extra)
+        .unwrap()
+        .delete()
+        .unwrap();
+    for name in [review_name.as_str(), sigrefs_name.as_str()] {
+        let original = receiver.raw().refname_to_id(name).ok();
         receiver
             .raw()
-            .reference(&main_name, head.into(), true, "Conflicting local target")
+            .reference(name, base.into(), true, "Conflicting publication ref")
             .unwrap();
         let before = receiver.references_of(&owner).unwrap();
         assert!(matches!(
@@ -1867,128 +1897,92 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
             Err(crate::integration::publication::Error::RefConflict)
         ));
         assert_eq!(receiver.references_of(&owner).unwrap(), before);
-        receiver
-            .raw()
-            .reference(&main_name, base.into(), true, "Restore accepted target")
-            .unwrap();
-        let extra = git::fmt::qualified!("refs/heads/unaccepted")
-            .with_namespace((&owner).into())
-            .to_string();
-        receiver
-            .raw()
-            .reference(&extra, head.into(), false, "Unaccepted owner ref")
-            .unwrap();
-        let before = receiver.references_of(&owner).unwrap();
-        assert!(matches!(
-            historical.install(&receiver),
-            Err(crate::integration::publication::Error::RefConflict)
-        ));
-        assert_eq!(receiver.references_of(&owner).unwrap(), before);
-        receiver
-            .raw()
-            .find_reference(&extra)
-            .unwrap()
-            .delete()
-            .unwrap();
-        for name in [review_name.as_str(), sigrefs_name.as_str()] {
-            let original = receiver.raw().refname_to_id(name).ok();
-            receiver
-                .raw()
-                .reference(name, base.into(), true, "Conflicting publication ref")
-                .unwrap();
-            let before = receiver.references_of(&owner).unwrap();
-            assert!(matches!(
-                historical.install(&receiver),
-                Err(crate::integration::publication::Error::RefConflict)
-            ));
-            assert_eq!(receiver.references_of(&owner).unwrap(), before);
-            match original {
-                Some(oid) => {
-                    receiver
-                        .raw()
-                        .reference(name, oid, true, "Restore ref")
-                        .unwrap();
-                }
-                None => receiver
+        match original {
+            Some(oid) => {
+                receiver
                     .raw()
-                    .find_reference(name)
-                    .unwrap()
-                    .delete()
-                    .unwrap(),
+                    .reference(name, oid, true, "Restore ref")
+                    .unwrap();
             }
+            None => receiver
+                .raw()
+                .find_reference(name)
+                .unwrap()
+                .delete()
+                .unwrap(),
         }
-        historical.install(&receiver).unwrap();
-        historical.install(&receiver).unwrap();
-        // A crash can leave the COB promoted before sigrefs; retry must finish that state.
-        receiver
-            .raw()
-            .reference(
-                sigrefs_name.as_str(),
-                previous_sigrefs.into(),
-                true,
-                "Interrupted install",
-            )
-            .unwrap();
-        historical.install(&receiver).unwrap();
-        assert_eq!(
-            receiver.raw().refname_to_id(review_name.as_str()).unwrap(),
-            review.id.into()
-        );
-        assert_eq!(
-            receiver.raw().refname_to_id(sigrefs_name.as_str()).unwrap(),
-            signed_refs.into()
-        );
-        assert_eq!(
-            receiver.raw().refname_to_id(&main_name).unwrap(),
-            base.into()
-        );
-        assert!(receiver
-            .raw()
-            .find_reference(git::refs::storage::id(&owner).as_str())
-            .unwrap()
-            .symbolic_target()
-            .unwrap()
-            .is_some());
-        let accepted = cob::get::<Patch, _>(&receiver, &patch::TYPENAME, &patch_id)
-            .unwrap()
-            .unwrap()
-            .object;
-        assert_eq!(
-            accepted
-                .revision(&revision)
-                .unwrap()
-                .review_by(&owner)
-                .unwrap()
-                .verdict(),
-            Some(patch::Verdict::Accept)
-        );
-        assert!(accepted
-            .revision(&later_revision)
+    }
+    historical.install(&receiver).unwrap();
+    historical.install(&receiver).unwrap();
+    // A crash can leave the COB promoted before sigrefs; retry must finish that state.
+    receiver
+        .raw()
+        .reference(
+            sigrefs_name.as_str(),
+            previous_sigrefs.into(),
+            true,
+            "Interrupted install",
+        )
+        .unwrap();
+    historical.install(&receiver).unwrap();
+    assert_eq!(
+        receiver.raw().refname_to_id(review_name.as_str()).unwrap(),
+        review.id.into()
+    );
+    assert_eq!(
+        receiver.raw().refname_to_id(sigrefs_name.as_str()).unwrap(),
+        signed_refs.into()
+    );
+    assert_eq!(
+        receiver.raw().refname_to_id(&main_name).unwrap(),
+        base.into()
+    );
+    assert!(receiver
+        .raw()
+        .find_reference(git::refs::storage::id(&owner).as_str())
+        .unwrap()
+        .symbolic_target()
+        .unwrap()
+        .is_some());
+    let accepted = cob::get::<Patch, _>(&receiver, &patch::TYPENAME, &patch_id)
+        .unwrap()
+        .unwrap()
+        .object;
+    assert_eq!(
+        accepted
+            .revision(&revision)
             .unwrap()
             .review_by(&owner)
-            .is_none());
-        assert!(accepted.is_open());
-        assert!(
-            crate::integration::publication::review::verify_accepted_review_publication(
-                &receiver,
-                current_state.approval(),
-                &snapshot,
-                &accepted_verifier
-            )
-            .is_err()
-        );
-        let mut changed = current_state.approval().clone();
-        changed.approval.approved_timestamp += 1;
-        assert!(
-            crate::integration::publication::review::verify_accepted_review_publication(
-                &receiver,
-                &changed,
-                &accepted_predecessor,
-                &accepted_verifier
-            )
-            .is_err()
-        );
-    }
+            .unwrap()
+            .verdict(),
+        Some(patch::Verdict::Accept)
+    );
+    assert!(accepted
+        .revision(&later_revision)
+        .unwrap()
+        .review_by(&owner)
+        .is_none());
+    assert!(accepted.is_open());
+    assert!(
+        crate::integration::publication::review::verify_accepted_review_publication(
+            &receiver,
+            current_state.approval(),
+            &snapshot,
+            &accepted_verifier
+        )
+        .is_err()
+    );
+    let mut changed = current_state.approval().clone();
+    changed.approval.approved_timestamp += 1;
+    assert!(
+        crate::integration::publication::review::verify_accepted_review_publication(
+            &receiver,
+            &changed,
+            &accepted_predecessor,
+            &accepted_verifier
+        )
+        .is_err()
+    );
 
     let accepted_policy = Arc::new(
         crate::integration::publication::policy::AcceptedRepositoryPolicy::new(
@@ -2026,93 +2020,79 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
     assert!(cob::change::Storage::load(&policy_repo, revision.into_inner()).is_ok());
     assert!(cob::change::Storage::load(&policy_repo, review.id).is_err());
     assert!(radicle::storage::refs::SignedRefs::load_at(signed_refs, owner, &policy_repo).is_err());
-    for encoded in &bundles {
-        let witness = RepositoryWitnessBundle::from_bytes(encoded).unwrap();
-        witness.verify(&material, &actual).unwrap();
-        let historical =
+    accepted_policy.accept_review(&historical).unwrap();
+    accepted_policy.accept_review(&historical).unwrap();
+    let authorization = accepted_policy.authorize_entry(&review_request).unwrap();
+    assert_eq!(authorization.context(), context);
+    assert_eq!(
+        authorization.receipt(),
+        Some(historical.receipt().receipt().receipt_hash.0)
+    );
+    assert_eq!(
+        cob::change::Storage::load(&policy_repo, review.id)
+            .unwrap()
+            .id,
+        review.id
+    );
+    let native_refs = radicle::storage::refs::SignedRefs::load_at(signed_refs, owner, &policy_repo)
+        .unwrap()
+        .unwrap();
+    assert_eq!(native_refs.refs(), &desired_refs);
+    let mut wrong = review_request.clone();
+    wrong.kind = SubjectKind::Identity;
+    assert!(accepted_policy.authorize_entry(&wrong).is_err());
+    wrong.kind = SubjectKind::SignedRefs;
+    assert!(accepted_policy.authorize_entry(&wrong).is_err());
+    wrong = review_request.clone();
+    wrong.entry = identity;
+    assert!(accepted_policy.authorize_entry(&wrong).is_err());
+    wrong = review_request.clone();
+    wrong.repository = git::Oid::from_sha1([99; 20]).into();
+    assert!(accepted_policy.authorize_entry(&wrong).is_err());
+    wrong = review_request.clone();
+    wrong.authority = (*author.public_key()).into();
+    assert!(accepted_policy.authorize_entry(&wrong).is_err());
+
+    for block_conflict in [true, false] {
+        let mut conflicting = accepted_verifier.receipt().clone();
+        if block_conflict {
+            conflicting.block.hash = B256::from([99; 32]);
+        } else {
+            conflicting.receipt.body.finalized_anchor_hash = B256::from([99; 32]);
+            conflicting.receipt.receipt_hash = conflicting.receipt.body.receipt_hash();
+        }
+        let conflicting_verifier =
+            crate::integration::signing::accepted::AcceptedPublicationVerifier::from_receipt(
+                conflicting,
+                review_manifest.clone(),
+            )
+            .unwrap();
+        let conflicting =
             crate::integration::publication::review::verify_accepted_review_publication(
                 &receiver,
                 current_state.approval(),
                 &accepted_predecessor,
-                &accepted_verifier,
+                &conflicting_verifier,
             )
             .unwrap();
-        accepted_policy.accept_review(&historical).unwrap();
-        accepted_policy.accept_review(&historical).unwrap();
-        let authorization = accepted_policy.authorize_entry(&review_request).unwrap();
-        assert_eq!(authorization.context(), context);
-        assert_eq!(
-            authorization.receipt(),
-            Some(historical.receipt().receipt().receipt_hash.0)
-        );
-        assert_eq!(
-            cob::change::Storage::load(&policy_repo, review.id)
-                .unwrap()
-                .id,
-            review.id
-        );
-        let native_refs =
-            radicle::storage::refs::SignedRefs::load_at(signed_refs, owner, &policy_repo)
-                .unwrap()
-                .unwrap();
-        assert_eq!(native_refs.refs(), &desired_refs);
-        let mut wrong = review_request.clone();
-        wrong.kind = SubjectKind::Identity;
-        assert!(accepted_policy.authorize_entry(&wrong).is_err());
-        wrong.kind = SubjectKind::SignedRefs;
-        assert!(accepted_policy.authorize_entry(&wrong).is_err());
-        wrong = review_request.clone();
-        wrong.entry = identity;
-        assert!(accepted_policy.authorize_entry(&wrong).is_err());
-        wrong = review_request.clone();
-        wrong.repository = git::Oid::from_sha1([99; 20]).into();
-        assert!(accepted_policy.authorize_entry(&wrong).is_err());
-        wrong = review_request.clone();
-        wrong.authority = (*author.public_key()).into();
-        assert!(accepted_policy.authorize_entry(&wrong).is_err());
-
-        for block_conflict in [true, false] {
-            let mut conflicting = accepted_verifier.receipt().clone();
-            if block_conflict {
-                conflicting.block.hash = B256::from([99; 32]);
-            } else {
-                conflicting.receipt.body.finalized_anchor_hash = B256::from([99; 32]);
-                conflicting.receipt.receipt_hash = conflicting.receipt.body.receipt_hash();
-            }
-            let conflicting_verifier =
-                crate::integration::signing::accepted::AcceptedPublicationVerifier::from_receipt(
-                    conflicting,
-                    review_manifest.clone(),
-                )
-                .unwrap();
-            let conflicting =
-                crate::integration::publication::review::verify_accepted_review_publication(
-                    &receiver,
-                    current_state.approval(),
-                    &accepted_predecessor,
-                    &conflicting_verifier,
-                )
-                .unwrap();
-            assert!(accepted_policy.accept_review(&conflicting).is_err());
-        }
-        let mut other_checkpoint = accepted_predecessor.checkpoint().clone();
-        other_checkpoint.receipt.body.descriptor_hash = B256::from([99; 32]);
-        other_checkpoint.receipt.receipt_hash = other_checkpoint.receipt.body.receipt_hash();
-        let other_snapshot =
-            CheckpointOwnerSnapshot::bootstrap(other_checkpoint, &manifest).unwrap();
-        let other_policy =
-            crate::integration::publication::policy::AcceptedRepositoryPolicy::new(&other_snapshot)
-                .unwrap();
-        assert!(other_policy.accept_review(&historical).is_err());
-        assert!(other_policy.authorize_entry(&review_request).is_err());
-        assert_eq!(
-            accepted_policy
-                .authorize_entry(&review_request)
-                .unwrap()
-                .receipt(),
-            authorization.receipt()
-        );
+        assert!(accepted_policy.accept_review(&conflicting).is_err());
     }
+    let mut other_checkpoint = accepted_predecessor.checkpoint().clone();
+    other_checkpoint.receipt.body.descriptor_hash = B256::from([99; 32]);
+    other_checkpoint.receipt.receipt_hash = other_checkpoint.receipt.body.receipt_hash();
+    let other_snapshot = CheckpointOwnerSnapshot::bootstrap(other_checkpoint, &manifest).unwrap();
+    let other_policy =
+        crate::integration::publication::policy::AcceptedRepositoryPolicy::new(&other_snapshot)
+            .unwrap();
+    assert!(other_policy.accept_review(&historical).is_err());
+    assert!(other_policy.authorize_entry(&review_request).is_err());
+    assert_eq!(
+        accepted_policy
+            .authorize_entry(&review_request)
+            .unwrap()
+            .receipt(),
+        authorization.receipt()
+    );
     assert!(policy_repo.raw().references().unwrap().next().is_none());
 }
 

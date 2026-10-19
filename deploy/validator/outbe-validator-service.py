@@ -11,14 +11,12 @@ import socket
 import stat
 import sys
 import time
-import tomllib
 import urllib.request
 from collections.abc import Callable
 from typing import NoReturn
 
 
 OUTBE_ROOT = pathlib.Path("/opt/outbe-chain")
-STORAGE_CONFIG = OUTBE_ROOT / "offchain-storage.toml"
 RADICLE_CONTROL_SOCKET = (
     OUTBE_ROOT / "keys" / "radicle" / "node" / "outbe-control.sock"
 )
@@ -103,7 +101,7 @@ def probe_rpc() -> None:
     if payload.get("error") is not None:
         raise RuntimeError(f"local RPC returned an error: {payload['error']}")
     chain_id = int(payload["result"], 16)
-    expected_chain_id = int(required_env("OCOMP_CHAIN_ID"))
+    expected_chain_id = int(required_env("OUTBE_CHAIN_ID"))
     if chain_id != expected_chain_id:
         raise RuntimeError(
             f"local RPC chain id {chain_id} does not match {expected_chain_id}"
@@ -126,49 +124,13 @@ def wait_rpc(timeout: float) -> None:
     wait_for("local validator RPC", probe_rpc, timeout)
 
 
-def verify_rocksdb_storage(path: pathlib.Path) -> None:
-    try:
-        with path.open("rb") as stream:
-            document = tomllib.load(stream)
-    except OSError as error:
-        fail(f"cannot read storage configuration: {error}")
-    except tomllib.TOMLDecodeError:
-        fail("storage configuration is not valid TOML")
-
-    if document.get("version") != 1:
-        fail("storage configuration requires version = 1")
-    if document.get("backend") != "rocksdb":
-        fail("validator deployment requires RocksDB storage")
-
-    allowed = {"version", "backend", "start_block", "rocksdb"}
-    if set(document) - allowed:
-        fail("storage configuration contains unknown fields")
-
-    start_block = document.get("start_block", 1)
-    if (
-        isinstance(start_block, bool)
-        or not isinstance(start_block, int)
-        or not 0 <= start_block <= 2**64 - 1
-    ):
-        fail("storage start_block must be a u64")
-
-    rocksdb = document.get("rocksdb")
-    required = {"path", "secondary_path"}
-    if not isinstance(rocksdb, dict) or set(rocksdb) != required:
-        fail("storage configuration has an invalid rocksdb section")
-    if any(
-        not isinstance(value, str) or not value.strip() for value in rocksdb.values()
-    ):
-        fail("storage configuration has an invalid rocksdb value")
-
-
 def enclave() -> NoReturn:
     runtime = required_env("OUTBE_ENCLAVE_RUNTIME")
-    chain_id = required_env("OCOMP_CHAIN_ID")
+    chain_id = required_env("OUTBE_CHAIN_ID")
     try:
         chain_hex = f"0x{int(chain_id):064x}"
     except ValueError:
-        fail("OCOMP_CHAIN_ID must be a positive decimal integer")
+        fail("OUTBE_CHAIN_ID must be a positive decimal integer")
     arguments = [
         "--socket",
         "127.0.0.1:17000",
@@ -192,10 +154,10 @@ def enclave() -> NoReturn:
 
 
 def feeder() -> NoReturn:
-    chain_id = required_env("OCOMP_CHAIN_ID")
+    chain_id = required_env("OUTBE_CHAIN_ID")
     validator = required_env("OUTBE_VALIDATOR_ADDRESS")
     if re.fullmatch(r"[1-9][0-9]*", chain_id) is None:
-        fail("OCOMP_CHAIN_ID must be a positive decimal integer")
+        fail("OUTBE_CHAIN_ID must be a positive decimal integer")
     if re.fullmatch(r"0x[0-9a-fA-F]{40}", validator) is None:
         fail("OUTBE_VALIDATOR_ADDRESS must be a 20-byte hex address")
 
@@ -246,7 +208,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "role",
         choices=(
-            "verify-rocksdb",
             "wait-enclave",
             "wait-validator-dependencies",
             "wait-rpc",
@@ -254,7 +215,6 @@ def parse_args() -> argparse.Namespace:
             "feeder",
         ),
     )
-    parser.add_argument("--storage-config", type=pathlib.Path, default=STORAGE_CONFIG)
     parser.add_argument(
         "--timeout",
         type=float,
@@ -266,9 +226,6 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     role = args.role
-    if role == "verify-rocksdb":
-        verify_rocksdb_storage(args.storage_config)
-        return 0
     if role == "wait-enclave":
         wait_enclave(args.timeout)
         return 0

@@ -15,14 +15,17 @@ pub enum GemError {
     #[error("gem not found")]
     GemNotFound,
 
-    #[error("invalid state transition")]
-    InvalidState,
+    #[error("gem is already settled")]
+    AlreadySettled,
 
     #[error("index out of bounds")]
     IndexOutOfBounds,
 
     #[error("gem already exists")]
     AlreadyExists,
+
+    #[error("gem owner is the zero address")]
+    ZeroOwner,
 
     #[error("unknown gem profile selector: {0}")]
     UnknownProfileSelector(u8),
@@ -45,12 +48,6 @@ pub enum GemError {
     #[error("gem bucket {bucket_id} settled count underflow")]
     SettledCountUnderflow { bucket_id: WwdEntityId },
 
-    #[error("loaded gem bucket {actual} does not match item bucket {expected}")]
-    LoadedBucketMismatch {
-        actual: WwdEntityId,
-        expected: WwdEntityId,
-    },
-
     #[error("gem bucket {bucket} is empty")]
     EmptyBucket { bucket: B256 },
 
@@ -66,7 +63,7 @@ pub enum GemError {
 #[non_exhaustive]
 pub enum GemFatalError {
     #[error("gem {gem_id} has no bucket body {bucket_id}")]
-    MissingBucketBody {
+    MissingBucketRecord {
         gem_id: U256,
         bucket_id: WwdEntityId,
     },

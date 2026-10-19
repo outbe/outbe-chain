@@ -324,4 +324,104 @@ mod tests {
         assert_ne!(scoped(840, 1), scoped(978, 1));
         assert_ne!(bin_index_key(840, 1, 0), bin_index_key(978, 1, 0));
     }
+
+    struct TestContract<'s> {
+        root: Map<'s, u16, U256>,
+        mid: Map<'s, u64, U256>,
+        leaf: Map<'s, u64, U256>,
+        count: Map<'s, u64, u32>,
+        at: Map<'s, B256, u64>,
+        slot: Map<'s, u64, u64>,
+        cursor: Map<'s, u16, u64>,
+        failed: Map<'s, u16, u32>,
+    }
+
+    struct TestAdapter<'a, 's>(&'a TestContract<'s>, u16);
+
+    impl_call_bins!(TestAdapter<u64> {
+        root: root,
+        mid: mid,
+        leaf: leaf,
+        count: count,
+        at: at,
+        slot: slot,
+        cursor: cursor,
+        failed: failed,
+    });
+
+    #[test]
+    fn insert_remove_and_budgeted_walk_across_currencies() {
+        use crate::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+        use alloy_primitives::Address;
+
+        let mut provider = HashMapStorageProvider::new(1);
+        StorageHandle::enter(&mut provider, |storage| {
+            let contract = TestContract {
+                root: Map::new(U256::from(1), Address::ZERO, storage.clone()),
+                mid: Map::new(U256::from(2), Address::ZERO, storage.clone()),
+                leaf: Map::new(U256::from(3), Address::ZERO, storage.clone()),
+                count: Map::new(U256::from(4), Address::ZERO, storage.clone()),
+                at: Map::new(U256::from(5), Address::ZERO, storage.clone()),
+                slot: Map::new(U256::from(6), Address::ZERO, storage.clone()),
+                cursor: Map::new(U256::from(7), Address::ZERO, storage.clone()),
+                failed: Map::new(U256::from(8), Address::ZERO, storage.clone()),
+            };
+            let usd = TestAdapter(&contract, 840);
+            let eur = TestAdapter(&contract, 978);
+
+            // Insert into USD bins 10 (two entries), 20 (one entry), and 50 (above ceiling),
+            // and into EUR bin 5.
+            insert(&usd, 101, 10).unwrap();
+            insert(&usd, 102, 10).unwrap();
+            insert(&usd, 201, 20).unwrap();
+            insert(&usd, 501, 50).unwrap();
+            assert!(insert(&usd, 101, 10).is_err());
+            assert_eq!(bin_of(&usd, 101).unwrap(), Some(10));
+            assert!(pending(&usd).unwrap());
+
+            insert(&eur, 901, 5).unwrap();
+
+            // Swap-remove middle entry 101 from bin 10; 102 moves to index 0.
+            assert!(remove(&usd, 101).unwrap());
+            assert!(!remove(&usd, 101).unwrap());
+            assert_eq!(bin_of(&usd, 101).unwrap(), None);
+            assert_eq!(len(&usd, 10).unwrap(), 1);
+            assert_eq!(entry_at(&usd, 10, 0).unwrap(), 102);
+
+            // Reinsert 101 into bin 10 so bin 10 has [102, 101] (visited top-down: 101 then 102).
+            insert(&usd, 101, 10).unwrap();
+
+            let currency_cursor = Value::<u32>::new(U256::from(9), Address::ZERO, storage);
+            let mut visited = Vec::new();
+
+            // First pass with 2 visits stops after visiting bin 10 (101, 102), before bin 20.
+            let mut budget = SweepBudget::new(2, 10, 10);
+            let done = walk_currencies(&[840, 978], &currency_cursor, &mut budget, |iso, b| {
+                let adapter = TestAdapter(&contract, iso);
+                walk(&adapter, 30, b, |entry, _| {
+                    visited.push((iso, entry));
+                    Ok(Visit::Next)
+                })
+            })
+            .unwrap();
+            assert!(!done);
+            assert_eq!(visited, vec![(840, 101), (840, 102)]);
+
+            // Second pass resumes at USD bin 20, skips bin 50 (> ceiling 30), then walks EUR bin 5.
+            let mut budget = SweepBudget::new(10, 10, 10);
+            let done = walk_currencies(&[840, 978], &currency_cursor, &mut budget, |iso, b| {
+                let adapter = TestAdapter(&contract, iso);
+                walk(&adapter, 30, b, |entry, _| {
+                    visited.push((iso, entry));
+                    Ok(Visit::Next)
+                })
+            })
+            .unwrap();
+            assert!(done);
+            assert_eq!(
+                visited,
+                vec![(840, 101), (840, 102), (840, 201), (978, 901)]
+            );
+        });
+    }
 }

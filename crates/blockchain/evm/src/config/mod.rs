@@ -9,8 +9,6 @@ use reth_ethereum::evm::EthEvmConfig;
 
 use std::sync::Arc;
 
-use outbe_metadosis::api::OcompFinalizedIntentAuthority;
-use outbe_metadosis::config::OcompForkInstallV1;
 use outbe_primitives::{
     consensus::ConsensusExecutionBridge, reshare_artifact::sanitize_prefinal_outbe_block_artifacts,
     OutbeHeader,
@@ -18,15 +16,12 @@ use outbe_primitives::{
 
 use crate::{
     executor::AccountedParentArtifactProvider, factory::OutbeEvmFactory,
-    signer::SharedOutbeEvmSigner, system_tx::OcompLifecycleActivation,
+    signer::SharedOutbeEvmSigner,
 };
 
 mod parent_artifacts;
 use parent_artifacts::BridgeAccountedParentArtifactProvider;
 pub use parent_artifacts::RethAccountedParentArtifactProvider;
-
-mod finality;
-use finality::ProviderAnchoredOcompFinalityAuthority;
 
 mod context;
 pub use context::{OutbeBlockExecutionCtx, OutbeNextBlockEnvAttributes};
@@ -60,9 +55,6 @@ pub struct OutbeEvmConfig {
     accounted_parent_artifact_provider: Option<Arc<dyn AccountedParentArtifactProvider>>,
     /// Validator-mode EVM signer used to authenticate system-tx artifacts.
     evm_signer: Option<SharedOutbeEvmSigner>,
-
-    ocomp_lifecycle_activation: OcompLifecycleActivation,
-    ocomp_fork_install: Option<Arc<OcompForkInstallV1>>,
 }
 
 impl std::fmt::Debug for OutbeEvmConfig {
@@ -80,11 +72,6 @@ impl std::fmt::Debug for OutbeEvmConfig {
                 "evm_signer",
                 &self.evm_signer.as_ref().map(|signer| signer.address()),
             )
-            .field(
-                "ocomp_lifecycle_activation",
-                &self.ocomp_lifecycle_activation,
-            )
-            .field("ocomp_fork_install", &self.ocomp_fork_install.is_some())
             .finish()
     }
 }
@@ -144,9 +131,6 @@ impl OutbeEvmConfig {
             bridge: None,
             accounted_parent_artifact_provider: None,
             evm_signer: None,
-
-            ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
-            ocomp_fork_install: None,
         }
     }
 
@@ -175,9 +159,6 @@ impl OutbeEvmConfig {
                 BridgeAccountedParentArtifactProvider::new(summary_cache),
             )),
             evm_signer: None,
-
-            ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
-            ocomp_fork_install: None,
         }
     }
 
@@ -203,9 +184,6 @@ impl OutbeEvmConfig {
             bridge: Some(bridge),
             accounted_parent_artifact_provider: Some(accounted_parent_artifact_provider),
             evm_signer: None,
-
-            ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
-            ocomp_fork_install: None,
         }
     }
 
@@ -238,57 +216,11 @@ impl OutbeEvmConfig {
             bridge: None,
             accounted_parent_artifact_provider: Some(accounted_parent_artifact_provider),
             evm_signer: None,
-
-            ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
-            ocomp_fork_install: None,
         }
     }
 
     pub fn with_evm_signer(mut self, signer: SharedOutbeEvmSigner) -> Self {
         self.evm_signer = Some(signer);
-        self
-    }
-
-    /// Installs structural OCOMP lifecycle activation. The default remains
-    /// disabled until OCM-26 supplies the canonical fresh-devnet schedule.
-    pub fn with_ocomp_lifecycle_activation(mut self, activation: OcompLifecycleActivation) -> Self {
-        self.inner
-            .executor_factory
-            .evm_factory()
-            .install_ocomp_lifecycle_activation(activation);
-        self.ocomp_lifecycle_activation = activation;
-        self
-    }
-
-    /// Installs the immutable chain-manifest authority into every EVM created
-    /// by this configuration.
-    pub fn with_ocomp_fork_install(mut self, install: Arc<OcompForkInstallV1>) -> Self {
-        self.inner
-            .executor_factory
-            .evm_factory()
-            .install_ocomp_fork_install(install.clone());
-        self.ocomp_fork_install = Some(install);
-        self
-    }
-
-    #[must_use]
-    pub const fn ocomp_lifecycle_activation(&self) -> OcompLifecycleActivation {
-        self.ocomp_lifecycle_activation
-    }
-
-    #[must_use]
-    pub const fn ocomp_lifecycle_active_at(&self, block_number: u64) -> bool {
-        self.ocomp_lifecycle_activation.is_active_at(block_number)
-    }
-
-    fn with_ocomp_finality_authority(
-        self,
-        authority: Arc<dyn OcompFinalizedIntentAuthority>,
-    ) -> Self {
-        self.inner
-            .executor_factory
-            .evm_factory()
-            .install_ocomp_finality_authority(authority);
         self
     }
 

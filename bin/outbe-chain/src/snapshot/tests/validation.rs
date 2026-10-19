@@ -48,7 +48,7 @@ fn unselected_corruption_remains_not_requested_and_does_not_change_success() {
     let mut report = ValidationReport::new([CheckName::Headers, CheckName::Evm]);
     report.record(CheckName::Headers, CheckStatus::Passed, None);
     report.record(CheckName::Evm, CheckStatus::Passed, None);
-    for check in [CheckName::Files, CheckName::Provenance, CheckName::Ocomp] {
+    for check in [CheckName::Files, CheckName::Provenance] {
         report.record(
             check,
             CheckStatus::Failed,
@@ -59,8 +59,7 @@ fn unselected_corruption_remains_not_requested_and_does_not_change_success() {
     }
     assert!(report.success());
     let encoded = serde_json::to_value(&report).unwrap();
-    assert_eq!(encoded["checks"].as_object().unwrap().len(), 5);
-    assert_eq!(encoded["checks"]["ocomp"]["status"], "not_requested");
+    assert_eq!(encoded["checks"].as_object().unwrap().len(), 4);
 }
 
 #[test]
@@ -71,22 +70,20 @@ fn artifact_success_cannot_override_missing_or_failed_native_checks() {
     report.provenance.signature_valid = Some(true);
     report.provenance.expected_signer_match = Some(true);
     assert!(!report.success());
-    for check in [CheckName::Headers, CheckName::Evm] {
-        report.record(check, CheckStatus::Passed, None);
-    }
+    report.record(CheckName::Headers, CheckStatus::Passed, None);
     report.record(
-        CheckName::Ocomp,
+        CheckName::Evm,
         CheckStatus::Failed,
-        Some("required job has conflicting manifest"),
+        Some("state root mismatch"),
     );
     assert!(!report.success());
     report.record(
-        CheckName::Ocomp,
+        CheckName::Evm,
         CheckStatus::Incomplete,
-        Some("required second NOD job is missing"),
+        Some("state unavailable"),
     );
     assert!(!report.success());
-    report.record(CheckName::Ocomp, CheckStatus::Passed, None);
+    report.record(CheckName::Evm, CheckStatus::Passed, None);
     assert!(report.success());
 }
 
@@ -100,9 +97,6 @@ fn report_serializes_distinct_frontiers_ranges_bounds_and_provenance() {
     report.observed.h = Some(block(10, 1));
     report.observed.e = Some(block(14, 2));
 
-    report.observed.c_baseline = Some(block(0, 5));
-    report.observed.c_previous = Some(block(2, 6));
-    report.observed.c_current = Some(block(7, 7));
     report.retained_ranges.push(RetainedRange {
         domain: "headers".into(),
         start: 7,
@@ -132,13 +126,7 @@ fn report_serializes_distinct_frontiers_ranges_bounds_and_provenance() {
         Some("valid signature, unexpected signer"),
     );
     let encoded = serde_json::to_value(&report).unwrap();
-    for (name, number) in [
-        ("h", 10),
-        ("e", 14),
-        ("c_baseline", 0),
-        ("c_previous", 2),
-        ("c_current", 7),
-    ] {
+    for (name, number) in [("h", 10), ("e", 14)] {
         assert_eq!(encoded["observed"][name]["number"], number);
     }
     assert_eq!(
@@ -172,24 +160,19 @@ fn report_serializes_distinct_frontiers_ranges_bounds_and_provenance() {
 
 #[test]
 fn diagnostic_is_bounded_on_unicode_boundaries_and_replaced_not_accumulated() {
-    let mut report = ValidationReport::new([CheckName::Ocomp]);
+    let mut report = ValidationReport::new([CheckName::Evm]);
     let message = "a💾界é".repeat(MAX_DIAGNOSTIC_CHARS);
-    report.record(CheckName::Ocomp, CheckStatus::Failed, Some(&message));
-    let diagnostic = report.check(CheckName::Ocomp).diagnostic.as_ref().unwrap();
+    report.record(CheckName::Evm, CheckStatus::Failed, Some(&message));
+    let diagnostic = report.check(CheckName::Evm).diagnostic.as_ref().unwrap();
     assert_eq!(diagnostic.chars().count(), MAX_DIAGNOSTIC_CHARS);
     assert!(message.starts_with(diagnostic));
     serde_json::to_string(&report).unwrap();
     report.record(
-        CheckName::Ocomp,
+        CheckName::Evm,
         CheckStatus::Incomplete,
         Some("new observation"),
     );
-    assert_eq!(
-        report.check(CheckName::Ocomp).diagnostic.as_deref(),
-        Some("new observation")
-    );
-    report.record(CheckName::Ocomp, CheckStatus::Passed, None);
-    assert!(report.check(CheckName::Ocomp).diagnostic.is_none());
+    report.record(CheckName::Evm, CheckStatus::Passed, None);
     assert!(report.success());
 }
 
@@ -204,7 +187,6 @@ mod selection {
         for (requested, expected) in [
             ("headers", vec![Headers]),
             ("evm", vec![Headers, Evm]),
-            ("ocomp", vec![Headers, Evm, Ocomp]),
             ("evm,headers,evm", vec![Headers, Evm]),
         ] {
             let selection = CheckSelection::resolve(requested, false, false).unwrap();
@@ -221,7 +203,7 @@ mod selection {
         use CheckName::*;
         assert_eq!(
             CheckSelection::resolve("all", false, false).unwrap().checks,
-            [Headers, Evm, Ocomp].into_iter().collect()
+            [Headers, Evm].into_iter().collect()
         );
         assert_eq!(
             CheckSelection::resolve("all", true, false).unwrap().checks,
@@ -294,9 +276,7 @@ mod artifact {
             "version":1,"chain_id":54322345,"genesis_hash":"22".repeat(32),
             "created_at_unix":1789940000_u64,"creator":null,"source":null,
             "progress":{"finalized":block(100),"execution":block(101),"execution_stage":101,
-                "finish_stage":101,"partial_state_trie":null,"unwind":null,"storage_version":2,
-                "ocomp_baseline":block(0),
-                "ocomp_previous":block(90),"ocomp_current":block(97)},
+                "finish_stage":101,"partial_state_trie":null,"unwind":null,"storage_version":2},
             "domains":[{"id":"native","kind":"execution-db","native_root":"chain",
                 "native_path":"db","mode":448,"entries":[{"path":"data","kind":"file",
                 "size":4,"sha256":hex::encode(manifest_digest(b"data")),"mode":384}]}],
@@ -604,7 +584,7 @@ mod native_files {
     };
 
     // Structural native-file fixture only: these bytes are deliberately not
-    // semantic native MDBX/RocksDB/OCOMP data. The existing writer signs inventory.
+    // semantic native MDBX/RocksDB data. The existing writer signs inventory.
     fn fixture() -> (tempfile::TempDir, NativeLayout, SnapshotManifestV1) {
         let root = tempfile::tempdir().unwrap();
         let inputs =
@@ -614,10 +594,6 @@ mod native_files {
             layout.chain_root.join("db/mdbx.dat"),
             layout.static_files_root.join("fixture-native-file"),
             layout.execution_rocksdb_root.join("CURRENT"),
-            layout
-                .ocomp_root
-                .join("exporter-v1/discovery/closure-checkpoint-v1/checkpoint.v1"),
-            layout.ocomp_root.join("cas-v1/objects/11/object"),
         ] {
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(path, b"native bytes").unwrap();
@@ -766,7 +742,7 @@ mod native_files {
                 }
                 2 => manifest
                     .domains
-                    .retain(|domain| domain.kind != DomainKind::CasObjects),
+                    .retain(|domain| domain.kind != DomainKind::ExecutionRocksDb),
                 _ => {
                     manifest.file_count += 1;
                 }
@@ -851,7 +827,7 @@ mod native_files {
         recount(&mut duplicate);
         assert!(run(root.path(), &layout, &duplicate).is_err());
         let mut wrong_root = original;
-        db_domain(&mut wrong_root).native_root = NativeRoot::Ocomp;
+        db_domain(&mut wrong_root).native_root = NativeRoot::Consensus;
         assert!(run(root.path(), &layout, &wrong_root).is_err());
     }
 
@@ -942,7 +918,7 @@ mod orchestration {
     fn native_status(report: &ValidationReport, evm: CheckStatus) {
         assert_eq!(report.check(CheckName::Headers).status, CheckStatus::Passed);
         assert_eq!(report.check(CheckName::Evm).status, evm);
-        for check in [CheckName::Files, CheckName::Provenance, CheckName::Ocomp] {
+        for check in [CheckName::Files, CheckName::Provenance] {
             assert_eq!(
                 report.check(check).status,
                 CheckStatus::NotRequested,
@@ -956,7 +932,7 @@ mod orchestration {
     #[test]
     fn evm_selection_verifies_both_native_storage_versions_and_sparse_headers() {
         for version in [1, 2] {
-            let (root, layout, _) = state_fixture(version);
+            let (root, _layout, _) = state_fixture(version);
             let report = run(root.path(), &inputs("evm"));
             native_status(&report, CheckStatus::Passed);
             assert_eq!(report.observed.e.as_ref().unwrap().number, 101);
@@ -970,26 +946,9 @@ mod orchestration {
                 .collect::<Vec<_>>();
             assert_eq!(ranges, vec![(0, 0), (100, 101)]);
             assert!(report.required_missing.is_empty());
-            assert!(!layout.ocomp_root.exists());
 
             assert!(!root.path().join("secondary").exists());
         }
-    }
-
-    #[test]
-    fn corrupt_unselected_ocomp_artifacts_do_not_poison_evm_validation() {
-        let (root, layout, _) = state_fixture(2);
-        for relative in [
-            "exporter-v1/discovery/closure-checkpoint-v1/checkpoint.v1",
-            "node-v1/fatal-evidence/sticky-fatal-v1",
-            "cas-v1/objects/11/invalid-object",
-        ] {
-            let path = layout.ocomp_root.join(relative);
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::write(path, b"deliberately invalid unselected OCOMP data").unwrap();
-        }
-        let report = run(root.path(), &inputs("evm"));
-        native_status(&report, CheckStatus::Passed);
     }
 
     #[test]
@@ -1129,13 +1088,7 @@ mod orchestration {
                     CheckStatus::Incomplete | CheckStatus::Failed
                 ));
             }
-            assert_eq!(
-                report.check(CheckName::Ocomp).status,
-                CheckStatus::NotRequested
-            );
             assert!(!missing.exists());
-
-            assert!(!layout.ocomp_root.exists());
         }
     }
 
@@ -1169,7 +1122,7 @@ mod orchestration {
                 }
                 assert_ne!(report.provenance.signature_valid, Some(true));
                 assert_ne!(report.provenance.expected_signer_match, Some(true));
-                for check in [CheckName::Headers, CheckName::Evm, CheckName::Ocomp] {
+                for check in [CheckName::Headers, CheckName::Evm] {
                     assert_eq!(report.check(check).status, CheckStatus::NotRequested);
                 }
             }
@@ -1195,7 +1148,8 @@ mod orchestration {
             CheckStatus::Incomplete | CheckStatus::Failed
         ));
         assert_ne!(report.provenance.expected_signer_match, Some(true));
-        for check in [CheckName::Files, CheckName::Ocomp] {
+        {
+            let check = CheckName::Files;
             assert_eq!(report.check(check).status, CheckStatus::NotRequested);
         }
     }
@@ -1211,9 +1165,6 @@ mod orchestration {
             for path in [
                 layout.static_files_root.join("fixture-native-file"),
                 layout.execution_rocksdb_root.join("CURRENT"),
-                layout
-                    .ocomp_root
-                    .join("exporter-v1/discovery/closure-checkpoint-v1/checkpoint.v1"),
             ] {
                 fs::create_dir_all(path.parent().unwrap()).unwrap();
                 fs::write(path, b"unselected native population").unwrap();
@@ -1293,9 +1244,7 @@ mod orchestration {
                     "{check:?}: {report:?}"
                 );
             }
-            for check in [CheckName::Ocomp] {
-                assert_eq!(report.check(check).status, CheckStatus::NotRequested);
-            }
+
             assert_eq!(report.provenance.signature_valid, Some(true));
 
             assert!(report.success());
@@ -1364,12 +1313,7 @@ mod orchestration {
             CheckStatus::Passed
         );
         assert!(report.success());
-        for check in [
-            CheckName::Files,
-            CheckName::Headers,
-            CheckName::Evm,
-            CheckName::Ocomp,
-        ] {
+        for check in [CheckName::Files, CheckName::Headers, CheckName::Evm] {
             assert_eq!(report.check(check).status, CheckStatus::NotRequested);
         }
     }

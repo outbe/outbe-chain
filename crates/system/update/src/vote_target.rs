@@ -1,7 +1,6 @@
 //! Vote target-module handler for scheduling protocol updates.
 
 use alloy_primitives::{Address, U256};
-use outbe_ocompregistry::OcompRegistry;
 use outbe_primitives::addresses::UPDATE_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::{PrecompileError, Result};
@@ -73,7 +72,6 @@ fn stage_approved_update(
         Err(err) => return Err(classify_domain_error_as_precompile(err)),
     }
     stage_measurement_upgrade(&mut tee_registry, proposal_id, decoded)?;
-    stage_ocomp_successor(ctx, proposal_id, decoded)?;
     Ok(())
 }
 
@@ -99,24 +97,6 @@ fn stage_measurement_upgrade(
     Ok(())
 }
 
-fn stage_ocomp_successor(
-    ctx: &BlockRuntimeContext,
-    proposal_id: U256,
-    decoded: &ScheduleUpdatePayload,
-) -> Result<()> {
-    if let Some(successor) = decoded
-        .ocomp_successor()
-        .map_err(UpdateError::stored_ocomp_successor_invalid)?
-    {
-        OcompRegistry::new(ctx.storage.clone()).stage_successor(
-            proposal_id,
-            &successor,
-            &outbe_ocompregistry::poc_schema_limits(),
-        )?;
-    }
-    Ok(())
-}
-
 fn classify_domain_error(err: UpdateError) -> Result<TargetExecutionOutcome> {
     match err {
         UpdateError::HeightInPast
@@ -133,19 +113,14 @@ fn classify_domain_error(err: UpdateError) -> Result<TargetExecutionOutcome> {
         | UpdateError::InvalidTeePolicy
         | UpdateError::TeePolicyChainIdentityMismatch
         | UpdateError::TeePolicyActivationMismatch
-        | UpdateError::InvalidOcompSuccessor
-        | UpdateError::OcompSuccessorChainIdentityMismatch
-        | UpdateError::OcompSuccessorActivationMismatch
         | UpdateError::ActiveVersionDoesNotFitU32
         | UpdateError::CannotActivateVersionAboveCeiling { .. }
         | UpdateError::UpgradeHandlerFailed { .. }
         | UpdateError::StagedTeePolicyMissingProposal { .. }
-        | UpdateError::StagedOcompSuccessorMissingProposal { .. }
         | UpdateError::TeePolicyActivationFailed { .. }
         | UpdateError::StoredProposalPayloadInvalid(_)
         | UpdateError::EnclaveRolloutRequiresExclusiveScheduledUpgrade
         | UpdateError::InvalidActiveTeePolicy(_)
-        | UpdateError::StoredOcompSuccessorInvalid(_)
         | UpdateError::VoteTargetInvariantFailure(_)
         | UpdateError::UnexpectedAppliedClassification => {
             Err(UpdateError::VoteTargetInvariantFailure(err.to_string()).into())
@@ -187,9 +162,6 @@ mod tests {
             UpdateError::InvalidTeePolicy,
             UpdateError::TeePolicyChainIdentityMismatch,
             UpdateError::TeePolicyActivationMismatch,
-            UpdateError::InvalidOcompSuccessor,
-            UpdateError::OcompSuccessorChainIdentityMismatch,
-            UpdateError::OcompSuccessorActivationMismatch,
         ] {
             assert!(matches!(
                 classify_domain_error(err),

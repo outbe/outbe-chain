@@ -12,7 +12,6 @@ same network.yaml, and the identities come from the key directory.
 
 from __future__ import annotations
 
-import json
 import hashlib
 import secrets
 import shutil
@@ -52,7 +51,6 @@ SECP256K1_G = (
 # sidecar. Thus validators that join later do not require a restart of every
 # validator that already runs.
 DEFAULT_MAX_VALIDATORS = 128
-OCOMP_BUNDLE_LANE_STRIDE = 6
 
 
 def quote(value: Any) -> str:
@@ -63,17 +61,6 @@ def port_of(config: dict[str, Any], name: str) -> int:
     return int(config.get(name, DEFAULT_PORTS[name]))
 
 
-def embedded_ocomp_endpoint_port(config: dict[str, Any], consensus_port: int) -> int:
-    """Return the node-owned Worker registration endpoint.
-
-    The node derives this endpoint directly from its consensus listener.
-    """
-    if not 1 <= consensus_port < 65535:
-        raise ValueError(
-            f"consensus port leaves no embedded OCOMP endpoint: {consensus_port}"
-        )
-    endpoint_port = consensus_port + 1
-    return endpoint_port
 
 
 def write_script(path: Path, body: str) -> None:
@@ -87,20 +74,21 @@ def write_script(path: Path, body: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _point_slope(p1: tuple[int, int], p2: tuple[int, int]) -> int:
+    x1, y1 = p1
+    x2, y2 = p2
+    num, den = (3 * x1 * x1, 2 * y1) if p1 == p2 else (y2 - y1, x2 - x1)
+    return (num * pow(den, -1, SECP256K1_P)) % SECP256K1_P
+
+
 def _point_add(p1, p2):
-    if p1 is None:
-        return p2
-    if p2 is None:
-        return p1
+    if p1 is None or p2 is None:
+        return p2 if p1 is None else p1
     x1, y1 = p1
     x2, y2 = p2
     if x1 == x2 and (y1 + y2) % SECP256K1_P == 0:
         return None
-    if p1 == p2:
-        lam = (3 * x1 * x1) * pow(2 * y1, -1, SECP256K1_P)
-    else:
-        lam = (y2 - y1) * pow(x2 - x1, -1, SECP256K1_P)
-    lam %= SECP256K1_P
+    lam = _point_slope(p1, p2)
     x3 = (lam * lam - x1 - x2) % SECP256K1_P
     y3 = (lam * (x1 - x3) - y1) % SECP256K1_P
     return x3, y3
@@ -118,6 +106,16 @@ def _point_mul(scalar: int, point):
     return result
 
 
+def _mint_secp256k1_hex(path: Path) -> str:
+    while True:
+        candidate = secrets.token_bytes(32)
+        if 1 <= int.from_bytes(candidate, "big") < SECP256K1_N:
+            raw = candidate.hex()
+            path.write_text(raw)
+            path.chmod(0o600)
+            return raw
+
+
 def ensure_reth_p2p_secret(directory: Path) -> str:
     """Return the enode node id, minting a stable p2p identity when absent.
 
@@ -131,29 +129,9 @@ def ensure_reth_p2p_secret(directory: Path) -> str:
         if len(raw) != 64:
             raise ValueError(f"{path} must hold 32 bytes of hex")
     else:
-        while True:
-            candidate = secrets.token_bytes(32)
-            if 1 <= int.from_bytes(candidate, "big") < SECP256K1_N:
-                raw = candidate.hex()
-                break
-        path.write_text(raw)
-        path.chmod(0o600)
+        raw = _mint_secp256k1_hex(path)
     x, y = _point_mul(int(raw, 16), SECP256K1_G)
     return f"{x:064x}{y:064x}"
-
-
-def ensure_ocomp_evm_key(directory: Path) -> None:
-    """The embedded OCOMP runtime signs its submissions with this key.
-
-    It defaults to a copy of the validator's own EVM key, which the chain always
-    accepts as the sender. Operators wanting a dedicated operational key replace
-    this file and register it with `outbe-cli validator delegate ocomp <addr>`.
-    """
-    ocomp_key = directory / "ocomp-evm-key.hex"
-    if ocomp_key.is_file():
-        return
-    ocomp_key.write_text((directory / "evm-key.hex").read_text().strip() + "\n")
-    ocomp_key.chmod(0o600)
 
 
 def format_enode_host(host: str) -> str:
@@ -250,7 +228,6 @@ def radicle_script(
     index: int,
     host: str,
     keys_dir: str,
-    repo_root: str,
 ) -> str:
     port = port_of(config, "radicle_port")
     status_port = port_of(config, "radicle_status_port")
@@ -258,7 +235,7 @@ def radicle_script(
     binary = str(config.get("radicle_binary", "outbe-radicle"))
     validator_set = config.get("validator_set")
     max_validators = int(
-        (validator_set or {}).get("max_validators", DEFAULT_MAX_VALIDATORS)
+        dict(validator_set or {}).get("max_validators", DEFAULT_MAX_VALIDATORS)
     )
     return f"""
 # Validator-owned Radicle sidecar. The node refuses to start as a validator
@@ -293,17 +270,21 @@ exec {quote(binary)} \\
 """
 
 
+def _uses_production_tee_session(config: dict[str, Any]) -> bool:
+    return bool(config.get("enclave_sgx", True)) or (
+        config["tee"]["mode"] == "dcap-required"
+    )
+
+
 def node_script(
     *,
     config: dict[str, Any],
     index: int,
     base_dir: str,
-    keys_dir: str,
-    repo_root: str,
-    consensus_port: int,
-    host: str,
-    identity: dict[str, Any],
+    p2p_address: str,
 ) -> str:
+    keys_dir = str(config.get("remote_keys_dir", base_dir))
+    host, _, consensus_port = p2p_address.rpartition(":")
     binary = str(config.get("node_binary", "outbe-chain"))
     # Which TEE transport the node must speak. `dcap-required` always uses the
     # authenticated sealed session. `gramine-direct-dev` is ambiguous on its
@@ -314,35 +295,17 @@ def node_script(
     # "development enclave connection failed". Thus state the mode explicitly.
     session_mode = (
         "  --tee-session-mode production-node-host \\\n"
-        if config["tee"]["mode"] == "dcap-required"
-        or config.get("enclave_sgx", True)
+        if _uses_production_tee_session(config)
         else ""
     )
     validator_keys = f"{keys_dir}/validator-{index}"
     validator_dir = f"{base_dir}/validator-{index}"
     radicle_home = f"{validator_keys}/radicle"
     return f"""
-# Validator node: execution, consensus and the embedded OCOMP runtime in one
-# process. OCOMP needs no separate daemon - it runs inside this binary and
-# reads its keys from <datadir>/../ocomp/domain-v1.
+# Validator node: execution and consensus with native enclave Lysis.
 KEYS={quote(validator_keys)}
 DATA={quote(validator_dir + "/data")}
-DOMAIN={quote(validator_dir + "/ocomp/domain-v1")}
-BUNDLE_HASH={quote(identity["protocol_bundle_hash"])}
-
-mkdir -p "$DATA" "$DOMAIN/protocol-bundles-v1" {quote(validator_dir + "/logs")}
-install -m 600 "$KEYS/ocomp-key-v1.hex" "$DOMAIN/ocomp-key-v1.hex"
-install -m 600 "$KEYS/ocomp-evm-key.hex" "$DOMAIN/ocomp-evm-key.hex"
-# Preserve the V1 compatibility path and publish the same canonical bytes in
-# the hash-addressed catalog used by successor-aware Nodes and exporters.
-install -m 640 {quote(base_dir + "/protocol-bundle-v1.ocb1")} "$DOMAIN/protocol-bundle-v1.ocb1"
-install -m 640 {quote(base_dir + "/protocol-bundles-v1")}/"${{BUNDLE_HASH#0x}}.ocb1" \
-  "$DOMAIN/protocol-bundles-v1/${{BUNDLE_HASH#0x}}.ocb1"
-
-if [ -f {quote(validator_dir + "/ocomp-bundles.env")} ]; then
-  source {quote(validator_dir + "/ocomp-bundles.env")}
-  export OCOMP_PROTOCOL_BUNDLE_HASHES
-fi
+mkdir -p "$DATA" {quote(validator_dir + "/logs")}
 
 # reth reads the p2p key from the file verbatim, so normalize it in place.
 printf '%s' "$(tr -d '[:space:]' < "$KEYS/reth-p2p-secret.hex")" > "$KEYS/reth-p2p-secret.hex"
@@ -360,7 +323,7 @@ exec {quote(binary)} node \\
   --engine.memory-block-buffer-target 0 \\
   --consensus.signing-key "$KEYS/signing-key.hex" \\
   --validator.evm-key "$KEYS/evm-key.hex" \\
-  --consensus.listen-addr 0.0.0.0:{consensus_port} \\
+  --consensus.listen-addr 0.0.0.0:{int(consensus_port)} \\
   --consensus.storage-dir {quote(validator_dir + "/consensus")} \\
   --radicle.control-socket {quote(radicle_home + "/node/outbe-control.sock")} \\
   --radicle.status-address 127.0.0.1:{port_of(config, "radicle_status_port")} \\
@@ -384,12 +347,8 @@ exec {quote(binary)} node \\
 def feeder_pairs(*, config: dict[str, Any]) -> str:
     """The pairs file every validator's feeder.toml names."""
     price_provider = str(config.get("price_provider", "mock_http"))
-    source_quote = str(
-        config.get(
-            "price_source_quote",
-            "840" if price_provider == "mock_http" else "USDT",
-        )
-    )
+    default_quote = {"mock_http": "840"}.get(price_provider, "USDT")
+    source_quote = str(config.get("price_source_quote", default_quote))
     return f"""[[currency_pairs]]
 base = "COEN"
 quote = "840"
@@ -445,7 +404,7 @@ bind_address = "127.0.0.1:{port_of(config, "feeder_health_port")}"
 """
 
 
-def feeder_script(*, config: dict[str, Any], index: int, base_dir: str, repo_root: str) -> str:
+def feeder_script(*, config: dict[str, Any], index: int, base_dir: str) -> str:
     binary = str(config.get("feeder_binary", "outbe-feeder"))
     return f"""
 # Price oracle feeder. Start it once the node serves RPC; oracle votes are
@@ -455,7 +414,7 @@ exec {quote(binary)} --config {quote(f"{base_dir}/validator-{index}/feeder.toml"
 
 
 def start_all_script(
-    *, config: dict[str, Any], index: int, base_dir: str, ocomp_endpoint_port: int
+    *, config: dict[str, Any], index: int, base_dir: str
 ) -> str:
     directory = f"{base_dir}/validator-{index}"
     status_port = port_of(config, "radicle_status_port")
@@ -495,32 +454,11 @@ done
 nohup ./run-feeder.sh > logs/feeder.log 2>&1 &
 echo $! > feeder.pid
 
-# The node owns the embedded OCOMP Supervisor. Wait for its registration
-# endpoint before starting the external SnapshotExporter and Worker clients.
-ocomp_ready=0
-for _ in $(seq 1 60); do
-  if (exec 3<>/dev/tcp/127.0.0.1/{ocomp_endpoint_port}) 2>/dev/null; then
-    exec 3>&-
-    ocomp_ready=1
-    break
-  fi
-  sleep 1
-done
-if [ "$ocomp_ready" -ne 1 ]; then
-  echo "node-owned OCOMP endpoint 127.0.0.1:{ocomp_endpoint_port} did not become ready" >&2
-  exit 1
-fi
-nohup ./run-ocomp-exporter.sh > logs/ocomp-exporter.log 2>&1 &
-echo $! > ocomp-exporter.pid
-nohup ./run-ocomp-worker.sh > logs/ocomp-worker.log 2>&1 &
-echo $! > ocomp-worker.pid
-
 echo
 echo "validator-{index} started:"
 echo "  node:    logs/node.log    (pid $(cat node.pid))"
 echo "  radicle: logs/radicle.log (pid $(cat radicle.pid))"
 echo "  feeder:  logs/feeder.log  (pid $(cat feeder.pid))"
-echo "  ocomp:   embedded Supervisor in node, logs/ocomp-exporter.log, logs/ocomp-worker.log"
 echo "  enclave: docker logs outbe-enclave-{index}"
 """
 
@@ -529,7 +467,7 @@ def stop_all_script(*, index: int, base_dir: str) -> str:
     directory = f"{base_dir}/validator-{index}"
     return f"""
 cd {quote(directory)}
-for name in ocomp-worker ocomp-exporter feeder node radicle enclave; do
+for name in feeder node radicle enclave; do
   if [ -f "$name.pid" ]; then
     pid="$(cat "$name.pid")"
     if kill -0 "$pid" 2>/dev/null; then
@@ -542,169 +480,6 @@ done
 docker stop outbe-enclave-{index} >/dev/null 2>&1 && echo "stopped enclave" || true
 """
 
-
-# ---------------------------------------------------------------------------
-# OCOMP roles
-# ---------------------------------------------------------------------------
-
-
-def ocomp_identity(genesis_path: Path, keys_dir: Path) -> dict[str, Any]:
-    """Read the identity the OCOMP roles must be started with.
-
-    chain id, genesis hash and install hash are plain fields of the genesis.
-    The protocol bundle hash is not. It sits inside the canonical install
-    bytes, right after the genesis hash and the fork id. This function knows
-    both of them, so it locates the bundle hash by anchoring on the genesis
-    hash rather than by a bare offset. Every role validates the value against
-    the bundle file that it loads, and exits with `HashMismatch` if the value
-    disagrees. Thus a wrong read fails immediately and loudly instead of
-    producing a subtly wrong network.
-    """
-    genesis = json.loads(genesis_path.read_text())
-    config = genesis.get("config", {})
-    install = config.get("ocompForkInstallV1")
-    if not install:
-        raise ValueError(f"{genesis_path} has no OCOMP install; cannot launch OCOMP roles")
-    canonical = bytes.fromhex(str(install["canonicalBytes"]).removeprefix("0x"))
-    genesis_hash = bytes.fromhex(genesis_hash_of(keys_dir).removeprefix("0x"))
-    anchor = canonical.find(genesis_hash)
-    if anchor < 0:
-        raise ValueError("OCOMP install does not carry this genesis hash")
-    # request profile order: genesis_hash, fork_id, protocol_bundle_hash
-    bundle_hash = canonical[anchor + 64 : anchor + 96]
-    if len(bundle_hash) != 32:
-        raise ValueError("OCOMP install is truncated before the protocol bundle hash")
-    return {
-        "chain_id": int(config["chainId"]),
-        "genesis_hash": "0x" + genesis_hash.hex(),
-        "protocol_bundle_hash": "0x" + bundle_hash.hex(),
-        "install_hash": str(install["installHash"]),
-    }
-
-
-def genesis_hash_of(keys_dir: Path) -> str:
-    """The genesis hash the OCOMP registrations were minted against.
-
-    create_genesis.py records it beside each registration it mints, which is
-    exactly the value the install document carries.
-    """
-    for marker in sorted(keys_dir.glob("validator-*/ocomp-registration-v1.genesis-hash")):
-        return marker.read_text().strip()
-    raise ValueError(
-        f"no OCOMP registration marker under {keys_dir}; cannot identify the genesis "
-        f"the OCOMP roles must run against"
-    )
-
-
-def ocomp_role_preamble(*, config: dict[str, Any], index: int, base_dir: str, identity: dict[str, Any]) -> str:
-    return f"""
-export OUTBE_OCOMP_BASE_PATH={quote(base_dir)}
-export OCOMP_VALIDATOR_INDEX={index}
-export OCOMP_CHAIN_ID={identity["chain_id"]}
-export OCOMP_GENESIS_HASH={identity["genesis_hash"]}
-export OCOMP_BOOT_NONCE=0x{f"{index + 1:02x}" * 32}
-export OCOMP_PROTOCOL_BUNDLE_HASH={identity["protocol_bundle_hash"]}
-export OCOMP_PROTOCOL_BUNDLE_HASHES={identity["protocol_bundle_hash"]}
-export OCOMP_REGISTRY_GENERATION=1
-export OUTBE_OCOMP_RPC_URL="http://127.0.0.1:{port_of(config, "rpc_port")}"
-"""
-
-
-def ocomp_exporter_script(
-    *,
-    config: dict[str, Any],
-    index: int,
-    base_dir: str,
-    identity: dict[str, Any],
-    ocomp_endpoint_port: int,
-) -> str:
-    binary = str(config.get("ocomp_binary", "outbe-ocomp"))
-    return f"""
-# OCOMP SnapshotExporter: materializes the finalized inputs the Workers read.
-{ocomp_role_preamble(config=config, index=index, base_dir=base_dir, identity=identity).strip()}
-if [ -f {quote(base_dir + f"/validator-{index}/ocomp-bundles.env")} ]; then
-  # Operator-owned allow-list. Add the staged hash here and restart only the
-  # exporter before submitting the Update proposal.
-  source {quote(base_dir + f"/validator-{index}/ocomp-bundles.env")}
-  export OCOMP_PROTOCOL_BUNDLE_HASHES
-fi
-
-exec {quote(binary)} snapshot-exporter \\
-  --supervisor-address 127.0.0.1:{ocomp_endpoint_port}
-"""
-
-
-def ocomp_worker_script(
-    *,
-    config: dict[str, Any],
-    index: int,
-    base_dir: str,
-    identity: dict[str, Any],
-    ocomp_endpoint_port: int,
-    ordinal: int = 0,
-) -> str:
-    binary = str(config.get("ocomp_binary", "outbe-ocomp"))
-    # Same shape as the harness uses. The first byte identifies the host, and
-    # the last four bytes identify the worker ordinal. Thus every worker
-    # process gets a distinct nonce.
-    nonce = f"{index + 1:02x}" + "00" * 27 + f"{ordinal:08x}"
-    return f"""
-# OCOMP Worker {ordinal}: runs the active-bundle computation and signs its result.
-{ocomp_role_preamble(config=config, index=index, base_dir=base_dir, identity=identity).strip()}
-source {quote(base_dir + f"/validator-{index}/ocomp-active.env")}
-: "${{OCOMP_ACTIVE_PROTOCOL_BUNDLE_HASH:?missing active bundle hash}}"
-BUNDLE_NAME="${{OCOMP_ACTIVE_PROTOCOL_BUNDLE_HASH#0x}}.ocb1"
-[ -f {quote(base_dir + f"/validator-{index}/ocomp/domain-v1/protocol-bundles-v1")}/"$BUNDLE_NAME" ] || {{
-  echo "active bundle is not installed: $BUNDLE_NAME" >&2
-  exit 1
-}}
-export OCOMP_PROTOCOL_BUNDLE_HASH="$OCOMP_ACTIVE_PROTOCOL_BUNDLE_HASH"
-
-exec {quote(binary)} worker \\
-  --chain-id {identity["chain_id"]} \\
-  --genesis-hash {identity["genesis_hash"]} \\
-  --boot-nonce 0x{nonce} \\
-  --worker-ordinal {ordinal} \\
-  --protocol-bundle-hash "$OCOMP_ACTIVE_PROTOCOL_BUNDLE_HASH" \\
-  --supervisor-address 127.0.0.1:{ocomp_endpoint_port}
-"""
-
-
-def ocomp_successor_worker_script(
-    *,
-    config: dict[str, Any],
-    index: int,
-    base_dir: str,
-    identity: dict[str, Any],
-    ocomp_endpoint_port: int,
-) -> str:
-    binary = str(config.get("ocomp_binary", "outbe-ocomp"))
-    successor_endpoint = ocomp_endpoint_port + OCOMP_BUNDLE_LANE_STRIDE
-    if successor_endpoint > 65535:
-        raise ValueError("consensus port leaves no OCOMP successor endpoint")
-    nonce = f"{index + 1:02x}" + "00" * 26 + "01" + "00000000"
-    return f"""
-# Dormant V2 Worker lane. The operator writes ocomp-successor.env and starts
-# its systemd unit before the Update proposal; activation itself starts no
-# process and changes no local files.
-{ocomp_role_preamble(config=config, index=index, base_dir=base_dir, identity=identity).strip()}
-source {quote(base_dir + f"/validator-{index}/ocomp-successor.env")}
-: "${{OCOMP_SUCCESSOR_PROTOCOL_BUNDLE_HASH:?missing successor bundle hash}}"
-BUNDLE_NAME="${{OCOMP_SUCCESSOR_PROTOCOL_BUNDLE_HASH#0x}}.ocb1"
-[ -f {quote(base_dir + f"/validator-{index}/ocomp/domain-v1/protocol-bundles-v1")}/"$BUNDLE_NAME" ] || {{
-  echo "successor bundle is not installed: $BUNDLE_NAME" >&2
-  exit 1
-}}
-export OCOMP_PROTOCOL_BUNDLE_HASH="$OCOMP_SUCCESSOR_PROTOCOL_BUNDLE_HASH"
-
-exec {quote(binary)} worker \
-  --chain-id {identity["chain_id"]} \
-  --genesis-hash {identity["genesis_hash"]} \
-  --boot-nonce 0x{nonce} \
-  --worker-ordinal 0 \
-  --protocol-bundle-hash "$OCOMP_SUCCESSOR_PROTOCOL_BUNDLE_HASH" \
-  --supervisor-address 127.0.0.1:{successor_endpoint}
-"""
 
 # ---------------------------------------------------------------------------
 # Signed enclave
@@ -750,9 +525,8 @@ def stage_signed_enclave(*, config: dict[str, Any], output_dir: Path) -> dict[st
             )
         shutil.copy2(origin, staged / name)
     # A private key in the bundle would go to every machine. Refuse it.
-    for stray in source_dir.glob("*.pem"):
-        if (staged / stray.name).exists():
-            (staged / stray.name).unlink()
+    for stray in staged.glob("*.pem"):
+        stray.unlink()
     return {"path": str(staged)}
 
 
@@ -864,9 +638,6 @@ UNIT_ROLES = (
     ("enclave", "TEE enclave", None),
     ("radicle", "Radicle sidecar", "outbe-enclave@%i.service"),
     ("node", "validator node", "outbe-radicle@%i.service"),
-    ("ocomp-exporter", "OCOMP SnapshotExporter", "outbe-node@%i.service"),
-    ("ocomp-worker", "OCOMP Worker", "outbe-node@%i.service"),
-    ("ocomp-successor-worker", "OCOMP successor Worker", "outbe-node@%i.service"),
     ("feeder", "price oracle feeder", "outbe-node@%i.service"),
 )
 
@@ -886,9 +657,8 @@ exec {quote(base_dir + "/outbe-cli")} tee renew \\
 
 def systemd_unit(*, role: str, description: str, after: str | None, base_dir: str) -> str:
     """One templated unit per role. %i is the validator index."""
-    dependency = after
-    dependency_suffix = f" {dependency}" if dependency else ""
-    user = "root" if role == "enclave" else "ubuntu"
+    dependency_suffix = f" {after}" if after else ""
+    user = {"enclave": "root"}.get(role, "ubuntu")
     return f"""[Unit]
 Description=Outbe {description} (validator %i)
 After=network-online.target{dependency_suffix}
@@ -951,9 +721,11 @@ WantedBy=timers.target
 """
     )
 
-    renewal_install = ""
-    if enable_tee_renewal:
-        renewal_install = '\nsudo systemctl enable --now "outbe-tee-renew@$INDEX.timer"\n'
+    renewal_install = (
+        '\nsudo systemctl enable --now "outbe-tee-renew@$INDEX.timer"\n'
+        if enable_tee_renewal
+        else ""
+    )
     install = f"""
 # Install and start every Outbe service for validator $1 on this machine.
 INDEX="${{1:?usage: install-systemd.sh <validator-index>}}"
@@ -963,7 +735,7 @@ sudo install -m 644 {quote(base_dir)}/systemd/outbe-*@.timer /etc/systemd/system
 sudo systemctl daemon-reload
 
 
-for role in enclave radicle node ocomp-exporter ocomp-worker feeder; do
+for role in enclave radicle node feeder; do
   sudo systemctl enable --now "outbe-$role@$INDEX.service"
 done
 {renewal_install}
@@ -993,8 +765,7 @@ fail=0
 note() {{ printf '  %-42s %s\\n' "$1" "$2"; }}
 
 note "genesis sha256" "$(sha256sum genesis.json | cut -c1-16)"
-note "protocol bundle sha256" "$(sha256sum protocol-bundle-v1.ocb1 | cut -c1-16)"
-echo "  ^ these two must be identical on every machine"
+echo "  ^ genesis must be identical on every machine"
 
 if [ -f outbe-tee-enclave.sig ]; then
   note "enclave mr_enclave" "$(gramine-sgx-sigstruct-view outbe-tee-enclave.sig 2>/dev/null | grep -oE 'mr_enclave: [0-9a-f]+' | cut -c13-28)"
@@ -1004,8 +775,7 @@ else
   note "enclave signature" "MISSING"; fail=1
 fi
 
-# State from an earlier genesis makes the node exit with
-# 'projection identity does not match configured chain'.
+# State from an earlier genesis belongs to a different chain; the node refuses to start on it.
 for stale in validator-{index}/data validator-{index}/consensus tee; do
   [ -e "$stale" ] && {{ note "leftover state" "$stale - remove before a new genesis"; fail=1; }}
 done
@@ -1030,6 +800,33 @@ exit "$fail"
 # not after.
 
 
+def _pack_validator_archive(
+    *, output_dir: Path, dist: Path, keys_dir: Path, index: int
+) -> str:
+    staging = dist / f"validator-{index}"
+    staging.mkdir()
+    for name in ("genesis.json", "reth-bootnodes.txt", "DEPLOY.md", "install-systemd.sh"):
+        item = output_dir / name
+        if item.is_file():
+            shutil.copy2(item, staging / item.name)
+    for folder in ("systemd", "enclave"):
+        src = output_dir / folder
+        if src.is_dir():
+            shutil.copytree(src, staging / folder)
+    # This machine's run scripts and ONLY this machine's key material.
+    shutil.copytree(output_dir / f"validator-{index}", staging / f"validator-{index}")
+    keys_target = staging / "keys" / f"validator-{index}"
+    keys_target.parent.mkdir(exist_ok=True)
+    shutil.copytree(keys_dir / f"validator-{index}", keys_target)
+
+    archive = dist / f"validator-{index}.tgz"
+    with tarfile.open(archive, "w:gz") as tar:
+        for entry in sorted(staging.iterdir()):
+            tar.add(entry, arcname=entry.name)
+    shutil.rmtree(staging)
+    return archive.name
+
+
 def build_distribution(
     *,
     output_dir: Path,
@@ -1039,53 +836,22 @@ def build_distribution(
 ) -> list[str]:
     """Pack one self-contained archive per machine. Returns their names."""
     dist = output_dir / "dist"
-    if dist.exists():
-        shutil.rmtree(dist)
+    shutil.rmtree(dist, ignore_errors=True)
     dist.mkdir(parents=True)
 
-    shared = [
-        output_dir / "genesis.json",
-        output_dir / "protocol-bundle-v1.ocb1",
-        output_dir / "reth-bootnodes.txt",
-        output_dir / "DEPLOY.md",
-        output_dir / "install-systemd.sh",
+    names = [
+        _pack_validator_archive(
+            output_dir=output_dir, dist=dist, keys_dir=keys_dir, index=index
+        )
+        for index in range(len(validators))
     ]
-    enclave_dir = output_dir / "enclave"
-    systemd_dir = output_dir / "systemd"
-    bundle_catalog_dir = output_dir / "protocol-bundles-v1"
-
-    names = []
-    for index in range(len(validators)):
-        staging = dist / f"validator-{index}"
-        staging.mkdir()
-        for item in shared:
-            if item.is_file():
-                shutil.copy2(item, staging / item.name)
-        if systemd_dir.is_dir():
-            shutil.copytree(systemd_dir, staging / "systemd")
-        if bundle_catalog_dir.is_dir():
-            shutil.copytree(bundle_catalog_dir, staging / "protocol-bundles-v1")
-        if enclave_dir.is_dir():
-            shutil.copytree(enclave_dir, staging / "enclave")
-        # This machine's run scripts and ONLY this machine's key material.
-        shutil.copytree(output_dir / f"validator-{index}", staging / f"validator-{index}")
-        keys_target = staging / "keys" / f"validator-{index}"
-        keys_target.parent.mkdir(exist_ok=True)
-        shutil.copytree(keys_dir / f"validator-{index}", keys_target)
-
-        archive = dist / f"validator-{index}.tgz"
-        with tarfile.open(archive, "w:gz") as tar:
-            for entry in sorted(staging.iterdir()):
-                tar.add(entry, arcname=entry.name)
-        shutil.rmtree(staging)
-        names.append(archive.name)
 
     # One manifest over the archives. A truncated copy or a stale archive from
     # an earlier run is then a checksum mismatch, not a mystery at boot.
-    lines = []
-    for name in names:
-        digest = hashlib.sha256((dist / name).read_bytes()).hexdigest()
-        lines.append(f"{digest}  {name}")
+    lines = [
+        f"{hashlib.sha256((dist / name).read_bytes()).hexdigest()}  {name}"
+        for name in names
+    ]
     (dist / "SHA256SUMS").write_text("\n".join(lines) + "\n")
 
     unpack = f"""
@@ -1126,11 +892,11 @@ def deploy_markdown(
     *,
     config: dict[str, Any],
     validators: list[dict[str, Any]],
-    base_dir: str,
-    keys_dir: str,
-    local_keys_dir: Path,
+    keys_dir: Path,
     enodes: list[str],
 ) -> str:
+    base_dir = str(config.get("remote_base_dir", keys_dir.parent))
+    remote_keys_dir = str(config.get("remote_keys_dir", keys_dir))
     chain_id = int(config["chain_id"])
     mode = str(config["tee"]["mode"])
     consensus_port = validators[0]["p2p_address"].rsplit(":", 1)[1]
@@ -1165,11 +931,10 @@ Every machine gets the shared files plus **only its own** key directory:
 
 ```bash
 # from this directory on the operator workstation, for machine N (0..3):
-ssh <machine-N> "mkdir -p {base_dir} {keys_dir}"
-scp genesis.json reth-bootnodes.txt protocol-bundle-v1.ocb1 <machine-N>:{base_dir}/
-scp -r protocol-bundles-v1 <machine-N>:{base_dir}/
+ssh <machine-N> "mkdir -p {base_dir} {remote_keys_dir}"
+scp genesis.json reth-bootnodes.txt <machine-N>:{base_dir}/
 scp -r validator-N <machine-N>:{base_dir}/
-scp -r {local_keys_dir}/validator-N <machine-N>:{keys_dir}/
+scp -r {keys_dir}/validator-N <machine-N>:{remote_keys_dir}/
 ```
 
 `validator-N/` holds the run scripts; the key directory holds the secrets.
@@ -1198,7 +963,7 @@ metrics `{port_of(config, "metrics_port")}`, Radicle status
 - Python 3.11+ - reads the shared storage TOML at launch
 - Docker - the TEE enclave runs as a container
 - `outbe-cli` on every SGX validator host for automatic TEE renewal
-- the `outbe-chain`, `outbe-ocomp`, `outbe-radicle` and `outbe-feeder` binaries on `PATH`
+- the `outbe-chain`, `outbe-radicle` and `outbe-feeder` binaries on `PATH`
   (or set `node_binary`, `radicle_binary` and `feeder_binary` in the yaml to
   absolute paths and regenerate)
 - for `dcap-required`: SGX hardware exposing `/dev/sgx_enclave` and
@@ -1253,9 +1018,6 @@ number and `validator list` shows four active validators.
 | Component | Process | Notes |
 |---|---|---|
 | Execution + consensus | `outbe-chain node` | one binary, no Engine API split |
-| OCOMP Supervisor | embedded in `outbe-chain node` | ExEx hands out work and submits results |
-| OCOMP SnapshotExporter | `outbe-ocomp snapshot-exporter` | own process; materializes finalized inputs |
-| OCOMP Worker | `outbe-ocomp worker` | initial lane plus one dormant successor lane |
 | TEE enclave | Docker container | the node refuses to start without it |
 | Radicle | `outbe-radicle` | validator startup requires its control socket |
 | Price feeder | `outbe-feeder` | submits oracle votes |
@@ -1263,30 +1025,15 @@ number and `validator list` shows four active validators.
 ## Storage configuration
 
 Tribute, Nod and Gem records, buckets and indexes live in the node's EVM state.
-SnapshotExporter obtains encrypted Tribute records with account and storage proofs
-at the finalized request checkpoint. No separate entity datasource is configured.
+Metadosis reads Tribute from state, executes confidential Lysis in the enclave,
+and saves the ready encrypted Nod records. No separate entity datasource is configured.
 
 ## Notes
 
-- The OCOMP Supervisor is the node-owned ExEx. `start-all.sh` waits for its
-  embedded registration endpoint, then starts only the external SnapshotExporter
-  and Worker clients over loopback. The SnapshotExporter reads finalized EVM
-  state through the node RPC. Durable discovery authority lives
-  under its local spool; ZeroMQ on the separately allocated loopback control port
-  carries only fixed-size OfferRef/AckRef values.
-- The embedded OCOMP Supervisor signs its submissions with `ocomp-evm-key.hex`,
-  which defaults to a copy of the validator's own EVM key. To use a dedicated
-  operational key, replace that file and register it on-chain with
-  `outbe-cli validator delegate ocomp <address>`.
-- An OCOMP successor is installed as `protocol-bundles-v1/<hash>.ocb1` before
-  its Update proposal. Put both hashes in `validator-N/ocomp-bundles.env`, put
-  the successor hash in `validator-N/ocomp-successor.env`, restart the Node and
-  SnapshotExporter before the proposal, and start
-  `outbe-ocomp-successor-worker@N`. Do not restart anything at activation.
 - `reth-bootnodes.txt` pins each machine's reth identity:
 {bootnode_lines}
 - Re-running `create_genesis.py` without the pinned `timestamp:` produces a
-  different genesis hash and invalidates the OCOMP registrations. Keep the
+  different genesis hash. Keep the
   timestamp that is now in your yaml.
 """
 
@@ -1296,13 +1043,96 @@ at the finalized request checkpoint. No separate entity datasource is configured
 # ---------------------------------------------------------------------------
 
 
+def _write_validator_scripts(
+    *,
+    config: dict[str, Any],
+    index: int,
+    validator: dict[str, Any],
+    paths: tuple[Path, Path, str, str],
+) -> None:
+    output_dir, keys_dir, base_dir, remote_keys_dir = paths
+    directory = output_dir / f"validator-{index}"
+    host, _, _ = validator["p2p_address"].rpartition(":")
+
+    write_script(
+        directory / "run-enclave.sh",
+        enclave_script(config=config, index=index, base_dir=base_dir),
+    )
+    write_script(
+        directory / "run-radicle.sh",
+        radicle_script(
+            config=config,
+            index=index,
+            host=host,
+            keys_dir=remote_keys_dir,
+        ),
+    )
+    write_script(
+        directory / "run-node.sh",
+        node_script(
+            config=config | {"remote_keys_dir": remote_keys_dir},
+            index=index,
+            base_dir=base_dir,
+            p2p_address=validator["p2p_address"],
+        ),
+    )
+    write_script(
+        directory / "run-feeder.sh",
+        feeder_script(config=config, index=index, base_dir=base_dir),
+    )
+    (directory / "Caddyfile").write_text(caddyfile(config=config, host=host))
+    write_script(
+        directory / "run-tee-renew.sh",
+        tee_renew_script(
+            config=config,
+            index=index,
+            base_dir=base_dir,
+            keys_dir=remote_keys_dir,
+        ),
+    )
+    write_script(
+        directory / "preflight.sh",
+        preflight_script(
+            config=config,
+            base_dir=base_dir,
+            index=index,
+        ),
+    )
+    write_script(
+        directory / "install-caddy.sh",
+        caddy_install_script(config=config, base_dir=base_dir, index=index),
+    )
+    signer_key = (
+        (keys_dir / f"validator-{index}" / "evm-key.hex")
+        .read_text()
+        .strip()
+        .removeprefix("0x")
+    )
+    feeder_path = directory / "feeder.toml"
+    feeder_path.write_text(
+        feeder_config(
+            config=config, index=index, validator=validator, signer_key=signer_key
+        )
+    )
+    feeder_path.chmod(0o600)
+    (directory / "pairs.toml").write_text(feeder_pairs(config=config))
+    write_script(
+        directory / "start-all.sh",
+        start_all_script(
+            config=config,
+            index=index,
+            base_dir=base_dir,
+        ).replace("{TEE_PORT}", str(port_of(config, "tee_enclave_port"))),
+    )
+    write_script(directory / "stop-all.sh", stop_all_script(index=index, base_dir=base_dir))
+
+
 def render(
     *,
     config: dict[str, Any],
     validators: list[dict[str, Any]],
     genesis_path: Path,
     keys_dir: Path,
-    repo_root: Path,
 ) -> None:
     output_dir = genesis_path.parent
     # Paths as they will exist on the target machines. They default to this
@@ -1310,150 +1140,25 @@ def render(
     base_dir = str(config.get("remote_base_dir", output_dir))
     remote_keys_dir = str(config.get("remote_keys_dir", keys_dir))
 
-    enodes = []
-    for index, validator in enumerate(validators):
-        directory = keys_dir / f"validator-{index}"
-        host = validator["p2p_address"].rsplit(":", 1)[0]
-        node_id = ensure_reth_p2p_secret(directory)
-        ensure_ocomp_evm_key(directory)
-        enodes.append(
-            f"enode://{node_id}@{format_enode_host(host)}:{port_of(config, 'reth_p2p_port')}"
-        )
+    enodes = [
+        f"enode://{ensure_reth_p2p_secret(keys_dir / f'validator-{index}')}@{format_enode_host(validator['p2p_address'].rsplit(':', 1)[0])}:{port_of(config, 'reth_p2p_port')}"
+        for index, validator in enumerate(validators)
+    ]
     (output_dir / "reth-bootnodes.txt").write_text("\n".join(enodes) + "\n")
-    identity = ocomp_identity(genesis_path, keys_dir)
-    bundle_catalog = output_dir / "protocol-bundles-v1"
-    bundle_catalog.mkdir(parents=True, exist_ok=True)
-    initial_catalog_bundle = bundle_catalog / (
-        identity["protocol_bundle_hash"].removeprefix("0x") + ".ocb1"
-    )
-    shutil.copy2(output_dir / "protocol-bundle-v1.ocb1", initial_catalog_bundle)
+    paths = (output_dir, keys_dir, base_dir, remote_keys_dir)
     for index, validator in enumerate(validators):
-        directory = output_dir / f"validator-{index}"
-        host, _, consensus_port = validator["p2p_address"].rpartition(":")
-        ocomp_endpoint_port = embedded_ocomp_endpoint_port(config, int(consensus_port))
-
-        write_script(
-            directory / "run-enclave.sh",
-            enclave_script(config=config, index=index, base_dir=base_dir),
+        _write_validator_scripts(
+            config=config,
+            index=index,
+            validator=validator,
+            paths=paths,
         )
-        write_script(
-            directory / "run-radicle.sh",
-            radicle_script(
-                config=config,
-                index=index,
-                host=host,
-                keys_dir=remote_keys_dir,
-                repo_root=str(repo_root),
-            ),
-        )
-        write_script(
-            directory / "run-node.sh",
-            node_script(
-                config=config,
-                index=index,
-                base_dir=base_dir,
-                keys_dir=remote_keys_dir,
-                repo_root=str(repo_root),
-                consensus_port=int(consensus_port),
-                host=host,
-                identity=identity,
-            ),
-        )
-        write_script(
-            directory / "run-feeder.sh",
-            feeder_script(config=config, index=index, base_dir=base_dir, repo_root=str(repo_root)),
-        )
-        (directory / "Caddyfile").write_text(caddyfile(config=config, host=host))
-        write_script(
-            directory / "run-tee-renew.sh",
-            tee_renew_script(
-                config=config,
-                index=index,
-                base_dir=base_dir,
-                keys_dir=remote_keys_dir,
-            ),
-        )
-        write_script(
-            directory / "preflight.sh",
-            preflight_script(
-                config=config,
-                base_dir=base_dir,
-                index=index,
-            ),
-        )
-        write_script(
-            directory / "install-caddy.sh",
-            caddy_install_script(config=config, base_dir=base_dir, index=index),
-        )
-        write_script(
-            directory / "run-ocomp-exporter.sh",
-            ocomp_exporter_script(
-                config=config,
-                index=index,
-                base_dir=base_dir,
-                identity=identity,
-                ocomp_endpoint_port=ocomp_endpoint_port,
-            ),
-        )
-        write_script(
-            directory / "run-ocomp-worker.sh",
-            ocomp_worker_script(
-                config=config,
-                index=index,
-                base_dir=base_dir,
-                identity=identity,
-                ocomp_endpoint_port=ocomp_endpoint_port,
-            ),
-        )
-        write_script(
-            directory / "run-ocomp-successor-worker.sh",
-            ocomp_successor_worker_script(
-                config=config,
-                index=index,
-                base_dir=base_dir,
-                identity=identity,
-                ocomp_endpoint_port=ocomp_endpoint_port,
-            ),
-        )
-        (directory / "ocomp-bundles.env").write_text(
-            f'OCOMP_PROTOCOL_BUNDLE_HASHES={identity["protocol_bundle_hash"]}\n'
-        )
-        (directory / "ocomp-active.env").write_text(
-            f'OCOMP_ACTIVE_PROTOCOL_BUNDLE_HASH={identity["protocol_bundle_hash"]}\n'
-        )
-        signer_key = (
-            (keys_dir / f"validator-{index}" / "evm-key.hex")
-            .read_text()
-            .strip()
-            .removeprefix("0x")
-        )
-        feeder_path = directory / "feeder.toml"
-        feeder_path.write_text(
-            feeder_config(
-                config=config, index=index, validator=validator, signer_key=signer_key
-            )
-        )
-        feeder_path.chmod(0o600)
-        (directory / "pairs.toml").write_text(feeder_pairs(config=config))
-        write_script(
-            directory / "start-all.sh",
-            start_all_script(
-                config=config,
-                index=index,
-                base_dir=base_dir,
-                ocomp_endpoint_port=ocomp_endpoint_port,
-            ).replace("{TEE_PORT}", str(port_of(config, "tee_enclave_port"))),
-        )
-        write_script(directory / "stop-all.sh", stop_all_script(index=index, base_dir=base_dir))
 
     stage_signed_enclave(config=config, output_dir=output_dir)
     write_systemd_units(
         output_dir=output_dir,
         base_dir=base_dir,
-        enable_tee_renewal=(
-            config["tee"]["mode"] == "dcap-required"
-            or bool(config.get("enclave_sgx", True))
-        ),
+        enable_tee_renewal=_uses_production_tee_session(config),
     )
 
     build_distribution(
@@ -1465,11 +1170,9 @@ def render(
 
     (output_dir / "DEPLOY.md").write_text(
         deploy_markdown(
-            config=config,
+            config=config | {"remote_base_dir": base_dir},
             validators=validators,
-            base_dir=base_dir,
-            keys_dir=remote_keys_dir,
-            local_keys_dir=keys_dir,
+            keys_dir=keys_dir,
             enodes=enodes,
         )
     )

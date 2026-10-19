@@ -2,7 +2,6 @@
 
 use alloy_primitives::{Address, B256, U256};
 use core::fmt::Display;
-use outbe_metadosis::api::OcompFinalityAuthorityError;
 use outbe_primitives::{
     error::PrecompileError, storage::MetadosisMutationEntitlements,
     storage::MetadosisMutationPurposeTag,
@@ -31,22 +30,6 @@ pub(crate) const fn is_overridden_by_subcall_out_of_gas(error: &PrecompileError)
             | PrecompileError::WriteProtection
             | PrecompileError::BodyReadCorruption(_)
     )
-}
-
-/// Errors that occur when the builder constructs the Outbe EVM setup.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum OutbeEvmBuilderError {
-    #[error("OCOMP fork install requires an active lifecycle schedule")]
-    OcompForkInstallRequiresLifecycleSchedule,
-    #[error("active OCOMP lifecycle requires a chain-manifest fork install")]
-    ActiveOcompLifecycleRequiresForkInstall,
-    #[error(
-        "OCOMP fork install height {install_height} differs from lifecycle height {lifecycle_height}"
-    )]
-    OcompForkInstallHeightMismatch {
-        install_height: u64,
-        lifecycle_height: u64,
-    },
 }
 
 /// Errors that occur when the node checks TEE genesis and ChainSpec data.
@@ -262,31 +245,6 @@ impl From<TeeAttestationActivationError> for String {
     }
 }
 
-/// Errors that occur when the finality authority checks local finalized headers.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum FinalityAuthorityLocalError {
-    #[error("{0}")]
-    Provider(String),
-    #[error("finalized checkpoint is unavailable")]
-    FinalizedCheckpointUnavailable,
-    #[error("claimed request height {claimed} is above local finalized height {finalized}")]
-    ClaimedHeightAboveFinalized { claimed: u64, finalized: u64 },
-    #[error("canonical hash at finalized height {height} is unavailable")]
-    CanonicalHashUnavailable { height: u64 },
-}
-
-impl FinalityAuthorityLocalError {
-    pub(crate) fn provider(error: impl Display) -> OcompFinalityAuthorityError {
-        Self::Provider(error.to_string()).into()
-    }
-}
-
-impl From<FinalityAuthorityLocalError> for OcompFinalityAuthorityError {
-    fn from(error: FinalityAuthorityLocalError) -> Self {
-        Self::LocalAuthority(error.to_string())
-    }
-}
-
 /// Errors that occur when the config validates or recovers signers from system transactions.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SystemTxExpectationError {
@@ -403,14 +361,10 @@ pub enum BeginBlockPrecompileError {
     NativeValueRejected,
     #[error("invalid system tx input: {0}")]
     InvalidSystemTxInput(String),
-    #[error("OCOMP terminal request requires execution seal authority")]
-    OcompTerminalRequestMissingSealAuthority,
     #[error("{name} exceeds u64 range: {value}")]
     ValueExceedsU64 { name: &'static str, value: U256 },
     #[error("Cycle execution body read authority was not supplied")]
     MissingCycleBodyReadAuthority,
-    #[error("RewardsGemDelivery execution body read authority was not supplied")]
-    MissingRewardsGemDeliveryBodyReadAuthority,
     #[error("proposer is not a current consensus participant: {proposer}")]
     ProposerNotConsensusParticipant { proposer: Address },
     #[error(
@@ -591,9 +545,7 @@ impl From<BeginBlockPrecompileError> for PrecompileError {
     fn from(error: BeginBlockPrecompileError) -> Self {
         match error {
             BeginBlockPrecompileError::MissingPreloadedExecutionSummary { .. }
-            | BeginBlockPrecompileError::OcompTerminalRequestMissingSealAuthority
             | BeginBlockPrecompileError::MissingCycleBodyReadAuthority
-            | BeginBlockPrecompileError::MissingRewardsGemDeliveryBodyReadAuthority
             | BeginBlockPrecompileError::MissingVerifiedParentStateRoot => {
                 Self::BodyReadUnavailable(error.to_string())
             }

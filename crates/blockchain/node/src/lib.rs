@@ -6,12 +6,11 @@
 pub mod consensus;
 pub mod engine;
 pub mod errors;
-pub mod finalized_frame;
 pub mod node;
-pub mod ocomp;
 pub mod payload_builder;
 pub mod shutdown;
 pub mod state_persistence;
+pub mod state_proof;
 pub mod tee_call_context;
 pub mod tee_canary;
 

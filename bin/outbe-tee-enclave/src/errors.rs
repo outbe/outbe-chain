@@ -12,8 +12,8 @@ use std::fmt;
 
 pub use attestation::{DcapVerifyError, FinalizedAdmissionError, GramineError};
 pub use compute::{
-    ComputeError, FidelityEnclaveError, GratisRejectReason, NodMaterializationRejectReason,
-    NodMineRejectReason, PayloadError, ProcessError, PromisRejectReason, TributeDayRejectReason,
+    ComputeError, FidelityEnclaveError, GratisRejectReason, NodMineRejectReason, PayloadError,
+    ProcessError, PromisRejectReason, TributeDayRejectReason,
 };
 pub use init::{InitError, OnboardingUploadError, RunError, SgxSealingError};
 pub use transport::{
@@ -179,11 +179,6 @@ impl TeeError {
     /// Wrap a prefixed debuggable error as a `TeeError::Dkg` variant.
     pub fn dkg_debug_context(prefix: &'static str, err: impl fmt::Debug) -> Self {
         Self::Dkg(format!("{prefix}: {err:?}"))
-    }
-
-    /// Wrap a displayable error as a `TeeError::TributeOfferReject` variant.
-    pub fn tribute_offer_reject(err: impl fmt::Display) -> Self {
-        Self::TributeOfferReject(err.to_string())
     }
 }
 

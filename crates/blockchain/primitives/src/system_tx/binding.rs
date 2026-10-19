@@ -1,7 +1,7 @@
 //! Pure system-transaction layout and header/body bindings.
 use super::{
-    split_system_layout, validate_system_tx_set_for_publication, OcompLifecycleActivation,
-    SystemTxError, SystemTxInputV2, SystemTxKind, SystemTxLayout,
+    split_system_layout, validate_system_tx_set_for_publication, SystemTxError, SystemTxInputV2,
+    SystemTxKind, SystemTxLayout,
 };
 use crate::{
     error::PrecompileError,
@@ -65,7 +65,6 @@ pub enum BoundaryBindingError {
 pub fn validate_system_layout<'a>(
     body: &'a OutbeBlockBody,
     header: &OutbeHeader,
-    activation: OcompLifecycleActivation,
 ) -> Result<(SystemTxLayout<'a>, OutbeBlockArtifacts), LayoutBindingError> {
     let artifacts = decode_outbe_block_artifacts(header.extra_data().as_ref())
         .map_err(LayoutBindingError::Artifacts)?;
@@ -80,7 +79,6 @@ pub fn validate_system_layout<'a>(
         header.number(),
         has_boundary_outcome,
         has_tee_bootstrap,
-        activation,
         artifacts.radicle_publication.is_some(),
     )
     .map_err(LayoutBindingError::Set)?;

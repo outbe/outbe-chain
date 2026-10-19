@@ -7,10 +7,8 @@ pub(crate) fn resolve_live_state_read<T>(
     observation.map(|value| (!head_changed).then_some(value))
 }
 
-#[cfg(feature = "ocomp-integration")]
 use eyre::{ensure, eyre};
 
-#[cfg(feature = "ocomp-integration")]
 pub(crate) struct StateSample<T> {
     pub(crate) before: u64,
     pub(crate) observation: Result<Option<T>, String>,
@@ -18,7 +16,7 @@ pub(crate) struct StateSample<T> {
 }
 
 // None requests a fresh complete observation. It never means an absent owner.
-#[cfg(feature = "ocomp-integration")]
+
 pub(crate) fn state_read_decision<T>(sample: StateSample<T>) -> Result<Option<T>, String> {
     match sample.observation {
         Err(error) => Err(error),
@@ -38,7 +36,6 @@ pub(crate) fn state_read_decision<T>(sample: StateSample<T>) -> Result<Option<T>
     }
 }
 
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn observe_state<T>(
     deadline: std::time::Instant,
     mut sample: impl FnMut() -> eyre::Result<StateSample<T>>,

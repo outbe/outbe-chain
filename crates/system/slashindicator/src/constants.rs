@@ -30,7 +30,7 @@ pub const DEFAULT_VOTER_MISDEMEANOR_THRESHOLD: u64 = 128;
 pub const DEFAULT_VOTER_FELONY_THRESHOLD: u64 = 512;
 
 /// Percentage of stake slashed for one felony.
-pub const DEFAULT_SLASH_AMOUNT_PERCENT: u64 = 5;
+pub const DEFAULT_SLASH_AMOUNT_PERCENT: u64 = 8;
 
 /// Percentage of the slashed amount paid to a valid evidence submitter.
 pub const DEFAULT_EVIDENCE_REWARD_PERCENT: u64 = 10;

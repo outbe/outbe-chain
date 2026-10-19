@@ -13,7 +13,6 @@ use alloy_provider::{Provider, ProviderBuilder};
 use eyre::{bail, Context};
 use outbe_chain_constants::GenesisProtocolParametersV1;
 use outbe_evm::OutbeEvmSigner;
-use outbe_metadosis::test_support::ForkInstallScenario;
 use outbe_node::OutbeNode;
 use outbe_primitives::{
     addresses::REWARDS_ADDRESS,
@@ -225,6 +224,41 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
     // Adding the config field does not change the genesis block hash, so the policy
     // can bind the hash computed from the seeded genesis alloc.
     let mut genesis = seed_single_validator_genesis(&signer)?;
+    let scheduled_version = outbe_update::constants::PROTOCOL_VERSION;
+    {
+        use outbe_primitives::{
+            addresses::UPDATE_ADDRESS,
+            storage::{hashmap::HashMapStorageProvider, StorageHandle},
+        };
+        use outbe_update::schema::{ScheduledUpdateRecord, ScheduledUpdateStatus, Update};
+
+        let mut update_provider = HashMapStorageProvider::new(DEVNET_CHAIN_ID);
+        StorageHandle::enter(&mut update_provider, |storage| {
+            let update = Update::new(storage);
+            let proposal_id = alloy_primitives::U256::from(1u64);
+            update
+                .scheduled_updates
+                .create(&ScheduledUpdateRecord {
+                    proposal_id,
+                    version: scheduled_version,
+                    activation_height: 1,
+                    info: String::new(),
+                    status: ScheduledUpdateStatus::Scheduled.to_u8(),
+                })
+                .expect("seed scheduled update record");
+            update
+                .waiting_for_activation_proposal_ids
+                .push(proposal_id)
+                .expect("seed waiting_for_activation_proposal_ids");
+        });
+        let update_account = genesis.alloc.entry(UPDATE_ADDRESS).or_default();
+        let slot_map = update_account.storage.get_or_insert_with(Default::default);
+        for ((address, slot), value) in update_provider.storage {
+            if address == UPDATE_ADDRESS {
+                slot_map.insert(slot.into(), value.into());
+            }
+        }
+    }
     let genesis_hash = chain_spec_with_genesis(genesis.clone()).genesis_hash();
     let tee_policy = gramine_direct_policy_v1(DEVNET_CHAIN_ID, genesis_hash)
         .expect("GramineDirectDev devnet TEE policy is canonical");
@@ -252,13 +286,6 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
         )
         .expect("GramineDirectDev OST3 bootstrap payload is canonical"),
     );
-    let ocomp_fork_install = Arc::new(
-        ForkInstallScenario::measurement_at(1, DEVNET_CHAIN_ID, genesis_hash)
-            .expect("fresh-devnet OCOMP install fixture is canonical")
-            .with_founder_validators(&[(proposer, genesis_validator_pubkey())])
-            .expect("OCOMP founder registration matches the seeded validator")
-            .into_install(),
-    );
     let runtime = Runtime::test();
 
     let network_config = NetworkArgs {
@@ -283,8 +310,6 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
         shutdown: Default::default(),
         bridge: Some(bridge),
         evm_signer: Some(signer),
-
-        ocomp_fork_install: Some(ocomp_fork_install),
     };
     let NodeHandle {
         node,
@@ -397,6 +422,63 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
         actual_ratio <= 1.0,
         "eth_feeHistory must not leak a 100M system budget over the 30M block gas limit"
     );
+
+    let version_calldata = Bytes::copy_from_slice(&keccak256(b"getActiveVersion()")[..4]);
+    let height_calldata = Bytes::copy_from_slice(&keccak256(b"getActiveVersionHeight()")[..4]);
+    for (block_id, expected_version, expected_height) in [
+        (serde_json::json!("0x0"), 0u64, 0u64),
+        (
+            serde_json::json!({ "blockHash": format!("{genesis_hash:#x}") }),
+            0,
+            0,
+        ),
+        (
+            serde_json::json!("0x1"),
+            u64::from(scheduled_version.raw()),
+            1,
+        ),
+        (
+            serde_json::json!({ "blockHash": format!("{:#x}", rpc_block.header.hash) }),
+            u64::from(scheduled_version.raw()),
+            1,
+        ),
+    ] {
+        let raw_version: Bytes = provider
+            .raw_request(
+                "eth_call".into(),
+                (
+                    serde_json::json!({
+                        "to": outbe_primitives::addresses::UPDATE_ADDRESS,
+                        "data": version_calldata,
+                    }),
+                    block_id.clone(),
+                ),
+            )
+            .await?;
+        assert_eq!(
+            alloy_primitives::U256::from_be_slice(&raw_version),
+            alloy_primitives::U256::from(expected_version),
+            "historical eth_call getActiveVersion mismatch for block {block_id}"
+        );
+
+        let raw_height: Bytes = provider
+            .raw_request(
+                "eth_call".into(),
+                (
+                    serde_json::json!({
+                        "to": outbe_primitives::addresses::UPDATE_ADDRESS,
+                        "data": height_calldata,
+                    }),
+                    block_id.clone(),
+                ),
+            )
+            .await?;
+        assert_eq!(
+            alloy_primitives::U256::from_be_slice(&raw_height),
+            alloy_primitives::U256::from(expected_height),
+            "historical eth_call getActiveVersionHeight mismatch for block {block_id}"
+        );
+    }
 
     Ok(())
 }

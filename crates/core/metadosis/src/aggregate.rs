@@ -1,6 +1,3 @@
-mod ocomp_indexes;
-use ocomp_indexes::validate_ocomp_index_equivalence;
-
 use std::collections::{BTreeMap, BTreeSet};
 
 use alloy_primitives::U256;
@@ -27,7 +24,6 @@ pub enum WwdStatus {
     Ready = status::READY,
     Completed = status::COMPLETED,
     Failed = status::FAILED,
-    OffchainPending = status::OFFCHAIN_PENDING,
 }
 
 impl WwdStatus {
@@ -54,7 +50,6 @@ impl TryFrom<u8> for WwdStatus {
             status::READY => Ok(Self::Ready),
             status::COMPLETED => Ok(Self::Completed),
             status::FAILED => Ok(Self::Failed),
-            status::OFFCHAIN_PENDING => Ok(Self::OffchainPending),
             other => Err(MetadosisStorageCorruptionError::WwdUnknownStatusTag { other }.into()),
         }
     }
@@ -180,18 +175,18 @@ impl ValidatedWwdAggregate {
 
     pub(crate) fn retained_count(&self) -> usize {
         self.active_records()
-            .filter(|record| matches!(record.status, WwdStatus::Ready | WwdStatus::OffchainPending))
+            .filter(|record| matches!(record.status, WwdStatus::Ready))
             .count()
     }
 
     pub(crate) fn validate_capacity_victim(&self, victim: &WwdProjection) -> Result<()> {
         let victim_key = (victim.scheduled_process_time, victim.worldwide_day);
         if self.active_records().any(|record| {
-            matches!(record.status, WwdStatus::Ready | WwdStatus::OffchainPending)
+            matches!(record.status, WwdStatus::Ready)
                 && (record.scheduled_process_time, record.worldwide_day) > victim_key
         }) {
             return Err(
-                MetadosisStorageCorruptionError::CapacityForfeitureCandidateOlderThanRetainedOcompWork
+                MetadosisStorageCorruptionError::CapacityForfeitureCandidateOlderThanRetainedWork
                     .into(),
             );
         }
@@ -219,7 +214,6 @@ impl ValidatedWwdAggregate {
         let contract = MetadosisContract::new(storage);
         let (active_set, closed_set) = load_index_membership(&contract)?;
         let records = load_records(&contract, &active_set, &closed_set)?;
-        validate_ocomp_index_equivalence(&contract, &records, &active_set)?;
         let active_order = build_active_order(active_set, &records);
         let aggregate = Self {
             records,
@@ -228,7 +222,7 @@ impl ValidatedWwdAggregate {
         let retained_count = aggregate.retained_count();
         if retained_count > MAX_RETAINED_WWDS {
             return Err(
-                MetadosisStorageCorruptionError::RetainedWwdPopulationExceedsOcompCap {
+                MetadosisStorageCorruptionError::RetainedWwdPopulationExceedsCap {
                     retained_count,
                     max_retained_wwds: MAX_RETAINED_WWDS,
                 }
@@ -291,7 +285,6 @@ fn load_records(
             let day_type = WwdDayType::try_from(record.day_type)?;
             validate_record_shape(*wwd, status, membership, &record)?;
             validate_terminal_state(contract, *wwd, status, membership, &record)?;
-            validate_record_ocomp_presence(contract, *wwd, status, membership)?;
             records.insert(
                 *wwd,
                 WwdProjection::from_record(*wwd, status, day_type, membership, &record),
@@ -348,24 +341,6 @@ fn validate_terminal_state(
             expected_value_routed,
         ))
         .map_err(|_| MetadosisStorageCorruptionError::WwdInvalidTerminalReceipt { wwd }.into())
-}
-
-fn validate_record_ocomp_presence(
-    contract: &MetadosisContract<'_>,
-    wwd: WorldwideDay,
-    status: WwdStatus,
-    membership: WwdMembership,
-) -> Result<()> {
-    let has_ocomp_state = !contract.ocomp_fsm_states.get_bytes(&wwd).is_empty()?;
-    if status == WwdStatus::OffchainPending && !has_ocomp_state {
-        return Err(
-            MetadosisStorageCorruptionError::OffchainPendingWwdMissingOcompFsm { wwd }.into(),
-        );
-    }
-    if matches!(membership, WwdMembership::Closed) && has_ocomp_state {
-        return Err(MetadosisStorageCorruptionError::ClosedWwdRetainsLiveOcompFsm { wwd }.into());
-    }
-    Ok(())
 }
 
 fn build_active_order(

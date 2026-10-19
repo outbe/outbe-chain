@@ -76,7 +76,6 @@ fn input_for(kind: SystemTxKind) -> SystemTxInputV2 {
         SystemTxKind::LateFinalizeCredits => SystemTxInputV2::LateFinalizeCredits {
             artifact: outbe_primitives::reshare_artifact::LateFinalizeCreditsArtifact::default(),
         },
-        SystemTxKind::OcompLifecycleBegin => SystemTxInputV2::OcompLifecycleBegin,
         SystemTxKind::CycleTick => SystemTxInputV2::CycleTick,
         SystemTxKind::RewardsGemDelivery => SystemTxInputV2::RewardsGemDelivery,
         SystemTxKind::BoundaryOutcome => SystemTxInputV2::BoundaryOutcome {
@@ -109,7 +108,6 @@ fn input_for(kind: SystemTxKind) -> SystemTxInputV2 {
         SystemTxKind::RadiclePublication => SystemTxInputV2::RadiclePublication {
             batch: outbe_primitives::test_utils::sample_radicle_publication_batch(1),
         },
-        SystemTxKind::OcompTerminalRequest => SystemTxInputV2::OcompTerminalRequest,
     }
 }
 
@@ -176,23 +174,58 @@ fn full_begin_system_prefix_validates_before_user_transactions() {
 
 #[test]
 fn missing_or_extra_receipt_visible_system_txs_are_rejected() {
-    let missing_oracle = vec![
-        system_tx(SystemTxKind::CertifiedParentAccounting, 0),
-        system_tx(SystemTxKind::CycleTick, 1),
-        system_tx(SystemTxKind::BoundaryOutcome, 2),
-    ];
-    let layout = split_system_layout(&missing_oracle).expect("layout splits");
-    assert!(validate_active_system_tx_set(&layout, BLOCK_NUMBER, true, false).is_err());
+    use outbe_primitives::system_tx::SystemTxError;
 
-    let unexpected_boundary = vec![
-        system_tx(SystemTxKind::CertifiedParentAccounting, 0),
-        system_tx(SystemTxKind::CycleTick, 1),
-        system_tx(SystemTxKind::BoundaryOutcome, 2),
-        system_tx(SystemTxKind::OracleSlashWindow, 3),
-        system_tx(SystemTxKind::HookEvents, 4),
+    let canonical_with_boundary = vec![
+        SystemTxKind::CertifiedParentAccounting,
+        SystemTxKind::LateFinalizeCredits,
+        SystemTxKind::CycleTick,
+        SystemTxKind::RewardsGemDelivery,
+        SystemTxKind::BoundaryOutcome,
+        SystemTxKind::OracleSlashWindow,
+        SystemTxKind::HookEvents,
     ];
+    let missing_oracle_kinds: Vec<SystemTxKind> = canonical_with_boundary
+        .iter()
+        .copied()
+        .filter(|&kind| kind != SystemTxKind::OracleSlashWindow)
+        .collect();
+    let missing_oracle: Vec<TransactionSigned> = missing_oracle_kinds
+        .iter()
+        .enumerate()
+        .map(|(ordinal, &kind)| system_tx(kind, ordinal as u8))
+        .collect();
+    let layout = split_system_layout(&missing_oracle).expect("layout splits");
+    assert_eq!(
+        validate_active_system_tx_set(&layout, BLOCK_NUMBER, true, false),
+        Err(SystemTxError::ActiveSystemTxSetMismatch {
+            expected_begin: canonical_with_boundary.clone(),
+            expected_end: Vec::new(),
+            actual_begin: missing_oracle_kinds,
+            actual_end: Vec::new(),
+        })
+    );
+
+    let canonical_without_boundary: Vec<SystemTxKind> = canonical_with_boundary
+        .iter()
+        .copied()
+        .filter(|&kind| kind != SystemTxKind::BoundaryOutcome)
+        .collect();
+    let unexpected_boundary: Vec<TransactionSigned> = canonical_with_boundary
+        .iter()
+        .enumerate()
+        .map(|(ordinal, &kind)| system_tx(kind, ordinal as u8))
+        .collect();
     let layout = split_system_layout(&unexpected_boundary).expect("layout splits");
-    assert!(validate_active_system_tx_set(&layout, BLOCK_NUMBER, false, false).is_err());
+    assert_eq!(
+        validate_active_system_tx_set(&layout, BLOCK_NUMBER, false, false),
+        Err(SystemTxError::ActiveSystemTxSetMismatch {
+            expected_begin: canonical_without_boundary,
+            expected_end: Vec::new(),
+            actual_begin: canonical_with_boundary,
+            actual_end: Vec::new(),
+        })
+    );
 }
 
 #[test]

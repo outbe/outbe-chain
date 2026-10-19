@@ -240,7 +240,6 @@ fn try_forfeit(
     // Burns from the last member down, each in its own checkpoint, as the sweep does.
     storage.with_checkpoint(|| {
         let mut nod = NodContract::new(storage.clone());
-        let bodies = crate::expired::Bodies { storage };
         let mut burned = 0;
         while burned < budget {
             let Some(last) = nod.bucket_nod_count.read(&bucket_key)?.checked_sub(1) else {
@@ -250,11 +249,11 @@ fn try_forfeit(
                 .bucket_nods
                 .read(&outbe_nod::index_keys::bucket_nod_key(bucket_key, last))?;
             let burn = storage.with_checkpoint(|| {
-                crate::expired::forfeit_member(&bodies, &mut nod, bucket_key, nod_id)
+                crate::expired::forfeit_member(storage, &mut nod, bucket_key, nod_id)
             });
             match burn {
                 Ok(()) => burned += 1,
-                Err(error) if error.body_sweep_failure() == SweepFailure::Stop => break,
+                Err(error) if error.record_sweep_failure() == SweepFailure::Stop => break,
                 Err(error) => return Err(error),
             }
         }
@@ -1519,39 +1518,6 @@ fn a_running_call_sweep_keeps_its_day() {
 }
 
 #[test]
-fn a_bucket_is_not_called_while_its_generation_is_materializing() {
-    harness(|storage| {
-        let item = issue_owned(storage, Address::repeat_byte(0x91), ISO);
-        let nod = NodContract::new(storage.clone());
-        nod.ocomp_target_generation
-            .write(&item.worldwide_day, 1)
-            .unwrap();
-        let at = START + 30 * DAY;
-        fill_days(
-            storage,
-            last_closed_day(at),
-            CALL_LOOKBACK_DAYS,
-            above_call(),
-        );
-        assert_eq!(scan(storage, at), 0);
-        assert_eq!(called_at(storage, item.bucket_key), 0);
-
-        nod.ocomp_target_generation
-            .write(&item.worldwide_day, 0)
-            .unwrap();
-        let next = at + DAY;
-        fill_days(
-            storage,
-            last_closed_day(next),
-            CALL_LOOKBACK_DAYS,
-            above_call(),
-        );
-        assert_eq!(scan(storage, next), 1);
-        assert_eq!(called_at(storage, item.bucket_key), next);
-    });
-}
-
-#[test]
 fn every_cycle_tick_forfeits_without_the_daily_trigger() {
     harness(|storage| {
         let (bucket_key, _) = arm_lapsed(storage, &[(0x97, 3, false)]);
@@ -1569,32 +1535,6 @@ fn every_cycle_tick_forfeits_without_the_daily_trigger() {
         assert_eq!(nod.bucket_nod_count.read(&bucket_key).unwrap(), 0);
         assert!(!is_queued(storage, bucket_key));
         assert_eq!(reserve(storage), U256::from(3u64));
-    });
-}
-
-#[test]
-fn a_lapsed_bucket_waits_for_its_generation_to_materialize_before_forfeiting() {
-    harness(|storage| {
-        let (bucket_key, items) = arm_lapsed(storage, &[(0x95, 3, false), (0x96, 5, false)]);
-        let nod = NodContract::new(storage.clone());
-        let worldwide_day = items[0].worldwide_day;
-        nod.ocomp_target_generation
-            .write(&worldwide_day, 1)
-            .unwrap();
-        let past = START + 30 * DAY + NOTICE + HOUR;
-        assert_eq!(scan(storage, past), 0);
-        assert_eq!(nod.bucket_nod_count.read(&bucket_key).unwrap(), 2);
-        assert!(is_queued(storage, bucket_key));
-        assert_eq!(reserve(storage), U256::ZERO);
-
-        nod.ocomp_target_generation
-            .write(&worldwide_day, 0)
-            .unwrap();
-        let next = past + DAY;
-        finalize_through(storage, next);
-        assert_eq!(scan(storage, next), 2);
-        assert_eq!(nod.bucket_nod_count.read(&bucket_key).unwrap(), 0);
-        assert_eq!(reserve(storage), U256::from(8u64));
     });
 }
 

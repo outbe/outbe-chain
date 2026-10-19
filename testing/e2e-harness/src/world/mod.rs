@@ -7,18 +7,17 @@
 //! work to `crate::internal`.
 
 pub mod bidders;
-#[cfg(feature = "ocomp-integration")]
+
 pub mod credis;
 pub mod forge;
 pub mod hardhat;
 pub mod localnet;
-pub mod ocomp;
 pub mod origin_venue;
 pub mod price_oracle;
 pub mod projection;
 pub mod relay;
 pub mod rpc;
-#[cfg(feature = "ocomp-integration")]
+
 pub mod settlement_currency;
 pub mod state;
 pub mod target_chain;
@@ -28,9 +27,7 @@ pub mod venue_probes;
 
 use crate::env::environment;
 use crate::internal::config::Config;
-use crate::ocomp_capacity::OcompCapacityResourceMeterV1;
 use localnet::Localnet;
-use ocomp::OcompTopology;
 use price_oracle::PriceOracleTopology;
 use projection::ProjectionFixture;
 use rpc::Rpc;
@@ -49,20 +46,14 @@ pub struct World {
     /// The localnet and every owned node: bootstrap/start/stop the committee,
     /// provision/launch the joiner + followers, kill/restart validators.
     pub localnet: Localnet,
-    /// Scenario-owned RocksDB projection and read-only observation sessions.
+    /// Fixed-checkpoint EVM state reads over RPC, compared across validators.
     pub projection: ProjectionFixture,
     /// Chain reads/sends/waits.
     pub rpc: Rpc,
     /// Validator/operator identities and committee size.
     pub validators: Validators,
-    /// One isolated OCOMP domain per active validator. Processes are owned here
-    /// so dropping a scenario cannot orphan compute work.
-    pub ocomp: OcompTopology,
     /// Harness-owned price source and the real feeder process that consumes it.
     pub price_oracle: PriceOracleTopology,
-    /// Present only when the Rust capacity runner explicitly starts this
-    /// scenario inside its dedicated cold-run cgroup.
-    pub(crate) capacity_meter: Option<OcompCapacityResourceMeterV1>,
     /// Local EVM chain the committee bridges to. Idle until a scenario starts it.
     pub target_chain: TargetChain,
     /// Carries mailbox dispatches between the two chains. Dropping it stops the pump,
@@ -83,13 +74,6 @@ impl Default for World {
         let cfg = Config::for_scenario(&env, id);
         cfg.validate_committee_ipc_paths(env.validators)
             .expect("validate scenario node IPC paths before starting services");
-        let capacity_meter = std::env::var("OUTBE_OCOMP_CAPACITY_RUN_ID")
-            .ok()
-            .map(|run_id| {
-                OcompCapacityResourceMeterV1::start_current_process(&run_id).unwrap_or_else(
-                    |error| panic!("start dedicated OCOMP capacity meter: {error:#}"),
-                )
-            });
         let projection = projection::projection_fixture(&cfg);
         let target_chain = TargetChain::new(cfg.clone());
         Self {
@@ -99,9 +83,7 @@ impl Default for World {
             projection,
             rpc: Rpc::new(cfg.clone()),
             validators: Validators::new(cfg.clone(), env.validators),
-            ocomp: OcompTopology::new(cfg.clone()),
             price_oracle: PriceOracleTopology::new(cfg),
-            capacity_meter,
             target_chain,
             state: FixtureState::default(),
         }

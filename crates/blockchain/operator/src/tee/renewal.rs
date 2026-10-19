@@ -1242,54 +1242,6 @@ mod tests {
         assert!(exact_transaction_receipt_exists(&rpc, raw).await.is_err());
     }
 
-    #[test]
-    fn direct_dev_renewal_uses_only_the_enclave_intent_signature() {
-        let genesis_hash = B256::repeat_byte(0x44);
-        let policy = initial_tee_policy_v1(
-            InitialTeeProfileV1::GramineDirectDev,
-            DEVNET_CHAIN_ID,
-            genesis_hash,
-        )
-        .unwrap();
-        let signer = ed25519_dalek::SigningKey::from_bytes(&[0x45; 32]);
-        let mut intent =
-            RegistrationIntentV1::decode_canonical(&target_attempt().0.intent).unwrap();
-        intent.chain_id = policy.chain_id;
-        intent.genesis_hash = genesis_hash;
-        intent.attestation_mode = AttestationMode::GramineDirectDev;
-        intent.policy_hash = policy.policy_hash().unwrap();
-        intent.attestation_ed25519 = signer.verifying_key().to_bytes();
-        intent.enclave_id = intent.derived_enclave_id().unwrap();
-        let mut enclave = DirectOnlyEnclave {
-            signer,
-            dcap_calls: 0,
-            direct_calls: 0,
-        };
-
-        let generated = generate_renewal_evidence(
-            &mut enclave,
-            &intent,
-            &policy,
-            RenewalEvidenceWindow {
-                finalized_timestamp: 100,
-                desired_valid_until: 700,
-            },
-        )
-        .unwrap();
-        assert_eq!(enclave.dcap_calls, 0);
-        assert_eq!(enclave.direct_calls, 1);
-        assert_eq!(generated.collateral_valid_until, u64::MAX);
-        assert_eq!(generated.collateral_margin, 0);
-        let decoded = AttestationEvidenceV1::decode_canonical(&generated.evidence).unwrap();
-        assert_eq!(decoded.evidence_hash().unwrap(), generated.evidence_hash);
-        let AttestationEvidenceV1::GramineDirectDev(direct) = decoded else {
-            panic!("expected GramineDirectDev evidence");
-        };
-        assert_eq!(direct.intent, intent);
-        assert_eq!(direct.dev_attestation_public, intent.attestation_ed25519);
-        assert_eq!(direct.dev_signature, generated.enclave_signature);
-    }
-
     #[tokio::test]
     async fn direct_dev_prepare_builds_the_shared_calldata_and_relay_transaction() {
         let genesis_hash = B256::repeat_byte(0x51);
@@ -1391,6 +1343,24 @@ mod tests {
         assert_eq!(enclave.direct_calls, 1);
         assert_eq!(attempt.collateral_valid_until, u64::MAX);
         assert_eq!(attempt.collateral_margin, 0);
+        let decoded_intent = RegistrationIntentV1::decode_canonical(&attempt.intent).unwrap();
+        let decoded_evidence = AttestationEvidenceV1::decode_canonical(&attempt.evidence).unwrap();
+        assert_eq!(
+            decoded_evidence.evidence_hash().unwrap(),
+            attempt.evidence_hash
+        );
+        let AttestationEvidenceV1::GramineDirectDev(direct) = decoded_evidence else {
+            panic!("expected GramineDirectDev evidence");
+        };
+        assert_eq!(direct.intent, decoded_intent);
+        assert_eq!(
+            direct.dev_attestation_public,
+            decoded_intent.attestation_ed25519
+        );
+        assert_eq!(
+            direct.dev_signature.as_slice(),
+            attempt.enclave_signature.as_slice()
+        );
         let call = ITeeRegistryV1::renewEnclaveCall::abi_decode(&attempt.calldata).unwrap();
         assert_eq!(call.evidence.as_ref(), attempt.evidence);
         assert_eq!(call.nodeSignature.as_ref(), attempt.node_signature);

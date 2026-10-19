@@ -1,5 +1,54 @@
 use super::*;
 
+#[test]
+fn publication_budget_uses_executed_genesis_timing_and_actual_vote_period() {
+    use outbe_consensus::timing::{
+        DEFAULT_CERTIFICATION_TIMEOUT_MS, DEFAULT_LEADER_TIMEOUT_MS, DEFAULT_MIN_BLOCK_TIME_MS,
+    };
+    let sgx = serde_json::json!({"config": {
+        "minBlockTimeMs": 2000,
+        "leaderTimeoutMs": 15000,
+        "certificationTimeoutMs": 30000,
+    }});
+    assert_eq!(
+        publication_budget(&sgx, 60).unwrap(),
+        Duration::from_secs(7200)
+    );
+    assert_eq!(
+        publication_budget(&sgx, 30).unwrap(),
+        Duration::from_secs(3600)
+    );
+    let explicit_defaults = serde_json::json!({"config": {
+        "minBlockTimeMs": DEFAULT_MIN_BLOCK_TIME_MS,
+        "leaderTimeoutMs": DEFAULT_LEADER_TIMEOUT_MS,
+        "certificationTimeoutMs": DEFAULT_CERTIFICATION_TIMEOUT_MS,
+    }});
+    assert_eq!(
+        publication_budget(&serde_json::json!({"config": {}}), 60).unwrap(),
+        publication_budget(&explicit_defaults, 60).unwrap()
+    );
+}
+
+#[test]
+fn publication_budget_rejects_invalid_timing_and_overflow() {
+    let defaults = serde_json::json!({"config": {}});
+    assert!(publication_budget(&defaults, 0).is_err());
+    assert!(publication_budget(&defaults, u64::MAX).is_err());
+    for config in [
+        serde_json::json!({"minBlockTimeMs": 0}),
+        serde_json::json!({"leaderTimeoutMs": "15000"}),
+        serde_json::json!({"certificationTimeoutMs": null}),
+        serde_json::json!({"leaderTimeoutMs": 1000}),
+        serde_json::json!({"certificationTimeoutMs": 3000}),
+        serde_json::json!({"certificationTimeoutMs": u64::MAX}),
+    ] {
+        assert!(
+            publication_budget(&serde_json::json!({"config": config}), 60).is_err(),
+            "malformed, unordered or overflowing timing must not permit an Oracle wait"
+        );
+    }
+}
+
 fn checkpoint() -> OracleCheckpointV1 {
     OracleCheckpointV1 {
         height: 20,

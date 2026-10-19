@@ -14,7 +14,16 @@ use revm::{
     state::{AccountInfo, Bytecode},
 };
 
+use std::sync::LazyLock;
+
 const GAS_LIMIT: u64 = 1_000_000;
+
+static RESERVED_CREATE_CALLER_NONCE_0: LazyLock<Address> =
+    LazyLock::new(|| find_create_caller(0, true));
+static ADJACENT_CREATE_CALLER_NONCE_0: LazyLock<Address> =
+    LazyLock::new(|| find_create_caller(0, false));
+static RESERVED_CREATE_CALLER_NONCE_1: LazyLock<Address> =
+    LazyLock::new(|| find_create_caller(1, true));
 
 fn test_env() -> EvmEnv {
     EvmEnv {
@@ -62,9 +71,9 @@ fn create_tx(caller: Address, nonce: u64) -> TxEnv {
 
 #[test]
 fn top_level_create_uses_canonical_collision_while_adjacent_create_succeeds() {
-    let reserved_caller = find_create_caller(0, true);
+    let reserved_caller = *RESERVED_CREATE_CALLER_NONCE_0;
     let reserved_target = reserved_caller.create(0);
-    let adjacent_caller = find_create_caller(0, false);
+    let adjacent_caller = *ADJACENT_CREATE_CALLER_NONCE_0;
     let adjacent_target = adjacent_caller.create(0);
 
     let mut reserved_db = CacheDB::new(EmptyDB::default());
@@ -208,7 +217,7 @@ fn execute_parent(parent: Address, nonce: u64, runtime: Bytes) -> (U256, u64) {
 
 #[test]
 fn nested_create_and_create2_return_zero_for_reserved_destinations() {
-    let create_parent = find_create_caller(1, true);
+    let create_parent = *RESERVED_CREATE_CALLER_NONCE_1;
     assert_eq!(
         execute_parent(create_parent, 1, create_and_store_runtime(None)),
         (U256::ZERO, 2)
@@ -234,7 +243,7 @@ fn nested_create_and_create2_return_zero_for_reserved_destinations() {
 #[test]
 fn native_value_transfer_to_reserved_address_remains_valid() {
     let sender = Address::repeat_byte(0x77);
-    let reserved = find_create_caller(0, true).create(0);
+    let reserved = RESERVED_CREATE_CALLER_NONCE_0.create(0);
     let mut db = CacheDB::new(EmptyDB::default());
     db.insert_account_info(sender, funded_account(0));
 

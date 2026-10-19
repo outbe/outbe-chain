@@ -8,7 +8,7 @@ fn a_fresh_gem_is_payable_at_once() {
         let load = U256::from(10u64) * six_decimal_unit();
         let gem_id =
             issue_at_live_rate(storage, ALICE, GemTypes::Validator, load, 840, 840).unwrap();
-        admitted_at_quote(storage, gem_id, STABLE);
+        admitted_at_quote(storage, gem_id, SETTLEMENT_ASSET);
     });
 }
 

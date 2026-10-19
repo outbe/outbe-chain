@@ -1,7 +1,8 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolInterface;
 use outbe_primitives::dispatch::{dispatch_call, mutate, view};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
+use outbe_vaultrouter::settlement::SettlementPayment;
 
 use crate::runtime;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
@@ -33,20 +34,15 @@ pub fn dispatch(
     if let Some(answer) = crate::test_arming_e2e::dispatch(&storage, data) {
         return answer;
     }
-    if data.get(..4)
-        == Some(outbe_ocomp_protocol::abi::MATERIALIZE_CERTIFIED_NODS_SELECTOR.as_slice())
-    {
-        return dispatch_materialization(storage, data, caller);
-    }
     dispatch_call(data, INodFactory::INodFactoryCalls::abi_decode, |call| {
         use INodFactory::INodFactoryCalls::*;
         match call {
             settleNod(c) => mutate(&storage, c, caller, |sender, c| {
                 runtime::settle_nod(
                     &storage,
-                    runtime::SettleNodRequest {
-                        caller: sender,
-                        nod_id: WwdEntityId::from(c.nodId),
+                    WwdEntityId::from(c.nodId),
+                    SettlementPayment {
+                        payer: sender,
                         asset: c.asset,
                         snapshot_id: c.snapshotId,
                     },
@@ -78,61 +74,6 @@ pub fn dispatch(
                 )?;
                 Ok(encrypted_balance)
             }),
-            materializationHead(c) => view(c, |_| {
-                let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
-                let head =
-                    outbe_nod::NodContract::new(storage.clone()).ocomp_materialization_head()?;
-                let (exists, canonical_head) =
-                    crate::materialization::encode_materialization_head(head, &limits)?;
-                Ok(INodFactory::materializationHeadReturn {
-                    exists,
-                    canonicalHead: canonical_head,
-                })
-            }),
-            materializeCertifiedNods(_) => {
-                Err(crate::errors::NodFactoryError::MaterializationBypassedDispatcher.into())
-            }
         }
-    })
-}
-
-fn dispatch_materialization(
-    storage: outbe_primitives::storage::StorageHandle<'_>,
-    data: &[u8],
-    caller: Address,
-) -> Result<Bytes> {
-    outbe_primitives::dispatch::ensure_mutation_allowed(&storage)?;
-    crate::materialization::authorize_materializer(storage.clone(), caller)
-        .map_err(crate::materialization::typed_materialization_error)?;
-    let profile = outbe_chain_constants::NodMaterializationProfileV1 {
-        batch_subtree_height: outbe_chain_constants::get_nod_materialization_batch_subtree_height(),
-        retry_interval_blocks: outbe_chain_constants::get_nod_materialization_retry_interval_blocks(
-        ),
-        max_attempts_per_block:
-            outbe_chain_constants::get_nod_materialization_max_attempts_per_block(),
-    };
-    let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
-    storage.clone().with_checkpoint(|| {
-        crate::materialization::consume_materialization_attempt(&storage, profile)
-            .map_err(crate::materialization::typed_materialization_error)?;
-        let batch =
-            outbe_ocomp_protocol::abi::decode_protected_materialize_certified_nods_calldata(
-                data, &limits,
-            )
-            .map_err(|_| {
-                crate::materialization::typed_materialization_error(PrecompileError::from(
-                    crate::errors::NodFactoryError::InvalidMaterializationBatchShape,
-                ))
-            })?;
-        crate::materialization::materialize_protected_after_attempt(
-            &storage,
-            &batch,
-            crate::materialization::MaterializationRules {
-                profile,
-                limits: &limits,
-            },
-        )
-        .map_err(crate::materialization::typed_materialization_error)?;
-        Ok(Bytes::new())
     })
 }

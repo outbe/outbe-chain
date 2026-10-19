@@ -516,10 +516,7 @@ class PrepareNetworkTests(unittest.TestCase):
             genesis = json.loads((output / "genesis.json").read_text())
             config = genesis["config"]
             self.assertEqual(config["epochLengthBlocks"], 300)
-            self.assertIn("ocompForkInstallV1", config)
-            self.assertIn("metadosisStorageLayoutV1", config)
             self.assertIn("teeAttestationV1", config)
-            self.assertTrue((output / "protocol-bundle-v1.ocb1").is_file())
             funded = genesis["alloc"]["4fe927ab711793954b3a29969ecd4a60d6d265d0"]
             self.assertEqual(int(funded["balance"], 16), 1_000_000_000_000_000_000_000)
             self.assertFalse(
@@ -536,11 +533,9 @@ class PrepareNetworkTests(unittest.TestCase):
 
             node_scripts = []
             enclave_scripts = []
-            projection_scope = (output / "projection-scope").read_text().strip()
+            deployment_scope = (output / "deployment-scope").read_text().strip()
             for index in range(4):
                 validator_dir = output / f"validator-{index}"
-                self.assertTrue((validator_dir / "ocomp-key-v1.hex").is_file())
-                self.assertTrue((validator_dir / "ocomp-registration-v1.ocb1").is_file())
                 self.assertTrue((validator_dir / "radicle/keys/radicle").is_file())
                 self.assertTrue((validator_dir / "radicle/keys/radicle.pub").is_file())
                 self.assertFalse((validator_dir / "signing-share.hex").exists())
@@ -556,9 +551,6 @@ class PrepareNetworkTests(unittest.TestCase):
                 self.assertNotIn("--consensus.signing-share", node)
                 self.assertNotIn("--consensus.public-polynomial", node)
                 self.assertNotIn("--consensus.dkg-output", node)
-                self.assertNotIn("--projection.storage-config", node)
-                self.assertNotIn("--projection.mongodb", node)
-                self.assertFalse((validator_dir / "offchain-storage.toml").exists())
                 self.assertIn("--engine.persistence-threshold 0", node)
                 self.assertIn("--engine.memory-block-buffer-target 0", node)
                 self.assertNotIn("--node-evm-key", node)
@@ -568,7 +560,7 @@ class PrepareNetworkTests(unittest.TestCase):
                 self.assertTrue(node.startswith("#!/usr/bin/env bash\nset -euo pipefail\n"))
                 self.assertIn("/usr/local/bin/outbe-chain node", node)
                 self.assertIn(
-                    f"--name 'outbe-{projection_scope}-enclave-{index}'",
+                    f"--name 'outbe-{deployment_scope}-enclave-{index}'",
                     enclave_scripts[-1],
                 )
 

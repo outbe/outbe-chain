@@ -2,8 +2,8 @@
 #
 #   python3 scripts/create_genesis.py testnet.yaml
 #
-# One run produces genesis.json, protocol-bundle-v1.ocb1, reth-bootnodes.txt,
-# per-machine launch scripts and DEPLOY.md.
+# One run produces genesis.json, reth-bootnodes.txt, per-machine launch scripts
+# and DEPLOY.md.
 #
 # This file is also the baseline profile: a network.yaml of your own may list
 # only what it changes, and every protocol section it omits is taken from here.
@@ -12,7 +12,7 @@
 
 chain_id: 424242
 
-# One host or IP per founding validator, in order. OCOMP V1 fixes the founding
+# One host or IP per founding validator, in order. The bootstrap profile fixes the founding
 # committee at four members. Append `:port` to give one validator a consensus
 # port of its own (`- 10.0.0.3:31555`).
 validators:
@@ -25,7 +25,6 @@ validators:
 #   keys_dir/validator-0/signing-key.hex          BLS consensus key
 #   keys_dir/validator-0/evm-key.hex              EVM signer
 #   keys_dir/validator-0/radicle/keys/radicle.pub Radicle identity
-#   keys_dir/validator-0/ocomp-registration-v1.ocb1   minted here if absent
 # Produced by `outbe-keygen validator --output-dir <dir> --chain-id <id>`.
 # Public keys, addresses and node ids are read from these files, never restated
 # in this yaml.
@@ -55,7 +54,6 @@ tee:
 
 # Binaries on the validator machines; default to PATH lookups.
 # node_binary: outbe-chain
-# ocomp_binary: outbe-ocomp
 # radicle_binary: outbe-radicle
 # feeder_binary: outbe-feeder
 
@@ -82,7 +80,7 @@ tee:
 
 # --- Chain parameters ------------------------------------------------------
 
-# Pin the timestamp to keep the genesis hash - and the OCOMP registrations
+# Pin the timestamp to keep the genesis hash
 # that sign it - reproducible. Left unset, each run stamps the current time.
 # timestamp: 1756032000
 
@@ -112,8 +110,6 @@ tee:
 #     waitingPeriodSeconds: 43200
 #     bootstrapDurationSeconds: 300
 #     advanceIntervalSeconds: 10
-#   ocomp:
-#     computeVoteWindowBlocks: 120
 
 # --- Protocol parameters ---------------------------------------------------
 # A network.yaml of your own may override any of these. Scalars replace, lists

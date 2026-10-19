@@ -6,7 +6,7 @@ use crate::{builder::OutbeBlockBuilder, executor::OutbeBlockExecutor};
 
 use alloy_evm::{
     eth::{EthBlockExecutionCtx, NextEvmEnvAttributes},
-    Evm, EvmEnv,
+    EvmEnv,
 };
 use outbe_primitives::{OutbeBlock, OutbeExecutionData, OutbeHeader, OutbePrimitives};
 use reth_ethereum::{
@@ -92,12 +92,8 @@ impl ConfigureEvm for OutbeEvmConfig {
         &self,
         block: &'a SealedBlock<OutbeBlock>,
     ) -> Result<OutbeBlockExecutionCtx<'a>, Self::Error> {
-        let (
-            expected_begin_system_txs,
-            expected_end_system_txs,
-            system_layout_error,
-            recovered_proposer,
-        ) = system_tx_expectations_for_block(block, self.ocomp_lifecycle_activation);
+        let (expected_begin_system_txs, system_layout_error, recovered_proposer) =
+            system_tx_expectations_for_block(block);
 
         Ok(OutbeBlockExecutionCtx {
             inner: EthBlockExecutionCtx {
@@ -117,7 +113,6 @@ impl ConfigureEvm for OutbeEvmConfig {
             block_hash: Some(block.hash()),
             block_state_root: Some(block.header().state_root()),
             expected_begin_system_txs,
-            expected_end_system_txs,
             system_layout_error,
             parent_consensus_metadata: None,
             proposer_evm_address: recovered_proposer,
@@ -161,7 +156,6 @@ impl ConfigureEvm for OutbeEvmConfig {
             block_hash: None,
             block_state_root: None,
             expected_begin_system_txs: Vec::new(),
-            expected_end_system_txs: Vec::new(),
             system_layout_error: None,
             parent_consensus_metadata: attributes.parent_consensus_metadata,
             proposer_evm_address: attributes.proposer_evm_address,
@@ -190,7 +184,6 @@ impl ConfigureEvm for OutbeEvmConfig {
         use alloy_evm::eth::EthBlockExecutor;
 
         let expected_begin_system_txs = ctx.expected_begin_system_txs.clone();
-        let expected_end_system_txs = ctx.expected_end_system_txs.clone();
         let system_layout_error = ctx.system_layout_error.clone();
         let parent_consensus_metadata = ctx.parent_consensus_metadata.clone();
         let proposer_evm_address = ctx.proposer_evm_address;
@@ -198,16 +191,13 @@ impl ConfigureEvm for OutbeEvmConfig {
         let parent_hash = ctx.inner.parent_hash;
         let prebuilt_phase1_tx = ctx.prebuilt_phase1_tx.clone();
         let parent_artifact_hint = ctx.parent_artifact_hint;
-        let block_number = evm.block().number.saturating_to::<u64>();
         let system_plan = BlockSystemPlan {
             expected_begin_system_txs,
-            expected_end_system_txs,
             system_layout_error,
             proposer_evm_address,
             execute_outbe_block_hooks,
             prebuilt_phase1_tx,
             pending_tee_bootstrap: ctx.pending_tee_bootstrap.clone(),
-            ocomp_lifecycle_active: self.ocomp_lifecycle_active_at(block_number),
         };
 
         OutbeBlockBuilder::new(

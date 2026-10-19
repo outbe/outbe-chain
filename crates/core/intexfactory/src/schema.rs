@@ -18,13 +18,7 @@ pub struct IssuanceParams {
     pub entry_price_minor: U256,
     pub issuance_currency: u16,
     pub reference_currency: u16,
-    /// Auction winners: per-address issue recipients for ISSUANCE_INSTRUCTIONS.
-    pub recipients: Vec<Address>,
-    pub units: Vec<U256>,
-    /// Source chain of each winner (parallel to `recipients`). It routes each issue to its chain.
-    pub recipient_chains: Vec<u32>,
-    /// Every target chain of the day's snapshot. Each chain gets an ISSUANCE
-    /// (empty recipients = create only).
+    /// Every target chain of the day's snapshot. Each one creates the series.
     pub snapshot_chains: Vec<u32>,
 }
 

@@ -15,12 +15,10 @@ pub enum IntexFactoryError {
     ZeroAmount,
     #[error("units must be positive")]
     ZeroUnits,
-    #[error("series not found")]
-    SeriesNotFound,
     #[error("series not settleable in state {0}")]
     NotSettleable(u8),
-    #[error("settlement deadline expired")]
-    DeadlineExpired,
+    #[error("settlement deadline has passed")]
+    SettlementDeadlinePassed,
     #[error("zero balance")]
     ZeroBalance,
     #[error("units exceed balance")]
@@ -29,10 +27,6 @@ pub enum IntexFactoryError {
     InsufficientSettled,
     #[error("insufficient proof of work")]
     InsufficientProofOfWork,
-    #[error("no COEN rate published for currency {0}")]
-    FxRateUnavailable(u16),
-    #[error("COEN rate for currency {0} is too old to convert with")]
-    FxRateStale(u16),
     #[error("caller is not the origin router")]
     NotOriginRouter,
 

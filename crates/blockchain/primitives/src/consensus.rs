@@ -276,7 +276,7 @@ pub struct CachedExecutionSummary {
     /// State root committed by the same exact block header as `summary`.
     ///
     /// `None` is retained only for legacy/test cache writers. Consensus paths that need
-    /// to bind an OCOMP JobId require `Some` and fail closed otherwise.
+    /// to authenticate native state require `Some` and fail closed otherwise.
     pub state_root: Option<B256>,
 }
 

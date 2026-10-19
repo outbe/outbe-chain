@@ -13,14 +13,12 @@ use super::WINDOW_CLOSE_MARGIN_SECS;
 use crate::internal::eth;
 use crate::internal::pricing_coverage::{
     first_stepped_hour, pricing_step, prospective_end, step_limit, PricingStep, HOUR,
-    RESTART_ROUNDS,
+    MIN_HOUR_SNAPSHOTS, RESTART_ROUNDS,
 };
 use crate::world::World;
 
 const HISTORY_LIMIT: u32 = 4_096;
 const ENTER_TIMEOUT: Duration = Duration::from_secs(300);
-/// Long enough to repay the rounds a slow restart costs, short of the real hour rolling over.
-const HOUR_DWELL_TIMEOUT: Duration = Duration::from_secs(600);
 const DWELL_POLL: Duration = Duration::from_secs(2);
 const NO_VWAP_DATA: &str = "no VWAP data in the requested time range";
 
@@ -77,14 +75,17 @@ pub(super) fn close(world: &mut World, currencies: &[u16]) -> Result<()> {
 
 /// Restart the committee just inside `hour` and return the first finalized height in it.
 fn enter_hour(world: &mut World, hour: u64) -> Result<u64> {
-    let (_, _, _, pending) = crate::features::ocomp::restart_committee_at_logical_time(
+    let (_, pending) = crate::features::common::restart_committee_at_logical_time(
         world,
         hour + WINDOW_CLOSE_MARGIN_SECS,
     );
     let port = world.validators.primary_port();
     let mut publication_ready = pending.is_none();
+    let enter_timeout = pending.as_ref().map_or(ENTER_TIMEOUT, |pending| {
+        ENTER_TIMEOUT.max(pending.remaining_wait())
+    });
     poll_until(
-        ENTER_TIMEOUT,
+        enter_timeout,
         || format!("the committee or its feeders did not reach the pricing hour {hour}"),
         || {
             publication_ready = publication_ready
@@ -119,12 +120,27 @@ fn enter_hour(world: &mut World, hour: u64) -> Result<u64> {
 
 /// Returns the planner's decision with the height and time it was made at.
 fn dwell(world: &mut World, currencies: &[u16], tail: u64) -> Result<(PricingStep, (u64, u64))> {
-    let deadline = Instant::now() + HOUR_DWELL_TIMEOUT;
-    let url = world.rpc.url(world.validators.primary_port());
+    let port = world.validators.primary_port();
+    let url = world.rpc.url(port);
+    let checkpoint = finalized_checkpoint(world);
+    let initial = ProspectiveWindow::at(world, checkpoint.height, tail)?;
+    verify_checkpoint(world, checkpoint);
+    let genesis = std::fs::read(world.localnet.scenario_dir().join("genesis.json"))?;
+    let genesis = serde_json::from_slice(&genesis)?;
+    let timeout = dwell_wait_budget(&genesis, initial.period, tail)?
+        .min(Duration::from_secs(initial.cutoff - initial.time));
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .ok_or_else(|| eyre!("pricing dwell deadline overflow"))?;
     loop {
         world.price_oracle.ensure_cohort_feeders_alive()?;
         let checkpoint = finalized_checkpoint(world);
         let window = ProspectiveWindow::at(world, checkpoint.height, tail)?;
+        ensure!(
+            window.time < initial.cutoff,
+            "pricing hour {} rolled over before coverage was established",
+            initial.cutoff - HOUR,
+        );
         let counts = currencies
             .iter()
             .map(|&currency| window.observations(&url, currency, checkpoint.height))
@@ -145,6 +161,16 @@ fn dwell(world: &mut World, currencies: &[u16], tail: u64) -> Result<(PricingSte
         );
         sleep(DWELL_POLL);
     }
+}
+
+/// Budget ten real publications plus the measured restart tail from executed timing.
+fn dwell_wait_budget(genesis: &serde_json::Value, period: u64, tail: u64) -> Result<Duration> {
+    ensure!(period > 0, "Oracle vote period must be positive");
+    let blocks = MIN_HOUR_SNAPSHOTS
+        .checked_mul(period)
+        .and_then(|blocks| blocks.checked_add(tail))
+        .ok_or_else(|| eyre!("pricing dwell block budget overflow"))?;
+    crate::features::common::consensus_block_wait_budget(genesis, blocks)
 }
 
 struct ProspectiveWindow {
@@ -341,6 +367,26 @@ fn price_is_ready(outcome: eth::ViewCallOutcome<U256>) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hourly_fixture_budget_uses_executed_timing_and_restart_tail() {
+        let genesis = serde_json::json!({"config": {
+            "minBlockTimeMs": 2000,
+            "leaderTimeoutMs": 15000,
+            "certificationTimeoutMs": 30000,
+        }});
+        assert_eq!(
+            dwell_wait_budget(&genesis, 8, 16).unwrap(),
+            Duration::from_secs(2880)
+        );
+        assert_eq!(
+            dwell_wait_budget(&genesis, 8, 24).unwrap(),
+            Duration::from_secs(3120)
+        );
+        assert!(dwell_wait_budget(&genesis, 0, 16).is_err());
+        assert!(dwell_wait_budget(&genesis, u64::MAX, 16).is_err());
+        assert!(dwell_wait_budget(&genesis, 8, u64::MAX).is_err());
+    }
 
     #[test]
     fn accepts_only_a_positive_production_price() {

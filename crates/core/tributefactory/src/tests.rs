@@ -472,6 +472,7 @@ fn assert_real_zk_offer_with_key_source(
     const CALLER: Address = Address::repeat_byte(0x77);
     const REWARD_DAY: u32 = 20_260_803;
     const PRIVATE_KEY: [u8; 32] = [0x33; 32];
+    let _enclave = outbe_tribute::enclave_client::test_enclave::scope();
     outbe_zk_backend::barretenberg::BarretenbergHandler::init().unwrap();
     let merkle_root = B256::from(decode_public_words::<4>(proof, proof.len()).unwrap()[3]);
     let payload = serde_json::to_vec(&serde_json::json!({

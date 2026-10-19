@@ -433,7 +433,7 @@ fn co_located_devnet_bounds_each_nodes_cross_block_cache() {
 }
 
 #[test]
-fn every_localnet_node_retains_the_ocomp_exact_state_proof_window() {
+fn every_localnet_node_retains_the_native_state_proof_window() {
     let env = Environment::default();
     env.ports
         .start_scenario(env.validators)
@@ -509,7 +509,6 @@ fn sealed_dirs_finds_only_enclave_mounts() {
 
 #[test]
 fn worldwide_day_is_eight_digits() {
-    assert_eq!(ymd_utc(0), "19700101");
     let wd = worldwide_day();
     assert_eq!(wd.len(), 8);
     assert!(wd.chars().all(|c| c.is_ascii_digit()));

@@ -362,7 +362,7 @@ mod tests {
 
     #[test]
     fn bounded_wait_promotes_zero_number_cn_clone_only_after_timeout() {
-        use commonware_runtime::Runner as _;
+        use commonware_runtime::{Clock as _, Runner as _};
         commonware_runtime::deterministic::Runner::timed(Duration::from_secs(5)).start(
             |context| async move {
                 let store = FinalizedParentCertStore::new();
@@ -378,6 +378,7 @@ mod tests {
                     ParentProofSelector::new(store, crate::config::DEFAULT_PROPOSAL_TIMEOUT);
                 let key = CertifiedParentProofKey::new(0, 0, hash);
 
+                let before = context.current();
                 let r = selector
                     .select_direct_parent_proof_by_key_with_wait(
                         &context,
@@ -387,6 +388,14 @@ mod tests {
                     )
                     .await
                     .unwrap();
+                let elapsed = context
+                    .current()
+                    .duration_since(before)
+                    .expect("deterministic clock must not go backwards");
+                assert!(
+                    elapsed >= PHASE1_FINALIZATION_WAIT_MIN,
+                    "CN promotion must wait at least {PHASE1_FINALIZATION_WAIT_MIN:?}, elapsed={elapsed:?}"
+                );
 
                 assert_eq!(
                     r.proof_kind(),

@@ -14,7 +14,7 @@ use crate::internal::{
 };
 
 use super::Localnet;
-#[cfg(feature = "ocomp-integration")]
+
 use super::{checked_node_interrupt, NodeLaunchObservation, StoppedSnapshotNode};
 
 const VALIDATOR_RECOVERY_FOLLOWER_FORBIDDEN_ARGS: &[&str] = &[
@@ -233,7 +233,6 @@ impl Localnet {
     /// policy. DCAP and GramineDirectDev differ only in attestation authority.
     /// Both require the same resident offer-key delivery before node startup.
     /// Prepare the same ordinary configuration without opening recipient databases.
-    #[cfg(feature = "ocomp-integration")]
     pub(crate) fn prepare_snapshot_full_node(&mut self, index: usize) -> Result<()> {
         self.provision_full_node_node_host(index)?;
 
@@ -539,7 +538,6 @@ impl Localnet {
             .is_some_and(|guard| !guard.exited())
     }
 
-    #[cfg(feature = "ocomp-integration")]
     pub(crate) fn follower_launch_observation(
         &mut self,
         name: &str,
@@ -559,7 +557,6 @@ impl Localnet {
 
     /// Strict snapshot boundary. Unlike general teardown, missing or already
     /// exited owners cannot establish successful stop evidence.
-    #[cfg(feature = "ocomp-integration")]
     pub(crate) fn stop_follower_for_snapshot(
         &mut self,
         name: &str,
@@ -568,6 +565,7 @@ impl Localnet {
     ) -> Result<StoppedSnapshotNode> {
         let observed = self.follower_launch_observation(name, index)?;
         eyre::ensure!(observed.pid == expected_pid, "follower stop PID mismatch");
+        #[cfg(test)]
         let recipe = self.captured_node_recipe(index, expected_pid)?;
         let observation = checked_node_interrupt(
             self.followers
@@ -585,7 +583,9 @@ impl Localnet {
         }
         Ok(StoppedSnapshotNode {
             observation,
+            #[cfg(test)]
             recipe,
+            #[cfg(test)]
             follower_name: Some(name.to_owned()),
         })
     }
@@ -708,8 +708,5 @@ mod tests {
             exact_restore, original,
             "validator restart must retain byte-for-byte original argv"
         );
-        assert!(!follower
-            .iter()
-            .any(|arg| arg.starts_with("--projection.storage-config")));
     }
 }

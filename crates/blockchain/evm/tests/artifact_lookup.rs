@@ -183,14 +183,13 @@ fn canonical_number_hash_mismatch_rejects() {
 // ---------------------------------------------------------------------------
 // Unfinalized side-chain parent. The provider must resolve a header that is
 // reachable only through `sealed_header_by_hash` (NOT canonical at its number).
-// A structural source check verifies the hint path, because the executor's
-// `accounted_parent_artifact_for_metadata` is `pub(crate)`. An integration test
-// cannot call it directly.
+// Direct `parent_artifact_hint` acceptance/rejection unit tests live in
+// `src/executor/tests/accounting.rs`.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn unfinalized_side_chain_parent_artifact_resolves_by_exact_hash_or_parent_hint() {
-    // (a) exact-hash branch on a side-chain header that is NOT canonical.
+fn unfinalized_side_chain_parent_artifact_resolves_by_exact_hash() {
+    // Exact-hash branch on a side-chain header that is NOT canonical.
     let canonical = header_with_artifact(7, 1_700_000_000, U256::from(100u64), 0xAA);
     let side = header_with_artifact(7, 1_700_000_001, U256::from(200u64), 0xBB);
     let side_hash = side.hash();
@@ -219,48 +218,228 @@ fn unfinalized_side_chain_parent_artifact_resolves_by_exact_hash_or_parent_hint(
 
 // ---------------------------------------------------------------------------
 // Full-node mode (no consensus bridge) still installs a provider-backed
-// `AccountedParentArtifactProvider`. The test verifies this through the
-// `OutbeEvmConfig::new_with_provider_only` constructor exposed for this path.
+// `AccountedParentArtifactProvider`. The test verifies this through an
+// executor built by `OutbeEvmConfig::new_with_provider_only` executing a real
+// Phase 1 (`CertifiedParentAccounting`) transaction against the seeded parent.
 // ---------------------------------------------------------------------------
 
 #[test]
 fn full_node_import_installs_provider_backed_accounted_parent_artifact_lookup_without_bridge() {
-    let header = header_with_artifact(5, 1_700_001_000, U256::from(55u64), 0xCC);
+    use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
+    use alloy_evm::block::BlockExecutor;
+    use alloy_evm::eth::EthBlockExecutionCtx;
+    use alloy_primitives::Bytes;
+    use outbe_evm::{OutbeBlockExecutionCtx, OutbeEvmSigner};
+    use outbe_primitives::{
+        addresses::REWARDS_ADDRESS,
+        block::{BlockContext, BlockRuntimeContext},
+        consensus_metadata::CertifiedParentAccountingMetadata,
+        storage::{direct::DirectStorageProvider, hashmap::HashMapStorageProvider, StorageHandle},
+        system_tx::protocol_block_gas_limit,
+        time::timestamp_to_date_key,
+    };
+    use reth_ethereum::evm::revm::db::State;
+    use reth_evm::{execute::ProviderError, ConfigureEvm, EvmEnv};
+    use revm::{
+        context::{BlockEnv, CfgEnv},
+        database::CacheDB,
+        database_interface::EmptyDBTyped,
+        primitives::hardfork::SpecId,
+        state::AccountInfo,
+    };
+
+    let seeded_fee = U256::from(55u64);
+    let parent_timestamp = 1_700_001_000u64;
+    let header = header_with_artifact(5, parent_timestamp, seeded_fee, 0xCC);
     let block_hash = header.hash();
 
     let mut hp = StageHeaderProvider::default();
     hp.insert_canonical(header);
 
+    let signer = Arc::new(OutbeEvmSigner::from_secret_bytes([1u8; 32]).expect("test signer"));
+    let proposer = signer.address();
     let provider = Arc::new(RethAccountedParentArtifactProvider::new(hp, None))
         as Arc<dyn AccountedParentArtifactProvider>;
-    let config = OutbeEvmConfig::new_with_provider_only(test_chain_spec(), provider);
+    let config = OutbeEvmConfig::new_with_provider_only(test_chain_spec(), provider)
+        .with_evm_signer(signer.clone());
 
-    // The constructor must not require a bridge (full-node mode), and the
-    // provider it installs must resolve the seeded artifact.
     assert!(
         config.bridge.is_none(),
         "full-node config must not carry a consensus bridge"
     );
 
-    // Indirect: the lookup ladder lives inside the executor. Here we only
-    // verify the wire-up. We structurally require that a config built through
-    // the full-node constructor can resolve the seeded header.
-    // The provider field is private. Thus we re-derive a fresh provider with
-    // the same fixture and assert that it resolves. This guards against the
-    // installer accidentally dropping the provider.
-    let mut hp2 = StageHeaderProvider::default();
-    hp2.insert_canonical(header_with_artifact(
-        5,
-        1_700_001_000,
-        U256::from(55u64),
-        0xCC,
-    ));
-    let direct = RethAccountedParentArtifactProvider::new(hp2, None);
-    let resolved = direct
-        .execution_summary_by_hash(5, block_hash)
-        .expect("direct provider must not fail")
-        .expect("seeded header must resolve");
-    assert_eq!(resolved.summary.validator_fee_sum, U256::from(55u64));
+    let make_state = || {
+        let mut seed_storage = HashMapStorageProvider::new(1);
+        StorageHandle::enter(&mut seed_storage, |storage| {
+            let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            vs.config_owner.write(proposer).unwrap();
+            vs.set_config_max_validators(128).unwrap();
+            vs.config_epoch_length_blocks.write(60).unwrap();
+            vs.config_is_initialized.write(true).unwrap();
+            let mut pubkey = [0u8; 48];
+            pubkey[0] = 0xA2;
+            vs.register_validator(proposer, proposer, &pubkey).unwrap();
+            vs.activate_validator_via_boundary_for_test(proposer)
+                .unwrap();
+            outbe_validatorset::write_committee_snapshot(
+                storage.clone(),
+                0,
+                &outbe_validatorset::CommitteeSnapshot {
+                    committee: vec![outbe_validatorset::CommitteeEntry {
+                        address: proposer,
+                        consensus_pubkey: pubkey,
+                    }],
+                    vrf_material_version: 0,
+                    vrf_group_public_key_bytes: vec![0x42; 96],
+                    vrf_public_polynomial_hash: B256::ZERO,
+                },
+            )
+            .unwrap();
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::new(5, parent_timestamp, 1, proposer, vec![proposer]),
+                storage,
+            );
+            outbe_cycle::record_phase1_progress(&ctx, 4).unwrap();
+        });
+        let marker_code = revm::state::Bytecode::new_legacy([0xef].into());
+        let marker_info = || AccountInfo {
+            code_hash: marker_code.hash_slow(),
+            code: Some(marker_code.clone()),
+            ..Default::default()
+        };
+        let mut db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+        let entries: Vec<_> = seed_storage.storage.into_iter().collect();
+        let mut addresses: Vec<Address> =
+            entries.iter().map(|((address, _), _)| *address).collect();
+        addresses.sort_unstable();
+        addresses.dedup();
+        for address in addresses {
+            db.insert_account_info(address, marker_info());
+        }
+        for ((address, slot), value) in entries {
+            db.insert_account_storage(address, slot, value).unwrap();
+        }
+        db.insert_account_info(
+            REWARDS_ADDRESS,
+            AccountInfo {
+                balance: seeded_fee,
+                ..marker_info()
+            },
+        );
+        State::builder()
+            .with_database(db)
+            .with_bundle_update()
+            .build()
+    };
+
+    let metadata = CertifiedParentAccountingMetadata {
+        finalized_block_number: 5,
+        finalized_block_hash: block_hash,
+        ordered_committee: vec![proposer],
+        signer_bitmap: vec![1],
+        ..Default::default()
+    };
+    let evm_env = EvmEnv {
+        cfg_env: CfgEnv::new()
+            .with_chain_id(1)
+            .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
+        block_env: BlockEnv {
+            number: U256::from(6u64),
+            gas_limit: protocol_block_gas_limit(6),
+            basefee: MIN_PROTOCOL_BASE_FEE,
+            beneficiary: REWARDS_ADDRESS,
+            timestamp: U256::from(1_700_001_006u64),
+            ..Default::default()
+        },
+    };
+    let make_ctx = || OutbeBlockExecutionCtx {
+        inner: EthBlockExecutionCtx {
+            parent_hash: block_hash,
+            parent_beacon_block_root: None,
+            ommers: &[],
+            withdrawals: None,
+            extra_data: Bytes::new(),
+            tx_count_hint: Some(1),
+            slot_number: None,
+        },
+        timestamp_millis_part: 0,
+        block_hash: None,
+        block_state_root: None,
+        expected_begin_system_txs: Vec::new(),
+        system_layout_error: None,
+        parent_consensus_metadata: Some(metadata.clone()),
+        proposer_evm_address: Some(proposer),
+        execute_outbe_block_hooks: false,
+        prebuilt_phase1_tx: None,
+        parent_artifact_hint: None,
+        pending_tee_bootstrap: None,
+        execution_read_budget: None,
+    };
+
+    let phase1_tx = config
+        .build_begin_system_txs(
+            6,
+            1,
+            protocol_block_gas_limit(6),
+            block_hash,
+            &Bytes::new(),
+            Some(metadata.clone()),
+            Some(proposer),
+            None,
+            None,
+        )
+        .expect("begin-zone system txs should build")
+        .into_iter()
+        .next()
+        .expect("Phase 1 system tx must be first at block 6");
+
+    let mut state = make_state();
+    {
+        let evm = config.evm_with_env(&mut state, evm_env.clone());
+        let mut executor = config.create_executor(evm, make_ctx());
+        executor
+            .apply_pre_execution_changes()
+            .expect("pre-execution marker setup must succeed");
+        executor
+            .execute_transaction(phase1_tx.clone())
+            .expect("Phase 1 CPA must resolve parent artifact through provider-only config");
+        assert_eq!(executor.receipts().len(), 1);
+        assert!(executor.receipts()[0].success);
+    }
+
+    let read_ctx = BlockContext::new(6, 1_700_001_006, 1, proposer, vec![proposer]);
+    let mut direct_provider = DirectStorageProvider::new(&mut state, read_ctx.clone());
+    StorageHandle::enter(&mut direct_provider, |storage| {
+        let runtime_ctx = BlockRuntimeContext::new(read_ctx, storage.clone());
+        assert_eq!(
+            outbe_cycle::read_last_accounted_block_number(&runtime_ctx)?,
+            5
+        );
+        let rewards = outbe_rewards::schema::Rewards::new(storage);
+        let date_key = timestamp_to_date_key(parent_timestamp);
+        assert_eq!(rewards.pending_fees.read(&block_hash)?, seeded_fee);
+        assert_eq!(rewards.daily_fee_sum_raw.read(&date_key)?, seeded_fee);
+        Ok::<_, outbe_primitives::error::PrecompileError>(())
+    })
+    .expect("accounting state should be readable");
+
+    // Negative control: without the provider installed on config, the same
+    // Phase 1 execution fails with a missing accounted-parent summary error.
+    let mut unseeded_state = make_state();
+    let config_without_provider = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
+    let evm = config_without_provider.evm_with_env(&mut unseeded_state, evm_env);
+    let mut executor = config_without_provider.create_executor(evm, make_ctx());
+    executor
+        .apply_pre_execution_changes()
+        .expect("pre-execution marker setup must succeed");
+    let err = executor
+        .execute_transaction(phase1_tx)
+        .expect_err("config without provider must fail Phase 1 parent lookup");
+    assert!(
+        err.to_string()
+            .contains("missing execution summary artifact"),
+        "expected missing-summary error without provider, got: {err}"
+    );
 }
 
 // ---------------------------------------------------------------------------

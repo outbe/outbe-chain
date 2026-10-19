@@ -1,4 +1,3 @@
-mod carrier_admission;
 mod size_budget;
 mod stages;
 
@@ -21,16 +20,14 @@ use outbe_evm::{
     system_tx::{split_system_layout, system_tx_intrinsic_gas, SystemTxKind},
     OutbeEvmSigner,
 };
-use outbe_metadosis::test_support::ForkInstallScenario;
 use outbe_primitives::{
     addresses::REWARDS_ADDRESS,
-    block::{BlockContext, BlockRuntimeContext},
     consensus::{ConsensusExecutionBridge, DkgBoundaryArtifact, ReshareResult},
     projection::ExecutionReadBudget,
     reshare_artifact::{
         encode_outbe_block_artifacts, ConsensusHeaderArtifact, OutbeBlockArtifacts,
     },
-    storage::{hashmap::HashMapStorageProvider, MetadosisMutationPurposeTag, StorageHandle},
+    storage::{hashmap::HashMapStorageProvider, StorageHandle},
     tee_genesis_v1::GRAMINE_DIRECT_DEV_CHAIN_ID,
     units::SCALE_1E6_U256,
     OutbePrimitives,
@@ -185,7 +182,7 @@ fn genesis_dev_tee_bootstrap(
     .expect("test GramineDirectDev OST3 payload is canonical")
 }
 
-fn active_ocomp_provider(
+fn active_native_provider(
     chain_spec: &Arc<ChainSpec<OutbeHeader>>,
     proposer: alloy_primitives::Address,
     funded_user: alloy_primitives::Address,
@@ -196,7 +193,6 @@ fn active_ocomp_provider(
     let mut seed =
         HashMapStorageProvider::new_with_chain_identity(chain_spec.chain().id(), genesis_hash);
     seed.set_block_number(1);
-    seed.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::ForkProfile);
     StorageHandle::enter(&mut seed, |storage| {
         let mut validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         validators
@@ -221,30 +217,8 @@ fn active_ocomp_provider(
         validators
             .activate_validator_via_boundary_for_test(proposer)
             .expect("active proposer reaches production boundary activation");
-        let founder_registration = validators
-            .ocomp_registration(proposer)
-            .expect("active proposer OCOMP registration is readable")
-            .expect("active proposer has OCOMP registration");
-
-        let mut install =
-            ForkInstallScenario::measurement_at(1, chain_spec.chain().id(), genesis_hash)
-                .expect("fresh-devnet OCOMP install fixture is canonical")
-                .into_install();
-        install.founder_registrations = vec![founder_registration];
-        let install_ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(
-                1,
-                ACTIVE_PAYLOAD_BLOCK_TIMESTAMP,
-                chain_spec.chain().id(),
-            ),
-            storage.clone(),
-        );
-        // Fork installation validates the required day-type pair, so the
-        // test genesis must register it before installing the profile.
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .expect("oracle pair seed succeeds");
-        outbe_metadosis::commands::install_fork_profile(&install_ctx, &install)
-            .expect("fresh-devnet OCOMP profile installs through the production command");
 
         outbe_oracle::api::set_exchange_rate(
             storage,
@@ -291,6 +265,28 @@ struct ActivePayloadCase {
     evm_config: OutbeEvmConfig,
     provider: TestProvider,
     rejected: Arc<AtomicUsize>,
+}
+
+fn narrow_user_stage_fixture() -> (OutbeEvmConfig, TestProvider) {
+    let mut chain_spec = ChainSpecBuilder::mainnet()
+        .with_fork(EthereumHardfork::Paris, ForkCondition::Block(0))
+        .build();
+    chain_spec.chain = GRAMINE_DIRECT_DEV_CHAIN_ID.into();
+    chain_spec.genesis.config.chain_id = GRAMINE_DIRECT_DEV_CHAIN_ID;
+    let chain_spec: Arc<ChainSpec<OutbeHeader>> = chain_spec.map_header(OutbeHeader::new).into();
+    let signer =
+        Arc::new(OutbeEvmSigner::from_secret_bytes([1u8; 32]).expect("test proposer key is valid"));
+    let proposer = signer.address();
+    let evm_config =
+        OutbeEvmConfig::new_with_bridge(chain_spec.clone(), ConsensusExecutionBridge::new())
+            .with_evm_signer(signer);
+    let provider = active_native_provider(
+        &chain_spec,
+        proposer,
+        alloy_primitives::Address::ZERO,
+        B256::ZERO,
+    );
+    (evm_config, provider)
 }
 
 fn build_active_payload_case(
@@ -353,10 +349,6 @@ fn build_active_payload_case(
             Some(bootstrap),
         )
         .expect("active begin zone builds");
-    let end = evm_config
-        .build_end_system_txs(1, chain_spec.chain().id(), begin.len(), Some(proposer))
-        .expect("active terminal zone builds");
-    assert!(end.is_empty());
     let begin_visible_gas = begin
         .iter()
         .map(|transaction| {
@@ -398,7 +390,7 @@ fn build_active_payload_case(
         authority_ids: None,
     });
 
-    let provider = active_ocomp_provider(&chain_spec, proposer, user_sender, parent.hash());
+    let provider = active_native_provider(&chain_spec, proposer, user_sender, parent.hash());
     let payload_builder = OutbePayloadBuilder::new(
         provider.clone(),
         TestPool::new(),

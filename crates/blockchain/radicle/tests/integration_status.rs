@@ -5,7 +5,7 @@ use outbe_radicle::{
     endpoint::{sign_response, EndpointAddress, EndpointFrame, EndpointResponseBody, PeerId},
     integration::{
         ObservedRepositoryStatus, RadicleMetrics, RadicleRepositoryState, RadicleStatusChannel,
-        RadicleVotingGate, SignedEndpointEvidence, PRODUCTION_REPAIR_INTERVAL,
+        RadicleVotingGate, SignedEndpointEvidence,
     },
     manager::{
         BoxFuture, FinalizedBlock, FinalizedSnapshot, FinalizedValidator, ManagerError,
@@ -16,7 +16,6 @@ use outbe_radicleregistry::RepoId;
 use std::{
     collections::VecDeque,
     sync::{Arc, Mutex},
-    time::Duration,
 };
 
 fn block(number: u64) -> FinalizedBlock {
@@ -103,7 +102,7 @@ fn immutable_status_distinguishes_repository_states() {
 fn metrics_use_frozen_names_and_known_height_bits() {
     let validator = Address::repeat_byte(0x11);
     let (publisher, handle) = RadicleStatusChannel::enabled(validator, [1_u8; 32]);
-    publisher.observe_manager(ManagerStatus {
+    let status_initial = ManagerStatus {
         phase: ManagerPhase::Ready,
         last_seen_finalized: Some(block(0)),
         last_converged_finalized: Some(block(0)),
@@ -112,12 +111,15 @@ fn metrics_use_frozen_names_and_known_height_bits() {
         provider_failures: 4,
         uds_failures: 5,
         ..ManagerStatus::default()
-    });
+    };
+    publisher.observe_manager(status_initial.clone());
 
     let recorder = DebuggingRecorder::new();
     let snapshotter = recorder.snapshotter();
+    let mut metrics = RadicleMetrics::default();
     metrics::with_local_recorder(&recorder, || {
-        let mut metrics = RadicleMetrics::default();
+        // Record the same snapshot twice to ensure cumulative failure totals are not double-counted.
+        metrics.record(&handle.snapshot());
         metrics.record(&handle.snapshot());
     });
     let values = snapshotter.snapshot().into_vec();
@@ -127,28 +129,48 @@ fn metrics_use_frozen_names_and_known_height_bits() {
             .find(|(key, _, _, _)| key.key().name() == name)
             .unwrap_or_else(|| panic!("missing metric {name}"))
     };
+    let assert_gauge = |name: &str, expected: f64| match &find(name).3 {
+        DebugValue::Gauge(value) => assert_eq!(value.into_inner(), expected, "metric {name}"),
+        other => panic!("expected gauge for {name}, got {other:?}"),
+    };
+    let assert_counter = |name: &str, expected: u64| match &find(name).3 {
+        DebugValue::Counter(value) => assert_eq!(*value, expected, "metric {name}"),
+        other => panic!("expected counter for {name}, got {other:?}"),
+    };
 
-    for name in [
-        "outbe_radicle_phase",
-        "outbe_radicle_last_seen_finalized_known",
-        "outbe_radicle_last_seen_finalized_height",
-        "outbe_radicle_last_converged_finalized_known",
-        "outbe_radicle_last_converged_finalized_height",
-        "outbe_radicle_resolved_peers",
-        "outbe_radicle_connected_peers",
-        "outbe_radicle_provider_failures_total",
-        "outbe_radicle_uds_failures_total",
-    ] {
-        let _ = find(name);
-    }
-    assert!(matches!(
-        find("outbe_radicle_phase").3,
-        DebugValue::Gauge(_)
-    ));
-    assert!(matches!(
-        find("outbe_radicle_provider_failures_total").3,
-        DebugValue::Counter(_)
-    ));
+    assert_gauge("outbe_radicle_phase", 2.0);
+    assert_gauge("outbe_radicle_last_seen_finalized_known", 1.0);
+    assert_gauge("outbe_radicle_last_seen_finalized_height", 0.0);
+    assert_gauge("outbe_radicle_last_converged_finalized_known", 1.0);
+    assert_gauge("outbe_radicle_last_converged_finalized_height", 0.0);
+    assert_gauge("outbe_radicle_resolved_peers", 3.0);
+    assert_gauge("outbe_radicle_connected_peers", 2.0);
+    assert_counter("outbe_radicle_provider_failures_total", 4);
+    assert_counter("outbe_radicle_uds_failures_total", 5);
+
+    // Advance one failure total and verify only the delta is added.
+    publisher.observe_manager(ManagerStatus {
+        provider_failures: 7,
+        ..status_initial
+    });
+    metrics::with_local_recorder(&recorder, || {
+        metrics.record(&handle.snapshot());
+    });
+    let values_after = snapshotter.snapshot().into_vec();
+    let find_after = |name: &str| {
+        values_after
+            .iter()
+            .find(|(key, _, _, _)| key.key().name() == name)
+            .unwrap_or_else(|| panic!("missing metric {name}"))
+    };
+    assert_eq!(
+        find_after("outbe_radicle_provider_failures_total").3,
+        DebugValue::Counter(3)
+    );
+    assert_eq!(
+        find_after("outbe_radicle_uds_failures_total").3,
+        DebugValue::Counter(0)
+    );
 }
 
 #[test]
@@ -236,11 +258,6 @@ fn snapshot_prunes_evidence() {
         evidence(&changed_signer, changed, [3_u8; 32], at_10.block, 20),
     ]);
     assert!(handle.snapshot().signed_peers.is_empty());
-}
-
-#[test]
-fn production_interval() {
-    assert_eq!(PRODUCTION_REPAIR_INTERVAL, Duration::from_secs(30));
 }
 
 struct RepositorySequence(Mutex<VecDeque<Result<bool, ManagerError>>>);

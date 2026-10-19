@@ -26,11 +26,10 @@ fn seed_local_terminal_fixture(provider: &mut HashMapStorageProvider, day: Local
         tribute_nominal,
     } = day;
     StorageHandle::enter(provider, |storage| {
-        arm_genesis_ocomp(&storage, CHAIN_ID);
+        install_test_enclaves();
         let scheduled = create_waiting_day(&storage, wwd, day_type, day_limit);
         super::arm_reference_price(&storage, scheduled);
         let mut tribute = TributeContract::new(storage);
-        tribute.initialize_fresh_ocomp_profile().unwrap();
         tribute
             .total_supply
             .write(u64::from(tribute_count))
@@ -46,21 +45,16 @@ fn seed_local_terminal_fixture(provider: &mut HashMapStorageProvider, day: Local
             },
         )
         .unwrap();
-        let admission = tribute.pre_admission_projection(wwd).unwrap();
-        assert!(admission.profile_ready);
-        assert!(
-            !admission.is_sealed,
-            "local terminal classification precedes OCOMP pre-admission sealing"
-        );
-        assert_eq!(admission.tribute_count, tribute_count);
-        assert_eq!(admission.tribute_nominal_total_minor, tribute_nominal);
+        let totals = tribute.get_day_totals(wwd).unwrap();
+        assert!(totals.initialized && totals.is_sealed);
+        assert_eq!(totals.tribute_count, tribute_count);
+        assert_eq!(totals.tribute_nominal_total_minor, tribute_nominal);
         scheduled
     })
 }
 
 fn seal_fresh_tribute_day(storage: &StorageHandle, wwd: outbe_primitives::time::WorldwideDay) {
     let mut tribute = TributeContract::new(storage.clone());
-    tribute.initialize_fresh_ocomp_profile().unwrap();
     tribute.seal_day(wwd).unwrap();
 }
 
@@ -94,7 +88,6 @@ fn assert_ready_day_forfeited(
         assert_eq!(receipt.value_routed, day_limit);
         assert_eq!(receipt.carry_over_after, day_limit);
         assert_eq!(receipt.retirement, RetirementOutcome::Requested);
-        assert_no_ocomp_job(&storage, wwd);
     });
     assert_tribute_partition_forfeited(provider, wwd);
 }
@@ -109,13 +102,6 @@ fn assert_tribute_partition_forfeited(
         let totals = tribute.get_day_totals(wwd).unwrap();
         assert_eq!(totals.tribute_count, 0);
         assert_eq!(totals.tribute_nominal_total_minor, U256::ZERO);
-        assert_eq!(
-            tribute
-                .pre_admission_projection(wwd)
-                .unwrap()
-                .source_generation,
-            1
-        );
     });
 }
 
@@ -180,7 +166,6 @@ fn exercise_local_terminal_fault_matrix(
         mutation_count >= 7,
         "local terminal command must include transition, domain effects, retirement and events"
     );
-    if outcome == ReadyOutcome::Completed {}
     assert_ready_outcome(&mut probe, wwd, outcome, expected_promis);
     let clean_storage = probe.storage.clone();
     let clean_events = probe.events.clone();
@@ -350,7 +335,7 @@ fn zero_gratis_completes_and_forfeits_its_present_parent_partition() {
     StorageHandle::enter(&mut provider, |storage| {
         assert!(
             TributeContract::new(storage.clone())
-                .pre_admission_projection(wwd)
+                .get_day_totals(wwd)
                 .unwrap()
                 .is_sealed
         );
@@ -358,7 +343,6 @@ fn zero_gratis_completes_and_forfeits_its_present_parent_partition() {
             .read_metadosis_failure_receipt(wwd, day_limit)
             .unwrap()
             .is_none());
-        assert_no_ocomp_job(&storage, wwd);
     });
     let retired = provider
         .get_ordered_events()
@@ -549,14 +533,13 @@ fn test_ready_processing_no_tributes_returns_the_limit_to_promis() {
 
 // Stable historical ID retained after moving this invariant out of the
 // four-node E2E lane.
-// OCOMP-TEST-ID: OCM-E2E-002
 #[test]
-fn active_ocomp_profile_preserves_the_empty_day_compatibility_branch() {
+fn native_lifecycle_preserves_the_empty_day_compatibility_branch() {
     with_storage(|storage| {
         let wwd = outbe_primitives::time::WorldwideDay::new(2026_0313);
         let day_limit = U256::from(777);
         let scheduled = create_waiting_day(&storage, wwd, day_type::RED, day_limit);
-        arm_genesis_ocomp(&storage, CHAIN_ID);
+        install_test_enclaves();
 
         seal_fresh_tribute_day(&storage, wwd);
 
@@ -566,7 +549,6 @@ fn active_ocomp_profile_preserves_the_empty_day_compatibility_branch() {
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::COMPLETED);
         assert!(!metadosis.active_wwd.read_all().unwrap().contains(&wwd));
         assert!(metadosis.closed_wwd.read_all().unwrap().contains(&wwd));
-        assert_no_ocomp_job(&storage, wwd);
 
         let series = wwd;
         let desis = storage.contract::<outbe_desis::schema::DesisContract>();
@@ -603,7 +585,7 @@ fn green_empty_day_briefs_nothing_however_large_the_limit() {
     StorageHandle::enter(&mut provider, |storage| {
         let wwd = outbe_primitives::time::WorldwideDay::new(2026_0321);
         let scheduled = create_waiting_day(&storage, wwd, day_type::GREEN, U256::MAX);
-        arm_genesis_ocomp(&storage, CHAIN_ID);
+        install_test_enclaves();
 
         seal_fresh_tribute_day(&storage, wwd);
 
@@ -654,7 +636,7 @@ fn assert_populated_ready_day_fails_and_forfeits(
     StorageHandle::enter(&mut provider, |storage| {
         assert!(
             TributeContract::new(storage.clone())
-                .pre_admission_projection(wwd)
+                .get_day_totals(wwd)
                 .unwrap()
                 .is_sealed
         );
@@ -679,7 +661,7 @@ fn assert_populated_ready_day_fails_and_forfeits(
 }
 
 #[test]
-fn active_ocomp_profile_fails_the_populated_zero_limit_day_and_forfeits_its_partition() {
+fn native_lifecycle_fails_the_populated_zero_limit_day_and_forfeits_its_partition() {
     assert_populated_ready_day_fails_and_forfeits(
         outbe_primitives::time::WorldwideDay::new(2026_0314),
         day_type::GREEN,
@@ -688,7 +670,7 @@ fn active_ocomp_profile_fails_the_populated_zero_limit_day_and_forfeits_its_part
 }
 
 #[test]
-fn active_ocomp_profile_completes_the_populated_zero_lysis_limit_day_and_forfeits_its_partition() {
+fn native_lifecycle_completes_the_populated_zero_lysis_limit_day_and_forfeits_its_partition() {
     let wwd = outbe_primitives::time::WorldwideDay::new(2026_0318);
     let nominal = U256::from(1_000);
     // A red day divides the day gratis limit by RED_DAY_REDUCTION_COEF. This
@@ -711,7 +693,6 @@ fn active_ocomp_profile_completes_the_populated_zero_lysis_limit_day_and_forfeit
     assert_local_terminal_completed(&mut provider, wwd, day_limit);
     assert_tribute_partition_forfeited(&mut provider, wwd);
     StorageHandle::enter(&mut provider, |storage| {
-        assert_no_ocomp_job(&storage, wwd);
         let desis = storage.contract::<outbe_desis::schema::DesisContract>();
         assert_eq!(
             desis.auction_stage.read(&wwd).unwrap(),
@@ -727,7 +708,7 @@ fn active_ocomp_profile_completes_the_populated_zero_lysis_limit_day_and_forfeit
 }
 
 #[test]
-fn active_ocomp_profile_fails_the_populated_unknown_day_and_forfeits_its_partition() {
+fn native_lifecycle_fails_the_populated_unknown_day_and_forfeits_its_partition() {
     assert_populated_ready_day_fails_and_forfeits(
         outbe_primitives::time::WorldwideDay::new(2026_0315),
         day_type::UNKNOWN,
@@ -849,7 +830,7 @@ fn settle_minted_ready_day(
     let owner = address!("7400000000000000000000000000000000000074");
     let id = outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(owner, wwd).unwrap();
     let (scheduled, stored) = StorageHandle::enter(&mut provider, |storage| {
-        arm_genesis_ocomp(&storage, CHAIN_ID);
+        install_test_enclaves();
         let scheduled = create_waiting_day(&storage, wwd, dtype, day_limit);
         super::arm_reference_price(&storage, scheduled);
         issue_one_tribute(

@@ -60,7 +60,6 @@ pub(crate) fn install_delegation_with_overrides(
 /// - the authority is also the transaction sender
 /// - its transaction nonce is incremented before the authorization tuple is
 ///   processed.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn install_delegation_for_authority(
     url: &str,
     payer_key: &str,

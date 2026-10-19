@@ -62,20 +62,84 @@ fn dispatch_phase1(
 #[test]
 fn dispatch_finalization_uses_preloaded_summary_not_calldata_money() {
     let mut provider = configured_storage(2, 1_700_000_000);
+    let preloaded_fee = U256::from(1_234u64);
+    let parent_timestamp = 1_699_999_990u64;
+    let parent_day = outbe_primitives::time::timestamp_to_date_key(parent_timestamp);
+    let vrf_hash = B256::repeat_byte(0xAB);
+    let meta = metadata();
+    let fb_hash = meta.finalized_block_hash;
+
+    let context = PreloadedSystemTxContext {
+        proposer: VALIDATOR,
+        finalized_summary: Some(AccountedParentArtifact {
+            summary: outbe_primitives::reshare_artifact::ExecutionSummaryArtifact {
+                validator_fee_sum: preloaded_fee,
+            },
+            timestamp: parent_timestamp,
+            state_root: Some(B256::repeat_byte(0x92)),
+        }),
+        allow_boundary_proposer: false,
+        canonical_vrf_proof_hash: vrf_hash,
+    };
+
+    provider.enable_metadosis_mutation_frame(
+        outbe_primitives::storage::MetadosisMutationPurposeTag::CertifiedFinality,
+    );
+    provider.enter(|storage| {
+        storage
+            .increase_balance(outbe_primitives::addresses::REWARDS_ADDRESS, preloaded_fee)
+            .unwrap();
+        let input = SystemTxInputV2::CertifiedParentAccounting {
+            metadata: meta.clone(),
+        }
+        .encode()
+        .unwrap();
+        with_preloaded_system_tx_context(context.clone(), || {
+            dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO)
+        })
+        .unwrap();
+    });
+
+    assert_eq!(read_progress(&mut provider), 1);
+    provider.enter(|storage| {
+        let rewards = storage.contract::<outbe_rewards::schema::Rewards>();
+        assert_eq!(rewards.pending_fees.read(&fb_hash).unwrap(), preloaded_fee);
+        assert_eq!(
+            rewards.daily_fee_sum_raw.read(&parent_day).unwrap(),
+            preloaded_fee
+        );
+        assert_eq!(rewards.late_voter_count.read(&fb_hash).unwrap(), 1);
+        assert_ne!(
+            rewards
+                .metadata_fingerprint_for_block
+                .read(&fb_hash)
+                .unwrap(),
+            B256::ZERO
+        );
+    });
+
+    // Supported identical replay succeeds without duplicating fee escrow or participation.
     provider.enable_metadosis_mutation_frame(
         outbe_primitives::storage::MetadosisMutationPurposeTag::CertifiedFinality,
     );
     provider.enter(|storage| {
         let input = SystemTxInputV2::CertifiedParentAccounting {
-            metadata: metadata(),
+            metadata: meta.clone(),
         }
         .encode()
         .unwrap();
-        with_preloaded_system_tx_context(
-            finalized_dispatch_context(B256::repeat_byte(0x92), B256::ZERO),
-            || dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO),
-        )
+        with_preloaded_system_tx_context(context, || {
+            dispatch(storage.clone(), &input, SYSTEM_ADDRESS, U256::ZERO)
+        })
         .unwrap();
+
+        let rewards = storage.contract::<outbe_rewards::schema::Rewards>();
+        assert_eq!(rewards.pending_fees.read(&fb_hash).unwrap(), preloaded_fee);
+        assert_eq!(
+            rewards.daily_fee_sum_raw.read(&parent_day).unwrap(),
+            preloaded_fee
+        );
+        assert_eq!(rewards.late_voter_count.read(&fb_hash).unwrap(), 1);
     });
 }
 

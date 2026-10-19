@@ -182,13 +182,6 @@ fn proposer_and_validator_state_matches_after_a_gem_issue() {
     assert_eq!(observations[0], observations[1]);
 }
 
-fn state_with_active_proposer_and_funded_account_without_ocomp(
-    proposer: Address,
-    funded: Address,
-) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
-    state_with_active_proposer_and_funded_account_fixture(proposer, funded, false)
-}
-
 #[test]
 fn pending_rpc_context_skips_consensus_hooks_and_executes_user_transactions() {
     let user_tx = test_regular_tx()
@@ -218,6 +211,8 @@ fn finish_uses_final_extra_data_setter_for_summary_validation() {
     let chain_spec = test_chain_spec();
     let receipt_builder = reth_ethereum::evm::RethReceiptBuilder::default();
     let config = OutbeEvmConfig::new(chain_spec.clone());
+    let expected_fee = U256::from(1_234u64);
+
     let db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
     let mut state = State::builder()
         .with_database(db)
@@ -242,11 +237,12 @@ fn finish_uses_final_extra_data_setter_for_summary_validation() {
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
         fixtures::executor_inputs_from_ctx(&ctx, None, true),
     );
+    executor.current_block_validator_fees = expected_fee;
     let final_extra_data = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
         radicle_publication_enabled: false,
         radicle_publication: None,
         execution_summary: Some(ExecutionSummaryArtifact {
-            validator_fee_sum: U256::ZERO,
+            validator_fee_sum: expected_fee,
         }),
         consensus_header_artifact: None,
         timestamp_millis_part: 0,
@@ -255,17 +251,42 @@ fn finish_uses_final_extra_data_setter_for_summary_validation() {
     .expect("final extra_data must encode");
 
     executor.set_final_extra_data(final_extra_data);
-    let artifacts = outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(
-        executor.final_extra_data().as_ref(),
-    )
-    .unwrap();
-    super::validate_execution_summary_artifact(
-        true,
-        1,
-        artifacts.execution_summary,
-        executor.current_execution_summary(),
-    )
-    .expect("final extra_data summary must validate");
+    executor
+        .finish()
+        .expect("final extra_data summary must validate through finish()");
+
+    // Genesis block (number == 0) is exempt from execution-summary validation even without extra_data.
+    let db_genesis = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+    let mut state_genesis = State::builder()
+        .with_database(db_genesis)
+        .with_bundle_update()
+        .build();
+    let evm_env_genesis = EvmEnv {
+        cfg_env: CfgEnv::new()
+            .with_chain_id(CHAIN_ID)
+            .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
+        block_env: BlockEnv {
+            number: U256::ZERO,
+            gas_limit: 30_000_000,
+            basefee: 1_000_000_000,
+            beneficiary: OWNER,
+            timestamp: U256::from(1u64),
+            ..Default::default()
+        },
+    };
+    let evm_genesis = config.evm_with_env(&mut state_genesis, evm_env_genesis);
+    let genesis_executor = OutbeBlockExecutor::new(
+        EthBlockExecutor::new(
+            evm_genesis,
+            ctx.inner.clone(),
+            &chain_spec,
+            &receipt_builder,
+        ),
+        fixtures::executor_inputs_from_ctx(&ctx, None, true),
+    );
+    genesis_executor
+        .finish()
+        .expect("genesis block must bypass execution summary requirement in finish()");
 }
 
 #[test]
@@ -291,28 +312,63 @@ fn finish_without_final_extra_data_setter_rejects_missing_summary() {
             ..Default::default()
         },
     };
-    let evm = config.evm_with_env(&mut state, evm_env);
+    let evm = config.evm_with_env(&mut state, evm_env.clone());
     let ctx = execution_ctx(Some(0), Bytes::new());
     let executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
         fixtures::executor_inputs_from_ctx(&ctx, None, true),
     );
 
-    let artifacts = outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(
-        executor.final_extra_data().as_ref(),
-    )
-    .unwrap();
-    let err = super::validate_execution_summary_artifact(
-        true,
-        1,
-        artifacts.execution_summary,
-        executor.current_execution_summary(),
-    )
-    .expect_err("stale pre-summary extra_data must not validate");
+    let err = match executor.finish() {
+        Ok(_) => panic!("stale pre-summary extra_data must not validate in finish()"),
+        Err(err) => err,
+    };
+    assert!(
+        err.to_string()
+            .contains("missing execution summary artifact in block extra_data"),
+        "unexpected error: {err}"
+    );
 
-    assert!(err
-        .to_string()
-        .contains("missing execution summary artifact in block extra_data"));
+    // Deliberately non-zero mismatched validator_fee_sum must also fail finish().
+    let db_mismatch = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+    let mut state_mismatch = State::builder()
+        .with_database(db_mismatch)
+        .with_bundle_update()
+        .build();
+    let evm_mismatch = config.evm_with_env(&mut state_mismatch, evm_env);
+    let mut mismatch_executor = OutbeBlockExecutor::new(
+        EthBlockExecutor::new(
+            evm_mismatch,
+            ctx.inner.clone(),
+            &chain_spec,
+            &receipt_builder,
+        ),
+        fixtures::executor_inputs_from_ctx(&ctx, None, true),
+    );
+    mismatch_executor.current_block_validator_fees = U256::from(1_000u64);
+    let mismatched_extra_data = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
+        radicle_publication_enabled: false,
+        radicle_publication: None,
+        execution_summary: Some(ExecutionSummaryArtifact {
+            validator_fee_sum: U256::from(2_000u64),
+        }),
+        consensus_header_artifact: None,
+        timestamp_millis_part: 0,
+        late_finalize_credits: None,
+    })
+    .expect("mismatched final extra_data must encode");
+    mismatch_executor.set_final_extra_data(mismatched_extra_data);
+
+    let mismatch_err = match mismatch_executor.finish() {
+        Ok(_) => panic!("mismatched validator_fee_sum must fail finish()"),
+        Err(err) => err,
+    };
+    assert!(
+        mismatch_err
+            .to_string()
+            .contains("execution summary artifact mismatch"),
+        "unexpected error: {mismatch_err}"
+    );
 }
 
 #[test]

@@ -8,7 +8,6 @@ use crate::state_machine::ValidatorLifecycle;
 mod boundary;
 mod cleanup;
 mod lifecycle;
-mod ocomp_recovery;
 mod participation;
 mod queries;
 mod readiness;
@@ -20,7 +19,6 @@ mod staking;
 mod test_support;
 
 pub use lifecycle::DeferredValidatorPunishment;
-pub use ocomp_recovery::{OcompMissRecord, OcompRecoveryOutcome, OcompRecoveryWindow};
 
 /// Stable ABI status constants. The effective Rust states are richer: PENDING
 /// distinguishes readiness from joining, and JAILED distinguishes retained from
@@ -60,10 +58,6 @@ pub const MAX_SELF_REGISTERED_UNSTAKED: u32 = 32;
 /// This is not a configurable product capacity.
 pub const CONSENSUS_VALIDATOR_BOUND: u32 = outbe_consensus::bls::MAX_VALIDATORS;
 
-/// One day at the protocol's two-second block target. This is a recovery
-/// deadline, not a polling interval: the recovery sweep runs every block.
-pub const OCOMP_RECOVERY_WINDOW_BLOCKS: u64 = 43_200;
-
 /// Legacy flat read/ABI projection.
 ///
 /// Lifecycle decisions must use [`crate::state_machine::ValidatorState`] or [`ValidatorLifecycle`].
@@ -88,8 +82,7 @@ pub struct ValidatorRecord {
 
 impl ValidatorSet<'_> {
     /// Store the configured validator cap only when it fits the canonical
-    /// consensus codec/committee bound. OCOMP reads this consensus limit and
-    /// does not define a second participant ceiling.
+    /// consensus codec/committee bound.
     pub fn set_config_max_validators(&mut self, max_validators: u32) -> Result<()> {
         if max_validators > CONSENSUS_VALIDATOR_BOUND {
             return Err(ValidatorSetError::MaxValidatorsExceedsConsensusBound {

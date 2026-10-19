@@ -160,14 +160,14 @@ jobs:
         run: |
           set -euo pipefail
           epoch="$(jq -r .build.source_date_epoch "${RUNNER_TEMP}/elf-a/release-manifest.json")"
-          # Every artifact of release/reproducible-elf-build-v1.json, including
-          # outbe-ocomp, plus the SHA256SUMS and manifest that bind them.
+          # Every artifact of release/reproducible-elf-build-v1.json, plus
+          # the SHA256SUMS and manifest that bind them.
           tar --sort=name --format=gnu --mtime="@${epoch}" \
             --owner=0 --group=0 --numeric-owner \
             -cf "${RUNNER_TEMP}/release-inputs/outbe-linux-x86_64.tar" \
             -C "${RUNNER_TEMP}/elf-a" .
           tar -tf "${RUNNER_TEMP}/release-inputs/outbe-linux-x86_64.tar" \
-            | grep -qx './bin/outbe-ocomp'
+            | grep -qx './bin/outbe-chain'
           tar --sort=name --format=gnu --mtime="@${epoch}" \
             --owner=0 --group=0 --numeric-owner \
             -cf "${RUNNER_TEMP}/release-inputs/outbe-deploy-assets.tar" \

@@ -1,5 +1,5 @@
 use crate::runtime::create_worldwide_day_for_date;
-use crate::state::{DayLimitFormationReceipt, OcompDayLimitFormation};
+use crate::state::{DayLimitFormation, DayLimitFormationReceipt};
 use alloy_primitives::U256;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
@@ -29,16 +29,12 @@ pub(crate) fn apply(ctx: &BlockRuntimeContext, amount: U256) -> Result<DayLimitF
 }
 
 fn apply_inner(ctx: &BlockRuntimeContext, amount: U256) -> Result<DayLimitFormationReceipt> {
-    crate::runtime::require_active_ocomp_profile(&MetadosisContract::new(ctx.storage.clone()))?;
-    apply_ocomp_day_limit(ctx, amount)
+    apply_day_limit(ctx, amount)
 }
 
-/// Recycles late-settlement headroom without racing daily OCOMP limit formation.
-///
-/// The genesis-active OCOMP profile makes the daily Cycle allocation the sole
-/// base-limit formation input. A late residue becomes carry-over credit.
-/// OCOMP request processing draws this credit when it knows the day's demand.
-/// Missing profile state is fatal.
+/// Recycles late-settlement headroom without racing daily limit formation.
+/// Daily Cycle allocations form base limits. Late residues become carry-over
+/// credit, which native Metadosis draws when the next day limit is formed.
 pub(crate) fn apply_late_settlement_headroom(
     ctx: &BlockRuntimeContext,
     amount: U256,
@@ -56,12 +52,11 @@ pub(crate) fn apply_late_settlement_headroom(
 }
 
 fn apply_late_settlement_headroom_inner(ctx: &BlockRuntimeContext, amount: U256) -> Result<U256> {
-    crate::runtime::require_active_ocomp_profile(&MetadosisContract::new(ctx.storage.clone()))?;
     PromisLimitContract::new(ctx.storage.clone()).checked_add_carry_over(amount)?;
     Ok(U256::ZERO)
 }
 
-fn apply_ocomp_day_limit(
+fn apply_day_limit(
     ctx: &BlockRuntimeContext,
     base_limit: U256,
 ) -> Result<DayLimitFormationReceipt> {
@@ -70,10 +65,10 @@ fn apply_ocomp_day_limit(
         let mut metadosis = MetadosisContract::new(ctx.storage.clone());
         create_worldwide_day_for_date(&mut metadosis, ctx, wwd)?;
 
-        if let Some(formed) = metadosis.ocomp_day_limit_formation(wwd)? {
+        if let Some(formed) = metadosis.day_limit_formation(wwd)? {
             if formed.base_limit != base_limit {
                 return Err(
-                    crate::errors::MetadosisCallerError::FormedOcompDayLimitCannotBeReplaced.into(),
+                    crate::errors::MetadosisCallerError::FormedDayLimitCannotBeReplaced.into(),
                 );
             }
             return Ok(DayLimitFormationReceipt::Formed(formed));
@@ -84,7 +79,7 @@ fn apply_ocomp_day_limit(
         let carry_over = PromisLimitContract::new(ctx.storage.clone()).get_total_unallocated()?;
         crate::commit::commit_day_limit_formation(
             &mut metadosis,
-            OcompDayLimitFormation {
+            DayLimitFormation {
                 worldwide_day: wwd,
                 base_limit,
                 carry_over_before: carry_over,

@@ -68,13 +68,23 @@ contract EscrowAdapterAssetVersionTest is Test {
         assertEq(_positionOf(COMPACT, lockIdA), LOCK, "the locked funds stayed where they were");
     }
 
+    function test_MoneyLeftUnderARetiredAssetStillCountsAsOutstanding() public {
+        _lock(DAY_1, alice, tokenA);
+        escrow.wire(admin, COMPACT, address(tokenB));
+        assertEq(escrow.lockId(), 0, "the active asset holds nothing yet");
+
+        assertTrue(escrow.hasOutstandingLocks(), "the retired position still holds the lock");
+        vm.expectRevert(IEscrowAdapter.LocksOutstanding.selector);
+        escrow.wire(makeAddr("auction2"), COMPACT, address(tokenB));
+    }
+
     function test_ADayLockedBeforeARotationIsClaimedInItsOwnAsset() public {
         _lock(DAY_1, alice, tokenA);
         uint256 lockIdA = escrow.lockId();
         escrow.wire(admin, COMPACT, address(tokenB));
 
         vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
-        escrow.claimRefund(DAY_1, alice);
+        escrow.releaseRefund(DAY_1, alice);
 
         assertEq(tokenA.balanceOf(alice), LOCK, "refunded in the token it was locked in");
         assertEq(tokenB.balanceOf(alice), 0, "never in the rotated token");
@@ -90,8 +100,8 @@ contract EscrowAdapterAssetVersionTest is Test {
         address[] memory winners = new address[](1);
         winners[0] = bob;
         escrow.finalizeAuction(DAY_1, bytes32(uint256(1)), winners, 0, 0, 500_000, 1000e6, true);
-        escrow.claimRefund(DAY_1, alice);
-        escrow.claimRefund(DAY_1, bob);
+        escrow.releaseRefund(DAY_1, alice);
+        escrow.releaseRefund(DAY_1, bob);
 
         assertEq(tokenA.balanceOf(alice), LOCK, "loser refunded in the day's token");
         assertEq(tokenA.balanceOf(bob), LOCK / 2, "winner refunded in the day's token");
@@ -109,7 +119,7 @@ contract EscrowAdapterAssetVersionTest is Test {
         assertTrue(lockIdB != 0 && lockIdB != lockIdA, "a separate position");
 
         vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
-        escrow.claimRefund(DAY_2, bob);
+        escrow.releaseRefund(DAY_2, bob);
         assertEq(tokenB.balanceOf(bob), LOCK, "refunded in the new token");
         assertEq(_positionOf(COMPACT, lockIdA), LOCK, "the old day's funds untouched");
     }
@@ -148,8 +158,8 @@ contract EscrowAdapterAssetVersionTest is Test {
         uint256 lockIdNew = escrow.lockId();
 
         vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
-        escrow.claimRefund(DAY_1, alice);
-        escrow.claimRefund(DAY_2, bob);
+        escrow.releaseRefund(DAY_1, alice);
+        escrow.releaseRefund(DAY_2, bob);
 
         assertEq(tokenA.balanceOf(alice), LOCK, "old day refunded");
         assertEq(tokenA.balanceOf(bob), LOCK, "new day refunded");

@@ -6,12 +6,12 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use alloy_primitives::{Address, U256};
-use cucumber::{then, when};
+use cucumber::{given, then, when};
 use outbe_gem::{GemBucketState, GemItemState};
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 use crate::features::entity_lifecycle::chain::{
-    assert_single_event, finalized_checkpoint, head_time, poll_until,
+    assert_single_event, finalized_checkpoint, head_time, poll_until, verify_checkpoint,
 };
 use crate::features::entity_lifecycle::entity::{Item, Lifecycle, Phase, Target, Terms};
 use crate::features::entity_lifecycle::holders::{self, FORFEITED, HOLDERS, UNPAID_AT_CALL};
@@ -25,8 +25,6 @@ use crate::world::settlement_currency::USD_ISO;
 use crate::world::test_issuance::{self, SeriesSpec};
 use crate::world::{venue_probes, World};
 
-/// How long a view may trail the block that wrote the body it reads.
-const PROJECTION_READ_TIMEOUT: Duration = Duration::from_secs(90);
 /// The source series' entry price; the gems derive their own from it. Low enough that
 /// the controlled COEN/USD quote clears the call price.
 const ENTRY_PRICE_MINOR: u64 = 800_000;
@@ -66,6 +64,36 @@ const POSITION_SWEEP_TIMEOUT_SECS: u64 = 300;
 const POSITION_DEADLINE_TIMEOUT_SECS: u64 = 900;
 
 pub(crate) struct GemLifecycle;
+
+/// Ten real Oracle publications and restart slack must fit inside one pricing hour.
+const HOURLY_PRICING_ORACLE_PERIOD: u64 = 8;
+
+#[given(expr = "a fresh Gem lifecycle localnet with a {int}-block voting window")]
+fn fresh_gem_lifecycle_localnet(world: &mut World, window: u64) {
+    crate::features::common::boot_localnet(
+        world,
+        window,
+        &[(
+            "TESTNET_ORACLE_VOTE_PERIOD_BLOCKS",
+            HOURLY_PRICING_ORACLE_PERIOD.to_string(),
+        )],
+    );
+    let checkpoint = finalized_checkpoint(world);
+    for port in world.validators.committee_ports() {
+        let params = eth::read_call_at_result(
+            &world.rpc.url(port),
+            outbe_primitives::addresses::ORACLE_ADDRESS,
+            &eth::IOracle::getParamsCall {},
+            checkpoint.height,
+        )
+        .expect("read the executed Gem fixture Oracle parameters");
+        assert_eq!(
+            params.votePeriod, HOURLY_PRICING_ORACLE_PERIOD,
+            "Gem fixture Oracle period on port {port}"
+        );
+    }
+    verify_checkpoint(world, checkpoint);
+}
 
 #[when("a test Intex series is issued to the merchant in MYR against USD")]
 fn issue_source_series(world: &mut World) {
@@ -115,8 +143,7 @@ fn issue_source_series(world: &mut World) {
         REFERENCE_BYTE,
         U256::from(ENTRY_PRICE_MINOR),
         PROMIS_LOAD_MINOR,
-        merchant,
-        &[UNITS],
+        UNITS,
         &[u32::try_from(chain_id).expect("committee chain id fits a uint32")],
         &[SeriesSpec {
             issuance: *b"MYR",
@@ -130,6 +157,17 @@ fn issue_source_series(world: &mut World) {
     // Issuance reaches the collection as its own message; parking before the
     // units land reverts with NonexistentToken.
     let nft = intex_nft(world);
+    test_issuance::issue_to_owner(
+        &url,
+        nft,
+        DEPLOYER_KEY,
+        merchant,
+        UNITS,
+        &[series],
+        || {},
+        Duration::from_secs(ISSUANCE_TIMEOUT_SECS),
+    )
+    .expect("issue the source units to the merchant");
     let deadline = Instant::now() + Duration::from_secs(ISSUANCE_TIMEOUT_SECS);
     loop {
         if venue_probes::series_balances(&url, nft, series, merchant) == Some((u64::from(UNITS), 0))
@@ -504,11 +542,9 @@ impl Lifecycle for GemLifecycle {
                 )
                 .expect("submit Promis mining");
                 assert_mined_success(&outcome, "mine Promis from the paid gem");
-                // The balance view trails the mining block by the projection's lag.
-                poll_until(
-                    PROJECTION_READ_TIMEOUT,
-                    || format!("mining did not burn gem {id}"),
-                    || gem_count(&url, owner).is_zero(),
+                assert!(
+                    gem_count(&url, owner).is_zero(),
+                    "mining did not burn gem {id}"
                 );
                 Mined {
                     owner,
@@ -721,23 +757,13 @@ fn read_position(world: &World) -> eth::IGemFactory::PositionData {
     .expect("the parked position reads back")
 }
 
-/// Gem views read through the compressed-body projection. The projection trails the
-/// block that wrote the body, so a fresh write can answer an error for a moment.
 fn read_gem_view<C>(url: &str, call: &C, what: &str) -> C::Return
 where
     C: alloy_sol_types::SolCall,
     C::Return: Send + 'static,
 {
-    let deadline = Instant::now() + PROJECTION_READ_TIMEOUT;
-    loop {
-        match eth::read_call_result(url, addresses::GEM_ADDR, call) {
-            Ok(value) => return value,
-            Err(error) => {
-                assert!(Instant::now() < deadline, "{what}: {error}");
-                sleep(Duration::from_secs(1));
-            }
-        }
-    }
+    eth::read_call_result(url, addresses::GEM_ADDR, call)
+        .unwrap_or_else(|error| panic!("{what}: {error}"))
 }
 
 fn gem_count(url: &str, owner: Address) -> U256 {

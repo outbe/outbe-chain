@@ -1,21 +1,16 @@
 //! Storage-independent Lysis V1 semantic program.
 //!
-//! The program consumes request-pinned logical observations and emits typed
-//! actions. Artifact and result modules use the OCOMP protocol codec.
+//! The program consumes logical observations and emits typed actions.
 //! The program owns no storage, node, process, or worker dependency.
 
-pub mod artifacts;
 mod execute;
-pub mod finalizer;
-pub mod phases;
-pub mod planner;
-pub mod reducers;
-pub mod result;
 mod types;
 
+pub use execute::{
+    calculate_gratis_load, compute_fraction_map_from_groups, execute, execute_with_amounts,
+};
 #[cfg(test)]
 pub(crate) use execute::{compute_fraction_hash_map, validate_required_gratis};
-pub use execute::{execute, execute_with_amounts};
 pub use types::{
     FidelityPhaseV1, LeagueFractionV1, LysisArithmeticErrorV1, NodActionV1, ObservationValueV1,
     ObservedTributeV1, ProgramErrorV1, ProgramInputV1, ProgramResultV1, SemanticObservationV1,

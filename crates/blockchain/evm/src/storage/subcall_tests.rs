@@ -48,10 +48,6 @@ fn provider<DB: Database + Debug>(
 
             abort_bridge: Default::default(),
 
-            ocomp_finality_authority: None,
-            ocomp_activation_block_meter: Arc::new(OcompActivationBlockMeter),
-            ocomp_lifecycle_active: false,
-            lysis_activation_entitled: false,
             metadosis_mutation_entitlements: MetadosisMutationEntitlements::NONE,
         },
     )

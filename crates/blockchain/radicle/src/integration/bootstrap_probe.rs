@@ -34,12 +34,6 @@ fn genesis_description_range_matches_native_project_range() {
             descriptor.description.clone(),
             git::fmt::refname!("main"),
         );
-        println!(
-            "description_bytes={length} genesis_accepts={} native_accepts={} native_error={:?}",
-            genesis.is_ok(),
-            native.is_ok(),
-            native.as_ref().err()
-        );
         assert_eq!(genesis.is_ok(), length <= 256);
         assert_eq!(native.is_ok(), length <= 256);
         if let Ok(project) = native {

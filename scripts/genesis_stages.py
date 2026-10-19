@@ -41,7 +41,7 @@ def build_base_genesis(config: dict[str, Any]) -> dict[str, Any]:
             f"set `allow_stale_timestamp: true` to reproduce an existing genesis."
         )
     # An explicit genesisTime pins the ValidatorSet epoch start. Without it, the
-    # seeder uses the wall clock instead. Then the genesis hash, which the OCOMP
+    # seeder uses the wall clock instead. Then the genesis hash, which the TEE
     # registrations sign, changes on every run.
     genesis_time = datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
@@ -174,7 +174,7 @@ def run_seed_stage(
             call()
     else:
         call()
-    # The OCOMP and TEE stages are the node binary's own subcommands, so the
+    # The TEE stage is the node binary's own subcommand, so the
     # seeded genesis reaches them as a file.
     seeded_path = work_dir / "genesis.seeded.json"
     seeded_path.write_text(json.dumps(seeded, indent=2))
@@ -185,7 +185,7 @@ def run_seed_stage(
 def seed_genesis_from_config(
     *, inputs: SeedInputs, options: SeedOptions
 ) -> dict[str, Any]:
-    """Seed one genesis from an explicit profile, without the OCOMP/TEE stages.
+    """Seed one genesis from an explicit profile, without the TEE stage.
     `seed_genesis.py` uses this entry point. Thus its CLI, which the e2e harness
     and the localnet scripts call, creates its genesis through exactly the same
     code path as a yaml-driven deployment. This function uses the profile as

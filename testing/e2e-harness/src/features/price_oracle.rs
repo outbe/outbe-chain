@@ -22,10 +22,27 @@ pub(crate) const MOCK_VOLUME: &str = "1000.000000";
 pub(crate) const EXPECTED_RATE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
 const BTC_TOKEN: Address = address!("2260fac5e5542a773aa44fbcfedf7c193bc2c599");
 const FX_TTL_SECS: u64 = 21_600;
-/// Four vote periods at 2 s blocks: a publication needs up to two rounds, and
-/// the quorum-loss window waits `2 * vote_period + 2` blocks.
-const PUBLICATION_TIMEOUT: Duration =
-    Duration::from_secs(4 * 2 * crate::internal::config::E2E_ORACLE_VOTE_PERIOD_BLOCKS);
+
+fn publication_budget(genesis: &serde_json::Value, vote_period: u64) -> Result<Duration> {
+    ensure!(vote_period > 0, "Oracle vote period must be positive");
+    let blocks = vote_period
+        .checked_mul(4)
+        .ok_or_else(|| eyre!("Oracle publication budget overflow"))?;
+    super::common::consensus_block_wait_budget(genesis, blocks)
+}
+
+fn publication_deadline(world: &World, cohort: &OracleCohortV1) -> (Duration, Instant) {
+    let genesis = std::fs::read(world.localnet.scenario_dir().join("genesis.json"))
+        .expect("read executed Oracle scenario genesis");
+    let genesis = serde_json::from_slice(&genesis).expect("decode Oracle scenario genesis");
+    let vote_period = cohort_vote_period(world, cohort).expect("canonical Oracle vote period");
+    let timeout = publication_budget(&genesis, vote_period)
+        .expect("Oracle wait budget from executed genesis timing");
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .expect("Oracle publication deadline fits the monotonic clock");
+    (timeout, deadline)
+}
 
 #[then("live feeders reject failed and malformed sources without publishing a new price")]
 fn live_feeders_reject_bad_sources(world: &mut World) {
@@ -141,12 +158,19 @@ fn live_feeders_reject_bad_sources(world: &mut World) {
     );
 }
 
-#[cfg(feature = "ocomp-integration")]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PendingPricePublication {
     strictly_after_block: u64,
     expected_rate: U256,
     deadline: Instant,
+    timeout: Duration,
+}
+
+impl PendingPricePublication {
+    /// The caller's joint barrier must allow this already bounded publication wait.
+    pub(crate) fn remaining_wait(&self) -> Duration {
+        self.deadline.saturating_duration_since(Instant::now())
+    }
 }
 
 #[given(expr = "a fresh price oracle localnet with a {int}-block voting window")]
@@ -404,7 +428,8 @@ fn five_admitted_validators_finalize_controlled_quote(world: &mut World) {
             eth::address_of(&key).expect("derive public Oracle admission identity")
         })
         .collect::<Vec<_>>();
-    let deadline = Instant::now() + PUBLICATION_TIMEOUT;
+    let initial_cohort = resolve_cohort(world, false).expect("initial Oracle admission cohort");
+    let (_, deadline) = publication_deadline(world, &initial_cohort);
     let cohort = loop {
         assert_eq!(
             world.localnet.owned_validator_indices(),
@@ -464,7 +489,6 @@ fn assert_controlled_quote_is_finalized(world: &mut World) {
 /// Stop the feeder before a controlled-time restart and retain the last
 /// finalized publication as the strict post-restart lower bound. Returning
 /// `None` keeps scenarios without the feeder unchanged.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn stop_before_clock_restart(world: &mut World) -> Option<u64> {
     let cohort = match world.price_oracle.cohort() {
         Ok(cohort) => cohort,
@@ -488,7 +512,6 @@ pub(crate) fn stop_before_clock_restart(world: &mut World) -> Option<u64> {
 
 /// Restart the feeder with reset poll/backoff state and return the strict
 /// publication condition that the caller must observe alongside WWD progress.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn resume_after_clock_restart(
     world: &mut World,
     previous_block: Option<u64>,
@@ -500,20 +523,21 @@ pub(crate) fn resume_after_clock_restart(
         .price_oracle
         .cohort()
         .expect("restarted Oracle cohort");
+    let (timeout, deadline) = publication_deadline(world, &cohort);
     Some(PendingPricePublication {
         strictly_after_block: publication_lower_bound(
             Some(previous_block),
             cohort.checkpoint.height,
         ),
         expected_rate,
-        deadline: Instant::now() + PUBLICATION_TIMEOUT,
+        deadline,
+        timeout,
     })
 }
 
 /// Poll one post-restart publication without hiding an irreversible lifecycle
 /// transition behind a nested wait. The caller owns the joint WWD/Oracle
 /// barrier and stops polling after the first successful observation.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn observe_pending_publication(
     world: &mut World,
     pending: &PendingPricePublication,
@@ -529,7 +553,8 @@ pub(crate) fn observe_pending_publication(
     }
     assert!(
         Instant::now() < pending.deadline,
-        "controlled quote did not publish a newer unanimous finalized Oracle rate within {PUBLICATION_TIMEOUT:?} after block {}",
+        "controlled quote did not publish a newer unanimous finalized Oracle rate within {:?} after block {}",
+        pending.timeout,
         pending.strictly_after_block,
     );
     false
@@ -537,7 +562,6 @@ pub(crate) fn observe_pending_publication(
 
 /// Atomically change the harness-owned quote and prove that the production
 /// feeder published the new exact scale-6 rate on every validator.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn publish_controlled_quote(world: &mut World, expected_rate: U256) {
     let cohort = world
         .price_oracle
@@ -818,7 +842,6 @@ fn oracle_quorum(active_validators: usize) -> usize {
     active_validators - active_validators / 3
 }
 
-#[cfg(any(test, feature = "ocomp-integration"))]
 fn publication_lower_bound(last_publication: Option<u64>, barrier: u64) -> u64 {
     last_publication.unwrap_or(0).max(barrier)
 }
@@ -1090,7 +1113,6 @@ fn feeder_start_quote(current: Option<(String, String)>) -> (String, String) {
     current.unwrap_or_else(|| (MOCK_PRICE.to_owned(), MOCK_VOLUME.to_owned()))
 }
 
-#[cfg(any(test, feature = "ocomp-integration"))]
 fn feeder_restart_expected_rate(current: Option<(String, String)>) -> U256 {
     let (price, _) = feeder_start_quote(current);
     parse_scale6_rate(&price).unwrap_or_else(|| {
@@ -1098,7 +1120,6 @@ fn feeder_restart_expected_rate(current: Option<(String, String)>) -> U256 {
     })
 }
 
-#[cfg(any(test, feature = "ocomp-integration"))]
 fn parse_scale6_rate(price: &str) -> Option<U256> {
     let (whole, fraction) = price.split_once('.').unwrap_or((price, ""));
     if whole.is_empty()
@@ -1147,7 +1168,11 @@ fn wait_for_unanimous_pair_publication(
     expected: ExpectedPublication,
     require_live_feeder: bool,
 ) {
-    let deadline = Instant::now() + PUBLICATION_TIMEOUT;
+    let cohort = world
+        .price_oracle
+        .cohort()
+        .expect("Oracle publication cohort");
+    let (_, deadline) = publication_deadline(world, &cohort);
     loop {
         if observe_unanimous_pair_publication(world, phase, expected, require_live_feeder) {
             return;
@@ -1162,7 +1187,6 @@ fn wait_for_unanimous_pair_publication(
     }
 }
 
-#[cfg(feature = "ocomp-integration")]
 fn observe_unanimous_publication(
     world: &mut World,
     phase: OracleEvidencePhaseV1,
@@ -1322,7 +1346,8 @@ fn wait_finalized_blocks(world: &mut World, blocks: u64) -> u64 {
 }
 
 fn wait_until_finalized_height(world: &mut World, target: u64) {
-    let deadline = Instant::now() + PUBLICATION_TIMEOUT;
+    let cohort = resolve_cohort(world, false).expect("Oracle block-wait cohort");
+    let (_, deadline) = publication_deadline(world, &cohort);
     loop {
         let ports = world.validators.committee_ports();
         if ports.iter().all(|port| {
@@ -1341,7 +1366,6 @@ fn wait_until_finalized_height(world: &mut World, target: u64) {
     }
 }
 
-#[cfg(any(test, feature = "ocomp-integration"))]
 fn scale6_quote(rate: U256) -> String {
     let scale = U256::from(1_000_000_u64);
     let whole = rate / scale;

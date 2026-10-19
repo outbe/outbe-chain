@@ -221,7 +221,7 @@ mod tests {
     use alloy_evm::{block::CommitChanges, RecoveredTx};
     use alloy_primitives::{address, Address, Bytes, StorageKey, StorageValue, B256, U256};
     use outbe_primitives::addresses::REWARDS_ADDRESS;
-    use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
+    use outbe_primitives::block::BlockContext;
     use outbe_primitives::consensus::ConsensusExecutionBridge;
     use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
     use outbe_primitives::reshare_artifact::{
@@ -229,8 +229,7 @@ mod tests {
         ExecutionSummaryArtifact, OutbeBlockArtifacts,
     };
     use outbe_primitives::storage::{
-        direct::DirectStorageProvider, hashmap::HashMapStorageProvider,
-        MetadosisMutationPurposeTag, StorageHandle,
+        direct::DirectStorageProvider, hashmap::HashMapStorageProvider, StorageHandle,
     };
     use outbe_primitives::tee_genesis_v1::GRAMINE_DIRECT_DEV_CHAIN_ID;
     use outbe_primitives::OutbeHeader;
@@ -589,15 +588,6 @@ mod tests {
                 (validator, consensus_key)
             })
             .collect::<Vec<_>>();
-        let install = outbe_metadosis::test_support::ForkInstallScenario::measurement_at(
-            1,
-            chain_spec.chain().id(),
-            chain_spec.genesis_hash(),
-        )
-        .unwrap()
-        .with_founder_validators(&founders)
-        .unwrap()
-        .into_install();
         let mut metadosis_genesis = HashMapStorageProvider::new_with_chain_identity(
             chain_spec.chain().id(),
             chain_spec.genesis_hash(),
@@ -610,16 +600,11 @@ mod tests {
             vs.config_epoch_length_blocks.write(60).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
-            for ((validator, consensus_key), registration) in
-                founders.iter().zip(&install.founder_registrations)
-            {
+            for (validator, consensus_key) in &founders {
                 vs.register_validator(Address::ZERO, *validator, consensus_key)
                     .unwrap();
                 vs.mark_pending(*validator).unwrap();
-                let encoded = registration
-                    .encode_canonical(&outbe_metadosis::config::poc_schema_limits())
-                    .unwrap();
-                vs.confirm_validator_ready(*validator, &encoded).unwrap();
+                vs.confirm_validator_ready(*validator).unwrap();
                 vs.activate_validator_via_boundary_for_test(*validator)
                     .unwrap();
             }
@@ -631,14 +616,6 @@ mod tests {
                 0,
             )
             .unwrap();
-        });
-        metadosis_genesis.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::ForkProfile);
-        metadosis_genesis.enter(|storage| {
-            let ctx = BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(1, 1_700_000_001, chain_spec.chain().id()),
-                storage,
-            );
-            outbe_metadosis::commands::install_fork_profile(&ctx, &install).unwrap();
         });
         for ((address, slot), value) in metadosis_genesis.storage {
             db.insert_account_storage(address, slot, value)
@@ -667,14 +644,6 @@ mod tests {
             AccountInfo {
                 code_hash: marker_code.hash_slow(),
                 code: Some(marker_code.clone()),
-                ..Default::default()
-            },
-        );
-        db.insert_account_info(
-            outbe_primitives::addresses::OCOMP_REGISTRY_ADDRESS,
-            AccountInfo {
-                code_hash: marker_code.hash_slow(),
-                code: Some(marker_code),
                 ..Default::default()
             },
         );
@@ -1014,7 +983,7 @@ mod tests {
             encode_consensus_header_artifact(&ConsensusHeaderArtifact::BoundaryOutcome(artifact))
                 .expect("artifact encoding must succeed");
 
-        let config = test_config(bridge);
+        let config = test_config(bridge.clone());
         let parent = test_parent();
         let provider = DeterministicEmptyStateProvider;
 
@@ -1059,7 +1028,20 @@ mod tests {
             .finish(&provider, None)
             .expect("proposer path must build a block");
         let built_block = outcome.block;
+        let built_hash = built_block.hash();
         let built_root = built_block.header().inner.state_root;
+        let expected_cached_summary = outbe_primitives::consensus::CachedExecutionSummary {
+            summary: outbe_primitives::reshare_artifact::ExecutionSummaryArtifact {
+                validator_fee_sum: alloy_primitives::U256::ZERO,
+            },
+            timestamp: built_block.header().inner.timestamp,
+            state_root: Some(built_root),
+        };
+        assert_eq!(
+            bridge.cached_execution_summary(1, built_hash),
+            Some(expected_cached_summary),
+            "proposer finish must publish the canonical block's execution summary and state root",
+        );
 
         // The block header must carry the artifact.
         assert!(
@@ -1091,13 +1073,16 @@ mod tests {
         );
 
         // Reth validates receipt and state roots only after `execute_one`
-        // returns. Validator execution must therefore publish no speculative execution artifacts,
-        // even when execution itself succeeds for a header that the following
-        // post-execution check rejects.
+        // returns. Because the bridge cache is keyed by `(block_number, block_hash)`,
+        // executing a same-height candidate that fails post-execution receipt or
+        // state-root validation must never overwrite the canonical `built_hash`
+        // summary or state root.
         let mut wrong_receipt_block = built_block.clone().into_block();
         wrong_receipt_block.header.inner.receipts_root = B256::repeat_byte(0x71);
         let wrong_receipt_block =
             RecoveredBlock::new_unhashed(wrong_receipt_block, built_block.senders().to_vec());
+        let wrong_receipt_hash = wrong_receipt_block.header().inner.hash_slow();
+        assert_ne!(wrong_receipt_hash, built_hash);
 
         let receipt_config = config.clone();
         let mut receipt_db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
@@ -1129,6 +1114,8 @@ mod tests {
         wrong_state_block.header.inner.state_root = B256::repeat_byte(0x72);
         let wrong_state_block =
             RecoveredBlock::new_unhashed(wrong_state_block, built_block.senders().to_vec());
+        let wrong_state_hash = wrong_state_block.header().inner.hash_slow();
+        assert_ne!(wrong_state_hash, built_hash);
 
         let state_config = config.clone();
         let mut state_db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
@@ -1150,6 +1137,11 @@ mod tests {
             wrong_state_block.header().inner.state_root,
             actual_state_root,
             "the fixture must reach Reth's state-root rejection seam",
+        );
+        assert_eq!(
+            bridge.cached_execution_summary(1, built_hash),
+            Some(expected_cached_summary),
+            "legitimate built-block execution summary and state root must remain intact in bridge cache",
         );
     }
 }

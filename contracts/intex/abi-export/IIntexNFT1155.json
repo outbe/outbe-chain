@@ -612,6 +612,35 @@
     },
     {
       "type": "function",
+      "name": "seriesIdOf",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "issuanceCurrency",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "referenceCurrency",
+          "type": "uint16",
+          "internalType": "uint16"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bytes14",
+          "internalType": "bytes14"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "seriesIdsByWorldwideDay",
       "inputs": [
         {

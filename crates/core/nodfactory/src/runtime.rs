@@ -20,7 +20,7 @@ use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 use crate::errors::NodFactoryError;
 use crate::precompile::INodFactory;
-use outbe_vaultrouter::settlement::{self, Currencies, Obligation};
+use outbe_vaultrouter::settlement::{self, Currencies, SettlementCost, SettlementPayment};
 
 /// Issues an authenticated encrypted Nod through the block-scoped body lifecycle.
 pub fn issue_nod(storage: &StorageHandle<'_>, encrypted: &EncryptedNodV2) -> Result<WwdEntityId> {
@@ -48,6 +48,25 @@ pub fn issue_lysis_nod(
     )
 }
 
+/// Issues a Nod claimed from a Tribute within the 7-day post-Metadosis claim window.
+pub fn issue_tribute_nod(
+    storage: &StorageHandle<'_>,
+    encrypted: &EncryptedNodV2,
+    gratis_load_minor: U256,
+) -> Result<WwdEntityId> {
+    let cost =
+        nod_api::settlement_cost_minor(encrypted.terms.entry_price_minor, gratis_load_minor)?;
+    if cost.is_zero() {
+        return Err(NodFactoryError::EntryPriceOutOfBounds.into());
+    }
+    issue_nod_with_cost(
+        storage,
+        encrypted,
+        storage.timestamp()?.to::<u64>(),
+        Some(cost),
+    )
+}
+
 fn issue_nod_with_cost(
     storage: &StorageHandle<'_>,
     encrypted: &EncryptedNodV2,
@@ -63,7 +82,7 @@ fn issue_nod_with_cost(
         || terms.chain_id != storage.chain_id()?
         || !encrypted.has_valid_encoding()
     {
-        return Err(NodFactoryError::InvalidMaterializationProof.into());
+        return Err(NodFactoryError::InvalidEncryptedNod.into());
     }
     if nod_api::get_item(storage, nod_id)?.is_some() {
         return Err(NodFactoryError::NodAlreadyExists.into());
@@ -95,12 +114,21 @@ fn issue_nod_with_cost(
             nod_api::calculation_amount(&item)?,
         )?,
     };
-    let call_terms = call_terms(storage, terms.entry_price_minor, terms.reference_currency)?;
+    let existing_call_price = NodContract::new(storage.clone())
+        .bucket_call_price_minor
+        .read(&item.bucket_key)?;
+    let call_terms = if existing_call_price.is_zero() {
+        call_terms(storage, terms.entry_price_minor, terms.reference_currency)?
+    } else {
+        None
+    };
     nod_api::add_nod(storage, &item, terms.entry_price_minor, call_terms)?;
     // The bucket's sealed terms, which a Nod joining an existing bucket inherits.
-    let call_price_minor = NodContract::new(storage.clone())
-        .read_call_terms(item.bucket_key)?
-        .call_price_minor;
+    let call_price_minor = if existing_call_price.is_zero() {
+        call_terms.map_or(U256::ZERO, |t| t.call_price_minor)
+    } else {
+        existing_call_price
+    };
     emit_event(
         storage,
         INodFactory::NodIssued {
@@ -126,37 +154,32 @@ pub struct MineGratisRequest {
     pub auth: outbe_gratisfactory::api::ModifyAuth,
 }
 
-/// One payment for an uncalled Nod, or a called one before its deadline.
-pub struct SettleNodRequest {
-    pub caller: Address,
-    pub nod_id: WwdEntityId,
-    pub asset: Address,
-    pub snapshot_id: U256,
-}
-
 /// Pays an uncalled or called Nod's known cost in ERC20 base units of `asset`. An
 /// issuance-currency payment must name the VWAP snapshot required at this block.
-pub fn settle_nod(storage: &StorageHandle<'_>, request: SettleNodRequest) -> Result<()> {
-    let SettleNodRequest {
-        caller,
-        nod_id,
+pub fn settle_nod(
+    storage: &StorageHandle<'_>,
+    nod_id: WwdEntityId,
+    payment: SettlementPayment,
+) -> Result<()> {
+    let SettlementPayment {
+        payer,
         asset,
         snapshot_id,
-    } = request;
+    } = payment;
     let (item, bucket) = load_nod(storage, nod_id)?;
     if item.body().is_settled {
         return Err(NodFactoryError::NodAlreadySettled.into());
     }
     let deadline = nod_api::settlement_deadline(storage, item.body().bucket_key)?;
     if deadline != 0 && storage.timestamp()?.to::<u64>() > deadline {
-        return Err(NodFactoryError::CallDeadlineExpired.into());
+        return Err(NodFactoryError::SettlementDeadlinePassed.into());
     }
     let owner = item.body().owner;
     let quote = settlement::quote(
         storage,
         asset,
         currencies(item.body()),
-        &obligation(item.body(), bucket.body())?,
+        &settlement_cost(item.body(), bucket.body())?,
     )?;
     quote.require_snapshot(snapshot_id)?;
     storage.clone().with_checkpoint(|| {
@@ -166,7 +189,7 @@ pub fn settle_nod(storage: &StorageHandle<'_>, request: SettleNodRequest) -> Res
         settlement::collect(
             storage,
             NOD_FACTORY_ADDRESS,
-            caller,
+            payer,
             asset,
             quote.payment_minor,
         )?;
@@ -190,8 +213,8 @@ pub(crate) fn settlement_units(
     rate: Option<(U256, U256)>,
     asset_decimals: u8,
 ) -> Result<U256> {
-    let obligation = nod_obligation(entry_price_minor, gratis_load_minor);
-    outbe_common::settlement::obligation_units(&obligation, rate, asset_decimals)
+    let cost = nod_cost(entry_price_minor, gratis_load_minor);
+    outbe_primitives::settlement::settlement_cost_units(&cost, rate, asset_decimals)
         .map_err(|e| settlement::SettlementError::Rounding(e).into())
 }
 
@@ -203,16 +226,16 @@ fn currencies(item: &NodItemState) -> Currencies {
 }
 
 /// One Nod: its bucket's entry price times its Gratis load.
-fn obligation(item: &NodItemState, bucket: &NodBucketState) -> Result<Obligation> {
-    Ok(nod_obligation(
+fn settlement_cost(item: &NodItemState, bucket: &NodBucketState) -> Result<SettlementCost> {
+    Ok(nod_cost(
         bucket.entry_price_minor,
         nod_api::calculation_amount(item)?,
     ))
 }
 
 /// One Nod at its entry price and Gratis load, at cost.
-fn nod_obligation(entry_price_minor: U256, gratis_load_minor: U256) -> Obligation {
-    Obligation {
+fn nod_cost(entry_price_minor: U256, gratis_load_minor: U256) -> SettlementCost {
+    SettlementCost {
         entry_price_minor,
         load_minor: gratis_load_minor,
         units: U256::ONE,
@@ -291,12 +314,6 @@ fn load_nod(
     nod_id: WwdEntityId,
 ) -> Result<(LoadedNodItem, LoadedNodBucket)> {
     let item = nod_api::load_item(storage, nod_id)?.ok_or(NodFactoryError::NodNotFound)?;
-    if NodContract::new(storage.clone())
-        .ocomp_certified_generation(item.body().worldwide_day)?
-        .is_some_and(|generation| generation.next_nod_ordinal < generation.nod_count)
-    {
-        return Err(NodFactoryError::NodGenerationNotMaterialized.into());
-    }
     let bucket = nod_api::load_bucket(storage, item.body().bucket_key)?
         .ok_or(NodFactoryError::BucketNotFound)?;
     Ok((item, bucket))
@@ -314,7 +331,7 @@ pub fn quote_settlement(
         storage,
         asset,
         currencies(item.body()),
-        &obligation(item.body(), bucket.body())?,
+        &settlement_cost(item.body(), bucket.body())?,
     )?;
     Ok((
         quote.settlement_currency,

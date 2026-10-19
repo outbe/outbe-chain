@@ -1,10 +1,7 @@
 //! Canonical entity payload conversion, independent of the storage backend.
 
 use crate::{NodBucketState, NodItemState};
-use outbe_primitives::{
-    entity_codec::{NodBucketBodyV1, NodItemBodyV2},
-    wwd_entity_id::WwdEntityId,
-};
+use outbe_primitives::entity_codec::{NodBucketBodyV1, NodItemBodyV2};
 
 /// Converts one runtime Nod item into its normative encrypted v2 payload model.
 pub fn canonical_item(body: &NodItemState) -> NodItemBodyV2 {
@@ -25,11 +22,6 @@ pub fn canonical_bucket(body: &NodBucketState) -> NodBucketBodyV1 {
         entry_price_minor: body.entry_price_minor,
         reference_currency: body.reference_currency,
     }
-}
-
-/// Reconstructs the canonical bucket identity from the body.
-pub fn canonical_bucket_id(body: &NodBucketState) -> WwdEntityId {
-    canonical_bucket(body).entity_id()
 }
 
 /// Converts a validated normative encrypted v2 payload into the runtime item type.

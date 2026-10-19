@@ -1,8 +1,7 @@
-use super::tee_fixture::{initial_tee_policy, successor_tee_policy};
+use super::tee_fixture::initial_tee_policy;
 use super::TEST_CHAIN_ID;
 use alloy_primitives::{address, B256};
 use alloy_sol_types::SolEvent;
-use outbe_ocompregistry::{poc_schema_limits, OcompRegistry};
 use outbe_primitives::addresses::UPDATE_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::PrecompileError;
@@ -19,7 +18,7 @@ use crate::handlers::UpgradeHandlerRegistry;
 use crate::payload::{encode_schedule_update_json, ScheduleUpdatePayload};
 use crate::precompile::IUpdate;
 use crate::schema::Update;
-use crate::tests::{block_ctx, min_activation, ocomp_authority, ocomp_successor, PV};
+use crate::tests::{block_ctx, min_activation, PV};
 use crate::vote_target::UpdateVoteTarget;
 
 static UPDATE_VOTE_TARGET: UpdateVoteTarget = UpdateVoteTarget;
@@ -498,55 +497,6 @@ fn measurement_only_vote_derives_policy_and_promotes_only_at_deadline() {
         expected.assert_staged(&mut provider, deadline);
         expected.assert_promoted(&mut provider);
     }
-}
-
-#[test]
-fn one_approved_update_atomically_stages_tee_and_ocomp_successors() {
-    with_vote(|storage| {
-        let current_height = 100u64;
-        let deadline = current_height + VOTING_WINDOW_BLOCKS + 1;
-        let activation = min_activation(deadline);
-        let genesis_hash = storage.genesis_hash().unwrap();
-        let current_tee = initial_tee_policy(genesis_hash, B256::repeat_byte(0x51), 0x31);
-        let successor_tee =
-            successor_tee_policy(&current_tee, activation, B256::repeat_byte(0x52), 0x31);
-        TeeRegistry::new(storage.clone())
-            .install_initial_policy_v1(&current_tee)
-            .unwrap();
-
-        let current_ocomp = ocomp_authority(genesis_hash);
-        let successor_ocomp = ocomp_successor(genesis_hash, activation);
-        let limits = poc_schema_limits();
-        OcompRegistry::new(storage.clone())
-            .initialize_genesis_authority(&current_ocomp, B256::repeat_byte(0x53), 1, 1, &limits)
-            .unwrap();
-
-        let mut payload = ScheduleUpdatePayload::new(PV, activation, "TEE and OCOMP release")
-            .with_ocomp_successor(&successor_ocomp)
-            .unwrap();
-        payload.mrenclave = Some(successor_tee.measurement_rules[0].mrenclave);
-        let mut vote = Vote::new(storage.clone());
-        let proposal_id = create_approved_update(
-            &mut vote,
-            &serde_json::to_string(&payload).unwrap(),
-            current_height,
-        );
-
-        process_begin_block_test(storage.clone(), deadline);
-
-        assert_eq!(
-            TeeRegistry::new(storage.clone())
-                .staged_successor_policy_v1()
-                .unwrap(),
-            Some((proposal_id, successor_tee))
-        );
-        assert_eq!(
-            OcompRegistry::new(storage)
-                .staged_successor(&limits)
-                .unwrap(),
-            Some((proposal_id, successor_ocomp))
-        );
-    });
 }
 
 #[test]

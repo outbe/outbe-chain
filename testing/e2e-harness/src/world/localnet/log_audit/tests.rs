@@ -4,7 +4,6 @@ use super::{
     audit_full_node_shutdown, audit_loaded_logs, audit_loaded_logs_with_expectations,
     audit_validator_shutdown,
 };
-use alloy_primitives::B256;
 use outbe_primitives::runtime_audit_v1::{
     BODY_READ_REQUEST_DEADLINE, OTHER_PAYLOAD_EXECUTION_FAILURE, PAYLOAD_EXECUTION_FAILED,
     PROCESS_INSTANCE_FIELD, PROPOSAL_VIEW_CANCELLED, SCHEMA_VERSION,
@@ -339,13 +338,8 @@ fn legacy_deadline_bundle(hash: &str, terminal_hash: &str) -> Vec<(PathBuf, Stri
 #[test]
 fn legacy_new_payload_adapter_preserves_the_existing_exact_rule() {
     let hash = "0x36aded35254849d7f72af50566e7ef7b799b8d970741319889c63b3ae292ce3a";
-    let accepted = audit_loaded_logs_with_expectations(
-        &legacy_deadline_bundle(hash, hash),
-        4,
-        None,
-        None,
-        None,
-    );
+    let accepted =
+        audit_loaded_logs_with_expectations(&legacy_deadline_bundle(hash, hash), 4, None, None);
     assert!(accepted.is_clean(), "{:?}", accepted.findings);
     assert_eq!(accepted.counts.expected_request_deadline_cancellation, 1);
 
@@ -354,8 +348,7 @@ fn legacy_new_payload_adapter_preserves_the_existing_exact_rule() {
         &legacy_deadline_bundle(hash, other),
         4,
         None,
-        None,
-        None,
+        None
     )
     .is_clean());
 }
@@ -366,7 +359,7 @@ fn legacy_new_payload_adapter_accepts_rotated_reth_log() {
     let mut logs = legacy_deadline_bundle(hash, hash);
     logs[0].0 = PathBuf::from("scenario-1/validator-1/logs/54322345/reth.log.1");
 
-    let accepted = audit_loaded_logs_with_expectations(&logs, 4, None, None, None);
+    let accepted = audit_loaded_logs_with_expectations(&logs, 4, None, None);
     assert!(accepted.is_clean(), "{:?}", accepted.findings);
     assert_eq!(accepted.counts.expected_request_deadline_cancellation, 1);
 }
@@ -384,7 +377,7 @@ fn legacy_new_payload_adapter_accepts_only_the_canonical_joiner() {
         })
         .collect::<Vec<_>>();
 
-    let accepted = audit_loaded_logs_with_expectations(&joiner_logs, 4, None, None, None);
+    let accepted = audit_loaded_logs_with_expectations(&joiner_logs, 4, None, None);
     assert!(accepted.is_clean(), "{:?}", accepted.findings);
     assert_eq!(accepted.counts.expected_request_deadline_cancellation, 1);
 
@@ -397,7 +390,7 @@ fn legacy_new_payload_adapter_accepts_only_the_canonical_joiner() {
             )
         })
         .collect::<Vec<_>>();
-    let rejected = audit_loaded_logs_with_expectations(&outside_topology, 4, None, None, None);
+    let rejected = audit_loaded_logs_with_expectations(&outside_topology, 4, None, None);
     assert!(!rejected.is_clean());
     assert_eq!(rejected.counts.expected_request_deadline_cancellation, 0);
 }
@@ -413,25 +406,19 @@ fn unsupported_update_requires_a_rejection_not_every_replica_to_build() {
             )
         })
         .collect::<Vec<_>>();
-    assert!(
-        !audit_loaded_logs_with_expectations(&idle, 4, Some(50_331_648), None, None).is_clean()
-    );
+    assert!(!audit_loaded_logs_with_expectations(&idle, 4, Some(50_331_648), None).is_clean());
     for rejecting_validator in 0..4 {
         let mut logs = idle.clone();
         logs[rejecting_validator].1 = rejection.to_owned();
-        let audit = audit_loaded_logs_with_expectations(&logs, 4, Some(50_331_648), None, None);
+        let audit = audit_loaded_logs_with_expectations(&logs, 4, Some(50_331_648), None);
         assert!(audit.is_clean(), "{:?}", audit.findings);
         assert_eq!(audit.counts.expected_update_fatal, 1);
         logs[rejecting_validator]
             .1
             .push_str("\nERROR fatal: database corruption");
-        assert!(
-            !audit_loaded_logs_with_expectations(&logs, 4, Some(50_331_648), None, None).is_clean()
-        );
+        assert!(!audit_loaded_logs_with_expectations(&logs, 4, Some(50_331_648), None).is_clean());
         logs[rejecting_validator].1 = rejection.replace("v3.0 (50331648)", "v3.1 (50397184)");
-        assert!(
-            !audit_loaded_logs_with_expectations(&logs, 4, Some(50_331_648), None, None).is_clean()
-        );
+        assert!(!audit_loaded_logs_with_expectations(&logs, 4, Some(50_331_648), None).is_clean());
     }
 }
 
@@ -442,8 +429,7 @@ fn legacy_update_and_dkg_expectations_remain_exact_adapters() {
         "ERROR fatal: cannot activate protocol version v3.0 (50331648): binary supports at most v0.1 (1)"
             .to_owned(),
     )];
-    let update_audit =
-        audit_loaded_logs_with_expectations(&update, 1, Some(50_331_648), None, None);
+    let update_audit = audit_loaded_logs_with_expectations(&update, 1, Some(50_331_648), None);
     assert!(update_audit.is_clean(), "{:?}", update_audit.findings);
     assert_eq!(update_audit.counts.expected_update_fatal, 1);
 
@@ -455,159 +441,9 @@ fn legacy_update_and_dkg_expectations_remain_exact_adapters() {
              revealed_validator={key}"
         ),
     )];
-    let reveal_audit = audit_loaded_logs_with_expectations(&reveal, 1, None, Some(key), None);
+    let reveal_audit = audit_loaded_logs_with_expectations(&reveal, 1, None, Some(key));
     assert!(reveal_audit.is_clean(), "{:?}", reveal_audit.findings);
     assert_eq!(reveal_audit.counts.expected_dkg_reveal, 1);
-}
-
-#[test]
-fn full_node_mismatch_requires_the_exact_two_sink_shutdown_bundle() {
-    let job_id = B256::repeat_byte(0x42);
-    let local = B256::repeat_byte(0x51);
-    let canonical = B256::repeat_byte(0x61);
-    let start = "INFO reth::cli: Starting Reth version=\"2.5.2-dev\"";
-    let mismatch = format!(
-        "embedded OCOMP job {job_id:#x}: local result {local:#x} differs from canonical result {canonical:#x}"
-    );
-    let initial = format!(
-        "{start}\nERROR exex{{id=\"outbe-finalized\"}}: outbe_chain::ocomp_exex::failure: embedded OCOMP requested local node shutdown job_id={job_id:#x} detail=local result {local:#x} differs from canonical result {canonical:#x}\nERROR outbe_chain::launch::node: embedded OCOMP requested node shutdown failure_class=Other failure={mismatch}"
-    );
-    let sticky = format!(
-        "embedded OCOMP persisted fatal evidence: job_id={job_id:#x}\nlocal_result_digest={local:#x}\ncanonical_result_digest={canonical:#x}"
-    );
-    let anchor = format!(
-        "ERROR outbe_chain::launch::node: embedded OCOMP requested node shutdown failure_class=Other failure={sticky}"
-    );
-    let recovery = format!("OCOMP recovery readiness failed (Other): {sticky}");
-    let restart = format!(
-        "{start}\n{anchor}\nERROR outbe_chain::launch::node::consensus: consensus stack failed during shutdown error={recovery}"
-    );
-    let expected = vec![
-        (
-            PathBuf::from("scenario-1/validator-4/node.log"),
-            format!(
-                "{initial}\nError: embedded OCOMP failure (Other): {mismatch}\n{restart}\nError: additional shutdown failure: consensus task exited with error: {recovery}\nCaused by:\n    embedded OCOMP failure (Other): {sticky}"
-            ),
-        ),
-        (
-            PathBuf::from("scenario-1/validator-4/logs/54322345/reth.log"),
-            format!("{initial}\n{restart}"),
-        ),
-    ];
-    let audit = audit_loaded_logs_with_expectations(&expected, 4, None, None, Some(job_id));
-    assert!(audit.is_clean(), "{:?}", audit.findings);
-    assert_eq!(audit.counts.expected_ocomp_full_node_mismatch, 11);
-
-    let wrong_job = audit_loaded_logs_with_expectations(
-        &expected,
-        4,
-        None,
-        None,
-        Some(B256::repeat_byte(0x43)),
-    );
-    assert!(!wrong_job.is_clean());
-    let wrong_node = expected
-        .iter()
-        .map(|(path, content)| {
-            (
-                PathBuf::from(path.to_string_lossy().replace("validator-4", "validator-3")),
-                content.clone(),
-            )
-        })
-        .collect::<Vec<_>>();
-    assert!(
-        !audit_loaded_logs_with_expectations(&wrong_node, 4, None, None, Some(job_id),).is_clean()
-    );
-
-    let missing_sink = vec![expected[0].clone()];
-    assert!(
-        !audit_loaded_logs_with_expectations(&missing_sink, 4, None, None, Some(job_id)).is_clean()
-    );
-
-    let mut unrelated_fatal = expected.clone();
-    unrelated_fatal[0]
-        .1
-        .push_str("\nERROR outbe_chain::launch::node: unrelated fatal condition");
-    assert!(
-        !audit_loaded_logs_with_expectations(&unrelated_fatal, 4, None, None, Some(job_id),)
-            .is_clean()
-    );
-
-    let reordered = expected
-        .iter()
-        .map(|(path, _)| (path.clone(), format!("{restart}\n{initial}")))
-        .collect::<Vec<_>>();
-    assert!(
-        !audit_loaded_logs_with_expectations(&reordered, 4, None, None, Some(job_id)).is_clean()
-    );
-
-    let mut duplicated = expected.clone();
-    duplicated[1].1.push_str(&format!("\n{anchor}"));
-    assert!(
-        !audit_loaded_logs_with_expectations(&duplicated, 4, None, None, Some(job_id)).is_clean()
-    );
-
-    for (current, obsolete) in [
-        ("outbe_chain::launch::node:", "outbe_chain:"),
-        (
-            "outbe_chain::ocomp_exex::failure:",
-            "outbe_chain::ocomp_exex:",
-        ),
-    ] {
-        let stale = expected
-            .iter()
-            .map(|(path, content)| (path.clone(), content.replace(current, obsolete)))
-            .collect::<Vec<_>>();
-        assert!(
-            !audit_loaded_logs_with_expectations(&stale, 4, None, None, Some(job_id)).is_clean()
-        );
-    }
-
-    for altered in [
-        expected
-            .iter()
-            .map(|(path, content)| {
-                (
-                    path.clone(),
-                    content.replace(&format!("{canonical:#x}"), &format!("{local:#x}")),
-                )
-            })
-            .collect::<Vec<_>>(),
-        vec![
-            expected[0].clone(),
-            (
-                expected[1].0.clone(),
-                expected[1].1.replace(
-                    &format!("{canonical:#x}"),
-                    &format!("{:#x}", B256::repeat_byte(0x71)),
-                ),
-            ),
-        ],
-        expected
-            .iter()
-            .map(|(path, content)| {
-                (
-                    path.clone(),
-                    content.replace("canonical_result_digest=", "missing_digest="),
-                )
-            })
-            .collect::<Vec<_>>(),
-        expected
-            .iter()
-            .map(|(path, content)| (path.clone(), content.replace(start, "")))
-            .collect::<Vec<_>>(),
-    ] {
-        assert!(
-            !audit_loaded_logs_with_expectations(&altered, 4, None, None, Some(job_id)).is_clean()
-        );
-    }
-
-    let mut panic = expected.clone();
-    panic[0].1.push_str("\nERROR panic in unrelated teardown");
-    assert!(!audit_loaded_logs_with_expectations(&panic, 4, None, None, Some(job_id)).is_clean());
-
-    let absent = audit_loaded_logs_with_expectations(&[], 4, None, None, Some(job_id));
-    assert!(!absent.is_clean());
 }
 
 fn tee_lease_guard_shutdown_bundle(validator: usize) -> Vec<(PathBuf, String)> {
@@ -699,7 +535,7 @@ fn tee_lease_guard_accepts_only_the_explicit_exact_two_sink_shutdown_bundle() {
         4
     );
 
-    let unarmed = audit_loaded_logs_with_expectations(&expected, 4, None, None, None);
+    let unarmed = audit_loaded_logs_with_expectations(&expected, 4, None, None);
     assert!(!unarmed.is_clean());
 
     let wrong_validator = audit_validator_shutdown(&expected, 2);
@@ -759,7 +595,7 @@ fn tee_lease_full_node_accepts_only_owned_controlled_shutdown() {
     let accepted = audit(&expected, &proof);
     assert!(accepted.is_clean(), "{:?}", accepted.findings);
     assert_eq!(accepted.counts.expected_tee_lease_guard_shutdown_fatal, 4);
-    let unarmed = audit_loaded_logs_with_expectations(&expected, 4, None, None, None);
+    let unarmed = audit_loaded_logs_with_expectations(&expected, 4, None, None);
     assert!(!unarmed.is_clean());
     assert_eq!(unarmed.findings.len(), 2);
     let mut later_expiry = expected.clone();
@@ -895,8 +731,6 @@ fn runtime_log_discovery_is_explicit_and_rotation_aware() {
         "validator-0/node.log.1",
         "validator-0/enclave.log",
         "validator-0/radicle.log",
-        "validator-0/ocomp/domain-v1/snapshot-exporter.log",
-        "validator-0/ocomp/domain-v1/worker-0.log",
         "validator-0/logs/54322345/reth.log",
         "validator-0/logs/54322345/reth.log.1",
     ] {
@@ -908,12 +742,13 @@ fn runtime_log_discovery_is_explicit_and_rotation_aware() {
 }
 
 #[test]
-fn terminal_shutdown_and_body_failures_cannot_be_a_clean_audit() {
+fn terminal_shutdown_and_native_fatal_failures_cannot_be_a_clean_audit() {
     for message in [
         "WARN Radicle integration shutdown deadline exceeded error=manager stopped",
         "ERROR Radicle integration shutdown failed error=endpoint discovery failed",
         "WARN Radicle endpoint actor stopped error=network closed",
-        "ERROR embedded OCOMP requested node shutdown failure_class=CorruptBody failure=body commitment mismatch",
+        "ERROR reth::cli: Fatal error in consensus engine",
+        "ERROR fatal node shutdown failure=body commitment mismatch",
     ] {
         let logs = vec![(PathBuf::from("validator-0/node.log"), message.to_owned())];
         assert!(!audit_loaded_logs(&logs).is_clean(), "{message}");

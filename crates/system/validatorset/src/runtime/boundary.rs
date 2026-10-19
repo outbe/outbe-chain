@@ -5,7 +5,8 @@ use crate::schema::ValidatorSet;
 use crate::state_machine::{self, ValidatorHistory, ValidatorLifecycle, ValidatorState};
 use alloy_primitives::{Address, B256};
 use outbe_primitives::error::Result;
-use outbe_primitives::slashing_journal::{iso8601_now, record as journal_record, JournalRecord};
+use outbe_primitives::slashing_journal::{record as journal_record, JournalRecord};
+use outbe_primitives::time::iso8601_now;
 use std::collections::HashSet;
 use tracing::{info, warn};
 
@@ -119,17 +120,9 @@ impl ValidatorSet<'_> {
         freeze_height: u64,
     ) -> Result<ValidatorLifecycle> {
         match before.lifecycle().clone() {
-            ValidatorLifecycle::Joining(joining) => {
-                if self.ocomp_registration(before.address())?.is_none() {
-                    return Err(ValidatorSetError::CertifiedActiveValidatorWithoutOcomp {
-                        address: before.address(),
-                    }
-                    .into());
-                }
-                Ok(ValidatorLifecycle::Active(
-                    state_machine::activate_at_boundary(joining),
-                ))
-            }
+            ValidatorLifecycle::Joining(joining) => Ok(ValidatorLifecycle::Active(
+                state_machine::activate_at_boundary(joining),
+            )),
             ValidatorLifecycle::Active(active) => Ok(ValidatorLifecycle::Active(
                 state_machine::retain_active_at_boundary(active),
             )),

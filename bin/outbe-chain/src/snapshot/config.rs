@@ -22,7 +22,6 @@ pub(crate) struct NativeLayout {
     pub chain: Arc<ChainSpec<OutbeHeader>>,
     pub chain_root: PathBuf,
     pub consensus_root: PathBuf,
-    pub ocomp_root: PathBuf,
     pub static_files_root: PathBuf,
     pub execution_rocksdb_root: PathBuf,
     pub protected: ProtectedPaths,
@@ -77,10 +76,6 @@ pub(crate) fn resolve_requested_layout(inputs: &NodeInputs) -> eyre::Result<Requ
         .storage_dir
         .clone()
         .unwrap_or_else(|| chain_root.join("consensus"));
-    let ocomp_root = chain_root
-        .parent()
-        .ok_or(crate::errors::SnapshotError::MissingOcompParent)?
-        .join("ocomp/domain-v1");
     let mut protected = vec![
         chain_root.join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1),
         args.keys_dir
@@ -113,7 +108,6 @@ pub(crate) fn resolve_requested_layout(inputs: &NodeInputs) -> eyre::Result<Requ
         chain: node.chain.clone(),
         chain_root,
         consensus_root,
-        ocomp_root,
         static_files_root: datadir.static_files(),
         execution_rocksdb_root: datadir.rocksdb(),
         protected: ProtectedPaths(protected),

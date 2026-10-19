@@ -177,12 +177,24 @@ pub fn shift_div_round_down(x: U256, offset: u8, denom: U256) -> Result<U256> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::U512;
 
     #[test]
     fn mul_shift_round_down_matches_simple_cases() {
         // (5 * 8) >> 2 = 40 >> 2 = 10.
         let r = mul_shift_round_down(U256::from(5u64), U256::from(8u64), 2).unwrap();
         assert_eq!(r, U256::from(10u64));
+
+        // High-half product (prod1 != 0) that fits after shifting right by 64.
+        let x = (U256::ONE << 200) + U256::from(12_345u64);
+        let y = (U256::ONE << 100) + U256::from(6_789u64);
+        let ref_shifted = (U512::from(x) * U512::from(y)) >> 64usize;
+        let expected = U256::checked_from_limbs_slice(ref_shifted.as_limbs()).unwrap();
+        assert_eq!(mul_shift_round_down(x, y, 64).unwrap(), expected);
+
+        // High-half overflow when prod1 >= (1 << offset).
+        assert!(mul_shift_round_down(U256::MAX, U256::from(2u64), 0).is_err());
+        assert!(mul_shift_round_down(U256::MAX, U256::ONE << 64, 63).is_err());
     }
 
     #[test]
@@ -190,6 +202,39 @@ mod tests {
         // (3 << 4) / 6 = 48 / 6 = 8.
         let r = shift_div_round_down(U256::from(3u64), 4, U256::from(6u64)).unwrap();
         assert_eq!(r, U256::from(8u64));
+
+        // Wide 512-bit dividend cases verified against independent U512 reference quotient:
+        // - prod0 == 0 with non-zero remainder (triggers remainder > prod0 borrow from prod1)
+        // - odd and even non-power-of-two denominators
+        for (x, offset, denom) in [
+            (
+                U256::ONE << 200,
+                128u8,
+                (U256::ONE << 100) + U256::from(3u64),
+            ),
+            (
+                (U256::ONE << 240) + U256::from(999u64),
+                128u8,
+                (U256::ONE << 120) * U256::from(12u64),
+            ),
+            (
+                U256::MAX - U256::from(17u64),
+                64u8,
+                (U256::ONE << 70) + U256::from(257u64),
+            ),
+        ] {
+            let ref_q = (U512::from(x) << (offset as usize)) / U512::from(denom);
+            let expected = U256::checked_from_limbs_slice(ref_q.as_limbs()).unwrap();
+            assert_eq!(
+                shift_div_round_down(x, offset, denom).unwrap(),
+                expected,
+                "x={x}, offset={offset}, denom={denom}"
+            );
+        }
+
+        // Quotient overflow (prod1 >= denom) and division by zero.
+        assert!(shift_div_round_down(U256::MAX, 128, U256::ONE << 127).is_err());
+        assert!(shift_div_round_down(U256::from(3u64), 4, U256::ZERO).is_err());
     }
 
     #[test]

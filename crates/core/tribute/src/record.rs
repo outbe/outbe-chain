@@ -73,34 +73,6 @@ pub fn from_legacy(body: TributeData) -> TributeRecord {
     }
 }
 
-pub fn decode_payload(schema: u32, payload: &[u8]) -> Result<TributeRecord, CanonicalBodyError> {
-    match schema {
-        outbe_primitives::entity_codec::BODY_SCHEMA_V1 => {
-            outbe_primitives::entity_codec::decode_tribute_v1(payload)
-                .map(crate::from_canonical_body)
-                .map(from_legacy)
-        }
-        outbe_primitives::entity_codec::TRIBUTE_BODY_SCHEMA_V2 => {
-            outbe_primitives::entity_codec::decode_tribute_v2(payload).map(from_encrypted)
-        }
-        actual => Err(CanonicalBodyError::UnsupportedSchema { actual }),
-    }
-}
-
-pub fn decode_stored(bytes: &[u8]) -> Result<TributeRecord, CanonicalBodyError> {
-    let stored = outbe_primitives::entity_codec::decode_stored_body(bytes)?;
-    decode_payload(stored.schema_version(), stored.payload())
-}
-
-/// Both canonical payload encodings are strict and disjoint: the V1 amount
-/// is 32 bytes, while the V2 packed amount ciphertext is 88 bytes. This
-/// preserves the original OCOMP chunk bytes and their authenticated digest.
-pub fn decode_canonical(payload: &[u8]) -> Result<TributeRecord, CanonicalBodyError> {
-    outbe_primitives::entity_codec::decode_tribute_v2(payload)
-        .map(from_encrypted)
-        .or_else(|_| decode_payload(outbe_primitives::entity_codec::BODY_SCHEMA_V1, payload))
-}
-
 impl TributeRecord {
     pub fn stored_body(&self) -> Result<StoredBody, CanonicalBodyError> {
         match &self.body {
@@ -143,20 +115,6 @@ impl TributeRecord {
         match &self.body {
             Body::Encrypted(body) => Some(body),
             _ => None,
-        }
-    }
-
-    #[must_use]
-    pub fn public_body_v1(&self) -> outbe_primitives::entity_codec::TributeBodyV1 {
-        outbe_primitives::entity_codec::TributeBodyV1 {
-            tribute_id: self.tribute_id,
-            owner: self.owner,
-            worldwide_day: self.worldwide_day,
-            issuance_amount_minor: U256::ZERO,
-            issuance_currency: self.issuance_currency,
-            nominal_amount_minor: U256::ZERO,
-            reference_currency: self.reference_currency,
-            tribute_price_minor: self.tribute_price_minor,
         }
     }
 

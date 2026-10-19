@@ -1,11 +1,10 @@
 use super::*;
 use std::path::Path;
 
-#[cfg(feature = "ocomp-integration")]
 #[test]
-fn offchain_storage_network_scenario_is_registered_for_rocksdb() {
+fn state_persistence_scenario_is_registered_for_sgx_lanes() {
     let feature = Feature::parse_path(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("features/offchain_storage.feature"),
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("features/state_persistence.feature"),
         cucumber::gherkin::GherkinEnv::default(),
     )
     .unwrap();
@@ -23,7 +22,7 @@ fn offchain_storage_network_scenario_is_registered_for_rocksdb() {
 }
 
 #[test]
-fn removed_projection_backend_options_are_rejected() {
+fn flattened_env_cli_parses_with_default_validator_count() {
     use clap::Parser;
 
     #[derive(Parser)]
@@ -31,20 +30,13 @@ fn removed_projection_backend_options_are_rejected() {
         #[command(flatten)]
         env: EnvCli,
     }
-    for backend in ["rocksdb", "mongodb"] {
-        assert!(Cli::try_parse_from(["e2e", "--projection-backend", backend]).is_err());
-    }
-    assert!(
-        Cli::try_parse_from(["e2e", "--projection-mongodb-uri", "mongodb://127.0.0.1"]).is_err()
-    );
     assert_eq!(Cli::try_parse_from(["e2e"]).unwrap().env.validators, 4);
 }
 
-#[cfg(feature = "ocomp-integration")]
 #[test]
-fn native_storage_scenario_runs_only_in_its_explicit_profile_even_with_all() {
+fn native_state_persistence_scenario_runs_only_in_its_explicit_profile_even_with_all() {
     let feature = Feature::parse_path(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("features/offchain_storage_native.feature"),
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("features/state_persistence_native.feature"),
         cucumber::gherkin::GherkinEnv::default(),
     )
     .unwrap();
@@ -73,48 +65,6 @@ fn native_storage_scenario_runs_only_in_its_explicit_profile_even_with_all() {
     assert_registered_steps(&feature, scenario);
 }
 
-#[test]
-fn settlement_scenarios_declare_their_integration_build_requirement() {
-    let feature = Feature::parse_path(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("features/settlement.feature"),
-        cucumber::gherkin::GherkinEnv::default(),
-    )
-    .expect("parse settlement feature");
-    assert_eq!(feature.scenarios.len(), 2);
-    assert!(
-        feature.tags.iter().any(|tag| tag == "ocomp"),
-        "settlement step registration requires the OCOMP integration build"
-    );
-    let mut env = Environment {
-        tee_mode: TeeMode::SgxNoAttest,
-        validators: 4,
-        sudo: true,
-        ..Environment::default()
-    };
-    for scenario in &feature.scenarios {
-        if cfg!(feature = "ocomp-integration") {
-            assert_eq!(unmet(&feature, scenario, &env), None);
-            assert_eq!(decide(&feature, scenario, &env), Decision::Run);
-        } else {
-            assert!(unmet(&feature, scenario, &env)
-                .expect("missing build requirement")
-                .contains("built without --features ocomp-integration"));
-            assert!(matches!(
-                decide(&feature, scenario, &env),
-                Decision::Skip(_)
-            ));
-        }
-        env.all = true;
-        assert_eq!(decide(&feature, scenario, &env), Decision::Run);
-        assert_eq!(
-            unmet(&feature, scenario, &env).is_some(),
-            !cfg!(feature = "ocomp-integration"),
-            "--all must expose missing capabilities to the failing before hook"
-        );
-        env.all = false;
-    }
-}
-
 fn assert_registered_steps(feature: &Feature, scenario: &Scenario) {
     use cucumber::World as _;
 
@@ -138,7 +88,6 @@ fn assert_registered_steps(feature: &Feature, scenario: &Scenario) {
     }
 }
 
-#[cfg(feature = "ocomp-integration")]
 #[test]
 fn lifecycle_scenarios_use_only_registered_steps() {
     for file in [
@@ -185,30 +134,6 @@ fn chained_followers_keep_all_twelve_live_handoff_and_restart_steps() {
     assert_eq!(scenario.steps.len(), 12);
     assert_eq!(unmet(&feature, scenario, &env), None);
     assert_eq!(decide(&feature, scenario, &env), Decision::Run);
-    assert_registered_steps(&feature, scenario);
-}
-
-#[cfg(feature = "ocomp-integration")]
-#[test]
-fn worker_outage_precedes_independent_exports_and_includes_independent_recovery() {
-    let feature = Feature::parse_path(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("features/ocomp.feature"),
-        cucumber::gherkin::GherkinEnv::default(),
-    )
-    .unwrap();
-    let scenario = feature
-        .scenarios
-        .iter()
-        .find(|scenario| {
-            scenario.name == "Complete worker outage preserves exports and cannot halt consensus"
-        })
-        .unwrap();
-    assert_eq!(scenario.steps.len(), 11);
-    assert_eq!(scenario.steps[5].value, "all four OCOMP workers stop before voting opens and exporters independently materialize the public JobIntent");
-    assert_eq!(
-        scenario.steps[10].value,
-        "the independent OCOMP job completes on every validator"
-    );
     assert_registered_steps(&feature, scenario);
 }
 
@@ -262,7 +187,6 @@ fn ordinary_oracle_and_zerofee_rollover_steps_remain_available_without_integrati
             {
                 assert_eq!(unmet(&feature, scenario, &env), None);
                 assert_eq!(decide(&feature, scenario, &env), Decision::Run);
-                assert!(!has_tag(&feature, scenario, "ocomp"));
                 assert_registered_steps(&feature, scenario);
                 checked.push(scenario.name.clone());
             }
@@ -278,7 +202,6 @@ fn ordinary_oracle_and_zerofee_rollover_steps_remain_available_without_integrati
     );
 }
 
-#[cfg(feature = "ocomp-integration")]
 #[test]
 fn settlement_and_nod_redemption_keep_all_three_executable_scenarios() {
     let env = Environment {
@@ -289,7 +212,7 @@ fn settlement_and_nod_redemption_keep_all_three_executable_scenarios() {
         ..Environment::default()
     };
     let mut checked = Vec::new();
-    for file in ["settlement.feature", "ocomp.feature"] {
+    for file in ["settlement.feature", "lysis.feature"] {
         let feature = Feature::parse_path(
             Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("features")
@@ -313,7 +236,7 @@ fn settlement_and_nod_redemption_keep_all_three_executable_scenarios() {
         [
             "A zero-balance validator redeems its reward Gem through ZeroFee",
             "A stale Oracle rate defers validator Gem delivery and later recovers",
-            "A public Tribute completes real OCOMP, FullNode verification, NOD, and replay",
+            "A public Tribute becomes an encrypted Nod and its owner receives COEN",
         ]
     );
 }
@@ -502,18 +425,17 @@ fn parsed_real_sgx_scenario_is_skipped_by_sgx_no_attest_all_lane() {
     ));
 }
 
-#[cfg(feature = "ocomp-integration")]
 #[test]
 fn inbox_tribute_to_coen_scenario_is_runnable_with_registered_steps() {
     let feature = Feature::parse_path(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("features/ocomp.feature"),
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("features/lysis.feature"),
         cucumber::gherkin::GherkinEnv::default(),
     )
     .expect("parse Tribute scenarios");
     let scenario = feature
         .scenarios
         .iter()
-        .find(|scenario| has_tag(&feature, scenario, "tribute-inbox-key"))
+        .find(|scenario| has_tag(&feature, scenario, "nod-settlement"))
         .expect("inbox-backed real proof scenario");
     let env = Environment {
         tee_mode: TeeMode::SgxNoAttest,
@@ -524,7 +446,6 @@ fn inbox_tribute_to_coen_scenario_is_runnable_with_registered_steps() {
     };
     assert_eq!(unmet(&feature, scenario, &env), None);
     assert_eq!(decide(&feature, scenario, &env), Decision::Run);
-    assert!(has_tag(&feature, scenario, "ocomp-public-apply"));
     let step_index = |text: &str| {
         scenario
             .steps
@@ -536,8 +457,9 @@ fn inbox_tribute_to_coen_scenario_is_runnable_with_registered_steps() {
         "an L2 network is registered through governance with an inbox contract and no pinned key",
     );
     let offer = step_index("a user of the registered L2 submits an encrypted Tribute with ZKP and WAA and SRA beneficiaries");
-    let nod =
-        step_index("three matching validator domains atomically apply Lysis and create the Nod");
+    let nod = step_index(
+        "Metadosis completes confidential Lysis and stores ready Nods on every validator",
+    );
     let coen = step_index(
         "the public Tribute owner settles its Nod and redeems its exact Gratis into COEN",
     );
@@ -582,15 +504,7 @@ fn explicit_tee_profiles_are_disjoint_even_under_all() {
     assert_eq!(intex.scenarios.len(), 2);
     for scenario in &intex.scenarios {
         assert_eq!(decide(&intex, scenario, &no_attest_env), Decision::Run);
-        if cfg!(feature = "ocomp-integration") {
-            assert_registered_steps(&intex, scenario);
-        } else {
-            // --all selects the scenario, but the before hook must report
-            // that its @ocomp capability is absent from this build.
-            assert!(unmet(&intex, scenario, &no_attest_env)
-                .expect("missing OCOMP build capability")
-                .contains("built without --features ocomp-integration"));
-        }
+        assert_registered_steps(&intex, scenario);
     }
     assert!(matches!(
         decide(&direct_feature, direct, &no_attest_env),
@@ -629,11 +543,7 @@ fn every_feature_step_resolves_to_one_definition() {
     let steps = crate::world::World::collection();
     let unresolved = parse_features("features")
         .iter()
-        .flat_map(|feature| {
-            unresolved_steps(&steps, feature, |scenario| {
-                !cfg!(feature = "ocomp-integration") && has_tag(feature, scenario, "ocomp")
-            })
-        })
+        .flat_map(|feature| unresolved_steps(&steps, feature, |_| false))
         .collect::<Vec<_>>();
     assert!(unresolved.is_empty(), "{}", unresolved.join("\n"));
 }

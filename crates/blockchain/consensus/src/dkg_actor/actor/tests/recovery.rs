@@ -1,60 +1,5 @@
 use super::*;
 
-// -----------------------------------------------------------------------
-// Ack dedup - HashSet ignores duplicate inserts
-// -----------------------------------------------------------------------
-
-/// Verify that acked_players HashSet correctly deduplicates.
-/// In production, duplicate P2P ack messages from the same player
-/// must not inflate the ack count.
-#[test]
-fn test_ack_hashset_dedup() {
-    use commonware_cryptography::bls12381;
-
-    let key_a = bls12381::PrivateKey::from_seed(1);
-    let pk_a = key_a.public_key();
-    let key_b = bls12381::PrivateKey::from_seed(2);
-    let pk_b = key_b.public_key();
-
-    let mut acked_players = std::collections::BTreeSet::new();
-
-    // First insert - count goes to 1
-    acked_players.insert(pk_a.clone());
-    assert_eq!(acked_players.len(), 1);
-
-    // Duplicate insert of same key - count stays at 1
-    acked_players.insert(pk_a.clone());
-    assert_eq!(
-        acked_players.len(),
-        1,
-        "duplicate ack must not increment count"
-    );
-
-    // Different key - count goes to 2
-    acked_players.insert(pk_b.clone());
-    assert_eq!(acked_players.len(), 2);
-
-    // Duplicate of second key - still 2
-    acked_players.insert(pk_b);
-    assert_eq!(acked_players.len(), 2);
-}
-
-// -----------------------------------------------------------------------
-// Self-dealing ack count - only on success
-// -----------------------------------------------------------------------
-
-/// Verify that self-ack is counted only when self-dealing succeeds.
-/// The acked_players HashSet starts empty. Self-ack goes into it only
-/// after receive_player_ack succeeds.
-#[test]
-fn test_self_ack_starts_empty() {
-    let acked_players: std::collections::BTreeSet<commonware_cryptography::bls12381::PublicKey> =
-        std::collections::BTreeSet::new();
-
-    // Starts at 0 (not 1 as the old code had)
-    assert_eq!(acked_players.len(), 0, "acked_players must start empty");
-}
-
 #[test]
 fn dealer_retry_snapshot_round_trips_and_is_ceremony_scoped() {
     let dir = tempfile::tempdir().unwrap();
@@ -192,21 +137,6 @@ fn recovered_seed_reconstructs_identical_dealer_transcript() {
         restart_replay_targets.is_empty(),
         "the exact regenerated ACK proves that the restarted Player ingested the replay"
     );
-}
-
-#[test]
-fn test_valid_ack_removes_player_from_retry_set() {
-    let key = bls12381::PrivateKey::from_seed(1);
-    let player_pk = key.public_key();
-    let mut unsent_shares = BTreeMap::new();
-    unsent_shares.insert(player_pk.clone(), ());
-
-    let mut acked_players = std::collections::BTreeSet::new();
-    acked_players.insert(player_pk.clone());
-    unsent_shares.remove(&player_pk);
-
-    assert!(unsent_shares.is_empty());
-    assert_eq!(acked_players.len(), 1);
 }
 
 #[test]

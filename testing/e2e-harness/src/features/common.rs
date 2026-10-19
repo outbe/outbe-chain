@@ -13,6 +13,37 @@ use cucumber::{given, then};
 use crate::world::localnet::StartOpts;
 use crate::world::World;
 
+/// Budget a bounded test wait from the executed consensus settings.
+pub(crate) fn consensus_block_wait_budget(
+    genesis: &serde_json::Value,
+    blocks: u64,
+) -> eyre::Result<Duration> {
+    use outbe_consensus::timing::{
+        DEFAULT_CERTIFICATION_TIMEOUT_MS, DEFAULT_LEADER_TIMEOUT_MS, DEFAULT_MIN_BLOCK_TIME_MS,
+    };
+
+    let timing = |name: &str, default| -> eyre::Result<u64> {
+        match genesis.pointer(&format!("/config/{name}")) {
+            None => Ok(default),
+            Some(value) => value
+                .as_u64()
+                .ok_or_else(|| eyre::eyre!("genesis {name} must be an unsigned integer")),
+        }
+    };
+    let min = timing("minBlockTimeMs", DEFAULT_MIN_BLOCK_TIME_MS)?;
+    let leader = timing("leaderTimeoutMs", DEFAULT_LEADER_TIMEOUT_MS)?;
+    let certification = timing("certificationTimeoutMs", DEFAULT_CERTIFICATION_TIMEOUT_MS)?;
+    eyre::ensure!(
+        min > 0 && min < leader && leader <= certification,
+        "genesis consensus timing must satisfy 0 < min < leader <= certification"
+    );
+    eyre::ensure!(blocks > 0, "consensus wait requires a positive block count");
+    let millis = blocks
+        .checked_mul(certification)
+        .ok_or_else(|| eyre::eyre!("consensus block wait budget overflow"))?;
+    Ok(Duration::from_millis(millis))
+}
+
 /// Localnet setup shared by every flow. The committee size and TEE mode come
 /// from the environment (`--validators` / `--tee`, gated by the scenario's
 /// `@min-validators-N` / `@tee` tags). The voting window is a step parameter
@@ -67,7 +98,7 @@ pub(crate) fn boot_bounded_tribute_localnet(
 ) {
     bootstrap_localnet(world, window, tuning);
     let worldwide_day = world
-        .ocomp
+        .localnet
         .prepare_cross_currency_tribute_fixture()
         .expect("prepare bounded Tribute OFFERING fixture before node start");
     world.state.wwd = Some(worldwide_day.to_string());
@@ -106,7 +137,7 @@ pub(crate) fn bootstrap_localnet(world: &mut World, window: u64, tuning: &[(&str
     let profile = crate::world::localnet::BootstrapProfile::from_tuning(tuning)
         .and_then(|profile| profile.with_governance_voting_window(window))
         .expect("valid genesis governance voting window");
-    #[cfg(feature = "ocomp-integration")]
+
     let profile = match crate::features::entity_lifecycle::markets::genesis_oracle_pairs(world) {
         Some(pairs) => profile
             .with_oracle_pairs(pairs)
@@ -134,16 +165,6 @@ pub(crate) fn start_bootstrapped_localnet(world: &mut World, opts: &StartOpts) {
         .localnet
         .bind_tee_genesis()
         .expect("bind canonical TEE genesis manifest");
-    #[cfg(not(feature = "ocomp-integration"))]
-    world
-        .localnet
-        .ensure_embedded_ocomp_domain_material()
-        .expect("stage embedded OCOMP validator domain material before node start");
-    #[cfg(feature = "ocomp-integration")]
-    world
-        .ocomp
-        .ensure_validator_domain_material_before_node_start()
-        .expect("stage complete OCOMP validator domain material before node start");
     world.localnet.start(opts).expect("start localnet");
 
     let bootstrap_wait_attempts = world.localnet.tee_bootstrap_wait_attempts();
@@ -198,4 +219,44 @@ fn state_root_parity(world: &mut World) {
             "finalized checkpoint mismatch at h{pn} on port {port}"
         );
     }
+}
+
+/// Restart the native committee at a controlled consensus timestamp.
+pub(crate) fn restart_committee_at_logical_time(
+    world: &mut World,
+    requested_timestamp: u64,
+) -> (
+    u64,
+    Option<crate::features::price_oracle::PendingPricePublication>,
+) {
+    let ports = world.validators.committee_ports();
+    let minimum = ports
+        .iter()
+        .map(|&port| {
+            world
+                .rpc
+                .finalized_result(port)
+                .expect("current committee finality")
+        })
+        .min()
+        .expect("committee");
+    let before = world
+        .rpc
+        .wait_finalized_checkpoint(&ports, minimum, 120)
+        .expect("common finalized state before clock restart");
+    let previous_quote = crate::features::price_oracle::stop_before_clock_restart(world);
+    world
+        .localnet
+        .restart_committee_at_consensus_timestamp(requested_timestamp)
+        .expect("restart native committee at requested logical time");
+    let minimum_height = before
+        .height
+        .checked_add(1)
+        .expect("post-restart height fits u64");
+    world
+        .rpc
+        .wait_finalized_checkpoint(&ports, minimum_height, 120)
+        .expect("native committee finality after clock restart");
+    let pending = crate::features::price_oracle::resume_after_clock_restart(world, previous_quote);
+    (minimum_height, pending)
 }

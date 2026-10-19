@@ -31,7 +31,7 @@ use reth_storage_api::StateProvider;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::ocomp::finality::{verify_public_account_proof, PublicAccountProofV1};
+use crate::state_proof::{verify_public_account_proof, PublicAccountProofV1};
 
 /// Exact consensus-finalized number/hash read inside one node-owned Registry
 /// operation. It is deliberately private so callers cannot retain a once-valid
@@ -696,4 +696,63 @@ fn provider_error(error: impl core::fmt::Display) -> LocalRegistryAdmissionError
 
 fn registry_error(error: impl core::fmt::Display) -> LocalRegistryAdmissionError {
     LocalRegistryAdmissionError::Registry(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn proof_storage_reader_rejects_non_registry_address_and_checkpoint_validates_fields() {
+        let mut values = BTreeMap::new();
+        values.insert(B256::repeat_byte(0x01), U256::from(42_u64));
+        let reader = ProofStorageReader { values };
+
+        assert_eq!(
+            reader
+                .read_storage(
+                    outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
+                    B256::repeat_byte(0x01),
+                )
+                .unwrap(),
+            U256::from(42_u64)
+        );
+        assert!(reader
+            .read_storage(Address::repeat_byte(0x99), B256::repeat_byte(0x01))
+            .is_err());
+
+        let valid_view = FinalizedRegistryViewV1 {
+            chain_id: chain_id_word(54_322_345),
+            genesis_hash: B256::repeat_byte(0x11),
+            block_number: 1,
+            block_hash: B256::repeat_byte(0x22),
+            state_root: B256::repeat_byte(0x33),
+            consensus_timestamp: 1_700_000_000,
+        };
+        assert_eq!(
+            TrustedFinalizedRegistryCheckpointV1::from_light_client(valid_view)
+                .unwrap()
+                .view(),
+            valid_view
+        );
+        for invalid in [
+            FinalizedRegistryViewV1 {
+                chain_id: [0; 32],
+                ..valid_view
+            },
+            FinalizedRegistryViewV1 {
+                block_number: 0,
+                ..valid_view
+            },
+            FinalizedRegistryViewV1 {
+                state_root: B256::ZERO,
+                ..valid_view
+            },
+        ] {
+            assert!(matches!(
+                TrustedFinalizedRegistryCheckpointV1::from_light_client(invalid),
+                Err(ExternalRegistryAdmissionError::MalformedCheckpoint)
+            ));
+        }
+    }
 }

@@ -1,5 +1,5 @@
 use crate as primitives;
-use crate::system_tx::{binding::*, OcompLifecycleActivation, SystemTxLayout};
+use crate::system_tx::{binding::*, SystemTxLayout};
 use alloy_primitives::B256;
 #[path = "binding_cases.rs"]
 mod cases;
@@ -15,8 +15,8 @@ fn fixture(name: &str) -> cases::Case {
 fn shared_diagnostics_match_original_node_snapshots() {
     cases::assert_diagnostics(
         true,
-        |body, header, activation| {
-            validate_system_layout(body, header, activation)
+        |body, header| {
+            validate_system_layout(body, header)
                 .map(|_| ())
                 .map_err(|error| error.to_string())
         },
@@ -32,31 +32,55 @@ fn shared_diagnostics_match_original_node_snapshots() {
             validate_boundary_outcome_binding(layout, artifacts).map_err(|error| error.to_string())
         },
     );
+    cases::assert_diagnostics(
+        false,
+        |body, header| {
+            validate_system_layout(body, header)
+                .map(|_| ())
+                .map_err(|error| match error {
+                    LayoutBindingError::Artifacts(err) => {
+                        format!("decode Outbe block artifacts for system tx validation: {err}")
+                    }
+                    LayoutBindingError::Layout(err) => {
+                        format!("invalid system tx layout for leader binding: {err}")
+                    }
+                    other => other.to_string(),
+                })
+        },
+        |layout, header| {
+            validate_parent_accounting_binding(layout, header).map_err(|error| match error {
+                ParentAccountingBindingError::Decode(err) => {
+                    format!("decode CertifiedParentAccounting system tx input: {err}")
+                }
+                other => other.to_string(),
+            })
+        },
+        |layout, artifacts| {
+            validate_boundary_outcome_binding(layout, artifacts).map_err(|error| match error {
+                BoundaryBindingError::Decode(err) => {
+                    format!("decode system transaction input: {err}")
+                }
+                other => other.to_string(),
+            })
+        },
+    );
 }
 
 #[test]
 fn layout_failures_identify_the_rejected_stage() {
     let artifacts = fixture("artifacts_before_layout");
     assert!(matches!(
-        validate_system_layout(
-            &artifacts.body,
-            &artifacts.header,
-            OcompLifecycleActivation::Disabled
-        ),
+        validate_system_layout(&artifacts.body, &artifacts.header),
         Err(LayoutBindingError::Artifacts(_))
     ));
     let order = fixture("wrong_order");
     assert!(matches!(
-        validate_system_layout(
-            &order.body,
-            &order.header,
-            OcompLifecycleActivation::Disabled
-        ),
+        validate_system_layout(&order.body, &order.header),
         Err(LayoutBindingError::Layout(_))
     ));
     let set = fixture("block1_requires_boundary");
     assert!(matches!(
-        validate_system_layout(&set.body, &set.header, OcompLifecycleActivation::Disabled),
+        validate_system_layout(&set.body, &set.header),
         Err(LayoutBindingError::Set(_))
     ));
 }

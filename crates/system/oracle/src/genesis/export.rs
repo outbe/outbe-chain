@@ -18,8 +18,7 @@ type PairExport = (Vec<(Address, Address)>, Vec<(Address, Address, U256)>);
 /// Exports the full oracle state into an `OracleGenesisConfig`.
 ///
 /// This reads all config slots, pair registry, exchange rates, delegations,
-/// penalty counters, pending aggregate votes, snapshots, S-curve entries, and
-/// protected validators.
+/// penalty counters, pending aggregate votes, snapshots and S-curve entries.
 ///
 /// `init_from_genesis` can use the exported config to re-initialize a fresh
 /// oracle. This enables full state migration.
@@ -40,7 +39,6 @@ pub fn export_genesis(
     let aggregate_votes = export_aggregate_votes(oracle)?;
     let snapshots = export_snapshots(oracle)?;
     let scurve_entries = export_scurve_entries(oracle)?;
-    let protected_validators = export_protected_validators(oracle, validators)?;
     let reference_currencies = oracle.reference_currencies.read_all()?;
     let policy_rates = export_policy_rates(oracle)?;
 
@@ -60,7 +58,6 @@ pub fn export_genesis(
         aggregate_votes,
         snapshots,
         scurve_entries,
-        protected_validators,
     })
 }
 
@@ -153,24 +150,6 @@ fn export_scurve_entries(oracle: &OracleContract) -> Result<Vec<GenesisScurveEnt
         });
     }
     Ok(scurve_entries)
-}
-
-/// Export protected validators. Reads nothing more when protection is off.
-fn export_protected_validators(
-    oracle: &OracleContract,
-    validators: &[Address],
-) -> Result<Vec<Address>> {
-    let allow_protected = oracle.config_allow_protected.read()?;
-    let mut protected_validators = Vec::new();
-    if allow_protected {
-        for validator in validators {
-            let is_protected = oracle.protected_validator.read(validator)?;
-            if is_protected {
-                protected_validators.push(*validator);
-            }
-        }
-    }
-    Ok(protected_validators)
 }
 
 /// Export the policy-rate registry in its stored order.

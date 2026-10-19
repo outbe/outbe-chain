@@ -12,14 +12,9 @@ fn active_lifecycle_proposer_and_replay_match_receipts_roots_and_header_artifact
             .try_into_recovered()
             .expect("regular tx signer recovers");
         let user_sender = Address(*user.signer());
-        let mut state =
-            state_with_active_proposer_and_funded_account_without_ocomp(proposer, user_sender);
+        let mut state = state_with_active_proposer_and_funded_account(proposer, user_sender);
         let chain_spec = test_chain_spec();
-        let install = test_ocomp_fork_install(&chain_spec, &[(proposer, dummy_pubkey(0xA2))]);
-        let config = OutbeEvmConfig::new(chain_spec.clone())
-            .with_evm_signer(signer)
-            .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(1))
-            .with_ocomp_fork_install(install.clone());
+        let config = OutbeEvmConfig::new(chain_spec.clone()).with_evm_signer(signer);
         let begin = begin_system_txs_for_test(
             &config,
             BeginBlockFixture {
@@ -31,16 +26,11 @@ fn active_lifecycle_proposer_and_replay_match_receipts_roots_and_header_artifact
                 bootstrap: BootstrapFixture::StandardForBlock,
             },
         );
-        let end = config
-            .build_end_system_txs(1, CHAIN_ID, begin.len(), Some(proposer))
-            .expect("terminal system tx builds");
-
         let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
-        let mut ctx = block_one_execution_ctx(Some(begin.len() + 1 + end.len()), Bytes::new());
+        let mut ctx = block_one_execution_ctx(Some(begin.len() + 1), Bytes::new());
         ctx.proposer_evm_address = Some(proposer);
         if replay {
             ctx.expected_begin_system_txs = begin.clone();
-            ctx.expected_end_system_txs = end.clone();
         }
         let mut executor = config.create_executor(evm, ctx);
 
@@ -56,18 +46,12 @@ fn active_lifecycle_proposer_and_replay_match_receipts_roots_and_header_artifact
             .execute_transaction(user)
             .expect("ordinary tx executes before terminal artifact preparation");
         executor
-            .execute_transaction(end.into_iter().next().unwrap())
-            .expect("terminal request executes after ordinary txs");
-
-        executor
             .prepare_final_header_artifacts(0)
             .expect("final header artifacts encode");
         let final_extra_data = executor.final_extra_data.clone();
         let (evm, result) = executor.finish().expect("active block finishes");
         drop(evm);
         let state_root = post_state_root(&state.bundle_state);
-        assert_persisted_fork_install(&mut state, chain_spec.chain().id(), &install)
-            .expect("assert persisted fork install fixture succeeds");
 
         (
             result.receipts,
@@ -80,7 +64,7 @@ fn active_lifecycle_proposer_and_replay_match_receipts_roots_and_header_artifact
     let proposer = run(false);
     let replay = run(true);
     assert_eq!(proposer, replay);
-    assert_eq!(proposer.0.len(), 8);
+    assert_eq!(proposer.0.len(), 6);
 }
 
 /// Determinism gate: a block carries a valid BLS late-finalize credit. The block executes on two
@@ -139,8 +123,8 @@ fn proposer_validator_same_state_root() {
     let settle_committee = 4u64;
     let settle_fee = U256::from(4_000u64) * outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT;
     // payout_i = fee * w(1) / (committee * w_max) = 4000e12 * 100 / 400 = 1000e12.
-    let expected_payout = settle_fee * outbe_rewards::constants::decay_weight(1)
-        / outbe_rewards::constants::fixed_denominator(settle_committee);
+    let expected_payout =
+        U256::from(1_000u64) * outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT;
     let artifact = signed_late_credit_artifact(
         &keys,
         &LateCreditBinding {
@@ -424,23 +408,6 @@ fn seed_late_credit_escrow(
         .storage
         .increase_balance(REWARDS_ADDRESS, settle_fee)?;
     outbe_cycle::record_phase1_progress(&seed_ctx, progress_marker)?;
-
-    Ok(())
-}
-
-fn assert_persisted_fork_install(
-    state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>,
-    chain_id: u64,
-    install: &outbe_metadosis::config::OcompForkInstallV1,
-) -> eyre::Result<()> {
-    let mut provider =
-        super::DirectStorageProvider::new(state, BlockContext::empty_for_tests(1, 1, chain_id));
-    let storage = StorageHandle::new(&mut provider);
-    assert!(
-        outbe_metadosis::api::is_active_ocomp_fork_install(storage, install)
-            .expect("read persisted block-1 fork installation"),
-        "block-1 lifecycle must persist the exact fork installation"
-    );
 
     Ok(())
 }

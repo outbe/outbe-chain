@@ -26,9 +26,6 @@ fn capacity_context(
 fn assert_capacity_headroom(receipt: &Receipt, visible_gas: u64) {
     let maximum_used =
         BLOCK_GAS_LIMIT * (BPS_DENOMINATOR - REQUIRED_HEADROOM_BPS) / BPS_DENOMINATOR;
-    eprintln!(
-        "CapacityForfeiture CycleTick visible gas: used={visible_gas}, max_for_20pct_headroom={maximum_used}"
-    );
     assert!(receipt.success);
     assert!(
         visible_gas <= maximum_used,

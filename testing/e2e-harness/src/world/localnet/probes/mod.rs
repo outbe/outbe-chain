@@ -2,12 +2,11 @@
 //! recovery/promotion scenarios.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{ExitStatus, Output};
 use std::time::{Duration, Instant};
 
 use eyre::{ensure, Result, WrapErr};
-use serde::Serialize;
 
 use crate::internal::proc::{first_hex, run_capture};
 
@@ -19,14 +18,10 @@ use header_capture::{capture_header_command_until, stopped_header_command};
 #[cfg(test)]
 use header_capture::{header_capture_timeout, header_stream_before, HeaderCaptureTimeout};
 
-fn validator_slot_node_log_path(root: &Path, slot: usize) -> PathBuf {
-    root.join(format!("validator-{slot}")).join("node.log")
-}
-
 fn read_required_node_log(path: &Path, node: &str) -> Result<String> {
     fs::read_to_string(path).wrap_err_with(|| {
         format!(
-            "read OCOMP runtime trace for {node} from owned log {}",
+            "read native runtime log for {node} from owned log {}",
             path.display()
         )
     })
@@ -59,17 +54,6 @@ fn has_required_signing_share(node_dir: &Path) -> Result<bool> {
     Ok(found)
 }
 
-/// One structured OCOMP execution-boundary marker parsed from a node's real
-/// runtime log. The producer emits only consensus-observational fields. This
-/// probe never infers behavior from source code or mutates node state.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct OcompRuntimeTraceMarkerV1 {
-    pub node: String,
-    pub kind: String,
-    pub origin: Option<String>,
-    pub block_number: u64,
-}
-
 impl Localnet {
     pub(crate) fn scenario_id(&self) -> usize {
         self.cfg.scenario
@@ -82,91 +66,6 @@ impl Localnet {
     fn node_log(&self, node: &str) -> Result<String> {
         let path = self.cfg.dir.join(node).join("node.log");
         read_required_node_log(&path, node)
-    }
-
-    /// Parse bounded OCOMP runtime markers for one exact owned node.
-    pub fn ocomp_runtime_trace_markers(
-        &self,
-        node: &str,
-    ) -> Result<Vec<OcompRuntimeTraceMarkerV1>> {
-        ensure!(
-            node.strip_prefix("validator-")
-                .and_then(|index| index.parse::<usize>().ok())
-                .is_some_and(|index| index < self.committee_size()),
-            "OCOMP trace probe refuses unknown node {node}"
-        );
-        let path = self.cfg.dir.join(node).join("node.log");
-        self.ocomp_runtime_trace_markers_from_path(node, &path)
-    }
-
-    /// Parse OCOMP runtime markers for a named FullNode whose owned data lives
-    /// in one allocated validator slot rather than a directory named after the
-    /// process. The slot is the storage identity used by
-    /// `launch_dcap_full_node`. The display name only owns the child process.
-    pub fn ocomp_runtime_trace_markers_at_validator_slot(
-        &self,
-        node: &str,
-        slot: usize,
-    ) -> Result<Vec<OcompRuntimeTraceMarkerV1>> {
-        ensure!(
-            self.followers.contains_key(node),
-            "OCOMP trace probe refuses unowned follower {node}"
-        );
-        ensure!(
-            slot >= self.committee_size(),
-            "OCOMP follower trace slot {slot} overlaps the active committee"
-        );
-        let path = validator_slot_node_log_path(&self.cfg.dir, slot);
-        self.ocomp_runtime_trace_markers_from_path(node, &path)
-    }
-
-    fn ocomp_runtime_trace_markers_from_path(
-        &self,
-        node: &str,
-        path: &Path,
-    ) -> Result<Vec<OcompRuntimeTraceMarkerV1>> {
-        let log = read_required_node_log(path, node)?;
-        let mut markers = Vec::new();
-        for line in log.lines() {
-            let Some(payload) = line.split_once("OCOMP_TRACE_V1 ").map(|(_, value)| value) else {
-                continue;
-            };
-            let fields = payload
-                .split_whitespace()
-                .filter_map(|field| field.split_once('='))
-                .collect::<std::collections::BTreeMap<_, _>>();
-            let kind = fields
-                .get("kind")
-                .ok_or_else(|| eyre::eyre!("OCOMP trace marker has no kind in {node}"))?
-                .trim_matches(|character: char| {
-                    !character.is_ascii_alphanumeric() && character != '_'
-                })
-                .to_owned();
-            let block_number = fields
-                .get("block")
-                .ok_or_else(|| eyre::eyre!("OCOMP trace marker has no block in {node}"))?
-                .trim_matches(|character: char| !character.is_ascii_digit())
-                .parse::<u64>()
-                .wrap_err_with(|| format!("decode OCOMP trace block in {node}"))?;
-            let origin = fields.get("origin").map(|value| {
-                value
-                    .trim_matches(|character: char| {
-                        !character.is_ascii_alphanumeric() && character != '_'
-                    })
-                    .to_owned()
-            });
-            markers.push(OcompRuntimeTraceMarkerV1 {
-                node: node.to_owned(),
-                kind,
-                origin,
-                block_number,
-            });
-        }
-        ensure!(
-            markers.len() <= 4_096,
-            "OCOMP trace marker count exceeds the bounded per-node evidence cap"
-        );
-        Ok(markers)
     }
 
     /// Whether validator `index`'s owned node process has already exited.

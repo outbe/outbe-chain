@@ -64,16 +64,6 @@ pub(super) fn current_preloaded_system_tx_context() -> Option<PreloadedSystemTxC
     PRELOADED_SYSTEM_TX_CONTEXT.with(|slot| *slot.borrow())
 }
 
-/// Exact finalized state root carried by the executor-owned Phase 1 context.
-///
-/// This is visible only to the sibling provider-route classifier. Calldata
-/// cannot set it, and the guard clears it after the one system transaction.
-pub(in super::super) fn preloaded_certified_parent_state_root() -> Option<B256> {
-    current_preloaded_system_tx_context()
-        .and_then(|context| context.finalized_summary)
-        .and_then(|summary| summary.state_root)
-}
-
 pub(super) fn block_runtime_context_from_storage(
     storage: StorageHandle,
     include_validator_snapshot: bool,

@@ -74,6 +74,48 @@ impl LimitedSender for MockSender {
 #[derive(Debug)]
 struct MockReceiver {
     receiver: mpsc::UnboundedReceiver<(bls12381::PublicKey, IoBuf)>,
+    delivered: mpsc::UnboundedSender<()>,
+}
+
+struct IncomingHarness {
+    sender: mpsc::UnboundedSender<(bls12381::PublicKey, IoBuf)>,
+    delivered: mpsc::UnboundedReceiver<()>,
+}
+
+impl IncomingHarness {
+    fn channel() -> (Self, MockReceiver) {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        let (delivered_tx, delivered_rx) = mpsc::unbounded_channel();
+        (
+            Self {
+                sender,
+                delivered: delivered_rx,
+            },
+            MockReceiver {
+                receiver,
+                delivered: delivered_tx,
+            },
+        )
+    }
+
+    fn send(&self, peer: bls12381::PublicKey, frame: IoBuf) {
+        self.sender.send((peer, frame)).unwrap();
+    }
+
+    async fn send_and_wait_delivered(&mut self, peer: bls12381::PublicKey, frame: IoBuf) {
+        self.send(peer, frame);
+        tokio::time::timeout(Duration::from_secs(1), self.delivered.recv())
+            .await
+            .unwrap()
+            .unwrap();
+    }
+}
+
+macro_rules! send_and_flush {
+    ($incoming:expr, $resolver:expr, $peer:expr, $frame:expr) => {{
+        $incoming.send_and_wait_delivered($peer, $frame).await;
+        let _ = $resolver.take_repository_messages().await;
+    }};
 }
 
 impl Receiver for MockReceiver {
@@ -81,10 +123,13 @@ impl Receiver for MockReceiver {
     type PublicKey = bls12381::PublicKey;
 
     async fn recv(&mut self) -> Result<(Self::PublicKey, IoBuf), Self::Error> {
-        self.receiver
+        let item = self
+            .receiver
             .recv()
             .await
-            .ok_or_else(|| std::io::ErrorKind::BrokenPipe.into())
+            .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::BrokenPipe))?;
+        let _ = self.delivered.send(());
+        Ok(item)
     }
 }
 
@@ -198,7 +243,7 @@ async fn request_response_and_signed_evidence() {
     let signer_b = bls12381::PrivateKey::from_seed(2);
     let sent = Arc::new(Mutex::new(Vec::new()));
     let sender = MockSender { sent: sent.clone() };
-    let (incoming, receiver) = mpsc::unbounded_channel();
+    let (mut incoming, receiver) = IncomingHarness::channel();
     let (gate, status) = RadicleStatusChannel::enabled(Address::repeat_byte(0x11), [1_u8; 32]);
     gate.mark_startup_ready();
     let (service, resolver, evidence) = EndpointNetwork::build(
@@ -215,10 +260,7 @@ async fn request_response_and_signed_evidence() {
     };
     let (_, local) = LocalEndpointIdentityChannel::create(local);
     let task = tokio::spawn(service.run(
-        EndpointTransport {
-            sender,
-            receiver: MockReceiver { receiver },
-        },
+        EndpointTransport { sender, receiver },
         EndpointSigningIdentity {
             signer: signer_a.clone(),
             local,
@@ -238,25 +280,15 @@ async fn request_response_and_signed_evidence() {
         &signer_b,
         EndpointFixture::new(Address::repeat_byte(0x22), [2_u8; 32], 8776),
     );
-    incoming
-        .send((
-            signer_b.public_key(),
-            EndpointFrame::Response(Box::new(signed.clone()))
-                .encode()
-                .into(),
-        ))
-        .unwrap();
-
-    tokio::time::timeout(Duration::from_secs(1), async {
-        loop {
-            if evidence.snapshot().len() == 1 {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
+    send_and_flush!(
+        incoming,
+        resolver,
+        signer_b.public_key(),
+        EndpointFrame::Response(Box::new(signed.clone()))
+            .encode()
+            .into()
+    );
+    assert_eq!(evidence.snapshot().len(), 1);
     let refreshed = resolver.refresh(&current).await.unwrap();
     assert_eq!(refreshed.len(), 1);
     let proof = &evidence.snapshot()[0];
@@ -289,7 +321,7 @@ async fn response_gate() {
     let signer_b = bls12381::PrivateKey::from_seed(12);
     let sent = Arc::new(Mutex::new(Vec::new()));
     let sender = MockSender { sent: sent.clone() };
-    let (incoming, receiver) = mpsc::unbounded_channel();
+    let (mut incoming, receiver) = IncomingHarness::channel();
     let (gate, status) = RadicleStatusChannel::enabled(Address::repeat_byte(0x11), [1_u8; 32]);
     let (service, resolver, _evidence) = EndpointNetwork::build(
         ChainIdentity {
@@ -299,10 +331,7 @@ async fn response_gate() {
         status,
     );
     let task = tokio::spawn(service.run(
-        EndpointTransport {
-            sender,
-            receiver: MockReceiver { receiver },
-        },
+        EndpointTransport { sender, receiver },
         EndpointSigningIdentity {
             signer: signer_a.clone(),
             local: local_identity(),
@@ -312,15 +341,14 @@ async fn response_gate() {
     resolver.refresh(&joining).await.unwrap();
     let baseline = wait_for_frames(&sent, 1).await.len();
 
-    incoming
-        .send((
-            signer_b.public_key(),
-            EndpointFrame::Request(EndpointRequest::new([9_u8; 32]).unwrap())
-                .encode()
-                .into(),
-        ))
-        .unwrap();
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    send_and_flush!(
+        incoming,
+        resolver,
+        signer_b.public_key(),
+        EndpointFrame::Request(EndpointRequest::new([9_u8; 32]).unwrap())
+            .encode()
+            .into()
+    );
     let responses = sent
         .lock()
         .unwrap()
@@ -332,15 +360,14 @@ async fn response_gate() {
 
     let bound = snapshot(21, &signer_a, &signer_b, true);
     resolver.refresh(&bound).await.unwrap();
-    incoming
-        .send((
-            signer_b.public_key(),
-            EndpointFrame::Request(EndpointRequest::new([10_u8; 32]).unwrap())
-                .encode()
-                .into(),
-        ))
-        .unwrap();
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    send_and_flush!(
+        incoming,
+        resolver,
+        signer_b.public_key(),
+        EndpointFrame::Request(EndpointRequest::new([10_u8; 32]).unwrap())
+            .encode()
+            .into()
+    );
     let responses = sent
         .lock()
         .unwrap()
@@ -351,46 +378,34 @@ async fn response_gate() {
     assert_eq!(responses, 0);
 
     gate.mark_startup_ready();
-    incoming
-        .send((
-            signer_b.public_key(),
-            EndpointFrame::Request(EndpointRequest::new([11_u8; 32]).unwrap())
-                .encode()
-                .into(),
-        ))
-        .unwrap();
-    tokio::time::timeout(Duration::from_secs(1), async {
-        loop {
-            let responses = sent
-                .lock()
-                .unwrap()
-                .iter()
-                .skip(baseline)
-                .filter(|(_, bytes)| {
-                    matches!(EndpointFrame::decode(bytes), Ok(EndpointFrame::Response(_)))
-                })
-                .count();
-            if responses == 1 {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
+    send_and_flush!(
+        incoming,
+        resolver,
+        signer_b.public_key(),
+        EndpointFrame::Request(EndpointRequest::new([11_u8; 32]).unwrap())
+            .encode()
+            .into()
+    );
+    let responses = sent
+        .lock()
+        .unwrap()
+        .iter()
+        .skip(baseline)
+        .filter(|(_, bytes)| matches!(EndpointFrame::decode(bytes), Ok(EndpointFrame::Response(_))))
+        .count();
+    assert_eq!(responses, 1);
 
     gate.set_voting_gate(RadicleVotingGate::Fatal(
         RadicleVotingGateError::BindingMismatch,
     ));
-    incoming
-        .send((
-            signer_b.public_key(),
-            EndpointFrame::Request(EndpointRequest::new([12_u8; 32]).unwrap())
-                .encode()
-                .into(),
-        ))
-        .unwrap();
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    send_and_flush!(
+        incoming,
+        resolver,
+        signer_b.public_key(),
+        EndpointFrame::Request(EndpointRequest::new([12_u8; 32]).unwrap())
+            .encode()
+            .into()
+    );
     let responses = sent
         .lock()
         .unwrap()
@@ -410,7 +425,7 @@ async fn live_local_endpoint_identity_replaces_addresses_and_suppresses_stale_re
     let signer_b = bls12381::PrivateKey::from_seed(32);
     let sent = Arc::new(Mutex::new(Vec::new()));
     let sender = MockSender { sent: sent.clone() };
-    let (incoming, receiver) = mpsc::unbounded_channel();
+    let (mut incoming, receiver) = IncomingHarness::channel();
     let (gate, status) = RadicleStatusChannel::enabled(Address::repeat_byte(0x11), [1_u8; 32]);
     gate.mark_startup_ready();
     let (service, resolver, _evidence) = EndpointNetwork::build(
@@ -426,10 +441,7 @@ async fn live_local_endpoint_identity_replaces_addresses_and_suppresses_stale_re
         addresses: vec![EndpointAddress::dns("a.example.com", 8776).unwrap()],
     });
     let task = tokio::spawn(service.run(
-        EndpointTransport {
-            sender,
-            receiver: MockReceiver { receiver },
-        },
+        EndpointTransport { sender, receiver },
         EndpointSigningIdentity {
             signer: signer_a.clone(),
             local,
@@ -439,16 +451,6 @@ async fn live_local_endpoint_identity_replaces_addresses_and_suppresses_stale_re
     resolver.refresh(&current).await.unwrap();
     let baseline = wait_for_frames(&sent, 1).await.len();
 
-    let send_request = |request_id: u8| {
-        incoming
-            .send((
-                signer_b.public_key(),
-                EndpointFrame::Request(EndpointRequest::new([request_id; 32]).unwrap())
-                    .encode()
-                    .into(),
-            ))
-            .unwrap();
-    };
     let response_addresses = || {
         sent.lock()
             .unwrap()
@@ -461,14 +463,15 @@ async fn live_local_endpoint_identity_replaces_addresses_and_suppresses_stale_re
             .collect::<Vec<_>>()
     };
 
-    send_request(41);
-    tokio::time::timeout(Duration::from_secs(1), async {
-        while response_addresses().len() != 1 {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
+    send_and_flush!(
+        incoming,
+        resolver,
+        signer_b.public_key(),
+        EndpointFrame::Request(EndpointRequest::new([41; 32]).unwrap())
+            .encode()
+            .into()
+    );
+    assert_eq!(response_addresses().len(), 1);
     assert_eq!(
         response_addresses()[0],
         vec![EndpointAddress::dns("a.example.com", 8776).unwrap()]
@@ -478,44 +481,58 @@ async fn live_local_endpoint_identity_replaces_addresses_and_suppresses_stale_re
         [1_u8; 32],
         vec![EndpointAddress::dns("a.example.com", 9776).unwrap()]
     ));
-    send_request(42);
-    tokio::time::timeout(Duration::from_secs(1), async {
-        while response_addresses().len() != 2 {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
+    send_and_flush!(
+        incoming,
+        resolver,
+        signer_b.public_key(),
+        EndpointFrame::Request(EndpointRequest::new([42; 32]).unwrap())
+            .encode()
+            .into()
+    );
+    assert_eq!(response_addresses().len(), 2);
     assert_eq!(
         response_addresses()[1],
         vec![EndpointAddress::dns("a.example.com", 9776).unwrap()]
     );
 
     publisher.unavailable();
-    send_request(43);
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    send_and_flush!(
+        incoming,
+        resolver,
+        signer_b.public_key(),
+        EndpointFrame::Request(EndpointRequest::new([43; 32]).unwrap())
+            .encode()
+            .into()
+    );
     assert_eq!(response_addresses().len(), 2);
 
     assert!(!publisher.update(
         [9_u8; 32],
         vec![EndpointAddress::dns("wrong.example.com", 10776).unwrap()]
     ));
-    send_request(44);
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    send_and_flush!(
+        incoming,
+        resolver,
+        signer_b.public_key(),
+        EndpointFrame::Request(EndpointRequest::new([44; 32]).unwrap())
+            .encode()
+            .into()
+    );
     assert_eq!(response_addresses().len(), 2);
 
     assert!(publisher.update(
         [1_u8; 32],
         vec![EndpointAddress::ipv4([198, 51, 100, 1], 11776).unwrap()]
     ));
-    send_request(45);
-    tokio::time::timeout(Duration::from_secs(1), async {
-        while response_addresses().len() != 3 {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
+    send_and_flush!(
+        incoming,
+        resolver,
+        signer_b.public_key(),
+        EndpointFrame::Request(EndpointRequest::new([45; 32]).unwrap())
+            .encode()
+            .into()
+    );
+    assert_eq!(response_addresses().len(), 3);
     assert_eq!(
         response_addresses()[2],
         vec![EndpointAddress::ipv4([198, 51, 100, 1], 11776).unwrap()]
@@ -531,7 +548,7 @@ async fn future_anchor_evidence_is_published_only_after_exact_resolution() {
     let signer_b = bls12381::PrivateKey::from_seed(22);
     let sent = Arc::new(Mutex::new(Vec::new()));
     let sender = MockSender { sent: sent.clone() };
-    let (incoming, receiver) = mpsc::unbounded_channel();
+    let (mut incoming, receiver) = IncomingHarness::channel();
     let (gate, status) = RadicleStatusChannel::enabled(Address::repeat_byte(0x11), [1_u8; 32]);
     gate.mark_startup_ready();
     let (service, resolver, evidence) = EndpointNetwork::build(
@@ -542,10 +559,7 @@ async fn future_anchor_evidence_is_published_only_after_exact_resolution() {
         status,
     );
     let task = tokio::spawn(service.run(
-        EndpointTransport {
-            sender,
-            receiver: MockReceiver { receiver },
-        },
+        EndpointTransport { sender, receiver },
         EndpointSigningIdentity {
             signer: signer_a.clone(),
             local: local_identity(),
@@ -565,23 +579,16 @@ async fn future_anchor_evidence_is_published_only_after_exact_resolution() {
         &signer_b,
         EndpointFixture::new(Address::repeat_byte(0x22), [2_u8; 32], 9776),
     );
-    incoming
-        .send((
-            signer_b.public_key(),
-            EndpointFrame::Response(Box::new(signed)).encode().into(),
-        ))
-        .unwrap();
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    send_and_flush!(
+        incoming,
+        resolver,
+        signer_b.public_key(),
+        EndpointFrame::Response(Box::new(signed)).encode().into()
+    );
     assert!(evidence.snapshot().is_empty());
 
     resolver.refresh(&at_31).await.unwrap();
-    tokio::time::timeout(Duration::from_secs(1), async {
-        while evidence.snapshot().is_empty() {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
+    assert_eq!(evidence.snapshot().len(), 1);
 
     resolver.shutdown().await.unwrap();
     task.await.unwrap().unwrap();

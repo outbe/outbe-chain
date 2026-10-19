@@ -30,9 +30,6 @@ pub enum NodError {
     #[error("reference currency must be a nonzero ISO 4217 numeric code")]
     ZeroReferenceCurrency,
 
-    #[error("invalid nod entry-price opening")]
-    InvalidEntryPriceOpening,
-
     #[error("nod is non-transferable")]
     NonTransferable,
 
@@ -57,38 +54,6 @@ pub enum NodError {
     #[error("Nod bucket identity mismatch: expected {expected}, found {found}")]
     BucketIdentityMismatch { expected: B256, found: B256 },
 
-    #[error("absent Nod OCOMP generation has residual state")]
-    AbsentOcompGenerationHasResidualState,
-
-    #[error(
-        "installed Nod OCOMP generation is malformed: day {day} generation {generation} nod_root {nod_root} bucket_root {bucket_root} manifest {output_manifest_root} job {job_id} bundle {protocol_bundle_hash} semantics {program_semantics_hash}"
-    )]
-    MalformedOcompGeneration {
-        day: u32,
-        generation: u64,
-        nod_root: B256,
-        bucket_root: B256,
-        output_manifest_root: B256,
-        job_id: B256,
-        protocol_bundle_hash: B256,
-        program_semantics_hash: B256,
-    },
-
-    #[error("Nod materialization FIFO bounds are malformed")]
-    MalformedMaterializationFifoBounds,
-
-    #[error("Nod materialization FIFO head entry is missing")]
-    MissingMaterializationFifoHeadEntry,
-
-    #[error("Nod materialization FIFO head projection is missing")]
-    MissingMaterializationFifoHeadProjection,
-
-    #[error("Nod materialization FIFO head is already complete")]
-    CompletedMaterializationFifoHead,
-
-    #[error("installed Nod OCOMP generation metadata is malformed")]
-    MalformedOcompGenerationMetadata,
-
     #[error("nod already exists")]
     NodAlreadyExists,
 
@@ -112,12 +77,6 @@ pub enum NodError {
 
     #[error("Nod settled count overflow")]
     SettledCountOverflow,
-
-    #[error("loaded Nod bucket {loaded} does not match item bucket {expected}")]
-    LoadedBucketMismatch {
-        loaded: WwdEntityId,
-        expected: WwdEntityId,
-    },
 
     #[error("Nod bucket {bucket_key} member index overflow")]
     BucketMemberIndexOverflow { bucket_key: B256 },

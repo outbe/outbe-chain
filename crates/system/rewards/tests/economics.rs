@@ -13,8 +13,7 @@ use outbe_primitives::consensus_metadata::{
     CertifiedParentAccountingMetadata, ParentParticipationProof,
 };
 use outbe_rewards::runtime::{
-    check_and_record_metadata_fingerprint, compute_metadata_fingerprint,
-    MetadataFingerprintOutcome, VALIDATOR_REWARD_PERCENT,
+    check_and_record_metadata_fingerprint, compute_metadata_fingerprint, MetadataFingerprintOutcome,
 };
 
 mod support;
@@ -70,11 +69,6 @@ fn certified_notarization_participation_economics_pinned_by_chainspec() {
     assert_eq!(SRA_REWARD_PCT, 4);
     assert_eq!(CCA_REWARD_PCT, 4);
     assert_eq!(PERCENT_DENOMINATOR, 100);
-
-    // The validator share that flows through the `Rewards` precompile
-    // is the same constant. Pin it independently here, so that a re-export
-    // skew between `outbe-rewards` and `outbe-emissionlimit` trips.
-    assert_eq!(VALIDATOR_REWARD_PERCENT, 4);
 
     // The fixed table sums to 16% so the terminal Metadosis pool
     // receives 84%. Pin that derived invariant.

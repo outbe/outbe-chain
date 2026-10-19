@@ -1,12 +1,11 @@
 //! Per-attempt budgets and system-transaction execution.
 
-use alloy_consensus::Transaction as _;
 use alloy_primitives::U256;
 use alloy_rlp::Encodable as _;
 use outbe_primitives::{OutbePrimitives, OutbeTxEnvelope};
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_ethereum_payload_builder::EthereumBuilderConfig;
-use reth_evm::{execute::BlockBuilder, RecoveredTx};
+use reth_evm::execute::BlockBuilder;
 use reth_payload_builder::BlobSidecars;
 use reth_payload_primitives::PayloadBuilderError;
 use reth_primitives_traits::Recovered;
@@ -29,7 +28,6 @@ pub(super) struct PayloadBuildState {
     pub(super) size_budget: BlockSizeBudget,
     pub(super) block_gas_limit: u64,
     pub(super) base_fee: u64,
-    pub(super) reserved_end_gas: u64,
     pub(super) max_blob_count: u64,
     pub(super) is_osaka: bool,
 }
@@ -40,7 +38,6 @@ impl PayloadBuildState {
         builder_config: &EthereumBuilderConfig,
         block_gas_limit: u64,
         base_fee: u64,
-        end_system_txs: &[Recovered<OutbeTxEnvelope>],
     ) -> Result<Self, PayloadBuilderError> {
         let chain_spec = context.chain_spec;
         let inner = context.attributes.inner();
@@ -60,24 +57,7 @@ impl PayloadBuildState {
             .map(|withdrawals| withdrawals.length())
             .unwrap_or(0);
 
-        let reserved_end_gas = end_system_txs
-            .iter()
-            .try_fold(0u64, |total, tx| total.checked_add(tx.tx().gas_limit()))
-            .ok_or_else(|| {
-                PayloadBuilderError::other(std::io::Error::other(
-                    "end system transaction gas overflow",
-                ))
-            })?;
-        let reserved_end_rlp_length = end_system_txs
-            .iter()
-            .try_fold(0usize, |total, tx| total.checked_add(tx.inner().length()))
-            .ok_or_else(|| {
-                PayloadBuilderError::other(std::io::Error::other(
-                    "end system transaction size overflow",
-                ))
-            })?;
-        let size_budget =
-            BlockSizeBudget::new(reserved_end_rlp_length, withdrawals_rlp_length, is_osaka);
+        let size_budget = BlockSizeBudget::new(withdrawals_rlp_length, is_osaka);
         Ok(Self {
             cumulative_gas_used: 0,
             total_fees: U256::ZERO,
@@ -86,7 +66,6 @@ impl PayloadBuildState {
             size_budget,
             block_gas_limit,
             base_fee,
-            reserved_end_gas,
             max_blob_count,
             is_osaka,
         })
@@ -128,34 +107,6 @@ impl PayloadBuildState {
                 target: "payload_builder",
                 gas_used,
                 "included begin system transaction"
-            );
-        }
-
-        Ok(StageOutcome::Completed)
-    }
-
-    pub(super) fn execute_end(
-        &mut self,
-        builder: &mut impl BlockBuilder<Primitives = OutbePrimitives>,
-        transactions: Vec<Recovered<OutbeTxEnvelope>>,
-        cancel: &CancelOnDrop,
-    ) -> Result<StageOutcome, PayloadBuilderError> {
-        for tx in transactions {
-            if cancel.is_cancelled() {
-                return Ok(StageOutcome::Cancelled);
-            }
-            let gas_used = builder
-                .execute_transaction(tx)
-                .map_err(|err| {
-                    warn!(target: "payload_builder", %err, "failed to execute end system transaction");
-                    PayloadBuilderError::Internal(err.into())
-                })?
-                .tx_gas_used();
-            self.cumulative_gas_used = self.cumulative_gas_used.saturating_add(gas_used);
-            trace!(
-                target: "payload_builder",
-                gas_used,
-                "included end system transaction"
             );
         }
 

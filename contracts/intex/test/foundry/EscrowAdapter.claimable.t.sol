@@ -8,7 +8,7 @@ import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
-/// @dev `getClaimableRefund` must report exactly what `claimRefund` then pays, from exactly when
+/// @dev `getClaimableRefund` must report exactly what `releaseRefund` then pays, from exactly when
 ///      it pays it.
 contract EscrowAdapterClaimableTest is Test {
     EscrowAdapter internal escrow;
@@ -41,6 +41,11 @@ contract EscrowAdapterClaimableTest is Test {
         _lock(other);
     }
 
+    function _refund(uint32 worldwideDay, address bidder) internal {
+        vm.prank(auction);
+        escrow.releaseRefund(worldwideDay, bidder);
+    }
+
     function _lock(address who) internal {
         token.mint(who, LOCK);
         vm.prank(who);
@@ -71,12 +76,12 @@ contract EscrowAdapterClaimableTest is Test {
             vm.expectRevert(
                 abi.encodeWithSelector(IEscrowAdapter.RefundNotYetClaimable.selector, claimableAt, claimableAt - 1)
             );
-            escrow.claimRefund(DAY, bidder);
+            _refund(DAY, bidder);
             vm.warp(claimableAt);
         }
 
         uint256 before = token.balanceOf(bidder);
-        escrow.claimRefund(DAY, bidder);
+        _refund(DAY, bidder);
         assertEq(token.balanceOf(bidder) - before, amount, "the claim pays what the view reported");
 
         (amount, claimableAt) = escrow.getClaimableRefund(DAY, bidder);
@@ -118,7 +123,7 @@ contract EscrowAdapterClaimableTest is Test {
 
     function test_AClaimDeletesTheLock() public {
         vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
-        escrow.claimRefund(DAY, bidder);
+        _refund(DAY, bidder);
 
         IEscrowAdapter.BidLock memory lock = escrow.getBidLock(DAY, bidder);
         assertEq(lock.lockedAmount, 0, "amount cleared");
@@ -126,6 +131,6 @@ contract EscrowAdapterClaimableTest is Test {
         assertEq(uint8(lock.status), uint8(IEscrowAdapter.LockStatus.None), "status cleared");
 
         vm.expectRevert(IEscrowAdapter.LockNotActive.selector);
-        escrow.claimRefund(DAY, bidder);
+        _refund(DAY, bidder);
     }
 }

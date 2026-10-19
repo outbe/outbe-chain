@@ -31,23 +31,8 @@ pub enum LysisArithmeticErrorV1 {
     #[error("Fidelity league population overflow")]
     FidelityLeaguePopulationOverflow,
 
-    #[error("Fidelity reducer population overflow")]
-    FidelityReducerPopulationOverflow,
-
-    #[error("Gratis total overflow at {ordinal}")]
-    GratisTotalOverflow { ordinal: u32 },
-
-    #[error("nominal total overflow at {ordinal}")]
-    NominalTotalOverflow { ordinal: u32 },
-
-    #[error("settlement cost total overflow at {ordinal}")]
-    SettlementCostTotalOverflow { ordinal: u32 },
-
     #[error("Nod entry price out of bounds at {ordinal}")]
     NodEntryPriceOutOfBounds { ordinal: usize },
-
-    #[error("Gratis reducer total overflow at {ordinal}")]
-    GratisReducerTotalOverflow { ordinal: u32 },
 
     #[error("Fidelity share sum overflow")]
     FidelityShareSumOverflow,

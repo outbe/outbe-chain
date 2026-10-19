@@ -3,8 +3,7 @@
 The yaml carries the minimum: which machines run the founding validators and
 where their key material lives. This script derives everything else from the
 key directory and writes it into the genesis in one run: public keys, Radicle
-node ids, OCOMP registrations, precompile storage, and the OCOMP and TEE
-manifests.
+node ids, precompile storage, and the TEE policy.
     python3 scripts/create_genesis.py network.yaml
     chain_id: 424242
     keys_dir: ./keys          # keys_dir/validator-N/ per founder
@@ -16,11 +15,7 @@ manifests.
     tee:
       mode: gramine-direct-dev
 Each keys_dir/validator-N/ is what `outbe-keygen validator` produces:
-signing-key.hex (BLS), evm-key.hex, radicle/keys/radicle.pub, and optionally
-ocomp-registration-v1.ocb1. This script generates a missing OCOMP
-registration. Its proof of possession signs the seeded genesis hash. That hash
-exists only after seeding, so nothing can produce the registration before this
-run.
+signing-key.hex (BLS), evm-key.hex, and radicle/keys/radicle.pub.
 See scripts/network.example.yaml for every optional parameter and its
 default. The yaml dialect is a strict subset (nested mappings, lists of
 scalars, lists of flat mappings, ints, booleans, quoted/plain strings, `#`
@@ -48,8 +43,6 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from genesis_inputs import (
-    GenesisTools,
-    OcompPaths,
     SeedInputs,
     SeedOptions as SeedOptions,
 )
@@ -57,10 +50,7 @@ from genesis_yaml import load_yaml, YamlError
 from launch_bundle import _point_add
 import launch_bundle  # noqa: E402  (sibling module, path set just above)
 from genesis_attestation import (
-    ensure_ocomp_registrations,
-    run_ocomp_stage,
     run_tee_stage,
-    validate_ocomp_registration_inventory,
 )
 from genesis_keys import (
     _point_mul,
@@ -140,11 +130,6 @@ def main() -> None:
     if output.exists():
         raise SystemExit(f"refusing to overwrite existing genesis: {output}")
     output.parent.mkdir(parents=True, exist_ok=True)
-    protocol_bundle_output = output.parent / "protocol-bundle-v1.ocb1"
-    if protocol_bundle_output.exists():
-        raise SystemExit(
-            f"refusing to overwrite existing protocol bundle: {protocol_bundle_output}"
-        )
     chain_binary = resolve_binary(config, "chain_binary", "outbe-chain")
     keygen_binary = resolve_binary(config, "keygen_binary", "outbe-keygen")
     module = load_seed_genesis_module()
@@ -173,41 +158,17 @@ def main() -> None:
                 base_genesis=base_genesis, seed=seed, validators=validators
             ),
         )
-        registrations_dir = ensure_ocomp_registrations(
-            validators=validators,
-            allow_generation=network != "mainnet",
-            tools=GenesisTools(chain_binary=chain_binary, keygen_binary=keygen_binary),
-            paths=OcompPaths(
-                work_dir=work_dir, seeded_genesis=seeded, keys_dir=keys_dir
-            ),
-        )
-        ocomp_genesis = run_ocomp_stage(
+        run_tee_stage(
             chain_binary=chain_binary,
-            registrations_dir=registrations_dir,
-            protocol_bundle_output=protocol_bundle_output,
-            paths=OcompPaths(
-                work_dir=work_dir, seeded_genesis=seeded, keys_dir=keys_dir
-            ),
+            seeded_genesis=seeded,
+            output=output,
+            config=config,
         )
-        try:
-            run_tee_stage(
-                chain_binary=chain_binary,
-                ocomp_genesis=ocomp_genesis,
-                output=output,
-                config=config,
-            )
-        except BaseException:
-            # If a later stage fails, the protocol bundle must not stay behind.
-            # The next run refuses to overwrite the bundle, and the operator is
-            # stuck with a half-written directory and no way forward.
-            protocol_bundle_output.unlink(missing_ok=True)
-            raise
     launch_bundle.render(
         config=config,
         validators=validators,
         genesis_path=output,
         keys_dir=keys_dir,
-        repo_root=REPO_ROOT,
     )
     identity_path = output.parent / "network-identity.json"
     identity_path.write_text(
@@ -219,7 +180,6 @@ def main() -> None:
     )
     print()
     print(f"genesis:         {output}")
-    print(f"protocol bundle: {protocol_bundle_output}")
     print(f"bootnodes:       {output.parent / 'reth-bootnodes.txt'}")
     print(f"launch scripts:  {output.parent}/validator-N/")
     print(f"instructions:    {output.parent / 'DEPLOY.md'}")

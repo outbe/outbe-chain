@@ -51,11 +51,7 @@ pub fn settlement_deadline(storage: &StorageHandle<'_>, bucket_key: B256) -> Res
     Ok(settlement_deadline_of(called_at, notice))
 }
 
-/// The deadline rule itself, for callers that already hold both values.
-#[must_use]
-pub fn settlement_deadline_of(called_at: u64, notice_period: u32) -> u64 {
-    called_at.saturating_add(u64::from(notice_period))
-}
+pub use outbe_primitives::settlement::settlement_deadline_of;
 
 pub use crate::state_api::{LoadedNodBucket, LoadedNodItem};
 
@@ -97,22 +93,30 @@ pub fn load_bucket(
 
 /// Fetches a Nod item state by ID.
 pub fn get_item(storage: &StorageHandle<'_>, nod_id: WwdEntityId) -> Result<Option<NodItemState>> {
-    load_item(storage, nod_id).map(|loaded| loaded.map(|loaded| loaded.into_parts().0))
+    load_item(storage, nod_id).map(|loaded| loaded.map(|loaded| loaded.into_body()))
 }
 
 /// Fetches a Nod bucket state by ID.
 pub fn get_bucket(storage: &StorageHandle<'_>, bucket_key: B256) -> Result<Option<NodBucketState>> {
-    load_bucket(storage, bucket_key).map(|loaded| loaded.map(|loaded| loaded.into_parts().0))
+    load_bucket(storage, bucket_key).map(|loaded| loaded.map(|loaded| loaded.into_body()))
 }
 
-/// Loads the complete Nod collection with overlay-correct membership.
+/// Loads the complete Nod collection.
 pub fn list_all(storage: &StorageHandle<'_>) -> Result<Vec<NodItemState>> {
     NodContract::new(storage.clone())
         .state_records(None)
         .map(|records| records.into_iter().map(Into::into).collect())
 }
 
-/// Loads one owner's Nod collection with overlay-correct membership.
+/// How many Nods one owner holds, read from the owner index alone.
+pub fn balance_of(storage: &StorageHandle<'_>, owner: Address) -> Result<u32> {
+    NodContract::new(storage.clone())
+        .owner_ids
+        .list(&owner)
+        .len()
+}
+
+/// Loads one owner's Nod collection.
 pub fn list_by_owner(storage: &StorageHandle<'_>, owner: Address) -> Result<Vec<NodItemState>> {
     NodContract::new(storage.clone())
         .state_records(Some(owner))
@@ -128,7 +132,7 @@ pub fn record_settled(
     crate::state_api::record_settled(storage, item, bucket)
 }
 
-/// Internal arithmetic boundary; public bodies and projections retain ciphertext.
+/// Internal arithmetic boundary; stored records and public views keep the amount encrypted.
 pub fn calculation_amount(item: &NodItemState) -> Result<U256> {
     crate::enclave_client::read_amount(&item.encrypted)
         .map_err(|error| crate::errors::NodError::AmountReadFailed(error).into())

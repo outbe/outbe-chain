@@ -709,4 +709,99 @@ mod tests {
             }
         ));
     }
+
+    #[test]
+    fn worker_state_publishes_failure_threshold_recovery_and_stuck_in_flight_degradation() {
+        let status = TeeEnclaveHealthChannel::default();
+        let in_flight = AtomicBool::new(false);
+        let mut snapshot = TeeEnclaveHealthSnapshot {
+            state: TeeEnclaveHealthState::Starting,
+            ..TeeEnclaveHealthSnapshot::default()
+        };
+        let mut skipped = 0;
+        let mut worker_state = CanaryWorkerState {
+            snapshot: &mut snapshot,
+            status: &status,
+            in_flight: &in_flight,
+            skipped: &mut skipped,
+        };
+
+        // 1. Initial success transitions to Ready and publishes health snapshot.
+        worker_state.apply_result(
+            Ok((
+                CanaryTickOutcome::Success { latency_ms: 5 },
+                Some(false),
+                None,
+            )),
+            2,
+        );
+        let snap = status.snapshot();
+        assert_eq!(snap.state, TeeEnclaveHealthState::Ready);
+        assert_eq!(snap.consecutive_failures, 0);
+        assert!(snap.offer_key_ready);
+        assert_eq!(snap.last_canary_latency_ms, Some(5));
+
+        // 2. First soft failure stays Ready (below threshold=2) and increments consecutive_failures.
+        worker_state.apply_result(
+            Ok((
+                CanaryTickOutcome::Failure {
+                    unreachable: false,
+                    reason: "decrypt mismatch".into(),
+                },
+                Some(false),
+                None,
+            )),
+            2,
+        );
+        let snap = status.snapshot();
+        assert_eq!(snap.state, TeeEnclaveHealthState::Ready);
+        assert_eq!(snap.consecutive_failures, 1);
+        assert_eq!(snap.last_failure.as_deref(), Some("decrypt mismatch"));
+
+        // 3. Second consecutive soft failure reaches threshold=2 -> Degraded.
+        worker_state.apply_result(
+            Ok((
+                CanaryTickOutcome::Failure {
+                    unreachable: false,
+                    reason: "decrypt timeout".into(),
+                },
+                Some(false),
+                None,
+            )),
+            2,
+        );
+        let snap = status.snapshot();
+        assert_eq!(snap.state, TeeEnclaveHealthState::Degraded);
+        assert_eq!(snap.consecutive_failures, 2);
+        assert_eq!(snap.last_failure.as_deref(), Some("decrypt timeout"));
+
+        // 4. Subsequent success resets consecutive_failures and restores Ready.
+        worker_state.apply_result(
+            Ok((
+                CanaryTickOutcome::Success { latency_ms: 4 },
+                Some(false),
+                None,
+            )),
+            2,
+        );
+        let snap = status.snapshot();
+        assert_eq!(snap.state, TeeEnclaveHealthState::Ready);
+        assert_eq!(snap.consecutive_failures, 0);
+        assert!(snap.last_failure.is_none());
+
+        // 5. Stuck in-flight probe across STUCK_SKIPPED_TICKS (2) degrades to Unavailable.
+        in_flight.store(true, Ordering::Release);
+        assert!(worker_state.skip_in_flight());
+        assert_eq!(status.snapshot().state, TeeEnclaveHealthState::Ready);
+        assert!(worker_state.skip_in_flight());
+        let snap = status.snapshot();
+        assert_eq!(snap.state, TeeEnclaveHealthState::Unavailable);
+        assert_eq!(
+            snap.last_failure.as_deref(),
+            Some("canary probe stuck (enclave not answering)")
+        );
+
+        in_flight.store(false, Ordering::Release);
+        assert!(!worker_state.skip_in_flight());
+    }
 }

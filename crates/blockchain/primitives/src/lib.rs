@@ -39,6 +39,7 @@ pub mod radicle_genesis;
 pub mod radicle_publication;
 pub mod reshare_artifact;
 pub mod runtime_audit_v1;
+pub mod settlement;
 pub mod signer;
 pub mod slashing_journal;
 pub mod stablecoin;
@@ -57,6 +58,7 @@ pub mod tee_test_utils;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
 pub mod time;
+pub mod transaction_call;
 pub mod tribute_day_encryption;
 pub mod tribute_encryption;
 pub mod units;

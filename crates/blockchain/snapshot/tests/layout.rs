@@ -20,10 +20,7 @@ fn manifest_json() -> serde_json::Value {
             "finish_stage": 1001,
             "partial_state_trie": 1000,
             "unwind": null,
-            "storage_version": 2,
-            "ocomp_baseline": block(0),
-            "ocomp_previous": block(995),
-            "ocomp_current": block(999)
+            "storage_version": 2
         },
         "domains": [{
             "id": "execution-db",
@@ -51,7 +48,6 @@ fn manifest_preserves_distinct_native_frontiers_and_digests_original_bytes() {
     let manifest = SnapshotManifestV1::from_bytes(&raw).unwrap();
     assert_eq!(manifest.progress.finalized.number, 1000);
     assert_eq!(manifest.progress.execution.number, 1001);
-    assert_eq!(manifest.progress.ocomp_current.number, 999);
     assert_eq!(manifest.progress.partial_state_trie, Some(1000));
     assert_eq!(serde_json::to_value(&manifest).unwrap(), manifest_json());
 
@@ -93,6 +89,21 @@ fn manifest_rejects_invalid_versions_hashes_and_inconsistent_totals() {
     let mut value = manifest_json();
     value["domains"][0]["entries"][0]["sha256"] = serde_json::Value::Null;
     reject(value);
+    let mut value = manifest_json();
+    value["domains"][0]["id"] = "".into();
+    reject(value);
+    for (size, sha256) in [
+        (1_u64, serde_json::Value::Null),
+        (0_u64, serde_json::Value::String("33".repeat(32))),
+    ] {
+        let mut value = manifest_json();
+        value["domains"][0]["entries"][0]["kind"] = "directory".into();
+        value["domains"][0]["entries"][0]["size"] = size.into();
+        value["domains"][0]["entries"][0]["sha256"] = sha256;
+        value["file_count"] = 0.into();
+        value["total_bytes"] = 0.into();
+        reject(value);
+    }
 }
 
 #[test]

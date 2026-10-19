@@ -11,7 +11,7 @@ use alloy_consensus::BlockHeader as _;
 use alloy_primitives::B256;
 use commonware_consensus::types::Round;
 use commonware_cryptography::bls12381::{primitives::variant::MinSig, PublicKey};
-use outbe_primitives::{addresses::REWARDS_ADDRESS, system_tx::OcompLifecycleActivation};
+use outbe_primitives::addresses::REWARDS_ADDRESS;
 
 use crate::block::ConsensusBlock;
 use crate::committee_provider::CommitteeProvider;
@@ -24,7 +24,6 @@ pub(crate) struct SystemTxLeaderValidationContext<'a> {
     pub(crate) round: Round,
     pub(crate) proposer: &'a PublicKey,
     pub(crate) chain_id: u64,
-    pub(crate) ocomp_lifecycle_activation: OcompLifecycleActivation,
     pub(crate) certificate_scheme_provider: &'a HybridSchemeProvider<MinSig>,
     pub(crate) committee_provider: &'a CommitteeProvider,
 }
@@ -97,11 +96,7 @@ pub(crate) fn validate_system_tx_leader_binding_for_activation(
 ) -> Result<(), BlockValidationError> {
     let raw_block = block.clone().into_inner().into_block();
     leader::validate_gas_limit(&raw_block.header)?;
-    let (layout, artifacts) = leader::validate_layout(
-        &raw_block.body,
-        &raw_block.header,
-        context.ocomp_lifecycle_activation,
-    )?;
+    let (layout, artifacts) = leader::validate_layout(&raw_block.body, &raw_block.header)?;
     if layout.system_tx_count() == 0 {
         return Ok(());
     }
@@ -128,7 +123,7 @@ mod tests {
         encode_consensus_header_artifact, ConsensusHeaderArtifact,
     };
     use outbe_primitives::signer::OutbeEvmSigner;
-    use outbe_primitives::system_tx::{OcompLifecycleActivation, SystemTxInputV2};
+    use outbe_primitives::system_tx::SystemTxInputV2;
 
     fn steady_system_inputs(parent_hash: B256) -> Vec<SystemTxInputV2> {
         vec![
@@ -159,7 +154,6 @@ mod tests {
             round,
             proposer,
             chain_id: outbe_primitives::chain::CHAIN_ID,
-            ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
             certificate_scheme_provider: providers.0,
             committee_provider: providers.1,
         }
@@ -176,46 +170,39 @@ mod tests {
     }
 
     #[test]
-    fn context_parent_binding_accepts_direct_child() {
+    fn context_parent_binding_enforces_direct_child_and_genesis_rules() {
         let parent = block_with_number(7);
-        let child = block_with_number_and_parent(8, parent.block_hash());
-
-        validate_context_parent_binding(&child, Some(&parent), parent.digest(), B256::ZERO)
+        let direct_child = block_with_number_and_parent(8, parent.block_hash());
+        validate_context_parent_binding(&direct_child, Some(&parent), parent.digest(), B256::ZERO)
             .expect("direct child extends Simplex context parent");
-    }
 
-    #[test]
-    fn context_parent_binding_rejects_wrong_parent_digest() {
-        let parent = block_with_number(7);
-        let child = block_with_number_and_parent(8, B256::from([0x44; 32]));
-
-        let error =
-            validate_context_parent_binding(&child, Some(&parent), parent.digest(), B256::ZERO)
-                .expect_err("child must bind header parent to Simplex context parent");
+        let wrong_parent_child = block_with_number_and_parent(8, B256::from([0x44; 32]));
+        let error = validate_context_parent_binding(
+            &wrong_parent_child,
+            Some(&parent),
+            parent.digest(),
+            B256::ZERO,
+        )
+        .expect_err("child must bind header parent to Simplex context parent");
         assert!(error
             .to_string()
             .contains("does not match Simplex context parent"));
-    }
 
-    #[test]
-    fn context_parent_binding_rejects_height_gap() {
-        let parent = block_with_number(7);
-        let child = block_with_number_and_parent(9, parent.block_hash());
-
-        let error =
-            validate_context_parent_binding(&child, Some(&parent), parent.digest(), B256::ZERO)
-                .expect_err("child height must be parent height plus one");
+        let gapped_child = block_with_number_and_parent(9, parent.block_hash());
+        let error = validate_context_parent_binding(
+            &gapped_child,
+            Some(&parent),
+            parent.digest(),
+            B256::ZERO,
+        )
+        .expect_err("child height must be parent height plus one");
         assert!(error
             .to_string()
             .contains("does not extend Simplex parent height"));
-    }
 
-    #[test]
-    fn context_parent_binding_accepts_genesis_parent_for_block_one() {
         let genesis_hash = B256::from([0x55; 32]);
-        let child = block_with_number_and_parent(1, genesis_hash);
-
-        validate_context_parent_binding(&child, None, Digest(genesis_hash), genesis_hash)
+        let block_one = block_with_number_and_parent(1, genesis_hash);
+        validate_context_parent_binding(&block_one, None, Digest(genesis_hash), genesis_hash)
             .expect("block 1 extends genesis parent");
     }
 
@@ -337,68 +324,6 @@ mod tests {
         )
         .expect_err("500M is valid only at block 1");
         assert!(error.to_string().contains("protocol gas limit"));
-    }
-
-    #[test]
-    fn system_tx_leader_binding_uses_the_manifest_activation_height() {
-        const ACTIVATION_HEIGHT: u64 = 32;
-
-        let (keys, _) = participants();
-        let signer = OutbeEvmSigner::from_secret_bytes([7u8; 32]).unwrap();
-        let mut validator_set = validator_set_from_keys(&keys);
-        validator_set.addresses[0] = signer.address();
-        let (scheme_provider, committee_provider) =
-            leader_binding_providers(Epoch::new(0), &validator_set);
-        let parent_hash = B256::ZERO;
-        let block = block_with_gas_planned_system_inputs(
-            &signer,
-            SystemBlockFixture {
-                block_number: ACTIVATION_HEIGHT,
-                parent_hash,
-                extra_data: Bytes::new(),
-                inputs: vec![
-                    SystemTxInputV2::CertifiedParentAccounting {
-                        metadata: finalized_metadata(parent_hash),
-                    },
-                    SystemTxInputV2::LateFinalizeCredits {
-                        artifact: Default::default(),
-                    },
-                    SystemTxInputV2::OcompLifecycleBegin,
-                    SystemTxInputV2::CycleTick,
-                    SystemTxInputV2::RewardsGemDelivery,
-                    SystemTxInputV2::OracleSlashWindow,
-                    SystemTxInputV2::HookEvents,
-                    SystemTxInputV2::OcompTerminalRequest,
-                ],
-                chain_id: outbe_primitives::chain::CHAIN_ID,
-            },
-            30_000_000,
-        );
-        let round = Round::new(Epoch::new(0), View::new(1));
-
-        validate_system_tx_leader_binding_for_activation(
-            &block,
-            SystemTxLeaderValidationContext {
-                ocomp_lifecycle_activation: OcompLifecycleActivation::at_block(ACTIVATION_HEIGHT),
-                ..leader_context(
-                    round,
-                    &keys[0].public_key(),
-                    (&scheme_provider, &committee_provider),
-                )
-            },
-        )
-        .expect("consensus verifier must accept the active payload layout at H");
-
-        let error = validate_system_tx_leader_binding_for_activation(
-            &block,
-            leader_context(
-                round,
-                &keys[0].public_key(),
-                (&scheme_provider, &committee_provider),
-            ),
-        )
-        .expect_err("the same payload must be invalid when OCOMP is not armed");
-        assert!(error.to_string().contains("active system tx set mismatch"));
     }
 
     #[test]

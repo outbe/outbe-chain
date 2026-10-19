@@ -336,7 +336,17 @@ fn every_validator_observes_one_reward_delivery(world: &mut World) {
         .state
         .reward_gem_delivery_block_number
         .expect("delivery block number");
+    // The FIFO head retires a few blocks after the delivery block, so peers must
+    // reach the block where the primary saw the drained queue, not just the delivery.
+    let drained_at = world
+        .rpc
+        .head(primary)
+        .expect("primary head after the FIFO drained");
     for port in world.validators.committee_ports() {
+        assert!(
+            world.rpc.wait_finalized_at_least(port, drained_at, 60),
+            "validator {port} did not finalize the block where the Rewards FIFO drained"
+        );
         assert_eq!(validator_reward_gem_balance(world, port), expected_balance);
         assert_eq!(
             reward_gem_id_at(world, port, expected_balance - U256::ONE),
@@ -632,7 +642,7 @@ fn wait_for_materialized_nod(
 ) -> (Vec<u8>, crate::internal::eth::INod::NodData) {
     let deadline = Instant::now() + Duration::from_secs(MATERIALIZED_NOD_TIMEOUT_SECS);
     loop {
-        match world.rpc.materialized_nod_for_owner(port, owner) {
+        match world.rpc.nod_for_owner(port, owner) {
             Ok(Some(nod)) => return nod,
             Ok(None) if Instant::now() < deadline => {}
             Err(_) if Instant::now() < deadline => {}
@@ -825,23 +835,13 @@ fn validator_reward_owner(world: &World) -> Address {
         .expect("canonical validator 0 address")
 }
 
-/// Gem views read through the compressed-body projection, which trails the block
-/// that wrote the body: retry a failed read for a bounded moment.
 fn read_gem_view<C>(url: &str, call: &C, what: &str) -> C::Return
 where
     C: alloy_sol_types::SolCall,
     C::Return: Send + 'static,
 {
-    let deadline = Instant::now() + Duration::from_secs(90);
-    loop {
-        match eth::read_call_result(url, addresses::GEM_ADDR, call) {
-            Ok(value) => return value,
-            Err(error) => {
-                assert!(Instant::now() < deadline, "{what}: {error}");
-                sleep(Duration::from_secs(1));
-            }
-        }
-    }
+    eth::read_call_result(url, addresses::GEM_ADDR, call)
+        .unwrap_or_else(|error| panic!("{what}: {error}"))
 }
 
 fn validator_reward_gem_balance(world: &World, port: u16) -> U256 {

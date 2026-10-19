@@ -75,15 +75,6 @@ pub(super) fn configured_storage(block_number: u64, timestamp: u64) -> HashMapSt
     provider.set_block_number(block_number);
     provider.set_timestamp(U256::from(timestamp));
     provider.set_beneficiary(VALIDATOR);
-    let install = outbe_metadosis::test_support::ForkInstallScenario::measurement_at(
-        1,
-        CHAIN_ID,
-        GENESIS_HASH,
-    )
-    .unwrap()
-    .with_founder_validators(&[(VALIDATOR, consensus_key)])
-    .unwrap()
-    .into_install();
     provider.enter(|storage| {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();
@@ -92,27 +83,12 @@ pub(super) fn configured_storage(block_number: u64, timestamp: u64) -> HashMapSt
         vs.register_validator(OWNER, VALIDATOR, &consensus_key)
             .unwrap();
         vs.mark_pending(VALIDATOR).unwrap();
-        let registration = install.founder_registrations[0]
-            .encode_canonical(&outbe_metadosis::config::poc_schema_limits())
-            .unwrap();
-        vs.confirm_validator_ready(VALIDATOR, &registration)
-            .unwrap();
+        vs.confirm_validator_ready(VALIDATOR).unwrap();
         vs.activate_validator_via_boundary_for_test(VALIDATOR)
             .unwrap();
 
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
-    });
-    provider.set_block_number(1);
-    provider.enable_metadosis_mutation_frame(
-        outbe_primitives::storage::MetadosisMutationPurposeTag::ForkProfile,
-    );
-    provider.enter(|storage| {
-        let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, timestamp, CHAIN_ID),
-            storage,
-        );
-        outbe_metadosis::commands::install_fork_profile(&ctx, &install).unwrap();
     });
     provider.set_block_number(block_number);
     provider
