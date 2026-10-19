@@ -66,7 +66,7 @@ use outbe_zk::protocol::key::{NftSecret, Signer};
 use outbe_zk::protocol::zk::{Circuit, ProofGenerator};
 use outbe_zk::wire::decode_public_words;
 use outbe_zk::INCLUSION_DEPTH;
-use outbe_zk_backend::barretenberg::{init_crs, verify_circuit, Barretenberg};
+use outbe_zk_backend::barretenberg::{verify_circuit, Barretenberg, BarretenbergHandler};
 use rand::{rngs::StdRng, SeedableRng};
 use revm::context_interface::cfg::gas::{SSTORE_RESET, WARM_STORAGE_READ_COST};
 use revm::precompile::bn254::{
@@ -174,7 +174,7 @@ fn build_payload() -> Vec<u8> {
 
 fn build_fixture() -> Fixture {
     let crs_started = Instant::now();
-    init_crs().expect("pinned CRS initializes");
+    BarretenbergHandler::init().expect("pinned CRS initializes");
     let crs_init_ms = crs_started.elapsed().as_secs_f64() * 1_000.0;
 
     let plaintext = build_payload();

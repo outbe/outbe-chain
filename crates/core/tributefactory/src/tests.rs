@@ -385,7 +385,7 @@ fn niflheim_tribute_chain_9900501_issues_and_rejects_replay() {
         key::{NftSigner, Signer},
         zk::ProofGenerator,
     };
-    use outbe_zk_backend::barretenberg::{init_crs, Barretenberg};
+    use outbe_zk_backend::barretenberg::{Barretenberg, BarretenbergHandler};
     use rand::{rngs::StdRng, SeedableRng};
 
     const L2_CHAIN_ID: u32 = 9_900_501;
@@ -437,7 +437,7 @@ fn niflheim_tribute_chain_9900501_issues_and_rejects_replay() {
         binding_hash,
         merkle_root,
     };
-    init_crs().unwrap();
+    BarretenbergHandler::init().unwrap();
     let proof = ProofGenerator::<niflheim_tribute::NiflheimTribute>::generate(
         &Barretenberg::default(),
         &witness,
@@ -473,7 +473,7 @@ fn assert_real_zk_offer_with_key_source(
     const REWARD_DAY: u32 = 20_260_803;
     const PRIVATE_KEY: [u8; 32] = [0x33; 32];
     let _enclave = outbe_tribute::enclave_client::test_enclave::scope();
-    outbe_zk_backend::barretenberg::init_crs().unwrap();
+    outbe_zk_backend::barretenberg::BarretenbergHandler::init().unwrap();
     let merkle_root = B256::from(decode_public_words::<4>(proof, proof.len()).unwrap()[3]);
     let payload = serde_json::to_vec(&serde_json::json!({
         "creator": format!("{CALLER:#x}"),

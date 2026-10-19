@@ -1,8 +1,8 @@
-//! Real barretenberg prove→verify round-trips.
+//! These tests generate and verify real Barretenberg proofs.
 //!
-//! Generates actual UltraHonkKeccak proofs from genuine witnesses and verifies
-//! them through the FFI backend — the full on-device path. Run with
-//! `cargo test -p outbe-zk-backend --test barretenberg`.
+//! They generate UltraHonkKeccak proofs from genuine witnesses and verify them through the FFI backend.
+//! They execute the complete proof flow on the device.
+//! Run `cargo test -p outbe-zk-backend --test barretenberg`.
 
 use ark_ff::UniformRand;
 
@@ -16,7 +16,7 @@ use outbe_zk::protocol::key::{NftSecret, Signer};
 use outbe_zk::protocol::zk::{ProofGenerator, ProofVerifier};
 use outbe_zk::Fr;
 use outbe_zk::INCLUSION_DEPTH;
-use outbe_zk_backend::barretenberg::Barretenberg;
+use outbe_zk_backend::barretenberg::{verify_circuit, Barretenberg, BarretenbergHandler};
 
 struct TestNft {
     id: Fr,
@@ -44,6 +44,7 @@ impl Owned for TestNft {
 
 #[test]
 fn demo_tribute_prove_verify_round_trip() {
+    BarretenbergHandler::init().expect("launch initializes the handler before proof generation");
     let mut rng = ark_std::test_rng();
     let (sk, pk) = signature::keypair(&mut rng);
     let nonce = Fr::rand(&mut rng);
@@ -69,7 +70,58 @@ fn demo_tribute_prove_verify_round_trip() {
         "valid demo tribute proof must verify"
     );
 
+    // Call native verification and statistics concurrently through the same handler.
+    let acir = {
+        use base64::Engine;
+        use outbe_zk::CircuitId;
+        use std::io::Read;
+        let compressed = base64::engine::general_purpose::STANDARD
+            .decode(DemoTribute::BYTECODE_B64)
+            .unwrap();
+        let mut raw = Vec::new();
+        flate2::read::GzDecoder::new(compressed.as_slice())
+            .read_to_end(&mut raw)
+            .unwrap();
+        raw
+    };
+    std::thread::scope(|scope| {
+        let verify = scope.spawn(|| {
+            for _ in 0..2 {
+                assert!(ProofVerifier::<DemoTribute>::verify(
+                    &Barretenberg::default(),
+                    &public,
+                    &proof
+                )
+                .unwrap());
+            }
+        });
+        let stats = scope.spawn(|| {
+            let info = BarretenbergHandler::global()
+                .circuit_stats(
+                    barretenberg_rs::generated_types::CircuitInput {
+                        name: String::new(),
+                        bytecode: acir,
+                        verification_key: Vec::new(),
+                    },
+                    false,
+                    barretenberg_rs::generated_types::ProofSystemSettings {
+                        ipa_accumulation: false,
+                        oracle_hash_type: "keccak".into(),
+                        disable_zk: false,
+                        optimized_solidity_verifier: false,
+                    },
+                )
+                .unwrap();
+            assert!(info.num_gates_dyadic > 0);
+        });
+        verify.join().unwrap();
+        stats.join().unwrap();
+    });
     let combined = demo_tribute::encode_combined_proof(public.clone(), proof.proof).unwrap();
+    assert!(verify_circuit::<DemoTribute>(&combined).unwrap());
+    let mut tampered = combined.clone();
+    tampered[4..36].fill(0);
+    assert!(!verify_circuit::<DemoTribute>(&tampered).unwrap());
     assert_eq!(combined.len(), demo_tribute::COMBINED_LEN);
     let decoded = demo_tribute::decode_public_inputs(&combined).unwrap();
     assert_eq!(decoded.derived_owner, owner);
