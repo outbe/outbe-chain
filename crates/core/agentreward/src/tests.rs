@@ -911,3 +911,54 @@ fn reward_timestamp_narrowing_rejects_overflow() {
 }
 
 mod cca;
+
+#[test]
+fn accrual_and_claim_emit_their_events_for_any_pool() {
+    use crate::precompile::IAgentReward;
+    use alloy_sol_types::SolEvent;
+
+    let alice = address!("0x1111111111111111111111111111111111111111");
+    let day = WorldwideDay::new(timestamp_to_date_key(T_NOW));
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_timestamp(U256::from(T_NOW));
+    let gem_id = StorageHandle::enter(&mut provider, |storage| {
+        seed_oracle(&storage, ONE_COEN);
+        let mut contract = AgentRewardContract::new(storage.clone());
+        contract.increment_waa_tribute(day, alice).unwrap();
+        let ctx = outbe_primitives::block::BlockRuntimeContext::new(
+            outbe_primitives::block::BlockContext::empty_for_tests(1, T_NOW, CHAIN_ID),
+            storage.clone(),
+        );
+        distribute_daily(&ctx, day, &[(PoolKind::Waa, U256::from(500u64))]).unwrap();
+        contract
+            .claim_reward(RewardPool::Waa, alice, U256::ZERO, (USD, USD))
+            .unwrap()
+    });
+    let logs = provider.get_events(outbe_primitives::addresses::AGENT_REWARD_ADDRESS);
+    let accrued: Vec<_> = logs
+        .iter()
+        .filter_map(|log| IAgentReward::RewardAccrued::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(
+        accrued,
+        vec![IAgentReward::RewardAccrued {
+            account: alice,
+            pool: RewardPool::Waa as u8,
+            utcDay: day.value(),
+            promisLoadMinor: U256::from(500u64),
+        }]
+    );
+    let claimed: Vec<_> = logs
+        .iter()
+        .filter_map(|log| IAgentReward::RewardsClaimed::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(
+        claimed,
+        vec![IAgentReward::RewardsClaimed {
+            account: alice,
+            pool: RewardPool::Waa as u8,
+            promisLoadMinor: U256::from(500u64),
+            gemId: gem_id,
+        }]
+    );
+}

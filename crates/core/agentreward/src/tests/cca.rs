@@ -224,7 +224,7 @@ fn cca_pool_queries_and_claims_are_isolated() {
         assert_eq!(contract.get_claimable_reward(BOB).unwrap(), U256::ZERO);
         let claim = IAgentReward::claimRewardCall {
             pool: 2,
-            amount: U256::ZERO,
+            promisLoadMinor: U256::ZERO,
             issuanceCurrency: USD,
             referenceCurrency: USD,
         }
@@ -240,7 +240,7 @@ fn cca_pool_queries_and_claims_are_isolated() {
                 storage.clone(),
                 &IAgentReward::claimRewardCall {
                     pool,
-                    amount: U256::ZERO,
+                    promisLoadMinor: U256::ZERO,
                     issuanceCurrency: USD,
                     referenceCurrency: USD,
                 }
@@ -267,7 +267,7 @@ fn cca_pool_queries_and_claims_are_isolated() {
                 // An empty pool is a no-op whatever currencies the call names.
                 &IAgentReward::claimRewardCall {
                     pool,
-                    amount: U256::ZERO,
+                    promisLoadMinor: U256::ZERO,
                     issuanceCurrency: 0,
                     referenceCurrency: 0,
                 }

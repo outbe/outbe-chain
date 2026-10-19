@@ -9,7 +9,7 @@
         "internalType": "uint8"
       },
       {
-        "name": "amount",
+        "name": "promisLoadMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -45,7 +45,7 @@
     ],
     "outputs": [
       {
-        "name": "",
+        "name": "promisLoadMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -69,7 +69,7 @@
     ],
     "outputs": [
       {
-        "name": "",
+        "name": "promisLoadMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -81,10 +81,16 @@
     "name": "RewardAccrued",
     "inputs": [
       {
-        "name": "cca",
+        "name": "account",
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      },
+      {
+        "name": "pool",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
       },
       {
         "name": "utcDay",
@@ -93,7 +99,7 @@
         "internalType": "uint32"
       },
       {
-        "name": "amount",
+        "name": "promisLoadMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -106,13 +112,25 @@
     "name": "RewardsClaimed",
     "inputs": [
       {
-        "name": "cca",
+        "name": "account",
         "type": "address",
         "indexed": true,
         "internalType": "address"
       },
       {
-        "name": "amount",
+        "name": "pool",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "promisLoadMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "gemId",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

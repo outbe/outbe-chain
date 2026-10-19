@@ -259,7 +259,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     let claim = |amount| {
         IAgentReward::claimRewardCall {
             pool: 2,
-            amount,
+            promisLoadMinor: amount,
             issuanceCurrency: 840,
             referenceCurrency: 840,
         }
@@ -334,10 +334,11 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
             .find_map(|log| IAgentReward::RewardsClaimed::decode_log(log).ok())
             .unwrap()
             .data;
-        assert_eq!(claimed.cca, CCA);
+        assert_eq!(claimed.account, CCA);
+        assert_eq!(claimed.pool, 2);
         assert!(logs.iter().any(|log| log.address == AGENT_REWARD_ADDRESS
             && IAgentReward::RewardsClaimed::decode_log(log).is_ok()));
-        assert_eq!(claimed.amount, U256::from(load));
+        assert_eq!(claimed.promisLoadMinor, U256::from(load));
         let issued = logs
             .iter()
             .find_map(|log| {
@@ -346,6 +347,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
             .unwrap()
             .data;
         assert_eq!(issued.gemId, gem_id);
+        assert_eq!(claimed.gemId, gem_id);
         with_storage(&mut db, |storage| {
             let gem = outbe_gem::api::get_view(&storage, gem_id).unwrap().unwrap();
             assert_eq!(gem.item.owner, CCA);

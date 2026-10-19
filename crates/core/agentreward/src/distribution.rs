@@ -102,13 +102,12 @@ fn distribute_pool(
             continue;
         }
         contract.add_claimable_reward(reward_pool, reward.address, reward.reward_amount)?;
-        if reward_pool == RewardPool::Cca {
-            contract.emit(IAgentReward::RewardAccrued {
-                cca: reward.address,
-                utcDay: prev_day.value(),
-                amount: reward.reward_amount,
-            })?;
-        }
+        contract.emit(IAgentReward::RewardAccrued {
+            account: reward.address,
+            pool: reward_pool as u8,
+            utcDay: prev_day.value(),
+            promisLoadMinor: reward.reward_amount,
+        })?;
     }
     match kind {
         PoolKind::Waa => contract.clear_waa_counts(prev_day)?,

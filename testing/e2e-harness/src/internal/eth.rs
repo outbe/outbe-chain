@@ -1408,7 +1408,7 @@ pub(crate) fn send_reward_call(
     let url = url.to_string();
     let data = IAgentReward::claimRewardCall {
         pool: WAA_POOL,
-        amount: U256::ZERO,
+        promisLoadMinor: U256::ZERO,
         issuanceCurrency: REWARD_CALL_ISO,
         referenceCurrency: REWARD_CALL_ISO,
     }

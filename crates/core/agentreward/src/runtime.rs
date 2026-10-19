@@ -143,13 +143,12 @@ impl AgentRewardContract<'_> {
             let gem_id =
                 issue_reward_gem(&self.storage, (address, requested), gem_type, currencies)?;
             self.write_pool_claimable_reward(pool, address, balance - requested)?;
-
-            if pool == RewardPool::Cca {
-                self.emit(IAgentReward::RewardsClaimed {
-                    cca: address,
-                    amount: requested,
-                })?;
-            }
+            self.emit(IAgentReward::RewardsClaimed {
+                account: address,
+                pool: pool as u8,
+                promisLoadMinor: requested,
+                gemId: gem_id,
+            })?;
             Ok(gem_id)
         })
     }
