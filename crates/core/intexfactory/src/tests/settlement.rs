@@ -463,6 +463,15 @@ fn settled_token_id_tags_the_series_id() {
 }
 
 #[test]
+fn settled_tag_matches_the_nft_contract() {
+    use crate::constants::SETTLED_TAG;
+    use outbe_primitives::test_utils::sol_interface::sol_constant_shift;
+    const SOL: &str = include_str!("../../../../../contracts/intex/src/shared/IntexNFT1155.sol");
+    let bit = sol_constant_shift(SOL, "_SETTLED_TAG").expect("_SETTLED_TAG is 1 << N");
+    assert_eq!(U256::from(1u8) << bit, SETTLED_TAG);
+}
+
+#[test]
 fn compute_pow_hash_matches_manual_sha256() {
     // SHA256(owner ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8)
     let promis_amount = U256::from(1_000u64);

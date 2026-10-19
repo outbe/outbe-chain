@@ -37,5 +37,6 @@ pub const MAX_SERIES_PER_MARK: usize = 8;
 
 /// Bit that marks a Settled NFT token id. A series id is 14 bytes, so the issued id space ends at
 /// 2**112 and this bit sits directly above it. The classes cannot collide, and clearing the bit
-/// recovers the series. Mirrors `IntexNFT1155._SETTLED_TAG`.
+/// recovers the series. Mirrors `IntexNFT1155._SETTLED_TAG`. The test
+/// `settled_tag_matches_the_nft_contract` keeps the two values equal.
 pub const SETTLED_TAG: U256 = U256::from_limbs([0, 1 << 48, 0, 0]);

@@ -36,10 +36,26 @@ pub fn sol_function_canonical(sol: &str, name: &str) -> Option<SolFnCanonical> {
 
 /// Reads a literal `constant NAME = <value>;` declaration.
 pub fn sol_constant<T: std::str::FromStr>(sol: &str, name: &str) -> Option<T> {
+    constant_expr(sol, name)?.replace('_', "").parse().ok()
+}
+
+/// Reads a `constant NAME = 1 << N;` declaration and returns `N`.
+/// Returns `None` for any other form, for example `2 ** N` or `1 << X`.
+pub fn sol_constant_shift(sol: &str, name: &str) -> Option<u32> {
+    let (base, bit) = constant_expr(sol, name)?.split_once("<<")?;
+    let bit = bit.trim();
+    if base.trim() != "1" || !bit.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    bit.parse().ok()
+}
+
+/// Returns the trimmed expression of a `constant NAME = <expr>;` declaration.
+fn constant_expr<'a>(sol: &'a str, name: &str) -> Option<&'a str> {
     let needle = format!(" constant {name} =");
     let start = sol.find(&needle)? + needle.len();
     let end = sol[start..].find(';')? + start;
-    sol[start..end].trim().replace('_', "").parse().ok()
+    Some(sol[start..end].trim())
 }
 
 /// Returns the index of the parenthesis that closes the one at `open`.
@@ -77,7 +93,7 @@ fn canonical_type_list(list: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{sol_constant, sol_function_canonical};
+    use super::{sol_constant, sol_constant_shift, sol_function_canonical};
 
     #[test]
     fn sol_constant_reads_plain_and_separated_literals() {
@@ -90,6 +106,35 @@ mod tests {
         assert_eq!(sol_constant(SAMPLE, "MILLION"), Some(1_000_000u32));
         assert_eq!(sol_constant::<u128>(SAMPLE, "DERIVED"), None);
         assert_eq!(sol_constant::<u128>(SAMPLE, "MISSING"), None);
+    }
+
+    #[test]
+    fn sol_constant_shift_reads_only_one_shifted_left() {
+        assert_eq!(
+            sol_constant_shift("uint256 constant X = 1 << 112;", "X"),
+            Some(112)
+        );
+        assert_eq!(
+            sol_constant_shift("uint256 constant X =1<<7 ;", "X"),
+            Some(7)
+        );
+        assert_eq!(sol_constant_shift("uint256 constant X = 5;", "X"), None);
+        assert_eq!(
+            sol_constant_shift("uint256 constant X = 2 ** 112;", "X"),
+            None
+        );
+        assert_eq!(
+            sol_constant_shift("uint256 constant X = 1 << SIX;", "X"),
+            None
+        );
+        assert_eq!(
+            sol_constant_shift("uint256 constant X = 2 << 112;", "X"),
+            None
+        );
+        assert_eq!(
+            sol_constant_shift("uint256 constant X = 1 << 112;", "Y"),
+            None
+        );
     }
 
     /// Pins the parser output for names, `calldata`/`memory` markers, `view` and
