@@ -1,0 +1,5 @@
+error[E0080]: evaluation panicked: storage field `inside` starts inside the slots of storage field `words`
+ --> tests/compile_fail/explicit_slot_inside_array.rs:9:1
+  |
+9 | #[contract]
+  | ^^^^^^^^^^^ evaluation of `_` failed here

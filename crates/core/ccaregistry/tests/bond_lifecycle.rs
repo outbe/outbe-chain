@@ -15,9 +15,13 @@ use outbe_ccaregistry::{
     schema::CcaContract,
 };
 use outbe_evm::OutbeEvmFactory;
+use outbe_gemfactory::precompile::IGemFactory;
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::{
-    addresses::{AGENT_REWARD_ADDRESS, CCA_REGISTRY_ADDRESS},
+    addresses::{
+        AGENT_REWARD_ADDRESS, CCA_REGISTRY_ADDRESS, GEM_ADDRESS, GEM_FACTORY_ADDRESS,
+        ORACLE_ADDRESS,
+    },
     block::{BlockContext, BlockRuntimeContext},
     storage::{direct::DirectStorageProvider, StorageHandle},
     time::{previous_date_key, timestamp_to_date_key},
@@ -351,12 +355,8 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         with_storage(&mut db, |storage| {
             let gem = outbe_gem::api::get_view(&storage, gem_id).unwrap().unwrap();
             assert_eq!(gem.item.owner, CCA);
-            assert_eq!(
-                gem.item.gem_type,
-                outbe_gemfactory::schema::GemTypes::Cca as u8
-            );
             assert_eq!(gem.item.promis_load_minor, U256::from(load));
-            assert_eq!(gem.bucket.entry_price_minor, price);
+            assert_eq!(gem.item.entry_price_minor, price);
             assert_eq!(gem.item.issuance_currency, 840);
             assert_eq!(gem.item.reference_currency, 840);
             assert_eq!(gem.item.issued_at, claim_time);
@@ -482,16 +482,21 @@ fn bond_past_the_active_cap_refunds_value_and_leaves_the_set_unchanged() {
 
 alloy_sol_types::sol!("../../../contracts/precompiles/src/IAgentReward.sol");
 
-#[test]
-fn reward_claim_transaction_issues_the_gem_and_clears_the_pool() {
+const PRICE: U256 = U256::from_limbs([2_000_000, 0, 0, 0]);
+const REWARD: U256 = U256::from_limbs([250, 0, 0, 0]);
+
+/// CCA can claim Gems: marker code on the touched precompiles and a previous-day
+/// COEN/USD VWAP of [`PRICE`].
+fn reward_world() -> CacheDB<EmptyDB> {
     let mut db = CacheDB::new(EmptyDB::default());
     db.insert_account_info(CCA, AccountInfo::default());
     let code = Bytecode::new_raw(Bytes::from_static(&[0xef]));
     for address in [
         AGENT_REWARD_ADDRESS,
-        outbe_primitives::addresses::GEM_ADDRESS,
-        outbe_primitives::addresses::GEM_FACTORY_ADDRESS,
-        outbe_primitives::addresses::ORACLE_ADDRESS,
+        CCA_REGISTRY_ADDRESS,
+        GEM_ADDRESS,
+        GEM_FACTORY_ADDRESS,
+        ORACLE_ADDRESS,
     ] {
         db.insert_account_info(
             address,
@@ -502,33 +507,46 @@ fn reward_claim_transaction_issues_the_gem_and_clears_the_pool() {
             },
         );
     }
-    let load = U256::from(250);
-    let price = U256::from(2_000_000);
     with_storage(&mut db, |storage| {
         seed_oracle(&storage);
         seed_vwap(
             &storage,
             previous_date_key(timestamp_to_date_key(NOW)),
-            price,
+            PRICE,
         );
+    });
+    db
+}
+
+fn credit(db: &mut CacheDB<EmptyDB>, pool: RewardPool, amount: U256) {
+    with_storage(db, |storage| {
         AgentRewardContract::new(storage)
-            .add_claimable_reward(RewardPool::Waa, CCA, load)
+            .add_claimable_reward(pool, CCA, amount)
             .unwrap();
     });
+}
 
-    let result = tx_to(
-        &mut db,
+fn claim_tx(db: &mut CacheDB<EmptyDB>, pool: RewardPool, requested: U256) -> ExecutionResult {
+    tx_to(
+        db,
         AGENT_REWARD_ADDRESS,
         U256::ZERO,
         IAgentReward::claimRewardCall {
-            pool: RewardPool::Waa as u8,
-            promisLoadMinor: U256::ZERO,
+            pool: pool as u8,
+            promisLoadMinor: requested,
             issuanceCurrency: 840,
             referenceCurrency: 840,
         }
         .abi_encode(),
         NOW,
-    );
+    )
+}
+
+/// Claims `requested` of CCA's `held` balance in `pool` by transaction, zero for all
+/// of it, and checks the Gem, both events and what stays claimable.
+fn claim_by_tx(db: &mut CacheDB<EmptyDB>, pool: RewardPool, held: U256, requested: U256) -> U256 {
+    let load = if requested.is_zero() { held } else { requested };
+    let result = claim_tx(db, pool, requested);
     assert!(result.is_success(), "{result:?}");
     let gem_id =
         IAgentReward::claimRewardCall::abi_decode_returns(result.output().unwrap()).unwrap();
@@ -539,25 +557,84 @@ fn reward_claim_transaction_issues_the_gem_and_clears_the_pool() {
         .expect("the claim emits RewardsClaimed")
         .data;
     assert_eq!(claimed.account, CCA);
-    assert_eq!(claimed.pool, RewardPool::Waa as u8);
+    assert_eq!(claimed.pool, pool as u8);
     assert_eq!(claimed.promisLoadMinor, load);
     assert_eq!(claimed.gemId, gem_id);
-    with_storage(&mut db, |storage| {
+    let issued = result
+        .logs()
+        .iter()
+        .find_map(|log| IGemFactory::GemIssued::decode_log(log).ok())
+        .expect("the claim emits GemIssued")
+        .data;
+    assert_eq!(issued.gemId, gem_id);
+    assert_eq!(issued.promisLoadMinor, load);
+    with_storage(db, |storage| {
         let gem = outbe_gem::api::get_view(&storage, gem_id).unwrap().unwrap();
         assert_eq!(gem.item.owner, CCA);
         assert_eq!(gem.item.promis_load_minor, load);
-        assert_eq!(gem.bucket.entry_price_minor, price);
+        assert_eq!(gem.item.entry_price_minor, PRICE);
+        assert_eq!(gem.item.issued_at, NOW);
         assert_eq!(
             AgentRewardContract::new(storage)
-                .get_pool_claimable_reward(RewardPool::Waa, CCA)
+                .get_pool_claimable_reward(pool, CCA)
                 .unwrap(),
-            U256::ZERO
+            held - load
         );
     });
     assert_eq!(
         db.cache.accounts[&AGENT_REWARD_ADDRESS].info.balance,
         U256::ZERO
     );
+    gem_id
+}
+
+#[test]
+fn reward_claim_transaction_issues_the_gem_and_clears_the_pool() {
+    let mut db = reward_world();
+    credit(&mut db, RewardPool::Waa, REWARD);
+    claim_by_tx(&mut db, RewardPool::Waa, REWARD, U256::ZERO);
+}
+
+#[test]
+fn an_sra_claim_transaction_issues_the_gem() {
+    let mut db = reward_world();
+    credit(&mut db, RewardPool::Sra, REWARD);
+    claim_by_tx(&mut db, RewardPool::Sra, REWARD, U256::ZERO);
+}
+
+#[test]
+fn a_cca_claim_transaction_needs_registration_and_may_claim_part() {
+    let mut db = reward_world();
+    credit(&mut db, RewardPool::Cca, REWARD);
+    assert!(!claim_tx(&mut db, RewardPool::Cca, U256::ZERO).is_success());
+    with_storage(&mut db, |storage| {
+        storage
+            .increase_balance(CCA_REGISTRY_ADDRESS, BOND_REQUIREMENT)
+            .unwrap();
+        runtime::bond(storage.clone(), CCA, BOND_REQUIREMENT, "Test CCA".into()).unwrap();
+        assert_eq!(
+            AgentRewardContract::new(storage)
+                .get_pool_claimable_reward(RewardPool::Cca, CCA)
+                .unwrap(),
+            REWARD
+        );
+    });
+    claim_by_tx(&mut db, RewardPool::Cca, REWARD, U256::from(100));
+}
+
+#[test]
+fn a_validator_claim_transaction_issues_the_gem_and_an_empty_pool_is_a_no_op() {
+    let mut db = reward_world();
+    credit(&mut db, RewardPool::Validator, REWARD);
+    claim_by_tx(&mut db, RewardPool::Validator, REWARD, U256::ZERO);
+
+    let result = claim_tx(&mut db, RewardPool::Validator, U256::ZERO);
+    assert!(result.is_success(), "{result:?}");
+    assert_eq!(
+        IAgentReward::claimRewardCall::abi_decode_returns(result.output().unwrap()).unwrap(),
+        U256::ZERO
+    );
+    assert!(result.logs().is_empty());
 }
 
 fn seed_oracle(storage: &StorageHandle<'_>) {
@@ -583,8 +660,8 @@ fn snapshot(db: &mut CacheDB<EmptyDB>) -> (ICcaRegistry::Cca, Vec<ContractState>
     for address in [
         CCA_REGISTRY_ADDRESS,
         AGENT_REWARD_ADDRESS,
-        outbe_primitives::addresses::GEM_ADDRESS,
-        outbe_primitives::addresses::GEM_FACTORY_ADDRESS,
+        GEM_ADDRESS,
+        GEM_FACTORY_ADDRESS,
     ] {
         let mut slots = db
             .cache

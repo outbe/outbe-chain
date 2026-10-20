@@ -364,7 +364,9 @@ fn capacity_forfeiture_cycle_tick_keeps_twenty_percent_block_headroom() {
 fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
     const GENESIS_TS: u64 = 1_704_067_200;
     use outbe_primitives::time::SECONDS_PER_DAY;
-    const DENSE_ADDRESS_COUNT: u64 = 512;
+    // WAA and SRA recipients together fill one block's accrual slice.
+    const DENSE_ADDRESS_COUNT: u64 =
+        outbe_agentreward::distribution::ACCRUAL_RECIPIENTS_PER_BLOCK as u64 / 2;
     const DENSE_VALIDATOR_COUNT: u32 = outbe_consensus::bls::MAX_VALIDATORS;
 
     let signer = test_evm_signer();

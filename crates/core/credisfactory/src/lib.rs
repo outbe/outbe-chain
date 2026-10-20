@@ -7,12 +7,14 @@
 //!   to the source's liquid balance.
 //! - `forfeitCredis` lets the owner give up an Issued or Called Credis. Its
 //!   collateral burns as in an expired one.
-//! - [`called`] is the daily Cycle-triggered price-path scan. It calls Credis
-//!   whose breach window filled.
-//! - [`expired`] forfeits called Credis after their settlement window.
-//!   It burns unpaid collateral from the source's pledged balance into the Promis Reserve.
+//! - [`called`] is the daily Cycle-triggered price-path scan. It calls the groups of
+//!   Credis whose breach window filled.
+//! - [`expired`] forfeits a called group after its settlement window. The cleanup then
+//!   deletes its Credis, burning each one's collateral from its source's pledged balance
+//!   into the Promis Reserve.
 
 pub mod called;
+mod cleanup;
 pub mod errors;
 pub mod expired;
 pub mod hooks;

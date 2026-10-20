@@ -8,9 +8,10 @@ use crate::errors::CredisError;
 
 /// Credis lifecycle state.
 ///
-/// A Credis is settleable from the moment it is issued. `Issued -> Called` is the
-/// sustained-breach trigger. Both `Settled` (fully repaid) and `Forfeited` (settlement
-/// deadline passed with a remainder, or given up by the owner) are terminal.
+/// A Credis is settleable from the moment it is issued. `Issued -> Called` is its
+/// group's sustained-breach trigger. Both `Settled` (fully repaid) and `Forfeited`
+/// (settlement deadline passed with a remainder) are terminal. A forfeited Credis is
+/// deleted, so storage holds only `Issued` and `Settled`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum CredisState {
@@ -42,7 +43,8 @@ impl CredisState {
 /// Every term, both currency codes included, is sealed at issuance and never
 /// changes afterwards. Only `outstanding_principal_minor`, `outstanding_gratis_minor`,
 /// `interest_paid_minor`, `last_settled_at`, `called_at` and `state` move over the
-/// Credis's life.
+/// Credis's life. A live Credis is called with its group: loading it reads the call and
+/// its terms from the group, and settling it copies them onto the record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[storage_record(exists_field = owner)]
 pub struct Credis {
@@ -77,8 +79,8 @@ pub struct Credis {
     #[attribute(order = 5)]
     pub principal_minor: U256,
 
-    /// `P_out` - outstanding principal. Reaching zero settles the Credis. A Forfeited
-    /// Credis keeps it as the principal written off; readers go through `outcome`.
+    /// `P_out` - outstanding principal. Reaching zero settles the Credis. Past its
+    /// deadline it is the principal written off; readers go through `outcome`.
     #[attribute(order = 6)]
     pub outstanding_principal_minor: U256,
 
@@ -87,8 +89,8 @@ pub struct Credis {
     #[attribute(order = 7)]
     pub gratis_minor: U256,
 
-    /// The share of `G` still locked. Released principal-proportionally. A Forfeited
-    /// Credis keeps it as the Gratis burned.
+    /// The share of `G` still locked. Released principal-proportionally. Past its
+    /// deadline it is the Gratis burned.
     #[attribute(order = 8)]
     pub outstanding_gratis_minor: U256,
 
@@ -109,8 +111,8 @@ pub struct Credis {
     #[attribute(order = 11)]
     pub call_price_minor: U256,
 
-    /// Issuance timestamp. The interest anchor starts here, and the call scan
-    /// ignores daily VWAPs from before this instant's UTC day.
+    /// Issuance timestamp. The interest anchor starts here, and its first full day
+    /// keys the Credis's call group.
     #[attribute(order = 12)]
     pub issued_at: u64,
 
@@ -121,7 +123,7 @@ pub struct Credis {
     #[attribute(order = 13)]
     pub last_settled_at: u64,
 
-    /// 0 until the Credis is called.
+    /// When the Credis's group was called, 0 while it is not.
     #[attribute(order = 14, default = 0)]
     pub called_at: u64,
 
@@ -138,7 +140,7 @@ pub struct Credis {
 
     /// Call Notice Period in seconds: a called Credis whose remainder is
     /// still outstanding at `called_at + call_notice_period_seconds` is forfeited.
-    /// Sealed from the parameter profile at issuance.
+    /// Snapshotted from the profile at issuance; a live Credis reads its group's.
     #[attribute(order = 17, default = 0)]
     pub call_notice_period_seconds: u32,
 
@@ -147,14 +149,14 @@ pub struct Credis {
     #[attribute(order = 18, default = 0)]
     pub call_rate: u16,
 
-    /// Call-trigger evaluation window in seconds, sealed from the parameter
-    /// profile at issuance. This is the trailing span the daily scan reads for
-    /// Call Price breaches. Divided by 86400 to get the day count.
+    /// Call-trigger evaluation window in seconds, snapshotted from the profile at
+    /// issuance; a live Credis reads its group's. This is the trailing span the daily
+    /// scan reads for Call Price breaches. Divided by 86400 to get the day count.
     #[attribute(order = 19, default = 0)]
     pub call_window_seconds: u32,
 
-    /// Breach threshold in seconds, sealed from the parameter profile at
-    /// issuance. Divided by 86400 to get the required breach-day count.
+    /// Breach threshold in seconds, snapshotted from the profile at issuance; a live
+    /// Credis reads its group's. Divided by 86400 to get the required breach-day count.
     #[attribute(order = 20, default = 0)]
     pub call_threshold_seconds: u32,
 
@@ -175,15 +177,29 @@ impl Credis {
     pub fn lifecycle_state(&self) -> Result<CredisState, CredisError> {
         CredisState::from_u8(self.state)
     }
+
+    /// The call group: the Credis's first full day, its call price and the currency
+    /// that price is quoted in.
+    #[must_use]
+    pub fn group_key(&self) -> B256 {
+        outbe_primitives::call_breach::group_key(
+            outbe_primitives::time::first_full_day(self.issued_at),
+            self.call_price_minor,
+            self.reference_currency,
+        )
+    }
 }
 
 /// EVM storage layout for the Credis contract.
 ///
-/// `owner_credis_*` and `total_credis` / `credis_id_at_index` provide
-/// dense, no-`Vec` enumeration in the same shape as `outbe-nod`'s owner index
-/// (`crates/core/nod/src/schema.rs`). Slot assignment is macro-generated: a
-/// `Map<K, V>` over a record reserves `V::SLOTS` top-level slots, so the
-/// Credis map alone spans as many slots as `Credis` has attributes.
+/// `owner_ids` and `all_ids` list the live Credis, as `outbe-nod` lists its Nods.
+/// Slot assignment is macro-generated: a `Map<K, V>` over a record reserves
+/// `V::SLOTS` top-level slots, so the Credis map alone spans as many slots as `Credis`
+/// has attributes.
+///
+/// Credis are called and forfeited in groups keyed by
+/// `call_breach::group_key(first full day, call price, reference currency)`. A group
+/// seals its first member's call terms and lists its unsettled members.
 #[storage_schema]
 #[contract(addr = CREDIS_ADDRESS)]
 pub struct CredisContract {
@@ -191,21 +207,18 @@ pub struct CredisContract {
     #[attribute(order = 0)]
     pub records: outbe_primitives::storage::dsl::Map<U256, Credis>,
 
-    /// Per-account count of Credis ever created.
+    /// Each account's live Credis.
     #[attribute(order = 1)]
-    pub owner_credis_counts: outbe_primitives::storage::dsl::Map<Address, u32>,
-
-    /// Per-account index - keccak(addr ++ idx_be32) -> credis_id.
+    pub owner_ids:
+        outbe_primitives::storage::dsl::Map<Address, outbe_primitives::storage::dsl::List<U256>>,
     #[attribute(order = 2)]
-    pub owner_credis_ids: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub owner_id_position: outbe_primitives::storage::dsl::Map<U256, u32>,
 
-    /// Total Credis ever issued (backs `totalSupply` / `tokenByIndex`).
+    /// Every live Credis (backs `totalSupply` / `tokenByIndex`).
     #[attribute(order = 3)]
-    pub total_credis: outbe_primitives::storage::dsl::Value<u64>,
-
-    /// Dense index - index -> credis_id.
+    pub all_ids: outbe_primitives::storage::dsl::List<U256>,
     #[attribute(order = 4)]
-    pub credis_id_at_index: outbe_primitives::storage::dsl::Map<u64, U256>,
+    pub global_id_position: outbe_primitives::storage::dsl::Map<U256, u32>,
 
     /// Widest `call_window_seconds` ever opened in a reference currency, in seconds. It
     /// only grows, so the trailing span the daily scan collects always covers a
@@ -213,7 +226,7 @@ pub struct CredisContract {
     #[attribute(order = 8)]
     pub max_call_window_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
 
-    // Called Credis, queued by the hour their settlement deadline falls in.
+    // Called groups, queued by the hour their settlement deadline falls in.
     #[attribute(order = 9)]
     pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 10)]
@@ -225,11 +238,11 @@ pub struct CredisContract {
     #[attribute(order = 13)]
     pub expiry_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 14)]
-    pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, B256>,
     #[attribute(order = 15)]
-    pub called_credis_slot: outbe_primitives::storage::dsl::Map<U256, u64>,
+    pub called_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 16)]
-    pub called_deadline: outbe_primitives::storage::dsl::Map<U256, u64>,
+    pub called_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 17)]
     pub expiry_sweep_hour: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 18)]
@@ -240,8 +253,8 @@ pub struct CredisContract {
     #[attribute(order = 19)]
     pub min_call_threshold_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
 
-    // Issued Credis by call price, one trie per reference currency. A call takes
-    // the Credis out, so the daily scan visits only what can still be called.
+    // Uncalled groups by call price, one trie per reference currency. A call takes
+    // the group out, so the daily scan visits only what can still be called.
     #[attribute(order = 20)]
     pub call_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
     #[attribute(order = 21)]
@@ -251,10 +264,10 @@ pub struct CredisContract {
     #[attribute(order = 23)]
     pub call_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
     #[attribute(order = 24)]
-    pub call_bin_credis: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub call_bin_groups: outbe_primitives::storage::dsl::Map<B256, B256>,
     #[attribute(order = 25)]
-    pub call_credis_slot: outbe_primitives::storage::dsl::Map<U256, u64>,
-    /// `(bin << 32) | Credis of that bin still to visit`. 0 = start from the lowest bin.
+    pub call_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
+    /// `(bin << 32) | groups of that bin still to visit`. 0 = start from the lowest bin.
     #[attribute(order = 26)]
     pub call_bin_cursor: outbe_primitives::storage::dsl::Map<u16, u64>,
     /// UTC day the call sweep could not price a reference currency on. The rest of that
@@ -268,13 +281,62 @@ pub struct CredisContract {
     /// UTC day the unfinished call sweep is pinned to. 0 = none in flight.
     #[attribute(order = 29)]
     pub call_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
-    /// UTC day waiting behind it. 0 = none.
+    /// Newest closed day scheduled. Every day up to it is walked in order.
     #[attribute(order = 30)]
-    pub call_pending_day: outbe_primitives::storage::dsl::Value<u32>,
+    pub call_latest_day: outbe_primitives::storage::dsl::Value<u32>,
 
     /// Profile selector (0 = by network, 1 = dev, 2 = prod). See `crate::config`.
     #[attribute(order = 31)]
     pub config_profile: outbe_primitives::storage::dsl::Value<u8>,
+
+    /// Each group's unsettled Credis.
+    #[attribute(order = 32)]
+    pub group_members:
+        outbe_primitives::storage::dsl::Map<B256, outbe_primitives::storage::dsl::List<U256>>,
+    #[attribute(order = 33)]
+    pub group_member_position: outbe_primitives::storage::dsl::Map<U256, u32>,
+    #[attribute(order = 34)]
+    pub group_currency: outbe_primitives::storage::dsl::Map<B256, u16>,
+    /// The first full day every member counts call days from.
+    #[attribute(order = 35)]
+    pub group_full_day: outbe_primitives::storage::dsl::Map<B256, u32>,
+    #[attribute(order = 36)]
+    pub group_call_price_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
+    #[attribute(order = 37)]
+    pub group_call_window_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
+    #[attribute(order = 38)]
+    pub group_call_threshold_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
+    #[attribute(order = 39)]
+    pub group_call_notice_period_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
+    #[attribute(order = 40)]
+    pub group_called_at: outbe_primitives::storage::dsl::Map<B256, u64>,
+    // Forfeited groups whose Credis wait to be deleted, bucketed like the expiry queue.
+    #[attribute(order = 42)]
+    pub cleanup_tree_root: outbe_primitives::storage::dsl::Value<U256>,
+    #[attribute(order = 43)]
+    pub cleanup_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    #[attribute(order = 44)]
+    pub cleanup_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
+    #[attribute(order = 45)]
+    pub cleanup_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    #[attribute(order = 46)]
+    pub cleanup_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    #[attribute(order = 47)]
+    pub cleanup_bucket_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    #[attribute(order = 48)]
+    pub cleanup_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
+    #[attribute(order = 49)]
+    pub cleanup_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
+    #[attribute(order = 50)]
+    pub cleanup_sweep_hour: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 51)]
+    pub cleanup_cursor: outbe_primitives::storage::dsl::Value<u64>,
+
+    /// Each account's principal and outstanding principal over its live Credis.
+    #[attribute(order = 52)]
+    pub owner_principal_minor: outbe_primitives::storage::dsl::Map<Address, U256>,
+    #[attribute(order = 53)]
+    pub owner_outstanding_minor: outbe_primitives::storage::dsl::Map<Address, U256>,
 }
 
 impl CredisContract<'_> {
@@ -287,13 +349,5 @@ impl CredisContract<'_> {
         buf[40..60].copy_from_slice(asset.as_slice());
         buf[60..].copy_from_slice(&block_number.to_be_bytes());
         U256::from_be_bytes(keccak256(buf).0)
-    }
-
-    /// Composite key for per-address Credis index: `keccak256(addr ++ idx_be32)`.
-    pub fn address_index_key(account: Address, index: u32) -> B256 {
-        let mut buf = [0u8; 24];
-        buf[0..20].copy_from_slice(account.as_slice());
-        buf[20..24].copy_from_slice(&index.to_be_bytes());
-        keccak256(buf)
     }
 }

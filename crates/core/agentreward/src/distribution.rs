@@ -1,6 +1,6 @@
 use crate::errors::AgentRewardError;
 use crate::precompile::IAgentReward;
-use crate::schema::{AgentRewardContract, RewardPool};
+use crate::schema::{AccrualJob, AgentRewardContract, RewardPool};
 use alloy_primitives::{Address, U256, U512};
 use outbe_primitives::error::Result as PrecompileResult;
 use outbe_primitives::time::WorldwideDay;
@@ -35,7 +35,8 @@ pub enum PoolKind {
 /// should be added to the Metadosis terminal credit.
 ///
 /// Excess is rounding residue, or the whole pool when no positive eligible
-/// weight exists. Shares are not capped per address.
+/// weight exists. WAA and SRA pools with tributes go to [`advance_accruals`].
+/// Shares are not capped per address.
 ///
 /// Claimable balances and the returned excess are protocol units.
 pub fn distribute_daily(
@@ -68,22 +69,8 @@ fn distribute_pool(
     }
     let mut contract = ctx.contract::<AgentRewardContract>();
     let (reward_pool, weights) = match kind {
-        PoolKind::Waa => (
-            RewardPool::Waa,
-            contract
-                .get_all_waa_counts(prev_day)?
-                .into_iter()
-                .map(|(address, count)| (address, U256::from(count)))
-                .collect(),
-        ),
-        PoolKind::Sra => (
-            RewardPool::Sra,
-            contract
-                .get_all_sra_counts(prev_day)?
-                .into_iter()
-                .map(|(address, count)| (address, U256::from(count)))
-                .collect(),
-        ),
+        PoolKind::Waa => return enqueue_day_pool(&mut contract, prev_day, RewardPool::Waa, amount),
+        PoolKind::Sra => return enqueue_day_pool(&mut contract, prev_day, RewardPool::Sra, amount),
         PoolKind::Cca => (
             RewardPool::Cca,
             outbe_ccaregistry::api::active_reward_weights(&ctx.storage, prev_day.value())?,
@@ -109,12 +96,142 @@ fn distribute_pool(
             promisLoadMinor: reward.reward_amount,
         })?;
     }
-    match kind {
-        PoolKind::Waa => contract.clear_waa_counts(prev_day)?,
-        PoolKind::Sra => contract.clear_sra_counts(prev_day)?,
-        PoolKind::Cca | PoolKind::Validator => {}
-    }
     Ok(excess)
+}
+
+/// Most WAA and SRA addresses that one block credits.
+pub const ACCRUAL_RECIPIENTS_PER_BLOCK: u32 = 256;
+
+/// Queues a WAA or SRA day pool for [`advance_accruals`]. A day without tributes
+/// returns the whole pool as excess.
+fn enqueue_day_pool(
+    contract: &mut AgentRewardContract<'_>,
+    day: WorldwideDay,
+    pool: RewardPool,
+    amount: U256,
+) -> PrecompileResult<U256> {
+    if contract.day_index(pool)?.total.read(&day)? == 0 {
+        return Ok(amount);
+    }
+    let seq = contract.accrual_tail.read()?;
+    contract.accrual_jobs.create(&AccrualJob {
+        seq,
+        day: day.value(),
+        pool: pool as u8,
+        pool_minor: amount,
+        next_index: 0,
+        credited_minor: U256::ZERO,
+    })?;
+    contract.accrual_tail.write(seq + 1)?;
+    let pending = contract
+        .pending_total_minor
+        .read(&(pool as u8))?
+        .checked_add(amount)
+        .ok_or(AgentRewardError::DistributionOverflow)?;
+    contract.pending_total_minor.write(&(pool as u8), pending)?;
+    Ok(U256::ZERO)
+}
+
+/// Credits up to [`ACCRUAL_RECIPIENTS_PER_BLOCK`] queued addresses, oldest job first,
+/// and returns the rounding residue of the jobs that finish.
+pub fn advance_accruals(
+    ctx: &outbe_primitives::block::BlockRuntimeContext,
+) -> PrecompileResult<U256> {
+    ctx.storage.with_checkpoint(|| {
+        let mut contract = ctx.contract::<AgentRewardContract>();
+        let mut budget = ACCRUAL_RECIPIENTS_PER_BLOCK;
+        let mut residue = U256::ZERO;
+        while budget > 0 {
+            let head = contract.accrual_head.read()?;
+            if head == contract.accrual_tail.read()? {
+                break;
+            }
+            let mut job = contract
+                .accrual_jobs
+                .get(head)?
+                .ok_or(AgentRewardError::AccrualJobMissing(head))?;
+            let pool = RewardPool::from_abi(job.pool)?;
+            let day = WorldwideDay::new(job.day);
+            let index = contract.day_index(pool)?;
+            let count = index.address_count.read(&day)?;
+            let total_weight = U256::from(index.total.read(&day)?);
+            let credited_before = job.credited_minor;
+            while job.next_index < count && budget > 0 {
+                let credited = credit_day_entry(&mut contract, &job, pool, day, total_weight)?;
+                job.credited_minor = job
+                    .credited_minor
+                    .checked_add(credited)
+                    .ok_or(AgentRewardError::DistributionOverflow)?;
+                job.next_index += 1;
+                budget -= 1;
+            }
+            let mut released = job.credited_minor - credited_before;
+            if job.next_index < count {
+                release_pending(&mut contract, pool, released)?;
+                contract.accrual_jobs.update(&job)?;
+                break;
+            }
+            let index = contract.day_index(pool)?;
+            index.address_count.write(&day, 0)?;
+            index.total.write(&day, 0)?;
+            let job_residue = job
+                .pool_minor
+                .checked_sub(job.credited_minor)
+                .ok_or(AgentRewardError::DistributionOverflow)?;
+            residue = residue
+                .checked_add(job_residue)
+                .ok_or(AgentRewardError::DistributionOverflow)?;
+            released += job_residue;
+            release_pending(&mut contract, pool, released)?;
+            contract.accrual_jobs.delete(head)?;
+            contract.accrual_head.write(head + 1)?;
+        }
+        Ok(residue)
+    })
+}
+
+fn release_pending(
+    contract: &mut AgentRewardContract<'_>,
+    pool: RewardPool,
+    amount: U256,
+) -> PrecompileResult<()> {
+    let pending = contract
+        .pending_total_minor
+        .read(&(pool as u8))?
+        .checked_sub(amount)
+        .ok_or(AgentRewardError::DistributionOverflow)?;
+    contract.pending_total_minor.write(&(pool as u8), pending)
+}
+
+/// Credits the address at `job.next_index` and clears its day entry.
+fn credit_day_entry(
+    contract: &mut AgentRewardContract<'_>,
+    job: &AccrualJob,
+    pool: RewardPool,
+    day: WorldwideDay,
+    total_weight: U256,
+) -> PrecompileResult<U256> {
+    let index_key = AgentRewardContract::address_index_key(day, job.next_index);
+    let (address, count_key, weight) = {
+        let index = contract.day_index(pool)?;
+        let address = index.addresses.read(&index_key)?;
+        let count_key = AgentRewardContract::tribute_count_key(day, address);
+        (address, count_key, index.counts.read(&count_key)?)
+    };
+    let share = mul_div(job.pool_minor, U256::from(weight), total_weight)?;
+    if !share.is_zero() {
+        contract.add_claimable_reward(pool, address, share)?;
+        contract.emit(IAgentReward::RewardAccrued {
+            account: address,
+            pool: pool as u8,
+            utcDay: day.value(),
+            promisLoadMinor: share,
+        })?;
+    }
+    let index = contract.day_index(pool)?;
+    index.counts.write(&count_key, 0)?;
+    index.addresses.write(&index_key, Address::ZERO)?;
+    Ok(share)
 }
 
 fn mul_div(a: U256, b: U256, denominator: U256) -> Result<U256, AgentRewardError> {

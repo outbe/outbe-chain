@@ -1,11 +1,11 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_nod::{
-    canonical_bucket, canonical_item, from_canonical_bucket, from_canonical_item, NodBucketState,
+    canonical_group, canonical_item, from_canonical_group, from_canonical_item, NodGroupState,
     NodItemState,
 };
 use outbe_primitives::entity_codec::{
-    decode_stored_nod_bucket_v1, decode_stored_nod_item_v2, encode_nod_bucket_v1,
-    encode_nod_item_v2, StoredBody,
+    decode_stored_nod_group_v1, decode_stored_nod_item_v2, encode_nod_group_v1, encode_nod_item_v2,
+    StoredBody,
 };
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
@@ -14,22 +14,21 @@ fn entity(seed: U256, worldwide_day: WorldwideDay) -> WwdEntityId {
     WwdEntityId::from_day_and_digest(worldwide_day, seed.to_be_bytes::<32>())
 }
 
-fn bucket_id(key: B256, worldwide_day: WorldwideDay) -> WwdEntityId {
+fn group_id(key: B256, worldwide_day: WorldwideDay) -> WwdEntityId {
     WwdEntityId::from_day_and_digest(worldwide_day, key.0)
 }
 
-fn bucket_key_for(id: WwdEntityId) -> B256 {
+fn group_key_for(id: WwdEntityId) -> B256 {
     let mut key = [0_u8; 32];
     key[4..].copy_from_slice(&id.body());
     B256::from(key)
 }
 
-fn bucket(bucket_id: WwdEntityId) -> NodBucketState {
-    NodBucketState {
+fn group(group_id: WwdEntityId) -> NodGroupState {
+    NodGroupState {
         settled_nods: 0,
-        bucket_key: bucket_key_for(bucket_id),
-        worldwide_day: bucket_id.worldwide_day(),
-        entry_price_minor: U256::ZERO,
+        group_key: group_key_for(group_id),
+        full_day_after_issue: group_id.worldwide_day(),
         reference_currency: 978,
     }
 }
@@ -43,25 +42,25 @@ fn stored_nod(body: &NodItemState) -> Vec<u8> {
     .encode()
 }
 
-fn stored_bucket(body: &NodBucketState) -> Vec<u8> {
+fn stored_group(body: &NodGroupState) -> Vec<u8> {
     StoredBody::new(
         outbe_primitives::entity_codec::BODY_SCHEMA_V1,
-        encode_nod_bucket_v1(&canonical_bucket(body)).unwrap(),
+        encode_nod_group_v1(&canonical_group(body)).unwrap(),
     )
     .unwrap()
     .encode()
 }
 
 #[test]
-fn the_bucket_reference_currency_only_appends_to_the_canonical_payload() {
-    let mut body = bucket(bucket_id(
+fn the_group_reference_currency_only_appends_to_the_canonical_payload() {
+    let mut body = group(group_id(
         B256::repeat_byte(0x21),
         WorldwideDay::new(20_260_715),
     ));
     body.reference_currency = 0;
-    let unpriced = encode_nod_bucket_v1(&canonical_bucket(&body)).unwrap();
+    let unpriced = encode_nod_group_v1(&canonical_group(&body)).unwrap();
     body.reference_currency = 840;
-    let priced = encode_nod_bucket_v1(&canonical_bucket(&body)).unwrap();
+    let priced = encode_nod_group_v1(&canonical_group(&body)).unwrap();
 
     // Tag = (4 << 3) | 0 = 0x20; 840 as a varint = 0xC8 0x06.
     assert_eq!(priced, [unpriced.as_slice(), &[0x20, 0xC8, 0x06]].concat());
@@ -78,7 +77,7 @@ fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
                 gratis_load_minor: U256::ZERO,
                 worldwide_day: WorldwideDay::new(0),
                 league_id: 0,
-                bucket_key: B256::ZERO,
+                group_key: B256::ZERO,
                 issuance_currency: 0,
                 reference_currency: 0,
                 issued_at: 0,
@@ -93,7 +92,7 @@ fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
                 gratis_load_minor: U256::MAX,
                 worldwide_day: WorldwideDay::new(u32::MAX),
                 league_id: u16::MAX,
-                bucket_key: B256::repeat_byte(u8::MAX),
+                group_key: B256::repeat_byte(u8::MAX),
                 issuance_currency: u16::MAX,
                 reference_currency: u16::MAX,
                 issued_at: u64::MAX,
@@ -111,34 +110,31 @@ fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
         );
         assert_eq!(decoded.worldwide_day, body.worldwide_day);
         assert_eq!(decoded.league_id, body.league_id);
-        assert_eq!(decoded.bucket_key, body.bucket_key);
+        assert_eq!(decoded.group_key, body.group_key);
         assert_eq!(decoded.issuance_currency, body.issuance_currency);
         assert_eq!(decoded.reference_currency, body.reference_currency);
         assert_eq!(decoded.issued_at, body.issued_at);
     }
 
     for body in [
-        NodBucketState {
+        NodGroupState {
             settled_nods: 0,
-            bucket_key: B256::ZERO,
-            worldwide_day: WorldwideDay::new(0),
-            entry_price_minor: U256::ZERO,
+            group_key: B256::ZERO,
+            full_day_after_issue: WorldwideDay::new(0),
             reference_currency: 0,
         },
-        NodBucketState {
-            entry_price_minor: U256::MAX,
+        NodGroupState {
             reference_currency: u16::MAX,
-            ..bucket(bucket_id(
+            ..group(group_id(
                 B256::repeat_byte(u8::MAX),
                 WorldwideDay::new(u32::MAX),
             ))
         },
     ] {
-        let stored = stored_bucket(&body);
-        let decoded = from_canonical_bucket(decode_stored_nod_bucket_v1(&stored).unwrap());
-        assert_eq!(decoded.bucket_key, body.bucket_key);
-        assert_eq!(decoded.worldwide_day, body.worldwide_day);
-        assert_eq!(decoded.entry_price_minor, body.entry_price_minor);
+        let stored = stored_group(&body);
+        let decoded = from_canonical_group(decode_stored_nod_group_v1(&stored).unwrap());
+        assert_eq!(decoded.group_key, body.group_key);
+        assert_eq!(decoded.full_day_after_issue, body.full_day_after_issue);
         assert_eq!(decoded.reference_currency, body.reference_currency);
     }
 }
@@ -158,7 +154,7 @@ fn nod_body_is_self_contained_and_carries_only_encrypted_amounts() {
     let encrypted = outbe_nod::test_support::encrypted_fixture(&params, 7);
     let body = outbe_primitives::entity_codec::NodItemBodyV2 {
         encrypted: encrypted.clone(),
-        bucket_key: B256::repeat_byte(0x74),
+        group_key: B256::repeat_byte(0x74),
         issued_at: 99,
         is_settled: false,
     };

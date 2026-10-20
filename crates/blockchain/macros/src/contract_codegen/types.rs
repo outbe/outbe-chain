@@ -85,6 +85,15 @@ pub(super) fn contract_slot_count_expr(ty: &Type) -> proc_macro2::TokenStream {
     if is_dsl_set_type(ty) || is_dsl_deque_type(ty) || is_dsl_circular_buffer_type(ty) {
         return quote! { 2u64 };
     }
+    if let Some((element_ty, len)) = is_storage_array(ty) {
+        // The array occupies `N * T::SLOTS` consecutive slots from its base
+        // (`StorageArray::element_slot`). A fixed count here puts the next
+        // field inside the array.
+        return quote! {
+            (#len as u64)
+                * (<#element_ty as ::outbe_primitives::storage::types::StorableType>::SLOTS as u64)
+        };
+    }
     if let Some((_, count)) = is_storage_collection(ty) {
         return quote! { #count as u64 };
     }

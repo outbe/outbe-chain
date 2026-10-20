@@ -1,15 +1,16 @@
-//! Daily call sweep: calls the Gem buckets whose reference price breached their call
+//! Daily call sweep: calls the Gem groups whose reference price breached their call
 //! price on enough days of their window. The daily trigger schedules the closed day,
 //! and every CycleTick walks a slice of it.
 
 use alloy_primitives::{B256, U256};
-use outbe_gem::precompile::IGem::{BatchMetadataUpdate, GemBucketCalled};
+use outbe_gem::precompile::IGem::{BatchMetadataUpdate, GemGroupCalled};
 
-use crate::precompile::IGemFactory::{CallScanSkipped, SweepDaySkipped};
+use crate::errors::GemFactoryError;
+use crate::precompile::IGemFactory::CallScanSkipped;
 use crate::runtime::emit_event;
 use outbe_gem::{CallBins, CallTerms, GemContract, GemParams};
 use outbe_oracle::{
-    call_sweep::{self, CallSweep, CALL_SWEEP},
+    call_sweep::{self, CallSweep},
     call_window::CallWindow,
 };
 use outbe_primitives::{
@@ -20,7 +21,6 @@ use outbe_primitives::{
     error::{PrecompileError, Result, SweepFailure},
     storage::dsl::Value,
     sweep_budget::SweepBudget,
-    time::first_full_day,
 };
 
 /// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
@@ -29,14 +29,14 @@ pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
 }
 
 /// Schedules the closed day and walks a slice of the day in flight. Returns the
-/// buckets called.
+/// groups called.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let mut sweep = GemCallSweep::new(ctx);
     call_sweep::schedule(ctx, &mut sweep)?;
     call_sweep::continue_day(ctx, &mut sweep)
 }
 
-/// Walks the next slice of the day in flight. Returns how many buckets were called.
+/// Walks the next slice of the day in flight. Returns how many groups were called.
 pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_sweep::continue_day(ctx, &mut GemCallSweep::new(ctx))
 }
@@ -64,7 +64,7 @@ impl<'storage> CallSweep<'storage> for GemCallSweep<'storage> {
     fn days(&self) -> PinnedDay<'_, 'storage> {
         PinnedDay {
             current: &self.gem.call_sweep_day,
-            pending: &self.gem.call_pending_day,
+            latest: &self.gem.call_latest_day,
         }
     }
 
@@ -78,17 +78,6 @@ impl<'storage> CallSweep<'storage> for GemCallSweep<'storage> {
 
     fn classify(error: &PrecompileError) -> SweepFailure {
         error.record_sweep_failure()
-    }
-
-    fn day_skipped(&mut self, skipped: u32, in_flight: u32) -> Result<()> {
-        emit_event(
-            &self.gem.storage,
-            SweepDaySkipped {
-                sweep: CALL_SWEEP,
-                skippedDay: skipped,
-                inFlightDay: in_flight,
-            },
-        )
     }
 
     fn slice(&mut self, ctx: &BlockRuntimeContext, pinned_day: u32) -> Result<(u32, bool)> {
@@ -140,7 +129,7 @@ fn scan_terms(gem: &GemContract<'_>, iso_code: u16, params: &GemParams) -> Resul
     )
 }
 
-/// Walk one currency's bucket bins up to `ceiling`, resuming where it stopped.
+/// Walk one currency's group bins up to `ceiling`, resuming where it stopped.
 /// Returns the calls made and whether the eligible range was walked to the end.
 pub(crate) fn call_currency(
     ctx: &BlockRuntimeContext,
@@ -156,12 +145,15 @@ pub(crate) fn call_currency(
         &CallBins(&index, iso_code),
         ceiling,
         budget,
-        |bucket, budget| {
-            call_sweep::call_entry::<GemCallSweep>(&ctx.storage, budget, bucket, || {
+        |group, budget| {
+            call_sweep::call_entry::<GemCallSweep>(&ctx.storage, budget, group, || {
+                if retire_paid_group(&mut gem, group, ctx.block.timestamp)? {
+                    return Ok(1);
+                }
                 let calls = u32::from(call_if_breached(
                     &mut gem,
                     window,
-                    bucket,
+                    group,
                     ctx.block.timestamp,
                 )?);
                 called += calls;
@@ -172,48 +164,70 @@ pub(crate) fn call_currency(
     Ok((called, finished))
 }
 
-/// Calls an uncalled bucket whose reference-currency daily VWAP exceeded its call price
+/// Takes a group every gem of which is paid out of its bin once its first full day is
+/// under way: a gem issued at its 00:00:00 still joins it, none after. Returns whether
+/// it did.
+fn retire_paid_group(gem: &mut GemContract<'_>, group: B256, now: u64) -> Result<bool> {
+    if gem.group_gem_count.read(&group)? != 0 || gem.group_called_at.read(&group)? != 0 {
+        return Ok(false);
+    }
+    let start_day = gem
+        .groups
+        .get(group)?
+        .ok_or(GemFactoryError::MissingGroupForCall { group })?
+        .full_day_after_issue;
+    if now <= outbe_primitives::time::date_key_to_utc_timestamp(start_day.value()) {
+        return Ok(false);
+    }
+    gem.remove_call_bin(group)?;
+    Ok(true)
+}
+
+/// Calls an uncalled group whose reference-currency daily VWAP exceeded its call price
 /// on at least its threshold days of its trailing window. Returns true if called.
 ///
-/// The terms were sealed when the bucket opened, so a later profile change cannot
-/// re-term it. Days before the first full day of the first member never count: the
-/// bucket did not exist yet.
+/// The terms were sealed when the group opened, so a later profile change cannot
+/// re-term it. Days before the group's first full day never count: no member existed yet.
 pub(crate) fn call_if_breached(
     gem: &mut GemContract<'_>,
     window: &CallWindow,
-    bucket: B256,
+    group: B256,
     now: u64,
 ) -> Result<bool> {
-    if gem.bucket_gem_count.read(&bucket)? == 0 || gem.bucket_called_at.read(&bucket)? != 0 {
+    if gem.group_gem_count.read(&group)? == 0 || gem.group_called_at.read(&group)? != 0 {
         return Ok(false);
     }
-    let terms = gem.read_call_terms(bucket)?;
-    let issued_at = gem.bucket_issued_at.read(&bucket)?;
+    let terms = gem.read_call_terms(group)?;
+    let start_day = gem
+        .groups
+        .get(group)?
+        .ok_or(GemFactoryError::MissingGroupForCall { group })?
+        .full_day_after_issue;
     let breached = window.breached(&BreachTerms {
         call_price: terms.call_price_minor,
         window_seconds: terms.call_window_seconds,
         threshold_seconds: terms.call_threshold_seconds,
-        start_day: first_full_day(issued_at),
+        start_day: start_day.value(),
     });
     if !breached {
         return Ok(false);
     }
-    mark_called(gem, bucket, &terms, now)?;
+    mark_called(gem, group, &terms, now)?;
     Ok(true)
 }
 
-/// `Issued -> Called` for every unpaid member at once: the bucket leaves the trie for the
+/// `Issued -> Called` for every unpaid member at once: the group leaves the trie for the
 /// expiry queue, where it waits on its sealed notice period as one entry.
 pub(crate) fn mark_called(
     gem: &mut GemContract<'_>,
-    bucket: B256,
+    group: B256,
     terms: &CallTerms,
     now: u64,
 ) -> Result<()> {
     let deadline = outbe_gem::api::settlement_deadline_of(now, terms.call_notice_period_seconds);
-    gem.record_bucket_called(bucket, now, deadline)?;
-    gem.emit(GemBucketCalled {
-        bucketKey: bucket,
+    gem.record_group_called(group, now, deadline)?;
+    gem.emit(GemGroupCalled {
+        groupKey: group,
         calledAt: now,
         settlementDeadline: deadline,
     })

@@ -19,7 +19,7 @@ pub const CALL_WINDOW: u32 = 28 * SECONDS_PER_DAY_U32;
 pub const CALL_THRESHOLD: u32 = 21 * SECONDS_PER_DAY_U32;
 
 /// Call Notice Period in seconds (7 days): time after `called_at` within which
-/// the owner must settle. Once elapsed the gem is forfeit-burned.
+/// the owner must settle. Once elapsed the gem is forfeited with its group.
 pub const CALL_NOTICE_PERIOD: u32 = 7 * SECONDS_PER_DAY_U32;
 
 /// GemPosition validity period: an Intex in the Gem Factory expires this long after
@@ -29,7 +29,3 @@ pub const POSITION_VALIDITY_SECONDS: u64 = 365 * SECONDS_PER_DAY;
 /// Call-price markup rate: call price = `entry x (100 + CALL_RATE_PCT) / 100`.
 /// Its breach arms a Call Event.
 pub const CALL_RATE_PCT: u16 = 128;
-
-/// SRA cost rate (share of the full agent cost): cost = `full x SRA_RATE / 100`
-/// (64 => 0.64x).
-pub const SRA_RATE: u64 = 64;

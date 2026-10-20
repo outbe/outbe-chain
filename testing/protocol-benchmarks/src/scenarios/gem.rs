@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use alloy_primitives::{Address, Bytes, U256};
-use outbe_gemfactory::{GemFactoryContract, GemTypes};
+use outbe_gemfactory::GemFactoryContract;
 use outbe_intex::SeriesId;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
@@ -23,7 +23,7 @@ const PARK_UNITS: u64 = 100;
 
 #[derive(Clone, Copy)]
 enum GemPath {
-    Direct(GemTypes),
+    Direct,
     Position,
     Merchant,
 }
@@ -34,9 +34,9 @@ pub struct GemScenario {
 
 impl GemScenario {
     #[must_use]
-    pub const fn direct(gem_type: GemTypes) -> Self {
+    pub const fn direct() -> Self {
         Self {
-            path: GemPath::Direct(gem_type),
+            path: GemPath::Direct,
         }
     }
 
@@ -56,7 +56,7 @@ impl GemScenario {
 }
 
 enum PreparedGemPath {
-    Direct(GemTypes),
+    Direct,
     Position,
     Merchant {
         position_id: U256,
@@ -67,16 +67,6 @@ enum PreparedGemPath {
 pub struct PreparedGem {
     provider: HashMapStorageProvider,
     path: PreparedGemPath,
-}
-
-fn branch_name(gem_type: GemTypes) -> &'static str {
-    match gem_type {
-        GemTypes::Validator => "validator",
-        GemTypes::Sra => "sra",
-        GemTypes::Wallet => "wallet",
-        GemTypes::Cca => "cca",
-        GemTypes::Merchant => "merchant",
-    }
 }
 
 fn six_decimal_unit() -> U256 {
@@ -151,9 +141,9 @@ impl BenchmarkScenario for GemScenario {
 
     fn metadata(&self) -> ScenarioMetadata {
         let (id, name) = match self.path {
-            GemPath::Direct(gem_type) => (
-                format!("gem/create/{}/single", branch_name(gem_type)),
-                format!("Gem {} creation", branch_name(gem_type)),
+            GemPath::Direct => (
+                "gem/create/reward/single".to_owned(),
+                "Reward Gem creation".to_owned(),
             ),
             GemPath::Position => (
                 "gem_position/create/marginal/single".to_owned(),
@@ -174,12 +164,12 @@ impl BenchmarkScenario for GemScenario {
 
     fn prepare(&self, _profile: Profile) -> Result<Self::Prepared, String> {
         match self.path {
-            GemPath::Direct(gem_type) => {
+            GemPath::Direct => {
                 let provider = new_provider(true)?;
                 Ok(PreparedGem {
                     provider,
 
-                    path: PreparedGemPath::Direct(gem_type),
+                    path: PreparedGemPath::Direct,
                 })
             }
             GemPath::Position => {
@@ -228,11 +218,10 @@ fn measure(prepared: &PreparedGem) -> Result<Observation, String> {
     let event_offset = provider.get_ordered_events().len();
     let started = Instant::now();
     let output = StorageHandle::enter(&mut provider, |storage| match prepared.path {
-        PreparedGemPath::Direct(gem_type) => outbe_gemfactory::api::issue_gem(
+        PreparedGemPath::Direct => outbe_gemfactory::api::issue_gem(
             &storage,
             outbe_gemfactory::GemIssueParams {
                 owner: ALICE,
-                gem_type,
                 promis_load_minor: U256::from(10) * six_decimal_unit(),
                 issuance_currency: 840,
                 reference_currency: 840,
@@ -278,18 +267,14 @@ fn measure(prepared: &PreparedGem) -> Result<Observation, String> {
     )
     .with_total_latency(latency_ns);
     match prepared.path {
-        PreparedGemPath::Direct(gem_type) => {
-            let gem = StorageHandle::enter(&mut provider, |storage| {
+        PreparedGemPath::Direct => {
+            StorageHandle::enter(&mut provider, |storage| {
                 outbe_gem::api::get_item(&storage, output).map_err(|error| error.to_string())
             })?
             .ok_or_else(|| "created Gem is not canonically readable".to_owned())?;
-            if gem.gem_type != gem_type as u8 {
-                return Err("created Gem has the wrong type".to_owned());
-            }
             observation = observation
                 .with_latency("chain.gem.mint", latency_ns)
-                .with_postcondition("gem.created", "true")
-                .with_postcondition("gem.type", gem.gem_type.to_string());
+                .with_postcondition("gem.created", "true");
         }
         PreparedGemPath::Position => {
             let record = StorageHandle::enter(&mut provider, |storage| {
@@ -321,11 +306,11 @@ fn measure(prepared: &PreparedGem) -> Result<Observation, String> {
                     .map(|position| position.remaining_capacity_minor);
                 Ok::<_, String>((gem, remaining))
             })?;
-            let gem = gem.ok_or_else(|| "created Merchant Gem is not readable".to_owned())?;
+            gem.ok_or_else(|| "created Merchant Gem is not readable".to_owned())?;
             let remaining = remaining.ok_or_else(|| "source GemPosition disappeared".to_owned())?;
             let capacity_drained =
                 remaining == initial_capacity.saturating_sub(U256::from(10) * six_decimal_unit());
-            if gem.gem_type != GemTypes::Merchant as u8 || !capacity_drained {
+            if !capacity_drained {
                 return Err(
                     "Merchant Gem postcondition does not match the source position".to_owned(),
                 );
@@ -333,7 +318,6 @@ fn measure(prepared: &PreparedGem) -> Result<Observation, String> {
             observation = observation
                 .with_latency("chain.gem.mint_merchant", latency_ns)
                 .with_postcondition("gem.created", "true")
-                .with_postcondition("gem.type", gem.gem_type.to_string())
                 .with_postcondition("gem_position.capacity_drained", "true");
         }
     }

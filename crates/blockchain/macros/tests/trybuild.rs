@@ -1,7 +1,5 @@
-//! Compile-fail tests for `#[contract_dispatch]` and its helper attributes.
-//!
-//! Each case triggers an error raised by the macro before any code is emitted,
-//! so external crates (`outbe-primitives`, `alloy-sol-types`) are not required.
+//! Compile-fail tests for `#[contract_dispatch]`, its helper attributes and
+//! the storage layout assertion of `#[contract]`.
 
 #[test]
 fn compile_fail_contract_dispatch() {
@@ -14,4 +12,5 @@ fn compile_fail_contract_dispatch() {
     t.compile_fail("tests/compile_fail/mutating_missing_caller.rs");
     t.compile_fail("tests/compile_fail/arg_count_mismatch.rs");
     t.compile_fail("tests/compile_fail/payable_without_selectors.rs");
+    t.compile_fail("tests/compile_fail/explicit_slot_inside_array.rs");
 }

@@ -72,6 +72,9 @@ fn run_begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
         return Ok(());
     }
 
+    let active = outbe_update::api::resolve_active_version(ctx.storage.clone())?;
+    crate::sources::sync_pairs(&mut oracle, ctx.storage.chain_id()?, active)?;
+
     let vote_period = oracle.config_vote_period.read()?;
 
     if block_number > 0 {

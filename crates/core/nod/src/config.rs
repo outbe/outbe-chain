@@ -1,4 +1,4 @@
-//! Genesis-selectable profile for the call terms a Nod bucket seals: `PROD` (real
+//! Genesis-selectable profile for the call terms a Nod group seals: `PROD` (real
 //! timings) and `DEV` (short timings). An unset `config_profile` byte resolves by
 //! network, so only mainnet runs PROD.
 

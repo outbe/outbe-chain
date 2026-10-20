@@ -142,7 +142,6 @@ from genesis_seed_economy import (
     seed_coen,
     seed_cycle,
     seed_metadosis,
-    seed_nod_materialization_fifo,
     seed_tribute_day_totals,
     seed_tributes,
     seed_vault_router,
