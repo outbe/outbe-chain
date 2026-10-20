@@ -267,6 +267,11 @@
                 "internalType": "uint256"
               }
             ]
+          },
+          {
+            "name": "groupKey",
+            "type": "bytes32",
+            "internalType": "bytes32"
           }
         ]
       }
@@ -637,31 +642,6 @@
   },
   {
     "type": "event",
-    "name": "CredisCalled",
-    "inputs": [
-      {
-        "name": "credisId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "calledAt",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      },
-      {
-        "name": "settlementDeadline",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "CredisForfeited",
     "inputs": [
       {
@@ -687,6 +667,50 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "CredisGroupCalled",
+    "inputs": [
+      {
+        "name": "groupKey",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "calledAt",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "settlementDeadline",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "CredisGroupForfeited",
+    "inputs": [
+      {
+        "name": "groupKey",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "credis",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
       }
     ],
     "anonymous": false

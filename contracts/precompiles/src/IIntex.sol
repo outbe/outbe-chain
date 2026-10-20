@@ -5,7 +5,7 @@ pragma solidity ^0.8.30;
 /// @notice View surface and lifecycle events of the Intex runtime module: the
 ///         canonical, cross-chain Intex series ledger (identity + lifecycle).
 /// @dev Writes are Rust-to-Rust only (IntexFactory). Its call and expiry sweeps emit
-///      the series events here. `promisLoadMinor` is returned as uint256
+///      the group events here. `promisLoadMinor` is returned as uint256
 ///      (its storage representation). The Origin `uint128` bounds it.
 interface IIntex {
     struct SeriesData {
@@ -33,10 +33,13 @@ interface IIntex {
         uint32 gemFactoryUnits;
         /// @notice Inclusive deadline: 0 when uncalled.
         uint64 settlementDeadline;
+        /// @notice The call group the series is called and expired with.
+        bytes32 groupKey;
     }
 
     /// @notice Full identity + lifecycle record for a series. Reverts if the
-    ///         series does not exist.
+    ///         series does not exist, or was deleted once nothing in it was left to settle
+    ///         or exercise.
     function getIntexSeries(bytes14 seriesId) external view returns (SeriesData memory);
 
     /// @notice The classes an issued unit can be in. Disjoint: they sum to
@@ -59,16 +62,17 @@ interface IIntex {
     /// @notice Whether a series exists.
     function seriesExists(bytes14 seriesId) external view returns (bool);
 
-    /// @notice Number of series ever created (dense-enumeration length).
+    /// @notice Number of live series (dense-enumeration length).
     function totalSeries() external view returns (uint64);
 
     /// @notice The series id at a dense-enumeration index.
     function seriesAt(uint64 index) external view returns (bytes14);
 
-    /// @notice The series was force-called. It settles until `settlementDeadline`, inclusive.
-    event IntexSeriesCalled(bytes14 indexed seriesId, uint32 calledAt, uint64 settlementDeadline);
+    /// @notice The call group was force-called. Each of its series settles until
+    ///         `settlementDeadline`, inclusive.
+    event IntexGroupCalled(bytes32 indexed groupKey, bytes14[] seriesIds, uint32 calledAt, uint64 settlementDeadline);
 
-    /// @notice The series' settlement window closed. Both are zero when every unit
+    /// @notice The group's settlement window closed. Both are zero when every unit
     ///         was realized in time.
-    event IntexSeriesExpired(bytes14 indexed seriesId, uint32 forfeitedUnits, uint256 returnedPromisMinor);
+    event IntexGroupExpired(bytes32 indexed groupKey, uint64 forfeitedUnits, uint256 returnedPromisMinor);
 }

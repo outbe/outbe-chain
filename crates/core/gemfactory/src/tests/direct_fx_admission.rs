@@ -33,7 +33,6 @@ fn a_direct_settlement_through_a_leg_the_window_never_priced_is_refused_without_
         let gem_id = issue_at_live_rate(
             &storage,
             ALICE,
-            GemTypes::Wallet,
             U256::from(10u64) * six_decimal_unit(),
             840,
             978,

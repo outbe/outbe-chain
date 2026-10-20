@@ -49,12 +49,26 @@ fn is_storage_collection(ty: &Type) -> Option<(&'static str, u64)> {
         return match name.as_str() {
             "StorageVec" => Some(("StorageVec", 1)),
             "StorageSet" => Some(("StorageSet", 2)),
-            "StorageArray" => Some(("StorageArray", 1)),
             "StorageBytes" => Some(("StorageBytes", 1)),
             _ => None,
         };
     }
     None
+}
+
+/// Returns the element type and the length of a `StorageArray<T, N>`.
+///
+/// The array occupies `N * T::SLOTS` slots, so its slot count comes from
+/// these arguments and not from the fixed table in `is_storage_collection`.
+fn is_storage_array(ty: &Type) -> Option<(Type, GenericArgument)> {
+    if !is_ident_type(ty, &["StorageArray"]) {
+        return None;
+    }
+    let args = type_args(ty)?;
+    match args.as_slice() {
+        [GenericArgument::Type(element), len] => Some((element.clone(), len.clone())),
+        _ => None,
+    }
 }
 
 fn is_dsl_value_type(ty: &Type) -> bool {

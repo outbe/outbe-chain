@@ -45,6 +45,27 @@ pub fn decode_vote_log(calldata: &[u8]) -> eyre::Result<String> {
 ///
 /// Prices and volumes are already in the pair's canonical integer scale from
 /// the aggregator: six decimals for COEN/ISO, existing decimal18 otherwise.
+/// Keeps the prices of active vote targets. The chain rejects the whole vote
+/// if one tuple names another pair, for example while a new sources file is
+/// not yet active on chain.
+pub fn only_vote_targets(
+    prices: Vec<AggregatedPrice>,
+    targets: &[(Address, Address)],
+) -> Vec<AggregatedPrice> {
+    prices
+        .into_iter()
+        .filter(|price| {
+            let target = targets.iter().any(|&(base, quote)| {
+                (base, quote) == (price.base, price.quote) || (quote, base) == (price.base, price.quote)
+            });
+            if !target {
+                tracing::warn!(base = %price.base, quote = %price.quote, "pair is not a vote target; not voting it");
+            }
+            target
+        })
+        .collect()
+}
+
 pub fn encode_vote(prices: &[AggregatedPrice]) -> Vec<u8> {
     let tuples: Vec<IOracle::ExchangeRateTuple> = prices
         .iter()
@@ -83,5 +104,19 @@ mod tests {
         assert_eq!(decoded.tuples[0].quote, expected_quote);
         assert_eq!(decoded.tuples[0].exchangeRate, U256::from(1_500_000u64));
         assert_eq!(decoded.tuples[0].volume, U256::from(10_000_000_000u64));
+    }
+
+    #[test]
+    fn only_vote_targets_drops_pairs_the_chain_does_not_vote() {
+        let price = |iso: u16| AggregatedPrice {
+            base: Address::ZERO,
+            quote: AssetType::IsoCurrency(iso).into(),
+            price: U256::from(1u64),
+            volume: U256::ZERO,
+        };
+        let targets = [(Address::ZERO, AssetType::IsoCurrency(840).into())];
+        let kept = only_vote_targets(vec![price(840), price(978)], &targets);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].quote, Address::from(AssetType::IsoCurrency(840)));
     }
 }

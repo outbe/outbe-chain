@@ -253,6 +253,30 @@ mod tests {
         );
     }
 
+    /// The TEE canary names ISO 4217 code 999 ("XXX", no currency). The enclave
+    /// does not read the codes, so 999/999 prices the same as 840/840.
+    #[test]
+    fn no_currency_code_prices_the_same_as_usd() {
+        let owner = Address::repeat_byte(0xCA);
+        let priced = |currency: u16| {
+            let mut offer = make_tribute_offer(owner, GOOD_JSON);
+            offer.tribute_currency = currency;
+            offer.reference_currency = currency;
+            offer.issuance_wwd_vwap_minor = U256::from(2u64) * SCALE_1E6_U256;
+            offer.reference_wwd_vwap_minor = offer.issuance_wwd_vwap_minor;
+            let (mut results, _) = process_tribute_offer_batch(&key(), &[offer]);
+            results.remove(0)
+        };
+        let usd = priced(840);
+        let no_currency = priced(999);
+        assert_eq!(no_currency.status, TributeOfferStatus::Created);
+        assert_eq!(no_currency.nominal_amount_minor, usd.nominal_amount_minor);
+        assert_eq!(
+            no_currency.effective_reference_price_minor,
+            usd.effective_reference_price_minor
+        );
+    }
+
     /// Each offer carries its own price, so one batch can mix currencies.
     #[test]
     fn one_batch_prices_each_offer_from_its_own_field() {

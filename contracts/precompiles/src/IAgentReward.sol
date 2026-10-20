@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
-/// Reward distribution surface. A claim issues the reward as a Gem:
-/// the WAA pool issues a Wallet Gem, SRA an Sra Gem, CCA a Cca Gem and the
-/// validator pool a Validator Gem. The `#[contract_dispatch]`
+/// Reward distribution surface. A claim issues the reward as a Gem. The `#[contract_dispatch]`
 /// macro pilot synthesizes the Rust dispatch at compile time from `#[contract_public(...)]`
 /// annotations in `crates/core/agentreward/src/precompile.rs`. The drift test in that crate
 /// keeps the two in sync. Every `promisLoadMinor` is a PROMIS load in protocol units
@@ -14,6 +12,10 @@ interface IAgentReward {
 
     function getClaimableBalance(address account) external view returns (uint256 promisLoadMinor);
     function getPoolClaimableBalance(address account, uint8 pool) external view returns (uint256 promisLoadMinor);
+    /// @notice The pool's claimable balances, summed over all accounts.
+    function getPoolClaimableTotal(uint8 pool) external view returns (uint256 promisLoadMinor);
+    /// @notice The part of queued WAA or SRA day pools not yet credited; zero for CCA and validator.
+    function getPoolPendingTotal(uint8 pool) external view returns (uint256 promisLoadMinor);
     /// @notice Issues `promisLoadMinor` of the caller's balance in `pool`
     /// as a Gem in the caller's `issuanceCurrency` and `referenceCurrency` (ISO 4217 numeric).
     /// `referenceCurrency` must be an Oracle reference currency, and the entry price is the

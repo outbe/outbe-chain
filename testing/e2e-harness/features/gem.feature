@@ -35,7 +35,7 @@ Feature: Gem from a parked Intex to Promis and COEN
     Then the position holds the parked capacity and the units are burned
     When the merchant issues a gem to each of five owners, leaving capacity unissued
     Then every gem reads Issued and carries its terms
-    And every validator reads the same gem and bucket from one finalized EVM state
+    And every validator reads the same gem and group from one finalized EVM state
     And no gem can be transferred
     And a gem payment is refused for a stale snapshot or a foreign currency
     And an unpaid gem cannot be mined

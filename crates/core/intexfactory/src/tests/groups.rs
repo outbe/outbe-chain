@@ -10,6 +10,7 @@ mod group_scans {
 
     use crate::runtime;
     use crate::schema::IssuanceParams;
+    use crate::tests::group_of;
     use outbe_intex::IntexContract;
 
     const CHAIN_ID: u64 = 1;
@@ -37,10 +38,6 @@ mod group_scans {
             crate::tests::select_prod_profile(&handle);
             f(handle)
         })
-    }
-
-    fn day() -> WorldwideDay {
-        WorldwideDay::new(WWD)
     }
 
     fn params(worldwide_day: u32, issuance_currency: u16) -> IssuanceParams {
@@ -75,11 +72,15 @@ mod group_scans {
         with_factory(|s| {
             issue_day(&s, WWD);
             let f = IntexContract::new(s.clone());
-            let members = f.call_bin_group_members(REFERENCE_ISO, day()).unwrap();
-            assert_eq!(members.len(), ISSUANCES.len());
+            let ids: Vec<_> = ISSUANCES
+                .iter()
+                .map(|issuance| params(WWD, *issuance).series_id)
+                .collect();
+            let group = group_of(&s, ids[0]);
+            assert_eq!(f.group_members(group).unwrap(), ids);
             let bin =
                 outbe_primitives::call_bins::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
-            assert_eq!(f.call_bin_groups(REFERENCE_ISO, bin).unwrap(), vec![day()]);
+            assert_eq!(f.call_bin_groups(REFERENCE_ISO, bin).unwrap(), vec![group]);
         });
     }
 }

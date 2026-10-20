@@ -4,7 +4,7 @@
 //! above its call price on at least its threshold days of its trailing window.
 //! Both terms are sealed onto the right, so retuning a profile cannot re-term it.
 
-use alloy_primitives::U256;
+use alloy_primitives::{keccak256, B256, U256};
 
 use crate::error::Result;
 use crate::storage::dsl::Map;
@@ -18,6 +18,16 @@ pub struct BreachTerms {
     pub threshold_seconds: u32,
     /// The right's first full UTC day. Earlier days never count: it did not exist yet.
     pub start_day: u32,
+}
+
+/// The call group of a right. Its members start counting on the same day against the
+/// same call price in the same currency, so one window decides them all.
+pub fn group_key(full_day_after_issue: u32, call_price: U256, reference_currency: u16) -> B256 {
+    let mut bytes = [0u8; 38];
+    bytes[..4].copy_from_slice(&full_day_after_issue.to_be_bytes());
+    bytes[4..36].copy_from_slice(&call_price.to_be_bytes::<32>());
+    bytes[36..].copy_from_slice(&reference_currency.to_be_bytes());
+    keccak256(bytes)
 }
 
 /// The span one currency's sweep reads: the widest window and the lowest threshold
@@ -116,6 +126,24 @@ mod tests {
             threshold_seconds: threshold * DAY,
             start_day,
         }
+    }
+
+    #[test]
+    fn each_group_input_splits_the_group() {
+        let base = group_key(20260310, U256::from(4_560_000), 840);
+        assert_ne!(base, group_key(20260311, U256::from(4_560_000), 840));
+        assert_ne!(base, group_key(20260310, U256::from(4_560_001), 840));
+        assert_ne!(base, group_key(20260310, U256::from(4_560_000), 978));
+    }
+
+    #[test]
+    fn a_midnight_issue_and_a_later_one_that_day_are_in_different_groups() {
+        let midnight = crate::time::first_full_day(1_773_100_800);
+        let later = crate::time::first_full_day(1_773_100_802);
+        assert_ne!(
+            group_key(midnight, U256::from(4_560_000), 840),
+            group_key(later, U256::from(4_560_000), 840)
+        );
     }
 
     #[test]

@@ -27,11 +27,11 @@ fn issue_creates_series_in_registry() {
         );
         // Born Issued. `issued_at` is the block timestamp.
         assert_eq!(
-            r.lifecycle_state().unwrap(),
+            series_state(&s, r.series_id),
             outbe_intex::IntexState::Issued
         );
         assert_eq!(r.issued_at, ISSUED_AT);
-        assert_eq!(r.called_at, 0);
+        assert_eq!(outbe_intex::api::call_stamp(&s, &r).unwrap().called_at, 0);
     });
 }
 
@@ -609,7 +609,7 @@ fn the_hourly_rollover_at_the_call_deadline_grants_no_grace() {
         let notice = outbe_intex::api::read_series(&s, sid(7))
             .unwrap()
             .call_notice_period_seconds;
-        outbe_intex::api::record_called(&s, sid(7), (deadline - u64::from(notice)) as u32).unwrap();
+        outbe_intex::api::call_group_of(&s, sid(7), (deadline - u64::from(notice)) as u32).unwrap();
     });
 
     storage.set_timestamp(U256::from(deadline));

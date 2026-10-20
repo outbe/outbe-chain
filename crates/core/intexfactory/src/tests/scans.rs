@@ -1,7 +1,6 @@
 use super::*;
 
 use super::lifecycle::{fill_days, setup_pair};
-use outbe_primitives::storage::types::Storable as _;
 use outbe_primitives::time::SECONDS_PER_DAY_U32;
 
 /// Well past issuance: the closed day before it is one every seeded series held in full.
@@ -23,13 +22,7 @@ fn scan_and_call_force_calls_breached_series() {
             s.clone(),
         );
         assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
-        assert_eq!(
-            outbe_intex::api::read_series(&s, sid(7))
-                .unwrap()
-                .lifecycle_state()
-                .unwrap(),
-            outbe_intex::IntexState::Called
-        );
+        assert_eq!(series_state(&s, sid(7)), outbe_intex::IntexState::Called);
     });
 }
 
@@ -62,7 +55,7 @@ fn a_called_series_reports_its_settlement_deadline() {
         .get_events(outbe_primitives::addresses::INTEX_ADDRESS)
         .iter()
         .filter_map(|log| {
-            outbe_intex::precompile::IIntex::IntexSeriesCalled::decode_log_data(log).ok()
+            outbe_intex::precompile::IIntex::IntexGroupCalled::decode_log_data(log).ok()
         })
         .collect();
     assert_eq!(events.len(), 1);
@@ -120,13 +113,7 @@ fn scan_and_call_reads_daily_vwap_at_midnight() {
             s.clone(),
         );
         assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
-        assert_eq!(
-            outbe_intex::api::read_series(&s, sid(7))
-                .unwrap()
-                .lifecycle_state()
-                .unwrap(),
-            outbe_intex::IntexState::Called
-        );
+        assert_eq!(series_state(&s, sid(7)), outbe_intex::IntexState::Called);
     });
 }
 
@@ -151,13 +138,7 @@ fn call_scan_does_not_halt_on_overflow_vwap() {
         );
         // Must not halt: returns Ok(0) and leaves the series Issued.
         assert_eq!(called::scan_and_call(&ctx).unwrap(), 0);
-        assert_eq!(
-            outbe_intex::api::read_series(&s, sid(7))
-                .unwrap()
-                .lifecycle_state()
-                .unwrap(),
-            outbe_intex::IntexState::Issued
-        );
+        assert_eq!(series_state(&s, sid(7)), outbe_intex::IntexState::Issued);
     });
 }
 
@@ -194,20 +175,9 @@ fn a_node_local_failure_while_calling_fails_the_scan() {
         Err(outbe_primitives::error::PrecompileError::Storage(_))
     ));
     StorageHandle::enter(&mut provider, |s| {
-        assert_eq!(
-            outbe_intex::api::read_series(&s, sid(7))
-                .unwrap()
-                .lifecycle_state()
-                .unwrap(),
-            outbe_intex::IntexState::Issued
-        );
-        let f = IntexContract::new(s);
-        assert_eq!(
-            f.call_bin_group(REFERENCE_ISO, WorldwideDay::new(7))
-                .unwrap()
-                .members,
-            vec![sid(7)]
-        );
+        assert_eq!(series_state(&s, sid(7)), outbe_intex::IntexState::Issued);
+        let f = IntexContract::new(s.clone());
+        assert_eq!(f.group_members(group_of(&s, sid(7))).unwrap(), vec![sid(7)]);
         assert_eq!(f.call_sweep_day.read().unwrap(), last_closed_day);
     });
 }
@@ -239,9 +209,6 @@ fn seed_issued_at(s: &StorageHandle<'_>, id: u32, issued_at: u32) {
         },
     )
     .unwrap();
-    IntexContract::new(s.clone())
-        .insert_call_bin(sid(id), REFERENCE_ISO, U256::from(EXPECTED_TRIGGER))
-        .unwrap();
 }
 
 #[test]
@@ -282,11 +249,9 @@ fn the_issue_day_counts_only_for_a_series_issued_at_midnight() {
                 U256::from(EXPECTED_TRIGGER) + U256::from(1),
             );
 
-            let group = f
-                .call_bin_group(REFERENCE_ISO, WorldwideDay::new(7))
-                .unwrap();
+            let group = group_of(&s, sid(7));
             assert_eq!(
-                call_group(&s, &mut f, &group, last_closed_day, scan_ts),
+                call_group(&s, &mut f, group, last_closed_day, scan_ts),
                 expected,
                 "issued at {issued_at}"
             );
@@ -320,17 +285,9 @@ fn call_survives_router_failure() {
             U256::from(EXPECTED_TRIGGER) + U256::from(1),
         );
 
-        let group = f
-            .call_bin_group(REFERENCE_ISO, WorldwideDay::new(7))
-            .unwrap();
-        assert_eq!(call_group(&s, &mut f, &group, last_closed_day, scan_ts), 1);
-        assert_eq!(
-            outbe_intex::api::read_series(&s, sid(7))
-                .unwrap()
-                .lifecycle_state()
-                .unwrap(),
-            outbe_intex::IntexState::Called
-        );
+        let group = group_of(&s, sid(7));
+        assert_eq!(call_group(&s, &mut f, group, last_closed_day, scan_ts), 1);
+        assert_eq!(series_state(&s, sid(7)), outbe_intex::IntexState::Called);
     });
 }
 
@@ -407,8 +364,13 @@ fn the_scan_range_covers_terms_the_live_profile_no_longer_names() {
     });
 }
 
-/// A Called series with nothing realized, so expiry forfeits all of it.
-fn called_series(s: &StorageHandle<'_>, worldwide_day: u32) -> SeriesId {
+/// A series in a call group of its own, with nothing realized, so expiry forfeits all of it.
+fn grouped_series(s: &StorageHandle<'_>, worldwide_day: u32) -> SeriesId {
+    series_in(s, worldwide_day, worldwide_day)
+}
+
+/// The series of `worldwide_day`, issued into the call group `group_day` names.
+fn series_in(s: &StorageHandle<'_>, worldwide_day: u32, group_day: u32) -> SeriesId {
     let series_id = sid(worldwide_day);
     outbe_intex::api::create_series(
         s,
@@ -424,36 +386,46 @@ fn called_series(s: &StorageHandle<'_>, worldwide_day: u32) -> SeriesId {
                 call_threshold_seconds: (21 * DAY) as u32,
                 call_notice_period_seconds: (7 * DAY) as u32,
             },
-            issued_at: ISSUED_AT,
+            issued_at: ISSUED_AT - (group_day % 1000) * SECONDS_PER_DAY_U32,
             issuance_currency: 840,
             reference_currency: REFERENCE_ISO,
         },
     )
     .unwrap();
-    outbe_intex::api::record_called(s, series_id, ISSUED_AT).unwrap();
     series_id
+}
+
+/// A grouped series whose group was called and waits on `deadline`.
+fn called_series(s: &StorageHandle<'_>, worldwide_day: u32, deadline: u64) -> SeriesId {
+    let series_id = grouped_series(s, worldwide_day);
+    IntexContract::new(s.clone())
+        .seed_called_group(series_id, deadline)
+        .unwrap();
+    series_id
+}
+
+fn queued(s: &StorageHandle<'_>, member: SeriesId) -> bool {
+    IntexContract::new(s.clone())
+        .called_group_slot
+        .read(&group_of(s, member))
+        .unwrap()
+        != 0
+}
+
+fn sweep_expiry(s: &StorageHandle<'_>, at: u64) {
+    let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(1, at, CHAIN_ID), s.clone());
+    crate::expired::sweep_expired(&ctx).unwrap();
 }
 
 #[test]
 fn a_group_due_sooner_is_retired_even_when_a_later_one_was_called_first() {
     with_factory(|s| {
-        let mut f = IntexContract::new(s.clone());
+        let f = IntexContract::new(s.clone());
         let now = ISSUED_AT as u64;
-        let far = WorldwideDay::new(20260101);
-        let near = WorldwideDay::new(20260102);
+        called_series(&s, 20260101, now + 10 * DAY);
+        called_series(&s, 20260102, now + DAY);
 
-        let far_member = called_series(&s, 20260101);
-        let near_member = called_series(&s, 20260102);
-        f.seed_called_group(REFERENCE_ISO, far, now + 10 * DAY, &[far_member])
-            .unwrap();
-        f.seed_called_group(REFERENCE_ISO, near, now + DAY, &[near_member])
-            .unwrap();
-
-        let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, now + 2 * DAY, CHAIN_ID),
-            s.clone(),
-        );
-        crate::expired::sweep_expired(&ctx).unwrap();
+        sweep_expiry(&s, now + 2 * DAY);
 
         let near_day = IntexContract::deadline_bucket(now + DAY);
         let far_day = IntexContract::deadline_bucket(now + 10 * DAY);
@@ -476,28 +448,14 @@ fn a_group_due_sooner_is_retired_even_when_a_later_one_was_called_first() {
 }
 
 #[test]
-fn a_series_that_was_never_called_does_not_expire() {
+fn an_uncalled_group_never_enters_the_expiry_queue() {
     with_factory(|s| {
-        select_prod_profile(&s);
-        let now = ISSUED_AT as u64;
         runtime::issue_intex(&s, sample(7)).unwrap();
-        IntexContract::new(s.clone())
-            .seed_called_group(REFERENCE_ISO, WorldwideDay::new(7), now + DAY, &[sid(7)])
-            .unwrap();
-
-        let due = IntexContract::bucket_end(IntexContract::deadline_bucket(now + DAY));
-        let ctx =
-            BlockRuntimeContext::new(BlockContext::empty_for_tests(1, due, CHAIN_ID), s.clone());
-        assert_eq!(crate::expired::sweep_expired(&ctx).unwrap(), 0);
-        let key = IntexContract::scoped(REFERENCE_ISO, WorldwideDay::new(7).value());
-        assert_eq!(
-            IntexContract::new(s.clone())
-                .call_group_count
-                .read(&key)
-                .unwrap(),
-            1,
-            "the uncalled series stays in its group"
-        );
+        sweep_expiry(&s, ISSUED_AT as u64 + 400 * DAY);
+        let f = IntexContract::new(s.clone());
+        assert_eq!(f.first_expiry_day().unwrap(), None);
+        assert_eq!(series_state(&s, sid(7)), outbe_intex::IntexState::Issued);
+        assert_eq!(f.group_members(group_of(&s, sid(7))).unwrap(), vec![sid(7)]);
     });
 }
 
@@ -505,15 +463,10 @@ fn a_series_that_was_never_called_does_not_expire() {
 fn a_node_local_failure_while_expiring_fails_the_sweep() {
     let mut provider = factory_provider();
     let now = ISSUED_AT as u64;
-    let day = WorldwideDay::new(20260101);
-    let key = IntexContract::scoped(REFERENCE_ISO, day.value());
     let due = IntexContract::bucket_end(IntexContract::deadline_bucket(now + DAY));
-    StorageHandle::enter(&mut provider, |s| {
+    let member = StorageHandle::enter(&mut provider, |s| {
         select_prod_profile(&s);
-        let member = called_series(&s, day.value());
-        IntexContract::new(s.clone())
-            .seed_called_group(REFERENCE_ISO, day, now + DAY, &[member])
-            .unwrap();
+        called_series(&s, 20260101, now + DAY)
     });
     provider.fail_after_mutation_at(0);
     let result = StorageHandle::enter(&mut provider, |s| {
@@ -526,10 +479,9 @@ fn a_node_local_failure_while_expiring_fails_the_sweep() {
         Err(outbe_primitives::error::PrecompileError::Storage(_))
     ));
     StorageHandle::enter(&mut provider, |s| {
-        let f = IntexContract::new(s);
-        assert_eq!(f.call_group_count.read(&key).unwrap(), 1);
+        assert!(queued(&s, member));
         assert_eq!(
-            f.first_expiry_day().unwrap(),
+            IntexContract::new(s).first_expiry_day().unwrap(),
             Some(IntexContract::deadline_bucket(now + DAY))
         );
     });
@@ -541,17 +493,18 @@ fn a_node_local_failure_while_deferring_fails_the_sweep() {
 
     let mut provider = factory_provider();
     let now = ISSUED_AT as u64;
-    let day = WorldwideDay::new(20260101);
-    let key = IntexContract::scoped(REFERENCE_ISO, day.value());
     let bucket = IntexContract::deadline_bucket(now + DAY);
-    StorageHandle::enter(&mut provider, |s| {
+    let member = StorageHandle::enter(&mut provider, |s| {
         select_prod_profile(&s);
+        let member = called_series(&s, 20260101, now + DAY);
+        // More settled than issued: the group cannot expire, so the sweep defers it.
         IntexContract::new(s)
-            .seed_called_group(REFERENCE_ISO, day, now + DAY, &[sid(1)])
+            .settled_units
+            .write(&member, 1_000)
             .unwrap();
+        member
     });
-    // The unissued member stays, so its group is rewritten in two writes and then deferred.
-    provider.fail_after_mutation_at(2);
+    provider.fail_after_mutation_at(0);
     let result = StorageHandle::enter(&mut provider, |s| {
         let ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(1, IntexContract::bucket_end(bucket), CHAIN_ID),
@@ -565,8 +518,8 @@ fn a_node_local_failure_while_deferring_fails_the_sweep() {
         Err(outbe_primitives::error::PrecompileError::Storage(_))
     ));
     StorageHandle::enter(&mut provider, |s| {
+        assert!(queued(&s, member));
         let f = IntexContract::new(s);
-        assert_eq!(f.call_group_count.read(&key).unwrap(), 1);
         assert_eq!(f.expiry_bucket_live.read(&bucket).unwrap(), 1);
         assert_eq!(f.first_expiry_day().unwrap(), Some(bucket));
     });
@@ -579,21 +532,15 @@ fn a_node_local_failure_while_deferring_fails_the_sweep() {
 #[test]
 fn a_bucket_the_sweep_cannot_finish_is_retired_rather_than_left_in_front() {
     with_factory(|s| {
-        let mut f = IntexContract::new(s.clone());
+        let f = IntexContract::new(s.clone());
         let now = ISSUED_AT as u64;
-        let day = WorldwideDay::new(20260101);
-
-        f.seed_called_group(REFERENCE_ISO, day, now + DAY, &[sid(1)])
-            .unwrap();
+        let member = called_series(&s, 20260101, now + DAY);
         let bucket = IntexContract::deadline_bucket(now + DAY);
-        let key = IntexContract::scoped(REFERENCE_ISO, day.value());
-        f.called_deadline.write(&key, now + 400 * DAY).unwrap();
+        f.called_deadline
+            .write(&group_of(&s, member), now + 400 * DAY)
+            .unwrap();
 
-        let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, IntexContract::bucket_end(bucket), CHAIN_ID),
-            s.clone(),
-        );
-        crate::expired::sweep_expired(&ctx).unwrap();
+        sweep_expiry(&s, IntexContract::bucket_end(bucket));
 
         let later = IntexContract::deadline_bucket(now + 400 * DAY);
         assert_eq!(f.expiry_bucket_live.read(&bucket).unwrap(), 0);
@@ -602,9 +549,8 @@ fn a_bucket_the_sweep_cannot_finish_is_retired_rather_than_left_in_front() {
             Some(later),
             "the day leaves the tree instead of blocking every later one"
         );
-        assert_eq!(
-            f.call_group_count.read(&key).unwrap(),
-            1,
+        assert!(
+            queued(&s, member),
             "and its group waits in the bucket its deadline falls in"
         );
         assert_eq!(f.expiry_bucket_live.read(&later).unwrap(), 1);
@@ -617,40 +563,33 @@ fn a_group_requeued_at_retirement_is_expired_and_credited_once() {
 
     let mut provider = factory_provider();
     let now = ISSUED_AT as u64;
-    let day = WorldwideDay::new(20260101);
-    let key = IntexContract::scoped(REFERENCE_ISO, day.value());
     let bucket = IntexContract::deadline_bucket(now + DAY);
     let later = IntexContract::deadline_bucket(now + 3 * DAY);
-    StorageHandle::enter(&mut provider, |s| {
+    let group = StorageHandle::enter(&mut provider, |s| {
         select_prod_profile(&s);
-        let mut f = IntexContract::new(s.clone());
-        let member = called_series(&s, day.value());
-        f.seed_called_group(REFERENCE_ISO, day, now + DAY, &[member])
-            .unwrap();
-        f.called_deadline.write(&key, now + 3 * DAY).unwrap();
-        let sweep = |at: u64| {
-            let ctx =
-                BlockRuntimeContext::new(BlockContext::empty_for_tests(1, at, CHAIN_ID), s.clone());
-            crate::expired::sweep_expired(&ctx).unwrap();
-        };
+        let f = IntexContract::new(s.clone());
+        let member = called_series(&s, 20260101, now + DAY);
+        let group = group_of(&s, member);
+        f.called_deadline.write(&group, now + 3 * DAY).unwrap();
         let unallocated = || {
             outbe_promislimit::PromisLimitContract::new(s.clone())
                 .get_total_unallocated()
                 .unwrap()
         };
 
-        sweep(IntexContract::bucket_end(bucket));
+        sweep_expiry(&s, IntexContract::bucket_end(bucket));
         assert_eq!(f.first_expiry_day().unwrap(), Some(later));
-        assert_eq!(f.call_group_count.read(&key).unwrap(), 1);
+        assert!(queued(&s, member));
         assert_eq!(unallocated(), U256::ZERO);
 
-        sweep(IntexContract::bucket_end(later));
+        sweep_expiry(&s, IntexContract::bucket_end(later));
         assert_eq!(f.first_expiry_day().unwrap(), None);
-        assert_eq!(f.call_group_count.read(&key).unwrap(), 0);
+        assert!(!queued(&s, member));
         assert_eq!(unallocated(), U256::from(PROMIS_LOAD_MINOR));
 
-        sweep(IntexContract::bucket_end(later) + DAY);
+        sweep_expiry(&s, IntexContract::bucket_end(later) + DAY);
         assert_eq!(unallocated(), U256::from(PROMIS_LOAD_MINOR));
+        group
     });
 
     let deferred: Vec<_> = provider
@@ -659,13 +598,13 @@ fn a_group_requeued_at_retirement_is_expired_and_credited_once() {
         .filter_map(|log| IIntexFactory::ExpiryDeferred::decode_log_data(log).ok())
         .collect();
     assert_eq!(deferred.len(), 1);
-    assert_eq!(deferred[0].worldwideDay, day.value());
+    assert_eq!(deferred[0].groupKey, group);
     assert_eq!(deferred[0].retryAt, IntexContract::bucket_end(later));
     let expired = provider
         .get_events(outbe_primitives::addresses::INTEX_ADDRESS)
         .iter()
         .filter_map(|log| {
-            outbe_intex::precompile::IIntex::IntexSeriesExpired::decode_log_data(log).ok()
+            outbe_intex::precompile::IIntex::IntexGroupExpired::decode_log_data(log).ok()
         })
         .count();
     assert_eq!(expired, 1);
@@ -674,28 +613,19 @@ fn a_group_requeued_at_retirement_is_expired_and_credited_once() {
 #[test]
 fn a_bucket_wider_than_one_block_resumes_where_it_gave_out() {
     with_factory(|s| {
-        let mut f = IntexContract::new(s.clone());
+        let f = IntexContract::new(s.clone());
         let now = ISSUED_AT as u64;
         let deadline = now + DAY;
         let bucket = IntexContract::deadline_bucket(deadline);
 
         let queued = outbe_primitives::sweep_budget::SWEEP_WRITES_PER_BLOCK + 44;
         for index in 0..queued {
-            let day = 20260101 + index;
-            let member = called_series(&s, day);
-            f.seed_called_group(REFERENCE_ISO, WorldwideDay::new(day), deadline, &[member])
-                .unwrap();
+            called_series(&s, 20260101 + index, deadline);
         }
         assert_eq!(f.expiry_bucket_live.read(&bucket).unwrap(), queued);
 
-        let sweep = |at: u64| {
-            let ctx =
-                BlockRuntimeContext::new(BlockContext::empty_for_tests(1, at, CHAIN_ID), s.clone());
-            crate::expired::sweep_expired(&ctx).unwrap();
-        };
         let due = IntexContract::bucket_end(bucket);
-
-        sweep(due);
+        sweep_expiry(&s, due);
         let left = f.expiry_bucket_live.read(&bucket).unwrap();
         assert!(
             left > 0 && left < queued,
@@ -711,7 +641,7 @@ fn a_bucket_wider_than_one_block_resumes_where_it_gave_out() {
             "along with the slot it stopped at"
         );
 
-        sweep(due + 1);
+        sweep_expiry(&s, due + 1);
         assert_eq!(
             f.expiry_bucket_live.read(&bucket).unwrap(),
             0,
@@ -729,29 +659,19 @@ fn a_bucket_wider_than_one_block_resumes_where_it_gave_out() {
 #[test]
 fn a_short_notice_is_forfeited_within_the_hour_not_the_day() {
     with_factory(|s| {
-        let mut f = IntexContract::new(s.clone());
+        let f = IntexContract::new(s.clone());
         let now = (ISSUED_AT as u64 / DAY) * DAY;
         let deadline = now + 600;
-        let day = WorldwideDay::new(20260101);
+        called_series(&s, 20260101, deadline);
 
-        let member = called_series(&s, 20260101);
-        f.seed_called_group(REFERENCE_ISO, day, deadline, &[member])
-            .unwrap();
-
-        let sweep = |at: u64| {
-            let ctx =
-                BlockRuntimeContext::new(BlockContext::empty_for_tests(1, at, CHAIN_ID), s.clone());
-            crate::expired::sweep_expired(&ctx).unwrap();
-        };
-
-        sweep(deadline + 1);
+        sweep_expiry(&s, deadline + 1);
         assert_eq!(
             f.first_expiry_day().unwrap(),
             Some(IntexContract::deadline_bucket(deadline)),
             "still waiting while its own bucket is open"
         );
 
-        sweep(now + 3600);
+        sweep_expiry(&s, now + 3600);
         assert_eq!(
             f.first_expiry_day().unwrap(),
             None,
@@ -761,65 +681,38 @@ fn a_short_notice_is_forfeited_within_the_hour_not_the_day() {
 }
 
 #[test]
-fn one_member_that_cannot_expire_does_not_cost_its_group_the_credit() {
+fn the_cleanup_deletes_a_spent_series_and_keeps_one_with_settled_units() {
     with_factory(|s| {
-        runtime::issue_intex(&s, sample(7)).unwrap();
-        let oracle = OracleContract::new(s.clone());
-        let pair = setup_pair(&oracle);
-        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
-        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
-        fill_days(
-            &oracle,
-            last_closed_day,
-            pair,
-            30,
-            U256::from(EXPECTED_TRIGGER) + U256::from(1),
-        );
-        let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
-            s.clone(),
-        );
-        assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
-
-        // A member the registry never issued: a group-wide checkpoint would roll the
-        // healthy one back with it.
-        let day = WorldwideDay::new(7);
-        let key = IntexContract::scoped(REFERENCE_ISO, day.value());
-        let f = IntexContract::new(s.clone());
-        f.call_group_members
-            .write(
-                &IntexContract::group_member_key(REFERENCE_ISO, day, 1),
-                sid(20260999).to_word(),
-            )
+        let now = ISSUED_AT as u64;
+        let deadline = now + DAY;
+        let spent = grouped_series(&s, 20260101);
+        let kept = series_in(&s, 20260102, 20260101);
+        outbe_intex::api::record_settled_units(&s, kept, 1).unwrap();
+        IntexContract::new(s.clone())
+            .seed_called_group(spent, deadline)
             .unwrap();
-        f.call_group_count.write(&key, 2).unwrap();
+        let group = group_of(&s, spent);
+        assert_eq!(group, group_of(&s, kept));
 
-        let deadline = f.called_deadline.read(&key).unwrap();
-        let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(
-                1,
-                IntexContract::bucket_end(IntexContract::deadline_bucket(deadline)),
-                CHAIN_ID,
-            ),
-            s.clone(),
-        );
-        crate::expired::sweep_expired(&ctx).unwrap();
+        let due = IntexContract::bucket_end(IntexContract::deadline_bucket(deadline));
+        let ctx =
+            BlockRuntimeContext::new(BlockContext::empty_for_tests(1, due, CHAIN_ID), s.clone());
+        crate::hooks::sweep_forfeits(&ctx).unwrap();
+        crate::hooks::sweep_cleanup(&ctx).unwrap();
 
-        assert!(
-            !outbe_promislimit::PromisLimitContract::new(s.clone())
-                .get_total_unallocated()
+        let f = IntexContract::new(s.clone());
+        assert!(!outbe_intex::api::series_exists(&s, spent).unwrap());
+        assert!(outbe_intex::api::series_exists(&s, kept).unwrap());
+        assert_eq!(f.group_members(group).unwrap(), vec![kept]);
+        assert_eq!(f.first_cleanup_hour().unwrap(), None);
+        let record = outbe_intex::api::read_series(&s, kept).unwrap();
+        assert_eq!(
+            outbe_intex::api::call_stamp(&s, &record)
                 .unwrap()
-                .is_zero(),
-            "the member that could expire still returns its load"
+                .state(due),
+            outbe_intex::IntexState::Expired
         );
     });
-}
-
-fn series_state(s: &StorageHandle<'_>, id: u32) -> outbe_intex::IntexState {
-    outbe_intex::api::read_series(s, sid(id))
-        .unwrap()
-        .lifecycle_state()
-        .unwrap()
 }
 
 fn block_at<'s>(s: &StorageHandle<'s>, number: u64, ts: u64) -> BlockRuntimeContext<'s> {
@@ -849,7 +742,7 @@ fn an_unindexable_window_price_is_reported_once() {
             called::scan_and_call(&block_at(&s, 1, MATURE_TS)).unwrap(),
             0
         );
-        assert_eq!(series_state(&s, 7), outbe_intex::IntexState::Issued);
+        assert_eq!(series_state(&s, sid(7)), outbe_intex::IntexState::Issued);
         day
     });
 
@@ -861,106 +754,4 @@ fn an_unindexable_window_price_is_reported_once() {
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].referenceCurrency, REFERENCE_ISO);
     assert_eq!(events[0].utcDay, day);
-}
-
-#[test]
-fn a_group_left_unfinished_moves_to_the_next_bucket_and_credits_once() {
-    use alloy_sol_types::SolEvent;
-
-    let mut provider = factory_provider();
-    let retry_day = StorageHandle::enter(&mut provider, |s| {
-        select_prod_profile(&s);
-        runtime::issue_intex(&s, sample(7)).unwrap();
-        let oracle = OracleContract::new(s.clone());
-        let pair = setup_pair(&oracle);
-        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
-        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
-        fill_days(
-            &oracle,
-            last_closed_day,
-            pair,
-            30,
-            U256::from(EXPECTED_TRIGGER) + U256::from(1),
-        );
-        let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
-            s.clone(),
-        );
-        assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
-
-        // A member the registry never issued cannot expire. The group must survive it.
-        let day = WorldwideDay::new(7);
-        let key = IntexContract::scoped(REFERENCE_ISO, day.value());
-        let f = IntexContract::new(s.clone());
-        f.call_group_members
-            .write(
-                &IntexContract::group_member_key(REFERENCE_ISO, day, 1),
-                sid(20260999).to_word(),
-            )
-            .unwrap();
-        f.call_group_count.write(&key, 2).unwrap();
-
-        let deadline = f.called_deadline.read(&key).unwrap();
-        let first_pass = IntexContract::bucket_end(IntexContract::deadline_bucket(deadline));
-        let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, first_pass, CHAIN_ID),
-            s.clone(),
-        );
-        crate::expired::sweep_expired(&ctx).unwrap();
-
-        let unallocated = |s: &StorageHandle<'_>| {
-            outbe_promislimit::PromisLimitContract::new(s.clone())
-                .get_total_unallocated()
-                .unwrap()
-        };
-        let after_first = unallocated(&s);
-        assert!(
-            !after_first.is_zero(),
-            "the member that could expire returns its load"
-        );
-
-        let retry_day = IntexContract::deadline_bucket(first_pass) + 1;
-        assert_eq!(f.first_expiry_day().unwrap(), Some(retry_day));
-        // Only the phantom stays, so the retry cannot meet the member already credited.
-        assert_eq!(f.call_group_count.read(&key).unwrap(), 1);
-        assert_eq!(
-            f.call_group_members
-                .read(&IntexContract::group_member_key(REFERENCE_ISO, day, 0))
-                .unwrap(),
-            sid(20260999).to_word()
-        );
-
-        // The phantom goes away and the retry finishes the group.
-        f.call_group_count.write(&key, 0).unwrap();
-        let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, IntexContract::bucket_end(retry_day), CHAIN_ID),
-            s.clone(),
-        );
-        crate::expired::sweep_expired(&ctx).unwrap();
-
-        assert_eq!(
-            unallocated(&s),
-            after_first,
-            "a retry credits each load exactly once"
-        );
-        assert_eq!(f.first_expiry_day().unwrap(), None);
-        assert_eq!(f.call_group_count.read(&key).unwrap(), 0);
-        retry_day
-    });
-
-    let sig = IIntexFactory::ExpiryDeferred::SIGNATURE_HASH;
-    let deferred: Vec<_> = provider
-        .get_events(INTEX_FACTORY_ADDRESS)
-        .iter()
-        .filter(|log| log.topics().first() == Some(&sig))
-        .map(|log| IIntexFactory::ExpiryDeferred::decode_log_data(log).unwrap())
-        .collect();
-    assert_eq!(
-        deferred.len(),
-        1,
-        "one ExpiryDeferred for the unfinished pass"
-    );
-    assert_eq!(deferred[0].referenceCurrency, REFERENCE_ISO);
-    assert_eq!(deferred[0].worldwideDay, 7);
-    assert_eq!(deferred[0].retryAt, IntexContract::bucket_end(retry_day));
 }

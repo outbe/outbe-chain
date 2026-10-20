@@ -41,20 +41,30 @@ fn guarded(storage: &StorageHandle<'_>, hook: impl FnOnce() -> Result<()>) -> Re
     hook().map(|()| Bytes::new())
 }
 
-/// Moves issuance and the interest anchor together, so no interest is skipped.
+/// Moves issuance and the interest anchor together, so no interest is skipped. The
+/// Credis moves to the group of its new issuance day.
 fn backdate(storage: &StorageHandle<'_>, credis_id: U256, issued_at: u64) -> Result<()> {
     let mut credis = CredisContract::new(storage.clone());
     let mut record = credis.get_credis(credis_id)?;
+    credis.leave_group(record.group_key(), credis_id)?;
+    credis.delete_credis_record(credis_id)?;
     record.issued_at = issued_at;
     record.last_settled_at = issued_at;
-    credis.update_credis_record(&record)
+    credis.create_credis_record(&record)
 }
 
+/// Moves the deadline of the Credis's called group.
 fn requeue_called(storage: &StorageHandle<'_>, credis_id: U256, deadline: u64) -> Result<()> {
     let mut credis = CredisContract::new(storage.clone());
-    if credis.called_deadline.read(&credis_id)? == 0 {
+    let group = credis.get_credis(credis_id)?.group_key();
+    if credis.called_deadline.read(&group)? == 0 {
         return Err(CredisFactoryError::NotCalled.into());
     }
-    credis.remove_called(credis_id)?;
-    credis.push_called(credis_id, deadline)
+    // Members read the deadline from the call, so the call moves with the queue.
+    let notice = u64::from(credis.group_call_notice_period_seconds.read(&group)?);
+    credis
+        .group_called_at
+        .write(&group, deadline.saturating_sub(notice).max(1))?;
+    credis.remove_called(group)?;
+    credis.push_called(group, deadline)
 }

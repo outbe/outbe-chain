@@ -483,10 +483,9 @@ fn claim_gem_and_assert_gas_only_cost(
         );
         let expected_load = claimable;
         assert!(!expected_load.is_zero());
-        assert!(!issued.bucketKey.is_zero());
+        assert!(!issued.groupKey.is_zero());
         let expected = eth::IGemFactory::GemIssued {
             gemId: added[0],
-            gemType: gem.gemType,
             owner: beneficiary,
             promisLoadMinor: expected_load,
             entryPriceMinor: terms,
@@ -498,9 +497,9 @@ fn claim_gem_and_assert_gas_only_cost(
             callThreshold: issued.callThreshold,
             callNoticePeriod: gem.callNoticePeriod,
             positionId: U256::ZERO,
-            bucketKey: issued.bucketKey,
+            groupKey: issued.groupKey,
         };
-        assert_claimed_gem(&gem, pool, &expected);
+        assert_claimed_gem(&gem, &expected);
         assert_eq!(gem.gemId, added[0]);
         let encoded = gem.abi_encode();
         assert_eq!(
@@ -630,14 +629,8 @@ fn claim_gem_terms_at(url: &str, height: u64, reference_currency: u16) -> U256 {
     price
 }
 
-fn assert_claimed_gem(gem: &eth::IGem::GemData, pool: u8, expected: &eth::IGemFactory::GemIssued) {
-    let kind = match pool {
-        WAA_POOL => 2,
-        SRA_POOL => 1,
-        _ => panic!("unknown reward pool"),
-    };
+fn assert_claimed_gem(gem: &eth::IGem::GemData, expected: &eth::IGemFactory::GemIssued) {
     assert_eq!(gem.owner, expected.owner);
-    assert_eq!(gem.gemType, kind);
     assert_eq!(gem.state, 0, "agent reward Gem must be born Issued");
     assert_eq!(gem.promisLoadMinor, expected.promisLoadMinor);
     assert_eq!(gem.entryPriceMinor, expected.entryPriceMinor);
@@ -774,7 +767,6 @@ mod claim_tests {
         eth::IGem::GemData {
             gemId: U256::from(7),
             owner: Address::repeat_byte(1),
-            gemType: 2,
             state: 0,
             promisLoadMinor: U256::from(123),
             entryPriceMinor: U256::from(1_000_001),
@@ -787,13 +779,13 @@ mod claim_tests {
             callWindow: 0,
             callThreshold: 0,
             settlementDeadline: 0,
+            groupKey: Default::default(),
         }
     }
 
-    fn issued_gem(gem_type: u8) -> eth::IGemFactory::GemIssued {
+    fn issued_gem() -> eth::IGemFactory::GemIssued {
         eth::IGemFactory::GemIssued {
             gemId: U256::from(7),
-            gemType: gem_type,
             owner: Address::repeat_byte(1),
             promisLoadMinor: U256::from(123),
             entryPriceMinor: U256::from(1_000_001),
@@ -805,23 +797,22 @@ mod claim_tests {
             callThreshold: 0,
             callNoticePeriod: 0,
             positionId: U256::ZERO,
-            bucketKey: Default::default(),
+            groupKey: Default::default(),
         }
     }
 
     #[test]
     fn agent_claim_oracle_rejects_wrong_recipient_load_pool_and_price() {
-        let expected = issued_gem(2);
-        let check = |gem: &eth::IGem::GemData| assert_claimed_gem(gem, WAA_POOL, &expected);
+        let expected = issued_gem();
+        let check = |gem: &eth::IGem::GemData| assert_claimed_gem(gem, &expected);
         check(&wallet_gem());
-        for mutation in 0..6 {
+        for mutation in 0..5 {
             let mut gem = wallet_gem();
             match mutation {
                 0 => gem.owner = Address::repeat_byte(2),
                 1 => gem.promisLoadMinor += U256::ONE,
-                2 => gem.gemType = 1,
-                3 => gem.entryPriceMinor += U256::ONE,
-                4 => gem.state = 1,
+                2 => gem.entryPriceMinor += U256::ONE,
+                3 => gem.state = 1,
                 _ => gem.referenceCurrency = 978,
             }
             assert!(
@@ -829,8 +820,5 @@ mod claim_tests {
                 "accepted wrong Gem field {mutation}"
             );
         }
-        let mut sra = wallet_gem();
-        sra.gemType = 1;
-        assert_claimed_gem(&sra, SRA_POOL, &issued_gem(1));
     }
 }

@@ -54,9 +54,8 @@ fn world() -> (HashMapStorageProvider, SeriesId) {
         api::record_settled_units(&s, id, 3).unwrap();
         api::record_exercised_units(&s, id, Address::repeat_byte(1), 1).unwrap();
         api::record_gem_factory_units(&s, id, Address::repeat_byte(1), 2).unwrap();
-        api::record_called(&s, id, ISSUED).unwrap();
         IntexContract::new(s.clone())
-            .seed_called_group(840, WorldwideDay::new(WWD), DEADLINE, &[id])
+            .seed_called_group(id, DEADLINE)
             .unwrap();
         assert_eq!(
             PromisLimitContract::new(s).get_total_unallocated().unwrap(),
@@ -93,15 +92,15 @@ fn ledger(p: &mut HashMapStorageProvider, id: SeriesId, terminal: bool) {
             units.active + units.settled + units.exercised + units.gem_factory + units.forfeited,
             10
         );
-        let key = IntexContract::scoped(840, WWD);
         let factory = IntexContract::new(s.clone());
-        let pending = factory.call_group_count.read(&key).unwrap();
+        let key = api::read_series(&s, id).unwrap().group_key();
+        let pending = u32::from(factory.called_group_slot.read(&key).unwrap() != 0);
         let returned = PromisLimitContract::new(s).get_total_unallocated().unwrap();
         if terminal {
             assert_eq!((units.active, units.forfeited, pending), (0, 5, 0));
             assert_eq!(returned, U256::from(5 * LOAD));
             assert_eq!(factory.expiry_tree_root.read().unwrap(), U256::ZERO);
-            assert_eq!(factory.called_group_slot.read(&key).unwrap(), 0);
+            assert!(factory.first_cleanup_hour().unwrap().is_some());
         } else {
             assert!(pending <= 1);
             assert_eq!(
@@ -133,9 +132,7 @@ fn partial_intex_expiry_returns_only_five_unpaid_units_and_never_paid_or_convert
     let events = p
         .get_events(INTEX_ADDRESS)
         .iter()
-        .filter_map(|e| {
-            outbe_intex::precompile::IIntex::IntexSeriesExpired::decode_log_data(e).ok()
-        })
+        .filter_map(|e| outbe_intex::precompile::IIntex::IntexGroupExpired::decode_log_data(e).ok())
         .collect::<Vec<_>>();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].forfeitedUnits, 5);
@@ -167,7 +164,7 @@ fn every_intex_expiry_write_failure_preserves_credit_debt_and_retries_exactly_on
                 .get_events(INTEX_ADDRESS)
                 .iter()
                 .filter_map(|e| {
-                    outbe_intex::precompile::IIntex::IntexSeriesExpired::decode_log_data(e).ok()
+                    outbe_intex::precompile::IIntex::IntexGroupExpired::decode_log_data(e).ok()
                 })
                 .count();
             assert_eq!(closed, 1);

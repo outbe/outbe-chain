@@ -6,7 +6,7 @@ pub const NOD_BODY_SCHEMA_V2: u32 = 2;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NodItemBodyV2 {
     pub encrypted: EncryptedNodV2,
-    pub bucket_key: B256,
+    pub group_key: B256,
     pub issued_at: u64,
     pub is_settled: bool,
 }
@@ -26,7 +26,7 @@ pub fn encode_nod_item_v2(body: &NodItemBodyV2) -> Result<Vec<u8>, CanonicalBody
     encode_bytes_field(8, &t.entry_price_minor.to_be_bytes::<32>(), &mut out);
     encode_optional_varint_field(9, u64::from(t.issuance_currency), &mut out);
     encode_optional_varint_field(10, u64::from(t.reference_currency), &mut out);
-    encode_bytes_field(11, body.bucket_key.as_slice(), &mut out);
+    encode_bytes_field(11, body.group_key.as_slice(), &mut out);
     encode_optional_varint_field(12, body.issued_at, &mut out);
     encode_optional_varint_field(13, u64::from(body.is_settled), &mut out);
     encode_bytes_field(14, body.encrypted.encryption_binding.as_slice(), &mut out);
@@ -44,7 +44,7 @@ pub fn decode_nod_item_v2(bytes: &[u8]) -> Result<NodItemBodyV2, CanonicalBodyEr
     let entry_price_minor = decode_u256(required_bytes(&mut f, 8)?, 8)?;
     let issuance_currency = optional_u16(&mut f, 9)?;
     let reference_currency = optional_u16(&mut f, 10)?;
-    let bucket_key = B256::from(fixed_bytes::<32>(required_bytes(&mut f, 11)?, 11)?);
+    let group_key = B256::from(fixed_bytes::<32>(required_bytes(&mut f, 11)?, 11)?);
     let issued_at = optional_varint(&mut f, 12)?;
     let is_settled = optional_bool(&mut f, 13)?;
     let encryption_binding = B256::from(fixed_bytes::<32>(required_bytes(&mut f, 14)?, 14)?);
@@ -65,7 +65,7 @@ pub fn decode_nod_item_v2(bytes: &[u8]) -> Result<NodItemBodyV2, CanonicalBodyEr
             encrypted_creator_public_key,
             encrypted_gratis_amount,
         },
-        bucket_key,
+        group_key,
         issued_at,
         is_settled,
     };

@@ -91,13 +91,6 @@ pub fn issue_intex(
         })
         .collect();
 
-    // Enroll into the call-price bin index the daily Called scan walks.
-    intex.insert_call_bin(
-        params.series_id,
-        params.reference_currency,
-        call_price_minor,
-    )?;
-
     emit_event(
         storage,
         crate::precompile::IIntexFactory::IntexSeriesIssued {
@@ -208,8 +201,7 @@ pub(crate) fn owner_balances(
     owner: Address,
 ) -> Result<crate::precompile::IIntexFactory::OwnerBalances> {
     let series = outbe_intex::api::read_series(storage, series_id)?;
-    let now = storage.timestamp()?.to::<u64>();
-    let issued = if series.effective_state(now)? == IntexState::Expired {
+    let issued = if outbe_intex::api::state(storage, &series)? == IntexState::Expired {
         0
     } else {
         nft_units_of(storage, owner, issued_token_id(series_id))?
@@ -305,16 +297,9 @@ pub fn settle_intex(
 }
 
 fn require_settleable(storage: &StorageHandle<'_>, series: &SeriesRecord) -> Result<()> {
-    match series.lifecycle_state()? {
-        IntexState::Called => {
-            let now = storage.timestamp()?.to::<u64>();
-            if now > series.settlement_deadline() {
-                return Err(IntexFactoryError::SettlementDeadlinePassed.into());
-            }
-            Ok(())
-        }
-        IntexState::Issued => Ok(()),
-        _ => Err(IntexFactoryError::NotSettleable(series.state).into()),
+    match outbe_intex::api::state(storage, series)? {
+        IntexState::Issued | IntexState::Called => Ok(()),
+        IntexState::Expired => Err(IntexFactoryError::SettlementDeadlinePassed.into()),
     }
 }
 

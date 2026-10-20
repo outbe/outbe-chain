@@ -15,15 +15,6 @@ fn fidelity_of(storage: &StorageHandle<'_>, account: Address) -> Vec<u8> {
         .unwrap()
 }
 
-fn call_and_lapse(storage: &StorageHandle<'_>, id: U256) {
-    let credis = CredisContract::new(storage.clone());
-    let mut p = credis.get_credis(id).unwrap();
-    p.state = CredisState::Called as u8;
-    p.called_at = CREATED_AT;
-    credis.records.update(&p).unwrap();
-    advance_to(storage, CREATED_AT + NOTICE + 1);
-}
-
 fn expect_issue_error(
     storage: &StorageHandle<'_>,
     caller: Address,
@@ -322,9 +313,9 @@ fn forfeit_burns_only_remaining_credis_backing_and_leaves_fidelity_untouched() {
         let reserve = PromisLimitContract::new(storage.clone())
             .get_total_unallocated()
             .unwrap();
-        call_and_lapse(&storage, id);
-        runtime::forfeit_credis(storage.clone(), id).unwrap();
-        assert!(runtime::forfeit_credis(storage.clone(), id).is_err());
+        call_credis(&storage, id, CREATED_AT);
+        assert_eq!(lapse(&storage, id), 1);
+        assert_eq!(expire(&storage, now_of(&storage)), 0);
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
         assert_eq!(view_pledged(&storage, bob()), pledge_cost());
         assert_eq!(

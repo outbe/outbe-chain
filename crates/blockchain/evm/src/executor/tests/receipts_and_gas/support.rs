@@ -249,6 +249,17 @@ pub(super) fn assert_dense_agent_settlement(
         U256::ZERO,
         "GAS-05: AgentReward holds no native COEN"
     );
+    assert_eq!(
+        agent.accrual_head.read()?,
+        agent.accrual_tail.read()?,
+        "GAS-05: one CycleTick must finish a day that fills one accrual slice"
+    );
+    let carry_over =
+        outbe_promislimit::PromisLimitContract::new(storage.clone()).get_total_unallocated()?;
+    assert!(
+        carry_over < U256::from(2 * address_count),
+        "GAS-05: the carry-over takes only the WAA and SRA rounding residue"
+    );
     Ok(())
 }
 
