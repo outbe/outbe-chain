@@ -118,7 +118,7 @@ contract AuctionSignatureTest is Test {
             commitBondMinor: 0
         });
         vm.prank(bridger);
-        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Green, schedule, params);
+        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Live, schedule, params);
     }
 
     function _enterReveal(uint32) internal {
@@ -226,8 +226,8 @@ contract AuctionSignatureTest is Test {
             commitBondMinor: 0
         });
         vm.startPrank(bridger);
-        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Green, schedule, params);
-        other.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Green, schedule, params);
+        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Live, schedule, params);
+        other.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Live, schedule, params);
         vm.stopPrank();
 
         // Bidder signs for `auction` (verifyingContract=auction). Attacker tries to replay on

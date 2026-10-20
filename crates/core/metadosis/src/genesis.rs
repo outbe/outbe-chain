@@ -9,7 +9,7 @@ use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 
 use crate::{
-    aggregate::{ValidatedWwdAggregate, WwdDayType, WwdStatus},
+    aggregate::{ValidatedWwdAggregate, WwdStatus},
     errors::MetadosisStorageCorruptionError,
     schema::{status, MetadosisContract, WorldwideDay as WorldwideDayRecord},
 };
@@ -19,15 +19,12 @@ use crate::{
 pub struct GenesisWorldwideDay {
     pub worldwide_day: WorldwideDay,
     pub status: WwdStatus,
-    pub day_type: WwdDayType,
     pub forming_start: u64,
     pub forming_end: u64,
     pub lookback_end: u64,
     pub offering_end: u64,
     pub scheduled_process_time: u64,
     pub metadosis_limit_minor: U256,
-    pub previous_vwap_minor: U256,
-    pub current_vwap_minor: U256,
 }
 
 impl GenesisWorldwideDay {
@@ -40,9 +37,6 @@ impl GenesisWorldwideDay {
                 MetadosisStorageCorruptionError::GenesisBuilderOnlyAcceptsOfferingOrReadyPredecessors
                     .into(),
             );
-        }
-        if self.day_type == WwdDayType::Unknown {
-            return Err(MetadosisStorageCorruptionError::GenesisWwdRequiresKnownDayType.into());
         }
         if ![
             self.forming_start,
@@ -152,15 +146,12 @@ impl GenesisOperation {
         contract.worldwide_days.create(&WorldwideDayRecord {
             wwd: day.worldwide_day,
             status: status_tag(day.status),
-            day_type: day.day_type.as_u8(),
             forming_start: day.forming_start,
             forming_end: day.forming_end,
             lookback_end: day.lookback_end,
             offering_end: day.offering_end,
             scheduled_process_time: day.scheduled_process_time,
             metadosis_limit_minor: day.metadosis_limit_minor,
-            previous_vwap_minor: day.previous_vwap_minor,
-            current_vwap_minor: day.current_vwap_minor,
         })?;
         contract.active_wwd.insert(day.worldwide_day)?;
         Ok(Some(true))
@@ -243,15 +234,12 @@ mod tests {
         GenesisWorldwideDay {
             worldwide_day: DAY,
             status: WwdStatus::Offering,
-            day_type: WwdDayType::Green,
             forming_start: 10,
             forming_end: 20,
             lookback_end: 30,
             offering_end: 40,
             scheduled_process_time: 40,
             metadosis_limit_minor: U256::from(100),
-            previous_vwap_minor: U256::from(8),
-            current_vwap_minor: U256::from(9),
         }
     }
 

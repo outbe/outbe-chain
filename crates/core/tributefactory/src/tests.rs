@@ -2,7 +2,7 @@ use alloy_primitives::{Address, Bytes, B256, U256};
 use outbe_agentreward::AgentRewardContract;
 use outbe_metadosis::{
     genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay},
-    WwdDayType, WwdStatus,
+    WwdStatus,
 };
 use outbe_oracle::{
     genesis::{init_from_genesis, OracleGenesisConfig},
@@ -321,15 +321,12 @@ fn seed_offer_world(storage: StorageHandle<'_>, target_days: &[WorldwideDay]) {
         metadosis = metadosis.seed_active_worldwide_day(GenesisWorldwideDay {
             worldwide_day,
             status: WwdStatus::Offering,
-            day_type: WwdDayType::Green,
             forming_start: offset + 1,
             forming_end: offset + 2,
             lookback_end: offset + 3,
             offering_end: offset + 4,
             scheduled_process_time: offset + 5,
             metadosis_limit_minor: U256::from(100),
-            previous_vwap_minor: U256::from(90),
-            current_vwap_minor: U256::from(100),
         });
     }
     metadosis.apply(storage.clone()).unwrap();

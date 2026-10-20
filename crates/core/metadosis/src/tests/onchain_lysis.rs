@@ -158,7 +158,7 @@ fn fixture_with_amounts(limit: u64, amounts: &[u64]) -> HashMapStorageProvider {
         arm_reference_price(&storage, CLOCK);
         let mut metadosis = MetadosisContract::new(storage.clone());
         metadosis
-            .fixture_create_ready_day(DAY, U256::from(limit), U256::ONE, U256::ONE)
+            .fixture_create_ready_day(DAY, U256::from(limit))
             .unwrap();
         metadosis.add_active_wwd(DAY).unwrap();
         let mut tribute = TributeContract::new(storage.clone());

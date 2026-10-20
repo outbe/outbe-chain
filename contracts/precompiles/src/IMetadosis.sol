@@ -71,7 +71,6 @@ interface IMetadosis {
         uint256 metadosisLimitMinor,
         uint256 promisLimitReturnedMinor,
         string status,
-        string dayState,
         string action
     );
 
@@ -85,14 +84,11 @@ interface IMetadosis {
         view
         returns (
             uint8 status,
-            uint8 dayType,
             uint64 formingStart,
             uint64 formingEnd,
             uint64 lookbackEnd,
             uint64 offeringEnd,
-            uint64 scheduledProcessTime,
-            uint256 previousVwapMinor,
-            uint256 currentVwapMinor
+            uint64 scheduledProcessTime
         );
 
     function getActiveWorldwideDays() external view returns (uint32[] memory wwds);

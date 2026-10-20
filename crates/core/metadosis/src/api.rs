@@ -6,7 +6,7 @@ use crate::{
     schema::MetadosisContract,
 };
 
-pub use crate::aggregate::{WwdDayType, WwdStatus as WorldwideDayStatus};
+pub use crate::aggregate::WwdStatus as WorldwideDayStatus;
 pub use crate::state::DayLimitFormationReceipt;
 pub use crate::terminal::{CapacityForfeitureReceipt, MissedOfferingReceipt};
 
@@ -37,9 +37,8 @@ pub fn worldwide_day(
         ),
     };
     let status = WwdStatus::try_from(record.status)?;
-    let day_type = record.day_type.try_into()?;
     Ok(Some(WwdProjection::from_record(
-        wwd, status, day_type, membership, &record,
+        wwd, status, membership, &record,
     )))
 }
 

@@ -1,7 +1,7 @@
 use super::*;
 use alloy_primitives::{Address, U256};
 use outbe_metadosis::genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay};
-use outbe_metadosis::{WwdDayType, WwdStatus};
+use outbe_metadosis::WwdStatus;
 use outbe_primitives::{
     addresses::{METADOSIS_ADDRESS, ORACLE_ADDRESS, TRIBUTE_ADDRESS},
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
@@ -325,17 +325,9 @@ fn seed_public_measurement_day(
         ));
     }
     let worldwide_day = day.worldwide_day;
-    let previous_day = worldwide_day.previous_date_key();
     write_measurement_vwaps(storage.clone(), day)?;
-    let stored_previous = outbe_oracle::api::day_type_pair_vwap(storage.clone(), previous_day)?
-        .ok_or_else(|| fatal("native Tribute fixture previous VWAP is missing"))?;
     let stored_current = outbe_oracle::api::day_type_pair_vwap(storage.clone(), worldwide_day)?
         .ok_or_else(|| fatal("native Tribute fixture current VWAP is missing"))?;
-    let day_type = if stored_current > stored_previous {
-        WwdDayType::Green
-    } else {
-        WwdDayType::Red
-    };
     let entry_price = stored_current.max(outbe_oracle::api::get_max_active_scurve_value(
         storage.clone(),
         worldwide_day,
@@ -359,15 +351,12 @@ fn seed_public_measurement_day(
         .seed_active_worldwide_day(GenesisWorldwideDay {
             worldwide_day,
             status: WwdStatus::Offering,
-            day_type,
             forming_start: day.forming_start,
             forming_end: day.genesis_timestamp,
             lookback_end: day.genesis_timestamp,
             offering_end: day.offering_end,
             scheduled_process_time: day.offering_end,
             metadosis_limit_minor: day_limit,
-            previous_vwap_minor: stored_previous,
-            current_vwap_minor: stored_current,
         })
         .apply(storage.clone())?;
     outbe_tribute::TributeContract::new(storage).unseal_day(worldwide_day)?;

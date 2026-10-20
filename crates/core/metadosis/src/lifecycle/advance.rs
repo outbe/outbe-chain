@@ -3,7 +3,7 @@ use super::effects::{
 };
 use crate::{
     aggregate::{ValidatedWwdAggregate, WwdProjection},
-    commit::commit_outer_transition_with_rate,
+    commit::commit_outer_transition,
     reducer::{
         reduce_outer_wwd, OuterWwdEvent, OuterWwdTransition, OuterWwdTransitionKind, WwdAdvanceEdge,
     },
@@ -46,13 +46,11 @@ impl<'storage> AdvanceTick<'_, 'storage> {
         &'a self,
         current: &'a WwdProjection,
         transition: &'a OuterWwdTransition,
-        rate_resolution: Option<crate::commit::WwdRateResolution>,
     ) -> WwdEffect<'a, 'storage> {
         WwdEffect {
             ctx: self.ctx,
             current,
             transition,
-            rate_resolution,
         }
     }
 
@@ -111,28 +109,17 @@ impl<'storage> AdvanceTick<'_, 'storage> {
         metadosis: &mut MetadosisContract<'_>,
         step: AdvanceStep<'_>,
     ) -> Result<()> {
-        let rate = apply_wwd_advance_edges(
-            metadosis,
-            step.current.worldwide_day,
-            step.edges,
-            crate::errors::MetadosisStorageCorruptionError::MissedOfferingResolvedRateMoreThanOnce,
-        )?;
-        apply_missed_offering(metadosis, self.effect(step.current, step.transition, rate))
+        apply_wwd_advance_edges(metadosis, step.current.worldwide_day, step.edges)?;
+        apply_missed_offering(metadosis, self.effect(step.current, step.transition))
     }
 
     fn advance(&self, metadosis: &mut MetadosisContract<'_>, step: AdvanceStep<'_>) -> Result<()> {
-        let rate = apply_wwd_advance_edges(
-            metadosis,
-            step.current.worldwide_day,
-            step.edges,
-            crate::errors::MetadosisStorageCorruptionError::OuterAdvanceResolvedRateMoreThanOnce,
-        )?;
-        commit_outer_transition_with_rate(
+        apply_wwd_advance_edges(metadosis, step.current.worldwide_day, step.edges)?;
+        commit_outer_transition(
             metadosis,
             step.current.worldwide_day,
             step.transition,
             self.ctx.block.block_number,
-            rate,
         )
     }
 
@@ -142,15 +129,10 @@ impl<'storage> AdvanceTick<'_, 'storage> {
         step: AdvanceStep<'_>,
     ) -> Result<()> {
         self.aggregate.validate_capacity_victim(step.current)?;
-        let rate = apply_wwd_advance_edges(
-            metadosis,
-            step.current.worldwide_day,
-            step.edges,
-            crate::errors::MetadosisStorageCorruptionError::CapacityForfeitureResolvedRateMoreThanOnce,
-        )?;
+        apply_wwd_advance_edges(metadosis, step.current.worldwide_day, step.edges)?;
         apply_capacity_forfeiture(
             metadosis,
-            self.effect(step.current, step.transition, rate),
+            self.effect(step.current, step.transition),
             self.aggregate.retained_count(),
         )
     }

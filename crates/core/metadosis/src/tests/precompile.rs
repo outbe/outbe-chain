@@ -40,7 +40,7 @@ fn missing_receipts_have_canonical_empty_abi_returns() {
 
 #[cfg(feature = "test-utils")]
 #[test]
-fn worldwide_day_abi_preserves_genesis_windows_rates_and_membership() {
+fn worldwide_day_abi_preserves_genesis_windows_and_membership() {
     with_storage(|storage| {
         seed_offering_day(storage.clone());
         let day = query(
@@ -48,7 +48,15 @@ fn worldwide_day_abi_preserves_genesis_windows_rates_and_membership() {
             IMetadosis::getWorldwideDayCall { wwd: 20270101 },
         );
         assert_eq!(day.status, status::OFFERING);
-        assert_eq!(day.dayType, day_type::GREEN);
+        // The day carries no colour: the return is the status and the five windows.
+        let raw = metadosis_dispatch(
+            storage.clone(),
+            &IMetadosis::getWorldwideDayCall { wwd: 20270101 }.abi_encode(),
+            Address::ZERO,
+            U256::ZERO,
+        )
+        .unwrap();
+        assert_eq!(raw.len(), 6 * 32);
         assert_eq!(
             (
                 day.formingStart,
@@ -58,10 +66,6 @@ fn worldwide_day_abi_preserves_genesis_windows_rates_and_membership() {
                 day.scheduledProcessTime
             ),
             (10, 20, 30, 40, 50)
-        );
-        assert_eq!(
-            (day.previousVwapMinor, day.currentVwapMinor),
-            (U256::from(8), U256::from(9))
         );
         let active: Vec<u32> = query(storage.clone(), IMetadosis::getActiveWorldwideDaysCall {});
         assert_eq!(active, vec![20270101]);
@@ -88,15 +92,12 @@ pub(super) fn seed_offering_day(storage: StorageHandle<'_>) {
         .seed_active_worldwide_day(GenesisWorldwideDay {
             worldwide_day: 20270101.into(),
             status: crate::WwdStatus::Offering,
-            day_type: crate::WwdDayType::Green,
             forming_start: 10,
             forming_end: 20,
             lookback_end: 30,
             offering_end: 40,
             scheduled_process_time: 50,
             metadosis_limit_minor: U256::from(100),
-            previous_vwap_minor: U256::from(8),
-            current_vwap_minor: U256::from(9),
         })
         .apply(storage.clone())
         .unwrap();

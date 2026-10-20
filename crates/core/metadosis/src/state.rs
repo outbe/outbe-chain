@@ -1,4 +1,4 @@
-use crate::aggregate::{WwdDayType, WwdStatus};
+use crate::aggregate::WwdStatus;
 use crate::constants::*;
 use crate::errors::{MetadosisCallerError, MetadosisStorageCorruptionError};
 use crate::precompile::IMetadosis;
@@ -54,20 +54,6 @@ impl MetadosisContract<'_> {
         schedule: crate::commit::NewWwdSchedule,
     ) -> Result<()> {
         self.create_worldwide_day_raw(wwd, schedule)
-    }
-
-    pub(crate) fn commit_set_wwd_rate_resolution(
-        &mut self,
-        _permit: &crate::commit::CommitPermit<'_>,
-        wwd: WorldwideDayKey,
-        resolution: crate::commit::WwdRateResolution,
-    ) -> Result<()> {
-        let day = self.worldwide_days.entry(wwd);
-        day.previous_vwap_minor()
-            .write(resolution.previous_vwap_minor)?;
-        day.current_vwap_minor()
-            .write(resolution.current_vwap_minor)?;
-        day.day_type().write(resolution.day_type.as_u8())
     }
 
     pub(crate) fn commit_write_day_limit_formation(
@@ -143,15 +129,12 @@ impl MetadosisContract<'_> {
         self.worldwide_days.create(&WorldwideDay {
             wwd,
             status: WwdStatus::Forming.as_u8(),
-            day_type: WwdDayType::Unknown.as_u8(),
             forming_start,
             forming_end,
             lookback_end,
             offering_end,
             scheduled_process_time,
             metadosis_limit_minor: U256::ZERO,
-            previous_vwap_minor: U256::ZERO,
-            current_vwap_minor: U256::ZERO,
         })
     }
 
@@ -229,10 +212,6 @@ impl MetadosisContract<'_> {
 
     pub fn get_wwd_status(&self, wwd: WorldwideDayKey) -> Result<WwdStatus> {
         WwdStatus::try_from(self.worldwide_days.entry(wwd).status().read()?)
-    }
-
-    pub fn get_wwd_day_type(&self, wwd: WorldwideDayKey) -> Result<WwdDayType> {
-        WwdDayType::try_from(self.worldwide_days.entry(wwd).day_type().read()?)
     }
 
     /// Moves a now-terminal day out of the active set and onto the bounded

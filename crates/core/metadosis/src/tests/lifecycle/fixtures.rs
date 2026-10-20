@@ -3,7 +3,6 @@ use super::*;
 pub(super) fn create_waiting_day(
     storage: &StorageHandle,
     wwd: outbe_primitives::time::WorldwideDay,
-    dtype: u8,
     day_limit: U256,
 ) -> u64 {
     let mut metadosis = MetadosisContract::new(storage.clone());
@@ -16,9 +15,6 @@ pub(super) fn create_waiting_day(
         )
         .unwrap();
     metadosis.add_active_wwd(wwd).unwrap();
-    metadosis
-        .set_wwd_day_type(wwd, WwdDayType::try_from(dtype).unwrap())
-        .unwrap();
     metadosis
         .fixture_set_wwd_status(wwd, WwdStatus::Waiting)
         .unwrap();

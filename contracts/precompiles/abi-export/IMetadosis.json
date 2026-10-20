@@ -116,11 +116,6 @@
         "internalType": "uint8"
       },
       {
-        "name": "dayType",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
         "name": "formingStart",
         "type": "uint64",
         "internalType": "uint64"
@@ -144,16 +139,6 @@
         "name": "scheduledProcessTime",
         "type": "uint64",
         "internalType": "uint64"
-      },
-      {
-        "name": "previousVwapMinor",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "currentVwapMinor",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -423,12 +408,6 @@
       },
       {
         "name": "status",
-        "type": "string",
-        "indexed": false,
-        "internalType": "string"
-      },
-      {
-        "name": "dayState",
         "type": "string",
         "indexed": false,
         "internalType": "string"

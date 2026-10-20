@@ -1,5 +1,5 @@
 use super::*;
-use crate::{WwdDayType, WwdStatus};
+use crate::WwdStatus;
 use alloy_sol_types::SolEvent;
 use outbe_nod::NodContract;
 use outbe_oracle::schema::OracleContract;

@@ -13,9 +13,6 @@ pub enum MetadosisStorageCorruptionError {
     #[error("Metadosis WWD has unknown status tag {other}")]
     WwdUnknownStatusTag { other: u8 },
 
-    #[error("Metadosis WWD has unknown day-type tag {other}")]
-    WwdUnknownDayTypeTag { other: u8 },
-
     #[error("CapacityForfeiture candidate is older than retained work")]
     CapacityForfeitureCandidateOlderThanRetainedWork,
 
@@ -115,9 +112,6 @@ pub enum MetadosisStorageCorruptionError {
     #[error("CapacityForfeiture commit must terminate from WAITING")]
     CapacityForfeitureCommitMustTerminateFromWaiting,
 
-    #[error("ResolveForming commit requires exactly one typed rate resolution")]
-    ResolveFormingCommitRequiresSingleTypedRateResolution,
-
     #[error("persisted WWD transition is missing a source status")]
     PersistedWwdTransitionMissingSourceStatus,
 
@@ -153,9 +147,6 @@ pub enum MetadosisStorageCorruptionError {
 
     #[error("fresh-devnet genesis builder only accepts OFFERING or READY predecessors")]
     GenesisBuilderOnlyAcceptsOfferingOrReadyPredecessors,
-
-    #[error("fresh-devnet genesis WWD requires a known day type")]
-    GenesisWwdRequiresKnownDayType,
 
     #[error("fresh-devnet genesis WWD phase order is invalid")]
     GenesisWwdPhaseOrderInvalid,
@@ -196,15 +187,6 @@ pub enum MetadosisStorageCorruptionError {
 
     #[error("AdvanceDue produced non-Cycle transition {unexpected:?}")]
     UnexpectedAdvanceDueTransition { unexpected: OuterWwdTransitionKind },
-
-    #[error("missed offering resolved one WWD rate more than once")]
-    MissedOfferingResolvedRateMoreThanOnce,
-
-    #[error("outer advance resolved one WWD rate more than once")]
-    OuterAdvanceResolvedRateMoreThanOnce,
-
-    #[error("capacity forfeiture resolved one WWD rate more than once")]
-    CapacityForfeitureResolvedRateMoreThanOnce,
 
     #[error("CapacityForfeiture requires the exact retained admission cap")]
     CapacityForfeitureRequiresExactRetainedAdmissionCap,
@@ -257,9 +239,6 @@ pub enum MetadosisStorageCorruptionError {
 
     #[error("Metadosis split exceeds the day limit")]
     SplitExceedsDayLimit,
-
-    #[error("accepted Desis brief exceeds the Metadosis routing limit")]
-    AcceptedDesisBriefExceedsRoutingLimit,
 
     #[error("Desis rejection receipt does not match the dispatched limit")]
     DesisRejectionReceiptMismatchDispatchedLimit,

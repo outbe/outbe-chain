@@ -171,7 +171,7 @@ interface IOriginRouter {
         uint16 minIntexBidQuantity;
         /// @notice Commit-entry bond in protocol units (1e6). 0 disables the bond.
         uint128 commitBondMinor;
-        /// @notice Final worldwide-day state (1 = Green, 2 = Red).
+        /// @notice Final worldwide-day state (1 = Live, 2 = Cancelled).
         uint8 dayState;
     }
 

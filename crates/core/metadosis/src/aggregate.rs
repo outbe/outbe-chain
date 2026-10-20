@@ -10,7 +10,7 @@ use outbe_primitives::{
 use crate::{
     constants::{MAX_ACTIVE_WWDS, MAX_RECORDS_KEPT, MAX_RETAINED_WWDS},
     errors::MetadosisStorageCorruptionError,
-    schema::{day_type, status, MetadosisContract},
+    schema::{status, MetadosisContract},
     terminal::{model::WwdTerminalReceipt, TerminalReceiptValidationContext},
 };
 
@@ -62,40 +62,6 @@ impl PartialEq<u8> for WwdStatus {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(u8)]
-pub enum WwdDayType {
-    Unknown = day_type::UNKNOWN,
-    Green = day_type::GREEN,
-    Red = day_type::RED,
-}
-
-impl TryFrom<u8> for WwdDayType {
-    type Error = PrecompileError;
-
-    fn try_from(value: u8) -> Result<Self> {
-        match value {
-            day_type::UNKNOWN => Ok(Self::Unknown),
-            day_type::GREEN => Ok(Self::Green),
-            day_type::RED => Ok(Self::Red),
-            other => Err(MetadosisStorageCorruptionError::WwdUnknownDayTypeTag { other }.into()),
-        }
-    }
-}
-
-impl PartialEq<u8> for WwdDayType {
-    fn eq(&self, other: &u8) -> bool {
-        self.as_u8() == *other
-    }
-}
-
-impl WwdDayType {
-    #[must_use]
-    pub const fn as_u8(self) -> u8 {
-        self as u8
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WwdMembership {
     Active,
     Closed,
@@ -106,7 +72,6 @@ pub enum WwdMembership {
 pub struct WwdProjection {
     pub worldwide_day: WorldwideDay,
     pub status: WwdStatus,
-    pub day_type: WwdDayType,
     pub membership: WwdMembership,
     pub forming_start: u64,
     pub forming_end: u64,
@@ -114,8 +79,6 @@ pub struct WwdProjection {
     pub offering_end: u64,
     pub scheduled_process_time: u64,
     pub metadosis_limit_minor: U256,
-    pub previous_vwap_minor: U256,
-    pub current_vwap_minor: U256,
 }
 
 impl WwdProjection {
@@ -124,14 +87,12 @@ impl WwdProjection {
     pub(crate) fn from_record(
         worldwide_day: WorldwideDay,
         status: WwdStatus,
-        day_type: WwdDayType,
         membership: WwdMembership,
         record: &crate::schema::WorldwideDay,
     ) -> Self {
         Self {
             worldwide_day,
             status,
-            day_type,
             membership,
             forming_start: record.forming_start,
             forming_end: record.forming_end,
@@ -139,8 +100,6 @@ impl WwdProjection {
             offering_end: record.offering_end,
             scheduled_process_time: record.scheduled_process_time,
             metadosis_limit_minor: record.metadosis_limit_minor,
-            previous_vwap_minor: record.previous_vwap_minor,
-            current_vwap_minor: record.current_vwap_minor,
         }
     }
 }
@@ -282,12 +241,11 @@ fn load_records(
                 },
             )?;
             let status = WwdStatus::try_from(record.status)?;
-            let day_type = WwdDayType::try_from(record.day_type)?;
             validate_record_shape(*wwd, status, membership, &record)?;
             validate_terminal_state(contract, *wwd, status, membership, &record)?;
             records.insert(
                 *wwd,
-                WwdProjection::from_record(*wwd, status, day_type, membership, &record),
+                WwdProjection::from_record(*wwd, status, membership, &record),
             );
         }
     }

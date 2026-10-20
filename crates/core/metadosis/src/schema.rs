@@ -15,13 +15,6 @@ pub mod status {
     pub const FAILED: u8 = 7;
 }
 
-/// Day type values.
-pub mod day_type {
-    pub const UNKNOWN: u8 = 0;
-    pub const GREEN: u8 = 1;
-    pub const RED: u8 = 2;
-}
-
 /// Durable outer-WWD terminal receipt discriminants.
 pub mod terminal_outcome {
     pub const NONE: u8 = 0;
@@ -46,9 +39,7 @@ pub struct WorldwideDay {
     #[attribute(order = 0, default = status::FORMING)]
     pub status: u8,
 
-    #[attribute(order = 1, default = day_type::UNKNOWN)]
-    pub day_type: u8,
-
+    // Order 1 is retired: it held the day colour (OIP-00320).
     #[attribute(order = 2)]
     pub forming_start: u64,
 
@@ -66,12 +57,7 @@ pub struct WorldwideDay {
 
     #[attribute(order = 7, default = U256::ZERO)]
     pub metadosis_limit_minor: U256,
-
-    #[attribute(order = 8, default = U256::ZERO)]
-    pub previous_vwap_minor: U256,
-
-    #[attribute(order = 9, default = U256::ZERO)]
-    pub current_vwap_minor: U256,
+    // Orders 8 and 9 are retired: they held the colour VWAPs (OIP-00320).
 }
 
 /// Semantic replay receipt for the Cycle-owned day-limit slot.

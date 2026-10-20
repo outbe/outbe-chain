@@ -77,7 +77,7 @@ contract IntexAuctionBondTest is Test {
 
         startTs = block.timestamp;
         vm.prank(bridger);
-        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Green, _schedule(), _params(BOND_PROTOCOL));
+        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Live, _schedule(), _params(BOND_PROTOCOL));
     }
 
     // --- Helpers ---
@@ -154,7 +154,7 @@ contract IntexAuctionBondTest is Test {
     function test_CommitBid_ZeroBond_SkipsEscrow() public {
         uint32 freeSeries = worldwideDay + 1;
         vm.prank(bridger);
-        auction.auctionStart(freeSeries, IIntexAuction.WorldwideDayState.Green, _schedule(), _params(0));
+        auction.auctionStart(freeSeries, IIntexAuction.WorldwideDayState.Live, _schedule(), _params(0));
 
         // No approval needed when the series carries no bond.
         address pauper = address(0xF00D);
@@ -214,12 +214,12 @@ contract IntexAuctionBondTest is Test {
 
     // --- claimCommitBond ---
 
-    function test_ClaimCommitBond_RedDay_HasNoBond() public {
+    function test_ClaimCommitBond_CancelledDay_HasNoBond() public {
         uint32 redSeries = worldwideDay + 7;
         vm.prank(bridger);
-        auction.auctionStart(redSeries, IIntexAuction.WorldwideDayState.Red, _schedule(), _params(BOND_PROTOCOL));
+        auction.auctionStart(redSeries, IIntexAuction.WorldwideDayState.Cancelled, _schedule(), _params(BOND_PROTOCOL));
 
-        // A red day is cancelled before anyone can commit, so its penalty window passes with no
+        // A cancelled day is cancelled before anyone can commit, so its penalty window passes with no
         // bond for the escrow to release.
         vm.warp(uint256(startTs) + REVEAL_OFFSET + auction.UNREVEALED_BOND_LOCK_PERIOD());
         vm.prank(outsider);

@@ -17,7 +17,7 @@ pub fn seed_ready_worldwide_days_for_capacity(
         if !worldwide_day.is_valid() {
             return Err(MetadosisTestSupportError::CapacityFixtureInvalidWorldwideDay.into());
         }
-        contract.fixture_create_ready_day(*worldwide_day, U256::ZERO, U256::ZERO, U256::ZERO)?;
+        contract.fixture_create_ready_day(*worldwide_day, U256::ZERO)?;
         contract.add_active_wwd(*worldwide_day)?;
     }
     Ok(())
