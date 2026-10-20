@@ -130,17 +130,10 @@ fn pricing_window_closes(world: &mut World) {
 /// Deploy a six-decimal stablecoin answering `iso_code` with its vault, and register the
 /// vault with the VaultRouter. The vault starts empty on every validator.
 pub(crate) fn register_currency(world: &World, iso_code: u16) -> SettlementCurrency {
-    let url = world.rpc.url(world.validators.primary_port());
-    // `addVault` admits the router's owner alone, and genesis seeds that to validator 0.
-    let owner_key = world
-        .validators
-        .get(0)
-        .evm_key()
-        .expect("VaultRouter owner key");
+    // The router has no owner. The vault enters by validator vote.
     let currency = settlement_currency::deploy_for(
+        world,
         &environment().repo.join("contracts/intex"),
-        &url,
-        &owner_key,
         iso_code,
     )
     .expect("register the settlement currency");

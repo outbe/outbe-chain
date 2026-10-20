@@ -102,7 +102,7 @@ pub(crate) fn preview_rebalance(
 
 /// Resolves both vaults' underlying assets and confirms each vault is still registered
 /// under its own asset. The check uses the enumerable set membership that
-/// `addVault`/`removeVault` maintain. It does not use `vault_reference_currencies`, which
+/// `add_vault`/`remove_vault` maintain. It does not use `vault_reference_currencies`, which
 /// has an upgrade-compatibility hole for vaults registered before the ISO index existed
 /// (see `remove_vault` above).
 fn registered_rebalance_assets(

@@ -82,6 +82,10 @@ pub enum VaultRouterError {
     PreviousDayVwapUnavailable,
     #[error("reference pair unavailable")]
     ReferencePairUnavailable,
+    #[error("approved vault action not found: {0}")]
+    ApprovedVaultActionNotFound(U256),
+    #[error("invalid VaultRouter proposal payload")]
+    InvalidProposalPayload,
 }
 
 impl From<VaultRouterError> for PrecompileError {

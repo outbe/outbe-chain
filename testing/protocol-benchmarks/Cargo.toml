@@ -38,7 +38,7 @@ outbe-tee.workspace = true
 outbe-tee-enclave.workspace = true
 outbe-tribute.workspace = true
 outbe-tributefactory = { workspace = true, features = ["bench-utils"] }
-outbe-vaultrouter.workspace = true
+outbe-vaultrouter = { workspace = true, features = ["test-utils"] }
 outbe-zk-backend.workspace = true
 rand.workspace = true
 rand-commonware.workspace = true

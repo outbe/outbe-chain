@@ -61,15 +61,9 @@ fn prepare(world: &mut World) {
         .expect("bootstrap Credis localnet");
     crate::features::common::start_bootstrapped_localnet(world, &StartOpts::with_voting_window(6));
     let url = world.rpc.url(world.validators.primary_port());
-    let owner_key = world
-        .validators
-        .get(0)
-        .evm_key()
-        .expect("vault router owner");
     let currency = settlement_currency::deploy(
+        world,
         &crate::env::environment().repo.join("contracts/intex"),
-        &url,
-        &owner_key,
     )
     .expect("deploy and register USD vault");
     let (owner_key, owner) = credis::owner();

@@ -2,6 +2,8 @@
 pragma solidity ^0.8.0;
 
 /// @notice Local stablecoin vault routing and authorization surface.
+/// @dev The router has no owner. Validator votes on the VaultRouter vote target add
+///      and remove vaults, liquidity sources and liquidity targets.
 interface IVaultRouter {
     enum StablesSource {
         Unknown,
@@ -14,6 +16,13 @@ interface IVaultRouter {
     enum StablesTarget {
         Unknown,
         Credis
+    }
+
+    /// @notice A vault change that a validator vote approved.
+    enum VaultAction {
+        Unknown,
+        AddVault,
+        RemoveVault
     }
 
     struct LiquidityReservation {
@@ -58,6 +67,7 @@ interface IVaultRouter {
     error CredisOwnerMismatch();
     error ReservationInsufficient(uint256 availableMinor, uint256 requiredMinor);
     error InvalidReservationAmount();
+    error ApprovedVaultActionNotFound(uint256 proposalId);
 
     event VaultAdded(uint16 indexed isoCode, address indexed asset, address indexed vault);
     event VaultRemoved(uint16 indexed isoCode, address indexed asset, address indexed vault);
@@ -65,6 +75,15 @@ interface IVaultRouter {
     event LiquiditySourceRemoved(address indexed sourceAddress, StablesSource sourceType);
     event LiquidityTargetAdded(address indexed targetAddress, StablesTarget targetType);
     event LiquidityTargetRemoved(address indexed targetAddress, StablesTarget targetType);
+
+    /// @notice A validator vote approved `action` on `vault`. Anyone can now apply it
+    ///         with {applyApproved}.
+    event VaultActionApproved(uint256 indexed proposalId, address indexed vault, VaultAction action);
+    /// @notice A newer approved action on the same vault deleted this pending action.
+    event VaultActionSuperseded(uint256 indexed proposalId, address indexed vault, uint256 indexed supersededBy);
+    /// @notice {applyApproved} deleted this action without applying it, because the
+    ///         action expired.
+    event VaultActionExpired(uint256 indexed proposalId, address indexed vault, VaultAction action);
 
     event LiquidityDeposited(
         address indexed source, address indexed vault, uint256 assetsMinor, uint256 shares, StablesSource sourceType
@@ -140,29 +159,25 @@ interface IVaultRouter {
     /// @notice Returns the liquidity target at `index`. Reverts if out of bounds.
     function liquidityTargetAt(uint256 index) external view returns (address targetAddress, StablesTarget targetType);
 
-    // TODO remove after implementation governance
-    /// @notice Registers a vault. Reverts if already registered.
-    function addVault(address vault) external;
+    /// @notice Applies the vault change that the validator vote `proposalId` approved.
+    ///         Anyone can call. AddVault reverts unless the vault asset is not zero,
+    ///         the vault owner is renounced, the asset ISO code is valid and the vault
+    ///         is not registered. It then sets the vault allowance to the maximum.
+    ///         RemoveVault reverts unless the vault is registered. It then sets the
+    ///         vault allowance to zero.
+    /// @dev Reverts if `proposalId` has no pending action. A successful call deletes
+    ///      the action. A reverted call keeps it. An action expires when the block
+    ///      number is more than its approval block plus the governance voting window.
+    ///      A call on an expired action deletes it, emits {VaultActionExpired} and
+    ///      does not apply it.
+    function applyApproved(uint256 proposalId) external;
 
-    // TODO remove after implementation governance
-    /// @notice Removes a previously registered vault for `asset`. Reverts if not found.
-    function removeVault(address vault) external;
-
-    // TODO remove after implementation governance
-    /// @notice Registers `sourceAddress` as an authorized liquidity source of `sourceType`.
-    function addLiquiditySource(address sourceAddress, StablesSource sourceType) external;
-
-    // TODO remove after implementation governance
-    /// @notice Deregisters a previously registered liquidity source. Reverts if not found.
-    function removeLiquiditySource(address sourceAddress) external;
-
-    // TODO remove after implementation governance
-    /// @notice Registers `targetAddress` as an authorized liquidity target of `targetType`.
-    function addLiquidityTarget(address targetAddress, StablesTarget targetType) external;
-
-    // TODO remove after implementation governance
-    /// @notice Deregisters a previously registered liquidity target. Reverts if not found.
-    function removeLiquidityTarget(address targetAddress) external;
+    /// @notice The pending vault change that the validator vote `proposalId` approved.
+    ///         Returns `VaultAction.Unknown` if no action is pending under `proposalId`.
+    function approvedVaultAction(uint256 proposalId)
+        external
+        view
+        returns (VaultAction action, address vault, uint64 approvedAt);
 
     /// @notice Deposits `assetsMinor` of `asset` into the asset's vault on behalf of the
     ///         caller. The caller (`msg.sender`) must be a registered liquidity source.
@@ -171,10 +186,6 @@ interface IVaultRouter {
     /// @notice Redeems `amountMinor` of `asset` from the vault and tops it up into `receiver`.
     ///         The caller (`msg.sender`) must be a registered liquidity target.
     function withdraw(address asset, uint256 amountMinor, address receiver) external returns (uint256 burnedShares);
-
-    // TODO remove after implementation governance
-    /// @notice Returns the current owner (admin) of the vault router.
-    function owner() external view returns (address);
 
     /// @notice Returns vault shares currently held by this provider.
     function sharesBalance(address vault) external view returns (uint256);

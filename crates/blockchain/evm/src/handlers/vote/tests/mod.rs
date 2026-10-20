@@ -1,4 +1,5 @@
-//! Vote target wiring tests: L2 registration and public bonded admission.
+//! Vote target wiring tests: L2 registration, public bonded admission and
+//! VaultRouter changes.
 
 use super::*;
 use alloy_sol_types::SolEvent;
@@ -16,6 +17,7 @@ use outbe_vote::precompile::IVote;
 use outbe_vote::schema::{BondSettlement, Vote};
 
 mod factory;
+mod vault_router;
 
 const VALIDATOR_OWNER: Address = Address::repeat_byte(0xff);
 const VALIDATOR_A: Address = Address::repeat_byte(0xa1);

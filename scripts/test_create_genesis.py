@@ -491,6 +491,32 @@ class SeedStageTests(unittest.TestCase):
             slot20 = "0x" + f"{20:064x}"  # validator_count
             self.assertEqual(int(validator_set["storage"][slot20], 16), 4)
 
+    def test_the_vault_router_has_no_owner_and_keeps_its_routes(self):
+        """The baseline (testnet.yaml) seeds no VaultRouter owner: slot 0 stays
+        empty. The liquidity sources and the target are still seeded."""
+        with tempfile.TemporaryDirectory() as tmp:
+            seeded = self.seed_once(pathlib.Path(tmp), minimal_config(tmp))
+
+            storage = seeded["alloc"][SEED_GENESIS.VAULT_ROUTER_ADDRESS]["storage"]
+
+            def slot(index: int) -> str:
+                return "0x" + f"{index:064x}"
+
+            self.assertEqual(int(storage.get(slot(0), "0x0"), 16), 0)
+            self.assertEqual(
+                int(storage[slot(4)], 16), len(SEED_GENESIS.VAULT_ROUTER_LIQUIDITY_SOURCES)
+            )
+            self.assertEqual(
+                int(storage[slot(7)], 16), len(SEED_GENESIS.VAULT_ROUTER_LIQUIDITY_TARGETS)
+            )
+
+    def test_a_vault_router_owner_cannot_be_configured(self):
+        config = minimal_config("./keys") | {
+            "vault_router": {"owner": f"0x{'11' * 20}"}
+        }
+        with self.assertRaisesRegex(ValueError, "vault_router"):
+            CG.validate_config(config)
+
     def test_a_nod_profile_reaches_the_nod_selector_slot(self):
         with tempfile.TemporaryDirectory() as tmp:
             config = minimal_config(tmp) | {"nod_profile": {"profile": "dev"}}
@@ -698,7 +724,6 @@ class ExampleFileTests(unittest.TestCase):
             "validator_set",
             "radicle_registry",
             "intex_profile",
-            "vault_router",
             "oracle",
         ):
             self.assertEqual(

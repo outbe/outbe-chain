@@ -6,7 +6,7 @@ use outbe_primitives::{
     addresses::CREDIS_FACTORY_ADDRESS,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
-use outbe_vaultrouter::{api::IVaultRouter, VaultRouterContract};
+use outbe_vaultrouter::{api::IVaultRouter, test_support};
 
 use super::support::{capture_execution, elapsed_ns};
 use crate::{
@@ -16,7 +16,6 @@ use crate::{
 
 const CHAIN_ID: u64 = 1;
 const BLOCK_GAS_LIMIT: u64 = 30_000_000;
-const ADMIN: Address = Address::repeat_byte(0xa1);
 const ASSET: Address = Address::repeat_byte(0x88);
 const VAULT: Address = Address::repeat_byte(0x77);
 const RECEIVER: Address = Address::repeat_byte(0xaa);
@@ -24,22 +23,14 @@ const AMOUNT: u64 = 2_000_000;
 
 sol! {
     interface IERC20Boundary {
-        function approve(address spender, uint256 amount) external returns (bool);
         function transfer(address to, uint256 amount) external returns (bool);
         function balanceOf(address account) external view returns (uint256);
     }
 
     interface IVaultV2Boundary {
-        function asset() external view returns (address);
-        function owner() external view returns (address);
         function previewWithdraw(uint256 assets) external view returns (uint256 shares);
         function withdraw(uint256 assets, address receiver, address onBehalf) external returns (uint256 shares);
     }
-
-    interface IReferenceCurrencyBoundary {
-        function isoCode() external view returns (uint16);
-    }
-
 }
 
 pub struct CredisVaultBoundaryScenario;
@@ -77,26 +68,6 @@ impl BenchmarkScenario for CredisVaultBoundaryScenario {
     fn prepare(&self, _profile: Profile) -> Result<Self::Prepared, String> {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
         provider.stub_sub_call_at_selector(
-            VAULT,
-            IVaultV2Boundary::assetCall::SELECTOR,
-            Bytes::from((ASSET,).abi_encode_params()),
-        );
-        provider.stub_sub_call_at_selector(
-            VAULT,
-            IVaultV2Boundary::ownerCall::SELECTOR,
-            Bytes::from((Address::ZERO,).abi_encode_params()),
-        );
-        provider.stub_sub_call_at_selector(
-            ASSET,
-            IReferenceCurrencyBoundary::isoCodeCall::SELECTOR,
-            Bytes::from((840_u16,).abi_encode_params()),
-        );
-        provider.stub_sub_call_at_selector(
-            ASSET,
-            IERC20Boundary::approveCall::SELECTOR,
-            Bytes::new(),
-        );
-        provider.stub_sub_call_at_selector(
             ASSET,
             IERC20Boundary::transferCall::SELECTOR,
             Bytes::new(),
@@ -117,21 +88,17 @@ impl BenchmarkScenario for CredisVaultBoundaryScenario {
             Bytes::from((U256::from(AMOUNT),).abi_encode_params()),
         );
 
+        // The router has no owner. Seed the state that an approved AddVault vote
+        // and the genesis liquidity target leave.
         StorageHandle::enter(&mut provider, |storage| {
-            VaultRouterContract::new(storage.clone())
-                .owner
-                .write(ADMIN)
-                .map_err(|error| error.to_string())?;
-            outbe_vaultrouter::runtime::add_vault(storage.clone(), ADMIN, VAULT)
-                .map_err(|error| error.to_string())?;
-            outbe_vaultrouter::runtime::add_liquidity_target(
-                storage,
-                ADMIN,
+            test_support::register_vault(&storage, ASSET, VAULT, 840)?;
+            test_support::register_target(
+                &storage,
                 CREDIS_FACTORY_ADDRESS,
-                IVaultRouter::StablesTarget::Credis as u8,
+                IVaultRouter::StablesTarget::Credis,
             )
-            .map_err(|error| error.to_string())
-        })?;
+        })
+        .map_err(|error| error.to_string())?;
 
         let calldata = IVaultRouter::withdrawCall {
             asset: ASSET,

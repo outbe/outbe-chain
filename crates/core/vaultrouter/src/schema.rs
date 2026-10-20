@@ -48,14 +48,32 @@ pub struct LiquidityReservation {
     pub source: Address,
 }
 
+/// One vault action that a validator vote approved and that waits for
+/// `applyApproved`. A zero `vault` means the slot is empty.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[storage_record(exists_field = vault)]
+pub struct ApprovedVaultAction {
+    #[key]
+    pub proposal_id: U256,
+    /// `IVaultRouter.VaultAction`, stored as `u8`.
+    #[attribute(order = 0)]
+    pub action: u8,
+    #[attribute(order = 1)]
+    pub vault: Address,
+    /// Block number at which the vote approved the action.
+    #[attribute(order = 2)]
+    pub approved_at: u64,
+}
+
 /// EVM storage layout for the vaultrouter precompile.
 #[storage_schema]
 #[contract(addr = VAULT_ROUTER_ADDRESS)]
 pub struct VaultRouterContract {
-    /// slot 0: owner (admin). Seeded at genesis. Gates the `add*`/`remove*`
-    /// management methods. Replaces `OwnableUpgradeable`.
-    #[attribute(order = 0)]
-    pub owner: outbe_primitives::storage::dsl::Value<Address>,
+    /// slot 0: retired hole. It held the owner (admin) that gated the vault and
+    /// route changes. Validator votes make those changes now. Nothing reads or
+    /// writes this slot. Kept so that no other slot moves. Do not reuse.
+    #[attribute(order = 0, deprecated = true)]
+    pub(crate) retired_owner: outbe_primitives::storage::dsl::Value<Address>,
 
     /// slots 1-2: set of assets that have at least one registered vault.
     #[attribute(order = 1)]
@@ -95,9 +113,20 @@ pub struct VaultRouterContract {
     #[attribute(order = 9)]
     pub reservation_nonce: outbe_primitives::storage::dsl::Value<U256>,
 
-    /// slot 13: CCA stables reservations keyed by id.
+    /// slots 13-28: CCA stables reservations keyed by id. Each record field
+    /// uses its own root slot.
     #[attribute(order = 10)]
     pub reservations: outbe_primitives::storage::dsl::Map<U256, LiquidityReservation>,
+
+    /// slots 29-31: approved vault actions that wait for `applyApproved`, keyed by
+    /// the id of the vote proposal that approved them.
+    #[attribute(order = 11)]
+    pub approved_vault_actions: outbe_primitives::storage::dsl::Map<U256, ApprovedVaultAction>,
+
+    /// slot 32: vault -> proposal id of its pending approved action. Zero means
+    /// that no action is pending for the vault.
+    #[attribute(order = 12)]
+    pub pending_vault_actions: outbe_primitives::storage::dsl::Map<Address, U256>,
 }
 
 impl<'storage> VaultRouterContract<'storage> {

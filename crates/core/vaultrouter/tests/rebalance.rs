@@ -76,7 +76,7 @@ fn vault_account(asset: Address) -> AccountInfo {
 }
 
 /// A database with both vaults sharing `ASSET`. The function registers
-/// `VAULT_FROM`/`VAULT_TO` with the router as production `addVault` would
+/// `VAULT_FROM`/`VAULT_TO` with the router as a production `applyApproved` AddVault would
 /// leave them, unless `register_from`/`register_to` say otherwise. `asset_reverts`
 /// swaps the asset stub for one that unconditionally reverts, simulating an
 /// unapproved caller.
