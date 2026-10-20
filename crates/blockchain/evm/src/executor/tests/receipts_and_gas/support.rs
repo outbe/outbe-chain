@@ -141,9 +141,15 @@ pub(super) fn assert_dense_agent_settlement(
     );
     let carry_over =
         outbe_promislimit::PromisLimitContract::new(storage.clone()).get_total_unallocated()?;
+    let settled_day_limit = outbe_metadosis::api::emission_day(storage.clone(), prev_day)?
+        .expect("GAS-05: settled prev_day must have an EmissionDay record")
+        .emission_limit_minor;
+    let reward_residue = carry_over
+        .checked_sub(settled_day_limit)
+        .expect("GAS-05: carry-over must include the settled empty EmissionDay limit");
     assert!(
-        carry_over < U256::from(2 * address_count),
-        "GAS-05: the carry-over takes only the WAA and SRA rounding residue"
+        reward_residue < U256::from(2 * address_count),
+        "GAS-05: the carry-over above the settled empty EmissionDay limit takes only the WAA and SRA rounding residue"
     );
     Ok(())
 }
