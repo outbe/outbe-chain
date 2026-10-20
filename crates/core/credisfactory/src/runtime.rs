@@ -24,8 +24,7 @@ fn live_reservation(
     reservation_id: U256,
 ) -> Result<(LiquidityReservation, u64)> {
     let r = outbe_vaultrouter::api::reservation_of(storage, reservation_id)?;
-    let now =
-        u64::try_from(storage.timestamp()?).map_err(|_| CredisFactoryError::TimestampOverflow)?;
+    let now = storage.now_secs()?;
     let error = if r.asset.is_zero() {
         CredisFactoryError::ReservationNotFound
     } else if r.cca != caller {
@@ -122,8 +121,7 @@ pub fn issue_credis(
 /// Zero once it is Settled or Forfeited.
 pub fn quote_settlement(storage: &StorageHandle<'_>, credis_id: U256) -> Result<U256> {
     let record = CredisContract::new(storage.clone()).get_credis(credis_id)?;
-    let now =
-        u64::try_from(storage.timestamp()?).map_err(|_| CredisFactoryError::TimestampOverflow)?;
+    let now = storage.now_secs()?;
     match effective_state(&record, now)? {
         CredisState::Settled | CredisState::Forfeited => Ok(U256::ZERO),
         CredisState::Issued | CredisState::Called => record
@@ -147,8 +145,7 @@ pub fn settle_credis(
         }
         let mut credis = CredisContract::new(storage.clone());
         let before = credis.get_credis(credis_id)?;
-        let now = u64::try_from(storage.timestamp()?)
-            .map_err(|_| CredisFactoryError::TimestampOverflow)?;
+        let now = storage.now_secs()?;
         let repayment = rules::settle(&mut credis, credis_id, amount, now)?;
         let after = credis.get_credis(credis_id)?;
         let released = before
@@ -175,12 +172,10 @@ pub fn settle_credis(
     })
 }
 
-/// Forfeit a Credis whose call lapsed.
-pub fn forfeit_credis(storage: StorageHandle<'_>, credis_id: U256) -> Result<()> {
-    let now =
-        u64::try_from(storage.timestamp()?).map_err(|_| CredisFactoryError::TimestampOverflow)?;
-    burn_forfeited_collateral(storage, credis_id, |credis| {
-        rules::forfeit(credis, credis_id, now)
+/// Deletes a Credis of a forfeited group.
+pub(crate) fn delete_forfeited_credis(storage: StorageHandle<'_>, credis_id: U256) -> Result<()> {
+    burn_forfeited_collateral(storage, credis_id, |credis, record| {
+        rules::delete_forfeited(credis, record)
     })?;
     Ok(())
 }
@@ -191,28 +186,24 @@ pub fn forfeit_by_owner(
     caller: Address,
     credis_id: U256,
 ) -> Result<Forfeit> {
-    burn_forfeited_collateral(storage, credis_id, |credis| {
+    burn_forfeited_collateral(storage, credis_id, |credis, _| {
         rules::forfeit_by_owner(credis, credis_id, caller)
     })
 }
 
-/// Burn only this Credis's remaining collateral from the source's pledged
-/// balance. Fidelity cohorts stay untouched.
+/// Burns only this Credis's remaining collateral from the source's pledged balance and
+/// returns it to the Promis Reserve, together. Fidelity cohorts stay untouched.
 fn burn_forfeited_collateral(
     storage: StorageHandle<'_>,
     credis_id: U256,
-    forfeit: impl FnOnce(&mut CredisContract<'_>) -> Result<Forfeit>,
+    forfeit: impl FnOnce(&mut CredisContract<'_>, outbe_credis::Credis) -> Result<Forfeit>,
 ) -> Result<Forfeit> {
     storage.with_checkpoint(|| {
         let mut credis = CredisContract::new(storage.clone());
         let before = credis.get_credis(credis_id)?;
-        let forfeit = forfeit(&mut credis)?;
-        let after = credis.get_credis(credis_id)?;
-        let only_state_moved = outbe_credis::Credis {
-            state: outbe_credis::CredisState::Forfeited as u8,
-            ..before.clone()
-        } == after;
-        if forfeit.gratis_burned_minor != before.outstanding_gratis_minor || !only_state_moved {
+        let pledged = before.outstanding_gratis_minor;
+        let forfeit = forfeit(&mut credis, before)?;
+        if forfeit.gratis_burned_minor != pledged || credis.credis_exists(credis_id)? {
             return Err(CredisFactoryError::ForfeitureCollateralMismatch.into());
         }
         if !forfeit.gratis_burned_minor.is_zero() {

@@ -22,7 +22,21 @@ use crate::error::{PrecompileError, Result};
 pub const PRECOMPILE_BASE_GAS: u64 = 200;
 
 /// Flat gas cost for one UltraHonkKeccak verification. This is the protocol
-/// charge for verification; calldata and storage gas are additional.
+/// charge for verification. Calldata and storage gas are additional.
+///
+/// Rationale for the value:
+///
+/// - The charge is flat. The circuit sets the UltraHonkKeccak verification
+///   cost, not the input size. Transaction calldata gas already bills the
+///   proof bytes.
+/// - Commit `fd16ab63` (#408) lowered the value from 3_000_000 to 300_000
+///   after release measurements.
+/// - The Tribute scenario in `testing/protocol-benchmarks` is the measurement
+///   to run again before you change this value. `measure_verify_ms` measures
+///   the verifier latency. `baselines/gas-v1.json` pins the
+///   `precompile.configured_base` component at 300000.
+/// - Outbe runs a permissioned validator set with a 30M block gas limit. This
+///   limits a block to approximately 100 verifications.
 pub const ZK_VERIFY_GAS: u64 = 300_000;
 
 /// Deterministic gas meter used by [`EvmStorageProvider`](super::evm::EvmStorageProvider).

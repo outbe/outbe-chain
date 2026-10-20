@@ -38,11 +38,8 @@ pub enum TributeFactoryError {
     #[error("worldwide_day {worldwide_day} is not a valid YYYYMMDD calendar date")]
     InvalidWorldwideDay { worldwide_day: WorldwideDay },
 
-    #[error("worldwide_day {worldwide_day} is not in OFFERING status (status={status})")]
-    WorldwideDayNotOffering {
-        worldwide_day: WorldwideDay,
-        status: u8,
-    },
+    #[error("worldwide_day {worldwide_day} is not in OFFERING status")]
+    WorldwideDayNotOffering { worldwide_day: WorldwideDay },
 
     #[error("tribute already exists for this combination of parameters")]
     TributeAlreadyExists,
@@ -152,9 +149,6 @@ pub enum TributeFactoryError {
     #[error("encrypted offer returned a legacy body")]
     EncryptedOfferReturnedLegacyBody,
 
-    #[error("TributeFactory block timestamp exceeds u64")]
-    TimestampExceedsU64,
-
     #[error("ZK verifier unavailable: zk verification backend failed: {0}")]
     ZkVerifierUnavailable(String),
 
@@ -208,7 +202,6 @@ impl From<TributeFactoryError> for PrecompileError {
                 PrecompileError::EnclaveUnavailable(enclave.to_string())
             }
             TributeFactoryError::ZkVerifierUnavailable(_)
-            | TributeFactoryError::TimestampExceedsU64
             | TributeFactoryError::RejectedEncryptedOfferCarriesTribute
             | TributeFactoryError::CreatedEncryptedOfferMissingTribute
             | TributeFactoryError::EmptyTributeOfferResult

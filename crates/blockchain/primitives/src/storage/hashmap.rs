@@ -76,6 +76,8 @@ pub struct HashMapStorageProvider {
     /// ahead of the fixed stubs. Models a view whose answer changes between
     /// calls, such as a balance around a transfer.
     sub_call_selector_sequences: HashMap<(Address, [u8; 4]), VecDeque<Bytes>>,
+    /// Every sub-call input in dispatch order, so tests can decode what was sent.
+    sub_call_inputs: Vec<SubCallInput>,
     metadosis_mutation_entitlements: MetadosisMutationEntitlements,
     metadosis_mutation_active: Option<(MetadosisMutationPurposeTag, B256, u64, u64)>,
     #[cfg(feature = "bench-utils")]
@@ -129,6 +131,7 @@ impl HashMapStorageProvider {
             sub_call_stubs: HashMap::new(),
             sub_call_selector_stubs: HashMap::new(),
             sub_call_selector_sequences: HashMap::new(),
+            sub_call_inputs: Vec::new(),
             metadosis_mutation_entitlements: MetadosisMutationEntitlements::NONE,
             metadosis_mutation_active: None,
             #[cfg(feature = "bench-utils")]
@@ -229,6 +232,11 @@ impl HashMapStorageProvider {
     ) {
         self.sub_call_selector_sequences
             .insert((address, selector), returndata.into_iter().collect());
+    }
+
+    /// Returns every sub-call input in dispatch order, including calls that failed.
+    pub fn sub_call_inputs(&self) -> &[SubCallInput] {
+        &self.sub_call_inputs
     }
 
     // Test helper methods
@@ -684,6 +692,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         &mut self,
         input: SubCallInput,
     ) -> std::result::Result<SubCallOutput, SubCallError> {
+        self.sub_call_inputs.push(input.clone());
         if let Some(selector) = input
             .calldata
             .get(..4)

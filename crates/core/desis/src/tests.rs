@@ -39,9 +39,7 @@ const LOAD_MINOR: u128 = 1_000_000 * PROMIS_LOAD_MINOR;
 
 #[test]
 fn the_bridge_caps_match_the_contracts() {
-    use crate::constants::{
-        CLEARING_BIDS_PER_CHUNK, MAX_BIDS_PER_BATCH, MAX_BID_BATCHES, MAX_REFUND_CHUNKS,
-    };
+    use crate::constants::{MAX_BID_BATCHES, MAX_PAYLOAD_ARRAY_LEN, MAX_REFUND_CHUNKS};
     use outbe_primitives::test_utils::sol_interface::sol_constant;
     const CODEC: &str =
         include_str!("../../../../contracts/intex/src/shared/libs/BridgeMsgCodec.sol");
@@ -49,11 +47,7 @@ fn the_bridge_caps_match_the_contracts() {
         include_str!("../../../../contracts/intex/src/target/TargetRouter.sol");
     assert_eq!(
         sol_constant(CODEC, "MAX_PAYLOAD_ARRAY_LEN"),
-        Some(MAX_BIDS_PER_BATCH)
-    );
-    assert_eq!(
-        sol_constant(CODEC, "MAX_PAYLOAD_ARRAY_LEN"),
-        Some(CLEARING_BIDS_PER_CHUNK)
+        Some(MAX_PAYLOAD_ARRAY_LEN)
     );
     assert_eq!(sol_constant(CODEC, "MAX_CHUNKS"), Some(MAX_REFUND_CHUNKS));
     assert_eq!(
@@ -216,8 +210,13 @@ fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
     with_targets(&[SRC_CHAIN], f)
 }
 
-fn brief_at(s: &StorageHandle, worldwide_day: WorldwideDay, desis_limit_minor: u128, green: bool) {
-    brief_at_rate(s, worldwide_day, desis_limit_minor, ENTRY_PRICE, green)
+fn brief_at(
+    s: &StorageHandle,
+    worldwide_day: WorldwideDay,
+    desis_limit_minor: u128,
+    has_limit: bool,
+) {
+    brief_at_rate(s, worldwide_day, desis_limit_minor, ENTRY_PRICE, has_limit)
 }
 
 /// Brief a day whose auction starts at `NOW`, quoted at `rate`: both the entry
@@ -227,9 +226,9 @@ fn brief_at_rate(
     worldwide_day: WorldwideDay,
     desis_limit_minor: u128,
     rate: u128,
-    green: bool,
+    has_limit: bool,
 ) {
-    brief_at_rate_from(s, worldwide_day, desis_limit_minor, rate, green, NOW)
+    brief_at_rate_from(s, worldwide_day, desis_limit_minor, rate, has_limit, NOW)
 }
 
 /// The same, for a day briefed at `now`. The brief time fixes both its schedule
@@ -239,7 +238,7 @@ fn brief_at_rate_from(
     worldwide_day: WorldwideDay,
     desis_limit_minor: u128,
     rate: u128,
-    green: bool,
+    has_limit: bool,
     now: u64,
 ) {
     seed_rate(s, now, rate);
@@ -249,7 +248,7 @@ fn brief_at_rate_from(
             crate::api::AuctionBrief {
                 worldwide_day,
                 desis_limit_minor: U256::from(desis_limit_minor),
-                is_green: green
+                has_limit
             },
             now,
             crate::api::BriefOverflowPolicy::CarryOver
@@ -259,8 +258,8 @@ fn brief_at_rate_from(
     );
 }
 
-fn brief(s: &StorageHandle, green: bool) {
-    brief_at(s, WORLDWIDE_DAY, 10 * LOAD_MINOR, green);
+fn brief(s: &StorageHandle, has_limit: bool) {
+    brief_at(s, WORLDWIDE_DAY, 10 * LOAD_MINOR, has_limit);
 }
 
 /// Brief and drive the schedule to `Revealing` (bid intake open, gate not armed).
@@ -361,7 +360,7 @@ fn dispatch_auction_brief_records_the_brief() {
             crate::api::AuctionBrief {
                 worldwide_day: WORLDWIDE_DAY,
                 desis_limit_minor: U256::from(10 * PROMIS_LOAD_MINOR),
-                is_green: true,
+                has_limit: true,
             },
             NOW,
             crate::api::BriefOverflowPolicy::CarryOver,
@@ -380,7 +379,7 @@ fn dispatch_auction_brief_records_the_brief() {
                 .unwrap(),
             U256::from(10 * PROMIS_LOAD_MINOR)
         );
-        assert_eq!(contract.brief_green.read(&WORLDWIDE_DAY).unwrap(), 1);
+        assert_eq!(contract.brief_has_limit.read(&WORLDWIDE_DAY).unwrap(), 1);
         assert_eq!(
             u64::from(contract.auction_at.read(&WORLDWIDE_DAY).unwrap()),
             NOW - NOW % SECONDS_PER_DAY
@@ -400,14 +399,14 @@ fn dispatch_auction_brief_records_the_brief() {
 }
 
 #[test]
-fn dispatch_auction_brief_records_a_red_day() {
+fn dispatch_auction_brief_records_a_brief_with_no_limit() {
     with_storage(|s| {
         let receipt = crate::api::dispatch_auction_brief(
             s.clone(),
             crate::api::AuctionBrief {
                 worldwide_day: WORLDWIDE_DAY,
                 desis_limit_minor: U256::from(PROMIS_LOAD_MINOR),
-                is_green: false,
+                has_limit: false,
             },
             NOW,
             crate::api::BriefOverflowPolicy::CarryOver,
@@ -419,7 +418,7 @@ fn dispatch_auction_brief_records_a_red_day() {
             contract.read_stage(WORLDWIDE_DAY).unwrap(),
             AuctionStage::Briefed
         );
-        assert_eq!(contract.brief_green.read(&WORLDWIDE_DAY).unwrap(), 0);
+        assert_eq!(contract.brief_has_limit.read(&WORLDWIDE_DAY).unwrap(), 0);
     });
 }
 
@@ -437,14 +436,14 @@ fn strict_auction_brief(
 }
 
 #[test]
-fn strict_request_desis_limit_commits_the_exact_green_brief() {
+fn strict_request_desis_limit_commits_the_exact_live_brief() {
     with_storage(|s| {
         let receipt = strict_auction_brief(
             s.clone(),
             crate::api::AuctionBrief {
                 worldwide_day: WORLDWIDE_DAY,
                 desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
-                is_green: true,
+                has_limit: true,
             },
             NOW,
         )
@@ -463,7 +462,7 @@ fn strict_request_desis_limit_commits_the_exact_green_brief() {
                 .unwrap(),
             U256::from(7 * PROMIS_LOAD_MINOR)
         );
-        assert_eq!(contract.brief_green.read(&WORLDWIDE_DAY).unwrap(), 1);
+        assert_eq!(contract.brief_has_limit.read(&WORLDWIDE_DAY).unwrap(), 1);
         // The brief carries no prices; the auction prices the day at its start.
         assert!(contract
             .read_auction_config(WORLDWIDE_DAY)
@@ -481,7 +480,7 @@ fn strict_request_desis_limit_propagates_duplicate_refusal_without_overwrite() {
             crate::api::AuctionBrief {
                 worldwide_day: WORLDWIDE_DAY,
                 desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
-                is_green: true,
+                has_limit: true,
             },
             NOW,
         )
@@ -492,7 +491,7 @@ fn strict_request_desis_limit_propagates_duplicate_refusal_without_overwrite() {
             crate::api::AuctionBrief {
                 worldwide_day: WORLDWIDE_DAY,
                 desis_limit_minor: U256::from(9 * PROMIS_LOAD_MINOR),
-                is_green: true
+                has_limit: true
             },
             NOW
         )
@@ -518,7 +517,7 @@ fn strict_request_desis_limit_rejects_an_oversized_limit_without_state() {
             crate::api::AuctionBrief {
                 worldwide_day: WORLDWIDE_DAY,
                 desis_limit_minor: U256::MAX,
-                is_green: true
+                has_limit: true
             },
             NOW
         )
@@ -558,7 +557,7 @@ fn assert_no_request_brief_state(storage: &StorageHandle<'_>) {
             .unwrap(),
         U256::ZERO
     );
-    assert_eq!(contract.brief_green.read(&WORLDWIDE_DAY).unwrap(), 0);
+    assert_eq!(contract.brief_has_limit.read(&WORLDWIDE_DAY).unwrap(), 0);
     assert_eq!(contract.auction_at.read(&WORLDWIDE_DAY).unwrap(), 0);
     assert_eq!(contract.sched_active_count.read().unwrap(), 0);
     assert_eq!(contract.sched_active_at.read(&0).unwrap(), 0u32);
@@ -575,7 +574,7 @@ fn strict_request_desis_limit_rolls_back_every_partial_write_boundary() {
                 crate::api::AuctionBrief {
                     worldwide_day: WORLDWIDE_DAY,
                     desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
-                    is_green: true,
+                    has_limit: true,
                 },
                 NOW,
             )
@@ -597,7 +596,7 @@ fn strict_request_desis_limit_rolls_back_every_partial_write_boundary() {
                 crate::api::AuctionBrief {
                     worldwide_day: WORLDWIDE_DAY,
                     desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
-                    is_green: true,
+                    has_limit: true,
                 },
                 NOW,
             )
@@ -622,7 +621,7 @@ fn strict_request_desis_limit_never_tops_up_a_live_auction() {
             crate::api::AuctionBrief {
                 worldwide_day: WORLDWIDE_DAY,
                 desis_limit_minor: U256::from(7 * LOAD_MINOR),
-                is_green: true,
+                has_limit: true,
             },
             NOW,
         )
@@ -642,7 +641,7 @@ fn strict_request_desis_limit_never_tops_up_a_live_auction() {
             crate::api::AuctionBrief {
                 worldwide_day: WORLDWIDE_DAY,
                 desis_limit_minor: U256::from(9 * LOAD_MINOR),
-                is_green: true
+                has_limit: true
             },
             NOW
         )
@@ -688,7 +687,7 @@ fn dispatch_auction_brief_duplicate_propagates_without_committed_failure_event()
                 crate::api::AuctionBrief {
                     worldwide_day: WORLDWIDE_DAY,
                     desis_limit_minor: U256::from(10 * PROMIS_LOAD_MINOR),
-                    is_green: true
+                    has_limit: true
                 },
                 NOW,
                 crate::api::BriefOverflowPolicy::CarryOver
@@ -701,7 +700,7 @@ fn dispatch_auction_brief_duplicate_propagates_without_committed_failure_event()
             crate::api::AuctionBrief {
                 worldwide_day: WORLDWIDE_DAY,
                 desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
-                is_green: true
+                has_limit: true
             },
             NOW,
             crate::api::BriefOverflowPolicy::CarryOver
@@ -737,7 +736,7 @@ fn dispatch_auction_brief_oversized_limit_returns_typed_full_carry_over() {
                 crate::api::AuctionBrief {
                     worldwide_day: WORLDWIDE_DAY,
                     desis_limit_minor: U256::MAX,
-                    is_green: true
+                    has_limit: true
                 },
                 NOW,
                 crate::api::BriefOverflowPolicy::CarryOver
@@ -779,7 +778,7 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
                 crate::api::AuctionBrief {
                     worldwide_day: WORLDWIDE_DAY,
                     desis_limit_minor: U256::from(u128::MAX),
-                    is_green: true
+                    has_limit: true
                 },
                 NOW,
                 crate::api::BriefOverflowPolicy::CarryOver
@@ -798,7 +797,7 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
                 crate::api::AuctionBrief {
                     worldwide_day: WORLDWIDE_DAY,
                     desis_limit_minor: supply,
-                    is_green: true
+                    has_limit: true
                 },
                 NOW,
                 crate::api::BriefOverflowPolicy::CarryOver
@@ -836,7 +835,7 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
             crate::api::AuctionBrief {
                 worldwide_day: WorldwideDay::new(0),
                 desis_limit_minor: U256::MAX,
-                is_green: true
+                has_limit: true
             },
             NOW,
             crate::api::BriefOverflowPolicy::CarryOver
@@ -849,7 +848,7 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
             crate::api::AuctionBrief {
                 worldwide_day: WORLDWIDE_DAY,
                 desis_limit_minor: U256::MAX,
-                is_green: true
+                has_limit: true
             },
             NOW,
             crate::api::BriefOverflowPolicy::CarryOver
@@ -861,7 +860,7 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
             crate::api::AuctionBrief {
                 worldwide_day: NEXT_WORLDWIDE_DAY,
                 desis_limit_minor: U256::MAX,
-                is_green: true
+                has_limit: true
             },
             u64::MAX,
             crate::api::BriefOverflowPolicy::CarryOver
@@ -883,7 +882,7 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
                 crate::api::AuctionBrief {
                     worldwide_day: WORLDWIDE_DAY,
                     desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
-                    is_green: true,
+                    has_limit: true,
                 },
                 NOW,
                 crate::api::BriefOverflowPolicy::CarryOver,
@@ -903,7 +902,7 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
                 crate::api::AuctionBrief {
                     worldwide_day: WORLDWIDE_DAY,
                     desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
-                    is_green: true,
+                    has_limit: true,
                 },
                 NOW,
                 crate::api::BriefOverflowPolicy::CarryOver,
@@ -925,7 +924,7 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
             crate::api::AuctionBrief {
                 worldwide_day: WORLDWIDE_DAY,
                 desis_limit_minor: U256::MAX,
-                is_green: true,
+                has_limit: true,
             },
             NOW,
             crate::api::BriefOverflowPolicy::CarryOver,
@@ -949,7 +948,7 @@ fn brief_anchor_at(now: u64) -> u64 {
                 crate::api::AuctionBrief {
                     worldwide_day: WORLDWIDE_DAY,
                     desis_limit_minor: U256::from(LOAD_MINOR),
-                    is_green: true
+                    has_limit: true
                 },
                 now,
                 crate::api::BriefOverflowPolicy::CarryOver
@@ -1051,11 +1050,11 @@ fn a_start_past_the_minimum_commit_window_cancels_the_day_and_returns_its_limit(
     );
 }
 
-/// A late day goes out as a red START. A router that cannot take it therefore keeps
+/// A late day goes out as a cancelled START. A router that cannot take it therefore keeps
 /// the day briefed for the next tick and does not cancel it unannounced.
 #[test]
 #[cfg(not(feature = "e2e-test"))]
-fn a_late_day_is_cancelled_only_once_its_red_start_is_sent() {
+fn a_late_day_is_cancelled_only_once_its_cancelled_start_is_sent() {
     let start = LAST_START + 1;
     let outcome = start_at(start, false, |s| {
         brief_at_rate_from(s, WORLDWIDE_DAY, 10 * LOAD_MINOR, ENTRY_PRICE, true, start);
@@ -1070,7 +1069,7 @@ fn native_brief_at_now(s: &StorageHandle) {
         crate::api::AuctionBrief {
             worldwide_day: WORLDWIDE_DAY,
             desis_limit_minor: U256::from(10 * LOAD_MINOR),
-            is_green: true,
+            has_limit: true,
         },
         NOW,
     )
@@ -1162,7 +1161,7 @@ fn the_price_chosen_at_start_is_the_one_the_series_carries() {
 }
 
 #[test]
-fn schedule_starts_a_green_brief() {
+fn schedule_starts_a_brief_with_a_limit() {
     with_storage(|s| {
         brief(&s, true);
         runtime::schedule_tick(&s, NOW).unwrap();
@@ -1239,7 +1238,7 @@ fn schedule_catches_up_over_missed_ticks() {
 }
 
 #[test]
-fn schedule_cancels_a_red_brief() {
+fn schedule_cancels_a_brief_with_no_limit() {
     with_storage(|s| {
         brief(&s, false);
         runtime::schedule_tick(&s, NOW).unwrap();
@@ -1749,13 +1748,13 @@ fn clearing_transitions_to_cleared() {
 
 fn start_day(
     desis_limit_minor: u128,
-    green: bool,
+    has_limit: bool,
 ) -> (AuctionStage, U256, Vec<alloy_primitives::LogData>) {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(NOW));
     storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
     let (stage, unallocated) = StorageHandle::enter(&mut storage, |s| {
-        brief_at(&s, WORLDWIDE_DAY, desis_limit_minor, green);
+        brief_at(&s, WORLDWIDE_DAY, desis_limit_minor, has_limit);
         runtime::schedule_tick(&s, NOW).unwrap();
         (
             s.contract::<DesisContract>()
@@ -1840,7 +1839,7 @@ fn an_overdue_day_records_a_zero_desis_allocation() {
 }
 
 #[test]
-fn a_green_day_with_no_limit_is_cancelled_below_one_unit() {
+fn a_zero_limit_briefed_with_a_limit_is_cancelled_below_one_unit() {
     let (stage, _, events) = start_day(0, true);
 
     assert_eq!(stage, AuctionStage::Cancelled);
@@ -1848,16 +1847,45 @@ fn a_green_day_with_no_limit_is_cancelled_below_one_unit() {
     assert_eq!(event.desisLimitMinor, U256::ZERO);
 }
 
+/// The `dayState` of every AUCTION_STAGE_START message the provider sent.
+fn sent_day_states(storage: &HashMapStorageProvider) -> Vec<u8> {
+    use crate::sol_ext::IOriginRouter::sendAuctionStageStartCall;
+    storage
+        .sub_call_inputs()
+        .iter()
+        .filter(|input| input.target == ORIGIN_ROUTER_ADDRESS)
+        .filter_map(|input| sendAuctionStageStartCall::abi_decode(&input.calldata).ok())
+        .map(|call| call.params.dayState)
+        .collect()
+}
+
 #[test]
-fn a_red_day_with_no_limit_stays_a_red_day() {
+fn a_day_briefed_with_no_limit_is_cancelled_with_no_limit() {
+    use crate::constants::DAY_STATE_CANCELLED;
     use alloy_sol_types::SolEvent;
-    let (stage, _, events) = start_day(0, false);
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(NOW));
+    storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
+    let stage = StorageHandle::enter(&mut storage, |s| {
+        brief_at(&s, WORLDWIDE_DAY, 0, false);
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(contract.brief_has_limit.read(&WORLDWIDE_DAY).unwrap(), 0);
+        runtime::schedule_tick(&s, NOW).unwrap();
+        s.contract::<DesisContract>()
+            .read_stage(WORLDWIDE_DAY)
+            .unwrap()
+    });
+    let events = storage
+        .get_events(outbe_primitives::addresses::DESIS_ADDRESS)
+        .clone();
 
     assert_eq!(stage, AuctionStage::Cancelled);
+    assert_eq!(DAY_STATE_CANCELLED, 2);
+    assert_eq!(sent_day_states(&storage), vec![DAY_STATE_CANCELLED]);
     assert!(below_one_unit(&events).is_none());
     assert!(events.iter().any(|log| {
         log.topics().first()
-            == Some(&crate::precompile::IDesis::AuctionCancelledRedDay::SIGNATURE_HASH)
+            == Some(&crate::precompile::IDesis::AuctionCancelledNoLimit::SIGNATURE_HASH)
     }));
 }
 
@@ -2521,7 +2549,7 @@ fn a_reference_currency_whose_letter_is_taken_is_dropped_from_the_day() {
                 .collect::<Vec<_>>(),
             vec![156]
         );
-        assert!(config.entry_price_for(756).is_none());
+        assert!(config.price_for(756).is_none());
     });
 }
 
@@ -2534,6 +2562,7 @@ fn escrow_basis_is_promis_load() {
         vec![crate::schema::ReferenceCurrencyPrice {
             iso_code: REFERENCE_ISO,
             entry_price_minor: U256::from(1_000_150u64),
+            call_price_minor: U256::ZERO,
         }],
         LOAD_MINOR,
     );
@@ -2697,7 +2726,7 @@ fn a_day_nobody_priced_carries_the_launch_load_and_captures_nothing() {
 
 #[test]
 fn a_day_nobody_could_price_is_cancelled_rather_than_failed() {
-    // An oracle gap prices nothing. That is the same condition that makes a day red.
+    // An oracle gap prices nothing.
     // Settlement still has to complete, so the day must reach a terminal stage
     // instead of failing the brief.
     with_storage(|s| {
@@ -2718,8 +2747,8 @@ fn a_day_nobody_could_price_is_cancelled_rather_than_failed() {
             0,
             "and leaves the schedule"
         );
-        // It was briefed green, so it holds the day's PROMIS. A red day, unlike it,
-        // is briefed with none. Cancelling it must give that limit back.
+        // It was briefed with a limit, so it holds the day's PROMIS. A day with no limit,
+        // unlike it, is briefed with none. Cancelling it must give that limit back.
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(s.clone())
                 .get_total_unallocated()
@@ -2955,7 +2984,7 @@ fn dispatch_auction_brief_oversized_limit_rejects_under_the_reject_policy() {
             crate::api::AuctionBrief {
                 worldwide_day: WORLDWIDE_DAY,
                 desis_limit_minor: U256::MAX,
-                is_green: true,
+                has_limit: true,
             },
             NOW,
             crate::api::BriefOverflowPolicy::Reject,
@@ -3011,6 +3040,8 @@ fn a_clearing_round_is_sized_from_the_chains_recent_days() {
 
 #[cfg(not(feature = "e2e-test"))]
 mod capacity_conservation;
+
+mod fixed_conditions;
 
 #[cfg(not(feature = "e2e-test"))]
 mod promis_load;

@@ -2,20 +2,42 @@
 //! call-price bin index. Canonical series state lives in Intex.
 
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_intex::{SeriesId, SERIES_ID_LEN};
+use outbe_intex::{IntexCallTrigger, SeriesId, SERIES_ID_LEN};
 use outbe_macros::{contract, storage_schema};
 use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
+use outbe_primitives::error::Result;
 use outbe_primitives::time::WorldwideDay;
 
-/// Issuance inputs captured on Outbe.
+/// The call terms of the live profile. `api::call_terms` reads them once, and the
+/// auction start fixes them for the day.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IntexCallTerms {
+    /// Percentage points over the entry price.
+    pub call_rate: u16,
+    pub call_trigger: IntexCallTrigger,
+}
+
+impl IntexCallTerms {
+    /// Per-unit call price (reference ISO stable-units, 1e6): the entry marked up by the call rate.
+    pub fn call_price(&self, entry_price_minor: U256) -> Result<U256> {
+        crate::runtime::marked_up(entry_price_minor, self.call_rate)
+    }
+}
+
+/// Issuance inputs captured on Outbe: every condition the auction fixed at its start.
+/// Issuance reads no profile value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IssuanceParams {
     pub series_id: SeriesId,
     pub worldwide_day: WorldwideDay,
     pub issued_units: u32,
     pub promis_load_minor: u128,
-    /// Entry price (per-unit, reference ISO stable-units, 1e6). Cost/floor/call derive from it.
+    /// Entry price (per-unit, reference ISO stable-units, 1e6). Cost and floor derive from it.
     pub entry_price_minor: U256,
+    /// Call price (per-unit, reference ISO stable-units, 1e6), fixed at the auction start.
+    pub call_price_minor: U256,
+    /// Call window, threshold and notice, fixed at the auction start.
+    pub call_trigger: IntexCallTrigger,
     pub issuance_currency: u16,
     pub reference_currency: u16,
     /// Every target chain of the day's snapshot. Each one creates the series.

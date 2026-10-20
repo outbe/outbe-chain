@@ -86,6 +86,19 @@
   },
   {
     "type": "function",
+    "name": "getTotalBonded",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "bondedMinor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "supportsInterface",
     "inputs": [
       {

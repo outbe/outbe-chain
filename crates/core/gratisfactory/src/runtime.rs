@@ -13,10 +13,6 @@ use outbe_primitives::{
     units::checked_protocol_to_native,
 };
 
-fn now_secs(storage: &StorageHandle<'_>) -> Result<u64> {
-    u64::try_from(storage.timestamp()?).map_err(|_| GratisFactoryError::TimestampOverflow.into())
-}
-
 /// Pledge exactly the reservation's Gratis from its source. Only the source may
 /// pledge, once per reservation, before the reservation expires.
 pub fn pledge_gratis(
@@ -33,7 +29,7 @@ pub fn pledge_gratis(
         if caller != r.source {
             return Err(GratisFactoryError::NotReservationSource.into());
         }
-        let now = now_secs(&storage)?;
+        let now = storage.now_secs()?;
         if now > r.expires_at {
             return Err(GratisFactoryError::ReservationExpired.into());
         }
@@ -211,7 +207,7 @@ pub fn mint(
 ) -> Result<()> {
     // Fold the acquisition cohort into the gratis mint round-trip. Persist the
     // returned fidelity blob.
-    let now = storage.timestamp()?.to::<u64>();
+    let now = storage.now_secs()?;
     let section =
         outbe_fidelity::api::cohort_section(storage.clone(), account, FidelityCohortOp::In, now)?;
     let outcome = gratis::mint_with_fidelity(storage.clone(), account, amount, auth, section)?;
@@ -230,7 +226,7 @@ pub fn mine_coen(
 
     // Fold the sale cohort into the gratis burn round-trip. Persist the returned
     // fidelity blob.
-    let now = storage.timestamp()?.to::<u64>();
+    let now = storage.now_secs()?;
     let section =
         outbe_fidelity::api::cohort_section(storage.clone(), account, FidelityCohortOp::Out, now)?;
     let outcome = gratis::burn_with_fidelity(storage.clone(), account, amount, auth, section)?;

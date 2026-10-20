@@ -23,8 +23,8 @@ pub enum NodFactoryError {
     #[error("nod entry price is out of bounds")]
     EntryPriceOutOfBounds,
 
-    #[error("nod bucket not found")]
-    BucketNotFound,
+    #[error("nod group not found")]
+    GroupNotFound,
 
     #[error("nod is already settled")]
     NodAlreadySettled,
@@ -41,26 +41,29 @@ pub enum NodFactoryError {
     #[error(transparent)]
     CreateNodForTest(#[from] outbe_tee::TransportError),
 
-    #[error("Nod bucket {bucket_key} has an empty member slot during forfeit")]
-    EmptyBucketMemberSlotDuringForfeit { bucket_key: B256 },
+    #[error("Nod group {group_key} has an empty member slot during cleanup")]
+    EmptyGroupMemberSlotDuringCleanup { group_key: B256 },
 
-    #[error("Nod bucket {bucket_key} member {nod_id} has no body during forfeit")]
-    MissingBucketMemberRecordDuringForfeit {
-        bucket_key: B256,
+    #[error("Nod group {group_key} member {nod_id} has no body during cleanup")]
+    MissingGroupMemberRecordDuringCleanup {
+        group_key: B256,
         nod_id: WwdEntityId,
     },
 
-    #[error("Nod bucket {bucket_key} indexes an ineligible member {nod_id}")]
-    IneligibleBucketMember {
-        bucket_key: B256,
+    #[error("Nod group {group_key} indexes an ineligible member {nod_id}")]
+    IneligibleGroupMember {
+        group_key: B256,
         nod_id: WwdEntityId,
     },
 
-    #[error("Nod bucket {bucket_key} has no body during forfeit")]
-    MissingBucketRecordDuringForfeit { bucket_key: B256 },
+    #[error("Nod group {group_key} has no body during cleanup")]
+    MissingGroupRecordDuringCleanup { group_key: B256 },
 
-    #[error("closeCallNoticeForTest: bucket not queued")]
-    BucketNotQueuedForTest,
+    #[error("Nod group {group_key} has no record to call")]
+    MissingGroupForCall { group_key: B256 },
+
+    #[error("closeCallNoticeForTest: group not queued")]
+    GroupNotQueuedForTest,
 
     #[error("Nod call price overflow")]
     CallPriceOverflow,

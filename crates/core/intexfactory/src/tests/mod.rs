@@ -18,7 +18,7 @@ use crate::precompile::{self, IIntexFactory};
 use crate::runtime;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
 use outbe_intex::constants::{CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW};
-use outbe_intex::{Group, IntexContract};
+use outbe_intex::{IntexContract, IntexState};
 
 /// ISO code every fixture prices in.
 const REFERENCE_ISO: u16 = 840;
@@ -79,18 +79,29 @@ fn sid(worldwide_day: u32) -> SeriesId {
     SeriesId::pack(WorldwideDay::new(worldwide_day), *b"USD", b'U').unwrap()
 }
 
+/// The series' state as of this block.
+fn series_state(s: &StorageHandle<'_>, id: SeriesId) -> IntexState {
+    let record = outbe_intex::api::read_series(s, id).unwrap();
+    outbe_intex::api::state(s, &record).unwrap()
+}
+
+/// The call group the series belongs to.
+fn group_of(s: &StorageHandle<'_>, id: SeriesId) -> B256 {
+    outbe_intex::api::read_series(s, id).unwrap().group_key()
+}
+
 /// Force-call one group against the protocol call window. Returns how many series moved.
 fn call_group<'s>(
     s: &StorageHandle<'s>,
     f: &mut IntexContract<'s>,
-    group: &Group,
+    group: B256,
     last_closed_day: u32,
     now_ts: u64,
 ) -> u32 {
     let secs_per_day = SECONDS_PER_DAY_U32;
     let window = outbe_oracle::call_window::CallWindow::load(
         s,
-        group.iso_code,
+        f.group_currency(group).unwrap(),
         last_closed_day,
         outbe_primitives::call_breach::ScanTerms {
             window_days: CALL_WINDOW / secs_per_day,
@@ -110,6 +121,15 @@ fn call_group<'s>(
     called::call_if_breached(call, group, &window, now_ts).unwrap()
 }
 
+/// The PROD call trigger: what the auction start fixes while the PROD profile is live.
+fn prod_trigger() -> outbe_intex::IntexCallTrigger {
+    outbe_intex::IntexCallTrigger {
+        call_window_seconds: CALL_WINDOW,
+        call_threshold_seconds: CALL_THRESHOLD,
+        call_notice_period_seconds: CALL_NOTICE_PERIOD,
+    }
+}
+
 fn sample(worldwide_day: u32) -> IssuanceParams {
     IssuanceParams {
         series_id: sid(worldwide_day),
@@ -117,6 +137,8 @@ fn sample(worldwide_day: u32) -> IssuanceParams {
         issued_units: 100,
         promis_load_minor: PROMIS_LOAD_MINOR,
         entry_price_minor: U256::from(ENTRY_PRICE),
+        call_price_minor: U256::from(EXPECTED_TRIGGER),
+        call_trigger: prod_trigger(),
         issuance_currency: 840,
         reference_currency: 840,
         // One target in the snapshot exercises the per-chain ISSUANCE loop.
@@ -124,35 +146,24 @@ fn sample(worldwide_day: u32) -> IssuanceParams {
     }
 }
 
-/// Seeds a group the way a call leaves it: members in the group, the group queued.
+/// Seeds the group of `member` the way a call leaves it: called, and queued on `deadline`.
 trait SeedCalledGroup {
     fn seed_called_group(
         &mut self,
-        iso: u16,
-        day: WorldwideDay,
+        member: SeriesId,
         deadline: u64,
-        members: &[SeriesId],
     ) -> outbe_primitives::error::Result<()>;
 }
 
 impl SeedCalledGroup for IntexContract<'_> {
     fn seed_called_group(
         &mut self,
-        iso: u16,
-        day: WorldwideDay,
+        member: SeriesId,
         deadline: u64,
-        members: &[SeriesId],
     ) -> outbe_primitives::error::Result<()> {
-        use outbe_primitives::storage::types::Storable as _;
-        let key = IntexContract::scoped(iso, day.value());
-        for (index, series_id) in members.iter().enumerate() {
-            self.call_group_members.write(
-                &IntexContract::group_member_key(iso, day, index as u32),
-                series_id.to_word(),
-            )?;
-        }
-        self.call_group_count.write(&key, members.len() as u32)?;
-        self.push_called(iso, day, deadline)
+        let record = outbe_intex::api::read_series(&self.storage, member)?;
+        let called_at = deadline.saturating_sub(u64::from(record.call_notice_period_seconds));
+        self.record_group_called(record.group_key(), called_at as u32, deadline)
     }
 }
 

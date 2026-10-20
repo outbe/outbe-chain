@@ -51,14 +51,12 @@ fn pow10(exponent: u32) -> U256 {
     U256::from(10u64).pow(U256::from(exponent))
 }
 
-/// What a settlement charges for: `entry x load x units`, scaled by `cost_rate_pct / 100`.
+/// What a settlement charges for: `entry x load x units`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SettlementCost {
     pub entry_price_minor: U256,
     pub load_minor: U256,
     pub units: U256,
-    /// Share of the full cost charged, in percent.
-    pub cost_rate_pct: u64,
 }
 
 /// The cost in the asset's minor units, floored once. A positive cost is at
@@ -69,25 +67,19 @@ pub fn settlement_cost_units(
     rate: Option<(U256, U256)>,
     asset_decimals: u8,
 ) -> Result<U256, RoundingError> {
-    let percent = U256::from(100u64);
     let amount = cost
         .entry_price_minor
         .checked_mul(cost.load_minor)
         .and_then(|v| v.checked_mul(cost.units))
-        .and_then(|v| v.checked_mul(U256::from(cost.cost_rate_pct)))
         .ok_or(RoundingError::Overflow)?;
-    // The amount keeps the x100 of the cost rate, so the minimum is 1e6 x 100.
     let amount = if amount.is_zero() {
         amount
     } else {
-        amount.max(SCALE_1E6_U256 * percent)
+        amount.max(SCALE_1E6_U256)
     };
     let (numerator, denominator) = match rate {
-        Some((to, from)) => (
-            amount.checked_mul(to).ok_or(RoundingError::Overflow)?,
-            from.checked_mul(percent).ok_or(RoundingError::Overflow)?,
-        ),
-        None => (amount, percent),
+        Some((to, from)) => (amount.checked_mul(to).ok_or(RoundingError::Overflow)?, from),
+        None => (amount, U256::ONE),
     };
     floor_to_asset_units(numerator, denominator, COST_DECIMALS, asset_decimals)
 }
@@ -200,20 +192,14 @@ mod tests {
     }
 
     #[test]
-    fn a_cost_is_entry_times_load_times_units_at_its_cost_rate() {
+    fn a_cost_is_entry_times_load_times_units() {
         let full = SettlementCost {
             entry_price_minor: u(2_000_000),
             load_minor: u(3_000_000),
             units: u(2),
-            cost_rate_pct: 100,
         };
         // 2.0 x 3.0 x 2 = 12.0 in a six-decimal asset.
         assert_eq!(settlement_cost_units(&full, None, 6), Ok(u(12_000_000)));
-        let share = SettlementCost {
-            cost_rate_pct: 64,
-            ..full
-        };
-        assert_eq!(settlement_cost_units(&share, None, 6), Ok(u(7_680_000)));
         // At COEN/issuance 3 over COEN/reference 2 the issuance asset pays 1.5x.
         assert_eq!(
             settlement_cost_units(&full, Some((u(3), u(2))), 6),
@@ -223,7 +209,6 @@ mod tests {
             entry_price_minor: U256::ONE,
             load_minor: U256::ONE,
             units: U256::ONE,
-            cost_rate_pct: 100,
         };
         assert_eq!(settlement_cost_units(&dust, None, 6), Ok(U256::ONE));
     }
@@ -234,7 +219,6 @@ mod tests {
             entry_price_minor: u(entry.into()),
             load_minor: u(load.into()),
             units: U256::ONE,
-            cost_rate_pct: 100,
         };
         let dust = at(19, 25_629);
         for (decimals, rate, expected) in [

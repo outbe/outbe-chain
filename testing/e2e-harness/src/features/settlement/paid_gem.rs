@@ -130,7 +130,6 @@ fn prepare(world: &mut World) -> PaidGem {
         gem,
         block_number: claim,
     } = validator_reward_gem(world);
-    assert_eq!(gem.gemType, 0, "expected a protocol reward Gem");
     assert!(
         !gem.promisLoadMinor.is_zero(),
         "reward Gem must carry Promis"

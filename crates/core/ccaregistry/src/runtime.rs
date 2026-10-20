@@ -9,14 +9,6 @@ use crate::{
 use alloy_primitives::{Address, U256};
 use outbe_primitives::{addresses::CCA_REGISTRY_ADDRESS, error::Result, storage::StorageHandle};
 
-fn now(storage: &StorageHandle<'_>) -> Result<u64> {
-    // Execution timestamps must fit Unix seconds in u64. Reject a larger value. Do not truncate it.
-    storage
-        .timestamp()?
-        .try_into()
-        .map_err(|_| CcaError::Arithmetic.into())
-}
-
 /// The payable EVM boundary has already credited `amount` to CCA_REGISTRY_ADDRESS.
 pub fn bond(storage: StorageHandle<'_>, caller: Address, amount: U256, name: String) -> Result<()> {
     storage.with_checkpoint(|| {
@@ -52,6 +44,12 @@ pub fn bond(storage: StorageHandle<'_>, caller: Address, amount: U256, name: Str
             ICcaRegistry::State::Bonding
         };
         contract.save(&record)?;
+        let total = contract
+            .total_bonded_minor
+            .read()?
+            .checked_add(amount)
+            .ok_or(CcaError::Arithmetic)?;
+        set_total_bonded(&storage, &contract, total)?;
         contract.emit(ICcaRegistry::Bonded {
             cca: caller,
             amountMinor: amount,
@@ -77,7 +75,8 @@ pub fn unbond(storage: StorageHandle<'_>, caller: Address) -> Result<()> {
         ) {
             return Err(CcaError::InvalidState(record.state.into()).into());
         }
-        record.unbond_unlocks_after = now(&storage)?
+        record.unbond_unlocks_after = storage
+            .now_secs()?
             .checked_add(UNBOND_COOLDOWN_SECONDS)
             .ok_or(CcaError::Arithmetic)?;
         record.state = ICcaRegistry::State::Deregistering;
@@ -100,7 +99,7 @@ pub fn claim_unbonded(storage: StorageHandle<'_>, caller: Address) -> Result<()>
         if record.state != ICcaRegistry::State::Deregistering {
             return Err(CcaError::InvalidState(record.state.into()).into());
         }
-        if now(&storage)? < record.unbond_unlocks_after {
+        if storage.now_secs()? < record.unbond_unlocks_after {
             return Err(CcaError::Cooldown.into());
         }
         let amount = record.bonded_minor;
@@ -109,11 +108,29 @@ pub fn claim_unbonded(storage: StorageHandle<'_>, caller: Address) -> Result<()>
         record.state = ICcaRegistry::State::Deregistered;
         contract.save(&record)?;
         storage.transfer_balance(CCA_REGISTRY_ADDRESS, caller, amount)?;
+        let total = contract
+            .total_bonded_minor
+            .read()?
+            .checked_sub(amount)
+            .ok_or(CcaError::Arithmetic)?;
+        set_total_bonded(&storage, &contract, total)?;
         contract.emit(ICcaRegistry::UnbondClaimed {
             cca: caller,
             amountMinor: amount,
         })
     })
+}
+
+/// Records the bonded total. The registry account must hold at least that much.
+fn set_total_bonded(
+    storage: &StorageHandle<'_>,
+    contract: &CcaContract<'_>,
+    total: U256,
+) -> Result<()> {
+    if storage.balance(CCA_REGISTRY_ADDRESS)? < total {
+        return Err(CcaError::CustodyShortfall.into());
+    }
+    contract.total_bonded_minor.write(total)
 }
 
 /// Trusted Rust entrypoint. Credis calls it once with the current UTC reward day key (YYYYMMDD).

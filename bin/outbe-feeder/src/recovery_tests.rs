@@ -129,6 +129,18 @@ impl RpcState {
                     ints(&[u64::from(self.exists), 160, 192, 224, 256, 0, 0, 0, 0])
                 } else if selector == IOracle::getExchangeRateDataCall::SELECTOR {
                     ints(&[1_000_000, self.height.max(1), 1_790_000_000])
+                } else if selector == IOracle::getVoteTargetsCall::SELECTOR {
+                    json!(Bytes::from(
+                        IOracle::getVoteTargetsCall::abi_encode_returns(
+                            &IOracle::getVoteTargetsReturn {
+                                bases: vec![Address::ZERO],
+                                quotes: vec![outbe_primitives::asset_type::AssetType::IsoCurrency(
+                                    840
+                                )
+                                .into()],
+                            }
+                        )
+                    ))
                 } else {
                     return Some(Err(format!("unexpected eth_call selector {selector:?}")));
                 }
@@ -351,8 +363,8 @@ async fn period_zero_submits_and_all_state_reads_are_pinned_to_committed_hash() 
         .collect();
     assert_eq!(
         calls.len(),
-        9,
-        "freshness plus two complete four-call preflights"
+        10,
+        "freshness, two complete four-call preflights and the vote targets"
     );
     for call in calls {
         assert_eq!(

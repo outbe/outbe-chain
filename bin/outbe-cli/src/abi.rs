@@ -44,7 +44,7 @@ sol!("../../contracts/precompiles/src/IOracle.sol");
 sol!("../../contracts/precompiles/src/IUpdate.sol");
 sol!("../../contracts/precompiles/src/IVote.sol");
 sol!("../../contracts/precompiles/src/IStablecoinPolicyRegistry.sol");
-sol!("../../contracts/precompiles/src/IRadicleRegistry.sol");
+sol!("../../contracts/precompiles/src/ICodeRegistry.sol");
 
 pub const ORACLE_ADDR: Address = address!("0x000000000000000000000000000000000000EE05");
 
@@ -127,8 +127,8 @@ mod tests {
             keccak256("ProposerFelony(address,uint64,uint64)")
         );
         assert_eq!(
-            INod::NodBucketCalled::SIGNATURE_HASH,
-            keccak256("NodBucketCalled(bytes32,uint64,uint64)")
+            INod::NodGroupCalled::SIGNATURE_HASH,
+            keccak256("NodGroupCalled(bytes32,uint64,uint64)")
         );
         assert_eq!(
             ICycle::CycleTriggerExecuted::SIGNATURE_HASH,

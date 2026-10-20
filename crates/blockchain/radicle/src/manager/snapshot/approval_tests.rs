@@ -1,12 +1,10 @@
 use super::*;
 use alloy_eips::{BlockNumHash, BlockNumberOrTag};
+use outbe_coderegistry::{payload::PatchVotePayloadV1, vote_target::CodePatchVoteTarget, RepoId};
 use outbe_primitives::{
-    addresses::RADICLE_REGISTRY_ADDRESS,
+    addresses::CODE_REGISTRY_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
     storage::hashmap::HashMapStorageProvider,
-};
-use outbe_radicleregistry::{
-    payload::PatchVotePayloadV1, vote_target::RadiclePatchVoteTarget, RepoId,
 };
 use reth_chainspec::ChainInfo;
 use reth_provider::{
@@ -158,16 +156,14 @@ fn snapshot(provider: &HashMapStorageProvider) -> MockEthProvider {
 }
 
 fn publication_receipt_fixture() -> RethSnapshotReader<ApprovalProvider> {
+    use outbe_coderegistry::schema::{PublicationReceiptRecord, PublicationReceiptRecordEntryExt};
     use outbe_primitives::storage::types::StorageKey as _;
-    use outbe_radicleregistry::schema::{
-        PublicationReceiptRecord, PublicationReceiptRecordEntryExt,
-    };
     let (mut body, manifest) = crate::integration::publication::tests::bootstrap_fixture();
     body.package_manifest_hash = manifest.hash().unwrap();
     let hash = body.receipt_hash();
     let mut storage = HashMapStorageProvider::new_with_chain_identity(2026, B256::repeat_byte(7));
     storage.enter(|s| {
-        let registry = RadicleRegistry::new(s);
+        let registry = CodeRegistry::new(s);
         registry.publication_sequence.write(1).unwrap();
         registry.publication_receipt_hash.write(hash).unwrap();
         registry
@@ -182,14 +178,14 @@ fn publication_receipt_fixture() -> RethSnapshotReader<ApprovalProvider> {
     });
     let accepted = snapshot(&storage);
     storage.enter(|s| {
-        RadicleRegistry::new(s)
+        CodeRegistry::new(s)
             .publication_receipt_hash
             .write(B256::ZERO)
             .unwrap()
     });
     let bad_hash = snapshot(&storage);
     storage.enter(|s| {
-        let registry = RadicleRegistry::new(s);
+        let registry = CodeRegistry::new(s);
         registry.publication_receipt_hash.write(hash).unwrap();
         registry
             .publication_receipts
@@ -200,7 +196,7 @@ fn publication_receipt_fixture() -> RethSnapshotReader<ApprovalProvider> {
     });
     let future = snapshot(&storage);
     storage.enter(|s| {
-        let registry = RadicleRegistry::new(s.clone());
+        let registry = CodeRegistry::new(s.clone());
         registry
             .publication_receipts
             .entry(1)
@@ -208,7 +204,7 @@ fn publication_receipt_fixture() -> RethSnapshotReader<ApprovalProvider> {
             .write(1)
             .unwrap();
         let slot = 1u64.mapping_slot(registry.publication_receipts.base_slot());
-        s.sstore(RADICLE_REGISTRY_ADDRESS, slot, U256::MAX).unwrap();
+        s.sstore(CODE_REGISTRY_ADDRESS, slot, U256::MAX).unwrap();
     });
     let bad_length = snapshot(&storage);
     RethSnapshotReader::new(
@@ -464,7 +460,7 @@ fn block(number: u64) -> FinalizedBlock {
 }
 
 fn signing_fixture() -> RethSnapshotReader<ApprovalProvider> {
-    use outbe_radicleregistry::schema::{
+    use outbe_coderegistry::schema::{
         PatchApprovalRecordEntryExt, PublicationReceiptRecord, PublicationReceiptRecordEntryExt,
     };
     use outbe_vote::{
@@ -472,7 +468,7 @@ fn signing_fixture() -> RethSnapshotReader<ApprovalProvider> {
         schema::ProposalRecordEntryExt,
         ProposalStatus, ProposalSubmission, Vote,
     };
-    static TARGET: RadiclePatchVoteTarget = RadiclePatchVoteTarget;
+    static TARGET: CodePatchVoteTarget = CodePatchVoteTarget;
     static HANDLERS: &[&dyn VoteTarget] = &[&TARGET];
     let targets = VoteTargetRegistry::new(HANDLERS);
     let (mut storage, committee) = repository_authority_storage();
@@ -501,7 +497,7 @@ fn signing_fixture() -> RethSnapshotReader<ApprovalProvider> {
     };
     storage.set_block_number(2);
     storage.enter(|s| {
-        let mut registry = RadicleRegistry::new(s.clone());
+        let mut registry = CodeRegistry::new(s.clone());
         registry.config_max_repositories.write(4).unwrap();
         registry
             .register_repository(body.repo_id, Address::repeat_byte(99))
@@ -512,7 +508,7 @@ fn signing_fixture() -> RethSnapshotReader<ApprovalProvider> {
             .unwrap();
         registry
             .network_repository
-            .write(outbe_radicleregistry::repo_id_storage_key(body.repo_id))
+            .write(outbe_coderegistry::repo_id_storage_key(body.repo_id))
             .unwrap();
         registry.publication_sequence.write(1).unwrap();
         registry.publication_material_sequence.write(1).unwrap();
@@ -526,7 +522,7 @@ fn signing_fixture() -> RethSnapshotReader<ApprovalProvider> {
             .create_proposal_with_voting_window(
                 ProposalSubmission::new(
                     committee.committee[0].address,
-                    RADICLE_REGISTRY_ADDRESS,
+                    CODE_REGISTRY_ADDRESS,
                     &payload,
                     2,
                 ),
@@ -565,30 +561,30 @@ fn signing_fixture() -> RethSnapshotReader<ApprovalProvider> {
             .status()
             .write(ProposalStatus::Approved.to_u8())
             .unwrap();
-        RadicleRegistry::new(s)
+        CodeRegistry::new(s)
             .patch_execution_stage
             .write(
                 &U256::ONE,
-                outbe_radicleregistry::schema::PATCH_EXECUTION_REVIEWED,
+                outbe_coderegistry::schema::PATCH_EXECUTION_REVIEWED,
             )
             .unwrap();
     });
     let reviewed = snapshot(&storage);
     storage.enter(|s| {
-        RadicleRegistry::new(s)
+        CodeRegistry::new(s)
             .patch_execution_stage
             .write(&U256::ONE, 99)
             .unwrap()
     });
     let unknown_stage = snapshot(&storage);
     storage.enter(|s| {
-        let registry = RadicleRegistry::new(s);
+        let registry = CodeRegistry::new(s);
         registry.patch_execution_stage.write(&U256::ONE, 1).unwrap();
         registry.publication_material_sequence.write(0).unwrap();
     });
     let unbound = snapshot(&storage);
     storage.enter(|s| {
-        let registry = RadicleRegistry::new(s);
+        let registry = CodeRegistry::new(s);
         registry.publication_material_sequence.write(1).unwrap();
         registry
             .config_descriptor_hash
@@ -597,7 +593,7 @@ fn signing_fixture() -> RethSnapshotReader<ApprovalProvider> {
     });
     let wrong_descriptor = snapshot(&storage);
     storage.enter(|s| {
-        let registry = RadicleRegistry::new(s);
+        let registry = CodeRegistry::new(s);
         registry
             .config_descriptor_hash
             .write(body.descriptor_hash)
@@ -606,7 +602,7 @@ fn signing_fixture() -> RethSnapshotReader<ApprovalProvider> {
     });
     let missing_receipt = snapshot(&storage);
     storage.enter(|s| {
-        let registry = RadicleRegistry::new(s);
+        let registry = CodeRegistry::new(s);
         registry.publication_sequence.write(1).unwrap();
         registry
             .patch_approvals
@@ -617,7 +613,7 @@ fn signing_fixture() -> RethSnapshotReader<ApprovalProvider> {
     });
     let future_approval = snapshot(&storage);
     storage.enter(|s| {
-        let registry = RadicleRegistry::new(s);
+        let registry = CodeRegistry::new(s);
         registry
             .patch_approvals
             .entry(U256::ONE)
@@ -665,7 +661,7 @@ fn current_patch_signing_state_uses_one_exact_finalized_state_and_preserves_cons
     assert_eq!(current.approval().approval.approved_height, 4);
     assert_eq!(
         current.stage(),
-        outbe_radicleregistry::schema::PATCH_EXECUTION_PENDING
+        outbe_coderegistry::schema::PATCH_EXECUTION_PENDING
     );
     assert_eq!(current.anchor(), block(4));
     assert_eq!(current.checkpoint().receipt().body.sequence, 1);
@@ -674,7 +670,7 @@ fn current_patch_signing_state_uses_one_exact_finalized_state_and_preserves_cons
     let reviewed = reader.read_current_patch_signing_state(U256::ONE).unwrap();
     assert_eq!(
         reviewed.stage(),
-        outbe_radicleregistry::schema::PATCH_EXECUTION_REVIEWED
+        outbe_coderegistry::schema::PATCH_EXECUTION_REVIEWED
     );
     assert_eq!(reviewed.approval().approval, current.approval().approval);
 }
@@ -715,7 +711,7 @@ fn fixture() -> (RethSnapshotReader<ApprovalProvider>, String) {
         handlers::{VoteTarget, VoteTargetRegistry},
         Vote,
     };
-    static TARGET: RadiclePatchVoteTarget = RadiclePatchVoteTarget;
+    static TARGET: CodePatchVoteTarget = CodePatchVoteTarget;
     static HANDLERS: &[&dyn VoteTarget] = &[&TARGET];
     let registry = VoteTargetRegistry::new(HANDLERS);
     let payload = String::from_utf8(
@@ -746,26 +742,21 @@ fn fixture() -> (RethSnapshotReader<ApprovalProvider>, String) {
                 .unwrap();
             vs.activate_validator(*voter).unwrap();
         }
-        let mut repos = RadicleRegistry::new(s.clone());
+        let mut repos = CodeRegistry::new(s.clone());
         repos.config_max_repositories.write(2).unwrap();
         repos
             .register_repository(RepoId::repeat_byte(0xaa), owner)
             .unwrap();
         repos
             .network_repository
-            .write(outbe_radicleregistry::repo_id_storage_key(
+            .write(outbe_coderegistry::repo_id_storage_key(
                 RepoId::repeat_byte(0xaa),
             ))
             .unwrap();
         let mut vote = Vote::new(s);
         let id = vote
             .create_proposal_with_voting_window(
-                outbe_vote::ProposalSubmission::new(
-                    voters[0],
-                    RADICLE_REGISTRY_ADDRESS,
-                    &payload,
-                    1,
-                ),
+                outbe_vote::ProposalSubmission::new(voters[0], CODE_REGISTRY_ADDRESS, &payload, 1),
                 1,
                 &registry,
             )
@@ -978,7 +969,7 @@ fn finalized_vote_pages_select_only_the_network_repository() {
         handlers::{VoteTarget, VoteTargetRegistry},
         Vote,
     };
-    static TARGET: RadiclePatchVoteTarget = RadiclePatchVoteTarget;
+    static TARGET: CodePatchVoteTarget = CodePatchVoteTarget;
     static HANDLERS: &[&dyn VoteTarget] = &[&TARGET];
     let handlers = VoteTargetRegistry::new(HANDLERS);
     let voters = [
@@ -999,12 +990,12 @@ fn finalized_vote_pages_select_only_the_network_repository() {
                     .unwrap();
                 validators.activate_validator(*voter).unwrap();
             }
-            let mut registry = RadicleRegistry::new(s.clone());
+            let mut registry = CodeRegistry::new(s.clone());
             registry.config_max_repositories.write(4).unwrap();
             if let Some(repo) = selected {
                 registry
                     .network_repository
-                    .write(outbe_radicleregistry::repo_id_storage_key(
+                    .write(outbe_coderegistry::repo_id_storage_key(
                         RepoId::repeat_byte(repo),
                     ))
                     .unwrap();
@@ -1029,7 +1020,7 @@ fn finalized_vote_pages_select_only_the_network_repository() {
                     .create_proposal_with_voting_window(
                         outbe_vote::ProposalSubmission::new(
                             voters[usize::from(repo) - 1],
-                            RADICLE_REGISTRY_ADDRESS,
+                            CODE_REGISTRY_ADDRESS,
                             &payload,
                             1,
                         ),
@@ -1111,12 +1102,12 @@ fn missing_finality_noncanonical_and_unavailable_snapshots_fail_without_fallback
 fn bootstrap_permission_uses_one_current_finalized_state_and_stops_after_binding() {
     let (mut storage, _) = repository_authority_storage();
     let seeded: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../../../system/radicleregistry/tests/fixtures/governments-genesis-storage.json"
+        "../../../../../system/coderegistry/tests/fixtures/governments-genesis-storage.json"
     ))
     .unwrap();
     for (slot, value) in seeded["storage"].as_object().unwrap() {
         storage.storage.insert(
-            (RADICLE_REGISTRY_ADDRESS, slot.parse().unwrap()),
+            (CODE_REGISTRY_ADDRESS, slot.parse().unwrap()),
             value.as_str().unwrap().parse().unwrap(),
         );
     }
@@ -1132,18 +1123,18 @@ fn bootstrap_permission_uses_one_current_finalized_state_and_stops_after_binding
     for (index, (slot, value)) in slots.into_iter().enumerate() {
         let original = storage
             .storage
-            .insert((RADICLE_REGISTRY_ADDRESS, U256::from(slot)), value);
+            .insert((CODE_REGISTRY_ADDRESS, U256::from(slot)), value);
         states.insert(block(index as u64 + 4).hash, snapshot(&storage));
         match original {
             Some(value) => {
                 storage
                     .storage
-                    .insert((RADICLE_REGISTRY_ADDRESS, U256::from(slot)), value);
+                    .insert((CODE_REGISTRY_ADDRESS, U256::from(slot)), value);
             }
             None => {
                 storage
                     .storage
-                    .remove(&(RADICLE_REGISTRY_ADDRESS, U256::from(slot)));
+                    .remove(&(CODE_REGISTRY_ADDRESS, U256::from(slot)));
             }
         }
     }
@@ -1186,19 +1177,19 @@ fn publication_delivery_progress_uses_one_finalized_state_and_preserves_accepted
     };
     let (mut storage, committee) = repository_authority_storage();
     let seeded: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../../../system/radicleregistry/tests/fixtures/governments-genesis-storage.json"
+        "../../../../../system/coderegistry/tests/fixtures/governments-genesis-storage.json"
     ))
     .unwrap();
     for (slot, value) in seeded["storage"].as_object().unwrap() {
         storage.storage.insert(
-            (RADICLE_REGISTRY_ADDRESS, slot.parse().unwrap()),
+            (CODE_REGISTRY_ADDRESS, slot.parse().unwrap()),
             value.as_str().unwrap().parse().unwrap(),
         );
     }
     let (mut body, manifest) = crate::integration::publication::tests::bootstrap_fixture();
     body.package_manifest_hash = manifest.hash().unwrap();
     body.descriptor_hash = storage
-        .enter(|s| RadicleRegistry::new(s).config_descriptor_hash.read())
+        .enter(|s| CodeRegistry::new(s).config_descriptor_hash.read())
         .unwrap();
     body.owner_bls_public =
         alloy_primitives::FixedBytes::from_slice(&committee.vrf_group_public_key_bytes);
@@ -1230,14 +1221,14 @@ fn publication_delivery_progress_uses_one_finalized_state_and_preserves_accepted
     };
     storage.set_block_number(3);
     assert!(storage
-        .enter(|s| RadicleRegistry::new(s).apply_publication_batch(&batch(&[0, 1])))
+        .enter(|s| CodeRegistry::new(s).apply_publication_batch(&batch(&[0, 1])))
         .unwrap()
         .receipt
         .is_none());
     let pending = snapshot(&storage);
     storage.set_block_number(4);
     let accepted = storage
-        .enter(|s| RadicleRegistry::new(s).apply_publication_batch(&batch(&[2])))
+        .enter(|s| CodeRegistry::new(s).apply_publication_batch(&batch(&[2])))
         .unwrap()
         .receipt
         .unwrap();

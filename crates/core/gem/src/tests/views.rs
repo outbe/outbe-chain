@@ -13,6 +13,40 @@ use crate::precompile::dispatch;
 use crate::schema::{GemContract, GemState};
 
 #[test]
+fn timestamp_overflow_rolls_back_settlement_and_rejects_time_views() {
+    let mut provider = provider_at(T_NOW);
+    let gem_id = StorageHandle::enter(&mut provider, |storage| add(&storage, sample_params(ALICE)));
+    let before_storage = provider.storage.clone();
+    let before_events = provider.get_ordered_events().to_vec();
+    for timestamp in [U256::from(u64::MAX) + U256::ONE, U256::MAX] {
+        provider.set_timestamp(timestamp);
+        StorageHandle::enter(&mut provider, |storage| {
+            for data in [
+                IGem::getGemCall { gemId: gem_id }.abi_encode(),
+                IGem::tokenURICall { gemId: gem_id }.abi_encode(),
+            ] {
+                assert!(matches!(call(&storage, data).unwrap_err(),
+                    outbe_primitives::error::PrecompileError::Revert(message)
+                        if message == "timestamp exceeds u64"));
+            }
+            let (item, group) = api::load_pair(&storage, gem_id).unwrap().unwrap();
+            assert!(
+                matches!(api::record_settled(&storage, item, group).unwrap_err(),
+                outbe_primitives::error::PrecompileError::Revert(message)
+                    if message == "timestamp exceeds u64")
+            );
+        });
+        assert_eq!(provider.storage, before_storage);
+        assert_eq!(provider.get_ordered_events(), before_events);
+    }
+    provider.set_timestamp(U256::from(T_NOW + 1));
+    StorageHandle::enter(&mut provider, |storage| {
+        settle(&storage, gem_id);
+        assert_eq!(item(&storage, gem_id).unwrap().settled_at, T_NOW + 1);
+    });
+}
+
+#[test]
 fn precompile_transfer_paths_revert() {
     with_storage(|storage| {
         let gem_id = add(storage, sample_params(ALICE));
@@ -302,7 +336,7 @@ fn token_uri_renders_the_gem_card() {
         assert_eq!(json["description"], crate::constants::TOKEN_DESCRIPTION);
         assert!(!json.to_string().contains("https://"));
         assert_eq!(trait_value(&json, "State").unwrap(), "Issued");
-        assert_eq!(trait_value(&json, "Gem Type").unwrap(), "SRA");
+        assert!(trait_value(&json, "Gem Type").is_none());
         assert_eq!(trait_value(&json, "Entry Price").unwrap(), 0.5);
         assert!(trait_value(&json, "Floor Price").is_none());
         assert_eq!(trait_value(&json, "Call Price").unwrap(), 1.14);
@@ -435,14 +469,14 @@ fn gem_contract_slot_layout_is_pinned() {
     with_storage(|storage| {
         let gem = GemContract::new(storage.clone());
         assert_eq!(gem.total_supply.slot(), U256::from(0u64));
-        assert_eq!(gem.bucket_gem_count.base_slot(), U256::from(1u64));
-        assert_eq!(gem.bucket_called_at.base_slot(), U256::from(11u64));
-        assert_eq!(gem.call_bin_tree_root.base_slot(), U256::from(12u64));
-        assert_eq!(gem.expiry_tree_root.slot(), U256::from(20u64));
-        assert_eq!(gem.config_profile.slot(), U256::from(33u64));
+        assert_eq!(gem.group_gem_count.base_slot(), U256::from(1u64));
+        assert_eq!(gem.group_called_at.base_slot(), U256::from(10u64));
+        assert_eq!(gem.call_bin_tree_root.base_slot(), U256::from(11u64));
+        assert_eq!(gem.expiry_tree_root.slot(), U256::from(19u64));
+        assert_eq!(gem.config_profile.slot(), U256::from(32u64));
         assert_eq!(
             gem.min_call_threshold_seconds.base_slot(),
-            U256::from(35u64)
+            U256::from(34u64)
         );
         assert_eq!(GemState::Settled as u8, 2);
     });

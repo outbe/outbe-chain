@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from genesis_yaml import load_yaml
+import launch_bundle
 
 from genesis_network import (
     BASE_PROFILE_PATH,
@@ -112,7 +113,28 @@ def build_seed(config: dict[str, Any]) -> dict[str, Any]:
     for section in SEED_SECTIONS:
         if section in config:
             seed[section] = deep_merge(seed.get(section), config[section])
+    _add_feeder_pairs(seed, config)
     return seed
+
+
+def _add_feeder_pairs(seed: dict[str, Any], config: dict[str, Any]) -> None:
+    """Registers the pairs of the committed feeder pairs file in genesis. A pair
+    the profile already lists keeps its entry, for example its initial rate."""
+    table = launch_bundle.feeder_pairs_table(config)
+    if not table:
+        return
+    oracle = seed.setdefault("oracle", {})
+    pairs = oracle.setdefault("pairs", [])
+    listed = {(pair["base"], str(pair["quote"])) for pair in pairs}
+    for pair in table.get("currency_pairs", []):
+        if (pair["base"], pair["quote"]) not in listed:
+            pairs.append({"base": pair["base"], "quote": pair["quote"]})
+    # Initial rates and S-curve seeds of these pairs. The feeder rejects
+    # unknown keys in the pairs file, so they live in a separate file.
+    if config.get("feeder_seeds"):
+        seeds = load_yaml(SCRIPT_DIR / config["feeder_seeds"])
+        for key in ("initial_rates", "scurve_seeds"):
+            oracle[key] = oracle.get(key, []) + seeds.get(key, [])
 
 
 def load_seed_genesis_module():

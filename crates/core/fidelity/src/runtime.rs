@@ -29,10 +29,6 @@ fn chain_id_b256(storage: &StorageHandle<'_>) -> Result<B256> {
 }
 
 impl FidelityContract<'_> {
-    fn now(&self) -> Result<u64> {
-        Ok(self.storage.timestamp()?.to::<u64>())
-    }
-
     /// Build the cohort op section from committed storage (current blob + the
     /// plaintext global anchor), for folding into a co-located gratis op.
     pub fn cohort_section(
@@ -138,7 +134,7 @@ impl FidelityContract<'_> {
 
     /// League for `account` at the current block time.
     pub fn league(&self, account: Address) -> Result<u16> {
-        self.league_at(account, self.now()?)
+        self.league_at(account, self.storage.now_secs()?)
     }
 
     /// Synthetic-max RCFI at `timestamp`: `t_dec(utc_day(timestamp) - first_qualified_start)`.
@@ -271,7 +267,7 @@ impl FidelityContract<'_> {
             account,
             cohort_blob: self.cohorts_ct_of(account)?,
             query_timestamp,
-            block_timestamp: self.now()?,
+            block_timestamp: self.storage.now_secs()?,
             first_qualified_start: self.first_qualified_start()?,
             expiry,
             owner_sig,
@@ -287,6 +283,6 @@ impl FidelityContract<'_> {
         expiry: u64,
         owner_sig: Vec<u8>,
     ) -> Result<FidelityQueryResult> {
-        self.query_index_at(account, self.now()?, expiry, owner_sig)
+        self.query_index_at(account, self.storage.now_secs()?, expiry, owner_sig)
     }
 }

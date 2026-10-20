@@ -18,14 +18,11 @@ pub enum GemFactoryError {
     #[error("gem is not settled")]
     GemNotSettled,
 
-    #[error("gem bucket is not called")]
+    #[error("gem group is not called")]
     GemNotCalled,
 
     #[error("settlement deadline has passed")]
     SettlementDeadlinePassed,
-
-    #[error("unsupported gem type")]
-    UnsupportedGemType,
 
     #[error("source intex not found")]
     SourceIntexNotFound,
@@ -72,14 +69,20 @@ pub enum GemFactoryError {
     #[error("{0} undecodable")]
     UndecodableReturn(&'static str),
 
-    #[error("gem bucket {bucket_key} has an empty member slot during forfeit")]
-    EmptyMemberSlotDuringForfeit { bucket_key: B256 },
+    #[error("gem group {group_key} has an empty member slot during cleanup")]
+    EmptyMemberSlotDuringCleanup { group_key: B256 },
 
-    #[error("gem bucket {bucket_key} member {gem_id} has no body during forfeit")]
-    MissingMemberRecordDuringForfeit { bucket_key: B256, gem_id: U256 },
+    #[error("gem group {group_key} member {gem_id} has no record during cleanup")]
+    MissingMemberRecordDuringCleanup { group_key: B256, gem_id: U256 },
 
-    #[error("gem bucket {bucket_key} indexes an ineligible member {gem_id}")]
-    IneligibleBucketMember { bucket_key: B256, gem_id: U256 },
+    #[error("position has not expired")]
+    PositionNotExpired,
+
+    #[error("gem group {group} has no record to call")]
+    MissingGroupForCall { group: B256 },
+
+    #[error("gem group {group_key} indexes an ineligible member {gem_id}")]
+    IneligibleGroupMember { group_key: B256, gem_id: U256 },
 
     #[error("gem call price overflow")]
     CallPriceOverflow,

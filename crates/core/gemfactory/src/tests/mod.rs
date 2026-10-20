@@ -19,7 +19,7 @@ use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 const POSITION_VALIDITY_SECONDS: u64 = outbe_gem::GemParams::PROD.position_validity;
 use crate::positions_expired;
 use crate::runtime;
-use crate::schema::{GemFactoryContract, GemIssueParams, GemPosition, GemTypes};
+use crate::schema::{GemFactoryContract, GemIssueParams, GemPosition};
 use crate::sol_ext::{IReferenceCurrency, IERC20};
 use alloy_sol_types::SolCall;
 use outbe_vaultrouter::api::IVaultRouter;
@@ -177,7 +177,6 @@ fn find_valid_nonce(gem_id: U256, owner: Address) -> u64 {
 fn issue_at_live_rate(
     storage: &StorageHandle<'_>,
     owner: Address,
-    gem_type: GemTypes,
     promis_load: U256,
     issuance_currency: u16,
     reference_currency: u16,
@@ -187,7 +186,6 @@ fn issue_at_live_rate(
         storage,
         GemIssueParams {
             owner,
-            gem_type,
             promis_load_minor: promis_load,
             issuance_currency,
             reference_currency,
@@ -210,7 +208,7 @@ fn admitted_at_quote(storage: &StorageHandle<'_>, gem_id: U256, asset: Address) 
         },
     );
     assert!(err_msg(res).contains("unexpected amount"));
-    let now = storage.timestamp().unwrap().to::<u64>();
+    let now = storage.now_secs().unwrap();
     assert_eq!(
         gem_view(storage, gem_id).effective_state(now),
         GemState::Issued as u8
@@ -255,8 +253,8 @@ fn force_settled(storage: &StorageHandle<'_>, gem_id: U256) {
 fn record_settled(storage: &StorageHandle<'_>, gem_id: U256) {
     let gem = gem_api::get_view(storage, gem_id).unwrap().unwrap();
     runtime::require_settleable(storage, &gem).unwrap();
-    let (item, bucket) = gem_api::load_pair(storage, gem_id).unwrap().unwrap();
-    gem_api::record_settled(storage, item, bucket).unwrap();
+    let (item, group) = gem_api::load_pair(storage, gem_id).unwrap().unwrap();
+    gem_api::record_settled(storage, item, group).unwrap();
 }
 
 // --- Merchant gems ---
@@ -324,7 +322,7 @@ fn seed_called_source(storage: &StorageHandle, called_at: u64) {
             ..Default::default()
         },
     );
-    outbe_intex::api::record_called(storage, source_intex_id(), called_at as u32).unwrap();
+    outbe_intex::api::call_group_of(storage, source_intex_id(), called_at as u32).unwrap();
 }
 
 fn send_whole_holding(storage: &StorageHandle) -> outbe_primitives::error::Result<U256> {
@@ -395,7 +393,7 @@ fn merchant_entry_price(storage: &StorageHandle, source_entry: U256) -> U256 {
         },
     )
     .unwrap();
-    gem_view(storage, gem_id).bucket.entry_price_minor
+    gem_view(storage, gem_id).item.entry_price_minor
 }
 
 mod capacity_conservation;

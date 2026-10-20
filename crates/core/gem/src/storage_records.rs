@@ -100,17 +100,17 @@ mod tests {
     }
 
     #[test]
-    fn zero_price_bucket_exists_until_deleted() {
+    fn zero_price_group_exists_until_deleted() {
         let mut provider = HashMapStorageProvider::new(54322345);
         StorageHandle::enter(&mut provider, |storage| {
             let contract = crate::GemContract::new(storage);
             let key = B256::repeat_byte(2);
-            let mut record = crate::GemBucketState::with_key(key);
-            record.worldwide_day = WorldwideDay::new(20261015);
-            contract.buckets.create(&record).unwrap();
-            assert_eq!(contract.buckets.get(key).unwrap(), Some(record));
-            contract.buckets.delete(key).unwrap();
-            assert!(contract.buckets.get(key).unwrap().is_none());
+            let mut record = crate::GemGroupState::with_key(key);
+            record.full_day_after_issue = WorldwideDay::new(20261015);
+            contract.groups.create(&record).unwrap();
+            assert_eq!(contract.groups.get(key).unwrap(), Some(record));
+            contract.groups.delete(key).unwrap();
+            assert!(contract.groups.get(key).unwrap().is_none());
         });
     }
 }

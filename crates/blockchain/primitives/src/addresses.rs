@@ -127,7 +127,7 @@ pub const ORACLE_ADDRESS: Address = address!("0x00000000000000000000000000000000
 pub const ZERO_FEE_POLICY_LOG_ADDRESS: Address =
     address!("0x000000000000000000000000000000000000EE06");
 
-/// Groth16 / UltraHonkKeccak proof verifier precompile address (stateless).
+/// UltraHonkKeccak proof verifier precompile address (stateless).
 ///
 /// Input is `abi.encode(bytes32 circuit_hash, bytes proof)`. The
 /// precompile does a lookup of `circuit_hash` in the shipped L2 tribute table from
@@ -136,7 +136,7 @@ pub const ZERO_FEE_POLICY_LOG_ADDRESS: Address =
 /// bytes: `0x..01` on a valid proof. It is `0x..00` for an unknown circuit
 /// hash or a proof that the verifier rejects. Malformed ABI input, a nonzero
 /// call value, and a verifier-backend error revert.
-pub const ZKPROOF_GROTH16_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE08");
+pub const ZKPROOF_VERIFY_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE08");
 
 /// ZeroFee paymaster precompile address (stateful).
 ///
@@ -216,9 +216,9 @@ pub const STABLECOIN_FACTORY_ADDRESS: Address =
 pub const STABLECOIN_POLICY_REGISTRY_ADDRESS: Address =
     address!("0x000000000000000000000000000000000000EE10");
 
-/// Permissionless append-only registry of public Heartwood repository ids.
-pub const RADICLE_REGISTRY_ADDRESS: Address =
-    address!("0x000000000000000000000000000000000000EE11");
+/// CodeRegistry precompile address: permissionless append-only registry of
+/// public Heartwood repository ids and approved code-change receipts.
+pub const CODE_REGISTRY_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE11");
 
 /// HyperlaneController precompile address (stateful).
 ///

@@ -214,6 +214,6 @@ fn genesis_seeds_the_usd_policy_rate() {
             &crate::genesis::OracleGenesisConfig::default_config(),
         )
         .unwrap();
-        assert_eq!(oracle.get_policy_rate(840).unwrap(), U256::from(36_300u64));
+        assert_eq!(oracle.get_policy_rate(840).unwrap(), U256::from(38_800u64));
     });
 }

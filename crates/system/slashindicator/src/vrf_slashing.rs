@@ -135,6 +135,7 @@ impl SlashIndicator<'_> {
         // (11) Re-verify the proof. Only a VRF-class failure is slashable.
         let failure_class = vrf_failure_class(&metadata, &snapshot, ev.parent_block_hash)?;
 
+        self.storage.now_secs()?;
         // (12) Mark dedup BEFORE applying effects so a panic / abort
         // between this point and the felony cannot enable replay.
         self.invalid_vrf_evidence_processed
@@ -384,6 +385,7 @@ impl SlashIndicator<'_> {
         if self.seed_partial_equivocation_processed.read(&dedup)? {
             return Err(SlashIndicatorError::EvidenceAlreadyProcessed.into());
         }
+        self.storage.now_secs()?;
         self.seed_partial_equivocation_processed
             .write(&dedup, true)?;
 
@@ -462,6 +464,7 @@ impl SlashIndicator<'_> {
         if self.invalid_seed_partial_processed.read(&dedup)? {
             return Err(SlashIndicatorError::EvidenceAlreadyProcessed.into());
         }
+        self.storage.now_secs()?;
         self.invalid_seed_partial_processed.write(&dedup, true)?;
 
         // (13) Felony.

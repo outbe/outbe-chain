@@ -20,17 +20,13 @@ interface INodFactory {
     /// @notice Emitted when a Nod is settled.
     event NodSettled(address indexed owner, uint256 nodId, address asset, uint256 paymentMinor);
 
-    /// @notice The daily call sweep (`sweep` = 1) fell two days behind. `skippedDay`
-    ///         gave its place to a newer day, and the sweep will not walk it.
-    event SweepDaySkipped(uint8 indexed sweep, uint32 skippedDay, uint32 inFlightDay);
-
     /// @notice A reference currency was left out of one day's Call scan because its
     ///         window price could not be indexed. The next daily pass tries it again.
     event CallScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);
 
-    /// @notice A lapsed bucket kept a Nod that could not burn, or its Nods were still
-    ///         landing. The forfeit sweep comes back to it at `retryAt`.
-    event ExpiryDeferred(bytes32 indexed bucketKey, uint64 retryAt);
+    /// @notice A lapsed group could not be forfeited. The forfeit sweep comes back to it
+    ///         at `retryAt`.
+    event ExpiryDeferred(bytes32 indexed groupKey, uint64 retryAt);
 
     /// @notice Pay an uncalled Nod, or a called one at or before its settlement
     /// deadline, in ERC20 base units of `asset`. Any caller may pay. The Nod stays

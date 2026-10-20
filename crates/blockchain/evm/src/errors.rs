@@ -361,8 +361,6 @@ pub enum BeginBlockPrecompileError {
     NativeValueRejected,
     #[error("invalid system tx input: {0}")]
     InvalidSystemTxInput(String),
-    #[error("{name} exceeds u64 range: {value}")]
-    ValueExceedsU64 { name: &'static str, value: U256 },
     #[error("Cycle execution body read authority was not supplied")]
     MissingCycleBodyReadAuthority,
     #[error("proposer is not a current consensus participant: {proposer}")]
@@ -554,7 +552,6 @@ impl From<BeginBlockPrecompileError> for PrecompileError {
             | BeginBlockPrecompileError::InvalidSystemCaller
             | BeginBlockPrecompileError::NativeValueRejected
             | BeginBlockPrecompileError::InvalidSystemTxInput(_)
-            | BeginBlockPrecompileError::ValueExceedsU64 { .. }
             | BeginBlockPrecompileError::ProposerNotConsensusParticipant { .. }
             | BeginBlockPrecompileError::IdenticalReplayUnexpectedProgress { .. }
             | BeginBlockPrecompileError::ProgressGap { .. }

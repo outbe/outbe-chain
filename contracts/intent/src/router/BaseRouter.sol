@@ -43,7 +43,7 @@ abstract contract BaseRouter is OriginSettler, DestinationSettler, Ownable2Step 
     /// @notice Thrown when the resource lock tag is zero
     error InvalidLockTag();
 
-    /// @notice Thrown when the caller attaches native value to a same-chain settle/refund. That path
+    /// @notice Thrown when the caller attaches native value to a same-chain settle or refund. That path
     ///         forwards no bridge fee, so without this check the ETH would be trapped in the router.
     error UnexpectedNativeValue();
 
@@ -105,6 +105,7 @@ abstract contract BaseRouter is OriginSettler, DestinationSettler, Ownable2Step 
     /// @dev Routes refund. Same-chain calls _handleRefundOrder directly. Cross-chain delegates.
     function _dispatchRefund(uint32 _originDomain, bytes32[] memory _orderIds) internal override {
         if (_originDomain == _localDomain()) {
+            if (msg.value != 0) revert UnexpectedNativeValue();
             bytes32 self = bytes32(uint256(uint160(address(this))));
             for (uint256 i = 0; i < _orderIds.length; i++) {
                 _handleRefundOrder(_originDomain, self, _orderIds[i]);

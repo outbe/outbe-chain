@@ -24,30 +24,27 @@ sol! {
             uint16 referenceCurrency,
             uint32[] snapshotChains
         ) external;
-        function closeCallNoticeForTest(uint16 isoCode, uint32 worldwideDay, uint64 deadline) external;
+        function closeCallNoticeForTest(bytes14 seriesId, uint64 deadline) external;
     }
 }
 
-/// Move a called group onto `deadline`, and with it into that deadline's bucket. The
-/// sweep opens a bucket only once its hour has closed, so a notice that lapsed minutes
-/// ago would otherwise idle out the rest of the hour.
-fn requeue_called(
-    storage: &StorageHandle<'_>,
-    iso_code: u16,
-    worldwide_day: u32,
-    deadline: u64,
-) -> Result<()> {
+/// Move the called group of `series_id` onto `deadline`, and with it into that deadline's
+/// bucket. The sweep opens a bucket only once its hour has closed, so a notice that lapsed
+/// minutes ago would otherwise idle out the rest of the hour.
+fn requeue_called(storage: &StorageHandle<'_>, series_id: SeriesId, deadline: u64) -> Result<()> {
     use outbe_intex::IntexContract;
-    use outbe_primitives::time::WorldwideDay;
 
     let mut intex = IntexContract::new(storage.clone());
-    let worldwide_day = WorldwideDay::from(worldwide_day);
-    let key = IntexContract::scoped(iso_code, worldwide_day.value());
-    if intex.called_deadline.read(&key)? == 0 {
+    let group = outbe_intex::api::read_series(storage, series_id)?.group_key();
+    if intex.called_deadline.read(&group)? == 0 {
         return Err(crate::errors::IntexFactoryError::NoCalledGroupForTest.into());
     }
-    intex.remove_called(iso_code, worldwide_day)?;
-    intex.push_called(iso_code, worldwide_day, deadline)
+    // Members read the deadline from the call, so the call moves with the queue.
+    let notice = u64::from(intex.call_group_notice_seconds.read(&group)?);
+    let called_at = u32::try_from(deadline.saturating_sub(notice).max(1))
+        .map_err(|_| crate::errors::IntexFactoryError::BlockTimestampExceedsU32)?;
+    intex.call_group_called_at.write(&group, called_at)?;
+    intex.requeue_called(group, deadline)
 }
 
 /// Runs a test-arming call, or returns `None` for any other calldata.
@@ -61,7 +58,7 @@ pub(crate) fn dispatch(storage: &StorageHandle<'_>, data: &[u8]) -> Option<Resul
     }
     if let Ok(call) = closeCallNoticeForTestCall::abi_decode(data) {
         return Some(guarded(storage, || {
-            requeue_called(storage, call.isoCode, call.worldwideDay, call.deadline)
+            requeue_called(storage, SeriesId::from(call.seriesId), call.deadline)
         }));
     }
     None
@@ -85,7 +82,7 @@ fn seed_day_vwaps_for_test(
     let oracle = OracleContract::new(storage.clone());
     let pair = outbe_oracle::api::AddressPair::new_coen_to(call.isoCode);
     let pair_id = oracle.pair_index_of(pair)?;
-    let mut day = previous_date_key(timestamp_to_date_key(storage.timestamp()?.to::<u64>()));
+    let mut day = previous_date_key(timestamp_to_date_key(storage.now_secs()?));
     for _ in 0..call.days {
         oracle.record_utc_day_vwap(day, pair_id, call.value)?;
         if oracle.utc_day_vwap_last_finalized.read()? < day {
@@ -106,6 +103,9 @@ fn issue_for_test(
     if call.seriesIds.len() != call.issuanceCurrencies.len() {
         return Err(crate::errors::IntexFactoryError::IssueForTestCurrencyCountMismatch.into());
     }
+    // The clearing engine fixes the call terms at the auction start. This hook has no
+    // auction, so it fixes them from the profile that is live now.
+    let terms = crate::api::call_terms(storage)?;
     let mut legs = Vec::new();
     let ids = call.seriesIds.clone();
     for (series_id, issuance_currency) in call.seriesIds.into_iter().zip(call.issuanceCurrencies) {
@@ -117,6 +117,8 @@ fn issue_for_test(
                 issued_units: call.issuedUnits,
                 promis_load_minor: call.promisLoadMinor,
                 entry_price_minor: call.entryPriceMinor,
+                call_price_minor: terms.call_price(call.entryPriceMinor)?,
+                call_trigger: terms.call_trigger,
                 issuance_currency,
                 reference_currency: call.referenceCurrency,
                 snapshot_chains: call.snapshotChains.clone(),

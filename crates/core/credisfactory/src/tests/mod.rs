@@ -145,13 +145,16 @@ pub fn pledge(storage: &StorageHandle<'_>, source: Address, reservation_id: U256
 /// Parks a live vault reservation for `credis_owner`, pledged by `source`, so
 /// `issue_credis` can consume it. This helper writes the hold through VaultRouter
 /// storage, not the ABI, because these tests stub EVM sub-calls into the router.
+///
+/// Each reservation's call anchor sits a minor unit below the last one's, so every
+/// Credis opens a group of its own unless a test shares one.
 pub fn seed_reservation(
     storage: &StorageHandle<'_>,
     credis_owner: Address,
     source: Address,
     amount: U256,
 ) -> U256 {
-    let expires_at = storage.timestamp().unwrap().to::<u64>() + 15 * 60;
+    let expires_at = storage.now_secs().unwrap() + 15 * 60;
     let contract = VaultRouterContract::new(storage.clone());
     let nonce = contract
         .reservation_nonce
@@ -178,7 +181,7 @@ pub fn seed_reservation(
             issuance_currency: ISSUANCE_ISO,
             asset_decimals: 6,
             reference_currency: REFERENCE_ISO,
-            call_anchor_price_minor: oracle_rate(),
+            call_anchor_price_minor: oracle_rate() - (nonce - U256::from(1)),
             source,
         })
         .unwrap();
@@ -246,7 +249,7 @@ pub fn set_coen_rate(storage: &StorageHandle<'_>, coen_iso_rate: U256) {
 /// [`set_coen_rate`] on an arbitrary pair. The COEN/`REFERENCE_ISO` leg is the
 /// spot price, which must not affect the issuance-time daily VWAP anchor.
 pub fn set_coen_rate_for(storage: &StorageHandle<'_>, iso: u16, coen_iso_rate: U256) {
-    let timestamp = storage.timestamp().unwrap().to::<u64>();
+    let timestamp = storage.now_secs().unwrap();
     outbe_oracle::api::set_exchange_rate(
         storage.clone(),
         Address::ZERO,
@@ -311,7 +314,7 @@ pub fn fill_days_for(storage: &StorageHandle<'_>, iso: u16, latest: u32, days: u
 /// Publishes `price` as the finalized VWAP of the UTC day closed at the
 /// storage clock, which is the day issuance reads.
 fn seed_previous_closed_day(storage: &StorageHandle<'_>, iso: u16, price: U256) {
-    let day = last_closed_day(storage.timestamp().unwrap().to::<u64>());
+    let day = last_closed_day(storage.now_secs().unwrap());
     set_vwap_for(storage, iso, day, price);
 }
 
@@ -349,9 +352,13 @@ pub fn slice(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
     crate::called::run_call_slice(&block_at(storage, timestamp)).unwrap()
 }
 
-/// One block's forfeit sweep over the lapsed called Credis.
+/// One block's forfeit sweep over the lapsed called groups, then its cleanup. Returns
+/// the groups forfeited.
 pub fn expire(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
-    crate::expired::sweep_expired(&block_at(storage, timestamp)).unwrap()
+    let ctx = block_at(storage, timestamp);
+    let forfeited = crate::expired::sweep_expired(&ctx).unwrap();
+    crate::cleanup::sweep_cleanup(&ctx).unwrap();
+    forfeited
 }
 
 /// What CycleTick runs every block.
@@ -359,10 +366,32 @@ pub fn tick(storage: &StorageHandle<'_>, timestamp: u64) {
     let ctx = block_at(storage, timestamp);
     crate::hooks::sweep_forfeits(&ctx).unwrap();
     crate::called::run_call_slice(&ctx).unwrap();
+    crate::hooks::sweep_cleanup(&ctx).unwrap();
+}
+
+/// Calls the Credis's group at `now`, as the call scan does. Returns whether it moved.
+pub fn call_credis(storage: &StorageHandle<'_>, id: U256, now: u64) -> bool {
+    let mut credis = CredisContract::new(storage.clone());
+    let group = credis.get_credis(id).unwrap().group_key();
+    if credis.group_called_at.read(&group).unwrap() != 0 {
+        return false;
+    }
+    credis.record_group_called(group, now).unwrap();
+    true
+}
+
+/// Moves the clock past the hour the called Credis's deadline falls in and runs that
+/// block's forfeit and cleanup. Returns the groups forfeited.
+pub fn lapse(storage: &StorageHandle<'_>, id: U256) -> u32 {
+    let record = CredisContract::new(storage.clone()).get_credis(id).unwrap();
+    let past = outbe_credis::settlement_deadline(&record) + HOUR;
+    advance_to(storage, past);
+    finalize_through(storage, past);
+    expire(storage, past)
 }
 
 pub fn now_of(storage: &StorageHandle<'_>) -> u64 {
-    storage.timestamp().unwrap().to::<u64>()
+    storage.now_secs().unwrap()
 }
 
 pub fn advance_to(storage: &StorageHandle<'_>, timestamp: u64) {

@@ -2,7 +2,7 @@
 Feature: Nod from issuance to Gratis and COEN
   # The Nod half of the shared lifecycle. Lysis over a certified generation is covered
   # by the Lysis scenario; here the Nods are issued straight to five owners in one
-  # bucket, so the phases every entity shares run on one chain and directly in EVM state.
+  # group, so the phases every entity shares run on one chain and directly in EVM state.
   #
   # Every Nod is issued in MYR against a USD reference. Two are paid while issued
   # and two inside the call notice, one by its owner and one by a third party, in
@@ -11,16 +11,16 @@ Feature: Nod from issuance to Gratis and COEN
   # quotes finalized. The fifth Nod is left to forfeit.
   #
   # Time is seeded rather than lived through wherever the protocol allows it.
-  # The call counts only closed days after the bucket's stamp, so the bucket is
+  # The call counts only closed days after the group's stamp, so the group is
   # stamped behind the seeded days. The call notice is the DEV
   # profile's, so it is waited out for real.
   @nod-lifecycle @myr-issuance
-  Scenario: Five Nods in one bucket are paid by owners and third parties in both currencies, one forfeits, and the paid ones end in COEN
+  Scenario: Five Nods in one group are paid by owners and third parties in both currencies, one forfeits, and the paid ones end in COEN
     Given a fresh localnet with a 20-block voting window
     And the deploy account is funded on the committee chain
     When the settlement currencies are registered on the committee chain
     Then owners may settle in each of them
-    When five owners are issued Nods in one bucket
+    When five owners are issued Nods in one group
     Then every Nod reads Issued and carries its terms
     And no Nod can be transferred
     And the controlled COEN quotes are finalized through the real price feeder

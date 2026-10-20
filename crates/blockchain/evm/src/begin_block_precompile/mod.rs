@@ -160,7 +160,7 @@ fn dispatch_inner(
             run_hook_events(&ctx)?;
         }
         SystemTxInputV2::RadiclePublication { batch } => {
-            outbe_radicleregistry::RadicleRegistry::new(storage).apply_publication_batch(&batch)?;
+            outbe_coderegistry::CodeRegistry::new(storage).apply_publication_batch(&batch)?;
         }
     }
 

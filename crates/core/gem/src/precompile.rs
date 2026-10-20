@@ -90,19 +90,17 @@ fn dispatch_entity(
         }),
         tokenURI(c) => view(c, |c| {
             let gem = api::get_view(storage, c.gemId)?.ok_or(GemError::GemNotFound)?;
-            let now = storage.timestamp()?.to::<u64>();
+            let now = storage.now_secs()?;
             Ok(crate::metadata::token_uri(&gem, now))
         }),
         tokenOfOwnerByIndex(c) => view(c, |c| {
-            let idx = usize::try_from(c.index).map_err(|_| GemError::IndexOutOfBounds)?;
-            api::list_by_owner(storage, c.owner)?
-                .get(idx)
-                .map(|item| item.gem_id.to_u256())
+            let index = u32::try_from(c.index).map_err(|_| GemError::IndexOutOfBounds)?;
+            api::token_of_owner_by_index(storage, c.owner, index)?
                 .ok_or_else(|| GemError::IndexOutOfBounds.into())
         }),
         getGem(c) => view(c, |c| {
             let gem = api::get_view(storage, c.gemId)?.ok_or(GemError::GemNotFound)?;
-            Ok(to_abi_data(&gem, storage.timestamp()?.to::<u64>()))
+            Ok(to_abi_data(&gem, storage.now_secs()?))
         }),
         _ => Err(crate::errors::GemFatalError::EntityRouteMetadataCall.into()),
     }
@@ -112,10 +110,9 @@ fn to_abi_data(gem: &GemView, now: u64) -> IGem::GemData {
     IGem::GemData {
         gemId: gem.item.gem_id.to_u256(),
         owner: gem.item.owner,
-        gemType: gem.item.gem_type,
         state: gem.effective_state(now),
         promisLoadMinor: gem.item.promis_load_minor,
-        entryPriceMinor: gem.bucket.entry_price_minor,
+        entryPriceMinor: gem.item.entry_price_minor,
         issuanceCurrency: gem.item.issuance_currency,
         referenceCurrency: gem.item.reference_currency,
         issuedAt: gem.item.issued_at,
@@ -125,5 +122,6 @@ fn to_abi_data(gem: &GemView, now: u64) -> IGem::GemData {
         callWindow: gem.terms.call_window_seconds,
         callThreshold: gem.terms.call_threshold_seconds,
         settlementDeadline: gem.settlement_deadline(),
+        groupKey: gem.item.group_key,
     }
 }

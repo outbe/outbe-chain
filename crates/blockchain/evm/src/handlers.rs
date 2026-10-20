@@ -5,6 +5,7 @@
 
 pub mod vote {
     use alloy_primitives::{Address, U256};
+    use outbe_coderegistry::vote_target::CodePatchVoteTarget;
     use outbe_governance::vote_target::GovernanceVoteTarget;
     use outbe_l2registry::L2RegistryVoteTarget;
     use outbe_primitives::addresses::STABLECOIN_FACTORY_ADDRESS;
@@ -13,7 +14,6 @@ pub mod vote {
     use outbe_primitives::stablecoin::decode_canonical_stablecoin_create;
     use outbe_primitives::stablecoin_fork::STABLECOIN_CREATE_BOND;
     use outbe_primitives::storage::StorageHandle;
-    use outbe_radicleregistry::vote_target::RadiclePatchVoteTarget;
     use outbe_stablecoinfactory::{
         FactoryReservation, StablecoinFactoryApi, ValidatedStablecoinCreate,
     };
@@ -26,14 +26,14 @@ pub mod vote {
     static UPDATE_VOTE_TARGET: UpdateVoteTarget = UpdateVoteTarget;
     static GOVERNANCE_VOTE_TARGET: GovernanceVoteTarget = GovernanceVoteTarget;
     static L2_REGISTRY_VOTE_TARGET: L2RegistryVoteTarget = L2RegistryVoteTarget;
-    static RADICLE_PATCH_VOTE_TARGET: RadiclePatchVoteTarget = RadiclePatchVoteTarget;
+    static CODE_PATCH_VOTE_TARGET: CodePatchVoteTarget = CodePatchVoteTarget;
     static STABLECOIN_FACTORY_VOTE_TARGET: StablecoinFactoryVoteTarget =
         StablecoinFactoryVoteTarget;
     static ACTIVE_VOTE_TARGETS: &[&dyn VoteTarget] = &[
         &UPDATE_VOTE_TARGET,
         &GOVERNANCE_VOTE_TARGET,
         &L2_REGISTRY_VOTE_TARGET,
-        &RADICLE_PATCH_VOTE_TARGET,
+        &CODE_PATCH_VOTE_TARGET,
         &STABLECOIN_FACTORY_VOTE_TARGET,
     ];
     static REGISTRY: VoteTargetRegistry = VoteTargetRegistry::new(ACTIVE_VOTE_TARGETS);

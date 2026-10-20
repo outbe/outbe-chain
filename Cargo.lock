@@ -8005,6 +8005,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "outbe-coderegistry"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "commonware-codec",
+ "commonware-cryptography",
+ "commonware-utils",
+ "outbe-consensus",
+ "outbe-macros",
+ "outbe-primitives",
+ "outbe-validatorset",
+ "outbe-vote",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "outbe-common"
 version = "0.1.0"
 dependencies = [
@@ -8131,7 +8150,6 @@ dependencies = [
  "outbe-primitives",
  "outbe-promislimit",
  "outbe-rewards",
- "outbe-tribute",
  "outbe-validatorset",
  "proptest",
  "thiserror 2.0.18",
@@ -8185,6 +8203,7 @@ dependencies = [
  "libc",
  "multibase",
  "outbe-chain-constants",
+ "outbe-coderegistry",
  "outbe-common",
  "outbe-consensus",
  "outbe-desis",
@@ -8193,13 +8212,11 @@ dependencies = [
  "outbe-gemfactory",
  "outbe-intexfactory",
  "outbe-l2registry",
- "outbe-metadosis",
  "outbe-nod",
  "outbe-nodfactory",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-radicle",
- "outbe-radicleregistry",
  "outbe-slashindicator",
  "outbe-tee",
  "outbe-tee-enclave",
@@ -8317,6 +8334,7 @@ dependencies = [
  "outbe-agentreward",
  "outbe-ccaregistry",
  "outbe-chain-constants",
+ "outbe-coderegistry",
  "outbe-consensus",
  "outbe-credis",
  "outbe-credisfactory",
@@ -8342,7 +8360,6 @@ dependencies = [
  "outbe-promis",
  "outbe-promisfactory",
  "outbe-promislimit",
- "outbe-radicleregistry",
  "outbe-rewards",
  "outbe-slashindicator",
  "outbe-stablecoin",
@@ -8707,7 +8724,6 @@ dependencies = [
  "proptest",
  "serde_json",
  "thiserror 2.0.18",
- "tracing",
  "trybuild",
 ]
 
@@ -8874,6 +8890,7 @@ dependencies = [
  "outbe-validatorset",
  "serde_json",
  "thiserror 2.0.18",
+ "toml 0.8.23",
  "tracing",
 ]
 
@@ -9040,9 +9057,9 @@ dependencies = [
  "metrics",
  "metrics-util",
  "multibase",
+ "outbe-coderegistry",
  "outbe-consensus",
  "outbe-primitives",
- "outbe-radicleregistry",
  "outbe-validatorset",
  "outbe-vote",
  "parking_lot",
@@ -9082,10 +9099,10 @@ dependencies = [
  "hex",
  "lexopt",
  "log",
+ "outbe-coderegistry",
  "outbe-consensus",
  "outbe-primitives",
  "outbe-radicle",
- "outbe-radicleregistry",
  "outbe-validatorset",
  "outbe-vote",
  "radicle",
@@ -9109,25 +9126,6 @@ dependencies = [
  "outbe-radicle-runtime",
  "radicle-log",
  "radicle-signals",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "outbe-radicleregistry"
-version = "0.1.0"
-dependencies = [
- "alloy-primitives",
- "alloy-sol-types",
- "commonware-codec",
- "commonware-cryptography",
- "commonware-utils",
- "outbe-consensus",
- "outbe-macros",
- "outbe-primitives",
- "outbe-validatorset",
- "outbe-vote",
- "serde",
- "serde_json",
  "thiserror 2.0.18",
 ]
 
@@ -9383,6 +9381,7 @@ dependencies = [
  "alloy-consensus",
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-chain-constants",
  "outbe-fidelity",
  "outbe-lysis",
  "outbe-macros",
@@ -9394,6 +9393,7 @@ dependencies = [
  "outbe-tee-enclave",
  "outbe-tribute",
  "postcard",
+ "proptest",
  "revm",
  "serde",
  "serde_json",
@@ -9419,7 +9419,6 @@ dependencies = [
  "outbe-l2registry",
  "outbe-lysis",
  "outbe-macros",
- "outbe-metadosis",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-tee",

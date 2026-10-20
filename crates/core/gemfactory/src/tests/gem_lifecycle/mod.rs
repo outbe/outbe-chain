@@ -41,7 +41,6 @@ pub(crate) fn with_storage<R>(f: impl FnOnce(&StorageHandle) -> R) -> R {
 pub(crate) fn sample_params(owner: Address) -> GemAddParams {
     GemAddParams {
         owner,
-        gem_type: 1, // SRA
         promis_load_minor: U256::from(1_000_000u64),
         entry_price_minor: U256::from(500_000u64),
         issuance_currency: USD,
@@ -65,12 +64,12 @@ pub(crate) fn view(storage: &StorageHandle, gem_id: U256) -> GemView {
 
 /// Lifecycle state as the view derives it at the block's timestamp.
 pub(crate) fn gem_state(storage: &StorageHandle, gem_id: U256) -> u8 {
-    let now = storage.timestamp().unwrap().to::<u64>();
+    let now = storage.now_secs().unwrap();
     view(storage, gem_id).effective_state(now)
 }
 
 pub(crate) fn bucket_of(storage: &StorageHandle, gem_id: U256) -> B256 {
-    item(storage, gem_id).unwrap().bucket_key
+    item(storage, gem_id).unwrap().group_key
 }
 
 pub(crate) fn owned(storage: &StorageHandle, owner: Address) -> Vec<U256> {
@@ -92,12 +91,12 @@ pub(crate) fn alice_gems(storage: &StorageHandle, loads: &[u64]) -> Vec<U256> {
         .collect()
 }
 
-/// Calls the gem's whole bucket at `at`.
+/// Calls the gem's whole group at `at`.
 pub(crate) fn call_gem(storage: &StorageHandle, gem_id: U256, at: u64) {
-    let bucket = bucket_of(storage, gem_id);
+    let group = bucket_of(storage, gem_id);
     let mut gem = GemContract::new(storage.clone());
-    let terms = gem.read_call_terms(bucket).unwrap();
-    crate::called::mark_called(&mut gem, bucket, &terms, at).unwrap();
+    let terms = gem.read_call_terms(group).unwrap();
+    crate::called::mark_called(&mut gem, group, &terms, at).unwrap();
 }
 
 /// Settles a gem the way the factory does once payment is accepted: an uncalled gem,
@@ -109,8 +108,8 @@ pub(crate) fn settle(storage: &StorageHandle, gem_id: U256) {
 /// Settles a gem if the factory's rules allow it, without taking a payment.
 pub(crate) fn try_settle(storage: &StorageHandle, gem_id: U256) -> Result<()> {
     crate::runtime::require_settleable(storage, &view(storage, gem_id))?;
-    let (item, bucket) = api::load_pair(storage, gem_id)?.unwrap();
-    api::record_settled(storage, item, bucket)
+    let (item, group) = api::load_pair(storage, gem_id)?.unwrap();
+    api::record_settled(storage, item, group)
 }
 
 pub(crate) fn burn_settled(storage: &StorageHandle, gem_id: U256) {
@@ -195,13 +194,15 @@ pub(crate) fn block_ctx_at<'s>(
 }
 
 pub(crate) fn block_ctx<'s>(storage: &StorageHandle<'s>) -> BlockRuntimeContext<'s> {
-    block_ctx_at(storage, storage.timestamp().unwrap().to::<u64>())
+    block_ctx_at(storage, storage.now_secs().unwrap())
 }
 
 /// One block of the Gem sweeps as CycleTick runs them: what fell due, then a slice.
 pub(crate) fn continue_sweeps(ctx: &BlockRuntimeContext) -> Result<()> {
     crate::hooks::sweep_forfeits(ctx)?;
-    crate::called::run_call_slice(ctx).map(drop)
+    crate::called::run_call_slice(ctx)?;
+    crate::hooks::sweep_cleanup(ctx)?;
+    Ok(())
 }
 
 pub(crate) fn begin_block_at(storage: &StorageHandle, ts: u64) {
@@ -217,8 +218,8 @@ pub(crate) fn mature_gem(storage: &StorageHandle) -> U256 {
     add(storage, p)
 }
 
-/// A gem of `iso` issued at `issued_at` whose own entry price opens its own bucket;
-/// `nonce` keeps the ids and the buckets apart.
+/// A gem of `iso` issued at `issued_at` whose own entry price opens its own group;
+/// `nonce` keeps the ids and the groups apart.
 pub(crate) fn callable_gem_of(
     storage: &StorageHandle,
     iso: u16,

@@ -16,6 +16,7 @@ pub const DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS: u64 = 502 * 60 * 60;
 pub const DEFAULT_METADOSIS_OFFERING_PERIOD_SECONDS: u64 = 50 * 60 * 60;
 pub const DEFAULT_METADOSIS_WAITING_PERIOD_SECONDS: u64 = 12 * 60 * 60;
 pub const DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS: u64 = 60 * 60;
+pub const DEFAULT_METADOSIS_LOOKAHEAD_DAYS: u32 = 7;
 pub const DEFAULT_GOVERNANCE_VOTING_WINDOW_BLOCKS: u64 = 86_400;
 pub const DEFAULT_VWAP_LOOKBACK_SECONDS: u64 = 8 * 60 * 60;
 pub const DEFAULT_VWAP_UPDATE_INTERVAL_SECONDS: u64 = 60 * 60;
@@ -318,6 +319,10 @@ pub fn get_metadosis_waiting_period_seconds() -> u64 {
 
 pub fn get_metadosis_advance_interval_seconds() -> u64 {
     parameters().metadosis_advance_interval_seconds
+}
+
+pub const fn get_metadosis_lookahead_days() -> u32 {
+    DEFAULT_METADOSIS_LOOKAHEAD_DAYS
 }
 
 pub fn get_governance_voting_window_blocks() -> u64 {

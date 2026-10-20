@@ -89,7 +89,7 @@ pub fn issue_encrypted_with_league(
         let league = match explicit_league {
             Some(l) => l,
             None => {
-                let timestamp = u64::try_from(storage.timestamp()?).unwrap_or(0);
+                let timestamp = storage.now_secs()?;
                 outbe_fidelity::api::league_for_wwd(
                     storage.clone(),
                     record.owner,

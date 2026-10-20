@@ -17,6 +17,8 @@ where
     ) -> Result<(), BlockExecutionError> {
         use crate::errors::ExecutorValidationError;
 
+        let timestamp = outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
+            .map_err(ExecutorValidationError::from)?;
         if self.ethereum_post_execution_requests.is_some() {
             return Err(ExecutorValidationError::PostExecutionAlreadyApplied.into());
         }
@@ -24,11 +26,7 @@ where
         validate_outbe_withdrawals(self.inner.ctx.withdrawals.as_deref())
             .map_err(ExecutorValidationError::invalid_withdrawals)?;
 
-        let requests = if self
-            .inner
-            .spec
-            .is_prague_active_at_timestamp(self.inner.evm.block().timestamp().saturating_to())
-        {
+        let requests = if self.inner.spec.is_prague_active_at_timestamp(timestamp) {
             let deposit_requests =
                 eip6110::parse_deposits_from_receipts(self.inner.spec, &self.inner.receipts)?;
             let mut requests = Requests::default();

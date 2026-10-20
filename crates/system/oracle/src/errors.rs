@@ -94,6 +94,10 @@ pub enum OracleError {
     SlashWindowZero,
     #[error("lookback_duration exceeds snapshot retention window")]
     LookbackExceedsRetention,
+    #[error("{field} {value} exceeds 1e18 (a ratio above 1)")]
+    RatioAboveOne { field: &'static str, value: U256 },
+    #[error("slash percent of slash_fraction {slash_fraction} exceeds u64")]
+    SlashPercentOutOfRange { slash_fraction: U256 },
     #[error("reference iso_code must be non-zero")]
     ReferenceIsoCodeZero,
     #[error("duplicate reference iso_code: {iso_code}")]
@@ -110,6 +114,8 @@ pub enum OracleError {
     PolicyRatesNotSorted,
     #[error("policy rate must be non-zero for iso_code {iso_code}")]
     PolicyRateZero { iso_code: u16 },
+    #[error("reference currency {iso_code} has no policy rate")]
+    MissingPolicyRate { iso_code: u16 },
 
     // -- genesis aggregate votes --------------------------------------------
     #[error("aggregate vote validator must be non-zero")]
@@ -186,6 +192,8 @@ impl From<OracleError> for PrecompileError {
             | VotePeriodZero
             | SlashWindowZero
             | LookbackExceedsRetention
+            | RatioAboveOne { .. }
+            | SlashPercentOutOfRange { .. }
             | ReferenceIsoCodeZero
             | DuplicateReferenceIsoCode { .. }
             | ReferenceCurrenciesNotSorted
@@ -194,6 +202,7 @@ impl From<OracleError> for PrecompileError {
             | DuplicatePolicyIsoCode { .. }
             | PolicyRatesNotSorted
             | PolicyRateZero { .. }
+            | MissingPolicyRate { .. }
             | AggregateVoteValidatorZero
             | DuplicateAggregateVoteValidator
             | AggregateVoteAlreadyExists

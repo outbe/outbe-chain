@@ -16,6 +16,33 @@ const MIN_STAKE: u64 = 1_000;
 /// Default large balance seeded to callers so transfer_balance succeeds.
 const DEFAULT_BALANCE: u64 = 1_000_000;
 
+#[test]
+fn slash_timestamp_overflow_leaves_stake_balance_queue_and_events_unchanged() {
+    let validator = address!("0x1111111111111111111111111111111111111111");
+    let amount = U256::from(MIN_STAKE);
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut staking = staking_with_unbonding_period(storage.clone(), 3600);
+        staking.stake_amount.write(&validator, amount).unwrap();
+        staking.total_staked.write(amount).unwrap();
+        storage.set_balance(STAKING_ADDRESS, amount).unwrap();
+        storage
+            .set_block_timestamp(U256::from(u64::MAX) + U256::from(1))
+            .unwrap();
+        assert!(matches!(
+            staking.slash_stake(validator, 10),
+            Err(outbe_primitives::error::PrecompileError::Revert(message))
+                if message == "timestamp exceeds u64"
+        ));
+        assert_eq!(staking.get_stake(validator).unwrap(), amount);
+        assert_eq!(staking.get_total_staked().unwrap(), amount);
+        assert_eq!(storage.balance(STAKING_ADDRESS).unwrap(), amount);
+        assert_eq!(staking.unbonding_count.read().unwrap(), 0);
+        assert_eq!(staking.per_val_unbonding_head.read(&validator).unwrap(), 0);
+    });
+    assert!(provider.get_ordered_events().is_empty());
+}
+
 pub(crate) fn with_staking<R>(f: impl FnOnce(StorageHandle, &mut Staking) -> R) -> R {
     with_staking_timed(0, f)
 }

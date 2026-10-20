@@ -39,17 +39,19 @@ from genesis_inputs import (
 from genesis_seed_alloc import (
     _validate_reserved_account,
     _validate_reserved_balance,
+    seed_code_registry as seed_code_registry,
     seed_external_contracts,
     seed_protocol_constants,
-    seed_radicle_registry,
     validate_stablecoin_namespace_alloc,
 )
+from genesis_network import SEED_SECTIONS
 from genesis_seed_economy import clear_seeded_metadosis_days, override_worldwide_day
 from genesis_seed_codec import (
     ACCOUNTING_PROGRESS_ADDRESS,
     AGENT_REWARD_ADDRESS,
     ALL_PRECOMPILE_ADDRESSES,
     CCA_REGISTRY_ADDRESS,
+    CODE_REGISTRY_ADDRESS as CODE_REGISTRY_ADDRESS,
     CREDIS_ADDRESS,
     CREDIS_PROFILE_SLOT,
     CREDIS_FACTORY_ADDRESS,
@@ -83,7 +85,6 @@ from genesis_seed_codec import (
     PROMIS_LIMIT_ADDRESS,
     PROTECTED_PROTOCOL_ADDRESSES,
     PROTOCOL_ACCUMULATOR_ADDRESSES,
-    RADICLE_REGISTRY_ADDRESS,
     REWARDS_ADDRESS,
     SECONDS_PER_DAY,
     SLASH_INDICATOR_ADDRESS,
@@ -142,7 +143,6 @@ from genesis_seed_economy import (
     seed_coen,
     seed_cycle,
     seed_metadosis,
-    seed_nod_materialization_fifo,
     seed_tribute_day_totals,
     seed_tributes,
     seed_vault_router,
@@ -260,6 +260,15 @@ def apply_seed(
             )
     if "intex_factory" in seed:
         raise ValueError("intex_factory was renamed to intex_profile")
+    # A section that no seeder reads would be dropped silently, so a misspelled
+    # or stale key fails here instead of leaving its precompile unseeded.
+    allowed = set(SEED_SECTIONS) | {"hyperlane_controller"}
+    unknown = sorted(set(seed) - allowed)
+    if unknown:
+        raise ValueError(
+            f"unknown key(s): {', '.join(unknown)}; "
+            f"allowed: {', '.join(sorted(allowed))}"
+        )
 
     _seed_economic_state(seed, alloc)
 

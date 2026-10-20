@@ -12,6 +12,8 @@ pub enum AgentRewardError {
     DistributionOverflow,
     #[error("agentreward claimable total overflow")]
     ClaimableTotalOverflow,
+    #[error("agentreward pool total disagrees with its balances")]
+    PoolTotalMismatch,
     #[error("agentreward claimable_rewards overflow")]
     ClaimableRewardsOverflow,
     #[error("no claimable balance in this pool")]
@@ -20,10 +22,10 @@ pub enum AgentRewardError {
     InsufficientClaimableBalance,
     #[error("agentreward has no previous-day COEN price in {0}")]
     MissingPreviousDayPrice(u16),
-    #[error("reward timestamp overflow")]
-    TimestampOverflow,
     #[error("agentreward unknown reward pool {0}")]
     UnknownRewardPool(u8),
+    #[error("agentreward accrual job {0} is missing")]
+    AccrualJobMissing(u64),
 }
 
 impl From<AgentRewardError> for PrecompileError {

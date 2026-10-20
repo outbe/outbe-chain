@@ -14,10 +14,11 @@ use outbe_primitives::storage::StorageHandle;
 
 use crate::errors::IntexError;
 use crate::schema::{
-    CreateSeriesParams, IntexContract, IntexState, SeriesId, SeriesRecord, SeriesRecordEntryExt,
+    CallStamp, CreateSeriesParams, IntexContract, IntexState, SeriesId, SeriesRecord,
+    SeriesRecordEntryExt,
 };
 
-/// Create a new Intex series record. The record always starts in `Issued`.
+/// Create a new Intex series record and enroll it in its call group.
 /// The function rejects a duplicate `series_id` (through the record-level create).
 /// It also rejects a zero `issued_at`, because that value would make the record
 /// read back as non-existent.
@@ -36,28 +37,44 @@ pub fn create_series(storage: &StorageHandle<'_>, params: CreateSeriesParams) ->
         call_window_seconds: params.call_trigger.call_window_seconds,
         call_threshold_seconds: params.call_trigger.call_threshold_seconds,
         call_price_minor: params.call_price_minor,
-        state: IntexState::Issued as u8,
         issued_at: params.issued_at,
-        called_at: 0,
         call_notice_period_seconds: params.call_trigger.call_notice_period_seconds,
         issuance_currency: params.issuance_currency,
         reference_currency: params.reference_currency,
         worldwide_day: params.worldwide_day,
     };
-    registry.create_series_record(&record)
+    registry.create_series_record(&record)?;
+    registry.join_call_group(&record)
 }
 
-/// Records the series `Called` at `called_at`. IntexFactory decides the call.
-pub fn record_called(
-    storage: &StorageHandle<'_>,
-    series_id: SeriesId,
-    called_at: u32,
-) -> Result<()> {
+/// The series' call, read from its group.
+pub fn call_stamp(storage: &StorageHandle<'_>, record: &SeriesRecord) -> Result<CallStamp> {
+    IntexContract::new(storage.clone()).call_stamp(record)
+}
+
+/// The series' state as of this block.
+pub fn state(storage: &StorageHandle<'_>, record: &SeriesRecord) -> Result<IntexState> {
+    let now = storage.now_secs()?;
+    Ok(call_stamp(storage, record)?.state(now))
+}
+
+/// Deletes the series once nothing in it is left to settle or exercise: no unpaid
+/// units (all realized, or returned by its group's expiry) and no settled ones still
+/// to exercise. Returns whether it was deleted.
+pub fn release_if_spent(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<bool> {
     let mut registry = IntexContract::new(storage.clone());
-    let mut record = registry.load_series(series_id)?;
-    record.state = IntexState::Called as u8;
-    record.called_at = called_at;
-    registry.update_series_record(&record)
+    let Some(record) = registry.get_series(series_id)? else {
+        return Ok(false);
+    };
+    let unpaid = forfeitable_units(storage, &record)?.units;
+    // Past the deadline the unpaid units still wait for the group's expiry to return them.
+    let returned = registry.group_forfeited(record.group_key())?;
+    if registry.settled_units.read(&series_id)? != 0 || (unpaid != 0 && !returned) {
+        return Ok(false);
+    }
+    registry.leave_call_group(record.group_key(), series_id)?;
+    registry.delete_series_record(series_id)?;
+    Ok(true)
 }
 
 /// What a series forfeited after its notice-period deadline.
@@ -223,8 +240,7 @@ pub fn unit_counts(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<U
         .and_then(|left| left.checked_sub(exercised))
         .and_then(|left| left.checked_sub(gem_factory))
         .ok_or(IntexError::RealizedUnitsOverflow)?;
-    let now = storage.timestamp()?.to::<u64>();
-    let expired = record.effective_state(now)? == IntexState::Expired;
+    let expired = state(storage, &record)? == IntexState::Expired;
     Ok(UnitCounts {
         issued: record.issued_units,
         active: if expired { 0 } else { unpaid },
@@ -305,8 +321,25 @@ pub fn set_issued_at(
     }
     let mut registry = IntexContract::new(storage.clone());
     let mut record = registry.load_series(series_id)?;
+    // The stamp picks the series' group, so the series moves to the backdated one.
+    registry.leave_call_group(record.group_key(), series_id)?;
     record.issued_at = issued_at;
-    registry.update_series_record(&record)
+    registry.update_series_record(&record)?;
+    registry.join_call_group(&record)
+}
+
+/// Calls the group of `series_id` at `called_at`. Test-only: the call sweep calls groups
+/// from the price window.
+#[cfg(any(test, feature = "test-utils"))]
+pub fn call_group_of(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+    called_at: u32,
+) -> Result<()> {
+    let mut registry = IntexContract::new(storage.clone());
+    let group = registry.load_series(series_id)?.group_key();
+    let deadline = registry.group_stamp(group, called_at)?.deadline;
+    registry.record_group_called(group, called_at, deadline)
 }
 
 /// Read a series record; errors if the series does not exist.
@@ -327,12 +360,12 @@ pub fn series_exists(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result
     IntexContract::new(storage.clone()).series_exists(series_id)
 }
 
-/// Number of series ever created (for dense enumeration).
-pub fn total_series(storage: &StorageHandle<'_>) -> Result<u64> {
+/// Number of live series (for dense enumeration).
+pub fn total_series(storage: &StorageHandle<'_>) -> Result<u32> {
     IntexContract::new(storage.clone()).read_total_series()
 }
 
 /// `series_id` at a dense enumeration index.
-pub fn series_id_at(storage: &StorageHandle<'_>, index: u64) -> Result<SeriesId> {
+pub fn series_id_at(storage: &StorageHandle<'_>, index: u32) -> Result<SeriesId> {
     IntexContract::new(storage.clone()).read_series_id_at(index)
 }

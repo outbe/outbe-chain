@@ -2,11 +2,13 @@
 mod bulk;
 use crate::world::World;
 use cucumber::{given, then, when};
-use outbe_metadosis::WwdStatus;
 use std::{
     thread::sleep,
     time::{Duration, Instant},
 };
+
+const EMISSION_DAY_SUCCEEDED: u8 = 1;
+const EMISSION_DAY_FAILED: u8 = 2;
 
 #[given("a fresh four-validator native Lysis localnet")]
 fn fresh_native_lysis(world: &mut World) {
@@ -55,8 +57,7 @@ fn reach_processing_time(world: &mut World) {
         .metadosis_wwd_state_at(ports[0], day, checkpoint.height)
         .expect("native WWD state");
     assert_eq!(
-        state.status,
-        WwdStatus::Offering.as_u8(),
+        state.status, 2,
         "Tributes must be offered before processing"
     );
     for &port in &ports {
@@ -78,8 +79,6 @@ fn reach_processing_time(world: &mut World) {
 
 #[then("Metadosis completes confidential Lysis and stores ready Nods on every validator")]
 fn native_lysis_completes(world: &mut World) {
-    // getWorldwideDayTerminalReceipt outcome for native Lysis completion.
-    const LYSIS_COMPLETED_RECEIPT_OUTCOME: u8 = 4;
     let day = world
         .state
         .wwd
@@ -88,61 +87,66 @@ fn native_lysis_completes(world: &mut World) {
         .parse::<u32>()
         .expect("numeric WWD");
     let ports = world.validators.committee_ports();
+    let emission_day = world
+        .rpc
+        .metadosis_wwd_state_on(ports[0], day)
+        .expect("native WWD state")
+        .day;
     let deadline = Instant::now() + Duration::from_secs(240);
-    let receipt = loop {
+    loop {
         let states = ports
             .iter()
-            .map(|&port| {
-                world
-                    .rpc
-                    .metadosis_wwd_state_on(port, day)
-                    .map(|state| WwdStatus::try_from(state.status).expect("valid native status"))
-            })
+            .map(|&port| world.rpc.metadosis_emission_day_on(port, emission_day))
             .collect::<Vec<_>>();
         assert!(
-            !states.contains(&Some(WwdStatus::Failed)),
+            !states.iter().any(|ed| ed
+                .as_ref()
+                .is_some_and(|ed| ed.state == EMISSION_DAY_FAILED)),
             "native Lysis failed: {states:?}"
         );
-        if states
-            .iter()
-            .all(|status| *status == Some(WwdStatus::Completed))
-        {
-            let receipts = ports
-                .iter()
-                .map(|&port| {
-                    world
-                        .rpc
-                        .metadosis_terminal_receipt_on(port, day)
-                        .expect("native Lysis terminal receipt")
-                })
-                .collect::<Vec<_>>();
-            let receipt = &receipts[0];
-            assert_eq!(
-                receipt.outcome, LYSIS_COMPLETED_RECEIPT_OUTCOME,
-                "native Lysis completion outcome"
-            );
-            assert!(receipt.block_number > 0, "native Lysis completion block");
+        if states.iter().all(|ed| {
+            ed.as_ref()
+                .is_some_and(|ed| ed.state == EMISSION_DAY_SUCCEEDED)
+        }) {
+            let first = states[0].as_ref().expect("native Lysis emission day");
+            assert_eq!(first.emission_day, emission_day);
+            assert_eq!(first.wwd, day);
             assert!(
-                receipts.iter().all(|other| other == receipt),
-                "same immutable Lysis terminal receipt on every validator"
+                states.iter().all(|other| other.as_ref() == Some(first)),
+                "same EmissionDay state on every validator"
             );
-            break receipt.clone();
+            break;
         }
         assert!(
             Instant::now() < deadline,
             "native Lysis did not complete: {states:?}"
         );
         sleep(Duration::from_secs(1));
-    };
-    let height = receipt.block_number;
+    }
+    let head_height = ports
+        .iter()
+        .filter_map(|&port| world.rpc.head(port))
+        .max()
+        .expect("native Lysis head height");
     world
         .rpc
-        .wait_finalized_checkpoint(&ports, height, 120)
+        .wait_finalized_checkpoint(&ports, head_height, 120)
         .expect("native Lysis completion finalized on every validator");
+    let completed = world
+        .rpc
+        .finalized_metadosis_lysis_completion_blocks_on(ports[0], day, head_height)
+        .expect("canonical native Lysis completion events");
+    assert_eq!(
+        completed.len(),
+        1,
+        "exactly one native Lysis completion event"
+    );
+    let (height, completed_hash) = completed[0];
     let checkpoint = world
         .rpc
         .checkpoint_at(ports[0], height)
         .expect("exact native Lysis completion checkpoint");
+    assert_eq!(checkpoint.block_hash, completed_hash);
     for &port in &ports {
         assert_eq!(
             world
@@ -154,27 +158,19 @@ fn native_lysis_completes(world: &mut World) {
         );
         let state = world
             .rpc
-            .metadosis_wwd_state_at(port, day, height)
-            .expect("native Lysis state at the completion checkpoint");
-        assert_eq!(state.status, WwdStatus::Completed.as_u8());
+            .metadosis_emission_day_at(port, emission_day, height)
+            .expect("native Lysis emission day at the completion checkpoint");
+        assert_eq!(state.state, EMISSION_DAY_SUCCEEDED);
     }
-    let completed = world
-        .rpc
-        .finalized_metadosis_lysis_completion_blocks_on(ports[0], day, height)
-        .expect("canonical native Lysis completion events");
-    assert_eq!(
-        completed.len(),
-        1,
-        "exactly one native Lysis completion event"
-    );
-    assert_eq!(completed[0], (height, checkpoint.block_hash));
-    let height = create_nods_for_completed_day(world, day, &ports, height);
+    let (nod_height, nod_blocks) = create_nods_for_completed_day(world, day, &ports, height);
     let supply = world.rpc.nod_supply(ports[0]).expect("native Nod supply");
     assert!(supply > 0);
     for port in ports {
         assert_eq!(world.rpc.nod_supply(port), Some(supply));
     }
     world.state.lysis_completion_height = Some(height);
+    world.state.nod_creation_height = Some(nod_height);
+    world.state.nod_creation_blocks = nod_blocks;
 }
 
 fn create_nods_for_completed_day(
@@ -182,7 +178,7 @@ fn create_nods_for_completed_day(
     day: u32,
     ports: &[u16],
     completed_height: u64,
-) -> u64 {
+) -> (u64, std::collections::BTreeMap<alloy_primitives::U256, u64>) {
     use crate::internal::{addresses, eth};
     use alloy_primitives::{Address, U256};
     use std::collections::BTreeMap;
@@ -191,7 +187,7 @@ fn create_nods_for_completed_day(
     let url = world.rpc.url(primary);
     let tribute_ids = world.rpc.tributes_by_day(primary, day).unwrap_or_default();
     if tribute_ids.is_empty() {
-        return completed_height;
+        return (completed_height, BTreeMap::new());
     }
 
     let mut owner_keys = BTreeMap::<Address, String>::new();
@@ -254,6 +250,7 @@ fn create_nods_for_completed_day(
     }
 
     let mut last_height = completed_height;
+    let mut blocks = BTreeMap::new();
     for chunk in calls.chunks(8) {
         let outcomes = std::thread::scope(|scope| {
             chunk
@@ -279,12 +276,13 @@ fn create_nods_for_completed_day(
                 .map(|handle| handle.join().expect("join createNod worker"))
                 .collect::<Vec<_>>()
         });
-        for outcome in &outcomes {
+        for ((tribute_id, _), outcome) in chunk.iter().zip(&outcomes) {
             crate::features::settlement::assert_mined_success(outcome, "ITribute::createNod");
             let block_number = world
                 .rpc
                 .receipt_block_number(&outcome.transaction_hash, primary)
                 .expect("createNod receipt block number");
+            blocks.insert(*tribute_id, block_number);
             last_height = last_height.max(block_number);
         }
     }
@@ -300,15 +298,12 @@ fn create_nods_for_completed_day(
             "all Tributes for day {day} must be burned after createNod on port {port}"
         );
     }
-    last_height
+    (last_height, blocks)
 }
 
 #[when("all validator nodes restart with preserved EVM state")]
 fn restart_native_nodes(world: &mut World) {
-    let height = world
-        .state
-        .lysis_completion_height
-        .expect("completed Lysis");
+    let height = world.state.nod_creation_height.expect("created Nods");
     let ports = world.validators.committee_ports();
     let before = world
         .rpc

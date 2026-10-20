@@ -7,7 +7,7 @@ mod export;
 mod import;
 mod validate;
 
-use crate::constants::{DAY_TYPE_ISO, DEFAULT_USD_CURRENCY_RATE};
+use crate::constants::{DAY_TYPE_ISO, DEFAULT_POLICY_RATES};
 use crate::types::AssetType;
 use alloy_primitives::{Address, U256};
 use outbe_primitives::asset_type::COEN_ASSET;
@@ -109,10 +109,13 @@ impl OracleGenesisConfig {
             initial_rates: vec![],
             feeder_delegations: vec![],
             reference_currencies: vec![156, 344, 392, 826, 840, 978],
-            policy_rates: vec![PolicyRate {
-                iso_code: 840,
-                annual_rate_1e6: DEFAULT_USD_CURRENCY_RATE,
-            }],
+            policy_rates: DEFAULT_POLICY_RATES
+                .iter()
+                .map(|&(iso_code, rate)| PolicyRate {
+                    iso_code,
+                    annual_rate_1e6: U256::from(rate),
+                })
+                .collect(),
             penalty_counters: vec![],
             aggregate_votes: vec![],
             snapshots: vec![],

@@ -296,6 +296,10 @@ pub struct FixtureState {
     /// The chain's worldwide-day key used for tribute offers.
     pub wwd: Option<String>,
     pub lysis_completion_height: Option<u64>,
+    /// Block of the last `createNod` of the completed day; every Nod exists there.
+    pub nod_creation_height: Option<u64>,
+    /// Block of each `createNod`, by Tribute id.
+    pub nod_creation_blocks: std::collections::BTreeMap<alloy_primitives::U256, u64>,
     /// A height captured by one step for a later assertion (kill/restart/exit).
     pub marker_height: Option<u64>,
     pub(crate) chained_handoff: Option<crate::internal::certified_handoff::PinnedHandoff>,
@@ -482,6 +486,8 @@ impl Default for FixtureState {
             promoted_validator_pid: None,
             wwd: None,
             lysis_completion_height: None,
+            nod_creation_height: None,
+            nod_creation_blocks: std::collections::BTreeMap::new(),
             marker_height: None,
             chained_handoff: None,
             marker_count: None,

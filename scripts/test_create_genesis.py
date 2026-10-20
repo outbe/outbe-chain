@@ -477,6 +477,24 @@ class SeedStageTests(unittest.TestCase):
         )
         return json.loads(path.read_text())
 
+    def test_testnet_feeder_seeds_reach_genesis(self):
+        config = {
+            "feeder_pairs": "testnet/pairs.toml",
+            "feeder_seeds": "testnet/seeds.yaml",
+        }
+        oracle = CG.build_seed(config)["oracle"]
+        rated = {"840"} | {rate["quote"] for rate in oracle["initial_rates"]}
+        seeded = {seed["pair_quote"] for seed in oracle["scurve_seeds"]}
+        every = {"840", "978", "392", "826", "156", "344"}
+        self.assertEqual(rated, every)
+        self.assertEqual(seeded, every)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = self.seed_once(
+                pathlib.Path(tmp), minimal_config(tmp) | config
+            )["alloc"][SEED_GENESIS.ORACLE_ADDRESS]["storage"]
+        self.assertEqual(storage[SEED_GENESIS.hex32(34)], SEED_GENESIS.hex32(6))
+
     def test_seed_stage_produces_a_valid_seeded_genesis(self):
         with tempfile.TemporaryDirectory() as tmp:
             config = minimal_config(tmp) | {"prefund_coen_units": 5_000_000}
@@ -535,6 +553,51 @@ class SeedStageTests(unittest.TestCase):
                         base_genesis=base_genesis, seed=seed, validators=validators
                     ),
                 )
+
+    def test_a_seed_carrying_an_unknown_section_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = minimal_config(tmp)
+            validators = self.fake_validators()
+            base_genesis = CG.build_base_genesis(config)
+            CG.prefund_validators(base_genesis, config, validators)
+            seed = CG.build_seed(config) | {"vault_routr": {}}
+            with self.assertRaisesRegex(
+                ValueError, r"^unknown key\(s\): vault_routr; allowed: balance, "
+            ):
+                CG.run_seed_stage(
+                    module=SEED_GENESIS,
+                    work_dir=pathlib.Path(tmp),
+                    config=config,
+                    quiet=True,
+                    inputs=CG.SeedInputs(
+                        base_genesis=base_genesis, seed=seed, validators=validators
+                    ),
+                )
+
+    def test_apply_seed_lists_every_unknown_section_and_the_allowed_set(self):
+        genesis = {"config": {"chainId": 1}, "alloc": {}, "timestamp": "0x0"}
+        allowed = set(CG.SEED_SECTIONS) | {"hyperlane_controller"}
+        with self.assertRaises(ValueError) as caught:
+            SEED_GENESIS.apply_seed(genesis, {"zeta": {}, "alpha": {}})
+        self.assertEqual(
+            str(caught.exception),
+            "unknown key(s): alpha, zeta; allowed: " + ", ".join(sorted(allowed)),
+        )
+
+    def test_the_named_legacy_checks_keep_their_own_messages(self):
+        genesis = {"config": {"chainId": 1}, "alloc": {}, "timestamp": "0x0"}
+        with self.assertRaisesRegex(ValueError, "renamed to intex_profile"):
+            SEED_GENESIS.apply_seed(genesis, {"intex_factory": {}, "vault_routr": {}})
+        with self.assertRaisesRegex(ValueError, "gems is no longer supported"):
+            SEED_GENESIS.apply_seed(genesis, {"gems": [], "vault_routr": {}})
+
+    def test_the_shipped_seed_files_use_only_known_sections(self):
+        allowed = set(CG.SEED_SECTIONS) | {"hyperlane_controller"}
+        for name in ("seed-testnet.json", "seed-testnet-lowstake.json"):
+            seed = json.loads(MODULE_PATH.with_name(name).read_text())
+            with self.subTest(seed=name):
+                self.assertEqual(sorted(set(seed) - allowed), [])
+                self.assertIn("code_registry", seed)
 
     def test_production_seed_stage_preserves_oracle_orientation_and_wire_scales(self):
         token = "0x1111111111111111111111111111111111111111"
@@ -696,7 +759,7 @@ class ExampleFileTests(unittest.TestCase):
             "staking",
             "rewards",
             "validator_set",
-            "radicle_registry",
+            "code_registry",
             "intex_profile",
             "vault_router",
             "oracle",
@@ -744,6 +807,10 @@ class BaselineProfileTests(unittest.TestCase):
         """testnet.yaml is not just a defaults bag: seeding it against itself
         must be a fixed point."""
         config = CG.load_yaml(CG.BASE_PROFILE_PATH)
+        # feeder_pairs and feeder_seeds add testnet-only pairs and seeds. Other
+        # networks do not inherit them.
+        del config["feeder_pairs"]
+        del config["feeder_seeds"]
         self.assertEqual(CG.build_seed(config), CG.build_seed({}))
 
 
@@ -841,6 +908,24 @@ class LaunchBundleTests(unittest.TestCase):
                 self.assertTrue((directory / "feeder.toml").is_file())
 
 
+
+    def test_testnet_feeder_pairs_file_reaches_genesis_and_the_bundle(self):
+        config = {"feeder_pairs": "testnet/pairs.toml"}
+        pairs = CG.build_seed(config)["oracle"]["pairs"]
+        quotes = [str(pair["quote"]) for pair in pairs]
+        self.assertEqual(sorted(quotes), sorted(["840", "978", "392", "826", "156", "344"]))
+        self.assertEqual(pairs[0]["initial_rate"], "1000000")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, output_dir = self.render(tmp, config)
+            directory = output_dir / "validator-0"
+            self.assertEqual(
+                (directory / "pairs.toml").read_text(),
+                (pathlib.Path(LB.__file__).parent / "testnet/pairs.toml").read_text(),
+            )
+            toml = (directory / "feeder.toml").read_text()
+            self.assertIn('[rpc_endpoints]\n1 = "REPLACE_WITH_RPC_URL"', toml)
+            self.assertIn('name = "pyth"', toml)
 
     def test_feeder_provider_name_is_one_the_binary_accepts(self):
         """outbe-feeder validates provider names against a fixed list and

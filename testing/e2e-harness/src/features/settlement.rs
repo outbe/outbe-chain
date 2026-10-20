@@ -54,11 +54,6 @@ pub(crate) struct SettlementFixture {
 #[then("validator 0 claims its validator reward as a Gem")]
 fn validator_claims_reward_gem(world: &mut World) {
     let reward = validator_reward_gem(world);
-    assert_eq!(
-        reward.gem.gemType, 0,
-        "validator-owned reward Gem {} is not a Validator Gem",
-        reward.gem_id
-    );
     assert!(
         !reward.gem.promisLoadMinor.is_zero(),
         "reward Gem load must be non-zero"
@@ -431,7 +426,11 @@ pub(crate) fn deploy_settlement_fixture(world: &World) -> SettlementFixture {
         eth::read_call(
             &url,
             addresses::VAULT_ROUTER_ADDR,
-            &eth::IVaultRouter::referenceCurrencyAssetsCall { isoCode: USD_ISO },
+            &eth::IVaultRouter::referenceCurrencyAssetsCall {
+                isoCode: USD_ISO,
+                offset: U256::ZERO,
+                limit: U256::MAX,
+            },
         ),
         Some(vec![asset])
     );

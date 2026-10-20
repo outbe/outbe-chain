@@ -104,6 +104,9 @@ pub enum TributeError {
     #[error("caller is not Tribute owner")]
     CallerNotTributeOwner,
 
+    #[error("no finalized entry price for UTC day {price_day} in currency {currency}")]
+    EntryPriceUnavailable { price_day: u32, currency: u16 },
+
     #[error(transparent)]
     DayAmountCodec(#[from] postcard::Error),
 
