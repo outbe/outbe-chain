@@ -172,7 +172,7 @@
   },
   {
     "type": "event",
-    "name": "AuctionBriefRejectedToCarryOver",
+    "name": "AuctionBriefRejected",
     "inputs": [
       {
         "name": "worldwideDay",

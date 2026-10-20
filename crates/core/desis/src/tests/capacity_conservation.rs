@@ -67,7 +67,7 @@ fn world_selling(units: u16) -> HashMapStorageProvider {
                 is_green: true,
             },
             NOW,
-            crate::api::BriefOverflowPolicy::CarryOver,
+            crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
         )
         .unwrap();
     });

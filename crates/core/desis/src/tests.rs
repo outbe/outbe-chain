@@ -246,7 +246,7 @@ fn brief_at_rate_from(
                 is_green: green
             },
             now,
-            crate::api::BriefOverflowPolicy::CarryOver
+            crate::api::BriefOverflowPolicy::ReturnToPromisLimit
         )
         .unwrap(),
         AuctionBriefReceipt::Accepted
@@ -358,7 +358,7 @@ fn dispatch_auction_brief_records_the_brief() {
                 is_green: true,
             },
             NOW,
-            crate::api::BriefOverflowPolicy::CarryOver,
+            crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
         )
         .unwrap();
         assert_eq!(receipt, AuctionBriefReceipt::Accepted);
@@ -404,7 +404,7 @@ fn dispatch_auction_brief_records_a_red_day() {
                 is_green: false,
             },
             NOW,
-            crate::api::BriefOverflowPolicy::CarryOver,
+            crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
         )
         .unwrap();
         assert_eq!(receipt, AuctionBriefReceipt::Accepted);
@@ -685,7 +685,7 @@ fn dispatch_auction_brief_duplicate_propagates_without_committed_failure_event()
                     is_green: true
                 },
                 NOW,
-                crate::api::BriefOverflowPolicy::CarryOver
+                crate::api::BriefOverflowPolicy::ReturnToPromisLimit
             )
             .unwrap(),
             AuctionBriefReceipt::Accepted
@@ -698,7 +698,7 @@ fn dispatch_auction_brief_duplicate_propagates_without_committed_failure_event()
                 is_green: true
             },
             NOW,
-            crate::api::BriefOverflowPolicy::CarryOver
+            crate::api::BriefOverflowPolicy::ReturnToPromisLimit
         )
         .is_err());
         let contract = s.contract::<DesisContract>();
@@ -719,7 +719,7 @@ fn dispatch_auction_brief_duplicate_propagates_without_committed_failure_event()
 }
 
 #[test]
-fn dispatch_auction_brief_oversized_limit_returns_typed_full_carry_over() {
+fn dispatch_auction_brief_oversized_limit_returns_typed_rejection() {
     use crate::precompile::IDesis;
     use alloy_sol_types::SolEvent;
 
@@ -734,10 +734,10 @@ fn dispatch_auction_brief_oversized_limit_returns_typed_full_carry_over() {
                     is_green: true
                 },
                 NOW,
-                crate::api::BriefOverflowPolicy::CarryOver
+                crate::api::BriefOverflowPolicy::ReturnToPromisLimit
             )
             .unwrap(),
-            AuctionBriefReceipt::RejectedToCarryOver {
+            AuctionBriefReceipt::Rejected {
                 reason: AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain,
                 desis_limit_minor: U256::MAX,
                 max_accepted: U256::from(u128::MAX),
@@ -754,7 +754,7 @@ fn dispatch_auction_brief_oversized_limit_returns_typed_full_carry_over() {
 
     let logs = storage.get_events(outbe_primitives::addresses::DESIS_ADDRESS);
     assert_eq!(logs.len(), 1);
-    let event = IDesis::AuctionBriefRejectedToCarryOver::decode_log_data(&logs[0]).unwrap();
+    let event = IDesis::AuctionBriefRejected::decode_log_data(&logs[0]).unwrap();
     assert_eq!(event.worldwideDay, WORLDWIDE_DAY.value());
     assert_eq!(event.desisLimitMinor, U256::MAX);
     assert_eq!(event.maxAcceptedMinor, U256::from(u128::MAX));
@@ -776,7 +776,7 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
                     is_green: true
                 },
                 NOW,
-                crate::api::BriefOverflowPolicy::CarryOver
+                crate::api::BriefOverflowPolicy::ReturnToPromisLimit
             )
             .unwrap(),
             AuctionBriefReceipt::Accepted
@@ -795,10 +795,10 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
                     is_green: true
                 },
                 NOW,
-                crate::api::BriefOverflowPolicy::CarryOver
+                crate::api::BriefOverflowPolicy::ReturnToPromisLimit
             )
             .unwrap(),
-            AuctionBriefReceipt::RejectedToCarryOver {
+            AuctionBriefReceipt::Rejected {
                 reason: AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain,
                 desis_limit_minor: supply,
                 max_accepted: U256::from(u128::MAX),
@@ -809,9 +809,7 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
     use alloy_sol_types::SolEvent;
     let logs = provider.get_events(outbe_primitives::addresses::DESIS_ADDRESS);
     assert_eq!(logs.len(), 1);
-    let event =
-        crate::precompile::IDesis::AuctionBriefRejectedToCarryOver::decode_log_data(&logs[0])
-            .unwrap();
+    let event = crate::precompile::IDesis::AuctionBriefRejected::decode_log_data(&logs[0]).unwrap();
     assert_eq!(event.worldwideDay, WORLDWIDE_DAY.value());
     assert_eq!(event.desisLimitMinor, supply);
     assert_eq!(event.maxAcceptedMinor, U256::from(u128::MAX));
@@ -833,7 +831,7 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
                 is_green: true
             },
             NOW,
-            crate::api::BriefOverflowPolicy::CarryOver
+            crate::api::BriefOverflowPolicy::ReturnToPromisLimit
         )
         .is_err());
 
@@ -846,7 +844,7 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
                 is_green: true
             },
             NOW,
-            crate::api::BriefOverflowPolicy::CarryOver
+            crate::api::BriefOverflowPolicy::ReturnToPromisLimit
         )
         .is_err());
 
@@ -858,7 +856,7 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
                 is_green: true
             },
             u64::MAX,
-            crate::api::BriefOverflowPolicy::CarryOver
+            crate::api::BriefOverflowPolicy::ReturnToPromisLimit
         )
         .is_err());
     });
@@ -880,7 +878,7 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
                     is_green: true,
                 },
                 NOW,
-                crate::api::BriefOverflowPolicy::CarryOver,
+                crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
             )
         });
         assert_eq!(result.unwrap(), AuctionBriefReceipt::Accepted);
@@ -900,7 +898,7 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
                     is_green: true,
                 },
                 NOW,
-                crate::api::BriefOverflowPolicy::CarryOver,
+                crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
             )
         });
         assert!(result.is_err(), "mutation {operation} must propagate");
@@ -922,7 +920,7 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
                 is_green: true,
             },
             NOW,
-            crate::api::BriefOverflowPolicy::CarryOver,
+            crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
         )
     });
     assert!(result.is_err());
@@ -946,7 +944,7 @@ fn brief_anchor_at(now: u64) -> u64 {
                     is_green: true
                 },
                 now,
-                crate::api::BriefOverflowPolicy::CarryOver
+                crate::api::BriefOverflowPolicy::ReturnToPromisLimit
             )
             .unwrap(),
             AuctionBriefReceipt::Accepted

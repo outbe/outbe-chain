@@ -100,7 +100,7 @@ interface IDesis {
     /// @notice The only committed auction-brief rejection. Technical and
     /// invariant failures revert instead of being converted to business state.
     /// `reasonCode == 1` means the Desis Limit exceeds Desis' uint128 auction domain.
-    event AuctionBriefRejectedToCarryOver(
+    event AuctionBriefRejected(
         uint32 indexed worldwideDay, uint256 desisLimitMinor, uint256 maxAcceptedMinor, uint8 reasonCode
     );
 }

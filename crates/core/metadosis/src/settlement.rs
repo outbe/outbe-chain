@@ -304,7 +304,7 @@ fn dispatch_brief(
             is_green,
         },
         ctx.block.timestamp,
-        outbe_desis::api::BriefOverflowPolicy::CarryOver,
+        outbe_desis::api::BriefOverflowPolicy::ReturnToPromisLimit,
     )?;
     match receipt {
         outbe_desis::api::AuctionBriefReceipt::Accepted => desis_limit_minor
@@ -313,7 +313,7 @@ fn dispatch_brief(
                 crate::errors::MetadosisStorageCorruptionError::AcceptedDesisBriefExceedsRoutingLimit
                     .into()
             }),
-        outbe_desis::api::AuctionBriefReceipt::RejectedToCarryOver {
+        outbe_desis::api::AuctionBriefReceipt::Rejected {
             reason: outbe_desis::api::AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain,
             desis_limit_minor: rejected_desis_limit_minor,
             max_accepted,

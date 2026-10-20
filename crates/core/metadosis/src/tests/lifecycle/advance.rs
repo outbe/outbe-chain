@@ -196,7 +196,7 @@ fn technical_desis_refusal_rolls_back_the_metadosis_cycle_command() {
                     is_green: true
                 },
                 scheduled,
-                outbe_desis::api::BriefOverflowPolicy::CarryOver
+                outbe_desis::api::BriefOverflowPolicy::ReturnToPromisLimit
             )
             .unwrap(),
             outbe_desis::api::AuctionBriefReceipt::Accepted
