@@ -46,8 +46,7 @@ pub(crate) fn quote(
         .ok_or(VaultRouterError::PledgePriceUnavailable)?;
     let (gratis_minor, entry_price_minor) = checked_quote(amount, decimals, valuation)?;
     let policy_rate = api::get_policy_rate(storage.clone(), currency)?;
-    let now =
-        u64::try_from(storage.timestamp()?).map_err(|_| VaultRouterError::TimestampExceedsU64)?;
+    let now = storage.now_secs()?;
     let day = previous_date_key(timestamp_to_date_key(now));
     if OracleContract::new(storage.clone())
         .utc_day_vwap_last_finalized

@@ -146,6 +146,7 @@ impl SlashIndicator<'_> {
         validator: Address,
         slashed_label: &'static str,
     ) -> Result<(u64, u64, U256)> {
+        self.storage.now_secs()?;
         let mut vs = ValidatorSet::new(self.storage.clone());
         vs.jail_validator(validator)?;
 

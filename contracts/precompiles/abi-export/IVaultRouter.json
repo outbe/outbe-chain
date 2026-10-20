@@ -339,6 +339,16 @@
         "name": "isoCode",
         "type": "uint16",
         "internalType": "uint16"
+      },
+      {
+        "name": "offset",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "limit",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -1189,11 +1199,6 @@
   {
     "type": "error",
     "name": "ReserveVaultAlreadyAdded",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ReserveVaultAssetMismatch",
     "inputs": []
   },
   {

@@ -141,15 +141,24 @@ pub(super) fn assert_dense_agent_settlement(
     );
     let carry_over =
         outbe_promislimit::PromisLimitContract::new(storage.clone()).get_total_unallocated()?;
-    let settled_day_limit = outbe_metadosis::api::emission_day(storage.clone(), prev_day)?
-        .expect("GAS-05: settled prev_day must have an EmissionDay record")
-        .emission_limit_minor;
-    let reward_residue = carry_over
-        .checked_sub(settled_day_limit)
-        .expect("GAS-05: carry-over must include the settled empty EmissionDay limit");
+    let emission_day = outbe_metadosis::api::emission_day(storage.clone(), prev_day)?
+        .expect("GAS-05: previous-day emission allocation must exist");
     assert!(
-        reward_residue < U256::from(2 * address_count),
-        "GAS-05: the carry-over above the settled empty EmissionDay limit takes only the WAA and SRA rounding residue"
+        !emission_day.emission_limit_minor.is_zero(),
+        "GAS-05: previous-day emission allocation must be nonzero"
+    );
+    assert_eq!(
+        emission_day.state,
+        outbe_metadosis::emission_day_state::SUCCEEDED,
+        "GAS-05: empty Tribute day must settle successfully"
+    );
+    // The empty Tribute day returns its terminal allocation before WAA/SRA residue arrives.
+    let rounding_residue = carry_over
+        .checked_sub(emission_day.emission_limit_minor)
+        .expect("GAS-05: carry-over must include the empty Tribute day's returned allocation");
+    assert!(
+        rounding_residue < U256::from(2 * address_count),
+        "GAS-05: carry-over beyond the returned allocation must contain only WAA/SRA rounding residue"
     );
     Ok(())
 }

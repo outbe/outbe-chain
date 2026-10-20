@@ -298,6 +298,25 @@ contract RouterE2E is BaseTest {
         vm.stopPrank();
     }
 
+    /// @dev A same-chain refund also forwards no bridge fee. The dispatch must reject attached value.
+    function test_refund_RevertWhen_SameChainCarriesValue() public {
+        OrderData memory orderData = _prepareOrderData();
+        orderData.originDomain = destination;
+        orderData.destinationDomain = destination;
+        OnchainCrossChainOrder[] memory orders = new OnchainCrossChainOrder[](1);
+        orders[0] = OnchainCrossChainOrder({
+            fillDeadline: orderData.fillDeadline,
+            orderDataType: OrderEncoder.orderDataType(),
+            orderData: OrderEncoder.encode(orderData)
+        });
+
+        vm.warp(orderData.fillDeadline + 1);
+        vm.deal(kakaroto, 1);
+        vm.prank(kakaroto);
+        vm.expectRevert(BaseRouter.UnexpectedNativeValue.selector);
+        destinationRouter.refund{value: 1}(orders);
+    }
+
     function test_RevertWhen_ReceiveFromNonBridge() public {
         bytes memory sender = _interop(origin, address(originRouter));
         vm.prank(makeAddr("intruder"));

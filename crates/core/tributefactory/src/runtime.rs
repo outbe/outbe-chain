@@ -162,8 +162,7 @@ impl TributeFactoryContract<'_> {
             return Ok(());
         }
 
-        let timestamp = u64::try_from(self.storage.timestamp()?)
-            .map_err(|_| TributeFactoryError::TimestampExceedsU64)?;
+        let timestamp = self.storage.now_secs()?;
         let reward_utc_day = WorldwideDay::new(timestamp_to_date_key(timestamp));
         let mut agent_reward = AgentRewardContract::new(self.storage.clone());
 

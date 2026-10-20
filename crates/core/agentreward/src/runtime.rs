@@ -273,11 +273,7 @@ fn resolve_gem_entry_price(
     storage: &StorageHandle<'_>,
     reference_currency: u16,
 ) -> Result<Option<U256>> {
-    // Unix seconds must fit u64. Reject malformed timestamps instead of truncating.
-    let now: u64 = storage
-        .timestamp()?
-        .try_into()
-        .map_err(|_| AgentRewardError::TimestampOverflow)?;
+    let now = storage.now_secs()?;
     let day = previous_date_key(timestamp_to_date_key(now));
     outbe_oracle::api::get_utc_day_vwap_for_iso(storage.clone(), day, reference_currency)
 }

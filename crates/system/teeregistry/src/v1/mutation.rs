@@ -56,7 +56,7 @@ impl TeeRegistry<'_> {
             intent,
             ..
         } = *mutation;
-        let now = consensus_timestamp(&self.storage)?;
+        let now = self.storage.now_secs()?;
         let node_id_hash = intent
             .node_id
             .node_id_hash()

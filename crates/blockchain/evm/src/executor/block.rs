@@ -245,6 +245,8 @@ where
         &mut self,
         tx: impl ExecutableTx<Self>,
     ) -> Result<Self::Result, BlockExecutionError> {
+        outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
+            .map_err(crate::errors::ExecutorValidationError::from)?;
         let (tx_env, recovered) = tx.into_parts();
         if is_reserved_system_tx(recovered.tx()) {
             return Err(
@@ -264,6 +266,8 @@ where
         tx: impl ExecutableTx<Self>,
         f: impl FnOnce(&Self::Result) -> CommitChanges,
     ) -> Result<Option<GasOutput>, BlockExecutionError> {
+        outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
+            .map_err(crate::errors::ExecutorValidationError::from)?;
         let (tx_env, recovered) = tx.into_parts();
         let outcome = (|| {
             if is_reserved_system_tx(recovered.tx()) {
@@ -296,9 +300,11 @@ where
     }
 
     fn finish(mut self) -> Result<(Self::Evm, BlockExecutionResult<Receipt>), BlockExecutionError> {
+        let block_timestamp =
+            outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
+                .map_err(crate::errors::ExecutorValidationError::from)?;
         let current_summary = self.current_execution_summary();
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
-        let block_timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
         let block_artifacts =
             artifacts::validate_finish_artifacts(&self, block_number, current_summary)?;
 

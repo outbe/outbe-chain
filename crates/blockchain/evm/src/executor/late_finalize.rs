@@ -50,7 +50,8 @@ where
             return Ok(());
         }
 
-        let timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
+        let timestamp = outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
+            .map_err(crate::errors::ExecutorValidationError::from)?;
         let chain_id = self.inner.evm.chain_id();
         let proposer = self
             .begin_zone_proposer(block_number)?

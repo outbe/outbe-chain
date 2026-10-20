@@ -37,7 +37,7 @@ fn a_settled_gem_mines_after_the_settlement_deadline_while_its_unpaid_twin_is_re
 
     StorageHandle::enter(&mut provider, |handle| {
         let handle = &handle;
-        let now = handle.timestamp().unwrap().to::<u64>();
+        let now = handle.now_secs().unwrap();
         let twin = gem_view(handle, unpaid);
         assert_eq!(
             twin.effective_state(T_NOW),

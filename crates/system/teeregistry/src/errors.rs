@@ -81,10 +81,6 @@ pub enum TeeRegistryError {
     #[error("renewal window has not opened")]
     RenewalWindowNotOpen,
 
-    /// Block timestamp exceeds the `u64` range.
-    #[error("consensus timestamp exceeds u64")]
-    ConsensusTimestampExceedsU64,
-
     /// Stored integer field exceeds its canonical type width.
     #[error("{0} exceeds its canonical width")]
     FieldExceedsCanonicalWidth(&'static str),

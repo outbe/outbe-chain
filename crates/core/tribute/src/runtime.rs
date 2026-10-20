@@ -326,7 +326,7 @@ impl TributeContract<'_> {
             if completed_at == 0 {
                 return Err(TributeError::MetadosisNotCompleted.into());
             }
-            let now = u64::try_from(storage.timestamp()?).unwrap_or(u64::MAX);
+            let now = storage.now_secs()?;
             if now < completed_at
                 || now > completed_at.saturating_add(7 * outbe_primitives::time::SECONDS_PER_DAY)
             {

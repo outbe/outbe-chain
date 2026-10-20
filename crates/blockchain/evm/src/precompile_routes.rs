@@ -330,7 +330,7 @@ define_exact_routes! {
     ORACLE_ADDRESS => (outbe_oracle::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_oracle::precompile::PAYABLE_SELECTORS),
     ZEROFEE_ADDRESS => (outbe_zerofee::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_zerofee::precompile::PAYABLE_SELECTORS),
     OUTBE_SYSTEM_TX_ADDRESS => (crate::begin_block_precompile::dispatch, default_base_gas, ValuePolicy::Reject, crate::begin_block_precompile::PAYABLE_SELECTORS),
-    ZKPROOF_GROTH16_ADDRESS => (crate::zk::dispatch_groth16, crate::zk::groth16_base_gas, ValuePolicy::Reject, crate::zk::GROTH16_PAYABLE_SELECTORS),
+    ZKPROOF_VERIFY_ADDRESS => (crate::zk::dispatch_zk_verify, crate::zk::zk_verify_base_gas, ValuePolicy::Reject, crate::zk::ZK_VERIFY_PAYABLE_SELECTORS),
     TEE_REGISTRY_ADDRESS => (outbe_teeregistry::v1_precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_teeregistry::v1_precompile::PAYABLE_SELECTORS),
     L2_REGISTRY_ADDRESS => (outbe_l2registry::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_l2registry::precompile::PAYABLE_SELECTORS),
     HYPERLANE_CONTROLLER_ADDRESS => (outbe_hyperlanecontroller::precompile::dispatch, default_base_gas, ValuePolicy::Payable, outbe_hyperlanecontroller::precompile::PAYABLE_SELECTORS),

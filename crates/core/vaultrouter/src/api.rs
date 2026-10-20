@@ -24,17 +24,24 @@ pub fn deposit(storage: &StorageHandle<'_>, asset: Address, amount: U256) -> Res
     )
 }
 
-/// `referenceCurrencyAssets`: every asset registered under an ISO 4217 code.
+/// `referenceCurrencyAssets`: the distinct assets of one page of the vaults
+/// registered under an ISO 4217 code. `offset` and `limit` index the vault set.
 /// Read-only, so this uses a staticcall. Order is not stable across removals.
 pub fn reference_currency_assets(
     storage: &StorageHandle<'_>,
     iso_code: u16,
+    offset: U256,
+    limit: U256,
 ) -> Result<Vec<Address>> {
     let ret = storage.staticcall(
         VAULT_ROUTER_ADDRESS,
-        IVaultRouter::referenceCurrencyAssetsCall { isoCode: iso_code }
-            .abi_encode()
-            .into(),
+        IVaultRouter::referenceCurrencyAssetsCall {
+            isoCode: iso_code,
+            offset,
+            limit,
+        }
+        .abi_encode()
+        .into(),
     )?;
     IVaultRouter::referenceCurrencyAssetsCall::abi_decode_returns(&ret)
         .map_err(|_| VaultRouterError::RouterCallUndecodable("referenceCurrencyAssets").into())

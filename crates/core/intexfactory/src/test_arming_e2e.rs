@@ -82,7 +82,7 @@ fn seed_day_vwaps_for_test(
     let oracle = OracleContract::new(storage.clone());
     let pair = outbe_oracle::api::AddressPair::new_coen_to(call.isoCode);
     let pair_id = oracle.pair_index_of(pair)?;
-    let mut day = previous_date_key(timestamp_to_date_key(storage.timestamp()?.to::<u64>()));
+    let mut day = previous_date_key(timestamp_to_date_key(storage.now_secs()?));
     for _ in 0..call.days {
         oracle.record_utc_day_vwap(day, pair_id, call.value)?;
         if oracle.utc_day_vwap_last_finalized.read()? < day {
