@@ -27,12 +27,6 @@ pub fn dispatch(
         use IVaultRouter::IVaultRouterCalls::*;
         outbe_primitives::dispatch::reject_value(&value)?;
         match call {
-            // --- admin / metadata views ---
-            owner(c) => view(c, |_c| {
-                let contract = VaultRouterContract::new(storage.clone());
-                contract.owner.read()
-            }),
-
             // --- asset and reference-currency enumeration ---
             assetsCount(c) => view(c, |_c| {
                 let contract = VaultRouterContract::new(storage.clone());
@@ -99,36 +93,9 @@ pub fn dispatch(
                 })
             }),
 
-            // --- vault management (owner-only) ---
-            addVault(c) => mutate_void(&storage, c, caller, |sender, c| {
-                runtime::add_vault(storage.clone(), sender, c.vault)
-            }),
-            removeVault(c) => mutate_void(&storage, c, caller, |sender, c| {
-                runtime::remove_vault(storage.clone(), sender, c.vault)
-            }),
-
-            // --- liquidity source / target management (owner-only) ---
-            addLiquiditySource(c) => mutate_void(&storage, c, caller, |sender, c| {
-                runtime::add_liquidity_source(
-                    storage.clone(),
-                    sender,
-                    c.sourceAddress,
-                    c.sourceType as u8,
-                )
-            }),
-            removeLiquiditySource(c) => mutate_void(&storage, c, caller, |sender, c| {
-                runtime::remove_liquidity_source(storage.clone(), sender, c.sourceAddress)
-            }),
-            addLiquidityTarget(c) => mutate_void(&storage, c, caller, |sender, c| {
-                runtime::add_liquidity_target(
-                    storage.clone(),
-                    sender,
-                    c.targetAddress,
-                    c.targetType as u8,
-                )
-            }),
-            removeLiquidityTarget(c) => mutate_void(&storage, c, caller, |sender, c| {
-                runtime::remove_liquidity_target(storage.clone(), sender, c.targetAddress)
+            // --- permissionless application of governance approvals ---
+            applyApproved(c) => mutate_void(&storage, c, caller, |_sender, c| {
+                runtime::apply_approved(storage.clone(), c.proposalId)
             }),
 
             // --- liquidity flow (source/target-gated against the registry) ---

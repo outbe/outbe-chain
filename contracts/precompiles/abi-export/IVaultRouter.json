@@ -1,48 +1,12 @@
 [
   {
     "type": "function",
-    "name": "addLiquiditySource",
+    "name": "applyApproved",
     "inputs": [
       {
-        "name": "sourceAddress",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "sourceType",
-        "type": "uint8",
-        "internalType": "enum IVaultRouter.StablesSource"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "addLiquidityTarget",
-    "inputs": [
-      {
-        "name": "targetAddress",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "targetType",
-        "type": "uint8",
-        "internalType": "enum IVaultRouter.StablesTarget"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "addVault",
-    "inputs": [
-      {
-        "name": "vault",
-        "type": "address",
-        "internalType": "address"
+        "name": "proposalId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -247,19 +211,6 @@
   },
   {
     "type": "function",
-    "name": "owner",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "previewRebalance",
     "inputs": [
       {
@@ -420,45 +371,6 @@
         "internalType": "uint256"
       }
     ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "removeLiquiditySource",
-    "inputs": [
-      {
-        "name": "sourceAddress",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "removeLiquidityTarget",
-    "inputs": [
-      {
-        "name": "targetAddress",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "removeVault",
-    "inputs": [
-      {
-        "name": "vault",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
     "stateMutability": "nonpayable"
   },
   {
@@ -686,6 +598,25 @@
       }
     ],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "ApprovedVaultActionExpired",
+    "inputs": [
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "vault",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",
@@ -1061,6 +992,28 @@
   },
   {
     "type": "error",
+    "name": "ApprovedVaultActionIndexInconsistent",
+    "inputs": [
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ApprovedVaultActionNotFound",
+    "inputs": [
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "CredisOwnerMismatch",
     "inputs": []
   },
@@ -1079,6 +1032,11 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidApprovedVaultAction",
+    "inputs": []
   },
   {
     "type": "error",

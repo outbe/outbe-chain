@@ -10,6 +10,12 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum VaultRouterError {
+    #[error("approved vault action not found: {0}")]
+    ApprovedVaultActionNotFound(U256),
+    #[error("approved vault action index inconsistent: {0}")]
+    ApprovedVaultActionIndexInconsistent(U256),
+    #[error("invalid approved vault action")]
+    InvalidApprovedVaultAction,
     #[error("ERC20 operation failed or returned malformed data")]
     TokenOperationFailed,
     #[error("zero address")]

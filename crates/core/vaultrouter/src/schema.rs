@@ -48,14 +48,27 @@ pub struct LiquidityReservation {
     pub source: Address,
 }
 
+/// A pending governance action. A zero vault means the record is absent.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[storage_record(exists_field = vault)]
+pub struct ApprovedVaultAction {
+    #[key]
+    pub id: U256,
+    #[attribute(order = 0)]
+    pub vault: Address,
+    #[attribute(order = 1)]
+    pub kind: u8,
+    #[attribute(order = 2)]
+    pub approved_at: u64,
+}
+
 /// EVM storage layout for the vaultrouter precompile.
 #[storage_schema]
 #[contract(addr = VAULT_ROUTER_ADDRESS)]
 pub struct VaultRouterContract {
-    /// slot 0: owner (admin). Seeded at genesis. Gates the `add*`/`remove*`
-    /// management methods. Replaces `OwnableUpgradeable`.
+    /// slot 0: retired owner slot. Do not reuse. Never read or write.
     #[attribute(order = 0)]
-    pub owner: outbe_primitives::storage::dsl::Value<Address>,
+    pub retired_owner: outbe_primitives::storage::dsl::Value<Address>,
 
     /// slots 1-2: set of assets that have at least one registered vault.
     #[attribute(order = 1)]
@@ -95,9 +108,18 @@ pub struct VaultRouterContract {
     #[attribute(order = 9)]
     pub reservation_nonce: outbe_primitives::storage::dsl::Value<U256>,
 
-    /// slot 13: CCA stables reservations keyed by id.
+    /// roots 13-28: CCA stables reservations keyed by id. Each record field
+    /// hashes its key with a separate root; these roots must not be reused.
     #[attribute(order = 10)]
     pub reservations: outbe_primitives::storage::dsl::Map<U256, LiquidityReservation>,
+
+    /// roots 29-31: pending vault actions keyed by proposal ID.
+    #[attribute(order = 11)]
+    pub approved_vault_actions: outbe_primitives::storage::dsl::Map<U256, ApprovedVaultAction>,
+
+    /// slot 32: vault -> pending proposal ID; zero means none.
+    #[attribute(order = 12)]
+    pub pending_vault_proposals: outbe_primitives::storage::dsl::Map<Address, U256>,
 }
 
 impl<'storage> VaultRouterContract<'storage> {

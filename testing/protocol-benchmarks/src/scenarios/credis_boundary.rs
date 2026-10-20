@@ -6,7 +6,7 @@ use outbe_primitives::{
     addresses::CREDIS_FACTORY_ADDRESS,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
-use outbe_vaultrouter::{api::IVaultRouter, VaultRouterContract};
+use outbe_vaultrouter::{api::IVaultRouter, test_support};
 
 use super::support::{capture_execution, elapsed_ns};
 use crate::{
@@ -16,7 +16,6 @@ use crate::{
 
 const CHAIN_ID: u64 = 1;
 const BLOCK_GAS_LIMIT: u64 = 30_000_000;
-const ADMIN: Address = Address::repeat_byte(0xa1);
 const ASSET: Address = Address::repeat_byte(0x88);
 const VAULT: Address = Address::repeat_byte(0x77);
 const RECEIVER: Address = Address::repeat_byte(0xaa);
@@ -118,17 +117,12 @@ impl BenchmarkScenario for CredisVaultBoundaryScenario {
         );
 
         StorageHandle::enter(&mut provider, |storage| {
-            VaultRouterContract::new(storage.clone())
-                .owner
-                .write(ADMIN)
+            test_support::register_vault(&storage, ASSET, VAULT, 840)
                 .map_err(|error| error.to_string())?;
-            outbe_vaultrouter::runtime::add_vault(storage.clone(), ADMIN, VAULT)
-                .map_err(|error| error.to_string())?;
-            outbe_vaultrouter::runtime::add_liquidity_target(
-                storage,
-                ADMIN,
+            test_support::register_target(
+                &storage,
                 CREDIS_FACTORY_ADDRESS,
-                IVaultRouter::StablesTarget::Credis as u8,
+                IVaultRouter::StablesTarget::Credis,
             )
             .map_err(|error| error.to_string())
         })?;

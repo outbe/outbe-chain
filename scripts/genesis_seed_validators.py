@@ -219,16 +219,13 @@ def _seed_founders(genesis, seed, validators, alloc):
         validator_storage.entries
     )
 
-    # VaultRouter owner: validator0 by default (overridable via
-    # seed["vault_router"]["owner"]). The owner can later register vaults
-    # and liquidity sources/targets on the precompile.
-    vault_owner = seed.get("vault_router", {}).get("owner", validators[0]["address"])
+    # Seed only factory liquidity routes. Vault registration requires governance.
     vault_router_storage = StorageBuilder()
-    seed_vault_router(vault_router_storage, vault_owner)
+    seed_vault_router(vault_router_storage)
     alloc[VAULT_ROUTER_ADDRESS].setdefault("storage", {}).update(
         vault_router_storage.entries
     )
-    print(f"  VaultRouter: owner={vault_owner}, slot 0 seeded")
+    print("  VaultRouter: factory liquidity routes seeded, no owner or vaults")
 
     # HyperlaneController bootstrap admin: the only caller of the one-shot
     # `initialize`. Validator0 by default (overridable via
