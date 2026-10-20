@@ -55,13 +55,6 @@ fn overflowing_worldwide_day_vwap_keeps_the_forming_edge() {
             metadosis.get_wwd_status(wwd).unwrap(),
             status::LOOKBACK_DELAY
         );
-        assert!(metadosis
-            .worldwide_days
-            .entry(wwd)
-            .current_vwap_minor()
-            .read()
-            .unwrap()
-            .is_zero());
         let missing = OracleContract::new(storage)
             .get_worldwide_day_vwap_snapshot(wwd)
             .expect_err("the overflowing snapshot is not stored");

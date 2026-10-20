@@ -1,5 +1,5 @@
 use super::*;
-use crate::{WwdDayType, WwdStatus};
+use crate::WwdStatus;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::time::WorldwideDay as WwdKey;
 
@@ -25,17 +25,6 @@ fn closed_wwd_tags_cover_every_byte_and_reject_unknown_storage() {
         if let Ok(status) = decoded_status {
             assert_eq!(status.as_u8(), byte);
         }
-
-        let decoded_day_type = WwdDayType::try_from(byte);
-        let known_day_type = matches!(byte, day_type::UNKNOWN | day_type::GREEN | day_type::RED);
-        assert_eq!(
-            decoded_day_type.is_ok(),
-            known_day_type,
-            "day-type byte {byte}"
-        );
-        if let Ok(day_type) = decoded_day_type {
-            assert_eq!(day_type.as_u8(), byte);
-        }
     }
 
     with_contract(|metadosis| {
@@ -45,15 +34,6 @@ fn closed_wwd_tags_cover_every_byte_and_reject_unknown_storage() {
             .unwrap();
         assert!(matches!(
             metadosis.get_wwd_status(status_wwd),
-            Err(PrecompileError::Revert(_))
-        ));
-
-        let day_type_wwd = WwdKey::new(20270102);
-        metadosis
-            .corrupt_wwd_day_type_tag(day_type_wwd, u8::MAX)
-            .unwrap();
-        assert!(matches!(
-            metadosis.get_wwd_day_type(day_type_wwd),
             Err(PrecompileError::Revert(_))
         ));
     });
@@ -141,36 +121,28 @@ fn unknown_abi_status_reverts_and_corrupt_get_day_is_fatal() {
 
 #[test]
 fn full_domain_allocation_matches_independent_big_integer_model_and_conserves() {
-    with_contract(|metadosis| {
-        let wwd = WwdKey::new(20270104);
-        metadosis.set_wwd_day_type(wwd, WwdDayType::Green).unwrap();
-
-        for total in [
-            U256::ZERO,
-            U256::from(1_u8),
-            U256::MAX.checked_sub(U256::from(1_u8)).unwrap(),
+    for total in [
+        U256::ZERO,
+        U256::from(1_u8),
+        U256::MAX.checked_sub(U256::from(1_u8)).unwrap(),
+        U256::MAX,
+    ] {
+        let calculation = crate::settlement::calculate_metadosis(total, U256::MAX).unwrap();
+        let expected = (as_big(total) * 32_u8) / 100_u8;
+        assert_eq!(as_big(calculation.gratis_demand), expected);
+        let desis = crate::settlement::desis_limit(
+            total,
+            calculation.lysis_limit_minor,
             U256::MAX,
-        ] {
-            let calculation = metadosis
-                .calculate_metadosis(wwd, total, U256::MAX)
-                .unwrap();
-            let expected = (as_big(total) * 32_u8) / 100_u8;
-            assert_eq!(as_big(calculation.gratis_demand), expected);
-            let desis = crate::settlement::desis_limit(
-                total,
-                calculation.lysis_limit_minor,
-                U256::MAX,
-                U256::ZERO,
-                true,
-            )
-            .unwrap();
-            assert_eq!(
-                calculation.lysis_limit_minor.checked_add(desis),
-                Some(total)
-            );
-            assert!(calculation.lysis_limit_minor <= calculation.day_gratis_limit_minor);
-        }
-    });
+            U256::ZERO,
+        )
+        .unwrap();
+        assert_eq!(
+            calculation.lysis_limit_minor.checked_add(desis),
+            Some(total)
+        );
+        assert!(calculation.lysis_limit_minor <= calculation.day_gratis_limit_minor);
+    }
 }
 
 #[test]
@@ -261,7 +233,6 @@ fn test_create_worldwide_day() {
         );
 
         assert_eq!(m.get_wwd_status(wwd).unwrap(), status::FORMING);
-        assert_eq!(m.get_wwd_day_type(wwd).unwrap(), day_type::UNKNOWN);
     });
 }
 
@@ -335,101 +306,50 @@ fn test_active_wwd_add_remove() {
 }
 
 #[test]
-fn test_calculate_metadosis_green_day() {
-    with_contract(|m| {
-        let wwd = WwdKey::new(20241220);
-        m.fixture_set_wwd_status(wwd, WwdStatus::Ready).unwrap();
-        m.set_wwd_day_type(wwd, WwdDayType::Green).unwrap();
+fn test_calculate_metadosis_limit_binds() {
+    let tribute_total = U256::from(10_000u64);
+    let day_limit = U256::from(5_000u64);
 
-        let tribute_total = U256::from(10_000u64);
-        let day_limit = U256::from(5_000u64);
+    let calc = crate::settlement::calculate_metadosis(tribute_total, day_limit).unwrap();
 
-        let calc = m
-            .calculate_metadosis(wwd, tribute_total, day_limit)
-            .unwrap();
-
-        // SYMBOLIC_RATE = 32, GREEN day:
-        //   demand     = 10_000 * 32 / 100 = 3_200
-        //   limit      = day_limit         = 5_000
-        //   lysis      = min(demand, limit) = 3_200
-        //   desis      = min(total, limit) - lysis = 1_800
-        assert_eq!(calc.lysis_limit_minor, U256::from(3_200u64));
-        assert_eq!(
-            crate::settlement::desis_limit(
-                tribute_total,
-                calc.lysis_limit_minor,
-                day_limit,
-                U256::ZERO,
-                true
-            ),
-            Some(U256::from(1_800u64))
-        );
-    });
+    // SYMBOLIC_RATE = 32:
+    //   demand     = 10_000 * 32 / 100 = 3_200
+    //   limit      = day_limit         = 5_000
+    //   lysis      = min(demand, limit) = 3_200
+    //   desis      = min(total, limit) - lysis = 1_800
+    assert_eq!(calc.lysis_limit_minor, U256::from(3_200u64));
+    assert_eq!(
+        crate::settlement::desis_limit(
+            tribute_total,
+            calc.lysis_limit_minor,
+            day_limit,
+            U256::ZERO
+        ),
+        Some(U256::from(1_800u64))
+    );
 }
 
 #[test]
-fn test_calculate_metadosis_green_day_below_the_limit() {
-    with_contract(|m| {
-        let wwd = WwdKey::new(20241220);
-        m.fixture_set_wwd_status(wwd, WwdStatus::Ready).unwrap();
-        m.set_wwd_day_type(wwd, WwdDayType::Green).unwrap();
+fn test_calculate_metadosis_below_the_limit() {
+    let tribute_total = U256::from(1_000u64);
+    let day_limit = U256::from(10_000u64);
 
-        let tribute_total = U256::from(1_000u64);
-        let day_limit = U256::from(10_000u64);
+    let calc = crate::settlement::calculate_metadosis(tribute_total, day_limit).unwrap();
 
-        let calc = m
-            .calculate_metadosis(wwd, tribute_total, day_limit)
-            .unwrap();
-
-        // The day earned less than the limit, so the limit does not bind:
-        //   lysis      = 1_000 * 32 / 100                  = 320
-        //   desis      = min(1_000, 10_000) - 320          = 680
-        //   unissued   = 10_000 - 320 - 680                = 9_000
-        assert_eq!(calc.lysis_limit_minor, U256::from(320u64));
-        assert_eq!(
-            crate::settlement::desis_limit(
-                tribute_total,
-                calc.lysis_limit_minor,
-                day_limit,
-                U256::ZERO,
-                true
-            ),
-            Some(U256::from(680u64))
-        );
-    });
-}
-
-#[test]
-fn test_calculate_metadosis_red_day() {
-    with_contract(|m| {
-        let wwd = WwdKey::new(20241220);
-        m.fixture_set_wwd_status(wwd, WwdStatus::Ready).unwrap();
-        m.set_wwd_day_type(wwd, WwdDayType::Red).unwrap();
-
-        let tribute_total = U256::from(10_000u64);
-        let day_limit = U256::from(5_000u64);
-
-        let calc = m
-            .calculate_metadosis(wwd, tribute_total, day_limit)
-            .unwrap();
-
-        // SYMBOLIC_RATE = 32, RED_DAY_REDUCTION_COEF = 8, RED day:
-        //   demand     = 10_000 * 32 / 100 / 8 = 400
-        //   limit      = day_limit / 8         = 625
-        //   lysis      = min(demand, limit)     = 400
-        //   desis      = 0, a red day sells nothing
-        assert_eq!(calc.lysis_limit_minor, U256::from(400u64));
-        assert_eq!(
-            crate::settlement::desis_limit(
-                tribute_total,
-                calc.lysis_limit_minor,
-                day_limit,
-                U256::ZERO,
-                false
-            ),
-            Some(U256::ZERO)
-        );
-    });
+    // The day earned less than the limit, so the limit does not bind:
+    //   lysis      = 1_000 * 32 / 100                  = 320
+    //   desis      = min(1_000, 10_000) - 320          = 680
+    //   unissued   = 10_000 - 320 - 680                = 9_000
+    assert_eq!(calc.lysis_limit_minor, U256::from(320u64));
+    assert_eq!(
+        crate::settlement::desis_limit(
+            tribute_total,
+            calc.lysis_limit_minor,
+            day_limit,
+            U256::ZERO
+        ),
+        Some(U256::from(680u64))
+    );
 }
 
 /// The local path is the same auction rule with nothing drawn from the carry-over, and a draw only ever
@@ -444,20 +364,14 @@ fn the_desis_limit_is_one_rule_for_both_paths() {
                 let day_limit = U256::from(day_limit);
                 let draw = U256::from(draw);
                 let lysis = (nominal * U256::from(32u64) / U256::from(100u64)).min(day_limit);
-                let local =
-                    crate::settlement::desis_limit(nominal, lysis, day_limit, U256::ZERO, true);
+                let local = crate::settlement::desis_limit(nominal, lysis, day_limit, U256::ZERO);
                 assert_eq!(local, Some(nominal.min(day_limit) - lysis));
-                let with_carry =
-                    crate::settlement::desis_limit(nominal, lysis, day_limit, draw, true);
+                let with_carry = crate::settlement::desis_limit(nominal, lysis, day_limit, draw);
                 assert_eq!(
                     with_carry,
                     Some((nominal - lysis).min(draw + day_limit - lysis))
                 );
                 assert!(with_carry >= local);
-                assert_eq!(
-                    crate::settlement::desis_limit(nominal, lysis, day_limit, draw, false),
-                    Some(U256::ZERO)
-                );
             }
         }
     }
@@ -466,32 +380,11 @@ fn the_desis_limit_is_one_rule_for_both_paths() {
             U256::from(10u64),
             U256::from(11u64),
             U256::from(20u64),
-            U256::ZERO,
-            true
+            U256::ZERO
         ),
         None,
         "Lysis above the nominal is a fault"
     );
-}
-
-#[test]
-fn test_calculate_metadosis_unknown_day_type_errors() {
-    with_contract(|m| {
-        let wwd = WwdKey::new(20241220);
-        m.fixture_set_wwd_status(wwd, WwdStatus::Ready).unwrap();
-        assert_eq!(
-            m.worldwide_days.entry(wwd).day_type().read().unwrap(),
-            day_type::UNKNOWN
-        );
-
-        let tribute_total = U256::from(10_000u64);
-        let day_limit = U256::from(5_000u64);
-
-        assert!(matches!(
-            m.calculate_metadosis(wwd, tribute_total, day_limit),
-            Err(outbe_primitives::error::PrecompileError::Revert(_))
-        ));
-    });
 }
 
 #[test]
@@ -541,13 +434,15 @@ fn test_storage_dsl_layout_slots() {
     with_contract(|m| {
         assert_eq!(m.bootstrap_end_time.slot(), U256::ZERO);
         assert_eq!(m.worldwide_days.base_slot(), U256::from(1u64));
-        // WorldwideDay gained `metadosis_limit_minor`, so the record is now
-        // 10 scalar slots (was 9). worldwide_days occupies slots 1..=10.
-        assert_eq!(<WorldwideDay as StorageRecord>::SLOTS, 10);
-        assert_eq!(m.closed_wwd.base_slot(), U256::from(13u64));
+        // The colour fields (orders 1, 8 and 9) are retired, so the record is
+        // 7 scalar slots. worldwide_days occupies slots 1..=7. The genesis
+        // seeder (`scripts/genesis_seed_economy.py`) writes this layout, with
+        // the active_wwd Set at slots 8 and 9.
+        assert_eq!(<WorldwideDay as StorageRecord>::SLOTS, 7);
+        assert_eq!(m.closed_wwd.base_slot(), U256::from(10u64));
         assert_eq!(
             m.worldwide_day_terminal_receipts.base_slot(),
-            U256::from(15u64)
+            U256::from(12u64)
         );
         assert_eq!(
             <crate::schema::DayLimitFormationReceiptState as StorageRecord>::SLOTS,
@@ -555,7 +450,7 @@ fn test_storage_dsl_layout_slots() {
         );
         assert_eq!(
             m.day_limit_formation_receipts.base_slot(),
-            U256::from(16u64)
+            U256::from(13u64)
         );
     });
 }

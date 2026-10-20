@@ -226,7 +226,7 @@ fn zero_limit_offering_opens_until_its_utc_day_closes() {
 }
 
 #[test]
-fn final_zero_limit_miss_from_forming_keeps_the_rate_for_the_next_day() {
+fn final_zero_limit_miss_from_forming_keeps_its_vwap_snapshot() {
     let wwd = outbe_primitives::time::WorldwideDay::new(2026_0302);
     let next = outbe_primitives::time::WorldwideDay::new(2026_0303);
     let forming = |day: outbe_primitives::time::WorldwideDay| {
@@ -279,8 +279,6 @@ fn final_zero_limit_miss_from_forming_keeps_the_rate_for_the_next_day() {
             outbe_oracle::api::day_type_pair_vwap(storage.clone(), wwd).unwrap(),
             Some(U256::from(110u64))
         );
-        let metadosis = MetadosisContract::new(storage.clone());
-        assert_eq!(metadosis.get_wwd_day_type(wwd).unwrap(), day_type::GREEN);
         let mut metadosis = MetadosisContract::new(storage.clone());
         metadosis
             .create_worldwide_day(
@@ -298,12 +296,16 @@ fn final_zero_limit_miss_from_forming_keeps_the_rate_for_the_next_day() {
     run_advance_command(&mut provider, 3, lookback_end + SECONDS_PER_HOUR).unwrap();
 
     StorageHandle::enter(&mut provider, |storage| {
-        let day = MetadosisContract::new(storage).worldwide_days.entry(next);
+        // The next day stores its own snapshot: the 110 and 130 samples both fall in
+        // its forming window. The missed day keeps its own snapshot.
         assert_eq!(
-            day.previous_vwap_minor().read().unwrap(),
-            U256::from(110u64)
+            outbe_oracle::api::day_type_pair_vwap(storage.clone(), next).unwrap(),
+            Some(U256::from(120u64))
         );
-        assert_eq!(day.day_type().read().unwrap(), day_type::GREEN);
+        assert_eq!(
+            outbe_oracle::api::day_type_pair_vwap(storage, wwd).unwrap(),
+            Some(U256::from(110u64))
+        );
     });
 }
 

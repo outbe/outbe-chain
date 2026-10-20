@@ -1,5 +1,5 @@
 use super::*;
-use crate::{WwdDayType, WwdStatus};
+use crate::WwdStatus;
 use outbe_tribute::runtime::RetirementOutcome;
 
 use alloy_sol_types::{SolCall, SolEvent};
@@ -24,7 +24,6 @@ fn seed_day(
     metadosis
         .fixture_set_wwd_status(wwd, WwdStatus::try_from(state).unwrap())
         .unwrap();
-    metadosis.set_wwd_day_type(wwd, WwdDayType::Green).unwrap();
     metadosis.set_metadosis_limit(wwd, day_limit).unwrap();
     if state == status::WAITING || state == status::OFFERING {
         metadosis.fixture_seed_day_limit_formation(wwd).unwrap();
@@ -65,15 +64,12 @@ fn wwd_words(
     let record = metadosis.worldwide_days.get(wwd).unwrap().unwrap();
     vec![
         U256::from(record.status),
-        U256::from(record.day_type),
         U256::from(record.forming_start),
         U256::from(record.forming_end),
         U256::from(record.lookback_end),
         U256::from(record.offering_end),
         U256::from(record.scheduled_process_time),
         record.metadosis_limit_minor,
-        record.previous_vwap_minor,
-        record.current_vwap_minor,
     ]
 }
 

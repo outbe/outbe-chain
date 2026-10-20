@@ -241,7 +241,7 @@
   },
   {
     "type": "event",
-    "name": "AuctionCancelledRedDay",
+    "name": "AuctionCancelledNoLimit",
     "inputs": [
       {
         "name": "worldwideDay",

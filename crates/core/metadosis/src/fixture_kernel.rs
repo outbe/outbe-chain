@@ -42,15 +42,10 @@ pub(crate) trait FixtureKernelExt {
         &mut self,
         wwd: WorldwideDay,
         day_limit: U256,
-        previous_vwap_minor: U256,
-        current_vwap_minor: U256,
     ) -> PrecompileResult<()>;
 
     #[cfg(test)]
     fn corrupt_wwd_status_tag(&mut self, wwd: WorldwideDay, tag: u8) -> PrecompileResult<()>;
-
-    #[cfg(test)]
-    fn corrupt_wwd_day_type_tag(&mut self, wwd: WorldwideDay, tag: u8) -> PrecompileResult<()>;
 
     #[cfg(test)]
     fn fixture_seed_day_limit_formation(&mut self, wwd: WorldwideDay) -> PrecompileResult<()>;
@@ -60,13 +55,6 @@ pub(crate) trait FixtureKernelExt {
         &mut self,
         wwd: WorldwideDay,
         scheduled_process_time: u64,
-    ) -> PrecompileResult<()>;
-
-    #[cfg(test)]
-    fn set_wwd_day_type(
-        &mut self,
-        wwd: WorldwideDay,
-        day_type: crate::WwdDayType,
     ) -> PrecompileResult<()>;
 
     fn add_active_wwd(&mut self, wwd: WorldwideDay) -> PrecompileResult<()>;
@@ -106,15 +94,12 @@ impl FixtureKernelExt for MetadosisContract<'_> {
         self.worldwide_days.create(&WorldwideDayRecord {
             wwd,
             status: crate::WwdStatus::Forming.as_u8(),
-            day_type: crate::WwdDayType::Unknown.as_u8(),
             forming_start,
             forming_end,
             lookback_end,
             offering_end,
             scheduled_process_time,
             metadosis_limit_minor: U256::ZERO,
-            previous_vwap_minor: U256::ZERO,
-            current_vwap_minor: U256::ZERO,
         })
     }
 
@@ -170,32 +155,22 @@ impl FixtureKernelExt for MetadosisContract<'_> {
         &mut self,
         wwd: WorldwideDay,
         day_limit: U256,
-        previous_vwap_minor: U256,
-        current_vwap_minor: U256,
     ) -> PrecompileResult<()> {
         self.worldwide_days.create(&WorldwideDayRecord {
             wwd,
             status: crate::WwdStatus::Ready.as_u8(),
-            day_type: crate::WwdDayType::Green.as_u8(),
             forming_start: 1,
             forming_end: 2,
             lookback_end: 3,
             offering_end: 4,
             scheduled_process_time: 5,
             metadosis_limit_minor: day_limit,
-            previous_vwap_minor,
-            current_vwap_minor,
         })
     }
 
     #[cfg(test)]
     fn corrupt_wwd_status_tag(&mut self, wwd: WorldwideDay, tag: u8) -> PrecompileResult<()> {
         self.worldwide_days.entry(wwd).status().write(tag)
-    }
-
-    #[cfg(test)]
-    fn corrupt_wwd_day_type_tag(&mut self, wwd: WorldwideDay, tag: u8) -> PrecompileResult<()> {
-        self.worldwide_days.entry(wwd).day_type().write(tag)
     }
 
     #[cfg(test)]
@@ -225,18 +200,6 @@ impl FixtureKernelExt for MetadosisContract<'_> {
             .entry(wwd)
             .scheduled_process_time()
             .write(scheduled_process_time)
-    }
-
-    #[cfg(test)]
-    fn set_wwd_day_type(
-        &mut self,
-        wwd: WorldwideDay,
-        day_type: crate::WwdDayType,
-    ) -> PrecompileResult<()> {
-        self.worldwide_days
-            .entry(wwd)
-            .day_type()
-            .write(day_type.as_u8())
     }
 
     fn add_active_wwd(&mut self, wwd: WorldwideDay) -> PrecompileResult<()> {

@@ -1,13 +1,12 @@
 use crate::{
-    aggregate::{WwdDayType, WwdProjection},
-    commit::{commit_outer_transition_with_rate, WwdRateResolution},
+    aggregate::WwdProjection,
+    commit::commit_outer_transition,
     constants::MAX_RETAINED_WWDS,
     precompile::IMetadosis,
     reducer::{OuterWwdTransition, WwdAdvanceEdge},
     schema::{MetadosisContract, WorldwideDayEntryExt},
     terminal::{CapacityForfeitureReceipt, MissedOfferingReceipt},
 };
-use alloy_primitives::U256;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result, time::WorldwideDay};
 use outbe_promislimit::PromisLimitContract;
 use outbe_tribute::TributeContract;
@@ -17,47 +16,33 @@ pub(super) struct WwdEffect<'a, 'storage> {
 
     pub current: &'a WwdProjection,
     pub transition: &'a OuterWwdTransition,
-    pub rate_resolution: Option<WwdRateResolution>,
 }
 
 pub(super) fn apply_wwd_advance_edges(
     metadosis: &mut MetadosisContract<'_>,
     wwd: WorldwideDay,
     edges: &[WwdAdvanceEdge],
-    duplicate_resolution_error: crate::errors::MetadosisStorageCorruptionError,
-) -> Result<Option<WwdRateResolution>> {
-    let mut rate_resolution = None;
+) -> Result<()> {
     for edge in edges {
-        let edge_resolution = apply_wwd_advance_edge_effect(metadosis, wwd, *edge)?;
-        let Some(resolution) = edge_resolution else {
-            continue;
-        };
-        if rate_resolution.replace(resolution).is_some() {
-            return Err(duplicate_resolution_error.into());
-        }
+        apply_wwd_advance_edge_effect(metadosis, wwd, *edge)?;
     }
-    Ok(rate_resolution)
+    Ok(())
 }
 
 fn apply_wwd_advance_edge_effect(
     metadosis: &mut MetadosisContract<'_>,
     wwd: WorldwideDay,
     edge: WwdAdvanceEdge,
-) -> Result<Option<WwdRateResolution>> {
+) -> Result<()> {
     match edge {
-        WwdAdvanceEdge::ResolveForming => {
-            resolve_forming_snapshot(metadosis, wwd)?;
-            Ok(Some(resolve_day_rate(metadosis, wwd)?))
-        }
+        WwdAdvanceEdge::ResolveForming => resolve_forming_snapshot(metadosis, wwd),
         WwdAdvanceEdge::OpenOffering => {
-            TributeContract::new(metadosis.storage.clone()).unseal_day(wwd)?;
-            Ok(None)
+            TributeContract::new(metadosis.storage.clone()).unseal_day(wwd)
         }
         WwdAdvanceEdge::CloseOffering => {
-            TributeContract::new(metadosis.storage.clone()).seal_day(wwd)?;
-            Ok(None)
+            TributeContract::new(metadosis.storage.clone()).seal_day(wwd)
         }
-        WwdAdvanceEdge::BecomeReady => Ok(None),
+        WwdAdvanceEdge::BecomeReady => Ok(()),
     }
 }
 
@@ -69,12 +54,11 @@ pub(super) fn apply_capacity_forfeiture(
     let counts = prepare_capacity_forfeiture(metadosis, &effect, retained_count)?;
     let receipt = forfeit_and_credit_capacity(metadosis.storage.clone(), &effect, counts)?;
     metadosis.write_capacity_forfeiture_receipt(receipt)?;
-    commit_outer_transition_with_rate(
+    commit_outer_transition(
         metadosis,
         effect.current.worldwide_day,
         effect.transition,
         effect.ctx.block.block_number,
-        effect.rate_resolution,
     )?;
     metadosis.emit(capacity_forfeiture_event(&receipt))
 }
@@ -161,7 +145,6 @@ pub(super) fn apply_missed_offering(
         ctx,
         current,
         transition,
-        rate_resolution,
     } = effect;
 
     metadosis.validate_day_limit_binding(current, "MissedOffering")?;
@@ -190,12 +173,11 @@ pub(super) fn apply_missed_offering(
             block_number: ctx.block.block_number,
         };
         metadosis.write_missed_offering_receipt(receipt)?;
-        commit_outer_transition_with_rate(
+        commit_outer_transition(
             metadosis,
             current.worldwide_day,
             transition,
             ctx.block.block_number,
-            rate_resolution,
         )?;
         metadosis.emit(IMetadosis::WorldwideDayMissedOffering {
             worldwideDay: current.worldwide_day.into(),
@@ -230,32 +212,7 @@ fn store_worldwide_day_vwap_snapshot(
     Ok(())
 }
 
-fn resolve_day_rate(metadosis: &MetadosisContract, wwd: WorldwideDay) -> Result<WwdRateResolution> {
-    let current_vwap_minor = outbe_oracle::api::day_type_pair_vwap(metadosis.storage.clone(), wwd)?
-        .unwrap_or(U256::ZERO);
-    let previous_vwap_minor = if current_vwap_minor.is_zero() {
-        U256::ZERO
-    } else {
-        outbe_oracle::api::day_type_pair_vwap(metadosis.storage.clone(), wwd.previous_date_key())?
-            .unwrap_or(U256::ZERO)
-    };
-    Ok(WwdRateResolution {
-        previous_vwap_minor,
-        current_vwap_minor,
-        day_type: determine_day_type(previous_vwap_minor, current_vwap_minor),
-    })
-}
-
-fn determine_day_type(previous_vwap_minor: U256, current_vwap_minor: U256) -> WwdDayType {
-    if previous_vwap_minor.is_zero() || current_vwap_minor.is_zero() {
-        return WwdDayType::Red;
-    }
-    if current_vwap_minor > previous_vwap_minor {
-        WwdDayType::Green
-    } else {
-        WwdDayType::Red
-    }
-}
+/// Stores the day's VWAP snapshot at the end of Forming. Tribute pricing reads it.
 fn resolve_forming_snapshot(
     metadosis: &mut MetadosisContract<'_>,
     wwd: WorldwideDay,

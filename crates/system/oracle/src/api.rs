@@ -396,11 +396,11 @@ pub fn priced_reference_currencies(
 /// Stored WorldwideDay VWAP for the [`DAY_TYPE_PAIR`] (`COEN/840`), or `None`
 /// when the pair is not registered or the day has no snapshot for it.
 ///
-/// This is the single entry point for the day-rate decision. Pair resolution and
-/// the snapshot lookup live here, behind one typed interface. Callers therefore
-/// never touch the oracle's internal `pair_index` map. Genuine storage faults
-/// propagate as `Err`. This keeps "no data yet" (`Ok(None)` -> caller's RED
-/// fallback) distinct from "oracle broken".
+/// Pair resolution and the snapshot lookup live here, behind one typed
+/// interface. Callers therefore never touch the oracle's internal `pair_index`
+/// map. Genuine storage faults propagate as `Err`. This keeps "no data yet"
+/// (`Ok(None)`) distinct from "oracle broken". No day colour reads this value
+/// (OIP-00320).
 pub fn day_type_pair_vwap(
     storage: StorageHandle,
     worldwide_day: WorldwideDay,

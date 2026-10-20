@@ -11,7 +11,6 @@ enum ReadyOutcome {
 #[derive(Clone, Copy)]
 struct LocalDay {
     wwd: outbe_primitives::time::WorldwideDay,
-    day_type: u8,
     day_limit: U256,
     tribute_count: u32,
     tribute_nominal: U256,
@@ -20,14 +19,13 @@ struct LocalDay {
 fn seed_local_terminal_fixture(provider: &mut HashMapStorageProvider, day: LocalDay) -> u64 {
     let LocalDay {
         wwd,
-        day_type,
         day_limit,
         tribute_count,
         tribute_nominal,
     } = day;
     StorageHandle::enter(provider, |storage| {
         install_test_enclaves();
-        let scheduled = create_waiting_day(&storage, wwd, day_type, day_limit);
+        let scheduled = create_waiting_day(&storage, wwd, day_limit);
         super::arm_reference_price(&storage, scheduled);
         let mut tribute = TributeContract::new(storage);
         tribute
@@ -140,7 +138,6 @@ fn exercise_local_terminal_fault_matrix(
 ) {
     let LocalDay {
         wwd,
-        day_type,
         day_limit,
         tribute_count,
         tribute_nominal,
@@ -152,7 +149,6 @@ fn exercise_local_terminal_fault_matrix(
         &mut probe,
         LocalDay {
             wwd,
-            day_type,
             day_limit,
             tribute_count,
             tribute_nominal,
@@ -177,7 +173,6 @@ fn exercise_local_terminal_fault_matrix(
             &mut provider,
             LocalDay {
                 wwd,
-                day_type,
                 day_limit,
                 tribute_count,
                 tribute_nominal,
@@ -226,7 +221,6 @@ fn empty_tribute_day_command_rolls_back_every_mutation_and_ce_work_then_retries(
     exercise_local_terminal_fault_matrix(
         LocalDay {
             wwd: outbe_primitives::time::WorldwideDay::new(2026_0812),
-            day_type: day_type::RED,
             day_limit: U256::from(777),
             tribute_count: 0,
             tribute_nominal: U256::ZERO,
@@ -237,26 +231,10 @@ fn empty_tribute_day_command_rolls_back_every_mutation_and_ce_work_then_retries(
 }
 
 #[test]
-fn zero_gratis_command_rolls_back_every_mutation_and_ce_work_then_retries() {
-    exercise_local_terminal_fault_matrix(
-        LocalDay {
-            wwd: outbe_primitives::time::WorldwideDay::new(2026_0813),
-            day_type: day_type::RED,
-            day_limit: U256::from(2),
-            tribute_count: 1,
-            tribute_nominal: U256::from(1_000),
-        },
-        ReadyOutcome::CompletedForfeited,
-        U256::from(2),
-    );
-}
-
-#[test]
 fn zero_day_limit_rolls_back_every_mutation_and_retries_exactly() {
     exercise_local_terminal_fault_matrix(
         LocalDay {
             wwd: outbe_primitives::time::WorldwideDay::new(2026_0820),
-            day_type: day_type::GREEN,
             day_limit: U256::ZERO,
             tribute_count: 1,
             tribute_nominal: U256::from(1_000),
@@ -267,41 +245,10 @@ fn zero_day_limit_rolls_back_every_mutation_and_retries_exactly() {
 }
 
 #[test]
-fn unknown_day_type_rolls_back_every_mutation_and_retries_exactly() {
-    exercise_local_terminal_fault_matrix(
-        LocalDay {
-            wwd: outbe_primitives::time::WorldwideDay::new(2026_0821),
-            day_type: day_type::UNKNOWN,
-            day_limit: U256::from(777),
-            tribute_count: 1,
-            tribute_nominal: U256::from(1_000),
-        },
-        ReadyOutcome::FailedForfeited,
-        U256::from(777),
-    );
-}
-
-#[test]
-fn green_empty_tribute_day_rolls_back_every_mutation_and_retries_exactly() {
-    exercise_local_terminal_fault_matrix(
-        LocalDay {
-            wwd: outbe_primitives::time::WorldwideDay::new(2026_0822),
-            day_type: day_type::GREEN,
-            day_limit: U256::from(777),
-            tribute_count: 0,
-            tribute_nominal: U256::ZERO,
-        },
-        ReadyOutcome::Completed,
-        U256::from(777),
-    );
-}
-
-#[test]
-fn green_zero_gratis_rolls_back_every_mutation_and_retries_exactly() {
+fn zero_gratis_rolls_back_every_mutation_and_retries_exactly() {
     exercise_local_terminal_fault_matrix(
         LocalDay {
             wwd: outbe_primitives::time::WorldwideDay::new(2026_0823),
-            day_type: day_type::GREEN,
             day_limit: U256::from(2),
             tribute_count: 1,
             tribute_nominal: U256::ONE,
@@ -315,13 +262,14 @@ fn green_zero_gratis_rolls_back_every_mutation_and_retries_exactly() {
 fn zero_gratis_completes_and_forfeits_its_present_parent_partition() {
     let wwd = outbe_primitives::time::WorldwideDay::new(2026_0818);
     let day_limit = U256::from(2);
-    let nominal = U256::from(1_000);
+    // floor(1 * 32 / 100) is zero, so the Lysis limit is zero. The Desis limit is
+    // min(1, 2) = 1, and the rest of the day limit returns to the warehouse.
+    let nominal = U256::ONE;
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let scheduled = seed_local_terminal_fixture(
         &mut provider,
         LocalDay {
             wwd,
-            day_type: day_type::RED,
             day_limit,
             tribute_count: 1,
             tribute_nominal: nominal,
@@ -330,7 +278,7 @@ fn zero_gratis_completes_and_forfeits_its_present_parent_partition() {
 
     run_start_command(&mut provider, 2, scheduled).unwrap();
 
-    assert_local_terminal_completed(&mut provider, wwd, day_limit);
+    assert_local_terminal_completed(&mut provider, wwd, U256::ONE);
     assert_tribute_partition_forfeited(&mut provider, wwd);
     StorageHandle::enter(&mut provider, |storage| {
         assert!(
@@ -376,7 +324,6 @@ fn test_ready_processing_missing_limit_fails_like_source() {
             )
             .unwrap();
         metadosis.add_active_wwd(wwd).unwrap();
-        metadosis.set_wwd_day_type(wwd, WwdDayType::Red).unwrap();
         metadosis
             .fixture_set_wwd_status(wwd, WwdStatus::Waiting)
             .unwrap();
@@ -390,49 +337,6 @@ fn test_ready_processing_missing_limit_fails_like_source() {
             .read_metadosis_failure_receipt(wwd, U256::ZERO)
             .unwrap()
             .is_some());
-    });
-}
-
-#[test]
-fn test_ready_processing_unknown_day_type_fails_and_returns_limit_to_promis() {
-    with_storage(|storage| {
-        let wwd_raw = 20260310u32;
-        let wwd = outbe_primitives::time::WorldwideDay::new(wwd_raw);
-        let day_limit = U256::from(333u64);
-        let forming_start = wwd.start_timestamp();
-        let scheduled = forming_start
-            + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR
-            + LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR
-            + OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR
-            + WAITING_PERIOD_HOURS * SECONDS_PER_HOUR;
-
-        let mut metadosis = MetadosisContract::new(storage.clone());
-        metadosis
-            .create_worldwide_day(
-                wwd,
-                forming_start,
-                LOOKBACK_DELAY_HOURS,
-                OFFERING_PERIOD_HOURS,
-            )
-            .unwrap();
-        metadosis.add_active_wwd(wwd).unwrap();
-        metadosis
-            .fixture_set_wwd_status(wwd, WwdStatus::Waiting)
-            .unwrap();
-        metadosis.set_metadosis_limit(wwd, day_limit).unwrap();
-        seal_fresh_tribute_day(&storage, wwd);
-
-        run_begin_block(storage.clone(), 2, scheduled + SECONDS_PER_HOUR);
-
-        let metadosis = MetadosisContract::new(storage.clone());
-        assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::FAILED);
-        assert!(metadosis
-            .read_metadosis_failure_receipt(wwd, day_limit)
-            .unwrap()
-            .is_some());
-
-        let promis = PromisLimitContract::new(storage);
-        assert_eq!(promis.get_total_unallocated().unwrap(), day_limit);
     });
 }
 
@@ -458,7 +362,6 @@ fn test_ready_processing_zero_limit_fails() {
             )
             .unwrap();
         metadosis.add_active_wwd(wwd).unwrap();
-        metadosis.set_wwd_day_type(wwd, WwdDayType::Red).unwrap();
         metadosis
             .fixture_set_wwd_status(wwd, WwdStatus::Waiting)
             .unwrap();
@@ -499,7 +402,6 @@ fn test_ready_processing_no_tributes_returns_the_limit_to_promis() {
             )
             .unwrap();
         metadosis.add_active_wwd(wwd).unwrap();
-        metadosis.set_wwd_day_type(wwd, WwdDayType::Red).unwrap();
         metadosis
             .fixture_set_wwd_status(wwd, WwdStatus::Waiting)
             .unwrap();
@@ -512,7 +414,7 @@ fn test_ready_processing_no_tributes_returns_the_limit_to_promis() {
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::COMPLETED);
 
-        // A red day is recorded as a brief with no limit. A day with no tributes issues nothing,
+        // A day with no tributes is recorded as a brief with no limit. It issues nothing,
         // so its whole limit returns to the warehouse.
         let series = wwd;
         let desis = storage.contract::<outbe_desis::schema::DesisContract>();
@@ -520,7 +422,7 @@ fn test_ready_processing_no_tributes_returns_the_limit_to_promis() {
             desis.auction_stage.read(&series).unwrap(),
             outbe_desis::schema::AuctionStage::Briefed as u8
         );
-        assert_eq!(desis.brief_green.read(&series).unwrap(), 0);
+        assert_eq!(desis.brief_has_limit.read(&series).unwrap(), 0);
         assert_eq!(
             desis.pending_desis_limit_minor.read(&series).unwrap(),
             U256::ZERO
@@ -538,7 +440,7 @@ fn native_lifecycle_preserves_the_empty_day_compatibility_branch() {
     with_storage(|storage| {
         let wwd = outbe_primitives::time::WorldwideDay::new(2026_0313);
         let day_limit = U256::from(777);
-        let scheduled = create_waiting_day(&storage, wwd, day_type::RED, day_limit);
+        let scheduled = create_waiting_day(&storage, wwd, day_limit);
         install_test_enclaves();
 
         seal_fresh_tribute_day(&storage, wwd);
@@ -556,7 +458,7 @@ fn native_lifecycle_preserves_the_empty_day_compatibility_branch() {
             desis.auction_stage.read(&series).unwrap(),
             outbe_desis::schema::AuctionStage::Briefed as u8
         );
-        assert_eq!(desis.brief_green.read(&series).unwrap(), 0);
+        assert_eq!(desis.brief_has_limit.read(&series).unwrap(), 0);
         assert_eq!(
             desis.pending_desis_limit_minor.read(&series).unwrap(),
             U256::ZERO
@@ -579,12 +481,12 @@ fn native_lifecycle_preserves_the_empty_day_compatibility_branch() {
 }
 
 #[test]
-fn green_empty_day_briefs_nothing_however_large_the_limit() {
+fn empty_day_briefs_nothing_however_large_the_limit() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
     StorageHandle::enter(&mut provider, |storage| {
         let wwd = outbe_primitives::time::WorldwideDay::new(2026_0321);
-        let scheduled = create_waiting_day(&storage, wwd, day_type::GREEN, U256::MAX);
+        let scheduled = create_waiting_day(&storage, wwd, U256::MAX);
         install_test_enclaves();
 
         seal_fresh_tribute_day(&storage, wwd);
@@ -598,7 +500,7 @@ fn green_empty_day_briefs_nothing_however_large_the_limit() {
             outbe_desis::AuctionStage::from_u8(desis.auction_stage.read(&wwd).unwrap()).unwrap(),
             outbe_desis::AuctionStage::Briefed
         );
-        assert_eq!(desis.brief_green.read(&wwd).unwrap(), 0);
+        assert_eq!(desis.brief_has_limit.read(&wwd).unwrap(), 0);
         assert_eq!(
             desis.pending_desis_limit_minor.read(&wwd).unwrap(),
             U256::ZERO
@@ -614,7 +516,6 @@ fn green_empty_day_briefs_nothing_however_large_the_limit() {
 
 fn assert_populated_ready_day_fails_and_forfeits(
     wwd: outbe_primitives::time::WorldwideDay,
-    dtype: u8,
     day_limit: U256,
 ) {
     let nominal = U256::from(1_000);
@@ -623,7 +524,6 @@ fn assert_populated_ready_day_fails_and_forfeits(
         &mut provider,
         LocalDay {
             wwd,
-            day_type: dtype,
             day_limit,
             tribute_count: 1,
             tribute_nominal: nominal,
@@ -664,7 +564,6 @@ fn assert_populated_ready_day_fails_and_forfeits(
 fn native_lifecycle_fails_the_populated_zero_limit_day_and_forfeits_its_partition() {
     assert_populated_ready_day_fails_and_forfeits(
         outbe_primitives::time::WorldwideDay::new(2026_0314),
-        day_type::GREEN,
         U256::ZERO,
     );
 }
@@ -672,16 +571,15 @@ fn native_lifecycle_fails_the_populated_zero_limit_day_and_forfeits_its_partitio
 #[test]
 fn native_lifecycle_completes_the_populated_zero_lysis_limit_day_and_forfeits_its_partition() {
     let wwd = outbe_primitives::time::WorldwideDay::new(2026_0318);
-    let nominal = U256::from(1_000);
-    // A red day divides the day gratis limit by RED_DAY_REDUCTION_COEF. This
-    // non-zero day limit therefore produces an exact zero Lysis Limit.
+    // floor(1 * 32 / 100) is zero, so this non-zero day limit produces an exact
+    // zero Lysis Limit. The day still sells its Desis limit, min(1, 2) = 1.
+    let nominal = U256::ONE;
     let day_limit = U256::from(2);
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let scheduled = seed_local_terminal_fixture(
         &mut provider,
         LocalDay {
             wwd,
-            day_type: day_type::RED,
             day_limit,
             tribute_count: 1,
             tribute_nominal: nominal,
@@ -690,7 +588,7 @@ fn native_lifecycle_completes_the_populated_zero_lysis_limit_day_and_forfeits_it
 
     run_start_command(&mut provider, 2, scheduled).unwrap();
 
-    assert_local_terminal_completed(&mut provider, wwd, day_limit);
+    assert_local_terminal_completed(&mut provider, wwd, U256::ONE);
     assert_tribute_partition_forfeited(&mut provider, wwd);
     StorageHandle::enter(&mut provider, |storage| {
         let desis = storage.contract::<outbe_desis::schema::DesisContract>();
@@ -698,26 +596,17 @@ fn native_lifecycle_completes_the_populated_zero_lysis_limit_day_and_forfeits_it
             desis.auction_stage.read(&wwd).unwrap(),
             outbe_desis::schema::AuctionStage::Briefed as u8
         );
-        assert_eq!(desis.brief_green.read(&wwd).unwrap(), 0);
+        assert_eq!(desis.brief_has_limit.read(&wwd).unwrap(), 1);
         assert_eq!(
             desis.pending_desis_limit_minor.read(&wwd).unwrap(),
-            U256::ZERO
+            U256::ONE
         );
         assert_eq!(NodContract::new(storage).total_supply().unwrap(), 0);
     });
 }
 
 #[test]
-fn native_lifecycle_fails_the_populated_unknown_day_and_forfeits_its_partition() {
-    assert_populated_ready_day_fails_and_forfeits(
-        outbe_primitives::time::WorldwideDay::new(2026_0315),
-        day_type::UNKNOWN,
-        U256::from(333),
-    );
-}
-
-#[test]
-fn no_tributes_green_day_briefs_nothing_and_returns_the_limit() {
+fn no_tributes_day_briefs_nothing_and_returns_the_limit() {
     with_storage(|storage| {
         let wwd = outbe_primitives::time::WorldwideDay::new(20260401u32);
         let day_limit = U256::from(10u64).pow(U256::from(26u64));
@@ -733,7 +622,6 @@ fn no_tributes_green_day_briefs_nothing_and_returns_the_limit() {
             )
             .unwrap();
         metadosis.add_active_wwd(wwd).unwrap();
-        metadosis.set_wwd_day_type(wwd, WwdDayType::Green).unwrap();
         metadosis
             .fixture_set_wwd_status(wwd, WwdStatus::Waiting)
             .unwrap();
@@ -759,7 +647,7 @@ fn no_tributes_green_day_briefs_nothing_and_returns_the_limit() {
             desis.auction_stage.read(&series).unwrap(),
             outbe_desis::schema::AuctionStage::Briefed as u8
         );
-        assert_eq!(desis.brief_green.read(&series).unwrap(), 0);
+        assert_eq!(desis.brief_has_limit.read(&series).unwrap(), 0);
         assert_eq!(
             desis.pending_desis_limit_minor.read(&series).unwrap(),
             U256::ZERO
@@ -775,7 +663,7 @@ fn no_tributes_green_day_briefs_nothing_and_returns_the_limit() {
 }
 
 #[test]
-fn zero_limit_green_day_dispatches_no_brief() {
+fn zero_limit_day_dispatches_no_brief() {
     with_storage(|storage| {
         let wwd = outbe_primitives::time::WorldwideDay::new(20260501u32);
         let forming_start = wwd.start_timestamp();
@@ -790,7 +678,6 @@ fn zero_limit_green_day_dispatches_no_brief() {
             )
             .unwrap();
         metadosis.add_active_wwd(wwd).unwrap();
-        metadosis.set_wwd_day_type(wwd, WwdDayType::Green).unwrap();
         metadosis
             .fixture_set_wwd_status(wwd, WwdStatus::Waiting)
             .unwrap();
@@ -821,7 +708,6 @@ fn zero_limit_green_day_dispatches_no_brief() {
 /// A later block retires the day and retains its ciphertext in EVM storage.
 fn settle_minted_ready_day(
     wwd: outbe_primitives::time::WorldwideDay,
-    dtype: u8,
     day_limit: U256,
     nominal: U256,
 ) -> HashMapStorageProvider {
@@ -831,7 +717,7 @@ fn settle_minted_ready_day(
     let id = outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(owner, wwd).unwrap();
     let (scheduled, stored) = StorageHandle::enter(&mut provider, |storage| {
         install_test_enclaves();
-        let scheduled = create_waiting_day(&storage, wwd, dtype, day_limit);
+        let scheduled = create_waiting_day(&storage, wwd, day_limit);
         super::arm_reference_price(&storage, scheduled);
         issue_one_tribute(
             &storage,
@@ -861,7 +747,7 @@ fn settle_minted_ready_day(
 #[test]
 fn minted_zero_limit_ready_day_fails_and_retires_its_partition_in_evm_state() {
     let wwd = outbe_primitives::time::WorldwideDay::new(2026_0316);
-    let mut provider = settle_minted_ready_day(wwd, day_type::GREEN, U256::ZERO, U256::from(1_000));
+    let mut provider = settle_minted_ready_day(wwd, U256::ZERO, U256::from(1_000));
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage);
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::FAILED);
@@ -876,8 +762,8 @@ fn minted_zero_limit_ready_day_fails_and_retires_its_partition_in_evm_state() {
 #[test]
 fn minted_zero_gratis_day_completes_and_retires_its_partition_in_evm_state() {
     let wwd = outbe_primitives::time::WorldwideDay::new(2026_0317);
-    let mut provider =
-        settle_minted_ready_day(wwd, day_type::RED, U256::from(2), U256::from(1_000));
+    // floor(1 * 32 / 100) is zero, so the day allocates no gratis.
+    let mut provider = settle_minted_ready_day(wwd, U256::from(2), U256::ONE);
     StorageHandle::enter(&mut provider, |storage| {
         assert_eq!(
             MetadosisContract::new(storage).get_wwd_status(wwd).unwrap(),

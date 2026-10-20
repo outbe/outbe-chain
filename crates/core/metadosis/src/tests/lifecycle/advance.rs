@@ -185,7 +185,7 @@ fn technical_desis_refusal_rolls_back_the_metadosis_cycle_command() {
     with_storage(|storage| {
         let wwd = outbe_primitives::time::WorldwideDay::new(2026_0322);
         let day_limit = U256::from(777_u64);
-        let scheduled = create_waiting_day(&storage, wwd, day_type::GREEN, day_limit);
+        let scheduled = create_waiting_day(&storage, wwd, day_limit);
         install_test_enclaves();
         assert_eq!(
             outbe_desis::api::dispatch_auction_brief(
@@ -193,7 +193,7 @@ fn technical_desis_refusal_rolls_back_the_metadosis_cycle_command() {
                 outbe_desis::api::AuctionBrief {
                     worldwide_day: wwd,
                     desis_limit_minor: U256::from(1_u8),
-                    is_green: true
+                    has_limit: true
                 },
                 scheduled,
                 outbe_desis::api::BriefOverflowPolicy::CarryOver
@@ -278,7 +278,6 @@ fn test_terminal_day_leaves_active_set() {
             )
             .unwrap();
         metadosis.add_active_wwd(wwd).unwrap();
-        metadosis.set_wwd_day_type(wwd, WwdDayType::Red).unwrap();
         metadosis
             .fixture_set_wwd_status(wwd, WwdStatus::Waiting)
             .unwrap();

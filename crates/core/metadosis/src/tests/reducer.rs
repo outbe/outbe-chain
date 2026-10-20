@@ -1,5 +1,5 @@
 use super::*;
-use crate::aggregate::{WwdDayType, WwdMembership, WwdProjection, WwdStatus};
+use crate::aggregate::{WwdMembership, WwdProjection, WwdStatus};
 use crate::reducer::{
     plan_wwd_advance, reduce_outer_wwd, OuterWwdEvent, OuterWwdTransitionKind, ReadyDisposition,
     WwdAdvanceEdge, WwdTransitionPlan,
@@ -12,14 +12,9 @@ const OFFERING_END: u64 = 400;
 const PROCESS_AT: u64 = 500;
 
 fn projection(status: WwdStatus) -> WwdProjection {
-    projection_for_day_type(status, WwdDayType::Green)
-}
-
-fn projection_for_day_type(status: WwdStatus, day_type: WwdDayType) -> WwdProjection {
     WwdProjection {
         worldwide_day: outbe_primitives::time::WorldwideDay::new(2026_0730),
         status,
-        day_type,
         membership: if status.is_terminal() {
             WwdMembership::Closed
         } else {
@@ -31,8 +26,6 @@ fn projection_for_day_type(status: WwdStatus, day_type: WwdDayType) -> WwdProjec
         offering_end: OFFERING_END,
         scheduled_process_time: PROCESS_AT,
         metadosis_limit_minor: U256::from(10),
-        previous_vwap_minor: U256::ZERO,
-        current_vwap_minor: U256::ZERO,
     }
 }
 
@@ -318,45 +311,34 @@ fn outer_wwd_state_event_matrix_is_exhaustive() {
         OuterWwdEvent::EmergencyFail,
     ];
 
-    for day_type in [WwdDayType::Green, WwdDayType::Red] {
-        for status in statuses {
-            for event in events {
-                let actual =
-                    reduce_outer_wwd(Some(&projection_for_day_type(status, day_type)), event);
-                let expected = expected_transition_at_process_time(status, event);
-                match (actual, expected) {
-                    (Ok(actual), Some((target, membership, kind))) => {
-                        assert_eq!(
-                            actual.source(),
-                            Some(status),
-                            "day type {day_type:?}, state {status:?}, event {event:?}"
-                        );
-                        assert_eq!(
-                            actual.target(),
-                            target,
-                            "day type {day_type:?}, state {status:?}, event {event:?}"
-                        );
-                        assert_eq!(
-                            actual.membership_after(),
-                            membership,
-                            "day type {day_type:?}, state {status:?}, event {event:?}"
-                        );
-                        assert_eq!(
-                            actual.kind(),
-                            &kind,
-                            "day type {day_type:?}, state {status:?}, event {event:?}"
-                        );
-                    }
-                    (Err(_), None) => {}
-                    (Ok(actual), None) => panic!(
-                        "day type {day_type:?}, state {status:?}, event {event:?} \
-                         unexpectedly accepted as {actual:?}"
-                    ),
-                    (Err(error), Some(expected)) => panic!(
-                        "day type {day_type:?}, state {status:?}, event {event:?} \
-                         rejected with {error}; expected {expected:?}"
-                    ),
+    for status in statuses {
+        for event in events {
+            let actual = reduce_outer_wwd(Some(&projection(status)), event);
+            let expected = expected_transition_at_process_time(status, event);
+            match (actual, expected) {
+                (Ok(actual), Some((target, membership, kind))) => {
+                    assert_eq!(
+                        actual.source(),
+                        Some(status),
+                        "state {status:?}, event {event:?}"
+                    );
+                    assert_eq!(actual.target(), target, "state {status:?}, event {event:?}");
+                    assert_eq!(
+                        actual.membership_after(),
+                        membership,
+                        "state {status:?}, event {event:?}"
+                    );
+                    assert_eq!(actual.kind(), &kind, "state {status:?}, event {event:?}");
                 }
+                (Err(_), None) => {}
+                (Ok(actual), None) => panic!(
+                    "state {status:?}, event {event:?} \
+                     unexpectedly accepted as {actual:?}"
+                ),
+                (Err(error), Some(expected)) => panic!(
+                    "state {status:?}, event {event:?} \
+                     rejected with {error}; expected {expected:?}"
+                ),
             }
         }
     }

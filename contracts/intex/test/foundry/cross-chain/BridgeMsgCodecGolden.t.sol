@@ -108,7 +108,7 @@ contract BridgeMsgCodecGoldenTest is Test {
             )
         );
         assertEq(worldwideDay, 0x11223344, "worldwideDay");
-        assertEq(uint8(dayState), uint8(IIntexAuction.WorldwideDayState.Red), "dayState");
+        assertEq(uint8(dayState), uint8(IIntexAuction.WorldwideDayState.Cancelled), "dayState");
         assertEq(schedule.commitEnd, 0x55667788, "commitEnd");
         assertEq(schedule.revealEnd, 0x99AABBCC, "revealEnd");
         assertEq(schedule.issuanceEnd, 0xDDEEFF00, "issuanceEnd");

@@ -1,4 +1,4 @@
-use alloy_primitives::{B256, U256};
+use alloy_primitives::B256;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     error::Result,
@@ -7,7 +7,7 @@ use outbe_primitives::{
 use outbe_tribute::TributeContract;
 
 use crate::{
-    aggregate::{ValidatedWwdAggregate, WwdDayType, WwdMembership, WwdStatus},
+    aggregate::{ValidatedWwdAggregate, WwdMembership, WwdStatus},
     precompile::IMetadosis,
     reducer::{
         reduce_outer_wwd, OuterWwdEvent, OuterWwdTransition, OuterWwdTransitionKind, WwdAdvanceEdge,
@@ -63,13 +63,6 @@ pub(crate) struct NewWwdSchedule {
     pub(crate) lookback_delay_seconds: u64,
     pub(crate) offering_period_seconds: u64,
     pub(crate) waiting_period_seconds: u64,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct WwdRateResolution {
-    pub(crate) previous_vwap_minor: U256,
-    pub(crate) current_vwap_minor: U256,
-    pub(crate) day_type: WwdDayType,
 }
 
 /// Commits the reducer-authorized creation of one new WWD record, membership,
@@ -136,10 +129,7 @@ fn commit_new_wwd_inner(
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum OuterCommitMode {
     Create(NewWwdSchedule),
-    Existing {
-        block_number: u64,
-        rate_resolution: Option<WwdRateResolution>,
-    },
+    Existing { block_number: u64 },
 }
 
 /// The only production owner of outer WWD status, active/closed membership,
@@ -154,28 +144,7 @@ pub(crate) fn commit_outer_transition(
         metadosis,
         worldwide_day,
         transition,
-        OuterCommitMode::Existing {
-            block_number,
-            rate_resolution: None,
-        },
-    )
-}
-
-pub(crate) fn commit_outer_transition_with_rate(
-    metadosis: &mut MetadosisContract<'_>,
-    worldwide_day: WorldwideDay,
-    transition: &OuterWwdTransition,
-    block_number: u64,
-    rate_resolution: Option<WwdRateResolution>,
-) -> Result<()> {
-    commit_outer_transition_owned(
-        metadosis,
-        worldwide_day,
-        transition,
-        OuterCommitMode::Existing {
-            block_number,
-            rate_resolution,
-        },
+        OuterCommitMode::Existing { block_number },
     )
 }
 
@@ -278,16 +247,13 @@ fn commit_outer_transition_owned(
             schedule,
             transition,
         ),
-        OuterCommitMode::Existing {
-            block_number,
-            rate_resolution,
-        } => {
+        OuterCommitMode::Existing { block_number } => {
             let scope = CommitScope {
                 permit,
                 worldwide_day,
                 block_number,
             };
-            commit_existing_wwd(&scope, metadosis, transition, rate_resolution)
+            commit_existing_wwd(&scope, metadosis, transition)
         }
     })
 }
@@ -296,9 +262,7 @@ fn commit_existing_wwd(
     scope: &CommitScope<'_, '_>,
     metadosis: &mut MetadosisContract<'_>,
     transition: &OuterWwdTransition,
-    rate_resolution: Option<WwdRateResolution>,
 ) -> Result<()> {
-    commit_rate_resolution(scope, metadosis, transition, rate_resolution)?;
     let source = validate_persisted_source(metadosis, scope.worldwide_day, transition)?;
     match transition.kind() {
         OuterWwdTransitionKind::Noop => validate_noop(source, transition),
@@ -341,30 +305,6 @@ fn commit_existing_wwd(
             commit_execution_status(scope, metadosis, source, transition.target())
         }
     }
-}
-
-fn commit_rate_resolution(
-    scope: &CommitScope<'_, '_>,
-    metadosis: &mut MetadosisContract<'_>,
-    transition: &OuterWwdTransition,
-    rate_resolution: Option<WwdRateResolution>,
-) -> Result<()> {
-    let requires_resolution = matches!(
-        transition.kind(),
-        OuterWwdTransitionKind::Advance(edges)
-            | OuterWwdTransitionKind::MissedOffering { preceding_edges: edges }
-            if edges.contains(&WwdAdvanceEdge::ResolveForming)
-    );
-    if requires_resolution != rate_resolution.is_some() {
-        return Err(
-            crate::errors::MetadosisStorageCorruptionError::ResolveFormingCommitRequiresSingleTypedRateResolution
-                .into(),
-        );
-    }
-    if let Some(resolution) = rate_resolution {
-        metadosis.commit_set_wwd_rate_resolution(scope.permit, scope.worldwide_day, resolution)?;
-    }
-    Ok(())
 }
 
 fn validate_persisted_source(
@@ -544,27 +484,24 @@ mod tests {
 
     use super::*;
     use crate::{
-        aggregate::{ValidatedWwdAggregate, WwdDayType, WwdStatus},
-        schema::{day_type, status, MetadosisContract, WorldwideDay as WorldwideDayRecord},
+        aggregate::{ValidatedWwdAggregate, WwdStatus},
+        schema::{status, MetadosisContract, WorldwideDay as WorldwideDayRecord},
     };
 
     fn wwd() -> WorldwideDay {
         WorldwideDay::new(20260730)
     }
 
-    fn record(status: u8, day_type: u8) -> WorldwideDayRecord {
+    fn record(status: u8) -> WorldwideDayRecord {
         WorldwideDayRecord {
             wwd: wwd(),
             status,
-            day_type,
             forming_start: 1,
             forming_end: 2,
             lookback_end: 3,
             offering_end: 4,
             scheduled_process_time: 5,
             metadosis_limit_minor: U256::ZERO,
-            previous_vwap_minor: U256::ZERO,
-            current_vwap_minor: U256::ZERO,
         }
     }
 
@@ -580,32 +517,29 @@ mod tests {
     }
 
     #[test]
-    fn unknown_persisted_status_is_rejected_for_green_and_red_before_effects() {
-        for day_type in [day_type::GREEN, day_type::RED] {
-            let mut provider = HashMapStorageProvider::new(1);
-            seed_active(&mut provider, &record(5, day_type));
-            provider
-                .enter(|storage| {
-                    assert!(matches!(
-                        ValidatedWwdAggregate::load_and_validate(storage),
-                        Err(outbe_primitives::error::PrecompileError::Revert(_))
-                    ));
-                    Ok::<_, outbe_primitives::error::PrecompileError>(())
-                })
-                .unwrap();
-        }
+    fn unknown_persisted_status_is_rejected_before_effects() {
+        let mut provider = HashMapStorageProvider::new(1);
+        seed_active(&mut provider, &record(5));
+        provider
+            .enter(|storage| {
+                assert!(matches!(
+                    ValidatedWwdAggregate::load_and_validate(storage),
+                    Err(outbe_primitives::error::PrecompileError::Revert(_))
+                ));
+                Ok::<_, outbe_primitives::error::PrecompileError>(())
+            })
+            .unwrap();
     }
 
     #[test]
     fn typed_tags_reject_unrecognized_values() {
         assert!(WwdStatus::try_from(255).is_err());
-        assert!(WwdDayType::try_from(255).is_err());
     }
 
     #[test]
     fn aggregate_rejects_active_closed_overlap() {
         let mut provider = HashMapStorageProvider::new(1);
-        let terminal = record(status::COMPLETED, day_type::GREEN);
+        let terminal = record(status::COMPLETED);
         provider
             .enter(|storage| {
                 let contract = MetadosisContract::new(storage.clone());
@@ -633,14 +567,14 @@ mod tests {
             .unwrap();
 
         let mut membership = HashMapStorageProvider::new(1);
-        seed_active(&mut membership, &record(status::COMPLETED, day_type::GREEN));
+        seed_active(&mut membership, &record(status::COMPLETED));
         membership.enter(|storage| {
             let error = ValidatedWwdAggregate::load_and_validate(storage).unwrap_err();
             assert!(error.to_string().contains("status/membership mismatch"));
         });
 
         let mut boundaries = HashMapStorageProvider::new(1);
-        let mut invalid = record(status::FORMING, day_type::UNKNOWN);
+        let mut invalid = record(status::FORMING);
         invalid.forming_end = 0;
         seed_active(&mut boundaries, &invalid);
         boundaries.enter(|storage| {
@@ -654,7 +588,7 @@ mod tests {
         expected: &str,
     ) {
         let mut provider = HashMapStorageProvider::new(1);
-        seed_active(&mut provider, &record(255, day_type::UNKNOWN));
+        seed_active(&mut provider, &record(255));
         provider.enable_metadosis_mutation_frame(purpose);
         let effect_called = Cell::new(false);
 
@@ -695,7 +629,7 @@ mod tests {
                     B256::repeat_byte(0x52),
                     |storage| {
                         let contract = MetadosisContract::new(storage);
-                        let invalid = record(255, day_type::UNKNOWN);
+                        let invalid = record(255);
                         contract.worldwide_days.create(&invalid)?;
                         contract.active_wwd.insert(invalid.wwd)?;
                         Ok(())
@@ -726,7 +660,7 @@ mod tests {
     #[test]
     fn nested_mutation_rejects_before_nested_aggregate_or_effect() {
         let mut provider = HashMapStorageProvider::new(1);
-        seed_active(&mut provider, &record(255, day_type::UNKNOWN));
+        seed_active(&mut provider, &record(255));
         provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CertifiedFinality);
         let nested_effect_called = Cell::new(false);
 

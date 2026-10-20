@@ -18,20 +18,12 @@ impl Rpc {
         port: u16,
         day: u32,
     ) -> Option<MetadosisWorldwideDayStateV1> {
-        let r = eth::read_call(
+        eth::read_call(
             &self.url(port),
             addresses::WWD_ADDR,
             &IMetadosis::getWorldwideDayCall { wwd: day },
-        )?;
-        Some(MetadosisWorldwideDayStateV1 {
-            status: r.status,
-            day_type: r.dayType,
-            forming_start: r.formingStart,
-            forming_end: r.formingEnd,
-            lookback_end: r.lookbackEnd,
-            offering_end: r.offeringEnd,
-            scheduled_process_time: r.scheduledProcessTime,
-        })
+        )
+        .map(MetadosisWorldwideDayStateV1::from)
     }
 
     pub fn metadosis_terminal_receipt_on(
@@ -60,21 +52,13 @@ impl Rpc {
         day: u32,
         block_number: u64,
     ) -> Option<MetadosisWorldwideDayStateV1> {
-        let r = eth::read_call_at(
+        eth::read_call_at(
             &self.url(port),
             addresses::WWD_ADDR,
             &IMetadosis::getWorldwideDayCall { wwd: day },
             block_number,
-        )?;
-        Some(MetadosisWorldwideDayStateV1 {
-            status: r.status,
-            day_type: r.dayType,
-            forming_start: r.formingStart,
-            forming_end: r.formingEnd,
-            lookback_end: r.lookbackEnd,
-            offering_end: r.offeringEnd,
-            scheduled_process_time: r.scheduledProcessTime,
-        })
+        )
+        .map(MetadosisWorldwideDayStateV1::from)
     }
 
     pub fn metadosis_unknown_status_reverts_at(
@@ -212,12 +196,24 @@ impl Rpc {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct MetadosisWorldwideDayStateV1 {
     pub status: u8,
-    pub day_type: u8,
     pub forming_start: u64,
     pub forming_end: u64,
     pub lookback_end: u64,
     pub offering_end: u64,
     pub scheduled_process_time: u64,
+}
+
+impl From<IMetadosis::getWorldwideDayReturn> for MetadosisWorldwideDayStateV1 {
+    fn from(r: IMetadosis::getWorldwideDayReturn) -> Self {
+        Self {
+            status: r.status,
+            forming_start: r.formingStart,
+            forming_end: r.formingEnd,
+            lookback_end: r.lookbackEnd,
+            offering_end: r.offeringEnd,
+            scheduled_process_time: r.scheduledProcessTime,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]

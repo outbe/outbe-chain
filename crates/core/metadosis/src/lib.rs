@@ -45,7 +45,7 @@ mod terminal;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_support;
 
-pub use aggregate::{WwdDayType, WwdMembership, WwdProjection, WwdStatus};
+pub use aggregate::{WwdMembership, WwdProjection, WwdStatus};
 pub use state::{DayLimitFormation, DayLimitFormationReceipt};
 
 #[cfg(test)]

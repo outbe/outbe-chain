@@ -150,62 +150,55 @@ def seed_tribute_day_totals(storage: StorageBuilder, days: list[int]):
 def seed_metadosis(storage: StorageBuilder, config: dict):
     """
     Metadosis storage layout - MUST track `crates/core/metadosis/src/schema.rs`
-    (`#[storage_schema] MetadosisContract`). Attributes occupy slots in declared
-    order. A `Map<WorldwideDayKey, WorldwideDay>` consumes one base slot per record
-    field, a `Value` one slot, and a `Set` two (length + positions base):
+    (`#[storage_schema] MetadosisContract`). Attributes occupy slots in
+    `#[attribute(order)]` order, packed with no gaps. A retired order reserves
+    no slot. A `Map<WorldwideDayKey, WorldwideDay>` consumes one base slot per
+    record field, a `Value` one slot, and a `Set` two (length + positions base):
 
       slot 0:      bootstrap_end_time (Value<u64>)
-      slots 1-10:  worldwide_days (Map<u32, WorldwideDay>) - one mapping per field:
-                     1 status(u8)            2 day_type(u8)
-                     3 forming_start(u64)     4 forming_end(u64)
-                     5 lookback_end(u64)      6 offering_end(u64)
-                     7 scheduled_process_time(u64)
-                     8 metadosis_limit_minor(U256)
-                     9 previous_vwap_minor(U256)   10 current_vwap_minor(U256)
-      slot 11:     active_wwd_count (Value<u16>)
-      slots 12-13: active_wwd (Set<WorldwideDayKey>) - OZ enumerable set:
-                     12 = length + value array at keccak256(be32(12))+i
-                     13 = positions base, position(wwd) = index + 1 (0 = absent)
-      slot 14+:    closed_wwd (Deque<WorldwideDayKey>)
+      slots 1-7:   worldwide_days (Map<u32, WorldwideDay>) - one mapping per field:
+                     1 status(u8)             2 forming_start(u64)
+                     3 forming_end(u64)       4 lookback_end(u64)
+                     5 offering_end(u64)      6 scheduled_process_time(u64)
+                     7 metadosis_limit_minor(U256)
+      slots 8-9:   active_wwd (Set<WorldwideDayKey>) - OZ enumerable set:
+                     8 = length + value array at keccak256(be32(8))+i
+                     9 = positions base, position(wwd) = index + 1 (0 = absent)
+      slot 10+:    closed_wwd (Deque<WorldwideDayKey>)
 
     The active_wwd Set is what `get_active_wwd_by_status` (and therefore the tribute
     OFFERING lookup) reads. The seeder MUST populate it in the enumerable-set layout
-    above. Seeding only the day record (slots 1-10) leaves the day invisible to the
+    above. Seeding only the day record (slots 1-7) leaves the day invisible to the
     active scan, and every offer reverts "no worldwide day is OFFERING".
     """
     wwds = config.get("worldwide_days", [])
 
-    # active_wwd is a Set at base slot 12 (schema order 3, right after the
-    # active_wwd_count Value at slot 11). Its positions mapping lives at base + 1.
-    ACTIVE_WWD_BASE = 12
+    # active_wwd is a Set at base slot 8 (schema order 2, right after the seven
+    # worldwide_days field mappings). Its positions mapping lives at base + 1.
+    ACTIVE_WWD_BASE = 8
 
     for idx, entry in enumerate(wwds):
         wwd = entry["wwd"]
         wwd_key = u32_bytes(wwd)
 
         storage.set_mapping(1, wwd_key, entry.get("status", 0))
-        storage.set_mapping(2, wwd_key, entry.get("day_type", 0))
-        storage.set_mapping(3, wwd_key, entry.get("forming_start", 0))
-        storage.set_mapping(4, wwd_key, entry.get("forming_end", 0))
-        storage.set_mapping(5, wwd_key, entry.get("lookback_end", 0))
-        storage.set_mapping(6, wwd_key, entry.get("offering_end", 0))
-        storage.set_mapping(7, wwd_key, entry.get("scheduled_process_time", 0))
+        storage.set_mapping(2, wwd_key, entry.get("forming_start", 0))
+        storage.set_mapping(3, wwd_key, entry.get("forming_end", 0))
+        storage.set_mapping(4, wwd_key, entry.get("lookback_end", 0))
+        storage.set_mapping(5, wwd_key, entry.get("offering_end", 0))
+        storage.set_mapping(6, wwd_key, entry.get("scheduled_process_time", 0))
 
-        # slot 8 = metadosis_limit_minor (per-day mint cap), 9 = previous_vwap_minor,
-        # 10 = current_vwap_minor - schema field order.
+        # slot 7 = metadosis_limit_minor (per-day mint cap).
         day_limit = parse_int(entry.get("day_limit", "0"))
         if day_limit > 0:
-            storage.set_mapping(8, wwd_key, day_limit)
-        storage.set_mapping(9, wwd_key, parse_int(entry.get("previous_vwap_minor", "0")))
-        storage.set_mapping(10, wwd_key, parse_int(entry.get("current_vwap_minor", "0")))
+            storage.set_mapping(7, wwd_key, day_limit)
 
         # Insert into the active_wwd Set: value-array entry + 1-indexed position.
         storage.set_slot(data_slot(ACTIVE_WWD_BASE) + idx, wwd)
         storage.set_mapping(ACTIVE_WWD_BASE + 1, u32_bytes(wwd), idx + 1)
 
-    # Set length (slot 12) and the separate active_wwd_count Value (slot 11).
+    # Set length.
     storage.set_slot(ACTIVE_WWD_BASE, len(wwds))
-    storage.set_slot(11, len(wwds))
 
     # Bootstrap end time
     bootstrap_end = config.get("bootstrap_end_time", 0)

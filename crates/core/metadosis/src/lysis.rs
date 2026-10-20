@@ -15,7 +15,7 @@ use outbe_tee::{
 use outbe_tribute::TributeContract;
 
 use crate::{
-    aggregate::{WwdDayType, WwdProjection},
+    aggregate::WwdProjection,
     commit::commit_outer_transition,
     limits::{apply_auction_brief, apply_lysis_limit, LysisLimitInput},
     precompile::IMetadosis,
@@ -75,14 +75,6 @@ fn validate_day_records(
     Ok(tributes)
 }
 
-fn resolve_green_day(day_type: WwdDayType) -> Result<bool> {
-    match day_type {
-        WwdDayType::Green => Ok(true),
-        WwdDayType::Red => Ok(false),
-        WwdDayType::Unknown => Err(mismatch()),
-    }
-}
-
 fn finalize_lysis_settlement(
     metadosis: &mut MetadosisContract<'_>,
     ctx: &BlockRuntimeContext<'_>,
@@ -93,14 +85,12 @@ fn finalize_lysis_settlement(
     let storage = ctx.storage.clone();
     let day = current.worldwide_day;
     let carry_before = PromisLimitContract::new(storage.clone()).get_total_unallocated()?;
-    let green = resolve_green_day(current.day_type)?;
     let split = apply_lysis_limit(
         storage.clone(),
         LysisLimitInput {
             base_limit: current.metadosis_limit_minor,
             lysis_limit_minor: calculation.lysis_limit_minor,
             nominal_total: completion.total_nominal_minor,
-            green,
         },
     )?;
     if completion
@@ -115,7 +105,7 @@ fn finalize_lysis_settlement(
     if credit.credited != completion.unused {
         return Err(mismatch());
     }
-    apply_auction_brief(storage.clone(), day, &split, green, ctx.block.timestamp)?;
+    apply_auction_brief(storage.clone(), day, &split, ctx.block.timestamp)?;
     let carry_after = PromisLimitContract::new(storage).get_total_unallocated()?;
     let transition = reduce_outer_wwd(
         Some(current),

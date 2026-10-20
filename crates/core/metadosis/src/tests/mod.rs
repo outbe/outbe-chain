@@ -11,7 +11,7 @@ use crate::constants::*;
 use crate::fixture_kernel::FixtureKernelExt;
 use crate::precompile::{dispatch as metadosis_dispatch, IMetadosis};
 use crate::runtime::timestamp_to_date_key;
-use crate::schema::{day_type, status, MetadosisContract, WorldwideDay, WorldwideDayEntryExt};
+use crate::schema::{status, MetadosisContract, WorldwideDay, WorldwideDayEntryExt};
 
 const CHAIN_ID: u64 = 1;
 

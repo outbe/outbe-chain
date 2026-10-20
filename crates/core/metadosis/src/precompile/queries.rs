@@ -1,6 +1,6 @@
 use super::IMetadosis;
 use crate::{
-    aggregate::{WwdDayType, WwdStatus},
+    aggregate::WwdStatus,
     schema::{terminal_outcome, terminal_retirement, MetadosisContract, WorldwideDayEntryExt},
 };
 use alloy_primitives::U256;
@@ -16,20 +16,16 @@ pub(super) fn worldwide_day(
             "WorldwideDay",
         ));
     };
-    // This function validates the persisted bytes as closed tags before it
-    // returns them through the raw ABI representation.
+    // This function validates the persisted status byte as a closed tag before
+    // it returns it through the raw ABI representation.
     WwdStatus::try_from(day.status)?;
-    WwdDayType::try_from(day.day_type)?;
     Ok((
         day.status,
-        day.day_type,
         day.forming_start,
         day.forming_end,
         day.lookback_end,
         day.offering_end,
         day.scheduled_process_time,
-        day.previous_vwap_minor,
-        day.current_vwap_minor,
     )
         .into())
 }
