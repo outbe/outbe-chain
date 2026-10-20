@@ -807,6 +807,17 @@ fn old_digest_is_rejected_without_issuing_a_tribute() {
     });
 }
 
+fn seed_entry_price(storage: &StorageHandle<'_>, iso: u16, utc_day: u32, vwap: U256) {
+    let index = outbe_oracle::api::register_pair(
+        storage.clone(),
+        outbe_oracle::api::AddressPair::new_coen_to(iso),
+    )
+    .unwrap();
+    outbe_oracle::schema::OracleContract::new(storage.clone())
+        .record_utc_day_vwap(utc_day, index, vwap)
+        .unwrap();
+}
+
 #[test]
 fn v1_mechanics_fi_groups_fractions_and_create_nod_within_7_days_burns_tribute() {
     use alloy_sol_types::SolCall;
@@ -857,6 +868,12 @@ fn v1_mechanics_fi_groups_fractions_and_create_nod_within_7_days_burns_tribute()
         assert!(fractions.get(&4000).copied().unwrap_or(0) > 0);
         assert!(fractions.get(&100).copied().unwrap_or(0) > 0);
         assert!(allocated > U256::ZERO);
+        seed_entry_price(
+            &storage,
+            840,
+            outbe_nod::openings::entry_price_day(base_ts),
+            U256::from(1_234_567u64),
+        );
 
         // Stage 5: Stranger cannot createNod for owner1's Tribute
         assert!(tc.create_nod(stranger, t1.tribute_id).is_err());
@@ -883,6 +900,14 @@ fn v1_mechanics_fi_groups_fractions_and_create_nod_within_7_days_burns_tribute()
             .expect("Nod must be created");
         assert_eq!(nod_item.owner, owner1);
         assert_eq!(nod_item.league_id, 100);
+        assert_eq!(
+            nod_item.issued_at,
+            base_ts + 3 * outbe_primitives::time::SECONDS_PER_DAY
+        );
+        assert_eq!(
+            nod_item.encrypted.terms.entry_price_minor,
+            U256::from(1_234_567u64)
+        );
         assert!(tc.get_record(t1.tribute_id).unwrap().is_none());
         assert_eq!(tc.total_supply().unwrap(), 1);
         let totals_after_t1 = tc.get_day_totals(day).unwrap();
@@ -923,4 +948,66 @@ fn v1_mechanics_fi_groups_fractions_and_create_nod_within_7_days_burns_tribute()
     assert_eq!(burned_events.len(), 1);
     assert_eq!(burned_events[0].tributeId, t1.tribute_id.to_u256());
     assert_eq!(burned_events[0].owner, owner1);
+}
+
+#[test]
+fn create_nod_reverts_without_a_completion_day_price() {
+    use alloy_sol_types::SolCall;
+
+    let mut provider = HashMapStorageProvider::new(1);
+    let completed_at = 1_750_000_000u64;
+    provider.set_timestamp(U256::from(completed_at));
+    let tribute = sample_tribute();
+    let day = tribute.worldwide_day;
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let _enclave = crate::enclave_client::test_enclave::scope();
+        let mut tc = TributeContract::new(storage.clone());
+        tc.unseal_day(day).unwrap();
+        tc.issue_with_league(&tribute, Some(100)).unwrap();
+        tc.seal_day(day).unwrap();
+        tc.compute_and_record_metadosis_fractions(
+            day,
+            U256::from(500_000_000_000u64),
+            completed_at,
+        )
+        .unwrap();
+        storage
+            .set_block_timestamp(U256::from(
+                completed_at + outbe_primitives::time::SECONDS_PER_DAY,
+            ))
+            .unwrap();
+
+        let call = crate::precompile::ITribute::createNodCall {
+            tributeId: tribute.tribute_id.to_u256(),
+        }
+        .abi_encode();
+        let unpriced =
+            crate::precompile::dispatch(storage.clone(), &call, tribute.owner, U256::ZERO);
+        assert!(
+            matches!(&unpriced, Err(PrecompileError::Revert(msg)) if msg.contains("no finalized entry price")),
+            "{unpriced:?}"
+        );
+        assert!(tc.get_record(tribute.tribute_id).unwrap().is_some());
+        assert_eq!(tc.total_supply().unwrap(), 1);
+        assert!(outbe_nod::api::get_item(&storage, tribute.tribute_id)
+            .unwrap()
+            .is_none());
+
+        seed_entry_price(
+            &storage,
+            840,
+            outbe_nod::openings::entry_price_day(completed_at),
+            U256::from(1_234_567u64),
+        );
+        crate::precompile::dispatch(storage.clone(), &call, tribute.owner, U256::ZERO).unwrap();
+        assert!(tc.get_record(tribute.tribute_id).unwrap().is_none());
+    });
+
+    let burned = provider
+        .get_events(TRIBUTE_ADDRESS)
+        .iter()
+        .filter(|log| crate::precompile::ITribute::TributeBurned::decode_log_data(log).is_ok())
+        .count();
+    assert_eq!(burned, 1);
 }

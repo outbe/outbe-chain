@@ -1,4 +1,5 @@
 use super::*;
+use alloy_sol_types::SolEvent;
 use outbe_primitives::{
     addresses::{NOD_ADDRESS, TRIBUTE_ADDRESS},
     time::WorldwideDay,
@@ -244,6 +245,54 @@ fn native_fraction_completion_keeps_tributes_for_owner_create_nod() {
             0
         );
     });
+}
+
+#[test]
+fn native_completion_credits_the_unused_lysis_limit_once() {
+    let mut provider = fixture();
+    let before = StorageHandle::enter(&mut provider, |storage| {
+        outbe_promislimit::PromisLimitContract::new(storage)
+            .get_total_unallocated()
+            .unwrap()
+    });
+
+    run(&mut provider).unwrap();
+
+    let executed = provider
+        .get_ordered_events()
+        .iter()
+        .filter_map(|event| IMetadosis::MetadosisExecuted::decode_log(event).ok())
+        .map(|event| event.data)
+        .collect::<Vec<_>>();
+    assert_eq!(executed.len(), 1);
+    assert_eq!(executed[0].status, "COMPLETED");
+    let unused = executed[0].unusedLysisLimitMinor;
+    assert!(!unused.is_zero());
+    StorageHandle::enter(&mut provider, |storage| {
+        let emission = MetadosisContract::new(storage.clone())
+            .emission_days
+            .get(DAY)
+            .unwrap()
+            .unwrap()
+            .emission_limit_minor;
+        let desis = outbe_desis::schema::DesisContract::new(storage.clone())
+            .pending_desis_limit_minor
+            .read(&WWD)
+            .unwrap();
+        let after = outbe_promislimit::PromisLimitContract::new(storage)
+            .get_total_unallocated()
+            .unwrap();
+        assert_eq!(
+            after + desis,
+            before + (emission - executed[0].lysisLimitMinor) + unused
+        );
+    });
+
+    let storage_before = provider.storage.clone();
+    let logs = provider.get_ordered_events().to_vec();
+    run(&mut provider).unwrap();
+    assert_eq!(provider.storage, storage_before);
+    assert_eq!(provider.get_ordered_events(), logs);
 }
 
 #[test]
