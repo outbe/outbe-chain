@@ -7,6 +7,7 @@ use outbe_primitives::erc::{
     ERC721_METADATA_INTERFACE_ID,
 };
 use outbe_primitives::error::Result;
+use outbe_primitives::storage::StorageHandle;
 
 use crate::constants::{TOKEN_NAME, TOKEN_SYMBOL};
 use crate::errors::CredisError;
@@ -27,6 +28,11 @@ const SUPPORTED_INTERFACES: [[u8; 4]; 5] = [
 
 sol!("../../../contracts/precompiles/src/ICredis.sol");
 
+fn now_secs(storage: &StorageHandle<'_>) -> Result<u64> {
+    // Header timestamps fit u64; reject wider provider values rather than panic.
+    u64::try_from(storage.timestamp()?).map_err(|_| CredisError::TimestampOverflow.into())
+}
+
 pub fn dispatch(
     storage: outbe_primitives::storage::StorageHandle,
     data: &[u8],
@@ -42,13 +48,13 @@ pub fn dispatch(
             symbol(_) => metadata::<ICredis::symbolCall>(|| Ok(TOKEN_SYMBOL.to_string())),
             tokenURI(c) => view(c, |c| {
                 let record = contract.get_credis(c.credisId)?;
-                let now = contract.storage.timestamp()?.to::<u64>();
+                let now = now_secs(&contract.storage)?;
                 crate::metadata::token_uri(&record, now)
             }),
             totalSupply(c) => view(c, |_| Ok(U256::from(contract.total_credis()?))),
             getCredis(c) => view(c, |c| {
                 let record = contract.get_credis(c.credisId)?;
-                abi_credis(&record, contract.storage.timestamp()?.to::<u64>())
+                abi_credis(&record, now_secs(&contract.storage)?)
             }),
             ownerOf(c) => view(c, |c| {
                 let record = contract.get_credis(c.credisId)?;
@@ -73,7 +79,7 @@ pub fn dispatch(
             }),
             interestAccruedMinor(c) => view(c, |c| {
                 let record = contract.get_credis(c.credisId)?;
-                let timestamp = contract.storage.timestamp()?.to::<u64>();
+                let timestamp = now_secs(&contract.storage)?;
                 CredisContract::accrued_interest(&record, timestamp)
             }),
             interestPaidMinor(c) => view(c, |c| {
