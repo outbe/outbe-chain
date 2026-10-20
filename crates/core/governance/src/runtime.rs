@@ -1,7 +1,7 @@
 use alloy_primitives::{keccak256, Address, U256};
 use outbe_primitives::error::Result;
 
-use crate::state::author_index_key;
+use crate::state::{author_index_key, page_bounds, ProposalMeta};
 
 use crate::errors::GovernanceError;
 use crate::precompile::IGovernance;
@@ -29,9 +29,9 @@ fn validate_text(text: &str) -> Result<()> {
     Ok(())
 }
 
-/// Generates the submit / update-text / set-status methods for one proposal
-/// kind. OIP and GIP share this exact logic over separate typed maps and id
-/// counters. Only the storage target and the per-kind event types differ.
+/// Generates proposal writes and author listings for one proposal kind.
+/// OIP and GIP share this logic over separate typed maps and id counters.
+/// Only the storage target, metadata projection and per-kind events differ.
 macro_rules! impl_proposal_ops {
     (
         submit = $submit:ident,
@@ -39,6 +39,8 @@ macro_rules! impl_proposal_ops {
         update = $update:ident,
         set_status = $set_status:ident,
         apply_status = $apply_status:ident,
+        list_by_author = $list_by_author:ident,
+        meta = $meta:ident,
         record = $record:ident,
         map = $map:ident,
         counter = $counter:ident,
@@ -85,6 +87,24 @@ macro_rules! impl_proposal_ops {
                 textHash: text_hash,
             })?;
             Ok(id)
+        }
+
+        /// Lists an author-index page, omitting entries whose records are missing.
+        pub fn $list_by_author(
+            &self,
+            author: Address,
+            offset: U256,
+            limit: U256,
+        ) -> Result<Vec<ProposalMeta>> {
+            let (start, end) = page_bounds(self.$author_count.read(&author)?, offset, limit);
+            let mut out = Vec::with_capacity((end - start) as usize);
+            for i in start..end {
+                let id = self.$author_ids.read(&author_index_key(author, i))?;
+                if self.$map.entry(id).exists()? {
+                    out.push(self.$meta(id)?);
+                }
+            }
+            Ok(out)
         }
 
         /// Creates a proposal already in `Approved`.
@@ -224,6 +244,8 @@ impl GovernanceContract<'_> {
         update = update_oip_text,
         set_status = set_oip_status,
         apply_status = apply_oip_status,
+        list_by_author = oips_by_author,
+        meta = oip_meta,
         record = Oip,
         map = oips,
         counter = next_oip_id,
@@ -241,6 +263,8 @@ impl GovernanceContract<'_> {
         update = update_gip_text,
         set_status = set_gip_status,
         apply_status = apply_gip_status,
+        list_by_author = gips_by_author,
+        meta = gip_meta,
         record = Gip,
         map = gips,
         counter = next_gip_id,

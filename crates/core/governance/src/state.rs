@@ -20,7 +20,7 @@ pub struct ProposalMeta {
 }
 
 /// Storage key for the per-author id list: `keccak256(author || index_be)`.
-/// Shared by the writer (runtime submit) and the reader (below).
+/// Shared by proposal submission and author-index listings.
 pub(crate) fn author_index_key(author: Address, index: u32) -> B256 {
     address_u32_key(author, index)
 }
@@ -31,7 +31,7 @@ pub const MAX_PAGE: u32 = 1000;
 
 /// Clamp an `(offset, limit)` request against a bucket of `total` items,
 /// returning the half-open `[start, end)` index range to read.
-fn page_bounds(total: u32, offset: U256, limit: U256) -> (u32, u32) {
+pub(crate) fn page_bounds(total: u32, offset: U256, limit: U256) -> (u32, u32) {
     let start = offset.min(U256::from(total)).to::<u32>();
     let take = limit.min(U256::from(MAX_PAGE)).to::<u32>();
     let end = start.saturating_add(take).min(total);
@@ -102,7 +102,7 @@ impl GovernanceContract<'_> {
     // --- proposal metadata projections (read only the fixed-width fields via the
     //     per-field accessors, never the text data-run) ---
 
-    fn oip_meta(&self, id: U256) -> Result<ProposalMeta> {
+    pub(crate) fn oip_meta(&self, id: U256) -> Result<ProposalMeta> {
         let e = self.oips.entry(id);
         Ok(ProposalMeta {
             id,
@@ -114,7 +114,7 @@ impl GovernanceContract<'_> {
         })
     }
 
-    fn gip_meta(&self, id: U256) -> Result<ProposalMeta> {
+    pub(crate) fn gip_meta(&self, id: U256) -> Result<ProposalMeta> {
         let e = self.gips.entry(id);
         Ok(ProposalMeta {
             id,
@@ -135,40 +135,6 @@ impl GovernanceContract<'_> {
 
     pub fn gip_count_by_author(&self, author: Address) -> Result<u32> {
         self.gip_author_count.read(&author)
-    }
-
-    pub fn oips_by_author(
-        &self,
-        author: Address,
-        offset: U256,
-        limit: U256,
-    ) -> Result<Vec<ProposalMeta>> {
-        let (start, end) = page_bounds(self.oip_author_count.read(&author)?, offset, limit);
-        let mut out = Vec::with_capacity((end - start) as usize);
-        for i in start..end {
-            let id = self.oip_author_ids.read(&author_index_key(author, i))?;
-            if self.oips.entry(id).exists()? {
-                out.push(self.oip_meta(id)?);
-            }
-        }
-        Ok(out)
-    }
-
-    pub fn gips_by_author(
-        &self,
-        author: Address,
-        offset: U256,
-        limit: U256,
-    ) -> Result<Vec<ProposalMeta>> {
-        let (start, end) = page_bounds(self.gip_author_count.read(&author)?, offset, limit);
-        let mut out = Vec::with_capacity((end - start) as usize);
-        for i in start..end {
-            let id = self.gip_author_ids.read(&author_index_key(author, i))?;
-            if self.gips.entry(id).exists()? {
-                out.push(self.gip_meta(id)?);
-            }
-        }
-        Ok(out)
     }
 
     /// Number of OIPs currently in `status` (0..=4).
