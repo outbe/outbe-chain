@@ -277,6 +277,7 @@ impl SlashIndicator<'_> {
     ) -> Result<()> {
         let vs = ValidatorSet::new(self.storage.clone());
         let validator_addr = registered_validator(&vs, pair.first.pubkey_hash())?;
+        self.storage.now_secs()?;
         self.evidence_processed.write(&evidence_hash, true)?;
         self.apply_evidence_felony(validator_addr, caller)
     }

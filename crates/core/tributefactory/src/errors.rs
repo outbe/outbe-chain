@@ -152,9 +152,6 @@ pub enum TributeFactoryError {
     #[error("encrypted offer returned a legacy body")]
     EncryptedOfferReturnedLegacyBody,
 
-    #[error("TributeFactory block timestamp exceeds u64")]
-    TimestampExceedsU64,
-
     #[error("ZK verifier unavailable: zk verification backend failed: {0}")]
     ZkVerifierUnavailable(String),
 
@@ -208,7 +205,6 @@ impl From<TributeFactoryError> for PrecompileError {
                 PrecompileError::EnclaveUnavailable(enclave.to_string())
             }
             TributeFactoryError::ZkVerifierUnavailable(_)
-            | TributeFactoryError::TimestampExceedsU64
             | TributeFactoryError::RejectedEncryptedOfferCarriesTribute
             | TributeFactoryError::CreatedEncryptedOfferMissingTribute
             | TributeFactoryError::EmptyTributeOfferResult

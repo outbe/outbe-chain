@@ -76,8 +76,6 @@ pub enum VaultRouterError {
     InvalidAssetCurrency,
     #[error("pledge price unavailable")]
     PledgePriceUnavailable,
-    #[error("timestamp exceeds u64")]
-    TimestampExceedsU64,
     #[error("previous day VWAP unavailable")]
     PreviousDayVwapUnavailable,
     #[error("reference pair unavailable")]

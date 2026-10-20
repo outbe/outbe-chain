@@ -167,6 +167,144 @@ fn test_slash_proposer_felony() {
 }
 
 #[test]
+fn direct_miss_felony_timestamp_overflow_is_side_effect_free_and_retryable() {
+    for proposer in [true, false] {
+        for timestamp in [U256::from(u64::MAX) + U256::from(1), U256::MAX] {
+            let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+            provider.set_block_number(1);
+            StorageHandle::enter(&mut provider, |storage| {
+                register_and_activate(storage.clone(), VAL_A, 1);
+                let si = SlashIndicator::new(storage);
+                si.config_proposer_felony_threshold.write(2).unwrap();
+                si.config_voter_felony_threshold.write(2).unwrap();
+                si.proposer_miss_count.write(&VAL_A, 1).unwrap();
+                si.voter_miss_count.write(&VAL_A, 1).unwrap();
+            });
+            let before_storage = provider.storage.clone();
+            let before_events = provider.get_ordered_events().to_vec();
+            provider.set_timestamp(timestamp);
+            StorageHandle::enter(&mut provider, |storage| {
+                let mut si = SlashIndicator::new(storage.clone());
+                let result = if proposer {
+                    si.slash_proposer(VAL_A)
+                } else {
+                    si.slash_voter(VAL_A)
+                };
+                assert!(matches!(
+                    result,
+                    Err(PrecompileError::Revert(message)) if message == "timestamp exceeds u64"
+                ));
+                assert_eq!(si.get_proposer_miss_count(VAL_A).unwrap(), 1);
+                assert_eq!(si.get_voter_miss_count(VAL_A).unwrap(), 1);
+                assert_eq!(si.get_felony_count(VAL_A).unwrap(), 0);
+                assert!(test_lifecycle_of(storage.clone(), VAL_A)
+                    .unwrap()
+                    .is_active_status());
+                let staking = Staking::new(storage.clone());
+                assert_eq!(staking.get_stake(VAL_A).unwrap(), U256::from(1_000_000));
+                assert_eq!(staking.get_total_staked().unwrap(), U256::from(1_000_000));
+                assert_eq!(
+                    storage.balance(STAKING_ADDRESS).unwrap(),
+                    U256::from(1_000_000)
+                );
+            });
+            assert_eq!(provider.storage, before_storage);
+            assert_eq!(provider.get_ordered_events(), before_events);
+
+            provider.set_timestamp(U256::from(100));
+            StorageHandle::enter(&mut provider, |storage| {
+                let mut si = SlashIndicator::new(storage.clone());
+                if proposer {
+                    si.slash_proposer(VAL_A).unwrap();
+                } else {
+                    si.slash_voter(VAL_A).unwrap();
+                }
+                assert_eq!(
+                    si.get_proposer_miss_count(VAL_A).unwrap(),
+                    if proposer { 2 } else { 1 }
+                );
+                assert_eq!(
+                    si.get_voter_miss_count(VAL_A).unwrap(),
+                    if proposer { 1 } else { 2 }
+                );
+                assert_eq!(si.get_felony_count(VAL_A).unwrap(), 1);
+                assert!(matches!(
+                    test_lifecycle_of(storage.clone(), VAL_A).unwrap(),
+                    ValidatorLifecycle::JailRetained(_)
+                ));
+                let staking = Staking::new(storage.clone());
+                assert_eq!(staking.get_stake(VAL_A).unwrap(), U256::from(920_000));
+                assert_eq!(staking.get_total_staked().unwrap(), U256::from(920_000));
+                assert_eq!(
+                    storage.balance(STAKING_ADDRESS).unwrap(),
+                    U256::from(920_000)
+                );
+            });
+            let felony_event = if proposer {
+                ISlashIndicator::ProposerFelony {
+                    validator: VAL_A,
+                    missCount: 2,
+                    felonyCount: 1,
+                }
+                .encode_log_data()
+            } else {
+                ISlashIndicator::VoterFelony {
+                    validator: VAL_A,
+                    missCount: 2,
+                    felonyCount: 1,
+                }
+                .encode_log_data()
+            };
+            assert_eq!(
+                provider.get_events(SLASH_INDICATOR_ADDRESS).last(),
+                Some(&felony_event)
+            );
+        }
+    }
+}
+
+#[test]
+fn direct_byzantine_timestamp_overflow_does_not_jail_before_slashing() {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_block_number(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        register_and_activate(storage, VAL_A, 1);
+    });
+    let before_storage = provider.storage.clone();
+    let before_events = provider.get_ordered_events().to_vec();
+    provider.set_timestamp(U256::MAX);
+    StorageHandle::enter(&mut provider, |storage| {
+        assert!(matches!(
+            SlashIndicator::new(storage.clone()).slash_byzantine(VAL_A),
+            Err(PrecompileError::Revert(message)) if message == "timestamp exceeds u64"
+        ));
+        assert!(test_lifecycle_of(storage.clone(), VAL_A)
+            .unwrap()
+            .is_active_status());
+        assert_eq!(
+            storage.balance(STAKING_ADDRESS).unwrap(),
+            U256::from(1_000_000)
+        );
+    });
+    assert_eq!(provider.storage, before_storage);
+    assert_eq!(provider.get_ordered_events(), before_events);
+    provider.set_timestamp(U256::from(100));
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut si = SlashIndicator::new(storage.clone());
+        si.slash_byzantine(VAL_A).unwrap();
+        assert_eq!(si.get_felony_count(VAL_A).unwrap(), 1);
+        assert!(matches!(
+            test_lifecycle_of(storage.clone(), VAL_A).unwrap(),
+            ValidatorLifecycle::JailRetained(_)
+        ));
+        assert_eq!(
+            Staking::new(storage).get_stake(VAL_A).unwrap(),
+            U256::from(920_000)
+        );
+    });
+}
+
+#[test]
 fn test_felony_stays_jailed_when_slash_drops_below_min_stake() {
     // The single biggest ordering invariant: JAIL BEFORE SLASH. slash_stake demotes
     // ACTIVE->EXITING / PENDING->REGISTERED when stake drops below min_stake. A JAILED
@@ -315,6 +453,59 @@ fn test_felony_count_cumulative() {
 // ---------------------------------------------------------------------------
 /// Verifies that evidence submitter receives a reward when submitting
 /// double-proposal evidence. Reward = slashed_amount * evidence_reward_percent / 100.
+#[test]
+fn direct_equivocation_timestamp_overflow_preserves_replay_flag_and_retry() {
+    let (sk, pk) = test_signing::keypair(99).unwrap();
+    let first = sign_notarize_evidence(&sk, &pk, &test_signing::proposal(1, 5, 0, [0xAA; 32]));
+    let second = sign_notarize_evidence(&sk, &pk, &test_signing::proposal(1, 5, 0, [0xBB; 32]));
+    for timestamp in [U256::from(u64::MAX) + U256::from(1), U256::MAX] {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        provider.set_block_number(1);
+        StorageHandle::enter(&mut provider, |storage| {
+            register_and_activate_with_pubkey_and_stake(
+                storage.clone(),
+                VAL_A,
+                &pk.to_bytes(),
+                U256::from(1_000_000),
+            );
+            write_test_committee(&storage);
+        });
+        let before_storage = provider.storage.clone();
+        let before_events = provider.get_ordered_events().to_vec();
+        provider.set_timestamp(timestamp);
+        StorageHandle::enter(&mut provider, |storage| {
+            assert!(matches!(
+                SlashIndicator::new(storage.clone())
+                    .submit_double_proposal_evidence(SUBMITTER, &first, &second),
+                Err(PrecompileError::Revert(message)) if message == "timestamp exceeds u64"
+            ));
+            assert_eq!(
+                storage.balance(STAKING_ADDRESS).unwrap(),
+                U256::from(1_000_000)
+            );
+            assert_eq!(storage.balance(SUBMITTER).unwrap(), U256::ZERO);
+        });
+        assert_eq!(provider.storage, before_storage);
+        assert_eq!(provider.get_ordered_events(), before_events);
+        provider.set_timestamp(U256::from(100));
+        StorageHandle::enter(&mut provider, |storage| {
+            let mut si = SlashIndicator::new(storage.clone());
+            si.submit_double_proposal_evidence(SUBMITTER, &first, &second)
+                .unwrap();
+            assert_eq!(si.get_felony_count(VAL_A).unwrap(), 1);
+            assert!(matches!(
+                test_lifecycle_of(storage.clone(), VAL_A).unwrap(),
+                ValidatorLifecycle::JailRetained(_)
+            ));
+            assert_eq!(
+                Staking::new(storage.clone()).get_stake(VAL_A).unwrap(),
+                U256::from(920_000)
+            );
+            assert_eq!(storage.balance(SUBMITTER).unwrap(), U256::from(8_000));
+        });
+    }
+}
+
 #[test]
 fn test_evidence_reward() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);

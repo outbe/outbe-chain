@@ -24,8 +24,7 @@ fn live_reservation(
     reservation_id: U256,
 ) -> Result<(LiquidityReservation, u64)> {
     let r = outbe_vaultrouter::api::reservation_of(storage, reservation_id)?;
-    let now =
-        u64::try_from(storage.timestamp()?).map_err(|_| CredisFactoryError::TimestampOverflow)?;
+    let now = storage.now_secs()?;
     let error = if r.asset.is_zero() {
         CredisFactoryError::ReservationNotFound
     } else if r.cca != caller {
@@ -122,8 +121,7 @@ pub fn issue_credis(
 /// Zero once it is Settled or Forfeited.
 pub fn quote_settlement(storage: &StorageHandle<'_>, credis_id: U256) -> Result<U256> {
     let record = CredisContract::new(storage.clone()).get_credis(credis_id)?;
-    let now =
-        u64::try_from(storage.timestamp()?).map_err(|_| CredisFactoryError::TimestampOverflow)?;
+    let now = storage.now_secs()?;
     match effective_state(&record, now)? {
         CredisState::Settled | CredisState::Forfeited => Ok(U256::ZERO),
         CredisState::Issued | CredisState::Called => record
@@ -147,8 +145,7 @@ pub fn settle_credis(
         }
         let mut credis = CredisContract::new(storage.clone());
         let before = credis.get_credis(credis_id)?;
-        let now = u64::try_from(storage.timestamp()?)
-            .map_err(|_| CredisFactoryError::TimestampOverflow)?;
+        let now = storage.now_secs()?;
         let repayment = rules::settle(&mut credis, credis_id, amount, now)?;
         let after = credis.get_credis(credis_id)?;
         let released = before
