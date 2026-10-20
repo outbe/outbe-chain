@@ -54,7 +54,7 @@ const CALL_TIMEOUT_SECS: u64 = 300;
 /// Once the group is closed the sweep reaches the gem in the next block or two.
 const FORFEIT_TIMEOUT: Duration = Duration::from_secs(120);
 /// The expiry queue groups deadlines by the hour they fall in.
-const EXPIRY_GROUP_SECS: u64 = 3_600;
+const EXPIRY_BUCKET_SECS: u64 = 3_600;
 /// Slack past the deadline so the notice is spent before the group is closed.
 const EXPIRY_MARGIN_SECS: u64 = 30;
 /// Once the position's hour is closed the sweep reaches it in the next block or two.
@@ -426,7 +426,7 @@ impl Lifecycle for GemLifecycle {
     }
 
     /// Wait out the notice on the chain's clock, then re-queue the gem behind a closed
-    /// expiry group, which saves only the rest of the group's hour.
+    /// expiry bucket, which saves only the rest of the bucket's hour.
     fn lapse_notice(&self, world: &mut World) {
         let url = world_url(world);
         let id = gem(world, FORFEITED);
@@ -438,7 +438,7 @@ impl Lifecycle for GemLifecycle {
         );
         let notice = u64::from(called.callNoticePeriod);
         assert!(
-            notice <= EXPIRY_GROUP_SECS,
+            notice <= EXPIRY_BUCKET_SECS,
             "call notice is {notice}s: the DEV parameter profile is not active, so this \
              scenario would wait out the production window"
         );
@@ -468,12 +468,12 @@ impl Lifecycle for GemLifecycle {
             DEPLOYER_KEY,
             &IGemFactoryTestArming::closeCallNoticeForTestCall {
                 gemId: id,
-                deadline: head_time(world).saturating_sub(EXPIRY_GROUP_SECS),
+                deadline: head_time(world).saturating_sub(EXPIRY_BUCKET_SECS),
             },
             None,
         )
-        .expect("close the expiry group the gem sits in");
-        assert_mined_success(&closed, "close the expiry group the gem sits in");
+        .expect("close the expiry bucket the gem sits in");
+        assert_mined_success(&closed, "close the expiry bucket the gem sits in");
     }
 
     fn assert_forfeited(&self, world: &World) {
@@ -574,32 +574,37 @@ fn position_returns_capacity(world: &mut World) {
     let position_id = world.state.gem_position.expect("a position was parked");
 
     // An expired position's hour returns its capacity, and the cleanup deletes it. The
-    // sweep opens an hour only once it has closed, so move it into a closed one.
-    let closed = eth::send_call_outcome(
-        &url,
-        addresses::GEM_FACTORY_ADDR,
-        DEPLOYER_KEY,
-        &IGemFactoryTestArming::closePositionHourForTestCall {
-            positionId: position_id,
-            deadline: head_time(world).saturating_sub(EXPIRY_GROUP_SECS),
-        },
-        None,
-    )
-    .expect("close the expiry hour the position sits in");
-    assert_mined_success(&closed, "close the expiry hour the position sits in");
+    // sweep opens an hour only once it has closed, so move it into a closed one, unless
+    // its own hour has closed and the cleanup deleted it already.
+    let read_position = || {
+        eth::read_call(
+            &url,
+            addresses::GEM_FACTORY_ADDR,
+            &eth::IGemFactory::getPositionCall {
+                positionId: position_id,
+            },
+        )
+    };
+    if read_position().is_some() {
+        let closed = eth::send_call_outcome(
+            &url,
+            addresses::GEM_FACTORY_ADDR,
+            DEPLOYER_KEY,
+            &IGemFactoryTestArming::closePositionHourForTestCall {
+                positionId: position_id,
+                deadline: head_time(world).saturating_sub(EXPIRY_BUCKET_SECS),
+            },
+            None,
+        )
+        .expect("close the expiry hour the position sits in");
+        if read_position().is_some() {
+            assert_mined_success(&closed, "close the expiry hour the position sits in");
+        }
+    }
     poll_until(
         Duration::from_secs(POSITION_SWEEP_TIMEOUT_SECS),
         || format!("position {position_id} is past its deadline; the cleanup has not deleted it"),
-        || {
-            eth::read_call(
-                &url,
-                addresses::GEM_FACTORY_ADDR,
-                &eth::IGemFactory::getPositionCall {
-                    positionId: position_id,
-                },
-            )
-            .is_none()
-        },
+        || read_position().is_none(),
     );
 
     assert_expiry_returns(world, finalized_checkpoint(world).height, true);

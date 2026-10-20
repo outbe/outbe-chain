@@ -56,8 +56,8 @@ const FORFEIT_TIMEOUT: Duration = Duration::from_secs(300);
 const MAX_DEV_NOTICE_SECS: u32 = 3_600;
 /// Slack past the deadline so the sweep has a block to run in.
 const NOTICE_MARGIN_SECS: u64 = 5;
-/// Width of a forfeit-queue group. The sweep opens one only once its hour has closed.
-const EXPIRY_GROUP_SECS: u64 = 3_600;
+/// Width of a forfeit-queue bucket. The sweep opens one only once its hour has closed.
+const EXPIRY_BUCKET_SECS: u64 = 3_600;
 
 pub(crate) struct NodLifecycle;
 
@@ -242,11 +242,11 @@ impl Lifecycle for NodLifecycle {
             DEPLOYER_KEY,
             &INodFactoryTestArming::closeCallNoticeForTestCall {
                 groupKey: called.groupKey,
-                deadline: head_time(world).saturating_sub(EXPIRY_GROUP_SECS),
+                deadline: head_time(world).saturating_sub(EXPIRY_BUCKET_SECS),
             },
             None,
         )
-        .expect("close the expiry group the Nod group sits in");
+        .expect("close the expiry bucket the Nod group sits in");
     }
 
     fn assert_forfeited(&self, world: &World) {

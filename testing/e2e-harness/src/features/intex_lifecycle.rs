@@ -595,17 +595,15 @@ impl Lifecycle for IntexLifecycle {
                 .expect("a nonce clearing two leading zero bytes");
             test_issuance::mine_promis(&url, DEPLOYER_KEY, series, UNITS, nonce, mac.0, op_nonce)
                 .expect("mine Promis from the settled units");
-            // The engine counts what it burned, so the series' classes stay disjoint.
-            let counts = eth::read_call(
-                &url,
-                addresses::INTEX_ADDR,
-                &eth::IIntex::seriesUnitCountsCall { seriesId: series },
-            )
-            .expect("series unit counts");
+            // Every unit is realized and exercised, so the series is spent and deleted.
             assert_eq!(
-                (counts.exercisedUnits, counts.settledUnits),
-                (UNITS, 0),
-                "series {series} did not count its settled units as exercised"
+                eth::read_call(
+                    &url,
+                    addresses::INTEX_ADDR,
+                    &eth::IIntex::seriesExistsCall { seriesId: series },
+                ),
+                Some(false),
+                "series {series} was not deleted once its last settled unit mined"
             );
             assert_eq!(
                 venue_probes::series_balances(&url, nft, series, owner),

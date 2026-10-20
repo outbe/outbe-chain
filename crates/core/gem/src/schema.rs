@@ -244,7 +244,7 @@ pub struct GemContract {
     pub expiry_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 22)]
     pub expiry_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
-    /// Slots ever used in a group. Retired ones are zeroed in place, not compacted.
+    /// Slots ever used in a bucket. Retired ones are zeroed in place, not compacted.
     #[attribute(order = 23)]
     pub expiry_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 24)]

@@ -149,7 +149,7 @@ fn pay_part(world: &mut World) {
         },
     );
     let after = snapshot(world);
-    let paid = after.record.as_ref().expect("partly paid Credis");
+    let paid = after.record.clone().expect("partly paid Credis");
     assert_eq!(paid.state, CALLED);
     assert_eq!(paid.outstandingPrincipalMinor, PRINCIPAL - PART);
     assert_eq!(
@@ -170,6 +170,8 @@ fn pay_part(world: &mut World) {
     let f = world.state.credis.as_mut().expect("fixture");
     f.interest_paid += interest;
     f.partly_paid_at = Some(receipt_height(&receipt));
+    // What the forfeit writes off, if the Credis is deleted before it can be read lapsed.
+    f.lapsed = Some(paid);
 }
 
 #[when("the settlement deadline passes unpaid")]
@@ -185,23 +187,35 @@ fn deadline_passes(world: &mut World) {
         .rpc
         .head(world.validators.primary_port())
         .expect("primary head");
-    let lapsed = eth::read_call_at(
+    // Unreadable only when the deadline fell in the last block of its hour.
+    if let Some(lapsed) = eth::read_call_at(
         &url(world),
         CREDIS_ADDRESS,
         &ICredis::getCredisCall {
             credisId: fixture(world).credis_id,
         },
         height,
+    ) {
+        world.state.credis.as_mut().expect("fixture").lapsed = Some(lapsed);
+    }
+}
+
+/// The Gratis and the principal a forfeit writes off, from a Called or a lapsed read.
+fn written_off(credis: &ICredis::Credis) -> (U256, U256) {
+    (
+        credis.outcome.gratisBurnedMinor + credis.outstandingGratisMinor,
+        credis.outcome.principalWrittenOffMinor + credis.outstandingPrincipalMinor,
     )
-    .expect("the lapsed Credis before the cleanup");
-    world.state.credis.as_mut().expect("fixture").lapsed = Some(lapsed);
 }
 
 #[then("the Credis reads Forfeited with its remainders written off")]
 fn reads_forfeited(world: &mut World) {
     let f = fixture(world);
     let lapsed = f.lapsed.clone().expect("lapsed Credis");
-    assert_eq!(lapsed.state, FORFEITED);
+    if lapsed.state != FORFEITED {
+        assert_eq!(settlement_revert(world, f).0, "Credis not found");
+        return;
+    }
     assert_eq!(
         (
             lapsed.outstandingPrincipalMinor,
@@ -256,7 +270,7 @@ fn burned(world: &mut World) {
     let f = fixture(world);
     let from = f.partly_paid_at.expect("partial payment height");
     let lapsed = f.lapsed.clone().expect("lapsed Credis");
-    let burned = lapsed.outcome.gratisBurnedMinor;
+    let (burned, principal_written_off) = written_off(&lapsed);
     poll_until(
         FORFEIT_TIMEOUT,
         || "the cleanup never burned the lapsed Credis's pledge".into(),
@@ -275,7 +289,7 @@ fn burned(world: &mut World) {
             credisId: f.credis_id,
             cca: f.cca,
             gratisBurnedMinor: burned,
-            principalWrittenOffMinor: lapsed.outcome.principalWrittenOffMinor,
+            principalWrittenOffMinor: principal_written_off,
         },
     );
     assert_single_event(
