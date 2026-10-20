@@ -24,6 +24,7 @@ pub(super) fn create_waiting_day(
         .unwrap();
     metadosis.set_metadosis_limit(wwd, day_limit).unwrap();
     metadosis
+        .tribute()
         .worldwide_days
         .entry(wwd)
         .scheduled_process_time()
@@ -82,6 +83,7 @@ pub(super) fn seed_missed_offering_day(
             .checked_add_carry_over(later_carry_over)
             .unwrap();
         MetadosisContract::new(storage)
+            .tribute()
             .worldwide_days
             .entry(wwd)
             .offering_end()

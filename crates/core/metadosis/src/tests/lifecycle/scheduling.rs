@@ -69,6 +69,7 @@ fn test_offering_entry_captures_vwap_unblocks_and_exit_reblocks() {
         );
         assert_eq!(
             metadosis
+                .tribute()
                 .worldwide_days
                 .entry(wwd)
                 .previous_vwap_minor()
@@ -78,6 +79,7 @@ fn test_offering_entry_captures_vwap_unblocks_and_exit_reblocks() {
         );
         assert_eq!(
             metadosis
+                .tribute()
                 .worldwide_days
                 .entry(wwd)
                 .current_vwap_minor()
@@ -93,6 +95,7 @@ fn test_offering_entry_captures_vwap_unblocks_and_exit_reblocks() {
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::OFFERING);
         assert_eq!(
             metadosis
+                .tribute()
                 .worldwide_days
                 .entry(wwd)
                 .previous_vwap_minor()
@@ -102,6 +105,7 @@ fn test_offering_entry_captures_vwap_unblocks_and_exit_reblocks() {
         );
         assert_eq!(
             metadosis
+                .tribute()
                 .worldwide_days
                 .entry(wwd)
                 .current_vwap_minor()
@@ -168,6 +172,7 @@ fn test_missing_previous_vwap_results_in_red_day() {
         );
         assert_eq!(
             metadosis
+                .tribute()
                 .worldwide_days
                 .entry(wwd)
                 .previous_vwap_minor()
@@ -177,6 +182,7 @@ fn test_missing_previous_vwap_results_in_red_day() {
         );
         assert_eq!(
             metadosis
+                .tribute()
                 .worldwide_days
                 .entry(wwd)
                 .current_vwap_minor()

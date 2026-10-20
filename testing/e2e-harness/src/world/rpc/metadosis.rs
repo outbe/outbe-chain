@@ -2,13 +2,13 @@ use crate::world::rpc::*;
 use alloy_sol_types::SolEvent;
 
 impl Rpc {
-    /// Metadosis worldwide-day status byte (field 1 of `getWorldwideDay`).
+    /// Tribute worldwide-day status byte (field 1 of `getWorldwideDay`).
     pub fn wwd_status(&self, port: u16, wwd: &str) -> Option<String> {
         let day: u32 = wwd.parse().ok()?;
         let r = eth::read_call(
             &self.url(port),
-            addresses::WWD_ADDR,
-            &IMetadosis::getWorldwideDayCall { wwd: day },
+            addresses::TRIBUTE_ADDR,
+            &ITribute::getWorldwideDayCall { wwd: day },
         )?;
         Some(r.status.to_string())
     }
@@ -20,8 +20,8 @@ impl Rpc {
     ) -> Option<MetadosisWorldwideDayStateV1> {
         let r = eth::read_call(
             &self.url(port),
-            addresses::WWD_ADDR,
-            &IMetadosis::getWorldwideDayCall { wwd: day },
+            addresses::TRIBUTE_ADDR,
+            &ITribute::getWorldwideDayCall { wwd: day },
         )?;
         Some(MetadosisWorldwideDayStateV1 {
             status: r.status,
@@ -62,8 +62,8 @@ impl Rpc {
     ) -> Option<MetadosisWorldwideDayStateV1> {
         let r = eth::read_call_at(
             &self.url(port),
-            addresses::WWD_ADDR,
-            &IMetadosis::getWorldwideDayCall { wwd: day },
+            addresses::TRIBUTE_ADDR,
+            &ITribute::getWorldwideDayCall { wwd: day },
             block_number,
         )?;
         Some(MetadosisWorldwideDayStateV1 {
@@ -85,8 +85,8 @@ impl Rpc {
     ) -> Option<bool> {
         eth::read_call_reverts_at(
             &self.url(port),
-            addresses::WWD_ADDR,
-            &IMetadosis::getWorldwideDaysByStatusCall { status },
+            addresses::TRIBUTE_ADDR,
+            &ITribute::getWorldwideDaysByStatusCall { status },
             block_number,
         )
     }
@@ -105,7 +105,7 @@ impl Rpc {
             &rpc_url,
             "eth_getLogs",
             serde_json::json!([{
-                "address": format!("{:#x}", addresses::WWD_ADDR),
+                "address": format!("{:#x}", addresses::TRIBUTE_ADDR),
                 "fromBlock": "0x1",
                 "toBlock": format!("0x{finalized_height:x}"),
                 "topics": [format!("{topic0:#x}"), indexed_day]
@@ -182,7 +182,7 @@ impl Rpc {
             &rpc_url,
             "eth_getLogs",
             serde_json::json!([{
-                "address": format!("{:#x}", addresses::WWD_ADDR),
+                "address": format!("{:#x}", addresses::TRIBUTE_ADDR),
                 "fromBlock": "0x1",
                 "toBlock": format!("0x{finalized_height:x}"),
                 "topics": [format!("{topic0:#x}"), indexed_day]

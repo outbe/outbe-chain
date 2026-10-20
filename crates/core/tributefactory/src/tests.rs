@@ -1,9 +1,5 @@
 use alloy_primitives::{Address, Bytes, B256, U256};
 use outbe_agentreward::AgentRewardContract;
-use outbe_metadosis::{
-    genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay},
-    WwdDayType, WwdStatus,
-};
 use outbe_oracle::{
     genesis::{init_from_genesis, OracleGenesisConfig},
     schema::OracleContract,
@@ -14,7 +10,13 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::date_key_to_utc_timestamp;
 use outbe_primitives::time::WorldwideDay;
-use outbe_tribute::TributeContract;
+use outbe_tribute::{
+    worldwideday::{
+        genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay},
+        WwdDayType, WwdStatus,
+    },
+    TributeContract,
+};
 
 use crate::runtime::{validate_agent_reward_addresses, OfferTributeInput};
 use crate::schema::TributeFactoryContract;

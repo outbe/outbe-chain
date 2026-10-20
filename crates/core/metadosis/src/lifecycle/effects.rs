@@ -4,13 +4,13 @@ use crate::{
     constants::MAX_RETAINED_WWDS,
     precompile::IMetadosis,
     reducer::{OuterWwdTransition, WwdAdvanceEdge},
-    schema::{MetadosisContract, WorldwideDayEntryExt},
+    schema::MetadosisContract,
     terminal::{CapacityForfeitureReceipt, MissedOfferingReceipt},
 };
 use alloy_primitives::U256;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result, time::WorldwideDay};
 use outbe_promislimit::PromisLimitContract;
-use outbe_tribute::TributeContract;
+use outbe_tribute::{worldwideday::WorldwideDayEntryExt, TributeContract};
 
 pub(super) struct WwdEffect<'a, 'storage> {
     pub ctx: &'a BlockRuntimeContext<'storage>,
@@ -44,21 +44,11 @@ fn apply_wwd_advance_edge_effect(
     wwd: WorldwideDay,
     edge: WwdAdvanceEdge,
 ) -> Result<Option<WwdRateResolution>> {
-    match edge {
-        WwdAdvanceEdge::ResolveForming => {
-            resolve_forming_snapshot(metadosis, wwd)?;
-            Ok(Some(resolve_day_rate(metadosis, wwd)?))
-        }
-        WwdAdvanceEdge::OpenOffering => {
-            TributeContract::new(metadosis.storage.clone()).unseal_day(wwd)?;
-            Ok(None)
-        }
-        WwdAdvanceEdge::CloseOffering => {
-            TributeContract::new(metadosis.storage.clone()).seal_day(wwd)?;
-            Ok(None)
-        }
-        WwdAdvanceEdge::BecomeReady => Ok(None),
+    if edge == WwdAdvanceEdge::ResolveForming {
+        resolve_forming_snapshot(metadosis, wwd)?;
+        return Ok(Some(resolve_day_rate(metadosis, wwd)?));
     }
+    Ok(None)
 }
 
 pub(super) fn apply_capacity_forfeiture(
@@ -67,8 +57,6 @@ pub(super) fn apply_capacity_forfeiture(
     retained_count: usize,
 ) -> Result<()> {
     let counts = prepare_capacity_forfeiture(metadosis, &effect, retained_count)?;
-    let receipt = forfeit_and_credit_capacity(metadosis.storage.clone(), &effect, counts)?;
-    metadosis.write_capacity_forfeiture_receipt(receipt)?;
     commit_outer_transition_with_rate(
         metadosis,
         effect.current.worldwide_day,
@@ -76,6 +64,8 @@ pub(super) fn apply_capacity_forfeiture(
         effect.ctx.block.block_number,
         effect.rate_resolution,
     )?;
+    let receipt = forfeit_and_credit_capacity(metadosis.storage.clone(), &effect, counts)?;
+    metadosis.write_capacity_forfeiture_receipt(receipt)?;
     metadosis.emit(capacity_forfeiture_event(&receipt))
 }
 
@@ -219,8 +209,9 @@ fn store_worldwide_day_vwap_snapshot(
     metadosis: &mut MetadosisContract,
     wwd: WorldwideDay,
 ) -> Result<()> {
-    let forming_start = metadosis.worldwide_days.entry(wwd).forming_start().read()?;
-    let forming_end = metadosis.worldwide_days.entry(wwd).forming_end().read()?;
+    let tribute = TributeContract::new(metadosis.storage.clone());
+    let forming_start = tribute.worldwide_days.entry(wwd).forming_start().read()?;
+    let forming_end = tribute.worldwide_days.entry(wwd).forming_end().read()?;
     outbe_oracle::api::store_worldwide_day_vwap_snapshot(
         metadosis.storage.clone(),
         wwd,

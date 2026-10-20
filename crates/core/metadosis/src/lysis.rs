@@ -295,12 +295,14 @@ fn execute_legacy_enclave(
             OuterWwdEvent::ProcessReady(ReadyDisposition::LysisFailed),
         )?;
         commit_outer_transition(metadosis, day, &transition, ctx.block.block_number)?;
-        return metadosis.emit(IMetadosis::WorldwideDayStatusChange {
-            worldwideDay: day.into(),
-            oldStatus: current.status.as_u8(),
-            newStatus: transition.target().as_u8(),
-            blockNumber: ctx.block.block_number,
-        });
+        return tribute.emit(
+            outbe_tribute::precompile::ITribute::WorldwideDayStatusChange {
+                worldwideDay: day.into(),
+                oldStatus: current.status.as_u8(),
+                newStatus: transition.target().as_u8(),
+                blockNumber: ctx.block.block_number,
+            },
+        );
     };
     if result.total_nominal_minor != totals.tribute_nominal_total_minor {
         return Err(mismatch());

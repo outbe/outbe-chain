@@ -122,8 +122,18 @@ fn assert_local_terminal_outcome(
     StorageHandle::enter(provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), expected_status);
-        assert!(!metadosis.active_wwd.read_all().unwrap().contains(&wwd));
-        assert!(metadosis.closed_wwd.read_all().unwrap().contains(&wwd));
+        assert!(!metadosis
+            .tribute()
+            .active_wwd
+            .read_all()
+            .unwrap()
+            .contains(&wwd));
+        assert!(metadosis
+            .tribute()
+            .closed_wwd
+            .read_all()
+            .unwrap()
+            .contains(&wwd));
         assert_eq!(
             PromisLimitContract::new(storage)
                 .get_total_unallocated()
@@ -547,8 +557,18 @@ fn native_lifecycle_preserves_the_empty_day_compatibility_branch() {
 
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::COMPLETED);
-        assert!(!metadosis.active_wwd.read_all().unwrap().contains(&wwd));
-        assert!(metadosis.closed_wwd.read_all().unwrap().contains(&wwd));
+        assert!(!metadosis
+            .tribute()
+            .active_wwd
+            .read_all()
+            .unwrap()
+            .contains(&wwd));
+        assert!(metadosis
+            .tribute()
+            .closed_wwd
+            .read_all()
+            .unwrap()
+            .contains(&wwd));
 
         let series = wwd;
         let desis = storage.contract::<outbe_desis::schema::DesisContract>();
@@ -740,6 +760,7 @@ fn no_tributes_green_day_briefs_nothing_and_returns_the_limit() {
         metadosis.set_metadosis_limit(wwd, day_limit).unwrap();
 
         let scheduled = metadosis
+            .tribute()
             .worldwide_days
             .entry(wwd)
             .scheduled_process_time()
@@ -796,6 +817,7 @@ fn zero_limit_green_day_dispatches_no_brief() {
             .unwrap();
 
         let scheduled = metadosis
+            .tribute()
             .worldwide_days
             .entry(wwd)
             .scheduled_process_time()

@@ -1,48 +1,9 @@
 use super::IMetadosis;
-use crate::{
-    aggregate::{WwdDayType, WwdStatus},
-    schema::{terminal_outcome, terminal_retirement, MetadosisContract, WorldwideDayEntryExt},
-};
+use crate::schema::{terminal_outcome, terminal_retirement, MetadosisContract};
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
 use outbe_primitives::error::Result;
-
-pub(super) fn worldwide_day(
-    metadosis: &MetadosisContract<'_>,
-    c: IMetadosis::getWorldwideDayCall,
-) -> Result<<IMetadosis::getWorldwideDayCall as SolCall>::Return> {
-    let Some(day) = metadosis.worldwide_days.get(c.wwd.into())? else {
-        return Err(outbe_primitives::storage::dsl::missing_record_err(
-            "WorldwideDay",
-        ));
-    };
-    // This function validates the persisted bytes as closed tags before it
-    // returns them through the raw ABI representation.
-    WwdStatus::try_from(day.status)?;
-    WwdDayType::try_from(day.day_type)?;
-    Ok((
-        day.status,
-        day.day_type,
-        day.forming_start,
-        day.forming_end,
-        day.lookback_end,
-        day.offering_end,
-        day.scheduled_process_time,
-        day.previous_vwap_minor,
-        day.current_vwap_minor,
-    )
-        .into())
-}
-
-pub(super) fn worldwide_days_by_status(
-    metadosis: &MetadosisContract<'_>,
-    c: IMetadosis::getWorldwideDaysByStatusCall,
-) -> Result<<IMetadosis::getWorldwideDaysByStatusCall as SolCall>::Return> {
-    let wanted = WwdStatus::try_from(c.status)
-        .map_err(|_| crate::errors::MetadosisCallerError::UnknownWorldwideDayStatus)?;
-    let wwds = metadosis.get_active_wwd_by_status(wanted)?;
-    Ok(wwds.into_iter().map(u32::from).collect())
-}
+use outbe_tribute::{worldwideday::WorldwideDayEntryExt, TributeContract};
 
 pub(super) fn terminal_receipt(
     metadosis: &MetadosisContract<'_>,
@@ -71,9 +32,10 @@ pub(super) fn terminal_receipt(
             metadosis.read_capacity_forfeiture_receipt(wwd)?;
         }
         crate::terminal::model::WwdTerminalReceipt::MetadosisFailure(_) => {
+            let tribute = TributeContract::new(metadosis.storage.clone());
             let expected_value_routed = metadosis.failure_value_routed(
                 wwd,
-                metadosis
+                tribute
                     .worldwide_days
                     .entry(wwd)
                     .metadosis_limit_minor()

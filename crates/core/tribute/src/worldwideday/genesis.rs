@@ -8,10 +8,12 @@ use alloy_primitives::U256;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 
-use crate::{
+use crate::schema::TributeContract;
+
+use super::{
     aggregate::{ValidatedWwdAggregate, WwdDayType, WwdStatus},
-    errors::MetadosisStorageCorruptionError,
-    schema::{status, MetadosisContract, WorldwideDay as WorldwideDayRecord},
+    errors::WwdStorageCorruptionError,
+    schema::{status, WorldwideDay as WorldwideDayRecord},
 };
 
 /// One invariant-valid active WWD included in a fresh-devnet genesis artifact.
@@ -33,16 +35,16 @@ pub struct GenesisWorldwideDay {
 impl GenesisWorldwideDay {
     fn validate(self) -> Result<Self> {
         if !self.worldwide_day.is_valid() {
-            return Err(MetadosisStorageCorruptionError::GenesisWwdNotValidCalendarDay.into());
+            return Err(WwdStorageCorruptionError::GenesisWwdNotValidCalendarDay.into());
         }
         if !matches!(self.status, WwdStatus::Offering | WwdStatus::Ready) {
             return Err(
-                MetadosisStorageCorruptionError::GenesisBuilderOnlyAcceptsOfferingOrReadyPredecessors
+                WwdStorageCorruptionError::GenesisBuilderOnlyAcceptsOfferingOrReadyPredecessors
                     .into(),
             );
         }
         if self.day_type == WwdDayType::Unknown {
-            return Err(MetadosisStorageCorruptionError::GenesisWwdRequiresKnownDayType.into());
+            return Err(WwdStorageCorruptionError::GenesisWwdRequiresKnownDayType.into());
         }
         if ![
             self.forming_start,
@@ -54,7 +56,7 @@ impl GenesisWorldwideDay {
         .windows(2)
         .all(|pair| pair[0] <= pair[1])
         {
-            return Err(MetadosisStorageCorruptionError::GenesisWwdPhaseOrderInvalid.into());
+            return Err(WwdStorageCorruptionError::GenesisWwdPhaseOrderInvalid.into());
         }
         Ok(self)
     }
@@ -114,12 +116,11 @@ impl FreshDevnetGenesisBuilder {
     pub fn apply(self, storage: StorageHandle<'_>) -> Result<FreshDevnetGenesisReport> {
         if storage.block_number()? > 1 {
             return Err(
-                MetadosisStorageCorruptionError::GenesisBuilderCannotRunAfterPreLaunchBoundary
-                    .into(),
+                WwdStorageCorruptionError::GenesisBuilderCannotRunAfterPreLaunchBoundary.into(),
             );
         }
         let mut changed = false;
-        let contract = MetadosisContract::new(storage.clone());
+        let contract = TributeContract::new(storage.clone());
         for operation in self.operations {
             let Some(operation_changed) = operation.apply(&contract)? else {
                 continue;
@@ -132,7 +133,7 @@ impl FreshDevnetGenesisBuilder {
 }
 
 impl GenesisOperation {
-    fn apply(self, contract: &MetadosisContract<'_>) -> Result<Option<bool>> {
+    fn apply(self, contract: &TributeContract<'_>) -> Result<Option<bool>> {
         match self {
             Self::SeedActive(day) => Self::seed(contract, day),
             Self::RetimeOffering {
@@ -144,10 +145,10 @@ impl GenesisOperation {
             } => Self::clear(contract, expected_worldwide_day),
         }
     }
-    fn seed(contract: &MetadosisContract<'_>, day: GenesisWorldwideDay) -> Result<Option<bool>> {
+    fn seed(contract: &TributeContract<'_>, day: GenesisWorldwideDay) -> Result<Option<bool>> {
         let day = day.validate()?;
         if contract.worldwide_days.get(day.worldwide_day)?.is_some() {
-            return Err(MetadosisStorageCorruptionError::GenesisWwdAlreadyExists.into());
+            return Err(WwdStorageCorruptionError::GenesisWwdAlreadyExists.into());
         }
         contract.worldwide_days.create(&WorldwideDayRecord {
             wwd: day.worldwide_day,
@@ -166,21 +167,19 @@ impl GenesisOperation {
         Ok(Some(true))
     }
     fn retime(
-        contract: &MetadosisContract<'_>,
+        contract: &TributeContract<'_>,
         worldwide_day: WorldwideDay,
         offering_end: u64,
     ) -> Result<Option<bool>> {
         let mut day = contract
             .worldwide_days
             .get(worldwide_day)?
-            .ok_or(MetadosisStorageCorruptionError::GenesisOfferingWwdMissing)?;
+            .ok_or(WwdStorageCorruptionError::GenesisOfferingWwdMissing)?;
         if WwdStatus::try_from(day.status)? != WwdStatus::Offering {
-            return Err(MetadosisStorageCorruptionError::GenesisWwdNotInOffering.into());
+            return Err(WwdStorageCorruptionError::GenesisWwdNotInOffering.into());
         }
         if day.forming_end > offering_end || day.lookback_end > offering_end {
-            return Err(
-                MetadosisStorageCorruptionError::GenesisWwdPhasesEndAfterOfferingDeadline.into(),
-            );
+            return Err(WwdStorageCorruptionError::GenesisWwdPhasesEndAfterOfferingDeadline.into());
         }
         let operation_changed =
             day.offering_end != offering_end || day.scheduled_process_time != offering_end;
@@ -190,7 +189,7 @@ impl GenesisOperation {
         Ok(Some(operation_changed))
     }
     fn clear(
-        contract: &MetadosisContract<'_>,
+        contract: &TributeContract<'_>,
         expected_worldwide_day: WorldwideDay,
     ) -> Result<Option<bool>> {
         let active = contract.active_wwd.read_all()?;
@@ -199,16 +198,16 @@ impl GenesisOperation {
                 .first()
                 .is_some_and(|day| *day != expected_worldwide_day)
         {
-            return Err(MetadosisStorageCorruptionError::GenesisContainsUnexpectedActiveWwd.into());
+            return Err(WwdStorageCorruptionError::GenesisContainsUnexpectedActiveWwd.into());
         }
         let Some(day) = contract.worldwide_days.get(expected_worldwide_day)? else {
             if active.is_empty() {
                 return Ok(None);
             }
-            return Err(MetadosisStorageCorruptionError::GenesisActiveWwdRecordMissing.into());
+            return Err(WwdStorageCorruptionError::GenesisActiveWwdRecordMissing.into());
         };
         if WwdStatus::try_from(day.status)? != WwdStatus::Offering {
-            return Err(MetadosisStorageCorruptionError::GenesisSeededWwdNotInOffering.into());
+            return Err(WwdStorageCorruptionError::GenesisSeededWwdNotInOffering.into());
         }
         if !active.is_empty() {
             contract.active_wwd.remove(&expected_worldwide_day)?;
@@ -235,7 +234,7 @@ mod tests {
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 
     use super::*;
-    use crate::{aggregate::WwdMembership, api};
+    use crate::worldwideday::{aggregate::WwdMembership, api};
 
     const DAY: WorldwideDay = WorldwideDay::new(20_260_731);
 

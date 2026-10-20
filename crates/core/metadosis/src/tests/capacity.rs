@@ -30,6 +30,7 @@ fn seed_day(
         metadosis.fixture_seed_day_limit_formation(wwd).unwrap();
     }
     metadosis
+        .tribute()
         .worldwide_days
         .entry(wwd)
         .scheduled_process_time()
@@ -62,7 +63,12 @@ fn wwd_words(
     metadosis: &MetadosisContract<'_>,
     wwd: outbe_primitives::time::WorldwideDay,
 ) -> Vec<U256> {
-    let record = metadosis.worldwide_days.get(wwd).unwrap().unwrap();
+    let record = metadosis
+        .tribute()
+        .worldwide_days
+        .get(wwd)
+        .unwrap()
+        .unwrap();
     vec![
         U256::from(record.status),
         U256::from(record.day_type),
@@ -555,8 +561,18 @@ fn capacity_forfeiture_preserves_retained_work_and_replays_without_effects() {
     StorageHandle::enter(&mut provider, |storage| {
         let mut metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(victim).unwrap(), status::FAILED);
-        assert!(!metadosis.active_wwd.read_all().unwrap().contains(&victim));
-        assert!(metadosis.closed_wwd.read_all().unwrap().contains(&victim));
+        assert!(!metadosis
+            .tribute()
+            .active_wwd
+            .read_all()
+            .unwrap()
+            .contains(&victim));
+        assert!(metadosis
+            .tribute()
+            .closed_wwd
+            .read_all()
+            .unwrap()
+            .contains(&victim));
         assert_eq!(
             (
                 wwd_words(&metadosis, 2026_0101u32.into()),
@@ -763,18 +779,16 @@ fn populated_and_max_shape_forfeiture_is_constant_size_and_emits_one_canonical_r
             assert_eq!(totals.tribute_nominal_total_minor, U256::ZERO);
             assert!(tribute.retired_days.read(&victim).unwrap());
         });
-        let tribute_events = provider
+        let retirement_events = provider
             .get_ordered_events()
             .iter()
             .filter(|event| event.address == outbe_primitives::addresses::TRIBUTE_ADDRESS)
+            .filter(|event| {
+                outbe_tribute::precompile::ITribute::TributePartitionRetired::decode_log(event)
+                    .is_ok()
+            })
             .collect::<Vec<_>>();
-        assert_eq!(tribute_events.len(), 1);
-        assert!(
-            outbe_tribute::precompile::ITribute::TributePartitionRetired::decode_log(
-                tribute_events[0]
-            )
-            .is_ok()
-        );
+        assert_eq!(retirement_events.len(), 1);
     }
 }
 
@@ -825,7 +839,7 @@ fn every_capacity_forfeiture_mutation_failure_restores_state_events_and_ce_work_
     let status_events = probe
         .get_ordered_events()
         .iter()
-        .filter_map(|event| IMetadosis::WorldwideDayStatusChange::decode_log(event).ok())
+        .filter_map(|event| ITribute::WorldwideDayStatusChange::decode_log(event).ok())
         .filter(|event| event.data.worldwideDay == probe_victim.value())
         .map(|event| {
             (
@@ -895,7 +909,7 @@ fn every_capacity_forfeiture_mutation_failure_restores_state_events_and_ce_work_
         let status_events = provider
             .get_ordered_events()
             .iter()
-            .filter_map(|event| IMetadosis::WorldwideDayStatusChange::decode_log(event).ok())
+            .filter_map(|event| ITribute::WorldwideDayStatusChange::decode_log(event).ok())
             .filter(|event| event.data.worldwideDay == victim.value())
             .map(|event| (event.data.oldStatus, event.data.newStatus))
             .collect::<Vec<_>>();
@@ -964,6 +978,6 @@ fn active_cap_rejects_create_before_an_orphan_record_or_event() {
     assert_eq!(provider.events, events_before);
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage);
-        assert!(!metadosis.worldwide_days.exists(rejected).unwrap());
+        assert!(!metadosis.tribute().worldwide_days.exists(rejected).unwrap());
     });
 }

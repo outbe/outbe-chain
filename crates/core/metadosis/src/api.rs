@@ -2,7 +2,7 @@ use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 
 use crate::{
-    aggregate::{ValidatedWwdAggregate, WwdMembership, WwdProjection, WwdStatus},
+    aggregate::{ValidatedWwdAggregate, WwdProjection},
     schema::MetadosisContract,
 };
 
@@ -22,25 +22,7 @@ pub fn worldwide_day(
     storage: StorageHandle<'_>,
     wwd: WorldwideDay,
 ) -> Result<Option<WwdProjection>> {
-    let contract = MetadosisContract::new(storage);
-    let Some(record) = contract.worldwide_days.get(wwd)? else {
-        return Ok(None);
-    };
-    let active = contract.active_wwd.read_all()?.contains(&wwd);
-    let closed = contract.closed_wwd.read_all()?.contains(&wwd);
-    let membership = match (active, closed) {
-        (true, false) => WwdMembership::Active,
-        (false, true) => WwdMembership::Closed,
-        _ => return Err(
-            crate::errors::MetadosisStorageCorruptionError::WwdMembershipNotExactlyActiveOrClosed
-                .into(),
-        ),
-    };
-    let status = WwdStatus::try_from(record.status)?;
-    let day_type = record.day_type.try_into()?;
-    Ok(Some(WwdProjection::from_record(
-        wwd, status, day_type, membership, &record,
-    )))
+    outbe_tribute::worldwideday::api::worldwide_day(storage, wwd)
 }
 
 /// Reads the complete bounded typed WWD aggregate without exposing indexes or
@@ -54,26 +36,13 @@ pub fn worldwide_days(storage: StorageHandle<'_>) -> Result<Vec<WwdProjection>> 
 
 /// Typed query used by TributeFactory instead of a raw status byte read.
 pub fn is_offering_day(storage: StorageHandle<'_>, wwd: WorldwideDay) -> Result<bool> {
-    Ok(worldwide_day(storage, wwd)?
-        .is_some_and(|projection| projection.status == WwdStatus::Offering))
+    outbe_tribute::worldwideday::api::is_offering_day(storage, wwd)
 }
 
 /// Returns indexed OFFERING days as typed keys without exposing status bytes or
 /// the storage facade.
 pub fn offering_worldwide_days(storage: StorageHandle<'_>) -> Result<Vec<WorldwideDay>> {
-    let contract = MetadosisContract::new(storage);
-    let mut result = Vec::new();
-    for wwd in contract.active_wwd.read_all()? {
-        let record = contract
-            .worldwide_days
-            .get(wwd)?
-            .ok_or(crate::errors::MetadosisStorageCorruptionError::ActiveIndexPointsToMissingWwd)?;
-        if WwdStatus::try_from(record.status)? == WwdStatus::Offering {
-            result.push(wwd);
-        }
-    }
-    result.sort();
-    Ok(result)
+    outbe_tribute::worldwideday::api::offering_worldwide_days(storage)
 }
 
 /// Reads the durable Metadosis-owned semantic result for one Cycle day-limit

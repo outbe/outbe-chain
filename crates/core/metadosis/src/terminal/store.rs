@@ -60,11 +60,16 @@ impl MetadosisContract<'_> {
         worldwide_day: WorldwideDay,
         expected_value: Option<alloy_primitives::U256>,
     ) -> Result<TerminalReceiptValidationContext> {
-        use crate::schema::WorldwideDayEntryExt;
-        let active = self.active_wwd.read_all()?;
-        let closed = self.closed_wwd.read_all()?;
+        use outbe_tribute::{worldwideday::WorldwideDayEntryExt, TributeContract};
+        let tribute = TributeContract::new(self.storage.clone());
+        let active = tribute.active_wwd.read_all()?;
+        let closed = tribute.closed_wwd.read_all()?;
         Ok(TerminalReceiptValidationContext::new(
-            self.worldwide_days.entry(worldwide_day).status().read()?,
+            tribute
+                .worldwide_days
+                .entry(worldwide_day)
+                .status()
+                .read()?,
             active
                 .iter()
                 .filter(|candidate| **candidate == worldwide_day)
@@ -75,7 +80,7 @@ impl MetadosisContract<'_> {
                 .count(),
             match expected_value {
                 Some(value) => value,
-                None => self
+                None => tribute
                     .worldwide_days
                     .entry(worldwide_day)
                     .metadosis_limit_minor()

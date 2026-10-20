@@ -7,6 +7,12 @@ fn query<C: SolCall>(storage: StorageHandle<'_>, call: C) -> C::Return {
     C::abi_decode_returns(&output).unwrap()
 }
 
+#[cfg(feature = "test-utils")]
+fn query_tribute<C: SolCall>(storage: StorageHandle<'_>, call: C) -> C::Return {
+    let output = tribute_dispatch(storage, &call.abi_encode(), Address::ZERO, U256::ZERO).unwrap();
+    C::abi_decode_returns(&output).unwrap()
+}
+
 #[test]
 fn missing_receipts_have_canonical_empty_abi_returns() {
     with_storage(|storage| {
@@ -43,9 +49,9 @@ fn missing_receipts_have_canonical_empty_abi_returns() {
 fn worldwide_day_abi_preserves_genesis_windows_rates_and_membership() {
     with_storage(|storage| {
         seed_offering_day(storage.clone());
-        let day = query(
+        let day = query_tribute(
             storage.clone(),
-            IMetadosis::getWorldwideDayCall { wwd: 20270101 },
+            ITribute::getWorldwideDayCall { wwd: 20270101 },
         );
         assert_eq!(day.status, status::OFFERING);
         assert_eq!(day.dayType, day_type::GREEN);
@@ -63,11 +69,12 @@ fn worldwide_day_abi_preserves_genesis_windows_rates_and_membership() {
             (day.previousVwapMinor, day.currentVwapMinor),
             (U256::from(8), U256::from(9))
         );
-        let active: Vec<u32> = query(storage.clone(), IMetadosis::getActiveWorldwideDaysCall {});
+        let active: Vec<u32> =
+            query_tribute(storage.clone(), ITribute::getActiveWorldwideDaysCall {});
         assert_eq!(active, vec![20270101]);
-        let offering: Vec<u32> = query(
+        let offering: Vec<u32> = query_tribute(
             storage.clone(),
-            IMetadosis::getWorldwideDaysByStatusCall {
+            ITribute::getWorldwideDaysByStatusCall {
                 status: status::OFFERING,
             },
         );

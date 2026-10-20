@@ -15,6 +15,22 @@ interface ITribute {
 
     event TributeWorldwideDaySealed(uint32 indexed worldwideDay, bool isSealed);
 
+    event WorldwideDayStarted(
+        uint32 indexed worldwideDay,
+        uint64 formingStart,
+        uint64 formingEnd,
+        uint64 offeringStart,
+        uint64 offeringEnd,
+        uint64 scheduledTime
+    );
+
+    event WorldwideDayStatusChange(uint32 indexed worldwideDay, uint8 oldStatus, uint8 newStatus, uint64 blockNumber);
+
+    /// @notice Emitted when a terminal WorldwideDay record leaves the bounded
+    /// delete-queue. Eviction is oldest-first, once terminal records exceed the cap.
+    /// `finalStatus` is the day's terminal status (COMPLETED or FAILED).
+    event WorldwideDayCleanedUp(uint32 indexed worldwideDay, uint8 finalStatus);
+
     /// @notice Canonical projection event for certified Lysis retirement and
     /// the two closed Metadosis terminal authorities (empty missed OFFERING or
     /// exact-aggregate capacity forfeiture). No arbitrary FAILED day may emit it.
@@ -40,6 +56,24 @@ interface ITribute {
         external
         view
         returns (uint32 tributeCount, bytes memory tributeNominalTotalMinor, bool isSealed);
+    function getWorldwideDay(uint32 wwd)
+        external
+        view
+        returns (
+            uint8 status,
+            uint8 dayType,
+            uint64 formingStart,
+            uint64 formingEnd,
+            uint64 lookbackEnd,
+            uint64 offeringEnd,
+            uint64 scheduledProcessTime,
+            uint256 previousVwapMinor,
+            uint256 currentVwapMinor
+        );
+    function getActiveWorldwideDays() external view returns (uint32[] memory wwds);
+    /// @notice Returns days for a closed WwdStatus discriminant.
+    /// @dev Unknown status bytes revert. The call never interprets them as empty.
+    function getWorldwideDaysByStatus(uint8 status) external view returns (uint32[] memory wwds);
     function getTributesByOwner(address owner) external view returns (uint256[] memory tributeIds);
     function getTributesByDay(uint32 worldwideDay) external view returns (uint256[] memory tributeIds);
     function getLeague(uint256 tributeId) external view returns (uint16 league);

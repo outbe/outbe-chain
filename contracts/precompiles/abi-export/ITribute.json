@@ -39,6 +39,19 @@
   },
   {
     "type": "function",
+    "name": "getActiveWorldwideDays",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "wwds",
+        "type": "uint32[]",
+        "internalType": "uint32[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getDayLeagueFraction",
     "inputs": [
       {
@@ -143,6 +156,84 @@
         "name": "tributeIds",
         "type": "uint256[]",
         "internalType": "uint256[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getWorldwideDay",
+    "inputs": [
+      {
+        "name": "wwd",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "status",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "dayType",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "formingStart",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "formingEnd",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "lookbackEnd",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "offeringEnd",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "scheduledProcessTime",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "previousVwapMinor",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "currentVwapMinor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getWorldwideDaysByStatus",
+    "inputs": [
+      {
+        "name": "status",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "wwds",
+        "type": "uint32[]",
+        "internalType": "uint32[]"
       }
     ],
     "stateMutability": "view"
@@ -388,6 +479,99 @@
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "WorldwideDayCleanedUp",
+    "inputs": [
+      {
+        "name": "worldwideDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "finalStatus",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "WorldwideDayStarted",
+    "inputs": [
+      {
+        "name": "worldwideDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "formingStart",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "formingEnd",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "offeringStart",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "offeringEnd",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "scheduledTime",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "WorldwideDayStatusChange",
+    "inputs": [
+      {
+        "name": "worldwideDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "oldStatus",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "newStatus",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "blockNumber",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
       }
     ],
     "anonymous": false

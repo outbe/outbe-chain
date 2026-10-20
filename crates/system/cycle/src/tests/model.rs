@@ -14,7 +14,7 @@ use outbe_metadosis::{
 };
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
-    addresses::{CYCLE_ADDRESS, METADOSIS_ADDRESS},
+    addresses::{CYCLE_ADDRESS, METADOSIS_ADDRESS, TRIBUTE_ADDRESS},
     block::{BlockRuntimeContext, BlockRuntimeContext as RuntimeContext},
     storage::{hashmap::HashMapStorageProvider, MetadosisMutationPurposeTag, StorageHandle},
 };
@@ -177,7 +177,12 @@ fn cycle_metadosis_snapshot(storage: &HashMapStorageProvider) -> BTreeMap<(Addre
     storage
         .storage
         .iter()
-        .filter(|((address, _), _)| matches!(*address, METADOSIS_ADDRESS | CYCLE_ADDRESS))
+        .filter(|((address, _), _)| {
+            matches!(
+                *address,
+                METADOSIS_ADDRESS | TRIBUTE_ADDRESS | CYCLE_ADDRESS
+            )
+        })
         .map(|(key, value)| (*key, *value))
         .collect()
 }
@@ -431,7 +436,7 @@ fn outer_probe_expectation(
             run.model.phase == ModelPhase::LookbackDelay,
         ),
         OuterProbe::FaultAtOffering if run.model.phase == ModelPhase::LookbackDelay => {
-            run.storage.fail_mutation_at_address(METADOSIS_ADDRESS);
+            run.storage.fail_mutation_at_address(TRIBUTE_ADDRESS);
             (run.offering_fire, true, false)
         }
         OuterProbe::FaultAtOffering => (run.offering_fire, false, false),
@@ -474,7 +479,7 @@ fn apply_outer_probe(
 fn assert_outer_cycle_rollback(run: &mut OuterHistoryRun, fire_at: u64) -> TestCaseResult {
     let rollback_storage = cycle_metadosis_snapshot(&run.storage);
     let rollback_events = run.storage.get_ordered_events().to_vec();
-    run.storage.fail_mutation_at_address(METADOSIS_ADDRESS);
+    run.storage.fail_mutation_at_address(TRIBUTE_ADDRESS);
     let failed = run_block(&mut run.storage, run.next_block, fire_at);
     prop_assert!(failed.is_err());
     run.storage.clear_mutation_failure();

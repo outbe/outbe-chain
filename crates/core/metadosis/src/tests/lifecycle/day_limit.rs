@@ -21,6 +21,7 @@ fn test_emission_sink_writes_metadosis_limit_for_worldwide_day() {
         let metadosis = MetadosisContract::new(storage);
         assert_eq!(
             metadosis
+                .tribute()
                 .worldwide_days
                 .entry(wwd)
                 .metadosis_limit_minor()
@@ -31,6 +32,7 @@ fn test_emission_sink_writes_metadosis_limit_for_worldwide_day() {
         // A neighboring day is untouched.
         assert_eq!(
             metadosis
+                .tribute()
                 .worldwide_days
                 .entry(wwd.previous_date_key())
                 .metadosis_limit_minor()
@@ -81,7 +83,8 @@ fn day_limit_formation_leaves_the_accumulator_untouched() {
     StorageHandle::enter(&mut provider, |storage| {
         let promis = PromisLimitContract::new(storage.clone());
         let metadosis = MetadosisContract::new(storage.clone());
-        let first_day = metadosis.worldwide_days.entry(first);
+        let tribute = metadosis.tribute();
+        let first_day = tribute.worldwide_days.entry(first);
         let first_formation = metadosis.day_limit_formation(first).unwrap().unwrap();
         assert_eq!(first_formation.worldwide_day, first);
         assert_eq!(first_formation.base_limit, U256::from(100));
@@ -108,9 +111,8 @@ fn day_limit_formation_leaves_the_accumulator_untouched() {
 
     StorageHandle::enter(&mut provider, |storage| {
         let promis = PromisLimitContract::new(storage.clone());
-        let first_day = MetadosisContract::new(storage.clone())
-            .worldwide_days
-            .entry(first);
+        let tribute = MetadosisContract::new(storage.clone()).tribute();
+        let first_day = tribute.worldwide_days.entry(first);
         assert_eq!(
             first_day.metadosis_limit_minor().read().unwrap(),
             U256::from(100)
@@ -131,7 +133,8 @@ fn day_limit_formation_leaves_the_accumulator_untouched() {
     StorageHandle::enter(&mut provider, |storage| {
         let promis = PromisLimitContract::new(storage.clone());
         let metadosis = MetadosisContract::new(storage);
-        let second_day = metadosis.worldwide_days.entry(second);
+        let tribute = metadosis.tribute();
+        let second_day = tribute.worldwide_days.entry(second);
         let second_formation = metadosis.day_limit_formation(second).unwrap().unwrap();
         assert_eq!(second_formation.carry_over_taken, U256::ZERO);
         assert_eq!(second_formation.carry_over_before, U256::from(37));

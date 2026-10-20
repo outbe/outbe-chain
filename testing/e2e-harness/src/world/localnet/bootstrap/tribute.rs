@@ -1,11 +1,13 @@
 use super::*;
 use alloy_primitives::{Address, U256};
-use outbe_metadosis::genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay};
-use outbe_metadosis::{WwdDayType, WwdStatus};
 use outbe_primitives::{
     addresses::{METADOSIS_ADDRESS, ORACLE_ADDRESS, TRIBUTE_ADDRESS},
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
     time::WorldwideDay,
+};
+use outbe_tribute::worldwideday::{
+    genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay},
+    WwdDayType, WwdStatus,
 };
 use std::str::FromStr as _;
 
@@ -21,7 +23,7 @@ impl Localnet {
                 .ok_or_else(|| eyre!("genesis timestamp"))?,
         )?)?;
         StorageHandle::enter(&mut provider, |storage| -> Result<()> {
-            let projection = outbe_metadosis::api::worldwide_day(
+            let projection = outbe_tribute::worldwideday::api::worldwide_day(
                 storage.clone(),
                 WorldwideDay::new(worldwide_day),
             )?

@@ -1,7 +1,7 @@
 use super::*;
 use alloy_sol_types::SolEvent;
 use outbe_primitives::{
-    addresses::{METADOSIS_ADDRESS, NOD_ADDRESS, TRIBUTE_ADDRESS},
+    addresses::{NOD_ADDRESS, TRIBUTE_ADDRESS},
     time::WorldwideDay,
 };
 use outbe_tee::{
@@ -308,12 +308,12 @@ fn calculation_rejection_only_fails_the_day_and_preserves_all_economic_state() {
         let event_count = provider.get_ordered_events().len();
         run(&mut provider).unwrap();
         for (key, value) in &before {
-            if key.0 != METADOSIS_ADDRESS {
+            if key.0 != TRIBUTE_ADDRESS {
                 assert_eq!(provider.storage.get(key), Some(value));
             }
         }
         for key in provider.storage.keys() {
-            assert!(key.0 == METADOSIS_ADDRESS || before.contains_key(key));
+            assert!(key.0 == TRIBUTE_ADDRESS || before.contains_key(key));
         }
         StorageHandle::enter(&mut provider, |storage| {
             let metadosis = MetadosisContract::new(storage.clone());
@@ -321,8 +321,18 @@ fn calculation_rejection_only_fails_the_day_and_preserves_all_economic_state() {
                 metadosis.get_wwd_status(DAY).unwrap(),
                 crate::WwdStatus::Failed
             );
-            assert!(!metadosis.active_wwd.read_all().unwrap().contains(&DAY));
-            assert!(metadosis.closed_wwd.read_all().unwrap().contains(&DAY));
+            assert!(!metadosis
+                .tribute()
+                .active_wwd
+                .read_all()
+                .unwrap()
+                .contains(&DAY));
+            assert!(metadosis
+                .tribute()
+                .closed_wwd
+                .read_all()
+                .unwrap()
+                .contains(&DAY));
             assert!(metadosis.read_terminal_receipt(DAY).unwrap().is_none());
             let tribute = TributeContract::new(storage.clone());
             assert_eq!(tribute.total_supply().unwrap(), amounts.len() as u64);
@@ -337,10 +347,10 @@ fn calculation_rejection_only_fails_the_day_and_preserves_all_economic_state() {
         });
         let events = &provider.get_ordered_events()[event_count..];
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].address, METADOSIS_ADDRESS);
+        assert_eq!(events[0].address, TRIBUTE_ADDRESS);
         assert_eq!(
             events[0].topics()[0],
-            IMetadosis::WorldwideDayStatusChange::SIGNATURE_HASH
+            ITribute::WorldwideDayStatusChange::SIGNATURE_HASH
         );
         let after = provider.storage.clone();
         let events = provider.get_ordered_events().to_vec();

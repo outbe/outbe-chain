@@ -7,12 +7,12 @@ pub fn seed_ready_worldwide_days_for_capacity(
     worldwide_days: &[WorldwideDay],
 ) -> Result<()> {
     use crate::errors::MetadosisTestSupportError;
-    use crate::fixture_kernel::FixtureKernelExt;
+    use outbe_tribute::{worldwideday::fixture_kernel::WwdFixtureKernelExt, TributeContract};
 
     if worldwide_days.len() > crate::constants::MAX_RETAINED_WWDS {
         return Err(MetadosisTestSupportError::CapacityFixtureExceedsMaxRetainedWwds.into());
     }
-    let mut contract = crate::schema::MetadosisContract::new(storage);
+    let mut contract = TributeContract::new(storage);
     for worldwide_day in worldwide_days {
         if !worldwide_day.is_valid() {
             return Err(MetadosisTestSupportError::CapacityFixtureInvalidWorldwideDay.into());

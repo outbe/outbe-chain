@@ -103,9 +103,9 @@ fn fresh_devnet_sentinel_probe_is_test_only_and_checks_per_day_residue() {
 #[test]
 fn unknown_abi_status_reverts_and_corrupt_get_day_is_fatal() {
     with_storage(|storage| {
-        let unused_status = IMetadosis::getWorldwideDaysByStatusCall { status: 5 };
+        let unused_status = ITribute::getWorldwideDaysByStatusCall { status: 5 };
         assert!(matches!(
-            metadosis_dispatch(
+            tribute_dispatch(
                 storage.clone(),
                 &unused_status.abi_encode(),
                 Address::ZERO,
@@ -114,9 +114,9 @@ fn unknown_abi_status_reverts_and_corrupt_get_day_is_fatal() {
             Err(PrecompileError::Revert(_))
         ));
 
-        let unknown_status = IMetadosis::getWorldwideDaysByStatusCall { status: u8::MAX };
+        let unknown_status = ITribute::getWorldwideDaysByStatusCall { status: u8::MAX };
         assert!(matches!(
-            metadosis_dispatch(
+            tribute_dispatch(
                 storage.clone(),
                 &unknown_status.abi_encode(),
                 Address::ZERO,
@@ -131,9 +131,9 @@ fn unknown_abi_status_reverts_and_corrupt_get_day_is_fatal() {
             .create_worldwide_day(wwd, 1_000, LOOKBACK_DELAY_HOURS, OFFERING_PERIOD_HOURS)
             .unwrap();
         metadosis.corrupt_wwd_status_tag(wwd, u8::MAX).unwrap();
-        let get_day = IMetadosis::getWorldwideDayCall { wwd: wwd.value() };
+        let get_day = ITribute::getWorldwideDayCall { wwd: wwd.value() };
         assert!(matches!(
-            metadosis_dispatch(storage, &get_day.abi_encode(), Address::ZERO, U256::ZERO,),
+            tribute_dispatch(storage, &get_day.abi_encode(), Address::ZERO, U256::ZERO,),
             Err(PrecompileError::Revert(_))
         ));
     });
@@ -189,6 +189,7 @@ fn worldwide_day_window_accepts_exact_u64_boundary_and_rejects_the_next_value() 
             .unwrap();
         assert_eq!(
             metadosis
+                .tribute()
                 .worldwide_days
                 .entry(accepted)
                 .scheduled_process_time()
@@ -209,6 +210,7 @@ fn worldwide_day_window_accepts_exact_u64_boundary_and_rejects_the_next_value() 
         ));
         assert_eq!(
             metadosis
+                .tribute()
                 .worldwide_days
                 .entry(rejected)
                 .forming_start()
@@ -236,23 +238,44 @@ fn test_create_worldwide_day() {
         let scheduled = offering_end + WAITING_PERIOD_HOURS * SECONDS_PER_HOUR;
 
         assert_eq!(
-            m.worldwide_days.entry(wwd).forming_start().read().unwrap(),
+            m.tribute()
+                .worldwide_days
+                .entry(wwd)
+                .forming_start()
+                .read()
+                .unwrap(),
             start
         );
         assert_eq!(
-            m.worldwide_days.entry(wwd).forming_end().read().unwrap(),
+            m.tribute()
+                .worldwide_days
+                .entry(wwd)
+                .forming_end()
+                .read()
+                .unwrap(),
             forming_end
         );
         assert_eq!(
-            m.worldwide_days.entry(wwd).lookback_end().read().unwrap(),
+            m.tribute()
+                .worldwide_days
+                .entry(wwd)
+                .lookback_end()
+                .read()
+                .unwrap(),
             lookback_end
         );
         assert_eq!(
-            m.worldwide_days.entry(wwd).offering_end().read().unwrap(),
+            m.tribute()
+                .worldwide_days
+                .entry(wwd)
+                .offering_end()
+                .read()
+                .unwrap(),
             offering_end
         );
         assert_eq!(
-            m.worldwide_days
+            m.tribute()
+                .worldwide_days
                 .entry(wwd)
                 .scheduled_process_time()
                 .read()
@@ -287,7 +310,8 @@ fn test_set_metadosis_limit_overwrites() {
         // not a separate accumulating map: each write overwrites the prior value.
         m.set_metadosis_limit(date, U256::from(100u64)).unwrap();
         assert_eq!(
-            m.worldwide_days
+            m.tribute()
+                .worldwide_days
                 .entry(date)
                 .metadosis_limit_minor()
                 .read()
@@ -297,7 +321,8 @@ fn test_set_metadosis_limit_overwrites() {
 
         m.set_metadosis_limit(date, U256::from(250u64)).unwrap();
         assert_eq!(
-            m.worldwide_days
+            m.tribute()
+                .worldwide_days
                 .entry(date)
                 .metadosis_limit_minor()
                 .read()
@@ -314,7 +339,7 @@ fn test_active_wwd_add_remove() {
         m.add_active_wwd(WwdKey::new(20241219)).unwrap();
         m.add_active_wwd(WwdKey::new(20241220)).unwrap();
 
-        let active = m.active_wwd.read_all().unwrap();
+        let active = m.tribute().active_wwd.read_all().unwrap();
         assert_eq!(active.len(), 3);
         assert!(active.contains(&WwdKey::new(20241218)));
         assert!(active.contains(&WwdKey::new(20241219)));
@@ -322,7 +347,7 @@ fn test_active_wwd_add_remove() {
 
         m.remove_active_wwd(WwdKey::new(20241219)).unwrap();
 
-        let active = m.active_wwd.read_all().unwrap();
+        let active = m.tribute().active_wwd.read_all().unwrap();
         assert_eq!(active.len(), 2);
         assert!(active.contains(&WwdKey::new(20241218)));
         assert!(active.contains(&WwdKey::new(20241220)));
@@ -330,7 +355,7 @@ fn test_active_wwd_add_remove() {
 
         m.remove_active_wwd(WwdKey::new(20241218)).unwrap();
         m.remove_active_wwd(WwdKey::new(20241220)).unwrap();
-        assert!(m.active_wwd.read_all().unwrap().is_empty());
+        assert!(m.tribute().active_wwd.read_all().unwrap().is_empty());
     });
 }
 
@@ -480,7 +505,12 @@ fn test_calculate_metadosis_unknown_day_type_errors() {
         let wwd = WwdKey::new(20241220);
         m.fixture_set_wwd_status(wwd, WwdStatus::Ready).unwrap();
         assert_eq!(
-            m.worldwide_days.entry(wwd).day_type().read().unwrap(),
+            m.tribute()
+                .worldwide_days
+                .entry(wwd)
+                .day_type()
+                .read()
+                .unwrap(),
             day_type::UNKNOWN
         );
 
@@ -522,13 +552,12 @@ fn test_query_worldwide_days_by_status_via_precompile() {
             metadosis.add_active_wwd(wwd).unwrap();
         }
 
-        let call_data = IMetadosis::getWorldwideDaysByStatusCall {
+        let call_data = ITribute::getWorldwideDaysByStatusCall {
             status: status::OFFERING,
         }
         .abi_encode();
-        let encoded = metadosis_dispatch(storage, &call_data, Address::ZERO, U256::ZERO).unwrap();
-        let decoded =
-            IMetadosis::getWorldwideDaysByStatusCall::abi_decode_returns(&encoded).unwrap();
+        let encoded = tribute_dispatch(storage, &call_data, Address::ZERO, U256::ZERO).unwrap();
+        let decoded = ITribute::getWorldwideDaysByStatusCall::abi_decode_returns(&encoded).unwrap();
 
         assert_eq!(decoded.len(), 2);
         assert!(decoded.contains(&20260320));
@@ -540,22 +569,17 @@ fn test_query_worldwide_days_by_status_via_precompile() {
 fn test_storage_dsl_layout_slots() {
     with_contract(|m| {
         assert_eq!(m.bootstrap_end_time.slot(), U256::ZERO);
-        assert_eq!(m.worldwide_days.base_slot(), U256::from(1u64));
-        // WorldwideDay gained `metadosis_limit_minor`, so the record is now
-        // 10 scalar slots (was 9). worldwide_days occupies slots 1..=10.
         assert_eq!(<WorldwideDay as StorageRecord>::SLOTS, 10);
-        assert_eq!(m.closed_wwd.base_slot(), U256::from(13u64));
         assert_eq!(
             m.worldwide_day_terminal_receipts.base_slot(),
-            U256::from(15u64)
+            U256::from(1u64)
         );
         assert_eq!(
             <crate::schema::DayLimitFormationReceiptState as StorageRecord>::SLOTS,
             7
         );
-        assert_eq!(
-            m.day_limit_formation_receipts.base_slot(),
-            U256::from(16u64)
-        );
+        assert_eq!(m.day_limit_formation_receipts.base_slot(), U256::from(2u64));
+        assert_eq!(m.tribute().worldwide_days.base_slot(), U256::from(27u64));
+        assert_eq!(m.tribute().closed_wwd.base_slot(), U256::from(39u64));
     });
 }

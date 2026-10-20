@@ -25,7 +25,10 @@ fn assert_genesis_created_once(
     let expected = outbe_primitives::time::WorldwideDay::from_timestamp(timestamp);
     StorageHandle::enter(provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
-        assert_eq!(metadosis.active_wwd.read_all().unwrap(), vec![expected]);
+        assert_eq!(
+            metadosis.tribute().active_wwd.read_all().unwrap(),
+            vec![expected]
+        );
         assert_eq!(metadosis.get_wwd_status(expected).unwrap(), status::FORMING);
         assert!(TributeContract::new(storage)
             .is_day_sealed(expected)
@@ -34,7 +37,7 @@ fn assert_genesis_created_once(
     let started = provider
         .get_ordered_events()
         .iter()
-        .filter_map(|event| IMetadosis::WorldwideDayStarted::decode_log(event).ok())
+        .filter_map(|event| ITribute::WorldwideDayStarted::decode_log(event).ok())
         .filter(|event| event.data.worldwideDay == expected.value())
         .count();
     assert_eq!(started, 1);
@@ -97,7 +100,7 @@ pub(super) fn provider_status_events(
     provider
         .get_ordered_events()
         .iter()
-        .filter_map(|event| IMetadosis::WorldwideDayStatusChange::decode_log(event).ok())
+        .filter_map(|event| ITribute::WorldwideDayStatusChange::decode_log(event).ok())
         .filter(|event| event.data.worldwideDay == wwd.value())
         .map(|event| {
             (
@@ -117,7 +120,7 @@ fn test_cold_start_creates_only_current_utc_plus_14_day() {
         run_begin_block(storage.clone(), 1, timestamp);
 
         let metadosis = MetadosisContract::new(storage.clone());
-        let active = metadosis.active_wwd.read_all().unwrap();
+        let active = metadosis.tribute().active_wwd.read_all().unwrap();
         assert_eq!(active, vec![20260302u32.into()]);
         // The bootstrap ends when that day opens its offering.
         let forming_start = outbe_primitives::time::WorldwideDay::new(20260302).start_timestamp();
@@ -148,7 +151,8 @@ fn genesis_day_uses_the_canonical_utc_plus_14_boundary() {
         let constants = outbe_chain_constants::GenesisProtocolParametersV1::default();
         StorageHandle::enter(&mut provider, |storage| {
             let metadosis = MetadosisContract::new(storage);
-            let day = metadosis.worldwide_days.entry(created);
+            let tribute = metadosis.tribute();
+            let day = tribute.worldwide_days.entry(created);
             let forming_start = created.start_timestamp();
             let forming_end = forming_start + constants.metadosis_forming_period_seconds;
             let lookback_end = forming_end + constants.metadosis_lookback_delay_seconds;
@@ -173,7 +177,7 @@ fn test_cold_start_uses_genesis_default_schedule_independent_of_chain_id() {
         run_begin_block_with_chain_id(storage.clone(), 1, timestamp, CHAIN_ID);
 
         let metadosis = MetadosisContract::new(storage.clone());
-        let active = metadosis.active_wwd.read_all().unwrap();
+        let active = metadosis.tribute().active_wwd.read_all().unwrap();
         assert_eq!(active, vec![20260302u32.into()]);
 
         let wwd = 20260302u32;
@@ -190,6 +194,7 @@ fn test_cold_start_uses_genesis_default_schedule_independent_of_chain_id() {
 
         assert_eq!(
             metadosis
+                .tribute()
                 .worldwide_days
                 .entry(wwd.into())
                 .lookback_end()
@@ -199,6 +204,7 @@ fn test_cold_start_uses_genesis_default_schedule_independent_of_chain_id() {
         );
         assert_eq!(
             metadosis
+                .tribute()
                 .worldwide_days
                 .entry(wwd.into())
                 .offering_end()

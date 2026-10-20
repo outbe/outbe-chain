@@ -33,6 +33,7 @@ fn seed_unformed_missed_offering_day(
         metadosis.add_active_wwd(wwd).unwrap();
         TributeContract::new(storage.clone()).seal_day(wwd).unwrap();
         metadosis
+            .tribute()
             .worldwide_days
             .entry(wwd)
             .offering_end()
@@ -59,8 +60,18 @@ fn missed_offering_routes_the_formed_limit_once_and_exposes_a_durable_receipt() 
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::FAILED);
-        assert!(!metadosis.active_wwd.read_all().unwrap().contains(&wwd));
-        assert!(metadosis.closed_wwd.read_all().unwrap().contains(&wwd));
+        assert!(!metadosis
+            .tribute()
+            .active_wwd
+            .read_all()
+            .unwrap()
+            .contains(&wwd));
+        assert!(metadosis
+            .tribute()
+            .closed_wwd
+            .read_all()
+            .unwrap()
+            .contains(&wwd));
         let receipt = metadosis
             .read_missed_offering_receipt(wwd)
             .unwrap()
@@ -158,7 +169,12 @@ fn assert_zero_limit_offering_missed(
     StorageHandle::enter(provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::FAILED);
-        assert!(metadosis.closed_wwd.read_all().unwrap().contains(&wwd));
+        assert!(metadosis
+            .tribute()
+            .closed_wwd
+            .read_all()
+            .unwrap()
+            .contains(&wwd));
         let receipt = metadosis
             .read_missed_offering_receipt(wwd)
             .unwrap()
@@ -179,7 +195,8 @@ fn final_zero_limit_misses_the_offering_from_forming_and_lookback() {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
         seed_unformed_missed_offering_day(&mut provider, wwd, U256::ZERO);
         let (forming_end, lookback_end) = StorageHandle::enter(&mut provider, |storage| {
-            let day = MetadosisContract::new(storage).worldwide_days.entry(wwd);
+            let tribute = MetadosisContract::new(storage).tribute();
+            let day = tribute.worldwide_days.entry(wwd);
             (
                 day.forming_end().read().unwrap(),
                 day.lookback_end().read().unwrap(),
@@ -257,6 +274,7 @@ fn final_zero_limit_miss_from_forming_keeps_the_rate_for_the_next_day() {
             .store_worldwide_day_vwap_snapshot(previous, start, end)
             .unwrap();
         MetadosisContract::new(storage)
+            .tribute()
             .worldwide_days
             .entry(wwd)
             .lookback_end()
@@ -298,7 +316,8 @@ fn final_zero_limit_miss_from_forming_keeps_the_rate_for_the_next_day() {
     run_advance_command(&mut provider, 3, lookback_end + SECONDS_PER_HOUR).unwrap();
 
     StorageHandle::enter(&mut provider, |storage| {
-        let day = MetadosisContract::new(storage).worldwide_days.entry(next);
+        let tribute = MetadosisContract::new(storage).tribute();
+        let day = tribute.worldwide_days.entry(next);
         assert_eq!(
             day.previous_vwap_minor().read().unwrap(),
             U256::from(110u64)
@@ -333,6 +352,7 @@ fn limit_settled_earlier_in_the_opening_tick_opens_the_offering() {
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::OFFERING);
         assert_eq!(
             metadosis
+                .tribute()
                 .worldwide_days
                 .entry(wwd)
                 .metadosis_limit_minor()
@@ -485,7 +505,7 @@ fn duplicate_closed_membership_is_fatal_in_reader_and_aggregate() {
 
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
-        metadosis.closed_wwd.push_back(wwd).unwrap();
+        metadosis.tribute().closed_wwd.push_back(wwd).unwrap();
 
         assert!(matches!(
             metadosis.read_missed_offering_receipt(wwd),
@@ -648,7 +668,12 @@ fn missed_offering_terminalizes_a_day_that_never_formed_its_limit() {
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::FAILED);
-        assert!(!metadosis.active_wwd.read_all().unwrap().contains(&wwd));
+        assert!(!metadosis
+            .tribute()
+            .active_wwd
+            .read_all()
+            .unwrap()
+            .contains(&wwd));
         let receipt = metadosis
             .read_missed_offering_receipt(wwd)
             .unwrap()
@@ -672,6 +697,7 @@ fn missed_offering_rejects_a_day_limit_with_no_formation() {
     let offering_end = seed_unformed_missed_offering_day(&mut provider, wwd, U256::ZERO);
     StorageHandle::enter(&mut provider, |storage| {
         MetadosisContract::new(storage)
+            .tribute()
             .worldwide_days
             .entry(wwd)
             .metadosis_limit_minor()

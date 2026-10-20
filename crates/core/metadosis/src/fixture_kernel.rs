@@ -1,20 +1,16 @@
-use crate::{
-    constants::MAX_ACTIVE_WWDS,
-    schema::{MetadosisContract, WorldwideDay as WorldwideDayRecord},
-};
 #[cfg(test)]
-use crate::{
-    constants::{FORMING_PERIOD_HOURS, SECONDS_PER_HOUR, WAITING_PERIOD_HOURS},
-    schema::{DayLimitFormationReceiptStateEntryExt, WorldwideDayEntryExt},
-};
+use crate::schema::DayLimitFormationReceiptStateEntryExt;
+use crate::schema::MetadosisContract;
 use alloy_primitives::U256;
 use outbe_primitives::{error::Result as PrecompileResult, time::WorldwideDay};
+use outbe_tribute::{worldwideday::fixture_kernel::WwdFixtureKernelExt, TributeContract};
 
 /// Crate-private raw fixture kernel.
 ///
 /// Production mutations must never use this trait. It exists only in test or
 /// `test-utils` builds. This way, one private module owns predecessor state and
 /// intentional corruption, and they do not leak through `MetadosisContract`.
+#[allow(dead_code)]
 pub(crate) trait FixtureKernelExt {
     #[cfg(test)]
     fn create_worldwide_day(
@@ -84,56 +80,20 @@ impl FixtureKernelExt for MetadosisContract<'_> {
         lookback_delay_hours: u64,
         offering_period_hours: u64,
     ) -> PrecompileResult<()> {
-        use crate::errors::MetadosisCallerError;
-        let seconds = |hours: u64, label: &'static str| -> PrecompileResult<u64> {
-            hours
-                .checked_mul(SECONDS_PER_HOUR)
-                .ok_or_else(|| MetadosisCallerError::DurationOverflow { label }.into())
-        };
-        let forming_end = forming_start
-            .checked_add(seconds(FORMING_PERIOD_HOURS, "forming")?)
-            .ok_or(MetadosisCallerError::FormingWindowOverflow)?;
-        let lookback_end = forming_end
-            .checked_add(seconds(lookback_delay_hours, "lookback")?)
-            .ok_or(MetadosisCallerError::LookbackWindowOverflow)?;
-        let offering_end = lookback_end
-            .checked_add(seconds(offering_period_hours, "offering")?)
-            .ok_or(MetadosisCallerError::OfferingWindowOverflow)?;
-        let scheduled_process_time = offering_end
-            .checked_add(seconds(WAITING_PERIOD_HOURS, "waiting")?)
-            .ok_or(MetadosisCallerError::WaitingWindowOverflow)?;
-
-        self.worldwide_days.create(&WorldwideDayRecord {
+        TributeContract::new(self.storage.clone()).create_worldwide_day(
             wwd,
-            status: crate::WwdStatus::Forming.as_u8(),
-            day_type: crate::WwdDayType::Unknown.as_u8(),
             forming_start,
-            forming_end,
-            lookback_end,
-            offering_end,
-            scheduled_process_time,
-            metadosis_limit_minor: U256::ZERO,
-            previous_vwap_minor: U256::ZERO,
-            current_vwap_minor: U256::ZERO,
-        })
+            lookback_delay_hours,
+            offering_period_hours,
+        )
     }
 
     #[cfg(test)]
     fn delete_worldwide_day(&mut self, wwd: WorldwideDay) -> PrecompileResult<()> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
-            self.worldwide_day_terminal_receipts
-                .get_bytes(&wwd)
-                .clear()?;
-            self.worldwide_days.delete(wwd)?;
-            if self
-                .day_limit_formation_receipts
-                .entry(wwd)
-                .formed()
-                .read()?
-            {
-                self.day_limit_formation_receipts.delete(wwd)?;
-            }
+            self.delete_wwd_receipts_raw(wwd)?;
+            TributeContract::new(storage.clone()).delete_worldwide_day_record(wwd)?;
             Ok(())
         })
     }
@@ -148,10 +108,7 @@ impl FixtureKernelExt for MetadosisContract<'_> {
         {
             return Err(crate::errors::MetadosisCallerError::FormedDayLimitImmutable.into());
         }
-        self.worldwide_days
-            .entry(wwd)
-            .metadosis_limit_minor()
-            .write(amount)
+        TributeContract::new(self.storage.clone()).set_wwd_metadosis_limit_raw(wwd, amount)
     }
 
     #[cfg(test)]
@@ -160,10 +117,7 @@ impl FixtureKernelExt for MetadosisContract<'_> {
         wwd: WorldwideDay,
         status: crate::WwdStatus,
     ) -> PrecompileResult<()> {
-        self.worldwide_days
-            .entry(wwd)
-            .status()
-            .write(status.as_u8())
+        TributeContract::new(self.storage.clone()).fixture_set_wwd_status(wwd, status)
     }
 
     fn fixture_create_ready_day(
@@ -173,38 +127,27 @@ impl FixtureKernelExt for MetadosisContract<'_> {
         previous_vwap_minor: U256,
         current_vwap_minor: U256,
     ) -> PrecompileResult<()> {
-        self.worldwide_days.create(&WorldwideDayRecord {
+        TributeContract::new(self.storage.clone()).fixture_create_ready_day(
             wwd,
-            status: crate::WwdStatus::Ready.as_u8(),
-            day_type: crate::WwdDayType::Green.as_u8(),
-            forming_start: 1,
-            forming_end: 2,
-            lookback_end: 3,
-            offering_end: 4,
-            scheduled_process_time: 5,
-            metadosis_limit_minor: day_limit,
+            day_limit,
             previous_vwap_minor,
             current_vwap_minor,
-        })
+        )
     }
 
     #[cfg(test)]
     fn corrupt_wwd_status_tag(&mut self, wwd: WorldwideDay, tag: u8) -> PrecompileResult<()> {
-        self.worldwide_days.entry(wwd).status().write(tag)
+        TributeContract::new(self.storage.clone()).corrupt_wwd_status_tag(wwd, tag)
     }
 
     #[cfg(test)]
     fn corrupt_wwd_day_type_tag(&mut self, wwd: WorldwideDay, tag: u8) -> PrecompileResult<()> {
-        self.worldwide_days.entry(wwd).day_type().write(tag)
+        TributeContract::new(self.storage.clone()).corrupt_wwd_day_type_tag(wwd, tag)
     }
 
     #[cfg(test)]
     fn fixture_seed_day_limit_formation(&mut self, wwd: WorldwideDay) -> PrecompileResult<()> {
-        let day_limit = self
-            .worldwide_days
-            .entry(wwd)
-            .metadosis_limit_minor()
-            .read()?;
+        let day_limit = TributeContract::new(self.storage.clone()).get_wwd_metadosis_limit(wwd)?;
         let receipt = self.day_limit_formation_receipts.entry(wwd);
         receipt.base_limit_minor().write(day_limit)?;
         receipt.promis_limit_before_minor().write(U256::ZERO)?;
@@ -221,10 +164,8 @@ impl FixtureKernelExt for MetadosisContract<'_> {
         wwd: WorldwideDay,
         scheduled_process_time: u64,
     ) -> PrecompileResult<()> {
-        self.worldwide_days
-            .entry(wwd)
-            .scheduled_process_time()
-            .write(scheduled_process_time)
+        TributeContract::new(self.storage.clone())
+            .fixture_set_scheduled_process_time(wwd, scheduled_process_time)
     }
 
     #[cfg(test)]
@@ -233,31 +174,22 @@ impl FixtureKernelExt for MetadosisContract<'_> {
         wwd: WorldwideDay,
         day_type: crate::WwdDayType,
     ) -> PrecompileResult<()> {
-        self.worldwide_days
-            .entry(wwd)
-            .day_type()
-            .write(day_type.as_u8())
+        TributeContract::new(self.storage.clone()).set_wwd_day_type(wwd, day_type)
     }
 
     fn add_active_wwd(&mut self, wwd: WorldwideDay) -> PrecompileResult<()> {
-        let active = self.active_wwd.read_all()?;
-        if active.contains(&wwd) {
-            return Ok(());
-        }
-        if active.len() >= MAX_ACTIVE_WWDS {
-            return Err(
-                crate::errors::MetadosisTestSupportError::ActiveWwdCapReached {
-                    max_active_wwds: MAX_ACTIVE_WWDS,
-                    wwd,
-                }
-                .into(),
-            );
-        }
-        self.active_wwd.insert(wwd).map(|_| ())
+        TributeContract::new(self.storage.clone()).add_active_wwd(wwd)
     }
 
     #[cfg(test)]
     fn remove_active_wwd(&mut self, wwd: WorldwideDay) -> PrecompileResult<()> {
-        self.active_wwd.remove(&wwd).map(|_| ())
+        TributeContract::new(self.storage.clone()).remove_active_wwd(wwd)
+    }
+}
+
+#[cfg(test)]
+impl<'storage> MetadosisContract<'storage> {
+    pub(crate) fn tribute(&self) -> TributeContract<'storage> {
+        TributeContract::new(self.storage.clone())
     }
 }

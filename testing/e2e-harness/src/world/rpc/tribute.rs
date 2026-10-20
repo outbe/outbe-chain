@@ -144,8 +144,8 @@ impl Rpc {
 
         let days: Vec<u32> = eth::read_call(
             &self.cfg.rpc0,
-            addresses::WWD_ADDR,
-            &IMetadosis::getWorldwideDaysByStatusCall { status: OFFERING },
+            addresses::TRIBUTE_ADDR,
+            &ITribute::getWorldwideDaysByStatusCall { status: OFFERING },
         )?;
         let worldwide_day = *days.first()?;
         if days.len() > 1 {

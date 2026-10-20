@@ -33,14 +33,6 @@ pub fn dispatch(
         let metadosis = MetadosisContract::new(storage);
         use IMetadosis::IMetadosisCalls::*;
         match call {
-            getWorldwideDay(c) => view(c, |c| queries::worldwide_day(&metadosis, c)),
-            getActiveWorldwideDays(_) => metadata::<IMetadosis::getActiveWorldwideDaysCall>(|| {
-                let wwds = metadosis.active_wwd.read_all()?;
-                Ok(wwds.into_iter().map(u32::from).collect())
-            }),
-            getWorldwideDaysByStatus(c) => {
-                view(c, |c| queries::worldwide_days_by_status(&metadosis, c))
-            }
             getBootstrapEndTime(_) => metadata::<IMetadosis::getBootstrapEndTimeCall>(|| {
                 metadosis.get_bootstrap_end_time()
             }),

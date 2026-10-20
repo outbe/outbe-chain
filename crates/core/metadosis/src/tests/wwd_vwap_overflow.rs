@@ -56,6 +56,7 @@ fn overflowing_worldwide_day_vwap_keeps_the_forming_edge() {
             status::LOOKBACK_DELAY
         );
         assert!(metadosis
+            .tribute()
             .worldwide_days
             .entry(wwd)
             .current_vwap_minor()

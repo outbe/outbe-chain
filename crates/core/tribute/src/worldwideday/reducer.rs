@@ -1,8 +1,9 @@
 use outbe_primitives::error::{PrecompileError, Result};
 
-use crate::{
+use super::{
     aggregate::{WwdMembership, WwdProjection, WwdStatus},
     constants::MAX_RETAINED_WWDS,
+    errors::WwdStorageCorruptionError,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -15,7 +16,7 @@ pub enum WwdAdvanceEdge {
 
 impl WwdAdvanceEdge {
     #[must_use]
-    pub(crate) const fn source(self) -> WwdStatus {
+    pub const fn source(self) -> WwdStatus {
         match self {
             Self::ResolveForming => WwdStatus::Forming,
             Self::OpenOffering => WwdStatus::LookbackDelay,
@@ -25,7 +26,7 @@ impl WwdAdvanceEdge {
     }
 
     #[must_use]
-    pub(crate) const fn target(self) -> WwdStatus {
+    pub const fn target(self) -> WwdStatus {
         match self {
             Self::ResolveForming => WwdStatus::LookbackDelay,
             Self::OpenOffering => WwdStatus::Offering,
@@ -36,7 +37,7 @@ impl WwdAdvanceEdge {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum WwdTransitionPlan {
+pub enum WwdTransitionPlan {
     Noop,
     Advance(Vec<WwdAdvanceEdge>),
     MissedOffering,
@@ -49,7 +50,6 @@ impl WwdTransitionPlan {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub enum ReadyDisposition {
     EmptyTributeDay,
     ZeroGratisAllocation,
@@ -58,7 +58,6 @@ pub enum ReadyDisposition {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[cfg_attr(not(any(test, feature = "test-utils")), allow(dead_code))]
 pub enum OuterWwdEvent {
     CreateDay,
     AdvanceDue {
@@ -87,7 +86,7 @@ pub enum OuterWwdTransitionKind {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct OuterWwdTransition {
+pub struct OuterWwdTransition {
     source: Option<WwdStatus>,
     target: WwdStatus,
     membership_after: WwdMembership,
@@ -96,27 +95,27 @@ pub(crate) struct OuterWwdTransition {
 
 impl OuterWwdTransition {
     #[must_use]
-    pub(crate) const fn source(&self) -> Option<WwdStatus> {
+    pub const fn source(&self) -> Option<WwdStatus> {
         self.source
     }
 
     #[must_use]
-    pub(crate) const fn target(&self) -> WwdStatus {
+    pub const fn target(&self) -> WwdStatus {
         self.target
     }
 
     #[must_use]
-    pub(crate) const fn membership_after(&self) -> WwdMembership {
+    pub const fn membership_after(&self) -> WwdMembership {
         self.membership_after
     }
 
     #[must_use]
-    pub(crate) const fn kind(&self) -> &OuterWwdTransitionKind {
+    pub const fn kind(&self) -> &OuterWwdTransitionKind {
         &self.kind
     }
 }
 
-pub(crate) fn reduce_outer_wwd(
+pub fn reduce_outer_wwd(
     current: Option<&WwdProjection>,
     event: OuterWwdEvent,
 ) -> Result<OuterWwdTransition> {
@@ -130,8 +129,7 @@ pub(crate) fn reduce_outer_wwd(
             ),
         });
     }
-    let current = current
-        .ok_or(crate::errors::MetadosisStorageCorruptionError::OuterWwdEventRequiresPersistedDay)?;
+    let current = current.ok_or(WwdStorageCorruptionError::OuterWwdEventRequiresPersistedDay)?;
     match event {
         OuterWwdEvent::AdvanceDue {
             block_time,
@@ -165,13 +163,11 @@ fn reduce_due(
     admission: Admission,
 ) -> Result<OuterWwdTransition> {
     if admission.retained_count > MAX_RETAINED_WWDS {
-        return Err(
-            crate::errors::MetadosisStorageCorruptionError::RetainedWwdCountExceedsCap {
-                retained_count: admission.retained_count,
-                max_retained_wwds: MAX_RETAINED_WWDS,
-            }
-            .into(),
-        );
+        return Err(WwdStorageCorruptionError::RetainedWwdCountExceedsCap {
+            retained_count: admission.retained_count,
+            max_retained_wwds: MAX_RETAINED_WWDS,
+        }
+        .into());
     }
     let mut plan = plan_wwd_advance(current, block_time)?;
     if admission.limit_final && current.metadosis_limit_minor.is_zero() && plan.opens_offering() {
@@ -283,7 +279,7 @@ fn reduce_failure(current: &WwdProjection) -> Result<OuterWwdTransition> {
 }
 
 fn invalid_event(current: &WwdProjection, event: OuterWwdEvent) -> PrecompileError {
-    crate::errors::MetadosisStorageCorruptionError::OuterWwdEventInvalidFromStatus {
+    WwdStorageCorruptionError::OuterWwdEventInvalidFromStatus {
         event,
         status: current.status,
     }
@@ -312,10 +308,7 @@ fn transition(
 /// The persisted status supplies the lowest time region that is still
 /// admissible. A timestamp behind that region is a consensus-state
 /// contradiction, not a request to rewind the state machine.
-pub(crate) fn plan_wwd_advance(
-    current: &WwdProjection,
-    block_time: u64,
-) -> Result<WwdTransitionPlan> {
+pub fn plan_wwd_advance(current: &WwdProjection, block_time: u64) -> Result<WwdTransitionPlan> {
     if block_time < current.forming_start || block_time < earliest_time(current) {
         return Err(backward_time(current, block_time));
     }
@@ -380,10 +373,15 @@ fn plan_offering(current: &WwdProjection, time: u64) -> WwdTransitionPlan {
 }
 
 fn backward_time(current: &WwdProjection, block_time: u64) -> PrecompileError {
-    crate::errors::MetadosisStorageCorruptionError::WwdStatusAheadOfBlockTimestamp {
+    WwdStorageCorruptionError::WwdStatusAheadOfBlockTimestamp {
         worldwide_day: current.worldwide_day,
         status: current.status,
         block_time,
     }
     .into()
 }
+
+#[cfg(test)]
+mod phase_tests;
+#[cfg(test)]
+mod tests;

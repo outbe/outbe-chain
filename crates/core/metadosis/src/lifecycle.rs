@@ -8,9 +8,10 @@ use crate::{
     aggregate::ValidatedWwdAggregate,
     commit::{commit_new_wwd, commit_outer_transition, NewWwdSchedule},
     reducer::{reduce_outer_wwd, OuterWwdEvent},
-    schema::{MetadosisContract, WorldwideDayEntryExt},
+    schema::MetadosisContract,
 };
 use outbe_primitives::{block::BlockRuntimeContext, error::Result, time::WorldwideDay};
+use outbe_tribute::{worldwideday::WorldwideDayEntryExt, TributeContract};
 
 pub(crate) fn validate_metadosis_timestamp(timestamp: u64) -> Result<()> {
     timestamp
@@ -38,11 +39,12 @@ fn initialize_bootstrap_if_needed(metadosis: &mut MetadosisContract) -> Result<(
     if metadosis.get_bootstrap_end_time()? != 0 {
         return Ok(());
     }
-    let active = metadosis.active_wwd.read_all()?;
+    let tribute = TributeContract::new(metadosis.storage.clone());
+    let active = tribute.active_wwd.read_all()?;
     let first = *active
         .first()
         .ok_or(crate::errors::MetadosisStorageCorruptionError::BootstrapNeedsGenesisWorldwideDay)?;
-    let record = metadosis.worldwide_days.get(first)?.ok_or(
+    let record = tribute.worldwide_days.get(first)?.ok_or(
         crate::errors::MetadosisStorageCorruptionError::GenesisWorldwideDayRecordDisappeared,
     )?;
     metadosis.set_bootstrap_end_time(record.lookback_end)
@@ -53,7 +55,8 @@ fn create_initial_worldwide_day_if_needed(
     ctx: &BlockRuntimeContext,
     timestamp: u64,
 ) -> Result<()> {
-    if !metadosis.active_wwd.is_empty()? {
+    let tribute = TributeContract::new(metadosis.storage.clone());
+    if !tribute.active_wwd.is_empty()? {
         return Ok(());
     }
     create_worldwide_day_if_needed(metadosis, ctx, timestamp)
@@ -75,7 +78,8 @@ pub(crate) fn create_worldwide_day_for_date(
     wwd: WorldwideDay,
 ) -> Result<()> {
     let aggregate = ValidatedWwdAggregate::load_and_validate(metadosis.storage.clone())?;
-    let existing_forming_start = metadosis.worldwide_days.entry(wwd).forming_start().read()?;
+    let tribute = TributeContract::new(metadosis.storage.clone());
+    let existing_forming_start = tribute.worldwide_days.entry(wwd).forming_start().read()?;
     if existing_forming_start != 0 {
         let current = aggregate.record(wwd).ok_or(
             crate::errors::MetadosisStorageCorruptionError::WwdRecordExistsOutsideValidatedMembership {

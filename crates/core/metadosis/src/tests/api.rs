@@ -38,9 +38,9 @@ fn typed_day_query_rejects_each_invalid_membership_cardinality() {
             super::precompile::seed_offering_day(storage.clone());
             let contract = MetadosisContract::new(storage.clone());
             if active {
-                contract.closed_wwd.push_back(wwd).unwrap();
+                contract.tribute().closed_wwd.push_back(wwd).unwrap();
             } else {
-                contract.active_wwd.remove(&wwd).unwrap();
+                contract.tribute().active_wwd.remove(&wwd).unwrap();
             }
             let error = api::worldwide_day(storage, wwd).unwrap_err();
             assert!(
@@ -56,11 +56,12 @@ fn offering_query_fails_closed_for_dangling_active_key_and_unknown_status() {
     with_storage(|storage| {
         let wwd = 20270101.into();
         let contract = MetadosisContract::new(storage.clone());
-        contract.active_wwd.insert(wwd).unwrap();
+        contract.tribute().active_wwd.insert(wwd).unwrap();
         assert!(api::offering_worldwide_days(storage.clone()).is_err());
-        contract.active_wwd.remove(&wwd).unwrap();
+        contract.tribute().active_wwd.remove(&wwd).unwrap();
         super::precompile::seed_offering_day(storage.clone());
         contract
+            .tribute()
             .worldwide_days
             .entry(wwd)
             .status()

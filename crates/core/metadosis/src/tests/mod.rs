@@ -11,7 +11,9 @@ use crate::constants::*;
 use crate::fixture_kernel::FixtureKernelExt;
 use crate::precompile::{dispatch as metadosis_dispatch, IMetadosis};
 use crate::runtime::timestamp_to_date_key;
-use crate::schema::{day_type, status, MetadosisContract, WorldwideDay, WorldwideDayEntryExt};
+use crate::schema::{day_type, status, MetadosisContract};
+use outbe_tribute::precompile::{dispatch as tribute_dispatch, ITribute};
+use outbe_tribute::worldwideday::{WorldwideDayEntryExt, WorldwideDayRecord as WorldwideDay};
 
 const CHAIN_ID: u64 = 1;
 
@@ -40,8 +42,8 @@ fn install_test_enclaves() {
 
 fn form_due_fixture_day_limits(storage: &StorageHandle, timestamp: u64) {
     let mut metadosis = MetadosisContract::new(storage.clone());
-    for wwd in metadosis.active_wwd.read_all().unwrap() {
-        let day = metadosis.worldwide_days.entry(wwd);
+    for wwd in metadosis.tribute().active_wwd.read_all().unwrap() {
+        let day = metadosis.tribute().worldwide_days.entry(wwd);
         let current = day.status().read().unwrap();
         if current < status::OFFERING
             && timestamp >= day.offering_end().read().unwrap()
@@ -118,7 +120,6 @@ mod lifecycle;
 mod lysis_ingress;
 mod onchain_lysis;
 mod precompile;
-mod reducer;
 mod state;
 mod wwd_vwap_overflow;
 

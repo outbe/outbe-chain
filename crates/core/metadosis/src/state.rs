@@ -1,13 +1,12 @@
-use crate::aggregate::{WwdDayType, WwdStatus};
-use crate::constants::*;
+use crate::aggregate::WwdDayType;
+#[cfg(test)]
+use crate::aggregate::WwdStatus;
 use crate::errors::{MetadosisCallerError, MetadosisStorageCorruptionError};
-use crate::precompile::IMetadosis;
-use crate::schema::{
-    DayLimitFormationReceiptStateEntryExt, MetadosisContract, WorldwideDay, WorldwideDayEntryExt,
-};
+use crate::schema::{DayLimitFormationReceiptStateEntryExt, MetadosisContract};
 use alloy_primitives::U256;
 use outbe_primitives::error::Result;
 use outbe_primitives::time::WorldwideDay as WorldwideDayKey;
+use outbe_tribute::TributeContract;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DayLimitFormation {
@@ -45,31 +44,6 @@ impl MetadosisContract<'_> {
         }
     }
 
-    // --- WorldwideDay Management ---
-
-    pub(crate) fn commit_create_worldwide_day(
-        &mut self,
-        _permit: &crate::commit::CommitPermit<'_>,
-        wwd: WorldwideDayKey,
-        schedule: crate::commit::NewWwdSchedule,
-    ) -> Result<()> {
-        self.create_worldwide_day_raw(wwd, schedule)
-    }
-
-    pub(crate) fn commit_set_wwd_rate_resolution(
-        &mut self,
-        _permit: &crate::commit::CommitPermit<'_>,
-        wwd: WorldwideDayKey,
-        resolution: crate::commit::WwdRateResolution,
-    ) -> Result<()> {
-        let day = self.worldwide_days.entry(wwd);
-        day.previous_vwap_minor()
-            .write(resolution.previous_vwap_minor)?;
-        day.current_vwap_minor()
-            .write(resolution.current_vwap_minor)?;
-        day.day_type().write(resolution.day_type.as_u8())
-    }
-
     pub(crate) fn commit_write_day_limit_formation(
         &mut self,
         _permit: &crate::commit::CommitPermit<'_>,
@@ -83,10 +57,19 @@ impl MetadosisContract<'_> {
         {
             return Err(MetadosisCallerError::FormedDayLimitImmutable.into());
         }
-        self.worldwide_days
-            .entry(formation.worldwide_day)
-            .metadosis_limit_minor()
-            .write(formation.day_limit)?;
+        let mut tribute = TributeContract::new(self.storage.clone());
+        outbe_tribute::worldwideday::commit_set_day_limit(
+            &mut tribute,
+            formation.worldwide_day,
+            formation.day_limit,
+            || {
+                MetadosisStorageCorruptionError::DayLimitFormationMissingPersistedWwd {
+                    worldwide_day: formation.worldwide_day,
+                }
+                .into()
+            },
+            || MetadosisStorageCorruptionError::DayLimitFormationRequiresNoopOuterTransition.into(),
+        )?;
         let receipt = self
             .day_limit_formation_receipts
             .entry(formation.worldwide_day);
@@ -115,46 +98,6 @@ impl MetadosisContract<'_> {
             .write(true)
     }
 
-    fn create_worldwide_day_raw(
-        &mut self,
-        wwd: WorldwideDayKey,
-        schedule: crate::commit::NewWwdSchedule,
-    ) -> Result<()> {
-        let crate::commit::NewWwdSchedule {
-            forming_start,
-            forming_period_seconds,
-            lookback_delay_seconds,
-            offering_period_seconds,
-            waiting_period_seconds,
-        } = schedule;
-        let forming_end = forming_start
-            .checked_add(forming_period_seconds)
-            .ok_or(MetadosisCallerError::FormingWindowOverflow)?;
-        let lookback_end = forming_end
-            .checked_add(lookback_delay_seconds)
-            .ok_or(MetadosisCallerError::LookbackWindowOverflow)?;
-        let offering_end = lookback_end
-            .checked_add(offering_period_seconds)
-            .ok_or(MetadosisCallerError::OfferingWindowOverflow)?;
-        let scheduled_process_time = offering_end
-            .checked_add(waiting_period_seconds)
-            .ok_or(MetadosisCallerError::WaitingWindowOverflow)?;
-
-        self.worldwide_days.create(&WorldwideDay {
-            wwd,
-            status: WwdStatus::Forming.as_u8(),
-            day_type: WwdDayType::Unknown.as_u8(),
-            forming_start,
-            forming_end,
-            lookback_end,
-            offering_end,
-            scheduled_process_time,
-            metadosis_limit_minor: U256::ZERO,
-            previous_vwap_minor: U256::ZERO,
-            current_vwap_minor: U256::ZERO,
-        })
-    }
-
     pub fn day_limit_formation(
         &self,
         wwd_key: WorldwideDayKey,
@@ -163,11 +106,8 @@ impl MetadosisContract<'_> {
         if !receipt.formed().read()? {
             return Ok(None);
         }
-        let persisted_day_limit = self
-            .worldwide_days
-            .entry(wwd_key)
-            .metadosis_limit_minor()
-            .read()?;
+        let persisted_day_limit =
+            TributeContract::new(self.storage.clone()).get_wwd_metadosis_limit(wwd_key)?;
         let base_limit = receipt.base_limit_minor().read()?;
         let carry_over_before = receipt.promis_limit_before_minor().read()?;
         let carry_over_taken = receipt.promis_limit_taken_minor().read()?;
@@ -199,119 +139,47 @@ impl MetadosisContract<'_> {
             .map(|formed| formed.map(DayLimitFormationReceipt::Formed))
     }
 
-    pub(crate) fn commit_delete_worldwide_day(
+    pub(crate) fn cleanup_evicted_wwd_receipts(
         &mut self,
         _permit: &crate::commit::CommitPermit<'_>,
-        wwd_key: WorldwideDayKey,
+        evicted_days: &[WorldwideDayKey],
     ) -> Result<()> {
-        self.delete_worldwide_day_raw(wwd_key)
+        for &wwd_key in evicted_days {
+            self.delete_wwd_receipts_raw(wwd_key)?;
+        }
+        Ok(())
     }
 
-    fn delete_worldwide_day_raw(&mut self, wwd_key: WorldwideDayKey) -> Result<()> {
-        (|| {
-            // The day's terminal-evidence index dies with the day. Without
-            // this, retired days would leak index entries forever.
-            self.worldwide_day_terminal_receipts
-                .get_bytes(&wwd_key)
-                .clear()?;
-            self.worldwide_days.delete(wwd_key)?;
-            if self
-                .day_limit_formation_receipts
-                .entry(wwd_key)
-                .formed()
-                .read()?
-            {
-                self.day_limit_formation_receipts.delete(wwd_key)?;
-            }
-            Ok(())
-        })()
+    pub(crate) fn delete_wwd_receipts_raw(&mut self, wwd_key: WorldwideDayKey) -> Result<()> {
+        self.worldwide_day_terminal_receipts
+            .get_bytes(&wwd_key)
+            .clear()?;
+        if self
+            .day_limit_formation_receipts
+            .entry(wwd_key)
+            .formed()
+            .read()?
+        {
+            self.day_limit_formation_receipts.delete(wwd_key)?;
+        }
+        Ok(())
     }
 
+    #[cfg(test)]
     pub fn get_wwd_status(&self, wwd: WorldwideDayKey) -> Result<WwdStatus> {
-        WwdStatus::try_from(self.worldwide_days.entry(wwd).status().read()?)
+        TributeContract::new(self.storage.clone()).get_wwd_status(wwd)
     }
 
     pub fn get_wwd_day_type(&self, wwd: WorldwideDayKey) -> Result<WwdDayType> {
-        WwdDayType::try_from(self.worldwide_days.entry(wwd).day_type().read()?)
+        TributeContract::new(self.storage.clone()).get_wwd_day_type(wwd)
     }
 
-    /// Moves a now-terminal day out of the active set and onto the bounded
-    /// delete-queue. When the queue exceeds `MAX_RECORDS_KEPT`, pops the oldest
-    /// day from the front and deletes its record (emitting `WorldwideDayCleanedUp`).
-    pub(crate) fn commit_retire_terminal_wwd(
-        &mut self,
-        permit: &crate::commit::CommitPermit<'_>,
-        wwd: WorldwideDayKey,
-    ) -> Result<()> {
-        self.remove_active_wwd_raw(wwd)?;
-        self.closed_wwd.push_back(wwd)?;
-        // usize -> u64 is a widening, lossless conversion.
-        while self.closed_wwd.len()? > MAX_RECORDS_KEPT as u64 {
-            let Some(evicted) = self.closed_wwd.pop_front()? else {
-                break;
-            };
-            let final_status = self.get_wwd_status(evicted)?;
-            self.commit_delete_worldwide_day(permit, evicted)?;
-            self.emit(IMetadosis::WorldwideDayCleanedUp {
-                worldwideDay: evicted.into(),
-                finalStatus: final_status.as_u8(),
-            })?;
-        }
-        Ok(())
-    }
-
-    // --- Active WWD List ---
-
-    pub(crate) fn commit_add_active_wwd(
-        &mut self,
-        _permit: &crate::commit::CommitPermit<'_>,
-        wwd_key: WorldwideDayKey,
-    ) -> Result<()> {
-        self.add_active_wwd_raw(wwd_key)
-    }
-
-    fn add_active_wwd_raw(&mut self, wwd_key: WorldwideDayKey) -> Result<()> {
-        let active = self.active_wwd.read_all()?;
-        if active.contains(&wwd_key) {
-            return Ok(());
-        }
-        if active.len() >= MAX_ACTIVE_WWDS {
-            return Err(MetadosisStorageCorruptionError::ActiveWwdCapReached {
-                max_active_wwds: MAX_ACTIVE_WWDS,
-                wwd: wwd_key,
-            }
-            .into());
-        }
-        self.active_wwd.insert(wwd_key)?;
-        Ok(())
-    }
-
-    fn remove_active_wwd_raw(&mut self, wwd_key: WorldwideDayKey) -> Result<()> {
-        self.active_wwd.remove(&wwd_key)?;
-        Ok(())
-    }
-
+    #[cfg(test)]
     pub fn get_active_wwd_by_status(
         &self,
         wanted_status: WwdStatus,
     ) -> Result<Vec<WorldwideDayKey>> {
-        let mut result = Vec::new();
-        for wwd in self.active_wwd.read_all()? {
-            if self.get_wwd_status(wwd)? == wanted_status {
-                result.push(wwd);
-            }
-        }
-        // Terminal records live in the bounded delete-queue, not active_wwd, so
-        // COMPLETED/FAILED status queries must also scan the queue. The two sets
-        // are disjoint (active = non-terminal, queue = terminal), so no dedup is needed.
-        if wanted_status.is_terminal() {
-            for wwd in self.closed_wwd.read_all()? {
-                if self.get_wwd_status(wwd)? == wanted_status {
-                    result.push(wwd);
-                }
-            }
-        }
-        Ok(result)
+        TributeContract::new(self.storage.clone()).get_active_wwd_by_status(wanted_status)
     }
 
     // --- Bootstrap ---

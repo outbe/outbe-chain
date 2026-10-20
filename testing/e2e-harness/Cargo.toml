@@ -60,7 +60,7 @@ outbe-metadosis = { workspace = true, features = ["test-utils"] }
 outbe-nod = { workspace = true }
 outbe-nodfactory = { workspace = true }
 outbe-oracle = { workspace = true }
-outbe-tribute.workspace = true
+outbe-tribute = { workspace = true, features = ["test-utils"] }
 outbe-vaultrouter = { workspace = true }
 outbe-tee-enclave = { workspace = true }
 rand.workspace = true

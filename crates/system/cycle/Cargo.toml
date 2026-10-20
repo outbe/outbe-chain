@@ -35,7 +35,7 @@ proptest.workspace = true
 outbe-metadosis = { workspace = true, features = ["test-utils"] }
 outbe-oracle.workspace = true
 outbe-promislimit.workspace = true
-outbe-validatorset.workspace = true
+outbe-validatorset = { workspace = true, features = ["test-utils"] }
 
 [lints]
 workspace = true

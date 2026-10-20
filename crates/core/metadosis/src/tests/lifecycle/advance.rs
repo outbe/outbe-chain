@@ -37,6 +37,7 @@ fn seed_forming_day_for_advance(
         metadosis.set_metadosis_limit(wwd, U256::ONE).unwrap();
         TributeContract::new(storage).seal_day(wwd).unwrap();
         metadosis
+            .tribute()
             .worldwide_days
             .entry(wwd)
             .lookback_end()
@@ -53,7 +54,10 @@ fn assert_opened_offering_once(
     StorageHandle::enter(provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::OFFERING);
-        assert_eq!(metadosis.active_wwd.read_all().unwrap(), vec![wwd]);
+        assert_eq!(
+            metadosis.tribute().active_wwd.read_all().unwrap(),
+            vec![wwd]
+        );
         assert!(!TributeContract::new(storage).is_day_sealed(wwd).unwrap());
     });
     assert_eq!(
@@ -163,7 +167,7 @@ fn advance_active_worldwide_days_advances_status_without_creating_or_settling() 
         assert!(!tribute.is_day_sealed(wwd).unwrap());
 
         // Advancing did not create any other worldwide day.
-        let active = metadosis.active_wwd.read_all().unwrap();
+        let active = metadosis.tribute().active_wwd.read_all().unwrap();
         assert_eq!(active, vec![wwd], "advance must not create worldwide days");
         drop(metadosis);
 
@@ -173,7 +177,7 @@ fn advance_active_worldwide_days_advances_status_without_creating_or_settling() 
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::READY);
         assert_eq!(
-            metadosis.active_wwd.read_all().unwrap(),
+            metadosis.tribute().active_wwd.read_all().unwrap(),
             vec![wwd],
             "advance must not settle or retire a READY day"
         );
@@ -210,8 +214,18 @@ fn technical_desis_refusal_rolls_back_the_metadosis_cycle_command() {
 
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), WwdStatus::Waiting);
-        assert!(metadosis.active_wwd.read_all().unwrap().contains(&wwd));
-        assert!(!metadosis.closed_wwd.read_all().unwrap().contains(&wwd));
+        assert!(metadosis
+            .tribute()
+            .active_wwd
+            .read_all()
+            .unwrap()
+            .contains(&wwd));
+        assert!(!metadosis
+            .tribute()
+            .closed_wwd
+            .read_all()
+            .unwrap()
+            .contains(&wwd));
         assert_eq!(
             PromisLimitContract::new(storage.clone())
                 .get_total_unallocated()
@@ -236,7 +250,8 @@ fn test_events_emitted_for_accumulation_and_lifecycle() {
     );
     outbe_fidelity::enclave_client::test_enclave::install();
     outbe_tribute::enclave_client::test_enclave::install();
-    let contract_addr = outbe_primitives::addresses::METADOSIS_ADDRESS;
+    let metadosis_addr = outbe_primitives::addresses::METADOSIS_ADDRESS;
+    let tribute_addr = outbe_primitives::addresses::TRIBUTE_ADDRESS;
 
     StorageHandle::enter(&mut storage, |storage| {
         install_test_enclaves();
@@ -250,10 +265,11 @@ fn test_events_emitted_for_accumulation_and_lifecycle() {
         crate::commands::start_metadosis(&ctx).unwrap();
     });
 
-    let events = storage.get_events(contract_addr);
+    let metadosis_events = storage.get_events(metadosis_addr);
+    let tribute_events = storage.get_events(tribute_addr);
     assert!(
-        events.len() >= 2,
-        "expected accumulation + lifecycle events"
+        !metadosis_events.is_empty() && !tribute_events.is_empty(),
+        "expected accumulation event on Metadosis and lifecycle event on Tribute"
     );
 }
 
@@ -294,7 +310,12 @@ fn test_terminal_day_leaves_active_set() {
         // The day completed. Metadosis retired it out of the active set into the
         // bounded delete-queue, but it stays readable while under the cap.
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::COMPLETED);
-        assert!(!metadosis.active_wwd.read_all().unwrap().contains(&wwd));
+        assert!(!metadosis
+            .tribute()
+            .active_wwd
+            .read_all()
+            .unwrap()
+            .contains(&wwd));
         assert!(metadosis
             .get_active_wwd_by_status(WwdStatus::Completed)
             .unwrap()
