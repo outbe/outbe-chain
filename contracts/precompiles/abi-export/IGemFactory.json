@@ -332,7 +332,7 @@
     "name": "ExpiryDeferred",
     "inputs": [
       {
-        "name": "bucketKey",
+        "name": "groupKey",
         "type": "bytes32",
         "indexed": true,
         "internalType": "bytes32"
@@ -454,7 +454,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "bucketKey",
+        "name": "groupKey",
         "type": "bytes32",
         "indexed": true,
         "internalType": "bytes32"
@@ -464,25 +464,19 @@
   },
   {
     "type": "event",
-    "name": "GemPositionExpired",
+    "name": "GemPositionGroupExpired",
     "inputs": [
       {
-        "name": "positionId",
-        "type": "uint256",
+        "name": "expiryHour",
+        "type": "uint64",
         "indexed": true,
-        "internalType": "uint256"
+        "internalType": "uint64"
       },
       {
-        "name": "merchant",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "sourceIntexId",
-        "type": "bytes14",
+        "name": "positions",
+        "type": "uint32",
         "indexed": false,
-        "internalType": "bytes14"
+        "internalType": "uint32"
       },
       {
         "name": "returnedCapacityMinor",
@@ -587,31 +581,6 @@
         "type": "uint16",
         "indexed": false,
         "internalType": "uint16"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "SweepDaySkipped",
-    "inputs": [
-      {
-        "name": "sweep",
-        "type": "uint8",
-        "indexed": true,
-        "internalType": "uint8"
-      },
-      {
-        "name": "skippedDay",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      },
-      {
-        "name": "inFlightDay",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
       }
     ],
     "anonymous": false

@@ -483,7 +483,7 @@ fn claim_gem_and_assert_gas_only_cost(
         );
         let expected_load = claimable;
         assert!(!expected_load.is_zero());
-        assert!(!issued.bucketKey.is_zero());
+        assert!(!issued.groupKey.is_zero());
         let expected = eth::IGemFactory::GemIssued {
             gemId: added[0],
             gemType: gem.gemType,
@@ -498,7 +498,7 @@ fn claim_gem_and_assert_gas_only_cost(
             callThreshold: issued.callThreshold,
             callNoticePeriod: gem.callNoticePeriod,
             positionId: U256::ZERO,
-            bucketKey: issued.bucketKey,
+            groupKey: issued.groupKey,
         };
         assert_claimed_gem(&gem, pool, &expected);
         assert_eq!(gem.gemId, added[0]);
@@ -787,6 +787,7 @@ mod claim_tests {
             callWindow: 0,
             callThreshold: 0,
             settlementDeadline: 0,
+            groupKey: Default::default(),
         }
     }
 
@@ -805,7 +806,7 @@ mod claim_tests {
             callThreshold: 0,
             callNoticePeriod: 0,
             positionId: U256::ZERO,
-            bucketKey: Default::default(),
+            groupKey: Default::default(),
         }
     }
 

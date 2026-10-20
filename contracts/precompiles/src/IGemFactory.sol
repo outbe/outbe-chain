@@ -46,6 +46,7 @@ interface IGemFactory {
         returns (uint16 settlementCurrency, uint256 paymentMinor, uint256 snapshotId);
 
     // --- GemPosition NFT (ERC-721-style, non-transferable; owner = merchant) ---
+    // An expired position stays readable until the cleanup deletes it.
     /// @notice Number of GemPositions owned by `owner`.
     function balanceOf(address owner) external view returns (uint256);
     /// @notice Merchant that owns the position `positionId`.
@@ -62,6 +63,7 @@ interface IGemFactory {
         uint256 positionId;
         address merchant;
         bytes14 sourceIntexId;
+        /// @notice 0 once the position expired.
         uint256 remainingCapacityMinor;
         uint256 sourceEntryPriceMinor;
         uint16 issuanceCurrency;
@@ -74,8 +76,8 @@ interface IGemFactory {
 
     // --- Events (emitted by the GemFactory precompile) ---
     /// @notice A new gem was issued (agent reward or merchant flow). `positionId`
-    ///         is the position a merchant gem drew on, 0 otherwise. `bucketKey` names the
-    ///         call bucket that `IGem.GemBucketCalled` reports.
+    ///         is the position a merchant gem drew on, 0 otherwise. `groupKey` names the
+    ///         call group that `IGem.GemGroupCalled` reports.
     event GemIssued(
         uint256 indexed gemId,
         uint8 gemType,
@@ -90,7 +92,7 @@ interface IGemFactory {
         uint32 callThreshold,
         uint32 callNoticePeriod,
         uint256 positionId,
-        bytes32 indexed bucketKey
+        bytes32 indexed groupKey
     );
     /// @notice A merchant sent Intex units into a new position.
     event GemPositionIssued(
@@ -110,17 +112,13 @@ interface IGemFactory {
     );
     /// @notice A settled gem right was exercised: it burned to mine confidential Promis.
     event GemExercised(uint256 indexed gemId, address owner, uint256 promisLoadMinor);
-    /// @notice A due Called bucket was not fully forfeited. The expiry sweep tries its
-    ///         remaining gems again at `retryAt`.
-    event ExpiryDeferred(bytes32 indexed bucketKey, uint64 retryAt);
+    /// @notice A lapsed group could not be forfeited. The expiry sweep comes back to it
+    ///         at `retryAt`.
+    event ExpiryDeferred(bytes32 indexed groupKey, uint64 retryAt);
     /// @notice A reference currency was left out of one day's Call scan because its
     ///         window price could not be indexed. The next daily pass tries it again.
     event CallScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);
-    /// @notice The daily call sweep (`sweep` = 1) fell two days behind: `skippedDay`
-    ///         gave its place to a newer day and will not be walked.
-    event SweepDaySkipped(uint8 indexed sweep, uint32 skippedDay, uint32 inFlightDay);
-    /// @notice A position ended its validity with capacity it never issued.
-    event GemPositionExpired(
-        uint256 indexed positionId, address indexed merchant, bytes14 sourceIntexId, uint256 returnedCapacityMinor
-    );
+    /// @notice The `positions` positions whose validity ended in `expiryHour` (unix time
+    ///         / 3600) returned the capacity they never issued, and the cleanup deletes them.
+    event GemPositionGroupExpired(uint64 indexed expiryHour, uint32 positions, uint256 returnedCapacityMinor);
 }

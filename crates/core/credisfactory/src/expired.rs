@@ -1,35 +1,28 @@
-//! Forfeits the called Credis whose settlement window lapsed, earliest deadline first.
+//! Forfeits the called groups whose settlement window lapsed, earliest deadline first,
+//! and hands their Credis to the cleanup.
 
-use alloy_primitives::U256;
+use alloy_primitives::B256;
 use alloy_sol_types::SolEvent;
-use outbe_credis::{CredisContract, CredisState, ExpiryHours};
+use outbe_credis::precompile::ICredis;
+use outbe_credis::{CredisContract, ExpiryHours};
 use outbe_primitives::{
     addresses::CREDIS_FACTORY_ADDRESS,
     block::BlockRuntimeContext,
     error::Result,
     expiry_queue::{self, Due, ExpiryHandler},
-    sweep_budget::SweepBudget,
 };
 
 use crate::precompile::ICredisFactory::ExpiryDeferred;
-use crate::runtime;
 
-/// Runs from CycleTick every block. Returns the number of Credis forfeited.
-pub(crate) fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
+/// Runs from CycleTick every block. Returns the groups forfeited.
+pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = CredisContract::new(ctx.storage.clone());
     let mut expiry = CredisExpiry {
         ctx,
         credis: CredisContract::new(ctx.storage.clone()),
         forfeited: 0,
     };
-    let mut budget = SweepBudget::per_block();
-    expiry_queue::sweep(
-        &ExpiryHours(&queue),
-        &ctx.storage,
-        ctx.block.timestamp,
-        &mut budget,
-        &mut expiry,
-    )?;
+    expiry_queue::sweep_block(&ExpiryHours(&queue), ctx, &mut expiry)?;
     Ok(expiry.forfeited)
 }
 
@@ -39,39 +32,47 @@ struct CredisExpiry<'a, 'storage> {
     forfeited: u32,
 }
 
-/// A Credis is its own and only member.
-impl ExpiryHandler<U256> for CredisExpiry<'_, '_> {
-    type Member = U256;
+/// A called group forfeits as one: it is its own and only member.
+impl ExpiryHandler<B256> for CredisExpiry<'_, '_> {
+    type Member = B256;
 
-    fn due(&mut self, credis_id: U256) -> Result<Due> {
-        let Some(record) = self.credis.records.get(credis_id)? else {
-            return Ok(Due::Drop);
-        };
-        let forfeitable = record.lifecycle_state()? == CredisState::Called
-            && !record.outstanding_principal_minor.is_zero();
-        Ok(if forfeitable { Due::Expire } else { Due::Drop })
+    fn due(&mut self, group: B256) -> Result<Due> {
+        let called = self.credis.group_called_at.read(&group)? != 0;
+        Ok(
+            match called && self.credis.group_member_count(group)? != 0 {
+                true => Due::Expire,
+                false => Due::Drop,
+            },
+        )
     }
 
-    fn member_count(&self, _credis_id: U256) -> Result<u32> {
+    fn member_count(&self, _group: B256) -> Result<u32> {
         Ok(1)
     }
 
-    fn member_at(&self, credis_id: U256, _index: u32) -> Result<U256> {
-        Ok(credis_id)
+    fn member_at(&self, group: B256, _index: u32) -> Result<B256> {
+        Ok(group)
     }
 
-    fn expire_member(&mut self, credis_id: U256, _member: U256) -> Result<()> {
-        runtime::forfeit_credis(self.ctx.storage.clone(), credis_id)?;
+    /// Forfeits the group's Credis at once. Each one's Gratis burns and returns to the
+    /// Promis reserve together, in the cleanup.
+    fn expire_member(&mut self, group: B256, _member: B256) -> Result<()> {
+        let credis = self.credis.group_member_count(group)?;
+        self.credis.hand_to_cleanup(group)?;
+        self.credis.emit(ICredis::CredisGroupForfeited {
+            groupKey: group,
+            credis,
+        })?;
         self.forfeited = self.forfeited.saturating_add(1);
         Ok(())
     }
 
-    fn deferred(&mut self, credis_id: U256, retry_at: u64) -> Result<()> {
-        tracing::warn!(target: "outbe::credisfactory", %credis_id, retry_at, "expiry sweep: forfeit deferred");
+    fn deferred(&mut self, group: B256, retry_at: u64) -> Result<()> {
+        tracing::warn!(target: "outbe::credisfactory", %group, retry_at, "expiry sweep: forfeit deferred");
         self.ctx.storage.emit_event(
             CREDIS_FACTORY_ADDRESS,
             SolEvent::encode_log_data(&ExpiryDeferred {
-                credisId: credis_id,
+                groupKey: group,
                 retryAt: retry_at,
             }),
         )

@@ -180,6 +180,11 @@
             "name": "settlementDeadline",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "groupKey",
+            "type": "bytes32",
+            "internalType": "bytes32"
           }
         ]
       }
@@ -525,10 +530,10 @@
   },
   {
     "type": "event",
-    "name": "NodBucketCalled",
+    "name": "NodGroupCalled",
     "inputs": [
       {
-        "name": "bucketKey",
+        "name": "groupKey",
         "type": "bytes32",
         "indexed": true,
         "internalType": "bytes32"
@@ -550,25 +555,25 @@
   },
   {
     "type": "event",
-    "name": "NodForfeited",
+    "name": "NodGroupForfeited",
     "inputs": [
       {
-        "name": "owner",
-        "type": "address",
+        "name": "groupKey",
+        "type": "bytes32",
         "indexed": true,
-        "internalType": "address"
+        "internalType": "bytes32"
       },
       {
-        "name": "nodId",
+        "name": "nods",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "gratisLoadMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
-      },
-      {
-        "name": "encryptedGratisAmount",
-        "type": "bytes",
-        "indexed": false,
-        "internalType": "bytes"
       }
     ],
     "anonymous": false

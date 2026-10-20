@@ -21,7 +21,6 @@ pub enum TriggerId {
     AuctionClearing = 4,
     CredisCallDaily = 5,
     NodCallDaily = 6,
-    GemPositionDaily = 7,
     IntexDrainParked = 8,
 }
 
@@ -71,7 +70,6 @@ pub enum TriggerHandler {
     AuctionClearing,
     CredisCallDaily,
     NodCallDaily,
-    GemPositionDaily,
     IntexDrainParked,
 }
 
@@ -85,7 +83,6 @@ impl TriggerHandler {
             Self::AuctionClearing => outbe_desis::tick_gate(ctx),
             Self::CredisCallDaily => outbe_credisfactory::called::run_daily(ctx),
             Self::NodCallDaily => outbe_nodfactory::called::run_daily(ctx),
-            Self::GemPositionDaily => outbe_gemfactory::positions_expired::run_daily(ctx),
             Self::IntexDrainParked => outbe_intexfactory::parked::drain(ctx),
         }
     }
@@ -107,12 +104,6 @@ const CALL_SWEEP_PERIOD_SECONDS: u64 = outbe_primitives::time::SECONDS_PER_DAY;
 #[cfg(feature = "e2e-test")]
 const CALL_SWEEP_PERIOD_SECONDS: u64 = 60;
 
-/// The gem position sweep is daily in production for the same reason.
-#[cfg(not(feature = "e2e-test"))]
-const GEM_POSITION_PERIOD_SECONDS: u64 = outbe_primitives::time::SECONDS_PER_DAY;
-#[cfg(feature = "e2e-test")]
-const GEM_POSITION_PERIOD_SECONDS: u64 = 60;
-
 /// Cadence of the auction clearing poll, shortened for the same reason.
 #[cfg(not(feature = "e2e-test"))]
 const OUTBOUND_POLL_PERIOD_SECONDS: u64 = 600;
@@ -124,7 +115,7 @@ const OUTBOUND_POLL_PERIOD_SECONDS: u64 = 30;
 /// The first handler error stops the walk.
 /// AuctionAdvance must stay after ProtocolCycle.
 /// Same-slot brief and auction order depends on that sequence.
-pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 9] {
+pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 8] {
     [
         TriggerSpec {
             id: TriggerId::ProtocolCycle.as_u32(),
@@ -221,16 +212,6 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             handler: TriggerHandler::NodCallDaily,
         },
         TriggerSpec {
-            id: TriggerId::GemPositionDaily.as_u32(),
-            label: "gem_position_daily",
-            period_seconds: GEM_POSITION_PERIOD_SECONDS,
-            start_offset_seconds: 0,
-            // Walks positions by time alone: no oracle, no settlement accounting.
-            requires_accounting_window: false,
-            coalesces_backlog: false,
-            handler: TriggerHandler::GemPositionDaily,
-        },
-        TriggerSpec {
             id: TriggerId::IntexDrainParked.as_u32(),
             label: "intex_drain_parked",
             // Polls what the origin router parked, on the same cadence as the other outbound polls.
@@ -246,7 +227,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
     ]
 }
 
-pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 9] =
+pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 8] =
     active_triggers(outbe_chain_constants::DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS);
 pub const ACTIVE_TRIGGERS: &[TriggerSpec] = &ACTIVE_TRIGGER_ARRAY;
 
@@ -286,12 +267,9 @@ mod protocol_parameter_tests {
 
     #[test]
     fn protocol_cycle_uses_the_genesis_interval() {
-        // The call and gem position sweeps are daily in a release build; e2e shortens them.
+        // The call sweeps are daily in a release build; e2e shortens them.
         #[cfg(not(feature = "e2e-test"))]
-        assert_eq!(
-            (CALL_SWEEP_PERIOD_SECONDS, GEM_POSITION_PERIOD_SECONDS),
-            (SECONDS_PER_DAY, SECONDS_PER_DAY)
-        );
+        assert_eq!(CALL_SWEEP_PERIOD_SECONDS, SECONDS_PER_DAY);
         let configured = active_triggers(10);
         assert_eq!(configured[0].period_seconds, 10);
         assert_eq!(configured[0].start_offset_seconds, 0);
@@ -320,17 +298,10 @@ mod protocol_parameter_tests {
             configured[6].handler,
             TriggerHandler::NodCallDaily
         ));
-        assert_eq!(configured[7].period_seconds, GEM_POSITION_PERIOD_SECONDS);
-        assert_eq!(configured[7].start_offset_seconds, 0);
+        assert_eq!(configured[7].period_seconds, OUTBOUND_POLL_PERIOD_SECONDS);
+        assert_eq!(configured[7].id, TriggerId::IntexDrainParked.as_u32());
         assert!(matches!(
             configured[7].handler,
-            TriggerHandler::GemPositionDaily
-        ));
-
-        assert_eq!(configured[8].period_seconds, OUTBOUND_POLL_PERIOD_SECONDS);
-        assert_eq!(configured[8].id, TriggerId::IntexDrainParked.as_u32());
-        assert!(matches!(
-            configured[8].handler,
             TriggerHandler::IntexDrainParked
         ));
 
