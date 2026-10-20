@@ -1553,22 +1553,6 @@
     },
     {
       "type": "error",
-      "name": "BidAmountOverflow",
-      "inputs": [
-        {
-          "name": "quantity",
-          "type": "uint16",
-          "internalType": "uint16"
-        },
-        {
-          "name": "bidRate",
-          "type": "uint32",
-          "internalType": "uint32"
-        }
-      ]
-    },
-    {
-      "type": "error",
       "name": "BidBelowMinIntexBidQuantity",
       "inputs": []
     },

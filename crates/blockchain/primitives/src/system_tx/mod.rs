@@ -61,8 +61,6 @@ pub const SYSTEM_TX_INPUT_VERSION: u8 = 2;
 pub const CERTIFIED_PARENT_ACCOUNTING_SELECTOR: [u8; 4] = *b"OSA3";
 /// Selector for [`SystemTxKind::CycleTick`] (V2 OSC2).
 pub const CYCLE_TICK_SELECTOR: [u8; 4] = *b"OSC2";
-/// Selector for [`SystemTxKind::RewardsGemDelivery`] (V2 OSG2).
-pub const REWARDS_GEM_DELIVERY_SELECTOR: [u8; 4] = *b"OSG2";
 /// Selector for [`SystemTxKind::BoundaryOutcome`] (V2 OSB2).
 pub const BOUNDARY_OUTCOME_SELECTOR: [u8; 4] = *b"OSB2";
 /// Selector for [`SystemTxKind::OracleSlashWindow`] (V2 OSO2).
@@ -87,8 +85,7 @@ pub const MAX_SYSTEM_TXS_PER_BLOCK: u8 = 16;
 /// `n >= GENESIS_BOOTSTRAP_BLOCK_NUMBER + 1`. This constant is `1`, so
 /// Phase 1 begins at block `2`. Block `1` still carries the genesis
 /// `BoundaryOutcome` as a begin-zone system transaction. It comes after
-/// `CycleTick` and
-/// `RewardsGemDelivery`.
+/// `CycleTick`.
 pub const GENESIS_BOOTSTRAP_BLOCK_NUMBER: u64 = 1;
 
 /// Consensus gas limit for the evidence-heavy one-time block-1 bootstrap.

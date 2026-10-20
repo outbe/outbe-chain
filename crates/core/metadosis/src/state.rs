@@ -63,8 +63,10 @@ impl MetadosisContract<'_> {
         resolution: crate::commit::WwdRateResolution,
     ) -> Result<()> {
         let day = self.worldwide_days.entry(wwd);
-        day.previous_vwap().write(resolution.previous_vwap)?;
-        day.current_vwap().write(resolution.current_vwap)?;
+        day.previous_vwap_minor()
+            .write(resolution.previous_vwap_minor)?;
+        day.current_vwap_minor()
+            .write(resolution.current_vwap_minor)?;
         day.day_type().write(resolution.day_type.as_u8())
     }
 
@@ -148,8 +150,8 @@ impl MetadosisContract<'_> {
             offering_end,
             scheduled_process_time,
             metadosis_limit_minor: U256::ZERO,
-            previous_vwap: U256::ZERO,
-            current_vwap: U256::ZERO,
+            previous_vwap_minor: U256::ZERO,
+            current_vwap_minor: U256::ZERO,
         })
     }
 

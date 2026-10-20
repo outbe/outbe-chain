@@ -74,7 +74,7 @@ library IntexGas {
     ///      - any chunk: 159k.
     ///      - a chunk that carries winners: 83k more (the day's clearing snapshot, one Compact
     ///        withdrawal, one transfer to the router), plus 7.1k a winner.
-    ///      - the chunk that routes the day's proceeds: 82k more.
+    ///      - a chunk that routes its winners' payments: 82k more.
     ///      The mailbox's own dispatch is outside that reading (it needs a fork).
     ///      `ClearingRelayMailboxGas.t.sol` prices a send at ~157k against the canonical mailbox,
     ///      and production runs one hub hop more. So the routing part carries 170k for it. Every
@@ -105,7 +105,7 @@ library IntexGas {
     }
 
     /// @param winnerCount Winners the chunk carries. Zero for the chunk that only closes a day.
-    /// @param routesProceeds Whether this chunk sends the day's proceeds home.
+    /// @param routesProceeds Whether this chunk sends its proceeds home.
     function refund(uint256 winnerCount, bool routesProceeds) internal pure returns (uint256) {
         return REFUND_BASE + (winnerCount == 0 ? 0 : REFUND_SETTLE_BASE + winnerCount * REFUND_PER_ITEM)
             + (routesProceeds ? REFUND_PROCEEDS_ROUTE : 0);

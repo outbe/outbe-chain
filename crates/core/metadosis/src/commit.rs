@@ -67,8 +67,8 @@ pub(crate) struct NewWwdSchedule {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct WwdRateResolution {
-    pub(crate) previous_vwap: U256,
-    pub(crate) current_vwap: U256,
+    pub(crate) previous_vwap_minor: U256,
+    pub(crate) current_vwap_minor: U256,
     pub(crate) day_type: WwdDayType,
 }
 
@@ -563,8 +563,8 @@ mod tests {
             offering_end: 4,
             scheduled_process_time: 5,
             metadosis_limit_minor: U256::ZERO,
-            previous_vwap: U256::ZERO,
-            current_vwap: U256::ZERO,
+            previous_vwap_minor: U256::ZERO,
+            current_vwap_minor: U256::ZERO,
         }
     }
 

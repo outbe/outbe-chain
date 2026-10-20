@@ -153,7 +153,7 @@ fn a_drained_position_returns_nothing_and_is_deleted() {
                 caller: ALICE,
                 position_id: id,
                 owner: BOB,
-                promis_load: sent_capacity(six_decimal_u128()),
+                promis_load_minor: sent_capacity(six_decimal_u128()),
             },
         )
         .unwrap();
@@ -195,7 +195,7 @@ fn issue_merchant_gem_mints_issued_and_drains_capacity() {
                 caller: ALICE,
                 position_id: id,
                 owner: BOB,
-                promis_load: load,
+                promis_load_minor: load,
             },
         )
         .unwrap();
@@ -236,7 +236,7 @@ fn issue_merchant_gem_anchors_entry_to_source() {
                 caller: ALICE,
                 position_id: id,
                 owner: BOB,
-                promis_load: six_decimal_unit(),
+                promis_load_minor: six_decimal_unit(),
             },
         )
         .unwrap();
@@ -257,7 +257,7 @@ fn issue_merchant_gem_charges_one_minor_unit_when_the_cost_rounds_to_zero() {
                 caller: ALICE,
                 position_id: id,
                 owner: BOB,
-                promis_load: U256::ONE,
+                promis_load_minor: U256::ONE,
             },
         )
         .unwrap();
@@ -278,7 +278,7 @@ fn issue_merchant_gem_rejects_non_merchant() {
                 caller: BOB,
                 position_id: id,
                 owner: BOB,
-                promis_load: six_decimal_unit(),
+                promis_load_minor: six_decimal_unit(),
             },
         );
         assert!(err_msg(r).contains("position owner"));
@@ -297,7 +297,7 @@ fn issue_merchant_gem_over_capacity_rejects() {
                 caller: ALICE,
                 position_id: id,
                 owner: BOB,
-                promis_load: over,
+                promis_load_minor: over,
             },
         );
         assert!(err_msg(r).contains("capacity"));
@@ -331,7 +331,7 @@ fn issue_merchant_gem_after_expiry_rejects() {
                 caller: ALICE,
                 position_id,
                 owner: BOB,
-                promis_load: six_decimal_unit(),
+                promis_load_minor: six_decimal_unit(),
             },
         );
         assert!(err_msg(r).contains("expired"));
@@ -366,7 +366,7 @@ fn a_merchant_gem_issues_until_the_second_its_position_expires() {
                     caller: ALICE,
                     position_id: id,
                     owner: BOB,
-                    promis_load: load,
+                    promis_load_minor: load,
                 },
             );
             let remaining = runtime::position_data(&storage, id)
@@ -403,7 +403,7 @@ fn issue_merchant_gem_prices_at_the_previous_day_vwap() {
                 caller: ALICE,
                 position_id: id,
                 owner: BOB,
-                promis_load: six_decimal_unit(),
+                promis_load_minor: six_decimal_unit(),
             },
         )
         .unwrap();
@@ -480,7 +480,7 @@ fn issue_merchant_gem_takes_the_higher_entry() {
                     caller: ALICE,
                     position_id: id,
                     owner: BOB,
-                    promis_load: six_decimal_unit(),
+                    promis_load_minor: six_decimal_unit(),
                 },
             )
             .unwrap();
@@ -521,7 +521,7 @@ fn issue_merchant_gem_rejects_a_missing_previous_day_vwap() {
                 caller: ALICE,
                 position_id: id,
                 owner: BOB,
-                promis_load: six_decimal_unit(),
+                promis_load_minor: six_decimal_unit(),
             },
         );
         assert!(err_msg(r).contains("oracle nominal unavailable"));
@@ -542,7 +542,7 @@ fn issuance_events_carry_the_call_terms_the_position_and_the_group() {
                 caller: ALICE,
                 position_id: position,
                 owner: BOB,
-                promis_load: six_decimal_unit(),
+                promis_load_minor: six_decimal_unit(),
             },
         )
         .unwrap();

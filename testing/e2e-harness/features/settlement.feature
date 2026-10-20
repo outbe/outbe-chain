@@ -8,18 +8,5 @@ Feature: Protocol positions redeem through the reserve into COEN
   Scenario: A zero-balance validator redeems its reward Gem through ZeroFee
     Given a fresh four-validator native Lysis localnet
     Then the controlled COEN USD quote is finalized through the real price feeder
-    Then validator 0 receives a protocol reward Gem from same-block RewardsGemDelivery
+    Then validator 0 claims its validator reward as a Gem
     And validator 0 with zero COEN uses ZeroFee to redeem that Gem into exact COEN
-
-  @reward-gem-delivery-recovery
-  Scenario: A stale Oracle rate defers validator Gem delivery and later recovers
-    Given a fresh localnet near the next UTC worldwide-day boundary
-    And the committee has reached a usable finalized height
-    When the chain crosses into the next worldwide day without a price feeder
-    Then the stale boundary finalizes with one pending reward Gem batch and no new Gem
-    When the committee restarts while the reward Gem batch is pending
-    Then the controlled COEN USD quote is finalized through the real price feeder
-    And the fresh tally leaves the saved reward Gem batch pending
-    When the previous UTC day's COEN USD VWAP is seeded
-    Then the seeded VWAP delivers the saved reward Gem batch exactly once
-    And every validator observes the same delivered reward Gem and continued finality

@@ -210,6 +210,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
 
     /// @dev A day in flight finalizes on the escrow that took its locks, so the venue stays put.
     function test_wire_keepsTheVenueWhileTheEscrowHoldsLocks() public {
+        paymentToken.mint(bidder, 1e18);
         vm.prank(admin);
         escrow.lockFunds(WORLDWIDE_DAY, bidder, 1e6, 1_000_000, 1);
 
@@ -231,7 +232,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         vm.startPrank(admin);
         escrow.grantRole(escrow.AUCTION_ROLE(), admin);
         escrow.setProceedsRecipient(address(bnbRouter));
-        escrow.lockFunds(WORLDWIDE_DAY, bidder, 1e18, 1_000_000, 1);
+        escrow.lockFunds(WORLDWIDE_DAY, bidder, 1e6, 1_000_000, 1);
         vm.stopPrank();
 
         address[] memory winners = new address[](1);

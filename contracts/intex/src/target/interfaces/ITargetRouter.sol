@@ -93,10 +93,12 @@ interface ITargetRouter {
     /// @param totalBatches Chunks the day's relay spanned.
     event BidsRelayComplete(uint32 indexed worldwideDay, uint16 totalBatches);
 
-    /// @notice Emitted when finalized auction proceeds are routed cross-chain to the OriginRouter.
-    event ProceedsRouted(uint32 indexed worldwideDay, uint256 amount);
+    /// @notice Emitted when a refund chunk's proceeds are routed cross-chain to the OriginRouter.
+    event ProceedsRouted(uint32 indexed worldwideDay, uint16 chunkIndex, uint256 amount);
     /// @notice Emitted when proceeds routing failed and the amount was parked for retry.
-    event ProceedsParked(uint256 indexed idx, uint32 indexed worldwideDay, uint256 amount, bytes reason);
+    event ProceedsParked(
+        uint256 indexed idx, uint32 indexed worldwideDay, uint16 chunkIndex, uint256 amount, bytes reason
+    );
     /// @notice Emitted when `resendParkedProceeds` routed a previously deferred amount.
     event ParkedProceedsResent(uint256 indexed idx, uint32 indexed worldwideDay);
     /// @notice Emitted when the proceeds route (token bridge + OriginRouter) is set.
@@ -141,6 +143,8 @@ interface ITargetRouter {
     error NoParkedMark(bytes14 seriesId);
     /// @notice The parked entry at `idx` was already resolved. Another retry would repeat its effect.
     error AlreadyResolved(uint256 idx);
+    /// @notice A day's proceeds are in a token the proceeds bridge does not move.
+    error ProceedsTokenNotBridged(address dayToken, address bridgeToken);
 
     // --- Admin ---
     /// @notice Wire contract dependencies.

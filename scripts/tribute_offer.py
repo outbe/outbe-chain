@@ -24,17 +24,17 @@ against the proof's public input (and against the registered L2 chain).
 Deps:  pip install web3 cryptography
 
 Examples:
-  # auto-pick the OFFERING day, default amount 100 / currency 840 (USD)
+  # auto-pick the OFFERING day, default amount 100
   python3 scripts/tribute_offer.py \
       --rpc https://rpc.testnet.outbe.net \
-      --private-key 0x<KEY> \
+      --private-key 0x<KEY> --issuance-currency 840 --reference-currency 840 \
       --zk-proof 0x<COMBINED_PROOF> --zk-merkle-root 0x<ROOT> \
       --signature 0x<BLS_SIG> --chain-id 57005 --version 1.1.0 \
       --tribute-draft-id 0x<32-byte draft id> --su-hash 0x<32-byte su hash>
 
   # explicit day
   python3 scripts/tribute_offer.py --rpc https://rpc.testnet.outbe.net \
-      --private-key 0x<KEY> --day 20260601 --amount 100 --currency 840 \
+      --private-key 0x<KEY> --day 20260601 --amount 100 --issuance-currency 840 --reference-currency 840 \
       --zk-proof 0x<COMBINED_PROOF> --zk-merkle-root 0x<ROOT> \
       --signature 0x<BLS_SIG> --chain-id 57005 --version 1.1.0 \
       --tribute-draft-id 0x<DRAFT_ID> --su-hash 0x<SU_HASH>
@@ -217,7 +217,8 @@ def main() -> None:
         default="0",
         help="six-decimal remainder in [0,999999]; must match the proof's draft",
     )
-    ap.add_argument("--currency", type=int, default=840, help="ISO 4217 code (840=USD)")
+    ap.add_argument("--issuance-currency", type=int, required=True, help="issuance ISO 4217 numeric code")
+    ap.add_argument("--reference-currency", type=int, required=True, help="reference ISO 4217 numeric code")
     ap.add_argument("--zk-proof", required=True, type=hex_bytes_arg,
                     help="combined Tribute proof bytes (0x-hex): 4-byte public-input word "
                          "count, public inputs, proof; 0x is a deliberate negative "
@@ -287,8 +288,8 @@ def main() -> None:
         nonce,
         int.from_bytes(eph_pub, "big"),
         int(day),
-        int(args.currency),
-        int(args.currency),
+        int(args.issuance_currency),
+        int(args.reference_currency),
         args.zk_proof,
         args.chain_id,
         args.version,
@@ -309,7 +310,8 @@ def main() -> None:
     tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
     print(f"offerTribute tx: {tx_hash.hex()}")
     print(f"  creator={creator} worldwide_day={day} "
-          f"currency={args.currency} amount_base={amount_base}")
+          f"issuance_currency={args.issuance_currency} reference_currency={args.reference_currency} "
+          f"amount_base={amount_base}")
     print(f"  l2_chain_id={args.chain_id} circuit_version={args.version} "
           f"tribute_draft_id=0x{args.tribute_draft_id.hex()}")
 

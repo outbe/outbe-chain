@@ -441,6 +441,12 @@
           "internalType": "uint32"
         },
         {
+          "name": "chunkIndex",
+          "type": "uint16",
+          "indexed": false,
+          "internalType": "uint16"
+        },
+        {
           "name": "amount",
           "type": "uint256",
           "indexed": false,
@@ -483,6 +489,12 @@
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
+        },
+        {
+          "name": "chunkIndex",
+          "type": "uint16",
+          "indexed": false,
+          "internalType": "uint16"
         },
         {
           "name": "amount",
@@ -592,6 +604,22 @@
       "type": "error",
       "name": "NotSelf",
       "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "ProceedsTokenNotBridged",
+      "inputs": [
+        {
+          "name": "dayToken",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "bridgeToken",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
     },
     {
       "type": "error",

@@ -160,7 +160,6 @@ impl OutbeEvmConfig {
         }
         if block_number >= 1 {
             inputs.push(SystemTxInputV2::CycleTick);
-            inputs.push(SystemTxInputV2::RewardsGemDelivery);
         }
         if let Some(ConsensusHeaderArtifact::BoundaryOutcome(artifact)) =
             artifacts.consensus_header_artifact

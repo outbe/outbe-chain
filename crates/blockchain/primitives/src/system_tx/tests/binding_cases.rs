@@ -127,7 +127,6 @@ fn steady_inputs() -> Vec<Bytes> {
     ];
     inputs.extend([
         encoded(SystemTxInputV2::CycleTick),
-        encoded(SystemTxInputV2::RewardsGemDelivery),
         encoded(SystemTxInputV2::OracleSlashWindow),
         encoded(SystemTxInputV2::HookEvents),
     ]);
@@ -268,7 +267,7 @@ pub(super) fn assert_diagnostics(
         ("boundary_mismatch", Some("BoundaryOutcome system tx artifact mismatch"), Some("BoundaryOutcome system tx artifact mismatch")),
         ("boundary_match_then_bad_input", Some("decode system tx input: system tx input too short: 0 bytes"), Some("decode system transaction input: system tx input too short: 0 bytes")),
         ("bad_input_before_boundary_match", Some("decode system tx input: system tx input too short: 0 bytes"), Some("decode system transaction input: system tx input too short: 0 bytes")),
-        ("boundary_header_missing_body", Some("invalid system tx set: active system tx set mismatch: expected begin [CertifiedParentAccounting, LateFinalizeCredits, CycleTick, RewardsGemDelivery, BoundaryOutcome, OracleSlashWindow, HookEvents], expected end [], actual begin [CertifiedParentAccounting, LateFinalizeCredits, CycleTick, RewardsGemDelivery, OracleSlashWindow, HookEvents], actual end []"), Some("invalid system tx set: active system tx set mismatch: expected begin [CertifiedParentAccounting, LateFinalizeCredits, CycleTick, RewardsGemDelivery, BoundaryOutcome, OracleSlashWindow, HookEvents], expected end [], actual begin [CertifiedParentAccounting, LateFinalizeCredits, CycleTick, RewardsGemDelivery, OracleSlashWindow, HookEvents], actual end []")),
+        ("boundary_header_missing_body", Some("invalid system tx set: active system tx set mismatch: expected begin [CertifiedParentAccounting, LateFinalizeCredits, CycleTick, BoundaryOutcome, OracleSlashWindow, HookEvents], expected end [], actual begin [CertifiedParentAccounting, LateFinalizeCredits, CycleTick, OracleSlashWindow, HookEvents], actual end []"), Some("invalid system tx set: active system tx set mismatch: expected begin [CertifiedParentAccounting, LateFinalizeCredits, CycleTick, BoundaryOutcome, OracleSlashWindow, HookEvents], expected end [], actual begin [CertifiedParentAccounting, LateFinalizeCredits, CycleTick, OracleSlashWindow, HookEvents], actual end []")),
     ];
     let cases = cases();
     assert_eq!(cases.len(), expected.len());

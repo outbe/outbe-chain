@@ -213,13 +213,26 @@ contract ERC7786TokenBridgeTest is Test {
 
     function test_RevertWhen_BridgeLacksIssuerRole() public {
         stable.revokeIssuer(address(outbeStableBridge));
+        uint8 decimals = outbeStableBridge.tokenDecimals();
 
         vm.prank(address(outbeGateway));
         vm.expectRevert(abi.encodeWithSelector(MockStablecoin.NotIssuer.selector, address(outbeStableBridge)));
         outbeStableBridge.receiveMessage(
             bytes32(0),
             _interop(BNB, address(bnbStableBridge)),
-            abi.encode(abi.encodePacked(sourceAddr), targetAddr, uint256(1), bytes(""))
+            abi.encode(abi.encodePacked(sourceAddr), targetAddr, uint256(1), decimals, bytes(""))
+        );
+    }
+
+    function test_RevertWhen_SourceTokenHasOtherDecimals() public {
+        uint8 local = outbeStableBridge.tokenDecimals();
+
+        vm.prank(address(outbeGateway));
+        vm.expectRevert(abi.encodeWithSelector(ERC7786TokenBridge.DecimalsMismatch.selector, local + 12, local));
+        outbeStableBridge.receiveMessage(
+            bytes32(0),
+            _interop(BNB, address(bnbStableBridge)),
+            abi.encode(abi.encodePacked(sourceAddr), targetAddr, uint256(1), local + 12, bytes(""))
         );
     }
 

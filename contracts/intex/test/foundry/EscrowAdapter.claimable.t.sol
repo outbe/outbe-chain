@@ -22,7 +22,9 @@ contract EscrowAdapterClaimableTest is Test {
     address internal other = address(6);
 
     uint32 internal constant DAY = 1;
-    uint128 internal constant LOCK = 1000e18;
+    uint128 internal constant LOCK_UNITS = 1000e6;
+    // MockWCOEN has 18 decimals: 1e12 token units per protocol unit.
+    uint128 internal constant LOCK = LOCK_UNITS * 1e12;
     /// @dev One Intex at the full rate locks exactly `LOCK`.
     uint128 internal constant BASIS = 1000e6;
 
@@ -51,7 +53,7 @@ contract EscrowAdapterClaimableTest is Test {
         vm.prank(who);
         token.approve(address(escrow), type(uint256).max);
         vm.prank(auction);
-        escrow.lockFunds(DAY, who, LOCK, 1_000_000, 1);
+        escrow.lockFunds(DAY, who, LOCK_UNITS, 1_000_000, 1);
     }
 
     function _finalize(address[] memory winners, uint64 clearingRate, bool completesDay) internal {

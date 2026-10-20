@@ -30,7 +30,7 @@ pub struct AgentRewardContract {
 
     // slot 2: claimable WAA reward per address
     #[attribute(order = 2)]
-    pub waa_claimable_rewards: outbe_primitives::storage::dsl::Map<Address, U256>,
+    pub waa_claimable_minor: outbe_primitives::storage::dsl::Map<Address, U256>,
 
     // slot 3: WAA address count per day
     #[attribute(order = 3)]
@@ -50,21 +50,26 @@ pub struct AgentRewardContract {
 
     // slot 7: claimable SRA reward per address
     #[attribute(order = 7)]
-    pub sra_claimable_rewards: outbe_primitives::storage::dsl::Map<Address, U256>,
+    pub sra_claimable_minor: outbe_primitives::storage::dsl::Map<Address, U256>,
 
-    // slot 8: claimable CCA reward per address, in native COEN atomic units.
+    // slot 8: claimable CCA reward per address
     #[attribute(order = 8)]
-    pub cca_claimable_rewards: outbe_primitives::storage::dsl::Map<Address, U256>,
+    pub cca_claimable_minor: outbe_primitives::storage::dsl::Map<Address, U256>,
+
+    // slot 9: claimable validator reward per address
+    #[attribute(order = 9)]
+    pub validator_claimable_minor: outbe_primitives::storage::dsl::Map<Address, U256>,
 }
 
 /// Pool a claimable balance belongs to. The pool decides the Gem class a
-/// claim issues, so the contract keeps WAA, SRA and CCA balances apart.
+/// claim issues, so the contract keeps the pool balances apart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum RewardPool {
     Waa = 0,
     Sra = 1,
     Cca = 2,
+    Validator = 3,
 }
 
 impl RewardPool {
@@ -73,6 +78,7 @@ impl RewardPool {
             0 => Ok(Self::Waa),
             1 => Ok(Self::Sra),
             2 => Ok(Self::Cca),
+            3 => Ok(Self::Validator),
             _ => Err(AgentRewardError::UnknownRewardPool(value).into()),
         }
     }

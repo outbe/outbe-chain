@@ -135,7 +135,6 @@ pub fn expected_begin_block_kinds_for_publication(
     };
     if block_number > 0 {
         expected.push(SystemTxKind::CycleTick);
-        expected.push(SystemTxKind::RewardsGemDelivery);
     }
     if block_number > 0 && has_boundary_outcome {
         expected.push(SystemTxKind::BoundaryOutcome);

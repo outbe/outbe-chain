@@ -83,7 +83,7 @@ pub fn issue_credis(
                 issuance_currency: r.issuance_currency,
                 reference_currency: r.reference_currency,
                 policy_rate: r.policy_rate,
-                principal_minor: r.amount,
+                principal_minor: r.amount_minor,
                 entry_price_minor: r.entry_price_minor,
                 call_anchor_price_minor: r.call_anchor_price_minor,
                 gratis_minor: r.gratis_minor,
@@ -97,9 +97,9 @@ pub fn issue_credis(
             &storage,
             reservation_id,
             r.credis_owner,
-            r.amount,
+            r.amount_minor,
         )?;
-        if paid != r.amount || credis.get_credis(id)? != opened {
+        if paid != r.amount_minor || credis.get_credis(id)? != opened {
             return Err(CredisFactoryError::CredisChangedDuringIssuance.into());
         }
         storage.emit_event(
@@ -109,12 +109,12 @@ pub fn issue_credis(
                 owner: r.credis_owner,
                 cca: caller,
                 asset: r.asset,
-                principalMinor: r.amount,
+                principalMinor: r.amount_minor,
                 gratisMinor: r.gratis_minor,
                 callPriceMinor: opened.call_price_minor,
             }),
         )?;
-        Ok((id, r.amount))
+        Ok((id, r.amount_minor))
     })
 }
 

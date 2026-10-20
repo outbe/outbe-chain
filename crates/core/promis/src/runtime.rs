@@ -103,8 +103,8 @@ pub(crate) fn mint(
         PROMIS_ADDRESS,
         SolEvent::encode_log_data(&IPromis::PromisMinted {
             account: caller,
-            amount: result.event_amount,
-            newTotalSupply: new_supply,
+            promisMinor: result.event_amount,
+            totalSupplyMinor: new_supply,
         }),
     )?;
     Ok(())
@@ -136,8 +136,8 @@ pub(crate) fn burn(
         PROMIS_ADDRESS,
         SolEvent::encode_log_data(&IPromis::PromisBurned {
             account: caller,
-            amount: result.event_amount,
-            remainingSupply: remaining,
+            promisMinor: result.event_amount,
+            totalSupplyMinor: remaining,
         }),
     )?;
     Ok(remaining)

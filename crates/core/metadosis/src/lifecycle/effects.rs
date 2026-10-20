@@ -231,26 +231,26 @@ fn store_worldwide_day_vwap_snapshot(
 }
 
 fn resolve_day_rate(metadosis: &MetadosisContract, wwd: WorldwideDay) -> Result<WwdRateResolution> {
-    let current_vwap = outbe_oracle::api::day_type_pair_vwap(metadosis.storage.clone(), wwd)?
+    let current_vwap_minor = outbe_oracle::api::day_type_pair_vwap(metadosis.storage.clone(), wwd)?
         .unwrap_or(U256::ZERO);
-    let previous_vwap = if current_vwap.is_zero() {
+    let previous_vwap_minor = if current_vwap_minor.is_zero() {
         U256::ZERO
     } else {
         outbe_oracle::api::day_type_pair_vwap(metadosis.storage.clone(), wwd.previous_date_key())?
             .unwrap_or(U256::ZERO)
     };
     Ok(WwdRateResolution {
-        previous_vwap,
-        current_vwap,
-        day_type: determine_day_type(previous_vwap, current_vwap),
+        previous_vwap_minor,
+        current_vwap_minor,
+        day_type: determine_day_type(previous_vwap_minor, current_vwap_minor),
     })
 }
 
-fn determine_day_type(previous_vwap: U256, current_vwap: U256) -> WwdDayType {
-    if previous_vwap.is_zero() || current_vwap.is_zero() {
+fn determine_day_type(previous_vwap_minor: U256, current_vwap_minor: U256) -> WwdDayType {
+    if previous_vwap_minor.is_zero() || current_vwap_minor.is_zero() {
         return WwdDayType::Red;
     }
-    if current_vwap > previous_vwap {
+    if current_vwap_minor > previous_vwap_minor {
         WwdDayType::Green
     } else {
         WwdDayType::Red

@@ -68,10 +68,10 @@ pub struct WorldwideDay {
     pub metadosis_limit_minor: U256,
 
     #[attribute(order = 8, default = U256::ZERO)]
-    pub previous_vwap: U256,
+    pub previous_vwap_minor: U256,
 
     #[attribute(order = 9, default = U256::ZERO)]
-    pub current_vwap: U256,
+    pub current_vwap_minor: U256,
 }
 
 /// Semantic replay receipt for the Cycle-owned day-limit slot.

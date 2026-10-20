@@ -113,6 +113,10 @@ contract SyncTokenBridge {
         TOKEN = token;
     }
 
+    function token() external view returns (IERC20) {
+        return TOKEN;
+    }
+
     function quoteSend(uint32, address, uint256, bytes calldata, uint256) external pure returns (uint256) {
         return 0;
     }
@@ -352,7 +356,7 @@ contract LocalLoopbackTest is Test {
         // 8. Every leg executed within its IntexGas budget: nothing parked anywhere.
         (,, bool bidsRelayed) = target.bidsRelay(DAY);
         assertTrue(bidsRelayed, "bids relay finished");
-        (,, bool proceedsParked,) = target.parkedProceeds(0);
+        (,,, bool proceedsParked,) = target.parkedProceeds(0);
         assertFalse(proceedsParked, "proceeds route parked");
         assertEq(origin.parkedMessage(0).payload.length, 0, "origin leg parked");
     }

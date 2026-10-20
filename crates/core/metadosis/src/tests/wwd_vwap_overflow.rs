@@ -58,7 +58,7 @@ fn overflowing_worldwide_day_vwap_keeps_the_forming_edge() {
         assert!(metadosis
             .worldwide_days
             .entry(wwd)
-            .current_vwap()
+            .current_vwap_minor()
             .read()
             .unwrap()
             .is_zero());

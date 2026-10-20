@@ -448,6 +448,11 @@ impl FeederTickContext<'_> {
         if preflight != PreflightResult::Eligible {
             return Ok(false);
         }
+        let targets = self.client.vote_targets(&fresh).await?;
+        let aggregated = vote_builder::only_vote_targets(aggregated, &targets);
+        if aggregated.is_empty() {
+            return Err(FeederError::NoPriceDataAvailable.into());
+        }
         let calldata = vote_builder::encode_vote(&aggregated);
         if let Ok(decoded) = vote_builder::decode_vote_log(&calldata) {
             info!(vote=%decoded,"vote calldata");

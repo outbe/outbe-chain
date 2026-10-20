@@ -1,8 +1,6 @@
-# Imported from outbe/outbe-poseidon at 294e7790a22ffd2295f8010ad34ffa88b729b0c1.
 [package]
 name = "outbe-poseidon"
-# Matches outbe-protocol's dependency requirement.
-version = "0.13.0"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true

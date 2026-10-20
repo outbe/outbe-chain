@@ -21,8 +21,8 @@ pub const PERCENT_DENOMINATOR: u64 = 100;
 ///
 /// The day 5-sink table `(Validator 4 %, WAA 4 %, SRA 4 %, CCA 4 %, Metadosis terminal)`
 /// replaced the per-block 3-sink table (`Validator 4 %`, `AgentReward 8 %`, `Metadosis 88 %`).
-/// The Cycle handler forwards the validator pool to `outbe-rewards::api`.
-/// WAA / SRA / CCA go through `outbe_agentreward::distribute_daily`.
+/// WAA / SRA / CCA and the validator top-up go through
+/// `outbe_agentreward::distribute_daily`.
 /// The residue and the terminal 84 % land on Metadosis through
 /// [`crate::block::dispatch_terminal_remainder_at`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

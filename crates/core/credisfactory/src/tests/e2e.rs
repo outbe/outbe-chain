@@ -73,7 +73,7 @@ fn issue_uses_the_reservation_pledge_once_and_rolls_back_failures() {
 
         let (credis_id, amount) =
             runtime::issue_credis(storage.clone(), cca(), id, pledge_stake()).unwrap();
-        assert_eq!(amount, reservation.amount);
+        assert_eq!(amount, reservation.amount_minor);
         assert!(pledge_of(&storage, id).unwrap().source.is_zero());
         assert_eq!(view_balance(&storage, alice()), pledge_cost());
         assert_eq!(view_pledged(&storage, alice()), pledge_cost());
@@ -379,7 +379,7 @@ fn issuance_uses_reserved_terms_across_midnight_and_oracle_changes() {
         let (credis_id, principal) =
             runtime::issue_credis(storage.clone(), cca(), id, pledge_stake()).unwrap();
         let record = CredisContract::new(storage).get_credis(credis_id).unwrap();
-        assert_eq!(principal, reservation.amount);
+        assert_eq!(principal, reservation.amount_minor);
         assert_eq!(record.gratis_minor, reservation.gratis_minor);
         assert_eq!(record.entry_price_minor, reservation.entry_price_minor);
         assert_eq!(record.reference_currency, reservation.reference_currency);

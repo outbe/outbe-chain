@@ -434,7 +434,7 @@ fn burning_pledged_collateral_reports_the_supply_drop() {
         .collect();
     assert_eq!(burned.len(), 1);
     assert_eq!(
-        (burned[0].account, burned[0].amount),
+        (burned[0].account, burned[0].gratisMinor),
         (alice(), U256::from(40u64))
     );
 }

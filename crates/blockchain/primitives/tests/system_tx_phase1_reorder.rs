@@ -52,7 +52,7 @@ fn phase1_receipt_index_0_before_cycle_tick() {
 }
 
 /// Block `n>=2` body-index map: Phase 1 -> LateFinalizeCredits -> CycleTick ->
-/// RewardsGemDelivery -> (optional BoundaryOutcome) -> OracleSlashWindow ->
+/// (optional BoundaryOutcome) -> OracleSlashWindow ->
 /// HookEvents -> UserTxs. Reorder must preserve the ordering relative to the
 /// body receipt slots.
 #[test]
@@ -64,7 +64,6 @@ fn phase1_reordering_preserves_body_receipt_order() {
             SystemTxKind::CertifiedParentAccounting,
             SystemTxKind::LateFinalizeCredits,
             SystemTxKind::CycleTick,
-            SystemTxKind::RewardsGemDelivery,
             SystemTxKind::OracleSlashWindow,
             SystemTxKind::HookEvents,
         ]
@@ -77,7 +76,6 @@ fn phase1_reordering_preserves_body_receipt_order() {
             SystemTxKind::CertifiedParentAccounting,
             SystemTxKind::LateFinalizeCredits,
             SystemTxKind::CycleTick,
-            SystemTxKind::RewardsGemDelivery,
             SystemTxKind::BoundaryOutcome,
             SystemTxKind::OracleSlashWindow,
             SystemTxKind::HookEvents,
@@ -89,18 +87,16 @@ fn phase1_reordering_preserves_body_receipt_order() {
     let phase1 = SystemTxPhase::initial_for_block(BLOCK_42, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
     let late = phase1.advance_after_commit(true, false);
     let cycle = late.advance_after_commit(true, false);
-    let rewards = cycle.advance_after_commit(true, false);
-    let boundary = rewards.advance_after_commit(true, false);
+    let boundary = cycle.advance_after_commit(true, false);
     let oracle = boundary.advance_after_commit(true, false);
     let hook_events = oracle.advance_after_commit(true, false);
     let after_hook_events = hook_events.advance_after_commit(true, false);
     assert_eq!(phase1.body_index(), Some(0));
     assert_eq!(late.body_index(), Some(1));
     assert_eq!(cycle.body_index(), Some(2));
-    assert_eq!(rewards.body_index(), Some(3));
-    assert_eq!(boundary.body_index(), Some(4));
-    assert_eq!(oracle.body_index(), Some(5));
-    assert_eq!(hook_events.body_index(), Some(6));
+    assert_eq!(boundary.body_index(), Some(3));
+    assert_eq!(oracle.body_index(), Some(4));
+    assert_eq!(hook_events.body_index(), Some(5));
     assert_eq!(after_hook_events, SystemTxPhase::UserTxs);
 }
 

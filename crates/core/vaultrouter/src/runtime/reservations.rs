@@ -23,7 +23,7 @@ pub(crate) fn reserve_stables(
         credisOwner: credis_owner,
         source,
         asset,
-        amount,
+        amountMinor: amount,
         referenceCurrency: reference_currency,
     } = call;
     storage.with_checkpoint(|| {
@@ -71,7 +71,7 @@ pub(crate) fn reserve_stables(
             cca: caller,
             asset,
             vault,
-            amount,
+            amountMinor: amount,
             expiresAt: expires_at,
         })?;
         Ok(id)
@@ -112,7 +112,7 @@ fn release_checked(
 
         erc20_transfer(&storage, record.asset, record.cca, amount)?;
 
-        let excess = record.amount - amount;
+        let excess = record.amount_minor - amount;
         let mut returned_shares = U256::ZERO;
         if !excess.is_zero() {
             returned_shares = vault_deposit(&storage, record.vault, excess, SELF)?;
@@ -123,14 +123,14 @@ fn release_checked(
             id,
             asset: record.asset,
             receiver: record.cca,
-            amount,
+            amountMinor: amount,
         })?;
         if !excess.is_zero() {
             contract.emit(IVaultRouter::ReservationReturned {
                 id,
                 asset: record.asset,
                 vault: record.vault,
-                amount: excess,
+                amountMinor: excess,
                 mintedShares: returned_shares,
             })?;
         }
@@ -150,9 +150,9 @@ fn ensure_releasable(
         VaultRouterError::ReservationExpired(id)
     } else if receiver != record.credis_owner {
         VaultRouterError::CredisOwnerMismatch
-    } else if amount > record.amount {
+    } else if amount > record.amount_minor {
         VaultRouterError::ReservationInsufficient {
-            available: record.amount,
+            available: record.amount_minor,
             required: amount,
         }
     } else {
@@ -178,13 +178,13 @@ pub(crate) fn return_reservation(
             return Err(VaultRouterError::Unauthorized.into());
         }
 
-        let minted_shares = vault_deposit(&storage, record.vault, record.amount, SELF)?;
+        let minted_shares = vault_deposit(&storage, record.vault, record.amount_minor, SELF)?;
         let mut contract = VaultRouterContract::new(storage.clone());
         contract.emit(IVaultRouter::ReservationReturned {
             id,
             asset: record.asset,
             vault: record.vault,
-            amount: record.amount,
+            amountMinor: record.amount_minor,
             mintedShares: minted_shares,
         })?;
         Ok(minted_shares)

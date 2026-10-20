@@ -30,8 +30,8 @@ pub(crate) fn rebalance(
     let IVaultRouter::rebalanceCall {
         vaultFrom: vault_from,
         vaultTo: vault_to,
-        assetsAmount: amount,
-        maxAmountTo: max_amount_to,
+        assetsMinor: amount,
+        maxAssetsToMinor: max_amount_to,
     } = call;
     outbe_ccaregistry::api::require_active_cca(&storage, caller)?;
     if vault_from == vault_to {
@@ -75,9 +75,9 @@ pub(crate) fn rebalance(
             cca: caller,
             vaultFrom: vault_from,
             vaultTo: vault_to,
-            assetsWithdrawn: amount,
+            assetsWithdrawnMinor: amount,
             burnedShares: burned,
-            assetsDeposited: amount_to,
+            assetsDepositedMinor: amount_to,
             mintedShares: minted,
         })?;
         Ok(amount_to)

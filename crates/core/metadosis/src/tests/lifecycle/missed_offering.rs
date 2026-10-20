@@ -299,7 +299,10 @@ fn final_zero_limit_miss_from_forming_keeps_the_rate_for_the_next_day() {
 
     StorageHandle::enter(&mut provider, |storage| {
         let day = MetadosisContract::new(storage).worldwide_days.entry(next);
-        assert_eq!(day.previous_vwap().read().unwrap(), U256::from(110u64));
+        assert_eq!(
+            day.previous_vwap_minor().read().unwrap(),
+            U256::from(110u64)
+        );
         assert_eq!(day.day_type().read().unwrap(), day_type::GREEN);
     });
 }

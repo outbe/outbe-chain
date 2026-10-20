@@ -357,7 +357,7 @@ contract AuctionGasBudgetTest is CrossChainTest {
         spent = before - gasleft();
     }
 
-    /// @dev The widest start the codec allows: `MAX_REFERENCE_PRICES` rows.
+    /// @dev An AUCTION_STAGE_START with `rows` reference prices.
     function _startPacket(uint256 rows) internal view returns (bytes memory) {
         IOriginRouter.ReferenceCurrencyPrice[] memory prices = new IOriginRouter.ReferenceCurrencyPrice[](rows);
         for (uint256 i = 0; i < rows; ++i) {
@@ -383,11 +383,12 @@ contract AuctionGasBudgetTest is CrossChainTest {
     }
 
     function test_TheQuoteCoversAuctionStageStartAtItsWidest() public {
-        uint256 rows = BridgeMsgCodec.MAX_REFERENCE_PRICES;
+        // More rows than there are series-id letters (A-Z).
+        uint256 rows = 36;
 
         uint256 spent = _deliver(_startPacket(rows));
 
-        emit log_named_uint("auction_start_6prices", spent);
+        emit log_named_uint("auction_start_36prices", spent);
         assertLt(spent, IntexGas.auctionStart(rows), "auction start must fit the quote");
     }
 
@@ -412,7 +413,7 @@ contract AuctionGasBudgetTest is CrossChainTest {
             paymentToken.mint(who[i], 1e18);
             vm.prank(who[i]);
             paymentToken.approve(address(escrow), type(uint256).max);
-            escrow.lockFunds(WORLDWIDE_DAY, who[i], 1e18, 1_000_000, 1);
+            escrow.lockFunds(WORLDWIDE_DAY, who[i], 1e6, 1_000_000, 1);
         }
 
         uint256 spent = _deliver(BridgeMsgCodec.encodeRefundInstructions(WORLDWIDE_DAY, 0, 1, 600_000, 1e6, who, 0, 0));

@@ -36,15 +36,11 @@ fn split_accepts_empty_and_user_only_layouts() {
 
 #[test]
 fn split_accepts_block1_cycle_tick_prefix() {
-    let txs = vec![
-        system_tx(SystemTxKind::CycleTick, 0, 1),
-        system_tx(SystemTxKind::RewardsGemDelivery, 1, 1),
-        user_tx(),
-    ];
+    let txs = vec![system_tx(SystemTxKind::CycleTick, 0, 1), user_tx()];
     let layout = split_system_layout(&txs).expect("layout splits");
     assert_eq!(
         layout.begin_block_kinds().expect("kinds"),
-        vec![SystemTxKind::CycleTick, SystemTxKind::RewardsGemDelivery,]
+        vec![SystemTxKind::CycleTick]
     );
     assert_eq!(layout.user.len(), 1);
     assert!(layout.end.is_empty());
@@ -55,8 +51,7 @@ fn split_accepts_block_with_optional_boundary_prefix() {
     let txs = vec![
         system_tx(SystemTxKind::CertifiedParentAccounting, 0, 42),
         system_tx(SystemTxKind::CycleTick, 1, 42),
-        system_tx(SystemTxKind::RewardsGemDelivery, 2, 42),
-        system_tx(SystemTxKind::BoundaryOutcome, 3, 42),
+        system_tx(SystemTxKind::BoundaryOutcome, 2, 42),
         user_tx(),
     ];
     let layout = split_system_layout(&txs).expect("layout splits");
@@ -65,7 +60,6 @@ fn split_accepts_block_with_optional_boundary_prefix() {
         vec![
             SystemTxKind::CertifiedParentAccounting,
             SystemTxKind::CycleTick,
-            SystemTxKind::RewardsGemDelivery,
             SystemTxKind::BoundaryOutcome,
         ]
     );
@@ -100,14 +94,13 @@ fn split_rejects_reserved_tx_in_wrong_suffix_zone() {
 fn split_rejects_reserved_tx_in_middle_zone() {
     let txs = vec![
         system_tx(SystemTxKind::CycleTick, 0, 1),
-        system_tx(SystemTxKind::RewardsGemDelivery, 1, 1),
         user_tx(),
-        system_tx(SystemTxKind::BoundaryOutcome, 2, 1),
+        system_tx(SystemTxKind::BoundaryOutcome, 1, 1),
         user_tx(),
     ];
     assert!(matches!(
         split_system_layout(&txs),
-        Err(SystemTxError::MidBlockSystemTx { index: 3 })
+        Err(SystemTxError::MidBlockSystemTx { index: 2 })
     ));
 }
 
@@ -119,11 +112,10 @@ fn validate_active_system_tx_set_accepts_expected_membership() {
     // V2: block 1 must carry a BoundaryOutcome for the genesis bootstrap.
     let block1_txs = vec![
         system_tx(SystemTxKind::CycleTick, 0, 1),
-        system_tx(SystemTxKind::RewardsGemDelivery, 1, 1),
-        system_tx(SystemTxKind::BoundaryOutcome, 2, 1),
-        system_tx(SystemTxKind::TeeBootstrap, 3, 1),
-        system_tx(SystemTxKind::OracleSlashWindow, 4, 1),
-        system_tx(SystemTxKind::HookEvents, 5, 1),
+        system_tx(SystemTxKind::BoundaryOutcome, 1, 1),
+        system_tx(SystemTxKind::TeeBootstrap, 2, 1),
+        system_tx(SystemTxKind::OracleSlashWindow, 3, 1),
+        system_tx(SystemTxKind::HookEvents, 4, 1),
     ];
     let block1 = split_system_layout(&block1_txs).expect("layout");
     validate_active_system_tx_set(&block1, 1, true, true).expect("block 1 V2 ok");
@@ -132,9 +124,8 @@ fn validate_active_system_tx_set_accepts_expected_membership() {
         system_tx(SystemTxKind::CertifiedParentAccounting, 0, 2),
         system_tx(SystemTxKind::LateFinalizeCredits, 1, 2),
         system_tx(SystemTxKind::CycleTick, 2, 2),
-        system_tx(SystemTxKind::RewardsGemDelivery, 3, 2),
-        system_tx(SystemTxKind::OracleSlashWindow, 4, 2),
-        system_tx(SystemTxKind::HookEvents, 5, 2),
+        system_tx(SystemTxKind::OracleSlashWindow, 3, 2),
+        system_tx(SystemTxKind::HookEvents, 4, 2),
     ];
     let block2 = split_system_layout(&block2_txs).expect("layout");
     validate_active_system_tx_set(&block2, 2, false, false).expect("block 2 ok");
@@ -143,10 +134,9 @@ fn validate_active_system_tx_set_accepts_expected_membership() {
         system_tx(SystemTxKind::CertifiedParentAccounting, 0, 2),
         system_tx(SystemTxKind::LateFinalizeCredits, 1, 2),
         system_tx(SystemTxKind::CycleTick, 2, 2),
-        system_tx(SystemTxKind::RewardsGemDelivery, 3, 2),
-        system_tx(SystemTxKind::BoundaryOutcome, 4, 2),
-        system_tx(SystemTxKind::OracleSlashWindow, 5, 2),
-        system_tx(SystemTxKind::HookEvents, 6, 2),
+        system_tx(SystemTxKind::BoundaryOutcome, 3, 2),
+        system_tx(SystemTxKind::OracleSlashWindow, 4, 2),
+        system_tx(SystemTxKind::HookEvents, 5, 2),
     ];
     let block2_with_boundary = split_system_layout(&block2_with_boundary_txs).expect("layout");
     validate_active_system_tx_set(&block2_with_boundary, 2, true, false)
@@ -157,8 +147,7 @@ fn validate_active_system_tx_set_accepts_expected_membership() {
 fn validate_active_system_tx_set_requires_mandatory_and_conditional_kinds() {
     let missing_finalization_txs = vec![
         system_tx(SystemTxKind::CycleTick, 0, 2),
-        system_tx(SystemTxKind::RewardsGemDelivery, 1, 2),
-        system_tx(SystemTxKind::OracleSlashWindow, 2, 2),
+        system_tx(SystemTxKind::OracleSlashWindow, 1, 2),
     ];
     let missing_finalization = split_system_layout(&missing_finalization_txs).expect("layout");
     assert!(matches!(
@@ -168,8 +157,7 @@ fn validate_active_system_tx_set_requires_mandatory_and_conditional_kinds() {
 
     let missing_cycle_tick_txs = vec![
         system_tx(SystemTxKind::CertifiedParentAccounting, 0, 2),
-        system_tx(SystemTxKind::RewardsGemDelivery, 1, 2),
-        system_tx(SystemTxKind::OracleSlashWindow, 2, 2),
+        system_tx(SystemTxKind::OracleSlashWindow, 1, 2),
     ];
     let missing_cycle_tick = split_system_layout(&missing_cycle_tick_txs).expect("layout");
     assert!(matches!(
@@ -181,11 +169,10 @@ fn validate_active_system_tx_set_requires_mandatory_and_conditional_kinds() {
     // Missing CycleTick (with the other mandatory phases present)
     // still yields ActiveSystemTxSetMismatch.
     let block1_missing_cycle_tick_txs = vec![
-        system_tx(SystemTxKind::RewardsGemDelivery, 0, 1),
-        system_tx(SystemTxKind::BoundaryOutcome, 1, 1),
-        system_tx(SystemTxKind::TeeBootstrap, 2, 1),
-        system_tx(SystemTxKind::OracleSlashWindow, 3, 1),
-        system_tx(SystemTxKind::HookEvents, 4, 1),
+        system_tx(SystemTxKind::BoundaryOutcome, 0, 1),
+        system_tx(SystemTxKind::TeeBootstrap, 1, 1),
+        system_tx(SystemTxKind::OracleSlashWindow, 2, 1),
+        system_tx(SystemTxKind::HookEvents, 3, 1),
     ];
     let block1_missing_cycle_tick =
         split_system_layout(&block1_missing_cycle_tick_txs).expect("layout");
@@ -196,10 +183,9 @@ fn validate_active_system_tx_set_requires_mandatory_and_conditional_kinds() {
 
     let block1_missing_tee_txs = vec![
         system_tx(SystemTxKind::CycleTick, 0, 1),
-        system_tx(SystemTxKind::RewardsGemDelivery, 1, 1),
-        system_tx(SystemTxKind::BoundaryOutcome, 2, 1),
-        system_tx(SystemTxKind::OracleSlashWindow, 3, 1),
-        system_tx(SystemTxKind::HookEvents, 4, 1),
+        system_tx(SystemTxKind::BoundaryOutcome, 1, 1),
+        system_tx(SystemTxKind::OracleSlashWindow, 2, 1),
+        system_tx(SystemTxKind::HookEvents, 3, 1),
     ];
     let block1_missing_tee = split_system_layout(&block1_missing_tee_txs).expect("layout");
     assert!(
@@ -209,11 +195,10 @@ fn validate_active_system_tx_set_requires_mandatory_and_conditional_kinds() {
 
     let block1_with_user_txs = vec![
         system_tx(SystemTxKind::CycleTick, 0, 1),
-        system_tx(SystemTxKind::RewardsGemDelivery, 1, 1),
-        system_tx(SystemTxKind::BoundaryOutcome, 2, 1),
-        system_tx(SystemTxKind::TeeBootstrap, 3, 1),
-        system_tx(SystemTxKind::OracleSlashWindow, 4, 1),
-        system_tx(SystemTxKind::HookEvents, 5, 1),
+        system_tx(SystemTxKind::BoundaryOutcome, 1, 1),
+        system_tx(SystemTxKind::TeeBootstrap, 2, 1),
+        system_tx(SystemTxKind::OracleSlashWindow, 3, 1),
+        system_tx(SystemTxKind::HookEvents, 4, 1),
         user_tx(),
     ];
     let block1_with_user = split_system_layout(&block1_with_user_txs).expect("layout");
@@ -226,9 +211,8 @@ fn validate_active_system_tx_set_requires_mandatory_and_conditional_kinds() {
     // genesis bootstrap error before structural checks.
     let block1_no_boundary_txs = vec![
         system_tx(SystemTxKind::CycleTick, 0, 1),
-        system_tx(SystemTxKind::RewardsGemDelivery, 1, 1),
-        system_tx(SystemTxKind::OracleSlashWindow, 2, 1),
-        system_tx(SystemTxKind::HookEvents, 3, 1),
+        system_tx(SystemTxKind::OracleSlashWindow, 1, 1),
+        system_tx(SystemTxKind::HookEvents, 2, 1),
     ];
     let block1_no_boundary = split_system_layout(&block1_no_boundary_txs).expect("layout");
     assert!(matches!(
@@ -239,8 +223,7 @@ fn validate_active_system_tx_set_requires_mandatory_and_conditional_kinds() {
     let missing_oracle_slash_window_txs = vec![
         system_tx(SystemTxKind::CertifiedParentAccounting, 0, 2),
         system_tx(SystemTxKind::CycleTick, 1, 2),
-        system_tx(SystemTxKind::RewardsGemDelivery, 2, 2),
-        system_tx(SystemTxKind::HookEvents, 3, 2),
+        system_tx(SystemTxKind::HookEvents, 2, 2),
     ];
     let missing_oracle_slash_window =
         split_system_layout(&missing_oracle_slash_window_txs).expect("layout");
@@ -252,9 +235,8 @@ fn validate_active_system_tx_set_requires_mandatory_and_conditional_kinds() {
     let missing_boundary_txs = vec![
         system_tx(SystemTxKind::CertifiedParentAccounting, 0, 2),
         system_tx(SystemTxKind::CycleTick, 1, 2),
-        system_tx(SystemTxKind::RewardsGemDelivery, 2, 2),
-        system_tx(SystemTxKind::OracleSlashWindow, 3, 2),
-        system_tx(SystemTxKind::HookEvents, 4, 2),
+        system_tx(SystemTxKind::OracleSlashWindow, 2, 2),
+        system_tx(SystemTxKind::HookEvents, 3, 2),
     ];
     let missing_boundary = split_system_layout(&missing_boundary_txs).expect("layout");
     assert!(matches!(
@@ -265,10 +247,9 @@ fn validate_active_system_tx_set_requires_mandatory_and_conditional_kinds() {
     let unexpected_boundary_txs = vec![
         system_tx(SystemTxKind::CertifiedParentAccounting, 0, 2),
         system_tx(SystemTxKind::CycleTick, 1, 2),
-        system_tx(SystemTxKind::RewardsGemDelivery, 2, 2),
-        system_tx(SystemTxKind::BoundaryOutcome, 3, 2),
-        system_tx(SystemTxKind::OracleSlashWindow, 4, 2),
-        system_tx(SystemTxKind::HookEvents, 5, 2),
+        system_tx(SystemTxKind::BoundaryOutcome, 2, 2),
+        system_tx(SystemTxKind::OracleSlashWindow, 3, 2),
+        system_tx(SystemTxKind::HookEvents, 4, 2),
     ];
     let unexpected_boundary = split_system_layout(&unexpected_boundary_txs).expect("layout");
     assert!(matches!(
@@ -294,11 +275,7 @@ fn revert_fails_block_classifies_critical_begin_zone_phases() {
             "{kind:?} must fail the block on revert"
         );
     }
-    for kind in [
-        SystemTxKind::RewardsGemDelivery,
-        SystemTxKind::OracleSlashWindow,
-        SystemTxKind::HookEvents,
-    ] {
+    for kind in [SystemTxKind::OracleSlashWindow, SystemTxKind::HookEvents] {
         assert!(
             !kind.revert_fails_block(),
             "{kind:?} must keep the soft-receipt skip"
@@ -314,11 +291,10 @@ fn validate_active_system_tx_set_rejects_phase3b_outside_block1() {
         system_tx(SystemTxKind::CertifiedParentAccounting, 0, 2),
         system_tx(SystemTxKind::LateFinalizeCredits, 1, 2),
         system_tx(SystemTxKind::CycleTick, 2, 2),
-        system_tx(SystemTxKind::RewardsGemDelivery, 3, 2),
-        system_tx(SystemTxKind::BoundaryOutcome, 4, 2),
-        system_tx(SystemTxKind::TeeBootstrap, 5, 2),
-        system_tx(SystemTxKind::OracleSlashWindow, 6, 2),
-        system_tx(SystemTxKind::HookEvents, 7, 2),
+        system_tx(SystemTxKind::BoundaryOutcome, 3, 2),
+        system_tx(SystemTxKind::TeeBootstrap, 4, 2),
+        system_tx(SystemTxKind::OracleSlashWindow, 5, 2),
+        system_tx(SystemTxKind::HookEvents, 6, 2),
     ];
     let layout = split_system_layout(&txs).expect("layout");
     assert!(validate_active_system_tx_set(&layout, 2, true, true).is_err());
@@ -334,10 +310,9 @@ fn validate_active_system_tx_set_rejects_phase3b_outside_block1() {
         system_tx(SystemTxKind::CertifiedParentAccounting, 0, 2),
         system_tx(SystemTxKind::LateFinalizeCredits, 1, 2),
         system_tx(SystemTxKind::CycleTick, 2, 2),
-        system_tx(SystemTxKind::RewardsGemDelivery, 3, 2),
-        system_tx(SystemTxKind::TeeBootstrap, 4, 2),
-        system_tx(SystemTxKind::OracleSlashWindow, 5, 2),
-        system_tx(SystemTxKind::HookEvents, 6, 2),
+        system_tx(SystemTxKind::TeeBootstrap, 3, 2),
+        system_tx(SystemTxKind::OracleSlashWindow, 4, 2),
+        system_tx(SystemTxKind::HookEvents, 5, 2),
     ];
     let layout_no_bo = split_system_layout(&txs_no_bo).expect("layout");
     assert!(validate_active_system_tx_set(&layout_no_bo, 2, false, true).is_err());

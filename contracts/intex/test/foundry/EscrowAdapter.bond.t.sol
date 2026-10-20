@@ -25,7 +25,9 @@ contract EscrowAdapterBondTest is Test {
 
     uint32 worldwideDay1 = 1;
 
-    uint128 constant BOND_AMOUNT = 100e18;
+    uint128 constant BOND_UNITS = 100e6;
+    // MockWCOEN has 18 decimals: 1e12 token units per protocol unit.
+    uint128 constant BOND_AMOUNT = BOND_UNITS * 1e12;
 
     /// @dev Live ERC6909 balance held by the escrow in The Compact for the active lockId.
     function _liveCompactBalance() internal view returns (uint256) {
@@ -48,7 +50,7 @@ contract EscrowAdapterBondTest is Test {
 
     function _lockBond() internal {
         vm.prank(auction);
-        escrow.lockCommitBond(worldwideDay1, bidder1, BOND_AMOUNT);
+        escrow.lockCommitBond(worldwideDay1, bidder1, BOND_UNITS);
     }
 
     // --- lockCommitBond ---
@@ -70,9 +72,9 @@ contract EscrowAdapterBondTest is Test {
     function test_LockCommitBond_RevertsOnZeroInputs() public {
         vm.startPrank(auction);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroValue.selector, "worldwideDay"));
-        escrow.lockCommitBond(0, bidder1, BOND_AMOUNT);
+        escrow.lockCommitBond(0, bidder1, BOND_UNITS);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "bidder"));
-        escrow.lockCommitBond(worldwideDay1, address(0), BOND_AMOUNT);
+        escrow.lockCommitBond(worldwideDay1, address(0), BOND_UNITS);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroValue.selector, "amount"));
         escrow.lockCommitBond(worldwideDay1, bidder1, 0);
         vm.stopPrank();
@@ -82,13 +84,13 @@ contract EscrowAdapterBondTest is Test {
         _lockBond();
         vm.prank(auction);
         vm.expectRevert(IEscrowAdapter.CommitBondAlreadyLocked.selector);
-        escrow.lockCommitBond(worldwideDay1, bidder1, BOND_AMOUNT);
+        escrow.lockCommitBond(worldwideDay1, bidder1, BOND_UNITS);
     }
 
     function test_LockCommitBond_OnlyAuctionRole() public {
         vm.prank(outsider);
         vm.expectRevert();
-        escrow.lockCommitBond(worldwideDay1, bidder1, BOND_AMOUNT);
+        escrow.lockCommitBond(worldwideDay1, bidder1, BOND_UNITS);
     }
 
     // --- releaseCommitBond ---
@@ -191,11 +193,11 @@ contract EscrowAdapterBondTest is Test {
 
     /// @dev Any bond amount round-trips lock -> release without residue in The Compact.
     function testFuzz_LockRelease_RoundTrips(uint128 amount) public {
-        amount = uint128(bound(amount, 1, 1000e18));
+        amount = uint128(bound(amount, 1, 1000e6));
 
         vm.prank(auction);
         escrow.lockCommitBond(worldwideDay1, bidder1, amount);
-        assertEq(_liveCompactBalance(), amount, "custodied");
+        assertEq(_liveCompactBalance(), amount * 1e12, "custodied");
 
         vm.prank(auction);
         escrow.releaseCommitBond(worldwideDay1, bidder1);

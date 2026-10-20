@@ -728,10 +728,10 @@ fn settlement_cost_reads_entry_price_from_the_group() {
             GemIssueParams {
                 owner: other_owner,
                 gem_type: GemTypes::Wallet,
-                promis_load: heavy,
+                promis_load_minor: heavy,
                 issuance_currency: 840,
                 reference_currency: 840,
-                entry_price: other_entry,
+                entry_price_minor: other_entry,
             },
         )
         .unwrap();

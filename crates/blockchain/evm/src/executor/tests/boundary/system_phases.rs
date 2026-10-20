@@ -7,9 +7,9 @@ fn proposer_injects_tee_bootstrap_after_boundary_when_payload_pending() {
     let proposer = signer.address();
     let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
 
-    // Block 1, empty extra_data: begin-zone is CycleTick + RewardsGemDelivery
-    // + OracleSlashWindow + HookEvents. A pending bootstrap is injected
-    // between delivery and OracleSlashWindow.
+    // Block 1, empty extra_data: begin-zone is CycleTick + OracleSlashWindow
+    // + HookEvents. A pending bootstrap is injected between CycleTick and
+    // OracleSlashWindow.
     let with_bootstrap = begin_system_txs_for_test(
         &config,
         BeginBlockFixture {
@@ -25,7 +25,6 @@ fn proposer_injects_tee_bootstrap_after_boundary_when_payload_pending() {
         begin_system_tx_kinds(&with_bootstrap),
         vec![
             SystemTxKind::CycleTick,
-            SystemTxKind::RewardsGemDelivery,
             SystemTxKind::TeeBootstrap,
             SystemTxKind::OracleSlashWindow,
             SystemTxKind::HookEvents,
@@ -151,7 +150,7 @@ fn boundary_activation_allows_registered_next_epoch_proposer() {
             .expect("activation block begin-zone system tx should execute");
     }
 
-    assert_eq!(executor.receipts().len(), 6);
+    assert_eq!(executor.receipts().len(), 5);
     assert!(executor.receipts().iter().all(|receipt| receipt.success));
     drop(executor);
 
@@ -248,9 +247,9 @@ fn full_begin_phases_then_user_tx_observes_boundary_activation() {
             cumulative_receipts: true,
         },
     );
-    // CPA + LateFinalizeCredits + CycleTick + RewardsGemDelivery +
-    // BoundaryOutcome + OracleSlashWindow + HookEvents.
-    assert_eq!(executor.receipts().len(), 7);
+    // CPA + LateFinalizeCredits + CycleTick + BoundaryOutcome +
+    // OracleSlashWindow + HookEvents.
+    assert_eq!(executor.receipts().len(), 6);
     assert!(executor.receipts().iter().all(|receipt| receipt.success));
     assert!(
         visible_system_gas_used < 30_000_000,
@@ -281,9 +280,9 @@ fn full_begin_phases_then_user_tx_observes_boundary_activation() {
         .execute_transaction(recovered_deactivate)
         .expect("same-block user tx should see joining validator as active");
 
-    // 7 begin-zone receipts + 1 user (deactivate) tx.
-    assert_eq!(executor.receipts().len(), 8);
-    assert!(executor.receipts()[7].success);
+    // 6 begin-zone receipts + 1 user (deactivate) tx.
+    assert_eq!(executor.receipts().len(), 7);
+    assert!(executor.receipts()[6].success);
     drop(executor);
 
     let read_ctx = BlockContext::new(2, 2, CHAIN_ID, proposer, vec![proposer, joining]);
@@ -407,23 +406,23 @@ fn oracle_slash_window_runs_after_boundary_activation() {
         },
     );
 
-    assert_eq!(executor.receipts().len(), 6);
+    assert_eq!(executor.receipts().len(), 5);
     assert!(executor.receipts().iter().all(|receipt| receipt.success));
     let oracle_forced_exit = keccak256("ValidatorForcedExit(address)");
     assert!(
-        executor.receipts()[4].logs.iter().any(|log| {
+        executor.receipts()[3].logs.iter().any(|log| {
             log.address == ORACLE_ADDRESS && log.data.topics().first() == Some(&oracle_forced_exit)
         }),
         "Oracle slash-window force exit must be receipt-visible"
     );
     let oracle_slashed = keccak256("ValidatorSlashed(address,uint64)");
     assert!(
-        executor.receipts()[4].logs.iter().any(|log| {
+        executor.receipts()[3].logs.iter().any(|log| {
             log.address == ORACLE_ADDRESS && log.data.topics().first() == Some(&oracle_slashed)
         }),
         "Oracle slash-window stake slash must be receipt-visible"
     );
-    let hook_events_receipt = &executor.receipts()[5];
+    let hook_events_receipt = &executor.receipts()[4];
     assert!(
         hook_events_receipt.success,
         "mandatory HookEvents receipt must succeed even when empty"

@@ -287,7 +287,7 @@ impl Rpc {
             key,
             &IAgentReward::claimRewardCall {
                 pool,
-                amount: U256::ZERO,
+                promisLoadMinor: U256::ZERO,
                 issuanceCurrency: issuance_currency,
                 referenceCurrency: reference_currency,
             },

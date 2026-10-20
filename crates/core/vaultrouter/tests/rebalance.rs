@@ -121,8 +121,8 @@ fn rebalance_calldata(amount: U256, max_amount_to: U256) -> Bytes {
         IVaultRouter::rebalanceCall {
             vaultFrom: VAULT_FROM,
             vaultTo: VAULT_TO,
-            assetsAmount: amount,
-            maxAmountTo: max_amount_to,
+            assetsMinor: amount,
+            maxAssetsToMinor: max_amount_to,
         }
         .abi_encode(),
     )

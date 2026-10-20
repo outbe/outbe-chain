@@ -132,19 +132,13 @@ pub(super) fn seed_daily_voters(ctx: &BlockRuntimeContext, day: u32, voters: &[(
     let rewards = ctx.storage.contract::<outbe_rewards::schema::Rewards<'_>>();
     let voter_at = rewards.daily_voter_at.get_nested(&day);
     let participation = rewards.daily_participation.get_nested(&day);
-    let mut total = 0u64;
     for (index, (voter, count)) in voters.iter().enumerate() {
         voter_at.write(&(index as u32), *voter).unwrap();
         participation.write(voter, *count).unwrap();
-        total = total.checked_add(*count).unwrap();
     }
     rewards
         .daily_voter_count
         .write(&day, voters.len() as u32)
-        .unwrap();
-    rewards
-        .daily_total_participation
-        .write(&day, total)
         .unwrap();
 }
 

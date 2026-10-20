@@ -26,8 +26,8 @@ pub struct GenesisWorldwideDay {
     pub offering_end: u64,
     pub scheduled_process_time: u64,
     pub metadosis_limit_minor: U256,
-    pub previous_vwap: U256,
-    pub current_vwap: U256,
+    pub previous_vwap_minor: U256,
+    pub current_vwap_minor: U256,
 }
 
 impl GenesisWorldwideDay {
@@ -159,8 +159,8 @@ impl GenesisOperation {
             offering_end: day.offering_end,
             scheduled_process_time: day.scheduled_process_time,
             metadosis_limit_minor: day.metadosis_limit_minor,
-            previous_vwap: day.previous_vwap,
-            current_vwap: day.current_vwap,
+            previous_vwap_minor: day.previous_vwap_minor,
+            current_vwap_minor: day.current_vwap_minor,
         })?;
         contract.active_wwd.insert(day.worldwide_day)?;
         Ok(Some(true))
@@ -250,8 +250,8 @@ mod tests {
             offering_end: 40,
             scheduled_process_time: 40,
             metadosis_limit_minor: U256::from(100),
-            previous_vwap: U256::from(8),
-            current_vwap: U256::from(9),
+            previous_vwap_minor: U256::from(8),
+            current_vwap_minor: U256::from(9),
         }
     }
 

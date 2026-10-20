@@ -447,7 +447,6 @@ pub(crate) fn block_with_system_tx(signer: &OutbeEvmSigner) -> ConsensusBlock {
                     artifact: Default::default(),
                 },
                 SystemTxInputV2::CycleTick,
-                SystemTxInputV2::RewardsGemDelivery,
                 SystemTxInputV2::OracleSlashWindow,
                 SystemTxInputV2::HookEvents,
             ],

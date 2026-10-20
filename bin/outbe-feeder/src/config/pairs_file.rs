@@ -53,6 +53,9 @@ pub(super) fn merge_chain_sources(table: &mut toml::Table, text: &str) -> Result
     if let Some(key) = SHARED_SECTIONS.iter().find(|key| table.contains_key(**key)) {
         return Err(ConfigError::SharedSectionInLocalConfig(key).into());
     }
+    if text.trim().is_empty() {
+        return Err(ConfigError::NoNodeSources.into());
+    }
     let shared: toml::Table =
         toml::from_str(text).context("failed to parse the node's feeder sources")?;
     table.extend(shared);
@@ -202,5 +205,18 @@ markets = [{ provider = "binance" }]
             FeederConfig::build(toml::from_str(CHAIN_LOCAL).unwrap(), Some(exchange)).unwrap();
         let error = config.validate().unwrap_err();
         assert!(error.to_string().contains("is an ISO code"), "{error}");
+    }
+
+    #[test]
+    fn the_testnet_pairs_file_builds_a_valid_config() {
+        let path = format!(
+            "{}/../../scripts/testnet/pairs.toml",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let text = std::fs::read_to_string(&path).unwrap();
+        let config =
+            FeederConfig::build(toml::from_str(CHAIN_LOCAL).unwrap(), Some(&text)).unwrap();
+        config.validate().unwrap();
+        assert_eq!(config.currency_pairs.len(), 6);
     }
 }
