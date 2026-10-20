@@ -8187,6 +8187,7 @@ dependencies = [
  "outbe-chain-constants",
  "outbe-common",
  "outbe-consensus",
+ "outbe-credis",
  "outbe-desis",
  "outbe-evm",
  "outbe-gem",

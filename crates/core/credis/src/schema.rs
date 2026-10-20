@@ -102,7 +102,7 @@ pub struct Credis {
     #[attribute(order = 10)]
     pub entry_price_minor: U256,
 
-    /// `call_anchor_price_minor * 164 / 100`, in the reference currency (scale `1e6`).
+    /// `call_anchor_price_minor` marked up by `call_rate`, in the reference currency (scale `1e6`).
     /// The daily scan calls the Credis when `call_threshold_seconds` of its last
     /// `call_window_seconds` of finalized COEN/`reference_currency` VWAPs are strictly
     /// above this price. Immutable.
@@ -143,7 +143,7 @@ pub struct Credis {
     pub call_notice_period_seconds: u32,
 
     /// Call-price markup percent (snapshot of the profile call rate at issuance).
-    /// Applied to `call_anchor_price_minor`, not to `entry_price_minor` (64 => 1.64x).
+    /// Applied to `call_anchor_price_minor`, not to `entry_price_minor` (64 => 1.64x, 2 => 1.02x).
     #[attribute(order = 18, default = 0)]
     pub call_rate: u16,
 
@@ -160,7 +160,7 @@ pub struct Credis {
 
     /// COEN price in `reference_currency` (scale `1e6`) fixed by the reservation:
     /// the previous closed UTC-day VWAP, independent of spot.
-    /// Immutable. `call_price_minor` is this value times 1.64.
+    /// Immutable. `call_price_minor` is this value marked up by `call_rate`.
     #[attribute(order = 21)]
     pub call_anchor_price_minor: U256,
 
