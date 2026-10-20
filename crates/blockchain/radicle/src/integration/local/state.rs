@@ -7,14 +7,14 @@ use crate::manager::{
 use alloy_primitives::{Address, B256, U256};
 use commonware_codec::DecodeExt as _;
 use commonware_cryptography::bls12381;
-use outbe_primitives::radicle_publication::{
-    players_commitment, PublicationAction, PublicationBody, PUBLICATION_BODY_LEN,
-};
-use outbe_radicleregistry::{
+use outbe_coderegistry::{
     payload::{PatchVotePayloadV1, MAX_PATCH_VOTE_PAYLOAD_BYTES},
     publication::PublicationReceipt,
     schema::{PATCH_EXECUTION_MERGED, PATCH_EXECUTION_PENDING, PATCH_EXECUTION_REVIEWED},
     PatchApprovalRecord,
+};
+use outbe_primitives::radicle_publication::{
+    players_commitment, PublicationAction, PublicationBody, PUBLICATION_BODY_LEN,
 };
 use outbe_validatorset::state::{CommitteeEntry, CommitteeSnapshot};
 
@@ -114,10 +114,7 @@ pub(super) fn decode(
     let block = authority.block();
     let chain_id = authority.chain_id();
     let genesis_hash = authority.genesis_hash();
-    let epoch = authority.epoch();
-    let vrf_material_version = authority.committee().vrf_material_version;
     let vrf_public_polynomial_hash = authority.committee().vrf_public_polynomial_hash;
-    let group = authority.committee().vrf_group_public_key_bytes.as_slice();
     let committee = &authority.committee().committee;
     let response_proposal = U256::from_be_bytes(input.array::<32>()?);
     let approved_height = input.u64()?;
@@ -144,46 +141,27 @@ pub(super) fn decode(
             .map(|member| (member.address, &member.consensus_pubkey)),
     )
     .map_err(|_| Error::Protocol)?;
-    if !input.0.is_empty()
-        || chain_id != chain.chain_id
-        || genesis_hash != chain.genesis_hash
-        || block.hash.is_zero()
+    let invalid_header =
+        !input.0.is_empty() || chain_id != chain.chain_id || genesis_hash != chain.genesis_hash;
+    let invalid_proposal = block.hash.is_zero()
         || vrf_public_polynomial_hash.is_zero()
-        || response_proposal != proposal_id
-        || approved_height == 0
+        || response_proposal != proposal_id;
+    let invalid_approval = approved_height == 0
         || approved_height > block.number
         || !matches!(
             stage,
             PATCH_EXECUTION_PENDING | PATCH_EXECUTION_REVIEWED | PATCH_EXECUTION_MERGED
-        )
-        || anchor.hash.is_zero()
+        );
+    let invalid_anchor = anchor.hash.is_zero()
         || anchor.number
             != approved_height
                 .max(checkpoint.receipt.accepted_height)
                 .max(material.receipt.accepted_height)
-        || (anchor.number == block.number && anchor.hash != block.hash)
-        || bound.sequence > current.sequence
-        || !matches!(
-            bound.action,
-            PublicationAction::Bootstrap | PublicationAction::BindMaterial
-        )
-        || current.repo_id != subject.repo_id
-        || bound.repo_id != subject.repo_id
-        || current.descriptor_hash.is_zero()
-        || current.descriptor_hash != bound.descriptor_hash
-        || current.owner_bls_public != bound.owner_bls_public
-        || bound.owner_bls_public.as_slice() != group
-        || current.epoch != epoch
-        || bound.epoch != epoch
-        || current.material_version != vrf_material_version
-        || bound.material_version != vrf_material_version
-        || current.material_hash.is_zero()
-        || current.material_hash != bound.material_hash
-        || current.players_commitment != players
-        || bound.players_commitment != players
-    {
+        || (anchor.number == block.number && anchor.hash != block.hash);
+    if invalid_header || invalid_proposal || invalid_approval || invalid_anchor {
         return Err(Error::Protocol);
     }
+    validate_receipt_bodies(current, bound, &authority, &subject, *players)?;
     Ok(FinalizedPatchSigningState {
         authority,
         approval: FinalizedPatchApproval {
@@ -200,6 +178,42 @@ pub(super) fn decode(
         stage,
         anchor,
     })
+}
+
+fn validate_receipt_bodies(
+    current: &PublicationBody,
+    bound: &PublicationBody,
+    authority: &FinalizedRepositoryAuthority,
+    subject: &PatchVotePayloadV1,
+    players: [u8; 32],
+) -> Result<(), Error> {
+    let group = authority.committee().vrf_group_public_key_bytes.as_slice();
+    let epoch = authority.epoch();
+    let vrf_material_version = authority.committee().vrf_material_version;
+    let invalid_action = bound.sequence > current.sequence
+        || !matches!(
+            bound.action,
+            PublicationAction::Bootstrap | PublicationAction::BindMaterial
+        );
+    let invalid_repo = current.repo_id != subject.repo_id
+        || bound.repo_id != subject.repo_id
+        || current.descriptor_hash.is_zero()
+        || current.descriptor_hash != bound.descriptor_hash;
+    let invalid_owner = current.owner_bls_public != bound.owner_bls_public
+        || bound.owner_bls_public.as_slice() != group;
+    let invalid_epoch = current.epoch != epoch
+        || bound.epoch != epoch
+        || current.material_version != vrf_material_version
+        || bound.material_version != vrf_material_version;
+    let invalid_material = current.material_hash.is_zero()
+        || current.material_hash != bound.material_hash
+        || current.players_commitment != players
+        || bound.players_commitment != players;
+    let invalid_body = invalid_action || invalid_repo || invalid_owner;
+    if invalid_body || invalid_epoch || invalid_material {
+        return Err(Error::Protocol);
+    }
+    Ok(())
 }
 
 pub(super) fn decode_authority(
@@ -288,12 +302,12 @@ impl<'a> Input<'a> {
         let receipt_hash = B256::from(self.array::<32>()?);
         let body = PublicationBody::from_bytes(self.take(PUBLICATION_BODY_LEN)?)
             .map_err(|_| Error::Protocol)?;
-        if accepted_height == 0
+        let invalid_height = accepted_height == 0
             || accepted_height > block.number
-            || receipt_hash != body.receipt_hash()
-            || body.chain_id != chain.chain_id
-            || body.genesis_hash != chain.genesis_hash
-        {
+            || receipt_hash != body.receipt_hash();
+        let invalid_chain =
+            body.chain_id != chain.chain_id || body.genesis_hash != chain.genesis_hash;
+        if invalid_height || invalid_chain {
             return Err(Error::Protocol);
         }
         Ok(FinalizedPublicationReceipt {

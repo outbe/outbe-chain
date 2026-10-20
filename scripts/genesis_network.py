@@ -78,7 +78,7 @@ SEED_SECTIONS = (
     "staking",
     "rewards",
     "validator_set",
-    "radicle_registry",
+    "code_registry",
     "metadosis",
     "oracle",
     "tributes",

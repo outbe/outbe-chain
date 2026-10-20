@@ -54,8 +54,9 @@ fn layout_preserves_old_slots_and_appends_pending_maps() {
         );
         assert_eq!(router.reservation_nonce.slot(), U256::from(12));
         assert_eq!(router.reservations.base_slot(), U256::from(13));
-        assert_eq!(router.approved_vault_actions.base_slot(), U256::from(29));
-        assert_eq!(router.pending_vault_proposals.base_slot(), U256::from(32));
+        assert_eq!(router.vault_assets.base_slot(), U256::from(29));
+        assert_eq!(router.approved_vault_actions.base_slot(), U256::from(30));
+        assert_eq!(router.pending_vault_proposals.base_slot(), U256::from(33));
         assert_eq!(
             storage.sload(VAULT_ROUTER_ADDRESS, U256::ZERO).unwrap(),
             U256::ZERO
@@ -291,10 +292,9 @@ fn inconsistent_index_and_nonpayable_apply_do_not_consume_record() {
             .pending_vault_proposals
             .write(&vault(), U256::from(2))
             .unwrap();
-        assert!(apply(&storage, 1)
-            .unwrap_err()
-            .to_string()
-            .contains("index inconsistent"));
+        assert_revert::<IVaultRouter::ApprovedVaultActionIndexInconsistent>(
+            &apply(&storage, 1).unwrap_err(),
+        );
         assert!(dispatch(
             storage.clone(),
             &IVaultRouter::applyApprovedCall {

@@ -66,7 +66,7 @@ pub(crate) fn clearing_round_gas(
         let key = DesisContract::chain_key(WorldwideDay::new(day), chain_id);
         bids = bids.max(u64::from(contract.chain_bid_count.read(&key)?));
     }
-    let chunks = bids.div_ceil(CLEARING_BIDS_PER_CHUNK).max(1);
+    let chunks = bids.div_ceil(MAX_PAYLOAD_ARRAY_LEN as u64).max(1);
     let cost = CLEARING_FIXED_GAS
         .saturating_add(chunks.saturating_mul(CLEARING_CHUNK_GAS))
         .saturating_add(bids.saturating_mul(CLEARING_BID_GAS));
@@ -208,8 +208,7 @@ fn clear_inner(
             worldwideDay: worldwide_day.into(),
             unusedDesisLimitMinor: unused_desis_limit_minor,
         })?;
-        PromisLimitContract::new(storage.clone())
-            .add_to_total_unallocated(unused_desis_limit_minor)?;
+        PromisLimitContract::new(storage.clone()).checked_credit(unused_desis_limit_minor)?;
     }
 
     if result.issued_units != 0 {
@@ -279,7 +278,7 @@ fn clear_inner(
 /// closes the day on a chain whose bids all lost. Bounded by the codec's arrival set,
 /// which is one 256-bit word wide.
 pub(crate) fn refund_chunk_count(winners: usize) -> Result<usize> {
-    let chunks = winners.div_ceil(REFUND_CHUNK_LEN).max(1);
+    let chunks = winners.div_ceil(MAX_PAYLOAD_ARRAY_LEN).max(1);
     if chunks > MAX_REFUND_CHUNKS {
         return Err(DesisError::RefundFanOutTooLarge(winners).into());
     }
@@ -315,8 +314,8 @@ pub(crate) fn refund_chunks(result: &ClearingResult, chain_id: u32) -> Result<Ve
     let total_chunks = refund_chunk_count(winners.len())?;
     Ok((0..total_chunks)
         .map(|chunk_index| {
-            let start = chunk_index * REFUND_CHUNK_LEN;
-            let end = (start + REFUND_CHUNK_LEN).min(winners.len());
+            let start = chunk_index * MAX_PAYLOAD_ARRAY_LEN;
+            let end = (start + MAX_PAYLOAD_ARRAY_LEN).min(winners.len());
             let (partial_index, partial_won) = match partial {
                 Some((at, won)) if (start..end).contains(&at) => ((at - start) as u16, won),
                 _ => (0, 0),
@@ -331,9 +330,10 @@ pub(crate) fn refund_chunks(result: &ClearingResult, chain_id: u32) -> Result<Ve
 }
 
 /// One issuance per distinct winning `(issuance, reference)` pair, in the order
-/// the pairs first appear in the ranking. Each group carries its own reference
-/// currency's entry price, which is what the call price derives from.
-fn issuance_groups(
+/// the pairs first appear in the ranking. Each group carries every condition the
+/// day fixed at its auction start: the Promis load, the call trigger and its own
+/// reference currency's entry and call price.
+pub(crate) fn issuance_groups(
     result: &ClearingResult,
     config: &AuctionConfig,
     worldwide_day: WorldwideDay,
@@ -349,8 +349,8 @@ fn issuance_groups(
             None => {
                 // Reveal only accepts a reference the day priced, so a winner
                 // without a row means the day's table and its bids disagree.
-                let entry_price_minor = config
-                    .entry_price_for(reference_currency)
+                let row = config
+                    .price_for(reference_currency)
                     .ok_or(DesisError::UnpricedReferenceCurrency(reference_currency))?;
                 groups.push(IssuanceParams {
                     series_id: SeriesId::for_pair(
@@ -361,7 +361,9 @@ fn issuance_groups(
                     worldwide_day,
                     issued_units: 0,
                     promis_load_minor: config.promis_load_minor,
-                    entry_price_minor,
+                    entry_price_minor: row.entry_price_minor,
+                    call_price_minor: row.call_price_minor,
+                    call_trigger: config.call_trigger,
                     issuance_currency,
                     reference_currency,
                     snapshot_chains: snapshot.to_vec(),

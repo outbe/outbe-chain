@@ -5,13 +5,13 @@ from __future__ import annotations
 import os
 
 from genesis_keccak import keccak256
-from genesis_seed_alloc import seed_governments_descriptor, seed_radicle_registry
+from genesis_seed_alloc import seed_governments_descriptor, seed_code_registry
 from genesis_seed_codec import (
     ACCOUNTING_PROGRESS_ADDRESS,
     GOVERNANCE_ADDRESS,
 
     MARKER_CODE,
-    RADICLE_REGISTRY_ADDRESS,
+    CODE_REGISTRY_ADDRESS,
     TEE_REGISTRY_ADDRESS,
     ZEROFEE_ADDRESS,
     StorageBuilder,
@@ -189,18 +189,18 @@ def _seed_system_state(genesis, seed, alloc, canon_dir):
         f"{len(accounting_storage.entries)} storage entries"
     )
 
-    if "radicle_registry" in seed:
-        radicle_registry_storage = StorageBuilder()
-        seed_radicle_registry(radicle_registry_storage, seed["radicle_registry"])
+    if "code_registry" in seed:
+        code_registry_storage = StorageBuilder()
+        seed_code_registry(code_registry_storage, seed["code_registry"])
         seed_governments_descriptor(
-            genesis, radicle_registry_storage, seed["radicle_registry"]
+            genesis, code_registry_storage, seed["code_registry"]
         )
-        alloc[RADICLE_REGISTRY_ADDRESS].setdefault("storage", {}).update(
-            radicle_registry_storage.entries
+        alloc[CODE_REGISTRY_ADDRESS].setdefault("storage", {}).update(
+            code_registry_storage.entries
         )
         print(
-            "  RadicleRegistry: maxRepositories="
-            f"{seed['radicle_registry']['max_repositories']}"
+            "  CodeRegistry: maxRepositories="
+            f"{seed['code_registry']['max_repositories']}"
         )
 
     # ZeroFee paymaster: slot 0 = schema version (1). This honors the README

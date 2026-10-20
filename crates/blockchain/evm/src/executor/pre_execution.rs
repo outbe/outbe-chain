@@ -16,6 +16,8 @@ where
     ) -> Result<(), BlockExecutionError> {
         use crate::errors::ExecutorValidationError;
 
+        let timestamp = outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
+            .map_err(ExecutorValidationError::from)?;
         validate_outbe_withdrawals(self.inner.ctx.withdrawals.as_deref())
             .map_err(ExecutorValidationError::invalid_withdrawals)?;
 
@@ -59,7 +61,6 @@ where
         }
 
         // 4. Extract block context before taking a mutable DB borrow.
-        let timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
         let chain_id = self.inner.evm.chain_id();
         let block_artifacts = decode_outbe_block_artifacts(self.block_extra_data.as_ref())
             .map_err(ExecutorValidationError::block_artifacts)?;

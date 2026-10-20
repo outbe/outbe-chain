@@ -31,7 +31,7 @@ impl OracleContract<'_> {
         pair: AddressPair,
         snapshot: VwapSnapshotId,
     ) -> Result<Option<U256>> {
-        if snapshot.cutoff() > self.storage.timestamp()?.to::<u64>() {
+        if snapshot.cutoff() > self.storage.timestamp()?.saturating_to::<u64>() {
             return Err(OracleError::InvalidVwapSnapshot.into());
         }
         let (start, cutoff) = (snapshot.start(), snapshot.cutoff());

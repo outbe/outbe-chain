@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::errors::{GovernanceError, GovernanceFatalError};
-use crate::runtime::MAX_TEXT_BYTES;
+use crate::runtime::MAX_PROPOSAL_TEXT_BYTES;
 use crate::schema::GovernanceContract;
 
 /// Which governance proposal kind a vote payload creates.
@@ -50,8 +50,11 @@ impl GovernanceVotePayload {
         if self.text.is_empty() {
             return Err(GovernanceError::EmptyText);
         }
-        if self.text.len() > MAX_TEXT_BYTES {
-            return Err(GovernanceError::TextTooLarge);
+        if self.text.len() > MAX_PROPOSAL_TEXT_BYTES {
+            return Err(GovernanceError::TextTooLarge {
+                len: self.text.len(),
+                max: MAX_PROPOSAL_TEXT_BYTES,
+            });
         }
         Ok(())
     }
@@ -142,5 +145,21 @@ mod tests {
     fn rejects_empty_text() {
         let payload = GovernanceVotePayload::new(ProposalKind::Gip, "");
         assert_eq!(payload.validate().unwrap_err(), GovernanceError::EmptyText);
+    }
+
+    #[test]
+    fn validate_keeps_proposal_bound() {
+        let max = MAX_PROPOSAL_TEXT_BYTES;
+        for kind in [ProposalKind::Oip, ProposalKind::Gip] {
+            GovernanceVotePayload::new(kind, "a".repeat(max))
+                .validate()
+                .unwrap();
+            assert_eq!(
+                GovernanceVotePayload::new(kind, "a".repeat(max + 1))
+                    .validate()
+                    .unwrap_err(),
+                GovernanceError::TextTooLarge { len: max + 1, max }
+            );
+        }
     }
 }

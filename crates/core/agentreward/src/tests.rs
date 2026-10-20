@@ -1030,7 +1030,10 @@ fn reward_timestamp_narrowing_rejects_overflow() {
             (USD, USD),
         )
         .unwrap_err();
-        assert!(error.to_string().contains("timestamp overflow"));
+        assert!(
+            matches!(error, outbe_primitives::error::PrecompileError::Revert(message)
+            if message == "timestamp exceeds u64")
+        );
     });
 }
 

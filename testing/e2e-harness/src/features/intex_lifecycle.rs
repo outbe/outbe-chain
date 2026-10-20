@@ -438,7 +438,7 @@ impl Lifecycle for IntexLifecycle {
         let pool = eth::read_call_at(
             &url,
             addresses::PROMIS_LIMIT_ADDR,
-            &eth::IPromisLimit::totalUnallocatedCall {},
+            &eth::IPromisLimit::promisLimitCall {},
             height,
         )
         .expect("unallocated pool before the forfeit");
@@ -539,7 +539,7 @@ impl Lifecycle for IntexLifecycle {
         poll_until(
             FORFEIT_TIMEOUT,
             || format!("unallocated PROMIS never reached {want} after the notice lapsed"),
-            || world.rpc.promis_limit_total_unallocated_on(port) == Some(want),
+            || world.rpc.promis_limit_on(port) == Some(want),
         );
         let height = finalized_checkpoint(world).height;
         // Both series were issued into one call group, which expires as one.
@@ -567,7 +567,7 @@ impl Lifecycle for IntexLifecycle {
             eth::read_call_at(
                 &url,
                 addresses::PROMIS_LIMIT_ADDR,
-                &eth::IPromisLimit::totalUnallocatedCall {},
+                &eth::IPromisLimit::promisLimitCall {},
                 height,
             ),
             Some(want),

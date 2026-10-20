@@ -4,7 +4,7 @@ use super::{
     review::{self, PreparedPatchReview, PreparedReviewRefs, ReviewSigningContext},
 };
 use crate::manager::{FinalizedPatchApproval, FinalizedPublicationReceipt};
-use outbe_radicleregistry::{payload::PatchVotePayloadV1, PatchApprovalRecord};
+use outbe_coderegistry::{payload::PatchVotePayloadV1, PatchApprovalRecord};
 use radicle::{
     cob::{self, object, patch},
     crypto::{BlsEnvelope, RepositoryKey},
@@ -126,26 +126,13 @@ pub fn prepare_patch_merge_from_checkpoint(
         .map_err(|_| Error::Context)?;
     let checkpoint = snapshot.checkpoint().receipt();
     let reviewed = accepted_review.receipt().receipt();
-    if reviewed.body.chain_id != checkpoint.body.chain_id
-        || reviewed.body.genesis_hash != checkpoint.body.genesis_hash
-        || reviewed.body.owner_bls_public != checkpoint.body.owner_bls_public
-        || reviewed.body.descriptor_hash != checkpoint.body.descriptor_hash
-        || context.chain_id != checkpoint.body.chain_id
-        || context.genesis_hash != checkpoint.body.genesis_hash.0
-        || reviewed.body.proposal_id != approval.approval.proposal_id
-        || reviewed.body.repo_id != decision.repo_id
-        || reviewed.body.patch_id != decision.patch_id
-        || reviewed.body.revision_id != decision.revision_id
-        || reviewed.body.expected_target_head != decision.expected_target_head
-        || reviewed.body.sequence > checkpoint.body.sequence
-        || checkpoint.body.repo_id != decision.repo_id
-        || context.previous_receipt_hash != checkpoint.receipt_hash.0
-        || context.epoch != checkpoint.body.epoch
-        || context.material_version != checkpoint.body.material_version
-        || context.material_hash != checkpoint.body.material_hash.0
-    {
-        return Err(Error::Context);
-    }
+    validate_merge_context(
+        &reviewed.body,
+        checkpoint,
+        &approval.approval,
+        &decision,
+        context,
+    )?;
     let target = snapshot
         .owner_refs()
         .head(git::fmt::refname!("main"))
@@ -243,4 +230,35 @@ pub fn prepare_patch_merge_from_checkpoint(
         review: accepted_review.receipt().clone(),
         result,
     })
+}
+
+fn validate_merge_context(
+    reviewed: &outbe_primitives::radicle_publication::PublicationBody,
+    checkpoint: &outbe_coderegistry::publication::PublicationReceipt,
+    approval: &PatchApprovalRecord,
+    decision: &PatchVotePayloadV1,
+    context: &ReviewSigningContext,
+) -> Result<(), Error> {
+    let invalid_scope = reviewed.chain_id != checkpoint.body.chain_id
+        || reviewed.genesis_hash != checkpoint.body.genesis_hash
+        || reviewed.owner_bls_public != checkpoint.body.owner_bls_public
+        || reviewed.descriptor_hash != checkpoint.body.descriptor_hash;
+    let invalid_context_scope = context.chain_id != checkpoint.body.chain_id
+        || context.genesis_hash != checkpoint.body.genesis_hash.0
+        || reviewed.proposal_id != approval.proposal_id;
+    let invalid_decision = reviewed.repo_id != decision.repo_id
+        || reviewed.patch_id != decision.patch_id
+        || reviewed.revision_id != decision.revision_id
+        || reviewed.expected_target_head != decision.expected_target_head;
+    let invalid_sequence =
+        reviewed.sequence > checkpoint.body.sequence || checkpoint.body.repo_id != decision.repo_id;
+    let invalid_material = context.previous_receipt_hash != checkpoint.receipt_hash.0
+        || context.epoch != checkpoint.body.epoch
+        || context.material_version != checkpoint.body.material_version
+        || context.material_hash != checkpoint.body.material_hash.0;
+    let invalid_header = invalid_scope || invalid_context_scope || invalid_decision;
+    if invalid_header || invalid_sequence || invalid_material {
+        return Err(Error::Context);
+    }
+    Ok(())
 }

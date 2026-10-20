@@ -208,7 +208,7 @@ fn admitted_at_quote(storage: &StorageHandle<'_>, gem_id: U256, asset: Address) 
         },
     );
     assert!(err_msg(res).contains("unexpected amount"));
-    let now = storage.timestamp().unwrap().to::<u64>();
+    let now = storage.now_secs().unwrap();
     assert_eq!(
         gem_view(storage, gem_id).effective_state(now),
         GemState::Issued as u8
@@ -355,7 +355,7 @@ fn block_ctx<'a>(storage: &StorageHandle<'a>, now: u64) -> BlockRuntimeContext<'
 
 fn unallocated(storage: &StorageHandle) -> U256 {
     outbe_promislimit::PromisLimitContract::new(storage.clone())
-        .get_total_unallocated()
+        .promis_limit()
         .unwrap()
 }
 

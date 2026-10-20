@@ -1,9 +1,9 @@
 use super::*;
 use alloy_evm::Evm;
-use outbe_primitives::addresses::RADICLE_REGISTRY_ADDRESS;
-use outbe_radicleregistry::{
-    payload::PatchVotePayloadV1, precompile::IRadicleRegistry, RadicleRegistry, RepoId,
+use outbe_coderegistry::{
+    payload::PatchVotePayloadV1, precompile::ICodeRegistry, CodeRegistry, RepoId,
 };
+use outbe_primitives::addresses::CODE_REGISTRY_ADDRESS;
 use outbe_vote::precompile::IVote;
 use revm::{context::TxEnv, DatabaseCommit};
 
@@ -50,14 +50,14 @@ fn run_patch_vote_case(approve_second: bool) {
     ];
     let outsider = Address::repeat_byte(0xee);
     let mut state = state_with_active_validators_seeded_at_block(&validators, 7, |storage| {
-        RadicleRegistry::new(storage)
+        CodeRegistry::new(storage)
             .config_max_repositories
             .write(4)
             .unwrap();
     });
     let marker = Bytecode::new_legacy([0xef].into());
     state.database.insert_account_info(
-        RADICLE_REGISTRY_ADDRESS,
+        CODE_REGISTRY_ADDRESS,
         AccountInfo {
             code_hash: marker.hash_slow(),
             code: Some(marker),
@@ -74,13 +74,13 @@ fn run_patch_vote_case(approve_second: bool) {
         );
     }
     let repo = RepoId::repeat_byte(0xaa);
-    let register = IRadicleRegistry::registerRepositoryCall { repoId: repo }.abi_encode();
+    let register = ICodeRegistry::registerRepositoryCall { repoId: repo }.abi_encode();
     assert!(call(
         &mut state,
         7,
         validators[0].0,
         0,
-        RADICLE_REGISTRY_ADDRESS,
+        CODE_REGISTRY_ADDRESS,
         register
     )
     .is_success());
@@ -96,7 +96,7 @@ fn run_patch_vote_case(approve_second: bool) {
     )
     .unwrap();
     let create = IVote::createProposalWithVotingWindowCall {
-        targetModule: RADICLE_REGISTRY_ADDRESS,
+        targetModule: CODE_REGISTRY_ADDRESS,
         payload: payload.clone(),
         votingWindowBlocks: 2,
     }
@@ -137,7 +137,7 @@ fn run_patch_vote_case(approve_second: bool) {
         second_ballot
     )
     .is_success());
-    let get = IRadicleRegistry::getPatchApprovalCall {
+    let get = ICodeRegistry::getPatchApprovalCall {
         proposalId: U256::ONE,
     }
     .abi_encode();
@@ -146,12 +146,12 @@ fn run_patch_vote_case(approve_second: bool) {
         9,
         outsider,
         1,
-        RADICLE_REGISTRY_ADDRESS,
+        CODE_REGISTRY_ADDRESS,
         get.clone(),
     );
     assert!(before.is_success());
     assert!(
-        !IRadicleRegistry::getPatchApprovalCall::abi_decode_returns(before.output().unwrap())
+        !ICodeRegistry::getPatchApprovalCall::abi_decode_returns(before.output().unwrap())
             .unwrap()
             .approved
     );
@@ -167,11 +167,10 @@ fn run_patch_vote_case(approve_second: bool) {
         run_outbe_pre_execution_hooks(ctx, None)
     })
     .expect("actual begin-block hooks finalize patch Vote");
-    let after = call(&mut state, 10, outsider, 2, RADICLE_REGISTRY_ADDRESS, get);
+    let after = call(&mut state, 10, outsider, 2, CODE_REGISTRY_ADDRESS, get);
     assert!(after.is_success(), "{after:?}");
     let approval =
-        IRadicleRegistry::getPatchApprovalCall::abi_decode_returns(after.output().unwrap())
-            .unwrap();
+        ICodeRegistry::getPatchApprovalCall::abi_decode_returns(after.output().unwrap()).unwrap();
     let proposal = call(
         &mut state,
         10,

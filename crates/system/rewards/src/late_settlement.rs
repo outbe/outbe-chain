@@ -17,7 +17,7 @@
 //! [`BlockRuntimeContext`]. The executor wires them into the begin-zone CPA phase
 //! (escrow) and the `LateFinalizeCredits` phase (record + settle). At settle, the
 //! settlement logic burns the whole six-decimal units of the residue from
-//! `REWARDS_ADDRESS` and recycles them into the Metadosis carry-over via
+//! `REWARDS_ADDRESS` and recycles them into the Promis Limit via
 //! [`outbe_emissionlimit::block::dispatch_late_settlement_residue_at`]. The native
 //! remainder below one unit stays on `REWARDS_ADDRESS` for the next window. Then
 //! `settle_window` frees the per-window state (`pending_fees`, `late_voter_*`, and
@@ -284,9 +284,9 @@ fn pay_credited_voters(
 }
 
 /// Burns the whole protocol units of `residue` plus the carried dust and sends
-/// them to the Metadosis carry-over.
+/// them to the Promis Limit.
 fn recycle_residue(ctx: &BlockRuntimeContext, rewards: &Rewards<'_>, residue: U256) -> Result<()> {
-    // The residue is native wei, and the carry-over counts six-decimal units. Thus
+    // The residue is native wei, and the Promis Limit counts six-decimal units. Thus
     // this function burns and recycles only whole units. The rest waits on REWARDS
     // for the next window.
     let native = residue
@@ -549,7 +549,7 @@ mod tests {
             assert_eq!(residue, U256::from(1_000) * unit + U256::from(4));
             assert_eq!(
                 PromisLimitContract::new(ctx.storage.clone())
-                    .get_total_unallocated()
+                    .promis_limit()
                     .unwrap(),
                 U256::from(1_000)
             );
@@ -581,7 +581,7 @@ mod tests {
             escrow_block_fee(ctx, &block_at(11, second), pending, &[V0, V1, V2]).unwrap();
             let carry_over = || {
                 PromisLimitContract::new(ctx.storage.clone())
-                    .get_total_unallocated()
+                    .promis_limit()
                     .unwrap()
             };
 
@@ -635,7 +635,7 @@ mod tests {
             );
             assert_eq!(
                 PromisLimitContract::new(ctx.storage.clone())
-                    .get_total_unallocated()
+                    .promis_limit()
                     .unwrap(),
                 expected_residue
             );
@@ -658,7 +658,7 @@ mod tests {
             assert_eq!(emission_day.emission_limit_minor, daily_base);
             assert_eq!(
                 PromisLimitContract::new(ctx.storage.clone())
-                    .get_total_unallocated()
+                    .promis_limit()
                     .unwrap(),
                 expected_residue,
                 "the residue stays in the accumulator for whichever day draws on it"

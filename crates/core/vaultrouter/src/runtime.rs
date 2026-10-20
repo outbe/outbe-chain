@@ -77,6 +77,7 @@ pub(crate) fn add_vault(storage: StorageHandle<'_>, vault: Address) -> Result<()
     contract
         .vault_reference_currencies
         .write(&vault, iso_code)?;
+    contract.vault_assets.write(&vault, asset)?;
 
     erc20_approve(&storage, asset, vault, U256::MAX)?;
 
@@ -87,14 +88,26 @@ pub(crate) fn add_vault(storage: StorageHandle<'_>, vault: Address) -> Result<()
     })
 }
 
-/// Distinct assets whose vaults are registered under `iso_code`.
+/// Distinct assets of the vaults at positions `[offset, offset + limit)` of the
+/// `iso_code` vault set, in set order. Makes at most `limit` `asset()` sub-calls.
+/// Assets are deduplicated within the page only. An `offset` past the end or a
+/// zero `limit` returns an empty page. Values above `u32::MAX` saturate.
 pub(crate) fn reference_currency_assets(
     storage: &StorageHandle<'_>,
     iso_code: u16,
+    offset: U256,
+    limit: U256,
 ) -> Result<Vec<Address>> {
     let contract = VaultRouterContract::new(storage.clone());
+    let vaults = contract.reference_currency_vault_set(iso_code);
+    let offset = u32::try_from(offset).unwrap_or(u32::MAX);
+    let limit = u32::try_from(limit).unwrap_or(u32::MAX);
+    let end = offset.saturating_add(limit).min(vaults.len()?);
     let mut assets: Vec<Address> = Vec::new();
-    for vault in contract.reference_currency_vault_set(iso_code).read_all()? {
+    for index in offset..end {
+        let Some(vault) = vaults.at(index)? else {
+            break;
+        };
         let asset = vault_asset(storage, vault)?;
         if !assets.contains(&asset) {
             assets.push(asset);
@@ -104,14 +117,20 @@ pub(crate) fn reference_currency_assets(
 }
 
 /// `removeVault`: deregister `vault` for its asset and revoke the allowance.
+/// The asset comes from the registration record, so a vault whose `asset()`
+/// changes or reverts stays removable.
 pub(crate) fn remove_vault(storage: StorageHandle<'_>, vault: Address) -> Result<()> {
     if vault.is_zero() {
         return Err(VaultRouterError::ZeroAddress.into());
     }
 
-    let asset = vault_asset(&storage, vault)?;
-
     let mut contract = VaultRouterContract::new(storage.clone());
+    let mut asset = contract.vault_assets.read(&vault)?;
+    if asset.is_zero() {
+        // Upgrade compatibility for vaults registered before the asset record was
+        // introduced: ask the vault for its asset on first removal.
+        asset = vault_asset(&storage, vault)?;
+    }
     let mut iso_code = contract.vault_reference_currencies.read(&vault)?;
     if iso_code == 0 {
         // Upgrade compatibility for vaults registered before the ISO index was
@@ -128,6 +147,7 @@ pub(crate) fn remove_vault(storage: StorageHandle<'_>, vault: Address) -> Result
         .reference_currency_vault_set(iso_code)
         .remove(&vault)?;
     contract.vault_reference_currencies.clear(&vault)?;
+    contract.vault_assets.clear(&vault)?;
 
     erc20_approve(&storage, asset, vault, U256::ZERO)?;
 

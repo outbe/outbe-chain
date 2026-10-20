@@ -113,12 +113,16 @@ pub struct VaultRouterContract {
     #[attribute(order = 10)]
     pub reservations: outbe_primitives::storage::dsl::Map<U256, LiquidityReservation>,
 
-    /// roots 29-31: pending vault actions keyed by proposal ID.
+    /// slot 29: vault -> underlying asset captured at registration time.
     #[attribute(order = 11)]
+    pub vault_assets: outbe_primitives::storage::dsl::Map<Address, Address>,
+
+    /// roots 30-32: pending vault actions keyed by proposal ID.
+    #[attribute(order = 12)]
     pub approved_vault_actions: outbe_primitives::storage::dsl::Map<U256, ApprovedVaultAction>,
 
-    /// slot 32: vault -> pending proposal ID; zero means none.
-    #[attribute(order = 12)]
+    /// slot 33: vault -> pending proposal ID; zero means none.
+    #[attribute(order = 13)]
     pub pending_vault_proposals: outbe_primitives::storage::dsl::Map<Address, U256>,
 }
 

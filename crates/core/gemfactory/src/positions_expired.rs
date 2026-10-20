@@ -69,7 +69,7 @@ impl ExpiryHandler<u64> for PositionExpiry<'_, '_> {
         let returned = self.factory.hour_capacity_minor.read(&hour)?;
         if !returned.is_zero() {
             outbe_promislimit::PromisLimitContract::new(self.storage.clone())
-                .add_to_total_unallocated(returned)?;
+                .checked_credit(returned)?;
         }
         self.factory.hour_capacity_minor.clear(&hour)?;
         self.factory.hand_hour_to_cleanup(hour)?;

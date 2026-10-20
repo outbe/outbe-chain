@@ -47,7 +47,7 @@ where
         );
         let seeded_hash = genesis
             .alloc
-            .get(&outbe_primitives::addresses::RADICLE_REGISTRY_ADDRESS)
+            .get(&outbe_primitives::addresses::CODE_REGISTRY_ADDRESS)
             .and_then(|account| account.storage.as_ref())
             .and_then(|storage| storage.get(&slot))
             .copied()

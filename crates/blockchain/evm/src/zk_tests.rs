@@ -3,7 +3,7 @@ use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
-use crate::zk::{dispatch_groth16, groth16_base_gas, zk_verify, ZK_VERIFY_GAS};
+use crate::zk::{dispatch_zk_verify, zk_verify, zk_verify_base_gas, ZK_VERIFY_GAS};
 
 const CHAIN_ID: u64 = 19_280_501;
 
@@ -117,27 +117,27 @@ fn zk_verify_shifted_offset_is_rejected() {
 }
 
 #[test]
-fn groth16_base_gas_is_flat() {
-    assert_eq!(groth16_base_gas(&[]), ZK_VERIFY_GAS);
-    assert_eq!(groth16_base_gas(&[0u8; 1024]), ZK_VERIFY_GAS);
+fn zk_verify_base_gas_is_flat() {
+    assert_eq!(zk_verify_base_gas(&[]), ZK_VERIFY_GAS);
+    assert_eq!(zk_verify_base_gas(&[0u8; 1024]), ZK_VERIFY_GAS);
 }
 
 // ---- dispatch (msg.value rejection) --------------------------------------
 
 #[test]
-fn dispatch_groth16_rejects_nonzero_value() {
+fn dispatch_zk_verify_rejects_nonzero_value() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let storage = StorageHandle::new(&mut provider);
     let input = abi_encode(&[0u8; 32], &[0u8; 16]);
-    let res = dispatch_groth16(storage, &input, Address::ZERO, U256::from(1u64));
+    let res = dispatch_zk_verify(storage, &input, Address::ZERO, U256::from(1u64));
     assert!(matches!(res, Err(PrecompileError::Revert(_))));
 }
 
 #[test]
-fn dispatch_groth16_unknown_circuit_returns_zero_bytes() {
+fn dispatch_zk_verify_unknown_circuit_returns_zero_bytes() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let storage = StorageHandle::new(&mut provider);
     let input = abi_encode(&[0u8; 32], &[0u8; 64]);
-    let out = dispatch_groth16(storage, &input, Address::ZERO, U256::ZERO).unwrap();
+    let out = dispatch_zk_verify(storage, &input, Address::ZERO, U256::ZERO).unwrap();
     assert_eq!(out.as_ref(), &[0u8; 32]);
 }

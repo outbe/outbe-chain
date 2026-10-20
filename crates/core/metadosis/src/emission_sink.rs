@@ -27,7 +27,7 @@ pub(crate) fn apply(ctx: &BlockRuntimeContext, amount: U256) -> Result<()> {
     )
 }
 
-/// Recycles late-settlement headroom into PromisLimit carry-over.
+/// Recycles late-settlement headroom into the Promis Limit.
 pub(crate) fn apply_late_settlement_headroom(
     ctx: &BlockRuntimeContext,
     amount: U256,
@@ -41,7 +41,7 @@ pub(crate) fn apply_late_settlement_headroom(
         ctx.storage.clone(),
         binding,
         |_| {
-            PromisLimitContract::new(ctx.storage.clone()).checked_add_carry_over(amount)?;
+            PromisLimitContract::new(ctx.storage.clone()).checked_credit(amount)?;
             Ok(U256::ZERO)
         },
     )
@@ -52,7 +52,7 @@ fn apply_day_limit(ctx: &BlockRuntimeContext, base_limit: U256) -> Result<()> {
     let utc_day = timestamp_to_date_key(ctx.block.timestamp);
     crate::lifecycle::ensure_emission_day_with_limit(&mut metadosis, ctx, utc_day, base_limit)?;
 
-    let carry_over = PromisLimitContract::new(ctx.storage.clone()).get_total_unallocated()?;
+    let carry_over = PromisLimitContract::new(ctx.storage.clone()).promis_limit()?;
     metadosis.emit(IMetadosis::MetadosisAccumulation {
         date: utc_day,
         metadosisLimitMinor: base_limit,

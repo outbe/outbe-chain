@@ -28,8 +28,8 @@ pub enum GovernanceError {
     #[error("text must not be empty")]
     EmptyText,
 
-    #[error("text exceeds the maximum size")]
-    TextTooLarge,
+    #[error("text exceeds the maximum size ({len} > {max})")]
+    TextTooLarge { len: usize, max: usize },
 
     #[error("invalid diff base (expected 0 = canon or 1 = meta-canon)")]
     InvalidDiffBase,
@@ -39,6 +39,12 @@ pub enum GovernanceError {
 
     #[error("invalid proposal payload")]
     InvalidProposalPayload,
+
+    #[error("author proposal index is full")]
+    AuthorIndexFull,
+
+    #[error("proposal id sequence is exhausted")]
+    ProposalIdExhausted,
 }
 
 impl From<GovernanceError> for PrecompileError {

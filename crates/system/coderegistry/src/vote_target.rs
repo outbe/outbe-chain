@@ -2,7 +2,7 @@
 
 use alloy_primitives::{Address, U256};
 use outbe_primitives::{
-    addresses::RADICLE_REGISTRY_ADDRESS, block::BlockRuntimeContext, error::Result,
+    addresses::CODE_REGISTRY_ADDRESS, block::BlockRuntimeContext, error::Result,
     storage::StorageHandle,
 };
 use outbe_vote::{
@@ -11,15 +11,15 @@ use outbe_vote::{
 };
 
 use crate::{
-    errors::RadicleRegistryError, payload::PatchVotePayloadV1, repo_id_storage_key,
-    PatchApprovalRecord, RadicleRegistry,
+    errors::CodeRegistryError, payload::PatchVotePayloadV1, repo_id_storage_key, CodeRegistry,
+    PatchApprovalRecord,
 };
 
-pub struct RadiclePatchVoteTarget;
+pub struct CodePatchVoteTarget;
 
-impl VoteTarget for RadiclePatchVoteTarget {
+impl VoteTarget for CodePatchVoteTarget {
     fn target_module(&self) -> Address {
-        RADICLE_REGISTRY_ADDRESS
+        CODE_REGISTRY_ADDRESS
     }
 
     fn electorate(&self) -> TargetElectorate {
@@ -38,12 +38,12 @@ impl VoteTarget for RadiclePatchVoteTarget {
         _context: VoteTargetContext,
     ) -> Result<()> {
         let subject = PatchVotePayloadV1::decode(payload)?;
-        if RadicleRegistry::new(storage)
+        if CodeRegistry::new(storage)
             .repository_index
             .read(&repo_id_storage_key(subject.repo_id))?
             == 0
         {
-            return Err(RadicleRegistryError::UnknownRepository.into());
+            return Err(CodeRegistryError::UnknownRepository.into());
         }
         Ok(())
     }
@@ -59,29 +59,31 @@ impl VoteTarget for RadiclePatchVoteTarget {
         let proposal = Vote::new(ctx.storage.clone())
             .proposals
             .get(proposal_id)?
-            .ok_or(RadicleRegistryError::ApprovalProposalMismatch)?;
-        if proposal.target_module != RADICLE_REGISTRY_ADDRESS
+            .ok_or(CodeRegistryError::ApprovalProposalMismatch)?;
+        if proposal.target_module != CODE_REGISTRY_ADDRESS
             || proposal.payload.as_bytes() != payload
             || proposal.proposer != context.proposer
-            || !matches!(
-                proposal.proposal_status()?,
-                ProposalStatus::Pending | ProposalStatus::Approved
-            )
-            || ctx.block.block_number <= proposal.voting_deadline_height
         {
-            return Err(RadicleRegistryError::ApprovalProposalMismatch.into());
+            return Err(CodeRegistryError::ApprovalProposalMismatch.into());
         }
-        let registry = RadicleRegistry::new(ctx.storage.clone());
+        if !matches!(
+            proposal.proposal_status()?,
+            ProposalStatus::Pending | ProposalStatus::Approved
+        ) || ctx.block.block_number <= proposal.voting_deadline_height
+        {
+            return Err(CodeRegistryError::ApprovalProposalMismatch.into());
+        }
+        let registry = CodeRegistry::new(ctx.storage.clone());
         if registry
             .repository_index
             .read(&repo_id_storage_key(subject.repo_id))?
             == 0
         {
-            return Err(RadicleRegistryError::UnknownRepository.into());
+            return Err(CodeRegistryError::UnknownRepository.into());
         }
         if let Some(existing) = registry.patch_approvals.get(proposal_id)? {
             if existing.payload.as_bytes() != payload {
-                return Err(RadicleRegistryError::ImmutableApproval.into());
+                return Err(CodeRegistryError::ImmutableApproval.into());
             }
             return Ok(TargetExecutionOutcome::Applied);
         }

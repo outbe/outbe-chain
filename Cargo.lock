@@ -8005,6 +8005,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "outbe-coderegistry"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "commonware-codec",
+ "commonware-cryptography",
+ "commonware-utils",
+ "outbe-consensus",
+ "outbe-macros",
+ "outbe-primitives",
+ "outbe-validatorset",
+ "outbe-vote",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "outbe-common"
 version = "0.1.0"
 dependencies = [
@@ -8184,6 +8203,7 @@ dependencies = [
  "libc",
  "multibase",
  "outbe-chain-constants",
+ "outbe-coderegistry",
  "outbe-common",
  "outbe-consensus",
  "outbe-desis",
@@ -8197,7 +8217,6 @@ dependencies = [
  "outbe-oracle",
  "outbe-primitives",
  "outbe-radicle",
- "outbe-radicleregistry",
  "outbe-slashindicator",
  "outbe-tee",
  "outbe-tee-enclave",
@@ -8315,6 +8334,7 @@ dependencies = [
  "outbe-agentreward",
  "outbe-ccaregistry",
  "outbe-chain-constants",
+ "outbe-coderegistry",
  "outbe-consensus",
  "outbe-credis",
  "outbe-credisfactory",
@@ -8340,7 +8360,6 @@ dependencies = [
  "outbe-promis",
  "outbe-promisfactory",
  "outbe-promislimit",
- "outbe-radicleregistry",
  "outbe-rewards",
  "outbe-slashindicator",
  "outbe-stablecoin",
@@ -9038,9 +9057,9 @@ dependencies = [
  "metrics",
  "metrics-util",
  "multibase",
+ "outbe-coderegistry",
  "outbe-consensus",
  "outbe-primitives",
- "outbe-radicleregistry",
  "outbe-validatorset",
  "outbe-vote",
  "parking_lot",
@@ -9080,10 +9099,10 @@ dependencies = [
  "hex",
  "lexopt",
  "log",
+ "outbe-coderegistry",
  "outbe-consensus",
  "outbe-primitives",
  "outbe-radicle",
- "outbe-radicleregistry",
  "outbe-validatorset",
  "outbe-vote",
  "radicle",
@@ -9107,25 +9126,6 @@ dependencies = [
  "outbe-radicle-runtime",
  "radicle-log",
  "radicle-signals",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "outbe-radicleregistry"
-version = "0.1.0"
-dependencies = [
- "alloy-primitives",
- "alloy-sol-types",
- "commonware-codec",
- "commonware-cryptography",
- "commonware-utils",
- "outbe-consensus",
- "outbe-macros",
- "outbe-primitives",
- "outbe-validatorset",
- "outbe-vote",
- "serde",
- "serde_json",
  "thiserror 2.0.18",
 ]
 

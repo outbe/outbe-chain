@@ -255,11 +255,6 @@ fn chain_id_word(chain_id: u64) -> [u8; 32] {
     U256::from(chain_id).to_be_bytes()
 }
 
-fn consensus_timestamp(storage: &outbe_primitives::storage::StorageHandle<'_>) -> Result<u64> {
-    u64::try_from(storage.timestamp()?)
-        .map_err(|_| TeeRegistryError::ConsensusTimestampExceedsU64.into())
-}
-
 fn checked_u16(value: u64, field: &'static str) -> Result<u16> {
     u16::try_from(value).map_err(|_| TeeRegistryError::FieldExceedsCanonicalWidth(field).into())
 }

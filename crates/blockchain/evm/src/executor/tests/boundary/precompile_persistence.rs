@@ -9,9 +9,9 @@ fn marker_list_covers_stateful_precompiles() {
     use crate::executor::marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES;
     use crate::precompiles::outbe_precompile_addresses;
     use outbe_primitives::addresses::{
-        GOVERNANCE_ADDRESS, RADICLE_REGISTRY_ADDRESS, STABLECOIN_FACTORY_ADDRESS,
+        CODE_REGISTRY_ADDRESS, GOVERNANCE_ADDRESS, STABLECOIN_FACTORY_ADDRESS,
         STABLECOIN_POLICY_REGISTRY_ADDRESS, VAULT_ROUTER_ADDRESS, ZEROFEE_ADDRESS,
-        ZKPROOF_GROTH16_ADDRESS,
+        ZKPROOF_VERIFY_ADDRESS,
     };
 
     // Dispatch-registered precompiles that legitimately need NO runtime 0xEF
@@ -19,7 +19,7 @@ fn marker_list_covers_stateful_precompiles() {
     // evidence in `tests/genesis.rs`. An unproven exemption permits silent pruning.
     const MARKER_EXEMPT: [Address; 7] = [
         // Stateless verifier - no EVM storage to preserve.
-        ZKPROOF_GROTH16_ADDRESS,
+        ZKPROOF_VERIFY_ADDRESS,
         // Seeded with genesis marker bytecode by scripts/seed_genesis.py, so these
         // accounts are never EIP-161-empty.
         ZEROFEE_ADDRESS,
@@ -29,10 +29,18 @@ fn marker_list_covers_stateful_precompiles() {
         // even before Stablecoin V1 runtime activation.
         STABLECOIN_FACTORY_ADDRESS,
         STABLECOIN_POLICY_REGISTRY_ADDRESS,
-        // RadicleRegistry is present from genesis even when no repositories
+        // CodeRegistry is present from genesis even when no repositories
         // are configured because ALL_PRECOMPILE_ADDRESSES seeds its marker.
-        RADICLE_REGISTRY_ADDRESS,
+        CODE_REGISTRY_ADDRESS,
     ];
+
+    let unique: std::collections::BTreeSet<_> =
+        OUTBE_RUNTIME_MARKER_ADDRESSES.iter().copied().collect();
+    assert_eq!(
+        unique.len(),
+        OUTBE_RUNTIME_MARKER_ADDRESSES.len(),
+        "runtime marker addresses must not contain duplicates"
+    );
 
     for addr in outbe_precompile_addresses() {
         if MARKER_EXEMPT.contains(addr) {

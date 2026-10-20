@@ -44,7 +44,7 @@ where
         F: FnOnce(&EthTxResult<E::HaltReason, reth_ethereum::TxType>) -> CommitChanges,
     {
         // Release the storage borrow before mutating receipt/cap state.
-        let ctx = self.fee_route_context();
+        let ctx = self.fee_route_context()?;
         let authorize_outcome = {
             let db = self.inner.evm.db_mut();
             let mut provider = DirectStorageProvider::new(db, ctx);

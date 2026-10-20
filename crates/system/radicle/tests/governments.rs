@@ -8,9 +8,12 @@ use alloy_sol_types::SolCall as _;
 use commonware_codec::Encode as _;
 use commonware_cryptography::{bls12381, Signer as _};
 use commonware_utils::TryCollect as _;
+use outbe_coderegistry::{
+    payload::PatchVotePayloadV1, vote_target::CodePatchVoteTarget, CodeRegistry,
+};
 use outbe_consensus::{bls::bootstrap_dkg_for_participants, hybrid::VrfMaterialProvider};
 use outbe_primitives::{
-    addresses::RADICLE_REGISTRY_ADDRESS,
+    addresses::CODE_REGISTRY_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
     radicle_publication::{
         PublicationBody, RepositoryPublicationMailbox, MAX_PUBLICATION_BATCH_LEN,
@@ -28,9 +31,6 @@ use outbe_radicle::{
     manager::{RepositoryReceiptReader as _, RethSnapshotReader},
 };
 use outbe_radicle_runtime::{Options, PreparedSidecar};
-use outbe_radicleregistry::{
-    payload::PatchVotePayloadV1, vote_target::RadiclePatchVoteTarget, RadicleRegistry,
-};
 use outbe_validatorset::{
     contract::ValidatorSet,
     state::{write_committee_snapshot, CommitteeEntry, CommitteeSnapshot},
@@ -204,7 +204,7 @@ async fn exercise_patch_vote(
     let root = reader.read_current_publication_receipt(1).unwrap().unwrap();
     let rid = RepoId::from(git::Oid::from_sha1(root.receipt().body.repo_id.0));
     let sequence = state
-        .enter(|s| RadicleRegistry::new(s).publication_sequence.read())
+        .enter(|s| CodeRegistry::new(s).publication_sequence.read())
         .unwrap();
     let previous = reader
         .read_current_publication_receipt(sequence)
@@ -364,13 +364,13 @@ async fn exercise_patch_vote(
         .read_current_publication_receipt(review_sequence)
         .unwrap()
         .is_none());
-    static TARGET: RadiclePatchVoteTarget = RadiclePatchVoteTarget;
+    static TARGET: CodePatchVoteTarget = CodePatchVoteTarget;
     static HANDLERS: &[&dyn VoteTarget] = &[&TARGET];
     static REGISTRY: VoteTargetRegistry = VoteTargetRegistry::new(HANDLERS);
     *height += 1;
     state.set_block_number(*height);
     let create = IVote::createProposalWithVotingWindowCall {
-        targetModule: RADICLE_REGISTRY_ADDRESS,
+        targetModule: CODE_REGISTRY_ADDRESS,
         payload: String::from_utf8(
             PatchVotePayloadV1::accept(
                 rid.into_sha1().unwrap().into(),
@@ -460,7 +460,7 @@ async fn exercise_patch_vote(
             *height += 1;
             state.set_block_number(*height);
             state
-                .enter(|s| RadicleRegistry::new(s).apply_publication_batch(&batch))
+                .enter(|s| CodeRegistry::new(s).apply_publication_batch(&batch))
                 .unwrap();
             accounted.extend(
                 batch
@@ -633,7 +633,7 @@ async fn exercise_material_binding(
 ) {
     use outbe_primitives::radicle_publication::PublicationAction;
     let sequence = state
-        .enter(|s| RadicleRegistry::new(s).publication_sequence.read())
+        .enter(|s| CodeRegistry::new(s).publication_sequence.read())
         .unwrap();
     let before = reader
         .read_current_publication_receipt(sequence)
@@ -670,7 +670,7 @@ async fn exercise_material_binding(
             *height += 1;
             state.set_block_number(*height);
             state
-                .enter(|s| RadicleRegistry::new(s).apply_publication_batch(&batch))
+                .enter(|s| CodeRegistry::new(s).apply_publication_batch(&batch))
                 .unwrap();
             accounted.extend(batch.attestations.iter().map(|a| a.participant_index));
             provider.finalize(*height, state);
@@ -777,12 +777,12 @@ async fn automatic_bootstrap_vote_review_and_merge_with_one_offline_member_and_r
         write_committee_snapshot(s, 2, &committee).unwrap();
     });
     let genesis: serde_json::Value = serde_json::from_str(include_str!(
-        "../../radicleregistry/tests/fixtures/governments-genesis-storage.json"
+        "../../coderegistry/tests/fixtures/governments-genesis-storage.json"
     ))
     .unwrap();
     for (slot, value) in genesis["storage"].as_object().unwrap() {
         state.storage.insert(
-            (RADICLE_REGISTRY_ADDRESS, slot.parse().unwrap()),
+            (CODE_REGISTRY_ADDRESS, slot.parse().unwrap()),
             value.as_str().unwrap().parse().unwrap(),
         );
     }
@@ -905,7 +905,7 @@ async fn automatic_bootstrap_vote_review_and_merge_with_one_offline_member_and_r
                 height += 1;
                 state.set_block_number(height);
                 let result = state
-                    .enter(|s| RadicleRegistry::new(s).apply_publication_batch(&batch))
+                    .enter(|s| CodeRegistry::new(s).apply_publication_batch(&batch))
                     .unwrap();
                 accounted.extend(batch.attestations.iter().map(|a| a.participant_index));
                 provider.finalize(height, &mut state);

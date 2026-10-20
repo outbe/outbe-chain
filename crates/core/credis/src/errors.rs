@@ -15,8 +15,6 @@ pub enum CredisError {
     InvalidStateValue(u8),
     #[error("credis arithmetic overflow")]
     ArithmeticOverflow,
-    #[error("credis timestamp exceeds u64")]
-    TimestampOverflow,
     #[error("index out of bounds")]
     IndexOutOfBounds,
     #[error("Credis is non-transferable")]

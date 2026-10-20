@@ -2,14 +2,14 @@ use super::*;
 use commonware_codec::Encode as _;
 use commonware_cryptography::{bls12381, Hasher as _, Sha256, Signer as _};
 use commonware_utils::TryCollect as _;
+use outbe_coderegistry::CodeRegistry;
 use outbe_primitives::{
-    addresses::RADICLE_REGISTRY_ADDRESS,
+    addresses::CODE_REGISTRY_ADDRESS,
     radicle_publication::{
         players_commitment, PublicationAction, PublicationAttestation, PublicationBatch,
         PUBLICATION_NAMESPACE,
     },
 };
-use outbe_radicleregistry::RadicleRegistry;
 use outbe_validatorset::{
     contract::ValidatorSet,
     state::{write_committee_snapshot, CommitteeEntry, CommitteeSnapshot},
@@ -19,7 +19,7 @@ use outbe_validatorset::{
 fn publication_system_dispatch_requires_system_caller_and_current_quorum_atomically() {
     let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../system/radicleregistry/tests/fixtures/governments-genesis-storage.json"
+        "/../../system/coderegistry/tests/fixtures/governments-genesis-storage.json"
     )))
     .unwrap();
     let genesis = B256::repeat_byte(7);
@@ -27,7 +27,7 @@ fn publication_system_dispatch_requires_system_caller_and_current_quorum_atomica
     provider.set_block_number(1);
     for (slot, value) in fixture["storage"].as_object().unwrap() {
         provider.storage.insert(
-            (RADICLE_REGISTRY_ADDRESS, slot.parse().unwrap()),
+            (CODE_REGISTRY_ADDRESS, slot.parse().unwrap()),
             value.as_str().unwrap().parse().unwrap(),
         );
     }
@@ -71,12 +71,8 @@ fn publication_system_dispatch_requires_system_caller_and_current_quorum_atomica
     let mut body = outbe_primitives::test_utils::sample_radicle_publication_body();
     body.chain_id = 2026;
     body.genesis_hash = genesis;
-    body.descriptor_hash = provider.enter(|s| {
-        RadicleRegistry::new(s)
-            .config_descriptor_hash
-            .read()
-            .unwrap()
-    });
+    body.descriptor_hash =
+        provider.enter(|s| CodeRegistry::new(s).config_descriptor_hash.read().unwrap());
     body.epoch = 0;
     body.material_version = 1;
     body.owner_bls_public =
@@ -148,7 +144,7 @@ fn publication_system_dispatch_requires_system_caller_and_current_quorum_atomica
         .enter(|s| dispatch(s, &input, SYSTEM_ADDRESS, U256::ZERO))
         .unwrap();
     provider.enter(|s| {
-        let registry = RadicleRegistry::new(s);
+        let registry = CodeRegistry::new(s);
         assert_eq!(registry.publication_sequence.read().unwrap(), 1);
         assert_eq!(registry.publication_receipt(1).unwrap().unwrap().body, body);
     });

@@ -1,6 +1,7 @@
 use alloy_primitives::{Address, B256};
 use commonware_cryptography::{bls12381, Signer as _};
 use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+use outbe_coderegistry::RepoId;
 use outbe_radicle::{
     endpoint::{sign_response, EndpointAddress, EndpointFrame, EndpointResponseBody, PeerId},
     integration::{
@@ -12,7 +13,6 @@ use outbe_radicle::{
         ManagerPhase, ManagerStatus, RepositoryStatus,
     },
 };
-use outbe_radicleregistry::RepoId;
 use std::{
     collections::VecDeque,
     sync::{Arc, Mutex},

@@ -60,7 +60,7 @@ pub fn dispatch(
                     .read(&c.vault)
             }),
             referenceCurrencyAssets(c) => view(c, |c| {
-                runtime::reference_currency_assets(&storage, c.isoCode)
+                runtime::reference_currency_assets(&storage, c.isoCode, c.offset, c.limit)
             }),
 
             // --- liquidity source / target enumeration ---

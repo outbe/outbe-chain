@@ -198,6 +198,8 @@ impl From<SystemTxBuildError> for BlockExecutionError {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ExecutorValidationError {
+    #[error(transparent)]
+    TimestampOverflow(#[from] outbe_primitives::errors::TimestampOverflow),
     #[error("{0}")]
     BlockArtifacts(String),
     #[error("reserved system transaction cannot execute without commit")]

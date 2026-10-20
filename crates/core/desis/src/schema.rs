@@ -36,24 +36,17 @@ impl AuctionStage {
     }
 }
 
-/// Call-trigger parameters carried alongside the auction config. They are sourced
-/// from the genesis `IntexParams` at auction start and relayed to the target chain.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct IntexCallTrigger {
-    /// Rolling VWAP window evaluated for the call condition (seconds).
-    pub call_window_seconds: u32,
-    /// Breach time within the window required to trigger a call (seconds).
-    pub call_threshold_seconds: u32,
-    /// Notice a holder gets to settle after the series is Called (seconds).
-    pub call_notice_period_seconds: u32,
-}
+pub use outbe_intex::IntexCallTrigger;
 
-/// Entry price of one reference currency, chosen at auction start.
+/// Entry and call price of one reference currency, fixed at auction start.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReferenceCurrencyPrice {
     pub iso_code: u16,
-    /// Per-unit entry price in ISO stable-units (1e6). The call price derives from it.
+    /// Per-unit entry price in ISO stable-units (1e6).
     pub entry_price_minor: U256,
+    /// Per-unit call price in ISO stable-units (1e6). IntexFactory `call_terms` derives it
+    /// from the entry price at auction start.
+    pub call_price_minor: U256,
 }
 
 /// Auction configuration (demand side).
@@ -61,7 +54,7 @@ pub struct ReferenceCurrencyPrice {
 pub struct AuctionConfig {
     /// PROMIS-units per Intex unit (1e6). Bounded by uint128.
     pub promis_load_minor: u128,
-    /// Call-trigger parameters sourced from genesis `IntexParams`.
+    /// Call-trigger parameters fixed at auction start by IntexFactory `call_terms`.
     pub call_trigger: IntexCallTrigger,
     /// Minimum acceptable bid rate (1e6 fixed-point, % of the escrow basis). 0 -> no floor.
     pub min_intex_bid_rate: u32,
@@ -78,7 +71,7 @@ impl AuctionConfig {
     /// Build the demand-side config from the day's per-reference entry prices and
     /// the load the ladder stepped to. `min_intex_bid_rate = 0` means no bid floor.
     /// This function leaves `call_trigger`, `min_intex_bid_quantity` and
-    /// `commit_bond_minor` at their defaults. `fold_profile` folds them in.
+    /// `commit_bond_minor` at their defaults. `start_auction` fixes them.
     pub fn from_reference_prices(
         reference_prices: Vec<ReferenceCurrencyPrice>,
         promis_load_minor: u128,
@@ -93,12 +86,11 @@ impl AuctionConfig {
         }
     }
 
-    /// The day's entry price for one reference currency.
-    pub fn entry_price_for(&self, iso_code: u16) -> Option<U256> {
+    /// The day's price row for one reference currency.
+    pub fn price_for(&self, iso_code: u16) -> Option<&ReferenceCurrencyPrice> {
         self.reference_prices
             .iter()
             .find(|row| row.iso_code == iso_code)
-            .map(|row| row.entry_price_minor)
     }
 
     /// Per-Intex escrow basis = `promis_load` COEN, which the day is briefed at. The escrow
@@ -273,7 +265,7 @@ pub struct DesisContract {
     #[attribute(order = 34)]
     pub sched_active_slot: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
 
-    // --- Entry price per reference currency, chosen at auction start ---
+    // --- Entry and call price per reference currency, fixed at auction start ---
     /// worldwide_day -> number of priced reference currencies.
     #[attribute(order = 35)]
     pub reference_price_count: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
@@ -281,7 +273,7 @@ pub struct DesisContract {
     #[attribute(order = 36)]
     pub reference_price_iso: outbe_primitives::storage::dsl::Map<B256, u32>,
     /// keccak256(worldwide_day_be32 ++ index_be32) -> entry price in ISO stable-units (1e6).
-    /// The call price derives from it, so only the anchor is stored.
+    /// The call price derived from it at auction start is stored in `reference_call_price_minor`.
     #[attribute(order = 37)]
     pub reference_entry_price_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
 
@@ -297,6 +289,11 @@ pub struct DesisContract {
     /// exponent is stale.
     #[attribute(order = 40)]
     pub promis_load_reference_exponent: outbe_primitives::storage::dsl::Map<u16, u32>,
+
+    /// keccak256(worldwide_day_be32 ++ index_be32) -> call price in ISO stable-units (1e6),
+    /// fixed at auction start. Same key as `reference_entry_price_minor`.
+    #[attribute(order = 41)]
+    pub reference_call_price_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
 }
 
 impl DesisContract<'_> {
