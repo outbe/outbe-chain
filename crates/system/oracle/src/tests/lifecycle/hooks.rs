@@ -90,6 +90,28 @@ fn slash_window_rejects_unbounded_validator_work() {
     });
 }
 
+/// The setter admits up to `CONSENSUS_VALIDATOR_BOUND` validators, so the slash
+/// window must process a registry above the old fixed cap of 128.
+#[test]
+fn slash_window_processes_every_admissible_registry() {
+    with_oracle(|storage, oracle| {
+        let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+        vs.config_is_initialized.write(true).unwrap();
+        vs.config_owner.write(Address::ZERO).unwrap();
+        vs.config_epoch_length_blocks.write(3600).unwrap();
+        vs.set_config_max_validators(outbe_validatorset::runtime::CONSENSUS_VALIDATOR_BOUND)
+            .unwrap();
+
+        for i in 1..=129u32 {
+            let mut bytes = [0u8; 20];
+            bytes[16..].copy_from_slice(&i.to_be_bytes());
+            register_validator(storage.clone(), Address::new(bytes), U256::from(1u64));
+        }
+
+        crate::tally::slash_and_reset_counters(oracle, 10_000).unwrap();
+    });
+}
+
 #[test]
 fn slash_window_rolls_back_slash_state_when_force_exit_fails() {
     with_oracle(|storage, oracle| {
