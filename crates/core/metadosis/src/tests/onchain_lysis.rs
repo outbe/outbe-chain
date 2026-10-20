@@ -229,12 +229,7 @@ fn native_fraction_completion_keeps_tributes_for_owner_create_nod() {
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(
-            metadosis
-                .emission_days
-                .get(DAY)
-                .unwrap()
-                .unwrap()
-                .state,
+            metadosis.emission_days.get(DAY).unwrap().unwrap().state,
             emission_day_state::SUCCEEDED
         );
 
@@ -261,12 +256,7 @@ fn production_command_issues_encrypted_nods_and_completes_without_worker() {
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(
-            metadosis
-                .emission_days
-                .get(DAY)
-                .unwrap()
-                .unwrap()
-                .state,
+            metadosis.emission_days.get(DAY).unwrap().unwrap().state,
             emission_day_state::SUCCEEDED
         );
         let tribute = TributeContract::new(storage.clone());
@@ -335,12 +325,7 @@ fn calculation_rejection_only_fails_the_day_and_preserves_all_economic_state() {
         StorageHandle::enter(&mut provider, |storage| {
             let metadosis = MetadosisContract::new(storage.clone());
             assert_eq!(
-                metadosis
-                    .emission_days
-                    .get(DAY)
-                    .unwrap()
-                    .unwrap()
-                    .state,
+                metadosis.emission_days.get(DAY).unwrap().unwrap().state,
                 emission_day_state::FAILED
             );
             let tribute = TributeContract::new(storage.clone());

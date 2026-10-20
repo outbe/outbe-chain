@@ -16,7 +16,6 @@ outbe-emissionlimit.workspace = true
 outbe-rewards.workspace = true
 outbe-agentreward.workspace = true
 outbe-metadosis.workspace = true
-outbe-tribute.workspace = true
 outbe-intexfactory.workspace = true
 outbe-desis.workspace = true
 outbe-gemfactory.workspace = true

@@ -143,11 +143,8 @@ impl Rpc {
         }
         let log = &logs[0];
         let topics = log.get("topics")?.as_array()?;
-        let emission_day = u32::from_str_radix(
-            topics.get(2)?.as_str()?.trim_start_matches("0x"),
-            16,
-        )
-        .ok()?;
+        let emission_day =
+            u32::from_str_radix(topics.get(2)?.as_str()?.trim_start_matches("0x"), 16).ok()?;
         let data = decode_rpc_data_words(log, 4)?;
         let block_number = rpc_log_block_number(log)?;
         let block_hash = canonical_rpc_log_block_hash(&rpc_url, log, block_number)?;
@@ -207,7 +204,11 @@ fn block_timestamp_at(url: &str, block_number: u64) -> Option<u64> {
         "eth_getBlockByNumber",
         serde_json::json!([format!("0x{block_number:x}"), false]),
     )?;
-    u64::from_str_radix(block.get("timestamp")?.as_str()?.trim_start_matches("0x"), 16).ok()
+    u64::from_str_radix(
+        block.get("timestamp")?.as_str()?.trim_start_matches("0x"),
+        16,
+    )
+    .ok()
 }
 
 fn build_wwd_state(

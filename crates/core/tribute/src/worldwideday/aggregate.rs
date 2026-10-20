@@ -7,8 +7,7 @@ use crate::precompile::ITribute;
 use crate::schema::TributeContract;
 
 use super::{
-    constants::MAX_ACTIVE_WWDS,
-    errors::WwdStorageCorruptionError,
+    constants::MAX_ACTIVE_WWDS, errors::WwdStorageCorruptionError,
     schema::WorldwideDay as WorldwideDayRecord,
 };
 
@@ -33,7 +32,10 @@ pub struct WwdProjection {
 }
 
 impl WwdProjection {
-    pub(crate) const fn from_record(worldwide_day: WorldwideDay, record: &WorldwideDayRecord) -> Self {
+    pub(crate) const fn from_record(
+        worldwide_day: WorldwideDay,
+        record: &WorldwideDayRecord,
+    ) -> Self {
         Self {
             worldwide_day,
             day: record.day,
@@ -86,9 +88,10 @@ impl ValidatedWwdAggregate {
         }
         let mut records = BTreeMap::new();
         for wwd in &active_set {
-            let record = contract.worldwide_days.get(*wwd)?.ok_or(
-                WwdStorageCorruptionError::ActiveIndexPointsToMissingWwd { wwd: *wwd },
-            )?;
+            let record = contract
+                .worldwide_days
+                .get(*wwd)?
+                .ok_or(WwdStorageCorruptionError::ActiveIndexPointsToMissingWwd { wwd: *wwd })?;
             validate_record_shape(*wwd, &record)?;
             records.insert(*wwd, WwdProjection::from_record(*wwd, &record));
         }

@@ -53,9 +53,10 @@ fn initialize_bootstrap_if_needed(metadosis: &mut MetadosisContract) -> Result<(
     let first = *active
         .first()
         .ok_or(MetadosisStorageCorruptionError::BootstrapNeedsGenesisWorldwideDay)?;
-    let record = tribute.worldwide_days.get(first)?.ok_or(
-        MetadosisStorageCorruptionError::GenesisWorldwideDayRecordDisappeared,
-    )?;
+    let record = tribute
+        .worldwide_days
+        .get(first)?
+        .ok_or(MetadosisStorageCorruptionError::GenesisWorldwideDayRecordDisappeared)?;
     metadosis.bootstrap_end_time.write(record.offerings_start)
 }
 
@@ -118,12 +119,14 @@ pub(crate) fn create_worldwide_day_for_date(
     let day = schedule.day;
     if let Some(existing_emission) = metadosis.emission_days.get(day)? {
         if existing_emission.wwd != wwd {
-            return Err(MetadosisStorageCorruptionError::EmissionDayWwdLinkMismatch {
-                day,
-                expected_wwd: wwd,
-                found_wwd: existing_emission.wwd,
-            }
-            .into());
+            return Err(
+                MetadosisStorageCorruptionError::EmissionDayWwdLinkMismatch {
+                    day,
+                    expected_wwd: wwd,
+                    found_wwd: existing_emission.wwd,
+                }
+                .into(),
+            );
         }
     } else {
         let emission_limit_minor = default_emission_limit_for_day(ctx, day);
@@ -166,14 +169,7 @@ pub(crate) fn ensure_emission_day_with_limit(
     })?;
     let mut tribute = TributeContract::new(metadosis.storage.clone());
     if tribute.worldwide_days.get(wwd)?.is_none() {
-        create_worldwide_day(
-            &mut tribute,
-            wwd,
-            NewWwdSchedule {
-                day,
-                ..schedule
-            },
-        )?;
+        create_worldwide_day(&mut tribute, wwd, NewWwdSchedule { day, ..schedule })?;
     }
     Ok(())
 }
@@ -212,12 +208,14 @@ fn verify_emission_day_link(
 ) -> Result<()> {
     if let Some(emission_day) = metadosis.emission_days.get(day)? {
         if emission_day.wwd != expected_wwd {
-            return Err(MetadosisStorageCorruptionError::EmissionDayWwdLinkMismatch {
-                day,
-                expected_wwd,
-                found_wwd: emission_day.wwd,
-            }
-            .into());
+            return Err(
+                MetadosisStorageCorruptionError::EmissionDayWwdLinkMismatch {
+                    day,
+                    expected_wwd,
+                    found_wwd: emission_day.wwd,
+                }
+                .into(),
+            );
         }
     }
     Ok(())
@@ -237,8 +235,7 @@ fn snapshot_forming_vwap(
     ) {
         Ok(_) => Ok(true),
         Err(error)
-            if error.to_string().contains("VWAP must be non-zero")
-                || is_vwap_overflow(&error) =>
+            if error.to_string().contains("VWAP must be non-zero") || is_vwap_overflow(&error) =>
         {
             let reason = if is_vwap_overflow(&error) {
                 "VWAP calculation overflowed"
@@ -286,12 +283,14 @@ pub(crate) fn find_due_emission_day(
     for wwd_record in aggregate.active_records() {
         if let Some(record) = metadosis.emission_days.get(wwd_record.day)? {
             if record.wwd != wwd_record.worldwide_day {
-                return Err(MetadosisStorageCorruptionError::EmissionDayWwdLinkMismatch {
-                    day: wwd_record.day,
-                    expected_wwd: wwd_record.worldwide_day,
-                    found_wwd: record.wwd,
-                }
-                .into());
+                return Err(
+                    MetadosisStorageCorruptionError::EmissionDayWwdLinkMismatch {
+                        day: wwd_record.day,
+                        expected_wwd: wwd_record.worldwide_day,
+                        found_wwd: record.wwd,
+                    }
+                    .into(),
+                );
             }
             if record.state == emission_day_state::NONE && now >= record.metadosis_start {
                 return Ok(Some(record));

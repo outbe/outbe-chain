@@ -242,7 +242,8 @@ fn execute_legacy_enclave(
     let wwd = emission_day.wwd;
     let (mut tribute, totals) = load_ready_tribute(ctx, wwd)?;
     let tributes = validate_day_records(ctx, &tribute, wwd, totals.tribute_count)?;
-    let request = build_enclave_lysis_request(ctx, emission_day, calculation.lysis_limit_minor, tributes)?;
+    let request =
+        build_enclave_lysis_request(ctx, emission_day, calculation.lysis_limit_minor, tributes)?;
     let outcome = outbe_tee::lysis::execute(request)
         .map_err(|_| PrecompileError::EnclaveUnavailable("on-chain Lysis request failed".into()))?;
     let LysisOutcome::Completed(result) = outcome else {

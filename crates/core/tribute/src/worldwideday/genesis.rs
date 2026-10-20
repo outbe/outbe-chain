@@ -6,8 +6,7 @@ use outbe_primitives::{error::Result, storage::StorageHandle};
 use crate::schema::TributeContract;
 
 use super::{
-    aggregate::ValidatedWwdAggregate,
-    errors::WwdStorageCorruptionError,
+    aggregate::ValidatedWwdAggregate, errors::WwdStorageCorruptionError,
     schema::WorldwideDay as WorldwideDayRecord,
 };
 
@@ -176,7 +175,11 @@ impl GenesisOperation {
         {
             return Err(WwdStorageCorruptionError::GenesisContainsUnexpectedActiveWwd.into());
         }
-        if contract.worldwide_days.get(expected_worldwide_day)?.is_none() {
+        if contract
+            .worldwide_days
+            .get(expected_worldwide_day)?
+            .is_none()
+        {
             if active.is_empty() {
                 return Ok(None);
             }

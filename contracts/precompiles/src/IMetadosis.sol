@@ -44,11 +44,5 @@ interface IMetadosis {
     function getEmissionDay(uint32 day)
         external
         view
-        returns (
-            uint32 emissionDay,
-            uint256 emissionLimitMinor,
-            uint32 wwd,
-            uint64 metadosisStart,
-            uint8 state
-        );
+        returns (uint32 emissionDay, uint256 emissionLimitMinor, uint32 wwd, uint64 metadosisStart, uint8 state);
 }

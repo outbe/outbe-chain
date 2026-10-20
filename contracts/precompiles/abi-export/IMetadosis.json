@@ -14,118 +14,39 @@
   },
   {
     "type": "function",
-    "name": "getCapacityForfeitureReceipt",
+    "name": "getEmissionDay",
     "inputs": [
       {
-        "name": "wwd",
+        "name": "day",
         "type": "uint32",
         "internalType": "uint32"
       }
     ],
     "outputs": [
       {
-        "name": "outcome",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "maxRetainedWorldwideDays",
+        "name": "emissionDay",
         "type": "uint32",
         "internalType": "uint32"
       },
       {
-        "name": "retainedCountBefore",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "promisLimitReturnedMinor",
+        "name": "emissionLimitMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
-      {
-        "name": "promisLimitBeforeMinor",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "promisLimitAfterMinor",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "forfeitedTributeCount",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "forfeitedTributeNominalMinor",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "sourceGeneration",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "retiredGeneration",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "retirementOutcome",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "blockNumber",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getWorldwideDayTerminalReceipt",
-    "inputs": [
       {
         "name": "wwd",
         "type": "uint32",
         "internalType": "uint32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "outcome",
-        "type": "uint8",
-        "internalType": "uint8"
       },
       {
-        "name": "promisLimitReturnedMinor",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "promisLimitBeforeMinor",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "promisLimitAfterMinor",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "retirementOutcome",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "blockNumber",
+        "name": "metadosisStart",
         "type": "uint64",
         "internalType": "uint64"
+      },
+      {
+        "name": "state",
+        "type": "uint8",
+        "internalType": "uint8"
       }
     ],
     "stateMutability": "view"
@@ -341,128 +262,6 @@
         "type": "string",
         "indexed": false,
         "internalType": "string"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "WorldwideDayCapacityForfeited",
-    "inputs": [
-      {
-        "name": "worldwideDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "maxRetainedWorldwideDays",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      },
-      {
-        "name": "retainedCountBefore",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      },
-      {
-        "name": "promisLimitReturnedMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "promisLimitBeforeMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "promisLimitAfterMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "forfeitedTributeCount",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      },
-      {
-        "name": "forfeitedTributeNominalMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "sourceGeneration",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      },
-      {
-        "name": "retiredGeneration",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      },
-      {
-        "name": "retirementOutcome",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      },
-      {
-        "name": "blockNumber",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "WorldwideDayMissedOffering",
-    "inputs": [
-      {
-        "name": "worldwideDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "promisLimitReturnedMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "promisLimitBeforeMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "promisLimitAfterMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "retirementOutcome",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      },
-      {
-        "name": "blockNumber",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
       }
     ],
     "anonymous": false

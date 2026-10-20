@@ -91,10 +91,8 @@ pub(crate) fn process_ready_candidate(
         return settle_empty_day(metadosis, ctx, emission_day);
     }
 
-    let calculation = metadosis.calculate_metadosis(
-        tribute_totals.tribute_nominal_total_minor,
-        limit_amount,
-    )?;
+    let calculation =
+        metadosis.calculate_metadosis(tribute_totals.tribute_nominal_total_minor, limit_amount)?;
     if calculation.lysis_limit_minor.is_zero() {
         return settle_zero_allocation(
             metadosis,

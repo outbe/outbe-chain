@@ -172,14 +172,9 @@
     ],
     "outputs": [
       {
-        "name": "status",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "dayType",
-        "type": "uint8",
-        "internalType": "uint8"
+        "name": "day",
+        "type": "uint32",
+        "internalType": "uint32"
       },
       {
         "name": "formingStart",
@@ -192,7 +187,7 @@
         "internalType": "uint64"
       },
       {
-        "name": "lookbackEnd",
+        "name": "offeringsStart",
         "type": "uint64",
         "internalType": "uint64"
       },
@@ -200,40 +195,6 @@
         "name": "offeringEnd",
         "type": "uint64",
         "internalType": "uint64"
-      },
-      {
-        "name": "scheduledProcessTime",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "previousVwapMinor",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "currentVwapMinor",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getWorldwideDaysByStatus",
-    "inputs": [
-      {
-        "name": "status",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "wwds",
-        "type": "uint32[]",
-        "internalType": "uint32[]"
       }
     ],
     "stateMutability": "view"
@@ -485,7 +446,7 @@
   },
   {
     "type": "event",
-    "name": "WorldwideDayCleanedUp",
+    "name": "WorldwideDayStarted",
     "inputs": [
       {
         "name": "worldwideDay",
@@ -494,20 +455,7 @@
         "internalType": "uint32"
       },
       {
-        "name": "finalStatus",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "WorldwideDayStarted",
-    "inputs": [
-      {
-        "name": "worldwideDay",
+        "name": "day",
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"
@@ -525,50 +473,13 @@
         "internalType": "uint64"
       },
       {
-        "name": "offeringStart",
+        "name": "offeringsStart",
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
       },
       {
         "name": "offeringEnd",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      },
-      {
-        "name": "scheduledTime",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "WorldwideDayStatusChange",
-    "inputs": [
-      {
-        "name": "worldwideDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "oldStatus",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      },
-      {
-        "name": "newStatus",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      },
-      {
-        "name": "blockNumber",
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"

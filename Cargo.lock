@@ -8131,7 +8131,6 @@ dependencies = [
  "outbe-primitives",
  "outbe-promislimit",
  "outbe-rewards",
- "outbe-tribute",
  "outbe-validatorset",
  "proptest",
  "thiserror 2.0.18",
@@ -8193,7 +8192,6 @@ dependencies = [
  "outbe-gemfactory",
  "outbe-intexfactory",
  "outbe-l2registry",
- "outbe-metadosis",
  "outbe-nod",
  "outbe-nodfactory",
  "outbe-oracle",
@@ -8707,7 +8705,6 @@ dependencies = [
  "proptest",
  "serde_json",
  "thiserror 2.0.18",
- "tracing",
  "trybuild",
 ]
 

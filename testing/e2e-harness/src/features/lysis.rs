@@ -96,22 +96,18 @@ fn native_lysis_completes(world: &mut World) {
     loop {
         let states = ports
             .iter()
-            .map(|&port| {
-                world
-                    .rpc
-                    .metadosis_emission_day_on(port, emission_day)
-            })
+            .map(|&port| world.rpc.metadosis_emission_day_on(port, emission_day))
             .collect::<Vec<_>>();
         assert!(
-            !states
-                .iter()
-                .any(|ed| ed.as_ref().is_some_and(|ed| ed.state == EMISSION_DAY_FAILED)),
+            !states.iter().any(|ed| ed
+                .as_ref()
+                .is_some_and(|ed| ed.state == EMISSION_DAY_FAILED)),
             "native Lysis failed: {states:?}"
         );
-        if states
-            .iter()
-            .all(|ed| ed.as_ref().is_some_and(|ed| ed.state == EMISSION_DAY_SUCCEEDED))
-        {
+        if states.iter().all(|ed| {
+            ed.as_ref()
+                .is_some_and(|ed| ed.state == EMISSION_DAY_SUCCEEDED)
+        }) {
             let first = states[0].as_ref().expect("native Lysis emission day");
             assert_eq!(first.emission_day, emission_day);
             assert_eq!(first.wwd, day);

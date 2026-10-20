@@ -34,10 +34,7 @@ pub fn bootstrap_end_time(storage: StorageHandle<'_>) -> Result<Option<u64>> {
 }
 
 /// Reads one typed EmissionDay projection by its `YYYYMMDD` UTC day key.
-pub fn emission_day(
-    storage: StorageHandle<'_>,
-    day: u32,
-) -> Result<Option<EmissionDayProjection>> {
+pub fn emission_day(storage: StorageHandle<'_>, day: u32) -> Result<Option<EmissionDayProjection>> {
     Ok(MetadosisContract::new(storage)
         .emission_days
         .get(day)?

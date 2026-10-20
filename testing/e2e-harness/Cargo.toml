@@ -56,7 +56,6 @@ outbe-desis.workspace = true
 outbe-gem = { workspace = true }
 outbe-gemfactory = { workspace = true }
 outbe-intexfactory = { workspace = true }
-outbe-metadosis = { workspace = true, features = ["test-utils"] }
 outbe-nod = { workspace = true }
 outbe-nodfactory = { workspace = true }
 outbe-oracle = { workspace = true }

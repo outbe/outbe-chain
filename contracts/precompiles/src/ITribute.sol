@@ -51,13 +51,7 @@ interface ITribute {
     function getWorldwideDay(uint32 wwd)
         external
         view
-        returns (
-            uint32 day,
-            uint64 formingStart,
-            uint64 formingEnd,
-            uint64 offeringsStart,
-            uint64 offeringEnd
-        );
+        returns (uint32 day, uint64 formingStart, uint64 formingEnd, uint64 offeringsStart, uint64 offeringEnd);
     function getActiveWorldwideDays() external view returns (uint32[] memory wwds);
     function getTributesByOwner(address owner) external view returns (uint256[] memory tributeIds);
     function getTributesByDay(uint32 worldwideDay) external view returns (uint256[] memory tributeIds);

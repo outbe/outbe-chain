@@ -4,8 +4,8 @@
 //! 2^26 COEN on day 3072. From that day onward it returns the permanent
 //! `FLOOR_DAY_EMISSION`.
 
-use alloy_primitives::{uint, U256};
 use crate::units::SCALE_1E6_U256;
+use alloy_primitives::{uint, U256};
 use std::sync::LazyLock;
 
 /// Initial day emission: 2^28 COEN expressed in six-decimal `unit`.
