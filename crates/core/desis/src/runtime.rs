@@ -306,12 +306,10 @@ fn fold_profile(
 /// call trigger. The trigger does not depend on a price, so a day without rows gets
 /// it too. After the start, only the stored config gives these terms.
 fn fix_call_terms(storage: &StorageHandle<'_>, config: &mut AuctionConfig) -> Result<()> {
-    config.call_trigger = outbe_intexfactory::api::call_terms(storage, U256::ZERO)?
-        .call_trigger
-        .into();
+    let terms = outbe_intexfactory::api::call_terms(storage)?;
+    config.call_trigger = terms.call_trigger;
     for row in &mut config.reference_prices {
-        row.call_price_minor =
-            outbe_intexfactory::api::call_terms(storage, row.entry_price_minor)?.call_price_minor;
+        row.call_price_minor = terms.call_price(row.entry_price_minor)?;
     }
     Ok(())
 }

@@ -63,9 +63,9 @@ fn config_dev_profile_drives_issuance() {
         );
 
         // The auction start fixes the call terms from the live profile. Issuance seals them.
-        let terms = crate::api::call_terms(&s, U256::from(ENTRY_PRICE)).unwrap();
+        let terms = crate::api::call_terms(&s).unwrap();
         let params = IssuanceParams {
-            call_price_minor: terms.call_price_minor,
+            call_price_minor: terms.call_price(U256::from(ENTRY_PRICE)).unwrap(),
             call_trigger: terms.call_trigger,
             ..sample(7)
         };

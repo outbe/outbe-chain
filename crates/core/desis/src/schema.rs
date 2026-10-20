@@ -36,38 +36,7 @@ impl AuctionStage {
     }
 }
 
-/// Call-trigger parameters carried alongside the auction config. IntexFactory
-/// `call_terms` gives them at auction start. They are relayed to the target chain
-/// and passed with each issuance.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct IntexCallTrigger {
-    /// Rolling VWAP window evaluated for the call condition (seconds).
-    pub call_window_seconds: u32,
-    /// Breach time within the window required to trigger a call (seconds).
-    pub call_threshold_seconds: u32,
-    /// Notice a holder gets to settle after the series is Called (seconds).
-    pub call_notice_period_seconds: u32,
-}
-
-impl From<IntexCallTrigger> for outbe_intex::IntexCallTrigger {
-    fn from(trigger: IntexCallTrigger) -> Self {
-        Self {
-            call_window_seconds: trigger.call_window_seconds,
-            call_threshold_seconds: trigger.call_threshold_seconds,
-            call_notice_period_seconds: trigger.call_notice_period_seconds,
-        }
-    }
-}
-
-impl From<outbe_intex::IntexCallTrigger> for IntexCallTrigger {
-    fn from(trigger: outbe_intex::IntexCallTrigger) -> Self {
-        Self {
-            call_window_seconds: trigger.call_window_seconds,
-            call_threshold_seconds: trigger.call_threshold_seconds,
-            call_notice_period_seconds: trigger.call_notice_period_seconds,
-        }
-    }
-}
+pub use outbe_intex::IntexCallTrigger;
 
 /// Entry and call price of one reference currency, fixed at auction start.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -364,7 +364,7 @@ pub(crate) fn issuance_groups(
                     promis_load_minor: config.promis_load_minor,
                     entry_price_minor: row.entry_price_minor,
                     call_price_minor: row.call_price_minor,
-                    call_trigger: config.call_trigger.into(),
+                    call_trigger: config.call_trigger,
                     issuance_currency,
                     reference_currency,
                     snapshot_chains: snapshot.to_vec(),

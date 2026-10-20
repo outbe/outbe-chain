@@ -38,15 +38,18 @@ fn issue_creates_series_in_registry() {
 #[test]
 fn call_terms_mark_up_the_entry_with_the_live_profile() {
     with_factory(|s| {
-        let terms = crate::api::call_terms(&s, U256::from(ENTRY_PRICE)).unwrap();
-        assert_eq!(terms.call_price_minor, U256::from(EXPECTED_TRIGGER));
+        let terms = crate::api::call_terms(&s).unwrap();
+        assert_eq!(
+            terms.call_price(U256::from(ENTRY_PRICE)).unwrap(),
+            U256::from(EXPECTED_TRIGGER)
+        );
         assert_eq!(terms.call_trigger, prod_trigger());
 
         select_dev_profile(&s);
         let dev = outbe_intex::config::IntexParams::DEV;
-        let terms = crate::api::call_terms(&s, U256::from(ENTRY_PRICE)).unwrap();
+        let terms = crate::api::call_terms(&s).unwrap();
         assert_eq!(
-            terms.call_price_minor,
+            terms.call_price(U256::from(ENTRY_PRICE)).unwrap(),
             runtime::marked_up(U256::from(ENTRY_PRICE), dev.call_rate).unwrap()
         );
         assert_eq!(

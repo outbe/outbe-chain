@@ -12,13 +12,12 @@ use outbe_primitives::storage::StorageHandle;
 use crate::runtime;
 use crate::schema::{IntexCallTerms, IssuanceParams};
 
-/// The call terms a series opened at `entry_price_minor` seals: the entry marked up by
-/// the live profile's call rate, plus the profile's window, threshold and notice.
-/// Desis calls this at the auction start and stores the answer with the day's conditions.
-pub fn call_terms(storage: &StorageHandle<'_>, entry_price_minor: U256) -> Result<IntexCallTerms> {
+/// The live profile's call rate, window, threshold and notice. Desis calls this at
+/// the auction start and stores the day's call prices and trigger with the other conditions.
+pub fn call_terms(storage: &StorageHandle<'_>) -> Result<IntexCallTerms> {
     let profile = outbe_intex::config::read(storage)?;
     Ok(IntexCallTerms {
-        call_price_minor: runtime::marked_up(entry_price_minor, profile.call_rate)?,
+        call_rate: profile.call_rate,
         call_trigger: IntexCallTrigger {
             call_window_seconds: profile.call_window_seconds,
             call_threshold_seconds: profile.call_threshold_seconds,

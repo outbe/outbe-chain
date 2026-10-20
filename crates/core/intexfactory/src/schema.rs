@@ -5,15 +5,23 @@ use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_intex::{IntexCallTrigger, SeriesId, SERIES_ID_LEN};
 use outbe_macros::{contract, storage_schema};
 use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
+use outbe_primitives::error::Result;
 use outbe_primitives::time::WorldwideDay;
 
-/// The call terms a series seals at issuance. `api::call_terms` derives them from the
-/// live profile.
+/// The call terms of the live profile. `api::call_terms` reads them once, and the
+/// auction start fixes them for the day.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IntexCallTerms {
-    /// Per-unit call price (reference ISO stable-units, 1e6): the entry marked up by the call rate.
-    pub call_price_minor: U256,
+    /// Percentage points over the entry price.
+    pub call_rate: u16,
     pub call_trigger: IntexCallTrigger,
+}
+
+impl IntexCallTerms {
+    /// Per-unit call price (reference ISO stable-units, 1e6): the entry marked up by the call rate.
+    pub fn call_price(&self, entry_price_minor: U256) -> Result<U256> {
+        crate::runtime::marked_up(entry_price_minor, self.call_rate)
+    }
 }
 
 /// Issuance inputs captured on Outbe: every condition the auction fixed at its start.
