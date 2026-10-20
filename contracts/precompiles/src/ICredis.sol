@@ -154,7 +154,8 @@ interface ICredis {
     function interestPaidMinor(uint256 credisId) external view returns (uint256);
 
     /// @notice Sum of `principalMinor` and `outstandingPrincipalMinor` across the account's
-    ///         live Credis.
+    ///         live Credis. A Credis past its settlement deadline counts until the cleanup
+    ///         deletes it.
     function credisPrincipalAndOutstandingOf(address owner)
         external
         view

@@ -123,19 +123,13 @@ impl CredisContract<'_> {
     }
 
     /// Sum of `principal_minor` and of `outstanding_principal_minor` across the live Credis
-    /// of `account`, in one walk of the owner list.
-    pub fn principal_and_outstanding_of(&self, account: Address, now: u64) -> Result<(U256, U256)> {
-        let mut principal = U256::ZERO;
-        let mut outstanding = U256::ZERO;
-        for record in self.get_credis_by_owner(account)? {
-            principal = principal
-                .checked_add(record.principal_minor)
-                .ok_or(CredisError::ArithmeticOverflow)?;
-            outstanding = outstanding
-                .checked_add(outcome(&record, now)?.outstanding_principal_minor)
-                .ok_or(CredisError::ArithmeticOverflow)?;
-        }
-        Ok((principal, outstanding))
+    /// of `account`, kept as they change. A lapsed Credis counts until the cleanup deletes
+    /// it.
+    pub fn principal_and_outstanding_of(&self, account: Address) -> Result<(U256, U256)> {
+        Ok((
+            self.owner_principal_minor.read(&account)?,
+            self.owner_outstanding_minor.read(&account)?,
+        ))
     }
 
     /// How many live Credis `account` holds.
@@ -151,15 +145,6 @@ impl CredisContract<'_> {
     /// The `index`-th live Credis, in list order.
     pub fn token_by_index(&self, index: u32) -> Result<U256> {
         self.live_credis_id(index)
-    }
-
-    /// The live Credis of `account`. Unbounded, so it stays internal: the ABI
-    /// enumerates through `token_of_owner_by_index` instead.
-    pub(crate) fn get_credis_by_owner(&self, account: Address) -> Result<Vec<Credis>> {
-        self.owner_credis_ids(account)?
-            .into_iter()
-            .map(|credis_id| self.load_credis(credis_id))
-            .collect()
     }
 
     /// Live Credis. This value backs `totalSupply`.

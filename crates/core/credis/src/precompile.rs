@@ -80,9 +80,7 @@ pub fn dispatch(
                 Ok(contract.get_credis(c.credisId)?.interest_paid_minor)
             }),
             credisPrincipalAndOutstandingOf(c) => view(c, |c| {
-                let now = contract.storage.timestamp()?.to::<u64>();
-                let (principal, outstanding) =
-                    contract.principal_and_outstanding_of(c.owner, now)?;
+                let (principal, outstanding) = contract.principal_and_outstanding_of(c.owner)?;
                 Ok(ICredis::credisPrincipalAndOutstandingOfReturn {
                     principalMinor: principal,
                     outstandingPrincipalMinor: outstanding,

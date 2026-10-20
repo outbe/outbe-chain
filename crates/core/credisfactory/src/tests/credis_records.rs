@@ -1365,7 +1365,7 @@ fn sums_and_indexes_span_all_of_an_accounts_credis() {
         let mut credis = CredisContract::new(storage);
 
         assert_eq!(
-            credis.principal_and_outstanding_of(alice(), at(1)).unwrap(),
+            credis.principal_and_outstanding_of(alice()).unwrap(),
             (
                 U256::from(PRINCIPAL) * U256::from(2u64),
                 U256::from(PRINCIPAL) * U256::from(2u64)
@@ -1375,7 +1375,7 @@ fn sums_and_indexes_span_all_of_an_accounts_credis() {
         // Settling one reduces outstanding but never principal.
         rules::settle(&mut credis, first, U256::from(999_999_999_999u64), at(1)).unwrap();
         assert_eq!(
-            credis.principal_and_outstanding_of(alice(), at(1)).unwrap(),
+            credis.principal_and_outstanding_of(alice()).unwrap(),
             (
                 U256::from(PRINCIPAL) * U256::from(2u64),
                 U256::from(PRINCIPAL)
@@ -2217,12 +2217,10 @@ fn the_outcome_identities_hold_through_partial_settlements_and_forfeit() {
                 .unwrap()
                 .is_zero()
         );
+        // The owner's sums count a lapsed Credis until the cleanup deletes it.
         assert_eq!(
-            credis
-                .principal_and_outstanding_of(alice(), deadline + 1)
-                .unwrap()
-                .1,
-            U256::ZERO
+            credis.principal_and_outstanding_of(alice()).unwrap(),
+            (U256::from(PRINCIPAL), U256::from(PRINCIPAL / 2))
         );
 
         assert_eq!(check(&credis, later), before_sweep);
@@ -2233,7 +2231,7 @@ fn the_outcome_identities_hold_through_partial_settlements_and_forfeit() {
         );
         forfeit_lapsed(&mut credis, id, deadline + 1).unwrap();
         assert_eq!(
-            credis.principal_and_outstanding_of(alice(), later).unwrap(),
+            credis.principal_and_outstanding_of(alice()).unwrap(),
             (U256::ZERO, U256::ZERO)
         );
     });

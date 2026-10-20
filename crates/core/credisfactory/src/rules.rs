@@ -252,6 +252,7 @@ pub fn settle(
     let group = record.group_key();
     // A settled Credis keeps the call and terms it read from its group.
     credis.update_credis_record(&record)?;
+    credis.take_owner_outstanding(record.owner, principal_paid)?;
     if closed {
         credis.leave_group(group, credis_id)?;
     }

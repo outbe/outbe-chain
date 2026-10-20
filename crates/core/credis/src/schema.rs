@@ -331,6 +331,12 @@ pub struct CredisContract {
     pub cleanup_sweep_hour: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 51)]
     pub cleanup_cursor: outbe_primitives::storage::dsl::Value<u64>,
+
+    /// Each account's principal and outstanding principal over its live Credis.
+    #[attribute(order = 52)]
+    pub owner_principal_minor: outbe_primitives::storage::dsl::Map<Address, U256>,
+    #[attribute(order = 53)]
+    pub owner_outstanding_minor: outbe_primitives::storage::dsl::Map<Address, U256>,
 }
 
 impl CredisContract<'_> {

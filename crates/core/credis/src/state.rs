@@ -9,6 +9,7 @@ use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::call_bins;
 use outbe_primitives::error::Result;
 use outbe_primitives::expiry_queue;
+use outbe_primitives::storage::dsl::Map;
 use outbe_primitives::storage::indexed_list::{create_indexed, delete_indexed, IndexedList};
 
 use crate::errors::CredisError;
@@ -45,9 +46,20 @@ impl<'storage> CredisContract<'storage> {
         Ok(record)
     }
 
-    /// Records a new Credis, lists it and puts it in its group.
+    /// Records a new Credis, lists it, counts it in its owner's sums and puts it in its
+    /// group.
     pub fn create_credis_record(&mut self, record: &Credis) -> Result<()> {
         create_indexed(&self.records, record, self.record_indexes(record.owner))?;
+        add_to(
+            &self.owner_principal_minor,
+            record.owner,
+            record.principal_minor,
+        )?;
+        add_to(
+            &self.owner_outstanding_minor,
+            record.owner,
+            record.outstanding_principal_minor,
+        )?;
         self.join_group(record)
     }
 
@@ -55,11 +67,31 @@ impl<'storage> CredisContract<'storage> {
         self.records.update(record)
     }
 
-    /// Deletes a Credis and unlists it. Its group is the caller's.
+    /// Deletes a Credis, unlists it and takes it out of its owner's sums. Its group is the
+    /// caller's.
     pub fn delete_credis_record(&mut self, credis_id: U256) -> Result<()> {
+        let record = self
+            .records
+            .get(credis_id)?
+            .ok_or(CredisError::CredisNotFound)?;
+        take_from(
+            &self.owner_principal_minor,
+            record.owner,
+            record.principal_minor,
+        )?;
+        take_from(
+            &self.owner_outstanding_minor,
+            record.owner,
+            record.outstanding_principal_minor,
+        )?;
         delete_indexed(&self.records, credis_id, |record: &Credis| {
             self.record_indexes(record.owner)
         })
+    }
+
+    /// Takes repaid principal out of its owner's outstanding sum.
+    pub fn take_owner_outstanding(&mut self, owner: Address, repaid: U256) -> Result<()> {
+        take_from(&self.owner_outstanding_minor, owner, repaid)
     }
 
     fn record_indexes(&self, owner: Address) -> [IndexedList<'storage, U256>; 2] {
@@ -209,6 +241,22 @@ impl<'storage> CredisContract<'storage> {
     pub fn remove_called(&mut self, group: B256) -> Result<()> {
         expiry_queue::remove(&ExpiryHours(self), group)
     }
+}
+
+fn add_to(sums: &Map<'_, Address, U256>, owner: Address, amount: U256) -> Result<()> {
+    let total = sums
+        .read(&owner)?
+        .checked_add(amount)
+        .ok_or(CredisError::ArithmeticOverflow)?;
+    sums.write(&owner, total)
+}
+
+fn take_from(sums: &Map<'_, Address, U256>, owner: Address, amount: U256) -> Result<()> {
+    let total = sums
+        .read(&owner)?
+        .checked_sub(amount)
+        .ok_or(CredisError::ArithmeticOverflow)?;
+    sums.write(&owner, total)
 }
 
 /// Called groups, queued by the hour their settlement deadline falls in.
