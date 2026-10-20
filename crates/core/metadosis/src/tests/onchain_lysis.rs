@@ -230,6 +230,51 @@ fn native_fraction_completion_keeps_tributes_for_owner_create_nod() {
 }
 
 #[test]
+fn native_completion_credits_the_unused_lysis_limit_once() {
+    let mut provider = fixture();
+    let before = StorageHandle::enter(&mut provider, |storage| {
+        outbe_promislimit::PromisLimitContract::new(storage)
+            .get_total_unallocated()
+            .unwrap()
+    });
+
+    run(&mut provider).unwrap();
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let metadosis = MetadosisContract::new(storage.clone());
+        let receipt = metadosis.read_terminal_receipt(DAY).unwrap().unwrap();
+        let completion = metadosis.read_lysis_completion(DAY).unwrap().unwrap();
+        let after = outbe_promislimit::PromisLimitContract::new(storage)
+            .get_total_unallocated()
+            .unwrap();
+        assert_eq!(receipt.common().carry_over_before, before);
+        assert_eq!(receipt.common().carry_over_after, after);
+        assert_eq!(
+            after + completion.desis_limit,
+            before + (receipt.common().value_routed - completion.lysis_limit) + completion.unused
+        );
+    });
+    let executed = provider
+        .get_ordered_events()
+        .iter()
+        .filter_map(|event| IMetadosis::MetadosisExecuted::decode_log(event).ok())
+        .map(|event| event.data)
+        .collect::<Vec<_>>();
+    assert_eq!(executed.len(), 1);
+    assert_eq!(executed[0].status, "COMPLETED");
+    assert_eq!(
+        executed[0].promisLimitReturnedMinor,
+        executed[0].unusedLysisLimitMinor
+    );
+
+    let storage_before = provider.storage.clone();
+    let logs = provider.get_ordered_events().to_vec();
+    run(&mut provider).unwrap();
+    assert_eq!(provider.storage, storage_before);
+    assert_eq!(provider.get_ordered_events(), logs);
+}
+
+#[test]
 fn production_command_issues_encrypted_nods_and_completes_without_worker() {
     let _transport = outbe_tee::lysis::test_transport::scope(exchange);
     let mut provider = fixture();
