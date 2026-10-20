@@ -37,6 +37,9 @@ pub struct CcaContract {
     /// Excess burns offset later openings for the same CCA and UTC day only.
     #[attribute(order = 3)]
     pub gratis_deficit_minor_per_utc_day: outbe_primitives::storage::dsl::Map<B256, U256>,
+    /// Native COEN bonded across all records and not yet claimed back.
+    #[attribute(order = 4)]
+    pub total_bonded_minor: outbe_primitives::storage::dsl::Value<U256>,
 }
 
 pub(crate) fn address_day_key(cca: Address, day: u32) -> B256 {

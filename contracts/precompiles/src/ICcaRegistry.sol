@@ -33,5 +33,7 @@ interface ICcaRegistry {
     function claimUnbonded() external;
     function getCca(address cca) external view returns (Cca memory);
     function getCcaState(address cca) external view returns (State);
+    /// @notice Native COEN (18 decimals) bonded across all CCAs, not yet claimed back.
+    function getTotalBonded() external view returns (uint256 bondedMinor);
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 }
