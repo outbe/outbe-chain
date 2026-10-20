@@ -900,6 +900,18 @@ fn v1_mechanics_fi_groups_fractions_and_create_nod_within_7_days_burns_tribute()
             .expect("Nod must be created");
         assert_eq!(nod_item.owner, owner1);
         assert_eq!(nod_item.league_id, 100);
+        assert_eq!(
+            nod_item.issued_at,
+            base_ts + 3 * outbe_primitives::time::SECONDS_PER_DAY
+        );
+        assert_eq!(
+            nod_item.encrypted.terms.entry_price_minor,
+            U256::from(1_234_567u64)
+        );
+        let bucket = outbe_nod::api::get_bucket(&storage, nod_item.bucket_key)
+            .unwrap()
+            .expect("Nod bucket");
+        assert_eq!(bucket.entry_price_minor, U256::from(1_234_567u64));
         assert!(tc.get_record(t1.tribute_id).unwrap().is_none());
         assert_eq!(tc.total_supply().unwrap(), 1);
         let totals_after_t1 = tc.get_day_totals(day).unwrap();
