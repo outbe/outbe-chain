@@ -9,6 +9,8 @@ use outbe_tee_enclave::promis::{
 };
 use outbe_vaultrouter::settlement::SettlementPayment;
 
+const RELAYER: Address = Address::repeat_byte(0x5e);
+
 fn promis_auth(account: Address, amount: U256, nonce: u64) -> outbe_promisfactory::api::ModifyAuth {
     let sk = outbe_promis::enclave_client::test_enclave::state_key();
     let mk = derive_modify_key(&sk, account).unwrap();
@@ -84,19 +86,22 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
         );
         assert_eq!(outbe_intex::api::exercised_units(&s, sid(7)).unwrap(), 0);
 
-        // The paid unit still mines.
-        let minted = runtime::mine_promis(
-            &s,
-            sid(7),
-            owner(),
-            U256::ONE,
-            runtime::MiningProof {
-                nonce,
-                auth: promis_auth(owner(), promis_minor, 0),
-            },
-        )
-        .unwrap();
-        assert_eq!(minted, promis_minor);
+        // The paid unit still mines, relayed by a stranger.
+        let call = IIntexFactory::minePromisCall {
+            seriesId: sid(7).into(),
+            owner: owner(),
+            units: U256::ONE,
+            nonce,
+            mac: B256::from(promis_auth(owner(), promis_minor, 0).mac),
+            opNonce: 0,
+        };
+        let minted =
+            crate::precompile::dispatch(s.clone(), &call.abi_encode(), RELAYER, U256::ZERO)
+                .unwrap();
+        assert_eq!(
+            IIntexFactory::minePromisCall::abi_decode_returns(&minted).unwrap(),
+            promis_minor
+        );
         assert_eq!(outbe_intex::api::exercised_units(&s, sid(7)).unwrap(), 1);
 
         // The Promis landed on the owner's confidential ledger and consumed one op nonce.
@@ -110,6 +115,16 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
                 .read_mine_seq(sid(7), owner())
                 .unwrap(),
             1
+        );
+        assert!(outbe_promis::api::balance_ct(s.clone(), RELAYER)
+            .unwrap()
+            .is_empty());
+        assert_eq!(outbe_promis::api::op_nonce(s.clone(), RELAYER).unwrap(), 0);
+        assert_eq!(
+            IntexFactoryContract::new(s.clone())
+                .read_mine_seq(sid(7), RELAYER)
+                .unwrap(),
+            0
         );
     });
     let mined: Vec<_> = storage
