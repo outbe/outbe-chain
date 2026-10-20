@@ -39,14 +39,15 @@ contract IntexAuctionBondTest is Test {
 
     uint128 internal constant PROMIS_LOAD_MINOR = 100_000 * 1e6;
     uint64 internal constant ENTRY_PRICE = 1e6;
-    uint128 internal constant BOND = 100e18;
-    // Protocol-scale basis/rate cross into 18-decimal WCOEN, well below BOND.
+    // MockWCOEN has 18 decimals: 1e12 token units per protocol unit.
+    uint256 internal constant WCOEN_SCALE = 1e12;
+    uint128 internal constant BOND_PROTOCOL = 100e6;
+    uint128 internal constant BOND = uint128(BOND_PROTOCOL * WCOEN_SCALE);
+    // Protocol-scale basis/rate, well below BOND once scaled.
     uint16 internal constant QTY = 1;
     uint32 internal constant RATE = 1;
-    uint128 internal constant LOCK_AMOUNT = uint128(
-        uint256(QTY) * PROMIS_LOAD_MINOR * RATE / BridgeMsgCodec.SCALE_1E6
-            * BridgeMsgCodec.NATIVE_UNITS_PER_PROTOCOL_UNIT
-    );
+    uint128 internal constant LOCK_AMOUNT =
+        uint128(uint256(QTY) * PROMIS_LOAD_MINOR * RATE / BridgeMsgCodec.SCALE_1E6 * WCOEN_SCALE);
 
     uint32 constant COMMIT_OFFSET = 100;
     uint32 constant REVEAL_OFFSET = 200;
@@ -76,7 +77,7 @@ contract IntexAuctionBondTest is Test {
 
         startTs = block.timestamp;
         vm.prank(bridger);
-        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Green, _schedule(), _params(BOND));
+        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Live, _schedule(), _params(BOND_PROTOCOL));
     }
 
     // --- Helpers ---
@@ -153,7 +154,7 @@ contract IntexAuctionBondTest is Test {
     function test_CommitBid_ZeroBond_SkipsEscrow() public {
         uint32 freeSeries = worldwideDay + 1;
         vm.prank(bridger);
-        auction.auctionStart(freeSeries, IIntexAuction.WorldwideDayState.Green, _schedule(), _params(0));
+        auction.auctionStart(freeSeries, IIntexAuction.WorldwideDayState.Live, _schedule(), _params(0));
 
         // No approval needed when the series carries no bond.
         address pauper = address(0xF00D);
@@ -213,17 +214,19 @@ contract IntexAuctionBondTest is Test {
 
     // --- claimCommitBond ---
 
-    function test_ClaimCommitBond_RedDay_HasNoBond() public {
-        uint32 redSeries = worldwideDay + 7;
+    function test_ClaimCommitBond_CancelledDay_HasNoBond() public {
+        uint32 cancelledSeries = worldwideDay + 7;
         vm.prank(bridger);
-        auction.auctionStart(redSeries, IIntexAuction.WorldwideDayState.Red, _schedule(), _params(BOND));
+        auction.auctionStart(
+            cancelledSeries, IIntexAuction.WorldwideDayState.Cancelled, _schedule(), _params(BOND_PROTOCOL)
+        );
 
-        // A red day is cancelled before anyone can commit, so its penalty window passes with no
+        // A cancelled day is cancelled before anyone can commit, so its penalty window passes with no
         // bond for the escrow to release.
         vm.warp(uint256(startTs) + REVEAL_OFFSET + auction.UNREVEALED_BOND_LOCK_PERIOD());
         vm.prank(outsider);
         vm.expectRevert(IEscrowAdapter.CommitBondNotFound.selector);
-        auction.claimCommitBond(redSeries, iba1);
+        auction.claimCommitBond(cancelledSeries, iba1);
     }
 
     function test_ClaimCommitBond_NoReveal_RevertsBeforeWindow() public {

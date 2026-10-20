@@ -18,8 +18,8 @@ pub enum NodError {
     #[error("nod not found")]
     NodNotFound,
 
-    #[error("bucket not found")]
-    BucketNotFound,
+    #[error("group not found")]
+    GroupNotFound,
 
     #[error("index out of bounds")]
     IndexOutOfBounds,
@@ -51,26 +51,32 @@ pub enum NodError {
     #[error("cannot issue a settled Nod")]
     CannotIssueSettledNod,
 
-    #[error("Nod bucket identity mismatch: expected {expected}, found {found}")]
-    BucketIdentityMismatch { expected: B256, found: B256 },
+    #[error("Nod group identity mismatch: expected {expected}, found {found}")]
+    GroupIdentityMismatch { expected: B256, found: B256 },
 
     #[error("nod already exists")]
     NodAlreadyExists,
 
-    #[error("Nod bucket {bucket_id} existence disagrees with member count {member_count}")]
-    BucketExistenceDisagreesWithMemberCount {
-        bucket_id: WwdEntityId,
+    #[error("Nod group {group_id} existence disagrees with member count {member_count}")]
+    GroupExistenceDisagreesWithMemberCount {
+        group_id: WwdEntityId,
         member_count: u32,
     },
 
     #[error("Nod total supply overflow during issuance")]
     TotalSupplyOverflowDuringIssuance,
 
+    #[error("Nod group {group_key} unpaid load overflow")]
+    GroupUnpaidLoadOverflow { group_key: alloy_primitives::B256 },
+
+    #[error("Nod group {group_key} unpaid load underflow")]
+    GroupUnpaidLoadUnderflow { group_key: alloy_primitives::B256 },
+
     #[error("Nod total supply underflow during removal")]
     TotalSupplyUnderflowDuringRemoval,
 
-    #[error("Nod bucket {bucket_id} settled count underflow")]
-    BucketSettledCountUnderflow { bucket_id: WwdEntityId },
+    #[error("Nod group {group_id} settled count underflow")]
+    GroupSettledCountUnderflow { group_id: WwdEntityId },
 
     #[error("nod is already settled")]
     AlreadySettled,
@@ -78,20 +84,20 @@ pub enum NodError {
     #[error("Nod settled count overflow")]
     SettledCountOverflow,
 
-    #[error("Nod bucket {bucket_key} member index overflow")]
-    BucketMemberIndexOverflow { bucket_key: B256 },
+    #[error("Nod group {group_key} member index overflow")]
+    GroupMemberIndexOverflow { group_key: B256 },
 
-    #[error("Nod bucket {bucket_key} member count underflow during removal")]
-    BucketMemberCountUnderflowDuringRemoval { bucket_key: B256 },
+    #[error("Nod group {group_key} member count underflow during removal")]
+    GroupMemberCountUnderflowDuringRemoval { group_key: B256 },
 
-    #[error("Nod {nod_id} is not indexed in bucket {bucket_key}")]
-    NodNotIndexedInBucket {
+    #[error("Nod {nod_id} is not indexed in group {group_key}")]
+    NodNotIndexedInGroup {
         nod_id: WwdEntityId,
-        bucket_key: B256,
+        group_key: B256,
     },
 
-    #[error("Nod bucket {bucket_key} member slot {slot} is empty during removal")]
-    EmptyBucketMemberSlotDuringRemoval { bucket_key: B256, slot: u32 },
+    #[error("Nod group {group_key} member slot {slot} is empty during removal")]
+    EmptyGroupMemberSlotDuringRemoval { group_key: B256, slot: u32 },
 
     #[error("NOD amount read failed: {0}")]
     AmountReadFailed(#[source] outbe_tee::TransportError),

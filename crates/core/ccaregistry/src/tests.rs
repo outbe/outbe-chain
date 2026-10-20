@@ -42,6 +42,74 @@ fn bond(storage: &StorageHandle<'_>, who: Address, amount: U256) {
     .unwrap();
 }
 #[test]
+fn the_bonded_total_follows_bonds_and_claims_and_needs_the_registry_balance() {
+    run(|storage| {
+        bond(&storage, ALICE, BOND_REQUIREMENT);
+        bond(&storage, BOB, U256::from(7u64));
+        assert_eq!(
+            api::total_bonded(&storage).unwrap(),
+            BOND_REQUIREMENT + U256::from(7u64)
+        );
+
+        let shortfall = runtime::bond(storage.clone(), BOB, U256::ONE, "Test CCA".into());
+        assert!(shortfall
+            .unwrap_err()
+            .to_string()
+            .contains("below the bonded total"));
+        assert_eq!(
+            api::total_bonded(&storage).unwrap(),
+            BOND_REQUIREMENT + U256::from(7u64)
+        );
+        assert_eq!(
+            api::get_cca(&storage, BOB).unwrap().bondedMinor,
+            U256::from(7u64)
+        );
+
+        runtime::unbond(storage.clone(), ALICE).unwrap();
+        storage
+            .set_block_timestamp(U256::from(NOW + UNBOND_COOLDOWN_SECONDS))
+            .unwrap();
+        runtime::claim_unbonded(storage.clone(), ALICE).unwrap();
+        assert_eq!(api::total_bonded(&storage).unwrap(), U256::from(7u64));
+        assert_eq!(
+            storage.balance(CCA_REGISTRY_ADDRESS).unwrap(),
+            U256::from(7u64)
+        );
+    });
+}
+
+#[test]
+fn an_unbond_claim_that_leaves_less_than_the_bonded_total_reverts() {
+    run(|storage| {
+        bond(&storage, ALICE, BOND_REQUIREMENT);
+        bond(&storage, BOB, U256::from(7u64));
+        storage
+            .decrease_balance(CCA_REGISTRY_ADDRESS, U256::from(7u64))
+            .unwrap();
+        runtime::unbond(storage.clone(), ALICE).unwrap();
+        storage
+            .set_block_timestamp(U256::from(NOW + UNBOND_COOLDOWN_SECONDS))
+            .unwrap();
+
+        let error = runtime::claim_unbonded(storage.clone(), ALICE).unwrap_err();
+        assert!(error.to_string().contains("below the bonded total"));
+        assert_eq!(
+            api::get_cca(&storage, ALICE).unwrap().bondedMinor,
+            BOND_REQUIREMENT
+        );
+        assert_eq!(
+            api::total_bonded(&storage).unwrap(),
+            BOND_REQUIREMENT + U256::from(7u64)
+        );
+        assert_eq!(
+            storage.balance(CCA_REGISTRY_ADDRESS).unwrap(),
+            BOND_REQUIREMENT
+        );
+        assert_eq!(storage.balance(ALICE).unwrap(), U256::ZERO);
+    });
+}
+
+#[test]
 fn active_set_rejects_one_past_the_cap_and_frees_a_slot_on_exit() {
     run(|storage| {
         for id in 1..=MAX_ACTIVE_CCAS {
@@ -78,7 +146,7 @@ fn active_set_rejects_one_past_the_cap_and_frees_a_slot_on_exit() {
             runtime::bond(storage.clone(), partial, U256::ONE, "Test CCA".into()).unwrap_err();
         assert!(error.to_string().contains("CCA active set is full"));
         assert_eq!(
-            api::get_cca(&storage, partial).unwrap().bondedAmount,
+            api::get_cca(&storage, partial).unwrap().bondedMinor,
             BOND_REQUIREMENT - U256::ONE
         );
         assert_eq!(
@@ -89,7 +157,7 @@ fn active_set_rejects_one_past_the_cap_and_frees_a_slot_on_exit() {
         let incumbent = cca_at(1);
         bond(&storage, incumbent, U256::ONE);
         assert_eq!(
-            api::get_cca(&storage, incumbent).unwrap().bondedAmount,
+            api::get_cca(&storage, incumbent).unwrap().bondedMinor,
             BOND_REQUIREMENT + U256::ONE
         );
         assert!(api::is_active(&storage, incumbent).unwrap());
@@ -166,7 +234,7 @@ fn names_round_trip_across_storage_lengths_and_empty_names_preserve_registration
             assert_eq!(record.cca, ALICE);
             assert_eq!(record.name, name);
             assert_eq!(record.state, ICcaRegistry::State::Bonding);
-            assert_eq!(record.bondedAmount, U256::from(index + 1));
+            assert_eq!(record.bondedMinor, U256::from(index + 1));
 
             assert!(dispatch(storage.clone(), &empty_name, ALICE, U256::ONE).is_err());
             assert_eq!(api::get_cca(&storage, ALICE).unwrap(), record);
@@ -180,7 +248,7 @@ fn names_round_trip_across_storage_lengths_and_empty_names_preserve_registration
         let record = api::get_cca(&storage, ALICE).unwrap();
         assert_eq!(record.name, "B");
         assert_eq!(record.state, ICcaRegistry::State::Deregistered);
-        assert_eq!(record.bondedAmount, U256::ZERO);
+        assert_eq!(record.bondedMinor, U256::ZERO);
     });
 }
 
@@ -209,7 +277,7 @@ fn incremental_registration_exit_and_reregistration_preserve_history() {
         let record = api::get_cca(&storage, ALICE).unwrap();
         assert_eq!(record.cca, ALICE);
         assert_eq!(record.state, ICcaRegistry::State::Deregistering);
-        assert_eq!(record.bondedAmount, BOND_REQUIREMENT + U256::from(7));
+        assert_eq!(record.bondedMinor, BOND_REQUIREMENT + U256::from(7));
         assert_eq!(record.unbondUnlocksAfter, NOW + UNBOND_COOLDOWN_SECONDS);
         assert!(!api::is_active(&storage, ALICE).unwrap());
         assert!(runtime::unbond(storage.clone(), ALICE).is_err());
@@ -232,7 +300,7 @@ fn incremental_registration_exit_and_reregistration_preserve_history() {
         );
         assert!(runtime::claim_unbonded(storage.clone(), ALICE).is_err());
         assert_eq!(
-            api::get_cca(&storage, ALICE).unwrap().bondedAmount,
+            api::get_cca(&storage, ALICE).unwrap().bondedMinor,
             U256::ZERO
         );
         assert_eq!(storage.balance(CCA_REGISTRY_ADDRESS).unwrap(), U256::ZERO);
@@ -263,7 +331,7 @@ fn partial_registration_can_exit_and_rejected_calls_do_not_mutate() {
         bond(&storage, ALICE, U256::ONE);
         runtime::unbond(storage.clone(), ALICE).unwrap();
         assert_eq!(
-            api::get_cca(&storage, ALICE).unwrap().bondedAmount,
+            api::get_cca(&storage, ALICE).unwrap().bondedMinor,
             U256::ONE
         );
         assert!(CcaContract::new(storage)
@@ -314,7 +382,7 @@ fn failed_unbond_claim_preserves_record_and_balance() {
             .unwrap();
         assert!(runtime::claim_unbonded(storage.clone(), ALICE).is_err());
         assert_eq!(
-            api::get_cca(&storage, ALICE).unwrap().bondedAmount,
+            api::get_cca(&storage, ALICE).unwrap().bondedMinor,
             BOND_REQUIREMENT
         );
         assert_eq!(
@@ -356,7 +424,7 @@ fn abi_reads_and_nonpayable_selectors() {
         assert_eq!(
             ICcaRegistry::getCcaCall::abi_decode_returns(&out)
                 .unwrap()
-                .bondedAmount,
+                .bondedMinor,
             BOND_REQUIREMENT
         );
         for data in [
@@ -456,7 +524,10 @@ fn deficit_overflow_rolls_back_and_full_range_can_be_offset() {
         let contract = CcaContract::new(storage.clone());
         let key = address_day_key(ALICE, DAY);
         assert_eq!(
-            contract.gratis_deficits_per_utc_day.read(&key).unwrap(),
+            contract
+                .gratis_deficit_minor_per_utc_day
+                .read(&key)
+                .unwrap(),
             U256::MAX
         );
         assert_eq!(
@@ -465,7 +536,10 @@ fn deficit_overflow_rolls_back_and_full_range_can_be_offset() {
         );
         runtime::credis_issued(&storage, ALICE, DAY, U256::MAX).unwrap();
         assert_eq!(
-            contract.gratis_deficits_per_utc_day.read(&key).unwrap(),
+            contract
+                .gratis_deficit_minor_per_utc_day
+                .read(&key)
+                .unwrap(),
             U256::ZERO
         );
         assert_eq!(

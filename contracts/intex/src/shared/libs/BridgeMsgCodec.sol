@@ -57,20 +57,6 @@ library BridgeMsgCodec {
     /// @notice Decimals of protocol amounts and COEN/ISO prices.
     uint8 internal constant PROTOCOL_DECIMALS = 6;
 
-    /// @notice Decimals of native COEN and wCOEN.
-    uint8 internal constant NATIVE_DECIMALS = 18;
-
-    /// @notice 18-decimal wCOEN units in one six-decimal protocol unit.
-    uint256 internal constant NATIVE_UNITS_PER_PROTOCOL_UNIT = 10 ** (NATIVE_DECIMALS - PROTOCOL_DECIMALS);
-
-    /// @notice `quantity` Intexes at `rate` of the six-decimal `basis`, in 18-decimal payment
-    ///         units: the lock a bid takes and the payment a winner makes. Mirrors the clearing
-    ///         side's `rate_lock` bit for bit. The six-decimal product is floored before it is
-    ///         scaled.
-    function escrowAmount(uint256 quantity, uint256 basis, uint256 rate) internal pure returns (uint256) {
-        return quantity * basis * rate / SCALE_1E6 * NATIVE_UNITS_PER_PROTOCOL_UNIT;
-    }
-
     // --- Minimum encoded lengths ---
     // Header is fixed at 2 bytes: [bodyVersion(1)][msgType(1)].
     uint16 internal constant HEADER_LEN = 2;
@@ -79,8 +65,6 @@ library BridgeMsgCodec {
     uint16 internal constant MIN_LEN_AUCTION_STAGE_START = 70;
     /// @notice Bytes per reference-price row: [iso(2)][entry(8)][call(8)].
     uint16 internal constant REFERENCE_PRICE_LEN = 18;
-    /// @notice The oracle's reference list is short. A day may not exceed this.
-    uint8 internal constant MAX_REFERENCE_PRICES = 6;
     uint16 internal constant MIN_LEN_AUCTION_STAGE_CLEARING = 6;
     uint16 internal constant MIN_LEN_AUCTION_RESULT = 22;
     // MARK_CALLED: header + abi.encode(worldwideDay, calledAt, seriesIds). One series is 5 words.
@@ -283,7 +267,7 @@ library BridgeMsgCodec {
     /// @param _minIntexBidQuantity The minimum acceptable intex bid quantity.
     /// @param _commitBondMinor The commit-entry bond (payment-token minor units). 0 disables the
     ///        bond.
-    /// @param _dayState The final worldwide-day state (1 = Green, 2 = Red).
+    /// @param _dayState The final worldwide-day state (1 = Live, 2 = Cancelled).
     /// @return The wire-encoded AUCTION_STAGE_START message.
     function encodeAuctionStageStart(
         uint32 _worldwideDay,
@@ -300,11 +284,12 @@ library BridgeMsgCodec {
         uint128 _commitBondMinor,
         uint8 _dayState
     ) internal pure returns (bytes memory) {
-        if (_prices.length > MAX_REFERENCE_PRICES) {
-            revert PayloadArrayTooLong(_prices.length, MAX_REFERENCE_PRICES);
+        // The row count is one byte on the wire.
+        if (_prices.length > type(uint8).max) {
+            revert PayloadArrayTooLong(_prices.length, type(uint8).max);
         }
         // A live day must price something to bid against. A cancelled one is a closed record.
-        if (_prices.length == 0 && _dayState != uint8(IIntexAuction.WorldwideDayState.Red)) {
+        if (_prices.length == 0 && _dayState != uint8(IIntexAuction.WorldwideDayState.Cancelled)) {
             revert MissingReferencePrices();
         }
         bytes memory rows = abi.encodePacked(uint8(_prices.length));
@@ -391,7 +376,7 @@ library BridgeMsgCodec {
     ///         [callThreshold(4)][minIntexBidQuantity(2)][commitBondMinor(16)][dayState(1)][priceCount(1)]
     /// @param _msg The wire-encoded AUCTION_STAGE_START message.
     /// @return worldwideDay The worldwide day (yyyymmdd).
-    /// @return dayState The final worldwide-day state (Green or Red).
+    /// @return dayState The final worldwide-day state (Live or Cancelled).
     /// @return schedule The decoded commit/reveal/issuance schedule.
     /// @return params The decoded auction params.
     function decodeAuctionParams(bytes calldata _msg)
@@ -408,7 +393,7 @@ library BridgeMsgCodec {
         _assertBodyVersion(_msg);
         worldwideDay = uint32(bytes4(_msg[2:6]));
         uint8 rawDayState = uint8(_msg[68]);
-        if (rawDayState > uint8(IIntexAuction.WorldwideDayState.Red)) revert IIntexAuction.InvalidDayState();
+        if (rawDayState > uint8(IIntexAuction.WorldwideDayState.Cancelled)) revert IIntexAuction.InvalidDayState();
         dayState = IIntexAuction.WorldwideDayState(rawDayState);
         schedule = IIntexAuction.AuctionSchedule({
             commitEnd: uint32(bytes4(_msg[6:10])),
@@ -438,10 +423,6 @@ library BridgeMsgCodec {
         returns (IIntexAuction.ReferenceCurrencyPrice[] memory rows)
     {
         uint256 count = uint8(_msg[69]);
-        // Re-checked inbound: more rows than the quoted gas covers would revert and redeliver.
-        if (count > MAX_REFERENCE_PRICES) {
-            revert PayloadArrayTooLong(count, MAX_REFERENCE_PRICES);
-        }
         if (_msg.length != MIN_LEN_AUCTION_STAGE_START + count * REFERENCE_PRICE_LEN) {
             revert InvalidPayloadLength(MSG_AUCTION_STAGE_START, _msg.length, MIN_LEN_AUCTION_STAGE_START);
         }

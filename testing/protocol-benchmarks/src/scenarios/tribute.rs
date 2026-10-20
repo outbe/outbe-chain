@@ -24,10 +24,7 @@ use commonware_cryptography::bls12381::primitives::{
     variant::MinSig,
 };
 use outbe_l2registry::L2RegistryContract;
-use outbe_metadosis::{
-    genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay},
-    WwdDayType, WwdStatus,
-};
+use outbe_metadosis::genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay};
 use outbe_oracle::{
     genesis::{init_from_genesis, OracleGenesisConfig},
     schema::OracleContract,
@@ -330,16 +327,11 @@ fn seed_offer_world(storage: StorageHandle<'_>) {
     FreshDevnetGenesisBuilder::new()
         .seed_active_worldwide_day(GenesisWorldwideDay {
             worldwide_day: TARGET_WWD,
-            status: WwdStatus::Offering,
-            day_type: WwdDayType::Green,
+            day: 0,
             forming_start: 1,
             forming_end: 2,
-            lookback_end: 3,
-            offering_end: 4,
-            scheduled_process_time: 5,
-            metadosis_limit_minor: U256::from(100),
-            previous_vwap: U256::from(90),
-            current_vwap: U256::from(100),
+            offerings_start: 3,
+            offering_end: date_key_to_utc_timestamp(REWARD_UTC_DAY) + 86_400,
         })
         .apply(storage.clone())
         .unwrap();

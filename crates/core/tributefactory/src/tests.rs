@@ -1,9 +1,5 @@
 use alloy_primitives::{Address, Bytes, B256, U256};
 use outbe_agentreward::AgentRewardContract;
-use outbe_metadosis::{
-    genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay},
-    WwdDayType, WwdStatus,
-};
 use outbe_oracle::{
     genesis::{init_from_genesis, OracleGenesisConfig},
     schema::OracleContract,
@@ -14,7 +10,10 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::date_key_to_utc_timestamp;
 use outbe_primitives::time::WorldwideDay;
-use outbe_tribute::TributeContract;
+use outbe_tribute::{
+    worldwideday::genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay},
+    TributeContract,
+};
 
 use crate::runtime::{validate_agent_reward_addresses, OfferTributeInput};
 use crate::schema::TributeFactoryContract;
@@ -315,21 +314,17 @@ const REWARD_WALLET: Address = Address::repeat_byte(0x71);
 const REWARD_SRA: Address = Address::repeat_byte(0x72);
 
 fn seed_offer_world(storage: StorageHandle<'_>, target_days: &[WorldwideDay]) {
+    let now = u64::try_from(storage.timestamp().unwrap()).unwrap();
     let mut metadosis = FreshDevnetGenesisBuilder::new();
     for (index, worldwide_day) in target_days.iter().copied().enumerate() {
         let offset = u64::try_from(index).unwrap() * 10;
         metadosis = metadosis.seed_active_worldwide_day(GenesisWorldwideDay {
             worldwide_day,
-            status: WwdStatus::Offering,
-            day_type: WwdDayType::Green,
+            day: 0,
             forming_start: offset + 1,
             forming_end: offset + 2,
-            lookback_end: offset + 3,
-            offering_end: offset + 4,
-            scheduled_process_time: offset + 5,
-            metadosis_limit_minor: U256::from(100),
-            previous_vwap: U256::from(90),
-            current_vwap: U256::from(100),
+            offerings_start: offset + 3,
+            offering_end: now.max(offset + 3) + 86_400,
         });
     }
     metadosis.apply(storage.clone()).unwrap();
@@ -581,7 +576,7 @@ fn assert_real_zk_offer_with_key_source(
     });
 
     // Fail the final mutation of the real offer, after Tribute issuance and
-    // reward writes have begun, inside the enclosing VM transaction checkpoint.
+    // reward writes start, inside the enclosing VM transaction checkpoint.
     provider.storage = before_offer.clone();
     provider.fail_after_mutation_at(mutations - 1);
     StorageHandle::enter(&mut provider, |storage| {

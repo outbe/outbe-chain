@@ -124,19 +124,20 @@ fn prepare(world: &mut World) -> PaidGem {
     let ports = world.validators.committee_ports();
     let url = world.rpc.url(port);
     let key = world.validators.get(0).evm_key().expect("validator 0 key");
-    let (owner, gem_id, gem) = wait_for_validator_reward_gem(world);
-    assert_eq!(gem.owner, owner);
-    assert_eq!(gem.gemType, 0, "expected a protocol reward Gem");
+    let ValidatorRewardGem {
+        owner,
+        gem_id,
+        gem,
+        block_number: claim,
+    } = validator_reward_gem(world);
     assert!(
         !gem.promisLoadMinor.is_zero(),
         "reward Gem must carry Promis"
     );
-    let delivery = find_canonical_reward_gem_delivery_block_number(world, gem_id)
-        .expect("reward Gem must originate from canonical RewardsGemDelivery");
     world
         .rpc
-        .wait_finalized_checkpoint(&ports, delivery, 120)
-        .expect("all validators finalize the reward Gem delivery");
+        .wait_finalized_checkpoint(&ports, claim, 120)
+        .expect("all validators finalize the reward Gem claim");
     // The preceding Nod redemption already registered a real settlement vault.
     // Reuse it and assert a balance delta, not an empty-vault fixture balance.
     let vault = eth::read_call(

@@ -1,6 +1,5 @@
 use super::*;
 
-mod capacity;
 mod expiry;
 mod factory_approval;
 mod hook_events;
@@ -128,7 +127,7 @@ fn apply_pre_execution_changes_executes_cycle_tick_system_tx_receipt() {
         );
     }
 
-    assert_eq!(executor.receipts().len(), 5);
+    assert_eq!(executor.receipts().len(), 4);
     assert!(executor.receipts().iter().all(|receipt| receipt.success));
     assert!(
         executor.system_tx_execution_gas > 0,
@@ -147,11 +146,11 @@ fn apply_pre_execution_changes_executes_cycle_tick_system_tx_receipt() {
         .iter()
         .all(|receipt| receipt.tx_type == reth_ethereum::TxType::Legacy));
     assert_eq!(
-        executor.receipts()[4].cumulative_gas_used,
+        executor.receipts()[3].cumulative_gas_used,
         visible_system_gas_used
     );
 
-    assert_eq!(system_txs.len(), 5);
+    assert_eq!(system_txs.len(), 4);
     assert_eq!(Address::from(*system_txs[0].signer()), proposer);
     assert_eq!(system_txs[0].tx().chain_id(), Some(CHAIN_ID));
     assert_eq!(system_txs[0].tx().tx_type(), reth_ethereum::TxType::Legacy);
@@ -167,18 +166,14 @@ fn apply_pre_execution_changes_executes_cycle_tick_system_tx_receipt() {
     ));
     assert!(matches!(
         SystemTxInputV2::decode(system_txs[1].tx().input().as_ref()).unwrap(),
-        SystemTxInputV2::RewardsGemDelivery
-    ));
-    assert!(matches!(
-        SystemTxInputV2::decode(system_txs[2].tx().input().as_ref()).unwrap(),
         SystemTxInputV2::TeeBootstrap { .. }
     ));
     assert!(matches!(
-        SystemTxInputV2::decode(system_txs[3].tx().input().as_ref()).unwrap(),
+        SystemTxInputV2::decode(system_txs[2].tx().input().as_ref()).unwrap(),
         SystemTxInputV2::OracleSlashWindow
     ));
     assert!(matches!(
-        SystemTxInputV2::decode(system_txs[4].tx().input().as_ref()).unwrap(),
+        SystemTxInputV2::decode(system_txs[3].tx().input().as_ref()).unwrap(),
         SystemTxInputV2::HookEvents
     ));
     drop(executor);
@@ -329,7 +324,7 @@ fn cycle_tick_utc_boundary_gas_usage() {
         }
     }
 
-    assert_eq!(executor.receipts().len(), 5);
+    assert_eq!(executor.receipts().len(), 4);
     let visible_gas = cycle_tick_visible_gas.expect("CycleTick visible gas must be captured");
     let cycle_tick_receipt = &executor.receipts()[0];
     assert!(
@@ -359,16 +354,12 @@ fn tee_expiry_worst_case_active_sweep_fits_cycle_tick_budget() {
 }
 
 #[test]
-fn capacity_forfeiture_cycle_tick_keeps_twenty_percent_block_headroom() {
-    let _enclave = outbe_tribute::enclave_client::test_enclave::scope();
-    capacity::run();
-}
-
-#[test]
 fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
     const GENESIS_TS: u64 = 1_704_067_200;
     use outbe_primitives::time::SECONDS_PER_DAY;
-    const DENSE_ADDRESS_COUNT: u64 = 512;
+    // WAA and SRA recipients together fill one block's accrual slice.
+    const DENSE_ADDRESS_COUNT: u64 =
+        outbe_agentreward::distribution::ACCRUAL_RECIPIENTS_PER_BLOCK as u64 / 2;
     const DENSE_VALIDATOR_COUNT: u32 = outbe_consensus::bls::MAX_VALIDATORS;
 
     let signer = test_evm_signer();
@@ -433,7 +424,6 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
         },
     );
     let cycle_tx = system_txs.remove(0);
-    let delivery_tx = system_txs.remove(0);
     let cycle_signed_gas_limit = cycle_tx.tx().gas_limit();
     let cycle_gas = executor
         .execute_transaction(cycle_tx)
@@ -456,29 +446,17 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
         cycle_gas <= cycle_signed_gas_limit,
         "GAS-05: CycleTick receipt gas exceeded signed gas limit"
     );
-    let delivery_signed_gas_limit = delivery_tx.tx().gas_limit();
-    let delivery_gas = executor
-        .execute_transaction(delivery_tx)
-        .expect("dense RewardsGemDelivery should execute")
-        .tx_gas_used();
-    assert!(delivery_gas <= delivery_signed_gas_limit);
-
     drop(executor);
     let read_ctx = BlockContext::new(1, block_ts, CHAIN_ID, proposer, vec![proposer]);
     let mut provider =
         outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, read_ctx);
     StorageHandle::enter(&mut provider, |storage| {
         assert_dense_agent_settlement(storage.clone(), prev_day, DENSE_ADDRESS_COUNT)?;
+        assert_dense_validator_settlement(storage.clone(), DENSE_VALIDATOR_COUNT)?;
         let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
-        assert!(rewards.daily_topup_prepared.read(&prev_day)?);
-        // One reward Gem per block: the dense batch drains over later blocks
-        // and the day settles only when its FIFO head retires.
-        assert!(!rewards.daily_topup_settled.read(&prev_day)?);
-        assert_eq!(rewards.reward_gem_queue_head.read()?, 0);
-        assert_eq!(rewards.reward_gem_queue_tail.read()?, 1);
-        assert_eq!(rewards.reward_gem_delivered_count.read(&prev_day)?, 1);
+        assert!(rewards.daily_settled.read(&prev_day)?);
         let gem = outbe_gem::GemContract::new(storage);
-        assert_eq!(gem.total_supply()?, 1);
+        assert_eq!(gem.total_supply()?, 0);
         Ok::<_, outbe_primitives::error::PrecompileError>(())
     })
     .expect("GAS-05 dense AgentReward state should be readable after CycleTick");
@@ -517,9 +495,6 @@ fn gas_09_noncritical_system_oog_exhausts_aggregate_budget_atomically() {
     let cycle_tx = system_txs
         .next()
         .expect("CycleTick system tx should be present");
-    let rewards_tx = system_txs
-        .next()
-        .expect("RewardsGemDelivery system tx should be present");
     let tee_bootstrap_tx = system_txs
         .next()
         .expect("TeeBootstrap system tx should be present");
@@ -537,9 +512,6 @@ fn gas_09_noncritical_system_oog_exhausts_aggregate_budget_atomically() {
         .expect("CycleTick should execute successfully")
         .tx_gas_used();
     assert!(cycle_gas <= cycle_signed_gas_limit);
-    executor
-        .execute_transaction(rewards_tx)
-        .expect("RewardsGemDelivery should execute before TeeBootstrap");
     let _tee_bootstrap_gas = executor
         .execute_transaction(tee_bootstrap_tx)
         .expect("mandatory TeeBootstrap should execute before the non-critical phase")
@@ -849,12 +821,12 @@ fn gas_16_mixed_system_and_user_block_finish_uses_visible_system_gas() {
         .expect("final extra_data should encode");
     let (_evm, result) = executor.finish().expect("finish should succeed");
     assert_eq!(result.gas_used, visible_system_gas + user_gas);
-    assert_eq!(result.receipts.len(), 6);
+    assert_eq!(result.receipts.len(), 5);
     let first_visible_gas = result.receipts[0].cumulative_gas_used;
     assert!(first_visible_gas >= outbe_primitives::system_tx::SYSTEM_TX_VISIBLE_GAS_FLOOR);
-    assert_eq!(result.receipts[4].cumulative_gas_used, visible_system_gas);
+    assert_eq!(result.receipts[3].cumulative_gas_used, visible_system_gas);
     assert_eq!(
-        result.receipts[5].cumulative_gas_used,
+        result.receipts[4].cumulative_gas_used,
         visible_system_gas + user_gas
     );
 }

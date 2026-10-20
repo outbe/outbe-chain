@@ -213,7 +213,17 @@ pub(crate) fn snapshot(world: &World) -> Snapshot {
             serde_json::json!([format!("{:#x}", f.owner), format!("0x{h:x}")]),
         )
         .expect("owner native balance at checkpoint");
-        let record = (!f.credis_id.is_zero()).then(|| {
+        // A forfeited Credis is deleted.
+        let live = !f.credis_id.is_zero()
+            && read(
+                &url,
+                CREDIS_ADDRESS,
+                &ICredis::credisExistsCall {
+                    credisId: f.credis_id,
+                },
+                h,
+            );
+        let record = live.then(|| {
             let record = read(
                 &url,
                 CREDIS_ADDRESS,
@@ -259,7 +269,7 @@ pub(crate) fn snapshot(world: &World) -> Snapshot {
             ),
             reservation: (
                 reservation.asset,
-                reservation.amount,
+                reservation.amountMinor,
                 reservation.credisOwner,
                 reservation.cca,
                 reservation.vault,

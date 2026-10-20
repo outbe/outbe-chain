@@ -1,0 +1,82 @@
+# Testnet feeder pairs and markets. `create_genesis.py` registers these
+# pairs in genesis, and `launch_bundle.py` copies this file to each
+# validator's pairs.toml. The cross pairs use the mainnet markets
+# (crates/system/oracle/sources). COEN/840 comes from the mock_http price
+# server, because COEN has no market on testnet.
+#
+# Each validator sets in its feeder.toml: the Ethereum RPC under
+# `[rpc_endpoints]` and the Pyth key under `[[api_providers]]`.
+
+[[currency_pairs]]
+base = "COEN"
+quote = "840"
+markets = [{ provider = "mock_http" }]
+
+# COEN/978 = COEN/840 ÷ 978/840. The markets give dollars per euro.
+[[currency_pairs]]
+base = "COEN"
+quote = "978"
+cross = "840"
+markets = [
+  { provider = "chainlink_eur_usd" },
+  { provider = "pyth" },
+]
+
+[[currency_pairs]]
+base = "COEN"
+quote = "392"
+cross = "840"
+markets = [
+  { provider = "chainlink_jpy_usd" },
+  { provider = "pyth" },
+]
+
+[[currency_pairs]]
+base = "COEN"
+quote = "826"
+cross = "840"
+markets = [
+  { provider = "chainlink_gbp_usd" },
+  { provider = "pyth" },
+]
+
+[[currency_pairs]]
+base = "COEN"
+quote = "156"
+cross = "840"
+markets = [
+  { provider = "chainlink_cny_usd" },
+  { provider = "pyth" },
+]
+
+[[currency_pairs]]
+base = "COEN"
+quote = "344"
+cross = "840"
+markets = [
+  { provider = "pyth" },
+]
+
+[[deviation_thresholds]]
+base = "COEN"
+threshold = "2.0"
+
+[[onchain_providers]]
+name = "chainlink_eur_usd"
+chain_id = 1
+contract = "0xb49f677943BC038e9857d61E7d053CaA2C1734C1"   # Chainlink EUR / USD
+
+[[onchain_providers]]
+name = "chainlink_jpy_usd"
+chain_id = 1
+contract = "0xBcE206caE7f0ec07b545EddE332A47C2F75bbeb3"   # Chainlink JPY / USD
+
+[[onchain_providers]]
+name = "chainlink_gbp_usd"
+chain_id = 1
+contract = "0x5c0Ab2d9b5a7ed9f470386e82BB36A3613cDd4b5"   # Chainlink GBP / USD
+
+[[onchain_providers]]
+name = "chainlink_cny_usd"
+chain_id = 1
+contract = "0xeF8A4aF35cd47424672E3C590aBD37FBB7A7759a"   # Chainlink CNY / USD

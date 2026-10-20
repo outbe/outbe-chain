@@ -9,7 +9,8 @@ use alloy_sol_types::SolInterface;
 use outbe_primitives::dispatch::{dispatch_call, metadata, view};
 use outbe_primitives::error::Result;
 
-use crate::schema::{IntexContract, SeriesId, SeriesRecord};
+use crate::errors::IntexError;
+use crate::schema::{CallStamp, IntexContract, SeriesId, SeriesRecord};
 
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
@@ -43,8 +44,9 @@ pub fn dispatch(
                 let settled = registry.settled_units.read(&series_id)?;
                 let exercised = registry.exercised_units.read(&series_id)?;
                 let gem_factory = registry.gem_factory_units.read(&series_id)?;
+                let stamp = registry.call_stamp(&record)?;
                 let now = storage.timestamp()?.to::<u64>();
-                to_abi_data(&record, settled, exercised, gem_factory, now)
+                to_abi_data(&record, [settled, exercised, gem_factory], stamp, now)
             }),
             seriesUnitCounts(c) => view(c, |c| {
                 let counts = crate::api::unit_counts(&storage, SeriesId::from(c.seriesId))?;
@@ -58,17 +60,22 @@ pub fn dispatch(
                 })
             }),
             seriesExists(c) => view(c, |c| registry.series_exists(SeriesId::from(c.seriesId))),
-            totalSeries(_) => metadata::<IIntex::totalSeriesCall>(|| registry.read_total_series()),
-            seriesAt(c) => view(c, |c| Ok(registry.read_series_id_at(c.index)?.into())),
+            totalSeries(_) => {
+                metadata::<IIntex::totalSeriesCall>(|| Ok(u64::from(registry.read_total_series()?)))
+            }
+            seriesAt(c) => view(c, |c| {
+                let index =
+                    u32::try_from(c.index).map_err(|_| IntexError::SeriesIndexOutOfRange)?;
+                Ok(registry.read_series_id_at(index)?.into())
+            }),
         }
     })
 }
 
 fn to_abi_data(
     r: &SeriesRecord,
-    settled: u32,
-    exercised: u32,
-    gem_factory: u32,
+    [settled, exercised, gem_factory]: [u32; 3],
+    stamp: CallStamp,
     now: u64,
 ) -> Result<IIntex::SeriesData> {
     Ok(IIntex::SeriesData {
@@ -79,9 +86,9 @@ fn to_abi_data(
         callWindow: r.call_window_seconds,
         callThreshold: r.call_threshold_seconds,
         callPriceMinor: r.call_price_minor,
-        state: r.effective_state(now)? as u8,
+        state: stamp.state(now) as u8,
         issuedAt: r.issued_at,
-        calledAt: r.called_at,
+        calledAt: stamp.called_at,
         callNoticePeriod: r.call_notice_period_seconds,
         issuanceCurrency: r.issuance_currency,
         referenceCurrency: r.reference_currency,
@@ -89,10 +96,7 @@ fn to_abi_data(
         settledUnits: settled,
         exercisedUnits: exercised,
         gemFactoryUnits: gem_factory,
-        settlementDeadline: if r.called_at == 0 {
-            0
-        } else {
-            r.settlement_deadline()
-        },
+        settlementDeadline: stamp.deadline,
+        groupKey: r.group_key(),
     })
 }

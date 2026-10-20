@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use outbe_gemfactory::GemTypes;
 use outbe_protocol_benchmarks::{
     check_gas_baseline, render_text, run_scenario,
     scenarios::confidential::ConfidentialScenario,
@@ -95,10 +94,7 @@ fn execute() -> Result<(), String> {
         run_if_selected(&scenario, &arguments.filter, config, &mut reports)?;
     }
     for scenario in [
-        GemScenario::direct(GemTypes::Validator),
-        GemScenario::direct(GemTypes::Sra),
-        GemScenario::direct(GemTypes::Wallet),
-        GemScenario::direct(GemTypes::Cca),
+        GemScenario::direct(),
         GemScenario::position(),
         GemScenario::merchant(),
     ] {

@@ -33,12 +33,11 @@ pub struct PreparedSystemTx {
 
 impl SystemTxScenario {
     #[must_use]
-    pub const fn all() -> [Self; 9] {
+    pub const fn all() -> [Self; 8] {
         [
             Self::new(SystemTxKind::CertifiedParentAccounting),
             Self::new(SystemTxKind::LateFinalizeCredits),
             Self::new(SystemTxKind::CycleTick),
-            Self::new(SystemTxKind::RewardsGemDelivery),
             Self::new(SystemTxKind::BoundaryOutcome),
             Self::new(SystemTxKind::TeeBootstrap),
             Self::new(SystemTxKind::OracleSlashWindow),
@@ -210,7 +209,6 @@ const fn kind_name(kind: SystemTxKind) -> &'static str {
         SystemTxKind::CertifiedParentAccounting => "certified-parent-accounting",
         SystemTxKind::LateFinalizeCredits => "late-finalize-credits",
         SystemTxKind::CycleTick => "cycle-tick",
-        SystemTxKind::RewardsGemDelivery => "rewards-gem-delivery",
         SystemTxKind::BoundaryOutcome => "boundary-outcome",
         SystemTxKind::TeeBootstrap => "tee-bootstrap",
         SystemTxKind::OracleSlashWindow => "oracle-slash-window",
@@ -228,7 +226,6 @@ fn input_for(kind: SystemTxKind) -> Result<SystemTxInputV2, String> {
             artifact: LateFinalizeCreditsArtifact::default(),
         },
         SystemTxKind::CycleTick => SystemTxInputV2::CycleTick,
-        SystemTxKind::RewardsGemDelivery => SystemTxInputV2::RewardsGemDelivery,
         SystemTxKind::BoundaryOutcome => SystemTxInputV2::BoundaryOutcome {
             artifact: sample_boundary(),
         },

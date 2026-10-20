@@ -33,7 +33,7 @@ pub fn require_active_cca(storage: &StorageHandle<'_>, cca: Address) -> Result<(
 /// Raw GRATIS in one UTC day bucket (YYYYMMDD). Distribution is the only step that normalizes it.
 pub fn reward_weight(storage: &StorageHandle<'_>, cca: Address, day: u32) -> Result<U256> {
     CcaContract::new(storage.clone())
-        .gratis_sum_per_utc_day
+        .gratis_minor_per_utc_day
         .read(&address_day_key(cca, day))
 }
 
@@ -44,9 +44,14 @@ pub fn get_cca(storage: &StorageHandle<'_>, cca: Address) -> Result<ICcaRegistry
         cca: record.cca,
         name: record.name,
         state: record.state,
-        bondedAmount: record.bonded_amount,
+        bondedMinor: record.bonded_minor,
         unbondUnlocksAfter: record.unbond_unlocks_after,
     })
+}
+
+/// Native COEN bonded across all records and not yet claimed back.
+pub fn total_bonded(storage: &StorageHandle<'_>) -> Result<U256> {
+    CcaContract::new(storage.clone()).total_bonded_minor.read()
 }
 
 /// Positive net Gratis weights for CCAs active at the time of settlement.
@@ -69,7 +74,7 @@ pub fn active_reward_weights(
             .at(index)?
             .ok_or(CcaFatalError::ActiveIndexEntryMissing)?;
         let weight = contract
-            .gratis_sum_per_utc_day
+            .gratis_minor_per_utc_day
             .read(&address_day_key(cca, day))?;
         if !weight.is_zero() {
             weights.push((cca, weight));

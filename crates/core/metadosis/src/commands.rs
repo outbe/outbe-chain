@@ -27,25 +27,19 @@ pub fn start_metadosis(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
         ctx.block.block_number,
         ctx.block.timestamp,
     );
-    {
-        commit_transition::<MetadosisCycleLifecycle, _>(ctx.storage.clone(), binding, |_| {
-            crate::runtime::start_metadosis(ctx)
-        })
-    }
+    commit_transition::<MetadosisCycleLifecycle, _>(ctx.storage.clone(), binding, |_| {
+        crate::runtime::start_metadosis(ctx)
+    })
 }
 
 /// Purpose-bound terminal-sink adapter used by the Cycle-owned daily
-/// allocation flow. The internal sink returns a typed semantic receipt. The
-/// adapter exhaustively confirms that the limit is formed. Then it returns zero
-/// because the allocation has no unused amount.
+/// allocation flow.
 pub fn apply_cycle_day_limit(ctx: &BlockRuntimeContext<'_>, amount: U256) -> Result<U256> {
-    match crate::emission_sink::apply(ctx, amount)? {
-        crate::state::DayLimitFormationReceipt::Formed(_) => Ok(U256::ZERO),
-    }
+    crate::emission_sink::apply(ctx, amount)?;
+    Ok(U256::ZERO)
 }
 
-/// Purpose-bound late-settlement adapter. Late residue is carry-over only and
-/// cannot form or replace a Cycle-owned base day limit.
+/// Purpose-bound late-settlement adapter. Late residue is carry-over only.
 pub fn apply_late_settlement_headroom(ctx: &BlockRuntimeContext<'_>, amount: U256) -> Result<U256> {
     crate::emission_sink::apply_late_settlement_headroom(ctx, amount)
 }
@@ -56,9 +50,7 @@ pub fn advance_active_worldwide_days(ctx: &BlockRuntimeContext<'_>) -> Result<()
         ctx.block.block_number,
         ctx.block.timestamp,
     );
-    {
-        commit_transition::<MetadosisCycleLifecycle, _>(ctx.storage.clone(), binding, |_| {
-            crate::runtime::advance_active_worldwide_days(ctx)
-        })
-    }
+    commit_transition::<MetadosisCycleLifecycle, _>(ctx.storage.clone(), binding, |_| {
+        crate::runtime::advance_active_worldwide_days(ctx)
+    })
 }

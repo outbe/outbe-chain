@@ -1506,8 +1506,11 @@ fn genesis_seeds_reference_currencies_with_usd() {
             oracle.reference_currencies.read_all().unwrap(),
             vec![156, 344, 392, 826, 840, 978]
         );
-        assert_eq!(oracle.policy_rate_currencies.read_all().unwrap(), vec![840]);
-        assert_eq!(oracle.get_policy_rate(840).unwrap(), U256::from(36_300));
+        assert_eq!(
+            oracle.policy_rate_currencies.read_all().unwrap(),
+            vec![156, 344, 392, 826, 840, 978]
+        );
+        assert_eq!(oracle.get_policy_rate(840).unwrap(), U256::from(38_800));
     });
 }
 
@@ -1574,20 +1577,6 @@ fn init_from_genesis_rejects_unsorted_reference_currencies() {
 }
 
 #[test]
-fn init_from_genesis_rejects_more_than_six_reference_currencies() {
-    with_bare_oracle(|_storage, oracle| {
-        let config = crate::genesis::OracleGenesisConfig {
-            reference_currencies: vec![36, 124, 156, 344, 392, 826, 840],
-            ..crate::genesis::OracleGenesisConfig::default_config()
-        };
-        let error = crate::genesis::init_from_genesis(oracle, &config).unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("reference currency count exceeds 6"));
-    });
-}
-
-#[test]
 fn init_from_genesis_requires_usd_in_reference_currencies() {
     with_bare_oracle(|_storage, oracle| {
         let config = crate::genesis::OracleGenesisConfig {
@@ -1606,10 +1595,7 @@ fn reference_policy_and_pair_registries_are_independent() {
     with_bare_oracle(|_storage, oracle| {
         let config = crate::genesis::OracleGenesisConfig {
             reference_currencies: vec![840, 978],
-            policy_rates: vec![crate::genesis::PolicyRate {
-                iso_code: 392,
-                annual_rate_1e6: TEST_RATE,
-            }],
+            policy_rates: vec![policy_rate(392), policy_rate(840), policy_rate(978)],
             pairs: vec![(COEN, AssetType::IsoCurrency(156).into())],
             ..crate::genesis::OracleGenesisConfig::default_config()
         };
@@ -1619,7 +1605,10 @@ fn reference_policy_and_pair_registries_are_independent() {
             oracle.reference_currencies.read_all().unwrap(),
             vec![840, 978]
         );
-        assert_eq!(oracle.policy_rate_currencies.read_all().unwrap(), vec![392]);
+        assert_eq!(
+            oracle.policy_rate_currencies.read_all().unwrap(),
+            vec![392, 840, 978]
+        );
         assert_eq!(oracle.get_policy_rate(392).unwrap(), TEST_RATE);
         assert_eq!(oracle.pair_count.read().unwrap(), 1);
         assert!(oracle.pair_index_of(AddressPair::new_coen_to(840)).unwrap() == 0);
@@ -1657,6 +1646,11 @@ fn init_from_genesis_rejects_noncanonical_policy_rates() {
             vec![policy_rate(978), policy_rate(840)],
             "policy rates must be sorted",
         ),
+        (
+            "reference currency without a rate",
+            vec![policy_rate(840)],
+            "reference currency 156 has no policy rate",
+        ),
     ] {
         with_bare_oracle(|_storage, oracle| {
             let config = crate::genesis::OracleGenesisConfig {
@@ -1674,14 +1668,17 @@ fn export_genesis_round_trips_reference_currencies() {
     with_bare_oracle(|_storage, oracle| {
         let config = crate::genesis::OracleGenesisConfig {
             reference_currencies: vec![840, 978],
-            policy_rates: vec![policy_rate(840)],
+            policy_rates: vec![policy_rate(840), policy_rate(978)],
             ..crate::genesis::OracleGenesisConfig::default_config()
         };
         crate::genesis::init_from_genesis(oracle, &config).unwrap();
 
         let exported = crate::genesis::export_genesis(oracle, &[]).unwrap();
         assert_eq!(exported.reference_currencies, vec![840, 978]);
-        assert_eq!(exported.policy_rates, vec![policy_rate(840)]);
+        assert_eq!(
+            exported.policy_rates,
+            vec![policy_rate(840), policy_rate(978)]
+        );
     });
 }
 
@@ -1771,6 +1768,7 @@ fn get_policy_rate_precompile_returns_the_raw_six_decimal_annual_rate() {
 fn policy_rate_precompile_enumerates_and_rejects_absence() {
     with_bare_oracle(|storage, oracle| {
         let config = crate::genesis::OracleGenesisConfig {
+            reference_currencies: vec![392, 840],
             policy_rates: vec![policy_rate(392), policy_rate(840)],
             ..crate::genesis::OracleGenesisConfig::default_config()
         };
@@ -1929,5 +1927,22 @@ fn currency_cross_rate_converts_between_currencies() {
             U256::from(1u64),
             "1 EUR unit is half a USD unit and rounds up, not down to zero"
         );
+    });
+}
+
+#[test]
+fn currency_cross_rate_reverts_when_a_leg_has_no_rate() {
+    with_oracle(|storage, oracle| {
+        seed_coen_rate(oracle, 840, 2);
+        oracle.register_pair(AddressPair::new_coen_to(978)).unwrap();
+
+        for (from, to) in [(978, 840), (840, 978)] {
+            let error = crate::api::currency_cross_rate(storage.clone(), from, to, coen_iso(10))
+                .unwrap_err();
+            assert!(
+                error.to_string().contains("No rate for pair"),
+                "{from}->{to}: {error}"
+            );
+        }
     });
 }

@@ -15,15 +15,6 @@ fn fidelity_of(storage: &StorageHandle<'_>, account: Address) -> Vec<u8> {
         .unwrap()
 }
 
-fn call_and_lapse(storage: &StorageHandle<'_>, id: U256) {
-    let credis = CredisContract::new(storage.clone());
-    let mut p = credis.get_credis(id).unwrap();
-    p.state = CredisState::Called as u8;
-    p.called_at = CREATED_AT;
-    credis.records.update(&p).unwrap();
-    advance_to(storage, CREATED_AT + NOTICE + 1);
-}
-
 fn expect_issue_error(
     storage: &StorageHandle<'_>,
     caller: Address,
@@ -82,7 +73,7 @@ fn issue_uses_the_reservation_pledge_once_and_rolls_back_failures() {
 
         let (credis_id, amount) =
             runtime::issue_credis(storage.clone(), cca(), id, pledge_stake()).unwrap();
-        assert_eq!(amount, reservation.amount);
+        assert_eq!(amount, reservation.amount_minor);
         assert!(pledge_of(&storage, id).unwrap().source.is_zero());
         assert_eq!(view_balance(&storage, alice()), pledge_cost());
         assert_eq!(view_pledged(&storage, alice()), pledge_cost());
@@ -322,9 +313,9 @@ fn forfeit_burns_only_remaining_credis_backing_and_leaves_fidelity_untouched() {
         let reserve = PromisLimitContract::new(storage.clone())
             .get_total_unallocated()
             .unwrap();
-        call_and_lapse(&storage, id);
-        runtime::forfeit_credis(storage.clone(), id).unwrap();
-        assert!(runtime::forfeit_credis(storage.clone(), id).is_err());
+        call_credis(&storage, id, CREATED_AT);
+        assert_eq!(lapse(&storage, id), 1);
+        assert_eq!(expire(&storage, now_of(&storage)), 0);
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
         assert_eq!(view_pledged(&storage, bob()), pledge_cost());
         assert_eq!(
@@ -388,7 +379,7 @@ fn issuance_uses_reserved_terms_across_midnight_and_oracle_changes() {
         let (credis_id, principal) =
             runtime::issue_credis(storage.clone(), cca(), id, pledge_stake()).unwrap();
         let record = CredisContract::new(storage).get_credis(credis_id).unwrap();
-        assert_eq!(principal, reservation.amount);
+        assert_eq!(principal, reservation.amount_minor);
         assert_eq!(record.gratis_minor, reservation.gratis_minor);
         assert_eq!(record.entry_price_minor, reservation.entry_price_minor);
         assert_eq!(record.reference_currency, reservation.reference_currency);

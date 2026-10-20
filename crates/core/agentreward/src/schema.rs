@@ -1,7 +1,8 @@
 use alloy_primitives::{Address, B256, U256};
-use outbe_macros::{contract, storage_schema};
+use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::AGENT_REWARD_ADDRESS;
 use outbe_primitives::error::Result;
+use outbe_primitives::storage::dsl::Map;
 use outbe_primitives::storage::types::StorageKey;
 use outbe_primitives::time::WorldwideDay;
 
@@ -30,7 +31,7 @@ pub struct AgentRewardContract {
 
     // slot 2: claimable WAA reward per address
     #[attribute(order = 2)]
-    pub waa_claimable_rewards: outbe_primitives::storage::dsl::Map<Address, U256>,
+    pub waa_claimable_minor: outbe_primitives::storage::dsl::Map<Address, U256>,
 
     // slot 3: WAA address count per day
     #[attribute(order = 3)]
@@ -50,21 +51,74 @@ pub struct AgentRewardContract {
 
     // slot 7: claimable SRA reward per address
     #[attribute(order = 7)]
-    pub sra_claimable_rewards: outbe_primitives::storage::dsl::Map<Address, U256>,
+    pub sra_claimable_minor: outbe_primitives::storage::dsl::Map<Address, U256>,
 
-    // slot 8: claimable CCA reward per address, in native COEN atomic units.
+    // slot 8: claimable CCA reward per address
     #[attribute(order = 8)]
-    pub cca_claimable_rewards: outbe_primitives::storage::dsl::Map<Address, U256>,
+    pub cca_claimable_minor: outbe_primitives::storage::dsl::Map<Address, U256>,
+
+    // slot 9: claimable validator reward per address
+    #[attribute(order = 9)]
+    pub validator_claimable_minor: outbe_primitives::storage::dsl::Map<Address, U256>,
+
+    // slot 10: WAA tribute count per day, summed over its addresses
+    #[attribute(order = 10)]
+    pub waa_total_count: outbe_primitives::storage::dsl::Map<WorldwideDay, u64>,
+
+    // slot 11: SRA tribute count per day, summed over its addresses
+    #[attribute(order = 11)]
+    pub sra_total_count: outbe_primitives::storage::dsl::Map<WorldwideDay, u64>,
+
+    // slot 12: queued WAA and SRA day pools, by sequence number
+    #[attribute(order = 12)]
+    pub accrual_jobs: outbe_primitives::storage::dsl::Map<u64, AccrualJob>,
+
+    // slot 13: sequence number of the job credited next
+    #[attribute(order = 13)]
+    pub accrual_head: outbe_primitives::storage::dsl::Value<u64>,
+
+    // slot 14: sequence number the next queued job takes
+    #[attribute(order = 14)]
+    pub accrual_tail: outbe_primitives::storage::dsl::Value<u64>,
+
+    // slot 15: claimable reward per pool, summed over its addresses
+    #[attribute(order = 15)]
+    pub claimable_total_minor: outbe_primitives::storage::dsl::Map<u8, U256>,
+
+    // slot 16: queued day pools per pool, the part not yet credited
+    #[attribute(order = 16)]
+    pub pending_total_minor: outbe_primitives::storage::dsl::Map<u8, U256>,
 }
 
-/// Pool a claimable balance belongs to. The pool decides the Gem class a
-/// claim issues, so the contract keeps WAA, SRA and CCA balances apart.
+/// One settled WAA or SRA day pool. Blocks credit its addresses in list order,
+/// a bounded slice at a time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[storage_record(exists_field = day)]
+pub struct AccrualJob {
+    #[key]
+    pub seq: u64,
+    /// UTC day key (YYYYMMDD) whose tribute counts weight the pool.
+    #[attribute(order = 0)]
+    pub day: u32,
+    /// `RewardPool::Waa` or `RewardPool::Sra`.
+    #[attribute(order = 1)]
+    pub pool: u8,
+    #[attribute(order = 2)]
+    pub pool_minor: U256,
+    #[attribute(order = 3)]
+    pub next_index: u32,
+    #[attribute(order = 4)]
+    pub credited_minor: U256,
+}
+
+/// Pool a claimable balance belongs to. Each pool keeps its own balances.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum RewardPool {
     Waa = 0,
     Sra = 1,
     Cca = 2,
+    Validator = 3,
 }
 
 impl RewardPool {
@@ -73,7 +127,38 @@ impl RewardPool {
             0 => Ok(Self::Waa),
             1 => Ok(Self::Sra),
             2 => Ok(Self::Cca),
+            3 => Ok(Self::Validator),
             _ => Err(AgentRewardError::UnknownRewardPool(value).into()),
+        }
+    }
+}
+
+/// The per-day tribute index of the WAA or the SRA pool.
+pub(crate) struct DayIndex<'a, 's> {
+    pub(crate) address_count: &'a Map<'s, WorldwideDay, u32>,
+    pub(crate) addresses: &'a Map<'s, B256, Address>,
+    pub(crate) counts: &'a Map<'s, B256, u64>,
+    pub(crate) total: &'a Map<'s, WorldwideDay, u64>,
+}
+
+impl<'s> AgentRewardContract<'s> {
+    pub(crate) fn day_index(&self, pool: RewardPool) -> Result<DayIndex<'_, 's>> {
+        match pool {
+            RewardPool::Waa => Ok(DayIndex {
+                address_count: &self.waa_address_count,
+                addresses: &self.waa_addresses,
+                counts: &self.waa_tribute_counts,
+                total: &self.waa_total_count,
+            }),
+            RewardPool::Sra => Ok(DayIndex {
+                address_count: &self.sra_address_count,
+                addresses: &self.sra_addresses,
+                counts: &self.sra_tribute_counts,
+                total: &self.sra_total_count,
+            }),
+            RewardPool::Cca | RewardPool::Validator => {
+                Err(AgentRewardError::UnknownRewardPool(pool as u8).into())
+            }
         }
     }
 }

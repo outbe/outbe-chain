@@ -2,7 +2,6 @@
 pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
-import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
@@ -19,6 +18,13 @@ import {ReferenceCurrencyPriceLib} from "./helpers/ReferenceCurrencyPriceLib.sol
 /// @dev Bidders claim through the auction. A winner issues its own units: the auction reads the bid,
 ///      the escrow closes the win, and the collection mints. A refund clears the bid once nothing reads it.
 contract IntexAuctionClaimsTest is Test {
+    /// @dev The escrow's lock for `q` Intexes at rate `r` of the protocol basis `b`.
+    function _protocol(uint256 q, uint256 b, uint256 r) internal pure returns (uint256) {
+        return q * b * r / 1e6;
+    }
+
+    // MockWCOEN has 18 decimals: 1e12 token units per protocol unit.
+    uint256 internal constant WCOEN_SCALE = 1e12;
     bytes32 internal constant REVEAL_BID_TYPEHASH = keccak256(
         "RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
     );
@@ -62,7 +68,7 @@ contract IntexAuctionClaimsTest is Test {
         vm.prank(relayer);
         auction.auctionStart(
             DAY,
-            IIntexAuction.WorldwideDayState.Green,
+            IIntexAuction.WorldwideDayState.Live,
             IIntexAuction.AuctionSchedule({
                 commitEnd: uint32(startTs + 100), revealEnd: uint32(startTs + 200), issuanceEnd: uint32(startTs + 300)
             }),
@@ -107,7 +113,7 @@ contract IntexAuctionClaimsTest is Test {
     }
 
     function _reveal(address who, uint16 quantity, bytes memory signature) internal {
-        token.mint(who, BridgeMsgCodec.escrowAmount(quantity, BASIS, RATE));
+        token.mint(who, _protocol(quantity, BASIS, RATE) * WCOEN_SCALE);
         vm.startPrank(who);
         token.approve(address(escrow), type(uint256).max);
         auction.revealBid(DAY, quantity, RATE, USD, USD, uint64(block.chainid), signature);
@@ -134,8 +140,7 @@ contract IntexAuctionClaimsTest is Test {
     }
 
     function _change(uint16 quantity) internal pure returns (uint256) {
-        return BridgeMsgCodec.escrowAmount(quantity, BASIS, RATE)
-            - BridgeMsgCodec.escrowAmount(quantity, BASIS, CLEARING_RATE);
+        return _protocol(quantity, BASIS, RATE) * WCOEN_SCALE - _protocol(quantity, BASIS, CLEARING_RATE) * WCOEN_SCALE;
     }
 
     function test_AWinnerIssuesItsUnitsAndTakesItsChange() public {
@@ -290,7 +295,7 @@ contract IntexAuctionClaimsTest is Test {
         vm.prank(alice);
         auction.claimRefund(DAY, bob);
 
-        assertEq(token.balanceOf(bob), BridgeMsgCodec.escrowAmount(1, BASIS, RATE), "the whole principal");
+        assertEq(token.balanceOf(bob), _protocol(1, BASIS, RATE) * WCOEN_SCALE, "the whole principal");
         assertFalse(auction.revealedBidsByBidder(DAY, bob), "bid gone");
         assertEq(uint8(escrow.getBidLock(DAY, bob).status), uint8(IEscrowAdapter.LockStatus.None), "lock gone");
     }
@@ -310,7 +315,7 @@ contract IntexAuctionClaimsTest is Test {
         vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
 
         auction.claimRefund(DAY, bob);
-        assertEq(token.balanceOf(bob), BridgeMsgCodec.escrowAmount(1, BASIS, RATE), "the whole principal");
+        assertEq(token.balanceOf(bob), _protocol(1, BASIS, RATE) * WCOEN_SCALE, "the whole principal");
         assertTrue(auction.revealedBidsByBidder(DAY, bob), "the bid stays");
         IIntexAuction.SubmittedBidData[] memory bids = auction.revealedBidsSlice(DAY, 0, 2);
         assertEq(bids[1].bidderAddress, bob, "the relay still reads the real bid");
@@ -322,7 +327,7 @@ contract IntexAuctionClaimsTest is Test {
         _finalize(new address[](0), 0, 0);
         auction.claimRefund(DAY, bob);
         assertFalse(auction.revealedBidsByBidder(DAY, bob), "cleared once the day finalized");
-        assertEq(token.balanceOf(bob), BridgeMsgCodec.escrowAmount(1, BASIS, RATE), "paid once");
+        assertEq(token.balanceOf(bob), _protocol(1, BASIS, RATE) * WCOEN_SCALE, "paid once");
     }
 
     function test_TheAuctionClearsABidTheEscrowValvePaidOut() public {
@@ -333,7 +338,7 @@ contract IntexAuctionClaimsTest is Test {
 
         auction.claimRefund(DAY, bob);
         assertFalse(auction.revealedBidsByBidder(DAY, bob), "bid gone");
-        assertEq(token.balanceOf(bob), BridgeMsgCodec.escrowAmount(1, BASIS, RATE), "paid once");
+        assertEq(token.balanceOf(bob), _protocol(1, BASIS, RATE) * WCOEN_SCALE, "paid once");
     }
 
     function test_TheRevealedBidIsReadableUntilItIsCleared() public {

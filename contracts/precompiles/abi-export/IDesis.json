@@ -241,7 +241,7 @@
   },
   {
     "type": "event",
-    "name": "AuctionCancelledRedDay",
+    "name": "AuctionCancelledNoLimit",
     "inputs": [
       {
         "name": "worldwideDay",
@@ -499,31 +499,6 @@
         "type": "uint16",
         "indexed": true,
         "internalType": "uint16"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ReferenceCurrencyOverCap",
-    "inputs": [
-      {
-        "name": "worldwideDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "isoCode",
-        "type": "uint16",
-        "indexed": true,
-        "internalType": "uint16"
-      },
-      {
-        "name": "cap",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
       }
     ],
     "anonymous": false

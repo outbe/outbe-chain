@@ -8,28 +8,26 @@ use thiserror::Error;
 pub enum AgentRewardError {
     #[error("agentreward distribute_daily overflow")]
     DistributeDailyOverflow,
-    #[error("native AgentReward share overflow")]
-    NativeShareOverflow,
     #[error("reward distribution arithmetic overflow")]
     DistributionOverflow,
     #[error("agentreward claimable total overflow")]
     ClaimableTotalOverflow,
+    #[error("agentreward pool total disagrees with its balances")]
+    PoolTotalMismatch,
     #[error("agentreward claimable_rewards overflow")]
     ClaimableRewardsOverflow,
     #[error("no claimable balance in this pool")]
     NoClaimableBalance,
     #[error("insufficient claimable balance")]
     InsufficientClaimableBalance,
-    #[error("claimed amount is below one protocol unit")]
-    ClaimBelowProtocolUnit,
-    #[error("native AgentReward claim overflow")]
-    NativeClaimOverflow,
     #[error("agentreward has no previous-day COEN price in {0}")]
     MissingPreviousDayPrice(u16),
     #[error("reward timestamp overflow")]
     TimestampOverflow,
     #[error("agentreward unknown reward pool {0}")]
     UnknownRewardPool(u8),
+    #[error("agentreward accrual job {0} is missing")]
+    AccrualJobMissing(u64),
 }
 
 impl From<AgentRewardError> for PrecompileError {

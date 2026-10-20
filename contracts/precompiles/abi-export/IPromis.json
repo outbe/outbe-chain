@@ -119,13 +119,13 @@
         "internalType": "address"
       },
       {
-        "name": "amount",
+        "name": "promisMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "remainingSupply",
+        "name": "totalSupplyMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -144,13 +144,13 @@
         "internalType": "address"
       },
       {
-        "name": "amount",
+        "name": "promisMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "newTotalSupply",
+        "name": "totalSupplyMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

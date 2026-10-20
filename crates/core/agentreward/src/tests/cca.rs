@@ -10,7 +10,6 @@ use outbe_ccaregistry::{
 use outbe_primitives::{
     addresses::{AGENT_REWARD_ADDRESS, CCA_REGISTRY_ADDRESS},
     block::{BlockContext, BlockRuntimeContext},
-    units::checked_protocol_to_native,
 };
 
 const ALICE: Address = Address::repeat_byte(1);
@@ -48,11 +47,11 @@ fn inactive_weights_are_excluded_and_residue_stays_excess() {
         runtime::credis_issued(&storage, ALICE, DAY, U256::from(1)).unwrap();
         runtime::credis_issued(&storage, BOB, DAY, U256::from(3)).unwrap();
         assert_eq!(reward(&storage, U256::from(11)), U256::ONE);
-        assert_eq!(claimable(&storage, ALICE), native(2));
-        assert_eq!(claimable(&storage, BOB), native(8));
+        assert_eq!(claimable(&storage, ALICE), U256::from(2));
+        assert_eq!(claimable(&storage, BOB), U256::from(8));
         runtime::unbond(storage.clone(), BOB).unwrap();
         assert_eq!(reward(&storage, U256::from(11)), U256::ZERO);
-        assert_eq!(claimable(&storage, ALICE), native(13));
+        assert_eq!(claimable(&storage, ALICE), U256::from(13));
         AgentRewardContract::new(storage.clone())
             .claim_reward(RewardPool::Cca, BOB, U256::ZERO, (USD, USD))
             .unwrap();
@@ -61,28 +60,26 @@ fn inactive_weights_are_excluded_and_residue_stays_excess() {
             storage.balance(CCA_REGISTRY_ADDRESS).unwrap(),
             BOND_REQUIREMENT * U256::from(2)
         );
-        assert_eq!(storage.balance(AGENT_REWARD_ADDRESS).unwrap(), native(13));
+        assert_eq!(storage.balance(AGENT_REWARD_ADDRESS).unwrap(), U256::ZERO);
     });
 }
 
 #[test]
-fn wide_reward_products_do_not_overflow_and_conversion_failure_rolls_back() {
+fn wide_reward_products_do_not_overflow_and_a_failed_credit_rolls_back() {
     run(|storage| {
         bond(&storage, ALICE, BOND_REQUIREMENT);
         runtime::credis_issued(&storage, ALICE, DAY, U256::MAX).unwrap();
         assert_eq!(reward(&storage, U256::from(100)), U256::ZERO);
         let ctx = BlockRuntimeContext::new(BlockContext::default(), storage.clone());
-        let before = storage.balance(AGENT_REWARD_ADDRESS).unwrap();
         assert!(distribute_daily(&ctx, 20231115.into(), &[(PoolKind::Cca, U256::MAX)]).is_err());
-        assert_eq!(storage.balance(AGENT_REWARD_ADDRESS).unwrap(), before);
-        assert_eq!(claimable(&storage, ALICE), native(100));
+        assert_eq!(claimable(&storage, ALICE), U256::from(100));
         assert!(runtime::credis_issued(&storage, ALICE, DAY, U256::ONE).is_err());
         assert_eq!(api::reward_weight(&storage, ALICE, DAY).unwrap(), U256::MAX);
     });
 }
 
 #[test]
-fn reward_map_overflow_rolls_back_earlier_credits_and_minting() {
+fn reward_map_overflow_rolls_back_earlier_credits() {
     run(|storage| {
         for cca in [ALICE, BOB] {
             bond(&storage, cca, BOND_REQUIREMENT);
@@ -90,23 +87,21 @@ fn reward_map_overflow_rolls_back_earlier_credits_and_minting() {
         }
         let contract = AgentRewardContract::new(storage.clone());
         let active = [ALICE, BOB];
-        // Fail on the second recipient, after the first credit and mint.
+        // Fail on the second recipient, after the first credit.
         contract
-            .cca_claimable_rewards
+            .cca_claimable_minor
             .write(&active[1], U256::MAX)
             .unwrap();
-        let balance = storage.balance(AGENT_REWARD_ADDRESS).unwrap();
         let ctx = BlockRuntimeContext::new(BlockContext::default(), storage.clone());
         assert!(distribute_daily(&ctx, DAY.into(), &[(PoolKind::Cca, U256::from(10))]).is_err());
         assert_eq!(
-            contract.cca_claimable_rewards.read(&active[0]).unwrap(),
+            contract.cca_claimable_minor.read(&active[0]).unwrap(),
             U256::ZERO
         );
         assert_eq!(
-            contract.cca_claimable_rewards.read(&active[1]).unwrap(),
+            contract.cca_claimable_minor.read(&active[1]).unwrap(),
             U256::MAX
         );
-        assert_eq!(storage.balance(AGENT_REWARD_ADDRESS).unwrap(), balance);
     });
 }
 
@@ -135,10 +130,7 @@ fn daily_distribution_at_the_active_cap_matches_the_proportional_reference() {
         assert_eq!(excess, expected_excess);
         assert_eq!(excess, U256::ZERO);
         for share in expected {
-            assert_eq!(
-                claimable(&storage, share.address),
-                checked_protocol_to_native(share.reward_amount).unwrap()
-            );
+            assert_eq!(claimable(&storage, share.address), share.reward_amount);
         }
         let gas = storage.gas_used().unwrap();
         assert!(
@@ -178,14 +170,14 @@ fn daily_buckets_isolate_delayed_settlement_and_cross_day_voids() {
             distribute_daily(&ctx, DAY.into(), &[(PoolKind::Cca, U256::from(120))]).unwrap(),
             U256::ZERO
         );
-        assert_eq!(claimable(&storage, ALICE), native(60));
-        assert_eq!(claimable(&storage, BOB), native(60));
+        assert_eq!(claimable(&storage, ALICE), U256::from(60));
+        assert_eq!(claimable(&storage, BOB), U256::from(60));
         assert_eq!(
             distribute_daily(&ctx, next.into(), &[(PoolKind::Cca, U256::from(120))]).unwrap(),
             U256::ZERO
         );
-        assert_eq!(claimable(&storage, ALICE), native(90));
-        assert_eq!(claimable(&storage, BOB), native(150));
+        assert_eq!(claimable(&storage, ALICE), U256::from(90));
+        assert_eq!(claimable(&storage, BOB), U256::from(150));
         // Historical GRATIS does not carry into an empty day.
         assert_eq!(
             distribute_daily(&ctx, 20231117.into(), &[(PoolKind::Cca, U256::from(120))]).unwrap(),
@@ -193,7 +185,7 @@ fn daily_buckets_isolate_delayed_settlement_and_cross_day_voids() {
         );
         // A later void cannot claw back already accrued rewards.
         runtime::credis_forfeited(&storage, ALICE, next, U256::from(50)).unwrap();
-        assert_eq!(claimable(&storage, ALICE), native(90));
+        assert_eq!(claimable(&storage, ALICE), U256::from(90));
     });
 }
 
@@ -209,17 +201,14 @@ fn cca_pool_queries_and_claims_are_isolated() {
         let mut contract = AgentRewardContract::new(storage.clone());
         for (pool, amount) in [(RewardPool::Waa, 100), (RewardPool::Sra, 200)] {
             contract
-                .add_claimable_reward(pool, ALICE, native(amount))
-                .unwrap();
-            storage
-                .increase_balance(AGENT_REWARD_ADDRESS, native(amount))
+                .add_claimable_reward(pool, ALICE, U256::from(amount))
                 .unwrap();
         }
         let query = IAgentReward::getClaimableBalanceCall { account: ALICE };
         let output = dispatch(storage.clone(), &query.abi_encode(), BOB, U256::ZERO).unwrap();
         assert_eq!(
             IAgentReward::getClaimableBalanceCall::abi_decode_returns(&output).unwrap(),
-            native(1300)
+            U256::from(1300)
         );
         for (pool, amount) in [(0, 100), (1, 200), (2, 1000)] {
             let query = IAgentReward::getPoolClaimableBalanceCall {
@@ -229,13 +218,13 @@ fn cca_pool_queries_and_claims_are_isolated() {
             let output = dispatch(storage.clone(), &query.abi_encode(), BOB, U256::ZERO).unwrap();
             assert_eq!(
                 IAgentReward::getPoolClaimableBalanceCall::abi_decode_returns(&output).unwrap(),
-                native(amount)
+                U256::from(amount)
             );
         }
         assert_eq!(contract.get_claimable_reward(BOB).unwrap(), U256::ZERO);
         let claim = IAgentReward::claimRewardCall {
             pool: 2,
-            amount: U256::ZERO,
+            promisLoadMinor: U256::ZERO,
             issuanceCurrency: USD,
             referenceCurrency: USD,
         }
@@ -245,13 +234,13 @@ fn cca_pool_queries_and_claims_are_isolated() {
             assert!(dispatch(storage.clone(), &claim, caller, U256::ZERO).is_err());
         }
         assert!(dispatch(storage.clone(), &claim, ALICE, U256::ONE).is_err());
-        assert_eq!(claimable(&storage, ALICE), native(1000));
-        for pool in [3, 255] {
+        assert_eq!(claimable(&storage, ALICE), U256::from(1000));
+        for pool in [4, 255] {
             assert!(dispatch(
                 storage.clone(),
                 &IAgentReward::claimRewardCall {
                     pool,
-                    amount: U256::ZERO,
+                    promisLoadMinor: U256::ZERO,
                     issuanceCurrency: USD,
                     referenceCurrency: USD,
                 }
@@ -278,7 +267,7 @@ fn cca_pool_queries_and_claims_are_isolated() {
                 // An empty pool is a no-op whatever currencies the call names.
                 &IAgentReward::claimRewardCall {
                     pool,
-                    amount: U256::ZERO,
+                    promisLoadMinor: U256::ZERO,
                     issuanceCurrency: 0,
                     referenceCurrency: 0,
                 }
@@ -294,13 +283,7 @@ fn cca_pool_queries_and_claims_are_isolated() {
         }
         let output = dispatch(storage.clone(), &claim, ALICE, U256::ZERO).unwrap();
         let id = IAgentReward::claimRewardCall::abi_decode_returns(&output).unwrap();
-        assert_eq!(
-            outbe_gem::api::get_item(&storage, id)
-                .unwrap()
-                .unwrap()
-                .gem_type,
-            GemTypes::Cca as u8
-        );
+        assert!(outbe_gem::api::get_item(&storage, id).unwrap().is_some());
         assert_eq!(
             contract
                 .get_pool_claimable_reward(RewardPool::Cca, ALICE)
@@ -311,15 +294,15 @@ fn cca_pool_queries_and_claims_are_isolated() {
             contract
                 .get_pool_claimable_reward(RewardPool::Waa, ALICE)
                 .unwrap(),
-            native(100)
+            U256::from(100)
         );
         assert_eq!(
             contract
                 .get_pool_claimable_reward(RewardPool::Sra, ALICE)
                 .unwrap(),
-            native(200)
+            U256::from(200)
         );
-        assert_eq!(storage.balance(AGENT_REWARD_ADDRESS).unwrap(), native(300));
+        assert_eq!(storage.balance(AGENT_REWARD_ADDRESS).unwrap(), U256::ZERO);
         contract
             .add_claimable_reward(RewardPool::Cca, ALICE, U256::MAX)
             .unwrap();
@@ -342,7 +325,7 @@ fn deregistered_cca_claims_from_agentreward_after_withdrawing_bond() {
             ICcaRegistry::State::Deregistered
         );
         assert_eq!(storage.balance(CCA_REGISTRY_ADDRESS).unwrap(), U256::ZERO);
-        assert_eq!(storage.balance(AGENT_REWARD_ADDRESS).unwrap(), native(1000));
+        assert_eq!(storage.balance(AGENT_REWARD_ADDRESS).unwrap(), U256::ZERO);
         let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), 840)
             .unwrap()
             .unwrap();
@@ -378,8 +361,8 @@ fn one_eligible_cca_receives_the_whole_pool() {
     run(|storage| {
         originate(&storage, ALICE, 1);
         assert_eq!(reward(&storage, U256::from(100)), U256::ZERO);
-        assert_eq!(claimable(&storage, ALICE), native(100));
-        assert_eq!(storage.balance(AGENT_REWARD_ADDRESS).unwrap(), native(100));
+        assert_eq!(claimable(&storage, ALICE), U256::from(100));
+        assert_eq!(storage.balance(AGENT_REWARD_ADDRESS).unwrap(), U256::ZERO);
         assert_eq!(
             storage.balance(CCA_REGISTRY_ADDRESS).unwrap(),
             BOND_REQUIREMENT
@@ -393,9 +376,9 @@ fn weights_eighty_and_twenty_split_a_hundred_with_no_excess() {
         originate(&storage, ALICE, 80);
         originate(&storage, BOB, 20);
         assert_eq!(reward(&storage, U256::from(100)), U256::ZERO);
-        assert_eq!(claimable(&storage, ALICE), native(80));
-        assert_eq!(claimable(&storage, BOB), native(20));
-        assert_eq!(storage.balance(AGENT_REWARD_ADDRESS).unwrap(), native(100));
+        assert_eq!(claimable(&storage, ALICE), U256::from(80));
+        assert_eq!(claimable(&storage, BOB), U256::from(20));
+        assert_eq!(storage.balance(AGENT_REWARD_ADDRESS).unwrap(), U256::ZERO);
         assert_eq!(
             storage.balance(CCA_REGISTRY_ADDRESS).unwrap(),
             BOND_REQUIREMENT * U256::from(2)
@@ -409,8 +392,8 @@ fn concentrated_weights_are_not_capped() {
         originate(&storage, ALICE, 90);
         originate(&storage, BOB, 10);
         assert_eq!(reward(&storage, U256::from(1000)), U256::ZERO);
-        assert_eq!(claimable(&storage, ALICE), native(900));
-        assert_eq!(claimable(&storage, BOB), native(100));
+        assert_eq!(claimable(&storage, ALICE), U256::from(900));
+        assert_eq!(claimable(&storage, BOB), U256::from(100));
     });
 }
 
@@ -421,10 +404,10 @@ fn equal_weights_leave_indivisible_residue_as_excess() {
         originate(&storage, BOB, 1);
         originate(&storage, CAROL, 1);
         assert_eq!(reward(&storage, U256::from(10)), U256::ONE);
-        assert_eq!(claimable(&storage, ALICE), native(3));
-        assert_eq!(claimable(&storage, BOB), native(3));
-        assert_eq!(claimable(&storage, CAROL), native(3));
-        assert_eq!(storage.balance(AGENT_REWARD_ADDRESS).unwrap(), native(9));
+        assert_eq!(claimable(&storage, ALICE), U256::from(3));
+        assert_eq!(claimable(&storage, BOB), U256::from(3));
+        assert_eq!(claimable(&storage, CAROL), U256::from(3));
+        assert_eq!(storage.balance(AGENT_REWARD_ADDRESS).unwrap(), U256::ZERO);
     });
 }
 

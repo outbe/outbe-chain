@@ -54,7 +54,7 @@ pub fn dispatch(
                         caller: sender,
                         position_id: c.positionId,
                         owner: c.owner,
-                        promis_load: c.promisLoadMinor,
+                        promis_load_minor: c.promisLoadMinor,
                     },
                 )
             }),

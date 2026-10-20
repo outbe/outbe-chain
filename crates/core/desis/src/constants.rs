@@ -44,8 +44,8 @@ pub const MIN_COMMIT_WINDOW_SECONDS: u64 = 16 * 3600;
 pub const MIN_COMMIT_WINDOW_SECONDS: u64 = 300;
 
 /// `dayState` wire values carried by AUCTION_STAGE_START.
-pub const DAY_STATE_GREEN: u8 = 1;
-pub const DAY_STATE_RED: u8 = 2;
+pub const DAY_STATE_LIVE: u8 = 1;
+pub const DAY_STATE_CANCELLED: u8 = 2;
 
 /// Winners per REFUND_INSTRUCTIONS message: the codec's `MAX_PAYLOAD_ARRAY_LEN`.
 /// Issuance uses its own, narrower cap. A recipient costs a mint, and a winner
@@ -65,10 +65,6 @@ pub const MAX_BID_BATCHES: u16 = 256;
 // Otherwise, clearing fails on bids the intake already took.
 const _: () =
     assert!(MAX_BIDS_PER_BATCH * MAX_BID_BATCHES as usize <= REFUND_CHUNK_LEN * MAX_REFUND_CHUNKS);
-
-/// Reference currencies one day may price. Mirrors the codec's `MAX_REFERENCE_PRICES`:
-/// a day over it could not be started on any chain.
-pub const MAX_REFERENCE_PRICES: usize = 6;
 
 /// `IDesis.InboundIgnored` reason codes; mirrors the routers' `InboundReason` library.
 pub const IGNORED_OBSOLETE: u8 = 2;

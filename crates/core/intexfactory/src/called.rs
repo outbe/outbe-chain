@@ -7,7 +7,7 @@
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
 use outbe_intex::SeriesId;
-use outbe_oracle::call_sweep::{self, CallSweep, CALL_SWEEP};
+use outbe_oracle::call_sweep::{self, CallSweep};
 use outbe_oracle::call_window::CallWindow;
 use outbe_primitives::daily_sweep::PinnedDay;
 use outbe_primitives::time::WorldwideDay;
@@ -70,7 +70,7 @@ impl<'storage> CallSweep<'storage> for IntexCallSweep<'storage> {
     fn days(&self) -> PinnedDay<'_, 'storage> {
         PinnedDay {
             current: &self.intex.call_sweep_day,
-            pending: &self.intex.call_pending_day,
+            latest: &self.intex.call_latest_day,
         }
     }
 
@@ -80,17 +80,6 @@ impl<'storage> CallSweep<'storage> for IntexCallSweep<'storage> {
 
     fn currency_cursor(&self) -> &Value<'storage, u32> {
         &self.intex.call_currency_cursor
-    }
-
-    fn day_skipped(&mut self, skipped: u32, in_flight: u32) -> Result<()> {
-        crate::runtime::emit_event(
-            &self.intex.storage,
-            crate::precompile::IIntexFactory::SweepDaySkipped {
-                sweep: CALL_SWEEP,
-                skippedDay: skipped,
-                inFlightDay: in_flight,
-            },
-        )
     }
 
     fn slice(&mut self, ctx: &BlockRuntimeContext, pinned_day: u32) -> Result<(u32, bool)> {
@@ -147,19 +136,17 @@ fn call_currency(
         &CallBins(&index, iso_code),
         ceiling,
         budget,
-        |key, budget| {
-            let (_, worldwide_day) = IntexContract::unscoped(key);
-            let group = intex.call_bin_group(iso_code, worldwide_day)?;
-            if !budget.fits_writes(group.members.len() as u32) {
+        |group, budget| {
+            if !budget.fits_writes(intex.group_member_count(group)?) {
                 return Ok(Visit::Stop);
             }
-            call_sweep::call_entry::<IntexCallSweep>(&ctx.storage, budget, key, || {
+            call_sweep::call_entry::<IntexCallSweep>(&ctx.storage, budget, group, || {
                 let call = GroupCall {
                     storage: &ctx.storage,
                     intex: &mut intex,
                     factory: &factory,
                 };
-                let applied = call_if_breached(call, &group, window, ctx.block.timestamp)?;
+                let applied = call_if_breached(call, group, window, ctx.block.timestamp)?;
                 called += applied;
                 Ok(applied)
             })

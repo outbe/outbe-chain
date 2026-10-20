@@ -71,12 +71,9 @@ contract IntexAuctionFuzzTest is Test {
         auction.revealBid(worldwideDay, quantity, rate, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig);
     }
 
-    function test_Fuzz_RevealBid_ValidProductLocksExactAmount(uint256 qSeed, uint256 rSeed) public {
+    function test_Fuzz_RevealBid_HandsTheEscrowTheDaysBasis(uint256 qSeed, uint256 rSeed) public {
         uint16 quantity = uint16(bound(qSeed, MIN_QTY, type(uint16).max));
         uint32 rate = uint32(bound(rSeed, MIN_RATE, SCALE_1E6));
-        uint128 expected = uint128(
-            uint256(quantity) * ESCROW_BASIS * rate / SCALE_1E6 * BridgeMsgCodec.NATIVE_UNITS_PER_PROTOCOL_UNIT
-        );
 
         uint32 worldwideDay = 20260202;
         _start(worldwideDay);
@@ -87,11 +84,7 @@ contract IntexAuctionFuzzTest is Test {
         vm.prank(iba1);
         auction.revealBid(worldwideDay, quantity, rate, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig);
 
-        assertEq(
-            escrow.lockedFunds(worldwideDay, iba1),
-            expected,
-            "locked == protocol escrow amount converted to 18-decimal WCOEN"
-        );
+        assertEq(escrow.lockedFunds(worldwideDay, iba1), ESCROW_BASIS, "the escrow sizes the lock from the basis");
     }
 
     function test_Fuzz_ExecuteClearing_BoundsMatchPredicate(uint32 issued, uint256 rateSeed, uint256 wonSeed) public {
@@ -178,7 +171,7 @@ contract IntexAuctionFuzzTest is Test {
             commitBondMinor: 0
         });
         vm.prank(bridger);
-        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Green, schedule, params);
+        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Live, schedule, params);
     }
 
     function _commit(uint32 worldwideDay, address bidder, bytes memory sig) internal {

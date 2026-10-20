@@ -1,4 +1,4 @@
-//! Daily GEMs include canonical late voters, including across UTC midnight.
+//! Daily validator rewards include canonical late voters, including across UTC midnight.
 use alloy_primitives::{Address, Bytes, B256, U256};
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::{
@@ -7,11 +7,6 @@ use outbe_primitives::{
     storage::hashmap::HashMapStorageProvider,
 };
 use outbe_rewards::{api, finalized_metadata_hook::on_finalized_metadata, late_settlement};
-
-#[path = "support/coen840.rs"]
-mod coen840;
-
-use coen840::{one_coen840, publish_coen840_quote, record_coen840_day_vwap};
 
 const DAY: u32 = 20240101;
 const MIDNIGHT: u64 = 1_704_153_600;
@@ -50,28 +45,15 @@ fn seed(ctx: &BlockRuntimeContext) {
     };
     // This seam consumes already-verified CPA. Cryptographic checks live in EVM.
     on_finalized_metadata(ctx, &metadata, U256::ZERO, MIDNIGHT - 1, &VOTERS[..3]).unwrap();
-    publish_coen840_quote(&ctx.storage, one_coen840(), 11, MIDNIGHT);
-    outbe_oracle::schema::OracleContract::new(ctx.storage.clone())
-        .utc_day_vwap_last_finalized
-        .write(DAY)
-        .unwrap();
-    record_coen840_day_vwap(&ctx.storage, DAY, one_coen840());
 }
 
 #[test]
-fn midnight_late_vote_survives_reentry_and_mints_equal_gems_once() {
+fn midnight_late_vote_survives_reentry_and_counts_once() {
     let mut storage = HashMapStorageProvider::new(1);
     storage.enter(|handle| {
         let ctx = BlockRuntimeContext::new(block(11), handle);
         seed(&ctx);
         assert!(!api::day_participation_complete(&ctx, DAY).unwrap());
-        assert!(api::prepare_daily_validator_gem_batch(
-            &ctx,
-            DAY,
-            U256::from(400),
-            &api::read_voters_for_day(&ctx, DAY).unwrap()
-        )
-        .is_err());
         late_settlement::record_late_credit(&ctx, HASH, VOTERS[3], 1).unwrap();
     });
     // Re-enter the same storage provider with new context handles. Day binding
@@ -102,31 +84,16 @@ fn midnight_late_vote_survives_reentry_and_mints_equal_gems_once() {
     storage.enter(|handle| {
         let ctx = BlockRuntimeContext::new(block(14), handle);
         assert!(api::day_participation_complete(&ctx, DAY).unwrap());
-        let counts = api::read_voters_for_day(&ctx, DAY).unwrap();
-        api::prepare_daily_validator_gem_batch(&ctx, DAY, U256::from(400), &counts).unwrap();
-
-        // One reward Gem per block: the batch drains one voter per call.
-        for _ in VOTERS {
-            assert!(matches!(
-                api::deliver_oldest_reward_gem_batch(&ctx).unwrap(),
-                api::RewardGemDeliveryOutcome::Delivered { .. }
-            ));
-        }
-        api::prepare_daily_validator_gem_batch(&ctx, DAY, U256::from(400), &counts).unwrap();
-        assert!(matches!(
-            api::deliver_oldest_reward_gem_batch(&ctx).unwrap(),
-            api::RewardGemDeliveryOutcome::Empty
-        ));
-        for voter in VOTERS {
-            let owned = outbe_gem::api::list_by_owner(&ctx.storage, voter).unwrap();
-            assert_eq!(owned.len(), 1);
-            assert_eq!(owned[0].promis_load_minor, U256::from(100));
-        }
+        // Every voter weighs the same in the day's validator pool.
+        assert_eq!(
+            api::read_voters_for_day(&ctx, DAY).unwrap(),
+            VOTERS.map(|v| (v, 1)).to_vec()
+        );
     });
 }
 
 #[test]
-fn last_admissible_slot_counts_for_gem_even_when_fee_weight_is_zero() {
+fn last_admissible_slot_counts_for_the_reward_even_when_fee_weight_is_zero() {
     let mut storage = HashMapStorageProvider::new(1);
     storage.enter(|handle| {
         let ctx = BlockRuntimeContext::new(block(13), handle);

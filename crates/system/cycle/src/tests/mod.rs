@@ -23,34 +23,11 @@ use crate::lifecycle::{CycleLifecycle, CycleLifecycleContext};
 use crate::schema::Cycle;
 use crate::triggers::{next_fire_at, TriggerId, ACTIVE_TRIGGERS};
 
-mod model;
-
 pub(super) const CHAIN_ID: u64 = 1;
 /// Genesis at midnight UTC of 2024-01-01.
 pub(super) const GENESIS_TS: u64 = 1_704_067_200;
 pub(super) use outbe_primitives::time::SECONDS_PER_DAY;
 pub(super) const EMISSION_LIMIT_1_ID: u32 = TriggerId::ProtocolCycle.as_u32();
-
-pub(super) fn retained_days_before(
-    victim: outbe_primitives::time::WorldwideDay,
-    count: usize,
-) -> Vec<outbe_primitives::time::WorldwideDay> {
-    (0..count)
-        .map(|offset| {
-            let days_before = count - offset;
-            let seconds_before = u64::try_from(days_before)
-                .unwrap()
-                .checked_mul(SECONDS_PER_DAY)
-                .unwrap();
-            outbe_primitives::time::WorldwideDay::from_timestamp(
-                victim
-                    .start_timestamp()
-                    .checked_sub(seconds_before)
-                    .unwrap(),
-            )
-        })
-        .collect()
-}
 
 pub(super) fn cycle_storage() -> HashMapStorageProvider {
     cycle_storage_for(CHAIN_ID)
@@ -132,26 +109,20 @@ pub(super) fn seed_daily_voters(ctx: &BlockRuntimeContext, day: u32, voters: &[(
     let rewards = ctx.storage.contract::<outbe_rewards::schema::Rewards<'_>>();
     let voter_at = rewards.daily_voter_at.get_nested(&day);
     let participation = rewards.daily_participation.get_nested(&day);
-    let mut total = 0u64;
     for (index, (voter, count)) in voters.iter().enumerate() {
         voter_at.write(&(index as u32), *voter).unwrap();
         participation.write(voter, *count).unwrap();
-        total = total.checked_add(*count).unwrap();
     }
     rewards
         .daily_voter_count
         .write(&day, voters.len() as u32)
         .unwrap();
-    rewards
-        .daily_total_participation
-        .write(&day, total)
-        .unwrap();
 }
 
-/// seed V2 Phase 1 accounting progress so the dispatcher's
-/// new gate (`last_accounted_block_number >= block_number - 1`) is
-/// satisfied for tests that fire the trigger at `block_number >= 2`.
-/// Mirrors what `apply_phase1_commit_in_preexec` records in production.
+/// Seeds V2 Phase 1 accounting progress so the parent block satisfies the
+/// dispatcher gate (`last_accounted_block_number >= block_number - 1`) for
+/// tests that fire the trigger at `block_number >= 2`. Mirrors what
+/// `apply_phase1_commit_in_preexec` records in production.
 pub(super) fn account_parent(ctx: &BlockRuntimeContext, block_number: u64) {
     if block_number >= 2 {
         crate::record_phase1_progress(ctx, block_number - 1).unwrap();
@@ -181,18 +152,6 @@ pub(super) fn run_emission_limit_daily(
     ctx: &BlockRuntimeContext,
 ) -> outbe_primitives::error::Result<()> {
     crate::handler::run_emission_limit_daily(ctx)
-}
-
-pub(super) fn advance_metadosis_only(
-    storage: &mut HashMapStorageProvider,
-    block_number: u64,
-    timestamp: u64,
-) -> outbe_primitives::error::Result<()> {
-    storage.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
-    StorageHandle::enter(storage, |handle| {
-        let ctx = BlockRuntimeContext::new(block_ctx(block_number, timestamp), handle);
-        outbe_metadosis::commands::advance_active_worldwide_days(&ctx)
-    })
 }
 
 mod calendar;
@@ -238,8 +197,8 @@ pub(super) fn anchor_with<'s>(
     ctx
 }
 
-/// Runs the dispatcher at `block_number` and `timestamp` after Phase 1 has
-/// accounted the parent block.
+/// Runs the dispatcher at `block_number` and `timestamp` after Phase 1
+/// accounts the parent block.
 pub(super) fn dispatch_at(
     handle: StorageHandle<'_>,
     block_number: u64,
@@ -261,85 +220,6 @@ pub(super) fn day_zero_allocation(sink: outbe_emissionlimit::allocation::Emissio
     .find(|allocation| allocation.id == sink)
     .unwrap()
     .amount
-}
-
-/// Checked sum of the day-0 emission allocations of `sinks`.
-pub(super) fn day_zero_allocation_sum(
-    sinks: &[outbe_emissionlimit::allocation::EmissionSinkId],
-) -> U256 {
-    sinks
-        .iter()
-        .try_fold(U256::ZERO, |sum, sink| {
-            sum.checked_add(day_zero_allocation(*sink))
-        })
-        .unwrap()
-}
-
-/// A capacity scenario before the victim's process time.
-pub(super) struct CapacityScenario {
-    pub(super) storage: HashMapStorageProvider,
-    /// The victim WorldwideDay after its offering window closed.
-    pub(super) victim: outbe_metadosis::WwdProjection,
-    /// Next free block number.
-    pub(super) next_block: u64,
-}
-
-/// Seeds `retained` ready and sealed WorldwideDays, forms `victim` with
-/// `day_limit`, and advances it past its forming, lookback and offering ends.
-pub(super) fn capacity_scenario(
-    retained: &[outbe_primitives::time::WorldwideDay],
-    victim: outbe_primitives::time::WorldwideDay,
-    day_limit: U256,
-) -> CapacityScenario {
-    let mut storage = cycle_storage();
-    storage.enter(|handle| {
-        outbe_metadosis::test_support::seed_ready_worldwide_days_for_capacity(
-            handle.clone(),
-            retained,
-        )
-        .unwrap();
-        let mut tribute = outbe_tribute::TributeContract::new(handle);
-        for day in retained {
-            tribute.seal_day(*day).unwrap();
-        }
-    });
-
-    let mut next_block = 2_u64;
-    storage.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
-    let projection =
-        storage.enter(|handle| form_worldwide_day(handle, next_block, victim, day_limit));
-    next_block += 1;
-    for boundary in [
-        projection.forming_end,
-        projection.lookback_end,
-        projection.offering_end,
-    ] {
-        advance_metadosis_only(&mut storage, next_block, boundary).unwrap();
-        next_block += 1;
-    }
-    CapacityScenario {
-        storage,
-        victim: projection,
-        next_block,
-    }
-}
-
-/// Forms `wwd` with `day_limit` in block `block_number`, two hours after the
-/// day starts. Returns the projection of the formed day.
-pub(super) fn form_worldwide_day(
-    handle: StorageHandle<'_>,
-    block_number: u64,
-    wwd: outbe_primitives::time::WorldwideDay,
-    day_limit: U256,
-) -> outbe_metadosis::WwdProjection {
-    let ctx = BlockRuntimeContext::new(
-        block_ctx(block_number, wwd.start_timestamp() + 2 * 3_600),
-        handle.clone(),
-    );
-    outbe_metadosis::commands::apply_cycle_day_limit(&ctx, day_limit).unwrap();
-    outbe_metadosis::api::worldwide_day(handle, wwd)
-        .unwrap()
-        .unwrap()
 }
 
 /// Block time of the dispatcher anchor in [`with_anchored_cycle`].

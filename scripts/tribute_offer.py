@@ -4,7 +4,7 @@
 Byte-for-byte port of `outbe-cli tribute offer`:
 
   1. read the DKG-derived offer public key from the TeeRegistry (0xEE0A)
-  2. (optional) auto-detect the WorldwideDay currently in OFFERING via Metadosis
+  2. (optional) auto-detect the WorldwideDay currently in OFFERING via Tribute (0x1101)
   3. encrypt the payload to the offer key:
         ephemeral X25519 ECDHE
         -> HKDF-SHA256(salt=OFFER_HKDF_SALT, info="tribute-factory-encryption")
@@ -24,17 +24,17 @@ against the proof's public input (and against the registered L2 chain).
 Deps:  pip install web3 cryptography
 
 Examples:
-  # auto-pick the OFFERING day, default amount 100 / currency 840 (USD)
+  # auto-pick the OFFERING day, default amount 100
   python3 scripts/tribute_offer.py \
       --rpc https://rpc.testnet.outbe.net \
-      --private-key 0x<KEY> \
+      --private-key 0x<KEY> --issuance-currency 840 --reference-currency 840 \
       --zk-proof 0x<COMBINED_PROOF> --zk-merkle-root 0x<ROOT> \
       --signature 0x<BLS_SIG> --chain-id 57005 --version 1.1.0 \
       --tribute-draft-id 0x<32-byte draft id> --su-hash 0x<32-byte su hash>
 
   # explicit day
   python3 scripts/tribute_offer.py --rpc https://rpc.testnet.outbe.net \
-      --private-key 0x<KEY> --day 20260601 --amount 100 --currency 840 \
+      --private-key 0x<KEY> --day 20260601 --amount 100 --issuance-currency 840 --reference-currency 840 \
       --zk-proof 0x<COMBINED_PROOF> --zk-merkle-root 0x<ROOT> \
       --signature 0x<BLS_SIG> --chain-id 57005 --version 1.1.0 \
       --tribute-draft-id 0x<DRAFT_ID> --su-hash 0x<SU_HASH>
@@ -65,7 +65,6 @@ from eth_account import Account
 
 # --- Protocol addresses (see crates/blockchain/primitives/src/addresses.rs) ---
 TEE_REGISTRY_ADDR = Web3.to_checksum_address("0x000000000000000000000000000000000000EE0A")
-METADOSIS_ADDR = Web3.to_checksum_address("0x000000000000000000000000000000000000100E")
 TRIBUTE_FACTORY_ADDR = Web3.to_checksum_address("0x0000000000000000000000000000000000001100")
 TRIBUTE_ADDR = Web3.to_checksum_address("0x0000000000000000000000000000000000001101")
 
@@ -76,23 +75,12 @@ TRIBUTE_ADDR = Web3.to_checksum_address("0x0000000000000000000000000000000000001
 OFFER_SALT = b"outbe/tribute/offer-salt/v1".ljust(32, b"\0")
 HKDF_INFO = b"tribute-factory-encryption"
 
-# WorldwideDay status values (crates/core/metadosis/src/schema.rs::status).
-STATUS_OFFERING = 2
-
 TEE_REGISTRY_ABI = json.loads(
     """[
       {"type":"function","name":"isBootstrapped","stateMutability":"view",
        "inputs":[],"outputs":[{"type":"bool"}]},
       {"type":"function","name":"tributeOfferPublicKey","stateMutability":"view",
        "inputs":[],"outputs":[{"type":"uint256"}]}
-    ]"""
-)
-
-METADOSIS_ABI = json.loads(
-    """[
-      {"type":"function","name":"getWorldwideDaysByStatus","stateMutability":"view",
-       "inputs":[{"type":"uint8","name":"status"}],
-       "outputs":[{"type":"uint32[]","name":"wwds"}]}
     ]"""
 )
 
@@ -121,7 +109,10 @@ TRIBUTE_ABI = json.loads(
     """[
       {"type":"function","name":"getTributesByOwner","stateMutability":"view",
        "inputs":[{"type":"address","name":"owner"}],
-       "outputs":[{"type":"uint256[]"}]}
+       "outputs":[{"type":"uint256[]"}]},
+      {"type":"function","name":"getActiveWorldwideDays","stateMutability":"view",
+       "inputs":[],
+       "outputs":[{"type":"uint32[]","name":"wwds"}]}
     ]"""
 )
 
@@ -145,13 +136,13 @@ def encrypt_offer(offer_pub: bytes, plaintext: bytes):
 
 
 def pick_offering_day(w3: Web3) -> int:
-    md = w3.eth.contract(address=METADOSIS_ADDR, abi=METADOSIS_ABI)
-    days = md.functions.getWorldwideDaysByStatus(STATUS_OFFERING).call()
+    tribute = w3.eth.contract(address=TRIBUTE_ADDR, abi=TRIBUTE_ABI)
+    days = tribute.functions.getActiveWorldwideDays().call()
     if not days:
-        sys.exit("no WorldwideDay is currently in OFFERING status")
+        sys.exit("no active WorldwideDay found")
     if len(days) > 1:
-        print(f"multiple OFFERING days {days}; using {days[0]}")
-    return int(days[0])
+        print(f"multiple active WorldwideDays {days}. Using {days[-1]}")
+    return int(days[-1])
 
 
 def canonical_amount_base(value: str) -> str:
@@ -217,7 +208,8 @@ def main() -> None:
         default="0",
         help="six-decimal remainder in [0,999999]; must match the proof's draft",
     )
-    ap.add_argument("--currency", type=int, default=840, help="ISO 4217 code (840=USD)")
+    ap.add_argument("--issuance-currency", type=int, required=True, help="issuance ISO 4217 numeric code")
+    ap.add_argument("--reference-currency", type=int, required=True, help="reference ISO 4217 numeric code")
     ap.add_argument("--zk-proof", required=True, type=hex_bytes_arg,
                     help="combined Tribute proof bytes (0x-hex): 4-byte public-input word "
                          "count, public inputs, proof; 0x is a deliberate negative "
@@ -287,8 +279,8 @@ def main() -> None:
         nonce,
         int.from_bytes(eph_pub, "big"),
         int(day),
-        int(args.currency),
-        int(args.currency),
+        int(args.issuance_currency),
+        int(args.reference_currency),
         args.zk_proof,
         args.chain_id,
         args.version,
@@ -309,7 +301,8 @@ def main() -> None:
     tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
     print(f"offerTribute tx: {tx_hash.hex()}")
     print(f"  creator={creator} worldwide_day={day} "
-          f"currency={args.currency} amount_base={amount_base}")
+          f"issuance_currency={args.issuance_currency} reference_currency={args.reference_currency} "
+          f"amount_base={amount_base}")
     print(f"  l2_chain_id={args.chain_id} circuit_version={args.version} "
           f"tribute_draft_id=0x{args.tribute_draft_id.hex()}")
 

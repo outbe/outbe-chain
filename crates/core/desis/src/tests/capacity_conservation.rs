@@ -29,6 +29,11 @@ const LIMIT: u128 = 3 * LOAD + 7;
 const CHAIN: u32 = 1;
 
 fn world(sale: bool) -> HashMapStorageProvider {
+    world_selling(u16::from(sale))
+}
+
+/// The day with one bid for `units` Intex, none when zero.
+fn world_selling(units: u16) -> HashMapStorageProvider {
     let mut p = HashMapStorageProvider::new(1);
     p.set_timestamp(U256::from(NOW));
     p.stub_sub_call_at(
@@ -59,7 +64,7 @@ fn world(sale: bool) -> HashMapStorageProvider {
             crate::api::AuctionBrief {
                 worldwide_day: DAY,
                 desis_limit_minor: U256::from(LIMIT),
-                is_green: true,
+                has_limit: true,
             },
             NOW,
             crate::api::BriefOverflowPolicy::CarryOver,
@@ -71,12 +76,12 @@ fn world(sale: bool) -> HashMapStorageProvider {
         StorageHandle::enter(&mut p, |s| runtime::schedule_tick(&s, at).unwrap());
     }
     StorageHandle::enter(&mut p, |s| {
-        let bids = if sale {
+        let bids = if units > 0 {
             vec![BidData {
                 bidder_address: Address::repeat_byte(1),
                 intex_bid_rate: 200,
                 timestamp: 0,
-                intex_quantity: 1,
+                intex_quantity: units,
                 issuance_currency: 840,
                 reference_currency: 840,
             }]
@@ -103,7 +108,7 @@ fn world(sale: bool) -> HashMapStorageProvider {
                 src_chain_id: CHAIN,
             },
             1,
-            u32::from(sale),
+            u32::from(units > 0),
         )
         .unwrap();
     });
@@ -126,6 +131,10 @@ fn clear(p: &mut HashMapStorageProvider) {
 }
 
 fn ledger(p: &mut HashMapStorageProvider, sold: bool, terminal: bool) {
+    ledger_selling(p, u32::from(sold), terminal);
+}
+
+fn ledger_selling(p: &mut HashMapStorageProvider, sold: u32, terminal: bool) {
     StorageHandle::enter(p, |s| {
         let day = DesisContract::new(s.clone());
         let returned = PromisLimitContract::new(s).get_total_unallocated().unwrap();
@@ -137,7 +146,7 @@ fn ledger(p: &mut HashMapStorageProvider, sold: bool, terminal: bool) {
         );
         if terminal {
             assert_eq!(day.read_stage(DAY).unwrap(), AuctionStage::Cleared);
-            assert_eq!(issued, u32::from(sold));
+            assert_eq!(issued, sold);
             assert_eq!(pending, U256::ZERO);
             assert_eq!(returned, U256::from(LIMIT - u128::from(sold) * LOAD));
             assert_eq!(day.gate_active_count.read().unwrap(), 0);
@@ -181,17 +190,51 @@ fn partial_sale_returns_only_two_unsold_loads_and_dust_once() {
     ledger(&mut p, true, true);
 }
 
+/// Selling every unit returns only the dust, and the day's one series holds all three.
+#[test]
+fn full_sale_returns_only_the_dust_once() {
+    let mut p = world_selling(3);
+    clear(&mut p);
+    ledger_selling(&mut p, 3, true);
+    clear(&mut p);
+    ledger_selling(&mut p, 3, true);
+    let unused = p
+        .get_events(DESIS_ADDRESS)
+        .iter()
+        .filter_map(|e| IDesis::UnusedDesisLimitReported::decode_log_data(e).ok())
+        .map(|e| e.unusedDesisLimitMinor)
+        .collect::<Vec<_>>();
+    assert_eq!(unused, vec![U256::from(7u64)]);
+    let cleared = p
+        .get_events(DESIS_ADDRESS)
+        .iter()
+        .filter_map(|e| IDesis::AuctionCleared::decode_log_data(e).ok())
+        .map(|e| e.issuedUnits)
+        .collect::<Vec<_>>();
+    assert_eq!(cleared, vec![3]);
+    StorageHandle::enter(&mut p, |s| {
+        assert_eq!(outbe_intex::api::total_series(&s).unwrap(), 1);
+        let series = outbe_intex::api::series_id_at(&s, 0).unwrap();
+        let counts = outbe_intex::api::unit_counts(&s, series).unwrap();
+        assert_eq!((counts.issued, counts.active, counts.forfeited), (3, 3, 0));
+    });
+    assert!(p
+        .get_events(outbe_primitives::addresses::INTEX_ADDRESS)
+        .iter()
+        .all(|e| outbe_intex::precompile::IIntex::IntexGroupExpired::decode_log_data(e).is_err()));
+}
+
 #[test]
 fn every_clearing_write_failure_rolls_back_allocation_and_return_then_retries_once() {
-    for sale in [false, true] {
-        let mut baseline = world(sale);
+    for units in [0, 1, 3] {
+        let mut baseline = world_selling(units);
         clear(&mut baseline);
         let count = baseline.clear_mutation_failure();
-        ledger(&mut baseline, sale, true);
+        ledger_selling(&mut baseline, u32::from(units), true);
         assert!(count > 0);
         for after in [false, true] {
             for point in 0..count {
-                let mut p = world(sale);
+                let mut p = world_selling(units);
                 if after {
                     p.fail_after_mutation_at(point);
                 } else {
@@ -206,10 +249,10 @@ fn every_clearing_write_failure_rolls_back_allocation_and_return_then_retries_on
                     observed == point
                 };
                 assert!(reached, "unreached fault {point}, after={after}");
-                ledger(&mut p, sale, false);
+                ledger_selling(&mut p, u32::from(units), false);
                 clear(&mut p);
                 clear(&mut p);
-                ledger(&mut p, sale, true);
+                ledger_selling(&mut p, u32::from(units), true);
             }
         }
     }

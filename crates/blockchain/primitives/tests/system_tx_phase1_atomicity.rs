@@ -17,24 +17,21 @@ use outbe_primitives::system_tx::{SystemTxKind, SystemTxPhase, GENESIS_BOOTSTRAP
 const BLOCK_1: u64 = 1;
 const BLOCK_2: u64 = 2;
 
-/// Block 1 body-index map starts at CycleTick (no Phase 1), then
-/// RewardsGemDelivery, optional BoundaryOutcome (mandatory at block 1 under
-/// V2), then Oracle.
+/// Block 1 body-index map starts at CycleTick (no Phase 1), then the optional
+/// BoundaryOutcome (mandatory at block 1 under V2), then Oracle.
 #[test]
-fn block_1_body_index_map_is_cycle_rewards_boundary_oracle() {
+fn block_1_body_index_map_is_cycle_boundary_oracle() {
     let cursor = SystemTxPhase::initial_for_block(BLOCK_1, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
     assert_eq!(cursor, SystemTxPhase::CycleTick { body_index: 0 });
-    let rewards = cursor.advance_after_commit(true, false);
-    assert_eq!(rewards, SystemTxPhase::RewardsGemDelivery { body_index: 1 });
-    let boundary = rewards.advance_after_commit(true, false);
+    let boundary = cursor.advance_after_commit(true, false);
     assert_eq!(
         boundary,
-        SystemTxPhase::BoundaryOutcomeOptional { body_index: 2 }
+        SystemTxPhase::BoundaryOutcomeOptional { body_index: 1 }
     );
     let oracle = boundary.advance_after_commit(true, false);
-    assert_eq!(oracle, SystemTxPhase::OracleSlashWindow { body_index: 3 });
+    assert_eq!(oracle, SystemTxPhase::OracleSlashWindow { body_index: 2 });
     let hook_events = oracle.advance_after_commit(true, false);
-    assert_eq!(hook_events, SystemTxPhase::HookEvents { body_index: 4 });
+    assert_eq!(hook_events, SystemTxPhase::HookEvents { body_index: 3 });
     let done = hook_events.advance_after_commit(true, false);
     assert_eq!(done, SystemTxPhase::UserTxs);
 }
@@ -42,32 +39,27 @@ fn block_1_body_index_map_is_cycle_rewards_boundary_oracle() {
 /// Cursor advances past Oracle slash window to UserTxs in canonical order.
 #[test]
 fn oracle_slash_window_body_index_follows_optional_boundary_outcome() {
-    // inserts LateFinalizeCredits (body_index 1) after Phase 1, shifting
-    // the rest: Phase1(0) -> LateFinalizeCredits(1) -> CycleTick(2) ->
-    // RewardsGemDelivery(3) -> BoundaryOutcome(4) -> OracleSlashWindow(5).
+    // Phase1(0) -> LateFinalizeCredits(1) -> CycleTick(2) -> BoundaryOutcome(3)
+    // -> OracleSlashWindow(4).
     let phase1 = SystemTxPhase::initial_for_block(BLOCK_2, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
     let late = phase1.advance_after_commit(true, false);
     let cycle = late.advance_after_commit(true, false);
-    let rewards = cycle.advance_after_commit(true, false);
-    assert_eq!(rewards, SystemTxPhase::RewardsGemDelivery { body_index: 3 });
-    let boundary = rewards.advance_after_commit(true, false);
+    let boundary = cycle.advance_after_commit(true, false);
+    assert_eq!(
+        boundary,
+        SystemTxPhase::BoundaryOutcomeOptional { body_index: 3 }
+    );
     let oracle = boundary.advance_after_commit(true, false);
     assert!(matches!(
         oracle,
-        SystemTxPhase::OracleSlashWindow { body_index: 5 }
+        SystemTxPhase::OracleSlashWindow { body_index: 4 }
     ));
-    // When boundary is absent: Phase1(0) -> Late(1) -> CycleTick(2) ->
-    // RewardsGemDelivery(3) -> Oracle(4).
+    // When boundary is absent: Phase1(0) -> Late(1) -> CycleTick(2) -> Oracle(3).
     let phase1b = SystemTxPhase::initial_for_block(BLOCK_2, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
     let late_b = phase1b.advance_after_commit(false, false);
     let cycle_b = late_b.advance_after_commit(false, false);
-    let rewards_b = cycle_b.advance_after_commit(false, false);
-    assert_eq!(
-        rewards_b,
-        SystemTxPhase::RewardsGemDelivery { body_index: 3 }
-    );
-    let oracle_b = rewards_b.advance_after_commit(false, false);
-    assert_eq!(oracle_b, SystemTxPhase::OracleSlashWindow { body_index: 4 });
+    let oracle_b = cycle_b.advance_after_commit(false, false);
+    assert_eq!(oracle_b, SystemTxPhase::OracleSlashWindow { body_index: 3 });
 }
 
 /// Sanity: cursor advance from UserTxs is idempotent - there is no "post

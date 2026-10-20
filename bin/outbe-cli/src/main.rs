@@ -167,8 +167,8 @@ mod tests {
 
     #[test]
     fn test_cli_rejects_removed_rewards_claim_and_pending() {
-        // Validator emission is paid in gems. The dead `claim` / `pending`
-        // subcommands were removed and must no longer parse.
+        // Validator emission is claimed from AgentReward. The dead `claim` /
+        // `pending` subcommands were removed and must no longer parse.
         assert!(Cli::try_parse_from(["outbe-cli", "rewards", "claim"]).is_err());
         assert!(Cli::try_parse_from([
             "outbe-cli",

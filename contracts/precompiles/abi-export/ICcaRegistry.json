@@ -51,7 +51,7 @@
             "internalType": "enum ICcaRegistry.State"
           },
           {
-            "name": "bondedAmount",
+            "name": "bondedMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -80,6 +80,19 @@
         "name": "",
         "type": "uint8",
         "internalType": "enum ICcaRegistry.State"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getTotalBonded",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "bondedMinor",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -121,7 +134,7 @@
         "internalType": "address"
       },
       {
-        "name": "amount",
+        "name": "amountMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -146,7 +159,7 @@
         "internalType": "address"
       },
       {
-        "name": "amount",
+        "name": "amountMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -165,7 +178,7 @@
         "internalType": "address"
       },
       {
-        "name": "amount",
+        "name": "amountMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

@@ -134,7 +134,6 @@ mod tests {
                 artifact: Default::default(),
             },
             SystemTxInputV2::CycleTick,
-            SystemTxInputV2::RewardsGemDelivery,
             SystemTxInputV2::OracleSlashWindow,
             SystemTxInputV2::HookEvents,
         ]
@@ -463,7 +462,6 @@ mod tests {
                         artifact: Default::default(),
                     },
                     SystemTxInputV2::CycleTick,
-                    SystemTxInputV2::RewardsGemDelivery,
                     SystemTxInputV2::BoundaryOutcome {
                         artifact: tx_artifact,
                     },

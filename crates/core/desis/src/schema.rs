@@ -68,7 +68,7 @@ pub struct AuctionConfig {
     /// Minimum bid quantity in Intex units. The floor rescales 4% of the prior issued count
     /// by the prior PROMIS load divided by today's load.
     pub min_intex_bid_quantity: u16,
-    /// Commit-entry bond in 18-decimal WCOEN units. A value of 0 disables the bond.
+    /// Commit-entry bond in protocol units. A value of 0 disables the bond.
     pub commit_bond_minor: u128,
     /// One row per reference currency the oracle could price for this day.
     pub reference_prices: Vec<ReferenceCurrencyPrice>,
@@ -207,7 +207,7 @@ pub struct DesisContract {
     #[attribute(order = 15)]
     pub config_call_notice_period_seconds: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
 
-    /// worldwide_day -> commit-entry bond (payment-token minor units).
+    /// worldwide_day -> commit-entry bond (protocol units).
     #[attribute(order = 16)]
     pub config_commit_bond_minor: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
 
@@ -258,9 +258,9 @@ pub struct DesisContract {
     /// worldwide_day -> Desis Limit awaiting the auction, in raw PROMIS minor units.
     #[attribute(order = 30)]
     pub pending_desis_limit_minor: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
-    /// worldwide_day -> 1 for a green day.
+    /// worldwide_day -> 1 when the day was briefed with a limit to sell.
     #[attribute(order = 31)]
-    pub brief_green: outbe_primitives::storage::dsl::Map<WorldwideDay, u8>,
+    pub brief_has_limit: outbe_primitives::storage::dsl::Map<WorldwideDay, u8>,
     /// Days with a scheduled auction (dense active set for the begin-block tick).
     #[attribute(order = 32)]
     pub sched_active_count: outbe_primitives::storage::dsl::Value<u32>,

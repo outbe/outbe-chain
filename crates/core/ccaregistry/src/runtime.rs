@@ -33,7 +33,7 @@ pub fn bond(storage: StorageHandle<'_>, caller: Address, amount: U256, name: Str
         let mut record = contract.records.get(caller)?.unwrap_or(CcaRecord {
             cca: caller,
             state: ICcaRegistry::State::Bonding,
-            bonded_amount: U256::ZERO,
+            bonded_minor: U256::ZERO,
             unbond_unlocks_after: 0,
             name: String::new(),
         });
@@ -42,19 +42,25 @@ pub fn bond(storage: StorageHandle<'_>, caller: Address, amount: U256, name: Str
             return Err(CcaError::UnbondPending.into());
         }
         record.name = name;
-        record.bonded_amount = record
-            .bonded_amount
+        record.bonded_minor = record
+            .bonded_minor
             .checked_add(amount)
             .ok_or(CcaError::Arithmetic)?;
-        record.state = if record.bonded_amount >= BOND_REQUIREMENT {
+        record.state = if record.bonded_minor >= BOND_REQUIREMENT {
             ICcaRegistry::State::Active
         } else {
             ICcaRegistry::State::Bonding
         };
         contract.save(&record)?;
+        let total = contract
+            .total_bonded_minor
+            .read()?
+            .checked_add(amount)
+            .ok_or(CcaError::Arithmetic)?;
+        set_total_bonded(&storage, &contract, total)?;
         contract.emit(ICcaRegistry::Bonded {
             cca: caller,
-            amount,
+            amountMinor: amount,
             state: record.state,
         })
     })
@@ -68,7 +74,7 @@ pub fn unbond(storage: StorageHandle<'_>, caller: Address) -> Result<()> {
         if record.state == ICcaRegistry::State::Deregistering {
             return Err(CcaError::UnbondPending.into());
         }
-        if record.bonded_amount.is_zero() {
+        if record.bonded_minor.is_zero() {
             return Err(CcaError::InvalidAmount.into());
         }
         if !matches!(
@@ -84,7 +90,7 @@ pub fn unbond(storage: StorageHandle<'_>, caller: Address) -> Result<()> {
         contract.save(&record)?;
         contract.emit(ICcaRegistry::UnbondRequested {
             cca: caller,
-            amount: record.bonded_amount,
+            amountMinor: record.bonded_minor,
             unbondUnlocksAfter: record.unbond_unlocks_after,
         })
     })
@@ -94,7 +100,7 @@ pub fn claim_unbonded(storage: StorageHandle<'_>, caller: Address) -> Result<()>
     storage.with_checkpoint(|| {
         let mut contract = CcaContract::new(storage.clone());
         let mut record = contract.load(caller)?;
-        if record.bonded_amount.is_zero() {
+        if record.bonded_minor.is_zero() {
             return Err(CcaError::NoUnbond.into());
         }
         if record.state != ICcaRegistry::State::Deregistering {
@@ -103,17 +109,35 @@ pub fn claim_unbonded(storage: StorageHandle<'_>, caller: Address) -> Result<()>
         if now(&storage)? < record.unbond_unlocks_after {
             return Err(CcaError::Cooldown.into());
         }
-        let amount = record.bonded_amount;
-        record.bonded_amount = U256::ZERO;
+        let amount = record.bonded_minor;
+        record.bonded_minor = U256::ZERO;
         record.unbond_unlocks_after = 0;
         record.state = ICcaRegistry::State::Deregistered;
         contract.save(&record)?;
         storage.transfer_balance(CCA_REGISTRY_ADDRESS, caller, amount)?;
+        let total = contract
+            .total_bonded_minor
+            .read()?
+            .checked_sub(amount)
+            .ok_or(CcaError::Arithmetic)?;
+        set_total_bonded(&storage, &contract, total)?;
         contract.emit(ICcaRegistry::UnbondClaimed {
             cca: caller,
-            amount,
+            amountMinor: amount,
         })
     })
+}
+
+/// Records the bonded total. The registry account must hold at least that much.
+fn set_total_bonded(
+    storage: &StorageHandle<'_>,
+    contract: &CcaContract<'_>,
+    total: U256,
+) -> Result<()> {
+    if storage.balance(CCA_REGISTRY_ADDRESS)? < total {
+        return Err(CcaError::CustodyShortfall.into());
+    }
+    contract.total_bonded_minor.write(total)
 }
 
 /// Trusted Rust entrypoint. Credis calls it once with the current UTC reward day key (YYYYMMDD).
@@ -127,18 +151,18 @@ pub fn credis_issued(
         crate::api::require_active_cca(storage, cca)?;
         let contract = CcaContract::new(storage.clone());
         let key = address_day_key(cca, day);
-        let deficit = contract.gratis_deficits_per_utc_day.read(&key)?;
+        let deficit = contract.gratis_deficit_minor_per_utc_day.read(&key)?;
         let offset = gratis.min(deficit);
         let weight = contract
-            .gratis_sum_per_utc_day
+            .gratis_minor_per_utc_day
             .read(&key)?
             .checked_add(gratis - offset)
             .ok_or(CcaError::Arithmetic)?;
         // offset <= both gratis and deficit, so both subtractions are exact.
         contract
-            .gratis_deficits_per_utc_day
+            .gratis_deficit_minor_per_utc_day
             .write(&key, deficit - offset)?;
-        contract.gratis_sum_per_utc_day.write(&key, weight)
+        contract.gratis_minor_per_utc_day.write(&key, weight)
     })
 }
 
@@ -154,16 +178,18 @@ pub fn credis_forfeited(
         let contract = CcaContract::new(storage.clone());
         contract.load(cca)?;
         let key = address_day_key(cca, day);
-        let weight = contract.gratis_sum_per_utc_day.read(&key)?;
+        let weight = contract.gratis_minor_per_utc_day.read(&key)?;
         let offset = gratis_burned.min(weight);
         let deficit = contract
-            .gratis_deficits_per_utc_day
+            .gratis_deficit_minor_per_utc_day
             .read(&key)?
             .checked_add(gratis_burned - offset)
             .ok_or(CcaError::Arithmetic)?;
         // offset <= both gratis_burned and weight. Keep any excess as a deficit.
         let weight = weight - offset;
-        contract.gratis_deficits_per_utc_day.write(&key, deficit)?;
-        contract.gratis_sum_per_utc_day.write(&key, weight)
+        contract
+            .gratis_deficit_minor_per_utc_day
+            .write(&key, deficit)?;
+        contract.gratis_minor_per_utc_day.write(&key, weight)
     })
 }

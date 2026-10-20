@@ -82,11 +82,6 @@
             "internalType": "address"
           },
           {
-            "name": "gemType",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
             "name": "state",
             "type": "uint8",
             "internalType": "uint8"
@@ -145,6 +140,11 @@
             "name": "settlementDeadline",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "groupKey",
+            "type": "bytes32",
+            "internalType": "bytes32"
           }
         ]
       }
@@ -458,10 +458,10 @@
   },
   {
     "type": "event",
-    "name": "GemBucketCalled",
+    "name": "GemGroupCalled",
     "inputs": [
       {
-        "name": "bucketKey",
+        "name": "groupKey",
         "type": "bytes32",
         "indexed": true,
         "internalType": "bytes32"
@@ -483,19 +483,19 @@
   },
   {
     "type": "event",
-    "name": "GemForfeited",
+    "name": "GemGroupForfeited",
     "inputs": [
       {
-        "name": "gemId",
-        "type": "uint256",
+        "name": "groupKey",
+        "type": "bytes32",
         "indexed": true,
-        "internalType": "uint256"
+        "internalType": "bytes32"
       },
       {
-        "name": "owner",
-        "type": "address",
+        "name": "gems",
+        "type": "uint32",
         "indexed": false,
-        "internalType": "address"
+        "internalType": "uint32"
       },
       {
         "name": "promisLoadMinor",

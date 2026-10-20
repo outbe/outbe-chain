@@ -1,5 +1,5 @@
-use outbe_metadosis::commit::CommitPermit;
+use outbe_metadosis::commit::commit_transition;
 
 fn main() {
-    let _ = std::any::type_name::<CommitPermit<'static>>();
+    let _ = commit_transition::<outbe_primitives::storage::MetadosisCycleLifecycle, ()>;
 }

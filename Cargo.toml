@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "xtask",
-    "crates/poseidon",
     # blockchain
     "crates/blockchain/macros",
     "crates/blockchain/constants",
@@ -73,6 +72,7 @@ members = [
     "testing/e2e-harness",
     "testing/lysis-v1-reference",
     "testing/protocol-benchmarks",
+    "crates/zk/poseidon",
     "crates/zk/outbe-zk",
     "crates/zk/outbe-zk-backend",
 ]
@@ -262,7 +262,7 @@ num-bigint = "0.4"
 num-traits = "0.2"
 
 # ZK / Poseidon
-outbe-poseidon = { path = "crates/poseidon" }
+outbe-poseidon = { path = "crates/zk/poseidon" }
 outbe-zk = { path = "crates/zk/outbe-zk", features = ["alloy"] }
 outbe-zk-backend = { path = "crates/zk/outbe-zk-backend" }
 ark-bn254 = "0.6"
@@ -340,4 +340,4 @@ debug = 0
 opt-level = 3
 [patch.crates-io]
 alloy-evm = { path = "vendor/alloy-evm" }
-outbe-poseidon = { path = "crates/poseidon" }
+outbe-poseidon = { path = "crates/zk/poseidon" }

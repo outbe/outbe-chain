@@ -1000,408 +1000,6 @@
         }
       ]
     },
-    "gem/create/cca/single": {
-      "metadata": {
-        "id": "gem/create/cca/single",
-        "display_name": "Gem cca creation",
-        "execution_class": "internal_transition",
-        "profile": "single",
-        "crypto_mode": "none",
-        "execution_layer": "marginal",
-        "fidelity": "full"
-      },
-      "gas_totals": {
-        "system_internal": 249956
-      },
-      "gas_components": [
-        {
-          "ledger": "system_internal",
-          "key": "storage.gem.read",
-          "gas": 2100,
-          "operations": 21,
-          "module": "gem"
-        },
-        {
-          "ledger": "system_internal",
-          "key": "storage.gem.write",
-          "gas": 95000,
-          "operations": 19,
-          "module": "gem"
-        },
-        {
-          "ledger": "system_internal",
-          "key": "storage.gem_factory.read",
-          "gas": 100,
-          "operations": 1,
-          "module": "gem_factory"
-        },
-        {
-          "ledger": "system_internal",
-          "key": "storage.gem_factory.write",
-          "gas": 5000,
-          "operations": 1,
-          "module": "gem_factory"
-        },
-        {
-          "ledger": "system_internal",
-          "key": "storage.oracle.read",
-          "gas": 300,
-          "operations": 3,
-          "module": "oracle"
-        },
-        {
-          "ledger": "system_internal",
-          "key": "runtime.gem_factory.explicit",
-          "gas": 147456,
-          "operations": 1,
-          "module": "gem_factory"
-        }
-      ],
-      "storage": [
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x0",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x0",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x22",
-          "operation": "read",
-          "count": 2,
-          "gas": 200
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x2d0eb56e1303fd5c2024b1f4b231ede90d2a3aa928b72c48ddeb2b801ee7caaf",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x2d0eb56e1303fd5c2024b1f4b231ede90d2a3aa928b72c48ddeb2b801ee7caaf",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x365cfe6fbb7392298ce4f6ccd8eb203c78021a1d4fc36676a39fc0da4287517c",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x365cfe6fbb7392298ce4f6ccd8eb203c78021a1d4fc36676a39fc0da4287517c",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x379766e44a841841b83b6deebbf093fbd091ca2ed962f8b30386929f20972b20",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x3ab9c7f5092783b6a47476f22999e592448369b437a4f693fcb51388d2788baf",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x48fc9b73faf0df6aac98a78313eab6b54a443ecd8495c2aa87aa93604abcdd8c",
-          "operation": "read",
-          "count": 2,
-          "gas": 200
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x48fc9b73faf0df6aac98a78313eab6b54a443ecd8495c2aa87aa93604abcdd8c",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x4d8ebfa8320a64e2d41cafbfcf56ab25f6332476ada364cc284d8ade62d28176",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x4d8ebfa8320a64e2d41cafbfcf56ab25f6332476ada364cc284d8ade62d28176",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x53da44f0ed10e2a6c108d4287fe06b3fd845e63f83b644501a4eb54887f61dc2",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x53da44f0ed10e2a6c108d4287fe06b3fd845e63f83b644501a4eb54887f61dc2",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x5fd4265c2f084a5f7d5651673a765235b99cc509a30909a1d568c6711f5f12ae",
-          "operation": "read",
-          "count": 2,
-          "gas": 200
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x5fd4265c2f084a5f7d5651673a765235b99cc509a30909a1d568c6711f5f12ae",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x78244ef01eb957ac049c39ca1949f5b7846fea1905b85ef0d54a379f9ce2d130",
-          "operation": "read",
-          "count": 2,
-          "gas": 200
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x78244ef01eb957ac049c39ca1949f5b7846fea1905b85ef0d54a379f9ce2d130",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x8769389804ac6f1401d026e9bbdab8c8e6d491d902b26552d689791b1e7a314b",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x8a183ff578ae37b3fd0b8e5775c7884f7bb5e9dbab39ae40886d74687b0e2c01",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x8a183ff578ae37b3fd0b8e5775c7884f7bb5e9dbab39ae40886d74687b0e2c01",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x8e6769c54877342e6fd693bcb5a3b883c4937234269d99517eb57770e79f74cd",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xac13bfecbcadcc7ad3e3b77f2f885a03578a1b0fe074b3d02dbc03e5b64a6729",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xac13bfecbcadcc7ad3e3b77f2f885a03578a1b0fe074b3d02dbc03e5b64a6729",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xd222e1ad153836edca6b01122611e5cf9bcaaf52a3e276d333c5e856f4c7b99a",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xd222e1ad153836edca6b01122611e5cf9bcaaf52a3e276d333c5e856f4c7b99a",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xe400e775d5cc713d8c43378c62dd2a5138ff8e9a2eacb933c8755e36647b71a9",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xe400e775d5cc713d8c43378c62dd2a5138ff8e9a2eacb933c8755e36647b71a9",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xe40793d06bd248f6bdd1acc6f40c29690c77c0aa5f68b639d7aa578b1beecfa8",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xe40793d06bd248f6bdd1acc6f40c29690c77c0aa5f68b639d7aa578b1beecfa8",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xe56defb75250b5cf8a5d062357700b82f98574462ecb80b3d0ffea4bdcdfd3",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xe56defb75250b5cf8a5d062357700b82f98574462ecb80b3d0ffea4bdcdfd3",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xe9225f3a7a3ddf0e9eeddf9fa14f9b1d4600556d7290d460eb10dd8e36aebcb6",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xf835c045bf0769aef328524d699b2f0814a9f86c3fa843233e9d6adfc21e8f2e",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xf835c045bf0769aef328524d699b2f0814a9f86c3fa843233e9d6adfc21e8f2e",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem_factory",
-          "address": "0x0000000000000000000000000000000000002013",
-          "slot": "0x0",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem_factory",
-          "address": "0x0000000000000000000000000000000000002013",
-          "slot": "0x0",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "oracle",
-          "address": "0x000000000000000000000000000000000000ee05",
-          "slot": "0x37",
-          "operation": "read",
-          "count": 2,
-          "gas": 200
-        },
-        {
-          "module": "oracle",
-          "address": "0x000000000000000000000000000000000000ee05",
-          "slot": "0x42a7b7dd785cd69714a189dffb3fd7d7174edc9ece837694ce50f7078f7c31ae",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        }
-      ],
-      "events": [
-        {
-          "emitter": "0x0000000000000000000000000000000000001013",
-          "event": "0x376cf4ca8a29a70657cc634ca456bcf211bc468edcf41e0b9f0896da86f1e82a",
-          "count": 1
-        },
-        {
-          "emitter": "0x0000000000000000000000000000000000001013",
-          "event": "0x6bd31378b963a58529e45af3de7b52733b2b145bfcd1cdce61ea7ec88ef8d350",
-          "count": 1
-        },
-        {
-          "emitter": "0x0000000000000000000000000000000000001013",
-          "event": "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
-          "count": 1
-        },
-        {
-          "emitter": "0x0000000000000000000000000000000000002013",
-          "event": "0xc77e85b83903a4db23535ac5e1f1c81f12d0bc013a630ebb591a701e772c7cbb",
-          "count": 1
-        }
-      ]
-    },
     "gem/create/merchant/single": {
       "metadata": {
         "id": "gem/create/merchant/single",
@@ -1413,35 +1011,35 @@
         "fidelity": "full"
       },
       "gas_totals": {
-        "system_internal": 295956
+        "system_internal": 225500
       },
       "gas_components": [
         {
           "ledger": "system_internal",
           "key": "storage.gem.read",
-          "gas": 2100,
-          "operations": 21,
+          "gas": 4200,
+          "operations": 42,
           "module": "gem"
         },
         {
           "ledger": "system_internal",
           "key": "storage.gem.write",
-          "gas": 95000,
-          "operations": 19,
+          "gas": 175000,
+          "operations": 35,
           "module": "gem"
         },
         {
           "ledger": "system_internal",
           "key": "storage.gem_factory.read",
-          "gas": 1200,
-          "operations": 12,
+          "gas": 1100,
+          "operations": 11,
           "module": "gem_factory"
         },
         {
           "ledger": "system_internal",
           "key": "storage.gem_factory.write",
-          "gas": 50000,
-          "operations": 10,
+          "gas": 45000,
+          "operations": 9,
           "module": "gem_factory"
         },
         {
@@ -1450,13 +1048,6 @@
           "gas": 200,
           "operations": 2,
           "module": "oracle"
-        },
-        {
-          "ledger": "system_internal",
-          "key": "runtime.gem_factory.explicit",
-          "gas": 147456,
-          "operations": 1,
-          "module": "gem_factory"
         }
       ],
       "storage": [
@@ -1479,15 +1070,7 @@
         {
           "module": "gem",
           "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x22",
-          "operation": "read",
-          "count": 2,
-          "gas": 200
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x2d0eb56e1303fd5c2024b1f4b231ede90d2a3aa928b72c48ddeb2b801ee7caaf",
+          "slot": "0x1035b0596a38fb6a5c64fd471ae980071d4bac51ebc7333de382a73cffd87586",
           "operation": "read",
           "count": 1,
           "gas": 100
@@ -1495,7 +1078,7 @@
         {
           "module": "gem",
           "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x2d0eb56e1303fd5c2024b1f4b231ede90d2a3aa928b72c48ddeb2b801ee7caaf",
+          "slot": "0x1035b0596a38fb6a5c64fd471ae980071d4bac51ebc7333de382a73cffd87586",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -1503,7 +1086,7 @@
         {
           "module": "gem",
           "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x365cfe6fbb7392298ce4f6ccd8eb203c78021a1d4fc36676a39fc0da4287517c",
+          "slot": "0x10366a08d5fbc3b69ed00615ac72c7d0a262718940f62d7b7a2a5867a2231fac",
           "operation": "read",
           "count": 1,
           "gas": 100
@@ -1511,7 +1094,63 @@
         {
           "module": "gem",
           "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x365cfe6fbb7392298ce4f6ccd8eb203c78021a1d4fc36676a39fc0da4287517c",
+          "slot": "0x10366a08d5fbc3b69ed00615ac72c7d0a262718940f62d7b7a2a5867a2231fac",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0x166c0057c840954571f69d6f46dc6e4a6fb409eef54c4f4f87e39340b98722c3",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0x166c0057c840954571f69d6f46dc6e4a6fb409eef54c4f4f87e39340b98722c3",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0x1b767c68b714dd3c42d65f02d468a60878687eb5482a62dad9a9f15d9b4005c8",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0x1b767c68b714dd3c42d65f02d468a60878687eb5482a62dad9a9f15d9b4005c8",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0x21",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0x2d0eb56e1303fd5c2024b1f4b231ede90d2a3aa928b72c48ddeb2b801ee7caaf",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0x2d0eb56e1303fd5c2024b1f4b231ede90d2a3aa928b72c48ddeb2b801ee7caaf",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -1567,7 +1206,7 @@
         {
           "module": "gem",
           "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x53da44f0ed10e2a6c108d4287fe06b3fd845e63f83b644501a4eb54887f61dc2",
+          "slot": "0x50c7fd3ecca34af16dfb7616b8e9f2d4d901b18a07ce0cd406ed3978b9a5ee06",
           "operation": "read",
           "count": 1,
           "gas": 100
@@ -1575,7 +1214,39 @@
         {
           "module": "gem",
           "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x53da44f0ed10e2a6c108d4287fe06b3fd845e63f83b644501a4eb54887f61dc2",
+          "slot": "0x50c7fd3ecca34af16dfb7616b8e9f2d4d901b18a07ce0cd406ed3978b9a5ee06",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0x56ff4c9456cea129ee975ad7dfed61f45e99717b4279c18f40ca8d737695485d",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0x56ff4c9456cea129ee975ad7dfed61f45e99717b4279c18f40ca8d737695485d",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0x5dd5e7635663f741898088110d7ad575d83a5237add8f9c329c1847972ab542f",
+          "operation": "read",
+          "count": 4,
+          "gas": 400
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0x5dd5e7635663f741898088110d7ad575d83a5237add8f9c329c1847972ab542f",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -1623,7 +1294,7 @@
         {
           "module": "gem",
           "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x8769389804ac6f1401d026e9bbdab8c8e6d491d902b26552d689791b1e7a314b",
+          "slot": "0x8577dee161769504fb965c1c2a22bd17df342da140090fdc159f7ddb4b8c8390",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -1631,15 +1302,15 @@
         {
           "module": "gem",
           "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x8a183ff578ae37b3fd0b8e5775c7884f7bb5e9dbab39ae40886d74687b0e2c01",
+          "slot": "0x876203dc7534524b231cf1b95ae70af2985a3810d35ccf79b6c2446f4b34e7e9",
           "operation": "read",
-          "count": 1,
-          "gas": 100
+          "count": 2,
+          "gas": 200
         },
         {
           "module": "gem",
           "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x8a183ff578ae37b3fd0b8e5775c7884f7bb5e9dbab39ae40886d74687b0e2c01",
+          "slot": "0x876203dc7534524b231cf1b95ae70af2985a3810d35ccf79b6c2446f4b34e7e9",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -1655,7 +1326,7 @@
         {
           "module": "gem",
           "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xac13bfecbcadcc7ad3e3b77f2f885a03578a1b0fe074b3d02dbc03e5b64a6729",
+          "slot": "0x905788409303383993479dd14e0a2743ded6197324aa56702fc54aa9083e49d",
           "operation": "read",
           "count": 1,
           "gas": 100
@@ -1663,7 +1334,143 @@
         {
           "module": "gem",
           "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xac13bfecbcadcc7ad3e3b77f2f885a03578a1b0fe074b3d02dbc03e5b64a6729",
+          "slot": "0x905788409303383993479dd14e0a2743ded6197324aa56702fc54aa9083e49d",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0x97972469b554a6baa2457c9e69be98a752cfbe7f68f8e6b4a604c0971a8a80e0",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xa22117a4690ee5e862d5a1e05cc1aa39eb489a8ed55134fa88b0db8ce13e43c1",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xa22117a4690ee5e862d5a1e05cc1aa39eb489a8ed55134fa88b0db8ce13e43c1",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xa3983f86946a4a9314b17b64dff347bd432b14a273e8f14fff84750b136095ae",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xa3983f86946a4a9314b17b64dff347bd432b14a273e8f14fff84750b136095ae",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xa415f558f51412b712993708f5ebbb732beb3ff9162894c528c8dfdb76dc62d6",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xa415f558f51412b712993708f5ebbb732beb3ff9162894c528c8dfdb76dc62d6",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xa8f8720371ea65d58d1ecaccb921e83ba81f2fb401760c74560a92219a5f77b6",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xa8f8720371ea65d58d1ecaccb921e83ba81f2fb401760c74560a92219a5f77b6",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xb4727412f813f2fa78412a664fd8cb8f49a22b103218ae03acaa493564bddf9b",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xb4727412f813f2fa78412a664fd8cb8f49a22b103218ae03acaa493564bddf9b",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xb9e1416591ba34a058bfee107f7a626c0f5f75c7a50da829a234af86461df51c",
+          "operation": "read",
+          "count": 4,
+          "gas": 400
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xb9e1416591ba34a058bfee107f7a626c0f5f75c7a50da829a234af86461df51c",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xcb54c941d3f8949f13519a41cdfe477207ebcceedcce1b69f5afe55a5bbc01a8",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xcb54c941d3f8949f13519a41cdfe477207ebcceedcce1b69f5afe55a5bbc01a8",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xd1de0cae21d7a6df90c5529abfa3e7d4799e2168b7177cc472dff70b4df07bf6",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xd1de0cae21d7a6df90c5529abfa3e7d4799e2168b7177cc472dff70b4df07bf6",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -1687,7 +1494,7 @@
         {
           "module": "gem",
           "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xe400e775d5cc713d8c43378c62dd2a5138ff8e9a2eacb933c8755e36647b71a9",
+          "slot": "0xd9a1d9ab15b70961f46455cb37c444b5a6e4eca85f20d640440d167d7bd95b61",
           "operation": "read",
           "count": 1,
           "gas": 100
@@ -1695,7 +1502,7 @@
         {
           "module": "gem",
           "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xe400e775d5cc713d8c43378c62dd2a5138ff8e9a2eacb933c8755e36647b71a9",
+          "slot": "0xd9a1d9ab15b70961f46455cb37c444b5a6e4eca85f20d640440d167d7bd95b61",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -1735,7 +1542,7 @@
         {
           "module": "gem",
           "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xf835c045bf0769aef328524d699b2f0814a9f86c3fa843233e9d6adfc21e8f2e",
+          "slot": "0xed55d9db0cf6c806027b2c12907ec9159cbb80906afaf1fecf4f02d95188a92e",
           "operation": "read",
           "count": 1,
           "gas": 100
@@ -1743,7 +1550,39 @@
         {
           "module": "gem",
           "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xf835c045bf0769aef328524d699b2f0814a9f86c3fa843233e9d6adfc21e8f2e",
+          "slot": "0xed55d9db0cf6c806027b2c12907ec9159cbb80906afaf1fecf4f02d95188a92e",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xf0ae211d01a06e1b963fd6bfdf73f366c946d6071f7d4e2fc7cda2c1e2a6486",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xf0ae211d01a06e1b963fd6bfdf73f366c946d6071f7d4e2fc7cda2c1e2a6486",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xf31391a4113d2958eb2883d5e43172a2a84b4611f4640e724219d640adab032e",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xf31391a4113d2958eb2883d5e43172a2a84b4611f4640e724219d640adab032e",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -1879,22 +1718,6 @@
         {
           "module": "gem_factory",
           "address": "0x0000000000000000000000000000000000002013",
-          "slot": "0xe28a6ba9c959f5970cb1cb458294f7a16111f2fa6cb9dc4479e7eca64ed3a304",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem_factory",
-          "address": "0x0000000000000000000000000000000000002013",
-          "slot": "0xe28a6ba9c959f5970cb1cb458294f7a16111f2fa6cb9dc4479e7eca64ed3a304",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem_factory",
-          "address": "0x0000000000000000000000000000000000002013",
           "slot": "0xfa03b560a7e64076e8bd5a171b228c80cfa9c0ef2f1214b966aad12a54be3eec",
           "operation": "read",
           "count": 1,
@@ -1928,30 +1751,20 @@
       "events": [
         {
           "emitter": "0x0000000000000000000000000000000000001013",
-          "event": "0x376cf4ca8a29a70657cc634ca456bcf211bc468edcf41e0b9f0896da86f1e82a",
-          "count": 1
-        },
-        {
-          "emitter": "0x0000000000000000000000000000000000001013",
-          "event": "0x6bd31378b963a58529e45af3de7b52733b2b145bfcd1cdce61ea7ec88ef8d350",
-          "count": 1
-        },
-        {
-          "emitter": "0x0000000000000000000000000000000000001013",
           "event": "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
           "count": 1
         },
         {
           "emitter": "0x0000000000000000000000000000000000002013",
-          "event": "0xc77e85b83903a4db23535ac5e1f1c81f12d0bc013a630ebb591a701e772c7cbb",
+          "event": "0x80998310fe797b53875bb3ed7c913f37fe11321597a8cae5793834a751c2e9be",
           "count": 1
         }
       ]
     },
-    "gem/create/sra/single": {
+    "gem/create/reward/single": {
       "metadata": {
-        "id": "gem/create/sra/single",
-        "display_name": "Gem sra creation",
+        "id": "gem/create/reward/single",
+        "display_name": "Reward Gem creation",
         "execution_class": "internal_transition",
         "profile": "single",
         "crypto_mode": "none",
@@ -1959,21 +1772,21 @@
         "fidelity": "full"
       },
       "gas_totals": {
-        "system_internal": 249956
+        "system_internal": 184600
       },
       "gas_components": [
         {
           "ledger": "system_internal",
           "key": "storage.gem.read",
-          "gas": 2100,
-          "operations": 21,
+          "gas": 4200,
+          "operations": 42,
           "module": "gem"
         },
         {
           "ledger": "system_internal",
           "key": "storage.gem.write",
-          "gas": 95000,
-          "operations": 19,
+          "gas": 175000,
+          "operations": 35,
           "module": "gem"
         },
         {
@@ -1996,13 +1809,6 @@
           "gas": 300,
           "operations": 3,
           "module": "oracle"
-        },
-        {
-          "ledger": "system_internal",
-          "key": "runtime.gem_factory.explicit",
-          "gas": 147456,
-          "operations": 1,
-          "module": "gem_factory"
         }
       ],
       "storage": [
@@ -2025,15 +1831,7 @@
         {
           "module": "gem",
           "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x22",
-          "operation": "read",
-          "count": 2,
-          "gas": 200
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x2d0eb56e1303fd5c2024b1f4b231ede90d2a3aa928b72c48ddeb2b801ee7caaf",
+          "slot": "0x1035b0596a38fb6a5c64fd471ae980071d4bac51ebc7333de382a73cffd87586",
           "operation": "read",
           "count": 1,
           "gas": 100
@@ -2041,7 +1839,7 @@
         {
           "module": "gem",
           "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x2d0eb56e1303fd5c2024b1f4b231ede90d2a3aa928b72c48ddeb2b801ee7caaf",
+          "slot": "0x1035b0596a38fb6a5c64fd471ae980071d4bac51ebc7333de382a73cffd87586",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -2049,7 +1847,7 @@
         {
           "module": "gem",
           "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x365cfe6fbb7392298ce4f6ccd8eb203c78021a1d4fc36676a39fc0da4287517c",
+          "slot": "0x10366a08d5fbc3b69ed00615ac72c7d0a262718940f62d7b7a2a5867a2231fac",
           "operation": "read",
           "count": 1,
           "gas": 100
@@ -2057,7 +1855,79 @@
         {
           "module": "gem",
           "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x365cfe6fbb7392298ce4f6ccd8eb203c78021a1d4fc36676a39fc0da4287517c",
+          "slot": "0x10366a08d5fbc3b69ed00615ac72c7d0a262718940f62d7b7a2a5867a2231fac",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0x1139ee69011455ff04ea9a19c8fc43c7bb7d1f454a97ca6a45c2de083691eb33",
+          "operation": "read",
+          "count": 4,
+          "gas": 400
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0x1139ee69011455ff04ea9a19c8fc43c7bb7d1f454a97ca6a45c2de083691eb33",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0x166c0057c840954571f69d6f46dc6e4a6fb409eef54c4f4f87e39340b98722c3",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0x166c0057c840954571f69d6f46dc6e4a6fb409eef54c4f4f87e39340b98722c3",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0x1b767c68b714dd3c42d65f02d468a60878687eb5482a62dad9a9f15d9b4005c8",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0x1b767c68b714dd3c42d65f02d468a60878687eb5482a62dad9a9f15d9b4005c8",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0x21",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0x2d0eb56e1303fd5c2024b1f4b231ede90d2a3aa928b72c48ddeb2b801ee7caaf",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0x2d0eb56e1303fd5c2024b1f4b231ede90d2a3aa928b72c48ddeb2b801ee7caaf",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -2081,6 +1951,22 @@
         {
           "module": "gem",
           "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0x3b3253c57472b90edc95405a8c86410d5af3517a8538b8c2c8281b099d5c1852",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0x3b3253c57472b90edc95405a8c86410d5af3517a8538b8c2c8281b099d5c1852",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
           "slot": "0x48fc9b73faf0df6aac98a78313eab6b54a443ecd8495c2aa87aa93604abcdd8c",
           "operation": "read",
           "count": 2,
@@ -2090,6 +1976,22 @@
           "module": "gem",
           "address": "0x0000000000000000000000000000000000001013",
           "slot": "0x48fc9b73faf0df6aac98a78313eab6b54a443ecd8495c2aa87aa93604abcdd8c",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0x4b14db3400014c788d98ba1e19ffc54cf7ced91ee7888012ec95ff3d1edcdfd6",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0x4b14db3400014c788d98ba1e19ffc54cf7ced91ee7888012ec95ff3d1edcdfd6",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -2113,22 +2015,6 @@
         {
           "module": "gem",
           "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x53da44f0ed10e2a6c108d4287fe06b3fd845e63f83b644501a4eb54887f61dc2",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x53da44f0ed10e2a6c108d4287fe06b3fd845e63f83b644501a4eb54887f61dc2",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
           "slot": "0x5fd4265c2f084a5f7d5651673a765235b99cc509a30909a1d568c6711f5f12ae",
           "operation": "read",
           "count": 2,
@@ -2138,6 +2024,38 @@
           "module": "gem",
           "address": "0x0000000000000000000000000000000000001013",
           "slot": "0x5fd4265c2f084a5f7d5651673a765235b99cc509a30909a1d568c6711f5f12ae",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0x5fe59257273f5e4ad74d4fe4b4d8cdb6027534e492c426af4804feb75c05f5e8",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0x5fe59257273f5e4ad74d4fe4b4d8cdb6027534e492c426af4804feb75c05f5e8",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0x736a6b8846adf7c3f6883af8353a408cee91cc58c0731f3490c7da81056392de",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0x736a6b8846adf7c3f6883af8353a408cee91cc58c0731f3490c7da81056392de",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -2161,7 +2079,7 @@
         {
           "module": "gem",
           "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x8769389804ac6f1401d026e9bbdab8c8e6d491d902b26552d689791b1e7a314b",
+          "slot": "0x8577dee161769504fb965c1c2a22bd17df342da140090fdc159f7ddb4b8c8390",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -2169,15 +2087,15 @@
         {
           "module": "gem",
           "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x8a183ff578ae37b3fd0b8e5775c7884f7bb5e9dbab39ae40886d74687b0e2c01",
+          "slot": "0x8949b8133c860996fffe4ba888a9a71dc23bef6aa2426c253e76df9400fea641",
           "operation": "read",
-          "count": 1,
-          "gas": 100
+          "count": 2,
+          "gas": 200
         },
         {
           "module": "gem",
           "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x8a183ff578ae37b3fd0b8e5775c7884f7bb5e9dbab39ae40886d74687b0e2c01",
+          "slot": "0x8949b8133c860996fffe4ba888a9a71dc23bef6aa2426c253e76df9400fea641",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -2193,7 +2111,7 @@
         {
           "module": "gem",
           "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xac13bfecbcadcc7ad3e3b77f2f885a03578a1b0fe074b3d02dbc03e5b64a6729",
+          "slot": "0x905788409303383993479dd14e0a2743ded6197324aa56702fc54aa9083e49d",
           "operation": "read",
           "count": 1,
           "gas": 100
@@ -2201,7 +2119,71 @@
         {
           "module": "gem",
           "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xac13bfecbcadcc7ad3e3b77f2f885a03578a1b0fe074b3d02dbc03e5b64a6729",
+          "slot": "0x905788409303383993479dd14e0a2743ded6197324aa56702fc54aa9083e49d",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xa7677c9490ad11ea2f104b3519a2439b22646daca3725cae574721f13172a498",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xa7677c9490ad11ea2f104b3519a2439b22646daca3725cae574721f13172a498",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xa8f8720371ea65d58d1ecaccb921e83ba81f2fb401760c74560a92219a5f77b6",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xa8f8720371ea65d58d1ecaccb921e83ba81f2fb401760c74560a92219a5f77b6",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xb9e1416591ba34a058bfee107f7a626c0f5f75c7a50da829a234af86461df51c",
+          "operation": "read",
+          "count": 4,
+          "gas": 400
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xb9e1416591ba34a058bfee107f7a626c0f5f75c7a50da829a234af86461df51c",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xbecd6a173bab0a7c159d8fd95475c30223ac7f2f2c8ee03752bd4a647849e492",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xbecd6a173bab0a7c159d8fd95475c30223ac7f2f2c8ee03752bd4a647849e492",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -2225,7 +2207,7 @@
         {
           "module": "gem",
           "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xe400e775d5cc713d8c43378c62dd2a5138ff8e9a2eacb933c8755e36647b71a9",
+          "slot": "0xd663d278fcb215fae23ec9d042a062eedd8fb6e18b923a17aa9fdb2802b2f26b",
           "operation": "read",
           "count": 1,
           "gas": 100
@@ -2233,7 +2215,31 @@
         {
           "module": "gem",
           "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xe400e775d5cc713d8c43378c62dd2a5138ff8e9a2eacb933c8755e36647b71a9",
+          "slot": "0xd663d278fcb215fae23ec9d042a062eedd8fb6e18b923a17aa9fdb2802b2f26b",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xdc773d1746534c70849f07aab6319912add9eb3b7e0dc6f91c43b6027dcd2787",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xdc773d1746534c70849f07aab6319912add9eb3b7e0dc6f91c43b6027dcd2787",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xdd4352f94ae03ff4a184ada445de2286e1361d50a8d41e74f35e0858f5fcd79b",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -2281,7 +2287,7 @@
         {
           "module": "gem",
           "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xf835c045bf0769aef328524d699b2f0814a9f86c3fa843233e9d6adfc21e8f2e",
+          "slot": "0xed55d9db0cf6c806027b2c12907ec9159cbb80906afaf1fecf4f02d95188a92e",
           "operation": "read",
           "count": 1,
           "gas": 100
@@ -2289,7 +2295,55 @@
         {
           "module": "gem",
           "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xf835c045bf0769aef328524d699b2f0814a9f86c3fa843233e9d6adfc21e8f2e",
+          "slot": "0xed55d9db0cf6c806027b2c12907ec9159cbb80906afaf1fecf4f02d95188a92e",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xef8e7131552a1c2baaf1705601fc452109ffe5b41c54837fceca19687a31ad0d",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xef8e7131552a1c2baaf1705601fc452109ffe5b41c54837fceca19687a31ad0d",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xf0ae211d01a06e1b963fd6bfdf73f366c946d6071f7d4e2fc7cda2c1e2a6486",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xf0ae211d01a06e1b963fd6bfdf73f366c946d6071f7d4e2fc7cda2c1e2a6486",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xf31391a4113d2958eb2883d5e43172a2a84b4611f4640e724219d640adab032e",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "gem",
+          "address": "0x0000000000000000000000000000000000001013",
+          "slot": "0xf31391a4113d2958eb2883d5e43172a2a84b4611f4640e724219d640adab032e",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -2330,826 +2384,12 @@
       "events": [
         {
           "emitter": "0x0000000000000000000000000000000000001013",
-          "event": "0x376cf4ca8a29a70657cc634ca456bcf211bc468edcf41e0b9f0896da86f1e82a",
-          "count": 1
-        },
-        {
-          "emitter": "0x0000000000000000000000000000000000001013",
-          "event": "0x6bd31378b963a58529e45af3de7b52733b2b145bfcd1cdce61ea7ec88ef8d350",
-          "count": 1
-        },
-        {
-          "emitter": "0x0000000000000000000000000000000000001013",
           "event": "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
           "count": 1
         },
         {
           "emitter": "0x0000000000000000000000000000000000002013",
-          "event": "0xc77e85b83903a4db23535ac5e1f1c81f12d0bc013a630ebb591a701e772c7cbb",
-          "count": 1
-        }
-      ]
-    },
-    "gem/create/validator/single": {
-      "metadata": {
-        "id": "gem/create/validator/single",
-        "display_name": "Gem validator creation",
-        "execution_class": "internal_transition",
-        "profile": "single",
-        "crypto_mode": "none",
-        "execution_layer": "marginal",
-        "fidelity": "full"
-      },
-      "gas_totals": {
-        "system_internal": 249956
-      },
-      "gas_components": [
-        {
-          "ledger": "system_internal",
-          "key": "storage.gem.read",
-          "gas": 2100,
-          "operations": 21,
-          "module": "gem"
-        },
-        {
-          "ledger": "system_internal",
-          "key": "storage.gem.write",
-          "gas": 95000,
-          "operations": 19,
-          "module": "gem"
-        },
-        {
-          "ledger": "system_internal",
-          "key": "storage.gem_factory.read",
-          "gas": 100,
-          "operations": 1,
-          "module": "gem_factory"
-        },
-        {
-          "ledger": "system_internal",
-          "key": "storage.gem_factory.write",
-          "gas": 5000,
-          "operations": 1,
-          "module": "gem_factory"
-        },
-        {
-          "ledger": "system_internal",
-          "key": "storage.oracle.read",
-          "gas": 300,
-          "operations": 3,
-          "module": "oracle"
-        },
-        {
-          "ledger": "system_internal",
-          "key": "runtime.gem_factory.explicit",
-          "gas": 147456,
-          "operations": 1,
-          "module": "gem_factory"
-        }
-      ],
-      "storage": [
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x0",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x0",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x22",
-          "operation": "read",
-          "count": 2,
-          "gas": 200
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x2d0eb56e1303fd5c2024b1f4b231ede90d2a3aa928b72c48ddeb2b801ee7caaf",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x2d0eb56e1303fd5c2024b1f4b231ede90d2a3aa928b72c48ddeb2b801ee7caaf",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x365cfe6fbb7392298ce4f6ccd8eb203c78021a1d4fc36676a39fc0da4287517c",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x365cfe6fbb7392298ce4f6ccd8eb203c78021a1d4fc36676a39fc0da4287517c",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x379766e44a841841b83b6deebbf093fbd091ca2ed962f8b30386929f20972b20",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x3ab9c7f5092783b6a47476f22999e592448369b437a4f693fcb51388d2788baf",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x48fc9b73faf0df6aac98a78313eab6b54a443ecd8495c2aa87aa93604abcdd8c",
-          "operation": "read",
-          "count": 2,
-          "gas": 200
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x48fc9b73faf0df6aac98a78313eab6b54a443ecd8495c2aa87aa93604abcdd8c",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x4d8ebfa8320a64e2d41cafbfcf56ab25f6332476ada364cc284d8ade62d28176",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x4d8ebfa8320a64e2d41cafbfcf56ab25f6332476ada364cc284d8ade62d28176",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x53da44f0ed10e2a6c108d4287fe06b3fd845e63f83b644501a4eb54887f61dc2",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x53da44f0ed10e2a6c108d4287fe06b3fd845e63f83b644501a4eb54887f61dc2",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x5fd4265c2f084a5f7d5651673a765235b99cc509a30909a1d568c6711f5f12ae",
-          "operation": "read",
-          "count": 2,
-          "gas": 200
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x5fd4265c2f084a5f7d5651673a765235b99cc509a30909a1d568c6711f5f12ae",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x78244ef01eb957ac049c39ca1949f5b7846fea1905b85ef0d54a379f9ce2d130",
-          "operation": "read",
-          "count": 2,
-          "gas": 200
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x78244ef01eb957ac049c39ca1949f5b7846fea1905b85ef0d54a379f9ce2d130",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x8769389804ac6f1401d026e9bbdab8c8e6d491d902b26552d689791b1e7a314b",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x8a183ff578ae37b3fd0b8e5775c7884f7bb5e9dbab39ae40886d74687b0e2c01",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x8a183ff578ae37b3fd0b8e5775c7884f7bb5e9dbab39ae40886d74687b0e2c01",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x8e6769c54877342e6fd693bcb5a3b883c4937234269d99517eb57770e79f74cd",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xac13bfecbcadcc7ad3e3b77f2f885a03578a1b0fe074b3d02dbc03e5b64a6729",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xac13bfecbcadcc7ad3e3b77f2f885a03578a1b0fe074b3d02dbc03e5b64a6729",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xd222e1ad153836edca6b01122611e5cf9bcaaf52a3e276d333c5e856f4c7b99a",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xd222e1ad153836edca6b01122611e5cf9bcaaf52a3e276d333c5e856f4c7b99a",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xe400e775d5cc713d8c43378c62dd2a5138ff8e9a2eacb933c8755e36647b71a9",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xe400e775d5cc713d8c43378c62dd2a5138ff8e9a2eacb933c8755e36647b71a9",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xe40793d06bd248f6bdd1acc6f40c29690c77c0aa5f68b639d7aa578b1beecfa8",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xe40793d06bd248f6bdd1acc6f40c29690c77c0aa5f68b639d7aa578b1beecfa8",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xe56defb75250b5cf8a5d062357700b82f98574462ecb80b3d0ffea4bdcdfd3",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xe56defb75250b5cf8a5d062357700b82f98574462ecb80b3d0ffea4bdcdfd3",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xe9225f3a7a3ddf0e9eeddf9fa14f9b1d4600556d7290d460eb10dd8e36aebcb6",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xf835c045bf0769aef328524d699b2f0814a9f86c3fa843233e9d6adfc21e8f2e",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xf835c045bf0769aef328524d699b2f0814a9f86c3fa843233e9d6adfc21e8f2e",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem_factory",
-          "address": "0x0000000000000000000000000000000000002013",
-          "slot": "0x0",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem_factory",
-          "address": "0x0000000000000000000000000000000000002013",
-          "slot": "0x0",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "oracle",
-          "address": "0x000000000000000000000000000000000000ee05",
-          "slot": "0x37",
-          "operation": "read",
-          "count": 2,
-          "gas": 200
-        },
-        {
-          "module": "oracle",
-          "address": "0x000000000000000000000000000000000000ee05",
-          "slot": "0x42a7b7dd785cd69714a189dffb3fd7d7174edc9ece837694ce50f7078f7c31ae",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        }
-      ],
-      "events": [
-        {
-          "emitter": "0x0000000000000000000000000000000000001013",
-          "event": "0x376cf4ca8a29a70657cc634ca456bcf211bc468edcf41e0b9f0896da86f1e82a",
-          "count": 1
-        },
-        {
-          "emitter": "0x0000000000000000000000000000000000001013",
-          "event": "0x6bd31378b963a58529e45af3de7b52733b2b145bfcd1cdce61ea7ec88ef8d350",
-          "count": 1
-        },
-        {
-          "emitter": "0x0000000000000000000000000000000000001013",
-          "event": "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
-          "count": 1
-        },
-        {
-          "emitter": "0x0000000000000000000000000000000000002013",
-          "event": "0xc77e85b83903a4db23535ac5e1f1c81f12d0bc013a630ebb591a701e772c7cbb",
-          "count": 1
-        }
-      ]
-    },
-    "gem/create/wallet/single": {
-      "metadata": {
-        "id": "gem/create/wallet/single",
-        "display_name": "Gem wallet creation",
-        "execution_class": "internal_transition",
-        "profile": "single",
-        "crypto_mode": "none",
-        "execution_layer": "marginal",
-        "fidelity": "full"
-      },
-      "gas_totals": {
-        "system_internal": 249956
-      },
-      "gas_components": [
-        {
-          "ledger": "system_internal",
-          "key": "storage.gem.read",
-          "gas": 2100,
-          "operations": 21,
-          "module": "gem"
-        },
-        {
-          "ledger": "system_internal",
-          "key": "storage.gem.write",
-          "gas": 95000,
-          "operations": 19,
-          "module": "gem"
-        },
-        {
-          "ledger": "system_internal",
-          "key": "storage.gem_factory.read",
-          "gas": 100,
-          "operations": 1,
-          "module": "gem_factory"
-        },
-        {
-          "ledger": "system_internal",
-          "key": "storage.gem_factory.write",
-          "gas": 5000,
-          "operations": 1,
-          "module": "gem_factory"
-        },
-        {
-          "ledger": "system_internal",
-          "key": "storage.oracle.read",
-          "gas": 300,
-          "operations": 3,
-          "module": "oracle"
-        },
-        {
-          "ledger": "system_internal",
-          "key": "runtime.gem_factory.explicit",
-          "gas": 147456,
-          "operations": 1,
-          "module": "gem_factory"
-        }
-      ],
-      "storage": [
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x0",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x0",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x22",
-          "operation": "read",
-          "count": 2,
-          "gas": 200
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x2d0eb56e1303fd5c2024b1f4b231ede90d2a3aa928b72c48ddeb2b801ee7caaf",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x2d0eb56e1303fd5c2024b1f4b231ede90d2a3aa928b72c48ddeb2b801ee7caaf",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x365cfe6fbb7392298ce4f6ccd8eb203c78021a1d4fc36676a39fc0da4287517c",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x365cfe6fbb7392298ce4f6ccd8eb203c78021a1d4fc36676a39fc0da4287517c",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x379766e44a841841b83b6deebbf093fbd091ca2ed962f8b30386929f20972b20",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x3ab9c7f5092783b6a47476f22999e592448369b437a4f693fcb51388d2788baf",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x48fc9b73faf0df6aac98a78313eab6b54a443ecd8495c2aa87aa93604abcdd8c",
-          "operation": "read",
-          "count": 2,
-          "gas": 200
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x48fc9b73faf0df6aac98a78313eab6b54a443ecd8495c2aa87aa93604abcdd8c",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x4d8ebfa8320a64e2d41cafbfcf56ab25f6332476ada364cc284d8ade62d28176",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x4d8ebfa8320a64e2d41cafbfcf56ab25f6332476ada364cc284d8ade62d28176",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x53da44f0ed10e2a6c108d4287fe06b3fd845e63f83b644501a4eb54887f61dc2",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x53da44f0ed10e2a6c108d4287fe06b3fd845e63f83b644501a4eb54887f61dc2",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x5fd4265c2f084a5f7d5651673a765235b99cc509a30909a1d568c6711f5f12ae",
-          "operation": "read",
-          "count": 2,
-          "gas": 200
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x5fd4265c2f084a5f7d5651673a765235b99cc509a30909a1d568c6711f5f12ae",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x78244ef01eb957ac049c39ca1949f5b7846fea1905b85ef0d54a379f9ce2d130",
-          "operation": "read",
-          "count": 2,
-          "gas": 200
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x78244ef01eb957ac049c39ca1949f5b7846fea1905b85ef0d54a379f9ce2d130",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x8769389804ac6f1401d026e9bbdab8c8e6d491d902b26552d689791b1e7a314b",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x8a183ff578ae37b3fd0b8e5775c7884f7bb5e9dbab39ae40886d74687b0e2c01",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x8a183ff578ae37b3fd0b8e5775c7884f7bb5e9dbab39ae40886d74687b0e2c01",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0x8e6769c54877342e6fd693bcb5a3b883c4937234269d99517eb57770e79f74cd",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xac13bfecbcadcc7ad3e3b77f2f885a03578a1b0fe074b3d02dbc03e5b64a6729",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xac13bfecbcadcc7ad3e3b77f2f885a03578a1b0fe074b3d02dbc03e5b64a6729",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xd222e1ad153836edca6b01122611e5cf9bcaaf52a3e276d333c5e856f4c7b99a",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xd222e1ad153836edca6b01122611e5cf9bcaaf52a3e276d333c5e856f4c7b99a",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xe400e775d5cc713d8c43378c62dd2a5138ff8e9a2eacb933c8755e36647b71a9",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xe400e775d5cc713d8c43378c62dd2a5138ff8e9a2eacb933c8755e36647b71a9",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xe40793d06bd248f6bdd1acc6f40c29690c77c0aa5f68b639d7aa578b1beecfa8",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xe40793d06bd248f6bdd1acc6f40c29690c77c0aa5f68b639d7aa578b1beecfa8",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xe56defb75250b5cf8a5d062357700b82f98574462ecb80b3d0ffea4bdcdfd3",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xe56defb75250b5cf8a5d062357700b82f98574462ecb80b3d0ffea4bdcdfd3",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xe9225f3a7a3ddf0e9eeddf9fa14f9b1d4600556d7290d460eb10dd8e36aebcb6",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xf835c045bf0769aef328524d699b2f0814a9f86c3fa843233e9d6adfc21e8f2e",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem",
-          "address": "0x0000000000000000000000000000000000001013",
-          "slot": "0xf835c045bf0769aef328524d699b2f0814a9f86c3fa843233e9d6adfc21e8f2e",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "gem_factory",
-          "address": "0x0000000000000000000000000000000000002013",
-          "slot": "0x0",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "gem_factory",
-          "address": "0x0000000000000000000000000000000000002013",
-          "slot": "0x0",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "oracle",
-          "address": "0x000000000000000000000000000000000000ee05",
-          "slot": "0x37",
-          "operation": "read",
-          "count": 2,
-          "gas": 200
-        },
-        {
-          "module": "oracle",
-          "address": "0x000000000000000000000000000000000000ee05",
-          "slot": "0x42a7b7dd785cd69714a189dffb3fd7d7174edc9ece837694ce50f7078f7c31ae",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        }
-      ],
-      "events": [
-        {
-          "emitter": "0x0000000000000000000000000000000000001013",
-          "event": "0x376cf4ca8a29a70657cc634ca456bcf211bc468edcf41e0b9f0896da86f1e82a",
-          "count": 1
-        },
-        {
-          "emitter": "0x0000000000000000000000000000000000001013",
-          "event": "0x6bd31378b963a58529e45af3de7b52733b2b145bfcd1cdce61ea7ec88ef8d350",
-          "count": 1
-        },
-        {
-          "emitter": "0x0000000000000000000000000000000000001013",
-          "event": "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
-          "count": 1
-        },
-        {
-          "emitter": "0x0000000000000000000000000000000000002013",
-          "event": "0xc77e85b83903a4db23535ac5e1f1c81f12d0bc013a630ebb591a701e772c7cbb",
+          "event": "0x80998310fe797b53875bb3ed7c913f37fe11321597a8cae5793834a751c2e9be",
           "count": 1
         }
       ]
@@ -8513,76 +7753,6 @@
         "visible.block_gas_limit": "30000000",
         "visible.ce_gas_limit": "0",
         "visible.gas_limit": "21080"
-      }
-    },
-    "system-tx/rewards-gem-delivery/rust-wire/single": {
-      "metadata": {
-        "id": "system-tx/rewards-gem-delivery/rust-wire/single",
-        "display_name": "System tx rewards-gem-delivery (Rust wire/accounting only)",
-        "execution_class": "system_transaction",
-        "profile": "single",
-        "crypto_mode": "none",
-        "execution_layer": "marginal",
-        "fidelity": "partial_stubbed"
-      },
-      "calldata": {
-        "bytes": 5,
-        "zero_bytes": 0,
-        "nonzero_bytes": 5,
-        "transaction_base_gas": 21000,
-        "zero_byte_gas": 0,
-        "nonzero_byte_gas": 80
-      },
-      "gas_totals": {
-        "system_visible": 21080,
-        "system_internal": 0
-      },
-      "gas_components": [
-        {
-          "ledger": "system_visible",
-          "key": "visible.transaction_base",
-          "gas": 21000,
-          "operations": 1
-        },
-        {
-          "ledger": "system_visible",
-          "key": "visible.zero_calldata_bytes",
-          "gas": 0,
-          "operations": 0
-        },
-        {
-          "ledger": "system_visible",
-          "key": "visible.nonzero_calldata_bytes",
-          "gas": 80,
-          "operations": 5
-        },
-        {
-          "ledger": "system_visible",
-          "key": "visible.protocol_precharge",
-          "gas": 0,
-          "operations": 0
-        },
-        {
-          "ledger": "system_internal",
-          "key": "internal.execution_excluded_rust_only",
-          "gas": 0,
-          "operations": 0
-        }
-      ],
-      "child_frames": [
-        {
-          "label": "production system-tx execution",
-          "target": "0xff00000000000000000000000000000000000001",
-          "selector": "0x4f534732",
-          "status": "excluded; TODO outbe-chain-6le.7",
-          "gas_used": 0,
-          "fidelity": "benchmark_stub"
-        }
-      ],
-      "artifacts": {
-        "visible.block_gas_limit": "30000000",
-        "visible.ce_gas_limit": "200000",
-        "visible.gas_limit": "221080"
       }
     },
     "system-tx/tee-bootstrap/rust-wire/single": {

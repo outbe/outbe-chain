@@ -24,8 +24,8 @@ impl AgentRewardContract<'_> {
         currencies: (u16, u16),
     ) -> Result<U256> {
         let pool = RewardPool::from_abi(pool)?;
-        // A zero amount claims the whole pool balance. Empty WAA and SRA pools permit no-op
-        // claims.
+        // A zero amount claims the whole pool balance. Empty WAA, SRA and validator pools
+        // permit no-op claims.
         // CCA claims still require registration history and revert when the balance is zero.
         if pool != RewardPool::Cca
             && amount.is_zero()
@@ -55,6 +55,18 @@ impl AgentRewardContract<'_> {
     #[contract_view]
     fn _abi_get_pool_claimable_balance(&mut self, account: Address, pool: u8) -> Result<U256> {
         self.get_pool_claimable_reward(RewardPool::from_abi(pool)?, account)
+    }
+
+    #[contract_public("getPoolClaimableTotal(uint8) view returns (uint256)")]
+    #[contract_view]
+    fn _abi_get_pool_claimable_total(&mut self, pool: u8) -> Result<U256> {
+        self.pool_claimable_total(RewardPool::from_abi(pool)?)
+    }
+
+    #[contract_public("getPoolPendingTotal(uint8) view returns (uint256)")]
+    #[contract_view]
+    fn _abi_get_pool_pending_total(&mut self, pool: u8) -> Result<U256> {
+        self.pool_pending_total(RewardPool::from_abi(pool)?)
     }
 
     #[contract_public("claimReward(uint8,uint256,uint16,uint16) returns (uint256)")]

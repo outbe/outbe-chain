@@ -109,10 +109,10 @@ contract TargetRouter is
     function parkedProceeds(uint256 idx)
         external
         view
-        returns (uint32 worldwideDay, uint128 amount, bool exists, bool done)
+        returns (uint32 worldwideDay, uint16 chunkIndex, uint128 amount, bool exists, bool done)
     {
         ParkedProceeds storage p = _ts().parkedProceeds[idx];
-        return (p.worldwideDay, p.amount, p.exists, p.done);
+        return (p.worldwideDay, p.chunkIndex, p.amount, p.exists, p.done);
     }
 
     /// @notice How many proceeds routes have ever parked here. `done` in the view tells which are
@@ -392,9 +392,9 @@ contract TargetRouter is
     }
 
     /// @notice Self-call shim around `_doRouteProceeds`. Only callable by this contract itself.
-    function routeProceedsExt(uint32 worldwideDay, uint128 amount) external {
+    function routeProceedsExt(uint32 worldwideDay, uint16 chunkIndex, uint128 amount) external {
         if (msg.sender != address(this)) revert NotSelf();
-        _doRouteProceeds(worldwideDay, amount);
+        _doRouteProceeds(worldwideDay, chunkIndex, amount);
     }
 
     /// @notice Permissionless retry of a previously deferred proceeds route.
@@ -404,24 +404,26 @@ contract TargetRouter is
         if (!p.exists) revert NoSuchParkedProceeds(idx);
         if (p.done) revert AlreadyResolved(idx);
         p.done = true;
-        _doRouteProceeds(p.worldwideDay, p.amount);
+        _doRouteProceeds(p.worldwideDay, p.chunkIndex, p.amount);
         emit ParkedProceedsResent(idx, p.worldwideDay);
     }
 
     /// @dev Approve the token bridge and route `amount` WCOEN to the OriginRouter with the series
     ///      id, self-funding the bridge fee from the relay float. The credited WCOEN is unwrapped
     ///      and distributed on Outbe.
-    function _doRouteProceeds(uint32 worldwideDay, uint128 amount) internal {
+    function _doRouteProceeds(uint32 worldwideDay, uint16 chunkIndex, uint128 amount) internal {
         TargetRouterStorage storage $ = _ts();
         address to = $.originRouter;
         bytes memory extraData = abi.encode(worldwideDay);
-        IERC20 token = $.escrowAdapter.paymentToken();
+        IERC20 token = $.escrowAdapter.dayPaymentToken(worldwideDay);
+        IERC20 bridgeToken = $.tokenBridge.token();
+        if (token != bridgeToken) revert ProceedsTokenNotBridged(address(token), address(bridgeToken));
 
         token.forceApprove(address($.tokenBridge), amount);
         uint256 fee = $.tokenBridge.quoteSend(OUTBE_CHAIN_ID, to, amount, extraData, IntexGas.PROCEEDS_COMPOSE);
         // slither-disable-next-line unused-return,arbitrary-send-eth
         $.tokenBridge.sendAndCall{value: fee}(OUTBE_CHAIN_ID, to, amount, extraData, IntexGas.PROCEEDS_COMPOSE);
-        emit ProceedsRouted(worldwideDay, amount);
+        emit ProceedsRouted(worldwideDay, chunkIndex, amount);
     }
 
     /// @inheritdoc ITargetRouter

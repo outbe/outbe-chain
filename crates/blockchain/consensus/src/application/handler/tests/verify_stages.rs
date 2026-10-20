@@ -22,7 +22,6 @@ fn proposed_block(parent: Option<&ConsensusBlock>, malformed_phase1: bool) -> Co
                         artifact: Default::default(),
                     },
                     SystemTxInputV2::CycleTick,
-                    SystemTxInputV2::RewardsGemDelivery,
                     SystemTxInputV2::OracleSlashWindow,
                     SystemTxInputV2::HookEvents,
                 ],

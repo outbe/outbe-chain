@@ -12,7 +12,6 @@ bench-utils = ["outbe-tribute/test-enclave"]
 outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-tribute.workspace = true
-outbe-metadosis.workspace = true
 outbe-agentreward.workspace = true
 outbe-oracle.workspace = true
 outbe-l2registry.workspace = true
@@ -27,9 +26,8 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-outbe-tribute = { workspace = true, features = ["test-enclave"] }
+outbe-tribute = { workspace = true, features = ["test-enclave", "test-utils"] }
 outbe-lysis.workspace = true
-outbe-metadosis = { workspace = true, features = ["test-utils"] }
 outbe-tee-enclave.workspace = true
 ed25519-dalek.workspace = true
 ark-bn254.workspace = true

@@ -16,12 +16,12 @@
 //! These are deterministic storage functions over an explicit
 //! [`BlockRuntimeContext`]. The executor wires them into the begin-zone CPA phase
 //! (escrow) and the `LateFinalizeCredits` phase (record + settle). At settle, the
-//! whole six-decimal units of the residue are burned from `REWARDS_ADDRESS` and
-//! recycled into the Metadosis carry-over via
+//! settlement logic burns the whole six-decimal units of the residue from
+//! `REWARDS_ADDRESS` and recycles them into the Metadosis carry-over via
 //! [`outbe_emissionlimit::block::dispatch_late_settlement_residue_at`]. The native
-//! remainder below one unit stays on `REWARDS_ADDRESS` for the next window. Then the
-//! per-window state (`pending_fees`, `late_voter_*`, the by-number lookups) is freed.
-//! Only the `fee_settled` tombstone stays (no state bloat).
+//! remainder below one unit stays on `REWARDS_ADDRESS` for the next window. Then
+//! `settle_window` frees the per-window state (`pending_fees`, `late_voter_*`, and
+//! the by-number lookups). Only the `fee_settled` tombstone stays (no state bloat).
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::{
@@ -85,8 +85,8 @@ pub fn record_late_credit(
 
 /// Canonical binding of one finalized block whose fees wait for settlement.
 ///
-/// The Late phase authenticates each credit against this binding. A credit
-/// whose aggregate is over a non-canonical view of the same `hash` is rejected.
+/// The Late phase authenticates each credit against this binding. It rejects any
+/// credit whose aggregate covers a non-canonical view of the same `hash`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FinalizedBlockBinding {
     /// Finalized block number `N`.
@@ -119,8 +119,8 @@ pub fn escrow_block_fee(
     // Write the settle-trigger lookup by number, so block N+K can find block N's
     // escrow. Also write the canonical binding that the Late phase authenticates each
     // credit against: number -> {fb_hash, epoch, view, parent_view,
-    // committee_set_hash}. This function pins the full signed binding. Thus a credit
-    // whose aggregate is over a non-canonical view of the same fb_hash is rejected.
+    // committee_set_hash}. This function pins the full signed binding. The Late phase
+    // rejects any credit whose aggregate covers a non-canonical view of `fb_hash`.
     rewards
         .pending_fb_hash_at
         .write(&block.number, block.hash)?;
@@ -143,8 +143,8 @@ pub fn escrow_block_fee(
 
 /// Window-close side effect that the `LateFinalizeCredits` begin-zone phase runs at
 /// `current_block`. It settles the target whose inclusion window just closed
-/// (`fb_number = current_block - K`), looked up by number. No-op when nothing was
-/// escrowed at that number (e.g. block 0, or a block with no fees recorded yet).
+/// (`fb_number = current_block - K`), looked up by number. Returns a zero no-op when
+/// that number has no escrow (for example block 0 or a block without recorded fees).
 pub fn settle_matured(
     ctx: &BlockRuntimeContext,
     current_block: u64,
@@ -165,8 +165,8 @@ pub fn settle_matured(
     let committee_size = u64::from(rewards.pending_committee_size_at.read(&fb_number)?);
     let result = settle_window(ctx, fb_hash, committee_size)?;
 
-    // Free the number-keyed lookups now that the window is settled. `settle_window`
-    // frees the hash-keyed state. This code runs exactly once: a replay reads
+    // Free the number-keyed lookups after `settle_window` settles the window.
+    // `settle_window` frees the hash-keyed state. This code runs once: a replay reads
     // `pending_fb_hash_at[fb_number] == ZERO` above and returns early before it gets
     // here. `fee_settled[fb_hash]` is the durable guard.
     rewards.pending_fb_hash_at.write(&fb_number, B256::ZERO)?;
@@ -287,8 +287,8 @@ fn pay_credited_voters(
 /// them to the Metadosis carry-over.
 fn recycle_residue(ctx: &BlockRuntimeContext, rewards: &Rewards<'_>, residue: U256) -> Result<()> {
     // The residue is native wei, and the carry-over counts six-decimal units. Thus
-    // only whole units are burned and recycled. The rest waits on REWARDS for the
-    // next window.
+    // this function burns and recycles only whole units. The rest waits on REWARDS
+    // for the next window.
     let native = residue
         .checked_add(rewards.late_residue_dust_native.read()?)
         .ok_or(RewardsError::LateResidueDustOverflow)?;
@@ -311,14 +311,13 @@ fn recycle_residue(ctx: &BlockRuntimeContext, rewards: &Rewards<'_>, residue: U2
 fn free_window_state(rewards: &Rewards<'_>, window: &MaturedWindow) -> Result<()> {
     let kmap = rewards.late_voter_k_plus1.get_nested(&window.fb_hash);
     let at = rewards.late_voter_at.get_nested(&window.fb_hash);
-    // Free the per-window state now that it is settled. After
-    // `fee_settled = true`, `record_late_credit` short-circuits. Thus nothing more
-    // is written for this `fb_hash`, and the data is dead. Freeing it here
-    // prevents unbounded state growth. `fee_settled` is the immediate
-    // double-settle / re-escrow guard. The ring in `on_finalized_metadata` prunes
-    // `fee_settled` itself later (`BLOCK_GUARD_RETAIN` blocks after the block was
-    // first counted, long past the K-block window). Thus it is bounded, not
-    // permanent.
+    // Free the per-window state after settlement. After `fee_settled = true`,
+    // `record_late_credit` short-circuits. Thus no caller writes more entries for
+    // this `fb_hash`, and the data is dead. Freeing it here prevents unbounded state
+    // growth. `fee_settled` is the immediate double-settle / re-escrow guard. The
+    // ring in `on_finalized_metadata` prunes `fee_settled` itself later
+    // (`BLOCK_GUARD_RETAIN` blocks after the hook first counts the block, long past
+    // the K-block window). Thus the ring bounds it and prevents permanent retention.
     //
     // This code frees the nested `participation_counted_for_block[fb_hash]` map
     // too. `late_voter_at` is a superset of the participation-counted voters:
@@ -357,7 +356,7 @@ pub struct WindowCloseInfo {
 }
 
 /// Read the [`WindowCloseInfo`] for the window that matures at `fb_number`, or
-/// `None` when nothing was escrowed there (block 0, or a block with no fees).
+/// `None` when that number has no escrow (block 0, or a block with no fees).
 ///
 /// Pure read over committed chain state - deterministic across proposer and
 /// validator. **Must run before [`settle_matured`]**, which frees `late_voter_*`.
@@ -628,8 +627,9 @@ mod tests {
             let (distributed, residue) = settle_window(&ctx, FB, 4).unwrap();
             assert_eq!(distributed, U256::from(3_000) * unit);
             assert_eq!(residue, expected_residue * unit);
+            let utc_day = outbe_primitives::time::timestamp_to_date_key(timestamp);
             assert!(
-                outbe_metadosis::api::day_limit_formation_receipt(ctx.storage.clone(), wwd,)
+                outbe_metadosis::api::emission_day(ctx.storage.clone(), utc_day)
                     .unwrap()
                     .is_none()
             );
@@ -651,20 +651,11 @@ mod tests {
             outbe_emissionlimit::block::dispatch_terminal_remainder_at(&ctx, daily_base, timestamp)
                 .unwrap();
 
-            let outbe_metadosis::DayLimitFormationReceipt::Formed(formation) =
-                outbe_metadosis::api::day_limit_formation_receipt(ctx.storage.clone(), wwd)
-                    .unwrap()
-                    .unwrap();
-            assert_eq!(formation.base_limit, daily_base);
-            // Formation forms the day against its own emission and leaves the accumulator alone.
-            assert_eq!(formation.carry_over_taken, U256::ZERO);
-            assert_eq!(
-                outbe_metadosis::api::worldwide_day(ctx.storage.clone(), wwd)
-                    .unwrap()
-                    .unwrap()
-                    .metadosis_limit_minor,
-                daily_base
-            );
+            let utc_day = outbe_primitives::time::timestamp_to_date_key(timestamp);
+            let emission_day = outbe_metadosis::api::emission_day(ctx.storage.clone(), utc_day)
+                .unwrap()
+                .unwrap();
+            assert_eq!(emission_day.emission_limit_minor, daily_base);
             assert_eq!(
                 PromisLimitContract::new(ctx.storage.clone())
                     .get_total_unallocated()
@@ -799,8 +790,8 @@ mod tests {
         });
     }
 
-    /// After settle, all per-window state is freed (no state
-    /// bloat). Only the `fee_settled` tombstone is retained.
+    /// After settle, `settle_matured` frees all per-window state (no state
+    /// bloat). It retains only the `fee_settled` tombstone.
     #[test]
     fn settle_frees_window_state() {
         run(|ctx| {
@@ -836,7 +827,7 @@ mod tests {
             let rewards = ctx.storage.contract::<Rewards>();
             // Tombstone retained (double-settle / re-escrow guard).
             assert!(rewards.fee_settled.read(&FB).unwrap());
-            // All hash-keyed + number-keyed per-window state is freed.
+            // Settlement frees all hash-keyed and number-keyed per-window state.
             assert_eq!(rewards.pending_fees.read(&FB).unwrap(), U256::ZERO);
             assert_eq!(rewards.late_voter_count.read(&FB).unwrap(), 0);
             assert_eq!(rewards.pending_fb_hash_at.read(&10).unwrap(), B256::ZERO);

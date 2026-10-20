@@ -60,7 +60,9 @@ interface IDesis {
     /// - 3 = conflicting BIDS_DONE marker.
     /// - 4 = day not found (never briefed here).
     event InboundIgnored(uint32 indexed worldwideDay, uint32 indexed srcChainId, uint8 reason);
-    event AuctionCancelledRedDay(uint32 indexed worldwideDay);
+    /// @notice The day was cancelled because it was briefed with no Desis limit, so it has
+    /// nothing to sell.
+    event AuctionCancelledNoLimit(uint32 indexed worldwideDay);
     /// @notice The day was cancelled because the oracle could price none of its reference
     /// currencies, so no bid could have been measured against anything.
     event AuctionCancelledUnpriced(uint32 indexed worldwideDay);
@@ -70,9 +72,6 @@ interface IDesis {
     /// @notice The day was cancelled because its auction would start with less than the minimum
     ///         commit window.
     event AuctionCancelledLateStart(uint32 indexed worldwideDay);
-    /// @notice The day dropped a reference currency because it already prices as many as the
-    /// auction start message can carry.
-    event ReferenceCurrencyOverCap(uint32 indexed worldwideDay, uint16 indexed isoCode, uint8 cap);
     event AuctionOverdue(uint32 indexed worldwideDay);
     event AuctionCleared(uint32 indexed worldwideDay, uint32 issuedUnits, uint32 clearingRate, uint64 totalDemand);
     event AuctionClearedEmpty(uint32 indexed worldwideDay, uint64 totalDemand);

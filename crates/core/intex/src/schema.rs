@@ -4,15 +4,15 @@
 use alloy_primitives::{keccak256, Address, FixedBytes, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::INTEX_ADDRESS;
-use outbe_primitives::settlement::settlement_deadline_of;
+use outbe_primitives::call_breach::group_key;
 use outbe_primitives::stablecoin::iso_4217_alpha;
 use outbe_primitives::storage::types::{Storable, StorableType, StorageKey};
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::{first_full_day, WorldwideDay};
 use std::fmt;
 
 use crate::errors::IntexError;
 
-/// Series lifecycle state: `Issued -> Called -> Expired`.
+/// Series lifecycle state: `Issued -> Called -> Expired`, derived from the series' group.
 /// A Called series becomes Expired after its notice-period deadline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -40,6 +40,26 @@ pub struct IntexCallTrigger {
     pub call_threshold_seconds: u32,
     /// Seconds between `called_at` and the settlement deadline.
     pub call_notice_period_seconds: u32,
+}
+
+/// When a series' group was called and the last second it may still settle. Both are
+/// zero while the group is uncalled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CallStamp {
+    pub called_at: u32,
+    pub deadline: u64,
+}
+
+impl CallStamp {
+    /// The state as of `now`: derived, because no transaction arrives at the deadline
+    /// to write it.
+    pub const fn state(&self, now: u64) -> IntexState {
+        match (self.called_at, now > self.deadline) {
+            (0, _) => IntexState::Issued,
+            (_, false) => IntexState::Called,
+            (_, true) => IntexState::Expired,
+        }
+    }
 }
 
 /// Series identifier: the 14 ASCII bytes of `20260212-TRY-U`. A currency with no
@@ -239,39 +259,22 @@ pub struct SeriesRecord {
     #[attribute(order = 9)]
     pub issued_at: u32,
 
-    #[attribute(order = 10, default = 0)]
-    pub called_at: u32,
-
-    /// Lifecycle state as `u8`; decode via [`IntexState::from_u8`].
-    #[attribute(order = 11)]
-    pub state: u8,
-
     /// Worldwide day whose tributes fed this series. It is also the id's leading digits.
-    #[attribute(order = 12, default = WorldwideDay::new(0))]
+    #[attribute(order = 10, default = WorldwideDay::new(0))]
     pub worldwide_day: WorldwideDay,
 }
 
 impl SeriesRecord {
-    /// The stored state. This node never writes `Expired`: ask `effective_state` whether one expired.
-    pub fn lifecycle_state(&self) -> Result<IntexState, IntexError> {
-        IntexState::from_u8(self.state)
+    /// The call group the series belongs to.
+    pub fn group_key(&self) -> B256 {
+        group_key(
+            first_full_day(u64::from(self.issued_at)),
+            self.call_price_minor,
+            self.reference_currency,
+        )
     }
 
-    /// The state as of `now`: derived, because no transaction arrives at the
-    /// deadline to write it.
-    pub fn effective_state(&self, now: u64) -> Result<IntexState, IntexError> {
-        let stored = self.lifecycle_state()?;
-        match stored == IntexState::Called && now > self.settlement_deadline() {
-            true => Ok(IntexState::Expired),
-            false => Ok(stored),
-        }
-    }
-
-    /// The last second this series may still be settled once called.
-    pub fn settlement_deadline(&self) -> u64 {
-        settlement_deadline_of(u64::from(self.called_at), self.call_notice_period_seconds)
-    }
-
+    /// The call terms the series was issued with.
     pub fn call_trigger(&self) -> IntexCallTrigger {
         IntexCallTrigger {
             call_window_seconds: self.call_window_seconds,
@@ -289,10 +292,10 @@ pub struct IntexContract {
     pub series: outbe_primitives::storage::dsl::Map<SeriesId, SeriesRecord>,
 
     #[attribute(order = 1)]
-    pub total_series: outbe_primitives::storage::dsl::Value<u64>,
+    pub series_ids: outbe_primitives::storage::dsl::List<SeriesId>,
 
     #[attribute(order = 2)]
-    pub series_id_at_index: outbe_primitives::storage::dsl::Map<u64, U256>,
+    pub series_position: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
 
     // Disjoint classes: a series forfeits `issued_units - settled - exercised -
     // gem_factory` at its deadline. Not on `SeriesRecord` because a record write
@@ -345,26 +348,25 @@ pub struct IntexContract {
     #[attribute(order = 38)]
     pub call_bin_cursor: outbe_primitives::storage::dsl::Map<u16, u64>,
 
-    // Group members, keyed by `scoped(iso, day)`: a decision reads only fields the
-    // whole (reference currency, worldwide day) pair shares. A called group keeps them
-    // until each member expires.
+    // Live series of each call group. A series leaves once spent, and the group closes
+    // with its last one.
     #[attribute(order = 39)]
-    pub call_group_count: outbe_primitives::storage::dsl::Map<u64, u32>,
-    /// `keccak256(iso_be16 ++ worldwide_day_be32 ++ index_be32)` -> series_id word.
+    pub call_group_members:
+        outbe_primitives::storage::dsl::Map<B256, outbe_primitives::storage::dsl::List<SeriesId>>,
     #[attribute(order = 40)]
-    pub call_group_members: outbe_primitives::storage::dsl::Map<B256, U256>,
-    /// `scoped(iso, worldwide_day)` -> `(bin << 32) | (index + 1)` of the group in its bin.
+    pub call_group_position: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
+    /// Group key -> `(bin << 32) | (index + 1)` of the group in its bin.
     #[attribute(order = 41)]
-    pub call_group_slot: outbe_primitives::storage::dsl::Map<u64, u64>,
+    pub call_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
 
     // UTC day an unfinished call sweep is pinned to, so its later slices decide
     // against the prices it opened with. 0 = none in flight. A date key is never 0.
     #[attribute(order = 42)]
     pub call_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
 
-    /// `keccak256(iso_be16 ++ bin_id_be32 ++ index_be32)` -> `scoped(iso, worldwide_day)`.
+    /// `keccak256(iso_be16 ++ bin_id_be32 ++ index_be32)` -> group key.
     #[attribute(order = 43)]
-    pub call_bin_groups: outbe_primitives::storage::dsl::Map<B256, u64>,
+    pub call_bin_groups: outbe_primitives::storage::dsl::Map<B256, B256>,
 
     // Called groups awaiting their settlement window, bucketed by the hour it closes in.
     #[attribute(order = 44)]
@@ -373,10 +375,9 @@ pub struct IntexContract {
     pub expiry_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 46)]
     pub expiry_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
-    /// `scoped(iso, day)` -> when the group's settlement window closes. Stored so
-    /// the head check costs no record load.
+    /// Group key -> when the group's settlement window closes.
     #[attribute(order = 47)]
-    pub called_deadline: outbe_primitives::storage::dsl::Map<u64, u64>,
+    pub called_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
     // Widest terms ever issued in a currency. Both only move outwards, so the range
     // they define covers series the live profile no longer names.
     #[attribute(order = 48)]
@@ -389,37 +390,66 @@ pub struct IntexContract {
     pub expiry_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 51)]
     pub expiry_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
-    /// `keccak256(bucket_be32 ++ slot_be32)` -> `scoped(iso, worldwide_day)`.
+    /// `keccak256(bucket_be32 ++ slot_be32)` -> group key.
     #[attribute(order = 52)]
-    pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, u64>,
-    /// `scoped(iso, day)` -> `(bucket << 32) | slot`. 0 = not queued.
+    pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    /// Group key -> `(bucket << 32) | slot`. 0 = not queued.
     #[attribute(order = 53)]
-    pub called_group_slot: outbe_primitives::storage::dsl::Map<u64, u64>,
+    pub called_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 54)]
     pub expiry_sweep_hour: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 55)]
     pub expiry_cursor: outbe_primitives::storage::dsl::Value<u64>,
     #[attribute(order = 56)]
-    pub call_pending_day: outbe_primitives::storage::dsl::Value<u32>,
+    pub call_latest_day: outbe_primitives::storage::dsl::Value<u32>,
 
     /// UTC day the call sweep could not price a reference currency on. The rest of that
     /// day's pass passes it by.
     #[attribute(order = 57)]
     pub call_scan_failed_day: outbe_primitives::storage::dsl::Map<u16, u32>,
+
+    #[attribute(order = 58)]
+    pub call_group_currency: outbe_primitives::storage::dsl::Map<B256, u16>,
+    /// Group key -> when the group was called. 0 = uncalled.
+    #[attribute(order = 59)]
+    pub call_group_called_at: outbe_primitives::storage::dsl::Map<B256, u32>,
+
+    // Expired groups whose spent series wait to be deleted, bucketed like the expiry queue.
+    #[attribute(order = 60)]
+    pub cleanup_tree_root: outbe_primitives::storage::dsl::Value<U256>,
+    #[attribute(order = 61)]
+    pub cleanup_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    #[attribute(order = 62)]
+    pub cleanup_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
+    #[attribute(order = 63)]
+    pub cleanup_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    #[attribute(order = 64)]
+    pub cleanup_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    #[attribute(order = 65)]
+    pub cleanup_bucket_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    #[attribute(order = 66)]
+    pub cleanup_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
+    #[attribute(order = 67)]
+    pub cleanup_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
+    #[attribute(order = 68)]
+    pub cleanup_sweep_hour: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 69)]
+    pub cleanup_cursor: outbe_primitives::storage::dsl::Value<u64>,
+
+    /// The call terms a group's first series sealed: every member is called and
+    /// expires on them.
+    #[attribute(order = 70)]
+    pub call_group_window_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
+    #[attribute(order = 71)]
+    pub call_group_threshold_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
+    #[attribute(order = 72)]
+    pub call_group_notice_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
 }
 
 impl IntexContract<'_> {
     /// Namespace a bin-index column by the reference currency its prices are in.
     pub const fn scoped(reference_currency: u16, key: u32) -> u64 {
         outbe_primitives::call_bins::scoped(reference_currency, key)
-    }
-
-    /// Inverse of [`Self::scoped`] for a key that is a worldwide day.
-    pub const fn unscoped(scoped: u64) -> (u16, WorldwideDay) {
-        (
-            (scoped >> 32) as u16,
-            WorldwideDay::new((scoped & 0xffff_ffff) as u32),
-        )
     }
 
     /// Composite key for the per-owner ledgers: `keccak256(series_id ++ owner)`.

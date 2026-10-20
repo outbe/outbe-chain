@@ -32,9 +32,9 @@ use tokio::runtime::Runtime;
 
 /// Explicit limit used by negative-path calls.
 ///
-/// Supplying a limit prevents the provider from estimating gas first: an
-/// intentional contract revert is then submitted and observed through its
-/// mined receipt instead of being returned as a preflight RPC error.
+/// Supplying a limit prevents the provider from estimating gas first. The
+/// caller then submits an intentional contract revert and observes its mined
+/// receipt instead of a preflight RPC error.
 pub(crate) const REVERT_FRIENDLY_GAS_LIMIT: u64 = 10_000_000;
 
 /// Maximum fee accepted for a transaction intended for the next block.
@@ -170,6 +170,8 @@ sol!("../../contracts/precompiles/src/IAgentReward.sol");
 pub(crate) const WAA_POOL: u8 = 0;
 /// `claimReward` pool selector for the SRA pool.
 pub(crate) const SRA_POOL: u8 = 1;
+/// `claimReward` pool selector for the validator pool.
+pub(crate) const VALIDATOR_POOL: u8 = 3;
 /// Currency the canonical reward call names on both axes.
 const REWARD_CALL_ISO: u16 = 840;
 sol!("../../contracts/precompiles/src/ITeeRegistryV1.sol");
@@ -200,7 +202,7 @@ sol!(
     "../../contracts/precompiles/src/IStablecoin.sol"
 );
 
-/// A contract call that was submitted and mined, including reverted calls.
+/// A submitted and mined contract call, including reverted calls.
 #[derive(Clone, Debug)]
 pub(crate) struct MinedCallOutcome {
     pub transaction_hash: String,
@@ -368,31 +370,6 @@ where
     read_call_at_result(url, to, call, height).ok()
 }
 
-/// Require a typed view call to fail specifically as an EVM revert at the
-/// exact canonical block. Transport failures are not accepted as ABI evidence.
-pub(crate) fn read_call_reverts_at<C: SolCall>(
-    url: &str,
-    to: Address,
-    call: &C,
-    height: u64,
-) -> Option<bool> {
-    let url = url.to_string();
-    let data = call.abi_encode();
-    block_on(async move {
-        let provider = ProviderBuilder::new().connect_http(url.parse().ok()?);
-        let tx = TransactionRequest::default()
-            .to(to)
-            .input(Bytes::from(data).into());
-        match provider.call(tx).block(BlockId::number(height)).await {
-            Ok(_) => Some(false),
-            Err(error) => {
-                let message = error.to_string().to_ascii_lowercase();
-                Some(message.contains("revert"))
-            }
-        }
-    })
-}
-
 /// Simulate a state-changing call at the canonical head while preserving the
 /// RPC server's revert error. This is diagnostic only: E2E mutation paths still
 /// submit a real transaction and assert its mined receipt.
@@ -463,7 +440,7 @@ pub(crate) fn read_call_revert_data_at<C: SolCall>(
 }
 
 /// Bounded call replay with an explicit block selection and the submitted gas
-/// limit. Latest-state callers must independently capture and verify its header.
+/// limit. Latest-state callers must independently capture and check its header.
 pub(crate) fn read_call_revert_data_at_block<C: SolCall>(
     url: &str,
     to: Address,
@@ -781,36 +758,6 @@ pub(crate) fn gas_price(url: &str) -> Option<u128> {
     u128::from_str_radix(value.as_str()?.trim_start_matches("0x"), 16).ok()
 }
 
-/// Fetch a bounded inclusive block range with full public transactions through
-/// one shared HTTP provider. Scenario evidence must not spend one connection
-/// setup/poll interval per block and accidentally consume the result window it
-/// is trying to observe.
-pub(crate) fn blocks_with_transactions(
-    url: &str,
-    from_height: u64,
-    to_height: u64,
-    max_blocks: usize,
-) -> Option<Vec<serde_json::Value>> {
-    let count = to_height
-        .checked_sub(from_height)?
-        .checked_add(1)
-        .and_then(|value| usize::try_from(value).ok())?;
-    if count > max_blocks {
-        return None;
-    }
-    let url = url.to_string();
-    block_on(async move {
-        let provider = ProviderBuilder::new().connect_http(url.parse().ok()?);
-        let requests = (from_height..=to_height).map(|height| {
-            provider.raw_request::<_, serde_json::Value>(
-                "eth_getBlockByNumber".into(),
-                serde_json::json!([format!("0x{height:x}"), true]),
-            )
-        });
-        futures::future::try_join_all(requests).await.ok()
-    })
-}
-
 /// Sign and send a contract call from `key`, and wait for its receipt. Returns
 /// the tx hash. `value` funds a payable call (e.g. `stake`).
 pub(crate) fn send_call<C: SolCall>(
@@ -872,10 +819,10 @@ fn send_call_inner<C: SolCall>(
             .await
             .map_err(|_| eyre!("timed out estimating paid claim gas"))??;
             let limit = gas_limit_with_reserve(estimate)?;
-            // Compare separate executions on the very same state: a failure
-            // here cannot be attributed to intervening blocks or transactions.
-            // These probes diagnose estimation; only the mined receipt decides
-            // whether the submitted claim succeeded.
+            // Compare separate executions on the very same state. Intervening
+            // blocks or transactions cannot cause a failure here. These probes
+            // diagnose estimation. Only the mined receipt decides whether the
+            // submitted claim succeeded.
             for probe_limit in [estimate, limit] {
                 let probe = tokio::time::timeout(
                     std::time::Duration::from_secs(10),
@@ -1097,8 +1044,8 @@ pub(crate) fn send_value_outcome(
     })
 }
 
-/// Force an explicit gas limit so a deliberately reverting native transfer is
-/// included and produces a receipt rather than failing during gas estimation.
+/// Force an explicit gas limit so the node includes a deliberately reverting
+/// native transfer and produces a receipt instead of failing gas estimation.
 pub(crate) fn send_value_outcome_with_gas(
     url: &str,
     to: Address,
@@ -1191,7 +1138,7 @@ pub(crate) fn send_value_with_gas_at_nonce(
     })
 }
 
-/// Canonical-tip context; account reads use its exact hash, never a later tip.
+/// Canonical-tip context. Account reads use its exact hash, never a later tip.
 #[derive(Clone, Debug)]
 pub(crate) struct PoolAccountAtTip {
     pub number: u64,
@@ -1436,7 +1383,7 @@ pub(crate) fn send_reward_call(
     let url = url.to_string();
     let data = IAgentReward::claimRewardCall {
         pool: WAA_POOL,
-        amount: U256::ZERO,
+        promisLoadMinor: U256::ZERO,
         issuanceCurrency: REWARD_CALL_ISO,
         referenceCurrency: REWARD_CALL_ISO,
     }

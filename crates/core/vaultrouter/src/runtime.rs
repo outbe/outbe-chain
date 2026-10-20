@@ -177,8 +177,8 @@ pub(crate) fn deposit(
     contract.emit(IVaultRouter::LiquidityDeposited {
         source: caller,
         vault,
-        assetsAmount: amount,
-        sharesAmount: shares,
+        assetsMinor: amount,
+        shares,
         sourceType: source,
     })?;
 
@@ -194,7 +194,7 @@ pub(crate) fn withdraw(
 ) -> Result<U256> {
     let IVaultRouter::withdrawCall {
         asset,
-        amount,
+        amountMinor: amount,
         receiver,
     } = call;
     if receiver.is_zero() {
@@ -225,7 +225,7 @@ pub(crate) fn withdraw(
         target: caller,
         receiver,
         vault,
-        assetsAmount: amount,
+        assetsMinor: amount,
         burnedShares: burned_shares,
         targetType: target,
     })?;

@@ -2,7 +2,7 @@
 use super::*;
 use alloy_sol_types::{SolCall as _, SolError as _, SolValue as _};
 use outbe_primitives::{
-    entity_codec::{NodBucketBodyV1, NodItemBodyV2},
+    entity_codec::{NodGroupBodyV1, NodItemBodyV2},
     wwd_entity_id::WwdEntityId,
 };
 
@@ -224,17 +224,17 @@ fn assert_payment_delta(before: [U256; 4], after: [U256; 4], amount: U256) {
 }
 
 fn assert_paid_transition(
-    before: &(NodItemBodyV2, NodBucketBodyV1),
-    after: &(NodItemBodyV2, NodBucketBodyV1),
+    before: &(NodItemBodyV2, NodGroupBodyV1),
+    after: &(NodItemBodyV2, NodGroupBodyV1),
 ) {
     assert!(!before.0.is_settled);
     let mut item = before.0.clone();
     item.is_settled = true;
     assert_eq!(after.0, item, "payment changes only the Nod paid flag");
-    let mut bucket = before.1.clone();
-    bucket.settled_nods = bucket.settled_nods.checked_add(1).expect("settled counter");
+    let mut group = before.1.clone();
+    group.settled_nods = group.settled_nods.checked_add(1).expect("settled counter");
     assert_eq!(
-        after.1, bucket,
+        after.1, group,
         "payment increments only the live paid count"
     );
 }
@@ -611,7 +611,7 @@ fn assert_index_transition(
     }
 }
 
-fn assert_snapshot_bodies(snapshot: &NodSnapshot, bodies: &(NodItemBodyV2, NodBucketBodyV1)) {
+fn assert_snapshot_bodies(snapshot: &NodSnapshot, bodies: &(NodItemBodyV2, NodGroupBodyV1)) {
     let body = snapshot.body.as_ref().expect("live Nod body present");
     let item = &bodies.0;
     assert_eq!(body.nodId, item.encrypted.terms.nod_id.to_u256());
@@ -657,21 +657,21 @@ fn gratis_at(url: &str, owner: Address, view: &[u8; 32], height: u64) -> U256 {
     })
 }
 
-fn nod_bodies(world: &World, id: WwdEntityId, minimum: u64) -> (NodItemBodyV2, NodBucketBodyV1) {
+fn nod_bodies(world: &World, id: WwdEntityId, minimum: u64) -> (NodItemBodyV2, NodGroupBodyV1) {
     let checkpoint = world
         .rpc
         .wait_finalized_checkpoint(&world.validators.committee_ports(), minimum, 120)
         .expect("Nod state checkpoint finalized on every validator");
     let mut expected = None;
     for port in world.validators.committee_ports() {
-        let (item, bucket) = world
+        let (item, group) = world
             .rpc
             .nod_state_at(port, checkpoint, id)
             .expect("Nod EVM state")
             .expect("Nod is present");
         let bodies = (
             outbe_nod::canonical_item(&item),
-            outbe_nod::canonical_bucket(&bucket),
+            outbe_nod::canonical_group(&group),
         );
         assert_eq!(
             *expected.get_or_insert(bodies.clone()),
@@ -794,7 +794,7 @@ mod tests {
     #[test]
     fn paid_nod_oracle_rejects_missing_count_and_changed_owner_or_load() {
         let day = outbe_primitives::time::WorldwideDay::new(20260917);
-        let bucket_key = B256::repeat_byte(2);
+        let group_key = B256::repeat_byte(2);
         let item = NodItemBodyV2 {
             encrypted: outbe_primitives::nod_encryption::EncryptedNodV2 {
                 terms: outbe_primitives::nod_encryption::NodTermsV2 {
@@ -811,18 +811,17 @@ mod tests {
                 encrypted_gratis_amount: vec![0x23; 56],
                 encrypted_creator_public_key: vec![0x24; 56],
             },
-            bucket_key,
+            group_key,
             issued_at: 1,
             is_settled: false,
         };
-        let bucket = NodBucketBodyV1 {
-            bucket_key,
-            worldwide_day: day,
-            entry_price_minor: U256::from(9),
+        let group = NodGroupBodyV1 {
+            group_key,
+            full_day_after_issue: day,
             reference_currency: 840,
             settled_nods: 0,
         };
-        let before = (item, bucket);
+        let before = (item, group);
         let mut paid = before.clone();
         paid.0.is_settled = true;
         paid.1.settled_nods = 1;

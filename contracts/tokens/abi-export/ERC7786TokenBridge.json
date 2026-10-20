@@ -259,6 +259,19 @@
   },
   {
     "type": "function",
+    "name": "tokenDecimals",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "transferOwnership",
     "inputs": [
       {
@@ -381,6 +394,22 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "DecimalsMismatch",
+    "inputs": [
+      {
+        "name": "sourceDecimals",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "localDecimals",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
   },
   {
     "type": "error",

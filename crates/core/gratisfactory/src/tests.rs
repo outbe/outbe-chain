@@ -281,7 +281,7 @@ fn fund_and_reserve(storage: &StorageHandle<'_>, source: Address) -> U256 {
         .create(&outbe_vaultrouter::schema::LiquidityReservation {
             id,
             asset: address!("0x0000000000000000000000000000000000000888"),
-            amount: U256::from(2 * RESERVED),
+            amount_minor: U256::from(2 * RESERVED),
             gratis_minor: U256::from(RESERVED),
             expires_at: CREATED_AT + 900,
             source,
@@ -606,5 +606,100 @@ fn encrypted_nod_mint_preserves_nonce_and_combined_fidelity_state() {
         );
         assert_eq!(fidelity.cohorts_ct_of(alice()).unwrap(), cohorts);
         assert_eq!(outbe_gratis::api::op_nonce(storage, alice()).unwrap(), 1);
+    });
+}
+
+/// One second past the largest block timestamp that fits in `u64`.
+fn timestamp_above_u64() -> U256 {
+    U256::from(u64::MAX) + U256::from(1)
+}
+
+fn assert_timestamp_overflow(err: impl std::fmt::Display) {
+    let err = err.to_string();
+    assert!(err.contains("timestamp exceeds u64"), "got: {err}");
+}
+
+#[test]
+fn mint_reverts_when_the_timestamp_exceeds_u64() {
+    with_env(|storage| {
+        storage.set_block_timestamp(timestamp_above_u64()).unwrap();
+        let amount = U256::from(1_000u64);
+        let err = runtime::mint(
+            storage.clone(),
+            alice(),
+            amount,
+            auth(GratisOp::Mint, alice(), amount, 0),
+        )
+        .unwrap_err();
+        assert_timestamp_overflow(err);
+        assert_eq!(view_balance(&storage, alice()), U256::ZERO);
+    });
+}
+
+#[test]
+fn mine_coen_reverts_when_the_timestamp_exceeds_u64() {
+    with_env(|storage| {
+        let amount = U256::from(1_000u64);
+        outbe_gratis::api::mint(
+            storage.clone(),
+            alice(),
+            amount,
+            auth(GratisOp::Mint, alice(), amount, 0),
+        )
+        .unwrap();
+        storage.set_block_timestamp(timestamp_above_u64()).unwrap();
+
+        let call = Bytes::from(
+            IGratisFactory::IGratisFactoryCalls::mineCoen(IGratisFactory::mineCoenCall {
+                gratisMinor: amount,
+                mac: FixedBytes(auth(GratisOp::Burn, alice(), amount, 1).mac),
+                opNonce: 1,
+            })
+            .abi_encode(),
+        );
+        let err = dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap_err();
+        assert_timestamp_overflow(err);
+
+        // No COEN minted, gratis untouched.
+        assert_eq!(storage.balance(alice()).unwrap(), U256::ZERO);
+        assert_eq!(view_balance(&storage, alice()), amount);
+    });
+}
+
+#[test]
+fn encrypted_nod_mint_reverts_when_the_timestamp_exceeds_u64() {
+    with_env(|storage| {
+        use outbe_primitives::{
+            nod_encryption::NodTermsV2, time::WorldwideDay, wwd_entity_id::WwdEntityId,
+        };
+        let day = WorldwideDay::new(20250115);
+        let amount = U256::from(123);
+        let nod = outbe_tee_enclave::nod_encryption::encrypt_nod(
+            &[0x5a; 32],
+            &[9; 32],
+            NodTermsV2 {
+                chain_id: CHAIN_ID,
+                nod_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(7)),
+                owner: alice(),
+                worldwide_day: day,
+                league_id: 0,
+                entry_price_minor: U256::ONE,
+                issuance_currency: 840,
+                reference_currency: 978,
+            },
+            amount,
+        )
+        .unwrap();
+        storage.set_block_timestamp(timestamp_above_u64()).unwrap();
+
+        let err = crate::api::mint_encrypted_nod(
+            storage.clone(),
+            &nod,
+            auth(GratisOp::Mint, alice(), amount, 0),
+        )
+        .unwrap_err();
+        assert_timestamp_overflow(err);
+        assert_eq!(view_balance(&storage, alice()), U256::ZERO);
+        assert_eq!(outbe_gratis::api::op_nonce(storage, alice()).unwrap(), 0);
     });
 }

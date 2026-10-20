@@ -20,7 +20,7 @@ pub fn create_worldwide_day(
         BlockContext::empty_for_tests(block_number, timestamp, chain_id),
         storage.clone(),
     );
-    crate::runtime::create_worldwide_day_for_date(
+    crate::lifecycle::create_worldwide_day_for_date(
         &mut crate::schema::MetadosisContract::new(storage),
         &context,
         worldwide_day,

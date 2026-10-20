@@ -1,9 +1,7 @@
 //! Per-block entry points of the Intex sweeps, run from CycleTick.
 
-use outbe_primitives::{block::BlockRuntimeContext, error::Result};
-
 /// Expires the called groups whose notice period lapsed.
-pub fn sweep_forfeits(ctx: &BlockRuntimeContext) -> Result<()> {
-    crate::expired::sweep_expired(ctx)?;
-    Ok(())
-}
+pub use crate::expired::sweep_expired as sweep_forfeits;
+
+/// Deletes the spent series of the expired groups.
+pub use crate::cleanup::sweep_cleanup;

@@ -20,11 +20,11 @@ interface IIntexAuction {
     }
 
     /// @notice Worldwide-day state, final at `auctionStart`.
-    /// @dev `Green` = live auction, `Red` = cancelled record. `Unknown` never persists.
+    /// @dev `Live` = live auction, `Cancelled` = cancelled record. `Unknown` never persists.
     enum WorldwideDayState {
         Unknown,
-        Green,
-        Red
+        Live,
+        Cancelled
     }
 
     /// @notice Revealed bid payload. Slot-packed: slot 0 holds
@@ -87,8 +87,8 @@ interface IIntexAuction {
         /// @notice One row per currency the day can clear in. The bid's reference
         ///         currency must appear here.
         ReferenceCurrencyPrice[] prices;
-        /// @notice Entry bond (payment-token minor units) taken at `commitBid` and returned on
-        ///         reveal/cancel. 0 disables the bond.
+        /// @notice Entry bond in protocol units (1e6), scaled to the payment token by the escrow.
+        ///         Taken at `commitBid` and returned on reveal/cancel. 0 disables the bond.
         uint128 commitBondMinor;
     }
 
@@ -125,7 +125,7 @@ interface IIntexAuction {
     /// @param worldwideDay Worldwide day (yyyymmdd, uint32).
     /// @param auctionStage Target stage.
     /// @param timestamp New stage timestamp (UNIX seconds).
-    /// @param reason Optional reason (e.g. "Red day - auction cancelled"). Empty if not applicable.
+    /// @param reason Optional reason (e.g. "Day cancelled - no auction"). Empty if not applicable.
     event AuctionStageUpdated(uint32 indexed worldwideDay, AuctionStage auctionStage, uint32 timestamp, string reason);
 
     /// @notice Emitted when an auction is cleared.
@@ -208,8 +208,6 @@ interface IIntexAuction {
     error BidRateAboveMax(uint32 bidRate);
     /// @notice Bid quantity is below `minIntexBidQuantity`.
     error BidBelowMinIntexBidQuantity();
-    /// @notice The 18-decimal WCOEN lock derived from protocol-scale inputs exceeds uint128.
-    error BidAmountOverflow(uint16 quantity, uint32 bidRate);
     /// @notice `issuedUnits * promisLoadMinor` exceeds the uint128 loaded-Promis range.
     error IssuedPromisOverflow(uint32 issuedUnits, uint128 promisLoadMinor);
     /// @notice Auction does not exist.
@@ -222,7 +220,7 @@ interface IIntexAuction {
     error ClearingRateBelowMin(uint64 clearingRate, uint32 minIntexBidRate);
     /// @notice Schedule timestamps are not strictly increasing or are in the past.
     error InvalidSchedule();
-    /// @notice `auctionStart` requires a final Green or Red day state.
+    /// @notice `auctionStart` requires a final Live or Cancelled day state.
     error InvalidDayState();
     /// @notice The day does not carry a price for this reference currency.
     error ReferenceCurrencyNotPriced(uint32 worldwideDay, uint16 isoCode);
@@ -260,10 +258,10 @@ interface IIntexAuction {
     /// @notice Create and start a new auction for `worldwideDay`.
     /// @dev The schedule (`commitEnd`/`revealEnd`/`issuanceEnd`) is computed on the
     ///      Outbe side (Desis) and passed in. `dayState` is final at creation:
-    ///      Green opens the commit stage, Red records the series born Cancelled.
+    ///      Live opens the commit stage, Cancelled records the series born Cancelled.
     ///      Stage transitions follow the stored timestamps.
     /// @param worldwideDay Worldwide day (yyyymmdd, uint32).
-    /// @param dayState Final worldwide-day state (Green or Red).
+    /// @param dayState Final worldwide-day state (Live or Cancelled).
     /// @param schedule Stage-end timestamps.
     /// @param params Auction input parameters.
     function auctionStart(
@@ -296,7 +294,7 @@ interface IIntexAuction {
     /// @notice Commit a sealed bid hash for an auction.
     /// @dev When the series carries a non-zero `commitBondMinor`, the bond moves from the caller
     ///      into escrow in the same transaction. This requires prior payment-token
-    ///      approval on the escrow adapter. Reveal/cancel return it immediately. A green-day
+    ///      approval on the escrow adapter. Reveal/cancel return it immediately. A live-day
     ///      no-reveal locks it until `revealEnd + UNREVEALED_BOND_LOCK_PERIOD` (see `claimCommitBond`).
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param commitHash `keccak256(signature)`, where `signature` is an EIP-712 typed-data
@@ -352,7 +350,7 @@ interface IIntexAuction {
     function issueIntex(uint32 worldwideDay, address bidder) external;
 
     /// @notice Permissionless commit-bond claim for a bidder who committed but never revealed.
-    ///         A cancelled (red-day) auction releases immediately. Otherwise the bond is claimable
+    ///         A cancelled-day auction releases immediately. Otherwise the bond is claimable
     ///         only after `revealEnd + UNREVEALED_BOND_LOCK_PERIOD`. Pays the stored bidder, not the
     ///         caller. The escrow-local time-based valve (`claimAbandonedCommitBond`) is the fallback
     ///         if the auction contract itself is rotated away.

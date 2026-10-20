@@ -1,8 +1,8 @@
 //! Rewards commands.
 //!
-//! Validator daily emission is delivered as gems (see the Rewards module's
-//! prepare/delivery batch API), not as a claimable native balance, so there is no
-//! `claim` / `pending` command here.
+//! Validator daily emission is credited to the validator pool of AgentReward and
+//! claimed there as a Gem (`claimReward`), so there is no `claim` / `pending`
+//! command here.
 
 use clap::Subcommand;
 use eyre::Result;
@@ -40,7 +40,7 @@ async fn emission(client: &(impl Rpc + Sync)) -> Result<()> {
     println!("=== Reward Emission Parameters ===");
     println!("Validator Cap:      {validator_pct}%");
     println!("Fee Escrow:         {escrow_addr}");
-    println!("Delivery:           validator emission is paid in gems");
+    println!("Delivery:           claimed as a Gem from the AgentReward validator pool");
     println!("Settlement Source:  finalized block execution summary artifact");
 
     Ok(())

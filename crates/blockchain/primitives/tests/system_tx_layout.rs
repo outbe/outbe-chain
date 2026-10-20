@@ -11,8 +11,7 @@ use outbe_primitives::system_tx::{
     build_unsigned_system_tx, expected_begin_block_kinds, split_system_layout,
     validate_active_system_tx_set, BodyZone, SystemTxError, SystemTxInputV2, SystemTxKind,
     SystemTxLayout, BOUNDARY_OUTCOME_SELECTOR, CERTIFIED_PARENT_ACCOUNTING_SELECTOR,
-    CYCLE_TICK_SELECTOR, ORACLE_SLASH_WINDOW_SELECTOR, REWARDS_GEM_DELIVERY_SELECTOR,
-    SYSTEM_TX_INPUT_VERSION,
+    CYCLE_TICK_SELECTOR, ORACLE_SLASH_WINDOW_SELECTOR, SYSTEM_TX_INPUT_VERSION,
 };
 use reth_ethereum::TransactionSigned;
 
@@ -38,7 +37,6 @@ fn system_input(kind: SystemTxKind) -> SystemTxInputV2 {
             artifact: Default::default(),
         },
         SystemTxKind::CycleTick => SystemTxInputV2::CycleTick,
-        SystemTxKind::RewardsGemDelivery => SystemTxInputV2::RewardsGemDelivery,
         SystemTxKind::OracleSlashWindow => SystemTxInputV2::OracleSlashWindow,
         SystemTxKind::HookEvents => SystemTxInputV2::HookEvents,
         SystemTxKind::RadiclePublication => SystemTxInputV2::RadiclePublication {
@@ -84,7 +82,6 @@ fn active_selectors_have_expected_byte_sequence() {
         [0x4f, 0x53, 0x41, 0x33]
     ); // "OSA3"
     assert_eq!(CYCLE_TICK_SELECTOR, [0x4f, 0x53, 0x43, 0x32]); // "OSC2"
-    assert_eq!(REWARDS_GEM_DELIVERY_SELECTOR, [0x4f, 0x53, 0x47, 0x32]); // "OSG2"
     assert_eq!(BOUNDARY_OUTCOME_SELECTOR, [0x4f, 0x53, 0x42, 0x32]); // "OSB2"
     assert_eq!(ORACLE_SLASH_WINDOW_SELECTOR, [0x4f, 0x53, 0x4f, 0x32]); // "OSO2"
     assert_eq!(SYSTEM_TX_INPUT_VERSION, 2);
@@ -99,10 +96,9 @@ fn v2_selectors_differ_from_legacy_v1_selectors() {
         *b"OSB1", // legacy BoundaryOutcome
         *b"OSO1", // legacy OracleSlashWindow
     ];
-    let v2_selectors: [[u8; 4]; 5] = [
+    let v2_selectors: [[u8; 4]; 4] = [
         CERTIFIED_PARENT_ACCOUNTING_SELECTOR,
         CYCLE_TICK_SELECTOR,
-        REWARDS_GEM_DELIVERY_SELECTOR,
         BOUNDARY_OUTCOME_SELECTOR,
         ORACLE_SLASH_WINDOW_SELECTOR,
     ];
@@ -174,7 +170,6 @@ fn block_1_layout_requires_boundary_outcome_for_v2() {
         expected,
         vec![
             SystemTxKind::CycleTick,
-            SystemTxKind::RewardsGemDelivery,
             SystemTxKind::BoundaryOutcome,
             SystemTxKind::OracleSlashWindow,
             SystemTxKind::HookEvents,
@@ -237,39 +232,8 @@ fn native_layout_accepts_an_empty_user_zone() {
     assert!(layout.end.is_empty());
 }
 
-#[test]
-fn rewards_gem_delivery_is_mandatory_unique_and_immediately_after_cycle() {
-    let mut missing = canonical_transactions();
-    missing.remove(3);
-    let layout = split_system_layout(&missing).unwrap();
-    assert!(matches!(
-        validate_active_system_tx_set(&layout, TEST_BLOCK, false, false),
-        Err(SystemTxError::ActiveSystemTxSetMismatch { .. })
-    ));
-
-    let mut duplicate = canonical_transactions();
-    duplicate.insert(4, signed_system_tx(SystemTxKind::RewardsGemDelivery, 8));
-    assert!(matches!(
-        split_system_layout(&duplicate),
-        Err(SystemTxError::OutOfOrder {
-            zone: BodyZone::BeginBlock,
-            ..
-        })
-    ));
-
-    let mut reordered = canonical_transactions();
-    reordered.swap(2, 3);
-    assert!(matches!(
-        split_system_layout(&reordered),
-        Err(SystemTxError::OutOfOrder {
-            zone: BodyZone::BeginBlock,
-            ..
-        })
-    ));
-}
-
 /// V2 begin-zone ordering: CertifiedParentAccounting (>=2), CycleTick (>=1),
-/// RewardsGemDelivery (>=1), BoundaryOutcome (when present),
+/// BoundaryOutcome (when present),
 /// OracleSlashWindow (>=1).
 #[test]
 fn v2_begin_zone_ordering_is_canonical() {
@@ -281,7 +245,6 @@ fn v2_begin_zone_ordering_is_canonical() {
             SystemTxKind::CertifiedParentAccounting,
             SystemTxKind::LateFinalizeCredits,
             SystemTxKind::CycleTick,
-            SystemTxKind::RewardsGemDelivery,
             SystemTxKind::OracleSlashWindow,
             SystemTxKind::HookEvents,
         ],
@@ -295,7 +258,6 @@ fn v2_begin_zone_ordering_is_canonical() {
             SystemTxKind::CertifiedParentAccounting,
             SystemTxKind::LateFinalizeCredits,
             SystemTxKind::CycleTick,
-            SystemTxKind::RewardsGemDelivery,
             SystemTxKind::BoundaryOutcome,
             SystemTxKind::OracleSlashWindow,
             SystemTxKind::HookEvents,
@@ -307,7 +269,6 @@ fn v2_begin_zone_ordering_is_canonical() {
         SystemTxKind::CertifiedParentAccounting,
         SystemTxKind::LateFinalizeCredits,
         SystemTxKind::CycleTick,
-        SystemTxKind::RewardsGemDelivery,
         SystemTxKind::BoundaryOutcome,
         SystemTxKind::OracleSlashWindow,
         SystemTxKind::HookEvents,

@@ -55,6 +55,10 @@ contract LocalWcoenTokenBridge {
         _remoteBridge = InteroperableAddress.formatEvmV1(2, address(0xB21D6E));
     }
 
+    function token() external view returns (IERC20) {
+        return TOKEN;
+    }
+
     function quoteSend(uint32, address to, uint256 amount, bytes calldata extraData, uint256 gasLimit)
         external
         view
@@ -87,6 +91,13 @@ contract LocalWcoenTokenBridge {
 ///         genesis predeploy's runtime code, so it needs no RPC. Each test takes one measurement,
 ///         with state seeded in `setUp`. Run with `--isolate`.
 abstract contract RefundGasBase is CrossChainTest {
+    /// @dev The escrow's lock for `q` Intexes at rate `r` of the protocol basis `b`.
+    function _protocol(uint256 q, uint256 b, uint256 r) internal pure returns (uint256) {
+        return q * b * r / 1e6;
+    }
+
+    // MockWCOEN has 18 decimals: 1e12 token units per protocol unit.
+    uint256 internal constant WCOEN_SCALE = 1e12;
     address internal constant COMPACT = 0x00000000000000171ede64904551eeDF3C6C9788;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     uint32 internal constant DAY = 20260501;
@@ -123,13 +134,13 @@ abstract contract RefundGasBase is CrossChainTest {
     /// @dev `held` stays on each bidder's balance after locking, so a refund lands on a balance
     ///      already in use.
     function _lock(uint256 from, uint256 count, uint32 bidRate, uint128 held) internal {
-        uint128 amount = uint128(BridgeMsgCodec.escrowAmount(QUANTITY, BASIS, bidRate));
+        uint256 amount = _protocol(QUANTITY, BASIS, bidRate) * WCOEN_SCALE;
         for (uint256 i = from; i < from + count; ++i) {
             address who = _bidder(i);
-            deal(address(token), who, uint256(amount) + held);
+            deal(address(token), who, amount + held);
             vm.prank(who);
             token.approve(address(escrow), type(uint256).max);
-            escrow.lockFunds(DAY, who, amount, bidRate, QUANTITY);
+            escrow.lockFunds(DAY, who, BASIS, bidRate, QUANTITY);
         }
     }
 
@@ -245,8 +256,8 @@ contract RefundClaimFinalizedGasTest is RefundGasBase {
     }
 }
 
-/// @notice A day of 200 bidders that reaches a target chain in one chunk. The chunk carries its
-///         winners, closes the day and routes its proceeds. The last winner is filled in part.
+/// @notice A day of 200 bidders that reaches a target chain in chunks. Each chunk settles its
+///         winners and routes their proceeds. The last winner of a chunk is filled in part.
 contract RefundDayGasTest is RefundGasBase {
     uint256 internal constant BIDDERS = 200;
 
@@ -293,12 +304,17 @@ contract RefundDayGasTest is RefundGasBase {
         emit log_named_uint("day_chunk_40w", _deliverClosingChunk(40));
     }
 
-    /// @dev A chunk that does not close the day pays for its winners, its withdrawal and the day's
-    ///      clearing snapshot, and routes nothing. This is the base every chunk carries.
+    /// @dev A chunk that does not close the day still routes its own proceeds, so the widest one
+    ///      must fit the same quote as the day's last chunk.
     function test_AChunkThatDoesNotCloseTheDay() public {
-        emit log_named_uint("day_chunk_40w_open", _deliverChunk(40, 0, 2));
+        uint256 spent = _deliverChunk(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN, 0, 2);
+        emit log_named_uint("day_chunk_64w_open", spent);
         (, bool finalized,) = escrow.getAuctionStatus(DAY);
         assertFalse(finalized, "an unfinished day stays open");
+        assertEq(token.balanceOf(address(router)), 0, "the chunk's proceeds left with it");
+        assertLt(
+            spent, IntexGas.refund(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN, true), "an open-day chunk must fit its quote"
+        );
     }
 
     function test_AWidestChunkFitsItsQuote() public {
