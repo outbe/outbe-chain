@@ -67,7 +67,7 @@ fn issue(storage: &StorageHandle<'_>, call: INodFactoryTestArming::issueForTestC
     )
     .map_err(crate::errors::NodFactoryError::CreateNodForTest)?;
     let issued_at = match call.issuedAt {
-        0 => storage.timestamp()?.to::<u64>(),
+        0 => storage.now_secs()?,
         at => at,
     };
     runtime::issue_nod_at(storage, &encrypted, issued_at)?;

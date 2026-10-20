@@ -85,7 +85,7 @@ impl Staking<'_> {
     /// zeroes out mature entries, rebuilds the list without them,
     /// and transfers the total claimable amount to the caller.
     pub fn claim_unbonded(&mut self, caller: Address) -> Result<()> {
-        let timestamp = self.storage.timestamp()?.to::<u64>();
+        let timestamp = self.storage.now_secs()?;
         let mut total_claimable = U256::ZERO;
 
         // Walk per-validator linked list (stored = idx + 1, 0 = empty/end)

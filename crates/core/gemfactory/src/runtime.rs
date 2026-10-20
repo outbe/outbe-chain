@@ -46,7 +46,7 @@ pub fn issue_gem(storage: &StorageHandle<'_>, params: GemIssueParams) -> Result<
     outbe_oracle::api::check_reference_currency_with_storage(storage.clone(), reference_currency)?;
 
     // The caller resolves the price: it knows which day the gem belongs to.
-    let issued_at = storage.timestamp()?.to::<u64>();
+    let issued_at = storage.now_secs()?;
     let params = GemAddParams {
         owner,
         promis_load_minor: promis_load,
@@ -162,6 +162,8 @@ pub fn issue_gem_position(
         series.reference_currency,
     )?;
 
+    let issued_at = storage.now_secs()?;
+
     // Burn `units` of the merchant's Intex. `sendToGemFactory` returns the
     // burned count (and reverts on a state that may not be sent, or zero units).
     let burned = burn_intex_into_gem_factory(storage, caller, source_intex_id, units)?;
@@ -180,7 +182,6 @@ pub fn issue_gem_position(
     )?;
     outbe_intex::api::release_if_spent(storage, source_intex_id)?;
 
-    let issued_at = storage.timestamp()?.to::<u64>();
     let position_id =
         GemFactoryContract::generate_position_id(caller, source_intex_id, storage.block_number()?);
 
@@ -273,7 +274,7 @@ pub fn issue_merchant_gem(
         return Err(GemFactoryError::NotPositionOwner.into());
     }
 
-    let now = storage.timestamp()?.to::<u64>();
+    let now = storage.now_secs()?;
     if now >= record.expires_at {
         return Err(GemFactoryError::PositionExpired.into());
     }
@@ -363,7 +364,7 @@ pub(crate) fn require_settleable(storage: &StorageHandle<'_>, gem: &GemView) -> 
     if gem.item.is_settled() {
         return Err(GemFactoryError::GemAlreadySettled.into());
     }
-    if gem.group_called_at != 0 && storage.timestamp()?.to::<u64>() > gem.settlement_deadline() {
+    if gem.group_called_at != 0 && storage.now_secs()? > gem.settlement_deadline() {
         return Err(GemFactoryError::SettlementDeadlinePassed.into());
     }
     Ok(())

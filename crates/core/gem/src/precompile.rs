@@ -90,7 +90,7 @@ fn dispatch_entity(
         }),
         tokenURI(c) => view(c, |c| {
             let gem = api::get_view(storage, c.gemId)?.ok_or(GemError::GemNotFound)?;
-            let now = storage.timestamp()?.to::<u64>();
+            let now = storage.now_secs()?;
             Ok(crate::metadata::token_uri(&gem, now))
         }),
         tokenOfOwnerByIndex(c) => view(c, |c| {
@@ -100,7 +100,7 @@ fn dispatch_entity(
         }),
         getGem(c) => view(c, |c| {
             let gem = api::get_view(storage, c.gemId)?.ok_or(GemError::GemNotFound)?;
-            Ok(to_abi_data(&gem, storage.timestamp()?.to::<u64>()))
+            Ok(to_abi_data(&gem, storage.now_secs()?))
         }),
         _ => Err(crate::errors::GemFatalError::EntityRouteMetadataCall.into()),
     }

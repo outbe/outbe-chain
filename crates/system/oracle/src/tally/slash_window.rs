@@ -34,6 +34,8 @@ pub fn slash_and_reset_counters(oracle: &mut OracleContract, _timestamp: u64) ->
         .into());
     }
 
+    // Reject invalid time before any validator's counters or penalties change.
+    oracle.storage.now_secs()?;
     for addr in validator_addresses {
         close_validator_window(oracle, addr, policy)?;
     }

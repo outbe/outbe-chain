@@ -25,6 +25,7 @@ where
         R: RecoveredTx<TransactionSigned>,
         F: FnOnce(&EthTxResult<E::HaltReason, reth_ethereum::TxType>) -> CommitChanges,
     {
+        let ctx = self.fee_route_context()?;
         let tx = recovered.tx();
         let signer = *recovered.signer();
         if tx.gas_limit() < Self::SOFT_FAILURE_GAS {
@@ -47,7 +48,6 @@ where
         }
 
         // Preserve the signer read before both bootstrap and paid routing.
-        let ctx = self.fee_route_context();
         let account = self.read_fee_route_account(signer, ctx.clone())?;
         if waiver::bootstrap_fee_waiver_authorized(tx, signer, ctx.chain_id, &account) {
             return self.execute_without_user_fee(tx_env, recovered, f);
@@ -82,14 +82,18 @@ where
         Ok(Some(GasOutput::new(Self::SOFT_FAILURE_GAS)))
     }
 
-    fn fee_route_context(&self) -> BlockContext {
-        BlockContext::new_with_genesis_hash(outbe_primitives::block::BlockContextInput {
-            block_number: self.inner.evm.block().number().saturating_to::<u64>(),
-            timestamp: self.inner.evm.block().timestamp().saturating_to::<u64>(),
-            chain_id: self.inner.evm.chain_id(),
-            genesis_hash: self.genesis_hash,
-            proposer: self.inner.evm.block().beneficiary(),
-            validators: Vec::new(),
-        })
+    fn fee_route_context(&self) -> Result<BlockContext, BlockExecutionError> {
+        let timestamp = outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
+            .map_err(crate::errors::ExecutorValidationError::from)?;
+        Ok(BlockContext::new_with_genesis_hash(
+            outbe_primitives::block::BlockContextInput {
+                block_number: self.inner.evm.block().number().saturating_to::<u64>(),
+                timestamp,
+                chain_id: self.inner.evm.chain_id(),
+                genesis_hash: self.genesis_hash,
+                proposer: self.inner.evm.block().beneficiary(),
+                validators: Vec::new(),
+            },
+        ))
     }
 }

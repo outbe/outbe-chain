@@ -45,7 +45,7 @@ pub fn dispatch(
                 let exercised = registry.exercised_units.read(&series_id)?;
                 let gem_factory = registry.gem_factory_units.read(&series_id)?;
                 let stamp = registry.call_stamp(&record)?;
-                let now = storage.timestamp()?.to::<u64>();
+                let now = storage.now_secs()?;
                 to_abi_data(&record, [settled, exercised, gem_factory], stamp, now)
             }),
             seriesUnitCounts(c) => view(c, |c| {
