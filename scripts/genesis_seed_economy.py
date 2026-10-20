@@ -147,60 +147,54 @@ def seed_tribute_day_totals(storage: StorageBuilder, days: list[int]):
         storage.set_mapping(1, u32_bytes(wwd), 1)
 
 
-def seed_metadosis(storage: StorageBuilder, config: dict):
+def seed_tribute_worldwide_days(storage: StorageBuilder, wwds: list):
     """
-    Metadosis storage layout - MUST track `crates/core/metadosis/src/schema.rs`
-    (`#[storage_schema] MetadosisContract`). Attributes occupy slots in
-    `#[attribute(order)]` order, packed with no gaps. A retired order reserves
-    no slot. A `Map<WorldwideDayKey, WorldwideDay>` consumes one base slot per
-    record field, a `Value` one slot, and a `Set` two (length + positions base):
+    Tribute worldwide-day storage layout - MUST track `crates/core/tribute/src/schema.rs`
+    (`#[storage_schema] TributeContract`). Attributes occupy slots in declared
+    order. A `Map<WorldwideDayKey, WorldwideDay>` consumes one base slot per record
+    field, and a `Set` two (length + positions base):
 
-      slot 0:      bootstrap_end_time (Value<u64>)
-      slots 1-7:   worldwide_days (Map<u32, WorldwideDay>) - one mapping per field:
-                     1 status(u8)             2 forming_start(u64)
-                     3 forming_end(u64)       4 lookback_end(u64)
-                     5 offering_end(u64)      6 scheduled_process_time(u64)
-                     7 metadosis_limit_minor(U256)
-      slots 8-9:   active_wwd (Set<WorldwideDayKey>) - OZ enumerable set:
-                     8 = length + value array at keccak256(be32(8))+i
-                     9 = positions base, position(wwd) = index + 1 (0 = absent)
-      slot 10+:    closed_wwd (Deque<WorldwideDayKey>)
+      slots 27-31: worldwide_days (Map<u32, WorldwideDay>) - one mapping per field:
+                     27 day(u32)
+                     28 forming_start(u64)    29 forming_end(u64)
+                     30 offerings_start(u64)  31 offering_end(u64)
+      slots 32-33: active_wwd (Set<WorldwideDayKey>) - OZ enumerable set:
+                     32 = length + value array at keccak256(be32(32))+i
+                     33 = positions base, position(wwd) = index + 1 (0 = absent)
 
-    The active_wwd Set is what `get_active_wwd_by_status` (and therefore the tribute
-    OFFERING lookup) reads. The seeder MUST populate it in the enumerable-set layout
-    above. Seeding only the day record (slots 1-7) leaves the day invisible to the
-    active scan, and every offer reverts "no worldwide day is OFFERING".
+    The active_wwd Set is what `get_active_wwd` reads. The seeder MUST populate
+    it in the enumerable-set layout above.
     """
-    wwds = config.get("worldwide_days", [])
-
-    # active_wwd is a Set at base slot 8 (schema order 2, right after the seven
-    # worldwide_days field mappings). Its positions mapping lives at base + 1.
-    ACTIVE_WWD_BASE = 8
+    WWD_BASE = 27
+    ACTIVE_WWD_BASE = 32
 
     for idx, entry in enumerate(wwds):
         wwd = entry["wwd"]
         wwd_key = u32_bytes(wwd)
 
-        storage.set_mapping(1, wwd_key, entry.get("status", 0))
-        storage.set_mapping(2, wwd_key, entry.get("forming_start", 0))
-        storage.set_mapping(3, wwd_key, entry.get("forming_end", 0))
-        storage.set_mapping(4, wwd_key, entry.get("lookback_end", 0))
-        storage.set_mapping(5, wwd_key, entry.get("offering_end", 0))
-        storage.set_mapping(6, wwd_key, entry.get("scheduled_process_time", 0))
-
-        # slot 7 = metadosis_limit_minor (per-day mint cap).
-        day_limit = parse_int(entry.get("day_limit", "0"))
-        if day_limit > 0:
-            storage.set_mapping(7, wwd_key, day_limit)
+        storage.set_mapping(WWD_BASE + 0, wwd_key, entry.get("day", wwd))
+        storage.set_mapping(WWD_BASE + 1, wwd_key, entry.get("forming_start", 0))
+        storage.set_mapping(WWD_BASE + 2, wwd_key, entry.get("forming_end", 0))
+        storage.set_mapping(
+            WWD_BASE + 3,
+            wwd_key,
+            entry.get("offerings_start", entry.get("forming_end", 0)),
+        )
+        storage.set_mapping(WWD_BASE + 4, wwd_key, entry.get("offering_end", 0))
 
         # Insert into the active_wwd Set: value-array entry + 1-indexed position.
         storage.set_slot(data_slot(ACTIVE_WWD_BASE) + idx, wwd)
         storage.set_mapping(ACTIVE_WWD_BASE + 1, u32_bytes(wwd), idx + 1)
 
-    # Set length.
     storage.set_slot(ACTIVE_WWD_BASE, len(wwds))
 
-    # Bootstrap end time
+
+def seed_metadosis(storage: StorageBuilder, config: dict):
+    """
+    Metadosis storage layout - MUST track `crates/core/metadosis/src/schema.rs`
+    (`#[storage_schema] MetadosisContract`):
+      slot 0:      bootstrap_end_time (Value<u64>)
+    """
     bootstrap_end = config.get("bootstrap_end_time", 0)
     if bootstrap_end:
         storage.set_slot(0, bootstrap_end)
@@ -318,16 +312,23 @@ def _seed_economic_state(seed, alloc):
             f"{len(tribute_storage.entries)} storage entries"
         )
 
-    # Seed Metadosis
+    # Seed Metadosis (bootstrap_end_time at METADOSIS_ADDRESS, worldwide_days at TRIBUTE_ADDRESS)
     if "metadosis" in seed:
         meta_storage = StorageBuilder()
         seed_metadosis(meta_storage, seed["metadosis"])
         entry = alloc[METADOSIS_ADDRESS]
         entry.setdefault("storage", {}).update(meta_storage.entries)
         wwds = seed["metadosis"].get("worldwide_days", [])
+        tribute_wwd_storage = StorageBuilder()
+        if wwds:
+            seed_tribute_worldwide_days(tribute_wwd_storage, wwds)
+            alloc[TRIBUTE_ADDRESS].setdefault("storage", {}).update(
+                tribute_wwd_storage.entries
+            )
         print(
-            f"  Metadosis: {len(wwds)} worldwide days, "
-            f"{len(meta_storage.entries)} storage entries"
+            f"  Metadosis: {len(wwds)} worldwide days (in Tribute), "
+            f"{len(meta_storage.entries)} metadosis storage entries, "
+            f"{len(tribute_wwd_storage.entries)} tribute wwd storage entries"
         )
 
     # Seed Oracle

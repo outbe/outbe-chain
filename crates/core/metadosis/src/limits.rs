@@ -123,13 +123,14 @@ pub(crate) fn apply_auction_brief(
     split: &LimitSplit,
     logical_anchor: u64,
 ) -> Result<()> {
+    let is_active = !split.desis_limit_minor.is_zero();
     storage.with_checkpoint(|| {
         outbe_desis::api::dispatch_auction_brief(
             storage.clone(),
             outbe_desis::api::AuctionBrief {
                 worldwide_day,
                 desis_limit_minor: split.desis_limit_minor,
-                has_limit: !split.desis_limit_minor.is_zero(),
+                has_limit: is_active,
             },
             logical_anchor,
             outbe_desis::api::BriefOverflowPolicy::Reject,

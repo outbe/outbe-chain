@@ -1,12 +1,11 @@
 use super::*;
 use alloy_primitives::{Address, U256};
-use outbe_metadosis::genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay};
-use outbe_metadosis::WwdStatus;
 use outbe_primitives::{
     addresses::{METADOSIS_ADDRESS, ORACLE_ADDRESS, TRIBUTE_ADDRESS},
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
     time::WorldwideDay,
 };
+use outbe_tribute::worldwideday::genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay};
 use std::str::FromStr as _;
 
 impl Localnet {
@@ -21,16 +20,16 @@ impl Localnet {
                 .ok_or_else(|| eyre!("genesis timestamp"))?,
         )?)?;
         StorageHandle::enter(&mut provider, |storage| -> Result<()> {
-            let projection = outbe_metadosis::api::worldwide_day(
+            let projection = outbe_tribute::worldwideday::api::worldwide_day(
                 storage.clone(),
                 WorldwideDay::new(worldwide_day),
             )?
             .ok_or_else(|| eyre!("native Lysis fixture WorldwideDay is missing"))?;
             eyre::ensure!(
-                projection.status == WwdStatus::Offering,
+                projection.is_offering_at(timestamp),
                 "native Lysis fixture WorldwideDay must be Offering"
             );
-            let price_day = outbe_nod::openings::entry_price_day(projection.scheduled_process_time);
+            let price_day = outbe_nod::openings::entry_price_day(projection.offering_end);
             let last_closed_day = outbe_nod::openings::entry_price_day(timestamp);
             eyre::ensure!(
                 price_day <= last_closed_day,
@@ -272,7 +271,7 @@ fn fatal(message: &str) -> outbe_primitives::error::PrecompileError {
     outbe_primitives::error::PrecompileError::Fatal(message.into())
 }
 
-/// Loads the Metadosis, Oracle and Tribute genesis storage; returns each
+/// Loads the Metadosis, Oracle and Tribute genesis storage. Returns each
 /// account's alloc key for the write-back.
 fn load_measurement_accounts(
     genesis: &serde_json::Value,
@@ -346,17 +345,14 @@ fn seed_public_measurement_day(
             timestamp: day.genesis_timestamp,
         },
     )?;
-    let day_limit = U256::from(500) * outbe_primitives::units::SCALE_1E6_U256;
     let report = FreshDevnetGenesisBuilder::new()
         .seed_active_worldwide_day(GenesisWorldwideDay {
             worldwide_day,
-            status: WwdStatus::Offering,
+            day: outbe_primitives::time::first_full_day(day.offering_end),
             forming_start: day.forming_start,
             forming_end: day.genesis_timestamp,
-            lookback_end: day.genesis_timestamp,
+            offerings_start: day.genesis_timestamp,
             offering_end: day.offering_end,
-            scheduled_process_time: day.offering_end,
-            metadosis_limit_minor: day_limit,
         })
         .apply(storage.clone())?;
     outbe_tribute::TributeContract::new(storage).unseal_day(worldwide_day)?;

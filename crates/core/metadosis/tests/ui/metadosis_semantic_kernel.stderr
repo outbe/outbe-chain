@@ -1,5 +1,0 @@
-error[E0432]: unresolved import `outbe_metadosis::test_support::kernel`
- --> tests/ui/metadosis_semantic_kernel.rs:1:36
-  |
-1 | use outbe_metadosis::test_support::kernel::ActivationKernel;
-  |                                    ^^^^^^ could not find `kernel` in `test_support`
