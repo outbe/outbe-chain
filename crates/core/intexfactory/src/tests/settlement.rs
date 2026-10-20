@@ -321,7 +321,13 @@ fn erc20_settle_refuses_a_token_answering_false() {
             },
         )
         .unwrap_err();
-        assert!(err.to_string().contains("token call failed"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_vaultrouter::settlement::SettlementError::TokenOperationFailed,
+            )
+            .to_string()
+        );
         assert_eq!(outbe_intex::api::settled_units(&s, sid(7)).unwrap(), 0);
     });
 }
