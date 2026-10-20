@@ -1,7 +1,6 @@
 use std::time::Instant;
 
 use alloy_primitives::U256;
-use outbe_metadosis::WwdMembership;
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_primitives::time::WorldwideDay;
 
@@ -74,8 +73,8 @@ impl BenchmarkScenario for MetadosisScenario {
                 .map_err(|error| error.to_string())
         })?
         .ok_or_else(|| "created Metadosis WWD is not readable".to_owned())?;
-        if projection.membership != WwdMembership::Active {
-            return Err("created Metadosis WWD is not active".to_owned());
+        if projection.day == 0 {
+            return Err("created Metadosis WWD has zero EmissionDay link".to_owned());
         }
 
         let mut observation = Observation::new(

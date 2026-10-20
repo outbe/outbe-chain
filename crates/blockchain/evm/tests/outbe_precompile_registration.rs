@@ -41,7 +41,7 @@ fn expected_exact_addresses() -> [Address; 38] {
         ORACLE_ADDRESS,
         ZEROFEE_ADDRESS,
         OUTBE_SYSTEM_TX_ADDRESS,
-        ZKPROOF_GROTH16_ADDRESS,
+        ZKPROOF_VERIFY_ADDRESS,
         TEE_REGISTRY_ADDRESS,
         L2_REGISTRY_ADDRESS,
         HYPERLANE_CONTROLLER_ADDRESS,

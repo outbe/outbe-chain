@@ -1,11 +1,15 @@
 //! Error types for the vaultrouter precompile.
 //!
-//! These variants match the custom errors from the Solidity interfaces and `ErrorsLib`.
-//! Precompile reverts return a string message instead of an ABI selector.
+//! A variant with a matching custom error in `IVaultRouter.sol` reverts with that
+//! error's ABI encoding: its selector, then its fields. A variant with no declared
+//! Solidity error reverts with a string message.
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, Bytes, U256};
+use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
+
+use crate::api::IVaultRouter;
 
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -84,9 +88,86 @@ pub enum VaultRouterError {
     ReferencePairUnavailable,
 }
 
+/// Reverts with the ABI encoding of a declared `IVaultRouter` error.
+fn revert_with<E: SolError>(error: E) -> PrecompileError {
+    PrecompileError::RevertBytes(Bytes::from(error.abi_encode()))
+}
+
 impl From<VaultRouterError> for PrecompileError {
     fn from(err: VaultRouterError) -> Self {
-        PrecompileError::Revert(err.to_string())
+        use IVaultRouter as I;
+        match err {
+            VaultRouterError::TokenOperationFailed => revert_with(I::TokenOperationFailed {}),
+            VaultRouterError::InvalidLiquiditySource => revert_with(I::InvalidLiquiditySource {}),
+            VaultRouterError::InvalidLiquidityTarget => revert_with(I::InvalidLiquidityTarget {}),
+            VaultRouterError::ReserveVaultNotConfigured => {
+                revert_with(I::ReserveVaultNotConfigured {})
+            }
+            VaultRouterError::ReserveVaultAlreadyAdded => {
+                revert_with(I::ReserveVaultAlreadyAdded {})
+            }
+            VaultRouterError::ReserveVaultNotFound => revert_with(I::ReserveVaultNotFound {}),
+            VaultRouterError::ReserveVaultOwnerNotRenounced(current_owner) => {
+                revert_with(I::ReserveVaultOwnerNotRenounced {
+                    currentOwner: current_owner,
+                })
+            }
+            VaultRouterError::LiquiditySourceNotFound => revert_with(I::LiquiditySourceNotFound {}),
+            VaultRouterError::LiquidityTargetNotFound => revert_with(I::LiquidityTargetNotFound {}),
+            VaultRouterError::InsufficientSharesForWithdraw {
+                available,
+                required,
+            } => revert_with(I::InsufficientSharesForWithdraw {
+                availableShares: available,
+                requiredShares: required,
+            }),
+            VaultRouterError::SameVaultRebalance => revert_with(I::SameVaultRebalance {}),
+            VaultRouterError::InvalidRebalanceAmount => revert_with(I::InvalidRebalanceAmount {}),
+            VaultRouterError::RebalanceVaultNotRegistered(vault) => {
+                revert_with(I::RebalanceVaultNotRegistered { vault })
+            }
+            VaultRouterError::RebalanceInputExceedsMax {
+                required,
+                max_amount_to,
+            } => revert_with(I::RebalanceInputExceedsMax {
+                requiredMinor: required,
+                maxAssetsToMinor: max_amount_to,
+            }),
+            VaultRouterError::UnsupportedAssetDecimals(decimals) => {
+                revert_with(I::UnsupportedAssetDecimals { decimals })
+            }
+            VaultRouterError::ReservationExists(id) => revert_with(I::ReservationExists { id }),
+            VaultRouterError::ReservationNotFound(id) => revert_with(I::ReservationNotFound { id }),
+            VaultRouterError::ReservationExpired(id) => revert_with(I::ReservationExpired { id }),
+            VaultRouterError::CredisOwnerMismatch => revert_with(I::CredisOwnerMismatch {}),
+            VaultRouterError::ReservationInsufficient {
+                available,
+                required,
+            } => revert_with(I::ReservationInsufficient {
+                availableMinor: available,
+                requiredMinor: required,
+            }),
+            VaultRouterError::InvalidReservationAmount => {
+                revert_with(I::InvalidReservationAmount {})
+            }
+            undeclared @ (VaultRouterError::ZeroAddress
+            | VaultRouterError::Unauthorized
+            | VaultRouterError::ReceiverNotDeployed
+            | VaultRouterError::UndecodableReturn(_)
+            | VaultRouterError::TimestampOverflow
+            | VaultRouterError::RouterCallUndecodable(_)
+            | VaultRouterError::IndexOutOfBounds
+            | VaultRouterError::InvalidAsset
+            | VaultRouterError::InvalidAssetDecimals
+            | VaultRouterError::UnsupportedAssetDecimalsSimple
+            | VaultRouterError::InvalidAssetCurrency
+            | VaultRouterError::PledgePriceUnavailable
+            | VaultRouterError::TimestampExceedsU64
+            | VaultRouterError::PreviousDayVwapUnavailable
+            | VaultRouterError::ReferencePairUnavailable) => {
+                PrecompileError::Revert(undeclared.to_string())
+            }
+        }
     }
 }
 
@@ -119,6 +200,11 @@ pub enum SettlementError {
 
 impl From<SettlementError> for PrecompileError {
     fn from(error: SettlementError) -> Self {
-        PrecompileError::Revert(error.to_string())
+        match error {
+            SettlementError::TokenOperationFailed => {
+                revert_with(IVaultRouter::TokenOperationFailed {})
+            }
+            undeclared => PrecompileError::Revert(undeclared.to_string()),
+        }
     }
 }

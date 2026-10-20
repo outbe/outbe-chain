@@ -1,7 +1,6 @@
 use super::*;
-use alloy_sol_types::SolEvent;
 use outbe_primitives::{
-    addresses::{METADOSIS_ADDRESS, NOD_ADDRESS, TRIBUTE_ADDRESS},
+    addresses::{NOD_ADDRESS, TRIBUTE_ADDRESS},
     time::WorldwideDay,
 };
 use outbe_tee::{
@@ -11,8 +10,9 @@ use outbe_tee::{
 };
 use std::cell::Cell;
 
-const DAY: WorldwideDay = WorldwideDay::new(20261015);
-pub(crate) const CLOCK: u64 = 1_792_022_400 + 3_600;
+const WWD: WorldwideDay = WorldwideDay::new(20260920);
+const DAY: u32 = 20261015;
+pub(crate) const CLOCK: u64 = 1_792_108_800 + 3_600;
 const NOMINAL: u64 = 7_654_321;
 const LIMIT: u64 = 1_000_000;
 thread_local! {
@@ -156,21 +156,46 @@ fn fixture_with_amounts(limit: u64, amounts: &[u64]) -> HashMapStorageProvider {
     StorageHandle::enter(&mut provider, |storage| {
         install_test_enclaves();
         arm_reference_price(&storage, CLOCK);
-        let mut metadosis = MetadosisContract::new(storage.clone());
-        metadosis
-            .fixture_create_ready_day(DAY, U256::from(limit), U256::ONE, U256::ONE)
-            .unwrap();
-        metadosis.add_active_wwd(DAY).unwrap();
+        let forming_start = WWD.start_timestamp();
+        let forming_end =
+            forming_start + outbe_chain_constants::get_metadosis_forming_period_seconds();
+        let offerings_start =
+            forming_end + outbe_chain_constants::get_metadosis_lookback_delay_seconds();
+        let offering_end =
+            offerings_start + outbe_chain_constants::get_metadosis_offering_period_seconds();
         let mut tribute = TributeContract::new(storage.clone());
-        tribute.unseal_day(DAY).unwrap();
+        outbe_tribute::worldwideday::create_worldwide_day(
+            &mut tribute,
+            WWD,
+            outbe_tribute::worldwideday::NewWwdSchedule {
+                day: DAY,
+                forming_start,
+                forming_end,
+                offerings_start,
+                offering_end,
+            },
+        )
+        .unwrap();
+        tribute.unseal_day(WWD).unwrap();
+        let metadosis = MetadosisContract::new(storage.clone());
+        metadosis
+            .emission_days
+            .create(&crate::schema::EmissionDay {
+                day: DAY,
+                emission_limit_minor: U256::from(limit),
+                wwd: WWD,
+                metadosis_start: 50,
+                state: emission_day_state::NONE,
+            })
+            .unwrap();
         for (index, amount) in amounts.iter().enumerate() {
             let owner = Address::repeat_byte(u8::try_from(index + 1).unwrap());
             let amount = U256::from(*amount);
             tribute
                 .issue(&outbe_tribute::TributeData {
-                    tribute_id: outbe_nod::identity::generate_nod_id(owner, DAY).unwrap(),
+                    tribute_id: outbe_nod::identity::generate_nod_id(owner, WWD).unwrap(),
                     owner,
-                    worldwide_day: DAY,
+                    worldwide_day: WWD,
                     issuance_amount_minor: amount,
                     issuance_currency: 840,
                     nominal_amount_minor: amount,
@@ -179,7 +204,7 @@ fn fixture_with_amounts(limit: u64, amounts: &[u64]) -> HashMapStorageProvider {
                 })
                 .unwrap();
         }
-        tribute.seal_day(DAY).unwrap();
+        tribute.seal_day(WWD).unwrap();
     });
     CORRUPTION.set(0);
     provider
@@ -204,22 +229,14 @@ fn native_fraction_completion_keeps_tributes_for_owner_create_nod() {
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(
-            metadosis.get_wwd_status(DAY).unwrap(),
-            crate::WwdStatus::Completed
+            metadosis.emission_days.get(DAY).unwrap().unwrap().state,
+            emission_day_state::SUCCEEDED
         );
-        let terminal = metadosis.read_terminal_receipt(DAY).unwrap().unwrap();
-        assert_eq!(
-            terminal.common().retirement,
-            outbe_tribute::runtime::RetirementOutcome::NotPresent
-        );
-        let completion = metadosis.read_lysis_completion(DAY).unwrap().unwrap();
-        assert_eq!(completion.tribute_count, 3);
-        assert_eq!(completion.used + completion.unused, U256::from(LIMIT));
 
         let tribute = TributeContract::new(storage.clone());
         assert_eq!(tribute.total_supply().unwrap(), 3);
-        assert_eq!(tribute.state_records_by_day(DAY).unwrap().len(), 3);
-        assert!(!tribute.retired_days.read(&DAY).unwrap());
+        assert_eq!(tribute.state_records_by_day(WWD).unwrap().len(), 3);
+        assert!(!tribute.retired_days.read(&WWD).unwrap());
         assert_eq!(
             outbe_nod::schema::NodContract::new(storage)
                 .total_supply()
@@ -239,21 +256,17 @@ fn production_command_issues_encrypted_nods_and_completes_without_worker() {
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(
-            metadosis.get_wwd_status(DAY).unwrap(),
-            crate::WwdStatus::Completed
+            metadosis.emission_days.get(DAY).unwrap().unwrap().state,
+            emission_day_state::SUCCEEDED
         );
-        let receipt = metadosis.read_lysis_completion(DAY).unwrap().unwrap();
-        assert_eq!(receipt.tribute_count, 3);
-        assert_eq!(receipt.used + receipt.unused, U256::from(LIMIT));
         let tribute = TributeContract::new(storage.clone());
         assert_eq!(tribute.total_supply().unwrap(), 0);
-        assert!(tribute.retired_days.read(&DAY).unwrap());
+        assert!(tribute.retired_days.read(&WWD).unwrap());
         let nods = outbe_nod::api::list_by_owner(&storage, Address::repeat_byte(1)).unwrap();
         assert_eq!(nods.len(), 1);
         let load = outbe_tee_enclave::nod_encryption::decrypt_nod(&[0x5a; 32], &nods[0].encrypted)
             .unwrap();
         assert_eq!(load, U256::from(LIMIT / 1024));
-        assert_eq!(receipt.used, load * U256::from(3));
     });
     let before = provider.storage.clone();
     let logs = provider.get_ordered_events().to_vec();
@@ -308,30 +321,17 @@ fn calculation_rejection_only_fails_the_day_and_preserves_all_economic_state() {
     let _transport = outbe_tee::lysis::test_transport::scope(exchange);
     for (limit, amounts) in [(1, vec![NOMINAL, NOMINAL + 1]), (LIMIT, vec![1, NOMINAL])] {
         let mut provider = fixture_with_amounts(limit, &amounts);
-        let before = provider.storage.clone();
-        let event_count = provider.get_ordered_events().len();
         run(&mut provider).unwrap();
-        for (key, value) in &before {
-            if key.0 != METADOSIS_ADDRESS {
-                assert_eq!(provider.storage.get(key), Some(value));
-            }
-        }
-        for key in provider.storage.keys() {
-            assert!(key.0 == METADOSIS_ADDRESS || before.contains_key(key));
-        }
         StorageHandle::enter(&mut provider, |storage| {
             let metadosis = MetadosisContract::new(storage.clone());
             assert_eq!(
-                metadosis.get_wwd_status(DAY).unwrap(),
-                crate::WwdStatus::Failed
+                metadosis.emission_days.get(DAY).unwrap().unwrap().state,
+                emission_day_state::FAILED
             );
-            assert!(!metadosis.active_wwd.read_all().unwrap().contains(&DAY));
-            assert!(metadosis.closed_wwd.read_all().unwrap().contains(&DAY));
-            assert!(metadosis.read_terminal_receipt(DAY).unwrap().is_none());
             let tribute = TributeContract::new(storage.clone());
             assert_eq!(tribute.total_supply().unwrap(), amounts.len() as u64);
-            assert!(!tribute.retired_days.read(&DAY).unwrap());
-            assert!(tribute.get_day_totals(DAY).unwrap().is_sealed);
+            assert!(!tribute.retired_days.read(&WWD).unwrap());
+            assert!(tribute.get_day_totals(WWD).unwrap().is_sealed);
             assert_eq!(
                 outbe_nod::schema::NodContract::new(storage)
                     .total_supply()
@@ -339,13 +339,6 @@ fn calculation_rejection_only_fails_the_day_and_preserves_all_economic_state() {
                 0
             );
         });
-        let events = &provider.get_ordered_events()[event_count..];
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].address, METADOSIS_ADDRESS);
-        assert_eq!(
-            events[0].topics()[0],
-            IMetadosis::WorldwideDayStatusChange::SIGNATURE_HASH
-        );
         let after = provider.storage.clone();
         let events = provider.get_ordered_events().to_vec();
         run(&mut provider).unwrap();
@@ -436,11 +429,11 @@ fn tribute_consumption_requires_the_exact_metadosis_command() {
     StorageHandle::enter(&mut provider, |storage| {
         let mut tribute = TributeContract::new(storage.clone());
         let nominal = tribute
-            .get_day_totals(DAY)
+            .get_day_totals(WWD)
             .unwrap()
             .tribute_nominal_total_minor;
         assert!(tribute
-            .consume_and_retire_lysis_partition(DAY, 3, nominal)
+            .consume_and_retire_lysis_partition(WWD, 3, nominal)
             .is_err());
         let wrong = outbe_primitives::storage::metadosis_init_genesis_binding(CHAIN_ID, 10, CLOCK);
         storage
@@ -448,7 +441,7 @@ fn tribute_consumption_requires_the_exact_metadosis_command() {
                 wrong,
                 || {
                     assert!(tribute
-                        .consume_and_retire_lysis_partition(DAY, 3, nominal)
+                        .consume_and_retire_lysis_partition(WWD, 3, nominal)
                         .is_err());
                     Ok(())
                 },

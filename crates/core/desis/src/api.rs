@@ -48,15 +48,15 @@ pub enum AuctionBriefReceipt {
     },
 }
 
-/// One day's auction brief: its limit in raw PROMIS and whether the day is green.
+/// One day's auction brief: its limit in raw PROMIS and whether the day has a limit to sell.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AuctionBrief {
     pub worldwide_day: WorldwideDay,
     pub desis_limit_minor: U256,
-    pub is_green: bool,
+    pub has_limit: bool,
 }
 
-/// Record the day's auction brief (limit in raw PROMIS, day type). The day is
+/// Record the day's auction brief (limit in raw PROMIS, has-limit flag). The day is
 /// priced at auction start, not here. Only a limit outside Desis' `u128` auction
 /// domain is a committed rejection. Invalid state, timestamp overflow,
 /// storage/index/event faults and corruption propagate as `Err`.
@@ -69,7 +69,7 @@ pub fn dispatch_auction_brief(
     let AuctionBrief {
         worldwide_day,
         desis_limit_minor,
-        is_green,
+        has_limit,
     } = brief;
     storage.clone().with_checkpoint(|| {
         let anchor = runtime::preflight_brief(&storage, worldwide_day, now)?;
@@ -96,7 +96,7 @@ pub fn dispatch_auction_brief(
             storage.clone(),
             worldwide_day,
             desis_limit_u128,
-            is_green,
+            has_limit,
             anchor,
         )?;
         Ok(AuctionBriefReceipt::Accepted)

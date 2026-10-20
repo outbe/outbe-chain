@@ -64,7 +64,7 @@ fn world_selling(units: u16) -> HashMapStorageProvider {
             crate::api::AuctionBrief {
                 worldwide_day: DAY,
                 desis_limit_minor: U256::from(LIMIT),
-                is_green: true,
+                has_limit: true,
             },
             NOW,
             crate::api::BriefOverflowPolicy::ReturnToPromisLimit,

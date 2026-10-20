@@ -14,9 +14,6 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum MetadosisError {
-    #[error("Metadosis business failure: worldwide day type is UNKNOWN")]
-    UnknownWorldwideDayType,
-
     #[error("Metadosis business failure: VWAP must be non-zero")]
     VwapMustBeNonZero,
 

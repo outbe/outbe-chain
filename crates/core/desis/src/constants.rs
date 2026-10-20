@@ -44,8 +44,8 @@ pub const MIN_COMMIT_WINDOW_SECONDS: u64 = 16 * 3600;
 pub const MIN_COMMIT_WINDOW_SECONDS: u64 = 300;
 
 /// `dayState` wire values carried by AUCTION_STAGE_START.
-pub const DAY_STATE_GREEN: u8 = 1;
-pub const DAY_STATE_RED: u8 = 2;
+pub const DAY_STATE_LIVE: u8 = 1;
+pub const DAY_STATE_CANCELLED: u8 = 2;
 
 /// Entries one cross-chain payload array carries: bids per PROCESS_BIDS_BATCH and winners per
 /// REFUND_INSTRUCTIONS; clearing sizes its gas in chunks of the same length. Mirrors

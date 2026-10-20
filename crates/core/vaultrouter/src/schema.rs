@@ -98,6 +98,10 @@ pub struct VaultRouterContract {
     /// slot 13: CCA stables reservations keyed by id.
     #[attribute(order = 10)]
     pub reservations: outbe_primitives::storage::dsl::Map<U256, LiquidityReservation>,
+
+    /// slot 14: vault -> underlying asset captured at registration time.
+    #[attribute(order = 11)]
+    pub vault_assets: outbe_primitives::storage::dsl::Map<Address, Address>,
 }
 
 impl<'storage> VaultRouterContract<'storage> {

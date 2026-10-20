@@ -15,9 +15,17 @@ interface ITribute {
 
     event TributeWorldwideDaySealed(uint32 indexed worldwideDay, bool isSealed);
 
+    event WorldwideDayStarted(
+        uint32 indexed worldwideDay,
+        uint32 indexed day,
+        uint64 formingStart,
+        uint64 formingEnd,
+        uint64 offeringsStart,
+        uint64 offeringEnd
+    );
+
     /// @notice Canonical projection event for certified Lysis retirement and
-    /// the two closed Metadosis terminal authorities (empty missed OFFERING or
-    /// exact-aggregate capacity forfeiture). No arbitrary FAILED day may emit it.
+    /// Metadosis terminal authorities.
     event TributePartitionRetired(uint32 indexed worldwideDay);
 
     event CertifiedTributePartitionRetired(
@@ -40,6 +48,11 @@ interface ITribute {
         external
         view
         returns (uint32 tributeCount, bytes memory tributeNominalTotalMinor, bool isSealed);
+    function getWorldwideDay(uint32 wwd)
+        external
+        view
+        returns (uint32 day, uint64 formingStart, uint64 formingEnd, uint64 offeringsStart, uint64 offeringEnd);
+    function getActiveWorldwideDays() external view returns (uint32[] memory wwds);
     function getTributesByOwner(address owner) external view returns (uint256[] memory tributeIds);
     function getTributesByDay(uint32 worldwideDay) external view returns (uint256[] memory tributeIds);
     function getLeague(uint256 tributeId) external view returns (uint16 league);

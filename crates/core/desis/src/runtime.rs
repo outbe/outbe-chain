@@ -16,7 +16,7 @@ use outbe_intexfactory::SeriesId;
 use crate::constants::{
     BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, CLEARING_BID_GAS, CLEARING_CHUNK_GAS,
     CLEARING_FIXED_GAS, CLEARING_HISTORY_DAYS, CLEARING_MIN_BIDS, COMMIT_WINDOW_SECONDS,
-    DAY_STATE_GREEN, DAY_STATE_RED, IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE,
+    DAY_STATE_CANCELLED, DAY_STATE_LIVE, IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE,
     MAX_BID_BATCHES, MAX_PAYLOAD_ARRAY_LEN, MAX_REFUND_CHUNKS, MIN_COMMIT_WINDOW_SECONDS,
     ORIGIN_ROUTER_ADDRESS, PROMIS_LOAD_LAUNCH_EXPONENT, PROMIS_LOAD_OVERRIDE,
     REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
@@ -55,7 +55,7 @@ pub(crate) fn record_preflighted_brief(
     storage: StorageHandle<'_>,
     worldwide_day: WorldwideDay,
     desis_limit_minor: u128,
-    is_green: bool,
+    has_limit: bool,
     anchor: u32,
 ) -> Result<()> {
     let mut contract = storage.contract::<DesisContract>();
@@ -64,8 +64,8 @@ pub(crate) fn record_preflighted_brief(
         .pending_desis_limit_minor
         .write(&worldwide_day, U256::from(desis_limit_minor))?;
     contract
-        .brief_green
-        .write(&worldwide_day, u8::from(is_green))?;
+        .brief_has_limit
+        .write(&worldwide_day, u8::from(has_limit))?;
     contract.auction_at.write(&worldwide_day, anchor)?;
     contract.push_sched_active(worldwide_day)?;
     Ok(())

@@ -13,10 +13,10 @@ pub use outbe_primitives::storage::gas::ZK_VERIFY_GAS;
 
 /// Selectors on the UltraHonkKeccak verifier precompile (`0xEE08`) that accept
 /// native value.
-pub const GROTH16_PAYABLE_SELECTORS: &[[u8; 4]] = &[];
+pub const ZK_VERIFY_PAYABLE_SELECTORS: &[[u8; 4]] = &[];
 
 /// Dispatch the UltraHonkKeccak verifier precompile (`0xEE08`).
-pub fn dispatch_groth16(
+pub fn dispatch_zk_verify(
     _storage: StorageHandle,
     data: &[u8],
     _caller: Address,
@@ -26,8 +26,8 @@ pub fn dispatch_groth16(
     Ok(Bytes::copy_from_slice(&zk_verify(data)?))
 }
 
-/// Base gas charged before [`dispatch_groth16`].
-pub fn groth16_base_gas(_input: &[u8]) -> u64 {
+/// Base gas charged before [`dispatch_zk_verify`].
+pub fn zk_verify_base_gas(_input: &[u8]) -> u64 {
     ZK_VERIFY_GAS
 }
 

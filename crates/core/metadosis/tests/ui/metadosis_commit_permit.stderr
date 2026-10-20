@@ -1,7 +1,7 @@
 error[E0603]: module `commit` is private
  --> tests/ui/metadosis_commit_permit.rs:1:22
   |
-1 | use outbe_metadosis::commit::CommitPermit;
+1 | use outbe_metadosis::commit::commit_transition;
   |                      ^^^^^^ private module
   |
 note: the module `commit` is defined here

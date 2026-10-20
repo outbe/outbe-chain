@@ -130,8 +130,8 @@ enum StartOutcome {
     Retired,
 }
 
-/// Dispatch the START message for a briefed day: a red, unpriced, sub-unit or late day is
-/// born cancelled, otherwise it starts green.
+/// Dispatch the START message for a briefed day: a day with no limit, an unpriced, sub-unit
+/// or late day is born cancelled, otherwise it starts live.
 fn start_auction(
     storage: &StorageHandle<'_>,
     contract: &mut DesisContract<'_>,
@@ -168,23 +168,23 @@ fn start_auction(
         issuance_end: ts32(issuance_end)?,
     };
 
-    // A day nobody could price cannot hold an auction, and ends as a red day does. But
-    // unlike a red day, it was briefed with a limit, which has to be returned.
+    // A day nobody could price cannot hold an auction, and ends as a day with no limit does.
+    // But unlike that day, it was briefed with a limit, which has to be returned.
     let unpriced = config.reference_prices.is_empty();
-    let red = contract.brief_green.read(&worldwide_day)? == 0;
+    let no_limit = contract.brief_has_limit.read(&worldwide_day)? == 0;
     let desis_limit_minor = contract.pending_desis_limit_minor.read(&worldwide_day)?;
     let below_one_unit = desis_limit_minor < U256::from(config.promis_load_minor);
     let late = commit_end.saturating_sub(now) < MIN_COMMIT_WINDOW_SECONDS;
-    if unpriced || red || below_one_unit || late {
-        send_stage_start(storage, start, DAY_STATE_RED)?;
+    if unpriced || no_limit || below_one_unit || late {
+        send_stage_start(storage, start, DAY_STATE_CANCELLED)?;
         contract.write_stage(worldwide_day, AuctionStage::Cancelled)?;
         if unpriced {
             contract.emit(IDesis::AuctionCancelledUnpriced {
                 worldwideDay: worldwide_day.into(),
             })?;
             refund_unused_desis_limit(storage, contract, worldwide_day)?;
-        } else if red {
-            contract.emit(IDesis::AuctionCancelledRedDay {
+        } else if no_limit {
+            contract.emit(IDesis::AuctionCancelledNoLimit {
                 worldwideDay: worldwide_day.into(),
             })?;
         } else if below_one_unit {
@@ -203,7 +203,7 @@ fn start_auction(
         contract.remove_sched_active(worldwide_day)?;
         return Ok(StartOutcome::Retired);
     }
-    send_stage_start(storage, start, DAY_STATE_GREEN)?;
+    send_stage_start(storage, start, DAY_STATE_LIVE)?;
     contract.write_stage(worldwide_day, AuctionStage::Started)?;
     contract.emit(IDesis::AuctionCreated {
         worldwideDay: worldwide_day.into(),
@@ -213,7 +213,7 @@ fn start_auction(
 
 /// Return a retiring day's unused Desis Limit to PromisLimit, recording its
 /// Desis Allocation as zero. No-op once the limit was consumed at clearing (or
-/// for a red day, which briefs zero).
+/// for a day with no limit, which briefs zero).
 fn refund_unused_desis_limit(
     storage: &StorageHandle<'_>,
     contract: &mut DesisContract<'_>,

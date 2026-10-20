@@ -7,71 +7,66 @@ fn query<C: SolCall>(storage: StorageHandle<'_>, call: C) -> C::Return {
     C::abi_decode_returns(&output).unwrap()
 }
 
+fn query_tribute<C: SolCall>(storage: StorageHandle<'_>, call: C) -> C::Return {
+    let output = tribute_dispatch(storage, &call.abi_encode(), Address::ZERO, U256::ZERO).unwrap();
+    C::abi_decode_returns(&output).unwrap()
+}
+
 #[test]
-fn missing_receipts_have_canonical_empty_abi_returns() {
+fn missing_emission_day_and_worldwide_day_revert_cleanly() {
     with_storage(|storage| {
-        let wwd = 20270101;
-        let terminal = query(
+        let ed_err = metadosis_dispatch(
             storage.clone(),
-            IMetadosis::getWorldwideDayTerminalReceiptCall { wwd },
-        );
-        assert_eq!(terminal.outcome, 0);
-        assert_eq!(terminal.promisLimitReturnedMinor, U256::ZERO);
-        assert_eq!(terminal.promisLimitBeforeMinor, U256::ZERO);
-        assert_eq!(terminal.promisLimitAfterMinor, U256::ZERO);
-        assert_eq!(terminal.retirementOutcome, 0);
-        assert_eq!(terminal.blockNumber, 0);
-        let capacity = query(
-            storage.clone(),
-            IMetadosis::getRetentionForfeitureReceiptCall { wwd },
-        );
-        assert_eq!(capacity.outcome, 0);
-        assert_eq!(capacity.maxRetainedWorldwideDays, 0);
-        assert_eq!(capacity.retainedCountBefore, 0);
-        assert_eq!(capacity.promisLimitReturnedMinor, U256::ZERO);
-        assert_eq!(capacity.forfeitedTributeCount, 0);
-        assert_eq!(capacity.forfeitedTributeNominalMinor, U256::ZERO);
-        assert_eq!(capacity.sourceGeneration, 0);
-        assert_eq!(capacity.retiredGeneration, 0);
-        assert_eq!(capacity.retirementOutcome, 0);
-        assert_eq!(capacity.blockNumber, 0);
+            &IMetadosis::getEmissionDayCall { day: 20261015 }.abi_encode(),
+            Address::ZERO,
+            U256::ZERO,
+        )
+        .unwrap_err();
+        assert!(ed_err.to_string().contains("EmissionDay not found"));
+
+        let wwd_err = tribute_dispatch(
+            storage,
+            &ITribute::getWorldwideDayCall { wwd: 20260920 }.abi_encode(),
+            Address::ZERO,
+            U256::ZERO,
+        )
+        .unwrap_err();
+        assert!(wwd_err.to_string().contains("WorldwideDay not found"));
     });
 }
 
-#[cfg(feature = "test-utils")]
 #[test]
-fn worldwide_day_abi_preserves_genesis_windows_rates_and_membership() {
+fn worldwide_day_and_emission_day_abi_preserve_bidirectional_link() {
     with_storage(|storage| {
         seed_offering_day(storage.clone());
-        let day = query(
+        let day = query_tribute(
             storage.clone(),
-            IMetadosis::getWorldwideDayCall { wwd: 20270101 },
+            ITribute::getWorldwideDayCall { wwd: 20260920 },
         );
-        assert_eq!(day.status, status::OFFERING);
-        assert_eq!(day.dayType, day_type::GREEN);
+        assert_eq!(day.day, 20261015);
         assert_eq!(
             (
                 day.formingStart,
                 day.formingEnd,
-                day.lookbackEnd,
+                day.offeringsStart,
                 day.offeringEnd,
-                day.scheduledProcessTime
             ),
-            (10, 20, 30, 40, 50)
+            (10, 20, 30, 40)
         );
-        assert_eq!(
-            (day.previousVwapMinor, day.currentVwapMinor),
-            (U256::from(8), U256::from(9))
-        );
-        let active: Vec<u32> = query(storage.clone(), IMetadosis::getActiveWorldwideDaysCall {});
-        assert_eq!(active, vec![20270101]);
-        let offering: Vec<u32> = query(
+        let active: Vec<u32> =
+            query_tribute(storage.clone(), ITribute::getActiveWorldwideDaysCall {});
+        assert_eq!(active, vec![20260920]);
+
+        let ed = query(
             storage.clone(),
-            IMetadosis::getWorldwideDaysByStatusCall {
-                status: status::OFFERING,
-            },
+            IMetadosis::getEmissionDayCall { day: 20261015 },
         );
-        assert_eq!(offering, vec![20270101]);
+        assert_eq!(ed.emissionDay, 20261015);
+        assert_eq!(ed.emissionLimitMinor, U256::from(100));
+        assert_eq!(ed.wwd, 20260920);
+        assert_eq!(ed.metadosisStart, 50);
+        assert_eq!(ed.state, emission_day_state::NONE);
+
         MetadosisContract::new(storage.clone())
             .bootstrap_end_time
             .write(123)
@@ -81,23 +76,31 @@ fn worldwide_day_abi_preserves_genesis_windows_rates_and_membership() {
     });
 }
 
-#[cfg(feature = "test-utils")]
 pub(super) fn seed_offering_day(storage: StorageHandle<'_>) {
-    use crate::genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay};
-    FreshDevnetGenesisBuilder::new()
-        .seed_active_worldwide_day(GenesisWorldwideDay {
-            worldwide_day: 20270101.into(),
-            status: crate::WwdStatus::Offering,
-            day_type: crate::WwdDayType::Green,
+    let wwd = 20260920.into();
+    let day = 20261015u32;
+    let mut tribute = TributeContract::new(storage.clone());
+    outbe_tribute::worldwideday::create_worldwide_day(
+        &mut tribute,
+        wwd,
+        outbe_tribute::worldwideday::NewWwdSchedule {
+            day,
             forming_start: 10,
             forming_end: 20,
-            lookback_end: 30,
+            offerings_start: 30,
             offering_end: 40,
-            scheduled_process_time: 50,
-            metadosis_limit_minor: U256::from(100),
-            previous_vwap_minor: U256::from(8),
-            current_vwap_minor: U256::from(9),
+        },
+    )
+    .unwrap();
+    let metadosis = MetadosisContract::new(storage);
+    metadosis
+        .emission_days
+        .create(&crate::schema::EmissionDay {
+            day,
+            emission_limit_minor: U256::from(100),
+            wwd,
+            metadosis_start: 50,
+            state: emission_day_state::NONE,
         })
-        .apply(storage.clone())
         .unwrap();
 }
