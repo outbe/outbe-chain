@@ -129,6 +129,7 @@ TOP_LEVEL_KEYS = {
     "public_radicle_status_port",
     "price_feed_rest",
     "price_feed_websocket",
+    "feeder_pairs",
     *launch_bundle.DEFAULT_PORTS,
     *SEED_SECTIONS,
 }
