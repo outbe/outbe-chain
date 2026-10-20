@@ -19,9 +19,9 @@ interface ICredis {
     /// Every unsettled Credis of the group is called.
     event CredisGroupCalled(bytes32 indexed groupKey, uint64 calledAt, uint64 settlementDeadline);
 
-    /// The group's settlement deadline passed: `gratisBurnedMinor` of its `credis` unsettled
-    /// Credis returns to the Promis reserve, and the cleanup deletes them.
-    event CredisGroupForfeited(bytes32 indexed groupKey, uint32 credis, uint256 gratisBurnedMinor);
+    /// The group's settlement deadline passed: its `credis` unsettled Credis are forfeited.
+    /// The cleanup burns each one's Gratis into the Promis reserve and deletes it.
+    event CredisGroupForfeited(bytes32 indexed groupKey, uint32 credis);
 
     /// @notice A forfeited Credis is deleted: by its owner, or by the cleanup after its group's
     ///         deadline. Records the principal written off. Unpaid interest is left out of this

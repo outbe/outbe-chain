@@ -1,6 +1,5 @@
 //! Cleanup sweep: deletes the Credis of the forfeited groups. Each one takes its CCA's
-//! default and burns its Gratis from the source's pledge. The forfeit already returned
-//! that Gratis to the Promis reserve.
+//! default, and its Gratis burns from the source's pledge into the Promis reserve.
 
 use alloy_primitives::{B256, U256};
 use outbe_credis::{CleanupHours, CredisContract};

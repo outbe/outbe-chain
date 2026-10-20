@@ -9,9 +9,9 @@
 //!   collateral burns as in an expired one.
 //! - [`called`] is the daily Cycle-triggered price-path scan. It calls the groups of
 //!   Credis whose breach window filled.
-//! - [`expired`] forfeits a called group after its settlement window, returning its
-//!   unpaid collateral to the Promis Reserve in one credit. The cleanup then deletes its
-//!   Credis and burns their collateral from the sources' pledged balances.
+//! - [`expired`] forfeits a called group after its settlement window. The cleanup then
+//!   deletes its Credis, burning each one's collateral from its source's pledged balance
+//!   into the Promis Reserve.
 
 pub mod called;
 mod cleanup;

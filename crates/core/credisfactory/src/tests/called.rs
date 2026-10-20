@@ -1010,8 +1010,8 @@ fn settling_a_called_credis_in_full_leaves_the_queue() {
     teardown();
 }
 
-/// A group forfeits in one credit, and its cleanup deletes up to the block's write budget,
-/// leaving the rest to the next block.
+/// A group is forfeited at once, and its cleanup deletes up to the block's write budget,
+/// burning each Credis's Gratis into the reserve, and leaves the rest to the next block.
 #[test]
 fn the_cleanup_budget_bounds_one_block_and_the_next_block_drains_the_rest() {
     let mut provider = env();
@@ -1036,11 +1036,14 @@ fn the_cleanup_budget_bounds_one_block_and_the_next_block_drains_the_rest() {
         let lapsed = CREATED_AT + NOTICE + HOUR;
         advance_to(&storage, lapsed);
 
+        // Each deleted Credis burns its Gratis into the reserve as it goes.
+        let reserve = || {
+            outbe_promislimit::PromisLimitContract::new(storage.clone())
+                .get_total_unallocated()
+                .unwrap()
+        };
         assert_eq!(expire(&storage, lapsed), 1);
-        let reserve = outbe_promislimit::PromisLimitContract::new(storage.clone())
-            .get_total_unallocated()
-            .unwrap();
-        assert_eq!(reserve, pledge_cost() * U256::from(total));
+        assert_eq!(reserve(), pledge_cost() * U256::from(budget));
         assert_eq!(
             ids.iter().filter(|id| !is_deleted(&storage, **id)).count(),
             1
@@ -1048,13 +1051,8 @@ fn the_cleanup_budget_bounds_one_block_and_the_next_block_drains_the_rest() {
         assert_eq!(expire(&storage, lapsed), 0);
         assert!(ids.iter().all(|id| is_deleted(&storage, *id)));
         assert_eq!(cleanup_queued_at(&storage, group), 0);
-        assert_eq!(
-            outbe_promislimit::PromisLimitContract::new(storage.clone())
-                .get_total_unallocated()
-                .unwrap(),
-            reserve,
-            "the cleanup credits nothing"
-        );
+        assert_eq!(reserve(), pledge_cost() * U256::from(total));
+        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
     });
     teardown();
 }

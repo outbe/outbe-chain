@@ -711,12 +711,6 @@
         "type": "uint32",
         "indexed": false,
         "internalType": "uint32"
-      },
-      {
-        "name": "gratisBurnedMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
       }
     ],
     "anonymous": false

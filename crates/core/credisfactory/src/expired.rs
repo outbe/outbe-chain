@@ -54,20 +54,14 @@ impl ExpiryHandler<B256> for CredisExpiry<'_, '_> {
         Ok(group)
     }
 
-    /// Returns the Gratis still pledged on the group's Credis in one credit. The cleanup
-    /// burns it from each source's pledge.
+    /// Forfeits the group's Credis at once. Each one's Gratis burns and returns to the
+    /// Promis reserve together, in the cleanup.
     fn expire_member(&mut self, group: B256, _member: B256) -> Result<()> {
         let credis = self.credis.group_member_count(group)?;
-        let gratis = self.credis.group_outstanding_gratis.read(&group)?;
-        if !gratis.is_zero() {
-            outbe_promislimit::PromisLimitContract::new(self.ctx.storage.clone())
-                .add_to_total_unallocated(gratis)?;
-        }
         self.credis.hand_to_cleanup(group)?;
         self.credis.emit(ICredis::CredisGroupForfeited {
             groupKey: group,
             credis,
-            gratisBurnedMinor: gratis,
         })?;
         self.forfeited = self.forfeited.saturating_add(1);
         Ok(())

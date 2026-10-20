@@ -310,10 +310,6 @@ pub struct CredisContract {
     pub group_call_notice_period_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
     #[attribute(order = 40)]
     pub group_called_at: outbe_primitives::storage::dsl::Map<B256, u64>,
-    /// Gratis still pledged on the group's members, burned at once when it is forfeited.
-    #[attribute(order = 41)]
-    pub group_outstanding_gratis: outbe_primitives::storage::dsl::Map<B256, U256>,
-
     // Forfeited groups whose Credis wait to be deleted, bucketed like the expiry queue.
     #[attribute(order = 42)]
     pub cleanup_tree_root: outbe_primitives::storage::dsl::Value<U256>,

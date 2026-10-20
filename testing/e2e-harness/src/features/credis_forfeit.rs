@@ -1,6 +1,6 @@
-//! A called Credis left unpaid past its notice: it reads Forfeited at once, its group's
-//! forfeit returns the rest of its pledge to the Promis Limit pool, and the cleanup burns
-//! the pledge and deletes the Credis. An owner may forfeit their Credis themselves, with
+//! A called Credis left unpaid past its notice: it reads Forfeited at once, its group is
+//! forfeited, and the cleanup burns the rest of its pledge into the Promis Limit pool
+//! and deletes the Credis. An owner may forfeit their Credis themselves, with
 //! the same burn.
 
 use std::time::Duration;
@@ -300,7 +300,6 @@ fn burned(world: &mut World) {
         ICredis::CredisGroupForfeited {
             groupKey: lapsed.groupKey,
             credis: 1,
-            gratisBurnedMinor: burned,
         },
     );
     assert_no_event::<ICredisFactory::ExpiryDeferred>(&url, CREDIS_FACTORY_ADDRESS, from, height);

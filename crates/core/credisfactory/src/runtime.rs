@@ -175,8 +175,7 @@ pub fn settle_credis(
     })
 }
 
-/// Deletes a Credis of a forfeited group. Its group's forfeit already returned the
-/// collateral to the Promis Reserve.
+/// Deletes a Credis of a forfeited group.
 pub(crate) fn delete_forfeited_credis(storage: StorageHandle<'_>, credis_id: U256) -> Result<()> {
     burn_forfeited_collateral(storage, credis_id, |credis, record| {
         rules::delete_forfeited(credis, record)
@@ -184,25 +183,19 @@ pub(crate) fn delete_forfeited_credis(storage: StorageHandle<'_>, credis_id: U25
     Ok(())
 }
 
-/// The owner forfeits an Issued or Called Credis. Its collateral returns to the Promis
-/// Reserve here.
+/// The owner forfeits an Issued or Called Credis.
 pub fn forfeit_by_owner(
     storage: StorageHandle<'_>,
     caller: Address,
     credis_id: U256,
 ) -> Result<Forfeit> {
-    let forfeit = burn_forfeited_collateral(storage.clone(), credis_id, |credis, _| {
+    burn_forfeited_collateral(storage, credis_id, |credis, _| {
         rules::forfeit_by_owner(credis, credis_id, caller)
-    })?;
-    if !forfeit.gratis_burned_minor.is_zero() {
-        outbe_promislimit::PromisLimitContract::new(storage)
-            .add_to_total_unallocated(forfeit.gratis_burned_minor)?;
-    }
-    Ok(forfeit)
+    })
 }
 
-/// Burn only this Credis's remaining collateral from the source's pledged
-/// balance. Fidelity cohorts stay untouched.
+/// Burns only this Credis's remaining collateral from the source's pledged balance and
+/// returns it to the Promis Reserve, together. Fidelity cohorts stay untouched.
 fn burn_forfeited_collateral(
     storage: StorageHandle<'_>,
     credis_id: U256,
@@ -218,6 +211,8 @@ fn burn_forfeited_collateral(
         }
         if !forfeit.gratis_burned_minor.is_zero() {
             pledges::burn_from_credis(&storage, credis_id, forfeit.gratis_burned_minor)?;
+            outbe_promislimit::PromisLimitContract::new(storage.clone())
+                .add_to_total_unallocated(forfeit.gratis_burned_minor)?;
         }
         Ok(forfeit)
     })

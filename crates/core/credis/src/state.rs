@@ -142,7 +142,6 @@ impl<'storage> CredisContract<'storage> {
             let bin = call_bins::price_to_bin(record.call_price_minor)?;
             call_bins::insert(&CallBins(self, record.reference_currency), group, bin)?;
         }
-        self.add_group_gratis(group, record.outstanding_gratis_minor)?;
         self.group_index(group).insert(record.credis_id)
     }
 
@@ -167,8 +166,7 @@ impl<'storage> CredisContract<'storage> {
         self.group_call_window_seconds.clear(&group)?;
         self.group_call_threshold_seconds.clear(&group)?;
         self.group_call_notice_period_seconds.clear(&group)?;
-        self.group_called_at.clear(&group)?;
-        self.group_outstanding_gratis.clear(&group)
+        self.group_called_at.clear(&group)
     }
 
     pub fn group_member_count(&self, group: B256) -> Result<u32> {
@@ -180,24 +178,6 @@ impl<'storage> CredisContract<'storage> {
             .list(&group)
             .get(index)?
             .ok_or_else(|| CredisError::IndexOutOfBounds.into())
-    }
-
-    pub fn add_group_gratis(&mut self, group: B256, gratis: U256) -> Result<()> {
-        let total = self
-            .group_outstanding_gratis
-            .read(&group)?
-            .checked_add(gratis)
-            .ok_or(CredisError::ArithmeticOverflow)?;
-        self.group_outstanding_gratis.write(&group, total)
-    }
-
-    pub fn take_group_gratis(&mut self, group: B256, gratis: U256) -> Result<()> {
-        let total = self
-            .group_outstanding_gratis
-            .read(&group)?
-            .checked_sub(gratis)
-            .ok_or(CredisError::ArithmeticOverflow)?;
-        self.group_outstanding_gratis.write(&group, total)
     }
 
     /// Calls every member at once: the group leaves its bin for the expiry queue, where
@@ -215,7 +195,7 @@ impl<'storage> CredisContract<'storage> {
     }
 
     /// Moves a forfeited group from the expiry queue to the cleanup, which deletes its
-    /// Credis. Done with the group's credit, so a retry never credits it twice.
+    /// Credis.
     pub fn hand_to_cleanup(&mut self, group: B256) -> Result<()> {
         let deadline = self.called_deadline.read(&group)?;
         expiry_queue::remove(&ExpiryHours(self), group)?;

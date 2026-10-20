@@ -46,7 +46,6 @@ fn guarded(storage: &StorageHandle<'_>, hook: impl FnOnce() -> Result<()>) -> Re
 fn backdate(storage: &StorageHandle<'_>, credis_id: U256, issued_at: u64) -> Result<()> {
     let mut credis = CredisContract::new(storage.clone());
     let mut record = credis.get_credis(credis_id)?;
-    credis.take_group_gratis(record.group_key(), record.outstanding_gratis_minor)?;
     credis.leave_group(record.group_key(), credis_id)?;
     credis.delete_credis_record(credis_id)?;
     record.issued_at = issued_at;

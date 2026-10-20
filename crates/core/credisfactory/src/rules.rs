@@ -250,7 +250,6 @@ pub fn settle(
         record.state = CredisState::Settled as u8;
     }
     let group = record.group_key();
-    credis.take_group_gratis(group, gratis_returned_minor)?;
     // A settled Credis keeps the call and terms it read from its group.
     credis.update_credis_record(&record)?;
     if closed {
@@ -292,8 +291,7 @@ pub fn settle(
 }
 
 /// The owner gives up an Issued or Called Credis before its deadline, with the same
-/// write-off and burn as a lapsed call. Its share leaves the group's pledged Gratis, which
-/// the caller credits on its own.
+/// write-off and burn as a lapsed call.
 pub fn forfeit_by_owner(
     credis: &mut CredisContract<'_>,
     credis_id: U256,
@@ -311,7 +309,6 @@ pub fn forfeit_by_owner(
                 return Err(CredisFactoryError::CredisClosed.into())
             }
         }
-        credis.take_group_gratis(record.group_key(), record.outstanding_gratis_minor)?;
         delete_forfeited(credis, record)
     })
 }
