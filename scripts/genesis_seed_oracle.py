@@ -161,11 +161,8 @@ def _seed_oracle_registry(storage, config, validated_pairs):
 
 
 def _seed_oracle_scurves(storage, config, pair_ids):
-    # S-curve genesis seeds (macro slots 34-38). `resolve_tribute_price` reads
-    # `max(per-day VWAP, S-curve)`. Pre-seeded OFFERING days have no runtime-
-    # computed per-day VWAP. Without an S-curve entry the price is 0 and
-    # `offerTribute` reverts with `NominalPriceUnavailable`. Each seed gives a
-    # pair a peak at a worldwide day so days within the S-curve period resolve.
+    # S-curve genesis seeds (macro slots 34-38). Each seed gives a pair a peak
+    # price at a worldwide day.
     scurve_seeds = config.get("scurve_seeds", [])
     if scurve_seeds:
         storage.set_slot(34, len(scurve_seeds))  # scurve_count

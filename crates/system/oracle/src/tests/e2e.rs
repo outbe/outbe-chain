@@ -1929,3 +1929,20 @@ fn currency_cross_rate_converts_between_currencies() {
         );
     });
 }
+
+#[test]
+fn currency_cross_rate_reverts_when_a_leg_has_no_rate() {
+    with_oracle(|storage, oracle| {
+        seed_coen_rate(oracle, 840, 2);
+        oracle.register_pair(AddressPair::new_coen_to(978)).unwrap();
+
+        for (from, to) in [(978, 840), (840, 978)] {
+            let error = crate::api::currency_cross_rate(storage.clone(), from, to, coen_iso(10))
+                .unwrap_err();
+            assert!(
+                error.to_string().contains("No rate for pair"),
+                "{from}->{to}: {error}"
+            );
+        }
+    });
+}
