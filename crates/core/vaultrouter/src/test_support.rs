@@ -17,6 +17,7 @@ pub fn register_vault(
     router.assets.insert(asset)?;
     router.asset_vault_set(asset).insert(vault)?;
     router.reference_currency_vault_set(iso).insert(vault)?;
+    router.vault_assets.write(&vault, asset)?;
     router.vault_reference_currencies.write(&vault, iso)
 }
 
