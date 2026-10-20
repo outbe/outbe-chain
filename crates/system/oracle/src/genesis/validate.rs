@@ -5,6 +5,7 @@ use outbe_primitives::error::Result;
 use super::{OracleGenesisConfig, PolicyRate};
 use crate::constants::{DAY_TYPE_ISO, MAX_SNAPSHOT_RETENTION_SECONDS};
 use crate::errors::OracleError;
+use crate::schema::SCALE_1E18;
 
 /// Checks the config parameters, then the reference-currency and policy-rate
 /// registries, in that order, then that each reference currency has a policy rate.
@@ -17,6 +18,17 @@ pub(super) fn validate_genesis_config(config: &OracleGenesisConfig) -> Result<()
     }
     if config.lookback_duration > MAX_SNAPSHOT_RETENTION_SECONDS {
         return Err(OracleError::LookbackExceedsRetention.into());
+    }
+    // 1e18-scaled ratios in [0, 1]. Above 1, slash_fraction gives a slash
+    // percent above 100, and a large value overflows the u64 percent.
+    for (field, value) in [
+        ("reward_band", config.reward_band),
+        ("min_valid_per_window", config.min_valid_per_window),
+        ("slash_fraction", config.slash_fraction),
+    ] {
+        if value > SCALE_1E18 {
+            return Err(OracleError::RatioAboveOne { field, value }.into());
+        }
     }
     validate_reference_currencies(&config.reference_currencies)?;
     validate_policy_rates(&config.policy_rates)?;

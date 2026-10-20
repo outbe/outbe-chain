@@ -149,6 +149,25 @@ fn slash_window_rejects_unbounded_validator_work() {
     });
 }
 
+/// Genesis rejects such a slash_fraction. If one reaches storage anyway, the
+/// slash window must fail with an error, not panic and stop every node.
+#[test]
+fn slash_window_errors_instead_of_panicking_on_an_oversized_slash_fraction() {
+    with_oracle(|storage, oracle| {
+        let v1 = register_voter(&storage);
+        for _ in 0..20 {
+            oracle.increment_miss(&v1).unwrap();
+        }
+        oracle.config_slash_fraction.write(U256::MAX).unwrap();
+
+        let err = crate::tally::slash_and_reset_counters(oracle, 10_000).unwrap_err();
+        assert!(
+            err.to_string().contains("exceeds u64"),
+            "unexpected error: {err}"
+        );
+    });
+}
+
 #[test]
 fn slash_window_rolls_back_slash_state_when_force_exit_fails() {
     with_oracle(|storage, oracle| {
