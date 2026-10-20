@@ -19,7 +19,7 @@ use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 const POSITION_VALIDITY_SECONDS: u64 = outbe_gem::GemParams::PROD.position_validity;
 use crate::positions_expired;
 use crate::runtime;
-use crate::schema::{GemFactoryContract, GemIssueParams, GemPosition, GemTypes};
+use crate::schema::{GemFactoryContract, GemIssueParams, GemPosition};
 use crate::sol_ext::{IReferenceCurrency, IERC20};
 use alloy_sol_types::SolCall;
 use outbe_vaultrouter::api::IVaultRouter;
@@ -177,7 +177,6 @@ fn find_valid_nonce(gem_id: U256, owner: Address) -> u64 {
 fn issue_at_live_rate(
     storage: &StorageHandle<'_>,
     owner: Address,
-    gem_type: GemTypes,
     promis_load: U256,
     issuance_currency: u16,
     reference_currency: u16,
@@ -187,7 +186,6 @@ fn issue_at_live_rate(
         storage,
         GemIssueParams {
             owner,
-            gem_type,
             promis_load_minor: promis_load,
             issuance_currency,
             reference_currency,

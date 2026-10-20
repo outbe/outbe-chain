@@ -11,7 +11,6 @@ const ISSUED_AT: u64 = 1_704_067_200;
 fn params(owner: Address) -> GemAddParams {
     GemAddParams {
         owner,
-        gem_type: 2,
         promis_load_minor: U256::from(1_000_000u64),
         entry_price_minor: U256::from(500_000u64),
         issuance_currency: 840,

@@ -27,7 +27,6 @@ pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256
     let item = GemItemState {
         gem_id: WwdEntityId::from(gem_id),
         owner: params.owner,
-        gem_type: params.gem_type,
         promis_load_minor: params.promis_load_minor,
         issuance_currency: params.issuance_currency,
         reference_currency: params.reference_currency,

@@ -87,7 +87,6 @@ fn issue_settled(
         storage,
         GemAddParams {
             owner: call.owner,
-            gem_type: crate::schema::GemTypes::Wallet as u8,
             promis_load_minor: call.promisLoadMinor,
             entry_price_minor: unit,
             issuance_currency: call.currency,

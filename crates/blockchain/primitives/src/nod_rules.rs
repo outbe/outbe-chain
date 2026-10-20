@@ -18,7 +18,6 @@ pub fn settlement_cost_minor(entry: U256, load: U256) -> Result<U256> {
         entry_price_minor: entry,
         load_minor: load,
         units: U256::ONE,
-        cost_rate_pct: 100,
     };
     Ok(settlement_cost_units(
         &cost,

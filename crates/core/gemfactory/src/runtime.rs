@@ -13,17 +13,15 @@ use outbe_common::pow;
 
 use crate::errors::GemFactoryError;
 use crate::precompile::IGemFactory::{GemExercised, GemIssued, GemPositionIssued, GemSettled};
-use crate::schema::{GemFactoryContract, GemIssueParams, GemPosition, GemTypes};
+use crate::schema::{GemFactoryContract, GemIssueParams, GemPosition};
 use crate::sol_ext::IIntexNFT1155;
-use outbe_gem::constants::SRA_RATE;
 use outbe_vaultrouter::settlement::{self, Currencies, SettlementCost, SettlementPayment};
 
-/// Issues one agent-class gem priced at `entry_price`, the COEN rate in
+/// Issues one reward gem priced at `entry_price`, the COEN rate in
 /// `reference_currency` that the caller resolved for the gem's own day.
 pub fn issue_gem(storage: &StorageHandle<'_>, params: GemIssueParams) -> Result<U256> {
     let GemIssueParams {
         owner,
-        gem_type,
         promis_load_minor: promis_load,
         issuance_currency,
         reference_currency,
@@ -38,11 +36,6 @@ pub fn issue_gem(storage: &StorageHandle<'_>, params: GemIssueParams) -> Result<
     if promis_load.is_zero() {
         return Err(GemFactoryError::ZeroPromisLoad.into());
     }
-    // Merchant gems draw on a GemPosition, not this agent-class path.
-    if gem_type == GemTypes::Merchant {
-        return Err(GemFactoryError::UnsupportedGemType.into());
-    }
-
     // The owner's own label: only its range is checked, as the auction checks a bid's.
     if issuance_currency == 0 || issuance_currency > 999 {
         return Err(GemFactoryError::InvalidCurrency {
@@ -56,7 +49,6 @@ pub fn issue_gem(storage: &StorageHandle<'_>, params: GemIssueParams) -> Result<
     let issued_at = storage.timestamp()?.to::<u64>();
     let params = GemAddParams {
         owner,
-        gem_type: gem_type as u8,
         promis_load_minor: promis_load,
         entry_price_minor: entry_price,
         issuance_currency,
@@ -124,7 +116,6 @@ fn emit_gem_issued(storage: &StorageHandle<'_>, gem_id: U256, position_id: U256)
         storage,
         GemIssued {
             gemId: gem_id,
-            gemType: gem.item.gem_type,
             owner: gem.item.owner,
             promisLoadMinor: gem.item.promis_load_minor,
             entryPriceMinor: gem.item.entry_price_minor,
@@ -299,7 +290,6 @@ pub fn issue_merchant_gem(
         storage,
         GemAddParams {
             owner,
-            gem_type: GemTypes::Merchant as u8,
             promis_load_minor: promis_load,
             entry_price_minor: entry_price,
             issuance_currency: record.issuance_currency,
@@ -395,13 +385,12 @@ fn currencies(gem: &GemView) -> Currencies {
     }
 }
 
-/// One gem: its entry price times its Promis load, at its type's cost rate.
+/// One gem: its entry price times its Promis load.
 pub(crate) fn settlement_cost(gem: &GemView) -> SettlementCost {
     SettlementCost {
         entry_price_minor: gem.item.entry_price_minor,
         load_minor: gem.item.promis_load_minor,
         units: U256::ONE,
-        cost_rate_pct: cost_rate(gem.item.gem_type),
     }
 }
 
@@ -419,15 +408,6 @@ pub(crate) fn settlement_units(
 #[cfg(test)]
 pub(crate) fn gem_cost_minor(gem: &GemView) -> Result<U256> {
     settlement_units(gem, None, outbe_primitives::units::PROTOCOL_AMOUNT_DECIMALS)
-}
-
-/// Share of the full agent cost this gem type pays, in percent.
-fn cost_rate(gem_type: u8) -> u64 {
-    if gem_type == GemTypes::Sra as u8 {
-        SRA_RATE
-    } else {
-        100
-    }
 }
 
 /// What settling `gem_id` with `asset` costs, in which currency, and the VWAP

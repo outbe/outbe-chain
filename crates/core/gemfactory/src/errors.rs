@@ -24,9 +24,6 @@ pub enum GemFactoryError {
     #[error("settlement deadline has passed")]
     SettlementDeadlinePassed,
 
-    #[error("unsupported gem type")]
-    UnsupportedGemType,
-
     #[error("source intex not found")]
     SourceIntexNotFound,
 

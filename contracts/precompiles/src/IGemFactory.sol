@@ -80,7 +80,6 @@ interface IGemFactory {
     ///         call group that `IGem.GemGroupCalled` reports.
     event GemIssued(
         uint256 indexed gemId,
-        uint8 gemType,
         address owner,
         uint256 promisLoadMinor,
         uint256 entryPriceMinor,

@@ -202,7 +202,6 @@ fn issue_merchant_gem_mints_issued_and_drains_capacity() {
 
         let item = gem_view(storage, gem_id);
         assert_eq!(item.item.owner, BOB);
-        assert_eq!(item.item.gem_type, GemTypes::Merchant as u8);
         assert_eq!(item.item.state, GemState::Issued as u8);
         assert_eq!(item.item.entry_price_minor, rate); // max(coen, source_entry) = coen
         assert_eq!(
@@ -497,8 +496,7 @@ fn an_agent_gem_prices_cost_and_call_from_the_entry_at_every_rate() {
     let load = U256::from(10u64) * unit;
     for rate in [unit, U256::from(2u64) * unit, U256::from(7u64) * unit] {
         with_storage(Some(rate), |storage| {
-            let gem_id =
-                issue_at_live_rate(storage, ALICE, GemTypes::Validator, load, 840, 840).unwrap();
+            let gem_id = issue_at_live_rate(storage, ALICE, load, 840, 840).unwrap();
             let item = gem_view(storage, gem_id);
             assert_eq!(item.item.entry_price_minor, rate);
             assert_eq!(
@@ -546,15 +544,7 @@ fn issuance_events_carry_the_call_terms_the_position_and_the_group() {
             },
         )
         .unwrap();
-        let wallet_gem = issue_at_live_rate(
-            &storage,
-            ALICE,
-            GemTypes::Wallet,
-            six_decimal_unit(),
-            840,
-            840,
-        )
-        .unwrap();
+        let wallet_gem = issue_at_live_rate(&storage, ALICE, six_decimal_unit(), 840, 840).unwrap();
         let expected = [(merchant_gem, position), (wallet_gem, U256::ZERO)].map(|(gem_id, pos)| {
             let item = gem_view(&storage, gem_id);
             (item, pos, gem_item(&storage, gem_id).group_key)

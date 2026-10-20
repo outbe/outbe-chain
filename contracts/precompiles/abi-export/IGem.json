@@ -82,11 +82,6 @@
             "internalType": "address"
           },
           {
-            "name": "gemType",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
             "name": "state",
             "type": "uint8",
             "internalType": "uint8"

@@ -20,7 +20,6 @@ pub enum GemState {
 #[derive(Debug, Clone, PartialEq)]
 pub struct GemAddParams {
     pub owner: Address,
-    pub gem_type: u8,
     pub promis_load_minor: U256,
     pub entry_price_minor: U256,
     pub issuance_currency: u16,
@@ -40,29 +39,27 @@ pub struct GemItemState {
     #[attribute(order = 0)]
     pub owner: Address,
     #[attribute(order = 1)]
-    pub gem_type: u8,
-    #[attribute(order = 2)]
     pub promis_load_minor: U256,
-    #[attribute(order = 3)]
+    #[attribute(order = 2)]
     pub issuance_currency: u16,
-    #[attribute(order = 4)]
+    #[attribute(order = 3)]
     pub reference_currency: u16,
-    #[attribute(order = 5)]
+    #[attribute(order = 4)]
     pub issued_at: u64,
     /// `call_breach::group_key(full_day_after_issue, call_price, reference_currency)`.
-    #[attribute(order = 6)]
+    #[attribute(order = 5)]
     pub group_key: B256,
     /// `GemState::Issued` or `GemState::Settled`. Called is the group's.
-    #[attribute(order = 7)]
+    #[attribute(order = 6)]
     pub state: u8,
     /// The group's `called_at` copied in at settlement, so a settled gem keeps it
     /// after its group is gone. `0` until then.
-    #[attribute(order = 8)]
+    #[attribute(order = 7)]
     pub called_at: u64,
     /// Block timestamp of the settlement. `0` until Settled.
-    #[attribute(order = 9)]
+    #[attribute(order = 8)]
     pub settled_at: u64,
-    #[attribute(order = 10)]
+    #[attribute(order = 9)]
     pub entry_price_minor: U256,
 }
 

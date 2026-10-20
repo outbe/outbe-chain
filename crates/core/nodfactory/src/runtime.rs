@@ -232,7 +232,6 @@ fn nod_cost(entry_price_minor: U256, gratis_load_minor: U256) -> SettlementCost 
         entry_price_minor,
         load_minor: gratis_load_minor,
         units: U256::ONE,
-        cost_rate_pct: 100,
     }
 }
 

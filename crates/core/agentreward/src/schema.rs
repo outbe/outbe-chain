@@ -61,8 +61,7 @@ pub struct AgentRewardContract {
     pub validator_claimable_minor: outbe_primitives::storage::dsl::Map<Address, U256>,
 }
 
-/// Pool a claimable balance belongs to. The pool decides the Gem class a
-/// claim issues, so the contract keeps the pool balances apart.
+/// Pool a claimable balance belongs to. Each pool keeps its own balances.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum RewardPool {

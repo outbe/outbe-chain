@@ -5,7 +5,6 @@ interface IGem {
     struct GemData {
         uint256 gemId;
         address owner;
-        uint8 gemType;
         /// Read-time state: 0 Issued, 1 Called, 2 Settled,
         /// 3 Forfeited (a Called gem past its notice period, until the cleanup deletes it).
         uint8 state;

@@ -4,8 +4,6 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::test_utils::sol_interface::sol_function_canonical;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
 
-use outbe_gemfactory::schema::GemTypes;
-
 use crate::distribution::{distribute_daily, PoolKind};
 use crate::schema::{AgentRewardContract, RewardPool};
 
@@ -195,7 +193,6 @@ fn claiming_a_pool_issues_its_gem() {
         assert!(!gem_id.is_zero());
 
         let gem = gem_of(&storage, alice);
-        assert_eq!(gem.item.gem_type, GemTypes::Wallet as u8);
         assert_eq!(gem.item.promis_load_minor, load);
         assert_eq!(gem.item.entry_price_minor, ONE_COEN);
 
@@ -204,7 +201,7 @@ fn claiming_a_pool_issues_its_gem() {
 }
 
 #[test]
-fn the_sra_pool_issues_an_sra_gem_at_the_discounted_cost() {
+fn the_sra_pool_issues_a_gem_of_the_whole_load() {
     let alice = address!("0x1111111111111111111111111111111111111111");
     let load = U256::from(1_000_000u64);
 
@@ -218,9 +215,6 @@ fn the_sra_pool_issues_an_sra_gem_at_the_discounted_cost() {
             .claim_reward(RewardPool::Sra, alice, U256::ZERO, (USD, USD))
             .unwrap();
         let sra_gem = gem_of(&storage, alice);
-        // The SRA share of the cost is derived, not stored. gemfactory pins the 64%
-        // coefficient. What this pool owes is the Sra type and the whole load.
-        assert_eq!(sra_gem.item.gem_type, GemTypes::Sra as u8);
         assert_eq!(sra_gem.item.promis_load_minor, load);
     });
 }
@@ -901,7 +895,6 @@ fn reward_timestamp_narrowing_rejects_overflow() {
         let error = crate::runtime::issue_reward_gem(
             &storage,
             (Address::repeat_byte(1), U256::from(100)),
-            GemTypes::Cca,
             (USD, USD),
         )
         .unwrap_err();

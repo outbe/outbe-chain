@@ -3,21 +3,10 @@ use outbe_intex::{SeriesId, SERIES_ID_LEN};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::GEM_FACTORY_ADDRESS;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum GemTypes {
-    Validator = 0,
-    Sra = 1,
-    Wallet = 2,
-    Cca = 3,
-    Merchant = 4,
-}
-
-/// The terms an agent-class gem is issued on.
+/// The terms a reward gem is issued on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GemIssueParams {
     pub owner: Address,
-    pub gem_type: GemTypes,
     pub promis_load_minor: U256,
     pub issuance_currency: u16,
     pub reference_currency: u16,
