@@ -62,7 +62,14 @@ fn config_dev_profile_drives_issuance() {
             outbe_intex::config::IntexParams::DEV
         );
 
-        runtime::issue_intex(&s, sample(7)).unwrap();
+        // The auction start fixes the call terms from the live profile. Issuance seals them.
+        let terms = crate::api::call_terms(&s, U256::from(ENTRY_PRICE)).unwrap();
+        let params = IssuanceParams {
+            call_price_minor: terms.call_price_minor,
+            call_trigger: terms.call_trigger,
+            ..sample(7)
+        };
+        runtime::issue_intex(&s, params).unwrap();
 
         // Issuance captures the dev call-trigger and dev-derived prices.
         let dev = outbe_intex::config::IntexParams::DEV;

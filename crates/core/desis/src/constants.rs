@@ -47,16 +47,19 @@ pub const MIN_COMMIT_WINDOW_SECONDS: u64 = 300;
 pub const DAY_STATE_GREEN: u8 = 1;
 pub const DAY_STATE_RED: u8 = 2;
 
+/// Items in one bridge payload array. Mirrors the codec's `MAX_PAYLOAD_ARRAY_LEN`.
+pub const MAX_PAYLOAD_ARRAY_LEN: usize = 64;
+
 /// Winners per REFUND_INSTRUCTIONS message: the codec's `MAX_PAYLOAD_ARRAY_LEN`.
 /// Issuance uses its own, narrower cap. A recipient costs a mint, and a winner
 /// costs a status flip.
-pub use outbe_intexfactory::constants::MAX_RECIPIENTS_PER_MESSAGE as REFUND_CHUNK_LEN;
+pub const REFUND_CHUNK_LEN: usize = MAX_PAYLOAD_ARRAY_LEN;
 
 /// Chunks one chain-day's refunds may span; mirrors the codec's `MAX_CHUNKS`.
 pub const MAX_REFUND_CHUNKS: usize = 256;
 
 /// Bids one PROCESS_BIDS_BATCH message may carry; mirrors the codec's `MAX_BIDS_BATCH`.
-pub const MAX_BIDS_PER_BATCH: usize = 64;
+pub const MAX_BIDS_PER_BATCH: usize = MAX_PAYLOAD_ARRAY_LEN;
 
 /// Batches one chain-day may send: the arrival bitmap is one 256-bit word.
 pub const MAX_BID_BATCHES: u16 = 256;
@@ -78,7 +81,7 @@ pub const CLEARING_CHUNK_GAS: u64 = 197_000;
 pub const CLEARING_BID_GAS: u64 = 10_000;
 
 /// Bids one BIDS_BATCH carries; mirrors `BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN`.
-pub const CLEARING_BIDS_PER_CHUNK: u64 = 64;
+pub const CLEARING_BIDS_PER_CHUNK: u64 = MAX_PAYLOAD_ARRAY_LEN as u64;
 
 /// Days of a chain's own history a round is sized from, and the floor it is never sized below.
 pub const CLEARING_HISTORY_DAYS: u32 = 7;
