@@ -43,7 +43,7 @@ pub(crate) const VAULT_ROUTER_ADDR: Address =
     address!("0x0000000000000000000000000000000000001017");
 /// Metadosis worldwide-day registry (`getWorldwideDay(uint32)`).
 pub(crate) const WWD_ADDR: Address = address!("0x000000000000000000000000000000000000100E");
-/// PromiseLimit carry-over ledger (`totalUnallocated()`).
+/// Promis Limit (`promisLimit()`).
 pub(crate) const PROMIS_LIMIT_ADDR: Address =
     address!("0x000000000000000000000000000000000000100F");
 /// Desis auction owner (`getAuctionStage(uint32)`).
