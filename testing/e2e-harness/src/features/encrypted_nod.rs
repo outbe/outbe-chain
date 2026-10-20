@@ -34,6 +34,7 @@ fn verify_encrypted_nod(world: &mut World) {
         .state
         .lysis_completion_height
         .expect("native Lysis completion");
+    let created_at = world.state.nod_creation_height.expect("created Nods");
     let port = world.validators.primary_port();
     let owner = owner(world);
     let public = world
@@ -56,11 +57,11 @@ fn verify_encrypted_nod(world: &mut World) {
     assert_eq!(data.owner, owner);
     world
         .rpc
-        .wait_finalized_checkpoint(&world.validators.committee_ports(), completed_at, 120)
+        .wait_finalized_checkpoint(&world.validators.committee_ports(), created_at, 120)
         .expect("encrypted creation finalized on every validator");
     let checkpoint = world
         .rpc
-        .checkpoint_at(port, completed_at)
+        .checkpoint_at(port, created_at)
         .expect("exact encrypted Nod issuance checkpoint");
     let mut expected_body = None;
     for (index, peer) in world.validators.committee_ports().into_iter().enumerate() {
@@ -68,7 +69,20 @@ fn verify_encrypted_nod(world: &mut World) {
         assert_eq!(*expected_body.get_or_insert(body.clone()), body);
     }
     super::oracle_expectations::assert_native_entry_price(world, &encrypted.terms, completed_at);
-    assert_native_issuance(world, &encrypted, completed_at);
+    let issued_in = world.state.nod_creation_blocks[&encrypted.terms.nod_id.to_u256()];
+    let (item, _) = world
+        .rpc
+        .nod_state_at(port, checkpoint, encrypted.terms.nod_id)
+        .expect("encrypted Nod EVM state")
+        .expect("encrypted Nod is present");
+    assert_eq!(
+        item.issued_at,
+        world
+            .rpc
+            .block_timestamp(port, issued_in)
+            .expect("createNod block time")
+    );
+    assert_native_issuance(world, &encrypted, issued_in);
 }
 
 fn assert_nod_state(
@@ -224,10 +238,7 @@ fn assert_native_issuance(
 fn verify_full_node_nod(world: &mut World) {
     let primary = world.validators.primary_port();
     let follower = world.validators.http_port(14);
-    let height = world
-        .state
-        .lysis_completion_height
-        .expect("native Lysis completion");
+    let height = world.state.nod_creation_height.expect("created Nods");
     let checkpoint = world
         .rpc
         .wait_finalized_checkpoint(&[primary, follower], height, 120)
