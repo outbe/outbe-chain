@@ -30,7 +30,7 @@ impl PromisLimitContract<'_> {
         let before = self.promis_limit()?;
         let after = before
             .checked_add(amount)
-            .ok_or(PromisLimitError::PromisLimitOverflow)?;
+            .ok_or(PromisLimitError::Overflow)?;
         self.set_promis_limit(after)?;
         Ok(PromisLimitCredit {
             before,
@@ -46,7 +46,7 @@ impl PromisLimitContract<'_> {
         let taken = amount.min(before);
         let after = before
             .checked_sub(taken)
-            .ok_or(PromisLimitError::PromisLimitUnderflow)?;
+            .ok_or(PromisLimitError::Underflow)?;
         self.set_promis_limit(after)?;
         Ok(PromisLimitTake {
             before,

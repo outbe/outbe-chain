@@ -41,7 +41,7 @@ pub enum BriefOverflowPolicy {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AuctionBriefReceipt {
     Accepted,
-    Rejected {
+    ReturnedToPromisLimit {
         reason: AuctionBriefRejectionReason,
         desis_limit_minor: U256,
         max_accepted: U256,
@@ -86,7 +86,7 @@ pub fn dispatch_auction_brief(
                 maxAcceptedMinor: max_accepted,
                 reasonCode: reason.code(),
             })?;
-            return Ok(AuctionBriefReceipt::Rejected {
+            return Ok(AuctionBriefReceipt::ReturnedToPromisLimit {
                 reason,
                 desis_limit_minor,
                 max_accepted,

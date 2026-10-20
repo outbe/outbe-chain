@@ -737,7 +737,7 @@ fn dispatch_auction_brief_oversized_limit_returns_typed_rejection() {
                 crate::api::BriefOverflowPolicy::ReturnToPromisLimit
             )
             .unwrap(),
-            AuctionBriefReceipt::Rejected {
+            AuctionBriefReceipt::ReturnedToPromisLimit {
                 reason: AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain,
                 desis_limit_minor: U256::MAX,
                 max_accepted: U256::from(u128::MAX),
@@ -798,7 +798,7 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
                 crate::api::BriefOverflowPolicy::ReturnToPromisLimit
             )
             .unwrap(),
-            AuctionBriefReceipt::Rejected {
+            AuctionBriefReceipt::ReturnedToPromisLimit {
                 reason: AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain,
                 desis_limit_minor: supply,
                 max_accepted: U256::from(u128::MAX),

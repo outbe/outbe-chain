@@ -8,7 +8,7 @@ use crate::errors::MetadosisError;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct LimitSplit {
-    /// The day's own emission plus what it drew from the accumulator.
+    /// The day's own emission plus what it drew from the Promis Limit.
     pub day_limit: U256,
     /// Maximum Lysis capacity, in protocol units (1e6 per whole COEN).
     pub lysis_limit_minor: U256,
@@ -19,9 +19,9 @@ pub(crate) struct LimitSplit {
 }
 
 impl LimitSplit {
-    /// The day's own emission bounds Lysis, and the accumulator receives the credit for what
-    /// Lysis leaves. The auction then draws from that accumulator: no more than the nominal beyond
-    /// the symbolic share, and no more than the accumulator holds.
+    /// The day's own emission bounds Lysis, and the Promis Limit receives the credit for what
+    /// Lysis leaves. The auction then draws from the Promis Limit: no more than the nominal beyond
+    /// the symbolic share, and no more than it holds.
     pub(crate) fn derive(
         base_limit: U256,
         lysis_limit_minor: U256,

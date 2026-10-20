@@ -28,7 +28,7 @@ pub enum MetadosisError {
         lysis_limit_minor: U256,
     },
 
-    #[error("Lysis carry-over credit does not match the immutable day split")]
+    #[error("Lysis Promis Limit credit does not match the immutable day split")]
     LysisLimitCreditMismatch,
 
     #[error(

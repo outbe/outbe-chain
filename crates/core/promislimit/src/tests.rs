@@ -51,7 +51,7 @@ fn checked_credit_returns_the_committed_delta() {
 
         let delta = c
             .checked_credit(U256::from(2u64))
-            .expect("carry-over credit");
+            .expect("promis limit credit");
 
         assert_eq!(delta.before, U256::from(40u64));
         assert_eq!(delta.credited, U256::from(2u64));

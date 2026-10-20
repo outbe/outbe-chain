@@ -33,7 +33,7 @@ fn apply_inner(ctx: &BlockRuntimeContext, amount: U256) -> Result<DayLimitFormat
 }
 
 /// Recycles late-settlement headroom without racing daily limit formation.
-/// Daily Cycle allocations form base limits. Late residues become carry-over
+/// Daily Cycle allocations form base limits. Late residues become a Promis Limit
 /// credit, which native Metadosis draws when the next day limit is formed.
 pub(crate) fn apply_late_settlement_headroom(
     ctx: &BlockRuntimeContext,
@@ -74,7 +74,7 @@ fn apply_day_limit(
             return Ok(DayLimitFormationReceipt::Formed(formed));
         }
 
-        // A day is formed against its own emission. The accumulator is drawn from at the request,
+        // A day is formed against its own emission. The Promis Limit is drawn from at the request,
         // where the day's demand is known, so forming one day never strands it for the next.
         let carry_over = PromisLimitContract::new(ctx.storage.clone()).promis_limit()?;
         crate::commit::commit_day_limit_formation(

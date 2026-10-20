@@ -1,5 +1,5 @@
 //! Expiry sweep: closes a called group's settlement window, returns the Promis load of
-//! everything left unrealized to the unallocated limit, and hands the group to the
+//! everything left unrealized to the Promis Limit, and hands the group to the
 //! cleanup.
 
 use alloy_primitives::{B256, U256};

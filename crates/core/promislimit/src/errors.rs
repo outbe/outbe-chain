@@ -8,9 +8,9 @@ use thiserror::Error;
 #[non_exhaustive]
 pub enum PromisLimitError {
     #[error("promis limit overflow")]
-    PromisLimitOverflow,
+    Overflow,
     #[error("promis limit underflow")]
-    PromisLimitUnderflow,
+    Underflow,
 }
 
 impl From<PromisLimitError> for PrecompileError {

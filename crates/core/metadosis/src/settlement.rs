@@ -67,18 +67,18 @@ impl MetadosisContract<'_> {
 }
 
 /// The Desis Limit of a day: what the day earned beyond the Lysis share. The cap is what Lysis left
-/// of the day's own limit plus what the path draws from the carry-over. A day that is not green
+/// of the day's own limit plus what the path draws from the Promis Limit. A day that is not green
 /// sells nothing.
 pub(crate) fn desis_limit(
     nominal_total: U256,
     lysis_limit_minor: U256,
     day_limit: U256,
-    carry_over_draw: U256,
+    promis_limit_draw: U256,
     green: bool,
 ) -> Option<U256> {
     let available = day_limit
         .checked_sub(lysis_limit_minor)?
-        .checked_add(carry_over_draw)?;
+        .checked_add(promis_limit_draw)?;
     if !green {
         return Some(U256::ZERO);
     }
@@ -246,7 +246,7 @@ fn settle_zero_allocation(
     } = allocation;
     let wwd = current.worldwide_day;
     let mut promis_limit = PromisLimitContract::new(ctx.storage.clone());
-    // The local path never draws from the carry-over: its auction sells from the day alone.
+    // The local path never draws from the Promis Limit: its auction sells from the day alone.
     let desis_limit_minor = desis_limit(
         tribute_nominal_total,
         calculation.lysis_limit_minor,
@@ -313,7 +313,7 @@ fn dispatch_brief(
                 crate::errors::MetadosisStorageCorruptionError::AcceptedDesisBriefExceedsRoutingLimit
                     .into()
             }),
-        outbe_desis::api::AuctionBriefReceipt::Rejected {
+        outbe_desis::api::AuctionBriefReceipt::ReturnedToPromisLimit {
             reason: outbe_desis::api::AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain,
             desis_limit_minor: rejected_desis_limit_minor,
             max_accepted,

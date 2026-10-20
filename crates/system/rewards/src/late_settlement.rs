@@ -17,7 +17,7 @@
 //! [`BlockRuntimeContext`]. The executor wires them into the begin-zone CPA phase
 //! (escrow) and the `LateFinalizeCredits` phase (record + settle). At settle, the
 //! whole six-decimal units of the residue are burned from `REWARDS_ADDRESS` and
-//! recycled into the Metadosis carry-over via
+//! recycled into the Promis Limit via
 //! [`outbe_emissionlimit::block::dispatch_late_settlement_residue_at`]. The native
 //! remainder below one unit stays on `REWARDS_ADDRESS` for the next window. Then the
 //! per-window state (`pending_fees`, `late_voter_*`, the by-number lookups) is freed.
@@ -284,9 +284,9 @@ fn pay_credited_voters(
 }
 
 /// Burns the whole protocol units of `residue` plus the carried dust and sends
-/// them to the Metadosis carry-over.
+/// them to the Promis Limit.
 fn recycle_residue(ctx: &BlockRuntimeContext, rewards: &Rewards<'_>, residue: U256) -> Result<()> {
-    // The residue is native wei, and the carry-over counts six-decimal units. Thus
+    // The residue is native wei, and the Promis Limit counts six-decimal units. Thus
     // only whole units are burned and recycled. The rest waits on REWARDS for the
     // next window.
     let native = residue
