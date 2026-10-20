@@ -61,6 +61,9 @@ tee:
 # chain_binary: target/release/outbe-chain
 # keygen_binary: target/release/outbe-keygen
 
+# Feeder pairs and markets. Their pairs are also registered in genesis.
+feeder_pairs: testnet/pairs.toml
+
 # Price source for the oracle feeder.
 # price_feed_rest: https://prc.testnet.outbe.net
 # For an exchange `price_provider`, optionally override its built-in stream URL:

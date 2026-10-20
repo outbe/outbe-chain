@@ -212,6 +212,13 @@ impl OracleClient {
             PreflightResult::Eligible
         })
     }
+    /// The active vote targets at `head`, in registered orientation.
+    pub async fn vote_targets(&self, head: &Head) -> Result<Vec<(Address, Address)>> {
+        let targets = self
+            .call(head, ORACLE_ADDRESS, IOracle::getVoteTargetsCall {})
+            .await?;
+        Ok(targets.bases.into_iter().zip(targets.quotes).collect())
+    }
     pub async fn price_observation(
         &self,
         head: &Head,
