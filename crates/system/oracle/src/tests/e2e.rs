@@ -1732,6 +1732,24 @@ fn get_reference_currencies_precompile_returns_the_seeded_list() {
 }
 
 #[test]
+fn currency_alpha_code_precompile_returns_the_iso_4217_letter_code() {
+    with_bare_oracle(|storage, _oracle| {
+        use crate::precompile::IOracle;
+        use alloy_sol_types::SolCall;
+
+        for (iso_code, expected) in [(978u16, "EUR"), (949, "TRY"), (840, "USD"), (0, "")] {
+            let call = IOracle::currencyAlphaCodeCall { isoCode: iso_code }.abi_encode();
+            let decoded = IOracle::currencyAlphaCodeCall::abi_decode_returns(
+                &crate::precompile::dispatch(storage.clone(), &call, Address::ZERO, U256::ZERO)
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(decoded, expected, "ISO 4217 number {iso_code}");
+        }
+    });
+}
+
+#[test]
 fn get_policy_rate_precompile_returns_the_raw_six_decimal_annual_rate() {
     with_bare_oracle(|storage, oracle| {
         let config = crate::genesis::OracleGenesisConfig {
