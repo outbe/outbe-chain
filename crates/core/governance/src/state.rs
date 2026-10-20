@@ -147,7 +147,9 @@ impl GovernanceContract<'_> {
         let mut out = Vec::with_capacity((end - start) as usize);
         for i in start..end {
             let id = self.oip_author_ids.read(&author_index_key(author, i))?;
-            out.push(self.oip_meta(id)?);
+            if self.oips.entry(id).exists()? {
+                out.push(self.oip_meta(id)?);
+            }
         }
         Ok(out)
     }
@@ -162,7 +164,9 @@ impl GovernanceContract<'_> {
         let mut out = Vec::with_capacity((end - start) as usize);
         for i in start..end {
             let id = self.gip_author_ids.read(&author_index_key(author, i))?;
-            out.push(self.gip_meta(id)?);
+            if self.gips.entry(id).exists()? {
+                out.push(self.gip_meta(id)?);
+            }
         }
         Ok(out)
     }

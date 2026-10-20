@@ -18,6 +18,10 @@
 //! is not built yet.
 //! The vote path ([`GovernanceVoteTarget`]) may also materialize Approved
 //! OIP/GIP records after validator quorum.
+//!
+//! Submission rejects a full per-author index before writing a proposal.
+//! Author listings paginate index slots and omit missing records rather than
+//! returning fabricated proposal metadata.
 
 pub mod diff;
 pub mod errors;
