@@ -1,7 +1,7 @@
 //! Immutable accepted Vote data for verifying historical native entries.
 use super::*;
 use crate::manager::FinalizedPatchApproval;
-use outbe_radicleregistry::{
+use outbe_coderegistry::{
     payload::{PatchVotePayloadV1, MAX_PATCH_VOTE_PAYLOAD_BYTES},
     PatchApprovalRecord,
 };
@@ -49,14 +49,14 @@ impl LocalReceiptClient {
         let payload = input.take(size)?;
         PatchVotePayloadV1::decode(payload).map_err(|_| Error::Protocol)?;
         let payload = String::from_utf8(payload.to_vec()).map_err(|_| Error::Protocol)?;
-        if !input.0.is_empty()
+        let invalid_scope = !input.0.is_empty()
             || chain_id != self.chain.chain_id
-            || genesis_hash != self.chain.genesis_hash
-            || proposal_id != proposal
+            || genesis_hash != self.chain.genesis_hash;
+        let invalid_approval = proposal_id != proposal
             || block.hash.is_zero()
             || approved_height == 0
-            || approved_height > block.number
-        {
+            || approved_height > block.number;
+        if invalid_scope || invalid_approval {
             return Err(Error::Protocol);
         }
         Ok(Some(FinalizedPatchApproval {
@@ -89,12 +89,12 @@ pub(super) async fn read(
             .map_err(|_| Error::Unavailable)?
             .ok_or(Error::Unavailable)?;
         let record = &approval.approval;
-        if record.proposal_id != proposal
-            || record.payload.len() > MAX_PATCH_VOTE_PAYLOAD_BYTES
-            || record.approved_height == 0
+        let invalid_record =
+            record.proposal_id != proposal || record.payload.len() > MAX_PATCH_VOTE_PAYLOAD_BYTES;
+        let invalid_height = record.approved_height == 0
             || record.approved_height > approval.block.number
-            || approval.block.hash.is_zero()
-        {
+            || approval.block.hash.is_zero();
+        if invalid_record || invalid_height {
             return Err(Error::Protocol);
         }
         PatchVotePayloadV1::decode(record.payload.as_bytes()).map_err(|_| Error::Protocol)?;

@@ -405,7 +405,7 @@ pub(crate) fn signing_fixture(
     use commonware_codec::Encode as _;
     use commonware_cryptography::{bls12381, Signer as _};
     use commonware_utils::TryCollect as _;
-    use outbe_radicleregistry::{payload::PatchVotePayloadV1, PatchApprovalRecord};
+    use outbe_coderegistry::{payload::PatchVotePayloadV1, PatchApprovalRecord};
     use outbe_validatorset::state::{CommitteeEntry, CommitteeSnapshot};
 
     let mut keys: Vec<_> = (201..201 + count)
@@ -477,7 +477,7 @@ pub(crate) fn signing_fixture(
         },
         checkpoint: receipt.clone(),
         material: receipt,
-        stage: outbe_radicleregistry::schema::PATCH_EXECUTION_PENDING,
+        stage: outbe_coderegistry::schema::PATCH_EXECUTION_PENDING,
         anchor: FinalizedBlock {
             number: 10,
             hash: B256::repeat_byte(10),
@@ -562,7 +562,7 @@ async fn local_signing_state_is_requested_fresh_for_the_exact_proposal() {
         state.approval.block = state.authority.block;
         state.checkpoint.block = state.authority.block;
         state.material.block = state.authority.block;
-        state.stage = outbe_radicleregistry::schema::PATCH_EXECUTION_REVIEWED;
+        state.stage = outbe_coderegistry::schema::PATCH_EXECUTION_REVIEWED;
     }
     let changed = authority.state.lock().unwrap().clone();
     assert_eq!(

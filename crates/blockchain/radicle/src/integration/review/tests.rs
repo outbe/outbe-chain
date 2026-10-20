@@ -16,8 +16,8 @@ use commonware_cryptography::{
     Signer as _,
 };
 use commonware_utils::{Participant, TryCollect as _};
+use outbe_coderegistry::PatchApprovalRecord;
 use outbe_consensus::{bls::bootstrap_dkg_for_participants, hybrid::VrfMaterialProvider};
-use outbe_radicleregistry::PatchApprovalRecord;
 use radicle::{
     cob::{
         identity::{self, Identity},
@@ -761,7 +761,7 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
             number: 8,
             hash: B256::repeat_byte(8),
         },
-        receipt: outbe_radicleregistry::publication::PublicationReceipt {
+        receipt: outbe_coderegistry::publication::PublicationReceipt {
             accepted_height: 8,
             receipt_hash: bootstrap_body.receipt_hash(),
             body: bootstrap_body,
@@ -796,7 +796,7 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
         approval: approval.clone(),
         checkpoint: current_checkpoint.clone(),
         material: current_checkpoint,
-        stage: outbe_radicleregistry::schema::PATCH_EXECUTION_PENDING,
+        stage: outbe_coderegistry::schema::PATCH_EXECUTION_PENDING,
         anchor: FinalizedBlock {
             number: 10,
             hash: B256::repeat_byte(10),
@@ -1222,7 +1222,7 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
     assert_eq!(proof.manifest(), &review_manifest);
     proof.authorize_current(&current_state, &material).unwrap();
     let mut consumed = current_state.clone();
-    consumed.stage = outbe_radicleregistry::schema::PATCH_EXECUTION_REVIEWED;
+    consumed.stage = outbe_coderegistry::schema::PATCH_EXECUTION_REVIEWED;
     assert!(proof.authorize_current(&consumed, &material).is_err());
     let mut changed = current_state.clone();
     changed.approval.approval.approved_timestamp += 1;
@@ -1571,7 +1571,7 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
     );
     let checkpoint = crate::manager::FinalizedPublicationReceipt {
         block: approval.block,
-        receipt: outbe_radicleregistry::publication::PublicationReceipt {
+        receipt: outbe_coderegistry::publication::PublicationReceipt {
             accepted_height: 12,
             receipt_hash: review_body.receipt_hash(),
             body: review_body,

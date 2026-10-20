@@ -4,7 +4,7 @@ use commonware_codec::Encode as _;
 use commonware_cryptography::{bls12381, Hasher as _, Sha256, Signer as _};
 use commonware_utils::TryCollect as _;
 use outbe_primitives::{
-    addresses::RADICLE_REGISTRY_ADDRESS,
+    addresses::CODE_REGISTRY_ADDRESS,
     radicle_publication::{
         players_commitment, PublicationAction, PublicationAttestation, PublicationBatch,
         PublicationBody, PUBLICATION_NAMESPACE,
@@ -34,7 +34,7 @@ impl Fixture {
         provider.set_block_number(1);
         for (key, value) in fixture["storage"].as_object().unwrap() {
             provider.storage.insert(
-                (RADICLE_REGISTRY_ADDRESS, key.parse().unwrap()),
+                (CODE_REGISTRY_ADDRESS, key.parse().unwrap()),
                 value.as_str().unwrap().parse().unwrap(),
             );
         }
@@ -111,12 +111,8 @@ impl Fixture {
             chain_id: 2026,
             genesis_hash: B256::repeat_byte(7),
             repo_id: repo(0xaa),
-            descriptor_hash: provider.enter(|s| {
-                RadicleRegistry::new(s)
-                    .config_descriptor_hash
-                    .read()
-                    .unwrap()
-            }),
+            descriptor_hash: provider
+                .enter(|s| CodeRegistry::new(s).config_descriptor_hash.read().unwrap()),
             owner_bls_public: committee
                 .vrf_group_public_key_bytes
                 .as_slice()
@@ -170,7 +166,7 @@ impl Fixture {
     ) -> outbe_primitives::error::Result<PublicationProgress> {
         let batch = self.signed(body, indices);
         self.provider
-            .enter(|storage| RadicleRegistry::new(storage).apply_publication_batch(&batch))
+            .enter(|storage| CodeRegistry::new(storage).apply_publication_batch(&batch))
     }
 
     fn bootstrap(&mut self) {
@@ -232,7 +228,7 @@ fn publication_generation_drops_pending_slots_and_preserves_accepted_history() {
         .receipt
         .is_some());
     fixture.provider.enter(|storage| {
-        let registry = RadicleRegistry::new(storage);
+        let registry = CodeRegistry::new(storage);
         assert_eq!(
             registry.publication_receipt(1).unwrap().unwrap().body,
             accepted
@@ -253,14 +249,14 @@ fn pending_attesters_advance_to_the_next_batch_without_repeating_the_first_prefi
     let body = fixture.body.clone();
     assert!(fixture
         .provider
-        .enter(|s| RadicleRegistry::new(s).pending_publication_attesters(&body))
+        .enter(|s| CodeRegistry::new(s).pending_publication_attesters(&body))
         .unwrap()
         .is_empty());
     let first = (0..32).collect::<Vec<_>>();
     assert!(fixture.apply(&body, &first).unwrap().receipt.is_none());
     let seen = fixture
         .provider
-        .enter(|s| RadicleRegistry::new(s).pending_publication_attesters(&body))
+        .enter(|s| CodeRegistry::new(s).pending_publication_attesters(&body))
         .unwrap();
     assert_eq!(seen, (0..32).collect::<Vec<_>>());
     assert!(fixture.apply(&body, &first).unwrap().receipt.is_none());
@@ -268,7 +264,7 @@ fn pending_attesters_advance_to_the_next_batch_without_repeating_the_first_prefi
     other.package_manifest_hash = B256::repeat_byte(41);
     assert!(fixture
         .provider
-        .enter(|s| RadicleRegistry::new(s).pending_publication_attesters(&other))
+        .enter(|s| CodeRegistry::new(s).pending_publication_attesters(&other))
         .unwrap()
         .is_empty());
     let next = (0..33)
@@ -280,14 +276,14 @@ fn pending_attesters_advance_to_the_next_batch_without_repeating_the_first_prefi
     fixture.advance_material();
     assert!(fixture
         .provider
-        .enter(|s| RadicleRegistry::new(s).pending_publication_attesters(&body))
+        .enter(|s| CodeRegistry::new(s).pending_publication_attesters(&body))
         .is_err());
     let mut current = body;
     current.epoch = 1;
     current.material_version = 2;
     assert!(fixture
         .provider
-        .enter(|s| RadicleRegistry::new(s).pending_publication_attesters(&current))
+        .enter(|s| CodeRegistry::new(s).pending_publication_attesters(&current))
         .unwrap()
         .is_empty());
 }
@@ -306,7 +302,7 @@ fn publication_every_write_failure_rolls_back_pending_binding_receipt_and_event(
     let mut completed = fork();
     completed.clear_mutation_failure();
     completed
-        .enter(|s| RadicleRegistry::new(s).apply_publication_batch(&batch))
+        .enter(|s| CodeRegistry::new(s).apply_publication_batch(&batch))
         .unwrap();
     let mutations = completed.clear_mutation_failure();
     assert!(mutations > 0);
@@ -321,7 +317,7 @@ fn publication_every_write_failure_rolls_back_pending_binding_receipt_and_event(
             }
             assert!(
                 provider
-                    .enter(|s| RadicleRegistry::new(s).apply_publication_batch(&batch))
+                    .enter(|s| CodeRegistry::new(s).apply_publication_batch(&batch))
                     .is_err(),
                 "operation={operation},after={after}"
             );
@@ -355,7 +351,7 @@ fn publication_maximum_committee_reaches_quorum_with_six_bounded_batches() {
     let before = fixture.provider.storage.clone();
     assert!(fixture
         .provider
-        .enter(|s| RadicleRegistry::new(s).apply_publication_batch(&oversized))
+        .enter(|s| CodeRegistry::new(s).apply_publication_batch(&oversized))
         .is_err());
     assert_eq!(fixture.provider.storage, before);
     let start = std::time::Instant::now();
@@ -369,7 +365,7 @@ fn publication_maximum_committee_reaches_quorum_with_six_bounded_batches() {
             let before = fixture.provider.storage.clone();
             assert!(fixture
                 .provider
-                .enter(|s| RadicleRegistry::new(s).apply_publication_batch(&invalid))
+                .enter(|s| CodeRegistry::new(s).apply_publication_batch(&invalid))
                 .is_err());
             assert_eq!(fixture.provider.storage, before);
         }
@@ -396,14 +392,14 @@ fn publication_receipt_reader_bounds_the_raw_dynamic_body_before_loading() {
     fixture.bootstrap();
     let slot = fixture
         .provider
-        .enter(|s| 1_u64.mapping_slot(RadicleRegistry::new(s).publication_receipts.base_slot()));
+        .enter(|s| 1_u64.mapping_slot(CodeRegistry::new(s).publication_receipts.base_slot()));
     fixture
         .provider
         .storage
-        .insert((RADICLE_REGISTRY_ADDRESS, slot), U256::MAX);
+        .insert((CODE_REGISTRY_ADDRESS, slot), U256::MAX);
     assert!(fixture
         .provider
-        .enter(|s| RadicleRegistry::new(s).publication_receipt(1))
+        .enter(|s| CodeRegistry::new(s).publication_receipt(1))
         .is_err());
 }
 
@@ -423,7 +419,7 @@ fn publication_q_crossed_inside_batch_commits_once_and_bad_last_is_atomic() {
     );
     assert!(fixture
         .provider
-        .enter(|s| RadicleRegistry::new(s).apply_publication_batch(&bad))
+        .enter(|s| CodeRegistry::new(s).apply_publication_batch(&bad))
         .is_err());
     assert_eq!(fixture.provider.storage, before);
     assert_eq!(fixture.provider.get_ordered_events(), events);
@@ -431,7 +427,7 @@ fn publication_q_crossed_inside_batch_commits_once_and_bad_last_is_atomic() {
     assert_eq!(result.attestations, 4);
     assert_eq!(result.receipt.unwrap().receipt_hash, body.receipt_hash());
     fixture.provider.enter(|storage| {
-        let registry = RadicleRegistry::new(storage);
+        let registry = CodeRegistry::new(storage);
         assert_eq!(registry.publication_sequence.read().unwrap(), 1);
         assert_eq!(registry.publication_receipt(1).unwrap().unwrap().body, body);
         assert!(registry.publication_receipt(2).unwrap().is_none());
@@ -511,7 +507,7 @@ fn publication_invalid_context_or_typed_contributions_never_change_state() {
         let before = fixture.provider.storage.clone();
         assert!(fixture
             .provider
-            .enter(|s| RadicleRegistry::new(s).apply_publication_batch(&batch))
+            .enter(|s| CodeRegistry::new(s).apply_publication_batch(&batch))
             .is_err());
         assert_eq!(fixture.provider.storage, before);
     }
@@ -523,7 +519,7 @@ fn publication_bootstrap_reserves_capacity_and_adopts_an_existing_rid() {
         let mut fixture = Fixture::new(4);
         let body = fixture.body.clone();
         fixture.provider.enter(|storage| {
-            let mut registry = RadicleRegistry::new(storage);
+            let mut registry = CodeRegistry::new(storage);
             registry.config_max_repositories.write(2).unwrap();
             registry
                 .register_repository(
@@ -541,7 +537,7 @@ fn publication_bootstrap_reserves_capacity_and_adopts_an_existing_rid() {
         });
         fixture.bootstrap();
         fixture.provider.enter(|storage| {
-            let registry = RadicleRegistry::new(storage);
+            let registry = CodeRegistry::new(storage);
             assert_eq!(
                 registry.network_repository.read().unwrap(),
                 repo_id_storage_key(body.repo_id)
@@ -619,7 +615,7 @@ fn publication_review_requires_real_terminal_vote_and_merge_is_a_separate_checkp
         .is_some());
     fixture.provider.enter(|storage| {
         assert_eq!(
-            RadicleRegistry::new(storage)
+            CodeRegistry::new(storage)
                 .patch_execution_stage
                 .read(&proposal)
                 .unwrap(),
@@ -639,7 +635,7 @@ fn publication_review_requires_real_terminal_vote_and_merge_is_a_separate_checkp
         .set_canonical_block_hash(14, B256::repeat_byte(14));
     assert!(fixture.apply(&merge, &[0, 1, 2]).unwrap().receipt.is_some());
     fixture.provider.enter(|storage| {
-        let registry = RadicleRegistry::new(storage);
+        let registry = CodeRegistry::new(storage);
         assert_eq!(
             registry.patch_execution_stage.read(&proposal).unwrap(),
             crate::schema::PATCH_EXECUTION_MERGED

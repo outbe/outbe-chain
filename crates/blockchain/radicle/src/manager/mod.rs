@@ -7,7 +7,7 @@ mod types;
 pub use actor::{RadicleManager, RadicleManagerHandle};
 pub use adapters::{HttpRepositoryStatus, NativeHeartwoodControl};
 pub use fsm::{evaluate_phase, PhaseInput, PhaseMode};
-pub use outbe_radicleregistry::RepoId;
+pub use outbe_coderegistry::RepoId;
 pub use snapshot::{RethFinalizedFeed, RethSnapshotReader};
 pub use types::{
     BoxFuture, ControlSession, DisconnectDisposition, EndpointResolver, FinalizedBlock,

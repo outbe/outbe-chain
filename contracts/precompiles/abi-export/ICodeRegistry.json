@@ -13,7 +13,7 @@
       {
         "name": "",
         "type": "tuple",
-        "internalType": "struct IRadicleRegistry.PatchApprovalInfo",
+        "internalType": "struct ICodeRegistry.PatchApprovalInfo",
         "components": [
           {
             "name": "approved",

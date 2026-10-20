@@ -1,6 +1,6 @@
 use super::*;
 use outbe_primitives::{
-    addresses::RADICLE_REGISTRY_ADDRESS,
+    addresses::CODE_REGISTRY_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
     error::Result,
     storage::PrecompileStorageProvider,
@@ -12,9 +12,9 @@ use outbe_vote::{
     ProposalStatus, Vote,
 };
 
-use crate::{payload::PatchVotePayloadV1, vote_target::RadiclePatchVoteTarget};
+use crate::{payload::PatchVotePayloadV1, vote_target::CodePatchVoteTarget};
 
-static TARGET: RadiclePatchVoteTarget = RadiclePatchVoteTarget;
+static TARGET: CodePatchVoteTarget = CodePatchVoteTarget;
 static HANDLERS: &[&dyn VoteTarget] = &[&TARGET];
 static REGISTRY: VoteTargetRegistry = VoteTargetRegistry::new(HANDLERS);
 const OWNER: Address = Address::repeat_byte(0xff);
@@ -36,7 +36,7 @@ fn setup() -> HashMapStorageProvider {
             validators.register_validator(OWNER, address, &key).unwrap();
             validators.activate_validator(address).unwrap();
         }
-        let mut registry = RadicleRegistry::new(storage);
+        let mut registry = CodeRegistry::new(storage);
         registry.config_max_repositories.write(2).unwrap();
         registry.register_repository(repo(0xaa), A).unwrap();
     });
@@ -54,7 +54,7 @@ fn subject() -> String {
 
 pub(super) fn create(provider: &mut HashMapStorageProvider, payload: String) -> Result<U256> {
     let call = IVote::createProposalWithVotingWindowCall {
-        targetModule: RADICLE_REGISTRY_ADDRESS,
+        targetModule: CODE_REGISTRY_ADDRESS,
         payload,
         votingWindowBlocks: 2,
     };
@@ -94,15 +94,12 @@ pub(super) fn finalize(provider: &mut HashMapStorageProvider, height: u64) -> Re
     })
 }
 
-fn approval(
-    provider: &mut HashMapStorageProvider,
-    id: U256,
-) -> IRadicleRegistry::PatchApprovalInfo {
-    let call = IRadicleRegistry::getPatchApprovalCall { proposalId: id };
+fn approval(provider: &mut HashMapStorageProvider, id: U256) -> ICodeRegistry::PatchApprovalInfo {
+    let call = ICodeRegistry::getPatchApprovalCall { proposalId: id };
     let output = provider
         .enter(|storage| dispatch(storage, &call.abi_encode(), Address::ZERO, U256::ZERO))
         .unwrap();
-    IRadicleRegistry::getPatchApprovalCall::abi_decode_returns(&output).unwrap()
+    ICodeRegistry::getPatchApprovalCall::abi_decode_returns(&output).unwrap()
 }
 
 #[test]
@@ -115,7 +112,7 @@ fn abi_vote_approves_exact_revision_once_only_after_deadline() {
     assert!(!approval(&mut provider, id).approved);
     provider.enter(|storage| {
         assert_eq!(
-            RadicleRegistry::new(storage)
+            CodeRegistry::new(storage)
                 .patch_execution_stage
                 .read(&id)
                 .unwrap(),
@@ -133,12 +130,12 @@ fn abi_vote_approves_exact_revision_once_only_after_deadline() {
     assert_eq!(approved.payload, payload);
     assert_eq!(approved.approvedHeight, 13);
     assert_eq!(approved.approvedTimestamp, 1_700_000_013);
-    let stage = IRadicleRegistry::patchExecutionStageCall { proposalId: id }.abi_encode();
+    let stage = ICodeRegistry::patchExecutionStageCall { proposalId: id }.abi_encode();
     let stage = provider
         .enter(|storage| dispatch(storage, &stage, Address::ZERO, U256::ZERO))
         .unwrap();
     assert_eq!(
-        IRadicleRegistry::patchExecutionStageCall::abi_decode_returns(&stage).unwrap(),
+        ICodeRegistry::patchExecutionStageCall::abi_decode_returns(&stage).unwrap(),
         crate::schema::PATCH_EXECUTION_PENDING
     );
     let decoded = PatchVotePayloadV1::decode(approved.payload.as_bytes()).unwrap();
@@ -150,7 +147,7 @@ fn abi_vote_approves_exact_revision_once_only_after_deadline() {
     assert!(!approval(&mut provider, id + U256::ONE).approved);
 
     provider.enter(|storage| {
-        let registry = RadicleRegistry::new(storage.clone());
+        let registry = CodeRegistry::new(storage.clone());
         let before = registry.patch_approval(id).unwrap().unwrap();
         let ctx =
             BlockRuntimeContext::new(BlockContext::empty_for_tests(14, 99, CHAIN_ID), storage);
@@ -232,7 +229,7 @@ fn tally_rechecks_current_membership_and_expired_decision_grants_no_permission()
                 .status,
             ProposalStatus::Expired
         );
-        assert!(RadicleRegistry::new(storage)
+        assert!(CodeRegistry::new(storage)
             .patch_approvals
             .get(id)
             .unwrap()
@@ -290,7 +287,7 @@ fn approval_row_alone_does_not_authorize_pending_expired_or_error_proposals() {
     let payload = subject();
     let id = create(&mut provider, payload.clone()).unwrap();
     provider.enter(|storage| {
-        let registry = RadicleRegistry::new(storage.clone());
+        let registry = CodeRegistry::new(storage.clone());
         registry
             .patch_approvals
             .create(&crate::PatchApprovalRecord {

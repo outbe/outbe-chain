@@ -26,7 +26,7 @@ members = [
     "crates/system/tee",
     "crates/system/teeregistry",
     "crates/system/l2registry",
-    "crates/system/radicleregistry",
+    "crates/system/coderegistry",
     "crates/system/radicle",
     "crates/system/update",
     "crates/system/vote",
@@ -130,7 +130,7 @@ outbe-tee-enclave = { path = "bin/outbe-tee-enclave" }
 outbe-teeregistry = { path = "crates/system/teeregistry" }
 outbe-l2registry = { path = "crates/system/l2registry" }
 outbe-hyperlanecontroller = { path = "crates/system/hyperlanecontroller" }
-outbe-radicleregistry = { path = "crates/system/radicleregistry" }
+outbe-coderegistry = { path = "crates/system/coderegistry" }
 outbe-update = { path = "crates/system/update" }
 outbe-vote = { path = "crates/system/vote" }
 outbe-radicle-runtime = { path = "crates/system/radicle" }

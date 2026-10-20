@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
-/// @title RadicleRegistry V1
+/// @title CodeRegistry V1
 /// @notice Permissionless, append-only registry of public Heartwood repositories.
 /// @dev maxRepositories() == type(uint32).max denotes an unlimited configured capacity.
-interface IRadicleRegistry {
+interface ICodeRegistry {
     /// @dev payload is the exact canonical V1 Vote subject; execution and Merge are separate.
     struct PatchApprovalInfo {
         bool approved;
