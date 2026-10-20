@@ -129,3 +129,103 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
     assert_eq!(mined[0].promisMinor, promis_minor);
     outbe_promis::enclave_client::test_enclave::uninstall();
 }
+
+/// Once its group expired, the settled units of a series still mine. Mining credits no
+/// Promis Limit: the expiry already returned the unpaid units, and the last mined unit
+/// deletes the spent series.
+#[test]
+fn settled_units_mine_after_the_group_expired_without_moving_the_promis_limit() {
+    use crate::sol_ext::IERC1155;
+    const SETTLED: u32 = 40;
+
+    outbe_promis::enclave_client::test_enclave::install();
+    let mut storage = factory_provider();
+    storage.stub_sub_call_at_selector(
+        crate::constants::INTEX_NFT1155_ADDRESS,
+        IERC1155::balanceOfCall::SELECTOR,
+        word(u64::from(SETTLED)),
+    );
+    let load = StorageHandle::enter(&mut storage, |s| {
+        select_prod_profile(&s);
+        runtime::issue_intex(&s, sample(7)).unwrap();
+        outbe_intex::api::record_settled_units(&s, sid(7), SETTLED).unwrap();
+        outbe_intex::api::call_group_of(&s, sid(7), ISSUED_AT).unwrap();
+        outbe_intex::api::read_series(&s, sid(7))
+            .unwrap()
+            .promis_load_minor
+    });
+    let deadline = u64::from(ISSUED_AT) + u64::from(CALL_NOTICE_PERIOD);
+    let due = IntexContract::bucket_end(IntexContract::deadline_bucket(deadline));
+    storage.set_timestamp(U256::from(due));
+    let forfeited = U256::from(100 - SETTLED) * load;
+    let mined = U256::from(SETTLED) * load;
+
+    StorageHandle::enter(&mut storage, |s| {
+        let ctx = outbe_primitives::block::BlockRuntimeContext::new(
+            outbe_primitives::block::BlockContext::empty_for_tests(2, due, CHAIN_ID),
+            s.clone(),
+        );
+        crate::hooks::sweep_forfeits(&ctx).unwrap();
+        crate::hooks::sweep_cleanup(&ctx).unwrap();
+        let reserve = || {
+            outbe_promislimit::PromisLimitContract::new(s.clone())
+                .get_total_unallocated()
+                .unwrap()
+        };
+        assert_eq!(reserve(), forfeited);
+        assert!(outbe_intex::api::series_exists(&s, sid(7)).unwrap());
+        let counts = outbe_intex::api::unit_counts(&s, sid(7)).unwrap();
+        assert_eq!(
+            (counts.active, counts.settled, counts.forfeited),
+            (0, SETTLED, 100 - SETTLED)
+        );
+        let intex = IntexContract::new(s.clone());
+        assert_eq!(
+            intex.called_group_slot.read(&group_of(&s, sid(7))).unwrap(),
+            0
+        );
+        assert_eq!(intex.first_cleanup_hour().unwrap(), None);
+
+        let nonce = (0u64..)
+            .find(|nonce| runtime::validate_pow(owner(), mined, sid(7), 0, *nonce).is_ok())
+            .unwrap();
+        let group = group_of(&s, sid(7));
+        let minted = runtime::mine_promis(
+            &s,
+            sid(7),
+            owner(),
+            U256::from(SETTLED),
+            runtime::MiningProof {
+                nonce,
+                auth: promis_auth(owner(), mined, 0),
+            },
+        )
+        .unwrap();
+        assert_eq!(minted, mined);
+        assert_eq!(reserve(), forfeited, "mining credits no Promis Limit");
+        assert!(!outbe_intex::api::series_exists(&s, sid(7)).unwrap());
+        assert_eq!(intex.group_member_count(group).unwrap(), 0);
+        let sk = outbe_promis::enclave_client::test_enclave::state_key();
+        let vk = derive_view_key(&sk, owner()).unwrap();
+        let blob = outbe_promis::api::balance_ct(s.clone(), owner()).unwrap();
+        assert_eq!(decrypt_balance(&vk, owner(), &blob).unwrap(), mined);
+
+        let later = outbe_primitives::block::BlockRuntimeContext::new(
+            outbe_primitives::block::BlockContext::empty_for_tests(3, due + DAY, CHAIN_ID),
+            s.clone(),
+        );
+        crate::hooks::sweep_forfeits(&later).unwrap();
+        crate::hooks::sweep_cleanup(&later).unwrap();
+        assert_eq!(reserve(), forfeited);
+    });
+    let expired: Vec<_> = storage
+        .get_events(outbe_primitives::addresses::INTEX_ADDRESS)
+        .iter()
+        .filter_map(|log| {
+            outbe_intex::precompile::IIntex::IntexGroupExpired::decode_log_data(log).ok()
+        })
+        .map(|event| (event.forfeitedUnits, event.returnedPromisMinor))
+        .collect();
+    assert_eq!(expired, vec![(u64::from(100 - SETTLED), forfeited)]);
+    outbe_promis::enclave_client::test_enclave::uninstall();
+}
