@@ -39,9 +39,7 @@ const LOAD_MINOR: u128 = 1_000_000 * PROMIS_LOAD_MINOR;
 
 #[test]
 fn the_bridge_caps_match_the_contracts() {
-    use crate::constants::{
-        CLEARING_BIDS_PER_CHUNK, MAX_BIDS_PER_BATCH, MAX_BID_BATCHES, MAX_REFUND_CHUNKS,
-    };
+    use crate::constants::{MAX_BID_BATCHES, MAX_PAYLOAD_ARRAY_LEN, MAX_REFUND_CHUNKS};
     use outbe_primitives::test_utils::sol_interface::sol_constant;
     const CODEC: &str =
         include_str!("../../../../contracts/intex/src/shared/libs/BridgeMsgCodec.sol");
@@ -49,11 +47,7 @@ fn the_bridge_caps_match_the_contracts() {
         include_str!("../../../../contracts/intex/src/target/TargetRouter.sol");
     assert_eq!(
         sol_constant(CODEC, "MAX_PAYLOAD_ARRAY_LEN"),
-        Some(MAX_BIDS_PER_BATCH)
-    );
-    assert_eq!(
-        sol_constant(CODEC, "MAX_PAYLOAD_ARRAY_LEN"),
-        Some(CLEARING_BIDS_PER_CHUNK)
+        Some(MAX_PAYLOAD_ARRAY_LEN)
     );
     assert_eq!(sol_constant(CODEC, "MAX_CHUNKS"), Some(MAX_REFUND_CHUNKS));
     assert_eq!(
@@ -301,7 +295,7 @@ fn mark_done(s: &StorageHandle, chain: u32, total_batches: u16, total_bids: u32)
 /// Relay `n` bids the way the codec does: batches no wider than one message, then
 /// the done marker. The intake refuses a single oversized batch.
 fn relay_bids(s: &StorageHandle, chain: u32, n: u8, rate: u32) {
-    let cap = u8::try_from(crate::constants::MAX_BIDS_PER_BATCH).unwrap();
+    let cap = u8::try_from(crate::constants::MAX_PAYLOAD_ARRAY_LEN).unwrap();
     let total_batches = u16::from(n.div_ceil(cap));
     for batch_index in 0..total_batches {
         let start = u8::try_from(batch_index).unwrap() * cap;
@@ -1434,10 +1428,10 @@ fn process_bids_rejects_non_origin_caller() {
 
 #[test]
 fn process_bids_rejects_an_oversized_batch() {
-    use crate::constants::MAX_BIDS_PER_BATCH;
+    use crate::constants::MAX_PAYLOAD_ARRAY_LEN;
     with_storage(|s| {
         open_revealing(&s);
-        let over = u8::try_from(MAX_BIDS_PER_BATCH + 1).unwrap();
+        let over = u8::try_from(MAX_PAYLOAD_ARRAY_LEN + 1).unwrap();
         let error = runtime::process_bids_batch(
             s.clone(),
             runtime::Inbound {
@@ -2544,19 +2538,22 @@ fn escrow_basis_is_promis_load() {
 
 #[test]
 fn a_chains_winners_ship_in_chunks_the_encoder_can_carry() {
-    use crate::constants::{MAX_REFUND_CHUNKS, REFUND_CHUNK_LEN};
+    use crate::constants::{MAX_PAYLOAD_ARRAY_LEN, MAX_REFUND_CHUNKS};
 
     // A chain whose bids all lost still takes one chunk, which closes its day.
     assert_eq!(runtime::refund_chunk_count(0).unwrap(), 1);
     assert_eq!(runtime::refund_chunk_count(1).unwrap(), 1);
-    assert_eq!(runtime::refund_chunk_count(REFUND_CHUNK_LEN).unwrap(), 1);
     assert_eq!(
-        runtime::refund_chunk_count(REFUND_CHUNK_LEN + 1).unwrap(),
+        runtime::refund_chunk_count(MAX_PAYLOAD_ARRAY_LEN).unwrap(),
+        1
+    );
+    assert_eq!(
+        runtime::refund_chunk_count(MAX_PAYLOAD_ARRAY_LEN + 1).unwrap(),
         2
     );
 
     // The arrival set's ceiling. One winner more is refused rather than truncated.
-    let ceiling = REFUND_CHUNK_LEN * MAX_REFUND_CHUNKS;
+    let ceiling = MAX_PAYLOAD_ARRAY_LEN * MAX_REFUND_CHUNKS;
     assert_eq!(
         runtime::refund_chunk_count(ceiling).unwrap(),
         MAX_REFUND_CHUNKS
@@ -2576,10 +2573,10 @@ fn ranked_winners(chains: &[u32], partial: Option<usize>) -> crate::schema::Clea
 
 #[test]
 fn a_partial_fill_is_named_in_the_chunk_that_carries_it() {
-    use crate::constants::REFUND_CHUNK_LEN;
+    use crate::constants::MAX_PAYLOAD_ARRAY_LEN;
 
     // Chain 20's winners sit between chain 10's, and the last one ranked is the partial fill.
-    let mut chains = vec![10u32; REFUND_CHUNK_LEN + 1];
+    let mut chains = vec![10u32; MAX_PAYLOAD_ARRAY_LEN + 1];
     chains.insert(3, 20);
     chains.push(10);
     let partial = chains.len() - 1;
@@ -2587,7 +2584,7 @@ fn a_partial_fill_is_named_in_the_chunk_that_carries_it() {
 
     let chunks = runtime::refund_chunks(&result, 10).unwrap();
     assert_eq!(chunks.len(), 2);
-    assert_eq!(chunks[0].winners.len(), REFUND_CHUNK_LEN);
+    assert_eq!(chunks[0].winners.len(), MAX_PAYLOAD_ARRAY_LEN);
     assert!(
         !chunks[0].winners.contains(&bidder(3)),
         "another chain's winner"

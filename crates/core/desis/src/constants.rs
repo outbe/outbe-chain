@@ -47,24 +47,20 @@ pub const MIN_COMMIT_WINDOW_SECONDS: u64 = 300;
 pub const DAY_STATE_GREEN: u8 = 1;
 pub const DAY_STATE_RED: u8 = 2;
 
-/// Winners per REFUND_INSTRUCTIONS message: the codec's `MAX_PAYLOAD_ARRAY_LEN`.
-/// Issuance uses its own, narrower cap. A recipient costs a mint, and a winner
-/// costs a status flip.
-pub use outbe_intexfactory::constants::MAX_RECIPIENTS_PER_MESSAGE as REFUND_CHUNK_LEN;
+/// Entries one cross-chain payload array carries: bids per PROCESS_BIDS_BATCH and winners per
+/// REFUND_INSTRUCTIONS; clearing sizes its gas in chunks of the same length. Mirrors
+/// `BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN`.
+pub const MAX_PAYLOAD_ARRAY_LEN: usize = 64;
 
 /// Chunks one chain-day's refunds may span; mirrors the codec's `MAX_CHUNKS`.
 pub const MAX_REFUND_CHUNKS: usize = 256;
 
-/// Bids one PROCESS_BIDS_BATCH message may carry; mirrors the codec's `MAX_BIDS_BATCH`.
-pub const MAX_BIDS_PER_BATCH: usize = 64;
-
 /// Batches one chain-day may send: the arrival bitmap is one 256-bit word.
 pub const MAX_BID_BATCHES: u16 = 256;
 
-// Everything the intake admits from one chain must still fit its refund fan-out.
-// Otherwise, clearing fails on bids the intake already took.
-const _: () =
-    assert!(MAX_BIDS_PER_BATCH * MAX_BID_BATCHES as usize <= REFUND_CHUNK_LEN * MAX_REFUND_CHUNKS);
+// Everything the intake admits from one chain must still fit its refund fan-out: a bid batch
+// and a refund chunk share one array cap, so the batch count bounds the chunk count.
+const _: () = assert!(MAX_BID_BATCHES as usize <= MAX_REFUND_CHUNKS);
 
 /// `IDesis.InboundIgnored` reason codes; mirrors the routers' `InboundReason` library.
 pub const IGNORED_OBSOLETE: u8 = 2;
@@ -76,9 +72,6 @@ pub const IGNORED_NOT_FOUND: u8 = 4;
 pub const CLEARING_FIXED_GAS: u64 = 564_000;
 pub const CLEARING_CHUNK_GAS: u64 = 197_000;
 pub const CLEARING_BID_GAS: u64 = 10_000;
-
-/// Bids one BIDS_BATCH carries; mirrors `BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN`.
-pub const CLEARING_BIDS_PER_CHUNK: u64 = 64;
 
 /// Days of a chain's own history a round is sized from, and the floor it is never sized below.
 pub const CLEARING_HISTORY_DAYS: u32 = 7;
