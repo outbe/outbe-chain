@@ -1108,3 +1108,164 @@ fn a_deterministic_cleanup_failure_defers_the_group() {
     });
     teardown();
 }
+
+/// Three Credis of one group, called and past the hour their deadline falls in.
+fn lapsed_group_of_three() -> (
+    outbe_primitives::storage::hashmap::HashMapStorageProvider,
+    Vec<U256>,
+) {
+    let mut provider = env();
+    StorageHandle::enter(&mut provider, |storage| {
+        bootstrap_for(&storage, alice(), pledge_cost() * U256::from(3u64));
+    });
+    let ids: Vec<U256> = (1..=3u64)
+        .map(|nonce| {
+            provider.set_block_number(BLOCK_NUMBER + nonce);
+            StorageHandle::enter(&mut provider, |storage| {
+                open_on_fixture_anchor(&storage, alice(), nonce)
+            })
+        })
+        .collect();
+    StorageHandle::enter(&mut provider, |storage| {
+        call_by_hand(&storage, &ids[..1], CREATED_AT);
+        advance_to(&storage, CREATED_AT + NOTICE + HOUR);
+    });
+    provider.clear_mutation_failure();
+    (provider, ids)
+}
+
+/// One block's forfeit and cleanup under one checkpoint, as the CycleTick transaction runs them.
+fn forfeit_block(
+    storage: &StorageHandle<'_>,
+    timestamp: u64,
+) -> outbe_primitives::error::Result<u32> {
+    let ctx = outbe_primitives::block::BlockRuntimeContext::new(
+        outbe_primitives::block::BlockContext::empty_for_tests(BLOCK_NUMBER, timestamp, CHAIN_ID),
+        storage.clone(),
+    );
+    storage.with_checkpoint(|| {
+        let forfeited = crate::expired::sweep_expired(&ctx)?;
+        crate::cleanup::sweep_cleanup(&ctx)?;
+        Ok(forfeited)
+    })
+}
+
+/// Every write of a group's forfeit and of its cleanup (CCA default, pledge burn, credit,
+/// deletion, events) rolls back with the block. The retry credits the pledged Gratis once,
+/// and leaves the state a clean run leaves.
+#[test]
+fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
+    use alloy_sol_types::SolEvent;
+    use outbe_primitives::addresses::{CREDIS_ADDRESS, GRATIS_ADDRESS};
+
+    let lapsed = CREATED_AT + NOTICE + HOUR;
+    let expected = pledge_cost() * U256::from(3u64);
+    let reserve = |storage: &StorageHandle<'_>| {
+        outbe_promislimit::PromisLimitContract::new(storage.clone())
+            .get_total_unallocated()
+            .unwrap()
+    };
+
+    let (mut clean, ids) = lapsed_group_of_three();
+    let group = StorageHandle::enter(&mut clean, |storage| group_of(&storage, ids[0]));
+    clean.fail_after_mutation_at(usize::MAX);
+    StorageHandle::enter(&mut clean, |storage| {
+        assert_eq!(forfeit_block(&storage, lapsed).unwrap(), 1);
+    });
+    let mutations = clean.clear_mutation_failure();
+    assert!(mutations > 0);
+    let count = |provider: &outbe_primitives::storage::hashmap::HashMapStorageProvider| {
+        let credis = provider.get_events(CREDIS_ADDRESS);
+        let groups = credis
+            .iter()
+            .filter_map(|log| {
+                outbe_credis::precompile::ICredis::CredisGroupForfeited::decode_log_data(log).ok()
+            })
+            .map(|event| (event.groupKey, event.credis))
+            .collect::<Vec<_>>();
+        let forfeited = credis
+            .iter()
+            .filter_map(|log| {
+                outbe_credis::precompile::ICredis::CredisForfeited::decode_log_data(log).ok()
+            })
+            .count();
+        let burned_tokens = credis
+            .iter()
+            .filter_map(|log| {
+                outbe_credis::precompile::ICredis::Transfer::decode_log_data(log).ok()
+            })
+            .filter(|event| event.to == Address::ZERO)
+            .count();
+        let burned_gratis = provider
+            .get_events(GRATIS_ADDRESS)
+            .iter()
+            .filter_map(|log| {
+                outbe_gratis::precompile::IGratis::GratisBurned::decode_log_data(log).ok()
+            })
+            .count();
+        (groups, forfeited, burned_tokens, burned_gratis)
+    };
+    assert_eq!(count(&clean), (vec![(group, 3)], 3, 3, 3));
+    StorageHandle::enter(&mut clean, |storage| {
+        assert_eq!(reserve(&storage), expected);
+        let credis = CredisContract::new(storage.clone());
+        assert!(ids.iter().all(|id| is_deleted(&storage, *id)));
+        assert_eq!(credis.total_credis().unwrap(), 0);
+        assert_eq!(credis.credis_count_of(alice()).unwrap(), 0);
+        assert_eq!(credis.group_member_count(group).unwrap(), 0);
+        assert_eq!(queued_at(&storage, group), 0);
+        assert_eq!(cleanup_queued_at(&storage, group), 0);
+        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
+        assert_eq!(
+            outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
+            U256::ZERO
+        );
+        for id in &ids {
+            assert_eq!(
+                outbe_gratisfactory::api::collateral_of(&storage, *id)
+                    .unwrap()
+                    .remaining_minor,
+                U256::ZERO
+            );
+        }
+    });
+
+    for operation in 0..mutations {
+        let (mut provider, _) = lapsed_group_of_three();
+        let storage_before = provider.storage.clone();
+        let events_before = provider.events.clone();
+        let ordered_before = provider.get_ordered_events().to_vec();
+        provider.fail_after_mutation_at(operation);
+        let failed = StorageHandle::enter(&mut provider, |storage| forfeit_block(&storage, lapsed));
+        assert!(
+            failed.is_err(),
+            "mutation {operation} unexpectedly succeeded"
+        );
+        assert_eq!(provider.clear_mutation_failure(), operation + 1);
+        assert_eq!(provider.storage, storage_before, "storage at {operation}");
+        assert_eq!(provider.events, events_before, "events at {operation}");
+        assert_eq!(
+            provider.get_ordered_events(),
+            ordered_before.as_slice(),
+            "ordered events at {operation}"
+        );
+
+        StorageHandle::enter(&mut provider, |storage| {
+            assert_eq!(reserve(&storage), U256::ZERO);
+            assert_eq!(forfeit_block(&storage, lapsed).unwrap(), 1);
+            assert_eq!(reserve(&storage), expected);
+            assert_eq!(forfeit_block(&storage, lapsed + HOUR).unwrap(), 0);
+            assert_eq!(reserve(&storage), expected);
+        });
+        assert_eq!(
+            count(&provider),
+            count(&clean),
+            "events after retry at {operation}"
+        );
+        assert_eq!(
+            provider.storage, clean.storage,
+            "state after retry at {operation}"
+        );
+    }
+    teardown();
+}
