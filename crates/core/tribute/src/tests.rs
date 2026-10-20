@@ -951,7 +951,7 @@ fn v1_mechanics_fi_groups_fractions_and_create_nod_within_7_days_burns_tribute()
 }
 
 #[test]
-fn create_nod_reverts_until_the_completion_day_price_is_finalized() {
+fn create_nod_reverts_without_a_completion_day_price() {
     use alloy_sol_types::SolCall;
 
     let mut provider = HashMapStorageProvider::new(1);

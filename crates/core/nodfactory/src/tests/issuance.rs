@@ -331,6 +331,10 @@ fn a_stranger_can_mine_with_the_owners_auth() {
             .unwrap()
             .is_empty());
         assert_eq!(
+            outbe_gratis::api::op_nonce(storage.clone(), input.owner).unwrap(),
+            1
+        );
+        assert_eq!(
             outbe_gratis::api::op_nonce(storage.clone(), stranger).unwrap(),
             0
         );

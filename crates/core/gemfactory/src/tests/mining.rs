@@ -91,6 +91,10 @@ fn anyone_may_relay_mining_and_the_promis_lands_with_the_owner() {
             .unwrap()
             .is_empty());
         assert_eq!(
+            outbe_promis::api::op_nonce(storage.clone(), ALICE).unwrap(),
+            1
+        );
+        assert_eq!(
             outbe_promis::api::op_nonce(storage.clone(), BOB).unwrap(),
             0
         );

@@ -69,7 +69,12 @@ fn verify_encrypted_nod(world: &mut World) {
         assert_eq!(*expected_body.get_or_insert(body.clone()), body);
     }
     super::oracle_expectations::assert_native_entry_price(world, &encrypted.terms, completed_at);
-    let issued_in = world.state.nod_creation_blocks[&encrypted.terms.nod_id.to_u256()];
+    let issued_in = world
+        .state
+        .nod_creation_blocks
+        .get(&encrypted.terms.nod_id.to_u256())
+        .copied()
+        .expect("creator createNod block");
     let (item, _) = world
         .rpc
         .nod_state_at(port, checkpoint, encrypted.terms.nod_id)

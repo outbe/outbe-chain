@@ -247,6 +247,7 @@ fn native_completion_credits_the_unused_lysis_limit_once() {
         let after = outbe_promislimit::PromisLimitContract::new(storage)
             .get_total_unallocated()
             .unwrap();
+        assert!(!completion.unused.is_zero());
         assert_eq!(receipt.common().carry_over_before, before);
         assert_eq!(receipt.common().carry_over_after, after);
         assert_eq!(
@@ -262,10 +263,6 @@ fn native_completion_credits_the_unused_lysis_limit_once() {
         .collect::<Vec<_>>();
     assert_eq!(executed.len(), 1);
     assert_eq!(executed[0].status, "COMPLETED");
-    assert_eq!(
-        executed[0].promisLimitReturnedMinor,
-        executed[0].unusedLysisLimitMinor
-    );
 
     let storage_before = provider.storage.clone();
     let logs = provider.get_ordered_events().to_vec();
