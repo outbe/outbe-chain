@@ -241,8 +241,8 @@ fn vote_targets(oracle: &OracleContract) -> Result<Bytes> {
 
 fn sources(storage: outbe_primitives::storage::StorageHandle) -> Result<Bytes> {
     metadata::<IOracle::getSourcesCall>(|| {
-        let active = outbe_update::api::resolve_active_version(storage)?;
-        Ok(crate::sources::sources_for(active).to_owned())
+        let active = outbe_update::api::resolve_active_version(storage.clone())?;
+        Ok(crate::sources::sources_for(storage.chain_id()?, active).to_owned())
     })
 }
 
