@@ -35,7 +35,7 @@ fn assert_capacity_headroom(receipt: &Receipt, visible_gas: u64) {
 
 fn assert_capacity_events(receipt: &Receipt) {
     let capacity_event = keccak256(
-        "WorldwideDayCapacityForfeited(uint32,uint32,uint32,uint256,uint256,uint256,uint32,uint256,uint64,uint64,uint8,uint64)",
+        "WorldwideDayRetentionForfeited(uint32,uint32,uint32,uint256,uint256,uint256,uint32,uint256,uint64,uint64,uint8,uint64)",
     );
     assert!(receipt.logs.iter().any(|log| {
         log.address == outbe_primitives::addresses::METADOSIS_ADDRESS
@@ -50,7 +50,7 @@ fn assert_capacity_events(receipt: &Receipt) {
         .logs
         .iter()
         .find_map(|log| {
-            outbe_metadosis::precompile::IMetadosis::WorldwideDayCapacityForfeited::decode_log(log)
+            outbe_metadosis::precompile::IMetadosis::WorldwideDayRetentionForfeited::decode_log(log)
                 .ok()
         })
         .expect("typed capacity-forfeiture event");

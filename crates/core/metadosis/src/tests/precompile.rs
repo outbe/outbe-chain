@@ -23,7 +23,7 @@ fn missing_receipts_have_canonical_empty_abi_returns() {
         assert_eq!(terminal.blockNumber, 0);
         let capacity = query(
             storage.clone(),
-            IMetadosis::getCapacityForfeitureReceiptCall { wwd },
+            IMetadosis::getRetentionForfeitureReceiptCall { wwd },
         );
         assert_eq!(capacity.outcome, 0);
         assert_eq!(capacity.maxRetainedWorldwideDays, 0);

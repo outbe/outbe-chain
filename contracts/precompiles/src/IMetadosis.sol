@@ -36,7 +36,7 @@ interface IMetadosis {
         uint64 blockNumber
     );
 
-    event WorldwideDayCapacityForfeited(
+    event WorldwideDayRetentionForfeited(
         uint32 indexed worldwideDay,
         uint32 maxRetainedWorldwideDays,
         uint32 retainedCountBefore,
@@ -113,7 +113,7 @@ interface IMetadosis {
             uint64 blockNumber
         );
 
-    function getCapacityForfeitureReceipt(uint32 wwd)
+    function getRetentionForfeitureReceipt(uint32 wwd)
         external
         view
         returns (

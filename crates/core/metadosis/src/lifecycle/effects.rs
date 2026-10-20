@@ -136,8 +136,8 @@ fn forfeit_and_credit_capacity(
 
 fn capacity_forfeiture_event(
     receipt: &CapacityForfeitureReceipt,
-) -> IMetadosis::WorldwideDayCapacityForfeited {
-    IMetadosis::WorldwideDayCapacityForfeited {
+) -> IMetadosis::WorldwideDayRetentionForfeited {
+    IMetadosis::WorldwideDayRetentionForfeited {
         worldwideDay: receipt.worldwide_day.into(),
         maxRetainedWorldwideDays: receipt.max_retained_wwds,
         retainedCountBefore: receipt.retained_count_before,

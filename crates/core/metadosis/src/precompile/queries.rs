@@ -96,8 +96,8 @@ pub(super) fn terminal_receipt(
 
 pub(super) fn capacity_forfeiture_receipt(
     metadosis: &MetadosisContract<'_>,
-    c: IMetadosis::getCapacityForfeitureReceiptCall,
-) -> Result<<IMetadosis::getCapacityForfeitureReceiptCall as SolCall>::Return> {
+    c: IMetadosis::getRetentionForfeitureReceiptCall,
+) -> Result<<IMetadosis::getRetentionForfeitureReceiptCall as SolCall>::Return> {
     let Some(receipt) = metadosis.read_capacity_forfeiture_receipt(c.wwd.into())? else {
         return Ok((
             terminal_outcome::NONE,

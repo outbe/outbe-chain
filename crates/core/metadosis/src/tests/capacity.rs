@@ -605,7 +605,7 @@ fn capacity_forfeiture_preserves_retained_work_and_replays_without_effects() {
             Some(receipt)
         );
 
-        let call = IMetadosis::getCapacityForfeitureReceiptCall {
+        let call = IMetadosis::getRetentionForfeitureReceiptCall {
             wwd: victim.value(),
         };
         let output = metadosis_dispatch(
@@ -616,7 +616,7 @@ fn capacity_forfeiture_preserves_retained_work_and_replays_without_effects() {
         )
         .unwrap();
         let decoded =
-            IMetadosis::getCapacityForfeitureReceiptCall::abi_decode_returns(&output).unwrap();
+            IMetadosis::getRetentionForfeitureReceiptCall::abi_decode_returns(&output).unwrap();
         assert_eq!(
             decoded.outcome,
             crate::schema::terminal_outcome::CAPACITY_FORFEITURE
@@ -646,7 +646,7 @@ fn capacity_forfeiture_preserves_retained_work_and_replays_without_effects() {
             .get_ordered_events()
             .iter()
             .filter_map(|event| {
-                IMetadosis::WorldwideDayCapacityForfeited::decode_log(event).ok()
+                IMetadosis::WorldwideDayRetentionForfeited::decode_log(event).ok()
             })
             .count(),
         1

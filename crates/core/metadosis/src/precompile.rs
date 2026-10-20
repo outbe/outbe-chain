@@ -47,7 +47,7 @@ pub fn dispatch(
             getWorldwideDayTerminalReceipt(c) => {
                 view(c, |c| queries::terminal_receipt(&metadosis, c))
             }
-            getCapacityForfeitureReceipt(c) => {
+            getRetentionForfeitureReceipt(c) => {
                 view(c, |c| queries::capacity_forfeiture_receipt(&metadosis, c))
             }
         }

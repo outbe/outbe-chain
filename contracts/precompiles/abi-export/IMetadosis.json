@@ -27,7 +27,7 @@
   },
   {
     "type": "function",
-    "name": "getCapacityForfeitureReceipt",
+    "name": "getRetentionForfeitureReceipt",
     "inputs": [
       {
         "name": "wwd",
@@ -444,7 +444,69 @@
   },
   {
     "type": "event",
-    "name": "WorldwideDayCapacityForfeited",
+    "name": "WorldwideDayCleanedUp",
+    "inputs": [
+      {
+        "name": "worldwideDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "finalStatus",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "WorldwideDayMissedOffering",
+    "inputs": [
+      {
+        "name": "worldwideDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "promisLimitReturnedMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "promisLimitBeforeMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "promisLimitAfterMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "retirementOutcome",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "blockNumber",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "WorldwideDayRetentionForfeited",
     "inputs": [
       {
         "name": "worldwideDay",
@@ -505,68 +567,6 @@
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
-      },
-      {
-        "name": "retirementOutcome",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      },
-      {
-        "name": "blockNumber",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "WorldwideDayCleanedUp",
-    "inputs": [
-      {
-        "name": "worldwideDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "finalStatus",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "WorldwideDayMissedOffering",
-    "inputs": [
-      {
-        "name": "worldwideDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "promisLimitReturnedMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "promisLimitBeforeMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "promisLimitAfterMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
       },
       {
         "name": "retirementOutcome",
