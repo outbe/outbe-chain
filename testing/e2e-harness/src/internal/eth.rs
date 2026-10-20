@@ -32,9 +32,9 @@ use tokio::runtime::Runtime;
 
 /// Explicit limit used by negative-path calls.
 ///
-/// Supplying a limit prevents the provider from estimating gas first: an
-/// intentional contract revert is then submitted and observed through its
-/// mined receipt instead of being returned as a preflight RPC error.
+/// Supplying a limit prevents the provider from estimating gas first. The
+/// caller then submits an intentional contract revert and observes its mined
+/// receipt instead of a preflight RPC error.
 pub(crate) const REVERT_FRIENDLY_GAS_LIMIT: u64 = 10_000_000;
 
 /// Maximum fee accepted for a transaction intended for the next block.
@@ -202,7 +202,7 @@ sol!(
     "../../contracts/precompiles/src/IStablecoin.sol"
 );
 
-/// A contract call that was submitted and mined, including reverted calls.
+/// A submitted and mined contract call, including reverted calls.
 #[derive(Clone, Debug)]
 pub(crate) struct MinedCallOutcome {
     pub transaction_hash: String,
@@ -370,31 +370,6 @@ where
     read_call_at_result(url, to, call, height).ok()
 }
 
-/// Require a typed view call to fail specifically as an EVM revert at the
-/// exact canonical block. Transport failures are not accepted as ABI evidence.
-pub(crate) fn read_call_reverts_at<C: SolCall>(
-    url: &str,
-    to: Address,
-    call: &C,
-    height: u64,
-) -> Option<bool> {
-    let url = url.to_string();
-    let data = call.abi_encode();
-    block_on(async move {
-        let provider = ProviderBuilder::new().connect_http(url.parse().ok()?);
-        let tx = TransactionRequest::default()
-            .to(to)
-            .input(Bytes::from(data).into());
-        match provider.call(tx).block(BlockId::number(height)).await {
-            Ok(_) => Some(false),
-            Err(error) => {
-                let message = error.to_string().to_ascii_lowercase();
-                Some(message.contains("revert"))
-            }
-        }
-    })
-}
-
 /// Simulate a state-changing call at the canonical head while preserving the
 /// RPC server's revert error. This is diagnostic only: E2E mutation paths still
 /// submit a real transaction and assert its mined receipt.
@@ -465,7 +440,7 @@ pub(crate) fn read_call_revert_data_at<C: SolCall>(
 }
 
 /// Bounded call replay with an explicit block selection and the submitted gas
-/// limit. Latest-state callers must independently capture and verify its header.
+/// limit. Latest-state callers must independently capture and check its header.
 pub(crate) fn read_call_revert_data_at_block<C: SolCall>(
     url: &str,
     to: Address,
@@ -844,10 +819,10 @@ fn send_call_inner<C: SolCall>(
             .await
             .map_err(|_| eyre!("timed out estimating paid claim gas"))??;
             let limit = gas_limit_with_reserve(estimate)?;
-            // Compare separate executions on the very same state: a failure
-            // here cannot be attributed to intervening blocks or transactions.
-            // These probes diagnose estimation; only the mined receipt decides
-            // whether the submitted claim succeeded.
+            // Compare separate executions on the very same state. Intervening
+            // blocks or transactions cannot cause a failure here. These probes
+            // diagnose estimation. Only the mined receipt decides whether the
+            // submitted claim succeeded.
             for probe_limit in [estimate, limit] {
                 let probe = tokio::time::timeout(
                     std::time::Duration::from_secs(10),
@@ -1069,8 +1044,8 @@ pub(crate) fn send_value_outcome(
     })
 }
 
-/// Force an explicit gas limit so a deliberately reverting native transfer is
-/// included and produces a receipt rather than failing during gas estimation.
+/// Force an explicit gas limit so the node includes a deliberately reverting
+/// native transfer and produces a receipt instead of failing gas estimation.
 pub(crate) fn send_value_outcome_with_gas(
     url: &str,
     to: Address,
@@ -1163,7 +1138,7 @@ pub(crate) fn send_value_with_gas_at_nonce(
     })
 }
 
-/// Canonical-tip context; account reads use its exact hash, never a later tip.
+/// Canonical-tip context. Account reads use its exact hash, never a later tip.
 #[derive(Clone, Debug)]
 pub(crate) struct PoolAccountAtTip {
     pub number: u64,

@@ -426,7 +426,11 @@ pub(crate) fn deploy_settlement_fixture(world: &World) -> SettlementFixture {
         eth::read_call(
             &url,
             addresses::VAULT_ROUTER_ADDR,
-            &eth::IVaultRouter::referenceCurrencyAssetsCall { isoCode: USD_ISO },
+            &eth::IVaultRouter::referenceCurrencyAssetsCall {
+                isoCode: USD_ISO,
+                offset: U256::ZERO,
+                limit: U256::MAX,
+            },
         ),
         Some(vec![asset])
     );

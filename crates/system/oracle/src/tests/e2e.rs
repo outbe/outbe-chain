@@ -1618,6 +1618,18 @@ fn reference_policy_and_pair_registries_are_independent() {
 }
 
 #[test]
+fn init_from_genesis_rejects_a_ratio_above_one() {
+    with_bare_oracle(|_storage, oracle| {
+        let config = crate::genesis::OracleGenesisConfig {
+            slash_fraction: SCALE_1E18 + U256::from(1u64),
+            ..crate::genesis::OracleGenesisConfig::default_config()
+        };
+        let error = crate::genesis::init_from_genesis(oracle, &config).unwrap_err();
+        assert!(error.to_string().contains("slash_fraction"), "{error}");
+    });
+}
+
+#[test]
 fn init_from_genesis_rejects_noncanonical_policy_rates() {
     for (name, policy_rates, expected) in [
         (
