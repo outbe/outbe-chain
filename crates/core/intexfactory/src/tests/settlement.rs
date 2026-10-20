@@ -404,7 +404,7 @@ fn settle_rejects_expired_deadline() {
     StorageHandle::enter(&mut storage, |s| {
         runtime::issue_intex(&s, sample(7)).unwrap();
         // deadline = ISSUED_AT + CALL_NOTICE_PERIOD < now
-        outbe_intex::api::record_called(&s, sid(7), ISSUED_AT).unwrap();
+        outbe_intex::api::call_group_of(&s, sid(7), ISSUED_AT).unwrap();
         let err = runtime::settle_intex(
             &s,
             sid(7),
@@ -426,7 +426,7 @@ fn a_series_called_past_its_deadline_stays_closed() {
     let mut storage = factory_provider();
     StorageHandle::enter(&mut storage, |s| {
         runtime::issue_intex(&s, sample(7)).unwrap();
-        outbe_intex::api::record_called(&s, sid(7), ISSUED_AT).unwrap();
+        outbe_intex::api::call_group_of(&s, sid(7), ISSUED_AT).unwrap();
     });
     storage.set_timestamp(U256::from(
         (ISSUED_AT as u64) + (CALL_NOTICE_PERIOD as u64) + 1_000,
@@ -723,14 +723,14 @@ fn the_owner_balances_view_reports_live_units_and_owner_history() {
         outbe_intex::api::record_settled_units(&s, sid(7), 40).unwrap();
         outbe_intex::api::record_gem_factory_units(&s, sid(7), owner(), 10).unwrap();
         outbe_intex::api::record_exercised_units(&s, sid(7), owner(), 15).unwrap();
-        outbe_intex::api::record_called(&s, sid(7), ISSUED_AT).unwrap();
+        outbe_intex::api::call_group_of(&s, sid(7), ISSUED_AT).unwrap();
 
         let live = read(&s);
         assert_eq!((live.issuedUnits, live.settledUnits), (3, 3));
         assert_eq!((live.exercisedUnits, live.gemFactoryUnits), (15, 10));
         assert_eq!(live.ownerUnits, 6);
         let series = outbe_intex::api::read_series(&s, sid(7)).unwrap();
-        u64::from(series.called_at) + u64::from(series.call_notice_period_seconds)
+        outbe_intex::api::call_stamp(&s, &series).unwrap().deadline
     });
 
     storage.set_timestamp(U256::from(deadline + 1));

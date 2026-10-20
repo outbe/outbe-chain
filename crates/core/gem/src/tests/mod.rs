@@ -42,7 +42,7 @@ pub(crate) fn sample_params(owner: Address) -> GemAddParams {
     }
 }
 
-/// Records a gem whose bucket seals the live profile's call terms.
+/// Records a gem whose group seals the live profile's call terms.
 pub(crate) fn add(storage: &StorageHandle, mut params: GemAddParams) -> U256 {
     let profile = crate::config::read(storage).unwrap();
     params.call_terms = Some(CallTerms {
@@ -69,30 +69,30 @@ pub(crate) fn view(storage: &StorageHandle, gem_id: U256) -> GemView {
 }
 
 pub(crate) fn bucket_of(storage: &StorageHandle, gem_id: U256) -> B256 {
-    item(storage, gem_id).unwrap().bucket_key
+    item(storage, gem_id).unwrap().group_key
 }
 
-/// Calls the gem's whole bucket at `at`.
+/// Calls the gem's whole group at `at`.
 pub(crate) fn call_gem(storage: &StorageHandle, gem_id: U256, at: u64) {
-    let bucket = bucket_of(storage, gem_id);
+    let group = bucket_of(storage, gem_id);
     let mut gem = GemContract::new(storage.clone());
     let notice = gem
-        .read_call_terms(bucket)
+        .read_call_terms(group)
         .unwrap()
         .call_notice_period_seconds;
-    gem.record_bucket_called(bucket, at, at + u64::from(notice))
+    gem.record_group_called(group, at, at + u64::from(notice))
         .unwrap();
 }
 
 /// Records a gem settled, as GemFactory does once payment is accepted.
 pub(crate) fn settle(storage: &StorageHandle, gem_id: U256) {
-    let (item, bucket) = api::load_pair(storage, gem_id).unwrap().unwrap();
-    api::record_settled(storage, item, bucket).unwrap();
+    let (item, group) = api::load_pair(storage, gem_id).unwrap().unwrap();
+    api::record_settled(storage, item, group).unwrap();
 }
 
 pub(crate) fn burn_settled(storage: &StorageHandle, gem_id: U256) {
-    let (item, bucket) = api::load_pair(storage, gem_id).unwrap().unwrap();
-    api::remove_gem(storage, item, bucket).unwrap();
+    let (item, group) = api::load_pair(storage, gem_id).unwrap().unwrap();
+    api::remove_gem(storage, item, group).unwrap();
 }
 
 pub(crate) fn set_profile(storage: &StorageHandle, profile: u8) {

@@ -252,5 +252,5 @@ fn verify_full_node_nod(world: &mut World) {
         outbe_nod::canonical_item(&actual.0),
         outbe_nod::canonical_item(&expected.0)
     );
-    assert_eq!(actual.1.bucket_key, expected.1.bucket_key);
+    assert_eq!(actual.1.group_key, expected.1.group_key);
 }

@@ -33,68 +33,68 @@ impl GemContract<'_> {
         self.total_supply.read()
     }
 
-    // --- Bucket member index ----------------------------------------------------
+    // --- Group member index ----------------------------------------------------
 
-    pub fn bucket_member_key(bucket: B256, index: u32) -> B256 {
+    pub fn group_member_key(group: B256, index: u32) -> B256 {
         let mut buf = [0u8; 36];
-        buf[0..32].copy_from_slice(bucket.as_slice());
+        buf[0..32].copy_from_slice(group.as_slice());
         buf[32..36].copy_from_slice(&index.to_be_bytes());
         keccak256(buf)
     }
 
-    /// Appends `gem_id` and increments the bucket's unpaid count.
-    pub(crate) fn insert_bucket_member(&mut self, bucket: B256, gem_id: U256) -> Result<()> {
-        let index = self.bucket_gem_count.read(&bucket)?;
+    /// Appends `gem_id` and increments the group's unpaid count.
+    pub(crate) fn insert_group_member(&mut self, group: B256, gem_id: U256) -> Result<()> {
+        let index = self.group_gem_count.read(&group)?;
         let next = index
             .checked_add(1)
-            .ok_or(GemFatalError::BucketMemberIndexOverflow { bucket })?;
-        self.bucket_gems
-            .write(&Self::bucket_member_key(bucket, index), gem_id)?;
-        self.bucket_gem_index.write(&gem_id, index)?;
-        self.bucket_gem_count.write(&bucket, next)?;
+            .ok_or(GemFatalError::GroupMemberIndexOverflow { group })?;
+        self.group_gems
+            .write(&Self::group_member_key(group, index), gem_id)?;
+        self.group_gem_index.write(&gem_id, index)?;
+        self.group_gem_count.write(&group, next)?;
         Ok(())
     }
 
-    /// Swap-removes `gem_id` and returns the remaining unpaid count. The bucket's
+    /// Swap-removes `gem_id` and returns the remaining unpaid count. The group's
     /// terms stay: paid members may still need them.
-    pub(crate) fn remove_bucket_member(&mut self, bucket: B256, gem_id: U256) -> Result<u32> {
-        let index = self.bucket_gem_index.read(&gem_id)?;
+    pub(crate) fn remove_group_member(&mut self, group: B256, gem_id: U256) -> Result<u32> {
+        let index = self.group_gem_index.read(&gem_id)?;
         let last = self
-            .bucket_gem_count
-            .read(&bucket)?
+            .group_gem_count
+            .read(&group)?
             .checked_sub(1)
-            .ok_or(GemError::EmptyBucket { bucket })?;
+            .ok_or(GemError::EmptyGroup { group })?;
         if index > last
             || self
-                .bucket_gems
-                .read(&Self::bucket_member_key(bucket, index))?
+                .group_gems
+                .read(&Self::group_member_key(group, index))?
                 != gem_id
         {
-            return Err(GemError::GemNotInBucket { gem_id, bucket }.into());
+            return Err(GemError::GemNotInGroup { gem_id, group }.into());
         }
-        let last_key = Self::bucket_member_key(bucket, last);
+        let last_key = Self::group_member_key(group, last);
         if index != last {
-            let moved = self.bucket_gems.read(&last_key)?;
+            let moved = self.group_gems.read(&last_key)?;
             if moved.is_zero() {
-                return Err(GemError::EmptyBucketSlotOnRemoval { bucket, slot: last }.into());
+                return Err(GemError::EmptyGroupSlotOnRemoval { group, slot: last }.into());
             }
-            self.bucket_gems
-                .write(&Self::bucket_member_key(bucket, index), moved)?;
-            self.bucket_gem_index.write(&moved, index)?;
+            self.group_gems
+                .write(&Self::group_member_key(group, index), moved)?;
+            self.group_gem_index.write(&moved, index)?;
         }
-        self.bucket_gems.clear(&last_key)?;
-        self.bucket_gem_index.clear(&gem_id)?;
-        self.bucket_gem_count.write(&bucket, last)?;
+        self.group_gems.clear(&last_key)?;
+        self.group_gem_index.clear(&gem_id)?;
+        self.group_gem_count.write(&group, last)?;
         Ok(last)
     }
 
     // --- Sealed terms ------------------------------------------------------------
 
-    /// Writes the call terms a new bucket sealed at issuance. Later gems that join the
-    /// same bucket inherit this copy. Nothing reads the profile again.
-    pub(crate) fn seal_bucket_call_terms(&mut self, bucket: B256, terms: CallTerms) -> Result<()> {
-        self.seal_bucket_prices(bucket, &terms)?;
-        self.seal_bucket_calendar(bucket, &terms)?;
+    /// Writes the call terms a new group sealed at issuance. Later gems that join the
+    /// same group inherit this copy. Nothing reads the profile again.
+    pub(crate) fn seal_group_call_terms(&mut self, group: B256, terms: CallTerms) -> Result<()> {
+        self.seal_group_prices(group, &terms)?;
+        self.seal_group_calendar(group, &terms)?;
         outbe_primitives::call_breach::widen_scan_terms(
             &self.max_call_window_seconds,
             &self.min_call_threshold_seconds,
@@ -103,69 +103,103 @@ impl GemContract<'_> {
             terms.call_threshold_seconds,
         )
     }
-    fn seal_bucket_prices(&self, bucket: B256, terms: &CallTerms) -> Result<()> {
-        self.bucket_call_price_minor
-            .write(&bucket, terms.call_price_minor)?;
-        self.bucket_currency
-            .write(&bucket, terms.reference_currency)?;
-        self.bucket_call_rate.write(&bucket, terms.call_rate)?;
+    fn seal_group_prices(&self, group: B256, terms: &CallTerms) -> Result<()> {
+        self.group_call_price_minor
+            .write(&group, terms.call_price_minor)?;
+        self.group_currency
+            .write(&group, terms.reference_currency)?;
+        self.group_call_rate.write(&group, terms.call_rate)?;
         Ok(())
     }
 
-    fn seal_bucket_calendar(&self, bucket: B256, terms: &CallTerms) -> Result<()> {
-        self.bucket_call_window_seconds
-            .write(&bucket, terms.call_window_seconds)?;
-        self.bucket_call_threshold_seconds
-            .write(&bucket, terms.call_threshold_seconds)?;
-        self.bucket_call_notice_period_seconds
-            .write(&bucket, terms.call_notice_period_seconds)?;
+    fn seal_group_calendar(&self, group: B256, terms: &CallTerms) -> Result<()> {
+        self.group_call_window_seconds
+            .write(&group, terms.call_window_seconds)?;
+        self.group_call_threshold_seconds
+            .write(&group, terms.call_threshold_seconds)?;
+        self.group_call_notice_period_seconds
+            .write(&group, terms.call_notice_period_seconds)?;
         Ok(())
     }
 
-    /// Reads back the terms `seal_bucket_call_terms` sealed at issuance.
-    pub fn read_call_terms(&self, bucket: B256) -> Result<CallTerms> {
+    /// Reads back the terms `seal_group_call_terms` sealed at issuance.
+    pub fn read_call_terms(&self, group: B256) -> Result<CallTerms> {
         Ok(CallTerms {
-            call_price_minor: self.bucket_call_price_minor.read(&bucket)?,
-            reference_currency: self.bucket_currency.read(&bucket)?,
-            call_rate: self.bucket_call_rate.read(&bucket)?,
-            call_window_seconds: self.bucket_call_window_seconds.read(&bucket)?,
-            call_threshold_seconds: self.bucket_call_threshold_seconds.read(&bucket)?,
-            call_notice_period_seconds: self.bucket_call_notice_period_seconds.read(&bucket)?,
+            call_price_minor: self.group_call_price_minor.read(&group)?,
+            reference_currency: self.group_currency.read(&group)?,
+            call_rate: self.group_call_rate.read(&group)?,
+            call_window_seconds: self.group_call_window_seconds.read(&group)?,
+            call_threshold_seconds: self.group_call_threshold_seconds.read(&group)?,
+            call_notice_period_seconds: self.group_call_notice_period_seconds.read(&group)?,
         })
     }
 
-    /// Records every unpaid member called at once: the bucket leaves the trie for the
+    /// Records every unpaid member called at once: the group leaves the trie for the
     /// expiry queue, where it waits on `deadline` as one entry.
-    pub fn record_bucket_called(&mut self, bucket: B256, now: u64, deadline: u64) -> Result<()> {
-        self.remove_call_bin(bucket)?;
-        self.bucket_called_at.write(&bucket, now)?;
-        self.push_called(bucket, deadline)
+    pub fn record_group_called(&mut self, group: B256, now: u64, deadline: u64) -> Result<()> {
+        self.remove_call_bin(group)?;
+        self.group_called_at.write(&group, now)?;
+        self.push_called(group, deadline)
     }
 
-    /// Forgets a bucket nothing refers to any more: its terms, its place in the call
+    /// Forgets a group nothing refers to any more: its terms, its place in the call
     /// trie and the expiry queue, its day and its call.
-    pub(crate) fn close_bucket(&mut self, bucket: B256) -> Result<()> {
-        self.remove_call_bin(bucket)?;
-        self.remove_called(bucket)?;
-        self.bucket_call_price_minor.clear(&bucket)?;
-        self.bucket_currency.clear(&bucket)?;
-        self.bucket_call_rate.clear(&bucket)?;
-        self.bucket_call_window_seconds.clear(&bucket)?;
-        self.bucket_call_threshold_seconds.clear(&bucket)?;
-        self.bucket_call_notice_period_seconds.clear(&bucket)?;
-        self.bucket_issued_at.clear(&bucket)?;
-        self.bucket_called_at.clear(&bucket)?;
-        self.bucket_gem_count.clear(&bucket)
+    pub(crate) fn close_group(&mut self, group: B256) -> Result<()> {
+        self.remove_call_bin(group)?;
+        self.remove_called(group)?;
+        self.group_call_price_minor.clear(&group)?;
+        self.group_currency.clear(&group)?;
+        self.group_call_rate.clear(&group)?;
+        self.group_call_window_seconds.clear(&group)?;
+        self.group_call_threshold_seconds.clear(&group)?;
+        self.group_call_notice_period_seconds.clear(&group)?;
+        self.group_called_at.clear(&group)?;
+        self.group_unpaid_load.clear(&group)?;
+        expiry_queue::remove(&CleanupHours(self), group)?;
+        self.group_gem_count.clear(&group)
+    }
+
+    // --- Unpaid load ----------------------------------------------------------------
+
+    pub(crate) fn add_unpaid_load(&mut self, group: B256, load: U256) -> Result<()> {
+        let total = self
+            .group_unpaid_load
+            .read(&group)?
+            .checked_add(load)
+            .ok_or(GemFatalError::UnpaidLoadOverflow { group })?;
+        self.group_unpaid_load.write(&group, total)
+    }
+
+    pub(crate) fn take_unpaid_load(&mut self, group: B256, load: U256) -> Result<()> {
+        let total = self
+            .group_unpaid_load
+            .read(&group)?
+            .checked_sub(load)
+            .ok_or(GemFatalError::UnpaidLoadUnderflow { group })?;
+        self.group_unpaid_load.write(&group, total)
     }
 
     // --- Expiry queue -------------------------------------------------------------
 
-    pub fn push_called(&mut self, bucket: B256, deadline: u64) -> Result<()> {
-        expiry_queue::push(&ExpiryHours(self), bucket, deadline)
+    pub fn push_called(&mut self, group: B256, deadline: u64) -> Result<()> {
+        expiry_queue::push(&ExpiryHours(self), group, deadline)
     }
 
-    pub fn remove_called(&mut self, bucket: B256) -> Result<()> {
-        expiry_queue::remove(&ExpiryHours(self), bucket)
+    pub fn remove_called(&mut self, group: B256) -> Result<()> {
+        expiry_queue::remove(&ExpiryHours(self), group)
+    }
+
+    /// Moves a forfeited group from the expiry queue to the cleanup, which deletes its
+    /// unpaid gems. Done with the group's credit, so a retry never credits it twice.
+    pub fn hand_to_cleanup(&mut self, group: B256) -> Result<()> {
+        let deadline = self.called_deadline.read(&group)?;
+        expiry_queue::remove(&ExpiryHours(self), group)?;
+        expiry_queue::push(&CleanupHours(self), group, deadline)
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn first_cleanup_hour(&self) -> Result<Option<u32>> {
+        expiry_queue::first_bucket(&CleanupHours(self))
     }
 
     /// Hour since the epoch a deadline falls in: plain UTC, not a WorldwideDay.
@@ -189,29 +223,29 @@ impl GemContract<'_> {
         expiry_queue::first_bucket(&ExpiryHours(self))
     }
 
-    // --- Bucket bins: uncalled buckets by call price --------------------------------
+    // --- Group bins: uncalled groups by call price --------------------------------
 
-    /// Parks a bucket in the bin of its sealed call price. No-op for a bucket without
+    /// Parks a group in the bin of its sealed call price. No-op for a group without
     /// a call price.
-    pub(crate) fn insert_call_bin(&mut self, bucket: B256) -> Result<()> {
-        let price = self.bucket_call_price_minor.read(&bucket)?;
+    pub(crate) fn insert_call_bin(&mut self, group: B256) -> Result<()> {
+        let price = self.group_call_price_minor.read(&group)?;
         if price.is_zero() {
             return Ok(());
         }
-        let iso = self.bucket_currency.read(&bucket)?;
+        let iso = self.group_currency.read(&group)?;
         let bin = call_bins::price_to_bin(price)?;
-        call_bins::insert(&CallBins(self, iso), bucket, bin)
+        call_bins::insert(&CallBins(self, iso), group, bin)
     }
 
-    /// No-op for a bucket the trie no longer holds.
-    pub(crate) fn remove_call_bin(&mut self, bucket: B256) -> Result<()> {
-        let iso = self.bucket_currency.read(&bucket)?;
-        call_bins::remove(&CallBins(self, iso), bucket)?;
+    /// No-op for a group the trie no longer holds.
+    pub fn remove_call_bin(&mut self, group: B256) -> Result<()> {
+        let iso = self.group_currency.read(&group)?;
+        call_bins::remove(&CallBins(self, iso), group)?;
         Ok(())
     }
 }
 
-/// Called buckets, queued by the hour their notice period closes in.
+/// Called groups, queued by the hour their notice period closes in.
 pub struct ExpiryHours<'a, 'storage>(pub &'a GemContract<'storage>);
 
 outbe_primitives::impl_expiry_queue!(ExpiryHours<B256> {
@@ -221,13 +255,29 @@ outbe_primitives::impl_expiry_queue!(ExpiryHours<B256> {
     len: expiry_bucket_len,
     live: expiry_bucket_live,
     at: expiry_bucket_at,
-    slot: called_bucket_slot,
+    slot: called_group_slot,
     deadline: called_deadline,
     sweep_bucket: expiry_sweep_hour,
     cursor: expiry_cursor,
 });
 
-/// The uncalled buckets of one reference currency, by call price.
+/// Forfeited groups whose unpaid gems wait to be deleted.
+pub struct CleanupHours<'a, 'storage>(pub &'a GemContract<'storage>);
+
+outbe_primitives::impl_expiry_queue!(CleanupHours<B256> {
+    root: cleanup_tree_root,
+    mid: cleanup_tree_mid,
+    leaf: cleanup_tree_leaf,
+    len: cleanup_bucket_len,
+    live: cleanup_bucket_live,
+    at: cleanup_bucket_at,
+    slot: cleanup_group_slot,
+    deadline: cleanup_deadline,
+    sweep_bucket: cleanup_sweep_hour,
+    cursor: cleanup_cursor,
+});
+
+/// The uncalled groups of one reference currency, by call price.
 pub struct CallBins<'a, 'storage>(pub &'a GemContract<'storage>, pub u16);
 
 outbe_primitives::impl_call_bins!(CallBins<B256> {
@@ -235,8 +285,8 @@ outbe_primitives::impl_call_bins!(CallBins<B256> {
     mid: call_bin_tree_mid,
     leaf: call_bin_tree_leaf,
     count: call_bin_count,
-    at: call_bin_buckets,
-    slot: call_bucket_slot,
+    at: call_bin_groups,
+    slot: call_group_slot,
     cursor: call_bin_cursor,
     failed: call_scan_failed_day,
 });

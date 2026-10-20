@@ -70,7 +70,7 @@ pub fn issue_gem(storage: &StorageHandle<'_>, params: GemIssueParams) -> Result<
     Ok(gem_id)
 }
 
-/// Issues a gem on the live profile: the bucket it opens seals the profile's call terms.
+/// Issues a gem on the live profile: the group it opens seals the profile's call terms.
 pub(crate) fn add_gem(storage: &StorageHandle<'_>, mut params: GemAddParams) -> Result<U256> {
     if params.owner.is_zero() {
         return Err(GemFactoryError::InvalidOwner.into());
@@ -86,7 +86,7 @@ pub(crate) fn add_gem(storage: &StorageHandle<'_>, mut params: GemAddParams) -> 
 /// The entry marked up by the call rate, plus the profile's other call terms.
 ///
 /// `None` when entry is zero: a zero call price would fire on the first scan. The
-/// profile is read exactly here. Every later check reads the bucket's sealed copy, so
+/// profile is read exactly here. Every later check reads the group's sealed copy, so
 /// a retune cannot re-term an already-issued gem.
 pub(crate) fn derived_call_terms(
     entry_price_minor: U256,
@@ -108,8 +108,8 @@ pub(crate) fn derived_call_terms(
     }))
 }
 
-/// Announce a new gem with the terms its bucket sealed. A gem joining an open bucket
-/// reports that bucket's terms, not the live profile.
+/// Announce a new gem with the terms its group sealed. A gem joining an open group
+/// reports that group's terms, not the live profile.
 fn emit_gem_issued(storage: &StorageHandle<'_>, gem_id: U256, position_id: U256) -> Result<()> {
     let gem = load_view(storage, gem_id)?;
     emit_event(
@@ -118,7 +118,7 @@ fn emit_gem_issued(storage: &StorageHandle<'_>, gem_id: U256, position_id: U256)
             gemId: gem_id,
             owner: gem.item.owner,
             promisLoadMinor: gem.item.promis_load_minor,
-            entryPriceMinor: gem.bucket.entry_price_minor,
+            entryPriceMinor: gem.item.entry_price_minor,
             issuanceCurrency: gem.item.issuance_currency,
             referenceCurrency: gem.item.reference_currency,
             issuedAt: gem.item.issued_at,
@@ -127,7 +127,7 @@ fn emit_gem_issued(storage: &StorageHandle<'_>, gem_id: U256, position_id: U256)
             callThreshold: gem.terms.call_threshold_seconds,
             callNoticePeriod: gem.terms.call_notice_period_seconds,
             positionId: position_id,
-            bucketKey: gem.item.bucket_key,
+            groupKey: gem.item.group_key,
         },
     )
 }
@@ -152,7 +152,7 @@ pub fn issue_gem_position(
 
     let series = outbe_intex::api::get_series(storage, source_intex_id)?
         .ok_or(GemFactoryError::SourceIntexNotFound)?;
-    if series.effective_state(storage.timestamp()?.to::<u64>())? != IntexState::Issued {
+    if outbe_intex::api::state(storage, &series)? != IntexState::Issued {
         return Err(GemFactoryError::SourceIntexNotIssued.into());
     }
 
@@ -178,6 +178,7 @@ pub fn issue_gem_position(
         caller,
         gem_factory_units,
     )?;
+    outbe_intex::api::release_if_spent(storage, source_intex_id)?;
 
     let issued_at = storage.timestamp()?.to::<u64>();
     let position_id =
@@ -196,8 +197,6 @@ pub fn issue_gem_position(
         expires_at: issued_at.saturating_add(outbe_gem::config::read(storage)?.position_validity),
     };
     factory.add_position(&position)?;
-
-    factory.push_live_position(position_id)?;
 
     let prev_sent = factory.total_capacity_minor.read()?;
     let new_sent = prev_sent
@@ -302,10 +301,7 @@ pub fn issue_merchant_gem(
 
     record.remaining_capacity_minor = remaining;
     factory.positions.update(&record)?;
-    // Nothing left to return: it leaves the queue instead of sitting at the head.
-    if remaining.is_zero() {
-        factory.remove_live_position(position_id)?;
-    }
+    factory.take_hour_capacity(record.expiry_hour(), promis_load)?;
 
     let prev_total = factory.total_gems_issued.read()?;
     let new_total = prev_total
@@ -339,9 +335,9 @@ pub fn settle_gem(
     storage.clone().with_checkpoint(|| {
         // Settle before payment so a token callback cannot settle the gem twice.
         // A failed payment rolls the state back.
-        let (item, bucket) =
+        let (item, group) =
             gem_api::load_pair(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
-        gem_api::record_settled(storage, item, bucket)?;
+        gem_api::record_settled(storage, item, group)?;
         settlement::collect(
             storage,
             GEM_FACTORY_ADDRESS,
@@ -367,7 +363,7 @@ pub(crate) fn require_settleable(storage: &StorageHandle<'_>, gem: &GemView) -> 
     if gem.item.is_settled() {
         return Err(GemFactoryError::GemAlreadySettled.into());
     }
-    if gem.bucket_called_at != 0 && storage.timestamp()?.to::<u64>() > gem.settlement_deadline() {
+    if gem.group_called_at != 0 && storage.timestamp()?.to::<u64>() > gem.settlement_deadline() {
         return Err(GemFactoryError::SettlementDeadlinePassed.into());
     }
     Ok(())
@@ -375,12 +371,11 @@ pub(crate) fn require_settleable(storage: &StorageHandle<'_>, gem: &GemView) -> 
 
 /// Burns a settled gem for Promis mining.
 pub(crate) fn burn_settled(storage: &StorageHandle<'_>, gem_id: U256) -> Result<()> {
-    let (item, bucket) =
-        gem_api::load_pair(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
+    let (item, group) = gem_api::load_pair(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
     if !item.body().is_settled() {
         return Err(GemFactoryError::GemNotSettled.into());
     }
-    gem_api::remove_gem(storage, item, bucket)
+    gem_api::remove_gem(storage, item, group)
 }
 
 fn currencies(gem: &GemView) -> Currencies {
@@ -390,10 +385,10 @@ fn currencies(gem: &GemView) -> Currencies {
     }
 }
 
-/// One gem: its bucket's entry price times its Promis load.
+/// One gem: its entry price times its Promis load.
 pub(crate) fn settlement_cost(gem: &GemView) -> SettlementCost {
     SettlementCost {
-        entry_price_minor: gem.bucket.entry_price_minor,
+        entry_price_minor: gem.item.entry_price_minor,
         load_minor: gem.item.promis_load_minor,
         units: U256::ONE,
     }
@@ -436,7 +431,8 @@ pub fn position_data(
     storage: &StorageHandle<'_>,
     position_id: U256,
 ) -> Result<crate::precompile::IGemFactory::PositionData> {
-    let record = GemFactoryContract::new(storage.clone())
+    let factory = GemFactoryContract::new(storage.clone());
+    let record = factory
         .positions
         .get(position_id)?
         .ok_or(GemFactoryError::PositionNotFound)?;
@@ -444,7 +440,7 @@ pub fn position_data(
         positionId: record.position_id,
         merchant: record.merchant,
         sourceIntexId: record.source_intex_id.into(),
-        remainingCapacityMinor: record.remaining_capacity_minor,
+        remainingCapacityMinor: factory.remaining_capacity(&record)?,
         sourceEntryPriceMinor: record.source_entry_price_minor,
         issuanceCurrency: record.issuance_currency,
         referenceCurrency: record.reference_currency,

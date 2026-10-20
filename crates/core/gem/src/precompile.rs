@@ -94,10 +94,8 @@ fn dispatch_entity(
             Ok(crate::metadata::token_uri(&gem, now))
         }),
         tokenOfOwnerByIndex(c) => view(c, |c| {
-            let idx = usize::try_from(c.index).map_err(|_| GemError::IndexOutOfBounds)?;
-            api::list_by_owner(storage, c.owner)?
-                .get(idx)
-                .map(|item| item.gem_id.to_u256())
+            let index = u32::try_from(c.index).map_err(|_| GemError::IndexOutOfBounds)?;
+            api::token_of_owner_by_index(storage, c.owner, index)?
                 .ok_or_else(|| GemError::IndexOutOfBounds.into())
         }),
         getGem(c) => view(c, |c| {
@@ -114,7 +112,7 @@ fn to_abi_data(gem: &GemView, now: u64) -> IGem::GemData {
         owner: gem.item.owner,
         state: gem.effective_state(now),
         promisLoadMinor: gem.item.promis_load_minor,
-        entryPriceMinor: gem.bucket.entry_price_minor,
+        entryPriceMinor: gem.item.entry_price_minor,
         issuanceCurrency: gem.item.issuance_currency,
         referenceCurrency: gem.item.reference_currency,
         issuedAt: gem.item.issued_at,
@@ -124,5 +122,6 @@ fn to_abi_data(gem: &GemView, now: u64) -> IGem::GemData {
         callWindow: gem.terms.call_window_seconds,
         callThreshold: gem.terms.call_threshold_seconds,
         settlementDeadline: gem.settlement_deadline(),
+        groupKey: gem.item.group_key,
     }
 }

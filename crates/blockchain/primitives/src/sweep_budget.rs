@@ -4,32 +4,24 @@
 pub const SWEEP_VISITS_PER_BLOCK: u32 = 256;
 /// EVM state changes: a call, a burned or expired member, a void, a sent notice.
 pub const SWEEP_WRITES_PER_BLOCK: u32 = 64;
-/// Forfeits in one expiry sweep. Each forfeit deletes one member record.
-pub const SWEEP_BODY_WRITES_PER_BLOCK: u32 = 8;
 
 /// What is left of one sweep's work in this block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SweepBudget {
     visits: u32,
     writes: u32,
-    body_writes: u32,
     written: bool,
 }
 
 impl SweepBudget {
     pub const fn per_block() -> Self {
-        Self::new(
-            SWEEP_VISITS_PER_BLOCK,
-            SWEEP_WRITES_PER_BLOCK,
-            SWEEP_BODY_WRITES_PER_BLOCK,
-        )
+        Self::new(SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK)
     }
 
-    pub const fn new(visits: u32, writes: u32, body_writes: u32) -> Self {
+    pub const fn new(visits: u32, writes: u32) -> Self {
         Self {
             visits,
             writes,
-            body_writes,
             written: false,
         }
     }
@@ -63,20 +55,12 @@ impl SweepBudget {
         self.visits == 0 || !self.fits_writes(1)
     }
 
-    pub fn body_write(&mut self) -> bool {
-        take(&mut self.body_writes, 1)
-    }
-
     pub const fn visits_left(&self) -> u32 {
         self.visits
     }
 
     pub const fn writes_left(&self) -> u32 {
         self.writes
-    }
-
-    pub const fn body_writes_left(&self) -> u32 {
-        self.body_writes
     }
 }
 
@@ -96,31 +80,29 @@ mod tests {
 
     #[test]
     fn each_limit_runs_out_on_its_own() {
-        let mut budget = SweepBudget::new(1, 1, 1);
+        let mut budget = SweepBudget::new(1, 1);
         assert!(budget.visit());
         assert!(!budget.visit());
         assert!(budget.write());
         assert!(!budget.write());
-        assert!(budget.body_write());
-        assert!(!budget.body_write());
     }
 
     #[test]
     fn a_walk_stops_when_visits_or_writes_run_out() {
-        assert!(!SweepBudget::new(1, 1, 0).spent());
-        assert!(SweepBudget::new(0, 1, 0).spent());
-        let mut budget = SweepBudget::new(1, 1, 0);
+        assert!(!SweepBudget::new(1, 1).spent());
+        assert!(SweepBudget::new(0, 1).spent());
+        let mut budget = SweepBudget::new(1, 1);
         assert!(budget.write());
         assert!(budget.spent());
     }
 
     #[test]
     fn a_wide_batch_passes_whole_only_as_the_first_write() {
-        let mut budget = SweepBudget::new(0, 4, 0);
+        let mut budget = SweepBudget::new(0, 4);
         assert!(budget.admit_writes(10));
         assert_eq!(budget.writes_left(), 0);
 
-        let mut budget = SweepBudget::new(0, 4, 0);
+        let mut budget = SweepBudget::new(0, 4);
         assert!(budget.write());
         assert!(!budget.admit_writes(10));
         assert!(budget.admit_writes(3));
@@ -132,6 +114,5 @@ mod tests {
         let budget = SweepBudget::per_block();
         assert_eq!(budget.visits_left(), SWEEP_VISITS_PER_BLOCK);
         assert_eq!(budget.writes_left(), SWEEP_WRITES_PER_BLOCK);
-        assert_eq!(budget.body_writes_left(), SWEEP_BODY_WRITES_PER_BLOCK);
     }
 }

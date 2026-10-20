@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use alloy_primitives::{Address, U256};
 use cucumber::{given, then, when};
-use outbe_gem::{GemBucketState, GemItemState};
+use outbe_gem::{GemGroupState, GemItemState};
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 use crate::features::entity_lifecycle::chain::{
@@ -49,14 +49,14 @@ const HOLDER_SEED: u64 = 0x0e6e_0000;
 const ISSUANCE_TIMEOUT_SECS: u64 = 180;
 /// The call sweep is on a shortened cadence, not instant.
 const CALL_TIMEOUT_SECS: u64 = 300;
-/// Once the bucket is closed the sweep reaches the gem in the next block or two.
+/// Once the group is closed the sweep reaches the gem in the next block or two.
 const FORFEIT_TIMEOUT: Duration = Duration::from_secs(120);
-/// The expiry queue buckets deadlines by the hour they fall in.
+/// The expiry queue groups deadlines by the hour they fall in.
 const EXPIRY_BUCKET_SECS: u64 = 3_600;
-/// Slack past the deadline so the notice is spent before the bucket is closed.
+/// Slack past the deadline so the notice is spent before the group is closed.
 const EXPIRY_MARGIN_SECS: u64 = 30;
-/// The position sweep runs after its deadline, on the same cadence.
-const POSITION_SWEEP_TIMEOUT_SECS: u64 = 300;
+/// Once the position's hour is closed the sweep reaches it in the next block or two.
+const POSITION_SWEEP_TIMEOUT_SECS: u64 = 120;
 /// The DEV validity (15 minutes) runs from parking, and most of it is spent
 /// waiting out the call notice before this step is reached.
 const POSITION_DEADLINE_TIMEOUT_SECS: u64 = 900;
@@ -319,20 +319,20 @@ fn issue_five_gems(world: &mut World) {
     world.state.entity_lifecycle.pool_before_forfeit = Some((height, pool));
 }
 
-#[then("every validator reads the same gem and bucket from one finalized EVM state")]
+#[then("every validator reads the same gem and group from one finalized EVM state")]
 fn gem_bodies_match_on_every_committee_port(world: &mut World) {
     let minimum = issuance_baseline_height(world);
     for index in 0..HOLDERS {
         let id = gem(world, index);
         let view = read_gem(world, id);
-        let (item, bucket) = gem_bodies(world, id, minimum);
+        let (item, group) = gem_bodies(world, id, minimum);
         assert_eq!(item.gem_id, WwdEntityId::from(id));
         assert_eq!(item.owner, owner_address(index));
         assert_eq!(item.promis_load_minor, view.promisLoadMinor);
         assert_eq!(item.issued_at, view.issuedAt);
-        assert_eq!(bucket.bucket_key, item.bucket_key);
-        assert_eq!(bucket.entry_price_minor, view.entryPriceMinor);
-        assert_eq!(bucket.reference_currency, item.reference_currency);
+        assert_eq!(group.group_key, item.group_key);
+        assert_eq!(item.entry_price_minor, view.entryPriceMinor);
+        assert_eq!(group.reference_currency, item.reference_currency);
     }
 }
 
@@ -567,23 +567,38 @@ fn position_returns_capacity(world: &mut World) {
     let url = world_url(world);
     let position_id = world.state.gem_position.expect("a position was parked");
 
-    // A retired position keeps its record and drops its capacity to zero. Only
-    // the sweep's live queue forgets it.
+    // An expired position's hour returns its capacity, and the cleanup deletes it. The
+    // sweep opens an hour only once it has closed, so move it into a closed one, unless
+    // its own hour has closed and the cleanup deleted it already.
+    let read_position = || {
+        eth::read_call(
+            &url,
+            addresses::GEM_FACTORY_ADDR,
+            &eth::IGemFactory::getPositionCall {
+                positionId: position_id,
+            },
+        )
+    };
+    if read_position().is_some() {
+        let closed = eth::send_call_outcome(
+            &url,
+            addresses::GEM_FACTORY_ADDR,
+            DEPLOYER_KEY,
+            &IGemFactoryTestArming::closePositionHourForTestCall {
+                positionId: position_id,
+                deadline: head_time(world).saturating_sub(EXPIRY_BUCKET_SECS),
+            },
+            None,
+        )
+        .expect("close the expiry hour the position sits in");
+        if read_position().is_some() {
+            assert_mined_success(&closed, "close the expiry hour the position sits in");
+        }
+    }
     poll_until(
         Duration::from_secs(POSITION_SWEEP_TIMEOUT_SECS),
-        || format!("position {position_id} is past its deadline; the sweep has not retired it"),
-        || {
-            eth::read_call(
-                &url,
-                addresses::GEM_FACTORY_ADDR,
-                &eth::IGemFactory::getPositionCall {
-                    positionId: position_id,
-                },
-            )
-            .expect("the position reads back after its deadline")
-            .remainingCapacityMinor
-            .is_zero()
-        },
+        || format!("position {position_id} is past its deadline; the cleanup has not deleted it"),
+        || read_position().is_none(),
     );
 
     assert_expiry_returns(world, finalized_checkpoint(world).height, true);
@@ -603,31 +618,40 @@ fn assert_expiry_returns(world: &World, height: u64, require_position_expiry: bo
         .entity_lifecycle
         .pool_before_forfeit
         .expect("the pool was read before either return");
-    let merchant = crate::world::origin_venue::deployer_address();
     let position_id = world.state.gem_position.expect("parked position");
-    let position = eth::read_call_at(
+    let expiry_hour = eth::read_call_at(
         &url,
         addresses::GEM_FACTORY_ADDR,
         &eth::IGemFactory::getPositionCall {
             positionId: position_id,
         },
-        height,
+        from,
     )
-    .expect("finalized position after return");
-    let position_expired = position.remainingCapacityMinor.is_zero();
+    .expect("the position before either return")
+    .expiresAt
+        / 3_600;
+    let position_expired = hour_expired(&url, expiry_hour, from, height);
     if require_position_expiry {
         assert!(position_expired, "position retained unissued capacity");
-    } else if !position_expired {
-        assert_eq!(position.remainingCapacityMinor, unissued_capacity());
     }
+    let group = eth::read_call_at(
+        &url,
+        addresses::GEM_ADDR,
+        &eth::IGem::getGemCall {
+            gemId: gem(world, FORFEITED),
+        },
+        from,
+    )
+    .expect("the forfeited gem was live before its group was forfeited")
+    .groupKey;
     assert_single_event(
         &url,
         addresses::GEM_ADDR,
         from,
         height,
-        eth::IGem::GemForfeited {
-            gemId: gem(world, FORFEITED),
-            owner: owner_address(FORFEITED),
+        eth::IGem::GemGroupForfeited {
+            groupKey: group,
+            gems: 1,
             promisLoadMinor: U256::from(GEM_LOAD_MINOR),
         },
     );
@@ -637,10 +661,9 @@ fn assert_expiry_returns(world: &World, height: u64, require_position_expiry: bo
             addresses::GEM_FACTORY_ADDR,
             from,
             height,
-            eth::IGemFactory::GemPositionExpired {
-                positionId: position_id,
-                merchant,
-                sourceIntexId: source_series(world),
+            eth::IGemFactory::GemPositionGroupExpired {
+                expiryHour: expiry_hour,
+                positions: 1,
                 returnedCapacityMinor: unissued_capacity(),
             },
         );
@@ -660,10 +683,30 @@ fn assert_expiry_returns(world: &World, height: u64, require_position_expiry: bo
     );
 }
 
+/// Whether the positions of `hour` returned their capacity within the blocks.
+fn hour_expired(url: &str, hour: u64, from: u64, to: u64) -> bool {
+    use alloy_sol_types::SolEvent;
+    let logs = eth::raw_json_result(
+        url,
+        "eth_getLogs",
+        serde_json::json!([{
+            "address": addresses::GEM_FACTORY_ADDR,
+            "fromBlock": format!("0x{from:x}"), "toBlock": format!("0x{to:x}"),
+            "topics": [
+                eth::IGemFactory::GemPositionGroupExpired::SIGNATURE_HASH,
+                alloy_primitives::B256::from(alloy_primitives::U256::from(hour)),
+            ],
+        }]),
+    )
+    .expect("position expiry logs");
+    logs.as_array().is_some_and(|logs| !logs.is_empty())
+}
+
 alloy_sol_types::sol! {
     interface IGemFactoryTestArming {
         function backdateGemForTest(uint256 gemId, uint64 issuedAt) external;
         function closeCallNoticeForTest(uint256 gemId, uint64 deadline) external;
+        function closePositionHourForTest(uint256 positionId, uint64 deadline) external;
     }
 }
 
@@ -678,18 +721,18 @@ fn issuance_baseline_height(world: &World) -> u64 {
         .0
 }
 
-/// Reads the exact Gem and bucket state on every validator at one checkpoint.
-fn gem_bodies(world: &World, id: U256, minimum: u64) -> (GemItemState, GemBucketState) {
+/// Reads the exact Gem and group state on every validator at one checkpoint.
+fn gem_bodies(world: &World, id: U256, minimum: u64) -> (GemItemState, GemGroupState) {
     let checkpoint = finalized_checkpoint(world);
     assert!(checkpoint.height >= minimum);
     let mut expected = None;
     for port in world.validators.committee_ports() {
-        let (item, bucket) = world
+        let (item, group) = world
             .rpc
             .gem_state_at(port, checkpoint, WwdEntityId::from(id))
             .expect("Gem EVM state")
             .expect("Gem is present");
-        let bodies = (item, bucket);
+        let bodies = (item, group);
         assert_eq!(
             *expected.get_or_insert(bodies.clone()),
             bodies,

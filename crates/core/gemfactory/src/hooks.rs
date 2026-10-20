@@ -1,9 +1,11 @@
 //! Per-block entry points of the Gem sweeps, run from CycleTick.
 
-use outbe_primitives::{block::BlockRuntimeContext, error::Result};
+/// Forfeits the called groups whose notice period lapsed.
+pub use crate::expired::sweep_expired as sweep_forfeits;
 
-/// Burns the unpaid gems of the called buckets whose notice period lapsed.
-pub fn sweep_forfeits(ctx: &BlockRuntimeContext) -> Result<()> {
-    crate::expired::sweep_expired(ctx)?;
-    Ok(())
-}
+/// Deletes the unpaid gems of the forfeited groups.
+pub use crate::cleanup::sweep_cleanup;
+
+/// Returns the unissued capacity of the hours whose positions expired, and deletes the
+/// positions of the expired hours.
+pub use crate::positions_expired::{sweep_expired_positions, sweep_position_cleanup};

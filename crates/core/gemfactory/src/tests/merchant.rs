@@ -40,9 +40,9 @@ fn an_issued_series_is_sent_once_without_a_promis_limit_credit() {
             capacity
         );
         assert_eq!(factory.total_capacity_minor.read().unwrap(), capacity);
-        assert_eq!(
-            outbe_intex::api::gem_factory_units(storage, source_intex_id()).unwrap(),
-            SENT_UNITS as u32
+        assert!(
+            !outbe_intex::api::series_exists(storage, source_intex_id()).unwrap(),
+            "every unit went into the position, so the source series is spent"
         );
         assert_eq!(unallocated(storage), promis_limit);
     });
@@ -70,42 +70,52 @@ fn issue_gem_position_burns_sends_and_issues_nft() {
 }
 
 #[test]
-fn sending_marks_the_units_realized_on_the_source_series() {
+fn sending_every_unit_deletes_the_spent_source_series() {
     with_storage(None, |storage| {
         seed_and_send(storage, six_decimal_unit(), six_decimal_u128());
-        // Their load lives in the position now, so the source series can no
-        // longer forfeit them.
-        assert_eq!(
-            outbe_intex::api::gem_factory_units(storage, source_intex_id()).unwrap(),
-            SENT_UNITS as u32
-        );
+        // Their load lives in the position now, so nothing is left in the source series.
+        assert!(!outbe_intex::api::series_exists(storage, source_intex_id()).unwrap());
     });
 }
 
-/// The position stays visible afterwards, as the spent object it is.
+/// When the hour of `at` has closed.
+fn hour_closed(at: u64) -> u64 {
+    (at / 3_600 + 1) * 3_600
+}
+
+/// An expired position reads empty at once, returns its remainder with its hour and is
+/// then deleted.
 #[test]
 fn an_expired_position_returns_its_remainder() {
     with_storage(None, |storage| {
         let id = seed_and_send(storage, six_decimal_unit(), six_decimal_u128());
         let capacity = sent_capacity(six_decimal_u128());
+        let expires = T_NOW + POSITION_VALIDITY_SECONDS;
 
-        let ctx = block_ctx(storage, T_NOW + POSITION_VALIDITY_SECONDS - 1);
+        let ctx = block_ctx(storage, expires);
         assert_eq!(positions_expired::sweep_expired_positions(&ctx).unwrap(), 0);
         assert_eq!(unallocated(storage), U256::ZERO);
+        storage.set_block_timestamp(U256::from(expires)).unwrap();
+        assert_eq!(
+            runtime::position_data(storage, id)
+                .unwrap()
+                .remainingCapacityMinor,
+            U256::ZERO
+        );
 
-        // At the instant issuing starts reverting, the sweep takes it.
-        let ctx = block_ctx(storage, T_NOW + POSITION_VALIDITY_SECONDS);
+        let ctx = block_ctx(storage, hour_closed(expires));
         assert_eq!(positions_expired::sweep_expired_positions(&ctx).unwrap(), 1);
         assert_eq!(unallocated(storage), capacity);
+        assert_eq!(positions_expired::sweep_position_cleanup(&ctx).unwrap(), 1);
 
         let factory = GemFactoryContract::new(storage.clone());
-        let record = factory.positions.get(id).unwrap().unwrap();
-        assert_eq!(record.remaining_capacity_minor, U256::ZERO);
-        assert_eq!(factory.owner_of(id).unwrap(), ALICE);
+        assert!(factory.positions.get(id).unwrap().is_none());
+        assert_eq!(factory.balance_of(ALICE).unwrap(), 0);
+        assert!(runtime::position_data(storage, id).is_err());
     });
 }
 
-/// A storage fault is this node's own: it fails the block instead of skipping the position.
+/// A storage fault is this node's own: it fails the block instead of skipping the hour.
 #[test]
 fn a_storage_fault_in_the_position_sweep_fails_the_block() {
     let mut provider = test_storage(None);
@@ -115,22 +125,25 @@ fn a_storage_fault_in_the_position_sweep_fails_the_block() {
 
     provider.fail_mutation_at_address(outbe_primitives::addresses::PROMIS_LIMIT_ADDRESS);
     StorageHandle::enter(&mut provider, |storage| {
-        let ctx = block_ctx(&storage, T_NOW + POSITION_VALIDITY_SECONDS);
+        let ctx = block_ctx(&storage, hour_closed(T_NOW + POSITION_VALIDITY_SECONDS));
         assert!(matches!(
             positions_expired::sweep_expired_positions(&ctx).unwrap_err(),
             outbe_primitives::error::PrecompileError::Storage(_)
         ));
-        let record = GemFactoryContract::new(storage.clone())
-            .positions
-            .get(id)
-            .unwrap()
-            .unwrap();
-        assert_ne!(record.remaining_capacity_minor, U256::ZERO);
+        let factory = GemFactoryContract::new(storage.clone());
+        let record = factory.positions.get(id).unwrap().unwrap();
+        assert_ne!(
+            factory
+                .hour_capacity_minor
+                .read(&record.expiry_hour())
+                .unwrap(),
+            U256::ZERO
+        );
     });
 }
 
 #[test]
-fn a_drained_position_leaves_the_queue() {
+fn a_drained_position_returns_nothing_and_is_deleted() {
     with_storage(Some(six_decimal_unit()), |storage| {
         seed_day_vwap(storage, 840, six_decimal_unit());
         let id = seed_and_send(storage, six_decimal_unit(), six_decimal_u128());
@@ -145,12 +158,15 @@ fn a_drained_position_leaves_the_queue() {
         )
         .unwrap();
 
-        let factory = GemFactoryContract::new(storage.clone());
-        assert!(factory.live_queue_slot(0).unwrap().is_none());
-
-        let ctx = block_ctx(storage, T_NOW + POSITION_VALIDITY_SECONDS);
-        assert_eq!(positions_expired::sweep_expired_positions(&ctx).unwrap(), 0);
+        let ctx = block_ctx(storage, hour_closed(T_NOW + POSITION_VALIDITY_SECONDS));
+        assert_eq!(positions_expired::sweep_expired_positions(&ctx).unwrap(), 1);
         assert_eq!(unallocated(storage), U256::ZERO);
+        assert_eq!(positions_expired::sweep_position_cleanup(&ctx).unwrap(), 1);
+        assert!(GemFactoryContract::new(storage.clone())
+            .positions
+            .get(id)
+            .unwrap()
+            .is_none());
     });
 }
 
@@ -187,7 +203,7 @@ fn issue_merchant_gem_mints_issued_and_drains_capacity() {
         let item = gem_view(storage, gem_id);
         assert_eq!(item.item.owner, BOB);
         assert_eq!(item.item.state, GemState::Issued as u8);
-        assert_eq!(item.bucket.entry_price_minor, rate); // max(coen, source_entry) = coen
+        assert_eq!(item.item.entry_price_minor, rate); // max(coen, source_entry) = coen
         assert_eq!(
             runtime::gem_cost_minor(&item).unwrap(),
             U256::from(20u64) * six_decimal_unit()
@@ -224,7 +240,7 @@ fn issue_merchant_gem_anchors_entry_to_source() {
         )
         .unwrap();
         let item = gem_view(storage, gem_id);
-        assert_eq!(item.bucket.entry_price_minor, source_entry);
+        assert_eq!(item.item.entry_price_minor, source_entry);
     });
 }
 
@@ -370,7 +386,7 @@ fn a_merchant_gem_issues_until_the_second_its_position_expires() {
 
     let (expired, after) = issue(expires_at, six_decimal_unit());
     assert!(err_msg(expired).contains("position expired"));
-    assert_eq!(after, remaining);
+    assert_eq!(after, U256::ZERO, "an expired position reads empty");
 }
 
 #[test]
@@ -391,7 +407,7 @@ fn issue_merchant_gem_prices_at_the_previous_day_vwap() {
         )
         .unwrap();
         let item = gem_view(storage, gem_id);
-        assert_eq!(item.bucket.entry_price_minor, vwap);
+        assert_eq!(item.item.entry_price_minor, vwap);
         assert_eq!(
             item.terms.call_price_minor,
             vwap * U256::from(228u64) / U256::from(100u64)
@@ -468,7 +484,7 @@ fn issue_merchant_gem_takes_the_higher_entry() {
             )
             .unwrap();
             let item = gem_view(storage, gem_id);
-            assert_eq!(item.bucket.entry_price_minor, entry);
+            assert_eq!(item.item.entry_price_minor, entry);
         });
     }
 }
@@ -482,7 +498,7 @@ fn an_agent_gem_prices_cost_and_call_from_the_entry_at_every_rate() {
         with_storage(Some(rate), |storage| {
             let gem_id = issue_at_live_rate(storage, ALICE, load, 840, 840).unwrap();
             let item = gem_view(storage, gem_id);
-            assert_eq!(item.bucket.entry_price_minor, rate);
+            assert_eq!(item.item.entry_price_minor, rate);
             assert_eq!(
                 item.terms.call_price_minor,
                 rate * U256::from(228u64) / U256::from(100u64)
@@ -512,7 +528,7 @@ fn issue_merchant_gem_rejects_a_missing_previous_day_vwap() {
 
 /// Issuance events carry what an indexer needs to follow a gem through its call.
 #[test]
-fn issuance_events_carry_the_call_terms_the_position_and_the_bucket() {
+fn issuance_events_carry_the_call_terms_the_position_and_the_group() {
     let rate = U256::from(2u64) * six_decimal_unit();
     let mut provider = test_storage(Some(rate));
     let (position, expected) = StorageHandle::enter(&mut provider, |storage| {
@@ -531,7 +547,7 @@ fn issuance_events_carry_the_call_terms_the_position_and_the_bucket() {
         let wallet_gem = issue_at_live_rate(&storage, ALICE, six_decimal_unit(), 840, 840).unwrap();
         let expected = [(merchant_gem, position), (wallet_gem, U256::ZERO)].map(|(gem_id, pos)| {
             let item = gem_view(&storage, gem_id);
-            (item, pos, gem_item(&storage, gem_id).bucket_key)
+            (item, pos, gem_item(&storage, gem_id).group_key)
         });
         (position, expected)
     });
@@ -543,7 +559,7 @@ fn issuance_events_carry_the_call_terms_the_position_and_the_bucket() {
         .map(|log| log.data)
         .collect();
     assert_eq!(issued.len(), 2);
-    for (event, (item, position_id, bucket)) in issued.iter().zip(&expected) {
+    for (event, (item, position_id, group)) in issued.iter().zip(&expected) {
         assert_eq!(event.gemId, item.item.gem_id.to_u256());
         assert_eq!(event.callPriceMinor, item.terms.call_price_minor);
         assert_eq!(event.callWindow, item.terms.call_window_seconds);
@@ -553,8 +569,8 @@ fn issuance_events_carry_the_call_terms_the_position_and_the_bucket() {
             item.terms.call_notice_period_seconds
         );
         assert_eq!(event.positionId, *position_id);
-        assert_eq!(event.bucketKey, *bucket);
-        assert!(!bucket.is_zero());
+        assert_eq!(event.groupKey, *group);
+        assert!(!group.is_zero());
     }
 
     let opened: Vec<_> = events

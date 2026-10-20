@@ -6,7 +6,7 @@ interface IGem {
         uint256 gemId;
         address owner;
         /// Read-time state: 0 Issued, 1 Called, 2 Settled,
-        /// 3 Forfeited (a Called gem past its notice period, until the sweep burns it).
+        /// 3 Forfeited (a Called gem past its notice period, until the cleanup deletes it).
         uint8 state;
         uint256 promisLoadMinor;
         uint256 entryPriceMinor;
@@ -21,6 +21,8 @@ interface IGem {
         uint32 callThreshold;
         /// Inclusive deadline: 0 when uncalled.
         uint64 settlementDeadline;
+        /// The call group the gem is called and forfeited with.
+        bytes32 groupKey;
     }
 
     // ERC-165
@@ -52,18 +54,20 @@ interface IGem {
     function getGem(uint256 gemId) external view returns (GemData memory);
 
     // --- Events ---
-    /// @notice Emitted when a gem is issued and when it is burned by forfeit or mining.
+    /// @notice Emitted when a gem is issued, when the cleanup deletes it after its group
+    ///         was forfeited, and when it is burned by mining.
     event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);
     // Declared for ERC-721 shape only: gems are soulbound, so these two are never emitted.
     event Approval(address indexed owner, address indexed approved, uint256 indexed tokenId);
     event ApprovalForAll(address indexed owner, address indexed operator, bool approved);
     /// @notice ERC-4906: emitted when a gem is settled.
     event MetadataUpdate(uint256 _tokenId);
-    /// @notice ERC-4906: emitted over the whole id range when a bucket is called, since
+    /// @notice ERC-4906: emitted over the whole id range when a group is called, since
     ///         gem ids carry no order a narrower range could follow.
     event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
-    /// @notice The daily Call scan force-called every gem in the bucket.
-    event GemBucketCalled(bytes32 indexed bucketKey, uint64 calledAt, uint64 settlementDeadline);
-    /// @notice Called gem forfeit-burned after its notice period lapsed.
-    event GemForfeited(uint256 indexed gemId, address owner, uint256 promisLoadMinor);
+    /// @notice The daily Call scan force-called every gem in the group.
+    event GemGroupCalled(bytes32 indexed groupKey, uint64 calledAt, uint64 settlementDeadline);
+    /// @notice The group's notice period lapsed: its `gems` unpaid gems are forfeited and
+    ///         their `promisLoadMinor` returned at once. The cleanup deletes them after.
+    event GemGroupForfeited(bytes32 indexed groupKey, uint32 gems, uint256 promisLoadMinor);
 }

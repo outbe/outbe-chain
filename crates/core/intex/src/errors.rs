@@ -20,20 +20,10 @@ pub enum IntexError {
     InvalidSeriesId,
     #[error("realized units exceed the issued count for series")]
     RealizedUnitsOverflow,
-    #[error(
-        "currency {iso} day {worldwide_day} is indexed in bin {expected}, series priced into {got}"
-    )]
-    GroupBinMismatch {
-        iso: u16,
-        worldwide_day: outbe_primitives::time::WorldwideDay,
-        expected: u32,
-        got: u32,
-    },
-    #[error("currency {iso} day {worldwide_day} is already indexed")]
-    GroupAlreadyIndexed {
-        iso: u16,
-        worldwide_day: outbe_primitives::time::WorldwideDay,
-    },
+    #[error("call group already called")]
+    GroupAlreadyCalled,
+    #[error("series index out of range")]
+    SeriesIndexOutOfRange,
     #[error("unknown intex profile selector: {0}")]
     UnknownProfileSelector(u8),
     #[error("called group member out of range")]

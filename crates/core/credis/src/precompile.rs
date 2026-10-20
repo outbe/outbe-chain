@@ -63,7 +63,7 @@ pub fn dispatch(
             isApprovedForAll(c) => view(c, |_| Ok(false)),
             credisExists(c) => view(c, |c| contract.credis_exists(c.credisId)),
             tokenByIndex(c) => view(c, |c| {
-                let index = u64::try_from(c.index).map_err(|_| CredisError::IndexOutOfBounds)?;
+                let index = u32::try_from(c.index).map_err(|_| CredisError::IndexOutOfBounds)?;
                 contract.token_by_index(index)
             }),
             balanceOf(c) => view(c, |c| Ok(U256::from(contract.credis_count_of(c.owner)?))),
@@ -80,9 +80,7 @@ pub fn dispatch(
                 Ok(contract.get_credis(c.credisId)?.interest_paid_minor)
             }),
             credisPrincipalAndOutstandingOf(c) => view(c, |c| {
-                let now = contract.storage.timestamp()?.to::<u64>();
-                let (principal, outstanding) =
-                    contract.principal_and_outstanding_of(c.owner, now)?;
+                let (principal, outstanding) = contract.principal_and_outstanding_of(c.owner)?;
                 Ok(ICredis::credisPrincipalAndOutstandingOfReturn {
                     principalMinor: principal,
                     outstandingPrincipalMinor: outstanding,
@@ -134,5 +132,6 @@ fn abi_credis(p: &crate::schema::Credis, now: u64) -> Result<ICredis::Credis> {
             gratisReturnedMinor: outcome.gratis_returned_minor,
             gratisBurnedMinor: outcome.gratis_burned_minor,
         },
+        groupKey: p.group_key(),
     })
 }

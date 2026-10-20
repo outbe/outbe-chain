@@ -356,7 +356,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
             let gem = outbe_gem::api::get_view(&storage, gem_id).unwrap().unwrap();
             assert_eq!(gem.item.owner, CCA);
             assert_eq!(gem.item.promis_load_minor, U256::from(load));
-            assert_eq!(gem.bucket.entry_price_minor, price);
+            assert_eq!(gem.item.entry_price_minor, price);
             assert_eq!(gem.item.issuance_currency, 840);
             assert_eq!(gem.item.reference_currency, 840);
             assert_eq!(gem.item.issued_at, claim_time);
@@ -572,7 +572,7 @@ fn claim_by_tx(db: &mut CacheDB<EmptyDB>, pool: RewardPool, held: U256, requeste
         let gem = outbe_gem::api::get_view(&storage, gem_id).unwrap().unwrap();
         assert_eq!(gem.item.owner, CCA);
         assert_eq!(gem.item.promis_load_minor, load);
-        assert_eq!(gem.bucket.entry_price_minor, PRICE);
+        assert_eq!(gem.item.entry_price_minor, PRICE);
         assert_eq!(gem.item.issued_at, NOW);
         assert_eq!(
             AgentRewardContract::new(storage)

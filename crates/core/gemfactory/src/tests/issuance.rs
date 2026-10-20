@@ -41,7 +41,7 @@ fn issue_wallet_cost_and_state_issued() {
 
         let item = gem_view(storage, gem_id);
         // entry = coen_rate = 2; cost = entry * load / six_decimal_unit() = 2 * 5 = 10
-        assert_eq!(item.bucket.entry_price_minor, rate);
+        assert_eq!(item.item.entry_price_minor, rate);
         assert_eq!(
             runtime::gem_cost_minor(&item).unwrap(),
             U256::from(10u64) * six_decimal_unit()

@@ -83,15 +83,15 @@ fn settlement_preserves_entitlement_and_failed_mining_can_retry_after_deadline()
         let item = nod_api::get_item(&storage, nod_id).unwrap().unwrap();
         assert!(item.is_settled);
         assert_eq!(item.owner, input.owner);
-        let bucket = nod_api::get_bucket(&storage, item.bucket_key)
+        let group = nod_api::get_group(&storage, item.group_key)
             .unwrap()
             .unwrap();
-        assert_eq!(bucket.settled_nods, 1);
+        assert_eq!(group.settled_nods, 1);
         let nod = NodContract::new(storage.clone());
         assert_eq!(nod.total_supply().unwrap(), 1);
-        assert_eq!(nod.bucket_nod_count.read(&item.bucket_key).unwrap(), 0);
+        assert_eq!(nod.group_nod_count.read(&item.group_key).unwrap(), 0);
         assert_eq!(
-            nod.bucket_called_at.read(&item.bucket_key).unwrap(),
+            nod.group_called_at.read(&item.group_key).unwrap(),
             called_at
         );
         outbe_nod::canonical_item(&item)
@@ -165,8 +165,8 @@ fn settlement_failure_rolls_back_record_updates() {
     world.enter(|storage| {
         let item = nod_api::get_item(&storage, nod_id).unwrap().unwrap();
         NodContract::new(storage)
-            .bucket_nod_count
-            .write(&item.bucket_key, 0)
+            .group_nod_count
+            .write(&item.group_key, 0)
             .unwrap();
     });
     let before = world.provider.storage.clone();
@@ -178,8 +178,8 @@ fn settlement_failure_rolls_back_record_updates() {
         let item = nod_api::get_item(&storage, nod_id).unwrap().unwrap();
         assert!(!item.is_settled);
         NodContract::new(storage)
-            .bucket_nod_count
-            .write(&item.bucket_key, 1)
+            .group_nod_count
+            .write(&item.group_key, 1)
             .unwrap();
     });
     world.settle(nod_id, input.owner).unwrap();
@@ -345,7 +345,7 @@ fn settlement_over_a_broken_member_index_reverts() {
     world.register_reference_currency_asset(SETTLEMENT_ASSET);
     world.enter(|storage| {
         NodContract::new(storage)
-            .bucket_nod_index
+            .group_nod_index
             .write(&nod_id, 7)
             .unwrap();
     });

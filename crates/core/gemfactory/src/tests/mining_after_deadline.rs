@@ -1,4 +1,4 @@
-//! A paid Gem has no deadline: a settled Gem whose bucket was called mines its
+//! A paid Gem has no deadline: a settled Gem whose group was called mines its
 //! Promis after the settlement deadline, while its unpaid twin is refused.
 
 use super::*;
@@ -7,19 +7,19 @@ use outbe_primitives::addresses::GEM_FACTORY_ADDRESS;
 
 use crate::precompile::IGemFactory;
 
-/// Alice's and Bob's Gems of `load` share a bucket called at `T_NOW`;
+/// Alice's and Bob's Gems of `load` share a group called at `T_NOW`;
 /// Alice's is settled after the call, so it keeps that `called_at`.
-fn called_bucket(load: U256) -> (HashMapStorageProvider, U256, U256) {
+fn called_group(load: U256) -> (HashMapStorageProvider, U256, U256) {
     let mut provider = test_storage(Some(U256::from(2u64) * six_decimal_unit()));
     let ids = StorageHandle::enter(&mut provider, |handle| {
         let paid = issue_at_live_rate(&handle, ALICE, load, 840, 840).unwrap();
         let unpaid = issue_at_live_rate(&handle, BOB, load, 840, 840).unwrap();
-        let bucket = gem_item(&handle, paid).bucket_key;
-        assert_eq!(gem_item(&handle, unpaid).bucket_key, bucket);
-        assert!(!bucket.is_zero());
+        let group = gem_item(&handle, paid).group_key;
+        assert_eq!(gem_item(&handle, unpaid).group_key, group);
+        assert!(!group.is_zero());
         GemContract::new(handle.clone())
-            .bucket_called_at
-            .write(&bucket, T_NOW)
+            .group_called_at
+            .write(&group, T_NOW)
             .unwrap();
         record_settled(&handle, paid);
         (paid, unpaid)
@@ -31,7 +31,7 @@ fn called_bucket(load: U256) -> (HashMapStorageProvider, U256, U256) {
 fn a_settled_gem_mines_after_the_settlement_deadline_while_its_unpaid_twin_is_refused() {
     outbe_promis::enclave_client::test_enclave::install();
     let load = U256::from(10u64) * six_decimal_unit();
-    let (mut provider, paid, unpaid) = called_bucket(load);
+    let (mut provider, paid, unpaid) = called_group(load);
     let deadline = T_NOW + u64::from(GemParams::PROD.call_notice_period_seconds);
     provider.set_timestamp(U256::from(deadline + 1));
 
@@ -42,7 +42,7 @@ fn a_settled_gem_mines_after_the_settlement_deadline_while_its_unpaid_twin_is_re
         assert_eq!(
             twin.effective_state(T_NOW),
             GemState::Called as u8,
-            "the bucket is called"
+            "the group is called"
         );
         assert_eq!(twin.called_at(), T_NOW);
         assert_eq!(
