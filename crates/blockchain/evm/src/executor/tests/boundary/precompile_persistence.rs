@@ -11,7 +11,7 @@ fn marker_list_covers_stateful_precompiles() {
     use outbe_primitives::addresses::{
         GOVERNANCE_ADDRESS, RADICLE_REGISTRY_ADDRESS, STABLECOIN_FACTORY_ADDRESS,
         STABLECOIN_POLICY_REGISTRY_ADDRESS, VAULT_ROUTER_ADDRESS, ZEROFEE_ADDRESS,
-        ZKPROOF_GROTH16_ADDRESS,
+        ZKPROOF_VERIFY_ADDRESS,
     };
 
     // Dispatch-registered precompiles that legitimately need NO runtime 0xEF
@@ -19,7 +19,7 @@ fn marker_list_covers_stateful_precompiles() {
     // evidence in `tests/genesis.rs`. An unproven exemption permits silent pruning.
     const MARKER_EXEMPT: [Address; 7] = [
         // Stateless verifier - no EVM storage to preserve.
-        ZKPROOF_GROTH16_ADDRESS,
+        ZKPROOF_VERIFY_ADDRESS,
         // Seeded with genesis marker bytecode by scripts/seed_genesis.py, so these
         // accounts are never EIP-161-empty.
         ZEROFEE_ADDRESS,

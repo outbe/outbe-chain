@@ -25,7 +25,7 @@ impl TeeRegistry<'_> {
                 TeeRegistryError::RegistrationCallerNotAssociatedWithExistingNodeHost.into(),
             );
         }
-        let expired_rejoin = consensus_timestamp(&self.storage)? >= current.valid_until;
+        let expired_rejoin = self.storage.now_secs()? >= current.valid_until;
         if expired_rejoin
             && ValidatorSet::new(self.storage.clone())
                 .get_validator(caller)?
@@ -102,7 +102,7 @@ impl TeeRegistry<'_> {
         let node = self
             .node_enclave_binding_v1(binding.node_id_hash)?
             .ok_or(TeeRegistryError::ValidatorNodeBindingUnregisteredNodeHost)?;
-        if node.valid_until <= consensus_timestamp(&self.storage)? {
+        if node.valid_until <= self.storage.now_secs()? {
             return Err(TeeRegistryError::ValidatorNodeBindingExpiredNodeHost.into());
         }
         if !self.binding_code_admitted_v1(&node)? {

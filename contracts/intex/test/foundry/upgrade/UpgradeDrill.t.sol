@@ -129,7 +129,7 @@ contract UpgradeDrillTest is CrossChainTest {
 
         vm.startPrank(admin);
         auction.wire(escrow);
-        auction.auctionStart(20260614, IIntexAuction.WorldwideDayState.Green, schedule, params);
+        auction.auctionStart(20260614, IIntexAuction.WorldwideDayState.Live, schedule, params);
         vm.stopPrank();
         vm.prank(bidder);
         auction.commitBid(20260614, keccak256("commit"));

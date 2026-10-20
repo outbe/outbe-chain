@@ -97,7 +97,7 @@ impl<'s> GemFactoryContract<'s> {
     /// What the position can still issue: nothing once it expired, whether or not the
     /// cleanup has deleted it yet.
     pub(crate) fn remaining_capacity(&self, pos: &GemPosition) -> Result<U256> {
-        let now = self.storage.timestamp()?.to::<u64>();
+        let now = self.storage.now_secs()?;
         Ok(match now >= pos.expires_at {
             true => U256::ZERO,
             false => pos.remaining_capacity_minor,

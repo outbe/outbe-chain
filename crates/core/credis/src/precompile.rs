@@ -42,13 +42,13 @@ pub fn dispatch(
             symbol(_) => metadata::<ICredis::symbolCall>(|| Ok(TOKEN_SYMBOL.to_string())),
             tokenURI(c) => view(c, |c| {
                 let record = contract.get_credis(c.credisId)?;
-                let now = contract.storage.timestamp()?.to::<u64>();
+                let now = contract.storage.now_secs()?;
                 crate::metadata::token_uri(&record, now)
             }),
             totalSupply(c) => view(c, |_| Ok(U256::from(contract.total_credis()?))),
             getCredis(c) => view(c, |c| {
                 let record = contract.get_credis(c.credisId)?;
-                abi_credis(&record, contract.storage.timestamp()?.to::<u64>())
+                abi_credis(&record, contract.storage.now_secs()?)
             }),
             ownerOf(c) => view(c, |c| {
                 let record = contract.get_credis(c.credisId)?;
@@ -73,7 +73,7 @@ pub fn dispatch(
             }),
             interestAccruedMinor(c) => view(c, |c| {
                 let record = contract.get_credis(c.credisId)?;
-                let timestamp = contract.storage.timestamp()?.to::<u64>();
+                let timestamp = contract.storage.now_secs()?;
                 CredisContract::accrued_interest(&record, timestamp)
             }),
             interestPaidMinor(c) => view(c, |c| {

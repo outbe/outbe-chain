@@ -24,7 +24,7 @@ fn record(storage: &StorageHandle<'_>, id: U256) -> outbe_credis::Credis {
 
 /// What a reader of `id` sees now.
 fn shown(storage: &StorageHandle<'_>, id: U256) -> outbe_credis::Outcome {
-    let now = storage.timestamp().unwrap().to::<u64>();
+    let now = storage.now_secs().unwrap();
     outbe_credis::outcome(&record(storage, id), now).unwrap()
 }
 

@@ -17,13 +17,7 @@ use crate::precompile::ICredisFactory;
 
 /// Current execution timestamp's UTC reward day key (YYYYMMDD).
 fn reward_day(storage: &StorageHandle<'_>) -> Result<u32> {
-    Ok(timestamp_to_date_key(block_time(storage)?))
-}
-
-/// Execution timestamps must fit Unix seconds in u64. Reject a value that does not fit
-/// rather than truncate it.
-fn block_time(storage: &StorageHandle<'_>) -> Result<u64> {
-    u64::try_from(storage.timestamp()?).map_err(|_| CredisError::ArithmeticOverflow.into())
+    Ok(timestamp_to_date_key(storage.now_secs()?))
 }
 
 /// Terms captured when a Credis is issued. Grouped rather than passed positionally
@@ -304,7 +298,7 @@ pub fn forfeit_by_owner(
         if caller != record.owner {
             return Err(CredisFactoryError::NotCredisOwner.into());
         }
-        match effective_state(&record, block_time(&storage)?)? {
+        match effective_state(&record, storage.now_secs()?)? {
             CredisState::Issued | CredisState::Called => {}
             CredisState::Settled | CredisState::Forfeited => {
                 return Err(CredisFactoryError::CredisClosed.into())

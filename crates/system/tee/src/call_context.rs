@@ -42,16 +42,16 @@ pub struct EnclaveCallContextV1 {
 impl EnclaveCallContextV1 {
     pub fn from_storage(storage: &StorageHandle<'_>) -> Result<Self> {
         let version = storage.sload(UPDATE_ADDRESS, U256::ZERO)?;
-        let timestamp = storage.timestamp()?;
-        if version > U256::from(u32::MAX) || timestamp > U256::from(u64::MAX) {
+        if version > U256::from(u32::MAX) {
             return Err(CallContextError::IntegerOverflow.into());
         }
+        let timestamp = storage.now_secs()?;
         Ok(Self {
             kind: EnclaveContextKindV1::Execution,
             chain_id: storage.chain_id()?,
             genesis_hash: storage.genesis_hash()?,
             block_number: storage.block_number()?,
-            block_timestamp: timestamp.to(),
+            block_timestamp: timestamp,
             protocol_version: version.to(),
         })
     }
@@ -260,6 +260,45 @@ mod tests {
                 )
                 .unwrap();
             assert!(EnclaveCallContextV1::from_storage(&storage).is_err());
+        });
+    }
+
+    #[test]
+    fn timestamp_overflow_is_distinct_from_protocol_width_and_protocol_takes_precedence() {
+        use outbe_primitives::{error::PrecompileError, storage::hashmap::HashMapStorageProvider};
+
+        let mut provider = HashMapStorageProvider::new(42);
+        StorageHandle::enter(&mut provider, |storage| {
+            storage.set_block_timestamp(U256::from(u64::MAX)).unwrap();
+            assert_eq!(
+                EnclaveCallContextV1::from_storage(&storage)
+                    .unwrap()
+                    .block_timestamp,
+                u64::MAX
+            );
+            storage
+                .set_block_timestamp(U256::from(u64::MAX) + U256::from(1))
+                .unwrap();
+            assert!(matches!(
+                EnclaveCallContextV1::from_storage(&storage),
+                Err(PrecompileError::Revert(message)) if message == "timestamp exceeds u64"
+            ));
+            storage
+                .sstore(
+                    UPDATE_ADDRESS,
+                    U256::ZERO,
+                    U256::from(u32::MAX) + U256::from(1),
+                )
+                .unwrap();
+            assert!(matches!(
+                EnclaveCallContextV1::from_storage(&storage),
+                Err(PrecompileError::Revert(message)) if message == "enclave call context integer overflow"
+            ));
+            storage.set_block_timestamp(U256::from(100)).unwrap();
+            assert!(matches!(
+                EnclaveCallContextV1::from_storage(&storage),
+                Err(PrecompileError::Revert(message)) if message == "enclave call context integer overflow"
+            ));
         });
     }
 

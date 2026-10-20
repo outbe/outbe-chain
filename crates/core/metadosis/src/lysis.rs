@@ -1,10 +1,11 @@
-//! Executes one sealed day against the current EVM journal.
+//! Executes one sealed WorldwideDay linked to a due EmissionDay.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
+    time::WorldwideDay,
     tribute_encryption::EncryptedTributeV2,
 };
 use outbe_promislimit::PromisLimitContract;
@@ -15,14 +16,11 @@ use outbe_tee::{
 use outbe_tribute::TributeContract;
 
 use crate::{
-    aggregate::{WwdDayType, WwdProjection},
-    commit::commit_outer_transition,
+    lifecycle::complete_emission_day,
     limits::{apply_auction_brief, apply_lysis_limit, LysisLimitInput},
     precompile::IMetadosis,
-    reducer::{reduce_outer_wwd, OuterWwdEvent, ReadyDisposition},
-    schema::MetadosisContract,
+    schema::{emission_day_state, EmissionDay, MetadosisContract},
     settlement::MetadosisCalculation,
-    terminal::model::{LysisCompletionDetail, TerminalReceiptCommon, WwdTerminalReceipt},
 };
 
 fn mismatch() -> PrecompileError {
@@ -30,13 +28,9 @@ fn mismatch() -> PrecompileError {
 }
 
 struct SettlementCompletion {
-    tribute_count: u32,
     total_nominal_minor: alloy_primitives::U256,
     used: alloy_primitives::U256,
     unused: alloy_primitives::U256,
-    inputs_hash: alloy_primitives::B256,
-    result_hash: alloy_primitives::B256,
-    retirement: outbe_tribute::runtime::RetirementOutcome,
 }
 
 fn validate_encrypted_tribute(
@@ -58,7 +52,7 @@ fn validate_encrypted_tribute(
 fn validate_day_records(
     ctx: &BlockRuntimeContext<'_>,
     tribute: &TributeContract<'_>,
-    day: outbe_primitives::time::WorldwideDay,
+    day: WorldwideDay,
     expected_count: u32,
 ) -> Result<Vec<EncryptedTributeV2>> {
     let records = tribute.state_records_by_day(day)?;
@@ -75,32 +69,21 @@ fn validate_day_records(
     Ok(tributes)
 }
 
-fn resolve_green_day(day_type: WwdDayType) -> Result<bool> {
-    match day_type {
-        WwdDayType::Green => Ok(true),
-        WwdDayType::Red => Ok(false),
-        WwdDayType::Unknown => Err(mismatch()),
-    }
-}
-
 fn finalize_lysis_settlement(
     metadosis: &mut MetadosisContract<'_>,
     ctx: &BlockRuntimeContext<'_>,
-    current: &WwdProjection,
+    emission_day: &EmissionDay,
     calculation: MetadosisCalculation,
     completion: SettlementCompletion,
 ) -> Result<()> {
     let storage = ctx.storage.clone();
-    let day = current.worldwide_day;
-    let carry_before = PromisLimitContract::new(storage.clone()).get_total_unallocated()?;
-    let green = resolve_green_day(current.day_type)?;
+    let wwd = emission_day.wwd;
     let split = apply_lysis_limit(
         storage.clone(),
         LysisLimitInput {
-            base_limit: current.metadosis_limit_minor,
+            base_limit: emission_day.emission_limit_minor,
             lysis_limit_minor: calculation.lysis_limit_minor,
             nominal_total: completion.total_nominal_minor,
-            green,
         },
     )?;
     if completion
@@ -115,34 +98,10 @@ fn finalize_lysis_settlement(
     if credit.credited != completion.unused {
         return Err(mismatch());
     }
-    apply_auction_brief(storage.clone(), day, &split, green, ctx.block.timestamp)?;
-    let carry_after = PromisLimitContract::new(storage).get_total_unallocated()?;
-    let transition = reduce_outer_wwd(
-        Some(current),
-        OuterWwdEvent::ProcessReady(ReadyDisposition::LysisCompleted),
-    )?;
-    metadosis.write_terminal_receipt(WwdTerminalReceipt::LysisCompleted {
-        common: TerminalReceiptCommon {
-            worldwide_day: day,
-            value_routed: current.metadosis_limit_minor,
-            carry_over_before: carry_before,
-            carry_over_after: carry_after,
-            retirement: completion.retirement,
-            block_number: ctx.block.block_number,
-        },
-        detail: LysisCompletionDetail {
-            tribute_count: completion.tribute_count,
-            lysis_limit: calculation.lysis_limit_minor,
-            used: completion.used,
-            unused: completion.unused,
-            desis_limit: split.desis_limit_minor,
-            inputs_hash: completion.inputs_hash,
-            result_hash: completion.result_hash,
-        },
-    })?;
-    commit_outer_transition(metadosis, day, &transition, ctx.block.block_number)?;
+    apply_auction_brief(storage, wwd, &split, ctx.block.timestamp)?;
+    complete_emission_day(metadosis, emission_day, emission_day_state::SUCCEEDED)?;
     metadosis.emit(IMetadosis::MetadosisExecuted {
-        worldwideDay: day.into(),
+        worldwideDay: wwd.into(),
         tributeNominalTotalMinor: completion.total_nominal_minor,
         gratisDemandMinor: calculation.gratis_demand,
         dayGratisLimitMinor: calculation.day_gratis_limit_minor,
@@ -157,7 +116,7 @@ fn finalize_lysis_settlement(
 
 fn load_ready_tribute<'a>(
     ctx: &BlockRuntimeContext<'a>,
-    day: outbe_primitives::time::WorldwideDay,
+    day: WorldwideDay,
 ) -> Result<(TributeContract<'a>, outbe_tribute::schema::DayTotals)> {
     let tribute = TributeContract::new(ctx.storage.clone());
     let totals = tribute.get_day_totals(day)?;
@@ -171,41 +130,37 @@ fn load_ready_tribute<'a>(
 fn execute_onchain_fractions(
     metadosis: &mut MetadosisContract<'_>,
     ctx: &BlockRuntimeContext<'_>,
-    current: &WwdProjection,
+    emission_day: &EmissionDay,
     calculation: MetadosisCalculation,
 ) -> Result<()> {
-    let day = current.worldwide_day;
-    let (mut tribute, totals) = load_ready_tribute(ctx, day)?;
+    let wwd = emission_day.wwd;
+    let (mut tribute, totals) = load_ready_tribute(ctx, wwd)?;
     tribute.freeze_day_nominal(&totals)?;
     let (_, onchain_allocated_minor) = tribute.compute_and_record_metadosis_fractions(
-        day,
+        wwd,
         calculation.lysis_limit_minor,
         ctx.block.timestamp,
     )?;
-    outbe_fidelity::api::finalize_wwd_max_fidelity(ctx.storage.clone(), day, ctx.block.timestamp)?;
+    outbe_fidelity::api::finalize_wwd_max_fidelity(ctx.storage.clone(), wwd, ctx.block.timestamp)?;
 
     let used = onchain_allocated_minor.min(calculation.lysis_limit_minor);
     let unused = calculation.lysis_limit_minor.saturating_sub(used);
     finalize_lysis_settlement(
         metadosis,
         ctx,
-        current,
+        emission_day,
         calculation,
         SettlementCompletion {
-            tribute_count: totals.tribute_count,
             total_nominal_minor: totals.tribute_nominal_total_minor,
             used,
             unused,
-            inputs_hash: alloy_primitives::keccak256(day.value().to_be_bytes()),
-            result_hash: alloy_primitives::keccak256(used.to_be_bytes::<32>()),
-            retirement: outbe_tribute::runtime::RetirementOutcome::NotPresent,
         },
     )
 }
 
 fn build_enclave_lysis_request(
     ctx: &BlockRuntimeContext<'_>,
-    day: outbe_primitives::time::WorldwideDay,
+    emission_day: &EmissionDay,
     lysis_limit_minor: alloy_primitives::U256,
     tributes: Vec<EncryptedTributeV2>,
 ) -> Result<LysisRequest> {
@@ -215,7 +170,8 @@ fn build_enclave_lysis_request(
         first_qualified_start: 0,
         entries: Vec::with_capacity(tributes.len()),
     };
-    let price_day = outbe_nod::openings::entry_price_day(ctx.block.timestamp);
+    // Entry price uses the 24h UTC VWAP of `emission_day.day` (e.g. 15/10/2026),
+    // while tribute nominals and S-curve belong to `emission_day.wwd` (e.g. 20/09/2026).
     for encrypted in &tributes {
         let source = &encrypted.context;
         let section = outbe_fidelity::api::cohort_section(
@@ -239,14 +195,14 @@ fn build_enclave_lysis_request(
         {
             entry.insert(outbe_oracle::api::get_utc_day_vwap_for_iso(
                 ctx.storage.clone(),
-                price_day,
+                emission_day.day,
                 source.reference_currency,
             )?);
         }
     }
     Ok(LysisRequest {
         chain_id: ctx.block.chain_id,
-        worldwide_day: day,
+        worldwide_day: emission_day.wwd,
         timestamp: ctx.block.timestamp,
         lysis_limit_minor,
         tributes,
@@ -258,7 +214,7 @@ fn build_enclave_lysis_request(
 fn consume_legacy_nods(
     ctx: &BlockRuntimeContext<'_>,
     tribute: &mut TributeContract<'_>,
-    day: outbe_primitives::time::WorldwideDay,
+    day: WorldwideDay,
     tribute_count: u32,
     result: &outbe_tee::lysis::VerifiedLysisResult,
 ) -> Result<outbe_tribute::runtime::RetirementOutcome> {
@@ -280,55 +236,42 @@ fn consume_legacy_nods(
 fn execute_legacy_enclave(
     metadosis: &mut MetadosisContract<'_>,
     ctx: &BlockRuntimeContext<'_>,
-    current: &WwdProjection,
+    emission_day: &EmissionDay,
     calculation: MetadosisCalculation,
 ) -> Result<()> {
-    let day = current.worldwide_day;
-    let (mut tribute, totals) = load_ready_tribute(ctx, day)?;
-    let tributes = validate_day_records(ctx, &tribute, day, totals.tribute_count)?;
-    let request = build_enclave_lysis_request(ctx, day, calculation.lysis_limit_minor, tributes)?;
+    let wwd = emission_day.wwd;
+    let (mut tribute, totals) = load_ready_tribute(ctx, wwd)?;
+    let tributes = validate_day_records(ctx, &tribute, wwd, totals.tribute_count)?;
+    let request =
+        build_enclave_lysis_request(ctx, emission_day, calculation.lysis_limit_minor, tributes)?;
     let outcome = outbe_tee::lysis::execute(request)
         .map_err(|_| PrecompileError::EnclaveUnavailable("on-chain Lysis request failed".into()))?;
     let LysisOutcome::Completed(result) = outcome else {
-        let transition = reduce_outer_wwd(
-            Some(current),
-            OuterWwdEvent::ProcessReady(ReadyDisposition::LysisFailed),
-        )?;
-        commit_outer_transition(metadosis, day, &transition, ctx.block.block_number)?;
-        return metadosis.emit(IMetadosis::WorldwideDayStatusChange {
-            worldwideDay: day.into(),
-            oldStatus: current.status.as_u8(),
-            newStatus: transition.target().as_u8(),
-            blockNumber: ctx.block.block_number,
-        });
+        return complete_emission_day(metadosis, emission_day, emission_day_state::FAILED);
     };
     if result.total_nominal_minor != totals.tribute_nominal_total_minor {
         return Err(mismatch());
     }
     tribute.compute_and_record_metadosis_fractions(
-        day,
+        wwd,
         calculation.lysis_limit_minor,
         ctx.block.timestamp,
     )?;
-    outbe_fidelity::api::finalize_wwd_max_fidelity(ctx.storage.clone(), day, ctx.block.timestamp)?;
+    outbe_fidelity::api::finalize_wwd_max_fidelity(ctx.storage.clone(), wwd, ctx.block.timestamp)?;
     let used = calculation
         .lysis_limit_minor
         .checked_sub(result.unused_lysis_limit_minor)
         .ok_or_else(mismatch)?;
-    let retirement = consume_legacy_nods(ctx, &mut tribute, day, totals.tribute_count, &result)?;
+    let _ = consume_legacy_nods(ctx, &mut tribute, wwd, totals.tribute_count, &result)?;
     finalize_lysis_settlement(
         metadosis,
         ctx,
-        current,
+        emission_day,
         calculation,
         SettlementCompletion {
-            tribute_count: totals.tribute_count,
             total_nominal_minor: result.total_nominal_minor,
             used,
             unused: result.unused_lysis_limit_minor,
-            inputs_hash: result.inputs_hash,
-            result_hash: result.result_hash,
-            retirement,
         },
     )
 }
@@ -336,13 +279,13 @@ fn execute_legacy_enclave(
 pub(crate) fn execute(
     metadosis: &mut MetadosisContract<'_>,
     ctx: &BlockRuntimeContext<'_>,
-    current: &WwdProjection,
+    emission_day: &EmissionDay,
     calculation: MetadosisCalculation,
 ) -> Result<()> {
     ctx.storage.require_metadosis_process_ready()?;
     if outbe_tee::lysis::is_test_transport_installed() {
-        execute_legacy_enclave(metadosis, ctx, current, calculation)
+        execute_legacy_enclave(metadosis, ctx, emission_day, calculation)
     } else {
-        execute_onchain_fractions(metadosis, ctx, current, calculation)
+        execute_onchain_fractions(metadosis, ctx, emission_day, calculation)
     }
 }

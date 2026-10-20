@@ -9,14 +9,6 @@ use crate::{
 use alloy_primitives::{Address, U256};
 use outbe_primitives::{addresses::CCA_REGISTRY_ADDRESS, error::Result, storage::StorageHandle};
 
-fn now(storage: &StorageHandle<'_>) -> Result<u64> {
-    // Execution timestamps must fit Unix seconds in u64. Reject a larger value. Do not truncate it.
-    storage
-        .timestamp()?
-        .try_into()
-        .map_err(|_| CcaError::Arithmetic.into())
-}
-
 /// The payable EVM boundary has already credited `amount` to CCA_REGISTRY_ADDRESS.
 pub fn bond(storage: StorageHandle<'_>, caller: Address, amount: U256, name: String) -> Result<()> {
     storage.with_checkpoint(|| {
@@ -83,7 +75,8 @@ pub fn unbond(storage: StorageHandle<'_>, caller: Address) -> Result<()> {
         ) {
             return Err(CcaError::InvalidState(record.state.into()).into());
         }
-        record.unbond_unlocks_after = now(&storage)?
+        record.unbond_unlocks_after = storage
+            .now_secs()?
             .checked_add(UNBOND_COOLDOWN_SECONDS)
             .ok_or(CcaError::Arithmetic)?;
         record.state = ICcaRegistry::State::Deregistering;
@@ -106,7 +99,7 @@ pub fn claim_unbonded(storage: StorageHandle<'_>, caller: Address) -> Result<()>
         if record.state != ICcaRegistry::State::Deregistering {
             return Err(CcaError::InvalidState(record.state.into()).into());
         }
-        if now(&storage)? < record.unbond_unlocks_after {
+        if storage.now_secs()? < record.unbond_unlocks_after {
             return Err(CcaError::Cooldown.into());
         }
         let amount = record.bonded_minor;

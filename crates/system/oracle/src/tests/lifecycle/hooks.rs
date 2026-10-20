@@ -66,6 +66,65 @@ fn slash_window_resets_penalty_counters_at_the_window_end() {
 }
 
 #[test]
+fn slash_window_timestamp_overflow_preserves_all_validator_counters_for_retry() {
+    with_oracle(|storage, oracle| {
+        let healthy = Address::new([0x33; 20]);
+        let penalized = Address::new([0x44; 20]);
+        let stake = native_coen(100);
+        register_validator(storage.clone(), healthy, stake);
+        register_validator(storage.clone(), penalized, stake);
+        oracle.increment_success(&healthy).unwrap();
+        oracle.increment_miss(&penalized).unwrap();
+        oracle
+            .config_slash_fraction
+            .write(SCALE_1E18 / U256::from(10))
+            .unwrap();
+        let staking = outbe_staking::contract::Staking::new(storage.clone());
+        staking.stake_amount.write(&penalized, stake).unwrap();
+        staking.total_staked.write(stake).unwrap();
+        storage
+            .set_balance(outbe_primitives::addresses::STAKING_ADDRESS, stake)
+            .unwrap();
+        for timestamp in [U256::from(u64::MAX) + U256::from(1), U256::MAX] {
+            storage.set_block_timestamp(timestamp).unwrap();
+            assert!(matches!(
+                crate::tally::slash_and_reset_counters(oracle, 10_000),
+                Err(outbe_primitives::error::PrecompileError::Revert(message)) if message == "timestamp exceeds u64"
+            ));
+            assert_eq!(oracle.penalty_success_count.read(&healthy).unwrap(), 1);
+            assert_eq!(oracle.penalty_miss_count.read(&penalized).unwrap(), 1);
+            assert!(
+                outbe_validatorset::contract::ValidatorSet::new(storage.clone())
+                    .validator_lifecycle(penalized)
+                    .unwrap()
+                    .is_active_status()
+            );
+            assert_eq!(staking.get_stake(penalized).unwrap(), stake);
+            assert_eq!(
+                storage
+                    .balance(outbe_primitives::addresses::STAKING_ADDRESS)
+                    .unwrap(),
+                stake
+            );
+        }
+        storage.set_block_timestamp(U256::from(10_000)).unwrap();
+        crate::tally::slash_and_reset_counters(oracle, 10_000).unwrap();
+        assert_eq!(oracle.penalty_success_count.read(&healthy).unwrap(), 0);
+        assert_eq!(oracle.penalty_miss_count.read(&penalized).unwrap(), 0);
+        assert!(matches!(
+            outbe_validatorset::contract::ValidatorSet::new(storage.clone())
+                .validator_lifecycle(penalized)
+                .unwrap(),
+            ValidatorLifecycle::JailRetained(_) | ValidatorLifecycle::Jail(_)
+        ));
+        assert_eq!(
+            staking.get_stake(penalized).unwrap(),
+            stake * U256::from(9) / U256::from(10)
+        );
+    });
+}
+
+#[test]
 fn slash_window_rejects_unbounded_validator_work() {
     with_oracle(|storage, oracle| {
         let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
@@ -109,6 +168,25 @@ fn slash_window_processes_every_admissible_registry() {
         }
 
         crate::tally::slash_and_reset_counters(oracle, 10_000).unwrap();
+    });
+}
+
+/// Genesis rejects such a slash_fraction. If one reaches storage anyway, the
+/// slash window must fail with an error, not panic and stop every node.
+#[test]
+fn slash_window_errors_instead_of_panicking_on_an_oversized_slash_fraction() {
+    with_oracle(|storage, oracle| {
+        let v1 = register_voter(&storage);
+        for _ in 0..20 {
+            oracle.increment_miss(&v1).unwrap();
+        }
+        oracle.config_slash_fraction.write(U256::MAX).unwrap();
+
+        let err = crate::tally::slash_and_reset_counters(oracle, 10_000).unwrap_err();
+        assert!(
+            err.to_string().contains("exceeds u64"),
+            "unexpected error: {err}"
+        );
     });
 }
 

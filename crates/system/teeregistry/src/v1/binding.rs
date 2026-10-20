@@ -93,7 +93,7 @@ impl TeeRegistry<'_> {
         Ok(!binding.binding_id.is_zero()
             && !binding.enclave_id.is_zero()
             && self.binding_code_admitted_v1(&binding)?
-            && binding.valid_until > consensus_timestamp(&self.storage)?)
+            && binding.valid_until > self.storage.now_secs()?)
     }
 
     /// Deterministic attestation readiness only. Consensus membership/status is a
@@ -111,7 +111,7 @@ impl TeeRegistry<'_> {
             return Ok(false);
         }
         Ok(self.binding_code_admitted_v1(&binding)?
-            && binding.valid_until > consensus_timestamp(&self.storage)?)
+            && binding.valid_until > self.storage.now_secs()?)
     }
 
     pub(super) fn node_enclave_binding_v1(

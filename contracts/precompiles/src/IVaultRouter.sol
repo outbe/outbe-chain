@@ -40,7 +40,6 @@ interface IVaultRouter {
     error InvalidLiquiditySource();
     error InvalidLiquidityTarget();
     error ReserveVaultNotConfigured();
-    error ReserveVaultAssetMismatch();
     error ReserveVaultAlreadyAdded();
     error ReserveVaultNotFound();
     error ReserveVaultOwnerNotRenounced(address currentOwner);
@@ -124,9 +123,15 @@ interface IVaultRouter {
     /// @notice Returns the ISO 4217 currency code recorded when `vault` was registered.
     function vaultReferenceCurrency(address vault) external view returns (uint16 isoCode);
 
-    /// @notice Returns every asset registered under `isoCode`. Order is not
+    /// @notice Returns the distinct assets of the vaults at positions `[offset, offset + limit)`
+    ///         of the `isoCode` vault set. Use `referenceCurrencyVaultsCount` for the set size.
+    ///         An asset shared by vaults on different pages can occur on each page. Returns an
+    ///         empty array when `offset` is past the end or `limit` is zero. Order is not
     ///         stable across removals and carries no meaning.
-    function referenceCurrencyAssets(uint16 isoCode) external view returns (address[] memory assets);
+    function referenceCurrencyAssets(uint16 isoCode, uint256 offset, uint256 limit)
+        external
+        view
+        returns (address[] memory assets);
 
     /// @notice Returns the number of liquidity sources.
     function liquiditySourcesCount() external view returns (uint256);

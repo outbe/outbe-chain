@@ -247,7 +247,7 @@ fn auction_opened_on(world: &World, venue: &VenueSide) {
             venue_probes::desis_stage(&home, worldwide_day),
             venue_probes::frozen_targets(&home, origin_router, worldwide_day),
             venue_probes::day_closure(world, worldwide_day),
-            venue_probes::day_colour(world, worldwide_day)
+            venue_probes::day_status(world, worldwide_day)
         );
         sleep(Duration::from_secs(2));
     }

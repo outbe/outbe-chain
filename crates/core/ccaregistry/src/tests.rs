@@ -398,14 +398,22 @@ fn timestamp_conversion_and_deadline_overflow_are_checked() {
     run(|storage| {
         bond(&storage, ALICE, BOND_REQUIREMENT);
         storage.set_block_timestamp(U256::from(u64::MAX)).unwrap();
-        assert!(runtime::unbond(storage.clone(), ALICE).is_err());
+        assert!(
+            matches!(runtime::unbond(storage.clone(), ALICE).unwrap_err(),
+            outbe_primitives::error::PrecompileError::Revert(message)
+                if message == "CCA arithmetic overflow or underflow")
+        );
         assert!(api::is_active(&storage, ALICE).unwrap());
     });
     let mut provider = HashMapStorageProvider::new(1);
     provider.set_timestamp(U256::MAX);
     StorageHandle::enter(&mut provider, |storage| {
         bond(&storage, ALICE, BOND_REQUIREMENT);
-        assert!(runtime::unbond(storage.clone(), ALICE).is_err());
+        assert!(
+            matches!(runtime::unbond(storage.clone(), ALICE).unwrap_err(),
+            outbe_primitives::error::PrecompileError::Revert(message)
+                if message == "timestamp exceeds u64")
+        );
         assert!(api::is_active(&storage, ALICE).unwrap());
     });
 }

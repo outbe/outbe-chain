@@ -111,7 +111,7 @@ pub(super) fn runtime_ctx(storage: StorageHandle<'_>) -> BlockRuntimeContext<'_>
     BlockRuntimeContext::new(
         BlockContext::new(
             storage.block_number().unwrap(),
-            storage.timestamp().unwrap().to::<u64>(),
+            storage.now_secs().unwrap(),
             storage.chain_id().unwrap(),
             VALIDATOR,
             vec![VALIDATOR],

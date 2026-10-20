@@ -64,7 +64,7 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
             ISSUED_AT
         );
         assert!(
-            s.timestamp().unwrap().to::<u64>() > deadline,
+            s.now_secs().unwrap() > deadline,
             "the fixture sits past the settlement deadline"
         );
 

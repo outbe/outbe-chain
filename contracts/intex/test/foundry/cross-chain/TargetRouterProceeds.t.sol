@@ -179,8 +179,9 @@ contract TargetRouterProceedsTest is CrossChainTest {
         _deliverRefund(SERIES_ID);
 
         assertEq(otherBridge.calls(), 0, "nothing sent in a token the bridge does not move");
-        (uint32 s, uint128 a, bool exists, bool done) = target.parkedProceeds(0);
+        (uint32 s, uint16 chunk, uint128 a, bool exists, bool done) = target.parkedProceeds(0);
         assertEq(s, SERIES_ID);
+        assertEq(chunk, 0, "the parked route keeps its chunk");
         assertEq(a, AMOUNT);
         assertTrue(exists);
         assertFalse(done);

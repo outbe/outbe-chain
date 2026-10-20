@@ -58,8 +58,8 @@ pub use client::{IOracle, ITributeFactory, Rpc, TxOutcome};
 pub use finality::{BlockCommitmentV1, FinalizedCheckpoint};
 pub use governance::StablecoinProposal;
 pub use metadosis::{
-    MetadosisWorldwideDayStartedV1, MetadosisWorldwideDayStateV1,
-    MetadosisWorldwideDayStatusChangeV1, MetadosisWorldwideDayTerminalReceiptV1,
+    MetadosisEmissionDayStateV1, MetadosisWorldwideDayStartedV1, MetadosisWorldwideDayStateV1,
+    MetadosisWorldwideDayTerminalReceiptV1,
 };
 
 pub use oracle::OracleRateDataV1;

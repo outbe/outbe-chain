@@ -9,7 +9,7 @@ pub type CallContextProviderError = String;
 /// Errors returned by [`crate::call_context`] operations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub enum CallContextError {
-    /// Stored protocol version or block timestamp exceeded its integer width.
+    /// Stored protocol version exceeded its integer width.
     #[error("enclave call context integer overflow")]
     IntegerOverflow,
 

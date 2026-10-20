@@ -294,7 +294,7 @@ impl TeeRegistry<'_> {
         let policy_bytes = policy
             .encode_canonical()
             .map_err(TeeRegistryError::active_v1_policy_encoding_failed)?;
-        let consensus_timestamp = consensus_timestamp(&self.storage)?;
+        let consensus_timestamp = self.storage.now_secs()?;
         let (outcome, onboarding_artifact) = if issue_onboarding_artifact {
             self.verify_dcap_registration_claims_v1(DcapVerificationContextV1 {
                 expected_operation,

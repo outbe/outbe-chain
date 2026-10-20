@@ -25,9 +25,6 @@ pub const WWD_ADVANCE_TICK_CADENCE_HOURS: u64 = 1;
 /// Symbolic rate: 32% of tribute nominal -> gratis demand.
 pub const SYMBOLIC_RATE: u64 = 32;
 
-/// RED day reduction coefficient: divide by 8.
-pub const RED_DAY_REDUCTION_COEF: u64 = 8;
-
 /// Bootstrap lookback delay: 0 hours.
 pub const BOOTSTRAP_LOOKBACK_DELAY_HOURS: u64 = 0;
 

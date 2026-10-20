@@ -562,12 +562,9 @@ fn stale_oracle_cycle_credits_validator_reward_and_allows_later_feeder_vote() {
                     .unwrap(),
                 voter_gems: gem.total_supply().unwrap(),
                 feeder_vote_exists: oracle.vote_exists.read(&proposer).unwrap(),
-                formation_exists: outbe_metadosis::api::day_limit_formation_receipt(
-                    storage,
-                    outbe_primitives::time::WorldwideDay::new(PREVIOUS_DAY),
-                )
-                .unwrap()
-                .is_some(),
+                formation_exists: outbe_metadosis::api::emission_day(storage, PREVIOUS_DAY)
+                    .unwrap()
+                    .is_some(),
             }
         })
     }

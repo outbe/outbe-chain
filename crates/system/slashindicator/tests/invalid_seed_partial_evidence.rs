@@ -167,6 +167,60 @@ fn build_ipe1(
 }
 
 #[test]
+fn wide_timestamp_does_not_consume_invalid_partial_evidence() {
+    use outbe_primitives::{error::PrecompileError, storage::hashmap::HashMapStorageProvider};
+
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_block_number(1);
+    let fx = StorageHandle::enter(&mut provider, setup);
+    let signer = 1usize;
+    let bad = sign_partial(&fx, signer, ROUND_EPOCH, ROUND_VIEW + 1);
+    let id_sig = identity_sign(&fx, signer, &bad);
+    let evidence = build_ipe1(&fx, signer as u32, &bad, &id_sig, &fx.commitment);
+    let before_storage = provider.storage.clone();
+    let before_events = provider.get_ordered_events().to_vec();
+    for timestamp in [U256::from(u64::MAX) + U256::from(1), U256::MAX] {
+        provider.set_timestamp(timestamp);
+        StorageHandle::enter(&mut provider, |storage| {
+            assert!(matches!(
+                SlashIndicator::new(storage.clone()).submit_invalid_seed_partial_evidence(SUBMITTER, &evidence),
+                Err(PrecompileError::Revert(message)) if message == "timestamp exceeds u64"
+            ));
+            assert_eq!(
+                storage.balance(STAKING_ADDRESS).unwrap(),
+                U256::from(4_000_000)
+            );
+            assert_eq!(storage.balance(SUBMITTER).unwrap(), U256::ZERO);
+        });
+        assert_eq!(provider.storage, before_storage);
+        assert_eq!(provider.get_ordered_events(), before_events);
+    }
+    provider.set_timestamp(U256::from(100));
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut si = SlashIndicator::new(storage.clone());
+        si.submit_invalid_seed_partial_evidence(SUBMITTER, &evidence)
+            .unwrap();
+        assert!(matches!(
+            test_lifecycle_of(storage.clone(), validator_addr(signer as u32)).unwrap(),
+            ValidatorLifecycle::JailRetained(_)
+        ));
+        assert_eq!(
+            si.felony_count
+                .read(&validator_addr(signer as u32))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            Staking::new(storage.clone())
+                .get_stake(validator_addr(signer as u32))
+                .unwrap(),
+            U256::from(920_000)
+        );
+        assert_eq!(storage.balance(SUBMITTER).unwrap(), U256::from(8_000));
+    });
+}
+
+#[test]
 fn invalid_partial_jails_and_slashes_then_dedups() {
     with_storage(|storage| {
         let fx = setup(storage.clone());

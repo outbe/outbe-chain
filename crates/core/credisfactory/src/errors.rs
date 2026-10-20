@@ -39,8 +39,6 @@ pub enum CredisFactoryError {
     NothingOutstanding,
     #[error("only the Credis owner can forfeit it")]
     NotCredisOwner,
-    #[error("timestamp exceeds u64")]
-    TimestampOverflow,
     #[error("payoff overflow")]
     PayoffOverflow,
     #[error("asset decimals undecodable")]

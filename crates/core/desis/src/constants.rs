@@ -44,8 +44,8 @@ pub const MIN_COMMIT_WINDOW_SECONDS: u64 = 16 * 3600;
 pub const MIN_COMMIT_WINDOW_SECONDS: u64 = 300;
 
 /// `dayState` wire values carried by AUCTION_STAGE_START.
-pub const DAY_STATE_GREEN: u8 = 1;
-pub const DAY_STATE_RED: u8 = 2;
+pub const DAY_STATE_LIVE: u8 = 1;
+pub const DAY_STATE_CANCELLED: u8 = 2;
 
 /// Winners per REFUND_INSTRUCTIONS message: the codec's `MAX_PAYLOAD_ARRAY_LEN`.
 /// Issuance uses its own, narrower cap. A recipient costs a mint, and a winner

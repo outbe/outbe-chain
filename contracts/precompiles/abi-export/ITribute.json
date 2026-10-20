@@ -39,6 +39,19 @@
   },
   {
     "type": "function",
+    "name": "getActiveWorldwideDays",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "wwds",
+        "type": "uint32[]",
+        "internalType": "uint32[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getDayLeagueFraction",
     "inputs": [
       {
@@ -143,6 +156,45 @@
         "name": "tributeIds",
         "type": "uint256[]",
         "internalType": "uint256[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getWorldwideDay",
+    "inputs": [
+      {
+        "name": "wwd",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "day",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "formingStart",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "formingEnd",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "offeringsStart",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "offeringEnd",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "stateMutability": "view"
@@ -388,6 +440,49 @@
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "WorldwideDayStarted",
+    "inputs": [
+      {
+        "name": "worldwideDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "day",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "formingStart",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "formingEnd",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "offeringsStart",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "offeringEnd",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
       }
     ],
     "anonymous": false

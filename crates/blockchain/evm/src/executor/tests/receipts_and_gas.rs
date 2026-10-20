@@ -1,6 +1,5 @@
 use super::*;
 
-mod capacity;
 mod expiry;
 mod factory_approval;
 mod hook_events;
@@ -355,12 +354,6 @@ fn tee_expiry_worst_case_active_sweep_fits_cycle_tick_budget() {
 }
 
 #[test]
-fn capacity_forfeiture_cycle_tick_keeps_twenty_percent_block_headroom() {
-    let _enclave = outbe_tribute::enclave_client::test_enclave::scope();
-    capacity::run();
-}
-
-#[test]
 fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
     const GENESIS_TS: u64 = 1_704_067_200;
     use outbe_primitives::time::SECONDS_PER_DAY;
@@ -378,6 +371,13 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
     let emission_trigger = outbe_cycle::triggers::TriggerId::ProtocolCycle.as_u32();
     let mut state =
         state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
+            assert_eq!(
+                outbe_promislimit::PromisLimitContract::new(storage.clone())
+                    .get_total_unallocated()
+                    .unwrap(),
+                U256::ZERO,
+                "GAS-05 fixture must start with zero carry-over"
+            );
             let genesis_ctx = BlockRuntimeContext::new(
                 BlockContext::new(0, GENESIS_TS, CHAIN_ID, proposer, vec![proposer]),
                 storage.clone(),
