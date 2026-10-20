@@ -10,7 +10,9 @@ use outbe_vote::handlers::{VoteTarget, VoteTargetRegistry};
 use outbe_vote::schema::ProposalStatus;
 use outbe_vote::schema::Vote;
 
+use crate::errors::GovernanceError;
 use crate::precompile::IGovernance;
+use crate::runtime::MAX_PROPOSAL_TEXT_BYTES;
 use crate::schema::GovernanceContract;
 use crate::status;
 use crate::vote_target::GovernanceVoteTarget;
@@ -216,6 +218,45 @@ fn empty_text_is_rejected_at_creation() {
             PrecompileError::Revert(msg) if msg.contains("text must not be empty")
         ));
     });
+}
+
+#[test]
+fn oversize_text_is_rejected_at_creation() {
+    let max = MAX_PROPOSAL_TEXT_BYTES;
+    let expected = GovernanceError::TextTooLarge { len: max + 1, max }.to_string();
+    for kind in KINDS {
+        with_vote(|storage| {
+            let mut vote = Vote::new(storage.clone());
+            let err = vote
+                .create_proposal(
+                    PROPOSER,
+                    GOVERNANCE_ADDRESS,
+                    &GovernanceVotePayload::encode(kind, &"a".repeat(max + 1)),
+                    200,
+                    &VOTE_TARGET_REGISTRY,
+                )
+                .unwrap_err();
+            assert!(
+                matches!(&err, PrecompileError::Revert(msg) if *msg == expected),
+                "expected TextTooLarge, got {err:?}"
+            );
+            assert_absent(&GovernanceContract::new(storage), kind);
+        });
+    }
+}
+
+#[test]
+fn approved_vote_creates_proposal_at_proposal_bound() {
+    for kind in KINDS {
+        let text = "a".repeat(MAX_PROPOSAL_TEXT_BYTES);
+        with_vote(|storage| {
+            let mut vote = Vote::new(storage.clone());
+            let current = 300u64;
+            create_and_pass(&mut vote, kind, &text, current);
+            process_begin_block_test(storage.clone(), current + VOTING_WINDOW_BLOCKS + 1);
+            assert_approved(&GovernanceContract::new(storage), kind, &text);
+        });
+    }
 }
 
 #[test]
