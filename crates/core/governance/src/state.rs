@@ -1,12 +1,9 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::keys::address_u32_key;
-use outbe_primitives::storage::types::StorageSet;
 use outbe_validatorset::contract::ValidatorSet;
 
-use crate::errors::GovernanceError;
-use crate::schema::{Gip, GipEntryExt, GovernanceContract, Oip, OipEntryExt};
-use crate::status::is_valid_status;
+use crate::schema::{Gip, GovernanceContract, Oip};
 
 /// Lightweight proposal projection for listings - every field except the text.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,7 +28,7 @@ pub const MAX_PAGE: u32 = 1000;
 
 /// Clamp an `(offset, limit)` request against a bucket of `total` items,
 /// returning the half-open `[start, end)` index range to read.
-fn page_bounds(total: u32, offset: U256, limit: U256) -> (u32, u32) {
+pub(crate) fn page_bounds(total: u32, offset: U256, limit: U256) -> (u32, u32) {
     let start = offset.min(U256::from(total)).to::<u32>();
     let take = limit.min(U256::from(MAX_PAGE)).to::<u32>();
     let end = start.saturating_add(take).min(total);
@@ -72,21 +69,21 @@ impl GovernanceContract<'_> {
     // --- proposal reads ---
 
     pub fn get_oip(&self, id: U256) -> Result<Option<Oip>> {
-        self.oips.get(id)
+        self.proposals::<Oip>().get(id)
     }
 
     pub fn get_gip(&self, id: U256) -> Result<Option<Gip>> {
-        self.gips.get(id)
+        self.proposals::<Gip>().get(id)
     }
 
     /// Number of OIPs ever submitted (ids run `1..=oip_count`).
     pub fn oip_count(&self) -> Result<u64> {
-        self.next_oip_id.read()
+        self.proposals::<Oip>().count()
     }
 
     /// Number of GIPs ever submitted (ids run `1..=gip_count`).
     pub fn gip_count(&self) -> Result<u64> {
-        self.next_gip_id.read()
+        self.proposals::<Gip>().count()
     }
 
     // --- authority ---
@@ -99,42 +96,15 @@ impl GovernanceContract<'_> {
             .is_active_status())
     }
 
-    // --- proposal metadata projections (read only the fixed-width fields via the
-    //     per-field accessors, never the text data-run) ---
-
-    fn oip_meta(&self, id: U256) -> Result<ProposalMeta> {
-        let e = self.oips.entry(id);
-        Ok(ProposalMeta {
-            id,
-            author: e.author().read()?,
-            status: e.status().read()?,
-            created_block: e.created_block().read()?,
-            updated_block: e.updated_block().read()?,
-            text_hash: e.text_hash().read()?,
-        })
-    }
-
-    fn gip_meta(&self, id: U256) -> Result<ProposalMeta> {
-        let e = self.gips.entry(id);
-        Ok(ProposalMeta {
-            id,
-            author: e.author().read()?,
-            status: e.status().read()?,
-            created_block: e.created_block().read()?,
-            updated_block: e.updated_block().read()?,
-            text_hash: e.text_hash().read()?,
-        })
-    }
-
     // --- index-backed listings (paginated: read only the [offset, offset+limit)
     //     slice of the relevant bucket. The counts let callers size the pages) ---
 
     pub fn oip_count_by_author(&self, author: Address) -> Result<u32> {
-        self.oip_author_count.read(&author)
+        self.proposals::<Oip>().count_by_author(author)
     }
 
     pub fn gip_count_by_author(&self, author: Address) -> Result<u32> {
-        self.gip_author_count.read(&author)
+        self.proposals::<Gip>().count_by_author(author)
     }
 
     pub fn oips_by_author(
@@ -143,15 +113,7 @@ impl GovernanceContract<'_> {
         offset: U256,
         limit: U256,
     ) -> Result<Vec<ProposalMeta>> {
-        let (start, end) = page_bounds(self.oip_author_count.read(&author)?, offset, limit);
-        let mut out = Vec::with_capacity((end - start) as usize);
-        for i in start..end {
-            let id = self.oip_author_ids.read(&author_index_key(author, i))?;
-            if self.oips.entry(id).exists()? {
-                out.push(self.oip_meta(id)?);
-            }
-        }
-        Ok(out)
+        self.proposals::<Oip>().by_author(author, offset, limit)
     }
 
     pub fn gips_by_author(
@@ -160,31 +122,17 @@ impl GovernanceContract<'_> {
         offset: U256,
         limit: U256,
     ) -> Result<Vec<ProposalMeta>> {
-        let (start, end) = page_bounds(self.gip_author_count.read(&author)?, offset, limit);
-        let mut out = Vec::with_capacity((end - start) as usize);
-        for i in start..end {
-            let id = self.gip_author_ids.read(&author_index_key(author, i))?;
-            if self.gips.entry(id).exists()? {
-                out.push(self.gip_meta(id)?);
-            }
-        }
-        Ok(out)
+        self.proposals::<Gip>().by_author(author, offset, limit)
     }
 
     /// Number of OIPs currently in `status` (0..=4).
     pub fn oip_count_by_status(&self, status: u8) -> Result<u32> {
-        if !is_valid_status(status) {
-            return Err(GovernanceError::InvalidStatus.into());
-        }
-        self.oip_by_status.get_set(&status).len()
+        self.proposals::<Oip>().count_by_status(status)
     }
 
     /// Number of GIPs currently in `status` (0..=4).
     pub fn gip_count_by_status(&self, status: u8) -> Result<u32> {
-        if !is_valid_status(status) {
-            return Err(GovernanceError::InvalidStatus.into());
-        }
-        self.gip_by_status.get_set(&status).len()
+        self.proposals::<Gip>().count_by_status(status)
     }
 
     /// OIPs currently in `status` (paginated).
@@ -194,11 +142,7 @@ impl GovernanceContract<'_> {
         offset: U256,
         limit: U256,
     ) -> Result<Vec<ProposalMeta>> {
-        if !is_valid_status(status) {
-            return Err(GovernanceError::InvalidStatus.into());
-        }
-        let set = self.oip_by_status.get_set(&status);
-        self.status_page(&set, offset, limit, Self::oip_meta)
+        self.proposals::<Oip>().by_status(status, offset, limit)
     }
 
     /// GIPs currently in `status` (paginated).
@@ -208,27 +152,6 @@ impl GovernanceContract<'_> {
         offset: U256,
         limit: U256,
     ) -> Result<Vec<ProposalMeta>> {
-        if !is_valid_status(status) {
-            return Err(GovernanceError::InvalidStatus.into());
-        }
-        let set = self.gip_by_status.get_set(&status);
-        self.status_page(&set, offset, limit, Self::gip_meta)
-    }
-
-    fn status_page(
-        &self,
-        set: &StorageSet<'_, U256>,
-        offset: U256,
-        limit: U256,
-        meta: fn(&Self, U256) -> Result<ProposalMeta>,
-    ) -> Result<Vec<ProposalMeta>> {
-        let (start, end) = page_bounds(set.len()?, offset, limit);
-        let mut out = Vec::with_capacity((end - start) as usize);
-        for i in start..end {
-            if let Some(id) = set.at(i)? {
-                out.push(meta(self, id)?);
-            }
-        }
-        Ok(out)
+        self.proposals::<Gip>().by_status(status, offset, limit)
     }
 }

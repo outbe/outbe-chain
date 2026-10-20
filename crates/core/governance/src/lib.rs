@@ -22,10 +22,16 @@
 //! Submission rejects a full per-author index before writing a proposal.
 //! Author listings paginate index slots and omit missing records rather than
 //! returning fabricated proposal metadata.
+//!
+//! OIP/GIP operations share a private typed proposal store. Each record adapter
+//! binds its own maps, indexes and event types; schema layouts and the public
+//! API stay separate. Metadata reads and status changes access fixed-width
+//! fields without loading proposal text.
 
 pub mod diff;
 pub mod errors;
 pub mod precompile;
+mod proposals;
 pub mod runtime;
 pub mod schema;
 pub mod state;

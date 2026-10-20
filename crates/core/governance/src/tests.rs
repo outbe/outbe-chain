@@ -1,4 +1,6 @@
 use alloy_primitives::{address, keccak256, Address, U256};
+use alloy_sol_types::SolEvent;
+use outbe_primitives::addresses::GOVERNANCE_ADDRESS;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
@@ -6,7 +8,8 @@ use outbe_primitives::error::PrecompileError;
 use outbe_validatorset::contract::ValidatorSet;
 
 use crate::errors::GovernanceError;
-use crate::state::author_index_key;
+use crate::precompile::IGovernance;
+use crate::state::{author_index_key, ProposalMeta};
 use crate::status;
 use crate::GovernanceContract;
 
@@ -275,6 +278,103 @@ fn gip_mirrors_oip_behavior() {
         gov.set_gip_status(AUTH, id, status::APPROVED).unwrap();
         assert_eq!(gov.get_gip(id).unwrap().unwrap().status, status::APPROVED);
     });
+}
+
+#[test]
+fn proposal_kinds_keep_text_metadata_and_events_separate() {
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_block_number(10);
+    StorageHandle::enter(&mut provider, |storage| {
+        activate_validator(storage.clone(), AUTH, 1);
+        let mut gov = GovernanceContract::new(storage);
+        assert_eq!(
+            gov.submit_oip(AUTHOR, "original OIP").unwrap(),
+            U256::from(1)
+        );
+        assert_eq!(gov.submit_gip(OTHER, "g").unwrap(), U256::from(1));
+    });
+
+    provider.set_block_number(20);
+    let id = U256::from(1);
+    let oip_hash = keccak256(b"o");
+    let gip_hash = keccak256(b"longer GIP replacement");
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut gov = GovernanceContract::new(storage);
+        gov.update_oip_text(AUTHOR, id, "o").unwrap();
+        gov.update_gip_text(OTHER, id, "longer GIP replacement")
+            .unwrap();
+        gov.set_oip_status(AUTH, id, status::APPROVED).unwrap();
+        gov.set_gip_status(AUTH, id, status::REJECTED).unwrap();
+        assert_eq!(gov.get_oip(id).unwrap().unwrap().text, "o");
+        assert_eq!(
+            gov.get_gip(id).unwrap().unwrap().text,
+            "longer GIP replacement"
+        );
+        assert_eq!(
+            gov.oips_by_author(AUTHOR, U256::ZERO, U256::from(10))
+                .unwrap(),
+            vec![ProposalMeta {
+                id,
+                author: AUTHOR,
+                status: status::APPROVED,
+                created_block: 10,
+                updated_block: 20,
+                text_hash: oip_hash,
+            }]
+        );
+        assert_eq!(
+            gov.gips_by_status(status::REJECTED, U256::ZERO, U256::from(10))
+                .unwrap(),
+            vec![ProposalMeta {
+                id,
+                author: OTHER,
+                status: status::REJECTED,
+                created_block: 10,
+                updated_block: 20,
+                text_hash: gip_hash,
+            }]
+        );
+    });
+
+    assert_eq!(
+        provider.get_events(GOVERNANCE_ADDRESS),
+        &vec![
+            IGovernance::OipSubmitted {
+                id,
+                author: AUTHOR,
+                textHash: keccak256(b"original OIP"),
+            }
+            .encode_log_data(),
+            IGovernance::GipSubmitted {
+                id,
+                author: OTHER,
+                textHash: keccak256(b"g"),
+            }
+            .encode_log_data(),
+            IGovernance::OipTextUpdated {
+                id,
+                textHash: oip_hash
+            }
+            .encode_log_data(),
+            IGovernance::GipTextUpdated {
+                id,
+                textHash: gip_hash
+            }
+            .encode_log_data(),
+            IGovernance::OipStatusChanged {
+                id,
+                oldStatus: status::DRAFT,
+                newStatus: status::APPROVED,
+            }
+            .encode_log_data(),
+            IGovernance::GipStatusChanged {
+                id,
+                oldStatus: status::DRAFT,
+                newStatus: status::REJECTED,
+            }
+            .encode_log_data(),
+        ]
+    );
 }
 
 #[test]
