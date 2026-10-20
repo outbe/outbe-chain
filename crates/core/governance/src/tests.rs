@@ -64,8 +64,8 @@ fn canon_roundtrip_and_versioning() {
         assert_eq!(hash, keccak256(b"gain takes time"));
         assert_eq!(gov.canon_revision_hash(1).unwrap(), hash);
 
-        // second update -> version 2, revision map keeps both
-        let v = gov.update_canon(AUTH, "gain takes more time").unwrap();
+        // second write (the vote path) -> version 2, revision map keeps both
+        let v = gov.apply_canon_text("gain takes more time").unwrap();
         assert_eq!(v, 2);
         assert_eq!(
             gov.canon_revision_hash(1).unwrap(),
@@ -105,7 +105,7 @@ fn canon_overwrite_shorter_is_clean() {
     with_governance(|gov| {
         let long = "x".repeat(200);
         gov.update_canon(AUTH, &long).unwrap();
-        gov.update_canon(AUTH, "short").unwrap();
+        gov.apply_canon_text("short").unwrap();
         let (text, _, hash) = gov.get_canon().unwrap();
         assert_eq!(text, "short");
         assert_eq!(hash, keccak256(b"short"));
@@ -127,6 +127,67 @@ fn canon_rejects_empty_and_oversize() {
         assert!(gov.update_canon(AUTH, "").is_err());
         let too_big = "a".repeat(crate::runtime::MAX_TEXT_BYTES + 1);
         assert!(gov.update_canon(AUTH, &too_big).is_err());
+    });
+}
+
+fn assert_canon_requires_vote<T: std::fmt::Debug>(result: outbe_primitives::error::Result<T>) {
+    let expected = GovernanceError::CanonRequiresVote.to_string();
+    assert!(
+        matches!(&result, Err(PrecompileError::Revert(msg)) if *msg == expected),
+        "expected CanonRequiresVote, got {result:?}"
+    );
+}
+
+#[test]
+fn bootstrap_canon_update_still_works() {
+    with_governance(|gov| {
+        assert_eq!(gov.update_canon(AUTH, "first canon").unwrap(), 1);
+        let (text, ver, hash) = gov.get_canon().unwrap();
+        assert_eq!(text, "first canon");
+        assert_eq!(ver, 1);
+        assert_eq!(hash, keccak256(b"first canon"));
+        assert_eq!(gov.canon_revision_hash(1).unwrap(), hash);
+
+        assert_eq!(gov.update_meta_canon(AUTH, "first meta").unwrap(), 1);
+        let (text, ver, hash) = gov.get_meta_canon().unwrap();
+        assert_eq!(text, "first meta");
+        assert_eq!(ver, 1);
+        assert_eq!(hash, keccak256(b"first meta"));
+        assert_eq!(gov.meta_canon_revision_hash(1).unwrap(), hash);
+    });
+}
+
+#[test]
+fn direct_canon_update_refused_after_bootstrap() {
+    with_governance(|gov| {
+        gov.update_canon(AUTH, "canon v1").unwrap();
+        gov.update_meta_canon(AUTH, "meta v1").unwrap();
+
+        assert_canon_requires_vote(gov.update_canon(AUTH, "canon v2"));
+        assert_canon_requires_vote(gov.update_meta_canon(AUTH, "meta v2"));
+
+        // The stored texts, versions and revision maps are unchanged.
+        let (text, ver, hash) = gov.get_canon().unwrap();
+        assert_eq!((text.as_str(), ver), ("canon v1", 1));
+        assert_eq!(hash, keccak256(b"canon v1"));
+        assert!(gov.canon_revision_hash(2).unwrap().is_zero());
+        let (text, ver, hash) = gov.get_meta_canon().unwrap();
+        assert_eq!((text.as_str(), ver), ("meta v1", 1));
+        assert_eq!(hash, keccak256(b"meta v1"));
+        assert!(gov.meta_canon_revision_hash(2).unwrap().is_zero());
+    });
+}
+
+#[test]
+fn non_authority_still_refused_at_bootstrap() {
+    with_governance(|gov| {
+        assert_not_authorized(gov.update_canon(OTHER, "sneaky"));
+        assert_not_authorized(gov.update_meta_canon(OTHER, "sneaky"));
+        // After bootstrap a non-authority still gets NotAuthorized first.
+        gov.update_canon(AUTH, "canon v1").unwrap();
+        assert_not_authorized(gov.update_canon(OTHER, "sneaky"));
+        assert_eq!(gov.get_canon().unwrap().0, "canon v1");
+        assert_eq!(gov.get_meta_canon().unwrap().1, 0);
     });
 }
 
@@ -160,6 +221,9 @@ fn submission_counters_are_checked() {
                     let id = gov.submit_gip(AUTHOR, "last proposal").unwrap();
                     (id, gov.get_gip(id).unwrap().unwrap().text)
                 }
+                crate::ProposalKind::CanonText | crate::ProposalKind::MetaCanonText => {
+                    unreachable!("text kinds have no id sequence")
+                }
             };
             assert_eq!(id, U256::from(u64::MAX));
             assert_eq!(text, "last proposal");
@@ -172,6 +236,9 @@ fn submission_counters_are_checked() {
             let error = match kind {
                 crate::ProposalKind::Oip => gov.submit_oip(AUTHOR, "overflow"),
                 crate::ProposalKind::Gip => gov.submit_gip(AUTHOR, "overflow"),
+                crate::ProposalKind::CanonText | crate::ProposalKind::MetaCanonText => {
+                    unreachable!("text kinds have no id sequence")
+                }
             }
             .unwrap_err();
             assert!(
@@ -296,7 +363,7 @@ fn authority_follows_live_validator_set() {
         assert!(!gov.is_authority(LATE).unwrap());
         activate_validator(storage.clone(), LATE, 2);
         assert!(gov.is_authority(LATE).unwrap());
-        gov.update_canon(LATE, "v2").unwrap();
+        gov.update_meta_canon(LATE, "m1").unwrap();
 
         // A validator that leaves ACTIVE loses write rights at once.
         let id = gov.submit_oip(AUTHOR, "body").unwrap();
@@ -307,7 +374,8 @@ fn authority_follows_live_validator_set() {
         assert_not_authorized(gov.update_canon(AUTH, "v3"));
         assert_not_authorized(gov.update_meta_canon(AUTH, "m"));
         assert_not_authorized(gov.set_oip_status(AUTH, id, status::APPROVED));
-        assert_eq!(gov.get_canon().unwrap().1, 2);
+        assert_eq!(gov.get_canon().unwrap().1, 1);
+        assert_eq!(gov.get_meta_canon().unwrap().1, 1);
     });
 }
 

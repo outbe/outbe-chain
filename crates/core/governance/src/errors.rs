@@ -45,6 +45,9 @@ pub enum GovernanceError {
 
     #[error("proposal id sequence is exhausted")]
     ProposalIdExhausted,
+
+    #[error("canon text is installed: change it through an approved vote proposal")]
+    CanonRequiresVote,
 }
 
 impl From<GovernanceError> for PrecompileError {

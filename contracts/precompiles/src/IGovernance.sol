@@ -52,7 +52,10 @@ interface IGovernance {
     function getMetaCanonRevisionHash(uint64 version) external view returns (bytes32);
     function getCanonRevisionHash(uint64 version) external view returns (bytes32);
 
-    // --- canon / meta-canon: full-overwrite write (gated on ACTIVE validator) ---
+    // --- canon / meta-canon: bootstrap write (gated on ACTIVE validator) ---
+    // Installs version 1 only. After that the call reverts with
+    // "canon text is installed: ..." and the text changes only through an
+    // approved vote proposal of kind "canontext" or "metacanontext".
     function updateMetaCanon(string calldata text) external returns (uint64 newVersion);
     function updateCanon(string calldata text) external returns (uint64 newVersion);
 

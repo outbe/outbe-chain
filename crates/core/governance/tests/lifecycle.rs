@@ -4,14 +4,17 @@
 //! directly. Unlike them, this test exercises the full path: ABI decode -> dispatch -> caller
 //! gating -> ABI encode of the return value.
 //!
-//! Flow: activate one validator in the live ValidatorSet -> update canon/meta-canon -> submit an OIP ->
-//! drive its status Draft -> Approved -> Implemented -> submit a GIP and diff it against the
-//! canon. The test also covers the negative paths: a non-authority cannot write the canon or
-//! move a proposal's status.
+//! Flow: activate one validator in the live ValidatorSet -> install the first canon/meta-canon
+//! (bootstrap) -> submit an OIP -> drive its status Draft -> Approved -> Implemented -> submit a
+//! GIP and diff it against the canon. The test also covers the negative paths: a non-authority
+//! cannot write the canon or move a proposal's status, and an authority cannot overwrite the
+//! canon through the direct entry after bootstrap.
 
 use alloy_primitives::{address, Address, U256};
 use alloy_sol_types::SolCall;
+use outbe_governance::errors::GovernanceError;
 use outbe_governance::precompile::{dispatch as gov_dispatch, IGovernance};
+use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_validatorset::contract::ValidatorSet;
 
@@ -40,7 +43,7 @@ fn governance_full_lifecycle_via_dispatch() {
                 .unwrap();
         }
 
-        // --- canon / meta-canon: authority writes, anyone reads ---
+        // --- canon / meta-canon: authority installs version 1, anyone reads ---
         let call = IGovernance::updateCanonCall {
             text: "line a\nline b\nline c\n".into(),
         };
@@ -69,6 +72,26 @@ fn governance_full_lifecycle_via_dispatch() {
             text: "hostile".into(),
         };
         assert!(gov_dispatch(storage.clone(), &call.abi_encode(), OUTSIDER, U256::ZERO).is_err());
+
+        // After bootstrap the direct entry refuses an authority too: the text
+        // changes only through an approved vote proposal.
+        let err =
+            gov_dispatch(storage.clone(), &call.abi_encode(), AUTHORITY, U256::ZERO).unwrap_err();
+        assert!(
+            matches!(&err, PrecompileError::Revert(msg)
+                if *msg == GovernanceError::CanonRequiresVote.to_string()),
+            "err={err:?}"
+        );
+        let out = gov_dispatch(
+            storage.clone(),
+            &IGovernance::getCanonCall {}.abi_encode(),
+            OUTSIDER,
+            U256::ZERO,
+        )
+        .unwrap();
+        let canon = IGovernance::getCanonCall::abi_decode_returns(&out).unwrap();
+        assert_eq!(canon.text, "line a\nline b\nline c\n");
+        assert_eq!(canon.version, 1);
 
         // --- OIP: anyone submits; authority drives status ---
         let call = IGovernance::submitOipCall {

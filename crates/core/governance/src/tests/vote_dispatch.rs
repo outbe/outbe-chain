@@ -1,3 +1,4 @@
+use alloy_primitives::keccak256;
 use alloy_primitives::{address, Address, B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_primitives::addresses::GOVERNANCE_ADDRESS;
@@ -85,6 +86,9 @@ fn submitted_sig(kind: ProposalKind) -> B256 {
     match kind {
         ProposalKind::Oip => IGovernance::OipSubmitted::SIGNATURE_HASH,
         ProposalKind::Gip => IGovernance::GipSubmitted::SIGNATURE_HASH,
+        ProposalKind::CanonText | ProposalKind::MetaCanonText => {
+            unreachable!("text kinds create no proposal record")
+        }
     }
 }
 
@@ -105,6 +109,9 @@ fn assert_approved(gov: &GovernanceContract<'_>, kind: ProposalKind, text: &str)
                 .unwrap();
             (p.status, p.author, p.text, listed)
         }
+        ProposalKind::CanonText | ProposalKind::MetaCanonText => {
+            unreachable!("text kinds create no proposal record")
+        }
     };
     assert_eq!(record_status, status::APPROVED);
     assert_eq!(author, PROPOSER);
@@ -124,6 +131,9 @@ fn assert_absent(gov: &GovernanceContract<'_>, kind: ProposalKind) {
             assert!(gov.get_gip(id).unwrap().is_none());
             assert_eq!(gov.gip_count().unwrap(), 0);
         }
+        ProposalKind::CanonText | ProposalKind::MetaCanonText => {
+            unreachable!("text kinds create no proposal record")
+        }
     }
 }
 
@@ -133,6 +143,7 @@ fn approved_vote_creates_approved_proposal() {
         let text = match kind {
             ProposalKind::Oip => "oip body",
             ProposalKind::Gip => "gip body",
+            ProposalKind::CanonText | ProposalKind::MetaCanonText => unreachable!(),
         };
         let provider = with_vote_provider(|storage| {
             let mut vote = Vote::new(storage.clone());
@@ -248,5 +259,142 @@ fn expired_governance_proposal_does_not_create_record() {
             );
             assert_absent(&GovernanceContract::new(storage), kind);
         });
+    }
+}
+
+// ------------------------------------------------- canon / meta-canon text ---
+
+const TEXT_KINDS: [ProposalKind; 2] = [ProposalKind::CanonText, ProposalKind::MetaCanonText];
+
+/// Reads `(text, version, hash, revision hash at version)` for a text kind.
+fn stored_text(gov: &GovernanceContract<'_>, kind: ProposalKind) -> (String, u64, B256, B256) {
+    let ((text, version, hash), revision) = match kind {
+        ProposalKind::CanonText => {
+            let stored = gov.get_canon().unwrap();
+            let revision = gov.canon_revision_hash(stored.1).unwrap();
+            (stored, revision)
+        }
+        ProposalKind::MetaCanonText => {
+            let stored = gov.get_meta_canon().unwrap();
+            let revision = gov.meta_canon_revision_hash(stored.1).unwrap();
+            (stored, revision)
+        }
+        ProposalKind::Oip | ProposalKind::Gip => unreachable!("record kinds have no text slot"),
+    };
+    (text, version, hash, revision)
+}
+
+/// Decodes every `(version, hash)` text-update event of `kind`, in emit order.
+fn text_events(provider: &HashMapStorageProvider, kind: ProposalKind) -> Vec<(u64, B256)> {
+    provider
+        .get_events(GOVERNANCE_ADDRESS)
+        .iter()
+        .filter_map(|log| match kind {
+            ProposalKind::CanonText => IGovernance::CanonUpdated::decode_log_data(log)
+                .ok()
+                .map(|e| (e.version, e.hash)),
+            ProposalKind::MetaCanonText => IGovernance::MetaCanonUpdated::decode_log_data(log)
+                .ok()
+                .map(|e| (e.version, e.hash)),
+            ProposalKind::Oip | ProposalKind::Gip => {
+                unreachable!("record kinds emit no text event")
+            }
+        })
+        .collect()
+}
+
+/// Installs version 1 through the bootstrap route, then replaces it with
+/// version 2 through an approved vote proposal of `kind`.
+fn assert_approved_text_proposal_changes_text(kind: ProposalKind) {
+    let provider = with_vote_provider(|storage| {
+        let mut gov = GovernanceContract::new(storage.clone());
+        match kind {
+            ProposalKind::CanonText => gov.update_canon(PROPOSER, "text v1").unwrap(),
+            _ => gov.update_meta_canon(PROPOSER, "text v1").unwrap(),
+        };
+
+        let mut vote = Vote::new(storage.clone());
+        let current = 100u64;
+        let proposal_id = create_and_pass(&mut vote, kind, "text v2", current);
+        // Before the tally the text is still version 1.
+        assert_eq!(stored_text(&gov, kind).1, 1);
+        process_begin_block_test(storage.clone(), current + VOTING_WINDOW_BLOCKS + 1);
+
+        assert_eq!(
+            vote.proposals
+                .get(proposal_id)
+                .unwrap()
+                .unwrap()
+                .proposal_status()
+                .unwrap(),
+            ProposalStatus::Approved
+        );
+        let (text, version, hash, revision) = stored_text(&gov, kind);
+        assert_eq!(text, "text v2");
+        assert_eq!(version, 2);
+        assert_eq!(hash, keccak256(b"text v2"));
+        assert_eq!(revision, hash);
+        // The text kinds create no OIP / GIP record.
+        assert_eq!(gov.oip_count().unwrap(), 0);
+        assert_eq!(gov.gip_count().unwrap(), 0);
+    });
+    assert_eq!(
+        text_events(&provider, kind),
+        vec![(1, keccak256(b"text v1")), (2, keccak256(b"text v2"))]
+    );
+}
+
+#[test]
+fn approved_canon_proposal_changes_the_text() {
+    assert_approved_text_proposal_changes_text(ProposalKind::CanonText);
+}
+
+#[test]
+fn approved_meta_canon_proposal_changes_the_meta_text() {
+    assert_approved_text_proposal_changes_text(ProposalKind::MetaCanonText);
+}
+
+#[test]
+fn approved_canon_proposal_installs_first_text() {
+    let provider = with_vote_provider(|storage| {
+        let mut vote = Vote::new(storage.clone());
+        create_and_pass(&mut vote, ProposalKind::CanonText, "first", 100);
+        process_begin_block_test(storage.clone(), 100 + VOTING_WINDOW_BLOCKS + 1);
+        let (text, version, _, _) =
+            stored_text(&GovernanceContract::new(storage), ProposalKind::CanonText);
+        assert_eq!((text.as_str(), version), ("first", 1));
+    });
+    assert_eq!(
+        text_events(&provider, ProposalKind::CanonText),
+        vec![(1, keccak256(b"first"))]
+    );
+}
+
+#[test]
+fn unshaped_text_rejected_at_proposal_creation() {
+    let too_big = "a".repeat(crate::runtime::MAX_TEXT_BYTES + 1);
+    for kind in TEXT_KINDS {
+        for (text, expected) in [
+            ("", "text must not be empty"),
+            (too_big.as_str(), "text exceeds the maximum size"),
+        ] {
+            with_vote(|storage| {
+                let mut vote = Vote::new(storage.clone());
+                let err = vote
+                    .create_proposal(
+                        PROPOSER,
+                        GOVERNANCE_ADDRESS,
+                        &GovernanceVotePayload::encode(kind, text),
+                        200,
+                        &VOTE_TARGET_REGISTRY,
+                    )
+                    .unwrap_err();
+                assert!(
+                    matches!(&err, PrecompileError::Revert(msg) if msg.contains(expected)),
+                    "kind={kind:?} err={err:?}"
+                );
+                assert_eq!(stored_text(&GovernanceContract::new(storage), kind).1, 0);
+            });
+        }
     }
 }

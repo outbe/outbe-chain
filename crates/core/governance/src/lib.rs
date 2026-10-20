@@ -3,7 +3,9 @@
 //!
 //! - **Meta-canon / canon** - a single structured text each, versioned, with a
 //!   keccak hash and a `version -> hash` revision map. Two operations: read and
-//!   full-overwrite write. No status model.
+//!   full-overwrite write. No status model. The direct write entry installs
+//!   only the first version (bootstrap). After that, only an approved vote
+//!   proposal of kind `canontext` / `metacanontext` replaces the text.
 //! - **OIP / GIP** - separate record types with independent id sequences. Each
 //!   carries a small header (author, status, blocks, text hash) plus the
 //!   proposal text in-record. Status lifecycle:
@@ -12,12 +14,12 @@
 //! - **diff** - unified diff of a proposal's text against the current canon or
 //!   meta-canon (view-only, via `similar`).
 //!
-//! Writes to the normative texts and to proposal status are gated on the
+//! The bootstrap text writes and proposal status writes are gated on the
 //! caller being an ACTIVE validator in the live `ValidatorSet`, checked at call
-//! time. This gate is PoC scaffolding in place of the decision pipeline, which
-//! is not built yet.
-//! The vote path ([`GovernanceVoteTarget`]) may also materialize Approved
-//! OIP/GIP records after validator quorum.
+//! time. The status gate is PoC scaffolding in place of the decision pipeline,
+//! which is not built yet.
+//! The vote path ([`GovernanceVoteTarget`]) materializes Approved OIP/GIP
+//! records and replaces the canon or meta-canon text after validator quorum.
 //!
 //! Submission rejects an exhausted per-kind ID sequence or a full per-author
 //! index before changing proposal storage or emitting events.
