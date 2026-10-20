@@ -68,6 +68,17 @@ pub enum PrecompileError {
 /// Result type alias for precompile operations.
 pub type Result<T> = std::result::Result<T, PrecompileError>;
 
+/// An execution timestamp cannot be represented in seconds as a `u64`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("timestamp exceeds u64")]
+pub struct TimestampOverflow;
+
+impl From<TimestampOverflow> for PrecompileError {
+    fn from(error: TimestampOverflow) -> Self {
+        Self::Revert(error.to_string())
+    }
+}
+
 /// Errors that initial TEE genesis policy construction returns.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum TeeGenesisPolicyError {

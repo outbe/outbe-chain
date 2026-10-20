@@ -162,13 +162,15 @@ fn native_lysis_completes(world: &mut World) {
             .expect("native Lysis emission day at the completion checkpoint");
         assert_eq!(state.state, EMISSION_DAY_SUCCEEDED);
     }
-    let height = create_nods_for_completed_day(world, day, &ports, height);
+    let (nod_height, nod_blocks) = create_nods_for_completed_day(world, day, &ports, height);
     let supply = world.rpc.nod_supply(ports[0]).expect("native Nod supply");
     assert!(supply > 0);
     for port in ports {
         assert_eq!(world.rpc.nod_supply(port), Some(supply));
     }
     world.state.lysis_completion_height = Some(height);
+    world.state.nod_creation_height = Some(nod_height);
+    world.state.nod_creation_blocks = nod_blocks;
 }
 
 fn create_nods_for_completed_day(
@@ -176,7 +178,7 @@ fn create_nods_for_completed_day(
     day: u32,
     ports: &[u16],
     completed_height: u64,
-) -> u64 {
+) -> (u64, std::collections::BTreeMap<alloy_primitives::U256, u64>) {
     use crate::internal::{addresses, eth};
     use alloy_primitives::{Address, U256};
     use std::collections::BTreeMap;
@@ -185,7 +187,7 @@ fn create_nods_for_completed_day(
     let url = world.rpc.url(primary);
     let tribute_ids = world.rpc.tributes_by_day(primary, day).unwrap_or_default();
     if tribute_ids.is_empty() {
-        return completed_height;
+        return (completed_height, BTreeMap::new());
     }
 
     let mut owner_keys = BTreeMap::<Address, String>::new();
@@ -248,6 +250,7 @@ fn create_nods_for_completed_day(
     }
 
     let mut last_height = completed_height;
+    let mut blocks = BTreeMap::new();
     for chunk in calls.chunks(8) {
         let outcomes = std::thread::scope(|scope| {
             chunk
@@ -273,12 +276,13 @@ fn create_nods_for_completed_day(
                 .map(|handle| handle.join().expect("join createNod worker"))
                 .collect::<Vec<_>>()
         });
-        for outcome in &outcomes {
+        for ((tribute_id, _), outcome) in chunk.iter().zip(&outcomes) {
             crate::features::settlement::assert_mined_success(outcome, "ITribute::createNod");
             let block_number = world
                 .rpc
                 .receipt_block_number(&outcome.transaction_hash, primary)
                 .expect("createNod receipt block number");
+            blocks.insert(*tribute_id, block_number);
             last_height = last_height.max(block_number);
         }
     }
@@ -294,15 +298,12 @@ fn create_nods_for_completed_day(
             "all Tributes for day {day} must be burned after createNod on port {port}"
         );
     }
-    last_height
+    (last_height, blocks)
 }
 
 #[when("all validator nodes restart with preserved EVM state")]
 fn restart_native_nodes(world: &mut World) {
-    let height = world
-        .state
-        .lysis_completion_height
-        .expect("completed Lysis");
+    let height = world.state.nod_creation_height.expect("created Nods");
     let ports = world.validators.committee_ports();
     let before = world
         .rpc

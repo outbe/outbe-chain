@@ -1,6 +1,6 @@
 use super::*;
 use outbe_primitives::{
-    addresses::RADICLE_REGISTRY_ADDRESS,
+    addresses::CODE_REGISTRY_ADDRESS,
     radicle_genesis::{GovernmentsDescriptor, GENESIS_GOVERNMENTS_FIELD},
 };
 
@@ -12,7 +12,7 @@ fn seeded() -> (HashMapStorageProvider, serde_json::Value) {
     let mut provider = HashMapStorageProvider::new(2026);
     for (key, value) in fixture["storage"].as_object().unwrap() {
         provider.storage.insert(
-            (RADICLE_REGISTRY_ADDRESS, key.parse().unwrap()),
+            (CODE_REGISTRY_ADDRESS, key.parse().unwrap()),
             value.as_str().unwrap().parse().unwrap(),
         );
     }
@@ -23,7 +23,7 @@ fn seeded() -> (HashMapStorageProvider, serde_json::Value) {
 fn python_genesis_allocation_decodes_through_typed_registry() {
     let (mut provider, fixture) = seeded();
     StorageHandle::enter(&mut provider, |storage| {
-        let registry = RadicleRegistry::new(storage);
+        let registry = CodeRegistry::new(storage);
         let descriptor = registry.governments_descriptor().unwrap().unwrap();
         assert_eq!(descriptor.description, "Network governance");
         assert_eq!(descriptor.chain_id, 2026);
@@ -58,22 +58,20 @@ fn malformed_or_missing_genesis_commitment_fails_before_unbounded_bytes_read() {
         let (mut provider, _) = seeded();
         provider
             .storage
-            .insert((RADICLE_REGISTRY_ADDRESS, U256::from(slot)), word);
+            .insert((CODE_REGISTRY_ADDRESS, U256::from(slot)), word);
         StorageHandle::enter(&mut provider, |storage| {
-            assert!(RadicleRegistry::new(storage)
-                .governments_descriptor()
-                .is_err());
+            assert!(CodeRegistry::new(storage).governments_descriptor().is_err());
         });
     }
     let (mut provider, _) = seeded();
     provider
         .storage
-        .remove(&(RADICLE_REGISTRY_ADDRESS, U256::from(10)));
+        .remove(&(CODE_REGISTRY_ADDRESS, U256::from(10)));
     provider
         .storage
-        .remove(&(RADICLE_REGISTRY_ADDRESS, U256::from(11)));
+        .remove(&(CODE_REGISTRY_ADDRESS, U256::from(11)));
     StorageHandle::enter(&mut provider, |storage| {
-        assert!(RadicleRegistry::new(storage)
+        assert!(CodeRegistry::new(storage)
             .governments_descriptor()
             .unwrap()
             .is_none());

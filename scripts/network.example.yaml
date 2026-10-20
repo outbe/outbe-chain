@@ -144,7 +144,7 @@ tee:
 #   max_validators: 128
 #   reregistration_cooldown_blocks: 151200
 
-# radicle_registry:
+# code_registry:
 #   max_repositories: -1
 
 # oracle:

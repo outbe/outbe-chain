@@ -294,6 +294,29 @@ contract DestinationSettlerTest is BaseTest {
         vm.stopPrank();
     }
 
+    /// @dev A receiver the origin cannot decode would leave the order FILLED forever: it could be
+    ///      neither settled nor refunded.
+    function test_fillOrder_RevertWhen_FillerDataInvalid() public {
+        OrderData memory orderData = _prepareOrderData();
+        bytes32 orderId = OrderEncoder.id(orderData);
+        bytes memory originData = OrderEncoder.encode(orderData);
+
+        _doFullAuction(vegeta, orderId, amount, originData);
+
+        bytes[3] memory invalid = [
+            abi.encode(bytes32(type(uint256).max)), // upper 96 bits set
+            abi.encodePacked(vegeta), // 20 bytes, not 32
+            abi.encode(vegeta, vegeta) // 64 bytes
+        ];
+        vm.startPrank(vegeta);
+        outputToken.approve(address(destinationSettler), amount);
+        for (uint256 i = 0; i < invalid.length; i++) {
+            vm.expectRevert(DestinationSettler.InvalidFillerData.selector);
+            destinationSettler.fillOrder(orderId, originData, invalid[i]);
+        }
+        vm.stopPrank();
+    }
+
     function test_fillOrder_native_InvalidNativeAmount() public {
         OrderData memory orderData = _prepareOrderData();
         orderData.inputToken = TypeCasts.addressToBytes32(address(0));
@@ -305,7 +328,7 @@ contract DestinationSettlerTest is BaseTest {
 
         vm.prank(vegeta);
         vm.expectRevert(OrderStatusStorage.InvalidNativeAmount.selector);
-        destinationSettler.fillOrder{value: amount - 1}(orderId, originData, new bytes(0));
+        destinationSettler.fillOrder{value: amount - 1}(orderId, originData, abi.encode(vegeta.addressToBytes32()));
     }
 
     function test_fillOrder_InvalidOrderId() public {

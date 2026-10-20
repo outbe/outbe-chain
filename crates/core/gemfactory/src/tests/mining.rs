@@ -66,15 +66,40 @@ fn anyone_may_relay_mining_and_the_promis_lands_with_the_owner() {
         force_settled(storage, gem_id);
 
         let nonce = find_valid_nonce(gem_id, ALICE);
-        let minted = runtime::mine_promis(
-            storage,
-            crate::schema::GemMiningProof { gem_id, nonce },
-            promis_auth(ALICE, load, 0),
-        )
-        .unwrap();
-        assert_eq!(minted, load);
+        let call = crate::precompile::IGemFactory::minePromisCall {
+            gemId: gem_id,
+            nonce,
+            mac: B256::from(promis_auth(ALICE, load, 0).mac),
+            opNonce: 0,
+        };
+        let minted =
+            crate::precompile::dispatch(storage.clone(), &call.abi_encode(), BOB, U256::ZERO)
+                .unwrap();
+        assert_eq!(
+            crate::precompile::IGemFactory::minePromisCall::abi_decode_returns(&minted).unwrap(),
+            load
+        );
         assert!(gem_api::get_item(storage, gem_id).unwrap().is_none());
+
+        let sk = outbe_promis::enclave_client::test_enclave::state_key();
+        let blob = outbe_promis::api::balance_ct(storage.clone(), ALICE).unwrap();
+        assert_eq!(
+            decrypt_balance(&derive_view_key(&sk, ALICE).unwrap(), ALICE, &blob).unwrap(),
+            load
+        );
+        assert!(outbe_promis::api::balance_ct(storage.clone(), BOB)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            outbe_promis::api::op_nonce(storage.clone(), ALICE).unwrap(),
+            1
+        );
+        assert_eq!(
+            outbe_promis::api::op_nonce(storage.clone(), BOB).unwrap(),
+            0
+        );
     });
+    outbe_promis::enclave_client::test_enclave::uninstall();
 }
 
 #[test]

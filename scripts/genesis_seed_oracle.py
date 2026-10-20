@@ -90,18 +90,29 @@ def _validate_oracle_pairs(pairs):
 
 
 def _seed_oracle_config(storage, cfg, pairs):
-    storage.set_slot(0, parse_int(cfg.get("vote_period", 2)))
-    storage.set_slot(1, parse_int(cfg.get("reward_band", "20000000000000000")))
+    reward_band = parse_int(cfg.get("reward_band", "20000000000000000"))
     penalties_enabled = cfg.get("penalties_enabled", True)
     if penalties_enabled:
-        min_valid_per_window = cfg.get("min_valid_per_window", "50000000000000000")
-        slash_fraction = cfg.get("slash_fraction", "0")
+        min_valid_per_window = parse_int(
+            cfg.get("min_valid_per_window", "50000000000000000")
+        )
+        slash_fraction = parse_int(cfg.get("slash_fraction", "0"))
     else:
-        min_valid_per_window = "0"
-        slash_fraction = "0"
+        min_valid_per_window = 0
+        slash_fraction = 0
+    # 1e18-scaled ratios in [0, 1], as the Rust genesis check requires.
+    for field, value in (
+        ("reward_band", reward_band),
+        ("min_valid_per_window", min_valid_per_window),
+        ("slash_fraction", slash_fraction),
+    ):
+        if value > 10**18:
+            raise ValueError(f"oracle.config.{field} {value} exceeds 1e18 (a ratio above 1)")
+    storage.set_slot(0, parse_int(cfg.get("vote_period", 2)))
+    storage.set_slot(1, reward_band)
     storage.set_slot(2, parse_int(cfg.get("slash_window", 96)))
-    storage.set_slot(3, parse_int(min_valid_per_window))
-    storage.set_slot(4, parse_int(slash_fraction))
+    storage.set_slot(3, min_valid_per_window)
+    storage.set_slot(4, slash_fraction)
     storage.set_slot(5, parse_int(cfg.get("lookback_duration", SECONDS_PER_DAY)))
     storage.set_slot(6, 1 if cfg.get("enabled", True) else 0)
     storage.set_slot(7, 1 if cfg.get("initialized", True) else 0)

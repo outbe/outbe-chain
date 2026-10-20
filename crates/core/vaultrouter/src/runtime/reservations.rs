@@ -35,7 +35,7 @@ pub(crate) fn reserve_stables(
             return Err(VaultRouterError::InvalidReservationAmount.into());
         }
 
-        let now = now_secs(&storage)?;
+        let now = storage.now_secs()?;
         let expires_at = now
             .checked_add(RESERVATION_TTL_SECS)
             .ok_or(VaultRouterError::TimestampOverflow)?;
@@ -105,7 +105,7 @@ fn release_checked(
     receiver: Address,
     amount: U256,
 ) -> Result<U256> {
-    let now = now_secs(&storage)?;
+    let now = storage.now_secs()?;
     storage.with_checkpoint(|| {
         let record = take_reservation(&storage, id)?;
         ensure_releasable(&record, id, now, receiver, amount)?;
@@ -169,7 +169,7 @@ pub(crate) fn return_reservation(
     caller: Address,
     id: U256,
 ) -> Result<U256> {
-    let now = now_secs(&storage)?;
+    let now = storage.now_secs()?;
     storage.with_checkpoint(|| {
         let Some(record) = take_reservation_if_held(&storage, id)? else {
             return Ok(U256::ZERO);
@@ -208,13 +208,6 @@ fn take_reservation_if_held(
     };
     contract.reservations.delete(id)?;
     Ok(Some(record))
-}
-
-fn now_secs(storage: &StorageHandle<'_>) -> Result<u64> {
-    storage
-        .timestamp()?
-        .try_into()
-        .map_err(|_| VaultRouterError::TimestampOverflow.into())
 }
 
 /// `reservationOf`: the reservation held under `id`, or a zeroed record when none.

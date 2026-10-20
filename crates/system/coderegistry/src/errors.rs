@@ -1,12 +1,12 @@
-//! Typed error definitions for the RadicleRegistry system precompile.
+//! Typed error definitions for the CodeRegistry system precompile.
 
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
-/// Represents errors returned by the RadicleRegistry runtime.
+/// Represents errors returned by the CodeRegistry runtime.
 #[derive(Debug, Error)]
 #[non_exhaustive]
-pub enum RadicleRegistryError {
+pub enum CodeRegistryError {
     #[error("Radicle repository id must be non-zero")]
     ZeroRepositoryId,
     #[error("Radicle repository is already registered")]
@@ -31,8 +31,8 @@ pub enum RadicleRegistryError {
     InvalidPublication(&'static str),
 }
 
-impl From<RadicleRegistryError> for PrecompileError {
-    fn from(error: RadicleRegistryError) -> Self {
+impl From<CodeRegistryError> for PrecompileError {
+    fn from(error: CodeRegistryError) -> Self {
         Self::Revert(error.to_string())
     }
 }

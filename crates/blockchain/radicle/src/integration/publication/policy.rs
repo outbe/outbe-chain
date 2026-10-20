@@ -65,15 +65,15 @@ impl AcceptedRepositoryPolicy {
         let mut previous = alloy_primitives::B256::ZERO;
         for (index, receipt) in history.receipts.iter().enumerate() {
             let body = &receipt.receipt().body;
-            if self.scope != Scope::from_body(body)?
+            let invalid_chain = self.scope != Scope::from_body(body)?
                 || body.sequence != index as u64 + 1
-                || body.previous_receipt_hash != previous
-                || receipt.receipt().receipt_hash != body.receipt_hash()
-                || receipt.receipt().accepted_height > receipt.block().number
-                || (index == 0
-                    && body.action
-                        != outbe_primitives::radicle_publication::PublicationAction::Bootstrap)
-            {
+                || body.previous_receipt_hash != previous;
+            let invalid_receipt = receipt.receipt().receipt_hash != body.receipt_hash()
+                || receipt.receipt().accepted_height > receipt.block().number;
+            let invalid_bootstrap = index == 0
+                && body.action
+                    != outbe_primitives::radicle_publication::PublicationAction::Bootstrap;
+            if invalid_chain || invalid_receipt || invalid_bootstrap {
                 return Err(Error::Configuration);
             }
             previous = receipt.receipt().receipt_hash;
@@ -183,12 +183,13 @@ impl AcceptedRepositoryPolicy {
         receipt: &crate::manager::FinalizedPublicationReceipt,
     ) -> Result<Self, Error> {
         let root = receipt.receipt();
-        if root.body.action != outbe_primitives::radicle_publication::PublicationAction::Bootstrap
+        let invalid_root = root.body.action
+            != outbe_primitives::radicle_publication::PublicationAction::Bootstrap
             || root.body.sequence != 1
-            || !root.body.previous_receipt_hash.is_zero()
-            || root.receipt_hash != root.body.receipt_hash()
-            || root.accepted_height > receipt.block().number
-        {
+            || !root.body.previous_receipt_hash.is_zero();
+        let invalid_receipt = root.receipt_hash != root.body.receipt_hash()
+            || root.accepted_height > receipt.block().number;
+        if invalid_root || invalid_receipt {
             return Err(Error::Configuration);
         }
         Ok(Self {
@@ -404,7 +405,7 @@ impl PublicationPolicy for AcceptedRepositoryPolicy {
 mod tests {
     use super::*;
     use crate::manager::{FinalizedBlock, FinalizedPublicationReceipt};
-    use outbe_radicleregistry::publication::PublicationReceipt;
+    use outbe_coderegistry::publication::PublicationReceipt;
 
     #[test]
     fn trusted_bootstrap_without_package_pins_owner_but_grants_no_entries() {

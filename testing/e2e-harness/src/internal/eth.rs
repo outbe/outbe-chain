@@ -176,7 +176,7 @@ pub(crate) const VALIDATOR_POOL: u8 = 3;
 const REWARD_CALL_ISO: u16 = 840;
 sol!("../../contracts/precompiles/src/ITeeRegistryV1.sol");
 sol!("../../contracts/precompiles/src/ISlashIndicator.sol");
-sol!("../../contracts/precompiles/src/IRadicleRegistry.sol");
+sol!("../../contracts/precompiles/src/ICodeRegistry.sol");
 
 // Negative-path tests submit this deliberately unsupported legacy selector and
 // assert that the canonical ValidatorSet ABI rejects it without mutation.

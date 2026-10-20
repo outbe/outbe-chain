@@ -3,6 +3,35 @@ use outbe_primitives::time::SECONDS_PER_DAY_U32;
 use outbe_vaultrouter::settlement::SettlementPayment;
 
 #[test]
+fn issue_distinguishes_timestamp_narrowing_from_protocol_width() {
+    with_factory(|storage| {
+        for (timestamp, expected) in [
+            (
+                U256::from(u32::MAX) + U256::ONE,
+                "block timestamp exceeds u32",
+            ),
+            (U256::from(u64::MAX), "block timestamp exceeds u32"),
+            (U256::from(u64::MAX) + U256::ONE, "timestamp exceeds u64"),
+            (U256::MAX, "timestamp exceeds u64"),
+        ] {
+            storage.set_block_timestamp(timestamp).unwrap();
+            assert!(matches!(runtime::issue_intex(&storage, sample(7)),
+                Err(outbe_primitives::error::PrecompileError::Revert(message))
+                    if message == expected));
+            assert!(!outbe_intex::api::series_exists(&storage, sid(7)).unwrap());
+        }
+        storage.set_block_timestamp(U256::from(u32::MAX)).unwrap();
+        runtime::issue_intex(&storage, sample(7)).unwrap();
+        assert_eq!(
+            outbe_intex::api::read_series(&storage, sid(7))
+                .unwrap()
+                .issued_at,
+            u32::MAX
+        );
+    });
+}
+
+#[test]
 fn issue_creates_series_in_registry() {
     with_factory(|s| {
         runtime::issue_intex(&s, sample(7)).unwrap();

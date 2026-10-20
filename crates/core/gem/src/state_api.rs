@@ -162,7 +162,7 @@ impl GemContract<'_> {
         self.remove_group_member(item.group_key, item.gem_id.to_u256())?;
         self.take_unpaid_load(item.group_key, item.promis_load_minor)?;
         item.called_at = self.group_called_at.read(&item.group_key)?;
-        item.settled_at = self.storage.timestamp()?.to::<u64>();
+        item.settled_at = self.storage.now_secs()?;
         item.state = GemState::Settled as u8;
         self.records.update(&item)?;
         self.groups.update(&group)?;

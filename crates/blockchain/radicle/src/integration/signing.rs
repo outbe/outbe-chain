@@ -61,6 +61,106 @@ pub struct RepositorySigningMaterial {
     material_hash: [u8; 32],
 }
 
+type PatchTarget<'a> = (
+    &'a outbe_coderegistry::PatchApprovalRecord,
+    &'a CheckpointOwnerSnapshot,
+    &'a ReviewSigningContext,
+    RepositoryKey,
+);
+
+trait PreparedSubject {
+    fn context_and_owner(&self) -> (&ReviewSigningContext, RepositoryKey);
+    fn subject(&self) -> &RepositorySubject;
+}
+
+impl PreparedSubject for PreparedPatchReview {
+    fn context_and_owner(&self) -> (&ReviewSigningContext, RepositoryKey) {
+        (self.signing_context(), self.owner())
+    }
+    fn subject(&self) -> &RepositorySubject {
+        Self::subject(self)
+    }
+}
+
+impl PreparedSubject for PreparedReviewRefs {
+    fn context_and_owner(&self) -> (&ReviewSigningContext, RepositoryKey) {
+        (self.signing_context(), self.owner())
+    }
+    fn subject(&self) -> &RepositorySubject {
+        Self::subject(self)
+    }
+}
+
+trait PatchJob: std::ops::Deref<Target: PreparedSubject> {
+    fn approval_and_snapshot(
+        &self,
+    ) -> (
+        &outbe_coderegistry::PatchApprovalRecord,
+        &CheckpointOwnerSnapshot,
+    );
+    fn review_receipt(&self) -> Option<&crate::manager::FinalizedPublicationReceipt> {
+        None
+    }
+    fn patch_target(&self) -> PatchTarget<'_> {
+        let (approval, snapshot) = self.approval_and_snapshot();
+        let (context, owner) = self.deref().context_and_owner();
+        (approval, snapshot, context, owner)
+    }
+    fn subject(&self) -> &RepositorySubject {
+        self.deref().subject()
+    }
+}
+
+impl PatchJob for CheckpointPreparedReview {
+    fn approval_and_snapshot(
+        &self,
+    ) -> (
+        &outbe_coderegistry::PatchApprovalRecord,
+        &CheckpointOwnerSnapshot,
+    ) {
+        (self.approval(), self.snapshot())
+    }
+}
+
+impl PatchJob for CheckpointPreparedReviewRefs {
+    fn approval_and_snapshot(
+        &self,
+    ) -> (
+        &outbe_coderegistry::PatchApprovalRecord,
+        &CheckpointOwnerSnapshot,
+    ) {
+        (self.approval(), self.snapshot())
+    }
+}
+
+impl PatchJob for super::merge::CheckpointPreparedMerge {
+    fn approval_and_snapshot(
+        &self,
+    ) -> (
+        &outbe_coderegistry::PatchApprovalRecord,
+        &CheckpointOwnerSnapshot,
+    ) {
+        (self.approval(), self.snapshot())
+    }
+    fn review_receipt(&self) -> Option<&crate::manager::FinalizedPublicationReceipt> {
+        Some(self.review())
+    }
+}
+
+impl PatchJob for super::merge::CheckpointPreparedMergeRefs {
+    fn approval_and_snapshot(
+        &self,
+    ) -> (
+        &outbe_coderegistry::PatchApprovalRecord,
+        &CheckpointOwnerSnapshot,
+    ) {
+        (self.approval(), self.snapshot())
+    }
+    fn review_receipt(&self) -> Option<&crate::manager::FinalizedPublicationReceipt> {
+        Some(self.review())
+    }
+}
+
 impl RepositorySigningMaterial {
     /// Decode the public Output component of a witness against local finalized authority.
     /// The caller also binds its material hash to the current checkpoint before publication.
@@ -81,50 +181,31 @@ impl RepositorySigningMaterial {
         frames: &[RepositoryPartial],
     ) -> Result<(), Error> {
         verify_native_witness(
-            &self.review_context([0; 32]),
-            &self.output,
-            self.owner,
+            (&self.review_context([0; 32]), &self.output, self.owner),
             actual,
             envelope,
             frames,
         )
     }
 
-    fn authorize_current_review(
-        &self,
-        state: &FinalizedPatchSigningState,
-        approval: &outbe_radicleregistry::PatchApprovalRecord,
-        snapshot: &CheckpointOwnerSnapshot,
-        context: &ReviewSigningContext,
-        owner: RepositoryKey,
-    ) -> Result<(), Error> {
-        self.authorize_current_patch(
-            state,
-            approval,
-            snapshot,
-            context,
-            owner,
-            outbe_radicleregistry::schema::PATCH_EXECUTION_PENDING,
-        )
-    }
-
     fn authorize_current_patch(
         &self,
         state: &FinalizedPatchSigningState,
-        approval: &outbe_radicleregistry::PatchApprovalRecord,
-        snapshot: &CheckpointOwnerSnapshot,
-        context: &ReviewSigningContext,
-        owner: RepositoryKey,
+        (approval, snapshot, context, owner): PatchTarget<'_>,
         stage: u8,
     ) -> Result<(), Error> {
         self.check_context(owner, context)?;
         if state.authority() != &self.authority
             || &state.approval().approval != approval
             || state.stage() != stage
-            || snapshot.checkpoint().receipt() != state.checkpoint().receipt()
+        {
+            return Err(Error::Context);
+        }
+        let material = &state.material().receipt().body;
+        if snapshot.checkpoint().receipt() != state.checkpoint().receipt()
             || context.previous_receipt_hash != state.checkpoint().receipt().receipt_hash.0
-            || self.material_hash != state.material().receipt().body.material_hash.0
-            || self.players_commitment != state.material().receipt().body.players_commitment.0
+            || self.material_hash != material.material_hash.0
+            || self.players_commitment != material.players_commitment.0
         {
             return Err(Error::Context);
         }
@@ -134,34 +215,80 @@ impl RepositorySigningMaterial {
     fn authorize_current_merge(
         &self,
         state: &FinalizedPatchSigningState,
-        approval: &outbe_radicleregistry::PatchApprovalRecord,
-        snapshot: &CheckpointOwnerSnapshot,
-        context: &ReviewSigningContext,
-        owner: RepositoryKey,
+        (approval, snapshot, context, owner): PatchTarget<'_>,
         review: &crate::manager::FinalizedPublicationReceipt,
     ) -> Result<(), Error> {
         let decision =
-            outbe_radicleregistry::payload::PatchVotePayloadV1::decode(approval.payload.as_bytes())
+            outbe_coderegistry::payload::PatchVotePayloadV1::decode(approval.payload.as_bytes())
                 .map_err(|_| Error::Context)?;
         let body = &review.receipt().body;
         if body.action != outbe_primitives::radicle_publication::PublicationAction::Review
             || body.proposal_id != approval.proposal_id
-            || body.repo_id != decision.repo_id
+            || body.sequence > snapshot.checkpoint().receipt().body.sequence
+        {
+            return Err(Error::Context);
+        }
+        if body.repo_id != decision.repo_id
             || body.patch_id != decision.patch_id
             || body.revision_id != decision.revision_id
             || body.expected_target_head != decision.expected_target_head
-            || body.sequence > snapshot.checkpoint().receipt().body.sequence
         {
             return Err(Error::Context);
         }
         self.authorize_current_patch(
             state,
-            approval,
-            snapshot,
-            context,
-            owner,
-            outbe_radicleregistry::schema::PATCH_EXECUTION_REVIEWED,
+            (approval, snapshot, context, owner),
+            outbe_coderegistry::schema::PATCH_EXECUTION_REVIEWED,
         )
+    }
+
+    fn authorize_patch_job<J: PatchJob>(
+        &self,
+        state: &FinalizedPatchSigningState,
+        job: &J,
+    ) -> Result<(), Error> {
+        match job.review_receipt() {
+            Some(review) => self.authorize_current_merge(state, job.patch_target(), review),
+            None => self.authorize_current_patch(
+                state,
+                job.patch_target(),
+                outbe_coderegistry::schema::PATCH_EXECUTION_PENDING,
+            ),
+        }
+    }
+
+    fn sign_patch_job<J: PatchJob>(
+        &self,
+        provider: &VrfMaterialProvider<MinSig>,
+        job: &J,
+        state: &FinalizedPatchSigningState,
+        validator: Address,
+        identity: &bls12381::PrivateKey,
+    ) -> Result<RepositoryPartial, Error> {
+        self.authorize_patch_job(state, job)?;
+        self.sign_subject(provider, job.subject(), validator, identity)
+    }
+
+    fn verify_patch_job_partial<J: PatchJob>(
+        &self,
+        job: &J,
+        state: &FinalizedPatchSigningState,
+        sender: &bls12381::PublicKey,
+        frame: &RepositoryPartial,
+    ) -> Result<(), Error> {
+        self.authorize_patch_job(state, job)?;
+        self.verify_subject_partial(&self.public_verifier(), job.subject(), sender, frame)
+            .map(|_| ())
+    }
+
+    fn recover_patch_job<J: PatchJob>(
+        &self,
+        job: &J,
+        state: &FinalizedPatchSigningState,
+        frames: &[(bls12381::PublicKey, RepositoryPartial)],
+    ) -> Result<BlsEnvelope, Error> {
+        self.authorize_patch_job(state, job)?;
+        self.recover_subject(&self.public_verifier(), job.subject(), frames)
     }
 
     pub fn sign_current_merge(
@@ -172,15 +299,7 @@ impl RepositorySigningMaterial {
         validator: Address,
         identity: &bls12381::PrivateKey,
     ) -> Result<RepositoryPartial, Error> {
-        self.authorize_current_merge(
-            state,
-            job.approval(),
-            job.snapshot(),
-            job.signing_context(),
-            job.owner(),
-            job.review(),
-        )?;
-        self.sign_review(provider, job, validator, identity)
+        self.sign_patch_job(provider, job, state, validator, identity)
     }
 
     pub fn sign_current_merge_refs(
@@ -191,15 +310,7 @@ impl RepositorySigningMaterial {
         validator: Address,
         identity: &bls12381::PrivateKey,
     ) -> Result<RepositoryPartial, Error> {
-        self.authorize_current_merge(
-            state,
-            job.approval(),
-            job.snapshot(),
-            job.signing_context(),
-            job.owner(),
-            job.review(),
-        )?;
-        self.sign_review_refs(provider, job, validator, identity)
+        self.sign_patch_job(provider, job, state, validator, identity)
     }
 
     pub fn verify_current_merge_partial(
@@ -209,16 +320,7 @@ impl RepositorySigningMaterial {
         sender: &bls12381::PublicKey,
         frame: &RepositoryPartial,
     ) -> Result<(), Error> {
-        self.authorize_current_merge(
-            state,
-            job.approval(),
-            job.snapshot(),
-            job.signing_context(),
-            job.owner(),
-            job.review(),
-        )?;
-        self.verify_partial(&self.public_verifier(), job, sender, frame)
-            .map(|_| ())
+        self.verify_patch_job_partial(job, state, sender, frame)
     }
 
     pub fn verify_current_merge_refs_partial(
@@ -228,16 +330,7 @@ impl RepositorySigningMaterial {
         sender: &bls12381::PublicKey,
         frame: &RepositoryPartial,
     ) -> Result<(), Error> {
-        self.authorize_current_merge(
-            state,
-            job.approval(),
-            job.snapshot(),
-            job.signing_context(),
-            job.owner(),
-            job.review(),
-        )?;
-        self.verify_review_refs_partial(&self.public_verifier(), job, sender, frame)
-            .map(|_| ())
+        self.verify_patch_job_partial(job, state, sender, frame)
     }
 
     pub fn recover_current_merge(
@@ -246,15 +339,7 @@ impl RepositorySigningMaterial {
         state: &FinalizedPatchSigningState,
         frames: &[(bls12381::PublicKey, RepositoryPartial)],
     ) -> Result<BlsEnvelope, Error> {
-        self.authorize_current_merge(
-            state,
-            job.approval(),
-            job.snapshot(),
-            job.signing_context(),
-            job.owner(),
-            job.review(),
-        )?;
-        self.recover_review(&self.public_verifier(), job, frames)
+        self.recover_patch_job(job, state, frames)
     }
 
     pub fn recover_current_merge_refs(
@@ -263,15 +348,27 @@ impl RepositorySigningMaterial {
         state: &FinalizedPatchSigningState,
         frames: &[(bls12381::PublicKey, RepositoryPartial)],
     ) -> Result<BlsEnvelope, Error> {
-        self.authorize_current_merge(
-            state,
-            job.approval(),
-            job.snapshot(),
-            job.signing_context(),
-            job.owner(),
-            job.review(),
-        )?;
-        self.recover_review_refs(&self.public_verifier(), job, frames)
+        self.recover_patch_job(job, state, frames)
+    }
+
+    fn check_publication_body(
+        &self,
+        body: &outbe_primitives::radicle_publication::PublicationBody,
+    ) -> Result<(), Error> {
+        if body.chain_id != self.authority.chain_id()
+            || body.genesis_hash != self.authority.genesis_hash()
+            || body.epoch != self.authority.epoch()
+        {
+            return Err(Error::Context);
+        }
+        if body.material_version != self.authority.committee().vrf_material_version
+            || body.owner_bls_public.as_slice() != self.owner.as_bytes()
+            || body.material_hash.0 != self.material_hash
+            || body.players_commitment.0 != self.players_commitment
+        {
+            return Err(Error::Context);
+        }
+        Ok(())
     }
 
     fn authorize_bootstrap(
@@ -280,16 +377,13 @@ impl RepositorySigningMaterial {
         body: &outbe_primitives::radicle_publication::PublicationBody,
     ) -> Result<(), Error> {
         use outbe_primitives::radicle_publication::PublicationAction;
+        self.check_publication_body(body)?;
         if state.authority() != &self.authority
-            || body.chain_id != self.authority.chain_id()
-            || body.genesis_hash != self.authority.genesis_hash()
-            || body.epoch != self.authority.epoch()
-            || body.material_version != self.authority.committee().vrf_material_version
-            || body.owner_bls_public.as_slice() != self.owner.as_bytes()
-            || body.material_hash.0 != self.material_hash
-            || body.players_commitment.0 != self.players_commitment
             || body.descriptor_hash != state.descriptor().hash().map_err(|_| Error::Context)?
-            || body.action != PublicationAction::Bootstrap
+        {
+            return Err(Error::Context);
+        }
+        if body.action != PublicationAction::Bootstrap
             || body.sequence != 1
             || !body.previous_receipt_hash.is_zero()
         {
@@ -305,16 +399,7 @@ impl RepositorySigningMaterial {
         attestation: &outbe_primitives::radicle_publication::PublicationAttestation,
     ) -> Result<(), Error> {
         use outbe_primitives::radicle_publication::PUBLICATION_NAMESPACE;
-        if body.chain_id != self.authority.chain_id()
-            || body.genesis_hash != self.authority.genesis_hash()
-            || body.epoch != self.authority.epoch()
-            || body.material_version != self.authority.committee().vrf_material_version
-            || body.owner_bls_public.as_slice() != self.owner.as_bytes()
-            || body.material_hash.0 != self.material_hash
-            || body.players_commitment.0 != self.players_commitment
-        {
-            return Err(Error::Context);
-        }
+        self.check_publication_body(body)?;
         let member = self
             .authority
             .committee()
@@ -375,6 +460,21 @@ impl RepositorySigningMaterial {
         self.sign_subject(provider, job.subject(), validator, identity)
     }
 
+    fn verify_bootstrap_job_partial(
+        &self,
+        state: &crate::manager::FinalizedBootstrapSigningState,
+        (body, subject): (
+            &outbe_primitives::radicle_publication::PublicationBody,
+            &RepositorySubject,
+        ),
+        sender: &bls12381::PublicKey,
+        frame: &RepositoryPartial,
+    ) -> Result<(), Error> {
+        self.authorize_bootstrap(state, body)?;
+        self.verify_subject_partial(&self.public_verifier(), subject, sender, frame)
+            .map(|_| ())
+    }
+
     /// Public-only verification for a contribution to the exact prepared genesis document.
     pub fn verify_bootstrap_document_partial(
         &self,
@@ -383,14 +483,7 @@ impl RepositorySigningMaterial {
         sender: &bls12381::PublicKey,
         frame: &RepositoryPartial,
     ) -> Result<(), Error> {
-        self.authorize_bootstrap(state, job.body())?;
-        let verifier = VrfMaterialProvider::new(
-            self.authority.committee().vrf_material_version,
-            self.output.public().clone(),
-            None,
-        );
-        self.verify_subject_partial(&verifier, job.subject(), sender, frame)
-            .map(|_| ())
+        self.verify_bootstrap_job_partial(state, (job.body(), job.subject()), sender, frame)
     }
 
     pub fn verify_bootstrap_identity_partial(
@@ -400,14 +493,7 @@ impl RepositorySigningMaterial {
         sender: &bls12381::PublicKey,
         frame: &RepositoryPartial,
     ) -> Result<(), Error> {
-        self.authorize_bootstrap(state, job.body())?;
-        let verifier = VrfMaterialProvider::new(
-            self.authority.committee().vrf_material_version,
-            self.output.public().clone(),
-            None,
-        );
-        self.verify_subject_partial(&verifier, job.subject(), sender, frame)
-            .map(|_| ())
+        self.verify_bootstrap_job_partial(state, (job.body(), job.subject()), sender, frame)
     }
 
     pub fn verify_bootstrap_refs_partial(
@@ -417,14 +503,7 @@ impl RepositorySigningMaterial {
         sender: &bls12381::PublicKey,
         frame: &RepositoryPartial,
     ) -> Result<(), Error> {
-        self.authorize_bootstrap(state, job.body())?;
-        let verifier = VrfMaterialProvider::new(
-            self.authority.committee().vrf_material_version,
-            self.output.public().clone(),
-            None,
-        );
-        self.verify_subject_partial(&verifier, job.subject(), sender, frame)
-            .map(|_| ())
+        self.verify_bootstrap_job_partial(state, (job.body(), job.subject()), sender, frame)
     }
 
     fn public_verifier(&self) -> VrfMaterialProvider<MinSig> {
@@ -473,14 +552,7 @@ impl RepositorySigningMaterial {
         validator: Address,
         identity: &bls12381::PrivateKey,
     ) -> Result<RepositoryPartial, Error> {
-        self.authorize_current_review(
-            state,
-            job.approval(),
-            job.snapshot(),
-            job.signing_context(),
-            job.owner(),
-        )?;
-        self.sign_review(provider, job, validator, identity)
+        self.sign_patch_job(provider, job, state, validator, identity)
     }
 
     pub fn verify_current_review_partial(
@@ -490,15 +562,7 @@ impl RepositorySigningMaterial {
         sender: &bls12381::PublicKey,
         frame: &RepositoryPartial,
     ) -> Result<(), Error> {
-        self.authorize_current_review(
-            state,
-            job.approval(),
-            job.snapshot(),
-            job.signing_context(),
-            job.owner(),
-        )?;
-        self.verify_partial(&self.public_verifier(), job, sender, frame)
-            .map(|_| ())
+        self.verify_patch_job_partial(job, state, sender, frame)
     }
 
     pub fn recover_current_review(
@@ -507,14 +571,7 @@ impl RepositorySigningMaterial {
         state: &FinalizedPatchSigningState,
         contributions: &[(bls12381::PublicKey, RepositoryPartial)],
     ) -> Result<BlsEnvelope, Error> {
-        self.authorize_current_review(
-            state,
-            job.approval(),
-            job.snapshot(),
-            job.signing_context(),
-            job.owner(),
-        )?;
-        self.recover_review(&self.public_verifier(), job, contributions)
+        self.recover_patch_job(job, state, contributions)
     }
 
     pub fn recover_current_review_refs(
@@ -523,14 +580,7 @@ impl RepositorySigningMaterial {
         state: &FinalizedPatchSigningState,
         contributions: &[(bls12381::PublicKey, RepositoryPartial)],
     ) -> Result<BlsEnvelope, Error> {
-        self.authorize_current_review(
-            state,
-            job.approval(),
-            job.snapshot(),
-            job.signing_context(),
-            job.owner(),
-        )?;
-        self.recover_review_refs(&self.public_verifier(), job, contributions)
+        self.recover_patch_job(job, state, contributions)
     }
 
     pub fn verify_current_review_refs_partial(
@@ -540,15 +590,7 @@ impl RepositorySigningMaterial {
         sender: &bls12381::PublicKey,
         frame: &RepositoryPartial,
     ) -> Result<(), Error> {
-        self.authorize_current_review(
-            state,
-            job.approval(),
-            job.snapshot(),
-            job.signing_context(),
-            job.owner(),
-        )?;
-        self.verify_review_refs_partial(&self.public_verifier(), job, sender, frame)
-            .map(|_| ())
+        self.verify_patch_job_partial(job, state, sender, frame)
     }
 
     pub fn sign_current_review_refs(
@@ -559,14 +601,7 @@ impl RepositorySigningMaterial {
         validator: Address,
         identity: &bls12381::PrivateKey,
     ) -> Result<RepositoryPartial, Error> {
-        self.authorize_current_review(
-            state,
-            job.approval(),
-            job.snapshot(),
-            job.signing_context(),
-            job.owner(),
-        )?;
-        self.sign_review_refs(provider, job, validator, identity)
+        self.sign_patch_job(provider, job, state, validator, identity)
     }
 
     /// `output` is the locally authenticated canonical DKG output, never a peer's transcript.
@@ -580,10 +615,16 @@ impl RepositorySigningMaterial {
         if n == 0
             || n > outbe_consensus::bls::MAX_VALIDATORS as usize
             || output.players().len() != n
-            || output.public().total().get() as usize != n
+        {
+            return Err(Error::Material);
+        }
+        if output.public().total().get() as usize != n
             || output.public().required() as usize != n - (n - 1) / 3
             || output.public().public().encode().as_ref() != owner.as_bytes()
-            || committee.vrf_group_public_key_bytes.as_slice() != owner.as_bytes()
+        {
+            return Err(Error::Material);
+        }
+        if committee.vrf_group_public_key_bytes.as_slice() != owner.as_bytes()
             || committee.vrf_public_polynomial_hash
                 != outbe_consensus::dkg_manager::public_polynomial_hash(output.public())
             || output
@@ -653,7 +694,10 @@ impl RepositorySigningMaterial {
         if owner != RepositoryKey::from(self.owner)
             || actual.chain_id != expected.chain_id
             || actual.genesis_hash != expected.genesis_hash
-            || actual.epoch != expected.epoch
+        {
+            return Err(Error::Context);
+        }
+        if actual.epoch != expected.epoch
             || actual.material_version != expected.material_version
             || actual.material_hash != expected.material_hash
         {
@@ -759,9 +803,7 @@ impl RepositorySigningMaterial {
         frame: &RepositoryPartial,
     ) -> Result<PartialSignature<MinSig>, Error> {
         verify_native_partial(
-            &self.review_context([0; 32]),
-            &self.output,
-            provider,
+            (&self.review_context([0; 32]), &self.output, provider),
             subject,
             sender,
             frame,
@@ -795,9 +837,7 @@ impl RepositorySigningMaterial {
         contributions: &[(bls12381::PublicKey, RepositoryPartial)],
     ) -> Result<BlsEnvelope, Error> {
         recover_native_subject(
-            &self.review_context([0; 32]),
-            &self.output,
-            self.owner,
+            (&self.review_context([0; 32]), &self.output, self.owner),
             provider,
             subject,
             contributions,
@@ -877,9 +917,11 @@ impl RepositoryPartial {
 }
 
 fn verify_native_witness(
-    context: &ReviewSigningContext,
-    output: &Output<MinSig, bls12381::PublicKey>,
-    owner: BlsPublicKey,
+    (context, output, owner): (
+        &ReviewSigningContext,
+        &Output<MinSig, bls12381::PublicKey>,
+        BlsPublicKey,
+    ),
     actual: &RepositorySubject,
     envelope: &BlsEnvelope,
     frames: &[RepositoryPartial],
@@ -907,7 +949,7 @@ fn verify_native_witness(
     // A receiver needs only the authenticated public polynomial, never a local Share.
     let verifier =
         VrfMaterialProvider::new(context.material_version, output.public().clone(), None);
-    if recover_native_subject(context, output, owner, &verifier, actual, &contributions)?
+    if recover_native_subject((context, output, owner), &verifier, actual, &contributions)?
         != *envelope
     {
         return Err(Error::Partial);
@@ -916,9 +958,11 @@ fn verify_native_witness(
 }
 
 fn verify_native_partial(
-    context: &ReviewSigningContext,
-    output: &Output<MinSig, bls12381::PublicKey>,
-    provider: &VrfMaterialProvider<MinSig>,
+    (context, output, provider): (
+        &ReviewSigningContext,
+        &Output<MinSig, bls12381::PublicKey>,
+        &VrfMaterialProvider<MinSig>,
+    ),
     subject: &RepositorySubject,
     sender: &bls12381::PublicKey,
     frame: &RepositoryPartial,
@@ -945,7 +989,10 @@ fn verify_partial_identity(
     if frame.body.chain_id != context.chain_id
         || frame.body.genesis_hash != context.genesis_hash
         || frame.body.epoch != context.epoch
-        || frame.body.material_version != context.material_version
+    {
+        return Err(Error::Context);
+    }
+    if frame.body.material_version != context.material_version
         || frame.body.material_hash != context.material_hash
     {
         return Err(Error::Context);
@@ -960,9 +1007,11 @@ fn verify_partial_identity(
 }
 
 fn recover_native_subject(
-    context: &ReviewSigningContext,
-    output: &Output<MinSig, bls12381::PublicKey>,
-    owner: BlsPublicKey,
+    (context, output, owner): (
+        &ReviewSigningContext,
+        &Output<MinSig, bls12381::PublicKey>,
+        BlsPublicKey,
+    ),
     provider: &VrfMaterialProvider<MinSig>,
     subject: &RepositorySubject,
     contributions: &[(bls12381::PublicKey, RepositoryPartial)],
@@ -973,7 +1022,7 @@ fn recover_native_subject(
     let partials = contributions
         .iter()
         .map(|(sender, frame)| {
-            verify_native_partial(context, output, provider, subject, sender, frame)
+            verify_native_partial((context, output, provider), subject, sender, frame)
         })
         .collect::<Result<Vec<_>, _>>()?;
     let signature = provider.recover_repository(

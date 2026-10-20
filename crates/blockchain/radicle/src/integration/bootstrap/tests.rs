@@ -526,11 +526,11 @@ fn admit_bootstrap(
     committee: &outbe_validatorset::state::CommitteeSnapshot,
     body: &PublicationBody,
     attestations: &[outbe_primitives::radicle_publication::PublicationAttestation],
-) -> outbe_radicleregistry::publication::PublicationReceipt {
+) -> outbe_coderegistry::publication::PublicationReceipt {
+    use outbe_coderegistry::CodeRegistry;
     use outbe_primitives::{
         radicle_publication::PublicationBatch, storage::hashmap::HashMapStorageProvider,
     };
-    use outbe_radicleregistry::RadicleRegistry;
     use outbe_validatorset::{contract::ValidatorSet, state::write_committee_snapshot};
     let mut state =
         HashMapStorageProvider::new_with_chain_identity(body.chain_id, body.genesis_hash);
@@ -553,7 +553,7 @@ fn admit_bootstrap(
         validators.advance_epoch(1001, 1).unwrap();
         validators.advance_epoch(1002, 2).unwrap();
         write_committee_snapshot(storage.clone(), 2, committee).unwrap();
-        let registry = RadicleRegistry::new(storage);
+        let registry = CodeRegistry::new(storage);
         registry.config_max_repositories.write(8).unwrap();
         registry
             .config_descriptor_hash
@@ -570,12 +570,12 @@ fn admit_bootstrap(
         attestations: attestations[..2].to_vec(),
     };
     let progress = state
-        .enter(|s| RadicleRegistry::new(s).apply_publication_batch(&pending))
+        .enter(|s| CodeRegistry::new(s).apply_publication_batch(&pending))
         .unwrap();
     assert_eq!(progress.attestations, 2);
     assert!(progress.receipt.is_none());
     state.enter(|s| {
-        assert!(RadicleRegistry::new(s)
+        assert!(CodeRegistry::new(s)
             .network_repository
             .read()
             .unwrap()
@@ -586,7 +586,7 @@ fn admit_bootstrap(
         attestations: attestations[2..].to_vec(),
     };
     let accepted = state
-        .enter(|s| RadicleRegistry::new(s).apply_publication_batch(&completing))
+        .enter(|s| CodeRegistry::new(s).apply_publication_batch(&completing))
         .unwrap()
         .receipt
         .unwrap();
@@ -594,9 +594,9 @@ fn admit_bootstrap(
     assert_eq!(accepted.receipt_hash, body.receipt_hash());
     assert_eq!(accepted.accepted_height, 14);
     state.enter(|s| {
-        let registry = RadicleRegistry::new(s);
+        let registry = CodeRegistry::new(s);
         assert_eq!(
-            outbe_radicleregistry::repo_id_from_storage_key(
+            outbe_coderegistry::repo_id_from_storage_key(
                 registry.network_repository.read().unwrap()
             )
             .unwrap(),
@@ -710,7 +710,7 @@ fn accepted_native_history_recovers_without_local_packages_or_signing_material()
             number: 20,
             hash: B256::repeat_byte(20),
         },
-        receipt: outbe_radicleregistry::publication::PublicationReceipt {
+        receipt: outbe_coderegistry::publication::PublicationReceipt {
             accepted_height: 18,
             receipt_hash: body.receipt_hash(),
             body,
