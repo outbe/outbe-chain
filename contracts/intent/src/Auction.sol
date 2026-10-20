@@ -100,7 +100,10 @@ contract Auction is IAuction, Ownable2Step {
         if (commitHash == bytes32(0)) revert NotCommitted();
 
         // TODO fix note[asm-keccak256]: use of inefficient hashing mechanism; consider using inline assembly
-        bytes32 expected = keccak256(abi.encode(orderId, outputAmount, salt));
+        // The committer is part of the commitment. Without it, a commit hash is public calldata.
+        // Anyone can store it under their own address and open it with the values that the
+        // original solver reveals. The copy duplicates the top quote and can win the fill.
+        bytes32 expected = keccak256(abi.encode(orderId, msg.sender, outputAmount, salt));
         if (commitHash != expected) revert InvalidReveal();
 
         // Clear commit (prevent double reveal + gas refund)
