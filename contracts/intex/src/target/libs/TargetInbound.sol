@@ -66,7 +66,7 @@ library TargetInbound {
                     ? InboundReason.DUPLICATE
                     : InboundReason.CONFLICT;
             } else if (selector == IIntexAuction.InvalidSchedule.selector) {
-                bool late = dayState == IIntexAuction.WorldwideDayState.Green && schedule.commitEnd <= block.timestamp;
+                bool late = dayState == IIntexAuction.WorldwideDayState.Live && schedule.commitEnd <= block.timestamp;
                 why = late ? InboundReason.LATE : InboundReason.INVALID;
             } else if (selector == IIntexAuction.InvalidDayState.selector) {
                 why = InboundReason.INVALID;

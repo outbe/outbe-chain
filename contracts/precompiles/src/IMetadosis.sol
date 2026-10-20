@@ -36,7 +36,6 @@ interface IMetadosis {
         uint256 metadosisLimitMinor,
         uint256 promisLimitReturnedMinor,
         string status,
-        string dayState,
         string action
     );
 

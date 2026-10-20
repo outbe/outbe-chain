@@ -130,11 +130,113 @@ pub(crate) fn apply_auction_brief(
             outbe_desis::api::AuctionBrief {
                 worldwide_day,
                 desis_limit_minor: split.desis_limit_minor,
-                is_green: is_active,
+                has_limit: is_active,
             },
             logical_anchor,
             outbe_desis::api::BriefOverflowPolicy::Reject,
         )
         .map(|_| ())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use outbe_primitives::storage::hashmap::HashMapStorageProvider;
+
+    #[test]
+    fn native_split_preserves_the_day_and_carry_economic_vectors() {
+        for (base, lysis, nominal, carry, auction, remaining) in [
+            (1_000, 32, 100, 0, 68, 900),
+            (1_000, 320, 5_000, 0, 680, 0),
+            (1_000, 320, 5_000, 2_000, 2_680, 0),
+            (1_000, 4, 100, 7, 96, 907),
+            (100, 40, 100, 5, 60, 5),
+            (100, 100, 100, 5, 0, 5),
+        ] {
+            let mut provider = HashMapStorageProvider::new(1);
+            StorageHandle::enter(&mut provider, |storage| {
+                PromisLimitContract::new(storage.clone())
+                    .checked_add_carry_over(U256::from(carry as u64))
+                    .unwrap();
+                let split = apply_lysis_limit(
+                    storage.clone(),
+                    LysisLimitInput {
+                        base_limit: U256::from(base as u64),
+                        lysis_limit_minor: U256::from(lysis as u64),
+                        nominal_total: U256::from(nominal as u64),
+                    },
+                )
+                .unwrap();
+                assert_eq!(split.desis_limit_minor, U256::from(auction as u64));
+                assert_eq!(
+                    PromisLimitContract::new(storage.clone())
+                        .get_total_unallocated()
+                        .unwrap(),
+                    U256::from(remaining as u64)
+                );
+                let day = WorldwideDay::new(20260101);
+                apply_auction_brief(storage.clone(), day, &split, 1_699_920_005).unwrap();
+                let desis = outbe_desis::DesisContract::new(storage.clone());
+                assert_eq!(
+                    desis.pending_desis_limit_minor.read(&day).unwrap(),
+                    U256::from(auction as u64)
+                );
+                assert_eq!(
+                    desis.brief_has_limit.read(&day).unwrap(),
+                    u8::from(auction != 0)
+                );
+                assert_eq!(
+                    PromisLimitContract::new(storage)
+                        .get_total_unallocated()
+                        .unwrap(),
+                    U256::from(remaining as u64)
+                );
+            });
+        }
+    }
+
+    #[test]
+    fn native_split_and_auction_failures_roll_back_the_whole_effect() {
+        for (base, lysis, nominal, carry) in [
+            (U256::MAX, U256::ZERO, U256::MAX, U256::ZERO),
+            (U256::from(100), U256::from(40), U256::from(100), U256::MAX),
+            (
+                U256::from(u128::MAX) + U256::from(3),
+                U256::ONE,
+                U256::MAX,
+                U256::ZERO,
+            ),
+        ] {
+            let mut provider = HashMapStorageProvider::new(1);
+            StorageHandle::enter(&mut provider, |storage| {
+                PromisLimitContract::new(storage)
+                    .checked_add_carry_over(carry)
+                    .unwrap();
+            });
+            let before = provider.storage.clone();
+            let events = provider.get_ordered_events().to_vec();
+            let result = StorageHandle::enter(&mut provider, |storage| {
+                storage.with_checkpoint(|| {
+                    let split = apply_lysis_limit(
+                        storage.clone(),
+                        LysisLimitInput {
+                            base_limit: base,
+                            lysis_limit_minor: lysis,
+                            nominal_total: nominal,
+                        },
+                    )?;
+                    apply_auction_brief(
+                        storage.clone(),
+                        WorldwideDay::new(20260101),
+                        &split,
+                        1_699_920_005,
+                    )
+                })
+            });
+            assert!(result.is_err());
+            assert_eq!(provider.storage, before);
+            assert_eq!(provider.get_ordered_events(), events);
+        }
+    }
 }

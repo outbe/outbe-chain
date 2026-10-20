@@ -337,12 +337,6 @@
         "internalType": "string"
       },
       {
-        "name": "dayState",
-        "type": "string",
-        "indexed": false,
-        "internalType": "string"
-      },
-      {
         "name": "action",
         "type": "string",
         "indexed": false,

@@ -132,12 +132,12 @@ pub(crate) fn desis_stage(url: &str, worldwide_day: u32) -> String {
     }
 }
 
-pub(crate) fn day_colour(world: &World, worldwide_day: u32) -> String {
+pub(crate) fn day_status(world: &World, worldwide_day: u32) -> String {
     match world
         .rpc
         .metadosis_wwd_state_on(world.validators.primary_port(), worldwide_day)
     {
-        Some(state) => format!("day type {} in status {}", state.day_type, state.status),
+        Some(state) => format!("day in status {}", state.status),
         None => "day state unreadable".to_owned(),
     }
 }

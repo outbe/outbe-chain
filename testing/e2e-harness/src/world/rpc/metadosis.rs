@@ -229,7 +229,6 @@ fn build_wwd_state(
     MetadosisWorldwideDayStateV1 {
         day: r.day,
         status,
-        day_type: 1,
         forming_start: r.formingStart,
         forming_end: r.formingEnd,
         offerings_start: r.offeringsStart,
@@ -252,7 +251,6 @@ pub struct MetadosisEmissionDayStateV1 {
 pub struct MetadosisWorldwideDayStateV1 {
     pub day: u32,
     pub status: u8,
-    pub day_type: u8,
     pub forming_start: u64,
     pub forming_end: u64,
     pub offerings_start: u64,

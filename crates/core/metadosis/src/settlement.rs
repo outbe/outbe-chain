@@ -127,7 +127,6 @@ fn settle_empty_day(
         metadosisLimitMinor: day_limit,
         promisLimitReturnedMinor: returned,
         status: "COMPLETED".into(),
-        dayState: "SUCCEEDED".into(),
         action: "no tributes".into(),
     })?;
     promis_limit.add_to_total_unallocated(returned)
@@ -189,7 +188,7 @@ fn dispatch_brief(
         outbe_desis::api::AuctionBrief {
             worldwide_day: wwd,
             desis_limit_minor: briefed_desis_limit_minor,
-            is_green: is_active,
+            has_limit: is_active,
         },
         ctx.block.timestamp,
         outbe_desis::api::BriefOverflowPolicy::CarryOver,

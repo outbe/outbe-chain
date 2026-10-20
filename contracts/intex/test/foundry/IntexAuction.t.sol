@@ -95,13 +95,13 @@ contract AuctionTest is Test {
         return _paramsEntry(minIntexBidRate, ENTRY_PRICE, minIntexBidQuantity);
     }
 
-    /// @dev Create and start a green-day auction as the relayer. The schedule is anchored to
+    /// @dev Create and start a live-day auction as the relayer. The schedule is anchored to
     ///      the current `block.timestamp` via `_schedule()`.
     function _start(uint32 worldwideDay, uint32 minIntexBidRate, uint16 minIntexBidQuantity) internal {
         vm.prank(bridger);
         auction.auctionStart(
             worldwideDay,
-            IIntexAuction.WorldwideDayState.Green,
+            IIntexAuction.WorldwideDayState.Live,
             _schedule(),
             _params(minIntexBidRate, minIntexBidQuantity)
         );
@@ -394,10 +394,10 @@ contract AuctionTest is Test {
         _reveal(worldwideDay, iba2, 5, 120, iba2PrivateKey);
     }
 
-    function test_RedDay_AuctionBornCancelled() public {
+    function test_CancelledDay_AuctionBornCancelled() public {
         uint32 worldwideDay = 20250120;
         vm.prank(bridger);
-        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Red, _schedule(), _params(1, 1));
+        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Cancelled, _schedule(), _params(1, 1));
 
         assertEq(uint8(auction.getAuctionStage(worldwideDay)), uint8(IIntexAuction.AuctionStage.Cancelled));
 
@@ -420,7 +420,7 @@ contract AuctionTest is Test {
 
         IIntexAuction.AuctionData memory a = auction.getAuctionInfo(worldwideDay);
         assertEq(a.params.minIntexBidRate, 5);
-        assertEq(uint8(a.worldwideDayState), uint8(IIntexAuction.WorldwideDayState.Green));
+        assertEq(uint8(a.worldwideDayState), uint8(IIntexAuction.WorldwideDayState.Live));
 
         (IIntexAuction.AuctionData memory b, IIntexAuction.SubmittedBidData[] memory bids) =
             auction.getAuctionDetails(worldwideDay);
@@ -528,11 +528,11 @@ contract AuctionTest is Test {
 
         vm.expectRevert();
         vm.prank(admin);
-        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Green, _schedule(), _params(10, 1));
+        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Live, _schedule(), _params(10, 1));
 
         vm.expectRevert();
         vm.prank(iba1);
-        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Green, _schedule(), _params(10, 1));
+        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Live, _schedule(), _params(10, 1));
     }
 
     function test_AccessControl_StartClearingStage() public {
@@ -597,7 +597,7 @@ contract AuctionTest is Test {
         IIntexAuction.AuctionParams memory params = _params(floor, 1);
         params.promisLoadMinor = type(uint128).max; // ceiling so the clearing product overflows uint128
         vm.prank(bridger);
-        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Green, _schedule(), params);
+        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Live, _schedule(), params);
 
         _enterRevealStage(worldwideDay, startTs);
         vm.warp(startTs + REVEAL_OFFSET + 1);
@@ -714,7 +714,7 @@ contract AuctionTest is Test {
         });
         vm.expectRevert(IIntexAuction.InvalidSchedule.selector);
         vm.prank(bridger);
-        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Green, pastSchedule, _params(10, 1));
+        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Live, pastSchedule, _params(10, 1));
 
         // Schedule not strictly increasing (revealEnd <= commitEnd).
         IIntexAuction.AuctionSchedule memory nonIncreasing = IIntexAuction.AuctionSchedule({
@@ -724,16 +724,16 @@ contract AuctionTest is Test {
         });
         vm.expectRevert(IIntexAuction.InvalidSchedule.selector);
         vm.prank(bridger);
-        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Green, nonIncreasing, _params(10, 1));
+        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Live, nonIncreasing, _params(10, 1));
 
         // Valid start succeeds.
         vm.prank(bridger);
-        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Green, _schedule(), _params(10, 1));
+        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Live, _schedule(), _params(10, 1));
 
         // AuctionAlreadyExists
         vm.expectRevert(IIntexAuction.AuctionAlreadyExists.selector);
         vm.prank(bridger);
-        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Green, _schedule(), _params(10, 1));
+        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Live, _schedule(), _params(10, 1));
     }
 
     function test_AuctionStart_RevertWhen_UnknownDayState() public {
@@ -742,7 +742,7 @@ contract AuctionTest is Test {
         auction.auctionStart(20250135, IIntexAuction.WorldwideDayState.Unknown, _schedule(), _params(10, 1));
     }
 
-    function test_AuctionStart_RedDay_AllowsPastCommitEnd() public {
+    function test_AuctionStart_CancelledDay_AllowsPastCommitEnd() public {
         uint32 worldwideDay = 20250136;
         IIntexAuction.AuctionSchedule memory pastSchedule = IIntexAuction.AuctionSchedule({
             commitEnd: uint32(block.timestamp),
@@ -750,7 +750,7 @@ contract AuctionTest is Test {
             issuanceEnd: uint32(block.timestamp + 300)
         });
         vm.prank(bridger);
-        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Red, pastSchedule, _params(10, 1));
+        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Cancelled, pastSchedule, _params(10, 1));
 
         assertEq(uint8(auction.getAuctionStage(worldwideDay)), uint8(IIntexAuction.AuctionStage.Cancelled));
     }
