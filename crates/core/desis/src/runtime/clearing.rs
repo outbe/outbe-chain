@@ -331,9 +331,10 @@ pub(crate) fn refund_chunks(result: &ClearingResult, chain_id: u32) -> Result<Ve
 }
 
 /// One issuance per distinct winning `(issuance, reference)` pair, in the order
-/// the pairs first appear in the ranking. Each group carries its own reference
-/// currency's entry price, which is what the call price derives from.
-fn issuance_groups(
+/// the pairs first appear in the ranking. Each group carries every condition the
+/// day fixed at its auction start: the Promis load, the call trigger and its own
+/// reference currency's entry and call price.
+pub(crate) fn issuance_groups(
     result: &ClearingResult,
     config: &AuctionConfig,
     worldwide_day: WorldwideDay,
@@ -349,8 +350,8 @@ fn issuance_groups(
             None => {
                 // Reveal only accepts a reference the day priced, so a winner
                 // without a row means the day's table and its bids disagree.
-                let entry_price_minor = config
-                    .entry_price_for(reference_currency)
+                let row = config
+                    .price_for(reference_currency)
                     .ok_or(DesisError::UnpricedReferenceCurrency(reference_currency))?;
                 groups.push(IssuanceParams {
                     series_id: SeriesId::for_pair(
@@ -361,7 +362,9 @@ fn issuance_groups(
                     worldwide_day,
                     issued_units: 0,
                     promis_load_minor: config.promis_load_minor,
-                    entry_price_minor,
+                    entry_price_minor: row.entry_price_minor,
+                    call_price_minor: row.call_price_minor,
+                    call_trigger: config.call_trigger,
                     issuance_currency,
                     reference_currency,
                     snapshot_chains: snapshot.to_vec(),

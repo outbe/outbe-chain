@@ -39,9 +39,7 @@ const LOAD_MINOR: u128 = 1_000_000 * PROMIS_LOAD_MINOR;
 
 #[test]
 fn the_bridge_caps_match_the_contracts() {
-    use crate::constants::{
-        CLEARING_BIDS_PER_CHUNK, MAX_BIDS_PER_BATCH, MAX_BID_BATCHES, MAX_REFUND_CHUNKS,
-    };
+    use crate::constants::{MAX_BID_BATCHES, MAX_PAYLOAD_ARRAY_LEN, MAX_REFUND_CHUNKS};
     use outbe_primitives::test_utils::sol_interface::sol_constant;
     const CODEC: &str =
         include_str!("../../../../contracts/intex/src/shared/libs/BridgeMsgCodec.sol");
@@ -49,11 +47,7 @@ fn the_bridge_caps_match_the_contracts() {
         include_str!("../../../../contracts/intex/src/target/TargetRouter.sol");
     assert_eq!(
         sol_constant(CODEC, "MAX_PAYLOAD_ARRAY_LEN"),
-        Some(MAX_BIDS_PER_BATCH)
-    );
-    assert_eq!(
-        sol_constant(CODEC, "MAX_PAYLOAD_ARRAY_LEN"),
-        Some(CLEARING_BIDS_PER_CHUNK)
+        Some(MAX_PAYLOAD_ARRAY_LEN)
     );
     assert_eq!(sol_constant(CODEC, "MAX_CHUNKS"), Some(MAX_REFUND_CHUNKS));
     assert_eq!(
@@ -2555,7 +2549,7 @@ fn a_reference_currency_whose_letter_is_taken_is_dropped_from_the_day() {
                 .collect::<Vec<_>>(),
             vec![156]
         );
-        assert!(config.entry_price_for(756).is_none());
+        assert!(config.price_for(756).is_none());
     });
 }
 
@@ -2568,6 +2562,7 @@ fn escrow_basis_is_promis_load() {
         vec![crate::schema::ReferenceCurrencyPrice {
             iso_code: REFERENCE_ISO,
             entry_price_minor: U256::from(1_000_150u64),
+            call_price_minor: U256::ZERO,
         }],
         LOAD_MINOR,
     );
@@ -3045,6 +3040,8 @@ fn a_clearing_round_is_sized_from_the_chains_recent_days() {
 
 #[cfg(not(feature = "e2e-test"))]
 mod capacity_conservation;
+
+mod fixed_conditions;
 
 #[cfg(not(feature = "e2e-test"))]
 mod promis_load;

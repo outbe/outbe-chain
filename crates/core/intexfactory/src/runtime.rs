@@ -25,7 +25,8 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
     storage.emit_event(INTEX_FACTORY_ADDRESS, event.encode_log_data())
 }
 
-/// Record the series identity and call-price bin.
+/// Record the series identity and call-price bin with the conditions in `params`.
+/// The auction fixed them at its start, so this reads no profile value.
 /// Return issuance legs for the caller to broadcast through `send_issuance`.
 /// The broadcast creates IntexNFT1155 series on each target chain, including the origin.
 pub fn issue_intex(
@@ -41,9 +42,8 @@ pub fn issue_intex(
         .map_err(|_| IntexFactoryError::BlockTimestampExceedsU32)?;
 
     let mut intex = IntexContract::new(storage.clone());
-    let cfg = outbe_intex::config::read(storage)?;
-
-    let call_price_minor = marked_up(params.entry_price_minor, cfg.call_rate)?;
+    let call_price_minor = params.call_price_minor;
+    let trigger = params.call_trigger;
 
     let entry_price_minor_u64 = to_wire_price(params.entry_price_minor)?;
     let call_price_minor_u64 = to_wire_price(call_price_minor)?;
@@ -55,11 +55,7 @@ pub fn issue_intex(
         promis_load_minor: params.promis_load_minor,
         entry_price_minor: params.entry_price_minor,
         call_price_minor,
-        call_trigger: outbe_intex::IntexCallTrigger {
-            call_window_seconds: cfg.call_window_seconds,
-            call_threshold_seconds: cfg.call_threshold_seconds,
-            call_notice_period_seconds: cfg.call_notice_period_seconds,
-        },
+        call_trigger: trigger,
         issued_at,
         issuance_currency: params.issuance_currency,
         reference_currency: params.reference_currency,
@@ -67,8 +63,8 @@ pub fn issue_intex(
     outbe_intex::api::create_series(storage, record)?;
     intex.widen_call_terms(
         params.reference_currency,
-        cfg.call_window_seconds,
-        cfg.call_threshold_seconds,
+        trigger.call_window_seconds,
+        trigger.call_threshold_seconds,
     )?;
 
     // Not sent here: only the caller sees the whole day, and a chain's share of it
@@ -85,11 +81,11 @@ pub fn issue_intex(
                 issuedUnits: params.issued_units,
                 promisLoadMinor: params.promis_load_minor,
                 entryPriceMinor: entry_price_minor_u64,
-                callNoticePeriod: cfg.call_notice_period_seconds,
+                callNoticePeriod: trigger.call_notice_period_seconds,
                 issuanceCurrency: params.issuance_currency,
                 referenceCurrency: params.reference_currency,
-                callWindow: cfg.call_window_seconds,
-                callThreshold: cfg.call_threshold_seconds,
+                callWindow: trigger.call_window_seconds,
+                callThreshold: trigger.call_threshold_seconds,
                 callPriceMinor: call_price_minor_u64,
             },
         })

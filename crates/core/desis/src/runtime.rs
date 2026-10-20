@@ -265,13 +265,13 @@ fn choose_reference_prices(
     Ok(kept)
 }
 
-/// Fold the prior-clearing bid floor and the genesis profile into the config,
+/// Fold the prior-clearing bid floor and the genesis commit bond into the config,
 /// so the persisted config carries the same values the wire message ships.
 fn fold_profile(
     storage: &StorageHandle<'_>,
     contract: &DesisContract<'_>,
     config: &mut AuctionConfig,
-) -> Result<outbe_intex::IntexParams> {
+) -> Result<()> {
     // minBidQty = 4% of the prior clearing's issued count, restated at today's
     // load. The same PROMIS splits into ten times more Intexes one decade down
     // the ladder, so a floor left at yesterday's scale could sit above the whole
@@ -297,26 +297,31 @@ fn fold_profile(
             derived.min(u128::from(u16::MAX)) as u16
         }
     };
-    let iparams = outbe_intex::config::read(storage)?;
     config.min_intex_bid_quantity = min_bid_qty;
-    config.call_trigger = crate::schema::IntexCallTrigger {
-        call_window_seconds: iparams.call_window_seconds,
-        call_threshold_seconds: iparams.call_threshold_seconds,
-        call_notice_period_seconds: iparams.call_notice_period_seconds,
-    };
-    config.commit_bond_minor = iparams.commit_bond_minor;
-    Ok(iparams)
+    config.commit_bond_minor = outbe_intex::config::read(storage)?.commit_bond_minor;
+    Ok(())
+}
+
+/// Fix the day's call terms from IntexFactory: the call price of each row and the
+/// call trigger. The trigger does not depend on a price, so a day without rows gets
+/// it too. After the start, only the stored config gives these terms.
+fn fix_call_terms(storage: &StorageHandle<'_>, config: &mut AuctionConfig) -> Result<()> {
+    let terms = outbe_intexfactory::api::call_terms(storage)?;
+    config.call_trigger = terms.call_trigger;
+    for row in &mut config.reference_prices {
+        row.call_price_minor = terms.call_price(row.entry_price_minor)?;
+    }
+    Ok(())
 }
 
 /// What one AUCTION_STAGE_START message announces besides its day state.
 #[derive(Clone, Copy)]
-struct StageStart<'a> {
-    worldwide_day: WorldwideDay,
-    config: &'a AuctionConfig,
-    iparams: &'a outbe_intex::IntexParams,
-    commit_end: u32,
-    reveal_end: u32,
-    issuance_end: u32,
+pub(crate) struct StageStart<'a> {
+    pub(crate) worldwide_day: WorldwideDay,
+    pub(crate) config: &'a AuctionConfig,
+    pub(crate) commit_end: u32,
+    pub(crate) reveal_end: u32,
+    pub(crate) issuance_end: u32,
 }
 
 /// Broadcast AUCTION_STAGE_START with the given schedule and day state.
@@ -325,38 +330,7 @@ fn send_stage_start(
     start: StageStart<'_>,
     day_state: u8,
 ) -> Result<()> {
-    let StageStart {
-        worldwide_day,
-        config,
-        iparams,
-        commit_end,
-        reveal_end,
-        issuance_end,
-    } = start;
-    let mut prices = Vec::with_capacity(config.reference_prices.len());
-    for row in &config.reference_prices {
-        let call = outbe_intexfactory::marked_up(row.entry_price_minor, iparams.call_rate)?;
-        prices.push(IOriginRouter::ReferenceCurrencyPrice {
-            isoCode: row.iso_code,
-            entryPriceMinor: outbe_intexfactory::to_wire_price(row.entry_price_minor)?,
-            callPriceMinor: outbe_intexfactory::to_wire_price(call)?,
-        });
-    }
-    let stage_params = IOriginRouter::AuctionStageStartParams {
-        worldwideDay: worldwide_day.into(),
-        commitEnd: commit_end,
-        revealEnd: reveal_end,
-        issuanceEnd: issuance_end,
-        promisLoadMinor: config.promis_load_minor,
-        minIntexBidRate: config.min_intex_bid_rate,
-        prices,
-        callNoticePeriod: iparams.call_notice_period_seconds,
-        callWindow: iparams.call_window_seconds,
-        callThreshold: iparams.call_threshold_seconds,
-        minIntexBidQuantity: config.min_intex_bid_quantity,
-        commitBondMinor: config.commit_bond_minor,
-        dayState: day_state,
-    };
+    let stage_params = stage_start_params(start, day_state)?;
     // Relay-float-funded: value 0, so the router self-quotes and pays the bridge fee from its float.
     storage.call(
         ORIGIN_ROUTER_ADDRESS,
@@ -370,6 +344,43 @@ fn send_stage_start(
     Ok(())
 }
 
+/// The AUCTION_STAGE_START payload. Every condition comes from the stored day config.
+pub(crate) fn stage_start_params(
+    start: StageStart<'_>,
+    day_state: u8,
+) -> Result<IOriginRouter::AuctionStageStartParams> {
+    let StageStart {
+        worldwide_day,
+        config,
+        commit_end,
+        reveal_end,
+        issuance_end,
+    } = start;
+    let mut prices = Vec::with_capacity(config.reference_prices.len());
+    for row in &config.reference_prices {
+        prices.push(IOriginRouter::ReferenceCurrencyPrice {
+            isoCode: row.iso_code,
+            entryPriceMinor: outbe_intexfactory::to_wire_price(row.entry_price_minor)?,
+            callPriceMinor: outbe_intexfactory::to_wire_price(row.call_price_minor)?,
+        });
+    }
+    Ok(IOriginRouter::AuctionStageStartParams {
+        worldwideDay: worldwide_day.into(),
+        commitEnd: commit_end,
+        revealEnd: reveal_end,
+        issuanceEnd: issuance_end,
+        promisLoadMinor: config.promis_load_minor,
+        minIntexBidRate: config.min_intex_bid_rate,
+        prices,
+        callNoticePeriod: config.call_trigger.call_notice_period_seconds,
+        callWindow: config.call_trigger.call_window_seconds,
+        callThreshold: config.call_trigger.call_threshold_seconds,
+        minIntexBidQuantity: config.min_intex_bid_quantity,
+        commitBondMinor: config.commit_bond_minor,
+        dayState: day_state,
+    })
+}
+
 mod algorithm;
 mod clearing;
 mod intake;
@@ -380,7 +391,8 @@ pub(crate) use algorithm::rate_lock;
 pub use clearing::tick_gate;
 #[cfg(test)]
 pub(crate) use clearing::{
-    clearing_round_gas, force_clear, refund_chunk_count, refund_chunks, RefundChunk,
+    clearing_round_gas, force_clear, issuance_groups, refund_chunk_count, refund_chunks,
+    RefundChunk,
 };
 pub use intake::{process_bids_batch, process_bids_done, Inbound};
 #[cfg(test)]
