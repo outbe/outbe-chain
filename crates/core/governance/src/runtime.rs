@@ -1,7 +1,7 @@
 use alloy_primitives::{keccak256, Address, U256};
 use outbe_primitives::error::Result;
 
-use crate::state::author_index_key;
+use crate::state::{author_index_key, page_bounds, ProposalMeta};
 
 use crate::errors::GovernanceError;
 use crate::precompile::IGovernance;
@@ -29,9 +29,9 @@ fn validate_text(text: &str) -> Result<()> {
     Ok(())
 }
 
-/// Generates the submit / update-text / set-status methods for one proposal
-/// kind. OIP and GIP share this exact logic over separate typed maps and id
-/// counters. Only the storage target and the per-kind event types differ.
+/// Generates proposal writes and author listings for one proposal kind.
+/// OIP and GIP share this logic over separate typed maps and id counters.
+/// Only the storage target, metadata projection and per-kind events differ.
 macro_rules! impl_proposal_ops {
     (
         submit = $submit:ident,
@@ -39,6 +39,8 @@ macro_rules! impl_proposal_ops {
         update = $update:ident,
         set_status = $set_status:ident,
         apply_status = $apply_status:ident,
+        list_by_author = $list_by_author:ident,
+        meta = $meta:ident,
         record = $record:ident,
         map = $map:ident,
         counter = $counter:ident,
@@ -52,8 +54,18 @@ macro_rules! impl_proposal_ops {
         /// Submits a new proposal in `Draft`, open to any caller.
         pub fn $submit(&mut self, author: Address, text: &str) -> Result<U256> {
             validate_text(text)?;
+            // Refuse the submit before any write when the author index is full.
+            // A wrapped counter would overwrite index slot 0.
+            let acount = self.$author_count.read(&author)?;
+            let next_acount = acount
+                .checked_add(1)
+                .ok_or(GovernanceError::AuthorIndexFull)?;
             let block = self.storage.block_number()?;
-            let next = self.$counter.read()? + 1;
+            let next = self
+                .$counter
+                .read()?
+                .checked_add(1)
+                .ok_or(GovernanceError::ProposalIdExhausted)?;
             let id = U256::from(next);
             let text_hash = keccak256(text.as_bytes());
             let record = $record {
@@ -68,10 +80,9 @@ macro_rules! impl_proposal_ops {
             self.$map.create(&record)?;
             self.$counter.write(next)?;
             // author index (append-only): append id to the author's list.
-            let acount = self.$author_count.read(&author)?;
             self.$author_ids
                 .write(&author_index_key(author, acount), id)?;
-            self.$author_count.write(&author, acount + 1)?;
+            self.$author_count.write(&author, next_acount)?;
             // status index: a new proposal joins the Draft bucket.
             self.$by_status.get_set(&status::DRAFT).insert(id)?;
             self.emit($submitted_event {
@@ -80,6 +91,24 @@ macro_rules! impl_proposal_ops {
                 textHash: text_hash,
             })?;
             Ok(id)
+        }
+
+        /// Lists an author-index page, omitting entries whose records are missing.
+        pub fn $list_by_author(
+            &self,
+            author: Address,
+            offset: U256,
+            limit: U256,
+        ) -> Result<Vec<ProposalMeta>> {
+            let (start, end) = page_bounds(self.$author_count.read(&author)?, offset, limit);
+            let mut out = Vec::with_capacity((end - start) as usize);
+            for i in start..end {
+                let id = self.$author_ids.read(&author_index_key(author, i))?;
+                if self.$map.entry(id).exists()? {
+                    out.push(self.$meta(id)?);
+                }
+            }
+            Ok(out)
         }
 
         /// Creates a proposal already in `Approved`.
@@ -219,6 +248,8 @@ impl GovernanceContract<'_> {
         update = update_oip_text,
         set_status = set_oip_status,
         apply_status = apply_oip_status,
+        list_by_author = oips_by_author,
+        meta = oip_meta,
         record = Oip,
         map = oips,
         counter = next_oip_id,
@@ -236,6 +267,8 @@ impl GovernanceContract<'_> {
         update = update_gip_text,
         set_status = set_gip_status,
         apply_status = apply_gip_status,
+        list_by_author = gips_by_author,
+        meta = gip_meta,
         record = Gip,
         map = gips,
         counter = next_gip_id,

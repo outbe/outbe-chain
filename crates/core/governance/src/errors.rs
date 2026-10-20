@@ -39,6 +39,12 @@ pub enum GovernanceError {
 
     #[error("invalid proposal payload")]
     InvalidProposalPayload,
+
+    #[error("author proposal index is full")]
+    AuthorIndexFull,
+
+    #[error("proposal id sequence is exhausted")]
+    ProposalIdExhausted,
 }
 
 impl From<GovernanceError> for PrecompileError {
