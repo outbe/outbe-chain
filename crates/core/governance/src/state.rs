@@ -7,7 +7,6 @@ use outbe_validatorset::contract::ValidatorSet;
 use crate::errors::GovernanceError;
 use crate::schema::{Gip, GipEntryExt, GovernanceContract, Oip, OipEntryExt};
 use crate::status::is_valid_status;
-use crate::vote_target::ProposalKind;
 
 /// Lightweight proposal projection for listings - every field except the text.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,7 +143,15 @@ impl GovernanceContract<'_> {
         offset: U256,
         limit: U256,
     ) -> Result<Vec<ProposalMeta>> {
-        self.author_page(ProposalKind::Oip, author, offset, limit)
+        let (start, end) = page_bounds(self.oip_author_count.read(&author)?, offset, limit);
+        let mut out = Vec::with_capacity((end - start) as usize);
+        for i in start..end {
+            let id = self.oip_author_ids.read(&author_index_key(author, i))?;
+            if self.oips.entry(id).exists()? {
+                out.push(self.oip_meta(id)?);
+            }
+        }
+        Ok(out)
     }
 
     pub fn gips_by_author(
@@ -153,47 +160,15 @@ impl GovernanceContract<'_> {
         offset: U256,
         limit: U256,
     ) -> Result<Vec<ProposalMeta>> {
-        self.author_page(ProposalKind::Gip, author, offset, limit)
-    }
-
-    /// Reads the `[offset, offset+limit)` slice of the author's index for `kind`.
-    /// It skips a slot without a proposal, like `status_page`.
-    fn author_page(
-        &self,
-        kind: ProposalKind,
-        author: Address,
-        offset: U256,
-        limit: U256,
-    ) -> Result<Vec<ProposalMeta>> {
-        let (count, ids) = match kind {
-            ProposalKind::Oip => (&self.oip_author_count, &self.oip_author_ids),
-            ProposalKind::Gip => (&self.gip_author_count, &self.gip_author_ids),
-        };
-        let (start, end) = page_bounds(count.read(&author)?, offset, limit);
+        let (start, end) = page_bounds(self.gip_author_count.read(&author)?, offset, limit);
         let mut out = Vec::with_capacity((end - start) as usize);
         for i in start..end {
-            let id = ids.read(&author_index_key(author, i))?;
-            if let Some(meta) = self.listed_meta(kind, id)? {
-                out.push(meta);
+            let id = self.gip_author_ids.read(&author_index_key(author, i))?;
+            if self.gips.entry(id).exists()? {
+                out.push(self.gip_meta(id)?);
             }
         }
         Ok(out)
-    }
-
-    /// Listing row for `id`, or `None` when no proposal of `kind` exists at `id`.
-    fn listed_meta(&self, kind: ProposalKind, id: U256) -> Result<Option<ProposalMeta>> {
-        let exists = match kind {
-            ProposalKind::Oip => self.oips.entry(id).exists()?,
-            ProposalKind::Gip => self.gips.entry(id).exists()?,
-        };
-        if !exists {
-            return Ok(None);
-        }
-        match kind {
-            ProposalKind::Oip => self.oip_meta(id),
-            ProposalKind::Gip => self.gip_meta(id),
-        }
-        .map(Some)
     }
 
     /// Number of OIPs currently in `status` (0..=4).
