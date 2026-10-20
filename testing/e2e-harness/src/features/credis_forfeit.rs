@@ -368,7 +368,7 @@ fn assert_pool_credited(url: &str, forfeited_at: u64, burned: U256) {
         eth::read_call_at(
             url,
             addresses::PROMIS_LIMIT_ADDR,
-            &eth::IPromisLimit::totalUnallocatedCall {},
+            &eth::IPromisLimit::promisLimitCall {},
             height,
         )
         .expect("unallocated pool")

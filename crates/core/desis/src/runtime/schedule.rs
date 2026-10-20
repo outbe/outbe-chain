@@ -237,7 +237,7 @@ fn refund_unused_desis_limit(
         worldwideDay: worldwide_day.into(),
         unusedDesisLimitMinor: unused,
     })?;
-    PromisLimitContract::new(storage.clone()).add_to_total_unallocated(unused)?;
+    PromisLimitContract::new(storage.clone()).checked_credit(unused)?;
     Ok(())
 }
 

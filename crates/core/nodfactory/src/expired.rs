@@ -65,7 +65,7 @@ impl ExpiryHandler<B256> for NodExpiry<'_, '_> {
         let load = self.nod.group_unpaid_load.read(&group)?;
         if !load.is_zero() {
             outbe_promislimit::PromisLimitContract::new(self.storage.clone())
-                .add_to_total_unallocated(load)?;
+                .checked_credit(load)?;
         }
         self.nod.group_unpaid_load.clear(&group)?;
         self.nod.hand_to_cleanup(group)?;

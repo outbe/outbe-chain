@@ -160,7 +160,6 @@ impl From<VaultRouterError> for PrecompileError {
             | VaultRouterError::UnsupportedAssetDecimalsSimple
             | VaultRouterError::InvalidAssetCurrency
             | VaultRouterError::PledgePriceUnavailable
-            | VaultRouterError::TimestampExceedsU64
             | VaultRouterError::PreviousDayVwapUnavailable
             | VaultRouterError::ReferencePairUnavailable) => {
                 PrecompileError::Revert(undeclared.to_string())

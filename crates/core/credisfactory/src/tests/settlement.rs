@@ -14,7 +14,7 @@ use outbe_vaultrouter::VaultRouterContract;
 
 fn unallocated(storage: &StorageHandle<'_>) -> U256 {
     PromisLimitContract::new(storage.clone())
-        .get_total_unallocated()
+        .promis_limit()
         .unwrap()
 }
 

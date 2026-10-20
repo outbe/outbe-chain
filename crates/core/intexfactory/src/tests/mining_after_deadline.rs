@@ -184,7 +184,7 @@ fn settled_units_mine_after_the_group_expired_without_moving_the_promis_limit() 
         crate::hooks::sweep_cleanup(&ctx).unwrap();
         let reserve = || {
             outbe_promislimit::PromisLimitContract::new(s.clone())
-                .get_total_unallocated()
+                .promis_limit()
                 .unwrap()
         };
         assert_eq!(reserve(), forfeited);

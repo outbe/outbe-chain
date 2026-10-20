@@ -360,7 +360,7 @@ fn submit_vote(
 fn vwap(oracle: &OracleContract, c: IOracle::getVwapCall) -> Result<Bytes> {
     view(c, |c| {
         let pair = oracle.require_pair_from(c.base, c.quote)?;
-        let now = oracle.storage.timestamp()?.saturating_to::<u64>();
+        let now = oracle.storage.now_secs()?;
         oracle.calculate_vwap_lookback(pair, now, c.lookbackSeconds)
     })
 }
@@ -421,14 +421,14 @@ fn all_price_snapshot_history(
 fn twap(oracle: &OracleContract, c: IOracle::getTwapCall) -> Result<Bytes> {
     view(c, |c| {
         let pair = oracle.require_pair_from(c.base, c.quote)?;
-        let now = oracle.storage.timestamp()?.saturating_to::<u64>();
+        let now = oracle.storage.now_secs()?;
         oracle.calculate_twap(pair, now, c.lookbackSeconds)
     })
 }
 
 fn twaps(oracle: &OracleContract, c: IOracle::getTwapsCall) -> Result<Bytes> {
     view(c, |c| {
-        let now = oracle.storage.timestamp()?.saturating_to::<u64>();
+        let now = oracle.storage.now_secs()?;
         let (pairs, twaps, lookbacks) = oracle.calculate_twaps(now, c.lookback)?;
         let (bases, quotes) = split_pairs(&pairs);
         Ok(IOracle::getTwapsReturn {
@@ -443,7 +443,7 @@ fn twaps(oracle: &OracleContract, c: IOracle::getTwapsCall) -> Result<Bytes> {
 fn day_vwap(oracle: &OracleContract, c: IOracle::getDayVwapCall) -> Result<Bytes> {
     view(c, |c| {
         let pair = oracle.require_pair_from(c.base, c.quote)?;
-        let now = oracle.storage.timestamp()?.saturating_to::<u64>();
+        let now = oracle.storage.now_secs()?;
         oracle.calculate_vwap_lookback(pair, now, SECONDS_PER_DAY)
     })
 }
@@ -461,7 +461,7 @@ fn vwap_policy() -> Result<Bytes> {
 
 fn vwap_snapshot_id(oracle: &OracleContract) -> Result<Bytes> {
     metadata::<IOracle::getVwapSnapshotIdCall>(|| {
-        let now = oracle.storage.timestamp()?.saturating_to::<u64>();
+        let now = oracle.storage.now_secs()?;
         Ok(get_vwap_snapshot_id(now, &active_vwap_policy())?.to_u256())
     })
 }
@@ -527,7 +527,7 @@ fn scurve_value(oracle: &OracleContract, c: IOracle::getScurveValueCall) -> Resu
 fn scurve_entries(oracle: &OracleContract, c: IOracle::getScurveEntriesCall) -> Result<Bytes> {
     view(c, |c| {
         let pair = oracle.require_pair_from(c.base, c.quote)?;
-        let now = oracle.storage.timestamp()?.saturating_to::<u64>();
+        let now = oracle.storage.now_secs()?;
         let (peak_days, peak_prices, current_values) =
             crate::scurve::get_scurve_entries(oracle, pair, now)?;
         Ok(IOracle::getScurveEntriesReturn {

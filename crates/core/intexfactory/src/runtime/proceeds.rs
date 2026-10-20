@@ -20,7 +20,7 @@ pub fn distribute(
     storage.decrease_balance(INTEX_FACTORY_ADDRESS, amount)?;
     let credited = native_to_protocol_floor(amount);
     if !credited.is_zero() {
-        PromisLimitContract::new(storage.clone()).add_to_total_unallocated(credited)?;
+        PromisLimitContract::new(storage.clone()).checked_credit(credited)?;
     }
     emit_event(
         storage,
