@@ -57,15 +57,16 @@ pub fn encrypt_tribute_offer_with(
     chacha20poly1305_encrypt(&key, &nonce, plaintext)
 }
 
-/// The known-plaintext canary/bench offer payload (1 SU hash, USD). One shared
-/// recipe so the canary asserts exactly what the bench measures.
+/// The known-plaintext canary/bench offer payload: 1 SU hash and ISO 4217 code
+/// 999 ("XXX", no currency). One shared recipe so the canary asserts exactly
+/// what the bench measures.
 pub fn canary_offer_json(worldwide_day: u32) -> String {
     format!(
         r#"{{
     "creator": "canary",
     "tribute_draft_id": "0x1111111111111111111111111111111111111111111111111111111111111111",
     "worldwide_day": {worldwide_day},
-    "currency": 840,
+    "currency": 999,
     "amount_base": "100",
     "amount_micro": "0",
     "su_hashes": ["0x2222222222222222222222222222222222222222222222222222222222222222"]
@@ -123,6 +124,13 @@ fn chacha20poly1305_encrypt(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn canary_offer_json_names_no_currency() {
+        let payload: serde_json::Value =
+            serde_json::from_str(&canary_offer_json(20250115)).expect("valid JSON");
+        assert_eq!(payload["currency"], 999);
+    }
 
     #[test]
     fn deterministic_and_random_variants_agree() {

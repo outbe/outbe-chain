@@ -30,7 +30,7 @@ pub fn mint_encrypted_nod(
     auth: ModifyAuth,
 ) -> Result<()> {
     storage.with_checkpoint(|| {
-        let now = storage.timestamp()?.to::<u64>();
+        let now = crate::runtime::now_secs(&storage)?;
         let section = outbe_fidelity::api::cohort_section(
             storage.clone(),
             nod.terms.owner,

@@ -69,13 +69,13 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
         );
     }
 
-    function _greenStart(uint32 commitEnd) internal pure returns (bytes memory) {
+    function _liveStart(uint32 commitEnd) internal pure returns (bytes memory) {
         return _start(DAY, commitEnd, 60e6, uint8(IIntexAuction.WorldwideDayState.Live));
     }
 
     function _openLiveDay() internal returns (uint32 commitEnd) {
         commitEnd = uint32(block.timestamp + 1 days);
-        _deliver(_greenStart(commitEnd));
+        _deliver(_liveStart(commitEnd));
     }
 
     function _expectIgnored(uint8 msgType, uint8 reason) internal {
@@ -88,7 +88,7 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
     function test_ARepeatedStartIsADuplicate() public {
         uint32 commitEnd = _openLiveDay();
         _expectIgnored(BridgeMsgCodec.MSG_AUCTION_STAGE_START, InboundReason.DUPLICATE);
-        _deliver(_greenStart(commitEnd));
+        _deliver(_liveStart(commitEnd));
         assertEq(uint8(auction.getAuctionStage(DAY)), uint8(IIntexAuction.AuctionStage.CommittingBids), "unchanged");
     }
 
@@ -98,7 +98,7 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
         _deliver(BridgeMsgCodec.encodeAuctionStageClearing(DAY)); // snaps revealEnd to now
 
         _expectIgnored(BridgeMsgCodec.MSG_AUCTION_STAGE_START, InboundReason.DUPLICATE);
-        _deliver(_greenStart(commitEnd));
+        _deliver(_liveStart(commitEnd));
     }
 
     function test_AStartWithOtherTermsIsAConflict() public {
@@ -112,7 +112,7 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
         uint32 commitEnd = uint32(block.timestamp + 1 days);
         vm.warp(commitEnd + 1);
         _expectIgnored(BridgeMsgCodec.MSG_AUCTION_STAGE_START, InboundReason.LATE);
-        _deliver(_greenStart(commitEnd));
+        _deliver(_liveStart(commitEnd));
         vm.expectRevert(IIntexAuction.AuctionNotFound.selector);
         auction.getAuctionInfo(DAY);
     }
@@ -232,6 +232,6 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
     function test_AWiringErrorStillRevertsSoItCanBeFixedAndRedelivered() public {
         auction.revokeRole(auction.RELAYER_ROLE(), address(router));
         vm.expectRevert();
-        _deliver(_greenStart(uint32(block.timestamp + 1 days)));
+        _deliver(_liveStart(uint32(block.timestamp + 1 days)));
     }
 }

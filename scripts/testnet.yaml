@@ -63,6 +63,8 @@ tee:
 
 # Feeder pairs and markets. Their pairs are also registered in genesis.
 feeder_pairs: testnet/pairs.toml
+# Genesis initial rates and S-curve seeds of the feeder pairs.
+feeder_seeds: testnet/seeds.yaml
 
 # Price source for the oracle feeder.
 # price_feed_rest: https://prc.testnet.outbe.net

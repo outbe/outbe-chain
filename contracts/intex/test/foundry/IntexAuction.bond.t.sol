@@ -215,16 +215,18 @@ contract IntexAuctionBondTest is Test {
     // --- claimCommitBond ---
 
     function test_ClaimCommitBond_CancelledDay_HasNoBond() public {
-        uint32 redSeries = worldwideDay + 7;
+        uint32 cancelledSeries = worldwideDay + 7;
         vm.prank(bridger);
-        auction.auctionStart(redSeries, IIntexAuction.WorldwideDayState.Cancelled, _schedule(), _params(BOND_PROTOCOL));
+        auction.auctionStart(
+            cancelledSeries, IIntexAuction.WorldwideDayState.Cancelled, _schedule(), _params(BOND_PROTOCOL)
+        );
 
         // A cancelled day is cancelled before anyone can commit, so its penalty window passes with no
         // bond for the escrow to release.
         vm.warp(uint256(startTs) + REVEAL_OFFSET + auction.UNREVEALED_BOND_LOCK_PERIOD());
         vm.prank(outsider);
         vm.expectRevert(IEscrowAdapter.CommitBondNotFound.selector);
-        auction.claimCommitBond(redSeries, iba1);
+        auction.claimCommitBond(cancelledSeries, iba1);
     }
 
     function test_ClaimCommitBond_NoReveal_RevertsBeforeWindow() public {

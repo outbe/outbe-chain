@@ -1,0 +1,43 @@
+# Testnet genesis seeds for the cross pairs of testnet/pairs.toml. COEN/840
+# keeps its seeds in testnet.yaml. Each value converts the COEN/840 seed
+# (1.000000) at the ECB reference rate of 2026-10-19: USD 1.1225, CNY 7.4991,
+# HKD 8.8097, JPY 177.63 and GBP 0.84205 per EUR.
+
+initial_rates:
+  - base: COEN
+    quote: "156"
+    rate: "6680713"
+  - base: COEN
+    quote: "344"
+    rate: "7848285"
+  - base: COEN
+    quote: "392"
+    rate: "158244989"
+  - base: COEN
+    quote: "826"
+    rate: "750156"
+  - base: COEN
+    quote: "978"
+    rate: "890869"
+
+scurve_seeds:
+  - pair_base: COEN
+    pair_quote: "156"
+    peak_day: 20241220
+    peak_price: "6680713"
+  - pair_base: COEN
+    pair_quote: "344"
+    peak_day: 20241220
+    peak_price: "7848285"
+  - pair_base: COEN
+    pair_quote: "392"
+    peak_day: 20241220
+    peak_price: "158244989"
+  - pair_base: COEN
+    pair_quote: "826"
+    peak_day: 20241220
+    peak_price: "750156"
+  - pair_base: COEN
+    pair_quote: "978"
+    peak_day: 20241220
+    peak_price: "890869"

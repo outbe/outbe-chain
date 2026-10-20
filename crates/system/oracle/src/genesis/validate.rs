@@ -7,7 +7,7 @@ use crate::constants::{DAY_TYPE_ISO, MAX_SNAPSHOT_RETENTION_SECONDS};
 use crate::errors::OracleError;
 
 /// Checks the config parameters, then the reference-currency and policy-rate
-/// registries, in that order.
+/// registries, in that order, then that each reference currency has a policy rate.
 pub(super) fn validate_genesis_config(config: &OracleGenesisConfig) -> Result<()> {
     if config.vote_period == 0 {
         return Err(OracleError::VotePeriodZero.into());
@@ -19,7 +19,22 @@ pub(super) fn validate_genesis_config(config: &OracleGenesisConfig) -> Result<()
         return Err(OracleError::LookbackExceedsRetention.into());
     }
     validate_reference_currencies(&config.reference_currencies)?;
-    validate_policy_rates(&config.policy_rates)
+    validate_policy_rates(&config.policy_rates)?;
+    // A Credis reservation reads the policy rate of its asset's currency, so
+    // every reference currency needs one.
+    for iso_code in &config.reference_currencies {
+        if !config
+            .policy_rates
+            .iter()
+            .any(|policy| policy.iso_code == *iso_code)
+        {
+            return Err(OracleError::MissingPolicyRate {
+                iso_code: *iso_code,
+            }
+            .into());
+        }
+    }
+    Ok(())
 }
 
 fn validate_reference_currencies(reference_currencies: &[u16]) -> Result<()> {

@@ -42,6 +42,7 @@ pub fn dispatch(
             }),
             getCca(c) => view(c, |c| api::get_cca(&storage, c.cca)),
             getCcaState(c) => view(c, |c| api::cca_state(&storage, c.cca)),
+            getTotalBonded(c) => view(c, |_| api::total_bonded(&storage)),
             supportsInterface(c) => view(c, |c| Ok(c.interfaceId.0 == ERC165_INTERFACE_ID)),
         }
     })

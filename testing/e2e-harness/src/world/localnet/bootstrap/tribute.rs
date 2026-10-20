@@ -364,20 +364,14 @@ fn seed_public_measurement_day(
 }
 
 /// Keep this fixture's ordinary mineGratis path independent from the
-/// stablecoin/vault scenarios. Together with the Tribute amount, these prices
-/// produce non-zero Gratis and zero mining cost.
+/// stablecoin/vault scenarios. Together with the Tribute amount, this price
+/// produces non-zero Gratis and zero mining cost.
 fn write_measurement_vwaps(
     storage: StorageHandle<'_>,
     day: &MeasurementDay,
 ) -> PrecompileResult<()> {
     let pair = outbe_oracle::api::DAY_TYPE_PAIR;
-    let previous_vwap_minor = U256::ONE;
     let current_vwap_minor = U256::from(2);
-    let previous_day = day.worldwide_day.previous_date_key();
-    let previous_sample_time = day
-        .forming_start
-        .checked_sub(1)
-        .ok_or_else(|| fatal("native Tribute fixture previous VWAP window underflow"))?;
     let volume = U256::from(1_000_000_u64);
     let mut oracle = outbe_oracle::schema::OracleContract::new(storage);
     let inherited_scurve_expiry = day
@@ -387,7 +381,6 @@ fn write_measurement_vwaps(
         )
         .ok_or_else(|| fatal("native Tribute fixture S-curve expiry overflow"))?;
     outbe_oracle::scurve::evict_expired_scurves(&mut oracle, inherited_scurve_expiry)?;
-    oracle.write_snapshot(previous_sample_time, &[(pair, previous_vwap_minor, volume)])?;
     oracle.write_snapshot(day.forming_start, &[(pair, current_vwap_minor, volume)])?;
     let pair_index = oracle.pair_index_of(pair)?;
     if pair_index == 0 {
@@ -395,22 +388,18 @@ fn write_measurement_vwaps(
             "native Tribute fixture Oracle pair is not registered",
         ));
     }
-    for (vwap_day, vwap) in [
-        (previous_day, previous_vwap_minor),
-        (day.worldwide_day, current_vwap_minor),
-    ] {
-        let start = vwap_day.start_timestamp();
-        let end = start
-            .checked_add(outbe_chain_constants::DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS)
-            .ok_or_else(|| fatal("native Tribute fixture WWD window overflow"))?;
-        oracle.worldwide_day_vwap_exists.write(&vwap_day, true)?;
-        oracle.worldwide_day_vwap_start.write(&vwap_day, start)?;
-        oracle.worldwide_day_vwap_end.write(&vwap_day, end)?;
-        oracle
-            .worldwide_day_vwap_value
-            .get_nested(&vwap_day)
-            .write(&pair_index, vwap)?;
-    }
+    let vwap_day = day.worldwide_day;
+    let start = vwap_day.start_timestamp();
+    let end = start
+        .checked_add(outbe_chain_constants::DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS)
+        .ok_or_else(|| fatal("native Tribute fixture WWD window overflow"))?;
+    oracle.worldwide_day_vwap_exists.write(&vwap_day, true)?;
+    oracle.worldwide_day_vwap_start.write(&vwap_day, start)?;
+    oracle.worldwide_day_vwap_end.write(&vwap_day, end)?;
+    oracle
+        .worldwide_day_vwap_value
+        .get_nested(&vwap_day)
+        .write(&pair_index, current_vwap_minor)?;
     Ok(())
 }
 
