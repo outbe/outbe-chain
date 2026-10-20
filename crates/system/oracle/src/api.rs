@@ -124,7 +124,7 @@ pub fn coen_rate_for_opt(storage: StorageHandle, iso_code: u16) -> Result<Option
 
 /// Snapshot required at the current block under the active policy.
 pub fn current_vwap_snapshot(storage: StorageHandle) -> Result<VwapSnapshotId> {
-    let now = storage.timestamp()?.to::<u64>();
+    let now = storage.now_secs()?;
     get_vwap_snapshot_id(now, &active_vwap_policy())
 }
 
@@ -216,7 +216,7 @@ pub fn fresh_currency_cross_rate(
 }
 
 fn fresh_rate_at_index(storage: StorageHandle, index: PairIndex) -> Result<Option<U256>> {
-    let now = storage.timestamp()?.to::<u64>();
+    let now = storage.now_secs()?;
     let oracle = OracleContract::new(storage);
     let rate = oracle.exchange_rate.read(&index)?;
     let published = oracle.exchange_rate_timestamp.read(&index)?;

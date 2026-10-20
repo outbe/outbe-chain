@@ -37,7 +37,7 @@ pub fn issue_intex(
     }
 
     // u32 timestamp. It is bounded until 2106.
-    let issued_at = u32::try_from(storage.timestamp()?.to::<u64>())
+    let issued_at = u32::try_from(storage.now_secs()?)
         .map_err(|_| IntexFactoryError::BlockTimestampExceedsU32)?;
 
     let mut intex = IntexContract::new(storage.clone());

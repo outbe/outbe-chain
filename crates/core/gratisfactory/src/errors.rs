@@ -21,8 +21,6 @@ pub enum GratisFactoryError {
     PledgeNotFound,
     #[error("pledge does not match the reservation")]
     PledgeMismatch,
-    #[error("timestamp exceeds u64")]
-    TimestampOverflow,
     #[error("native COEN amount overflow")]
     NativeCoenOverflow,
 }

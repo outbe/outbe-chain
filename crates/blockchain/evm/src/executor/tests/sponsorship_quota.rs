@@ -117,6 +117,32 @@ fn assert_invalid_tx(error: BlockExecutionError, nonce_too_low: bool) {
 }
 
 #[test]
+fn wide_timestamp_rejects_sponsorship_before_quota_or_receipt_changes() {
+    let config = OutbeEvmConfig::new(test_chain_spec());
+    let recovered = sponsored_tx(0, 200_000, reverting_calldata())
+        .try_into_recovered()
+        .unwrap();
+    let signer = Address::from(*recovered.signer());
+    let initial_balance = U256::from(1);
+    let mut state = delegated_state(signer, initial_balance, 0);
+    let mut env = pectra_evm_env();
+    env.block_env.timestamp = U256::MAX;
+    let evm = config.evm_with_env(&mut state, env);
+    let mut executor = config.create_executor(evm, execution_ctx(Some(1), Bytes::new()));
+    let error = executor.execute_transaction(recovered).unwrap_err();
+    assert!(matches!(error, BlockExecutionError::Validation(_)));
+    assert_eq!(error.to_string(), "timestamp exceeds u64");
+    assert!(executor.receipts().is_empty());
+    drop(executor);
+    assert!(
+        state.cache.accounts.is_empty(),
+        "no delegation or quota access"
+    );
+    assert_eq!(live_counter(&mut state, signer), (0, 0));
+    assert_eq!(signer_balance(&mut state, signer), initial_balance);
+}
+
+#[test]
 fn sponsored_included_revert_keeps_quota() {
     let config = OutbeEvmConfig::new(test_chain_spec());
     let recovered = sponsored_tx(0, 200_000, reverting_calldata())

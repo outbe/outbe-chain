@@ -24,7 +24,7 @@ use outbe_vaultrouter::settlement::{self, Currencies, SettlementCost, Settlement
 
 /// Issues an authenticated encrypted Nod through the block-scoped body lifecycle.
 pub fn issue_nod(storage: &StorageHandle<'_>, encrypted: &EncryptedNodV2) -> Result<WwdEntityId> {
-    issue_nod_at(storage, encrypted, storage.timestamp()?.to::<u64>())
+    issue_nod_at(storage, encrypted, storage.now_secs()?)
 }
 
 pub(crate) fn issue_nod_at(
@@ -43,7 +43,7 @@ pub fn issue_lysis_nod(
     issue_nod_with_cost(
         storage,
         verified.nod(),
-        storage.timestamp()?.to::<u64>(),
+        storage.now_secs()?,
         Some(verified.settlement_cost_minor()),
         None,
     )
@@ -63,7 +63,7 @@ pub fn issue_tribute_nod(
     issue_nod_with_cost(
         storage,
         encrypted,
-        storage.timestamp()?.to::<u64>(),
+        storage.now_secs()?,
         Some(cost),
         Some(gratis_load_minor),
     )
@@ -164,7 +164,7 @@ pub fn settle_nod(
         return Err(NodFactoryError::NodAlreadySettled.into());
     }
     let deadline = nod_api::settlement_deadline(storage, item.body().group_key)?;
-    if deadline != 0 && storage.timestamp()?.to::<u64>() > deadline {
+    if deadline != 0 && storage.now_secs()? > deadline {
         return Err(NodFactoryError::SettlementDeadlinePassed.into());
     }
     let owner = item.body().owner;

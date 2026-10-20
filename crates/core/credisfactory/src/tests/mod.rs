@@ -154,7 +154,7 @@ pub fn seed_reservation(
     source: Address,
     amount: U256,
 ) -> U256 {
-    let expires_at = storage.timestamp().unwrap().to::<u64>() + 15 * 60;
+    let expires_at = storage.now_secs().unwrap() + 15 * 60;
     let contract = VaultRouterContract::new(storage.clone());
     let nonce = contract
         .reservation_nonce
@@ -249,7 +249,7 @@ pub fn set_coen_rate(storage: &StorageHandle<'_>, coen_iso_rate: U256) {
 /// [`set_coen_rate`] on an arbitrary pair. The COEN/`REFERENCE_ISO` leg is the
 /// spot price, which must not affect the issuance-time daily VWAP anchor.
 pub fn set_coen_rate_for(storage: &StorageHandle<'_>, iso: u16, coen_iso_rate: U256) {
-    let timestamp = storage.timestamp().unwrap().to::<u64>();
+    let timestamp = storage.now_secs().unwrap();
     outbe_oracle::api::set_exchange_rate(
         storage.clone(),
         Address::ZERO,
@@ -314,7 +314,7 @@ pub fn fill_days_for(storage: &StorageHandle<'_>, iso: u16, latest: u32, days: u
 /// Publishes `price` as the finalized VWAP of the UTC day closed at the
 /// storage clock, which is the day issuance reads.
 fn seed_previous_closed_day(storage: &StorageHandle<'_>, iso: u16, price: U256) {
-    let day = last_closed_day(storage.timestamp().unwrap().to::<u64>());
+    let day = last_closed_day(storage.now_secs().unwrap());
     set_vwap_for(storage, iso, day, price);
 }
 
@@ -391,7 +391,7 @@ pub fn lapse(storage: &StorageHandle<'_>, id: U256) -> u32 {
 }
 
 pub fn now_of(storage: &StorageHandle<'_>) -> u64 {
-    storage.timestamp().unwrap().to::<u64>()
+    storage.now_secs().unwrap()
 }
 
 pub fn advance_to(storage: &StorageHandle<'_>, timestamp: u64) {

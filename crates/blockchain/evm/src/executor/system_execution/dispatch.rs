@@ -43,6 +43,8 @@ where
     {
         use crate::errors::ExecutorValidationError;
 
+        outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
+            .map_err(ExecutorValidationError::from)?;
         let tx = recovered.tx();
         let signer = *recovered.signer();
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();

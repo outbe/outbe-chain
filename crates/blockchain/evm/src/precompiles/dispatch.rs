@@ -75,11 +75,29 @@ where
     };
     let block_number = ctx.block().number().saturating_to::<u64>();
     let chain_id = ctx.cfg().chain_id;
-    let timestamp = ctx.block().timestamp().saturating_to::<u64>();
     // Materialize the exact calldata before choosing the consensus gas charge.
     // SharedBuffer and top-level Bytes calls must pay the same activation charge.
     let data: Bytes = inputs.input.bytes_local(ctx.local());
     let base_gas = route.base_gas(data.as_ref()).max(PRECOMPILE_BASE_GAS);
+    let timestamp = match outbe_primitives::time::timestamp_secs(ctx.block().timestamp()) {
+        Ok(timestamp) => timestamp,
+        Err(error) => {
+            let outcome = DispatchOutcome {
+                result: Err(if inputs.gas_limit < base_gas {
+                    PrecompileError::OutOfGas
+                } else {
+                    error.into()
+                }),
+                actual_gas: base_gas,
+                refund: 0,
+            };
+            return Ok(Some(translate_outcome(
+                outcome,
+                &runtime,
+                inputs.gas_limit,
+            )?));
+        }
+    };
     let call = DispatchCall {
         inputs,
         route,

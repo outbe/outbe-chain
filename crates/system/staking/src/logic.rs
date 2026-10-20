@@ -92,7 +92,7 @@ impl Staking<'_> {
             return Err(StakingError::InsufficientStakedAmount.into());
         }
 
-        let timestamp = self.storage.timestamp()?.to::<u64>();
+        let timestamp = self.storage.now_secs()?;
         let unbonding_period = self.config_unbonding_period.read()?;
         let complete_time = self.checked_complete_time(timestamp, unbonding_period)?;
         let min_stake = self.config_min_stake.read()?;
@@ -160,6 +160,7 @@ impl Staking<'_> {
         }
 
         let current = self.stake_amount.read(&validator)?;
+        let timestamp = self.storage.now_secs()?;
         let mut total_slashed = U256::ZERO;
 
         // Slash active stake
@@ -175,10 +176,8 @@ impl Staking<'_> {
         // Slash unbonding entries proportionally.
         // Walk the per-validator linked list and reduce each pending entry.
         let mut current_stored = self.per_val_unbonding_head.read(&validator)?;
-        let slash_complete_time = self.checked_complete_time(
-            self.storage.timestamp()?.to::<u64>(),
-            self.slashed_withdrawal_delay()?,
-        )?;
+        let slash_complete_time =
+            self.checked_complete_time(timestamp, self.slashed_withdrawal_delay()?)?;
         while current_stored != 0 {
             let idx = current_stored - 1;
             let amount = self.unbonding_amount.read(&idx)?;

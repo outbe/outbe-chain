@@ -89,7 +89,7 @@ impl ZeroFeeContract<'_> {
     /// the two view methods so both apply the lazy reset against the
     /// same day the executor would use.
     fn current_day(&self) -> Result<u32> {
-        let now_secs = self.storage.timestamp()?.saturating_to::<u64>();
+        let now_secs = self.storage.now_secs()?;
         Ok(timestamp_to_date_key(now_secs))
     }
 }
@@ -233,6 +233,32 @@ mod tests {
                 "exhausted-quota signer must NOT be authorized"
             );
         });
+    }
+
+    #[test]
+    fn timestamp_overflow_reverts_views_without_resetting_counter() {
+        use outbe_primitives::error::PrecompileError;
+
+        for timestamp in [U256::from(u64::MAX) + U256::from(1), U256::MAX] {
+            let mut provider = HashMapStorageProvider::new(1);
+            provider.set_timestamp(timestamp);
+            StorageHandle::enter(&mut provider, |storage| {
+                let contract = ZeroFeeContract::new(storage.clone());
+                let packed = pack_counter(BLOCK_DAY, 5);
+                contract.counter.write(&SIGNER, packed).unwrap();
+                for call in [
+                    abi::getCounterCall { signer: SIGNER }.abi_encode(),
+                    abi::authorizeSponsorshipCall { signer: SIGNER }.abi_encode(),
+                ] {
+                    assert!(matches!(
+                        super::dispatch(storage.clone(), &call, Address::ZERO, U256::ZERO),
+                        Err(PrecompileError::Revert(message)) if message == "timestamp exceeds u64"
+                    ));
+                    assert_eq!(contract.counter.read(&SIGNER).unwrap(), packed);
+                }
+            });
+            assert!(provider.get_ordered_events().is_empty());
+        }
     }
 
     #[test]

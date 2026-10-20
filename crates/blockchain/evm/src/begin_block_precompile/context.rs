@@ -1,7 +1,6 @@
 use crate::executor::AccountedParentArtifact;
 use alloy_primitives::Address;
 use alloy_primitives::B256;
-use alloy_primitives::U256;
 use outbe_primitives::block::BlockContext;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;
@@ -69,7 +68,7 @@ pub(super) fn block_runtime_context_from_storage(
     include_validator_snapshot: bool,
 ) -> Result<BlockRuntimeContext> {
     let block_number = storage.block_number()?;
-    let timestamp = u256_to_u64("block timestamp", storage.timestamp()?)?;
+    let timestamp = storage.now_secs()?;
     let chain_id = storage.chain_id()?;
     let genesis_hash = storage.genesis_hash()?;
     let proposer = current_preloaded_system_tx_context()
@@ -108,13 +107,4 @@ pub(super) fn read_preloaded_finalized_summary(
     _storage: &StorageHandle<'_>,
 ) -> Result<Option<AccountedParentArtifact>> {
     Ok(current_preloaded_system_tx_context().and_then(|context| context.finalized_summary))
-}
-
-fn u256_to_u64(name: &'static str, value: U256) -> Result<u64> {
-    if value > U256::from(u64::MAX) {
-        return Err(
-            crate::errors::BeginBlockPrecompileError::ValueExceedsU64 { name, value }.into(),
-        );
-    }
-    Ok(value.to::<u64>())
 }

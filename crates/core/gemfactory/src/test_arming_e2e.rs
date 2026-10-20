@@ -62,7 +62,7 @@ fn requeue_position_hour(
         .positions
         .get(position_id)?
         .ok_or(GemFactoryError::PositionNotFound)?;
-    let now = storage.timestamp()?.to::<u64>();
+    let now = storage.now_secs()?;
     if now < position.expires_at {
         return Err(GemFactoryError::PositionNotExpired.into());
     }
@@ -91,7 +91,7 @@ fn issue_settled(
             entry_price_minor: unit,
             issuance_currency: call.currency,
             reference_currency: call.currency,
-            issued_at: storage.timestamp()?.to::<u64>(),
+            issued_at: storage.now_secs()?,
             call_terms: None,
         },
     )?;

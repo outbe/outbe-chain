@@ -64,7 +64,7 @@ pub(crate) fn view(storage: &StorageHandle, gem_id: U256) -> GemView {
 
 /// Lifecycle state as the view derives it at the block's timestamp.
 pub(crate) fn gem_state(storage: &StorageHandle, gem_id: U256) -> u8 {
-    let now = storage.timestamp().unwrap().to::<u64>();
+    let now = storage.now_secs().unwrap();
     view(storage, gem_id).effective_state(now)
 }
 
@@ -194,7 +194,7 @@ pub(crate) fn block_ctx_at<'s>(
 }
 
 pub(crate) fn block_ctx<'s>(storage: &StorageHandle<'s>) -> BlockRuntimeContext<'s> {
-    block_ctx_at(storage, storage.timestamp().unwrap().to::<u64>())
+    block_ctx_at(storage, storage.now_secs().unwrap())
 }
 
 /// One block of the Gem sweeps as CycleTick runs them: what fell due, then a slice.

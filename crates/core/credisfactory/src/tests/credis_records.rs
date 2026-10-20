@@ -1612,6 +1612,42 @@ fn precompile_reports_principal_and_outstanding_together() {
 }
 
 #[test]
+fn precompile_time_views_reject_wide_timestamps_after_record_lookup() {
+    let mut provider = credis_provider();
+    let id = open_at_block(&mut provider, 1, params(alice()));
+    StorageHandle::enter(&mut provider, |storage| {
+        let calls = [
+            ICredis::tokenURICall { credisId: id }.abi_encode(),
+            ICredis::getCredisCall { credisId: id }.abi_encode(),
+            ICredis::interestAccruedMinorCall { credisId: id }.abi_encode(),
+        ];
+        storage.set_block_timestamp(U256::from(u64::MAX)).unwrap();
+        for data in &calls {
+            dispatch(storage.clone(), data, alice(), U256::ZERO).unwrap();
+        }
+        for timestamp in [U256::from(u64::MAX) + U256::ONE, U256::MAX] {
+            storage.set_block_timestamp(timestamp).unwrap();
+            for data in &calls {
+                assert!(
+                    matches!(dispatch(storage.clone(), data, alice(), U256::ZERO).unwrap_err(),
+                    outbe_primitives::error::PrecompileError::Revert(message)
+                        if message == "timestamp exceeds u64")
+                );
+            }
+            let data = ICredis::getCredisCall {
+                credisId: U256::MAX,
+            }
+            .abi_encode();
+            assert!(
+                matches!(dispatch(storage.clone(), &data, alice(), U256::ZERO).unwrap_err(),
+                outbe_primitives::error::PrecompileError::Revert(message)
+                    if message == "Credis not found")
+            );
+        }
+    });
+}
+
+#[test]
 fn precompile_interest_views_use_the_storage_timestamp() {
     let mut storage = prod_provider();
     storage.set_timestamp(U256::from(ORIGINATED_AT));
@@ -1855,9 +1891,15 @@ fn oversized_timestamp_rolls_back_issuance_and_forfeit() {
                 invalid.asset,
                 storage.block_number().unwrap(),
             );
-            assert!(rules::issue(&mut credis, invalid).is_err());
+            assert!(matches!(rules::issue(&mut credis, invalid).unwrap_err(),
+                outbe_primitives::error::PrecompileError::Revert(message)
+                    if message == "timestamp exceeds u64"));
             assert!(!credis.credis_exists(new_id).unwrap());
-            assert!(forfeit_lapsed(&mut credis, id, deadline + 1).is_err());
+            assert!(
+                matches!(forfeit_lapsed(&mut credis, id, deadline + 1).unwrap_err(),
+                outbe_primitives::error::PrecompileError::Revert(message)
+                    if message == "timestamp exceeds u64")
+            );
             assert_eq!(credis.get_credis(id).unwrap(), before);
         }
         let day = timestamp_to_date_key(ORIGINATED_AT);

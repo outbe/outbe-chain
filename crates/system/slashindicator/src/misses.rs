@@ -247,6 +247,8 @@ impl SlashIndicator<'_> {
 
     /// Records one miss of `kind` and applies the graduated penalty.
     pub(crate) fn record_miss(&mut self, kind: MissKind, validator: Address) -> Result<()> {
+        // A felony can call staking; reject invalid time before recording any miss.
+        self.storage.now_secs()?;
         let count = kind.counter(self).read(&validator)? + 1;
         kind.counter(self).write(&validator, count)?;
 
