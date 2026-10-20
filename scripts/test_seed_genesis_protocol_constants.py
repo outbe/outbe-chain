@@ -150,13 +150,24 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
         self.assertNotIn(
             seed_genesis.mapping_key(seed_genesis.u32_bytes(840), 60), storage.entries
         )
-        self.assertEqual(storage.entries[seed_genesis.hex32(74)], seed_genesis.hex32(1))
-        self.assertEqual(
-            storage.entries[seed_genesis.hex32(seed_genesis.data_slot(74))],
-            seed_genesis.hex32(840),
-        )
+        self.assertEqual(storage.entries[seed_genesis.hex32(74)], seed_genesis.hex32(6))
+        for index, iso_code in enumerate((156, 344, 392, 826, 840, 978)):
+            self.assertEqual(
+                storage.entries[seed_genesis.hex32(seed_genesis.data_slot(74) + index)],
+                seed_genesis.hex32(iso_code),
+            )
         slot = seed_genesis.mapping_key(seed_genesis.u32_bytes(840), 75)
-        self.assertEqual(storage.entries[slot], seed_genesis.hex32(36_300))
+        self.assertEqual(storage.entries[slot], seed_genesis.hex32(38_800))
+
+    def test_every_reference_currency_needs_a_policy_rate(self):
+        with self.assertRaisesRegex(ValueError, r"no policy rate: \[978\]"):
+            seed_genesis.seed_oracle(
+                seed_genesis.StorageBuilder(),
+                {
+                    "reference_currencies": [840, 978],
+                    "policy_rates": [{"iso_code": 840, "annual_rate_1e6": 38_800}],
+                },
+            )
 
     def test_optional_seed_profile_is_copied_to_genesis_config(self):
         genesis = {"config": {"chainId": 1}, "alloc": {}}

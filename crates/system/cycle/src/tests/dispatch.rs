@@ -189,6 +189,52 @@ fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
 }
 
 #[test]
+fn every_block_credits_a_queued_reward_slice_between_hourly_cycles() {
+    use outbe_agentreward::distribution::{
+        distribute_daily, PoolKind, ACCRUAL_RECIPIENTS_PER_BLOCK,
+    };
+    use outbe_agentreward::schema::RewardPool;
+
+    with_anchored_cycle(|handle| {
+        let day = outbe_primitives::time::WorldwideDay::new(20_240_101);
+        let slice = u64::from(ACCRUAL_RECIPIENTS_PER_BLOCK);
+        let recipients = slice + 4;
+        let recipient = |n: u64| Address::from_word(U256::from(n + 1).into());
+        let mut agent_reward = outbe_agentreward::AgentRewardContract::new(handle.clone());
+        for n in 0..recipients {
+            agent_reward
+                .increment_waa_tribute(day, recipient(n))
+                .unwrap();
+        }
+        let claimable = |n: u64| {
+            outbe_agentreward::AgentRewardContract::new(handle.clone())
+                .get_pool_claimable_reward(RewardPool::Waa, recipient(n))
+                .unwrap()
+        };
+
+        let ctx = BlockRuntimeContext::new(block_ctx(2, ANCHOR_TS + 10), handle.clone());
+        distribute_daily(
+            &ctx,
+            day,
+            &[(PoolKind::Waa, U256::from(recipients * 1_000))],
+        )
+        .unwrap();
+        run_cycle_lifecycle(&ctx).unwrap();
+        assert_eq!(claimable(slice - 1), U256::from(1_000u64));
+        assert_eq!(claimable(slice), U256::ZERO);
+
+        let ctx = BlockRuntimeContext::new(block_ctx(3, ANCHOR_TS + 20), handle.clone());
+        run_cycle_lifecycle(&ctx).unwrap();
+        assert_eq!(claimable(recipients - 1), U256::from(1_000u64));
+        assert_eq!(
+            last_executed_at(&ctx),
+            ANCHOR_TS,
+            "the hourly cycle did not fire"
+        );
+    });
+}
+
+#[test]
 fn next_day_cycle_settlement_pays_previous_utc_day_agent_activity() {
     const REWARD_UTC_DAY: u32 = 20_240_101;
 
@@ -204,6 +250,7 @@ fn next_day_cycle_settlement_pays_previous_utc_day_agent_activity() {
 
         let fire_ts = GENESIS_TS + SECONDS_PER_DAY + 60;
         let ctx_fire = dispatch_at(handle, 2, fire_ts);
+        crate::handler::credit_reward_slice(&ctx_fire).unwrap();
 
         let agent_reward = outbe_agentreward::AgentRewardContract::new(ctx_fire.storage.clone());
         let wallet_claimable = agent_reward.get_claimable_reward(wallet).unwrap();

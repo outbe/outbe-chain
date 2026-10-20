@@ -130,6 +130,7 @@ TOP_LEVEL_KEYS = {
     "price_feed_rest",
     "price_feed_websocket",
     "feeder_pairs",
+    "feeder_seeds",
     *launch_bundle.DEFAULT_PORTS,
     *SEED_SECTIONS,
 }

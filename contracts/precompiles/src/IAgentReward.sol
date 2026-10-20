@@ -12,6 +12,10 @@ interface IAgentReward {
 
     function getClaimableBalance(address account) external view returns (uint256 promisLoadMinor);
     function getPoolClaimableBalance(address account, uint8 pool) external view returns (uint256 promisLoadMinor);
+    /// @notice The pool's claimable balances, summed over all accounts.
+    function getPoolClaimableTotal(uint8 pool) external view returns (uint256 promisLoadMinor);
+    /// @notice The part of queued WAA or SRA day pools not yet credited; zero for CCA and validator.
+    function getPoolPendingTotal(uint8 pool) external view returns (uint256 promisLoadMinor);
     /// @notice Issues `promisLoadMinor` of the caller's balance in `pool`
     /// as a Gem in the caller's `issuanceCurrency` and `referenceCurrency` (ISO 4217 numeric).
     /// `referenceCurrency` must be an Oracle reference currency, and the entry price is the
