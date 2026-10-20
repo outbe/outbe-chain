@@ -2,6 +2,7 @@
 pragma solidity ^0.8.25;
 
 import {Test} from "forge-std/Test.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {ResetPeriod} from "the-compact/src/types/ResetPeriod.sol";
@@ -29,6 +30,7 @@ contract SolverEscrowTest is Test {
     event CollateralSlashed(bytes32 indexed orderId, address indexed solver, address token, uint256 amount);
     event CollateralBpsUpdated(uint256 oldBps, uint256 newBps);
     event RewardDistributed(address indexed receiver, address indexed token, uint256 amount);
+    event SlashedPoolSwept(address indexed token, address indexed to, uint256 amount);
 
     function setUp() public {
         solver = makeAddr("solver");
@@ -700,6 +702,83 @@ contract SolverEscrowTest is Test {
         vm.prank(authorizedCaller);
         vm.expectRevert(SolverEscrow.ZeroAddress.selector);
         escrow.lockCollateral(keccak256("order1"), address(0), address(token), 100);
+    }
+
+    // ============ sweepSlashedPool ============
+
+    function test_sweepSlashedPool_ownerWithdrawsResidue() public {
+        uint256 id = escrow.lockId(address(token));
+        _slashSolver(5000, 1000);
+        deal(address(token), address(compact), 10_000);
+
+        address treasury = makeAddr("treasury");
+        escrow.sweepSlashedPool(address(token), treasury, 1000);
+
+        assertEq(token.balanceOf(treasury), 1000, "treasury got the underlying");
+        assertEq(escrow.slashedPool(id), 0, "slashed pool drained");
+        assertEq(compact.balanceOf(address(escrow), id), 0, "escrow ERC6909 burned");
+    }
+
+    function test_sweepSlashedPool_emitsEvent() public {
+        uint256 id = escrow.lockId(address(token));
+        _slashSolver(5000, 1000);
+        deal(address(token), address(compact), 10_000);
+
+        address treasury = makeAddr("treasury");
+        vm.expectEmit(true, true, false, true, address(escrow));
+        emit SlashedPoolSwept(address(token), treasury, 400);
+        escrow.sweepSlashedPool(address(token), treasury, 400);
+
+        assertEq(escrow.slashedPool(id), 600, "partial sweep keeps the remainder");
+        assertEq(compact.balanceOf(address(escrow), id), 600, "escrow keeps the remainder");
+    }
+
+    /// @dev The escrow's balance holds live locks and slashed funds on the same id. A sweep must
+    ///      only ever spend the slashed part, or the escrow could not honor a later unlock.
+    function test_sweepSlashedPool_aboveSlashedPool_revertsAndLiveLockSurvives() public {
+        uint256 id = escrow.lockId(address(token));
+        bytes32 liveOrder = keccak256("liveOrder");
+
+        _slashSolver(5000, 100);
+        vm.prank(authorizedCaller);
+        escrow.lockCollateral(liveOrder, solver, address(token), 1000);
+        deal(address(token), address(compact), 10_000);
+
+        address treasury = makeAddr("treasury");
+        // The escrow holds 1100, but only the 100 in the slashed pool is sweepable.
+        vm.expectRevert(ISolverEscrow.InsufficientAvailableBalance.selector);
+        escrow.sweepSlashedPool(address(token), treasury, 101);
+
+        escrow.sweepSlashedPool(address(token), treasury, 100);
+        assertEq(escrow.slashedPool(id), 0, "slashed pool drained");
+        assertEq(compact.balanceOf(address(escrow), id), 1000, "escrow still holds the live lock");
+
+        vm.prank(authorizedCaller);
+        escrow.unlockCollateral(liveOrder);
+        assertEq(compact.balanceOf(solver, id), 5000 - 100, "solver got the live lock back in full");
+        assertEq(compact.balanceOf(address(escrow), id), 0, "escrow drained");
+    }
+
+    function test_sweepSlashedPool_nonOwner_reverts() public {
+        _slashSolver(5000, 1000);
+
+        vm.prank(solver);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, solver));
+        escrow.sweepSlashedPool(address(token), solver, 1000);
+    }
+
+    function test_sweepSlashedPool_zeroTo_reverts() public {
+        _slashSolver(5000, 1000);
+
+        vm.expectRevert(SolverEscrow.ZeroAddress.selector);
+        escrow.sweepSlashedPool(address(token), address(0), 1000);
+    }
+
+    function test_sweepSlashedPool_zeroAmount_reverts() public {
+        _slashSolver(5000, 1000);
+
+        vm.expectRevert(SolverEscrow.InvalidAmount.selector);
+        escrow.sweepSlashedPool(address(token), makeAddr("treasury"), 0);
     }
 
     // ============ lockId ============

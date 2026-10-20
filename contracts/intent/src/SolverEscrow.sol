@@ -26,6 +26,7 @@ import {ISolverEscrow} from "./interfaces/ISolverEscrow.sol";
 ///   lock:      DestinationSettler -> Escrow.lockCollateral -> transferFrom(solver->escrow)
 ///   unlock:    DestinationSettler -> Escrow.unlockCollateral -> transfer(escrow->solver)
 ///   slash:     DestinationSettler -> Escrow.slashCollateral -> credits slashedPool
+///   sweep:     Owner -> Escrow.sweepSlashedPool -> debits slashedPool -> allocatedTransfer(escrow->to)
 ///
 /// Invariant: balanceOf(escrow, id) == sum(live locks on id) + slashedPool[id]
 ///
@@ -69,7 +70,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
     /// @notice ERC6909 held by the escrow on a solver's behalf while locked.
     mapping(address solver => mapping(uint256 id => uint256)) public totalLocked;
 
-    /// @notice Per-id pool of slashed collateral, the only source distributeReward pays from.
+    /// @notice Per-id pool of slashed collateral. distributeReward and sweepSlashedPool pay only from it.
     mapping(uint256 id => uint256) public slashedPool;
 
     // ============ Events ============
@@ -136,6 +137,23 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
         emit CollateralBpsUpdated(oldBps, _collateralBps);
     }
 
+    /// @notice Release slashed collateral that rewards do not use to `to` as underlying tokens.
+    /// @dev Spends only slashedPool[id]. The ERC6909 that backs live locks stays in the escrow.
+    /// @param token  Token address (address(0) for ETH)
+    /// @param to     Address that receives the underlying tokens
+    /// @param amount Amount to release. Must not exceed slashedPool[id].
+    function sweepSlashedPool(address token, address to, uint256 amount) external onlyOwner {
+        if (to == address(0)) revert ZeroAddress();
+        // The Compact rejects a zero-amount allocatedTransfer.
+        if (amount == 0) revert InvalidAmount();
+        uint256 id = _lockId(token);
+        if (amount > slashedPool[id]) revert InsufficientAvailableBalance();
+        slashedPool[id] -= amount;
+        emit SlashedPoolSwept(token, to, amount);
+
+        _releaseUnderlying(id, to, amount);
+    }
+
     // ============ Deposit ============
 
     /// @notice Deposit tokens as solver collateral.
@@ -184,15 +202,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
         IERC6909(address(COMPACT)).transferFrom(msg.sender, address(this), id, withdrawAmount);
 
         // Step 2: Release underlying tokens to solver via allocatedTransfer
-        // claimant = uint160(solver) -> zero upper bits -> zero lockTag -> withdrawal of underlying
-        Component[] memory recipients = new Component[](1);
-        recipients[0] = Component({claimant: uint160(msg.sender), amount: withdrawAmount});
-
-        COMPACT.allocatedTransfer(
-            AllocatedTransfer({
-                allocatorData: "", nonce: _nextNonce++, expires: type(uint256).max, id: id, recipients: recipients
-            })
-        );
+        _releaseUnderlying(id, msg.sender, withdrawAmount);
 
         uint256 solverBalAfter = IERC6909(address(COMPACT)).balanceOf(msg.sender, id);
         if (solverBalAfter > available - withdrawAmount) revert WithdrawalFailed();
@@ -260,14 +270,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
         slashedPool[id] -= reward;
 
         // Release underlying tokens to receiver via allocatedTransfer
-        Component[] memory recipients = new Component[](1);
-        recipients[0] = Component({claimant: uint160(receiver), amount: reward});
-
-        COMPACT.allocatedTransfer(
-            AllocatedTransfer({
-                allocatorData: "", nonce: _nextNonce++, expires: type(uint256).max, id: id, recipients: recipients
-            })
-        );
+        _releaseUnderlying(id, receiver, reward);
 
         emit RewardDistributed(receiver, token, reward);
     }
@@ -344,6 +347,19 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
         COMPACT.depositERC20(token, LOCK_TAG, amount, solver);
 
         emit Deposited(solver, token, amount);
+    }
+
+    /// @dev Burns `amount` of the escrow's ERC6909 `id` and sends the underlying to `to`.
+    ///      claimant = uint160(to) -> zero upper bits -> zero lockTag -> withdrawal of underlying.
+    function _releaseUnderlying(uint256 id, address to, uint256 amount) private {
+        Component[] memory recipients = new Component[](1);
+        recipients[0] = Component({claimant: uint160(to), amount: amount});
+
+        COMPACT.allocatedTransfer(
+            AllocatedTransfer({
+                allocatorData: "", nonce: _nextNonce++, expires: type(uint256).max, id: id, recipients: recipients
+            })
+        );
     }
 
     function _lockId(address token) internal view returns (uint256) {

@@ -7,7 +7,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {SolverEscrow} from "../../../src/SolverEscrow.sol";
 import {MockTheCompact} from "../../mocks/MockTheCompact.sol";
 
-/// @dev Drives lock/unlock/slash/withdraw/forced-withdrawal against the escrow so the invariant
+/// @dev Drives lock/unlock/slash/sweep/withdraw/forced-withdrawal against the escrow so the invariant
 ///      test can assert escrow custody accounting holds across arbitrary interleavings.
 contract SolverEscrowHandler is Test {
     SolverEscrow internal immutable escrow;
@@ -70,6 +70,17 @@ contract SolverEscrowHandler is Test {
         if (orderId == bytes32(0)) return;
         vm.prank(address(this));
         escrow.slashCollateral(orderId);
+    }
+
+    function sweep(uint256 amount) external {
+        uint256 pool = escrow.slashedPool(id);
+        if (pool == 0) return;
+        amount = bound(amount, 1, pool);
+        address owner = escrow.owner();
+        address treasury = makeAddr("invariantTreasury");
+        deal(address(token), address(compact), amount); // fund underlying release
+        vm.prank(owner);
+        escrow.sweepSlashedPool(address(token), treasury, amount);
     }
 
     function withdraw(uint256 actorSeed, uint256 amount) external {
