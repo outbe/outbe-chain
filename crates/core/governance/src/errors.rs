@@ -42,6 +42,9 @@ pub enum GovernanceError {
 
     #[error("author proposal index is full")]
     AuthorIndexFull,
+
+    #[error("proposal id sequence is exhausted")]
+    ProposalIdExhausted,
 }
 
 impl From<GovernanceError> for PrecompileError {

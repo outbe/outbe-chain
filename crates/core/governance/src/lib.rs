@@ -19,7 +19,8 @@
 //! The vote path ([`GovernanceVoteTarget`]) may also materialize Approved
 //! OIP/GIP records after validator quorum.
 //!
-//! Submission rejects a full per-author index before writing a proposal.
+//! Submission rejects an exhausted per-kind ID sequence or a full per-author
+//! index before changing proposal storage or emitting events.
 //! Author listings paginate index slots and omit missing records rather than
 //! returning fabricated proposal metadata.
 

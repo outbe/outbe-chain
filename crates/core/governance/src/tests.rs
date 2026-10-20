@@ -144,6 +144,51 @@ fn oip_gip_independent_id_sequences() {
 }
 
 #[test]
+fn submission_counters_are_checked() {
+    for kind in [crate::ProposalKind::Oip, crate::ProposalKind::Gip] {
+        let mut provider = HashMapStorageProvider::new(1);
+        StorageHandle::enter(&mut provider, |storage| {
+            let mut gov = GovernanceContract::new(storage);
+            let (id, text) = match kind {
+                crate::ProposalKind::Oip => {
+                    gov.next_oip_id.write(u64::MAX - 1).unwrap();
+                    let id = gov.submit_oip(AUTHOR, "last proposal").unwrap();
+                    (id, gov.get_oip(id).unwrap().unwrap().text)
+                }
+                crate::ProposalKind::Gip => {
+                    gov.next_gip_id.write(u64::MAX - 1).unwrap();
+                    let id = gov.submit_gip(AUTHOR, "last proposal").unwrap();
+                    (id, gov.get_gip(id).unwrap().unwrap().text)
+                }
+            };
+            assert_eq!(id, U256::from(u64::MAX));
+            assert_eq!(text, "last proposal");
+        });
+
+        let storage_before = provider.storage.clone();
+        let events_before = provider.events.clone();
+        StorageHandle::enter(&mut provider, |storage| {
+            let mut gov = GovernanceContract::new(storage);
+            let error = match kind {
+                crate::ProposalKind::Oip => gov.submit_oip(AUTHOR, "overflow"),
+                crate::ProposalKind::Gip => gov.submit_gip(AUTHOR, "overflow"),
+            }
+            .unwrap_err();
+            assert!(
+                matches!(
+                    &error,
+                    PrecompileError::Revert(reason)
+                        if *reason == GovernanceError::ProposalIdExhausted.to_string()
+                ),
+                "expected ProposalIdExhausted, got {error:?}"
+            );
+        });
+        assert_eq!(provider.storage, storage_before);
+        assert_eq!(provider.events, events_before);
+    }
+}
+
+#[test]
 fn oip_submit_get_roundtrip_text_in_record() {
     with_governance(|gov| {
         let id = gov.submit_oip(AUTHOR, "proposal body text").unwrap();

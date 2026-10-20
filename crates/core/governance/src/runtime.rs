@@ -61,7 +61,11 @@ macro_rules! impl_proposal_ops {
                 .checked_add(1)
                 .ok_or(GovernanceError::AuthorIndexFull)?;
             let block = self.storage.block_number()?;
-            let next = self.$counter.read()? + 1;
+            let next = self
+                .$counter
+                .read()?
+                .checked_add(1)
+                .ok_or(GovernanceError::ProposalIdExhausted)?;
             let id = U256::from(next);
             let text_hash = keccak256(text.as_bytes());
             let record = $record {
