@@ -211,10 +211,10 @@ fn get_policy_rate_reverts_for_an_unregistered_iso_code() {
             &crate::genesis::OracleGenesisConfig::default_config(),
         )
         .unwrap();
-        let err = oracle.get_policy_rate(978).unwrap_err();
+        let err = oracle.get_policy_rate(124).unwrap_err();
         let msg = format!("{err:?}");
         assert!(
-            msg.contains("no policy rate for iso_code 978"),
+            msg.contains("no policy rate for iso_code 124"),
             "unexpected error: {msg}"
         );
     });
