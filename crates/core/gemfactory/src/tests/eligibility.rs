@@ -45,7 +45,6 @@ fn cross_currency_settlement_rejects_a_leg_the_window_never_priced() {
         let gem_id = issue_at_live_rate(
             storage,
             ALICE,
-            GemTypes::Wallet,
             U256::from(10u64) * six_decimal_unit(),
             840,
             978,
@@ -78,7 +77,6 @@ fn settle_rejects_wrong_settlement_currency() {
         let gem_id = issue_at_live_rate(
             storage,
             ALICE,
-            GemTypes::Wallet,
             U256::from(10u64) * six_decimal_unit(),
             840,
             840,

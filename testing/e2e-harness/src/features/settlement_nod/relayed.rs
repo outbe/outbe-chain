@@ -13,7 +13,7 @@ struct RelayedNod {
     head: u64,
     body: eth::INod::NodData,
     gratis_load: U256,
-    bucket_key: B256,
+    group_key: B256,
     vault: Address,
     asset: Address,
     owner_keys: eth::ConfidentialAccountKeys,
@@ -21,7 +21,7 @@ struct RelayedNod {
     hardened: bool,
 }
 struct PaidNod {
-    paid: (NodItemBodyV2, NodBucketBodyV1),
+    paid: (NodItemBodyV2, NodGroupBodyV1),
     paid_indexes: NodSnapshot,
     settled: eth::MinedCallOutcome,
     duplicate: crate::world::rpc::TxOutcome,
@@ -133,7 +133,7 @@ fn prepare_relayed_nod(
     let body = issued.body.as_ref().expect("issued public Nod");
     let gratis_load = crate::internal::nod_keys::decrypt(world, body);
     assert!(!body.isSettled);
-    let bucket_key = issued_bodies.1.bucket_key;
+    let group_key = issued_bodies.1.group_key;
     let vault = eth::read_call(
         &url,
         addresses::VAULT_ROUTER_ADDR,
@@ -177,7 +177,7 @@ fn prepare_relayed_nod(
         head,
         body,
         gratis_load,
-        bucket_key,
+        group_key,
         vault,
         asset,
         owner_keys,
@@ -452,7 +452,7 @@ fn reject_mining_attempt(
     assert_eq!(
         nod_bodies(world, scenario.id, rejected_height),
         payment.paid,
-        "wrong MAC must preserve the paid item and bucket"
+        "wrong MAC must preserve the paid item and group"
     );
     let rejected_after = nod_snapshot(world, scenario.owner, scenario.id, rejected_height);
     assert_same_snapshot(&attempt.rejected_before, &rejected_after);
@@ -748,23 +748,23 @@ fn assert_mined_ledgers(
                 .is_none(),
             "mined Nod must have authenticated absence"
         );
-        // The fixture issued a singleton bucket. Mining its one paid right
-        // must remove the bucket instead of leaving an orphan settled counter.
+        // The fixture issued a singleton group. Mining its one paid right
+        // must remove the group instead of leaving an orphan settled counter.
         assert_eq!(payment.paid.1.settled_nods, 1);
         assert!(
             world
                 .rpc
-                .nod_bucket_state_at(
+                .nod_group_state_at(
                     peer,
                     world
                         .rpc
                         .checkpoint_at(scenario.port, minted.minted_height)
-                        .expect("mined bucket checkpoint"),
-                    scenario.bucket_key
+                        .expect("mined group checkpoint"),
+                    scenario.group_key
                 )
-                .expect("mined bucket state")
+                .expect("mined group state")
                 .is_none(),
-            "empty paid bucket must be deleted"
+            "empty paid group must be deleted"
         );
     }
 }

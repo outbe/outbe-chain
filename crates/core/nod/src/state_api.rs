@@ -1,6 +1,6 @@
 use crate::errors::NodError;
 use crate::precompile::INod;
-use crate::schema::{CallTerms, NodBucketState, NodContract, NodItemState};
+use crate::schema::{CallTerms, NodContract, NodGroupState, NodItemState};
 use crate::storage_records::{StoredNod, StoredNodEntryExt};
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::{
@@ -24,15 +24,15 @@ impl LoadedNodItem {
     }
 }
 
-/// A Nod bucket exactly as stored when it was loaded; mutation re-checks storage against it.
-pub struct LoadedNodBucket {
-    body: NodBucketState,
+/// A Nod group exactly as stored when it was loaded; mutation re-checks storage against it.
+pub struct LoadedNodGroup {
+    body: NodGroupState,
 }
-impl LoadedNodBucket {
-    pub const fn body(&self) -> &NodBucketState {
+impl LoadedNodGroup {
+    pub const fn body(&self) -> &NodGroupState {
         &self.body
     }
-    pub(crate) fn into_body(self) -> NodBucketState {
+    pub(crate) fn into_body(self) -> NodGroupState {
         self.body
     }
 }
@@ -60,51 +60,49 @@ pub fn load_item(storage: &StorageHandle<'_>, id: WwdEntityId) -> Result<Option<
     }
     Ok(Some(LoadedNodItem { body }))
 }
-pub fn load_bucket(storage: &StorageHandle<'_>, key: B256) -> Result<Option<LoadedNodBucket>> {
+pub fn load_group(storage: &StorageHandle<'_>, key: B256) -> Result<Option<LoadedNodGroup>> {
     let contract = NodContract::new(storage.clone());
     contract
-        .buckets
+        .groups
         .get(key)?
-        .map(|body| Ok(LoadedNodBucket { body }))
+        .map(|body| Ok(LoadedNodGroup { body }))
         .transpose()
 }
 pub fn add_item(
     storage: &StorageHandle<'_>,
     item: &NodItemState,
-    entry: U256,
     terms: Option<CallTerms>,
+    gratis_load_minor: U256,
 ) -> Result<()> {
     storage.with_checkpoint(|| {
-        NodContract::new(storage.clone()).record_nod_issued_state(item, entry, terms)
+        NodContract::new(storage.clone()).record_nod_issued_state(item, terms, gratis_load_minor)
     })
 }
 pub fn record_settled(
     storage: &StorageHandle<'_>,
     item: LoadedNodItem,
-    bucket: LoadedNodBucket,
+    group: LoadedNodGroup,
 ) -> Result<()> {
-    storage.with_checkpoint(|| {
-        NodContract::new(storage.clone()).record_nod_settled_state(item, bucket)
-    })
+    storage
+        .with_checkpoint(|| NodContract::new(storage.clone()).record_nod_settled_state(item, group))
 }
 pub fn remove_item(
     storage: &StorageHandle<'_>,
     item: LoadedNodItem,
-    bucket: LoadedNodBucket,
+    group: LoadedNodGroup,
 ) -> Result<()> {
-    storage.with_checkpoint(|| {
-        NodContract::new(storage.clone()).record_nod_removed_state(item, bucket)
-    })
+    storage
+        .with_checkpoint(|| NodContract::new(storage.clone()).record_nod_removed_state(item, group))
 }
-/// Must run before `item` or `bucket` is mutated: both are compared with storage as loaded.
+/// Must run before `item` or `group` is mutated: both are compared with storage as loaded.
 fn check_loaded(
     contract: &NodContract<'_>,
     item: &NodItemState,
-    bucket: &NodBucketState,
+    group: &NodGroupState,
 ) -> Result<()> {
-    if item.bucket_key != bucket.bucket_key
+    if item.group_key != group.group_key
         || contract.records.get(item.nod_id)? != Some(StoredNod::from(item))
-        || contract.buckets.get(bucket.bucket_key)?.as_ref() != Some(bucket)
+        || contract.groups.get(group.group_key)?.as_ref() != Some(group)
     {
         return Err(PrecompileError::revert("Nod state changed after loading"));
     }
@@ -114,46 +112,42 @@ impl NodContract<'_> {
     fn record_nod_issued_state(
         &mut self,
         item: &NodItemState,
-        entry_price_minor: U256,
         call_terms: Option<CallTerms>,
+        gratis_load_minor: U256,
     ) -> Result<()> {
-        crate::issuance::validate_item(item, entry_price_minor)?;
+        crate::issuance::validate_item(
+            item,
+            call_terms.map_or(U256::ZERO, |terms| terms.call_price_minor),
+        )?;
         if self.records.get(item.nod_id)?.is_some() {
             return Err(NodError::NodAlreadyExists.into());
         }
 
-        let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
-        let current_bucket = self.buckets.get(item.bucket_key)?;
-        let member_count = self.bucket_nod_count.read(&item.bucket_key)?;
-        let settled_count = current_bucket
-            .as_ref()
-            .map_or(0, |bucket| bucket.settled_nods);
-        if current_bucket.is_some() != (member_count > 0 || settled_count > 0) {
-            return Err(NodError::BucketExistenceDisagreesWithMemberCount {
-                bucket_id,
+        let group_id = item.group_id();
+        let current_group = self.groups.get(item.group_key)?;
+        let member_count = self.group_nod_count.read(&item.group_key)?;
+        let settled_count = current_group.as_ref().map_or(0, |group| group.settled_nods);
+        if current_group.is_some() != (member_count > 0 || settled_count > 0) {
+            return Err(NodError::GroupExistenceDisagreesWithMemberCount {
+                group_id,
                 member_count,
             }
             .into());
         }
-        let new_bucket = match current_bucket {
+        let new_group = match current_group {
             Some(_) => None,
             None => {
-                let bucket = NodBucketState {
+                let group = NodGroupState {
                     settled_nods: 0,
-                    bucket_key: item.bucket_key,
-                    worldwide_day: item.worldwide_day,
-                    entry_price_minor,
+                    group_key: item.group_key,
+                    full_day_after_issue: item.full_day_after_issue(),
                     reference_currency: item.reference_currency,
                 };
-                self.bucket_worldwide_day
-                    .write(&item.bucket_key, item.worldwide_day)?;
-                self.bucket_issued_at
-                    .write(&item.bucket_key, item.issued_at)?;
                 if let Some(terms) = call_terms {
-                    self.seal_bucket_call_terms(item.bucket_key, terms)?;
-                    self.insert_call_bin(item.bucket_key)?;
+                    self.seal_group_call_terms(item.group_key, terms)?;
+                    self.insert_call_bin(item.group_key)?;
                 }
-                Some(bucket)
+                Some(group)
             }
         };
 
@@ -163,10 +157,11 @@ impl NodContract<'_> {
             .checked_add(1)
             .ok_or(NodError::TotalSupplyOverflowDuringIssuance)?;
         self.total_supply.write(supply)?;
-        self.insert_bucket_member(item.bucket_key, item.nod_id)?;
+        self.add_unpaid_load(item.group_key, gratis_load_minor)?;
+        self.insert_group_member(item.group_key, item.nod_id)?;
         self.insert_state_record(&StoredNod::from(item))?;
-        if let Some(bucket) = new_bucket {
-            self.buckets.create(&bucket)?;
+        if let Some(group) = new_group {
+            self.groups.create(&group)?;
         }
         self.emit(INod::Transfer {
             from: Address::ZERO,
@@ -178,22 +173,23 @@ impl NodContract<'_> {
     fn record_nod_settled_state(
         &mut self,
         item: LoadedNodItem,
-        bucket: LoadedNodBucket,
+        group: LoadedNodGroup,
     ) -> Result<()> {
         let mut item = item.into_body();
-        let mut bucket = bucket.into_body();
-        check_loaded(self, &item, &bucket)?;
+        let mut group = group.into_body();
+        check_loaded(self, &item, &group)?;
         if item.is_settled {
             return Err(NodError::AlreadySettled.into());
         }
-        bucket.settled_nods = bucket
+        group.settled_nods = group
             .settled_nods
             .checked_add(1)
             .ok_or(NodError::SettledCountOverflow)?;
-        self.remove_bucket_member(item.bucket_key, item.nod_id)?;
+        self.remove_group_member(item.group_key, item.nod_id)?;
+        self.take_unpaid_load(item.group_key, crate::api::calculation_amount(&item)?)?;
         item.is_settled = true;
         self.records.update(&StoredNod::from(&item))?;
-        self.buckets.update(&bucket)?;
+        self.groups.update(&group)?;
         self.emit(INod::MetadataUpdate {
             _tokenId: item.nod_id.to_u256(),
         })
@@ -202,12 +198,12 @@ impl NodContract<'_> {
     fn record_nod_removed_state(
         &mut self,
         item: LoadedNodItem,
-        bucket: LoadedNodBucket,
+        group: LoadedNodGroup,
     ) -> Result<()> {
         let item = item.into_body();
-        let mut bucket = bucket.into_body();
-        check_loaded(self, &item, &bucket)?;
-        let bucket_id = WwdEntityId::from_day_and_digest(bucket.worldwide_day, bucket.bucket_key);
+        let mut group = group.into_body();
+        check_loaded(self, &item, &group)?;
+        let group_id = item.group_id();
         let supply = self
             .total_supply
             .read()?
@@ -215,23 +211,23 @@ impl NodContract<'_> {
             .ok_or(NodError::TotalSupplyUnderflowDuringRemoval)?;
         self.total_supply.write(supply)?;
         let remaining = if item.is_settled {
-            bucket.settled_nods = bucket
+            group.settled_nods = group
                 .settled_nods
                 .checked_sub(1)
-                .ok_or(NodError::BucketSettledCountUnderflow { bucket_id })?;
-            self.bucket_nod_count.read(&item.bucket_key)?
+                .ok_or(NodError::GroupSettledCountUnderflow { group_id })?;
+            self.group_nod_count.read(&item.group_key)?
         } else {
-            self.remove_bucket_member(item.bucket_key, item.nod_id)?
+            // An unpaid Nod leaves only through its forfeited group's cleanup, after the
+            // group's whole unpaid load was returned. So its load stays on the total.
+            self.remove_group_member(item.group_key, item.nod_id)?
         };
         self.delete_state_record(item.nod_id)?;
-        if remaining == 0 && bucket.settled_nods == 0 {
-            self.bucket_worldwide_day.clear(&item.bucket_key)?;
-            self.bucket_issued_at.clear(&item.bucket_key)?;
-            self.bucket_nod_count.clear(&item.bucket_key)?;
-            self.close_bucket(item.bucket_key)?;
-            self.buckets.delete(bucket.bucket_key)?;
+        if remaining == 0 && group.settled_nods == 0 {
+            self.group_nod_count.clear(&item.group_key)?;
+            self.close_group(item.group_key)?;
+            self.groups.delete(group.group_key)?;
         } else if item.is_settled {
-            self.buckets.update(&bucket)?;
+            self.groups.update(&group)?;
         }
         self.emit(INod::Transfer {
             from: item.owner,
@@ -272,7 +268,7 @@ mod tests {
             entry_price_minor: U256::from(4),
             issuance_currency: 5,
             reference_currency: 6,
-            bucket_key: B256::repeat_byte(8),
+            group_key: B256::repeat_byte(8),
             issued_at: 9,
             is_settled: true,
             encryption_binding: B256::repeat_byte(10),
@@ -363,49 +359,45 @@ mod tests {
                 owner: params.owner,
                 worldwide_day: params.worldwide_day,
                 league_id: params.league_id,
-                bucket_key: crate::identity::bucket_key(
-                    params.worldwide_day,
-                    params.entry_price_minor,
-                    params.reference_currency,
-                ),
+                group_key: crate::identity::group_key(1, U256::ZERO, params.reference_currency),
                 issuance_currency: params.issuance_currency,
                 reference_currency: params.reference_currency,
                 issued_at: 1,
                 is_settled: false,
                 encrypted,
             };
-            add_item(&storage, &item, params.entry_price_minor, None).unwrap();
+            add_item(&storage, &item, None, params.gratis_load_minor).unwrap();
             let contract = NodContract::new(storage.clone());
             assert_eq!(contract.total_supply().unwrap(), 1);
             assert_eq!(contract.state_records(Some(item.owner)).unwrap().len(), 1);
             let stale_item = load_item(&storage, item.nod_id).unwrap().unwrap();
-            let stale_bucket = load_bucket(&storage, item.bucket_key).unwrap().unwrap();
+            let stale_group = load_group(&storage, item.group_key).unwrap().unwrap();
             record_settled(
                 &storage,
                 load_item(&storage, item.nod_id).unwrap().unwrap(),
-                load_bucket(&storage, item.bucket_key).unwrap().unwrap(),
+                load_group(&storage, item.group_key).unwrap().unwrap(),
             )
             .unwrap();
-            assert!(record_settled(&storage, stale_item, stale_bucket).is_err());
+            assert!(record_settled(&storage, stale_item, stale_group).is_err());
             assert_eq!(
                 contract
-                    .buckets
-                    .get(item.bucket_key)
+                    .groups
+                    .get(item.group_key)
                     .unwrap()
                     .unwrap()
                     .settled_nods,
                 1
             );
-            assert_eq!(contract.bucket_nod_count.read(&item.bucket_key).unwrap(), 0);
+            assert_eq!(contract.group_nod_count.read(&item.group_key).unwrap(), 0);
             remove_item(
                 &storage,
                 load_item(&storage, item.nod_id).unwrap().unwrap(),
-                load_bucket(&storage, item.bucket_key).unwrap().unwrap(),
+                load_group(&storage, item.group_key).unwrap().unwrap(),
             )
             .unwrap();
             assert_eq!(contract.total_supply().unwrap(), 0);
             assert!(contract.state_records(None).unwrap().is_empty());
-            assert!(contract.buckets.get(item.bucket_key).unwrap().is_none());
+            assert!(contract.groups.get(item.group_key).unwrap().is_none());
         });
     }
 }

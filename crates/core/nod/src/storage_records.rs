@@ -23,7 +23,7 @@ pub struct StoredNod {
     #[attribute(order = 6)]
     pub reference_currency: u16,
     #[attribute(order = 7)]
-    pub bucket_key: B256,
+    pub group_key: B256,
     #[attribute(order = 8)]
     pub issued_at: u64,
     #[attribute(order = 9)]
@@ -47,7 +47,7 @@ impl From<&crate::NodItemState> for StoredNod {
             entry_price_minor: item.encrypted.terms.entry_price_minor,
             issuance_currency: item.issuance_currency,
             reference_currency: item.reference_currency,
-            bucket_key: item.bucket_key,
+            group_key: item.group_key,
             issued_at: item.issued_at,
             is_settled: item.is_settled,
             encryption_binding: item.encrypted.encryption_binding,
@@ -64,7 +64,7 @@ impl From<StoredNod> for crate::NodItemState {
             owner: item.owner,
             worldwide_day: item.worldwide_day,
             league_id: item.league_id,
-            bucket_key: item.bucket_key,
+            group_key: item.group_key,
             issuance_currency: item.issuance_currency,
             reference_currency: item.reference_currency,
             issued_at: item.issued_at,
@@ -197,17 +197,17 @@ mod tests {
     }
 
     #[test]
-    fn zero_price_bucket_exists_until_deleted() {
+    fn zero_price_group_exists_until_deleted() {
         let mut provider = HashMapStorageProvider::new(54322345);
         StorageHandle::enter(&mut provider, |storage| {
             let contract = crate::NodContract::new(storage);
             let key = B256::repeat_byte(2);
-            let mut record = crate::schema::NodBucketState::with_key(key);
-            record.worldwide_day = WorldwideDay::new(20261015);
-            contract.buckets.create(&record).unwrap();
-            assert_eq!(contract.buckets.get(key).unwrap(), Some(record));
-            contract.buckets.delete(key).unwrap();
-            assert!(contract.buckets.get(key).unwrap().is_none());
+            let mut record = crate::schema::NodGroupState::with_key(key);
+            record.full_day_after_issue = WorldwideDay::new(20261015);
+            contract.groups.create(&record).unwrap();
+            assert_eq!(contract.groups.get(key).unwrap(), Some(record));
+            contract.groups.delete(key).unwrap();
+            assert!(contract.groups.get(key).unwrap().is_none());
         });
     }
 }

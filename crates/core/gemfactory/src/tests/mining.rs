@@ -9,8 +9,7 @@ fn mine_promis_full_flow() {
         // The paid settle deposits into the Reserve vault, which this storage-only
         // harness cannot service. `force_settled` records Settled through
         // `gem_api::settle_gem` and does not deposit. Localnet covers the paid settle.
-        let gem_id =
-            issue_at_live_rate(storage, ALICE, GemTypes::Validator, load, 840, 840).unwrap();
+        let gem_id = issue_at_live_rate(storage, ALICE, load, 840, 840).unwrap();
 
         force_settled(storage, gem_id);
         let nonce = find_valid_nonce(gem_id, ALICE);
@@ -42,7 +41,6 @@ fn mine_promis_rejects_non_settled() {
         let gem_id = issue_at_live_rate(
             storage,
             ALICE,
-            GemTypes::Wallet,
             U256::from(10u64) * six_decimal_unit(),
             840,
             840,
@@ -64,8 +62,7 @@ fn anyone_may_relay_mining_and_the_promis_lands_with_the_owner() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         let load = U256::from(10u64) * six_decimal_unit();
-        let gem_id =
-            issue_at_live_rate(storage, ALICE, GemTypes::Validator, load, 840, 840).unwrap();
+        let gem_id = issue_at_live_rate(storage, ALICE, load, 840, 840).unwrap();
         force_settled(storage, gem_id);
 
         let nonce = find_valid_nonce(gem_id, ALICE);
@@ -110,7 +107,7 @@ fn statistics_track_mint_count() {
         // per issue so the same (owner, block) pair does not collide.
         for i in 0..3 {
             let load = base + U256::from(i as u64);
-            issue_at_live_rate(storage, ALICE, GemTypes::Wallet, load, 840, 840).unwrap();
+            issue_at_live_rate(storage, ALICE, load, 840, 840).unwrap();
         }
         let factory = GemFactoryContract::new(storage.clone());
         assert_eq!(factory.total_gems_issued.read().unwrap(), U256::from(3u64));

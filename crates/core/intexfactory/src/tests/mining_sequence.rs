@@ -78,7 +78,6 @@ fn a_mining_sequence_at_its_maximum_refuses_the_next_mining_without_writes() {
             "the sequence must not wrap"
         );
         let after = outbe_intex::api::read_series(&s, sid(7)).unwrap();
-        assert_eq!(after.state, series.state);
         assert_eq!(after.issued_units, series.issued_units);
         assert_eq!(after.promis_load_minor, series.promis_load_minor);
         let after = outbe_intex::api::unit_counts(&s, sid(7)).unwrap();

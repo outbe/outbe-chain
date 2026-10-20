@@ -18,8 +18,8 @@ use crate::schema::{Credis, CredisContract, CredisState};
 
 /// Timestamp after which a called Credis's remainder may be forfeited.
 ///
-/// Reads the notice period sealed onto the Credis at issuance, so switching the
-/// profile cannot move the deadline of a Credis that is already live.
+/// Reads the notice period its group sealed at issuance, so switching the profile
+/// cannot move the deadline of a Credis that is already live.
 pub fn settlement_deadline(record: &Credis) -> u64 {
     outbe_primitives::settlement::settlement_deadline_of(
         record.called_at,
@@ -28,7 +28,7 @@ pub fn settlement_deadline(record: &Credis) -> u64 {
 }
 
 /// The state a reader sees at `now`: a Called Credis past its deadline reads Forfeited
-/// before the forfeit sweep reaches it.
+/// until the cleanup deletes it.
 pub fn effective_state(record: &Credis, now: u64) -> Result<CredisState> {
     let state = record.lifecycle_state()?;
     if state == CredisState::Called && now > settlement_deadline(record) {
@@ -38,8 +38,8 @@ pub fn effective_state(record: &Credis, now: u64) -> Result<CredisState> {
 }
 
 /// Where a Credis's principal and Gratis went, as a reader sees it at `now`.
-/// A Forfeited Credis keeps its remainders on the record: they are what was written
-/// off and burned, and nothing is outstanding.
+/// Past the deadline its remainders are what is written off and burned, and nothing is
+/// outstanding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Outcome {
     pub outstanding_principal_minor: U256,
@@ -117,69 +117,38 @@ impl CredisContract<'_> {
     // Reads
     // ---------------------------------------------------------------------
 
-    /// Loads the Credis record. Reverts on missing.
+    /// Loads the Credis as its group sees it. Reverts on missing.
     pub fn get_credis(&self, credis_id: U256) -> Result<Credis> {
         self.load_credis(credis_id)
     }
 
-    /// Sum of `principal_minor` and of `outstanding_principal_minor` across all Credis for
-    /// `account`, in one walk of the owner index.
-    pub fn principal_and_outstanding_of(&self, account: Address, now: u64) -> Result<(U256, U256)> {
-        let mut principal = U256::ZERO;
-        let mut outstanding = U256::ZERO;
-        for record in self.get_credis_by_owner(account)? {
-            principal = principal
-                .checked_add(record.principal_minor)
-                .ok_or(CredisError::ArithmeticOverflow)?;
-            outstanding = outstanding
-                .checked_add(outcome(&record, now)?.outstanding_principal_minor)
-                .ok_or(CredisError::ArithmeticOverflow)?;
-        }
-        Ok((principal, outstanding))
+    /// Sum of `principal_minor` and of `outstanding_principal_minor` across the live Credis
+    /// of `account`, kept as they change. A lapsed Credis counts until the cleanup deletes
+    /// it.
+    pub fn principal_and_outstanding_of(&self, account: Address) -> Result<(U256, U256)> {
+        Ok((
+            self.owner_principal_minor.read(&account)?,
+            self.owner_outstanding_minor.read(&account)?,
+        ))
     }
 
-    /// How many Credis `account` has ever been issued.
+    /// How many live Credis `account` holds.
     pub fn credis_count_of(&self, account: Address) -> Result<u32> {
-        self.read_owner_credis_count(account)
+        self.owner_credis_count(account)
     }
 
-    /// `account`'s `index`-th Credis, in insertion order.
+    /// `account`'s `index`-th live Credis, in list order.
     pub fn token_of_owner_by_index(&self, account: Address, index: u32) -> Result<U256> {
-        if index >= self.read_owner_credis_count(account)? {
-            return Err(CredisError::IndexOutOfBounds.into());
-        }
-        self.read_owner_credis_id(account, index)
+        self.owner_credis_id(account, index)
     }
 
-    /// The `index`-th Credis ever created, in creation order.
-    pub fn token_by_index(&self, index: u64) -> Result<U256> {
-        if index >= self.read_total_credis()? {
-            return Err(CredisError::IndexOutOfBounds.into());
-        }
-        self.read_credis_id_at(index)
+    /// The `index`-th live Credis, in list order.
+    pub fn token_by_index(&self, index: u32) -> Result<U256> {
+        self.live_credis_id(index)
     }
 
-    /// All Credis for `account`, in insertion order. Unbounded, so it stays
-    /// internal: the ABI enumerates through `token_of_owner_by_index` instead.
-    pub(crate) fn get_credis_by_owner(&self, account: Address) -> Result<Vec<Credis>> {
-        let count = self.read_owner_credis_count(account)?;
-        let mut out = Vec::with_capacity(count as usize);
-        for i in 0..count {
-            let credis_id = self.read_owner_credis_id(account, i)?;
-            if let Some(record) = self.records.get(credis_id)? {
-                out.push(record);
-            }
-        }
-        Ok(out)
-    }
-
-    /// Total Credis ever created, including closed Credis. This value backs `totalSupply`.
-    pub fn total_credis(&self) -> Result<u64> {
-        self.read_total_credis()
-    }
-
-    /// Credis id at global dense-index `index` (`index < total_credis()`).
-    pub fn credis_id_at(&self, index: u64) -> Result<U256> {
-        self.read_credis_id_at(index)
+    /// Live Credis. This value backs `totalSupply`.
+    pub fn total_credis(&self) -> Result<u32> {
+        self.live_credis_count()
     }
 }

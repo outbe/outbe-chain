@@ -2,25 +2,11 @@ use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_intex::{SeriesId, SERIES_ID_LEN};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::GEM_FACTORY_ADDRESS;
-use outbe_primitives::error::Result;
 
-use crate::constants::MAX_POSITION_EXPIRIES_PER_RUN;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum GemTypes {
-    Validator = 0,
-    Sra = 1,
-    Wallet = 2,
-    Cca = 3,
-    Merchant = 4,
-}
-
-/// The terms an agent-class gem is issued on.
+/// The terms a reward gem is issued on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GemIssueParams {
     pub owner: Address,
-    pub gem_type: GemTypes,
     pub promis_load_minor: U256,
     pub issuance_currency: u16,
     pub reference_currency: u16,
@@ -77,9 +63,18 @@ pub struct GemPosition {
     pub issued_at: u64,
 
     /// Deadline snapshotted from the profile when the position opened, so a later profile
-    /// change cannot retroactively expire positions already in the queue.
+    /// change cannot retroactively expire positions already in the queue. Positions
+    /// expire in groups by its hour.
     #[attribute(order = 7)]
     pub expires_at: u64,
+}
+
+impl GemPosition {
+    /// The expiry group: the hour `expires_at` falls in.
+    #[must_use]
+    pub fn expiry_hour(&self) -> u64 {
+        self.expires_at / outbe_primitives::expiry_queue::BUCKET_SECONDS
+    }
 }
 
 #[storage_schema]
@@ -94,62 +89,68 @@ pub struct GemFactoryContract {
     #[attribute(order = 2)]
     pub positions: outbe_primitives::storage::dsl::Map<U256, GemPosition>,
 
-    // --- Position-NFT owner index (per-merchant enumeration) ---
+    /// Each merchant's positions.
     #[attribute(order = 3)]
-    pub position_owner_counts: outbe_primitives::storage::dsl::Map<Address, u32>,
-
+    pub owner_position_ids:
+        outbe_primitives::storage::dsl::Map<Address, outbe_primitives::storage::dsl::List<U256>>,
     #[attribute(order = 4)]
-    pub position_owner_ids: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub owner_position_index: outbe_primitives::storage::dsl::Map<U256, u32>,
 
-    // --- Live positions, in the order they opened. Nothing else enumerates them: the
-    // owner index answers "whose", not "which are alive".
+    /// The positions of each expiry hour, and the capacity they have left to issue.
     #[attribute(order = 5)]
-    pub live_head: outbe_primitives::storage::dsl::Value<u32>,
+    pub hour_positions:
+        outbe_primitives::storage::dsl::Map<u64, outbe_primitives::storage::dsl::List<U256>>,
     #[attribute(order = 6)]
-    pub live_tail: outbe_primitives::storage::dsl::Value<u32>,
-    /// Queue index -> position id. Zero marks a slot already taken.
+    pub hour_position_index: outbe_primitives::storage::dsl::Map<U256, u32>,
     #[attribute(order = 7)]
-    pub live_queue_at: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub hour_capacity_minor: outbe_primitives::storage::dsl::Map<u64, U256>,
+
+    // Expiry hours, queued on their first position's `expires_at`.
     #[attribute(order = 8)]
-    pub live_queue_index: outbe_primitives::storage::dsl::Map<U256, u32>,
+    pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
+    #[attribute(order = 9)]
+    pub expiry_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    #[attribute(order = 10)]
+    pub expiry_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
+    #[attribute(order = 11)]
+    pub expiry_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    #[attribute(order = 12)]
+    pub expiry_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    #[attribute(order = 13)]
+    pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, u64>,
+    #[attribute(order = 14)]
+    pub expiry_hour_slot: outbe_primitives::storage::dsl::Map<u64, u64>,
+    #[attribute(order = 15)]
+    pub expiry_deadline: outbe_primitives::storage::dsl::Map<u64, u64>,
+    #[attribute(order = 16)]
+    pub expiry_sweep_hour: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 17)]
+    pub expiry_cursor: outbe_primitives::storage::dsl::Value<u64>,
+
+    // Expired hours whose positions wait to be deleted.
+    #[attribute(order = 18)]
+    pub cleanup_tree_root: outbe_primitives::storage::dsl::Value<U256>,
+    #[attribute(order = 19)]
+    pub cleanup_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    #[attribute(order = 20)]
+    pub cleanup_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
+    #[attribute(order = 21)]
+    pub cleanup_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    #[attribute(order = 22)]
+    pub cleanup_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    #[attribute(order = 23)]
+    pub cleanup_bucket_at: outbe_primitives::storage::dsl::Map<B256, u64>,
+    #[attribute(order = 24)]
+    pub cleanup_hour_slot: outbe_primitives::storage::dsl::Map<u64, u64>,
+    #[attribute(order = 25)]
+    pub cleanup_deadline: outbe_primitives::storage::dsl::Map<u64, u64>,
+    #[attribute(order = 26)]
+    pub cleanup_sweep_hour: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 27)]
+    pub cleanup_cursor: outbe_primitives::storage::dsl::Value<u64>,
 }
 
 impl GemFactoryContract<'_> {
-    pub(crate) fn push_live_position(&mut self, position_id: U256) -> Result<()> {
-        let tail = self.live_tail.read()?;
-        self.live_queue_at.write(&tail, position_id)?;
-        self.live_queue_index.write(&position_id, tail)?;
-        self.live_tail.write(tail.saturating_add(1))
-    }
-
-    pub(crate) fn remove_live_position(&mut self, position_id: U256) -> Result<()> {
-        let index = self.live_queue_index.read(&position_id)?;
-        // A position that never queued reads index 0. Only clear a slot it owns.
-        if self.live_queue_at.read(&index)? == position_id {
-            self.live_queue_at.clear(&index)?;
-        }
-        self.live_queue_index.clear(&position_id)
-    }
-
-    pub(crate) fn live_queue_slot(&self, index: u32) -> Result<Option<U256>> {
-        let position_id = self.live_queue_at.read(&index)?;
-        Ok((!position_id.is_zero()).then_some(position_id))
-    }
-
-    pub(crate) fn compact_live_queue(&mut self) -> Result<()> {
-        let tail = self.live_tail.read()?;
-        let mut head = self.live_head.read()?;
-        let limit = tail.min(head.saturating_add(MAX_POSITION_EXPIRIES_PER_RUN));
-        while head < limit && self.live_queue_at.read(&head)?.is_zero() {
-            head = head.saturating_add(1);
-        }
-        if head >= tail {
-            self.live_head.write(0)?;
-            return self.live_tail.write(0);
-        }
-        self.live_head.write(head)
-    }
-
     /// `position_id = keccak256("gemposition" || merchant || source_intex_id_be || block_number_be)`.
     /// A series is held by many owners and any may send units, so the merchant is
     /// what tells two positions on the same series in one block apart.

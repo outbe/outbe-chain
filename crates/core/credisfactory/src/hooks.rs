@@ -1,9 +1,7 @@
 //! Per-block entry points of the Credis sweeps, run from CycleTick.
 
-use outbe_primitives::{block::BlockRuntimeContext, error::Result};
+/// Forfeits the called groups whose settlement window lapsed.
+pub use crate::expired::sweep_expired as sweep_forfeits;
 
-/// Forfeits the called Credis whose settlement window lapsed.
-pub fn sweep_forfeits(ctx: &BlockRuntimeContext) -> Result<()> {
-    crate::expired::sweep_expired(ctx)?;
-    Ok(())
-}
+/// Deletes the Credis of the forfeited groups.
+pub use crate::cleanup::sweep_cleanup;

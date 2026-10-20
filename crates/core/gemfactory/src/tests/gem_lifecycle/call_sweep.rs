@@ -1,4 +1,4 @@
-//! The daily call scan: bucket bins, slices, cursors and the day queue. The scan
+//! The daily call scan: group bins, slices, cursors and the day queue. The scan
 //! reads only compact EVM state; the bodies are untouched until a forfeit.
 
 use alloy_primitives::U256;
@@ -39,7 +39,7 @@ fn walk(
     budget: u32,
 ) -> (u32, bool) {
     let ctx = block_ctx(storage);
-    let mut budget = SweepBudget::new(budget, u32::MAX, 0);
+    let mut budget = SweepBudget::new(budget, u32::MAX);
     crate::called::call_currency(
         &ctx,
         USD,
@@ -130,7 +130,7 @@ fn a_finished_sweep_closes_itself_and_idle_blocks_do_nothing() {
     });
 }
 
-/// A bin holding more buckets than the budget resumes inside itself on the next slice.
+/// A bin holding more groups than the budget resumes inside itself on the next slice.
 #[test]
 fn a_bin_wider_than_the_budget_resumes_inside_it() {
     with_storage(|storage| {
@@ -143,7 +143,7 @@ fn a_bin_wider_than_the_budget_resumes_inside_it() {
             outbe_primitives::call_bins::price_to_bin(view(storage, id).terms.call_price_minor)
                 .unwrap()
         };
-        assert_eq!(bin(ids[0]), bin(ids[1]), "one bin, two buckets");
+        assert_eq!(bin(ids[0]), bin(ids[1]), "one bin, two groups");
         let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW));
         let window = full_window(last_closed_day, U256::from(300_000u64));
 
@@ -236,10 +236,10 @@ fn the_issue_day_counts_only_for_a_gem_issued_at_midnight() {
     }
 }
 
-/// The breach count of a bucket starts on the first member's first full day, so a
-/// later member issued the same day does not move it.
+/// A gem issued at midnight counts that day, and one issued later that day does not:
+/// they sit in different groups, so the later one is never called a day early.
 #[test]
-fn second_member_with_a_different_issued_at_joins_the_first_members_bucket() {
+fn a_later_gem_of_a_midnight_gems_day_does_not_count_the_partial_day() {
     let threshold_days = (outbe_gem::constants::CALL_THRESHOLD / SECONDS_PER_DAY_U32) as usize;
     let mut oldest_breach = timestamp_to_date_key(T_NOW);
     for _ in 1..threshold_days {
@@ -254,7 +254,7 @@ fn second_member_with_a_different_issued_at_joins_the_first_members_bucket() {
         let mut second = sample_params(BOB);
         second.issued_at = midnight + 3_600;
         let second = add(storage, second);
-        assert_eq!(bucket_of(storage, first), bucket_of(storage, second));
+        assert_ne!(bucket_of(storage, first), bucket_of(storage, second));
 
         let threshold = view(storage, first).terms.call_price_minor;
         let window = breach_window(T_NOW, threshold + U256::from(1u64), threshold_days);
@@ -262,9 +262,14 @@ fn second_member_with_a_different_issued_at_joins_the_first_members_bucket() {
         assert!(
             crate::called::call_if_breached(&mut gem, &window, bucket_of(storage, first), T_NOW)
                 .unwrap(),
-            "the bucket counts from its first member's midnight"
+            "the midnight gem counts its whole first day"
         );
-        assert_eq!(gem_state(storage, second), GemState::Called as u8);
+        assert!(
+            !crate::called::call_if_breached(&mut gem, &window, bucket_of(storage, second), T_NOW)
+                .unwrap(),
+            "the later gem counts from the next day, one short"
+        );
+        assert_eq!(gem_state(storage, second), GemState::Issued as u8);
     });
 }
 
@@ -323,7 +328,7 @@ fn a_wider_window_than_the_live_profile_widens_the_span_the_scan_collects() {
             GemParams::DEV.call_window_seconds
         );
 
-        // A new bucket is sealed on the wider profile.
+        // A new group is sealed on the wider profile.
         set_profile(storage, outbe_gem::config::PROFILE_PROD);
         let mut other = sample_params(BOB);
         other.entry_price_minor = U256::from(600_000u64);
@@ -400,7 +405,7 @@ fn an_unindexable_price_skips_its_currency_for_the_day_and_says_so() {
 }
 
 /// Gem ids carry no order, so a slice refreshes the whole range once, however many
-/// buckets it called.
+/// groups it called.
 #[test]
 fn a_call_slice_refreshes_all_metadata_once() {
     let mut provider = provider_at(T_NOW);
@@ -428,7 +433,7 @@ fn a_call_slice_refreshes_all_metadata_once() {
     assert_eq!(batches, vec![(U256::ZERO, U256::MAX)]);
     let called = events
         .iter()
-        .filter(|log| IGem::GemBucketCalled::decode_log_data(log).is_ok())
+        .filter(|log| IGem::GemGroupCalled::decode_log_data(log).is_ok())
         .count();
     assert_eq!(called, 3);
 }
@@ -460,7 +465,7 @@ fn a_trigger_during_a_running_call_sweep_queues_its_day() {
         let next = block_ctx_at(storage, next_ts);
         run_daily(&next).unwrap();
         assert_eq!(gem.call_sweep_day.read().unwrap(), day);
-        assert_eq!(gem.call_pending_day.read().unwrap(), next_day);
+        assert_eq!(gem.call_latest_day.read().unwrap(), next_day);
         assert_eq!(
             gem.call_bin_cursor.read(&USD).unwrap(),
             cursor,
@@ -471,21 +476,20 @@ fn a_trigger_during_a_running_call_sweep_queues_its_day() {
         run_call_slice(&next).unwrap();
         assert_eq!(gem_state(storage, above), GemState::Called as u8);
         assert_eq!(gem.call_sweep_day.read().unwrap(), next_day);
-        assert_eq!(gem.call_pending_day.read().unwrap(), 0);
+        assert_eq!(gem.call_latest_day.read().unwrap(), next_day);
     });
 }
 
-/// With a day already waiting, a newer one takes its place, and the day that will
-/// never be walked is named.
+/// Days that closed while the sweep was still walking an older one are walked after it,
+/// in order, none skipped.
 #[test]
-fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
-    let mut provider = provider_at(T_NOW);
-    let (in_flight, skipped) = StorageHandle::enter(&mut provider, |storage| {
-        set_profile(&storage, outbe_gem::config::PROFILE_PROD);
-        let pair = seed_currency(&storage, USD, Some(U256::from(600_000u64)));
+fn days_closed_behind_a_running_call_sweep_are_walked_in_order() {
+    with_storage(|storage| {
+        set_profile(storage, outbe_gem::config::PROFILE_PROD);
+        let pair = seed_currency(storage, USD, Some(U256::from(600_000u64)));
         for nonce in 0..=u64::from(SWEEP_VISITS_PER_BLOCK) {
             callable_gem_of(
-                &storage,
+                storage,
                 USD,
                 nonce,
                 T_NOW - 100 * SECONDS_PER_DAY,
@@ -496,9 +500,9 @@ fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
         for offset in 0..3u64 {
             let ts = T_NOW + offset * SECONDS_PER_DAY;
             let day = previous_date_key(timestamp_to_date_key(ts));
-            priced_window(&storage, pair, day, U256::from(300_000u64));
+            priced_window(storage, pair, day, U256::from(300_000u64));
             // Only the first trigger's block walks: the later days arrive meanwhile.
-            let ctx = block_ctx_at(&storage, ts);
+            let ctx = block_ctx_at(storage, ts);
             match offset {
                 0 => scan_and_call(&ctx).map(drop),
                 _ => run_daily(&ctx),
@@ -508,21 +512,19 @@ fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
         }
         let gem = GemContract::new(storage.clone());
         assert_eq!(gem.call_sweep_day.read().unwrap(), closed[0]);
-        assert_eq!(gem.call_pending_day.read().unwrap(), closed[2]);
-        (closed[0], closed[1])
-    });
+        assert_eq!(gem.call_latest_day.read().unwrap(), closed[2]);
 
-    let events: Vec<_> = provider
-        .get_events(GEM_FACTORY_ADDRESS)
-        .iter()
-        .filter_map(|log| {
-            crate::precompile::IGemFactory::SweepDaySkipped::decode_log_data(log).ok()
-        })
-        .collect();
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].sweep, outbe_oracle::call_sweep::CALL_SWEEP);
-    assert_eq!(events[0].skippedDay, skipped);
-    assert_eq!(events[0].inFlightDay, in_flight);
+        let ctx = block_ctx_at(storage, T_NOW + 2 * SECONDS_PER_DAY);
+        let mut walked = vec![closed[0]];
+        while walked.last() != Some(&0) && walked.len() < 8 {
+            run_call_slice(&ctx).unwrap();
+            let day = gem.call_sweep_day.read().unwrap();
+            if walked.last() != Some(&day) {
+                walked.push(day);
+            }
+        }
+        assert_eq!(walked, vec![closed[0], closed[1], closed[2], 0]);
+    });
 }
 
 /// A sweep walks each currency once. Take two currencies that each hold more
@@ -593,7 +595,7 @@ fn an_unpriced_currency_does_not_prevent_calling_the_next_currency() {
 }
 
 #[test]
-fn only_a_slice_that_calls_buckets_emits_a_batch_metadata_update() {
+fn only_a_slice_that_calls_groups_emits_a_batch_metadata_update() {
     let mut provider = provider_at(T_NOW);
     StorageHandle::enter(&mut provider, |storage| {
         callable_gem_of(

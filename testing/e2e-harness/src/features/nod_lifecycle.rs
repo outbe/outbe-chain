@@ -1,4 +1,4 @@
-//! What a Nod supplies to the shared lifecycle. One bucket holds five Nods, issued straight
+//! What a Nod supplies to the shared lifecycle. One group holds five Nods, issued straight
 //! to five owners. Two are paid while issued, two are inside the call notice, and one is
 //! forfeited.
 
@@ -35,11 +35,11 @@ alloy_sol_types::sol! {
             uint16 referenceCurrency,
             uint64 issuedAt
         ) external;
-        function closeCallNoticeForTest(bytes32 bucketKey, uint64 deadline) external;
+        function closeCallNoticeForTest(bytes32 groupKey, uint64 deadline) external;
     }
 }
 
-/// A Nod's id derives from its owner and day, so one bucket needs an owner per Nod.
+/// A Nod's id derives from its owner and day, so one group needs an owner per Nod.
 const HOLDER_SEED: u64 = 0x0e0d_0000;
 /// Shared with Gem and Intex, and low enough that the controlled COEN/USD quote clears
 /// the DEV call price.
@@ -61,7 +61,7 @@ const EXPIRY_BUCKET_SECS: u64 = 3_600;
 
 pub(crate) struct NodLifecycle;
 
-#[when("five owners are issued Nods in one bucket")]
+#[when("five owners are issued Nods in one group")]
 fn issue_five_nods(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
     let issuance_currency = world
@@ -70,7 +70,7 @@ fn issue_five_nods(world: &mut World) {
         .expect("the Nod scenario prices an issuance market");
     let now = head_time(world);
     let day = outbe_primitives::time::worldwide_day_from_timestamp(now);
-    // The call counts only days after the bucket's stamp: stamp it behind every day
+    // The call counts only days after the group's stamp: stamp it behind every day
     // the scenario seeds.
     let issued_at = now.saturating_sub((u64::from(CALL_WINDOW_SEED_DAYS) + 1) * SECONDS_PER_DAY);
     holders::fund(world, HOLDER_SEED);
@@ -175,7 +175,7 @@ impl Lifecycle for NodLifecycle {
                     dev.call_window_seconds,
                     dev.call_threshold_seconds
                 ),
-                "the bucket did not seal the DEV call terms"
+                "the group did not seal the DEV call terms"
             );
             assert!(
                 data.callNoticePeriod <= MAX_DEV_NOTICE_SECS,
@@ -185,7 +185,7 @@ impl Lifecycle for NodLifecycle {
             assert_eq!(
                 (data.worldwideDay, data.entryPriceMinor),
                 (first.worldwideDay, first.entryPriceMinor),
-                "every Nod must share one bucket"
+                "every Nod must share one group"
             );
         }
     }
@@ -229,30 +229,24 @@ impl Lifecycle for NodLifecycle {
         world.state.entity_lifecycle.pool_before_forfeit = Some((height, pool));
         let id = nod(world, FORFEITED);
         let called = read_nod(world, id);
-        world.state.entity_lifecycle.nod_before_forfeit =
-            Some((height, id, called.encryptedGratisAmount.clone()));
+        world.state.entity_lifecycle.nod_before_forfeit = Some((height, id, called.groupKey));
         let deadline = called.settlementDeadline + NOTICE_MARGIN_SECS;
         poll_until(
             Duration::from_secs(u64::from(called.callNoticePeriod)) + FORFEIT_TIMEOUT,
             || format!("the chain never passed the Nod settlement deadline {deadline}"),
             || head_time(world) > deadline,
         );
-        let bucket_key = outbe_nod::identity::bucket_key(
-            outbe_primitives::time::WorldwideDay::new(called.worldwideDay),
-            called.entryPriceMinor,
-            called.referenceCurrency,
-        );
         eth::send_call(
             &url,
             addresses::NOD_FACTORY_ADDR,
             DEPLOYER_KEY,
             &INodFactoryTestArming::closeCallNoticeForTestCall {
-                bucketKey: bucket_key,
+                groupKey: called.groupKey,
                 deadline: head_time(world).saturating_sub(EXPIRY_BUCKET_SECS),
             },
             None,
         )
-        .expect("close the expiry bucket the Nod bucket sits in");
+        .expect("close the expiry bucket the Nod group sits in");
     }
 
     fn assert_forfeited(&self, world: &World) {
@@ -266,23 +260,22 @@ impl Lifecycle for NodLifecycle {
             .pool_before_forfeit
             .expect("the pool was read before the notice lapsed");
         let height = finalized_checkpoint(world).height;
-        let (captured_height, captured_id, encrypted_amount) = world
+        let (captured_height, captured_id, group) = world
             .state
             .entity_lifecycle
             .nod_before_forfeit
-            .as_ref()
-            .expect("encrypted NOD captured before the notice lapsed");
-        assert_eq!((*captured_height, *captured_id), (from, id));
+            .expect("the Nod group captured before the notice lapsed");
+        assert_eq!((captured_height, captured_id), (from, id));
         let load = U256::from(GRATIS_LOAD_MINOR);
         assert_single_event(
             &url,
             addresses::NOD_ADDR,
             from,
             height,
-            eth::INod::NodForfeited {
-                owner,
-                nodId: id,
-                encryptedGratisAmount: encrypted_amount.clone(),
+            eth::INod::NodGroupForfeited {
+                groupKey: group,
+                nods: 1,
+                gratisLoadMinor: load,
             },
         );
         assert_eq!(

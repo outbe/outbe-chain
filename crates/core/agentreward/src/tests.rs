@@ -4,8 +4,6 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::test_utils::sol_interface::sol_function_canonical;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
 
-use outbe_gemfactory::schema::GemTypes;
-
 use crate::distribution::{distribute_daily, PoolKind};
 use crate::schema::{AgentRewardContract, RewardPool};
 
@@ -195,16 +193,15 @@ fn claiming_a_pool_issues_its_gem() {
         assert!(!gem_id.is_zero());
 
         let gem = gem_of(&storage, alice);
-        assert_eq!(gem.item.gem_type, GemTypes::Wallet as u8);
         assert_eq!(gem.item.promis_load_minor, load);
-        assert_eq!(gem.bucket.entry_price_minor, ONE_COEN);
+        assert_eq!(gem.item.entry_price_minor, ONE_COEN);
 
         assert_eq!(contract.get_claimable_reward(alice).unwrap(), U256::ZERO);
     });
 }
 
 #[test]
-fn the_sra_pool_issues_an_sra_gem_at_the_discounted_cost() {
+fn the_sra_pool_issues_a_gem_of_the_whole_load() {
     let alice = address!("0x1111111111111111111111111111111111111111");
     let load = U256::from(1_000_000u64);
 
@@ -218,9 +215,6 @@ fn the_sra_pool_issues_an_sra_gem_at_the_discounted_cost() {
             .claim_reward(RewardPool::Sra, alice, U256::ZERO, (USD, USD))
             .unwrap();
         let sra_gem = gem_of(&storage, alice);
-        // The SRA share of the cost is derived, not stored. gemfactory pins the 64%
-        // coefficient. What this pool owes is the Sra type and the whole load.
-        assert_eq!(sra_gem.item.gem_type, GemTypes::Sra as u8);
         assert_eq!(sra_gem.item.promis_load_minor, load);
     });
 }
@@ -260,7 +254,7 @@ fn a_claim_prices_on_the_previous_day_vwap() {
         seed_oracle(&storage, ONE_COEN);
         seed_day_vwap(&storage, day_vwap);
         claim_waa(contract, alice, U256::from(500u64)).unwrap();
-        assert_eq!(gem_of(&storage, alice).bucket.entry_price_minor, day_vwap);
+        assert_eq!(gem_of(&storage, alice).item.entry_price_minor, day_vwap);
     });
 }
 
@@ -273,7 +267,7 @@ fn a_claim_ignores_a_spot_above_the_previous_day_vwap() {
         seed_oracle(&storage, U256::from(3u64) * ONE_COEN);
         seed_day_vwap(&storage, day_vwap);
         claim_waa(contract, alice, U256::from(500u64)).unwrap();
-        assert_eq!(gem_of(&storage, alice).bucket.entry_price_minor, day_vwap);
+        assert_eq!(gem_of(&storage, alice).item.entry_price_minor, day_vwap);
     });
 }
 
@@ -330,7 +324,7 @@ fn a_claim_issues_the_gem_in_the_callers_currencies() {
         let gem = gem_of(&storage, alice);
         assert_eq!(gem.item.issuance_currency, MYR);
         assert_eq!(gem.item.reference_currency, EUR);
-        assert_eq!(gem.bucket.entry_price_minor, eur_vwap);
+        assert_eq!(gem.item.entry_price_minor, eur_vwap);
     });
 }
 
@@ -407,7 +401,7 @@ fn a_load_whose_cost_rounds_to_zero_still_claims() {
             .unwrap();
         assert_eq!(contract.get_claimable_reward(alice).unwrap(), U256::ZERO);
         let gem = gem_of(&storage, alice);
-        assert_eq!(gem.bucket.entry_price_minor, U256::ONE);
+        assert_eq!(gem.item.entry_price_minor, U256::ONE);
         assert_eq!(gem.item.promis_load_minor, U256::ONE);
     });
 }
@@ -901,7 +895,6 @@ fn reward_timestamp_narrowing_rejects_overflow() {
         let error = crate::runtime::issue_reward_gem(
             &storage,
             (Address::repeat_byte(1), U256::from(100)),
-            GemTypes::Cca,
             (USD, USD),
         )
         .unwrap_err();

@@ -395,7 +395,7 @@ mod tests {
             let mut visited = Vec::new();
 
             // First pass with 2 visits stops after visiting bin 10 (101, 102), before bin 20.
-            let mut budget = SweepBudget::new(2, 10, 10);
+            let mut budget = SweepBudget::new(2, 10);
             let done = walk_currencies(&[840, 978], &currency_cursor, &mut budget, |iso, b| {
                 let adapter = TestAdapter(&contract, iso);
                 walk(&adapter, 30, b, |entry, _| {
@@ -408,7 +408,7 @@ mod tests {
             assert_eq!(visited, vec![(840, 101), (840, 102)]);
 
             // Second pass resumes at USD bin 20, skips bin 50 (> ceiling 30), then walks EUR bin 5.
-            let mut budget = SweepBudget::new(10, 10, 10);
+            let mut budget = SweepBudget::new(10, 10);
             let done = walk_currencies(&[840, 978], &currency_cursor, &mut budget, |iso, b| {
                 let adapter = TestAdapter(&contract, iso);
                 walk(&adapter, 30, b, |entry, _| {

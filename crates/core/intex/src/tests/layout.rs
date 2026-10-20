@@ -64,8 +64,8 @@ fn intex_lifecycle_slot_layout_is_pinned() {
             intex.config_profile.slot(),
             intex.call_currency_cursor.slot(),
             intex.call_bin_cursor.base_slot(),
-            intex.call_group_count.base_slot(),
             intex.call_group_members.base_slot(),
+            intex.call_group_position.base_slot(),
             intex.call_group_slot.base_slot(),
             intex.call_sweep_day.slot(),
             intex.call_bin_groups.base_slot(),
@@ -81,11 +81,23 @@ fn intex_lifecycle_slot_layout_is_pinned() {
             intex.called_group_slot.base_slot(),
             intex.expiry_sweep_hour.slot(),
             intex.expiry_cursor.slot(),
-            intex.call_pending_day.slot(),
+            intex.call_latest_day.slot(),
             intex.call_scan_failed_day.base_slot(),
+            intex.call_group_currency.base_slot(),
+            intex.call_group_called_at.base_slot(),
+            intex.cleanup_tree_root.slot(),
+            intex.cleanup_tree_mid.base_slot(),
+            intex.cleanup_tree_leaf.base_slot(),
+            intex.cleanup_bucket_len.base_slot(),
+            intex.cleanup_bucket_live.base_slot(),
+            intex.cleanup_bucket_at.base_slot(),
+            intex.cleanup_group_slot.base_slot(),
+            intex.cleanup_deadline.base_slot(),
+            intex.cleanup_sweep_hour.slot(),
+            intex.cleanup_cursor.slot(),
         ];
         for (index, slot) in slots.into_iter().enumerate() {
-            assert_eq!(slot, U256::from(20 + index), "field #{index}");
+            assert_eq!(slot, U256::from(18 + index), "field #{index}");
         }
     });
 }

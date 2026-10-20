@@ -467,11 +467,7 @@ impl Lifecycle for IntexLifecycle {
         test_issuance::close_call_notice(
             &url,
             DEPLOYER_KEY,
-            USD_ISO,
-            world
-                .state
-                .lifecycle_day
-                .expect("the lifecycle series were issued into a day"),
+            series,
             head_time(world).saturating_sub(EXPIRY_BUCKET_SECS),
         )
         .expect("close the expiry bucket the group sits in");
@@ -546,19 +542,27 @@ impl Lifecycle for IntexLifecycle {
             || world.rpc.promis_limit_total_unallocated_on(port) == Some(want),
         );
         let height = finalized_checkpoint(world).height;
-        for (series, unrealized, returned) in expired {
-            assert_single_event(
-                &url,
-                addresses::INTEX_ADDR,
-                from,
-                height,
-                eth::IIntex::IntexSeriesExpired {
-                    seriesId: series,
-                    forfeitedUnits: unrealized,
-                    returnedPromisMinor: returned,
-                },
-            );
-        }
+        // Both series were issued into one call group, which expires as one.
+        let [series, _] = expiring_series(world);
+        let group = eth::read_call_at(
+            &url,
+            addresses::INTEX_ADDR,
+            &eth::IIntex::getIntexSeriesCall { seriesId: series },
+            from,
+        )
+        .expect("the expiring series was live before the notice lapsed")
+        .groupKey;
+        assert_single_event(
+            &url,
+            addresses::INTEX_ADDR,
+            from,
+            height,
+            eth::IIntex::IntexGroupExpired {
+                groupKey: group,
+                forfeitedUnits: expired.iter().map(|(_, units, _)| u64::from(*units)).sum(),
+                returnedPromisMinor: want - before,
+            },
+        );
         assert_eq!(
             eth::read_call_at(
                 &url,
@@ -591,17 +595,15 @@ impl Lifecycle for IntexLifecycle {
                 .expect("a nonce clearing two leading zero bytes");
             test_issuance::mine_promis(&url, DEPLOYER_KEY, series, UNITS, nonce, mac.0, op_nonce)
                 .expect("mine Promis from the settled units");
-            // The engine counts what it burned, so the series' classes stay disjoint.
-            let counts = eth::read_call(
-                &url,
-                addresses::INTEX_ADDR,
-                &eth::IIntex::seriesUnitCountsCall { seriesId: series },
-            )
-            .expect("series unit counts");
+            // Every unit is realized and exercised, so the series is spent and deleted.
             assert_eq!(
-                (counts.exercisedUnits, counts.settledUnits),
-                (UNITS, 0),
-                "series {series} did not count its settled units as exercised"
+                eth::read_call(
+                    &url,
+                    addresses::INTEX_ADDR,
+                    &eth::IIntex::seriesExistsCall { seriesId: series },
+                ),
+                Some(false),
+                "series {series} was not deleted once its last settled unit mined"
             );
             assert_eq!(
                 venue_probes::series_balances(&url, nft, series, owner),

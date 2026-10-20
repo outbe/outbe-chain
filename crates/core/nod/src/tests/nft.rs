@@ -74,18 +74,12 @@ fn transfer_logs_announce_issuance_and_removal() {
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
-        api::add_nod(
-            &storage,
-            &body,
-            U256::from(5),
-            crate::test_support::sealed_terms(&storage, &body, U256::from(5)),
-        )
-        .unwrap();
-        let bucket_id = body.bucket_key;
+        crate::test_support::add(&storage, &body).unwrap();
+        let group_id = body.group_key;
         api::remove_nod(
             &storage,
             api::load_item(&storage, body.nod_id).unwrap().unwrap(),
-            api::load_bucket(&storage, bucket_id).unwrap().unwrap(),
+            api::load_group(&storage, group_id).unwrap().unwrap(),
         )
         .unwrap();
     });

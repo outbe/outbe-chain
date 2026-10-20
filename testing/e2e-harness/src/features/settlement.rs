@@ -54,11 +54,6 @@ pub(crate) struct SettlementFixture {
 #[then("validator 0 claims its validator reward as a Gem")]
 fn validator_claims_reward_gem(world: &mut World) {
     let reward = validator_reward_gem(world);
-    assert_eq!(
-        reward.gem.gemType, 0,
-        "validator-owned reward Gem {} is not a Validator Gem",
-        reward.gem_id
-    );
     assert!(
         !reward.gem.promisLoadMinor.is_zero(),
         "reward Gem load must be non-zero"

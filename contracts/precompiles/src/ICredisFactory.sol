@@ -11,13 +11,11 @@ interface ICredisFactory {
         uint256 gratisMinor,
         uint256 callPriceMinor
     );
-    /// A newer closed day replaced `skippedDay` while `inFlightDay` was still being swept.
-    event SweepDaySkipped(uint8 indexed sweep, uint32 skippedDay, uint32 inFlightDay);
     /// A reference currency was left out of one day's Call scan because its window
     /// price could not be indexed. The next daily pass tries it again.
     event CallScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);
-    /// A forfeit that failed left the Credis queued until `retryAt`.
-    event ExpiryDeferred(uint256 indexed credisId, uint64 retryAt);
+    /// A forfeit that failed left the group queued until `retryAt`.
+    event ExpiryDeferred(bytes32 indexed groupKey, uint64 retryAt);
     /// @notice One successful settlement. `interestPaidMinor` is this payment's interest.
     ///         The Credis's `interestPaidMinor` is the sum of these payments
     ///         across successful settlements. A reverted settlement emits nothing
@@ -44,7 +42,8 @@ interface ICredisFactory {
     /// grows by whole days, so a payment landing a day later needs that day more;
     /// `settleCredis` takes only what is owed, so paying more is safe.
     function quoteSettlement(uint256 credisId) external view returns (uint256 payoffMinor);
-    /// The owner gives up an Issued or Called Credis: its remaining Gratis burns, the principal is written off.
+    /// The owner gives up an Issued or Called Credis before its settlement deadline: its remaining
+    /// Gratis burns, the principal is written off and the Credis is deleted.
     function forfeitCredis(uint256 credisId)
         external
         returns (uint256 gratisBurnedMinor, uint256 principalWrittenOffMinor);
