@@ -16,6 +16,12 @@ interface IVaultRouter {
         Credis
     }
 
+    enum VaultAction {
+        Unknown,
+        AddVault,
+        RemoveVault
+    }
+
     struct LiquidityReservation {
         address asset;
         /// @dev In `asset`'s own minor units.
@@ -153,6 +159,13 @@ interface IVaultRouter {
     ///         A failed application remains retriable. Strictly after the governance
     ///         window, deletes the record and emits ApprovedVaultActionExpired instead.
     function applyApproved(uint256 proposalId) external;
+
+    /// @notice Returns the pending approved action, or Unknown if no record remains.
+    /// @dev An expired action remains visible until applyApproved clears it.
+    function approvedVaultAction(uint256 proposalId)
+        external
+        view
+        returns (VaultAction action, address vault, uint64 approvedAt);
 
     /// @notice Deposits `assetsMinor` of `asset` into the asset's vault on behalf of the
     ///         caller. The caller (`msg.sender`) must be a registered liquidity source.

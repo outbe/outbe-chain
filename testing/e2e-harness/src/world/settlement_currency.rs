@@ -21,6 +21,7 @@ use crate::world::{validators::Operator, World};
 pub(crate) const USD_ISO: u16 = 840;
 
 const REGISTRATION_TIMEOUT_SECS: u64 = 60;
+const APPROVAL_TIMEOUT_SECS: u64 = 180;
 
 sol! {
     interface ISettlementAsset {
@@ -154,34 +155,31 @@ pub(crate) fn register_vault(
             "vault registration proposal #{proposal_id} ballot failed: {ballot}"
         );
     }
-    let proposal = world.rpc.vote_status_on(port, proposal_id)?;
-    ensure!(
-        proposal.target == target,
-        "vault proposal #{proposal_id} has wrong target"
-    );
-    let voting_deadline = proposal
-        .deadline
-        .ok_or_else(|| eyre!("vault proposal #{proposal_id} has no deadline"))?;
-    ensure!(
-        world.rpc.wait_block_gt(port, voting_deadline, 80)? > voting_deadline,
-        "vault proposal #{proposal_id} voting deadline did not pass"
-    );
-    let deadline = Instant::now() + Duration::from_secs(REGISTRATION_TIMEOUT_SECS);
+    // Poll the staged action directly: block/CLI polling can consume much of its
+    // short apply window. Keep the slower status query for timeout diagnostics.
+    let deadline = Instant::now() + Duration::from_secs(APPROVAL_TIMEOUT_SECS);
     loop {
-        let proposal = world.rpc.vote_status_on(port, proposal_id)?;
-        if proposal.status == "approved" {
+        if eth::read_call(
+            &url,
+            addresses::VAULT_ROUTER_ADDR,
+            &eth::IVaultRouter::approvedVaultActionCall {
+                proposalId: U256::from(proposal_id),
+            },
+        )
+        .is_some_and(|record| {
+            matches!(record.action, eth::IVaultRouter::VaultAction::AddVault)
+                && record.vault == vault
+        }) {
             break;
         }
-        ensure!(
-            proposal.status == "pending",
-            "vault registration proposal #{proposal_id} ended with status {}",
-            proposal.status
-        );
-        ensure!(
-            Instant::now() < deadline,
-            "vault proposal #{proposal_id} approval timed out"
-        );
-        sleep(Duration::from_millis(500));
+        if Instant::now() >= deadline {
+            let proposal = world.rpc.vote_status_on(port, proposal_id)?;
+            return Err(eyre!(
+                "vault proposal #{proposal_id} approval timed out (status: {})",
+                proposal.status
+            ));
+        }
+        sleep(Duration::from_millis(250));
     }
     let applied = eth::send_call(
         &url,

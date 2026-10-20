@@ -14,6 +14,35 @@
   },
   {
     "type": "function",
+    "name": "approvedVaultAction",
+    "inputs": [
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "action",
+        "type": "uint8",
+        "internalType": "enum IVaultRouter.VaultAction"
+      },
+      {
+        "name": "vault",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "approvedAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "assetAt",
     "inputs": [
       {

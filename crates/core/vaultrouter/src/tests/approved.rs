@@ -28,6 +28,103 @@ fn apply(storage: &StorageHandle<'_>, id: u64) -> outbe_primitives::error::Resul
     )
 }
 
+fn pending(
+    storage: &StorageHandle<'_>,
+    id: u64,
+) -> outbe_primitives::error::Result<IVaultRouter::approvedVaultActionReturn> {
+    let output = dispatch(
+        storage.clone(),
+        &IVaultRouter::approvedVaultActionCall {
+            proposalId: U256::from(id),
+        }
+        .abi_encode(),
+        stranger(),
+        U256::ZERO,
+    )?;
+    Ok(IVaultRouter::approvedVaultActionCall::abi_decode_returns(&output).unwrap())
+}
+
+#[test]
+fn pending_view_tracks_supersession_application_and_expiry_cleanup() {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    stub_vault(&mut provider);
+    StorageHandle::enter(&mut provider, |storage| {
+        let missing = pending(&storage, 1).unwrap();
+        assert!(matches!(missing.action, IVaultRouter::VaultAction::Unknown));
+        assert_eq!((missing.vault, missing.approvedAt), (Address::ZERO, 0));
+        stage(&storage, 1, REMOVE_VAULT, 7);
+        let removal = pending(&storage, 1).unwrap();
+        assert!(matches!(
+            removal.action,
+            IVaultRouter::VaultAction::RemoveVault
+        ));
+        assert_eq!((removal.vault, removal.approvedAt), (vault(), 7));
+        stage(&storage, 2, ADD_VAULT, 8);
+        assert!(matches!(
+            pending(&storage, 1).unwrap().action,
+            IVaultRouter::VaultAction::Unknown
+        ));
+        let addition = pending(&storage, 2).unwrap();
+        assert!(matches!(
+            addition.action,
+            IVaultRouter::VaultAction::AddVault
+        ));
+        assert_eq!((addition.vault, addition.approvedAt), (vault(), 8));
+        apply(&storage, 2).unwrap();
+        assert!(matches!(
+            pending(&storage, 2).unwrap().action,
+            IVaultRouter::VaultAction::Unknown
+        ));
+        stage(&storage, 3, REMOVE_VAULT, 8);
+    });
+    provider.set_block_number(9 + outbe_chain_constants::get_governance_voting_window_blocks());
+    StorageHandle::enter(&mut provider, |storage| {
+        // Expiry alone does not delete a record. The view reports it until cleanup.
+        assert!(matches!(
+            pending(&storage, 3).unwrap().action,
+            IVaultRouter::VaultAction::RemoveVault
+        ));
+        apply(&storage, 3).unwrap();
+        assert!(matches!(
+            pending(&storage, 3).unwrap().action,
+            IVaultRouter::VaultAction::Unknown
+        ));
+    });
+}
+
+#[test]
+fn pending_view_does_not_hide_corrupt_actions_or_indexes() {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        stage(&storage, 1, ADD_VAULT, 0);
+        let router = VaultRouterContract::new(storage.clone());
+        router
+            .pending_vault_proposals
+            .write(&vault(), U256::from(2))
+            .unwrap();
+        assert_revert::<IVaultRouter::ApprovedVaultActionIndexInconsistent>(
+            &pending(&storage, 1).map(|_| ()).unwrap_err(),
+        );
+        router
+            .pending_vault_proposals
+            .write(&vault(), U256::ONE)
+            .unwrap();
+        let mut record = router
+            .approved_vault_actions
+            .get(U256::ONE)
+            .unwrap()
+            .unwrap();
+        record.kind = 3;
+        router.approved_vault_actions.delete(U256::ONE).unwrap();
+        router.approved_vault_actions.create(&record).unwrap();
+        assert_revert::<IVaultRouter::InvalidApprovedVaultAction>(
+            &pending(&storage, 1).map(|_| ()).unwrap_err(),
+        );
+    });
+    assert!(provider.sub_call_inputs().is_empty());
+    assert!(provider.get_events(VAULT_ROUTER_ADDRESS).is_empty());
+}
+
 #[test]
 fn layout_preserves_old_slots_and_appends_pending_maps() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);

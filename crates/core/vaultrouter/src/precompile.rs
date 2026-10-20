@@ -94,6 +94,9 @@ pub fn dispatch(
             }),
 
             // --- permissionless application of governance approvals ---
+            approvedVaultAction(c) => view(c, |c| {
+                runtime::approved_vault_action(&storage, c.proposalId)
+            }),
             applyApproved(c) => mutate_void(&storage, c, caller, |_sender, c| {
                 runtime::apply_approved(storage.clone(), c.proposalId)
             }),

@@ -25,7 +25,7 @@ mod liquidity;
 mod rebalance;
 mod reservations;
 
-pub(crate) use approved::apply_approved;
+pub(crate) use approved::{apply_approved, approved_vault_action};
 use calls::{
     asset_iso_code, erc20_approve, erc20_balance_of, erc20_transfer, erc20_transfer_from,
     vault_asset, vault_deposit, vault_owner, vault_preview_withdraw, vault_withdraw,

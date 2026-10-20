@@ -23,20 +23,13 @@ const AMOUNT: u64 = 2_000_000;
 
 sol! {
     interface IERC20Boundary {
-        function approve(address spender, uint256 amount) external returns (bool);
         function transfer(address to, uint256 amount) external returns (bool);
         function balanceOf(address account) external view returns (uint256);
     }
 
     interface IVaultV2Boundary {
-        function asset() external view returns (address);
-        function owner() external view returns (address);
         function previewWithdraw(uint256 assets) external view returns (uint256 shares);
         function withdraw(uint256 assets, address receiver, address onBehalf) external returns (uint256 shares);
-    }
-
-    interface IReferenceCurrencyBoundary {
-        function isoCode() external view returns (uint16);
     }
 
 }
@@ -75,26 +68,6 @@ impl BenchmarkScenario for CredisVaultBoundaryScenario {
 
     fn prepare(&self, _profile: Profile) -> Result<Self::Prepared, String> {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-        provider.stub_sub_call_at_selector(
-            VAULT,
-            IVaultV2Boundary::assetCall::SELECTOR,
-            Bytes::from((ASSET,).abi_encode_params()),
-        );
-        provider.stub_sub_call_at_selector(
-            VAULT,
-            IVaultV2Boundary::ownerCall::SELECTOR,
-            Bytes::from((Address::ZERO,).abi_encode_params()),
-        );
-        provider.stub_sub_call_at_selector(
-            ASSET,
-            IReferenceCurrencyBoundary::isoCodeCall::SELECTOR,
-            Bytes::from((840_u16,).abi_encode_params()),
-        );
-        provider.stub_sub_call_at_selector(
-            ASSET,
-            IERC20Boundary::approveCall::SELECTOR,
-            Bytes::new(),
-        );
         provider.stub_sub_call_at_selector(
             ASSET,
             IERC20Boundary::transferCall::SELECTOR,
