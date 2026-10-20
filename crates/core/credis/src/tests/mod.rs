@@ -1,1 +1,2 @@
+mod precompile;
 mod profile;
