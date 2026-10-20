@@ -359,14 +359,10 @@ impl TributeContract<'_> {
                 price_day,
                 record.reference_currency,
             )?
-            .filter(|p| !p.is_zero())
-            .unwrap_or_else(|| {
-                if !record.tribute_price_minor.is_zero() {
-                    record.tribute_price_minor
-                } else {
-                    U256::from(1_000_000u64)
-                }
-            });
+            .ok_or(TributeError::EntryPriceUnavailable {
+                price_day,
+                currency: record.reference_currency,
+            })?;
 
             let encrypted_nod = outbe_primitives::nod_encryption::encode_v1_nod(
                 outbe_primitives::nod_encryption::NodTermsV2 {
