@@ -371,6 +371,13 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
     let emission_trigger = outbe_cycle::triggers::TriggerId::ProtocolCycle.as_u32();
     let mut state =
         state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
+            assert_eq!(
+                outbe_promislimit::PromisLimitContract::new(storage.clone())
+                    .get_total_unallocated()
+                    .unwrap(),
+                U256::ZERO,
+                "GAS-05 fixture must start with zero carry-over"
+            );
             let genesis_ctx = BlockRuntimeContext::new(
                 BlockContext::new(0, GENESIS_TS, CHAIN_ID, proposer, vec![proposer]),
                 storage.clone(),
