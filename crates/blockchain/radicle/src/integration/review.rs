@@ -158,14 +158,23 @@ pub(crate) fn prepare_patch_review_with_objects(
 ) -> Result<(CheckpointPreparedReview, BTreeSet<git::Oid>), Error> {
     let receipt = snapshot.checkpoint().receipt();
     let body = &receipt.body;
-    if context.chain_id != body.chain_id
-        || context.genesis_hash != body.genesis_hash.0
-        || context.epoch != body.epoch
-        || context.material_version != body.material_version
-        || context.material_hash != body.material_hash.0
-        || context.previous_receipt_hash != receipt.receipt_hash.0
-        || repo.id().into_sha1() != Some(body.repo_id.0)
-    {
+    if (
+        context.chain_id,
+        context.genesis_hash,
+        context.epoch,
+        context.material_version,
+        context.material_hash,
+        context.previous_receipt_hash,
+        repo.id().into_sha1(),
+    ) != (
+        body.chain_id,
+        body.genesis_hash.0,
+        body.epoch,
+        body.material_version,
+        body.material_hash.0,
+        receipt.receipt_hash.0,
+        Some(body.repo_id.0),
+    ) {
         return Err(Error::Snapshot);
     }
     let identity = snapshot
@@ -342,36 +351,66 @@ pub fn prepare_patch_review(
     previous_owner_tip: Option<git::Oid>,
     context: &ReviewSigningContext,
 ) -> Result<PreparedPatchReview, Error> {
-    prepare_patch_action(repo, approval, identity, previous_owner_tip, context, None)
+    prepare_patch_action(
+        PatchActionInput {
+            repo,
+            approval,
+            identity,
+            previous_owner_tip,
+            context,
+        },
+        None,
+    )
 }
 
-pub(crate) fn prepare_patch_merge(
-    repo: &Repository,
-    approval: &FinalizedPatchApproval,
+macro_rules! with_legacy_signature {
+    ($($item:item)*) => {
+        $($item)*
+    };
+}
+
+with_legacy_signature! {
+    pub(crate) fn prepare_patch_merge(
+        repo: &Repository,
+        approval: &FinalizedPatchApproval,
+        identity: git::Oid,
+        previous_owner_tip: Option<git::Oid>,
+        context: &ReviewSigningContext,
+        accepted_review: git::Oid,
+        result: git::Oid,
+    ) -> Result<PreparedPatchReview, Error> {
+        prepare_patch_action(
+            PatchActionInput {
+                repo,
+                approval,
+                identity,
+                previous_owner_tip,
+                context,
+            },
+            Some((accepted_review, result)),
+        )
+    }
+}
+
+struct PatchActionInput<'a> {
+    repo: &'a Repository,
+    approval: &'a FinalizedPatchApproval,
     identity: git::Oid,
     previous_owner_tip: Option<git::Oid>,
-    context: &ReviewSigningContext,
-    accepted_review: git::Oid,
-    result: git::Oid,
+    context: &'a ReviewSigningContext,
+}
+
+fn prepare_patch_action(
+    input: PatchActionInput<'_>,
+    merge: Option<(git::Oid, git::Oid)>,
 ) -> Result<PreparedPatchReview, Error> {
-    prepare_patch_action(
+    let PatchActionInput {
         repo,
         approval,
         identity,
         previous_owner_tip,
         context,
-        Some((accepted_review, result)),
-    )
-}
-
-fn prepare_patch_action(
-    repo: &Repository,
-    approval: &FinalizedPatchApproval,
-    identity: git::Oid,
-    previous_owner_tip: Option<git::Oid>,
-    context: &ReviewSigningContext,
-    merge: Option<(git::Oid, git::Oid)>,
-) -> Result<PreparedPatchReview, Error> {
+    } = input;
     let decision = PatchVotePayloadV1::decode(approval.approval.payload.as_bytes())
         .map_err(|_| Error::Approval)?;
     if approval.approval.approved_height == 0
@@ -502,28 +541,39 @@ pub(crate) fn object_closure(
         if git::raw::Oid::hash_object(object.kind(), object.data())? != id.into() {
             return Err(Error::Object);
         }
-        match object.kind() {
-            git::raw::ObjectType::Commit => {
-                let commit = repo.find_commit(id.into())?;
-                pending.push(commit.tree_id().into());
-                if parents {
-                    pending.extend(commit.parent_ids().map(git::Oid::from));
-                }
-            }
-            git::raw::ObjectType::Tree => {
-                for entry in repo.find_tree(id.into())?.iter() {
-                    match entry.kind() {
-                        Some(git::raw::ObjectType::Blob | git::raw::ObjectType::Tree) => {
-                            pending.push(entry.id().into())
-                        }
-                        Some(git::raw::ObjectType::Commit) if entry.filemode() == 0o160000 => (),
-                        _ => return Err(Error::Object),
-                    }
-                }
-            }
-            git::raw::ObjectType::Blob => (),
-            _ => return Err(Error::Object),
-        }
+        push_object_children(repo, object.kind(), id, parents, &mut pending)?;
     }
     Ok(seen)
+}
+
+fn push_object_children(
+    repo: &git::raw::Repository,
+    kind: git::raw::ObjectType,
+    id: git::Oid,
+    parents: bool,
+    pending: &mut Vec<git::Oid>,
+) -> Result<(), Error> {
+    match kind {
+        git::raw::ObjectType::Commit => {
+            let commit = repo.find_commit(id.into())?;
+            pending.push(commit.tree_id().into());
+            if parents {
+                pending.extend(commit.parent_ids().map(git::Oid::from));
+            }
+        }
+        git::raw::ObjectType::Tree => {
+            for entry in repo.find_tree(id.into())?.iter() {
+                match entry.kind() {
+                    Some(git::raw::ObjectType::Blob | git::raw::ObjectType::Tree) => {
+                        pending.push(entry.id().into());
+                    }
+                    Some(git::raw::ObjectType::Commit) if entry.filemode() == 0o160000 => (),
+                    _ => return Err(Error::Object),
+                }
+            }
+        }
+        git::raw::ObjectType::Blob => (),
+        _ => return Err(Error::Object),
+    }
+    Ok(())
 }

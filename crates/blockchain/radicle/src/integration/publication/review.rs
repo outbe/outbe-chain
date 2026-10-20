@@ -78,16 +78,78 @@ impl VerifiedReviewPublication {
     }
 }
 
-/// Run off the consensus executor on a blocking worker. Only immutable objects are written;
-/// refs remain at the accepted checkpoint until its successor is finalized.
-pub fn prepare_review_publication(
-    repo: &Repository,
-    state: &FinalizedPatchSigningState,
-    snapshot: &CheckpointOwnerSnapshot,
-    material: &RepositorySigningMaterial,
+pub(super) struct PatchPublicationInput<'a> {
+    pub repo: &'a Repository,
+    pub state: &'a FinalizedPatchSigningState,
+    pub snapshot: &'a CheckpointOwnerSnapshot,
+    pub material: &'a RepositorySigningMaterial,
+}
+
+macro_rules! with_legacy_signature {
+    ($($item:item)*) => {
+        $($item)*
+    };
+}
+
+pub(super) use with_legacy_signature;
+
+with_legacy_signature! {
+    /// Run off the consensus executor on a blocking worker. Only immutable objects are written;
+    /// refs remain at the accepted checkpoint until its successor is finalized.
+    pub fn prepare_review_publication(
+        repo: &Repository,
+        state: &FinalizedPatchSigningState,
+        snapshot: &CheckpointOwnerSnapshot,
+        material: &RepositorySigningMaterial,
+        signatures: [&BlsEnvelope; 2],
+        witness: &RepositoryWitnessBundle,
+    ) -> Result<VerifiedReviewPublication, Error> {
+        prepare_review_publication_with(
+            PatchPublicationInput {
+                repo,
+                state,
+                snapshot,
+                material,
+            },
+            signatures,
+            witness,
+        )
+    }
+
+    /// Reconstruct from trusted inputs, never from the peer's declared native subjects or refs.
+    pub fn verify_review_publication(
+        repo: &Repository,
+        state: &FinalizedPatchSigningState,
+        snapshot: &CheckpointOwnerSnapshot,
+        material: &RepositorySigningMaterial,
+        body: &PublicationBody,
+        manifest: &PublicationManifest,
+        witness: &RepositoryWitnessBundle,
+    ) -> Result<VerifiedReviewPublication, Error> {
+        verify_review_publication_with(
+            PatchPublicationInput {
+                repo,
+                state,
+                snapshot,
+                material,
+            },
+            (body, manifest),
+            witness,
+        )
+    }
+}
+
+fn prepare_review_publication_with(
+    input: PatchPublicationInput<'_>,
     signatures: [&BlsEnvelope; 2],
     witness: &RepositoryWitnessBundle,
 ) -> Result<VerifiedReviewPublication, Error> {
+    let PatchPublicationInput {
+        repo,
+        state,
+        snapshot,
+        material,
+    } = input;
     let mut body = review_body(
         state,
         snapshot.checkpoint(),
@@ -95,11 +157,13 @@ pub fn prepare_review_publication(
         material,
     )?;
     let context = material.review_context(body.previous_receipt_hash.0);
-    let manifest = reconstruct_review(
-        repo,
-        state.approval(),
-        snapshot,
-        &context,
+    let manifest = reconstruct_review_with(
+        ReconstructInput {
+            repo,
+            approval: state.approval(),
+            snapshot,
+            context: &context,
+        },
         signatures,
         |actual| witness.verify(material, actual),
     )?;
@@ -114,16 +178,12 @@ pub fn prepare_review_publication(
     })
 }
 
-/// Reconstruct from trusted inputs, never from the peer's declared native subjects or refs.
-pub fn verify_review_publication(
-    repo: &Repository,
-    state: &FinalizedPatchSigningState,
-    snapshot: &CheckpointOwnerSnapshot,
-    material: &RepositorySigningMaterial,
-    body: &PublicationBody,
-    manifest: &PublicationManifest,
+fn verify_review_publication_with(
+    input: PatchPublicationInput<'_>,
+    candidate: (&PublicationBody, &PublicationManifest),
     witness: &RepositoryWitnessBundle,
 ) -> Result<VerifiedReviewPublication, Error> {
+    let (body, manifest) = candidate;
     manifest.bind_receipt(body)?;
     if manifest.subjects().len() != 2 {
         return Err(Error::Package);
@@ -132,14 +192,8 @@ pub fn verify_review_publication(
         BlsEnvelope::from_hex(&manifest.subjects()[0].envelope)?,
         BlsEnvelope::from_hex(&manifest.subjects()[1].envelope)?,
     ];
-    let expected = prepare_review_publication(
-        repo,
-        state,
-        snapshot,
-        material,
-        [&signatures[0], &signatures[1]],
-        witness,
-    )?;
+    let expected =
+        prepare_review_publication_with(input, [&signatures[0], &signatures[1]], witness)?;
     if expected.body != *body || expected.manifest != *manifest {
         return Err(Error::Package);
     }
@@ -174,21 +228,45 @@ pub(super) fn patch_body(
         _ => return Err(Error::Context),
     };
     let context = material.review_context(previous.receipt().receipt_hash.0);
-    if state.authority() != material.authority()
-        || &state.approval().approval != approval
-        || state.stage() != stage
-        || state.checkpoint().receipt() != previous.receipt()
-        || context.chain_id != state.authority().chain_id()
-        || context.genesis_hash != state.authority().genesis_hash().0
-        || context.epoch != state.authority().epoch()
-        || context.material_version != state.authority().committee().vrf_material_version
-        || material.material_hash() != state.material().receipt().body.material_hash.0
-        || material.players_commitment() != state.material().receipt().body.players_commitment.0
-        || previous.receipt().body.epoch != context.epoch
-        || previous.receipt().body.material_version != context.material_version
-        || previous.receipt().body.material_hash.0 != context.material_hash
-        || previous.receipt().body.players_commitment.0 != material.players_commitment()
-    {
+    let authority = state.authority();
+    let material_body = &state.material().receipt().body;
+    let previous_body = &previous.receipt().body;
+    if (
+        authority,
+        &state.approval().approval,
+        state.stage(),
+        state.checkpoint().receipt(),
+        context.chain_id,
+        context.genesis_hash,
+        context.epoch,
+        context.material_version,
+    ) != (
+        material.authority(),
+        approval,
+        stage,
+        previous.receipt(),
+        authority.chain_id(),
+        authority.genesis_hash().0,
+        authority.epoch(),
+        authority.committee().vrf_material_version,
+    ) {
+        return Err(Error::Context);
+    }
+    if (
+        material.material_hash(),
+        material.players_commitment(),
+        previous_body.epoch,
+        previous_body.material_version,
+        previous_body.material_hash.0,
+        previous_body.players_commitment.0,
+    ) != (
+        material_body.material_hash.0,
+        material_body.players_commitment.0,
+        context.epoch,
+        context.material_version,
+        context.material_hash,
+        material.players_commitment(),
+    ) {
         return Err(Error::Context);
     }
     let decision =
@@ -210,30 +288,22 @@ pub(super) fn patch_body(
     Ok(body)
 }
 
-pub(super) fn reconstruct_review(
+pub(super) struct ReconstructInput<'a> {
+    pub repo: &'a Repository,
+    pub approval: &'a FinalizedPatchApproval,
+    pub snapshot: &'a CheckpointOwnerSnapshot,
+    pub context: &'a crate::integration::review::ReviewSigningContext,
+}
+
+pub(super) fn unpinned_object_commitments(
     repo: &Repository,
-    approval: &FinalizedPatchApproval,
-    snapshot: &CheckpointOwnerSnapshot,
-    context: &crate::integration::review::ReviewSigningContext,
-    signatures: [&BlsEnvelope; 2],
-    verify: impl FnOnce(
-        &[(RepositorySubject, BlsEnvelope)],
-    ) -> Result<(), crate::integration::signing::Error>,
-) -> Result<PublicationManifest, Error> {
-    let (job, pinned) = prepare_patch_review_with_objects(repo, approval, snapshot, context)?;
-    let owner = job.owner();
-    let subject = job.subject().clone();
-    let (entry, refs) = job.attach(repo, signatures[0])?;
-    let refs_subject = refs.subject().clone();
-    verify(&[
-        (subject, signatures[0].clone()),
-        (refs_subject, signatures[1].clone()),
-    ])?;
-    let sigrefs = refs.attach(repo.raw(), signatures[1].clone())?.oid();
-    let new_objects = object_closure(repo.raw(), vec![entry.id, sigrefs], false)?;
+    roots: Vec<git::Oid>,
+    pinned: &std::collections::BTreeSet<git::Oid>,
+) -> Result<Vec<ObjectCommitment>, Error> {
+    let new_objects = object_closure(repo.raw(), roots, false)?;
     let odb = repo.raw().odb()?;
-    let objects = new_objects
-        .difference(&pinned)
+    new_objects
+        .difference(pinned)
         .map(|oid| {
             let object = odb.read((*oid).into())?;
             let kind = match object.kind() {
@@ -248,7 +318,122 @@ pub(super) fn reconstruct_review(
                 sha256: hex::encode(Sha256::hash(&[object.data()]).0),
             })
         })
-        .collect::<Result<Vec<_>, Error>>()?;
+        .collect()
+}
+
+pub(super) fn verify_accepted_patch_context(
+    approval: &FinalizedPatchApproval,
+    previous: &CheckpointOwnerSnapshot,
+    verifier: &AcceptedPublicationVerifier,
+    action: PublicationAction,
+) -> Result<[BlsEnvelope; 2], Error> {
+    let receipt = verifier.receipt();
+    let body = &receipt.receipt().body;
+    let before = previous.checkpoint().receipt();
+    let decision = PatchVotePayloadV1::decode(approval.approval.payload.as_bytes())
+        .map_err(|_| Error::Context)?;
+    if body.action != action
+        || verifier.manifest().subjects().len() != 2
+        || body.proposal_id != approval.approval.proposal_id
+    {
+        return Err(Error::Context);
+    }
+    if (
+        body.repo_id,
+        body.patch_id,
+        body.revision_id,
+        body.expected_target_head,
+    ) != (
+        decision.repo_id,
+        decision.patch_id,
+        decision.revision_id,
+        decision.expected_target_head,
+    ) {
+        return Err(Error::Context);
+    }
+    let expected_anchor = approval
+        .approval
+        .approved_height
+        .max(before.accepted_height);
+    if approval.approval.approved_height > receipt.receipt().accepted_height
+        || body.finalized_anchor_height != expected_anchor
+    {
+        return Err(Error::Context);
+    }
+    if before.body.sequence.checked_add(1) != Some(body.sequence)
+        || body.previous_receipt_hash != before.receipt_hash
+    {
+        return Err(Error::Context);
+    }
+    if (
+        body.chain_id,
+        body.genesis_hash,
+        body.owner_bls_public,
+        body.descriptor_hash,
+        body.players_commitment,
+    ) != (
+        before.body.chain_id,
+        before.body.genesis_hash,
+        before.body.owner_bls_public,
+        before.body.descriptor_hash,
+        before.body.players_commitment,
+    ) {
+        return Err(Error::Context);
+    }
+    Ok([
+        BlsEnvelope::from_hex(&verifier.manifest().subjects()[0].envelope)?,
+        BlsEnvelope::from_hex(&verifier.manifest().subjects()[1].envelope)?,
+    ])
+}
+
+with_legacy_signature! {
+    pub(super) fn reconstruct_review(
+        repo: &Repository,
+        approval: &FinalizedPatchApproval,
+        snapshot: &CheckpointOwnerSnapshot,
+        context: &crate::integration::review::ReviewSigningContext,
+        signatures: [&BlsEnvelope; 2],
+        verify: impl FnOnce(
+            &[(RepositorySubject, BlsEnvelope)],
+        ) -> Result<(), crate::integration::signing::Error>,
+    ) -> Result<PublicationManifest, Error> {
+        reconstruct_review_with(
+            ReconstructInput {
+                repo,
+                approval,
+                snapshot,
+                context,
+            },
+            signatures,
+            verify,
+        )
+    }
+}
+
+pub(super) fn reconstruct_review_with(
+    input: ReconstructInput<'_>,
+    signatures: [&BlsEnvelope; 2],
+    verify: impl FnOnce(
+        &[(RepositorySubject, BlsEnvelope)],
+    ) -> Result<(), crate::integration::signing::Error>,
+) -> Result<PublicationManifest, Error> {
+    let ReconstructInput {
+        repo,
+        approval,
+        snapshot,
+        context,
+    } = input;
+    let (job, pinned) = prepare_patch_review_with_objects(repo, approval, snapshot, context)?;
+    let owner = job.owner();
+    let subject = job.subject().clone();
+    let (entry, refs) = job.attach(repo, signatures[0])?;
+    let refs_subject = refs.subject().clone();
+    verify(&[
+        (subject, signatures[0].clone()),
+        (refs_subject, signatures[1].clone()),
+    ])?;
+    let sigrefs = refs.attach(repo.raw(), signatures[1].clone())?.oid();
+    let objects = unpinned_object_commitments(repo, vec![entry.id, sigrefs], &pinned)?;
     let patch_id = git::Oid::from_sha1(
         PatchVotePayloadV1::decode(approval.approval.payload.as_bytes())
             .map_err(|_| Error::Context)?
@@ -324,42 +509,15 @@ pub fn verify_accepted_review_publication(
     verifier: &AcceptedPublicationVerifier,
 ) -> Result<AcceptedReviewPublication, Error> {
     let receipt = verifier.receipt();
-    let body = &receipt.receipt().body;
-    let before = previous.checkpoint().receipt();
-    let decision = PatchVotePayloadV1::decode(approval.approval.payload.as_bytes())
-        .map_err(|_| Error::Context)?;
-    if body.action != PublicationAction::Review
-        || verifier.manifest().subjects().len() != 2
-        || body.proposal_id != approval.approval.proposal_id
-        || body.repo_id != decision.repo_id
-        || body.patch_id != decision.patch_id
-        || body.revision_id != decision.revision_id
-        || body.expected_target_head != decision.expected_target_head
-        || approval.approval.approved_height > receipt.receipt().accepted_height
-        || body.finalized_anchor_height
-            != approval
-                .approval
-                .approved_height
-                .max(before.accepted_height)
-        || before.body.sequence.checked_add(1) != Some(body.sequence)
-        || body.previous_receipt_hash != before.receipt_hash
-        || body.chain_id != before.body.chain_id
-        || body.genesis_hash != before.body.genesis_hash
-        || body.owner_bls_public != before.body.owner_bls_public
-        || body.descriptor_hash != before.body.descriptor_hash
-        || body.players_commitment != before.body.players_commitment
-    {
-        return Err(Error::Context);
-    }
-    let signatures = [
-        BlsEnvelope::from_hex(&verifier.manifest().subjects()[0].envelope)?,
-        BlsEnvelope::from_hex(&verifier.manifest().subjects()[1].envelope)?,
-    ];
-    let expected = reconstruct_review(
-        repo,
-        approval,
-        previous,
-        &verifier.review_context(),
+    let signatures =
+        verify_accepted_patch_context(approval, previous, verifier, PublicationAction::Review)?;
+    let expected = reconstruct_review_with(
+        ReconstructInput {
+            repo,
+            approval,
+            snapshot: previous,
+            context: &verifier.review_context(),
+        },
         [&signatures[0], &signatures[1]],
         |actual| verifier.verify_native(actual),
     )?;

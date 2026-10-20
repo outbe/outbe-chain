@@ -63,11 +63,13 @@ impl VoteTarget for CodePatchVoteTarget {
         if proposal.target_module != CODE_REGISTRY_ADDRESS
             || proposal.payload.as_bytes() != payload
             || proposal.proposer != context.proposer
-            || !matches!(
-                proposal.proposal_status()?,
-                ProposalStatus::Pending | ProposalStatus::Approved
-            )
-            || ctx.block.block_number <= proposal.voting_deadline_height
+        {
+            return Err(CodeRegistryError::ApprovalProposalMismatch.into());
+        }
+        if !matches!(
+            proposal.proposal_status()?,
+            ProposalStatus::Pending | ProposalStatus::Approved
+        ) || ctx.block.block_number <= proposal.voting_deadline_height
         {
             return Err(CodeRegistryError::ApprovalProposalMismatch.into());
         }

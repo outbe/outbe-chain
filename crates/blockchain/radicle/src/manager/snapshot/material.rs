@@ -61,27 +61,32 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
             .config_descriptor_hash
             .read()
             .map_err(snapshot_error)?;
+        let latest_receipt_hash = registry
+            .publication_receipt_hash
+            .read()
+            .map_err(snapshot_error)?;
         if root.body.action != PublicationAction::Bootstrap
             || !matches!(
                 material.body.action,
                 PublicationAction::Bootstrap | PublicationAction::BindMaterial
             )
-            || checkpoint.receipt_hash
-                != registry
-                    .publication_receipt_hash
-                    .read()
-                    .map_err(snapshot_error)?
+            || checkpoint.receipt_hash != latest_receipt_hash
             || authority.committee().vrf_group_public_key_bytes.as_slice()
                 != root.body.owner_bls_public.as_slice()
-            || [&root, &checkpoint, &material].iter().any(|r| {
-                r.accepted_height > block.number
-                    || r.body.chain_id != self.chain_id
-                    || r.body.genesis_hash != self.genesis_hash
-                    || r.body.repo_id != repository
-                    || r.body.owner_bls_public != root.body.owner_bls_public
-                    || r.body.descriptor_hash != descriptor
-            })
         {
+            return Err(ManagerError::Snapshot(
+                "material binding chain/repository mismatch".into(),
+            ));
+        }
+        if [&root, &checkpoint, &material].iter().any(|r| {
+            self.receipt_mismatch(
+                r,
+                block.number,
+                repository,
+                root.body.owner_bls_public,
+                descriptor,
+            )
+        }) {
             return Err(ManagerError::Snapshot(
                 "material binding chain/repository mismatch".into(),
             ));
@@ -121,5 +126,24 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
                 hash,
             },
         })
+    }
+
+    pub(super) fn receipt_mismatch(
+        &self,
+        receipt: &outbe_coderegistry::publication::PublicationReceipt,
+        max_height: u64,
+        repository: outbe_coderegistry::RepoId,
+        owner: alloy_primitives::FixedBytes<96>,
+        descriptor: B256,
+    ) -> bool {
+        if receipt.accepted_height > max_height
+            || receipt.body.chain_id != self.chain_id
+            || receipt.body.genesis_hash != self.genesis_hash
+        {
+            return true;
+        }
+        receipt.body.repo_id != repository
+            || receipt.body.owner_bls_public != owner
+            || receipt.body.descriptor_hash != descriptor
     }
 }

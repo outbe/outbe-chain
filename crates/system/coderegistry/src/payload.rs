@@ -46,14 +46,13 @@ impl PatchVotePayloadV1 {
     }
 
     pub fn encode(&self) -> Result<Vec<u8>> {
-        if self.version != 1
-            || self.action != "accept"
-            || self.target_branch != "main"
-            || self.repo_id.is_zero()
-            || self.patch_id.is_zero()
-            || self.revision_id.is_zero()
-            || self.expected_target_head.is_zero()
-        {
+        if self.version != 1 || self.action != "accept" || self.target_branch != "main" {
+            return Err(CodeRegistryError::InvalidPatchPayload.into());
+        }
+        if self.repo_id.is_zero() || self.patch_id.is_zero() {
+            return Err(CodeRegistryError::InvalidPatchPayload.into());
+        }
+        if self.revision_id.is_zero() || self.expected_target_head.is_zero() {
             return Err(CodeRegistryError::InvalidPatchPayload.into());
         }
         serde_json::to_vec(self).map_err(|_| CodeRegistryError::InvalidPatchPayload.into())

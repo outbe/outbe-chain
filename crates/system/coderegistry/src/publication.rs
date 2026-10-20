@@ -6,23 +6,24 @@ use commonware_cryptography::{bls12381, Hasher as _, Sha256, Verifier as _};
 use outbe_primitives::{
     error::Result,
     radicle_publication::{
-        players_commitment, PublicationAction, PublicationBatch, PublicationBody,
-        PUBLICATION_BODY_LEN, PUBLICATION_NAMESPACE,
+        PublicationAction, PublicationBatch, PublicationBody, PUBLICATION_BODY_LEN,
+        PUBLICATION_NAMESPACE,
     },
     storage::types::StorageKey as _,
 };
-use outbe_validatorset::{contract::ValidatorSet, state::CommitteeSnapshot};
+use outbe_validatorset::state::CommitteeSnapshot;
 
 use crate::{
     errors::CodeRegistryError::InvalidPublication,
-    payload::PatchVotePayloadV1,
     repo_id_storage_key,
     schema::{
         PublicationReceiptRecord, PublicationReceiptRecordEntryExt, PATCH_EXECUTION_MERGED,
-        PATCH_EXECUTION_PENDING, PATCH_EXECUTION_REVIEWED,
+        PATCH_EXECUTION_REVIEWED,
     },
     CodeRegistry,
 };
+
+mod validate;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PublicationReceipt {
@@ -173,181 +174,6 @@ impl CodeRegistry<'_> {
             attestations,
             receipt,
         })
-    }
-
-    fn publication_committee(&self, body: &PublicationBody) -> Result<CommitteeSnapshot> {
-        let validators = ValidatorSet::new(self.storage.clone());
-        let epoch = validators.current_epoch_u64()?;
-        if epoch != body.epoch {
-            return Err(InvalidPublication("current epoch").into());
-        }
-        let committee = outbe_validatorset::state::read_committee_snapshot_for_epoch(
-            self.storage.clone(),
-            epoch,
-        )?
-        .ok_or(InvalidPublication("current committee missing"))?;
-        let n = committee.committee.len();
-        let effective = validators.get_active_consensus_set()?;
-        let unique: std::collections::BTreeSet<_> = committee
-            .committee
-            .iter()
-            .map(|member| member.address)
-            .collect();
-        if n == 0
-            || n > outbe_consensus::bls::MAX_VALIDATORS as usize
-            || n != effective.len()
-            || unique.len() != n
-            || committee.vrf_material_version != body.material_version
-            || committee.vrf_public_polynomial_hash.is_zero()
-            || committee.vrf_group_public_key_bytes.as_slice() != body.owner_bls_public.as_slice()
-            || committee
-                .committee
-                .windows(2)
-                .any(|pair| pair[0].consensus_pubkey >= pair[1].consensus_pubkey)
-            || committee.committee.iter().any(|member| {
-                !effective.iter().any(|active| {
-                    active.validator_address == member.address
-                        && active.consensus_pubkey.as_slice() == member.consensus_pubkey
-                })
-            })
-            || players_commitment(
-                committee
-                    .committee
-                    .iter()
-                    .map(|member| (member.address, &member.consensus_pubkey)),
-            )? != body.players_commitment
-        {
-            return Err(InvalidPublication("effective committee/material").into());
-        }
-        Ok(committee)
-    }
-
-    fn validate_publication_body(&self, body: &PublicationBody) -> Result<()> {
-        let descriptor = self
-            .governments_descriptor()?
-            .ok_or(InvalidPublication("governments disabled"))?;
-        let height = self.storage.block_number()?;
-        let sequence = self.publication_sequence.read()?;
-        if body.chain_id != self.storage.chain_id()?
-            || body.genesis_hash != self.storage.genesis_hash()?
-            || body.genesis_hash.is_zero()
-            || body.descriptor_hash != descriptor.hash()?
-            || body.repo_id.is_zero()
-            || body.material_hash.is_zero()
-            || body.package_manifest_hash.is_zero()
-            || sequence.checked_add(1) != Some(body.sequence)
-            || self.publication_receipt_hash.read()? != body.previous_receipt_hash
-            || body.finalized_anchor_height >= height
-        {
-            return Err(InvalidPublication("chain/descriptor/sequence").into());
-        }
-        let previous = if sequence == 0 {
-            None
-        } else {
-            Some(
-                self.publication_receipt(sequence)?
-                    .ok_or(InvalidPublication("previous receipt missing"))?,
-            )
-        };
-        if previous
-            .as_ref()
-            .is_some_and(|receipt| receipt.receipt_hash != body.previous_receipt_hash)
-        {
-            return Err(InvalidPublication("previous receipt mismatch").into());
-        }
-        let expected_anchor = match body.action {
-            PublicationAction::Bootstrap => {
-                if sequence != 0
-                    || !body.previous_receipt_hash.is_zero()
-                    || !self.network_repository.read()?.is_zero()
-                {
-                    return Err(InvalidPublication("already bootstrapped").into());
-                }
-                self.validate_non_patch_body(body)?;
-                0
-            }
-            PublicationAction::BindMaterial
-            | PublicationAction::Review
-            | PublicationAction::Merge => {
-                let bootstrap = self
-                    .publication_receipt(1)?
-                    .ok_or(InvalidPublication("bootstrap receipt missing"))?;
-                if self.network_repository.read()? != repo_id_storage_key(body.repo_id)
-                    || bootstrap.body.owner_bls_public != body.owner_bls_public
-                {
-                    return Err(InvalidPublication("immutable network owner/RID").into());
-                }
-                let material = self
-                    .publication_receipt(self.publication_material_sequence.read()?)?
-                    .ok_or(InvalidPublication("material receipt missing"))?;
-                let same_material = material.body.epoch == body.epoch
-                    && material.body.material_version == body.material_version;
-                if body.action == PublicationAction::BindMaterial {
-                    self.validate_non_patch_body(body)?;
-                    if same_material {
-                        return Err(InvalidPublication("material already bound").into());
-                    }
-                    ValidatorSet::new(self.storage.clone())
-                        .epoch_snapshot()?
-                        .start_block
-                } else {
-                    if !same_material
-                        || material.body.material_hash != body.material_hash
-                        || material.body.players_commitment != body.players_commitment
-                    {
-                        return Err(InvalidPublication("current material is not bound").into());
-                    }
-                    let approval = self
-                        .patch_approval(body.proposal_id)?
-                        .ok_or(InvalidPublication("terminal Approved patch required"))?;
-                    let subject = PatchVotePayloadV1::decode(approval.payload.as_bytes())?;
-                    let expected_stage = if body.action == PublicationAction::Review {
-                        PATCH_EXECUTION_PENDING
-                    } else {
-                        PATCH_EXECUTION_REVIEWED
-                    };
-                    if subject.repo_id != body.repo_id
-                        || subject.patch_id != body.patch_id
-                        || subject.revision_id != body.revision_id
-                        || subject.expected_target_head != body.expected_target_head
-                        || self.patch_execution_stage.read(&body.proposal_id)? != expected_stage
-                    {
-                        return Err(
-                            InvalidPublication("exact patch subject/execution stage").into()
-                        );
-                    }
-                    approval.approved_height.max(material.accepted_height).max(
-                        previous
-                            .as_ref()
-                            .ok_or(InvalidPublication("previous receipt missing"))?
-                            .accepted_height,
-                    )
-                }
-            }
-        };
-        if body.finalized_anchor_height != expected_anchor {
-            return Err(InvalidPublication("job anchor height").into());
-        }
-        let canonical = if expected_anchor == 0 {
-            Some(self.storage.genesis_hash()?)
-        } else {
-            self.storage.canonical_block_hash(expected_anchor)?
-        };
-        if canonical != Some(body.finalized_anchor_hash) {
-            return Err(InvalidPublication("canonical job anchor").into());
-        }
-        Ok(())
-    }
-
-    fn validate_non_patch_body(&self, body: &PublicationBody) -> Result<()> {
-        if !body.proposal_id.is_zero()
-            || !body.patch_id.is_zero()
-            || !body.revision_id.is_zero()
-            || !body.expected_target_head.is_zero()
-        {
-            return Err(InvalidPublication("non-patch action has patch fields").into());
-        }
-        Ok(())
     }
 
     fn commit_publication(&mut self, body: &PublicationBody, hash: B256) -> Result<()> {
