@@ -7,6 +7,12 @@
 //! `recordUse` calls would let a sponsored signer burn their own quota
 //! through a regular sub-call. That sub-call would race the executor's
 //! pre-fee write.
+//!
+//! ABI tests call the real dispatch through `IZeroFee.sol` types and compare
+//! their signatures, selectors, and return types with the annotation-generated
+//! ABI. Parameter names and mutability modifiers are outside that type-level
+//! comparison. Emitted sponsorship logs are decoded through the published
+//! event type.
 
 use alloy_primitives::Address;
 use alloy_sol_types::sol;
@@ -103,17 +109,16 @@ mod tests {
     //! These tests must verify it independently of `runtime::authorize_sponsorship`.
 
     use alloy_primitives::{address, Address, U256};
-    use alloy_sol_types::SolCall;
+    use alloy_sol_types::{SolCall, SolType};
     use outbe_primitives::{
         addresses::ZEROFEE_ADDRESS,
         storage::{hashmap::HashMapStorageProvider, StorageHandle},
-        test_utils::sol_interface::sol_function_canonical,
     };
 
     use crate::schema::{pack_counter, ZeroFeeContract};
 
-    // Private `sol!` interface the dispatch macro generated for this contract.
-    use super::__ZeroFeeContractAbi as abi;
+    // Encode and decode as external callers do, using the published interface.
+    use super::{__ZeroFeeContractAbi as dispatch_abi, IZeroFee as abi};
 
     const SIGNER: Address = address!("0x1111111111111111111111111111111111111111");
     // 2026-04-01 00:00:00 UTC -> date_key 20260401.
@@ -138,8 +143,8 @@ mod tests {
             let call = abi::getCounterCall { signer: SIGNER }.abi_encode();
             let out = dispatch(storage, &call);
             let ret = abi::getCounterCall::abi_decode_returns(&out).unwrap();
-            assert_eq!(ret._0, BLOCK_DAY, "day must be today's UTC day key");
-            assert_eq!(ret._1, 5, "same-day count is returned verbatim");
+            assert_eq!(ret.day, BLOCK_DAY, "day must be today's UTC day key");
+            assert_eq!(ret.count, 5, "same-day count is returned verbatim");
         });
     }
 
@@ -159,8 +164,11 @@ mod tests {
             let call = abi::getCounterCall { signer: SIGNER }.abi_encode();
             let out = dispatch(storage, &call);
             let ret = abi::getCounterCall::abi_decode_returns(&out).unwrap();
-            assert_eq!(ret._0, BLOCK_DAY, "day must roll forward to today");
-            assert_eq!(ret._1, 0, "stale-day count must lazily reset to 0 on read");
+            assert_eq!(ret.day, BLOCK_DAY, "day must roll forward to today");
+            assert_eq!(
+                ret.count, 0,
+                "stale-day count must lazily reset to 0 on read"
+            );
         });
     }
 
@@ -172,8 +180,8 @@ mod tests {
             let call = abi::getCounterCall { signer: SIGNER }.abi_encode();
             let out = dispatch(storage, &call);
             let ret = abi::getCounterCall::abi_decode_returns(&out).unwrap();
-            assert_eq!(ret._0, BLOCK_DAY);
-            assert_eq!(ret._1, 0);
+            assert_eq!(ret.day, BLOCK_DAY);
+            assert_eq!(ret.count, 0);
         });
     }
 
@@ -248,24 +256,23 @@ mod tests {
         });
     }
 
-    /// Drift guard between `contracts/precompiles/src/IZeroFee.sol` and the
-    /// `#[contract_public(...)]` annotations on `ZeroFeeContract`. ZeroFee uses
-    /// macro-driven dispatch, so the .sol file is a documentation /
-    /// abi-export mirror rather than the dispatch source. This test fails if
-    /// either side changes without the other.
+    /// Compare the published ABI with the independently generated dispatch ABI.
+    /// Return types need an explicit check: widening uint32 to uint256 preserves
+    /// both the selector and the encoded bytes for values that fit in uint32.
     #[test]
-    fn izerofee_sol_matches_contract_public_annotations() {
-        const SOL: &str = include_str!("../../../../contracts/precompiles/src/IZeroFee.sol");
-        let expected = [
-            ("authorizeSponsorship", "address", true, "bool"),
-            ("getCounter", "address", true, "uint32,uint32"),
-        ];
-        for (name, args_types, is_view, ret_types) in expected {
-            let canon = sol_function_canonical(SOL, name)
-                .unwrap_or_else(|| panic!("IZeroFee.sol is missing `function {name}(...)`"));
-            assert_eq!(canon.arg_types, args_types, "{name}: arg types differ");
-            assert_eq!(canon.is_view, is_view, "{name}: view-modifier differs");
-            assert_eq!(canon.ret_types, ret_types, "{name}: return types differ");
+    fn izerofee_sol_matches_dispatch_abi() {
+        fn assert_call_abi<Published: SolCall, Generated: SolCall>() {
+            assert_eq!(Published::SIGNATURE, Generated::SIGNATURE);
+            assert_eq!(Published::SELECTOR, Generated::SELECTOR);
+            assert_eq!(
+                <Published::ReturnTuple<'static> as SolType>::SOL_NAME,
+                <Generated::ReturnTuple<'static> as SolType>::SOL_NAME,
+                "{} return types differ",
+                Published::SIGNATURE
+            );
         }
+
+        assert_call_abi::<abi::authorizeSponsorshipCall, dispatch_abi::authorizeSponsorshipCall>();
+        assert_call_abi::<abi::getCounterCall, dispatch_abi::getCounterCall>();
     }
 }
