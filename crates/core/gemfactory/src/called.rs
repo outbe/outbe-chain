@@ -164,8 +164,8 @@ pub(crate) fn call_currency(
     Ok((called, finished))
 }
 
-/// Takes a group every gem of which is paid out of its bin once its first full day has
-/// begun: no gem can join it after that, so it has nothing left to call. Returns whether
+/// Takes a group every gem of which is paid out of its bin once its first full day is
+/// under way: a gem issued at its 00:00:00 still joins it, none after. Returns whether
 /// it did.
 fn retire_paid_group(gem: &mut GemContract<'_>, group: B256, now: u64) -> Result<bool> {
     if gem.group_gem_count.read(&group)? != 0 || gem.group_called_at.read(&group)? != 0 {
@@ -176,7 +176,7 @@ fn retire_paid_group(gem: &mut GemContract<'_>, group: B256, now: u64) -> Result
         .get(group)?
         .ok_or(GemFactoryError::MissingGroupForCall { group })?
         .full_day_after_issue;
-    if now < outbe_primitives::time::date_key_to_utc_timestamp(start_day.value()) {
+    if now <= outbe_primitives::time::date_key_to_utc_timestamp(start_day.value()) {
         return Ok(false);
     }
     gem.remove_call_bin(group)?;

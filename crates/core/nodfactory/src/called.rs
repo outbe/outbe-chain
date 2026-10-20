@@ -212,8 +212,8 @@ pub(crate) fn call_currency(
     Ok((called, finished))
 }
 
-/// Takes a group every Nod of which is paid out of its bin once its first full day has
-/// begun: no Nod can join it after that, so it has nothing left to call. Returns whether
+/// Takes a group every Nod of which is paid out of its bin once its first full day is
+/// under way: a Nod issued at its 00:00:00 still joins it, none after. Returns whether
 /// it did.
 fn retire_paid_group(nod: &mut NodContract<'_>, group_key: B256, now: u64) -> Result<bool> {
     if nod.group_nod_count.read(&group_key)? != 0 || nod.group_called_at.read(&group_key)? != 0 {
@@ -224,7 +224,7 @@ fn retire_paid_group(nod: &mut NodContract<'_>, group_key: B256, now: u64) -> Re
         .get(group_key)?
         .ok_or(crate::errors::NodFactoryError::MissingGroupForCall { group_key })?
         .full_day_after_issue;
-    if now < outbe_primitives::time::date_key_to_utc_timestamp(start_day.value()) {
+    if now <= outbe_primitives::time::date_key_to_utc_timestamp(start_day.value()) {
         return Ok(false);
     }
     nod.remove_call_bin(group_key)?;
