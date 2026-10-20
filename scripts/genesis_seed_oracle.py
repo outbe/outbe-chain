@@ -14,6 +14,18 @@ from genesis_seed_codec import (
 )
 from genesis_seed_codec import address_pair, asset_address, is_iso_asset_address
 
+# Genesis policy rate of each reference currency at scale 1e6: the overnight
+# rate of that currency. Keep in sync with `DEFAULT_POLICY_RATES` in
+# crates/system/oracle/src/constants.rs.
+DEFAULT_POLICY_RATES = [
+    {"iso_code": 156, "annual_rate_1e6": 12_624},  # CNY DR001 1.2624%, 2026-10-19
+    {"iso_code": 344, "annual_rate_1e6": 23_667},  # HKD HONIA 2.36666%, 2026-10-02
+    {"iso_code": 392, "annual_rate_1e6": 12_280},  # JPY TONA 1.228%, 2026-10-15
+    {"iso_code": 826, "annual_rate_1e6": 37_344},  # GBP SONIA 3.7344%, 2026-10-16
+    {"iso_code": 840, "annual_rate_1e6": 38_800},  # USD SOFR 3.88%, 2026-10-16
+    {"iso_code": 978, "annual_rate_1e6": 24_410},  # EUR €STR 2.441%, 2026-10-19
+]
+
 
 def seed_oracle(storage: StorageBuilder, config: dict):
     """
@@ -149,11 +161,8 @@ def _seed_oracle_registry(storage, config, validated_pairs):
 
 
 def _seed_oracle_scurves(storage, config, pair_ids):
-    # S-curve genesis seeds (macro slots 34-38). `resolve_tribute_price` reads
-    # `max(per-day VWAP, S-curve)`. Pre-seeded OFFERING days have no runtime-
-    # computed per-day VWAP. Without an S-curve entry the price is 0 and
-    # `offerTribute` reverts with `NominalPriceUnavailable`. Each seed gives a
-    # pair a peak at a worldwide day so days within the S-curve period resolve.
+    # S-curve genesis seeds (macro slots 34-38). Each seed gives a pair a peak
+    # price at a worldwide day.
     scurve_seeds = config.get("scurve_seeds", [])
     if scurve_seeds:
         storage.set_slot(34, len(scurve_seeds))  # scurve_count
@@ -176,7 +185,6 @@ def _seed_oracle_scurves(storage, config, pair_ids):
 def _seed_oracle_currencies(storage, config):
     # Reference currencies and annual policy rates are independent registries.
     # Both lists are canonical ascending ISO order. Slot 60 is retired.
-    DEFAULT_USD_CURRENCY_RATE = 36_300  # 3.63% at scale 1e6
     reference_currencies = config.get(
         "reference_currencies",
         [156, 344, 392, 826, 840, 978],
@@ -192,10 +200,7 @@ def _seed_oracle_currencies(storage, config):
     for i, iso_code in enumerate(reference_currencies):
         storage.set_raw_slot(data_slot(55) + i, iso_code)
 
-    policy_rates = config.get(
-        "policy_rates",
-        [{"iso_code": 840, "annual_rate_1e6": DEFAULT_USD_CURRENCY_RATE}],
-    )
+    policy_rates = config.get("policy_rates", DEFAULT_POLICY_RATES)
     parsed_policy_rates = [
         (parse_int(entry["iso_code"]), parse_int(entry["annual_rate_1e6"]))
         for entry in policy_rates
@@ -207,6 +212,9 @@ def _seed_oracle_currencies(storage, config):
     policy_isos = [iso_code for iso_code, _ in parsed_policy_rates]
     if policy_isos != sorted(set(policy_isos)):
         raise ValueError("oracle policy rates must be sorted and unique")
+    missing = [iso_code for iso_code in reference_currencies if iso_code not in policy_isos]
+    if missing:
+        raise ValueError(f"oracle reference currencies have no policy rate: {missing}")
     storage.set_slot(74, len(parsed_policy_rates))
     for i, (iso_code, rate) in enumerate(parsed_policy_rates):
         storage.set_raw_slot(data_slot(74) + i, iso_code)

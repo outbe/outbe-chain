@@ -52,6 +52,12 @@ pub fn bond(storage: StorageHandle<'_>, caller: Address, amount: U256, name: Str
             ICcaRegistry::State::Bonding
         };
         contract.save(&record)?;
+        let total = contract
+            .total_bonded_minor
+            .read()?
+            .checked_add(amount)
+            .ok_or(CcaError::Arithmetic)?;
+        set_total_bonded(&storage, &contract, total)?;
         contract.emit(ICcaRegistry::Bonded {
             cca: caller,
             amountMinor: amount,
@@ -109,11 +115,29 @@ pub fn claim_unbonded(storage: StorageHandle<'_>, caller: Address) -> Result<()>
         record.state = ICcaRegistry::State::Deregistered;
         contract.save(&record)?;
         storage.transfer_balance(CCA_REGISTRY_ADDRESS, caller, amount)?;
+        let total = contract
+            .total_bonded_minor
+            .read()?
+            .checked_sub(amount)
+            .ok_or(CcaError::Arithmetic)?;
+        set_total_bonded(&storage, &contract, total)?;
         contract.emit(ICcaRegistry::UnbondClaimed {
             cca: caller,
             amountMinor: amount,
         })
     })
+}
+
+/// Records the bonded total. The registry account must hold at least that much.
+fn set_total_bonded(
+    storage: &StorageHandle<'_>,
+    contract: &CcaContract<'_>,
+    total: U256,
+) -> Result<()> {
+    if storage.balance(CCA_REGISTRY_ADDRESS)? < total {
+        return Err(CcaError::CustodyShortfall.into());
+    }
+    contract.total_bonded_minor.write(total)
 }
 
 /// Trusted Rust entrypoint. Credis calls it once with the current UTC reward day key (YYYYMMDD).

@@ -58,7 +58,12 @@ pub fn check_reference_currency_with_storage(storage: StorageHandle, iso_code: u
 /// the pair has no rates.
 pub fn coen_rate_for(storage: StorageHandle, iso_code: u16) -> Result<U256> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
-    oracle.get_exchange_rate(COEN_ASSET, currency_address(iso_code))
+    let rate = oracle.get_exchange_rate(COEN_ASSET, currency_address(iso_code))?;
+    if rate.is_zero() {
+        let pair = AddressPair::new_coen_to(iso_code);
+        return Err(OracleError::NoRateForPair { pair }.into());
+    }
+    Ok(rate)
 }
 
 /// `amount`, denominated in `from_iso`, re-expressed in `to_iso`.

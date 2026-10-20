@@ -129,6 +129,12 @@ def _add_feeder_pairs(seed: dict[str, Any], config: dict[str, Any]) -> None:
     for pair in table.get("currency_pairs", []):
         if (pair["base"], pair["quote"]) not in listed:
             pairs.append({"base": pair["base"], "quote": pair["quote"]})
+    # Initial rates and S-curve seeds of these pairs. The feeder rejects
+    # unknown keys in the pairs file, so they live in a separate file.
+    if config.get("feeder_seeds"):
+        seeds = load_yaml(SCRIPT_DIR / config["feeder_seeds"])
+        for key in ("initial_rates", "scurve_seeds"):
+            oracle[key] = oracle.get(key, []) + seeds.get(key, [])
 
 
 def load_seed_genesis_module():

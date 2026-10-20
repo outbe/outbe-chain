@@ -111,8 +111,8 @@ fn encrypted_canary_offers(
         nonce: CANARY_NONCE.to_vec(),
         ephemeral_pubkey: U256::from_be_bytes(eph_pub),
         worldwide_day: WorldwideDay::new(CANARY_DAY),
-        tribute_currency: 840,
-        reference_currency: 840,
+        tribute_currency: CANARY_CURRENCY,
+        reference_currency: CANARY_CURRENCY,
         issuance_wwd_vwap_minor: U256::from(CANARY_PRICE_MINOR),
         reference_wwd_vwap_minor: U256::from(CANARY_PRICE_MINOR),
         reference_scurve_minor: U256::ZERO,
@@ -256,6 +256,15 @@ mod tests {
             key,
             reads: AtomicUsize::new(0),
         }
+    }
+    #[test]
+    fn canary_offer_names_no_currency() {
+        let offer_pub =
+            x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from([7u8; 32])).to_bytes();
+        let offers = encrypted_canary_offers(&offer_pub).expect("canary offer encrypts");
+        assert_eq!(offers.len(), 1);
+        assert_eq!(offers[0].tribute_currency, 999);
+        assert_eq!(offers[0].reference_currency, 999);
     }
     #[test]
     fn malformed_batch_checks_precede_pinned_key_lookup() {
