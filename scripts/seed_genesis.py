@@ -39,9 +39,9 @@ from genesis_inputs import (
 from genesis_seed_alloc import (
     _validate_reserved_account,
     _validate_reserved_balance,
+    seed_code_registry as seed_code_registry,
     seed_external_contracts,
     seed_protocol_constants,
-    seed_code_registry,
     validate_stablecoin_namespace_alloc,
 )
 from genesis_network import SEED_SECTIONS
@@ -51,6 +51,7 @@ from genesis_seed_codec import (
     AGENT_REWARD_ADDRESS,
     ALL_PRECOMPILE_ADDRESSES,
     CCA_REGISTRY_ADDRESS,
+    CODE_REGISTRY_ADDRESS as CODE_REGISTRY_ADDRESS,
     CREDIS_ADDRESS,
     CREDIS_PROFILE_SLOT,
     CREDIS_FACTORY_ADDRESS,
@@ -84,7 +85,6 @@ from genesis_seed_codec import (
     PROMIS_LIMIT_ADDRESS,
     PROTECTED_PROTOCOL_ADDRESSES,
     PROTOCOL_ACCUMULATOR_ADDRESSES,
-    CODE_REGISTRY_ADDRESS,
     REWARDS_ADDRESS,
     SECONDS_PER_DAY,
     SLASH_INDICATOR_ADDRESS,
