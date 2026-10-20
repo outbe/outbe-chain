@@ -9,6 +9,13 @@ interface IAuction {
         uint128 outputAmount;
     }
 
+    /// @notice Auction window of one order, fixed when the auction starts
+    struct Window {
+        uint64 startedAt;
+        uint64 commitPeriod;
+        uint64 revealPeriod;
+    }
+
     // ============ Events ============
 
     event Committed(bytes32 indexed orderId, address indexed solver);
@@ -20,7 +27,7 @@ interface IAuction {
     event RouterUpdated(address oldRouter, address newRouter);
     // ============ Errors ============
 
-    /// @notice Thrown when max quotes per order has been reached (checked at reveal)
+    /// @notice Thrown when the quote list is full and the revealed amount is not above its lowest quote
     error MaxQuotesReached();
     /// @notice Thrown when the commit phase has ended
     error CommitPhaseEnded();
@@ -40,6 +47,16 @@ interface IAuction {
     error RevealNotEnded();
     /// @notice Thrown when the router is set to the zero address
     error ZeroRouter();
+    /// @notice Thrown when a revealed outputAmount is zero
+    error ZeroOutputAmount();
+    /// @notice Thrown when caller is not the router
+    error UnauthorizedRouter();
+    /// @notice Thrown when a period is zero or does not fit in uint64
+    error InvalidPeriod();
+    /// @notice Thrown when max quotes is zero or above MAX_QUOTES_PER_ORDER
+    error InvalidMaxQuotes();
+    /// @notice Thrown by renounceOwnership, which is disabled
+    error RenounceDisabled();
     // ============ Solver Functions ============
 
     /// @notice Submit a commitment hash for an order (called directly by solver)
@@ -114,4 +131,7 @@ interface IAuction {
 
     /// @notice Get the maximum number of quotes per order
     function maxQuotesPerOrder() external view returns (uint256);
+
+    /// @notice Get the router address
+    function router() external view returns (address);
 }
