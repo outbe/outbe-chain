@@ -1,10 +1,11 @@
-//! The rules that change a Credis: issue on a reservation, call on a sustained breach,
-//! settle interest first, forfeit a lapsed call. Credis keeps the record and its reads.
+//! The rules that change a Credis: issue on a reservation, settle interest first, delete
+//! a forfeited one. Its group is called and forfeited by the sweeps. Credis keeps the
+//! record and its reads.
 
 use alloy_primitives::{Address, U256};
 use outbe_credis::constants::CALL_RATE_PCT;
 use outbe_credis::errors::CredisError;
-use outbe_credis::runtime::settlement_deadline;
+use outbe_credis::runtime::{effective_state, settlement_deadline};
 use outbe_credis::{Credis, CredisContract, CredisState};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
@@ -16,11 +17,13 @@ use crate::precompile::ICredisFactory;
 
 /// Current execution timestamp's UTC reward day key (YYYYMMDD).
 fn reward_day(storage: &StorageHandle<'_>) -> Result<u32> {
-    // Execution timestamps must fit Unix seconds in u64. Reject a value that does not fit
-    // rather than truncate it.
-    let timestamp =
-        u64::try_from(storage.timestamp()?).map_err(|_| CredisError::ArithmeticOverflow)?;
-    Ok(timestamp_to_date_key(timestamp))
+    Ok(timestamp_to_date_key(block_time(storage)?))
+}
+
+/// Execution timestamps must fit Unix seconds in u64. Reject a value that does not fit
+/// rather than truncate it.
+fn block_time(storage: &StorageHandle<'_>) -> Result<u64> {
+    u64::try_from(storage.timestamp()?).map_err(|_| CredisError::ArithmeticOverflow.into())
 }
 
 /// Terms captured when a Credis is issued. Grouped rather than passed positionally
@@ -89,8 +92,8 @@ pub fn calc_call_price(price: U256) -> Result<U256> {
 ///
 /// - The call price derives from `call_anchor_price_minor`.
 /// - `policy_rate` is pinned.
-/// - The call terms are snapshotted from the profile, so a later profile change
-///   cannot re-term a live Credis.
+/// - The call terms are snapshotted from the profile. The Credis's group seals its
+///   first member's, so a later profile change cannot re-term a live Credis.
 ///
 /// Collateral starts fully locked and the interest anchor starts at issuance.
 /// Entry price, call anchor, and call price are not written again.
@@ -159,9 +162,6 @@ pub fn issue(credis: &mut CredisContract<'_>, params: IssueCredisParams) -> Resu
         )?;
         credis.create_credis_record(&record)?;
         credis.widen_scan_terms(&record)?;
-        credis.append_to_owner_index(params.owner, credis_id)?;
-        credis.append_to_global_index(credis_id)?;
-        credis.insert_call_bin(&record)?;
 
         credis.emit(outbe_credis::precompile::ICredis::Transfer {
             from: Address::ZERO,
@@ -170,32 +170,6 @@ pub fn issue(credis: &mut CredisContract<'_>, params: IssueCredisParams) -> Resu
         })?;
         Ok(credis_id)
     })
-}
-
-/// Calls an Issued Credis, opening the settlement window. Settlement terms
-/// are unchanged throughout it. Idempotent: an already-called Credis
-/// returns `false` without moving its deadline.
-///
-/// The caller must establish the sustained breach before this call.
-pub fn mark_called(credis: &mut CredisContract<'_>, credis_id: U256, now: u64) -> Result<bool> {
-    let mut record = credis.load_credis(credis_id)?;
-    if record.lifecycle_state()? != CredisState::Issued {
-        return Ok(false);
-    }
-    record.state = CredisState::Called as u8;
-    record.called_at = now;
-    credis.update_credis_record(&record)?;
-    credis.remove_call_bin(&record)?;
-    credis.push_called(credis_id, settlement_deadline(&record))?;
-    credis.emit(outbe_credis::precompile::ICredis::CredisCalled {
-        credisId: credis_id,
-        calledAt: now,
-        settlementDeadline: settlement_deadline(&record),
-    })?;
-    credis.emit(outbe_credis::precompile::ICredis::MetadataUpdate {
-        _tokenId: credis_id,
-    })?;
-    Ok(true)
 }
 
 /// Applies a settlement of `amount`: interest first, principal second.
@@ -275,13 +249,12 @@ pub fn settle(
     if closed {
         record.state = CredisState::Settled as u8;
     }
+    let group = record.group_key();
+    // A settled Credis keeps the call and terms it read from its group.
     credis.update_credis_record(&record)?;
+    credis.take_owner_outstanding(record.owner, principal_paid)?;
     if closed {
-        // Terminal: leave the call index and the settlement-deadline queue.
-        credis.remove_call_bin(&record)?;
-        if state_before == CredisState::Called {
-            credis.remove_called(credis_id)?;
-        }
+        credis.leave_group(group, credis_id)?;
     }
 
     emit(
@@ -318,30 +291,7 @@ pub fn settle(
     })
 }
 
-/// Forfeits the remainder of a called Credis whose settlement window has
-/// lapsed. Only the unpaid share is written off: every settlement already
-/// released its proportional share, so whatever the owner settled they have
-/// already reclaimed. The record keeps its remainders: they are what is
-/// written off and burned, read through [`outbe_credis::outcome`]. Rounded-up partial returns
-/// may leave zero collateral even while principal remains outstanding.
-///
-/// Returns what the caller must burn and credit. This function closes the
-/// Credis itself.
-pub fn forfeit(credis: &mut CredisContract<'_>, credis_id: U256, now: u64) -> Result<Forfeit> {
-    let storage = credis.storage.clone();
-    storage.with_checkpoint(|| {
-        let record = credis.load_credis(credis_id)?;
-        if record.lifecycle_state()? != CredisState::Called {
-            return Err(CredisFactoryError::NotCalled.into());
-        }
-        if now <= settlement_deadline(&record) {
-            return Err(CredisFactoryError::SettlementDeadlineNotPassed.into());
-        }
-        close_forfeited(credis, record)
-    })
-}
-
-/// The owner gives up an Issued or Called Credis at any time, with the same
+/// The owner gives up an Issued or Called Credis before its deadline, with the same
 /// write-off and burn as a lapsed call.
 pub fn forfeit_by_owner(
     credis: &mut CredisContract<'_>,
@@ -354,51 +304,49 @@ pub fn forfeit_by_owner(
         if caller != record.owner {
             return Err(CredisFactoryError::NotCredisOwner.into());
         }
-        match record.lifecycle_state()? {
+        match effective_state(&record, block_time(&storage)?)? {
             CredisState::Issued | CredisState::Called => {}
             CredisState::Settled | CredisState::Forfeited => {
                 return Err(CredisFactoryError::CredisClosed.into())
             }
         }
-        close_forfeited(credis, record)
+        delete_forfeited(credis, record)
     })
 }
 
-fn close_forfeited(credis: &mut CredisContract<'_>, mut record: Credis) -> Result<Forfeit> {
+/// Deletes a forfeited Credis. Only the unpaid share is written off: every settlement
+/// already released its proportional share. Rounded-up partial returns may leave zero
+/// collateral even while principal remains outstanding.
+///
+/// Returns what the caller must burn.
+pub fn delete_forfeited(credis: &mut CredisContract<'_>, record: Credis) -> Result<Forfeit> {
     if record.outstanding_principal_minor.is_zero() {
         return Err(CredisFactoryError::NothingOutstanding.into());
     }
-    let was_called = record.lifecycle_state()? == CredisState::Called;
     let credis_id = record.credis_id;
-    let gratis_burned_minor = record.outstanding_gratis_minor;
-    let principal_written_off = record.outstanding_principal_minor;
-
+    let forfeit = Forfeit {
+        gratis_burned_minor: record.outstanding_gratis_minor,
+        principal_written_off: record.outstanding_principal_minor,
+    };
     outbe_ccaregistry::api::credis_forfeited(
         &credis.storage,
         record.cca,
         reward_day(&credis.storage)?,
-        gratis_burned_minor,
+        forfeit.gratis_burned_minor,
     )?;
-    // The remainders stay on the record: they are what was written off and burned.
-    record.state = CredisState::Forfeited as u8;
-    credis.update_credis_record(&record)?;
-    credis.remove_call_bin(&record)?;
-    if was_called {
-        credis.remove_called(credis_id)?;
-    }
+    credis.leave_group(record.group_key(), credis_id)?;
+    credis.delete_credis_record(credis_id)?;
 
     credis.emit(outbe_credis::precompile::ICredis::CredisForfeited {
         credisId: credis_id,
         cca: record.cca,
-        gratisBurnedMinor: gratis_burned_minor,
-        principalWrittenOffMinor: principal_written_off,
+        gratisBurnedMinor: forfeit.gratis_burned_minor,
+        principalWrittenOffMinor: forfeit.principal_written_off,
     })?;
-    credis.emit(outbe_credis::precompile::ICredis::MetadataUpdate {
-        _tokenId: credis_id,
+    credis.emit(outbe_credis::precompile::ICredis::Transfer {
+        from: record.owner,
+        to: Address::ZERO,
+        tokenId: credis_id,
     })?;
-
-    Ok(Forfeit {
-        gratis_burned_minor,
-        principal_written_off,
-    })
+    Ok(forfeit)
 }

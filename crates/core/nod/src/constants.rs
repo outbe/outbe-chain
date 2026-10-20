@@ -10,10 +10,10 @@ pub const TOKEN_DESCRIPTION: &str = concat!(
     "A Nod is never transferable."
 );
 
-/// The first issuance of a bucket snapshots the four call terms below onto it,
-/// and every later check reads the bucket's copy. Retuning one
-/// of them re-terms buckets issued afterwards. It leaves every already-issued
-/// bucket on the terms it was issued with. Gem and intex give the same guarantee.
+/// The first issuance of a group snapshots the four call terms below onto it,
+/// and every later check reads the group's copy. Retuning one
+/// of them re-terms groups issued afterwards. It leaves every already-issued
+/// group on the terms it was issued with. Gem and intex give the same guarantee.
 ///
 /// Call-price markup percent: `call = entry x (100 + CALL_RATE_PCT) / 100`
 /// (256 => +256%, i.e. 3.56x entry). Same shape as credis' 64 and
@@ -29,15 +29,16 @@ pub const CALL_LOOKBACK_DAYS: u32 = 28;
 /// `CALL_LOOKBACK_DAYS - CALL_THRESHOLD_DAYS` of either.
 pub const CALL_THRESHOLD_DAYS: u32 = 21;
 
-/// [`CALL_LOOKBACK_DAYS`] in seconds - the encoding `bucket_call_window_seconds`
+/// [`CALL_LOOKBACK_DAYS`] in seconds - the encoding `group_call_window_seconds`
 /// seals at issuance, matching `GemData::call_window_seconds`.
 pub const CALL_WINDOW: u32 = CALL_LOOKBACK_DAYS * SECONDS_PER_DAY_U32;
 
 /// [`CALL_THRESHOLD_DAYS`] in seconds - the encoding
-/// `bucket_call_threshold_seconds` seals at issuance, matching
+/// `group_call_threshold_seconds` seals at issuance, matching
 /// `GemData::call_threshold_seconds`.
 pub const CALL_THRESHOLD: u32 = CALL_THRESHOLD_DAYS * SECONDS_PER_DAY_U32;
 
 /// Seconds after `called_at` within which the owner must settle. Once the
-/// period elapses, the CycleTick forfeit sweep burns the bucket's remaining Nods.
+/// period elapses, the CycleTick forfeit sweep forfeits the group's unpaid Nods and
+/// the cleanup deletes them.
 pub const CALL_NOTICE_PERIOD: u32 = 7 * SECONDS_PER_DAY_U32;

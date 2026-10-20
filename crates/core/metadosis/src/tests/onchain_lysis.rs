@@ -254,6 +254,8 @@ fn native_fraction_completion_keeps_tributes_for_owner_create_nod() {
 #[test]
 fn production_command_issues_encrypted_nods_and_completes_without_worker() {
     let _transport = outbe_tee::lysis::test_transport::scope(exchange);
+    // Issuing a Lysis Nod reads its Gratis load for the group's unpaid total.
+    let _nod_enclave = outbe_nod::test_support::scope();
     let mut provider = fixture();
     run(&mut provider).unwrap();
     StorageHandle::enter(&mut provider, |storage| {
@@ -286,6 +288,8 @@ fn production_command_issues_encrypted_nods_and_completes_without_worker() {
 #[test]
 fn local_identity_does_not_change_ciphertexts_state_or_events() {
     let _transport = outbe_tee::lysis::test_transport::scope(exchange);
+    // Issuing a Lysis Nod reads its Gratis load for the group's unpaid total.
+    let _nod_enclave = outbe_nod::test_support::scope();
     let mut first = fixture();
     let mut second = fixture();
     first.enable_production_storage_gas_metering();

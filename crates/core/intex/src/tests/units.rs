@@ -5,7 +5,7 @@ use super::*;
 /// Create a series and drive it to `Called` so expiry can be exercised.
 fn called_series(storage: &StorageHandle, worldwide_day: u32) -> SeriesId {
     api::create_series(storage, sample_params(worldwide_day)).unwrap();
-    api::record_called(storage, sid(worldwide_day), ISSUED_AT).unwrap();
+    api::call_group_of(storage, sid(worldwide_day), ISSUED_AT).unwrap();
     sid(worldwide_day)
 }
 
@@ -20,7 +20,7 @@ fn expiry_forfeits_every_unrealized_unit() {
             100
         );
         assert_eq!(
-            api::read_series(&s, id).unwrap().lifecycle_state().unwrap(),
+            api::state(&s, &api::read_series(&s, id).unwrap()).unwrap(),
             IntexState::Called
         );
     });
@@ -131,11 +131,6 @@ fn a_called_series_reads_expired_from_its_deadline_not_from_the_sweep() {
         assert_eq!(
             dispatch_series_data(&s, id).state,
             IntexState::Expired as u8
-        );
-        // Derived, not written: the sweep has not run.
-        assert_eq!(
-            api::read_series(&s, id).unwrap().lifecycle_state().unwrap(),
-            IntexState::Called
         );
     });
 }

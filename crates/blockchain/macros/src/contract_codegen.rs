@@ -4,7 +4,7 @@ use super::{
     field_attrs::{parse_common_field_attrs, CommonFieldAttrs},
     is_dsl_binary_heap_type, is_dsl_circular_buffer_type, is_dsl_deque_type, is_dsl_list_type,
     is_dsl_map_type, is_dsl_set_type, is_dsl_value_type, is_mapping_type, is_slot_type,
-    is_storage_collection, type_args, unwrap_single_generic_type,
+    is_storage_array, is_storage_collection, type_args, unwrap_single_generic_type,
 };
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
@@ -46,13 +46,20 @@ struct ContractFieldInfo {
     attrs: CommonFieldAttrs,
 }
 
+/// Base slot of each field (in declaration order) and the order in which the
+/// allocator placed the fields.
+struct SlotLayout {
+    slots: Vec<TokenStream2>,
+    allocation_order: Vec<usize>,
+}
+
 pub(super) fn generate_contract(
     input: DeriveInput,
     config: ContractConfig,
 ) -> syn::Result<TokenStream2> {
     let fields = parse_fields(&input)?;
-    let slot_assignments = assign_slots(&fields);
-    Ok(emit_contract(&input, &config, &fields, &slot_assignments))
+    let layout = assign_slots(&fields);
+    Ok(emit_contract(&input, &config, &fields, &layout))
 }
 
 fn parse_fields(input: &DeriveInput) -> syn::Result<Vec<ContractFieldInfo>> {
@@ -91,7 +98,7 @@ fn parse_fields(input: &DeriveInput) -> syn::Result<Vec<ContractFieldInfo>> {
     Ok(fields)
 }
 
-fn assign_slots(fields: &[ContractFieldInfo]) -> Vec<TokenStream2> {
+fn assign_slots(fields: &[ContractFieldInfo]) -> SlotLayout {
     let use_order = fields.iter().any(|f| f.attrs.order.is_some())
         && fields.iter().all(|f| f.attrs.explicit_slot.is_none());
     if use_order {
@@ -101,29 +108,23 @@ fn assign_slots(fields: &[ContractFieldInfo]) -> Vec<TokenStream2> {
     }
 }
 
-fn assign_ordered_slots(fields: &[ContractFieldInfo]) -> Vec<TokenStream2> {
-    let mut ordered: Vec<(usize, u64, proc_macro2::TokenStream)> = fields
-        .iter()
-        .enumerate()
-        .map(|(i, f)| {
-            (
-                i,
-                f.attrs.order.unwrap_or(i as u64),
-                contract_slot_count_expr(&f.ty),
-            )
-        })
-        .collect();
-    ordered.sort_by_key(|(_, ord, _)| *ord);
+fn assign_ordered_slots(fields: &[ContractFieldInfo]) -> SlotLayout {
+    let mut allocation_order: Vec<usize> = (0..fields.len()).collect();
+    allocation_order.sort_by_key(|&i| fields[i].attrs.order.unwrap_or(i as u64));
     let mut slots = vec![quote! { 0u64 }; fields.len()];
     let mut next = quote! { 0u64 };
-    for (idx, _, count) in ordered {
+    for &idx in &allocation_order {
         slots[idx] = next.clone();
+        let count = contract_slot_count_expr(&fields[idx].ty);
         next = quote! { (#next) + (#count) };
     }
-    slots
+    SlotLayout {
+        slots,
+        allocation_order,
+    }
 }
 
-fn assign_sequential_slots(fields: &[ContractFieldInfo]) -> Vec<TokenStream2> {
+fn assign_sequential_slots(fields: &[ContractFieldInfo]) -> SlotLayout {
     let mut next_slot = quote! { 0u64 };
     let mut slots = Vec::with_capacity(fields.len());
     for f in fields {
@@ -134,14 +135,39 @@ fn assign_sequential_slots(fields: &[ContractFieldInfo]) -> Vec<TokenStream2> {
         let count = contract_slot_count_expr(&f.ty);
         next_slot = quote! { (#next_slot) + (#count) };
     }
-    slots
+    SlotLayout {
+        slots,
+        allocation_order: (0..fields.len()).collect(),
+    }
+}
+
+/// Emits a const assertion that each field starts at or after the end of the
+/// field that the allocator placed before it. An explicit `#[slot(k)]` inside
+/// the slots of the previous field does not compile.
+fn emit_layout_assertions(fields: &[ContractFieldInfo], layout: &SlotLayout) -> TokenStream2 {
+    let checks = layout.allocation_order.windows(2).map(|pair| {
+        let (prev, next) = (&fields[pair[0]], &fields[pair[1]]);
+        let prev_slot = &layout.slots[pair[0]];
+        let next_slot = &layout.slots[pair[1]];
+        let prev_count = contract_slot_count_expr(&prev.ty);
+        let message = format!(
+            "storage field `{}` starts inside the slots of storage field `{}`",
+            next.name, prev.name
+        );
+        quote! { assert!((#next_slot) >= (#prev_slot) + (#prev_count), #message); }
+    });
+    quote! {
+        const _: () = {
+            #(#checks)*
+        };
+    }
 }
 
 fn emit_contract(
     input: &DeriveInput,
     config: &ContractConfig,
     fields: &[ContractFieldInfo],
-    slot_assignments: &[TokenStream2],
+    layout: &SlotLayout,
 ) -> TokenStream2 {
     let name = &input.ident;
     let vis = &input.vis;
@@ -165,17 +191,19 @@ fn emit_contract(
 
     let field_inits: Vec<_> = fields
         .iter()
-        .zip(slot_assignments.iter())
+        .zip(layout.slots.iter())
         .map(|(f, slot)| emit_field_initializer(f, slot))
         .collect();
 
     let storage_backed_impl = emit_storage_backed(name, config.address.as_ref());
     let constructor = emit_constructor(name, config.address.as_ref(), &field_inits);
+    let layout_assertions = emit_layout_assertions(fields, layout);
 
     quote! {
         #struct_def
         #constructor
         #storage_backed_impl
+        #layout_assertions
     }
 }
 
@@ -198,6 +226,8 @@ fn emit_field_initializer(f: &ContractFieldInfo, slot: &TokenStream2) -> TokenSt
         quote! { #n: ::outbe_primitives::storage::types::StorageDeque::new(::alloy_primitives::U256::from(#slot), address, storage.clone()) }
     } else if is_dsl_circular_buffer_type(ty) {
         quote! { #n: ::outbe_primitives::storage::types::StorageCircularBuffer::new(::alloy_primitives::U256::from(#slot), address, storage.clone()) }
+    } else if is_storage_array(ty).is_some() {
+        quote! { #n: ::outbe_primitives::storage::types::StorageArray::new(::alloy_primitives::U256::from(#slot), address, storage.clone()) }
     } else if let Some((coll_name, _)) = is_storage_collection(ty) {
         let coll_ident = syn::Ident::new(coll_name, proc_macro2::Span::call_site());
         quote! { #n: ::outbe_primitives::storage::types::#coll_ident::new(::alloy_primitives::U256::from(#slot), address, storage.clone()) }

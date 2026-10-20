@@ -1,28 +1,26 @@
-//! Daily call scan: force-calls Nod buckets off the Oracle's finalized
+//! Daily call scan: force-calls Nod groups off the Oracle's finalized
 //! per-UTC-day VWAPs. The Cycle daily trigger schedules the closed UTC day, and every
 //! CycleTick walks a slice of it.
 //!
-//! A bucket is called, walking each currency's call-price trie, when the reference
+//! A group is called, walking each currency's call-price trie, when the reference
 //! price exceeded its call price on at least its `call_threshold_seconds` of the
 //! trailing `call_window_seconds`. The call queues it on its deadline, and every
-//! CycleTick forfeit-burns the unpaid Nods of the buckets whose
-//! `call_notice_period_seconds` lapsed (`expired::sweep_expired`).
+//! CycleTick forfeits the groups whose `call_notice_period_seconds` lapsed
+//! (`expired::sweep_expired`).
 //!
-//! Issuance seals all four terms onto the bucket, and this scan reads them back
-//! from it. Retuning a constant therefore leaves every issued bucket on the
+//! Issuance seals all four terms onto the group, and this scan reads them back
+//! from it. Retuning a constant therefore leaves every issued group on the
 //! terms it was issued with. Gem and intex give the same guarantee.
 //!
-//! The breach rule needs no per-bucket streak state. The daily series is global
-//! per currency, so one trailing window per currency decides every bucket
+//! The breach rule needs no per-group streak state. The daily series is global
+//! per currency, so one trailing window per currency decides every group
 //! denominated in it. Every run recomputes the count from oracle history rather
 //! than carrying it. Gem, Credis and Intex run the same shape from their factories.
 //!
-//! Calls count only days from `first_full_day` of the bucket's sealed `issued_at`.
+//! Calls count only days from the group's `full_day_after_issue`.
 
-use std::collections::BTreeSet;
-
-use alloy_primitives::B256;
-use outbe_oracle::call_sweep::{self, CallSweep, CALL_SWEEP};
+use alloy_primitives::{B256, U256};
+use outbe_oracle::call_sweep::{self, CallSweep};
 use outbe_oracle::call_window::CallWindow;
 use outbe_primitives::{
     block::BlockRuntimeContext,
@@ -32,7 +30,6 @@ use outbe_primitives::{
     error::{PrecompileError, Result, SweepFailure},
     storage::dsl::Value,
     sweep_budget::SweepBudget,
-    time::first_full_day,
 };
 
 use outbe_nod::state::CallBins;
@@ -52,7 +49,7 @@ pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
 }
 
 /// Schedules the closed day and walks a slice of the day in flight. Returns the
-/// buckets called.
+/// groups called.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let mut sweep = NodCallSweep::new(ctx);
     call_sweep::schedule(ctx, &mut sweep)?;
@@ -60,7 +57,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
 }
 
 /// Walks the next slice of the day in flight, pinned to the day it opened on so
-/// later blocks decide against the same prices. Returns how many buckets were called.
+/// later blocks decide against the same prices. Returns how many groups were called.
 pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_sweep::continue_day(ctx, &mut NodCallSweep::new(ctx))
 }
@@ -88,7 +85,7 @@ impl<'storage> CallSweep<'storage> for NodCallSweep<'storage> {
     fn days(&self) -> PinnedDay<'_, 'storage> {
         PinnedDay {
             current: &self.nod.call_sweep_day,
-            pending: &self.nod.call_pending_day,
+            latest: &self.nod.call_latest_day,
         }
     }
 
@@ -104,40 +101,33 @@ impl<'storage> CallSweep<'storage> for NodCallSweep<'storage> {
         error.record_sweep_failure()
     }
 
-    fn day_skipped(&mut self, skipped: u32, in_flight: u32) -> Result<()> {
-        emit_event(
-            &self.nod.storage,
-            INodFactory::SweepDaySkipped {
-                sweep: CALL_SWEEP,
-                skippedDay: skipped,
-                inFlightDay: in_flight,
-            },
-        )
-    }
-
     fn slice(&mut self, ctx: &BlockRuntimeContext, pinned_day: u32) -> Result<(u32, bool)> {
-        let mut called_days = BTreeSet::new();
-        let (called, finished) = call_slice(ctx, &self.nod, pinned_day, &mut called_days)?;
-        self.nod.emit_days_metadata_update(&called_days)?;
+        let (called, finished) = call_slice(ctx, &self.nod, pinned_day)?;
+        // A group holds Nods of several Worldwide Days, so a call refreshes the whole range.
+        if called != 0 {
+            self.nod.emit(INod::BatchMetadataUpdate {
+                _fromTokenId: U256::ZERO,
+                _toTokenId: U256::MAX,
+            })?;
+        }
         Ok((called, finished))
     }
 }
 
 /// One currency's call walk: its trailing VWAP window, and the highest bin a
-/// bucket that window breached can sit in.
+/// group that window breached can sit in.
 pub(crate) struct CurrencyScan<'w> {
     pub(crate) iso_code: u16,
     pub(crate) window: &'w CallWindow,
     pub(crate) ceiling: u32,
 }
 
-/// Walks every currency's bins up to its window's ceiling. Returns the buckets
+/// Walks every currency's bins up to its window's ceiling. Returns the groups
 /// called and whether every currency was walked.
 fn call_slice(
     ctx: &BlockRuntimeContext,
     nod: &NodContract<'_>,
     pinned_day: u32,
-    called_days: &mut BTreeSet<u32>,
 ) -> Result<(u32, bool)> {
     let params = outbe_nod::config::read(&ctx.storage)?;
     let mut caller = NodContract::new(ctx.storage.clone());
@@ -165,7 +155,7 @@ fn call_slice(
                 window,
                 ceiling,
             };
-            let (calls, finished) = call_currency(ctx, &mut caller, scan, budget, called_days)?;
+            let (calls, finished) = call_currency(ctx, &mut caller, scan, budget)?;
             called = called.saturating_add(calls);
             Ok(finished)
         },
@@ -173,7 +163,7 @@ fn call_slice(
     Ok((called, finished))
 }
 
-/// The live profile is the terms the next bucket is sealed with.
+/// The live profile is the terms the next group is sealed with.
 fn scan_terms(
     nod: &NodContract<'_>,
     iso_code: u16,
@@ -194,7 +184,6 @@ pub(crate) fn call_currency(
     nod: &mut NodContract<'_>,
     scan: CurrencyScan<'_>,
     budget: &mut SweepBudget,
-    called_days: &mut BTreeSet<u32>,
 ) -> Result<(u32, bool)> {
     let CurrencyScan {
         iso_code,
@@ -207,13 +196,15 @@ pub(crate) fn call_currency(
         &CallBins(&index, iso_code),
         ceiling,
         budget,
-        |bucket_key, budget| {
-            call_sweep::call_entry::<NodCallSweep>(&ctx.storage, budget, bucket_key, || {
-                if !call_if_breached(nod, window, bucket_key, ctx.block.timestamp)? {
+        |group_key, budget| {
+            call_sweep::call_entry::<NodCallSweep>(&ctx.storage, budget, group_key, || {
+                if retire_paid_group(nod, group_key, ctx.block.timestamp)? {
+                    return Ok(1);
+                }
+                if !call_if_breached(nod, window, group_key, ctx.block.timestamp)? {
                     return Ok(0);
                 }
                 called += 1;
-                called_days.insert(nod.bucket_worldwide_day.read(&bucket_key)?.value());
                 Ok(1)
             })
         },
@@ -221,43 +212,65 @@ pub(crate) fn call_currency(
     Ok((called, finished))
 }
 
-/// Calls the bucket if the window breached its sealed terms. Returns whether it did.
+/// Takes a group every Nod of which is paid out of its bin once its first full day is
+/// under way: a Nod issued at its 00:00:00 still joins it, none after. Returns whether
+/// it did.
+fn retire_paid_group(nod: &mut NodContract<'_>, group_key: B256, now: u64) -> Result<bool> {
+    if nod.group_nod_count.read(&group_key)? != 0 || nod.group_called_at.read(&group_key)? != 0 {
+        return Ok(false);
+    }
+    let start_day = nod
+        .groups
+        .get(group_key)?
+        .ok_or(crate::errors::NodFactoryError::MissingGroupForCall { group_key })?
+        .full_day_after_issue;
+    if now <= outbe_primitives::time::date_key_to_utc_timestamp(start_day.value()) {
+        return Ok(false);
+    }
+    nod.remove_call_bin(group_key)?;
+    Ok(true)
+}
+
+/// Calls the group if the window breached its sealed terms. Returns whether it did.
 fn call_if_breached(
     nod: &mut NodContract<'_>,
     window: &CallWindow,
-    bucket_key: B256,
+    group_key: B256,
     now: u64,
 ) -> Result<bool> {
-    if nod.bucket_nod_count.read(&bucket_key)? == 0 || nod.bucket_called_at.read(&bucket_key)? != 0
-    {
+    if nod.group_nod_count.read(&group_key)? == 0 || nod.group_called_at.read(&group_key)? != 0 {
         return Ok(false);
     }
-    let issued_at = nod.bucket_issued_at.read(&bucket_key)?;
-    let terms = nod.read_call_terms(bucket_key)?;
+    let start_day = nod
+        .groups
+        .get(group_key)?
+        .ok_or(crate::errors::NodFactoryError::MissingGroupForCall { group_key })?
+        .full_day_after_issue;
+    let terms = nod.read_call_terms(group_key)?;
     let breached = window.breached(&BreachTerms {
         call_price: terms.call_price_minor,
         window_seconds: terms.call_window_seconds,
         threshold_seconds: terms.call_threshold_seconds,
-        start_day: first_full_day(issued_at),
+        start_day: start_day.value(),
     });
     if !breached {
         return Ok(false);
     }
-    mark_called(nod, bucket_key, now, terms.call_notice_period_seconds)?;
+    mark_called(nod, group_key, now, terms.call_notice_period_seconds)?;
     Ok(true)
 }
 
-/// Stamps the call and opens the settlement window the bucket sealed.
+/// Stamps the call and opens the settlement window the group sealed.
 fn mark_called(
     nod: &mut NodContract<'_>,
-    bucket_key: B256,
+    group_key: B256,
     now: u64,
     notice_period: u32,
 ) -> Result<()> {
     let deadline = api::settlement_deadline_of(now, notice_period);
-    nod.record_bucket_called(bucket_key, now, deadline)?;
-    nod.emit(INod::NodBucketCalled {
-        bucketKey: bucket_key,
+    nod.record_group_called(group_key, now, deadline)?;
+    nod.emit(INod::NodGroupCalled {
+        groupKey: group_key,
         calledAt: now,
         settlementDeadline: deadline,
     })

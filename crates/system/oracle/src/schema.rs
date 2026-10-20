@@ -263,4 +263,10 @@ pub struct OracleContract {
     // First block number seen in each UTC hour (keyed by hour start), written
     // at begin-block. Gives the window's block span independently of votes.
     pub(crate) hour_first_block: Mapping<u64, u64>,
+
+    // === Node sources (slot 81) ===
+    // 0 until the node registers the pairs of its sources file, then 1 + the
+    // raw protocol version of the last file it registered. See `sources.rs`.
+    #[slot(81)]
+    pub(crate) sources_synced: Slot<u64>,
 }

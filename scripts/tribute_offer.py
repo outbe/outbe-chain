@@ -75,9 +75,6 @@ TRIBUTE_ADDR = Web3.to_checksum_address("0x0000000000000000000000000000000000001
 OFFER_SALT = b"outbe/tribute/offer-salt/v1".ljust(32, b"\0")
 HKDF_INFO = b"tribute-factory-encryption"
 
-# WorldwideDay status values (crates/core/tribute/src/worldwideday/schema.rs::status).
-STATUS_OFFERING = 2
-
 TEE_REGISTRY_ABI = json.loads(
     """[
       {"type":"function","name":"isBootstrapped","stateMutability":"view",
@@ -113,8 +110,8 @@ TRIBUTE_ABI = json.loads(
       {"type":"function","name":"getTributesByOwner","stateMutability":"view",
        "inputs":[{"type":"address","name":"owner"}],
        "outputs":[{"type":"uint256[]"}]},
-      {"type":"function","name":"getWorldwideDaysByStatus","stateMutability":"view",
-       "inputs":[{"type":"uint8","name":"status"}],
+      {"type":"function","name":"getActiveWorldwideDays","stateMutability":"view",
+       "inputs":[],
        "outputs":[{"type":"uint32[]","name":"wwds"}]}
     ]"""
 )
@@ -140,12 +137,12 @@ def encrypt_offer(offer_pub: bytes, plaintext: bytes):
 
 def pick_offering_day(w3: Web3) -> int:
     tribute = w3.eth.contract(address=TRIBUTE_ADDR, abi=TRIBUTE_ABI)
-    days = tribute.functions.getWorldwideDaysByStatus(STATUS_OFFERING).call()
+    days = tribute.functions.getActiveWorldwideDays().call()
     if not days:
-        sys.exit("no WorldwideDay is currently in OFFERING status")
+        sys.exit("no active WorldwideDay found")
     if len(days) > 1:
-        print(f"multiple OFFERING days {days}; using {days[0]}")
-    return int(days[0])
+        print(f"multiple active WorldwideDays {days}. Using {days[-1]}")
+    return int(days[-1])
 
 
 def canonical_amount_base(value: str) -> str:

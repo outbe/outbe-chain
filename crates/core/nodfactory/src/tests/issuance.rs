@@ -62,7 +62,7 @@ fn issue_is_immediately_readable_and_keeps_product_event_order() {
 }
 
 #[test]
-fn second_same_block_issue_reuses_the_bucket() {
+fn second_same_block_issue_reuses_the_group() {
     let mut world = World::new();
     let first = params(Address::repeat_byte(0x18));
     let second = params(Address::repeat_byte(0x19));
@@ -70,20 +70,20 @@ fn second_same_block_issue_reuses_the_bucket() {
     let second_id = world.issue(&second);
     assert_ne!(first_id, second_id);
 
-    let bucket_key = outbe_nod::identity::bucket_key(
-        first.worldwide_day,
-        first.entry_price_minor,
-        first.reference_currency,
-    );
-    let bucket_id = bucket_key;
-    let bucket = world
-        .enter(|storage| nod_api::get_bucket(&storage, bucket_id))
-        .unwrap()
+    let (first_item, second_item) = world
+        .enter(|storage| {
+            outbe_primitives::error::Result::Ok((
+                nod_api::get_item(&storage, first_id)?.unwrap(),
+                nod_api::get_item(&storage, second_id)?.unwrap(),
+            ))
+        })
         .unwrap();
-    assert_eq!(bucket.entry_price_minor, first.entry_price_minor);
+    let group_key = first_item.group_key;
+    assert_eq!(second_item.group_key, group_key);
+    assert_eq!(first_item.entry_price_minor(), first.entry_price_minor);
     assert_eq!(
         world
-            .enter(|storage| NodContract::new(storage).bucket_nod_count.read(&bucket_key))
+            .enter(|storage| NodContract::new(storage).group_nod_count.read(&group_key))
             .unwrap(),
         2
     );
@@ -217,10 +217,15 @@ fn invalid_gratis_mac_rolls_back_the_nod_burn() {
 }
 
 #[test]
-fn mining_deletes_item_and_last_bucket_then_emits_burn() {
+fn mining_deletes_item_and_last_group_then_emits_burn() {
     let mut world = World::new();
     let input = free(Address::repeat_byte(0x55));
     let nod_id = world.issue(&input);
+    let group_key = world
+        .enter(|storage| nod_api::get_item(&storage, nod_id))
+        .unwrap()
+        .unwrap()
+        .group_key;
     world.provider.clear_events(NOD_ADDRESS);
     world.provider.clear_events(NOD_FACTORY_ADDRESS);
     world.settle(nod_id, input.owner).unwrap();
@@ -238,14 +243,8 @@ fn mining_deletes_item_and_last_bucket_then_emits_burn() {
         .enter(|storage| nod_api::get_item(&storage, nod_id))
         .unwrap()
         .is_none());
-    let bucket_key = outbe_nod::identity::bucket_key(
-        input.worldwide_day,
-        input.entry_price_minor,
-        input.reference_currency,
-    );
-    let bucket_id = bucket_key;
     assert!(world
-        .enter(|storage| { nod_api::get_bucket(&storage, bucket_id) })
+        .enter(|storage| { nod_api::get_group(&storage, group_key) })
         .unwrap()
         .is_none());
 

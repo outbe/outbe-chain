@@ -1,18 +1,18 @@
 //! Pure NOD identities shared by issuance and offchain calculation.
 use crate::errors::NodError;
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::wwd_entity_id::{derive_poseidon_entity_id, WwdEntityId};
 use outbe_primitives::{error::Result, time::WorldwideDay};
 
-/// Computes the bucket key from
-/// `(worldwide_day, entry_price_minor, reference_currency)`.
-///
-/// The currency is part of the preimage because `entry_price_minor` is
-/// denominated in it. Two Nods that share a day and an entry value in
-/// different currencies are priced against different oracle rates. They must
-/// not share a bucket. This is the single derivation. The Lysis program
-/// calls it too, so the off-chain and on-chain keys cannot drift.
-pub use outbe_primitives::nod_rules::bucket_key;
+/// The call group of a Nod issued at `issued_at`: its first full day, its call price and
+/// the currency that price is quoted in.
+pub fn group_key(issued_at: u64, call_price_minor: U256, reference_currency: u16) -> B256 {
+    outbe_primitives::call_breach::group_key(
+        outbe_primitives::time::first_full_day(issued_at),
+        call_price_minor,
+        reference_currency,
+    )
+}
 
 /// Deterministic full-width Poseidon2 NOD identity derived from
 /// `(owner, worldwide_day)`. The typed Nod collection is its namespace.

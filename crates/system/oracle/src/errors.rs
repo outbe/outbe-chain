@@ -110,6 +110,8 @@ pub enum OracleError {
     PolicyRatesNotSorted,
     #[error("policy rate must be non-zero for iso_code {iso_code}")]
     PolicyRateZero { iso_code: u16 },
+    #[error("reference currency {iso_code} has no policy rate")]
+    MissingPolicyRate { iso_code: u16 },
 
     // -- genesis aggregate votes --------------------------------------------
     #[error("aggregate vote validator must be non-zero")]
@@ -194,6 +196,7 @@ impl From<OracleError> for PrecompileError {
             | DuplicatePolicyIsoCode { .. }
             | PolicyRatesNotSorted
             | PolicyRateZero { .. }
+            | MissingPolicyRate { .. }
             | AggregateVoteValidatorZero
             | DuplicateAggregateVoteValidator
             | AggregateVoteAlreadyExists

@@ -276,18 +276,18 @@ impl World {
         );
     }
 
-    /// Stamps the bucket's call directly. `tests::nod_lifecycle` covers the
+    /// Stamps the group's call directly. `tests::nod_lifecycle` covers the
     /// scan that decides *when* to stamp. What matters here is the gate
     /// `settle_nod` applies once it is stamped.
     fn mark_called(&mut self, nod_id: WwdEntityId, at: u64) {
         self.enter(|storage| {
             let item = nod_api::get_item(&storage, nod_id).unwrap().unwrap();
             let nod = NodContract::new(storage);
-            nod.bucket_called_at.write(&item.bucket_key, at).unwrap();
-            // A free Nod's bucket seals no call terms; give it the notice a priced one seals.
-            let notice = &nod.bucket_call_notice_period_seconds;
-            if notice.read(&item.bucket_key).unwrap() == 0 {
-                notice.write(&item.bucket_key, CALL_NOTICE_PERIOD).unwrap();
+            nod.group_called_at.write(&item.group_key, at).unwrap();
+            // A free Nod's group seals no call terms; give it the notice a priced one seals.
+            let notice = &nod.group_call_notice_period_seconds;
+            if notice.read(&item.group_key).unwrap() == 0 {
+                notice.write(&item.group_key, CALL_NOTICE_PERIOD).unwrap();
             }
         });
     }

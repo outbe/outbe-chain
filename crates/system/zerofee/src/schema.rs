@@ -29,7 +29,14 @@ use outbe_primitives::addresses::ZEROFEE_ADDRESS;
 #[storage_schema]
 #[contract(addr = ZEROFEE_ADDRESS)]
 pub struct ZeroFeeContract {
-    // slot N (macro-allocated): per-signer packed `(date_key u32, count u32)`.
+    /// Slot N (macro-allocated): per-signer packed `(date_key u32, count u32)`.
+    ///
+    /// One slot per signer is the minimal representation of the per-signer
+    /// daily quota. The lazy day reset overwrites the slot in place and
+    /// never deletes it. A signer that uses sponsorship on one day keeps
+    /// its slot after that day. Retention is permanent by design. The cost
+    /// to create each signer address limits the growth: a funding transfer,
+    /// or an EIP-7702 authorization in a paid transaction.
     #[attribute(order = 0)]
     pub counter: outbe_primitives::storage::dsl::Map<Address, u64>,
 }

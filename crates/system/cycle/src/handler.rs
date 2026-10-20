@@ -8,10 +8,10 @@
 
 use alloy_primitives::U256;
 
-use outbe_agentreward::distribution::{distribute_daily, PoolKind};
+use outbe_agentreward::distribution::{advance_accruals, distribute_daily, PoolKind};
 use outbe_emissionlimit::{
     allocation::{allocate_emission, EmissionSinkId},
-    block::dispatch_terminal_remainder_at,
+    block::{dispatch_late_settlement_residue_at, dispatch_terminal_remainder_at},
     day_emission::day_emission_limit,
 };
 use outbe_primitives::{
@@ -349,6 +349,19 @@ fn dispatch_terminal_remainder(
     } else {
         Err(CycleError::AllocationDisagreesWithMetadosisReceipt.into())
     }
+}
+
+/// Credits this block's slice of the queued WAA and SRA day pools and sends the
+/// rounding residue of the finished ones to the Promis Limit carry-over.
+pub(crate) fn credit_reward_slice(ctx: &BlockRuntimeContext) -> Result<()> {
+    let residue = advance_accruals(ctx).map_err(|e| {
+        tracing::error!(target: "outbe::cycle", step = "advance_accruals", error = ?e, "protocol cycle step failed");
+        e
+    })?;
+    wrap(
+        "dispatch_late_settlement_residue_at",
+        dispatch_late_settlement_residue_at(ctx, residue, ctx.block.timestamp),
+    )
 }
 
 /// Runs the single hourly protocol orchestration entry point.

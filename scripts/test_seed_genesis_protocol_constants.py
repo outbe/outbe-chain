@@ -150,13 +150,24 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
         self.assertNotIn(
             seed_genesis.mapping_key(seed_genesis.u32_bytes(840), 60), storage.entries
         )
-        self.assertEqual(storage.entries[seed_genesis.hex32(74)], seed_genesis.hex32(1))
-        self.assertEqual(
-            storage.entries[seed_genesis.hex32(seed_genesis.data_slot(74))],
-            seed_genesis.hex32(840),
-        )
+        self.assertEqual(storage.entries[seed_genesis.hex32(74)], seed_genesis.hex32(6))
+        for index, iso_code in enumerate((156, 344, 392, 826, 840, 978)):
+            self.assertEqual(
+                storage.entries[seed_genesis.hex32(seed_genesis.data_slot(74) + index)],
+                seed_genesis.hex32(iso_code),
+            )
         slot = seed_genesis.mapping_key(seed_genesis.u32_bytes(840), 75)
-        self.assertEqual(storage.entries[slot], seed_genesis.hex32(36_300))
+        self.assertEqual(storage.entries[slot], seed_genesis.hex32(38_800))
+
+    def test_every_reference_currency_needs_a_policy_rate(self):
+        with self.assertRaisesRegex(ValueError, r"no policy rate: \[978\]"):
+            seed_genesis.seed_oracle(
+                seed_genesis.StorageBuilder(),
+                {
+                    "reference_currencies": [840, 978],
+                    "policy_rates": [{"iso_code": 840, "annual_rate_1e6": 38_800}],
+                },
+            )
 
     def test_optional_seed_profile_is_copied_to_genesis_config(self):
         genesis = {"config": {"chainId": 1}, "alloc": {}}
@@ -204,14 +215,6 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
         self.assertEqual(seed["metadosis"]["worldwide_days"], [])
         self.assertEqual(seed["metadosis"]["other"], 7)
         self.assertEqual(seed["oracle"]["scurve_seeds"], [{"peak_day": 20260807}])
-
-    def test_nod_materialization_fifo_is_initialized_without_seeded_nods(self):
-        storage = seed_genesis.StorageBuilder()
-
-        seed_genesis.seed_nod_materialization_fifo(storage)
-
-        self.assertEqual(storage.entries[seed_genesis.hex32(13)], seed_genesis.hex32(1))
-        self.assertEqual(storage.entries[seed_genesis.hex32(14)], seed_genesis.hex32(1))
 
     def test_cycle_active_day_is_seeded_from_header_timestamp(self):
         genesis = {

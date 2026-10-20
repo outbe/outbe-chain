@@ -49,6 +49,11 @@ pub fn get_cca(storage: &StorageHandle<'_>, cca: Address) -> Result<ICcaRegistry
     })
 }
 
+/// Native COEN bonded across all records and not yet claimed back.
+pub fn total_bonded(storage: &StorageHandle<'_>) -> Result<U256> {
+    CcaContract::new(storage.clone()).total_bonded_minor.read()
+}
+
 /// Positive net Gratis weights for CCAs active at the time of settlement.
 /// This function reads historical day buckets and does not mutate them.
 ///

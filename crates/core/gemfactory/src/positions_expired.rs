@@ -1,97 +1,137 @@
-//! Daily sweep returning the capacity an expired merchant position never issued.
+//! Position expiry: an hour of positions returns the capacity they never issued in one
+//! credit, and the cleanup then deletes them.
 
-use alloy_primitives::U256;
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    error::{decide, Decided, PrecompileError, Result},
+    error::{PrecompileError, Result, SweepFailure},
+    expiry_queue::{self, Due, ExpiryHandler},
+    storage::StorageHandle,
 };
 
-use crate::constants::MAX_POSITION_EXPIRIES_PER_RUN;
+use crate::errors::GemFactoryError;
 use crate::runtime::emit_event;
-use crate::schema::{GemFactoryContract, GemPosition};
+use crate::schema::GemFactoryContract;
+use crate::state::{PositionCleanupHours, PositionExpiryHours};
+use alloy_primitives::U256;
 
-pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
-    sweep_expired_positions(ctx)?;
-    Ok(())
+/// Returns the unissued capacity of the hours whose positions expired. Returns the
+/// hours expired.
+pub fn sweep_expired_positions(ctx: &BlockRuntimeContext) -> Result<u32> {
+    let queue = GemFactoryContract::new(ctx.storage.clone());
+    let mut expiry = PositionExpiry {
+        storage: &ctx.storage,
+        factory: GemFactoryContract::new(ctx.storage.clone()),
+        expired: 0,
+    };
+    expiry_queue::sweep_block(&PositionExpiryHours(&queue), ctx, &mut expiry)?;
+    Ok(expiry.expired)
 }
 
-/// Positions queue in the order they opened, so a head still inside its year ends the pass.
-/// A deterministic failure skips its position. A node-local one fails the block.
-pub(crate) fn sweep_expired_positions(ctx: &BlockRuntimeContext) -> Result<u32> {
-    let storage = &ctx.storage;
-    let mut factory = GemFactoryContract::new(storage.clone());
-    let head = factory.live_head.read()?;
-    let tail = factory.live_tail.read()?;
-    if head >= tail {
-        return Ok(0);
-    }
-
-    let now = ctx.block.timestamp;
-    let mut budget = MAX_POSITION_EXPIRIES_PER_RUN;
-    let mut expired: u32 = 0;
-    // Slots, not just actions: a position the sweep cannot retire pins the head, and
-    // the run of emptied slots behind it would otherwise grow without bound.
-    for index in head..tail.min(head.saturating_add(MAX_POSITION_EXPIRIES_PER_RUN)) {
-        if budget == 0 {
-            break;
-        }
-        let Some(position_id) = factory.live_queue_slot(index)? else {
-            continue;
-        };
-        let Some(record) = factory.positions.get(position_id)? else {
-            factory.remove_live_position(position_id)?;
-            continue;
-        };
-        // `>=`, copied from the guard in `issue_merchant_gem`: the merchant can no
-        // longer issue from the position at exactly this instant.
-        if now < record.expires_at {
-            break;
-        }
-        budget -= 1;
-
-        let outcome = storage.with_checkpoint(|| expire_position(ctx, &record));
-        match decide(outcome, PrecompileError::sweep_failure)? {
-            Decided::Done(()) => expired = expired.saturating_add(1),
-            Decided::Stopped => break,
-            Decided::Skipped(error) => {
-                tracing::warn!(
-                    target: "outbe::gemfactory",
-                    %position_id,
-                    error = ?error,
-                    "position sweep: skipping position"
-                );
-            }
-        }
-    }
-
-    factory.compact_live_queue()?;
-    Ok(expired)
+/// Deletes the positions of the expired hours. Returns the positions deleted.
+pub fn sweep_position_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
+    let queue = GemFactoryContract::new(ctx.storage.clone());
+    let mut cleanup = PositionCleanup {
+        factory: GemFactoryContract::new(ctx.storage.clone()),
+        deleted: 0,
+    };
+    expiry_queue::sweep_block(&PositionCleanupHours(&queue), ctx, &mut cleanup)?;
+    Ok(cleanup.deleted)
 }
 
-/// This function keeps the record: a merchant should still see the position they held.
-fn expire_position(ctx: &BlockRuntimeContext, record: &GemPosition) -> Result<()> {
-    let storage = &ctx.storage;
-    let mut factory = GemFactoryContract::new(storage.clone());
-    let position_id = record.position_id;
+struct PositionExpiry<'a, 's> {
+    storage: &'a StorageHandle<'s>,
+    factory: GemFactoryContract<'s>,
+    expired: u32,
+}
 
-    let returned = record.remaining_capacity_minor;
-    factory.positions.update(&GemPosition {
-        remaining_capacity_minor: U256::ZERO,
-        ..*record
-    })?;
-    factory.remove_live_position(position_id)?;
+/// An hour expires as one: it is its own and only member.
+impl ExpiryHandler<u64> for PositionExpiry<'_, '_> {
+    type Member = u64;
 
-    if !returned.is_zero() {
-        outbe_promislimit::PromisLimitContract::new(storage.clone())
-            .add_to_total_unallocated(returned)?;
+    fn due(&mut self, hour: u64) -> Result<Due> {
+        Ok(match self.factory.hour_position_count(hour)? {
+            0 => Due::Drop,
+            _ => Due::Expire,
+        })
     }
-    emit_event(
-        storage,
-        crate::precompile::IGemFactory::GemPositionExpired {
-            positionId: position_id,
-            merchant: record.merchant,
-            sourceIntexId: record.source_intex_id.into(),
-            returnedCapacityMinor: returned,
-        },
-    )
+
+    fn member_count(&self, _hour: u64) -> Result<u32> {
+        Ok(1)
+    }
+
+    fn member_at(&self, hour: u64, _index: u32) -> Result<u64> {
+        Ok(hour)
+    }
+
+    /// Nobody issued the capacity, so it goes back to the Promis reserve.
+    fn expire_member(&mut self, hour: u64, _member: u64) -> Result<()> {
+        let positions = self.factory.hour_position_count(hour)?;
+        let returned = self.factory.hour_capacity_minor.read(&hour)?;
+        if !returned.is_zero() {
+            outbe_promislimit::PromisLimitContract::new(self.storage.clone())
+                .add_to_total_unallocated(returned)?;
+        }
+        self.factory.hour_capacity_minor.clear(&hour)?;
+        self.factory.hand_hour_to_cleanup(hour)?;
+        emit_event(
+            self.storage,
+            crate::precompile::IGemFactory::GemPositionGroupExpired {
+                expiryHour: hour,
+                positions,
+                returnedCapacityMinor: returned,
+            },
+        )?;
+        self.expired = self.expired.saturating_add(1);
+        Ok(())
+    }
+
+    fn deferred(&mut self, hour: u64, retry_at: u64) -> Result<()> {
+        tracing::warn!(target: "outbe::gemfactory", hour, retry_at, "position expiry: hour deferred");
+        Ok(())
+    }
+}
+
+struct PositionCleanup<'s> {
+    factory: GemFactoryContract<'s>,
+    deleted: u32,
+}
+
+/// An expired hour's members are its positions.
+impl ExpiryHandler<u64> for PositionCleanup<'_> {
+    type Member = U256;
+
+    fn due(&mut self, hour: u64) -> Result<Due> {
+        Ok(match self.factory.hour_position_count(hour)? {
+            0 => Due::Drop,
+            _ => Due::Expire,
+        })
+    }
+
+    fn member_count(&self, hour: u64) -> Result<u32> {
+        self.factory.hour_position_count(hour)
+    }
+
+    fn member_at(&self, hour: u64, index: u32) -> Result<U256> {
+        self.factory.hour_position(hour, index)
+    }
+
+    fn classify(&self, error: &PrecompileError) -> SweepFailure {
+        error.record_sweep_failure()
+    }
+
+    fn expire_member(&mut self, _hour: u64, position_id: U256) -> Result<()> {
+        let record = self
+            .factory
+            .positions
+            .get(position_id)?
+            .ok_or(GemFactoryError::PositionNotFound)?;
+        self.factory.delete_position(&record)?;
+        self.deleted = self.deleted.saturating_add(1);
+        Ok(())
+    }
+
+    fn deferred(&mut self, hour: u64, retry_at: u64) -> Result<()> {
+        tracing::warn!(target: "outbe::gemfactory", hour, retry_at, "position cleanup: hour deferred");
+        Ok(())
+    }
 }
