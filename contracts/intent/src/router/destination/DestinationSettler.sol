@@ -29,6 +29,11 @@ abstract contract DestinationSettler is DestinationSettlerBase {
     ///         silently mis-route every order whose origin differs and strand its input tokens.
     error MixedOriginDomain(uint32 expected, uint32 got);
 
+    /// @notice Thrown when the filler data is not one ABI-encoded receiver address. The origin
+    ///         chain decodes it at settle, so a bad value would make the order impossible to settle
+    ///         or refund.
+    error InvalidFillerData();
+
     // ========== CLAIM ==========
 
     /// @notice Claim an order after quoting ends. This locks the collateral of the winning solver.
@@ -70,11 +75,7 @@ abstract contract DestinationSettler is DestinationSettlerBase {
     /// @notice Fills an auction order (called via fill() from DestinationSettlerBase)
     /// @param _orderId The unique identifier of the order
     /// @param _originData The order data encoded as bytes (OrderData)
-    function _fillOrder(
-        bytes32 _orderId,
-        bytes calldata _originData,
-        bytes calldata /* _fillerData */
-    )
+    function _fillOrder(bytes32 _orderId, bytes calldata _originData, bytes calldata _fillerData)
         internal
         virtual
         override
@@ -87,6 +88,11 @@ abstract contract DestinationSettler is DestinationSettlerBase {
 
         (address winner, uint256 outputAmount) = _auction().getWinner(_orderId);
         if (msg.sender != winner) revert NotAWinner();
+
+        // The origin chain settles to `abi.decode(_fillerData, (bytes32))` narrowed to an address.
+        if (_fillerData.length != 32 || uint256(bytes32(_fillerData)) > type(uint160).max) {
+            revert InvalidFillerData();
+        }
 
         address outputToken = TypeCasts.bytes32ToAddress(orderData.outputToken);
         address recipient = TypeCasts.bytes32ToAddress(orderData.recipient);
