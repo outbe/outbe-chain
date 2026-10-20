@@ -94,6 +94,10 @@ pub enum OracleError {
     SlashWindowZero,
     #[error("lookback_duration exceeds snapshot retention window")]
     LookbackExceedsRetention,
+    #[error("{field} {value} exceeds 1e18 (a ratio above 1)")]
+    RatioAboveOne { field: &'static str, value: U256 },
+    #[error("slash percent of slash_fraction {slash_fraction} exceeds u64")]
+    SlashPercentOutOfRange { slash_fraction: U256 },
     #[error("reference iso_code must be non-zero")]
     ReferenceIsoCodeZero,
     #[error("duplicate reference iso_code: {iso_code}")]
@@ -188,6 +192,8 @@ impl From<OracleError> for PrecompileError {
             | VotePeriodZero
             | SlashWindowZero
             | LookbackExceedsRetention
+            | RatioAboveOne { .. }
+            | SlashPercentOutOfRange { .. }
             | ReferenceIsoCodeZero
             | DuplicateReferenceIsoCode { .. }
             | ReferenceCurrenciesNotSorted
