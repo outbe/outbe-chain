@@ -585,8 +585,8 @@ fn capacity_forfeiture_preserves_retained_work_and_replays_without_effects() {
         assert_eq!(receipt.max_retained_wwds, MAX_RETAINED_WWDS as u32);
         assert_eq!(receipt.retained_count_before, MAX_RETAINED_WWDS as u32);
         assert_eq!(receipt.value_routed, U256::from(100));
-        assert_eq!(receipt.carry_over_before, initial_carry);
-        assert_eq!(receipt.carry_over_after, initial_carry + U256::from(100));
+        assert_eq!(receipt.promis_limit_before, initial_carry);
+        assert_eq!(receipt.promis_limit_after, initial_carry + U256::from(100));
         assert_eq!(receipt.forfeited_count, 0);
         assert_eq!(receipt.forfeited_nominal, U256::ZERO);
         assert_eq!(receipt.source_generation, 0);
@@ -808,8 +808,8 @@ fn every_capacity_forfeiture_mutation_failure_restores_state_events_and_ce_work_
             .unwrap()
             .unwrap();
         assert_eq!(receipt.value_routed, U256::from(100));
-        assert_eq!(receipt.carry_over_before, U256::from(7));
-        assert_eq!(receipt.carry_over_after, U256::from(107));
+        assert_eq!(receipt.promis_limit_before, U256::from(7));
+        assert_eq!(receipt.promis_limit_after, U256::from(107));
         assert_eq!(receipt.forfeited_count, 1);
         assert_eq!(receipt.forfeited_nominal, U256::from(55));
         assert!(TributeContract::new(storage.clone())
@@ -887,7 +887,7 @@ fn every_capacity_forfeiture_mutation_failure_restores_state_events_and_ce_work_
                 .unwrap()
                 .unwrap();
             assert_eq!(receipt.value_routed, U256::from(100));
-            assert_eq!(receipt.carry_over_after, U256::from(107));
+            assert_eq!(receipt.promis_limit_after, U256::from(107));
             assert!(TributeContract::new(storage).is_day_sealed(victim).unwrap());
         });
         let status_events = provider

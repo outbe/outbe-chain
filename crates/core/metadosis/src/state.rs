@@ -13,9 +13,9 @@ use outbe_primitives::time::WorldwideDay as WorldwideDayKey;
 pub struct DayLimitFormation {
     pub worldwide_day: WorldwideDayKey,
     pub base_limit: U256,
-    pub carry_over_before: U256,
-    pub carry_over_taken: U256,
-    pub carry_over_after: U256,
+    pub promis_limit_before: U256,
+    pub promis_limit_taken: U256,
+    pub promis_limit_after: U256,
     pub day_limit: U256,
     pub block_number: u64,
 }
@@ -93,13 +93,13 @@ impl MetadosisContract<'_> {
         receipt.base_limit_minor().write(formation.base_limit)?;
         receipt
             .promis_limit_before_minor()
-            .write(formation.carry_over_before)?;
+            .write(formation.promis_limit_before)?;
         receipt
             .promis_limit_taken_minor()
-            .write(formation.carry_over_taken)?;
+            .write(formation.promis_limit_taken)?;
         receipt
             .promis_limit_after_minor()
-            .write(formation.carry_over_after)?;
+            .write(formation.promis_limit_after)?;
         receipt.metadosis_limit_minor().write(formation.day_limit)?;
         receipt.block_number().write(formation.block_number)
     }
@@ -169,13 +169,13 @@ impl MetadosisContract<'_> {
             .metadosis_limit_minor()
             .read()?;
         let base_limit = receipt.base_limit_minor().read()?;
-        let carry_over_before = receipt.promis_limit_before_minor().read()?;
-        let carry_over_taken = receipt.promis_limit_taken_minor().read()?;
-        let carry_over_after = receipt.promis_limit_after_minor().read()?;
+        let promis_limit_before = receipt.promis_limit_before_minor().read()?;
+        let promis_limit_taken = receipt.promis_limit_taken_minor().read()?;
+        let promis_limit_after = receipt.promis_limit_after_minor().read()?;
         let day_limit = receipt.metadosis_limit_minor().read()?;
         let block_number = receipt.block_number().read()?;
-        let valid_arithmetic = base_limit.checked_add(carry_over_taken) == Some(day_limit)
-            && carry_over_before.checked_sub(carry_over_taken) == Some(carry_over_after);
+        let valid_arithmetic = base_limit.checked_add(promis_limit_taken) == Some(day_limit)
+            && promis_limit_before.checked_sub(promis_limit_taken) == Some(promis_limit_after);
         let valid_binding = day_limit == persisted_day_limit && block_number != 0;
         if !valid_arithmetic || !valid_binding {
             return Err(MetadosisStorageCorruptionError::FormedDayLimitReceiptInconsistent.into());
@@ -183,9 +183,9 @@ impl MetadosisContract<'_> {
         Ok(Some(DayLimitFormation {
             worldwide_day: wwd_key,
             base_limit,
-            carry_over_before,
-            carry_over_taken,
-            carry_over_after,
+            promis_limit_before,
+            promis_limit_taken,
+            promis_limit_after,
             day_limit,
             block_number,
         }))

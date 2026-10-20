@@ -70,8 +70,8 @@ fn missed_offering_routes_the_formed_limit_once_and_exposes_a_durable_receipt() 
             .unwrap()
             .is_none());
         assert_eq!(receipt.value_routed, formed_limit);
-        assert_eq!(receipt.carry_over_before, carried);
-        assert_eq!(receipt.carry_over_after, carried + formed_limit);
+        assert_eq!(receipt.promis_limit_before, carried);
+        assert_eq!(receipt.promis_limit_after, carried + formed_limit);
         assert_eq!(receipt.block_number, 2);
         assert_eq!(
             receipt.retirement,
@@ -352,8 +352,8 @@ fn malformed_missed_offering_receipt_is_fatal() {
             .write_missed_offering_receipt(crate::terminal::MissedOfferingReceipt {
                 worldwide_day: wwd,
                 value_routed: U256::from(10),
-                carry_over_before: U256::from(3),
-                carry_over_after: U256::from(12),
+                promis_limit_before: U256::from(3),
+                promis_limit_after: U256::from(12),
                 retirement: outbe_tribute::runtime::RetirementOutcome::NotPresent,
                 block_number: 1,
             })
@@ -379,7 +379,7 @@ fn missed_receipt_value_drift_is_fatal_in_reader_and_aggregate() {
         let metadosis = MetadosisContract::new(storage.clone());
         let mut receipt = metadosis.read_terminal_receipt(wwd).unwrap().unwrap();
         receipt.common_mut().value_routed += U256::from(1);
-        receipt.common_mut().carry_over_after += U256::from(1);
+        receipt.common_mut().promis_limit_after += U256::from(1);
         metadosis
             .worldwide_day_terminal_receipts
             .get_bytes(&wwd)
@@ -652,8 +652,8 @@ fn missed_offering_terminalizes_a_day_that_never_formed_its_limit() {
             .unwrap()
             .unwrap();
         assert_eq!(receipt.value_routed, U256::ZERO);
-        assert_eq!(receipt.carry_over_before, carry_over);
-        assert_eq!(receipt.carry_over_after, carry_over);
+        assert_eq!(receipt.promis_limit_before, carry_over);
+        assert_eq!(receipt.promis_limit_after, carry_over);
         assert_eq!(
             PromisLimitContract::new(storage.clone())
                 .promis_limit()

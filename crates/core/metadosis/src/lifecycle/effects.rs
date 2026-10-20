@@ -123,8 +123,8 @@ fn forfeit_and_credit_capacity(
         max_retained_wwds,
         retained_count_before,
         value_routed: credit.credited,
-        carry_over_before: credit.before,
-        carry_over_after: credit.after,
+        promis_limit_before: credit.before,
+        promis_limit_after: credit.after,
         forfeited_count: tribute.forfeited_count,
         forfeited_nominal: tribute.forfeited_nominal,
         source_generation: tribute.source_generation,
@@ -142,8 +142,8 @@ fn capacity_forfeiture_event(
         maxRetainedWorldwideDays: receipt.max_retained_wwds,
         retainedCountBefore: receipt.retained_count_before,
         promisLimitReturnedMinor: receipt.value_routed,
-        promisLimitBeforeMinor: receipt.carry_over_before,
-        promisLimitAfterMinor: receipt.carry_over_after,
+        promisLimitBeforeMinor: receipt.promis_limit_before,
+        promisLimitAfterMinor: receipt.promis_limit_after,
         forfeitedTributeCount: receipt.forfeited_count,
         forfeitedTributeNominalMinor: receipt.forfeited_nominal,
         sourceGeneration: receipt.source_generation,
@@ -184,8 +184,8 @@ pub(super) fn apply_missed_offering(
         let receipt = MissedOfferingReceipt {
             worldwide_day: current.worldwide_day,
             value_routed: credit.credited,
-            carry_over_before: credit.before,
-            carry_over_after: credit.after,
+            promis_limit_before: credit.before,
+            promis_limit_after: credit.after,
             retirement,
             block_number: ctx.block.block_number,
         };
@@ -200,8 +200,8 @@ pub(super) fn apply_missed_offering(
         metadosis.emit(IMetadosis::WorldwideDayMissedOffering {
             worldwideDay: current.worldwide_day.into(),
             promisLimitReturnedMinor: receipt.value_routed,
-            promisLimitBeforeMinor: receipt.carry_over_before,
-            promisLimitAfterMinor: receipt.carry_over_after,
+            promisLimitBeforeMinor: receipt.promis_limit_before,
+            promisLimitAfterMinor: receipt.promis_limit_after,
             retirementOutcome: match retirement {
                 outbe_tribute::runtime::RetirementOutcome::NotPresent => 1,
                 outbe_tribute::runtime::RetirementOutcome::Requested => 2,

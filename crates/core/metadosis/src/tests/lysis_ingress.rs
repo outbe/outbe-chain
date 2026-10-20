@@ -44,8 +44,8 @@ fn terminal_receipt_writers_only_emit_known_outcomes() {
             .write_missed_offering_receipt(MissedOfferingReceipt {
                 worldwide_day: missed,
                 value_routed: U256::from(5_u8),
-                carry_over_before: U256::ZERO,
-                carry_over_after: U256::from(5_u8),
+                promis_limit_before: U256::ZERO,
+                promis_limit_after: U256::from(5_u8),
                 retirement: RetirementOutcome::NotPresent,
                 block_number: 7,
             })
@@ -58,8 +58,8 @@ fn terminal_receipt_writers_only_emit_known_outcomes() {
                 max_retained_wwds: 2,
                 retained_count_before: 2,
                 value_routed: U256::from(9_u8),
-                carry_over_before: U256::ZERO,
-                carry_over_after: U256::from(9_u8),
+                promis_limit_before: U256::ZERO,
+                promis_limit_after: U256::from(9_u8),
                 forfeited_count: 3,
                 forfeited_nominal: U256::from(30_u8),
                 source_generation: 1,

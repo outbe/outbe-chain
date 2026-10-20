@@ -37,8 +37,8 @@ impl TerminalReceiptValidationContext {
 pub struct MissedOfferingReceipt {
     pub worldwide_day: WorldwideDay,
     pub value_routed: U256,
-    pub carry_over_before: U256,
-    pub carry_over_after: U256,
+    pub promis_limit_before: U256,
+    pub promis_limit_after: U256,
     pub retirement: RetirementOutcome,
     pub block_number: u64,
 }
@@ -49,8 +49,8 @@ pub struct CapacityForfeitureReceipt {
     pub max_retained_wwds: u32,
     pub retained_count_before: u32,
     pub value_routed: U256,
-    pub carry_over_before: U256,
-    pub carry_over_after: U256,
+    pub promis_limit_before: U256,
+    pub promis_limit_after: U256,
     pub forfeited_count: u32,
     pub forfeited_nominal: U256,
     pub source_generation: u64,
@@ -63,8 +63,8 @@ pub struct CapacityForfeitureReceipt {
 pub(crate) struct MetadosisFailureReceipt {
     pub worldwide_day: WorldwideDay,
     pub value_routed: U256,
-    pub carry_over_before: U256,
-    pub carry_over_after: U256,
+    pub promis_limit_before: U256,
+    pub promis_limit_after: U256,
     pub retirement: RetirementOutcome,
     pub block_number: u64,
 }

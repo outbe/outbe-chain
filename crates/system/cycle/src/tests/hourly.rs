@@ -28,8 +28,8 @@ fn hourly_protocol_cycle_commits_the_same_typed_missed_offering_outcome() {
             .unwrap()
             .unwrap();
         assert_eq!(receipt.value_routed, day_limit);
-        assert_eq!(receipt.carry_over_before, U256::ZERO);
-        assert_eq!(receipt.carry_over_after, day_limit);
+        assert_eq!(receipt.promis_limit_before, U256::ZERO);
+        assert_eq!(receipt.promis_limit_after, day_limit);
         assert_eq!(
             receipt.retirement,
             outbe_tribute::runtime::RetirementOutcome::Requested
@@ -98,8 +98,8 @@ fn hourly_protocol_cycle_applies_exact_capacity_forfeiture_to_the_new_due_candid
         assert_eq!(receipt.max_retained_wwds, MAX_RETAINED_WWDS as u32);
         assert_eq!(receipt.retained_count_before, MAX_RETAINED_WWDS as u32);
         assert_eq!(receipt.value_routed, day_limit);
-        assert_eq!(receipt.carry_over_before, U256::ZERO);
-        assert_eq!(receipt.carry_over_after, day_limit);
+        assert_eq!(receipt.promis_limit_before, U256::ZERO);
+        assert_eq!(receipt.promis_limit_after, day_limit);
         assert_eq!(receipt.forfeited_count, 0);
         assert_eq!(receipt.forfeited_nominal, U256::ZERO);
         assert_eq!(

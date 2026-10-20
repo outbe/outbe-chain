@@ -77,8 +77,8 @@ fn route_failure(
     metadosis.write_metadosis_failure_receipt(MetadosisFailureReceipt {
         worldwide_day,
         value_routed: credit.credited,
-        carry_over_before: credit.before,
-        carry_over_after: credit.after,
+        promis_limit_before: credit.before,
+        promis_limit_after: credit.after,
         retirement: tribute.retirement_outcome,
         block_number,
     })?;

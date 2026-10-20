@@ -124,8 +124,8 @@ fn finalize_lysis_settlement(
         common: TerminalReceiptCommon {
             worldwide_day: day,
             value_routed: current.metadosis_limit_minor,
-            carry_over_before: carry_before,
-            carry_over_after: carry_after,
+            promis_limit_before: carry_before,
+            promis_limit_after: carry_after,
             retirement: completion.retirement,
             block_number: ctx.block.block_number,
         },

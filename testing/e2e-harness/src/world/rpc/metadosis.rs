@@ -47,8 +47,8 @@ impl Rpc {
         Some(MetadosisWorldwideDayTerminalReceiptV1 {
             outcome: receipt.outcome,
             value_routed: receipt.promisLimitReturnedMinor,
-            carry_over_before: receipt.promisLimitBeforeMinor,
-            carry_over_after: receipt.promisLimitAfterMinor,
+            promis_limit_before: receipt.promisLimitBeforeMinor,
+            promis_limit_after: receipt.promisLimitAfterMinor,
             retirement_outcome: receipt.retirementOutcome,
             block_number: receipt.blockNumber,
         })
@@ -245,8 +245,8 @@ pub struct MetadosisWorldwideDayStatusChangeV1 {
 pub struct MetadosisWorldwideDayTerminalReceiptV1 {
     pub outcome: u8,
     pub value_routed: U256,
-    pub carry_over_before: U256,
-    pub carry_over_after: U256,
+    pub promis_limit_before: U256,
+    pub promis_limit_after: U256,
     pub retirement_outcome: u8,
     pub block_number: u64,
 }

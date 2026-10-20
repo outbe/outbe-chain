@@ -91,8 +91,8 @@ impl MetadosisContract<'_> {
         self.write_terminal_receipt(WwdTerminalReceipt::MissedOffering(TerminalReceiptCommon {
             worldwide_day: receipt.worldwide_day,
             value_routed: receipt.value_routed,
-            carry_over_before: receipt.carry_over_before,
-            carry_over_after: receipt.carry_over_after,
+            promis_limit_before: receipt.promis_limit_before,
+            promis_limit_after: receipt.promis_limit_after,
             retirement: receipt.retirement,
             block_number: receipt.block_number,
         }))
@@ -106,8 +106,8 @@ impl MetadosisContract<'_> {
             TerminalReceiptCommon {
                 worldwide_day: receipt.worldwide_day,
                 value_routed: receipt.value_routed,
-                carry_over_before: receipt.carry_over_before,
-                carry_over_after: receipt.carry_over_after,
+                promis_limit_before: receipt.promis_limit_before,
+                promis_limit_after: receipt.promis_limit_after,
                 retirement: receipt.retirement,
                 block_number: receipt.block_number,
             },
@@ -130,8 +130,8 @@ impl MetadosisContract<'_> {
         Ok(Some(MetadosisFailureReceipt {
             worldwide_day,
             value_routed: common.value_routed,
-            carry_over_before: common.carry_over_before,
-            carry_over_after: common.carry_over_after,
+            promis_limit_before: common.promis_limit_before,
+            promis_limit_after: common.promis_limit_after,
             retirement: common.retirement,
             block_number: common.block_number,
         }))
@@ -149,8 +149,8 @@ impl MetadosisContract<'_> {
             WwdTerminalReceipt::MissedOffering(common) => Ok(Some(MissedOfferingReceipt {
                 worldwide_day,
                 value_routed: common.value_routed,
-                carry_over_before: common.carry_over_before,
-                carry_over_after: common.carry_over_after,
+                promis_limit_before: common.promis_limit_before,
+                promis_limit_after: common.promis_limit_after,
                 retirement: common.retirement,
                 block_number: common.block_number,
             })),
@@ -170,8 +170,8 @@ impl MetadosisContract<'_> {
             common: TerminalReceiptCommon {
                 worldwide_day: receipt.worldwide_day,
                 value_routed: receipt.value_routed,
-                carry_over_before: receipt.carry_over_before,
-                carry_over_after: receipt.carry_over_after,
+                promis_limit_before: receipt.promis_limit_before,
+                promis_limit_after: receipt.promis_limit_after,
                 retirement: receipt.retirement,
                 block_number: receipt.block_number,
             },
@@ -201,8 +201,8 @@ impl MetadosisContract<'_> {
                     max_retained_wwds: detail.max_retained_wwds,
                     retained_count_before: detail.retained_count_before,
                     value_routed: common.value_routed,
-                    carry_over_before: common.carry_over_before,
-                    carry_over_after: common.carry_over_after,
+                    promis_limit_before: common.promis_limit_before,
+                    promis_limit_after: common.promis_limit_after,
                     forfeited_count: detail.forfeited_count,
                     forfeited_nominal: detail.forfeited_nominal,
                     source_generation: detail.source_generation,

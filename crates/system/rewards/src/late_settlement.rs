@@ -657,7 +657,7 @@ mod tests {
                     .unwrap();
             assert_eq!(formation.base_limit, daily_base);
             // Formation forms the day against its own emission and leaves the accumulator alone.
-            assert_eq!(formation.carry_over_taken, U256::ZERO);
+            assert_eq!(formation.promis_limit_taken, U256::ZERO);
             assert_eq!(
                 outbe_metadosis::api::worldwide_day(ctx.storage.clone(), wwd)
                     .unwrap()

@@ -218,9 +218,9 @@ pub(crate) fn commit_day_limit_formation(
         metadosis.emit(IMetadosis::DayLimitFormed {
             worldwideDay: formation.worldwide_day.value(),
             baseLimitMinor: formation.base_limit,
-            promisLimitBeforeMinor: formation.carry_over_before,
-            promisLimitTakenMinor: formation.carry_over_taken,
-            promisLimitAfterMinor: formation.carry_over_after,
+            promisLimitBeforeMinor: formation.promis_limit_before,
+            promisLimitTakenMinor: formation.promis_limit_taken,
+            promisLimitAfterMinor: formation.promis_limit_after,
             metadosisLimitMinor: formation.day_limit,
             blockNumber: formation.block_number,
         })?;

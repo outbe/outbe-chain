@@ -13,8 +13,8 @@ use crate::{
 pub(crate) struct TerminalReceiptCommon {
     pub worldwide_day: WorldwideDay,
     pub value_routed: U256,
-    pub carry_over_before: U256,
-    pub carry_over_after: U256,
+    pub promis_limit_before: U256,
+    pub promis_limit_after: U256,
     pub retirement: RetirementOutcome,
     pub block_number: u64,
 }
@@ -88,7 +88,7 @@ impl WwdTerminalReceipt {
             let after = common
                 .value_routed
                 .checked_sub(detail.lysis_limit)
-                .and_then(|credit| common.carry_over_before.checked_add(credit))
+                .and_then(|credit| common.promis_limit_before.checked_add(credit))
                 .and_then(|available| available.checked_sub(detail.desis_limit))
                 .and_then(|remaining| remaining.checked_add(detail.unused));
             let terminal_membership = context.status == status::COMPLETED
@@ -100,7 +100,7 @@ impl WwdTerminalReceipt {
                 && !detail.result_hash.is_zero();
             let conserved = detail.used.checked_add(detail.unused) == Some(detail.lysis_limit)
                 && common.value_routed == context.expected_value_routed
-                && after == Some(common.carry_over_after);
+                && after == Some(common.promis_limit_after);
             if !terminal_membership || !completion_evidence || !conserved {
                 return Err(MetadosisStorageCorruptionError::WwdTerminalReceiptInvalid.into());
             }
@@ -120,7 +120,8 @@ impl TerminalReceiptCommon {
             && context.active_memberships == 0
             && context.closed_memberships == 1;
         let conserved = self.value_routed == context.expected_value_routed
-            && self.carry_over_before.checked_add(self.value_routed) == Some(self.carry_over_after);
+            && self.promis_limit_before.checked_add(self.value_routed)
+                == Some(self.promis_limit_after);
         if !terminal_membership || !conserved || self.block_number == 0 {
             return Err(MetadosisStorageCorruptionError::WwdTerminalReceiptInvalid.into());
         }
@@ -162,8 +163,8 @@ mod tests {
             common: TerminalReceiptCommon {
                 worldwide_day: WorldwideDay::new(42),
                 value_routed: U256::from(5),
-                carry_over_before: U256::from(2),
-                carry_over_after: U256::from(7),
+                promis_limit_before: U256::from(2),
+                promis_limit_after: U256::from(7),
                 retirement: RetirementOutcome::NotPresent,
                 block_number: 9,
             },
@@ -199,8 +200,8 @@ mod tests {
             let common = corrupt.common_mut();
             match field {
                 0 => common.block_number = 0,
-                1 => common.carry_over_after += U256::from(1),
-                _ => common.carry_over_before = U256::MAX,
+                1 => common.promis_limit_after += U256::from(1),
+                _ => common.promis_limit_before = U256::MAX,
             }
             assert!(corrupt.validate(context()).is_err());
         }

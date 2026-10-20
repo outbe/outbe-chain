@@ -82,9 +82,9 @@ fn apply_day_limit(
             DayLimitFormation {
                 worldwide_day: wwd,
                 base_limit,
-                carry_over_before: carry_over,
-                carry_over_taken: U256::ZERO,
-                carry_over_after: carry_over,
+                promis_limit_before: carry_over,
+                promis_limit_taken: U256::ZERO,
+                promis_limit_after: carry_over,
                 day_limit: base_limit,
                 block_number: ctx.block.block_number,
             },

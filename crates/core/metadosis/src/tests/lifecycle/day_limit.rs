@@ -85,9 +85,9 @@ fn day_limit_formation_leaves_the_accumulator_untouched() {
         let first_formation = metadosis.day_limit_formation(first).unwrap().unwrap();
         assert_eq!(first_formation.worldwide_day, first);
         assert_eq!(first_formation.base_limit, U256::from(100));
-        assert_eq!(first_formation.carry_over_before, U256::from(30));
-        assert_eq!(first_formation.carry_over_taken, U256::ZERO);
-        assert_eq!(first_formation.carry_over_after, U256::from(30));
+        assert_eq!(first_formation.promis_limit_before, U256::from(30));
+        assert_eq!(first_formation.promis_limit_taken, U256::ZERO);
+        assert_eq!(first_formation.promis_limit_after, U256::from(30));
         assert_eq!(first_formation.day_limit, U256::from(100));
         assert_eq!(first_formation.block_number, 10);
         assert_eq!(
@@ -133,9 +133,9 @@ fn day_limit_formation_leaves_the_accumulator_untouched() {
         let metadosis = MetadosisContract::new(storage);
         let second_day = metadosis.worldwide_days.entry(second);
         let second_formation = metadosis.day_limit_formation(second).unwrap().unwrap();
-        assert_eq!(second_formation.carry_over_taken, U256::ZERO);
-        assert_eq!(second_formation.carry_over_before, U256::from(37));
-        assert_eq!(second_formation.carry_over_after, U256::from(37));
+        assert_eq!(second_formation.promis_limit_taken, U256::ZERO);
+        assert_eq!(second_formation.promis_limit_before, U256::from(37));
+        assert_eq!(second_formation.promis_limit_after, U256::from(37));
         assert_eq!(second_formation.block_number, 20);
         assert_eq!(
             second_day.metadosis_limit_minor().read().unwrap(),
@@ -149,7 +149,7 @@ fn day_limit_formation_leaves_the_accumulator_untouched() {
         let metadosis = MetadosisContract::new(storage.clone());
         let third_formation = metadosis.day_limit_formation(third).unwrap().unwrap();
         assert_eq!(third_formation.base_limit, U256::from(50));
-        assert_eq!(third_formation.carry_over_taken, U256::ZERO);
+        assert_eq!(third_formation.promis_limit_taken, U256::ZERO);
         assert_eq!(third_formation.day_limit, U256::from(50));
 
         MetadosisContract::new(storage.clone())
@@ -283,7 +283,7 @@ fn day_limit_rejection_and_every_mutation_failure_are_atomic() {
                 .unwrap()
                 .unwrap();
             assert_eq!(formed.base_limit, U256::from(100));
-            assert_eq!(formed.carry_over_taken, U256::ZERO);
+            assert_eq!(formed.promis_limit_taken, U256::ZERO);
             assert_eq!(formed.day_limit, U256::from(100));
             assert_eq!(
                 PromisLimitContract::new(storage).promis_limit().unwrap(),

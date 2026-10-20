@@ -22,8 +22,8 @@ pub(crate) fn encode(receipt: &WwdTerminalReceipt) -> Vec<u8> {
     bytes.push(receipt.outcome());
     bytes.extend_from_slice(&common.worldwide_day.value().to_be_bytes());
     bytes.extend_from_slice(&common.value_routed.to_be_bytes::<32>());
-    bytes.extend_from_slice(&common.carry_over_before.to_be_bytes::<32>());
-    bytes.extend_from_slice(&common.carry_over_after.to_be_bytes::<32>());
+    bytes.extend_from_slice(&common.promis_limit_before.to_be_bytes::<32>());
+    bytes.extend_from_slice(&common.promis_limit_after.to_be_bytes::<32>());
     bytes.push(encode_retirement(common.retirement));
     bytes.extend_from_slice(&common.block_number.to_be_bytes());
     if let WwdTerminalReceipt::CapacityForfeiture { detail, .. } = receipt {
@@ -63,8 +63,8 @@ pub(crate) fn decode(bytes: &[u8], worldwide_day: WorldwideDay) -> Result<WwdTer
     let common = TerminalReceiptCommon {
         worldwide_day,
         value_routed: U256::from_be_bytes(reader.take::<32>()?),
-        carry_over_before: U256::from_be_bytes(reader.take::<32>()?),
-        carry_over_after: U256::from_be_bytes(reader.take::<32>()?),
+        promis_limit_before: U256::from_be_bytes(reader.take::<32>()?),
+        promis_limit_after: U256::from_be_bytes(reader.take::<32>()?),
         retirement: decode_retirement(reader.take::<1>()?[0])?,
         block_number: u64::from_be_bytes(reader.take()?),
     };
@@ -129,8 +129,8 @@ mod tests {
         TerminalReceiptCommon {
             worldwide_day: WorldwideDay::new(42),
             value_routed: U256::from(5),
-            carry_over_before: U256::from(2),
-            carry_over_after: U256::from(7),
+            promis_limit_before: U256::from(2),
+            promis_limit_after: U256::from(7),
             retirement: RetirementOutcome::NotPresent,
             block_number: 9,
         }

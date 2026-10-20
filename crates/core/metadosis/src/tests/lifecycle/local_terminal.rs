@@ -86,7 +86,7 @@ fn assert_ready_day_forfeited(
             .unwrap()
             .unwrap();
         assert_eq!(receipt.value_routed, day_limit);
-        assert_eq!(receipt.carry_over_after, day_limit);
+        assert_eq!(receipt.promis_limit_after, day_limit);
         assert_eq!(receipt.retirement, RetirementOutcome::Requested);
     });
     assert_tribute_partition_forfeited(provider, wwd);

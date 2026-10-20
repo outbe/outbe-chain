@@ -83,8 +83,8 @@ fn fresh_devnet_sentinel_probe_is_test_only_and_checks_per_day_residue() {
             crate::terminal::model::TerminalReceiptCommon {
                 worldwide_day: sentinel,
                 value_routed: U256::ZERO,
-                carry_over_before: U256::ZERO,
-                carry_over_after: U256::ZERO,
+                promis_limit_before: U256::ZERO,
+                promis_limit_after: U256::ZERO,
                 retirement: outbe_tribute::runtime::RetirementOutcome::NotPresent,
                 block_number: 1,
             },

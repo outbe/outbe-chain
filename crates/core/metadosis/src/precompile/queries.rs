@@ -86,8 +86,8 @@ pub(super) fn terminal_receipt(
     Ok((
         stored.outcome(),
         common.value_routed,
-        common.carry_over_before,
-        common.carry_over_after,
+        common.promis_limit_before,
+        common.promis_limit_after,
         crate::terminal::encode_retirement(common.retirement),
         common.block_number,
     )
@@ -124,8 +124,8 @@ pub(super) fn capacity_forfeiture_receipt(
         receipt.max_retained_wwds,
         receipt.retained_count_before,
         receipt.value_routed,
-        receipt.carry_over_before,
-        receipt.carry_over_after,
+        receipt.promis_limit_before,
+        receipt.promis_limit_after,
         receipt.forfeited_count,
         receipt.forfeited_nominal,
         receipt.source_generation,
