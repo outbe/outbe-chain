@@ -53,7 +53,10 @@ fn cycle_tick_entitlements(call: &MetadosisMutationCall<'_>) -> MetadosisMutatio
     let block_number = call.block_number;
     let timestamp = call.timestamp;
     let cycle_active_utc_day = call.cycle_active_utc_day;
-    let mut entitlements = MetadosisMutationEntitlements::NONE;
+    let mut entitlements = MetadosisMutationEntitlements::exact(
+        Purpose::CertifiedFinality,
+        metadosis_late_settlement_binding(chain_id, block_number, timestamp),
+    );
     if block_number == 1 {
         entitlements = entitlements.union(MetadosisMutationEntitlements::exact(
             Purpose::CycleLifecycle,
@@ -78,15 +81,10 @@ fn cycle_tick_entitlements(call: &MetadosisMutationCall<'_>) -> MetadosisMutatio
             ),
         ));
     }
-    entitlements
-        .union(MetadosisMutationEntitlements::exact(
-            Purpose::CycleLifecycle,
-            metadosis_process_ready_binding(chain_id, block_number, timestamp),
-        ))
-        .union(MetadosisMutationEntitlements::exact(
-            Purpose::CertifiedFinality,
-            metadosis_late_settlement_binding(chain_id, block_number, timestamp),
-        ))
+    entitlements.union(MetadosisMutationEntitlements::exact(
+        Purpose::CycleLifecycle,
+        metadosis_process_ready_binding(chain_id, block_number, timestamp),
+    ))
 }
 
 /// The Cycle cursor prepares capabilities for a protocol command, not for any

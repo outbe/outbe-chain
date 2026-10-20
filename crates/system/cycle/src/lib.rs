@@ -29,8 +29,11 @@
 //!    `outbe_rewards::api::read_daily_fee_sum_raw`. The fee-covered part
 //!    becomes terminal excess.
 //! 4. WAA / SRA / CCA / validator top-up: call
-//!    `outbe_agentreward::distribute_daily`. Each pool credits claimable
-//!    balances; the undistributed residue becomes terminal excess.
+//!    `outbe_agentreward::distribute_daily`. CCA and validator pools credit
+//!    claimable balances; their undistributed residue becomes terminal excess.
+//!    WAA and SRA pools with tributes are queued: every CycleTick credits a
+//!    bounded slice, and the rounding residue of a finished pool goes to the
+//!    Promis Limit carry-over.
 //! 5. Metadosis terminal credit = metadosis_amount + fee-covered validator
 //!    share + pool excess, dispatched through
 //!    `outbe_emissionlimit::block::dispatch_terminal_remainder_at` at
