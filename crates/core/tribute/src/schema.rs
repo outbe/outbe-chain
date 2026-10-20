@@ -117,9 +117,6 @@ pub struct TributeContract {
     >,
     #[attribute(order = 23)]
     pub active_wwd: outbe_primitives::storage::dsl::Set<WorldwideDay>,
-    /// Retains terminal days up to MAX_RECORDS_KEPT.
-    #[attribute(order = 24)]
-    pub closed_wwd: outbe_primitives::storage::dsl::Deque<WorldwideDay>,
 }
 
 pub const fn day_league_key(day: WorldwideDay, league: u16) -> u64 {

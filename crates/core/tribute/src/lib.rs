@@ -17,7 +17,7 @@ pub mod worldwideday;
 pub use record::{TributeMetadata, TributeRecord};
 pub use runtime::LoadedTribute;
 pub use schema::{DayTotals, TributeContract, TributeData};
-pub use worldwideday::{WwdDayType, WwdMembership, WwdProjection, WwdStatus};
+pub use worldwideday::{NewWwdSchedule, WwdProjection};
 
 #[cfg(test)]
 mod tests;

@@ -104,14 +104,8 @@ fn pricing(
         .into());
     }
     if !outbe_tribute::worldwideday::api::is_offering_day(storage.clone(), input.worldwide_day)? {
-        let status =
-            outbe_tribute::worldwideday::api::worldwide_day(storage.clone(), input.worldwide_day)?
-                .map(|projection| projection.status);
         return Err(TributeFactoryError::WorldwideDayNotOffering {
             worldwide_day: input.worldwide_day,
-            // Preserve the established diagnostic byte without granting
-            // TributeFactory raw WorldwideDay schema access.
-            status: status.map_or(u8::MAX, |status| status as u8),
         }
         .into());
     }

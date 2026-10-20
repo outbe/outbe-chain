@@ -140,13 +140,23 @@ impl Rpc {
 
     /// Create one Tribute for the currently OFFERING WorldwideDay.
     pub fn create_tribute(&self, key: &str) -> Option<String> {
-        const OFFERING: u8 = 2;
-
-        let days: Vec<u32> = eth::read_call(
+        let now = eth::latest_block_timestamp(&self.cfg.rpc0)?;
+        let active_days: Vec<u32> = eth::read_call(
             &self.cfg.rpc0,
             addresses::TRIBUTE_ADDR,
-            &ITribute::getWorldwideDaysByStatusCall { status: OFFERING },
+            &ITribute::getActiveWorldwideDaysCall {},
         )?;
+        let days: Vec<u32> = active_days
+            .into_iter()
+            .filter(|&wwd| {
+                eth::read_call(
+                    &self.cfg.rpc0,
+                    addresses::TRIBUTE_ADDR,
+                    &ITribute::getWorldwideDayCall { wwd },
+                )
+                .is_some_and(|r| now >= r.offeringsStart && now < r.offeringEnd)
+            })
+            .collect();
         let worldwide_day = *days.first()?;
         if days.len() > 1 {
             eprintln!(
@@ -321,9 +331,9 @@ impl Rpc {
     /// WAA and one SRA beneficiary. This is a harness-only producer for the
     /// existing public ABI. Production reward accounting remains unchanged.
     ///
-    /// The offer is ZK-verified: the proof is bound to the caller, this chain,
-    /// the day, the issuance currency, the declared amounts and exactly the
-    /// draft and SU hash the enclave decrypts.
+    /// A ZK proof verifies the offer. The proof binds the caller, this chain,
+    /// the day, the issuance currency, the declared amounts, the draft, and the
+    /// SU hash.
     pub fn submit_tribute_offer_with_agent_rewards(
         &self,
         key: &str,
@@ -350,7 +360,7 @@ impl Rpc {
         let (tribute_draft_id, su_hash) =
             l2_fixture::offer_identifiers("agent-reward-tribute", creator, worldwide_day);
         // The proof and the encrypted payload must declare the same claim, so
-        // both are built from these literals.
+        // this helper builds both from these literals.
         const AMOUNT_BASE: &str = "100";
         const AMOUNT_MICRO: &str = "0";
         let zk = self.prove_offer_for_network(
@@ -418,10 +428,10 @@ impl Rpc {
     /// same-currency operator path. This narrow E2E helper exercises the
     /// already-public ABI axis without adding a new product surface.
     ///
-    /// The proof binds the issuance currency (the reference currency is not part
-    /// of the TributeDraft claim) and the declared amounts, so the golden
-    /// nominal/reference price this scenario asserts comes from a fully
-    /// ZK-verified offer.
+    /// The proof binds the issuance currency and the declared amounts. The
+    /// reference currency is not part of the TributeDraft claim. Thus a
+    /// ZK-verified offer produces the golden nominal/reference price in this
+    /// scenario.
     pub fn tribute_cross_currency_offer(
         &self,
         key: &str,
@@ -521,9 +531,9 @@ impl Rpc {
     }
 
     /// Prove one real Demo Tribute offer for `caller`'s registered L2 fixture
-    /// network. The proof is bound to `caller`, this host chain's id, the
-    /// selected L2 chain id, and the offer's day, currency, amounts and draft.
-    /// Its Merkle root is signed with the key that network registered.
+    /// network. The proof binds `caller`, this host chain's id, the selected L2
+    /// chain id, and the offer's day, currency, amounts and draft. The fixture
+    /// signs its Merkle root with the registered network key.
     fn prove_offer(&self, input: TributeProofInput<'_>) -> TributeOfferZk {
         let TributeProofInput {
             caller,
@@ -671,12 +681,12 @@ impl Rpc {
                 return pending_tx;
             }
             // Do not blindly submit a replacement while the first offer is still
-            // pending. The CLI intentionally uses the account's pending nonce, so
-            // an identical-fee retry is rejected as `replacement transaction
-            // underpriced` and only adds noise to an otherwise healthy lifecycle
-            // run. A failed receipt is terminal for that attempt and permits a
-            // fresh logical offer. A pending or successful receipt gets the
-            // remainder of the polling budget to become visible in state.
+            // pending. The CLI intentionally uses the account's pending nonce.
+            // The pool rejects an identical-fee retry as `replacement transaction
+            // underpriced`, which adds noise to a healthy lifecycle run. A failed
+            // receipt is terminal for that attempt and permits a fresh logical
+            // offer. A pending or successful receipt gets the remainder of the
+            // polling budget to become visible in state.
             if pending_tx
                 .as_deref()
                 .and_then(|hash| eth::receipt_success(&self.cfg.rpc0, hash))

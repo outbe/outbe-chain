@@ -89,9 +89,6 @@ pub fn dispatch(
                     .map(u32::from)
                     .collect())
             }),
-            getWorldwideDaysByStatus(c) => view(c, |c| {
-                crate::worldwideday::queries::worldwide_days_by_status(&tribute, c)
-            }),
             supportsInterface(c) => view(c, |c| {
                 let id: [u8; 4] = c.interfaceId.0;
                 Ok(id == ERC165_INTERFACE_ID)

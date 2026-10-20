@@ -1,89 +1,44 @@
 use super::*;
-use crate::{aggregate::WwdMembership, api};
+use crate::api;
 
 #[test]
-fn typed_queries_distinguish_missing_days_from_offering_membership() {
+fn typed_queries_distinguish_missing_days_from_active_schedule() {
     with_storage(|storage| {
-        let wwd = 20270101.into();
+        let wwd = 20260920.into();
         assert!(api::worldwide_day(storage.clone(), wwd).unwrap().is_none());
-        assert!(!api::is_offering_day(storage.clone(), wwd).unwrap());
-        assert!(api::offering_worldwide_days(storage.clone())
+        assert!(api::emission_day(storage.clone(), 20261015)
             .unwrap()
-            .is_empty());
+            .is_none());
         assert!(api::bootstrap_end_time(storage.clone()).unwrap().is_none());
+
         super::precompile::seed_offering_day(storage.clone());
+
         let day = api::worldwide_day(storage.clone(), wwd).unwrap().unwrap();
+        assert_eq!(day.worldwide_day, wwd);
+        assert_eq!(day.day, 20261015);
         assert_eq!(
-            (day.status, day.membership),
-            (crate::WwdStatus::Offering, WwdMembership::Active)
+            (
+                day.forming_start,
+                day.forming_end,
+                day.offerings_start,
+                day.offering_end
+            ),
+            (10, 20, 30, 40)
         );
-        assert!(api::is_offering_day(storage.clone(), wwd).unwrap());
-        assert_eq!(
-            api::offering_worldwide_days(storage.clone()).unwrap(),
-            vec![wwd]
-        );
-        assert_eq!(api::worldwide_days(storage.clone()).unwrap(), vec![day]);
+
+        let ed = api::emission_day(storage.clone(), 20261015)
+            .unwrap()
+            .unwrap();
+        assert_eq!(ed.day, 20261015);
+        assert_eq!(ed.wwd, wwd);
+        assert_eq!(ed.emission_limit_minor, U256::from(100));
+        assert_eq!(ed.metadosis_start, 50);
+        assert_eq!(ed.state, emission_day_state::NONE);
+
         MetadosisContract::new(storage.clone())
-            .set_bootstrap_end_time(30)
+            .bootstrap_end_time
+            .write(30)
             .unwrap();
         assert_eq!(api::bootstrap_end_time(storage).unwrap(), Some(30));
-    });
-}
-
-#[test]
-fn typed_day_query_rejects_each_invalid_membership_cardinality() {
-    for active in [false, true] {
-        with_storage(|storage| {
-            let wwd = 20270101.into();
-            super::precompile::seed_offering_day(storage.clone());
-            let contract = MetadosisContract::new(storage.clone());
-            if active {
-                contract.tribute().closed_wwd.push_back(wwd).unwrap();
-            } else {
-                contract.tribute().active_wwd.remove(&wwd).unwrap();
-            }
-            let error = api::worldwide_day(storage, wwd).unwrap_err();
-            assert!(
-                matches!(error, outbe_primitives::error::PrecompileError::Revert(message)
-                if message == "Metadosis WWD membership is not exactly one of active/closed")
-            );
-        });
-    }
-}
-
-#[test]
-fn offering_query_fails_closed_for_dangling_active_key_and_unknown_status() {
-    with_storage(|storage| {
-        let wwd = 20270101.into();
-        let contract = MetadosisContract::new(storage.clone());
-        contract.tribute().active_wwd.insert(wwd).unwrap();
-        assert!(api::offering_worldwide_days(storage.clone()).is_err());
-        contract.tribute().active_wwd.remove(&wwd).unwrap();
-        super::precompile::seed_offering_day(storage.clone());
-        contract
-            .tribute()
-            .worldwide_days
-            .entry(wwd)
-            .status()
-            .write(255)
-            .unwrap();
-        assert!(api::offering_worldwide_days(storage.clone()).is_err());
-        assert!(api::worldwide_day(storage, wwd).is_err());
-    });
-}
-
-#[test]
-fn semantic_queries_report_absent_authority_and_receipts_without_inventing_state() {
-    with_storage(|storage| {
-        let wwd = 20270101.into();
-        assert!(api::day_limit_formation_receipt(storage.clone(), wwd)
-            .unwrap()
-            .is_none());
-        assert!(api::missed_offering_receipt(storage.clone(), wwd)
-            .unwrap()
-            .is_none());
-        assert!(api::capacity_forfeiture_receipt(storage.clone(), wwd)
-            .unwrap()
-            .is_none());
     });
 }

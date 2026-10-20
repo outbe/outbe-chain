@@ -1,20 +1,47 @@
+use alloy_primitives::U256;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{error::Result, storage::StorageHandle};
+use outbe_tribute::worldwideday::{ValidatedWwdAggregate, WwdProjection};
 
-use crate::{
-    aggregate::{ValidatedWwdAggregate, WwdProjection},
-    schema::MetadosisContract,
-};
+use crate::schema::{EmissionDay, MetadosisContract};
 
-pub use crate::aggregate::{WwdDayType, WwdStatus as WorldwideDayStatus};
-pub use crate::state::DayLimitFormationReceipt;
-pub use crate::terminal::{CapacityForfeitureReceipt, MissedOfferingReceipt};
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EmissionDayProjection {
+    pub day: u32,
+    pub emission_limit_minor: U256,
+    pub wwd: WorldwideDay,
+    pub metadosis_start: u64,
+    pub state: u8,
+}
+
+impl From<EmissionDay> for EmissionDayProjection {
+    fn from(record: EmissionDay) -> Self {
+        Self {
+            day: record.day,
+            emission_limit_minor: record.emission_limit_minor,
+            wwd: record.wwd,
+            metadosis_start: record.metadosis_start,
+            state: record.state,
+        }
+    }
+}
 
 /// When the bootstrap ends: the moment the first Worldwide Day opens its
 /// offering. `None` before that day exists, so callers name what zero means.
 pub fn bootstrap_end_time(storage: StorageHandle<'_>) -> Result<Option<u64>> {
-    let end = MetadosisContract::new(storage).get_bootstrap_end_time()?;
+    let end = MetadosisContract::new(storage).bootstrap_end_time.read()?;
     Ok((end != 0).then_some(end))
+}
+
+/// Reads one typed EmissionDay projection by its `YYYYMMDD` UTC day key.
+pub fn emission_day(
+    storage: StorageHandle<'_>,
+    day: u32,
+) -> Result<Option<EmissionDayProjection>> {
+    Ok(MetadosisContract::new(storage)
+        .emission_days
+        .get(day)?
+        .map(EmissionDayProjection::from))
 }
 
 /// Reads one typed WWD projection without exposing its storage facade.
@@ -26,7 +53,7 @@ pub fn worldwide_day(
 }
 
 /// Reads the complete bounded typed WWD aggregate without exposing indexes or
-/// storage entries. The result is sorted by WorldwideDay.
+/// storage entries. This function sorts the returned projections by WorldwideDay.
 pub fn worldwide_days(storage: StorageHandle<'_>) -> Result<Vec<WwdProjection>> {
     Ok(ValidatedWwdAggregate::load_and_validate(storage)?
         .records()
@@ -34,38 +61,12 @@ pub fn worldwide_days(storage: StorageHandle<'_>) -> Result<Vec<WwdProjection>> 
         .collect())
 }
 
-/// Typed query used by TributeFactory instead of a raw status byte read.
+/// Checks whether the current block timestamp falls in the offering window of `wwd`.
 pub fn is_offering_day(storage: StorageHandle<'_>, wwd: WorldwideDay) -> Result<bool> {
     outbe_tribute::worldwideday::api::is_offering_day(storage, wwd)
 }
 
-/// Returns indexed OFFERING days as typed keys without exposing status bytes or
-/// the storage facade.
+/// Returns active WorldwideDay keys whose offering window contains the block timestamp.
 pub fn offering_worldwide_days(storage: StorageHandle<'_>) -> Result<Vec<WorldwideDay>> {
     outbe_tribute::worldwideday::api::offering_worldwide_days(storage)
-}
-
-/// Reads the durable Metadosis-owned semantic result for one Cycle day-limit
-/// formation slot.
-pub fn day_limit_formation_receipt(
-    storage: StorageHandle<'_>,
-    wwd: WorldwideDay,
-) -> Result<Option<DayLimitFormationReceipt>> {
-    MetadosisContract::new(storage).day_limit_formation_receipt(wwd)
-}
-
-/// Reads the typed durable missed-offering result for one terminal WWD.
-pub fn missed_offering_receipt(
-    storage: StorageHandle<'_>,
-    wwd: WorldwideDay,
-) -> Result<Option<MissedOfferingReceipt>> {
-    MetadosisContract::new(storage).read_missed_offering_receipt(wwd)
-}
-
-/// Reads the typed durable capacity-forfeiture result for one terminal WWD.
-pub fn capacity_forfeiture_receipt(
-    storage: StorageHandle<'_>,
-    wwd: WorldwideDay,
-) -> Result<Option<CapacityForfeitureReceipt>> {
-    MetadosisContract::new(storage).read_capacity_forfeiture_receipt(wwd)
 }

@@ -1,4 +1,4 @@
-//! Private READY classification and local settlement paths.
+//! READY EmissionDay classification and local settlement paths.
 
 use alloy_primitives::U256;
 use outbe_primitives::time::WorldwideDay;
@@ -7,13 +7,10 @@ use outbe_promislimit::PromisLimitContract;
 use outbe_tribute::TributeContract;
 
 use crate::{
-    aggregate::{WwdDayType, WwdProjection},
-    commit::commit_outer_transition,
-    constants::{RED_DAY_REDUCTION_COEF, SYMBOLIC_RATE},
-    errors::MetadosisError,
+    constants::SYMBOLIC_RATE,
+    lifecycle::{complete_emission_day, fail_emission_day},
     precompile::IMetadosis,
-    reducer::{reduce_outer_wwd, OuterWwdEvent, ReadyDisposition},
-    schema::MetadosisContract,
+    schema::{emission_day_state, EmissionDay, MetadosisContract},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -24,21 +21,17 @@ pub(crate) struct MetadosisCalculation {
 }
 
 impl MetadosisContract<'_> {
-    /// Core metadosis calculation for a worldwide day.
+    /// Core metadosis calculation for an EmissionDay.
     pub(crate) fn calculate_metadosis(
         &self,
-        wwd: WorldwideDay,
         tribute_nominal_total: U256,
-        wwd_metadosis_limit: U256,
+        emission_limit_minor: U256,
     ) -> Result<MetadosisCalculation> {
-        let wwd_type = self.get_wwd_day_type(wwd)?;
-        // Full-domain floor(total * SYMBOLIC_RATE / 100) without an
-        // overflowing intermediate multiplication.
         let denominator = U256::from(100u64);
         let rate = U256::from(SYMBOLIC_RATE);
         let quotient = tribute_nominal_total / denominator;
         let remainder = tribute_nominal_total % denominator;
-        let mut demand = quotient
+        let demand = quotient
             .checked_mul(rate)
             .and_then(|scaled| {
                 remainder
@@ -46,17 +39,7 @@ impl MetadosisContract<'_> {
                     .and_then(|tail| scaled.checked_add(tail / denominator))
             })
             .ok_or(crate::errors::MetadosisStorageCorruptionError::FullPrecisionDemandOverflow)?;
-        let mut day_gratis_limit_minor = wwd_metadosis_limit;
-        match wwd_type {
-            WwdDayType::Green => {}
-            WwdDayType::Red => {
-                demand /= U256::from(RED_DAY_REDUCTION_COEF);
-                day_gratis_limit_minor /= U256::from(RED_DAY_REDUCTION_COEF);
-            }
-            WwdDayType::Unknown => {
-                return Err(MetadosisError::UnknownWorldwideDayType.into());
-            }
-        }
+        let day_gratis_limit_minor = emission_limit_minor;
         let lysis_limit_minor = demand.min(day_gratis_limit_minor);
         Ok(MetadosisCalculation {
             gratis_demand: demand,
@@ -67,206 +50,114 @@ impl MetadosisContract<'_> {
 }
 
 /// The Desis Limit of a day: what the day earned beyond the Lysis share. The cap is what Lysis left
-/// of the day's own limit plus what the path draws from the carry-over. A day that is not green
-/// sells nothing.
+/// of the day's own limit plus what the path draws from the carry-over.
 pub(crate) fn desis_limit(
     nominal_total: U256,
     lysis_limit_minor: U256,
     day_limit: U256,
     carry_over_draw: U256,
-    green: bool,
 ) -> Option<U256> {
     let available = day_limit
         .checked_sub(lysis_limit_minor)?
         .checked_add(carry_over_draw)?;
-    if !green {
-        return Some(U256::ZERO);
-    }
     Some(nominal_total.checked_sub(lysis_limit_minor)?.min(available))
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum LocalTerminalOutcome {
-    EmptyTributeDay {
-        day_type: WwdDayType,
-        day_limit: U256,
-    },
-    ZeroGratisAllocation {
-        day_type: WwdDayType,
-        tribute_nominal_total: U256,
-        calculation: MetadosisCalculation,
-    },
 }
 
 pub(crate) fn process_ready_candidate(
     metadosis: &mut MetadosisContract<'_>,
     ctx: &BlockRuntimeContext<'_>,
-    current: &WwdProjection,
+    emission_day: &EmissionDay,
 ) -> Result<()> {
-    let wwd = current.worldwide_day;
-    let limit_amount = current.metadosis_limit_minor;
-    let day_type = current.day_type;
-    if limit_amount.is_zero() || day_type == WwdDayType::Unknown {
-        return crate::terminal::fail_worldwide_day(
-            ctx.storage.clone(),
-            ctx.block.block_number,
+    let wwd = emission_day.wwd;
+    let limit_amount = emission_day.emission_limit_minor;
+    if limit_amount.is_zero() {
+        return fail_emission_day(
+            metadosis,
+            ctx,
+            emission_day.day,
             wwd,
+            "emission limit is zero",
         );
     }
 
-    let tribute_totals = TributeContract::new(metadosis.storage.clone()).get_day_totals(wwd)?;
+    let mut tribute = TributeContract::new(metadosis.storage.clone());
+    let mut tribute_totals = tribute.get_day_totals(wwd)?;
+    if !tribute_totals.is_sealed {
+        tribute.seal_day(wwd)?;
+        tribute_totals = tribute.get_day_totals(wwd)?;
+    }
+
     if tribute_totals.tribute_count == 0 {
-        return process_local_terminal_outcome(
-            metadosis,
-            ctx,
-            current,
-            LocalTerminalOutcome::EmptyTributeDay {
-                day_type,
-                day_limit: limit_amount,
-            },
-        );
+        return settle_empty_day(metadosis, ctx, emission_day);
     }
 
     let calculation = metadosis.calculate_metadosis(
-        wwd,
         tribute_totals.tribute_nominal_total_minor,
         limit_amount,
     )?;
     if calculation.lysis_limit_minor.is_zero() {
-        return process_local_terminal_outcome(
+        return settle_zero_allocation(
             metadosis,
             ctx,
-            current,
-            LocalTerminalOutcome::ZeroGratisAllocation {
-                day_type,
-                tribute_nominal_total: tribute_totals.tribute_nominal_total_minor,
-                calculation,
-            },
+            emission_day,
+            tribute_totals.tribute_nominal_total_minor,
+            calculation,
         );
     }
 
-    crate::lysis::execute(metadosis, ctx, current, calculation)
-}
-
-struct LocalSettlement<'effect, 'storage> {
-    ctx: &'effect BlockRuntimeContext<'storage>,
-
-    current: &'effect WwdProjection,
-    transition: &'effect crate::reducer::OuterWwdTransition,
-}
-
-fn process_local_terminal_outcome(
-    metadosis: &mut MetadosisContract,
-    ctx: &BlockRuntimeContext,
-    current: &WwdProjection,
-    outcome: LocalTerminalOutcome,
-) -> Result<()> {
-    let disposition = match outcome {
-        LocalTerminalOutcome::EmptyTributeDay { .. } => ReadyDisposition::EmptyTributeDay,
-        LocalTerminalOutcome::ZeroGratisAllocation { .. } => ReadyDisposition::ZeroGratisAllocation,
-    };
-    let transition = reduce_outer_wwd(Some(current), OuterWwdEvent::ProcessReady(disposition))?;
-    let settlement = LocalSettlement {
-        ctx,
-        current,
-        transition: &transition,
-    };
-    match outcome {
-        LocalTerminalOutcome::EmptyTributeDay {
-            day_type,
-            day_limit,
-        } => settle_empty_day(metadosis, settlement, day_type, day_limit),
-        LocalTerminalOutcome::ZeroGratisAllocation {
-            day_type,
-            tribute_nominal_total,
-            calculation,
-        } => settle_zero_allocation(
-            metadosis,
-            settlement,
-            ZeroAllocation {
-                day_type,
-                tribute_nominal_total,
-                calculation,
-            },
-        ),
-    }
+    crate::lysis::execute(metadosis, ctx, emission_day, calculation)
 }
 
 fn settle_empty_day(
     metadosis: &mut MetadosisContract,
-    settlement: LocalSettlement<'_, '_>,
-    day_type: WwdDayType,
-    day_limit: U256,
+    ctx: &BlockRuntimeContext,
+    emission_day: &EmissionDay,
 ) -> Result<()> {
-    let LocalSettlement {
-        ctx,
-        current,
-        transition,
-    } = settlement;
-    let wwd = current.worldwide_day;
+    let wwd = emission_day.wwd;
+    let day_limit = emission_day.emission_limit_minor;
     let mut promis_limit = PromisLimitContract::new(ctx.storage.clone());
-    let to_promis = dispatch_brief(ctx, day_type, wwd, U256::ZERO)?;
-    // A day with no tributes allocates nothing, so its whole limit stays on the warehouse.
+    let to_promis = dispatch_brief(ctx, wwd, U256::ZERO)?;
     let returned = to_promis
         .checked_add(day_limit)
         .ok_or(crate::errors::MetadosisStorageCorruptionError::DayLimitReturnOverflow)?;
-    commit_outer_transition(metadosis, wwd, transition, ctx.block.block_number)?;
+    complete_emission_day(metadosis, emission_day, emission_day_state::SUCCEEDED)?;
     TributeContract::new(metadosis.storage.clone()).retire_completed_partition(wwd)?;
     metadosis.emit(IMetadosis::MetadosisWorldwideDayProcessed {
         worldwideDay: wwd.into(),
         metadosisLimitMinor: day_limit,
         promisLimitReturnedMinor: returned,
         status: "COMPLETED".into(),
-        dayState: wwd_state_label(day_type).into(),
+        dayState: "SUCCEEDED".into(),
         action: "no tributes".into(),
     })?;
     promis_limit.add_to_total_unallocated(returned)
 }
 
-struct ZeroAllocation {
-    day_type: WwdDayType,
-    tribute_nominal_total: U256,
-    calculation: MetadosisCalculation,
-}
-
 fn settle_zero_allocation(
     metadosis: &mut MetadosisContract,
-    settlement: LocalSettlement<'_, '_>,
-    allocation: ZeroAllocation,
+    ctx: &BlockRuntimeContext,
+    emission_day: &EmissionDay,
+    tribute_nominal_total: U256,
+    calculation: MetadosisCalculation,
 ) -> Result<()> {
-    let LocalSettlement {
-        ctx,
-        current,
-        transition,
-    } = settlement;
-    let ZeroAllocation {
-        day_type,
-        tribute_nominal_total,
-        calculation,
-    } = allocation;
-    let wwd = current.worldwide_day;
+    let wwd = emission_day.wwd;
     let mut promis_limit = PromisLimitContract::new(ctx.storage.clone());
-    // The local path never draws from the carry-over: its auction sells from the day alone.
     let desis_limit_minor = desis_limit(
         tribute_nominal_total,
         calculation.lysis_limit_minor,
-        current.metadosis_limit_minor,
+        emission_day.emission_limit_minor,
         U256::ZERO,
-        day_type == WwdDayType::Green,
     )
     .ok_or(crate::errors::MetadosisStorageCorruptionError::LysisLimitExceedsDayNominal)?;
-    let to_promis = dispatch_brief(ctx, day_type, wwd, desis_limit_minor)?;
-    // Nobody issues the limit headroom above the day's own nominal, so it stays on the
-    // warehouse together with whatever the brief did not take.
-    let returned = current
-        .metadosis_limit_minor
+    let to_promis = dispatch_brief(ctx, wwd, desis_limit_minor)?;
+    let returned = emission_day
+        .emission_limit_minor
         .checked_sub(calculation.lysis_limit_minor)
         .and_then(|rest| rest.checked_sub(desis_limit_minor))
         .and_then(|headroom| headroom.checked_add(to_promis))
         .ok_or(crate::errors::MetadosisStorageCorruptionError::SplitExceedsDayLimit)?;
     promis_limit.add_to_total_unallocated(returned)?;
-    commit_outer_transition(metadosis, wwd, transition, ctx.block.block_number)?;
-    // No Lysis allocation consumes these tributes, so this path forfeits the sealed partition.
+    complete_emission_day(metadosis, emission_day, emission_day_state::SUCCEEDED)?;
     TributeContract::new(metadosis.storage.clone()).forfeit_sealed_partition(wwd)?;
     metadosis.emit(IMetadosis::MetadosisExecuted {
         worldwideDay: wwd.into(),
@@ -284,14 +175,11 @@ fn settle_zero_allocation(
 
 fn dispatch_brief(
     ctx: &BlockRuntimeContext,
-    dtype: WwdDayType,
     wwd: WorldwideDay,
     desis_limit_minor: U256,
 ) -> Result<U256> {
-    // This function briefs a day with nothing to sell as cancelled. An auction opened
-    // over a zero limit would run its whole cross-chain cycle with no winner possible.
-    let is_green = dtype == WwdDayType::Green && !desis_limit_minor.is_zero();
-    let briefed_desis_limit_minor = if is_green {
+    let is_active = !desis_limit_minor.is_zero();
+    let briefed_desis_limit_minor = if is_active {
         desis_limit_minor
     } else {
         U256::ZERO
@@ -301,7 +189,7 @@ fn dispatch_brief(
         outbe_desis::api::AuctionBrief {
             worldwide_day: wwd,
             desis_limit_minor: briefed_desis_limit_minor,
-            is_green,
+            is_green: is_active,
         },
         ctx.block.timestamp,
         outbe_desis::api::BriefOverflowPolicy::CarryOver,
@@ -328,13 +216,5 @@ fn dispatch_brief(
             }
             Ok(rejected_desis_limit_minor)
         }
-    }
-}
-
-fn wwd_state_label(dtype: WwdDayType) -> &'static str {
-    match dtype {
-        WwdDayType::Green => "GREEN",
-        WwdDayType::Red => "RED",
-        WwdDayType::Unknown => "UNKNOWN",
     }
 }

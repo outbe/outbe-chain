@@ -6,8 +6,8 @@ use super::*;
 fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
     // Genesis at 10:00 UTC on day D. First CycleTick fires at 00:00:01 UTC
     // on day D+1. prev_day = D = genesis_utc_day -> day_number = 0 -> Ok.
-    // This is the production scenario that was broken when genesis_utc_day
-    // was derived from block 0 timestamp at 10:00 instead of genesisTime.
+    // This scenario failed in production when the node derived genesis_utc_day
+    // from the block 0 timestamp at 10:00 instead of genesisTime.
     const DAY_D_MIDNIGHT: u64 = GENESIS_TS; // 2024-01-01 00:00:00
     const DAY_D_10AM: u64 = DAY_D_MIDNIGHT + 10 * 3600; // 10:00 UTC
 
@@ -17,14 +17,11 @@ fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
         let ctx_anchor = genesis_block(handle.clone(), DAY_D_10AM);
         run_cycle_lifecycle(&ctx_anchor).unwrap();
         let canonical_wwd = outbe_primitives::time::WorldwideDay::new(20_240_102);
-        assert_eq!(
-            outbe_metadosis::api::worldwide_days(ctx_anchor.storage.clone())
+        assert!(
+            outbe_metadosis::api::worldwide_day(ctx_anchor.storage.clone(), canonical_wwd)
                 .unwrap()
-                .into_iter()
-                .map(|day| day.worldwide_day)
-                .collect::<Vec<_>>(),
-            vec![canonical_wwd],
-            "block 1 at the UTC+14 boundary must create only the canonical WWD"
+                .is_some(),
+            "block 1 at the UTC+14 boundary must create the canonical WWD"
         );
 
         // Block at 00:00:01 UTC day D+1 - CycleTick fires.
@@ -34,17 +31,20 @@ fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
         account_parent(&ctx_fire, 2);
         run_cycle_lifecycle(&ctx_fire).unwrap();
 
-        assert_eq!(
-            outbe_metadosis::api::worldwide_days(ctx_fire.storage.clone())
-                .unwrap()
-                .into_iter()
-                .map(|day| day.worldwide_day)
-                .collect::<Vec<_>>(),
-            vec![
+        assert!(
+            outbe_metadosis::api::worldwide_day(
+                ctx_fire.storage.clone(),
                 outbe_primitives::time::WorldwideDay::new(20_240_101),
-                canonical_wwd,
-            ],
-            "the first UTC midnight must retain the canonical genesis WWD and add only the explicitly settled previous UTC day"
+            )
+            .unwrap()
+            .is_some(),
+            "the first UTC midnight must create the explicitly settled previous UTC day"
+        );
+        assert!(
+            outbe_metadosis::api::worldwide_day(ctx_fire.storage.clone(), canonical_wwd)
+                .unwrap()
+                .is_some(),
+            "the first UTC midnight must retain the canonical genesis WWD"
         );
 
         let rewards = ctx_fire

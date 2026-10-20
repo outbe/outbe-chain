@@ -6,12 +6,9 @@ use outbe_primitives::error::Result;
 mod queries;
 use crate::schema::MetadosisContract;
 
-/// Selectors on this precompile that accept native value. The route table binds
-/// this to the address's `ValuePolicy` at compile time, so a selector added here
-/// without flipping the route fails the build.
+/// Selectors on this precompile that accept native value.
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
 
-// Alloy 1.6 generates event constructors with the Solidity argument lists.
 #[allow(clippy::too_many_arguments)]
 mod abi {
     alloy_sol_types::sol!(
@@ -34,14 +31,9 @@ pub fn dispatch(
         use IMetadosis::IMetadosisCalls::*;
         match call {
             getBootstrapEndTime(_) => metadata::<IMetadosis::getBootstrapEndTimeCall>(|| {
-                metadosis.get_bootstrap_end_time()
+                metadosis.bootstrap_end_time.read()
             }),
-            getWorldwideDayTerminalReceipt(c) => {
-                view(c, |c| queries::terminal_receipt(&metadosis, c))
-            }
-            getCapacityForfeitureReceipt(c) => {
-                view(c, |c| queries::capacity_forfeiture_receipt(&metadosis, c))
-            }
+            getEmissionDay(c) => view(c, |c| queries::emission_day(&metadosis, c)),
         }
     })
 }
