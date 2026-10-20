@@ -22,9 +22,7 @@ fn deliver(s: &StorageHandle<'_>, src_chain_id: u32, amount: U256) {
 }
 
 fn pool(s: &StorageHandle<'_>) -> U256 {
-    PromisLimitContract::new(s.clone())
-        .get_total_unallocated()
-        .unwrap()
+    PromisLimitContract::new(s.clone()).promis_limit().unwrap()
 }
 
 fn burned_events(storage: &HashMapStorageProvider) -> Vec<IIntexFactory::ProceedsBurned> {

@@ -387,7 +387,7 @@ mod call_sweep {
 
     fn unallocated(s: &StorageHandle<'_>) -> U256 {
         outbe_promislimit::PromisLimitContract::new(s.clone())
-            .get_total_unallocated()
+            .promis_limit()
             .unwrap()
     }
 

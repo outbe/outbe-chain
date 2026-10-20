@@ -659,7 +659,7 @@ fn strict_request_desis_limit_never_tops_up_a_live_auction() {
         assert_eq!(after.sched_active_count.read().unwrap(), 1);
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(storage)
-                .get_total_unallocated()
+                .promis_limit()
                 .unwrap(),
             U256::ZERO
         );
@@ -1020,7 +1020,7 @@ fn start_at(
                 .read_stage(WORLDWIDE_DAY)
                 .unwrap(),
             outbe_promislimit::PromisLimitContract::new(s.clone())
-                .get_total_unallocated()
+                .promis_limit()
                 .unwrap(),
         )
     });
@@ -1129,7 +1129,7 @@ fn a_price_lost_between_brief_and_start_cancels_the_day_and_returns_its_limit() 
         );
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(s.clone())
-                .get_total_unallocated()
+                .promis_limit()
                 .unwrap(),
             U256::from(10 * LOAD_MINOR),
             "the briefed limit goes back"
@@ -1260,9 +1260,7 @@ fn schedule_cancels_a_missed_start() {
         assert_eq!(contract.sched_active_count.read().unwrap(), 0);
         assert_eq!(contract.gate_active_count.read().unwrap(), 0);
         assert_eq!(
-            PromisLimitContract::new(s.clone())
-                .get_total_unallocated()
-                .unwrap(),
+            PromisLimitContract::new(s.clone()).promis_limit().unwrap(),
             U256::from(10 * LOAD_MINOR)
         );
     });
@@ -1289,9 +1287,7 @@ fn schedule_retires_an_overdue_day() {
         assert_eq!(contract.sched_active_count.read().unwrap(), 0);
         assert_eq!(contract.gate_active_count.read().unwrap(), 0);
         assert_eq!(
-            PromisLimitContract::new(s.clone())
-                .get_total_unallocated()
-                .unwrap(),
+            PromisLimitContract::new(s.clone()).promis_limit().unwrap(),
             U256::from(10 * LOAD_MINOR)
         );
     });
@@ -1756,7 +1752,7 @@ fn start_day(
                 .read_stage(WORLDWIDE_DAY)
                 .unwrap(),
             outbe_promislimit::PromisLimitContract::new(s.clone())
-                .get_total_unallocated()
+                .promis_limit()
                 .unwrap(),
         )
     });
@@ -2118,9 +2114,7 @@ fn clearing_returns_the_unused_limit_and_dust_to_promis() {
             U256::ZERO
         );
         assert_eq!(
-            PromisLimitContract::new(s.clone())
-                .get_total_unallocated()
-                .unwrap(),
+            PromisLimitContract::new(s.clone()).promis_limit().unwrap(),
             U256::from(2 * LOAD_MINOR + 7),
             "unsold whole units and conversion dust return to PromisLimit"
         );
@@ -2719,7 +2713,7 @@ fn a_day_nobody_could_price_is_cancelled_rather_than_failed() {
         // is briefed with none. Cancelling it must give that limit back.
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(s.clone())
-                .get_total_unallocated()
+                .promis_limit()
                 .unwrap(),
             U256::from(4 * LOAD_MINOR),
             "an unpriced day returns its limit"

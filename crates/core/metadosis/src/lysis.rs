@@ -92,7 +92,7 @@ fn finalize_lysis_settlement(
 ) -> Result<()> {
     let storage = ctx.storage.clone();
     let day = current.worldwide_day;
-    let carry_before = PromisLimitContract::new(storage.clone()).get_total_unallocated()?;
+    let carry_before = PromisLimitContract::new(storage.clone()).promis_limit()?;
     let green = resolve_green_day(current.day_type)?;
     let split = apply_lysis_limit(
         storage.clone(),
@@ -110,13 +110,12 @@ fn finalize_lysis_settlement(
     {
         return Err(mismatch());
     }
-    let credit =
-        PromisLimitContract::new(storage.clone()).checked_add_carry_over(completion.unused)?;
+    let credit = PromisLimitContract::new(storage.clone()).checked_credit(completion.unused)?;
     if credit.credited != completion.unused {
         return Err(mismatch());
     }
     apply_auction_brief(storage.clone(), day, &split, green, ctx.block.timestamp)?;
-    let carry_after = PromisLimitContract::new(storage).get_total_unallocated()?;
+    let carry_after = PromisLimitContract::new(storage).promis_limit()?;
     let transition = reduce_outer_wwd(
         Some(current),
         OuterWwdEvent::ProcessReady(ReadyDisposition::LysisCompleted),

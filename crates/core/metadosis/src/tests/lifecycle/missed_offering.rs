@@ -19,7 +19,7 @@ fn seed_unformed_missed_offering_day(
     StorageHandle::enter(provider, |storage| {
         install_test_enclaves();
         PromisLimitContract::new(storage.clone())
-            .checked_add_carry_over(carry_over)
+            .checked_credit(carry_over)
             .unwrap();
         let mut metadosis = MetadosisContract::new(storage.clone());
         metadosis
@@ -79,7 +79,7 @@ fn missed_offering_routes_the_formed_limit_once_and_exposes_a_durable_receipt() 
         );
         assert_eq!(
             PromisLimitContract::new(storage.clone())
-                .get_total_unallocated()
+                .promis_limit()
                 .unwrap(),
             carried + formed_limit
         );
@@ -540,9 +540,7 @@ fn missed_offering_rejects_a_populated_partition_without_any_partial_effect() {
             .unwrap()
             .is_none());
         assert_eq!(
-            PromisLimitContract::new(storage)
-                .get_total_unallocated()
-                .unwrap(),
+            PromisLimitContract::new(storage).promis_limit().unwrap(),
             U256::from(7)
         );
     });
@@ -658,7 +656,7 @@ fn missed_offering_terminalizes_a_day_that_never_formed_its_limit() {
         assert_eq!(receipt.carry_over_after, carry_over);
         assert_eq!(
             PromisLimitContract::new(storage.clone())
-                .get_total_unallocated()
+                .promis_limit()
                 .unwrap(),
             carry_over
         );

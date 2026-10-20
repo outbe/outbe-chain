@@ -208,8 +208,7 @@ fn clear_inner(
             worldwideDay: worldwide_day.into(),
             unusedDesisLimitMinor: unused_desis_limit_minor,
         })?;
-        PromisLimitContract::new(storage.clone())
-            .add_to_total_unallocated(unused_desis_limit_minor)?;
+        PromisLimitContract::new(storage.clone()).checked_credit(unused_desis_limit_minor)?;
     }
 
     if result.issued_units != 0 {

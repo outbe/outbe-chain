@@ -70,7 +70,7 @@ impl ExpiryHandler<B256> for IntexExpiry<'_, '_> {
         }
         if !returned.is_zero() {
             outbe_promislimit::PromisLimitContract::new(self.storage.clone())
-                .add_to_total_unallocated(returned)?;
+                .checked_credit(returned)?;
         }
         self.intex.hand_to_cleanup(group)?;
         self.intex.emit(IIntex::IntexGroupExpired {

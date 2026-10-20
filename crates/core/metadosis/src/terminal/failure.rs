@@ -69,7 +69,7 @@ fn route_failure(
         unused_limit,
     } = *settlement;
     let storage = metadosis.storage.clone();
-    let credit = PromisLimitContract::new(storage.clone()).checked_add_carry_over(unused_limit)?;
+    let credit = PromisLimitContract::new(storage.clone()).checked_credit(unused_limit)?;
     // Carry-over credit precedes native Tribute retirement.
     // The failure receipt, outer transition, and event follow retirement.
     // The owning command checkpoint covers every write and event.

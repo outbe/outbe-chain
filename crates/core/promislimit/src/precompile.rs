@@ -28,7 +28,7 @@ pub fn dispatch(
         use IPromisLimit::IPromisLimitCalls::*;
         match call {
             totalUnallocated(_) => {
-                metadata::<IPromisLimit::totalUnallocatedCall>(|| contract.get_total_unallocated())
+                metadata::<IPromisLimit::totalUnallocatedCall>(|| contract.promis_limit())
             }
         }
     })

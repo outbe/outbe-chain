@@ -214,7 +214,7 @@ fn technical_desis_refusal_rolls_back_the_metadosis_cycle_command() {
         assert!(!metadosis.closed_wwd.read_all().unwrap().contains(&wwd));
         assert_eq!(
             PromisLimitContract::new(storage.clone())
-                .get_total_unallocated()
+                .promis_limit()
                 .unwrap(),
             U256::ZERO
         );

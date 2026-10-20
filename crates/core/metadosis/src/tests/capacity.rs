@@ -133,7 +133,7 @@ fn seed_capacity_fixture_with_victim_state(
             .write(u64::from(tribute_count))
             .unwrap();
         PromisLimitContract::new(storage)
-            .checked_add_carry_over(initial_carry)
+            .checked_credit(initial_carry)
             .unwrap();
         (victim, scheduled)
     })
@@ -816,9 +816,7 @@ fn every_capacity_forfeiture_mutation_failure_restores_state_events_and_ce_work_
             .is_day_sealed(probe_victim)
             .unwrap());
         assert_eq!(
-            PromisLimitContract::new(storage)
-                .get_total_unallocated()
-                .unwrap(),
+            PromisLimitContract::new(storage).promis_limit().unwrap(),
             U256::from(107)
         );
     });

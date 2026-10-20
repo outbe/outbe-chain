@@ -90,7 +90,7 @@ pub(crate) fn apply_lysis_limit(
     storage: StorageHandle<'_>,
     input: LysisLimitInput,
 ) -> Result<LimitSplit> {
-    let carry_before = PromisLimitContract::new(storage.clone()).get_total_unallocated()?;
+    let carry_before = PromisLimitContract::new(storage.clone()).promis_limit()?;
     let split = LimitSplit::derive(
         input.base_limit,
         input.lysis_limit_minor,
@@ -99,21 +99,18 @@ pub(crate) fn apply_lysis_limit(
         input.green,
     )?;
     if !split.carry_over_credit.is_zero() {
-        let delta = PromisLimitContract::new(storage.clone())
-            .checked_add_carry_over(split.carry_over_credit)?;
+        let delta =
+            PromisLimitContract::new(storage.clone()).checked_credit(split.carry_over_credit)?;
         if delta.credited != split.carry_over_credit {
             return Err(MetadosisError::LysisLimitCreditMismatch.into());
         }
     }
     if !split.desis_limit_minor.is_zero() {
         let mut promis = PromisLimitContract::new(storage);
-        if promis
-            .checked_take_carry_over(split.desis_limit_minor)?
-            .is_none()
-        {
+        if promis.checked_take(split.desis_limit_minor)?.is_none() {
             return Err(MetadosisError::DesisLimitUnavailable {
                 desis_limit_minor: split.desis_limit_minor,
-                available: promis.get_total_unallocated()?,
+                available: promis.promis_limit()?,
             }
             .into());
         }
@@ -161,7 +158,7 @@ mod tests {
             let mut provider = HashMapStorageProvider::new(1);
             StorageHandle::enter(&mut provider, |storage| {
                 PromisLimitContract::new(storage.clone())
-                    .checked_add_carry_over(U256::from(carry as u64))
+                    .checked_credit(U256::from(carry as u64))
                     .unwrap();
                 let split = apply_lysis_limit(
                     storage.clone(),
@@ -176,7 +173,7 @@ mod tests {
                 assert_eq!(split.desis_limit_minor, U256::from(auction as u64));
                 assert_eq!(
                     PromisLimitContract::new(storage.clone())
-                        .get_total_unallocated()
+                        .promis_limit()
                         .unwrap(),
                     U256::from(remaining as u64)
                 );
@@ -189,9 +186,7 @@ mod tests {
                 );
                 assert_eq!(desis.brief_green.read(&day).unwrap(), u8::from(green));
                 assert_eq!(
-                    PromisLimitContract::new(storage)
-                        .get_total_unallocated()
-                        .unwrap(),
+                    PromisLimitContract::new(storage).promis_limit().unwrap(),
                     U256::from(remaining as u64)
                 );
             });
@@ -220,7 +215,7 @@ mod tests {
             let mut provider = HashMapStorageProvider::new(1);
             StorageHandle::enter(&mut provider, |storage| {
                 PromisLimitContract::new(storage)
-                    .checked_add_carry_over(carry)
+                    .checked_credit(carry)
                     .unwrap();
             });
             let before = provider.storage.clone();

@@ -91,7 +91,7 @@ fn world() -> (HashMapStorageProvider, Vec<(U256, U256)>) {
         }
         assert_eq!(GemContract::new(s.clone()).total_supply().unwrap(), 5);
         assert_eq!(
-            PromisLimitContract::new(s).get_total_unallocated().unwrap(),
+            PromisLimitContract::new(s).promis_limit().unwrap(),
             U256::ZERO
         );
         rights
@@ -122,9 +122,7 @@ fn conserved(p: &mut HashMapStorageProvider, rights: &[(U256, U256)]) {
             .filter_map(|(id, _)| api::get_item(&s, *id).unwrap())
             .filter(|item| gem.cleanup_group_slot.read(&item.group_key).unwrap() == 0)
             .collect::<Vec<_>>();
-        let returned = PromisLimitContract::new(s.clone())
-            .get_total_unallocated()
-            .unwrap();
+        let returned = PromisLimitContract::new(s.clone()).promis_limit().unwrap();
         (
             live.iter().map(|item| item.promis_load_minor).sum::<U256>(),
             live.len() as u64,
@@ -167,7 +165,7 @@ fn every_included_gem_subtype_returns_its_full_load_once_after_forfeiture() {
     StorageHandle::enter(&mut p, |s| {
         assert_eq!(GemContract::new(s.clone()).total_supply().unwrap(), 5);
         assert_eq!(
-            PromisLimitContract::new(s).get_total_unallocated().unwrap(),
+            PromisLimitContract::new(s).promis_limit().unwrap(),
             U256::ZERO
         );
     });
@@ -197,7 +195,7 @@ fn a_paid_then_mined_gem_returns_no_capacity_while_unpaid_siblings_forfeit() {
         let (item, group) = api::load_pair(&s, paid).unwrap().unwrap();
         api::remove_gem(&s, item, group).unwrap();
         assert_eq!(
-            PromisLimitContract::new(s).get_total_unallocated().unwrap(),
+            PromisLimitContract::new(s).promis_limit().unwrap(),
             U256::ZERO
         );
     });
@@ -208,7 +206,7 @@ fn a_paid_then_mined_gem_returns_no_capacity_while_unpaid_siblings_forfeit() {
         assert_eq!(GemContract::new(s.clone()).total_supply().unwrap(), 0);
         let total = rights.iter().map(|(_, load)| *load).sum::<U256>();
         assert_eq!(
-            PromisLimitContract::new(s).get_total_unallocated().unwrap(),
+            PromisLimitContract::new(s).promis_limit().unwrap(),
             total - paid_load
         );
     });
@@ -263,7 +261,7 @@ fn a_paid_gem_stays_live_beside_its_forfeited_siblings() {
         assert_eq!(gem.cleanup_group_slot.read(&group_key).unwrap(), 0);
         assert_eq!(gem.expiry_tree_root.read().unwrap(), U256::ZERO);
         assert_eq!(
-            PromisLimitContract::new(s).get_total_unallocated().unwrap(),
+            PromisLimitContract::new(s).promis_limit().unwrap(),
             total - paid_load
         );
         group_key
@@ -285,7 +283,7 @@ fn a_paid_gem_stays_live_beside_its_forfeited_siblings() {
         assert!(api::get_group(&s, group_key).unwrap().is_none());
         assert_eq!(GemContract::new(s.clone()).total_supply().unwrap(), 0);
         assert_eq!(
-            PromisLimitContract::new(s).get_total_unallocated().unwrap(),
+            PromisLimitContract::new(s).promis_limit().unwrap(),
             total - paid_load
         );
     });

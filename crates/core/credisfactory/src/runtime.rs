@@ -212,7 +212,7 @@ fn burn_forfeited_collateral(
         if !forfeit.gratis_burned_minor.is_zero() {
             pledges::burn_from_credis(&storage, credis_id, forfeit.gratis_burned_minor)?;
             outbe_promislimit::PromisLimitContract::new(storage.clone())
-                .add_to_total_unallocated(forfeit.gratis_burned_minor)?;
+                .checked_credit(forfeit.gratis_burned_minor)?;
         }
         Ok(forfeit)
     })

@@ -73,7 +73,7 @@ fn day_limit_formation_leaves_the_accumulator_untouched() {
     StorageHandle::enter(&mut provider, |storage| {
         install_test_enclaves();
         PromisLimitContract::new(storage)
-            .checked_add_carry_over(U256::from(30))
+            .checked_credit(U256::from(30))
             .unwrap();
     });
     apply_limit(&mut provider, 10, first, U256::from(100)).unwrap();
@@ -98,10 +98,10 @@ fn day_limit_formation_leaves_the_accumulator_untouched() {
             first_day.metadosis_limit_minor().read().unwrap(),
             U256::from(100)
         );
-        assert_eq!(promis.get_total_unallocated().unwrap(), U256::from(30));
+        assert_eq!(promis.promis_limit().unwrap(), U256::from(30));
 
         PromisLimitContract::new(storage)
-            .checked_add_carry_over(U256::from(7))
+            .checked_credit(U256::from(7))
             .unwrap();
     });
     apply_limit(&mut provider, 10, first, U256::from(100)).unwrap();
@@ -115,7 +115,7 @@ fn day_limit_formation_leaves_the_accumulator_untouched() {
             first_day.metadosis_limit_minor().read().unwrap(),
             U256::from(100)
         );
-        assert_eq!(promis.get_total_unallocated().unwrap(), U256::from(37));
+        assert_eq!(promis.promis_limit().unwrap(), U256::from(37));
         assert!(MetadosisContract::new(storage.clone())
             .set_metadosis_limit(first, U256::from(999))
             .is_err());
@@ -123,7 +123,7 @@ fn day_limit_formation_leaves_the_accumulator_untouched() {
             first_day.metadosis_limit_minor().read().unwrap(),
             U256::from(100)
         );
-        assert_eq!(promis.get_total_unallocated().unwrap(), U256::from(37));
+        assert_eq!(promis.promis_limit().unwrap(), U256::from(37));
     });
     assert!(apply_limit(&mut provider, 10, first, U256::from(101)).is_err());
 
@@ -141,7 +141,7 @@ fn day_limit_formation_leaves_the_accumulator_untouched() {
             second_day.metadosis_limit_minor().read().unwrap(),
             U256::from(200)
         );
-        assert_eq!(promis.get_total_unallocated().unwrap(), U256::from(37));
+        assert_eq!(promis.promis_limit().unwrap(), U256::from(37));
     });
 
     apply_limit(&mut provider, 30, third, U256::from(50)).unwrap();
@@ -168,7 +168,7 @@ fn day_limit_rejection_and_every_mutation_failure_are_atomic() {
         StorageHandle::enter(provider, |storage| {
             install_test_enclaves();
             PromisLimitContract::new(storage)
-                .checked_add_carry_over(carry_over)
+                .checked_credit(carry_over)
                 .unwrap();
         });
     }
@@ -210,7 +210,7 @@ fn day_limit_rejection_and_every_mutation_failure_are_atomic() {
     StorageHandle::enter(&mut rejected, |storage| {
         assert_eq!(
             PromisLimitContract::new(storage.clone())
-                .get_total_unallocated()
+                .promis_limit()
                 .unwrap(),
             U256::from(1)
         );
@@ -286,9 +286,7 @@ fn day_limit_rejection_and_every_mutation_failure_are_atomic() {
             assert_eq!(formed.carry_over_taken, U256::ZERO);
             assert_eq!(formed.day_limit, U256::from(100));
             assert_eq!(
-                PromisLimitContract::new(storage)
-                    .get_total_unallocated()
-                    .unwrap(),
+                PromisLimitContract::new(storage).promis_limit().unwrap(),
                 U256::from(9)
             );
         });

@@ -550,7 +550,7 @@ mod tests {
             assert_eq!(residue, U256::from(1_000) * unit + U256::from(4));
             assert_eq!(
                 PromisLimitContract::new(ctx.storage.clone())
-                    .get_total_unallocated()
+                    .promis_limit()
                     .unwrap(),
                 U256::from(1_000)
             );
@@ -582,7 +582,7 @@ mod tests {
             escrow_block_fee(ctx, &block_at(11, second), pending, &[V0, V1, V2]).unwrap();
             let carry_over = || {
                 PromisLimitContract::new(ctx.storage.clone())
-                    .get_total_unallocated()
+                    .promis_limit()
                     .unwrap()
             };
 
@@ -635,7 +635,7 @@ mod tests {
             );
             assert_eq!(
                 PromisLimitContract::new(ctx.storage.clone())
-                    .get_total_unallocated()
+                    .promis_limit()
                     .unwrap(),
                 expected_residue
             );
@@ -667,7 +667,7 @@ mod tests {
             );
             assert_eq!(
                 PromisLimitContract::new(ctx.storage.clone())
-                    .get_total_unallocated()
+                    .promis_limit()
                     .unwrap(),
                 expected_residue,
                 "the residue stays in the accumulator for whichever day draws on it"

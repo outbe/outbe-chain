@@ -220,7 +220,7 @@ fn settle_empty_day(
         dayState: wwd_state_label(day_type).into(),
         action: "no tributes".into(),
     })?;
-    promis_limit.add_to_total_unallocated(returned)
+    promis_limit.checked_credit(returned).map(|_| ())
 }
 
 struct ZeroAllocation {
@@ -264,7 +264,7 @@ fn settle_zero_allocation(
         .and_then(|rest| rest.checked_sub(desis_limit_minor))
         .and_then(|headroom| headroom.checked_add(to_promis))
         .ok_or(crate::errors::MetadosisStorageCorruptionError::SplitExceedsDayLimit)?;
-    promis_limit.add_to_total_unallocated(returned)?;
+    promis_limit.checked_credit(returned)?;
     commit_outer_transition(metadosis, wwd, transition, ctx.block.block_number)?;
     // No Lysis allocation consumes these tributes, so this path forfeits the sealed partition.
     TributeContract::new(metadosis.storage.clone()).forfeit_sealed_partition(wwd)?;

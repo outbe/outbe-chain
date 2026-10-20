@@ -52,7 +52,7 @@ pub(crate) fn apply_late_settlement_headroom(
 }
 
 fn apply_late_settlement_headroom_inner(ctx: &BlockRuntimeContext, amount: U256) -> Result<U256> {
-    PromisLimitContract::new(ctx.storage.clone()).checked_add_carry_over(amount)?;
+    PromisLimitContract::new(ctx.storage.clone()).checked_credit(amount)?;
     Ok(U256::ZERO)
 }
 
@@ -76,7 +76,7 @@ fn apply_day_limit(
 
         // A day is formed against its own emission. The accumulator is drawn from at the request,
         // where the day's demand is known, so forming one day never strands it for the next.
-        let carry_over = PromisLimitContract::new(ctx.storage.clone()).get_total_unallocated()?;
+        let carry_over = PromisLimitContract::new(ctx.storage.clone()).promis_limit()?;
         crate::commit::commit_day_limit_formation(
             &mut metadosis,
             DayLimitFormation {

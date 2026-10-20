@@ -125,9 +125,7 @@ fn assert_local_terminal_outcome(
         assert!(!metadosis.active_wwd.read_all().unwrap().contains(&wwd));
         assert!(metadosis.closed_wwd.read_all().unwrap().contains(&wwd));
         assert_eq!(
-            PromisLimitContract::new(storage)
-                .get_total_unallocated()
-                .unwrap(),
+            PromisLimitContract::new(storage).promis_limit().unwrap(),
             expected_promis
         );
     });
@@ -432,7 +430,7 @@ fn test_ready_processing_unknown_day_type_fails_and_returns_limit_to_promis() {
             .is_some());
 
         let promis = PromisLimitContract::new(storage);
-        assert_eq!(promis.get_total_unallocated().unwrap(), day_limit);
+        assert_eq!(promis.promis_limit().unwrap(), day_limit);
     });
 }
 
@@ -527,7 +525,7 @@ fn test_ready_processing_no_tributes_returns_the_limit_to_promis() {
         );
 
         let promis = PromisLimitContract::new(storage);
-        assert_eq!(promis.get_total_unallocated().unwrap(), day_limit);
+        assert_eq!(promis.promis_limit().unwrap(), day_limit);
     });
 }
 
@@ -563,7 +561,7 @@ fn native_lifecycle_preserves_the_empty_day_compatibility_branch() {
         );
         assert_eq!(
             PromisLimitContract::new(storage.clone())
-                .get_total_unallocated()
+                .promis_limit()
                 .unwrap(),
             day_limit
         );
@@ -604,9 +602,7 @@ fn green_empty_day_briefs_nothing_however_large_the_limit() {
             U256::ZERO
         );
         assert_eq!(
-            PromisLimitContract::new(storage)
-                .get_total_unallocated()
-                .unwrap(),
+            PromisLimitContract::new(storage).promis_limit().unwrap(),
             U256::MAX
         );
     });
@@ -767,7 +763,7 @@ fn no_tributes_green_day_briefs_nothing_and_returns_the_limit() {
 
         let promis = PromisLimitContract::new(storage);
         assert_eq!(
-            promis.get_total_unallocated().unwrap(),
+            promis.promis_limit().unwrap(),
             day_limit,
             "a day that earned nothing auctions nothing and leaves its limit on the warehouse"
         );

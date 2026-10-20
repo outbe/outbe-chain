@@ -67,7 +67,7 @@ pub(super) fn seed_missed_offering_day(
     StorageHandle::enter(provider, |storage| {
         install_test_enclaves();
         PromisLimitContract::new(storage.clone())
-            .checked_add_carry_over(formation_carry_over)
+            .checked_credit(formation_carry_over)
             .unwrap();
         let formation_ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(
@@ -79,7 +79,7 @@ pub(super) fn seed_missed_offering_day(
         );
         crate::emission_sink::apply(&formation_ctx, base_limit).unwrap();
         PromisLimitContract::new(storage.clone())
-            .checked_add_carry_over(later_carry_over)
+            .checked_credit(later_carry_over)
             .unwrap();
         MetadosisContract::new(storage)
             .worldwide_days

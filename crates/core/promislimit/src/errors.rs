@@ -7,10 +7,10 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum PromisLimitError {
-    #[error("promislimit total_unallocated overflow")]
-    TotalUnallocatedOverflow,
-    #[error("promislimit total_unallocated underflow")]
-    TotalUnallocatedUnderflow,
+    #[error("promis limit overflow")]
+    PromisLimitOverflow,
+    #[error("promis limit underflow")]
+    PromisLimitUnderflow,
 }
 
 impl From<PromisLimitError> for PrecompileError {

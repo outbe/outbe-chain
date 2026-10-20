@@ -311,7 +311,7 @@ fn forfeit_burns_only_remaining_credis_backing_and_leaves_fidelity_untouched() {
         let fidelity = fidelity_of(&storage, alice());
         let liquid = outbe_gratis::api::balance_ct(storage.clone(), alice()).unwrap();
         let reserve = PromisLimitContract::new(storage.clone())
-            .get_total_unallocated()
+            .promis_limit()
             .unwrap();
         call_credis(&storage, id, CREATED_AT);
         assert_eq!(lapse(&storage, id), 1);
@@ -338,7 +338,7 @@ fn forfeit_burns_only_remaining_credis_backing_and_leaves_fidelity_untouched() {
         );
         assert_eq!(
             PromisLimitContract::new(storage.clone())
-                .get_total_unallocated()
+                .promis_limit()
                 .unwrap(),
             reserve + pledge_cost()
         );
