@@ -82,22 +82,7 @@ impl AgentRewardContract<'_> {
 
     /// The part of the pool's queued day pools not yet credited.
     pub fn pool_pending_total(&self, pool: RewardPool) -> Result<U256> {
-        let mut pending = U256::ZERO;
-        let tail = self.accrual_tail.read()?;
-        for seq in self.accrual_head.read()?..tail {
-            let job = self
-                .accrual_jobs
-                .get(seq)?
-                .ok_or(AgentRewardError::AccrualJobMissing(seq))?;
-            if job.pool == pool as u8 {
-                pending = job
-                    .pool_minor
-                    .checked_sub(job.credited_minor)
-                    .and_then(|left| pending.checked_add(left))
-                    .ok_or(AgentRewardError::DistributionOverflow)?;
-            }
-        }
-        Ok(pending)
+        self.pending_total_minor.read(&(pool as u8))
     }
 
     /// Adds amount to an address's claimable reward in one pool.

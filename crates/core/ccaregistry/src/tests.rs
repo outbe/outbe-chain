@@ -79,6 +79,37 @@ fn the_bonded_total_follows_bonds_and_claims_and_needs_the_registry_balance() {
 }
 
 #[test]
+fn an_unbond_claim_that_leaves_less_than_the_bonded_total_reverts() {
+    run(|storage| {
+        bond(&storage, ALICE, BOND_REQUIREMENT);
+        bond(&storage, BOB, U256::from(7u64));
+        storage
+            .decrease_balance(CCA_REGISTRY_ADDRESS, U256::from(7u64))
+            .unwrap();
+        runtime::unbond(storage.clone(), ALICE).unwrap();
+        storage
+            .set_block_timestamp(U256::from(NOW + UNBOND_COOLDOWN_SECONDS))
+            .unwrap();
+
+        let error = runtime::claim_unbonded(storage.clone(), ALICE).unwrap_err();
+        assert!(error.to_string().contains("below the bonded total"));
+        assert_eq!(
+            api::get_cca(&storage, ALICE).unwrap().bondedMinor,
+            BOND_REQUIREMENT
+        );
+        assert_eq!(
+            api::total_bonded(&storage).unwrap(),
+            BOND_REQUIREMENT + U256::from(7u64)
+        );
+        assert_eq!(
+            storage.balance(CCA_REGISTRY_ADDRESS).unwrap(),
+            BOND_REQUIREMENT
+        );
+        assert_eq!(storage.balance(ALICE).unwrap(), U256::ZERO);
+    });
+}
+
+#[test]
 fn active_set_rejects_one_past_the_cap_and_frees_a_slot_on_exit() {
     run(|storage| {
         for id in 1..=MAX_ACTIVE_CCAS {

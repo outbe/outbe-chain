@@ -84,6 +84,10 @@ pub struct AgentRewardContract {
     // slot 15: claimable reward per pool, summed over its addresses
     #[attribute(order = 15)]
     pub claimable_total_minor: outbe_primitives::storage::dsl::Map<u8, U256>,
+
+    // slot 16: queued day pools per pool, the part not yet credited
+    #[attribute(order = 16)]
+    pub pending_total_minor: outbe_primitives::storage::dsl::Map<u8, U256>,
 }
 
 /// One settled WAA or SRA day pool. Blocks credit its addresses in list order,
@@ -101,13 +105,9 @@ pub struct AccrualJob {
     pub pool: u8,
     #[attribute(order = 2)]
     pub pool_minor: U256,
-    /// The day's tribute count over all addresses of the pool.
     #[attribute(order = 3)]
-    pub total_weight: u64,
-    /// Index of the next address in the day list.
-    #[attribute(order = 4)]
     pub next_index: u32,
-    #[attribute(order = 5)]
+    #[attribute(order = 4)]
     pub credited_minor: U256,
 }
 
@@ -143,7 +143,6 @@ pub(crate) struct DayIndex<'a, 's> {
 }
 
 impl<'s> AgentRewardContract<'s> {
-    /// The day index of a pool weighted by tribute counts.
     pub(crate) fn day_index(&self, pool: RewardPool) -> Result<DayIndex<'_, 's>> {
         match pool {
             RewardPool::Waa => Ok(DayIndex {
