@@ -477,6 +477,24 @@ class SeedStageTests(unittest.TestCase):
         )
         return json.loads(path.read_text())
 
+    def test_testnet_feeder_seeds_reach_genesis(self):
+        config = {
+            "feeder_pairs": "testnet/pairs.toml",
+            "feeder_seeds": "testnet/seeds.yaml",
+        }
+        oracle = CG.build_seed(config)["oracle"]
+        rated = {"840"} | {rate["quote"] for rate in oracle["initial_rates"]}
+        seeded = {seed["pair_quote"] for seed in oracle["scurve_seeds"]}
+        every = {"840", "978", "392", "826", "156", "344"}
+        self.assertEqual(rated, every)
+        self.assertEqual(seeded, every)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = self.seed_once(
+                pathlib.Path(tmp), minimal_config(tmp) | config
+            )["alloc"][SEED_GENESIS.ORACLE_ADDRESS]["storage"]
+        self.assertEqual(storage[SEED_GENESIS.hex32(34)], SEED_GENESIS.hex32(6))
+
     def test_seed_stage_produces_a_valid_seeded_genesis(self):
         with tempfile.TemporaryDirectory() as tmp:
             config = minimal_config(tmp) | {"prefund_coen_units": 5_000_000}
@@ -744,8 +762,10 @@ class BaselineProfileTests(unittest.TestCase):
         """testnet.yaml is not just a defaults bag: seeding it against itself
         must be a fixed point."""
         config = CG.load_yaml(CG.BASE_PROFILE_PATH)
-        # feeder_pairs adds testnet-only pairs. Other networks do not inherit it.
+        # feeder_pairs and feeder_seeds add testnet-only pairs and seeds. Other
+        # networks do not inherit them.
         del config["feeder_pairs"]
+        del config["feeder_seeds"]
         self.assertEqual(CG.build_seed(config), CG.build_seed({}))
 
 
