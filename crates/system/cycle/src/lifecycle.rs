@@ -58,6 +58,7 @@ impl BlockLifecycle for CycleLifecycle {
         outbe_gemfactory::hooks::sweep_forfeits(&ctx.runtime)?;
         outbe_intexfactory::hooks::sweep_forfeits(&ctx.runtime)?;
         outbe_credisfactory::hooks::sweep_forfeits(&ctx.runtime)?;
+        outbe_gemfactory::hooks::sweep_expired_positions(&ctx.runtime)?;
         crate::runtime::dispatch_triggers(&ctx.runtime)?;
         crate::handler::credit_reward_slice(&ctx.runtime)?;
         // The daily triggers only schedule. Each right walks one slice of its pinned day.
@@ -66,6 +67,12 @@ impl BlockLifecycle for CycleLifecycle {
         outbe_intexfactory::called::run_call_slice(&ctx.runtime)?;
         outbe_credisfactory::called::run_call_slice(&ctx.runtime)?;
         outbe_intexfactory::notify::send_notices(&ctx.runtime)?;
+        // Last: deleting what already expired decides nothing.
+        outbe_nodfactory::hooks::sweep_cleanup(&ctx.runtime)?;
+        outbe_gemfactory::hooks::sweep_cleanup(&ctx.runtime)?;
+        outbe_intexfactory::hooks::sweep_cleanup(&ctx.runtime)?;
+        outbe_credisfactory::hooks::sweep_cleanup(&ctx.runtime)?;
+        outbe_gemfactory::hooks::sweep_position_cleanup(&ctx.runtime)?;
         Ok(())
     }
 

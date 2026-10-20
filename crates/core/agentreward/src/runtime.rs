@@ -2,7 +2,6 @@ use crate::errors::AgentRewardError;
 use crate::precompile::IAgentReward;
 use crate::schema::{AgentRewardContract, RewardPool};
 use alloy_primitives::{Address, B256, U256};
-use outbe_gemfactory::schema::GemTypes;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::dsl::Map;
 use outbe_primitives::storage::StorageHandle;
@@ -156,14 +155,7 @@ impl AgentRewardContract<'_> {
             if requested > balance {
                 return Err(AgentRewardError::InsufficientClaimableBalance.into());
             }
-            let gem_type = match pool {
-                RewardPool::Waa => GemTypes::Wallet,
-                RewardPool::Sra => GemTypes::Sra,
-                RewardPool::Cca => GemTypes::Cca,
-                RewardPool::Validator => GemTypes::Validator,
-            };
-            let gem_id =
-                issue_reward_gem(&self.storage, (address, requested), gem_type, currencies)?;
+            let gem_id = issue_reward_gem(&self.storage, (address, requested), currencies)?;
             self.write_pool_claimable_reward(pool, address, balance - requested)?;
             self.emit(IAgentReward::RewardsClaimed {
                 account: address,
@@ -258,7 +250,6 @@ pub(crate) fn issue_reward_gem(
     storage: &StorageHandle<'_>,
 
     recipient: (Address, U256),
-    gem_type: GemTypes,
     (issuance_currency, reference_currency): (u16, u16),
 ) -> Result<U256> {
     let (owner, load) = recipient;
@@ -270,7 +261,6 @@ pub(crate) fn issue_reward_gem(
         storage,
         outbe_gemfactory::GemIssueParams {
             owner,
-            gem_type,
             promis_load_minor: load,
             issuance_currency,
             reference_currency,

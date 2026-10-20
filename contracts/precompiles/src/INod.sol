@@ -10,19 +10,20 @@ interface INod {
 
     /// ERC-4906: emitted when a Nod is settled.
     event MetadataUpdate(uint256 _tokenId);
-    /// ERC-4906: emitted per Worldwide Day when the call pass calls its buckets.
-    /// The range is the ids of that day, whose top four bytes are the day.
+    /// ERC-4906: emitted over the whole id range when a group is called. A group holds
+    /// Nods of several Worldwide Days, so no narrower range covers it.
     event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
 
-    /// Bucket force-called by the daily Call scan: the reference price
-    /// exceeded the bucket's call price on enough of the trailing window. Every
-    /// Nod in the bucket must be settled by `settlementDeadline`. Otherwise the
-    /// Nod is forfeit-burned.
-    event NodBucketCalled(bytes32 indexed bucketKey, uint64 calledAt, uint64 settlementDeadline);
+    /// Group force-called by the daily Call scan: the reference price
+    /// exceeded the group's call price on enough of the trailing window. Every
+    /// Nod in the group must be settled by `settlementDeadline`. Otherwise it is
+    /// forfeited with its group.
+    event NodGroupCalled(bytes32 indexed groupKey, uint64 calledAt, uint64 settlementDeadline);
 
-    /// Nod burned by the Call scan because its bucket's settlement deadline
-    /// lapsed while the Nod was still unpaid. No Gratis is minted.
-    event NodForfeited(address indexed owner, uint256 nodId, bytes encryptedGratisAmount);
+    /// The group's settlement deadline lapsed: its `nods` unpaid Nods are forfeited and
+    /// their `gratisLoadMinor` returned to the Promis reserve at once. No Gratis is
+    /// minted. The cleanup deletes them after.
+    event NodGroupForfeited(bytes32 indexed groupKey, uint32 nods, uint256 gratisLoadMinor);
 
     struct NodData {
         uint256 nodId;
@@ -42,7 +43,7 @@ interface INod {
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
         uint64 issuedAt;
-        /// Block timestamp when the Nod's bucket was force-called. `0` while not
+        /// Block timestamp when the Nod's group was force-called. `0` while not
         /// called. The settlement deadline is this plus the call notice period.
         uint64 calledAt;
         bool isSettled;
@@ -50,7 +51,7 @@ interface INod {
         /// Paid entitlements remain Settled after expiry. Forfeited items stay
         /// in storage until cleanup. Reads of deleted items revert with NodNotFound.
         uint8 effectiveState;
-        /// Bucket terms sealed at issuance, independent of current defaults.
+        /// Group terms sealed at issuance, independent of current defaults.
         uint256 callPriceMinor;
         uint16 callRate; // percent
         uint32 callWindow; // seconds
@@ -58,6 +59,8 @@ interface INod {
         uint32 callNoticePeriod; // seconds
         /// Inclusive deadline: 0 when uncalled.
         uint64 settlementDeadline;
+        /// The call group the Nod is called and forfeited with.
+        bytes32 groupKey;
     }
 
     // ERC-165

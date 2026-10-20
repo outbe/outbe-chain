@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
-/// Reward distribution surface. A claim issues the reward as a Gem:
-/// the WAA pool issues a Wallet Gem, SRA an Sra Gem, CCA a Cca Gem and the
-/// validator pool a Validator Gem. The `#[contract_dispatch]`
+/// Reward distribution surface. A claim issues the reward as a Gem. The `#[contract_dispatch]`
 /// macro pilot synthesizes the Rust dispatch at compile time from `#[contract_public(...)]`
 /// annotations in `crates/core/agentreward/src/precompile.rs`. The drift test in that crate
 /// keeps the two in sync. Every `promisLoadMinor` is a PROMIS load in protocol units

@@ -1,45 +1,111 @@
-//! GemPosition NFT bookkeeping: issue (create record + owner index) and the
-//! ERC-721-style read views. Positions are single-owner and non-transferable,
-//! mirroring the `gem` crate's NFT ledger.
+//! GemPosition NFT bookkeeping: issue (create record, owner and expiry-hour lists),
+//! expiry and deletion, and the ERC-721-style read views. Positions are single-owner
+//! and non-transferable, mirroring the `gem` crate's NFT ledger.
 
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{Address, U256};
 use base64::Engine;
 use outbe_primitives::error::Result;
+use outbe_primitives::expiry_queue;
+use outbe_primitives::storage::indexed_list::IndexedList;
 
 use crate::errors::GemFactoryError;
 use crate::schema::{GemFactoryContract, GemPosition};
 
-impl GemFactoryContract<'_> {
-    /// `keccak256(owner || index_be)` - per-owner position enumeration key.
-    pub(crate) fn owner_index_key(owner: Address, index: u32) -> B256 {
-        let mut buf = [0u8; 24];
-        buf[0..20].copy_from_slice(owner.as_slice());
-        buf[20..24].copy_from_slice(&index.to_be_bytes());
-        keccak256(buf)
+impl<'s> GemFactoryContract<'s> {
+    fn owner_index(&self, owner: Address) -> IndexedList<'s, U256> {
+        IndexedList::new(
+            self.owner_position_ids.list(&owner),
+            self.owner_position_index.clone(),
+        )
     }
 
-    /// Issue a position NFT: create the record and append it to the merchant's
-    /// owner index. Rejects a duplicate `position_id`.
+    fn hour_index(&self, hour: u64) -> IndexedList<'s, U256> {
+        IndexedList::new(
+            self.hour_positions.list(&hour),
+            self.hour_position_index.clone(),
+        )
+    }
+
+    /// Issue a position NFT: create the record, list it under its merchant and its
+    /// expiry hour, and queue the hour on its first position. Rejects a duplicate
+    /// `position_id`.
     pub(crate) fn add_position(&mut self, pos: &GemPosition) -> Result<()> {
         if self.positions.exists(pos.position_id)? {
             return Err(GemFactoryError::PositionAlreadyExists.into());
         }
         self.positions.create(pos)?;
+        self.owner_index(pos.merchant).insert(pos.position_id)?;
+        let hour = pos.expiry_hour();
+        if self.hour_position_count(hour)? == 0 {
+            expiry_queue::push(&PositionExpiryHours(self), hour, pos.expires_at)?;
+        }
+        self.hour_index(hour).insert(pos.position_id)?;
+        let capacity = self
+            .hour_capacity_minor
+            .read(&hour)?
+            .checked_add(pos.remaining_capacity_minor)
+            .ok_or(GemFactoryError::Overflow)?;
+        self.hour_capacity_minor.write(&hour, capacity)
+    }
 
-        let owner_count = self.position_owner_counts.read(&pos.merchant)?;
-        self.position_owner_ids.write(
-            &Self::owner_index_key(pos.merchant, owner_count),
-            pos.position_id,
-        )?;
-        self.position_owner_counts
-            .write(&pos.merchant, owner_count + 1)?;
+    /// Records a merchant issue drawing `load` from the position's hour.
+    pub(crate) fn take_hour_capacity(&mut self, hour: u64, load: U256) -> Result<()> {
+        let capacity = self
+            .hour_capacity_minor
+            .read(&hour)?
+            .checked_sub(load)
+            .ok_or(GemFactoryError::InsufficientCapacity)?;
+        self.hour_capacity_minor.write(&hour, capacity)
+    }
+
+    pub(crate) fn hour_position_count(&self, hour: u64) -> Result<u32> {
+        self.hour_positions.list(&hour).len()
+    }
+
+    pub(crate) fn hour_position(&self, hour: u64, index: u32) -> Result<U256> {
+        self.hour_positions
+            .list(&hour)
+            .get(index)?
+            .ok_or_else(|| GemFactoryError::IndexOutOfBounds.into())
+    }
+
+    /// Moves an expired hour from the expiry queue to the cleanup, which deletes its
+    /// positions. Done with the hour's credit, so a retry never credits it twice.
+    pub(crate) fn hand_hour_to_cleanup(&mut self, hour: u64) -> Result<()> {
+        let deadline = self.expiry_deadline.read(&hour)?;
+        expiry_queue::remove(&PositionExpiryHours(self), hour)?;
+        expiry_queue::push(&PositionCleanupHours(self), hour, deadline)
+    }
+
+    /// Deletes an expired position, and forgets its hour with the last one.
+    pub(crate) fn delete_position(&mut self, record: &GemPosition) -> Result<()> {
+        let hour = record.expiry_hour();
+        self.owner_index(record.merchant)
+            .remove(record.position_id)?;
+        self.hour_index(hour).remove(record.position_id)?;
+        self.positions.delete(record.position_id)?;
+        if self.hour_position_count(hour)? == 0 {
+            self.hour_capacity_minor.clear(&hour)?;
+            expiry_queue::remove(&PositionExpiryHours(self), hour)?;
+            expiry_queue::remove(&PositionCleanupHours(self), hour)?;
+        }
         Ok(())
     }
 
     // --- Position NFT views (ERC-721-style, non-transferable) ---
 
+    /// What the position can still issue: nothing once it expired, whether or not the
+    /// cleanup has deleted it yet.
+    pub(crate) fn remaining_capacity(&self, pos: &GemPosition) -> Result<U256> {
+        let now = self.storage.timestamp()?.to::<u64>();
+        Ok(match now >= pos.expires_at {
+            true => U256::ZERO,
+            false => pos.remaining_capacity_minor,
+        })
+    }
+
     pub fn balance_of(&self, owner: Address) -> Result<u32> {
-        self.position_owner_counts.read(&owner)
+        self.owner_position_ids.list(&owner).len()
     }
 
     pub fn owner_of(&self, position_id: U256) -> Result<Address> {
@@ -51,12 +117,10 @@ impl GemFactoryContract<'_> {
     }
 
     pub fn token_of_owner_by_index(&self, owner: Address, index: u32) -> Result<U256> {
-        let count = self.position_owner_counts.read(&owner)?;
-        if index >= count {
-            return Err(GemFactoryError::IndexOutOfBounds.into());
-        }
-        self.position_owner_ids
-            .read(&Self::owner_index_key(owner, index))
+        self.owner_position_ids
+            .list(&owner)
+            .get(index)?
+            .ok_or_else(|| GemFactoryError::IndexOutOfBounds.into())
     }
 
     pub fn token_uri(&self, position_id: U256) -> Result<String> {
@@ -70,7 +134,7 @@ impl GemFactoryContract<'_> {
             position_id,
             pos.merchant,
             pos.source_intex_id,
-            pos.remaining_capacity_minor,
+            self.remaining_capacity(&pos)?,
             pos.source_entry_price_minor,
             pos.issuance_currency,
             pos.reference_currency,
@@ -80,3 +144,35 @@ impl GemFactoryContract<'_> {
         Ok(format!("data:application/json;base64,{}", encoded))
     }
 }
+
+/// Positions' expiry hours, each queued as one entry.
+pub struct PositionExpiryHours<'a, 'storage>(pub &'a GemFactoryContract<'storage>);
+
+outbe_primitives::impl_expiry_queue!(PositionExpiryHours<u64> {
+    root: expiry_tree_root,
+    mid: expiry_tree_mid,
+    leaf: expiry_tree_leaf,
+    len: expiry_bucket_len,
+    live: expiry_bucket_live,
+    at: expiry_bucket_at,
+    slot: expiry_hour_slot,
+    deadline: expiry_deadline,
+    sweep_bucket: expiry_sweep_hour,
+    cursor: expiry_cursor,
+});
+
+/// Expired hours whose positions wait to be deleted.
+pub struct PositionCleanupHours<'a, 'storage>(pub &'a GemFactoryContract<'storage>);
+
+outbe_primitives::impl_expiry_queue!(PositionCleanupHours<u64> {
+    root: cleanup_tree_root,
+    mid: cleanup_tree_mid,
+    leaf: cleanup_tree_leaf,
+    len: cleanup_bucket_len,
+    live: cleanup_bucket_live,
+    at: cleanup_bucket_at,
+    slot: cleanup_hour_slot,
+    deadline: cleanup_deadline,
+    sweep_bucket: cleanup_sweep_hour,
+    cursor: cleanup_cursor,
+});

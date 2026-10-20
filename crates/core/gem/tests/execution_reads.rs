@@ -11,7 +11,6 @@ const ISSUED_AT: u64 = 1_704_067_200;
 fn params(owner: Address) -> GemAddParams {
     GemAddParams {
         owner,
-        gem_type: 2,
         promis_load_minor: U256::from(1_000_000u64),
         entry_price_minor: U256::from(500_000u64),
         issuance_currency: 840,
@@ -48,9 +47,9 @@ fn removal_consumes_loaded_state() {
     let owner = Address::repeat_byte(0x41);
     StorageHandle::enter(&mut provider, |storage| {
         let gem_id = api::add_gem(&storage, params(owner)).unwrap();
-        let (item, bucket) = api::load_pair(&storage, gem_id).unwrap().unwrap();
+        let (item, group) = api::load_pair(&storage, gem_id).unwrap().unwrap();
 
-        api::remove_gem(&storage, item, bucket).unwrap();
+        api::remove_gem(&storage, item, group).unwrap();
 
         assert!(api::get_item(&storage, gem_id).unwrap().is_none());
         assert_eq!(GemContract::new(storage).total_supply().unwrap(), 0);

@@ -1,89 +1,108 @@
-//! Scheduling of a sweep that walks one closed UTC day at a time.
+//! Scheduling of a sweep that walks one closed UTC day at a time, every closed day in
+//! order.
 
 use crate::error::Result;
 use crate::storage::dsl::Value;
+use crate::time::next_date_key;
 
-/// The day a sweep is walking and the one waiting behind it, 0 for none.
+/// The day a sweep is walking, 0 for none, and the newest closed day scheduled.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SweepDays {
     pub current: u32,
-    pub pending: u32,
+    pub latest: u32,
 }
 
 /// What scheduling a closed day did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scheduled {
-    /// Nothing was running, so the day starts now.
+    /// Nothing was running, so the first day not yet walked starts now.
     Opened,
     /// An earlier day is still being walked, so the day waits behind it.
     Queued,
-    /// The day took the place of `skipped`, which will never be walked.
-    Replaced { skipped: u32 },
-    /// The day is already being walked or already waits.
+    /// The day is already scheduled.
     Ignored,
 }
 
 impl SweepDays {
-    /// Schedules `day` without disturbing a sweep in flight. One day waits at most,
-    /// so a backlog shows up as skipped days rather than as a growing queue.
+    /// Schedules `day` without disturbing a sweep in flight. Every closed day after the
+    /// newest one scheduled is walked, in order, so a sweep that fell behind catches up
+    /// rather than skipping days. An idle sweep walks the newest day again.
     pub fn schedule(mut self, day: u32) -> (Self, Scheduled) {
-        let scheduled = if day <= self.current.max(self.pending) {
+        let idle = self.current == 0;
+        let scheduled = if day < self.latest || (!idle && day <= self.current.max(self.latest)) {
             Scheduled::Ignored
-        } else if self.current == 0 {
+        } else if idle {
+            let first = match self.latest {
+                latest if latest == 0 || latest == day => day,
+                latest => next_date_key(latest),
+            };
             self = Self {
-                current: day,
-                pending: 0,
+                current: first,
+                latest: day,
             };
             Scheduled::Opened
-        } else if self.pending == 0 {
-            self.pending = day;
-            Scheduled::Queued
         } else {
-            let skipped = core::mem::replace(&mut self.pending, day);
-            Scheduled::Replaced { skipped }
+            self.latest = day;
+            Scheduled::Queued
         };
         (self, scheduled)
     }
 
-    /// The current day was walked to its end, so the waiting one starts.
+    /// The current day was walked to its end, so the next one starts, or the sweep idles.
     pub fn finish(self) -> Self {
+        let current = match self.current < self.latest {
+            true => next_date_key(self.current),
+            false => 0,
+        };
         Self {
-            current: self.pending,
-            pending: 0,
+            current,
+            latest: self.latest,
         }
     }
 }
 
-/// The stored current and pending days of one sweep.
+/// The stored current and newest scheduled days of one sweep.
 pub struct PinnedDay<'a, 'storage> {
     pub current: &'a Value<'storage, u32>,
-    pub pending: &'a Value<'storage, u32>,
+    pub latest: &'a Value<'storage, u32>,
 }
 
 impl PinnedDay<'_, '_> {
-    /// Schedules `day` and stores the day that waits. An opened day is stored by [`Self::open`].
-    pub fn schedule(&self, day: u32) -> Result<(SweepDays, Scheduled)> {
-        let days = SweepDays {
+    fn days(&self) -> Result<SweepDays> {
+        Ok(SweepDays {
             current: self.current.read()?,
-            pending: self.pending.read()?,
-        };
-        let (next, scheduled) = days.schedule(day);
-        if matches!(scheduled, Scheduled::Queued | Scheduled::Replaced { .. }) {
-            self.pending.write(next.pending)?;
+            latest: self.latest.read()?,
+        })
+    }
+
+    /// Schedules `day` and stores the newest day scheduled. An opened day is stored by
+    /// [`Self::open`].
+    pub fn schedule(&self, day: u32) -> Result<(SweepDays, Scheduled)> {
+        let (next, scheduled) = self.days()?.schedule(day);
+        if scheduled == Scheduled::Queued {
+            self.latest.write(next.latest)?;
         }
         Ok((next, scheduled))
     }
 
+    /// Marks `day` walked by an idle sweep with nothing to walk.
+    pub fn pass(&self, day: u32) -> Result<()> {
+        if day > self.latest.read()? {
+            self.latest.write(day)?;
+        }
+        Ok(())
+    }
+
     pub fn open(&self, days: SweepDays) -> Result<()> {
         self.current.write(days.current)?;
-        self.pending.write(days.pending)
+        self.latest.write(days.latest)
     }
 
     /// Ends the walk of `pinned`. Returns the days to open next, or `None` once idle.
     pub fn finish(&self, pinned: u32) -> Result<Option<SweepDays>> {
         let next = SweepDays {
             current: pinned,
-            pending: self.pending.read()?,
+            latest: self.latest.read()?,
         }
         .finish();
         if next.current == 0 {
@@ -110,54 +129,63 @@ mod tests {
     const YESTERDAY: u32 = 20260101;
     const TODAY: u32 = 20260102;
 
-    fn days(current: u32, pending: u32) -> SweepDays {
-        SweepDays { current, pending }
+    fn days(current: u32, latest: u32) -> SweepDays {
+        SweepDays { current, latest }
     }
 
     #[test]
     fn a_closed_day_opens_an_idle_sweep_and_waits_behind_a_running_one() {
         assert_eq!(
             SweepDays::default().schedule(TODAY),
-            (days(TODAY, 0), Scheduled::Opened)
+            (days(TODAY, TODAY), Scheduled::Opened)
         );
         assert_eq!(
-            days(YESTERDAY, 0).schedule(TODAY),
+            days(YESTERDAY, YESTERDAY).schedule(TODAY),
             (days(YESTERDAY, TODAY), Scheduled::Queued)
         );
     }
 
     #[test]
-    fn a_day_already_walked_or_waiting_is_left_alone() {
-        for scheduled in [days(TODAY, 0), days(YESTERDAY, TODAY)] {
+    fn a_day_already_scheduled_is_left_alone() {
+        for scheduled in [days(TODAY, TODAY), days(YESTERDAY, TODAY)] {
             assert_eq!(scheduled.schedule(TODAY), (scheduled, Scheduled::Ignored));
         }
-        assert_eq!(
-            days(TODAY, 0).schedule(YESTERDAY),
-            (days(TODAY, 0), Scheduled::Ignored)
-        );
-    }
-
-    #[test]
-    fn a_newer_day_replaces_the_one_waiting_and_names_it() {
-        assert_eq!(
-            days(TWO_AGO, YESTERDAY).schedule(TODAY),
-            (
-                days(TWO_AGO, TODAY),
-                Scheduled::Replaced { skipped: YESTERDAY }
-            )
-        );
-    }
-
-    #[test]
-    fn finishing_starts_the_waiting_day_or_goes_idle() {
-        assert_eq!(days(YESTERDAY, TODAY).finish(), days(TODAY, 0));
-        assert_eq!(days(TODAY, 0).finish(), SweepDays::default());
+        for scheduled in [days(TODAY, TODAY), days(0, TODAY)] {
+            assert_eq!(
+                scheduled.schedule(YESTERDAY),
+                (scheduled, Scheduled::Ignored)
+            );
+        }
     }
 
     #[test]
     fn a_finished_day_can_be_walked_again() {
-        let finished = days(TODAY, 0).finish();
-        assert_eq!(finished.schedule(TODAY).1, Scheduled::Opened);
+        let finished = days(TODAY, TODAY).finish();
+        assert_eq!(
+            finished.schedule(TODAY),
+            (days(TODAY, TODAY), Scheduled::Opened)
+        );
+    }
+
+    #[test]
+    fn every_day_a_stalled_sweep_missed_is_walked_in_order() {
+        let (running, _) = days(TWO_AGO, YESTERDAY).schedule(TODAY);
+        assert_eq!(running, days(TWO_AGO, TODAY));
+        assert_eq!(running.finish(), days(YESTERDAY, TODAY));
+        assert_eq!(running.finish().finish(), days(TODAY, TODAY));
+        assert_eq!(running.finish().finish().finish(), days(0, TODAY));
+
+        // An idle sweep picks up after the newest day it scheduled.
+        assert_eq!(
+            days(0, TWO_AGO).schedule(TODAY),
+            (days(YESTERDAY, TODAY), Scheduled::Opened)
+        );
+    }
+
+    #[test]
+    fn finishing_starts_the_next_day_or_goes_idle() {
+        assert_eq!(days(YESTERDAY, TODAY).finish(), days(TODAY, TODAY));
+        assert_eq!(days(TODAY, TODAY).finish(), days(0, TODAY));
     }
 
     fn with_pinned(test: impl FnOnce(&PinnedDay<'_, '_>)) {
@@ -167,23 +195,23 @@ mod tests {
         let mut provider = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut provider, |storage| {
             let current = Value::new(U256::from(1), contract, storage.clone());
-            let pending = Value::new(U256::from(2), contract, storage);
+            let latest = Value::new(U256::from(2), contract, storage);
             test(&PinnedDay {
                 current: &current,
-                pending: &pending,
+                latest: &latest,
             });
         });
     }
 
     #[test]
-    fn a_pinned_day_stores_the_waiting_day_and_leaves_opening_to_the_caller() {
+    fn a_pinned_day_stores_the_newest_day_and_leaves_opening_to_the_caller() {
         with_pinned(|pinned| {
             assert_eq!(
                 pinned.schedule(YESTERDAY).unwrap(),
-                (days(YESTERDAY, 0), Scheduled::Opened)
+                (days(YESTERDAY, YESTERDAY), Scheduled::Opened)
             );
             assert_eq!(pinned.current.read().unwrap(), 0);
-            pinned.open(days(YESTERDAY, 0)).unwrap();
+            pinned.open(days(YESTERDAY, YESTERDAY)).unwrap();
             assert_eq!(
                 pinned.schedule(TODAY).unwrap(),
                 (days(YESTERDAY, TODAY), Scheduled::Queued)
@@ -191,7 +219,7 @@ mod tests {
             assert_eq!(
                 (
                     pinned.current.read().unwrap(),
-                    pinned.pending.read().unwrap()
+                    pinned.latest.read().unwrap()
                 ),
                 (YESTERDAY, TODAY)
             );
@@ -200,12 +228,23 @@ mod tests {
     }
 
     #[test]
-    fn finishing_a_pinned_day_hands_over_the_waiting_one_or_goes_idle() {
+    fn finishing_a_pinned_day_hands_over_the_next_one_or_goes_idle() {
         with_pinned(|pinned| {
             pinned.open(days(YESTERDAY, TODAY)).unwrap();
-            assert_eq!(pinned.finish(YESTERDAY).unwrap(), Some(days(TODAY, 0)));
-            pinned.open(days(TODAY, 0)).unwrap();
+            assert_eq!(pinned.finish(YESTERDAY).unwrap(), Some(days(TODAY, TODAY)));
+            pinned.open(days(TODAY, TODAY)).unwrap();
             assert_eq!(pinned.finish(TODAY).unwrap(), None);
+            assert_eq!(pinned.current.read().unwrap(), 0);
+            assert_eq!(pinned.latest.read().unwrap(), TODAY);
+        });
+    }
+
+    #[test]
+    fn an_idle_pass_moves_the_newest_day_forward_only() {
+        with_pinned(|pinned| {
+            pinned.pass(TODAY).unwrap();
+            pinned.pass(YESTERDAY).unwrap();
+            assert_eq!(pinned.latest.read().unwrap(), TODAY);
             assert_eq!(pinned.current.read().unwrap(), 0);
         });
     }

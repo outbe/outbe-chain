@@ -19,7 +19,6 @@ fn series_cost(entry_price_minor: U256, load_minor: U256, units: U256) -> Settle
         entry_price_minor,
         load_minor,
         units,
-        cost_rate_pct: 100,
     }
 }
 

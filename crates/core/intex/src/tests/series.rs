@@ -24,9 +24,9 @@ fn create_then_read_round_trip() {
                 call_notice_period_seconds: CALL_NOTICE_PERIOD,
             }
         );
-        assert_eq!(r.lifecycle_state().unwrap(), IntexState::Issued);
+        assert_eq!(api::state(&s, &r).unwrap(), IntexState::Issued);
         assert_eq!(r.issued_at, ISSUED_AT);
-        assert_eq!(r.called_at, 0);
+        assert_eq!(api::call_stamp(&s, &r).unwrap().called_at, 0);
         assert_eq!(r.worldwide_day, 20260101.into());
         // The ledger stores the call period verbatim. The caller must apply
         // any default.
@@ -65,13 +65,48 @@ fn reads_on_missing_series() {
 }
 
 #[test]
-fn record_called_sets_state_and_called_at() {
+fn a_spent_series_is_deleted_and_leaves_the_enumeration() {
     with_registry(|s| {
-        api::create_series(&s, sample_params(1)).unwrap();
-        api::record_called(&s, sid(1), ISSUED_AT + 10).unwrap();
-        let r = api::read_series(&s, sid(1)).unwrap();
-        assert_eq!(r.lifecycle_state().unwrap(), IntexState::Called);
-        assert_eq!(r.called_at, ISSUED_AT + 10);
+        api::create_series(&s, sample_params(11)).unwrap();
+        api::create_series(&s, sample_params(22)).unwrap();
+        api::record_settled_units(&s, sid(11), 100).unwrap();
+        assert!(
+            !api::release_if_spent(&s, sid(11)).unwrap(),
+            "settled units still to exercise"
+        );
+
+        api::record_exercised_units(&s, sid(11), owner(), 100).unwrap();
+        assert!(api::release_if_spent(&s, sid(11)).unwrap());
+
+        assert!(!api::series_exists(&s, sid(11)).unwrap());
+        assert_eq!(api::total_series(&s).unwrap(), 1);
+        assert_eq!(api::series_id_at(&s, 0).unwrap(), sid(22));
+        assert_eq!(api::settled_units(&s, sid(11)).unwrap(), 0);
+    });
+}
+
+/// Past its deadline a series' unpaid units wait for the group's expiry to return them,
+/// so the series is spent only once the group handed it to the cleanup.
+#[test]
+fn an_expired_series_is_spent_once_its_group_returned_its_units() {
+    with_registry(|s| {
+        api::create_series(&s, sample_params(11)).unwrap();
+        assert!(
+            !api::release_if_spent(&s, sid(11)).unwrap(),
+            "unpaid units are still live"
+        );
+
+        api::call_group_of(&s, sid(11), 1).unwrap();
+        assert!(
+            !api::release_if_spent(&s, sid(11)).unwrap(),
+            "the group's expiry has not returned its units yet"
+        );
+
+        let group = api::read_series(&s, sid(11)).unwrap().group_key();
+        IntexContract::new(s.clone())
+            .hand_to_cleanup(group)
+            .unwrap();
+        assert!(api::release_if_spent(&s, sid(11)).unwrap());
     });
 }
 

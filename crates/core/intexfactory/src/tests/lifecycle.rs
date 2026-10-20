@@ -68,35 +68,24 @@ pub(super) fn fill_days(
 }
 
 #[test]
-fn insert_remove_call_bin_roundtrip() {
+fn a_group_holds_its_bin_entry_until_its_last_member_leaves() {
     with_factory(|s| {
+        runtime::issue_intex(&s, sample(11)).unwrap();
+        runtime::issue_intex(&s, sample(22)).unwrap();
         let mut f = IntexContract::new(s.clone());
-        let trigger = U256::from(EXPECTED_TRIGGER);
-        let bin = outbe_primitives::call_bins::price_to_bin(trigger).unwrap();
-        f.insert_call_bin(sid(11), REFERENCE_ISO, trigger).unwrap();
-        f.insert_call_bin(sid(22), REFERENCE_ISO, trigger).unwrap();
-        assert_eq!(
+        let bin = outbe_primitives::call_bins::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
+        let count = |f: &IntexContract<'_>| {
             f.call_bin_count
                 .read(&IntexContract::scoped(REFERENCE_ISO, bin))
-                .unwrap(),
-            2
-        );
-        f.remove_call_bin(REFERENCE_ISO, WorldwideDay::new(11))
-            .unwrap();
-        assert_eq!(
-            f.call_bin_count
-                .read(&IntexContract::scoped(REFERENCE_ISO, bin))
-                .unwrap(),
-            1
-        );
-        f.remove_call_bin(REFERENCE_ISO, WorldwideDay::new(22))
-            .unwrap();
-        assert_eq!(
-            f.call_bin_count
-                .read(&IntexContract::scoped(REFERENCE_ISO, bin))
-                .unwrap(),
-            0
-        );
+                .unwrap()
+        };
+        let group = group_of(&s, sid(11));
+        assert_eq!(group, group_of(&s, sid(22)));
+        assert_eq!(count(&f), 1);
+        f.leave_call_group(group, sid(11)).unwrap();
+        assert_eq!(count(&f), 1);
+        f.leave_call_group(group, sid(22)).unwrap();
+        assert_eq!(count(&f), 0);
     });
 }
 
@@ -113,17 +102,9 @@ fn try_call_marks_called_when_threshold_met() {
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
         fill_days(&oracle, last_closed_day, pair, 30, breach);
 
-        let group = f
-            .call_bin_group(REFERENCE_ISO, WorldwideDay::new(7))
-            .unwrap();
-        assert_eq!(call_group(&s, &mut f, &group, last_closed_day, scan_ts), 1);
-        assert_eq!(
-            outbe_intex::api::read_series(&s, sid(7))
-                .unwrap()
-                .lifecycle_state()
-                .unwrap(),
-            outbe_intex::IntexState::Called
-        );
+        let group = group_of(&s, sid(7));
+        assert_eq!(call_group(&s, &mut f, group, last_closed_day, scan_ts), 1);
+        assert_eq!(series_state(&s, sid(7)), outbe_intex::IntexState::Called);
         let bin = outbe_primitives::call_bins::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
         assert_eq!(
             f.call_bin_count
@@ -156,17 +137,9 @@ fn try_call_skips_when_below_threshold() {
             d = previous_date_key(d);
         }
 
-        let group = f
-            .call_bin_group(REFERENCE_ISO, WorldwideDay::new(7))
-            .unwrap();
-        assert_eq!(call_group(&s, &mut f, &group, last_closed_day, scan_ts), 0);
-        assert_eq!(
-            outbe_intex::api::read_series(&s, sid(7))
-                .unwrap()
-                .lifecycle_state()
-                .unwrap(),
-            outbe_intex::IntexState::Issued
-        );
+        let group = group_of(&s, sid(7));
+        assert_eq!(call_group(&s, &mut f, group, last_closed_day, scan_ts), 0);
+        assert_eq!(series_state(&s, sid(7)), outbe_intex::IntexState::Issued);
     });
 }
 
@@ -204,19 +177,9 @@ fn try_call_excludes_pre_issuance_days() {
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
         fill_days(&oracle, last_closed_day, pair, 30, breach);
 
-        let group = Group {
-            iso_code: REFERENCE_ISO,
-            worldwide_day: WorldwideDay::new(8),
-            members: vec![sid(8)],
-        };
-        assert_eq!(call_group(&s, &mut f, &group, last_closed_day, scan_ts), 0);
-        assert_eq!(
-            outbe_intex::api::read_series(&s, sid(8))
-                .unwrap()
-                .lifecycle_state()
-                .unwrap(),
-            outbe_intex::IntexState::Issued
-        );
+        let group = group_of(&s, sid(8));
+        assert_eq!(call_group(&s, &mut f, group, last_closed_day, scan_ts), 0);
+        assert_eq!(series_state(&s, sid(8)), outbe_intex::IntexState::Issued);
     });
 }
 
@@ -224,13 +187,14 @@ mod call_sweep {
     //! A call sweep too large for one run continues across blocks, pinned to the
     //! day it opened on.
 
+    use crate::tests::{group_of, series_state};
+
     use alloy_primitives::U256;
     use outbe_intex::SeriesId;
     use outbe_oracle::api::AddressPair;
     use outbe_oracle::schema::OracleContract;
     use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-    use outbe_primitives::storage::types::Storable;
     use outbe_primitives::storage::StorageHandle;
     use outbe_primitives::time::WorldwideDay;
     use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
@@ -291,8 +255,14 @@ mod call_sweep {
         }
     }
 
+    /// Each day's candidate is issued on its own day, so it opens its own call group.
     fn seed_called_candidate(s: &StorageHandle<'_>, worldwide_day: u32) {
-        seed_candidate_at(s, worldwide_day, ISSUED_AT, TRIGGER)
+        let issued_at = ISSUED_AT - (worldwide_day % 1000) * SECONDS_PER_DAY_U32;
+        seed_candidate_at(s, worldwide_day, issued_at, TRIGGER)
+    }
+
+    fn series_of(worldwide_day: u32) -> SeriesId {
+        SeriesId::for_pair(WorldwideDay::new(worldwide_day), 840, REFERENCE_ISO).unwrap()
     }
 
     fn seed_young_candidate_at(
@@ -334,19 +304,12 @@ mod call_sweep {
             },
         )
         .unwrap();
-        IntexContract::new(s.clone())
-            .insert_call_bin(series_id, REFERENCE_ISO, trigger)
-            .unwrap();
     }
 
     fn called_count(s: &StorageHandle<'_>, days: std::ops::Range<u32>) -> u32 {
         days.filter(|d| {
             let series_id = SeriesId::for_pair(WorldwideDay::new(*d), 840, REFERENCE_ISO).unwrap();
-            outbe_intex::api::read_series(s, series_id)
-                .unwrap()
-                .lifecycle_state()
-                .unwrap()
-                == outbe_intex::IntexState::Called
+            series_state(s, series_id) == outbe_intex::IntexState::Called
         })
         .count() as u32
     }
@@ -368,8 +331,7 @@ mod call_sweep {
             assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
 
             let factory = IntexContract::new(s.clone());
-            let day = WorldwideDay::new(20260101);
-            let key = IntexContract::scoped(REFERENCE_ISO, day.value());
+            let key = group_of(&s, series_of(20260101));
 
             // The group left its bin and keeps its members for the expiry sweep.
             assert_eq!(factory.call_group_slot.read(&key).unwrap(), 0);
@@ -382,26 +344,24 @@ mod call_sweep {
                 key
             );
             assert_eq!(factory.expiry_bucket_live.read(&bucket).unwrap(), 1);
-            assert_eq!(factory.call_group_count.read(&key).unwrap(), 1);
             assert_eq!(
                 factory.called_deadline.read(&key).unwrap(),
                 scan_ts + 7 * DAY
             );
             assert_eq!(
-                SeriesId::from_word(
-                    factory
-                        .call_group_members
-                        .read(&IntexContract::group_member_key(REFERENCE_ISO, day, 0))
-                        .unwrap()
-                ),
-                SeriesId::for_pair(day, 840, REFERENCE_ISO).unwrap()
+                factory.group_members(key).unwrap(),
+                vec![series_of(20260101)]
+            );
+            assert_eq!(
+                factory.call_group_called_at.read(&key).unwrap(),
+                scan_ts as u32
             );
         });
     }
 
     /// Drive `worldwide_day` to Called at `scan_ts` and return the deadline its
     /// group now carries.
-    fn call_and_deadline(s: &StorageHandle<'_>, worldwide_day: u32, scan_ts: u64) -> u64 {
+    fn call_and_deadline(s: &StorageHandle<'_>, member: SeriesId, scan_ts: u64) -> u64 {
         let ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
             s.clone(),
@@ -409,7 +369,7 @@ mod call_sweep {
         called::scan_and_call(&ctx).unwrap();
         IntexContract::new(s.clone())
             .called_deadline
-            .read(&IntexContract::scoped(REFERENCE_ISO, worldwide_day))
+            .read(&group_of(s, member))
             .unwrap()
     }
 
@@ -448,18 +408,12 @@ mod call_sweep {
             let scan_ts = ISSUED_AT as u64 + 60 * DAY;
             priced_window(&s, scan_ts);
             seed_called_candidate(&s, 20260101);
-            let deadline = call_and_deadline(&s, 20260101, scan_ts);
+            let deadline = call_and_deadline(&s, series_of(20260101), scan_ts);
 
             sweep_at(&s, deadline);
             assert_eq!(unallocated(&s), U256::ZERO, "still settleable");
             assert_eq!(
-                outbe_intex::api::read_series(
-                    &s,
-                    SeriesId::for_pair(WorldwideDay::new(20260101), 840, REFERENCE_ISO).unwrap()
-                )
-                .unwrap()
-                .lifecycle_state()
-                .unwrap(),
+                series_state(&s, series_of(20260101)),
                 outbe_intex::IntexState::Called
             );
 
@@ -482,7 +436,7 @@ mod call_sweep {
             outbe_intex::api::record_settled_units(&s, series_id, 30).unwrap();
             outbe_intex::api::record_gem_factory_units(&s, series_id, owner(), 25).unwrap();
 
-            let deadline = call_and_deadline(&s, 20260101, scan_ts);
+            let deadline = call_and_deadline(&s, series_of(20260101), scan_ts);
             sweep_at(&s, due(deadline));
 
             assert_eq!(
@@ -500,11 +454,11 @@ mod call_sweep {
         with_factory(|s| {
             let scan_ts = ISSUED_AT as u64 + 60 * DAY;
             priced_window(&s, scan_ts);
-            let (_, deadline) = called_two_member_group(&s, scan_ts);
+            let (members, deadline) = called_two_member_group(&s, scan_ts);
             sweep_at(&s, due(deadline));
 
             assert_eq!(unallocated(&s), U256::from(140u64) * U256::from(LOAD));
-            assert_eq!(group_len(&s), 0);
+            assert!(!expiring(&s, members[0]));
         });
     }
 
@@ -514,7 +468,6 @@ mod call_sweep {
     fn called_two_member_group(s: &StorageHandle<'_>, scan_ts: u64) -> (Vec<SeriesId>, u64) {
         let day = WorldwideDay::new(20260101);
         let trigger = U256::from(TRIGGER);
-        let mut factory = IntexContract::new(s.clone());
         let mut members = Vec::new();
         for (issuance, count) in [(840u16, 100u32), (978u16, 40u32)] {
             let series_id = SeriesId::for_pair(day, issuance, REFERENCE_ISO).unwrap();
@@ -535,27 +488,25 @@ mod call_sweep {
                 reference_currency: REFERENCE_ISO,
             };
             outbe_intex::api::create_series(s, params).unwrap();
-            factory
-                .insert_call_bin(series_id, REFERENCE_ISO, trigger)
-                .unwrap();
             members.push(series_id);
         }
-        let deadline = call_and_deadline(s, 20260101, scan_ts);
+        let deadline = call_and_deadline(s, members[0], scan_ts);
         (members, deadline)
     }
 
-    fn group_len(s: &StorageHandle<'_>) -> u32 {
+    /// Whether the group of `member` still waits in the expiry queue.
+    fn expiring(s: &StorageHandle<'_>, member: SeriesId) -> bool {
         IntexContract::new(s.clone())
-            .call_group_count
-            .read(&IntexContract::scoped(REFERENCE_ISO, 20260101))
+            .called_group_slot
+            .read(&group_of(s, member))
             .unwrap()
+            != 0
     }
 
     /// One series per issuance code, a unit each, all in one group, then called.
     fn called_wide_group(s: &StorageHandle<'_>, scan_ts: u64, width: u16) -> (Vec<SeriesId>, u64) {
         let day = WorldwideDay::new(20260101);
         let trigger = U256::from(TRIGGER);
-        let mut factory = IntexContract::new(s.clone());
         let mut members = Vec::new();
         for issuance in 1..=width {
             let series_id = SeriesId::for_pair(day, issuance, REFERENCE_ISO).unwrap();
@@ -576,12 +527,9 @@ mod call_sweep {
                 reference_currency: REFERENCE_ISO,
             };
             outbe_intex::api::create_series(s, params).unwrap();
-            factory
-                .insert_call_bin(series_id, REFERENCE_ISO, trigger)
-                .unwrap();
             members.push(series_id);
         }
-        let deadline = call_and_deadline(s, 20260101, scan_ts);
+        let deadline = call_and_deadline(s, members[0], scan_ts);
         (members, deadline)
     }
 
@@ -595,43 +543,34 @@ mod call_sweep {
             let (members, deadline) = called_wide_group(&s, scan_ts, width);
             assert_ne!(deadline, 0);
             for series_id in members {
-                assert_eq!(
-                    outbe_intex::api::read_series(&s, series_id)
-                        .unwrap()
-                        .lifecycle_state()
-                        .unwrap(),
-                    outbe_intex::IntexState::Called
-                );
+                assert_eq!(series_state(&s, series_id), outbe_intex::IntexState::Called);
             }
         });
     }
 
-    /// Its expiry takes a block's writes, and the next block resumes on what is left.
+    /// Its expiry is one step however wide it is: the credit is the group's sum.
     #[test]
-    fn a_group_wider_than_the_write_budget_expires_over_two_blocks() {
+    fn a_group_wider_than_the_write_budget_expires_in_one_step() {
         with_factory(|s| {
             let scan_ts = ISSUED_AT as u64 + 60 * DAY;
             priced_window(&s, scan_ts);
             let width = SWEEP_WRITES_PER_BLOCK as u16 + 1;
-            let (_, deadline) = called_wide_group(&s, scan_ts, width);
+            let (members, deadline) = called_wide_group(&s, scan_ts, width);
 
             sweep_at(&s, due(deadline));
-            assert_eq!(group_len(&s), 1);
-            assert_eq!(
-                unallocated(&s),
-                U256::from(SWEEP_WRITES_PER_BLOCK) * U256::from(LOAD)
-            );
-
-            sweep_at(&s, due(deadline) + 1);
-            assert_eq!(group_len(&s), 0);
+            assert!(!expiring(&s, members[0]));
             assert_eq!(unallocated(&s), U256::from(width) * U256::from(LOAD));
+            assert!(IntexContract::new(s.clone())
+                .first_cleanup_hour()
+                .unwrap()
+                .is_some());
         });
     }
 
-    /// Nothing marks a series as done any more, so a group walked again after a failure
-    /// must no longer hold the members whose load already went back.
+    /// A member whose accounting fails defers the whole group, which credits nothing
+    /// until every member adds up, and then all of them once.
     #[test]
-    fn a_group_walked_again_credits_only_the_member_left_behind() {
+    fn a_group_with_a_failing_member_is_deferred_whole() {
         with_factory(|s| {
             let scan_ts = ISSUED_AT as u64 + 60 * DAY;
             priced_window(&s, scan_ts);
@@ -641,15 +580,15 @@ mod call_sweep {
             registry.settled_units.write(&members[1], 1_000).unwrap();
 
             sweep_at(&s, due(deadline));
-            assert_eq!(unallocated(&s), U256::from(100u64) * U256::from(LOAD));
-            assert_eq!(group_len(&s), 1);
+            assert_eq!(unallocated(&s), U256::ZERO);
+            assert!(expiring(&s, members[0]));
 
             registry.settled_units.write(&members[1], 0).unwrap();
             let retry =
                 IntexContract::bucket_end(IntexContract::deadline_bucket(due(deadline)) + 1);
             sweep_at(&s, retry);
             assert_eq!(unallocated(&s), U256::from(140u64) * U256::from(LOAD));
-            assert_eq!(group_len(&s), 0);
+            assert!(!expiring(&s, members[0]));
         });
     }
 
@@ -659,7 +598,7 @@ mod call_sweep {
             let scan_ts = ISSUED_AT as u64 + 60 * DAY;
             priced_window(&s, scan_ts);
             seed_called_candidate(&s, 20260101);
-            let deadline = call_and_deadline(&s, 20260101, scan_ts);
+            let deadline = call_and_deadline(&s, series_of(20260101), scan_ts);
 
             sweep_at(&s, due(deadline));
             let after_first = unallocated(&s);
@@ -901,9 +840,6 @@ mod call_sweep {
             },
         )
         .unwrap();
-        IntexContract::new(s.clone())
-            .insert_call_bin(series_id, REFERENCE_ISO, trigger)
-            .unwrap();
     }
 
     /// Nothing shrinks a bin whose groups all decide against a move, so the sweep has
@@ -990,7 +926,8 @@ mod call_sweep {
             seed_young_candidate_at(&s, young, (scan_ts - 5 * DAY) as u32, TRIGGER);
             // Above it: enough mature groups at a higher trigger to spend every action.
             for day in 20260101..20260101 + SWEEP_WRITES_PER_BLOCK + 1 {
-                seed_candidate_at(&s, day, ISSUED_AT, TRIGGER * 2);
+                let issued_at = ISSUED_AT - (day % 1000) * SECONDS_PER_DAY_U32;
+                seed_candidate_at(&s, day, issued_at, TRIGGER * 2);
             }
 
             let ctx = BlockRuntimeContext::new(
@@ -1021,9 +958,15 @@ mod call_sweep {
                 s.clone(),
             );
             called::scan_and_call(&later).unwrap();
-            for _ in 0..4 {
+            // The in-flight day finishes, then every day up to the new one is walked.
+            let factory = IntexContract::new(s.clone());
+            for _ in 0..64 {
+                if factory.call_sweep_day.read().unwrap() == 0 {
+                    break;
+                }
                 called::run_call_slice(&later).unwrap();
             }
+            assert_eq!(factory.call_sweep_day.read().unwrap(), 0);
 
             assert_eq!(
                 called_count(&s, young..young + 1),
@@ -1050,7 +993,9 @@ mod call_sweep {
     }
 
     /// Seeds one callable group of `iso`, priced so its trigger sits under the window.
+    /// Each day's series is issued on its own day, so it opens its own group.
     fn seed_candidate_for(s: &StorageHandle<'_>, iso: u16, worldwide_day: u32) {
+        let issued_at = ISSUED_AT - (worldwide_day % 1000) * SECONDS_PER_DAY_U32;
         let series_id = SeriesId::for_pair(WorldwideDay::new(worldwide_day), 840, iso).unwrap();
         let trigger = U256::from(TRIGGER);
         outbe_intex::api::create_series(
@@ -1067,15 +1012,12 @@ mod call_sweep {
                     call_threshold_seconds: 21 * SECONDS_PER_DAY_U32,
                     call_notice_period_seconds: 7 * SECONDS_PER_DAY_U32,
                 },
-                issued_at: ISSUED_AT,
+                issued_at,
                 issuance_currency: 840,
                 reference_currency: iso,
             },
         )
         .unwrap();
-        IntexContract::new(s.clone())
-            .insert_call_bin(series_id, iso, trigger)
-            .unwrap();
     }
 
     /// A budget that is exhausted inside the last currency of the rotation must resume
@@ -1151,7 +1093,7 @@ mod call_sweep {
             );
             called::run_daily(&next).unwrap();
             assert_eq!(factory.call_sweep_day.read().unwrap(), day);
-            assert_eq!(factory.call_pending_day.read().unwrap(), next_day);
+            assert_eq!(factory.call_latest_day.read().unwrap(), next_day);
             assert_eq!(
                 factory.call_bin_cursor.read(&REFERENCE_ISO).unwrap(),
                 cursor,
@@ -1162,21 +1104,15 @@ mod call_sweep {
             called::run_call_slice(&next).unwrap();
             assert_eq!(called_count(&s, days), groups);
             assert_eq!(factory.call_sweep_day.read().unwrap(), next_day);
-            assert_eq!(factory.call_pending_day.read().unwrap(), 0);
+            assert_eq!(factory.call_latest_day.read().unwrap(), next_day);
         });
     }
 
-    /// With a day already waiting, a newer one takes its place, and the day that will
-    /// never be walked is named.
+    /// Days that closed while the sweep was still walking an older one are walked after
+    /// it, in order, none skipped.
     #[test]
-    fn a_newer_day_pushes_out_the_waiting_one_and_names_it() {
-        use alloy_sol_types::SolEvent;
-        use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
-
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-        storage.set_timestamp(U256::from(ISSUED_AT as u64));
-        let (in_flight, skipped) = StorageHandle::enter(&mut storage, |s| {
-            crate::tests::select_prod_profile(&s);
+    fn days_closed_behind_a_running_call_sweep_are_walked_in_order() {
+        with_factory(|s| {
             let oracle = OracleContract::new(s.clone());
             let pair = setup_pair(&oracle);
             for d in 20260101..20260101 + SWEEP_WRITES_PER_BLOCK + 1 {
@@ -1201,21 +1137,22 @@ mod call_sweep {
             }
             let factory = IntexContract::new(s.clone());
             assert_eq!(factory.call_sweep_day.read().unwrap(), closed[0]);
-            assert_eq!(factory.call_pending_day.read().unwrap(), closed[2]);
-            (closed[0], closed[1])
-        });
+            assert_eq!(factory.call_latest_day.read().unwrap(), closed[2]);
 
-        let events: Vec<_> = storage
-            .get_events(INTEX_FACTORY_ADDRESS)
-            .iter()
-            .filter_map(|log| {
-                crate::precompile::IIntexFactory::SweepDaySkipped::decode_log_data(log).ok()
-            })
-            .collect();
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].sweep, outbe_oracle::call_sweep::CALL_SWEEP);
-        assert_eq!(events[0].skippedDay, skipped);
-        assert_eq!(events[0].inFlightDay, in_flight);
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(4, ISSUED_AT as u64 + 62 * DAY, CHAIN_ID),
+                s.clone(),
+            );
+            let mut walked = vec![closed[0]];
+            while walked.last() != Some(&0) && walked.len() < 8 {
+                called::run_call_slice(&ctx).unwrap();
+                let day = factory.call_sweep_day.read().unwrap();
+                if walked.last() != Some(&day) {
+                    walked.push(day);
+                }
+            }
+            assert_eq!(walked, vec![closed[0], closed[1], closed[2], 0]);
+        });
     }
 
     /// Each currency is walked once a sweep. Assume the sweep walked the ones closed
@@ -1284,9 +1221,6 @@ mod call_sweep {
             },
         )
         .unwrap();
-        IntexContract::new(s.clone())
-            .insert_call_bin(series_id, iso, trigger)
-            .unwrap();
     }
 }
 
@@ -1304,7 +1238,6 @@ mod called_pstar {
     use outbe_primitives::time::WorldwideDay;
 
     use crate::called;
-    use outbe_intex::Group;
     use outbe_intex::IntexContract;
     use outbe_oracle::call_window::CallWindow;
     use outbe_primitives::call_breach::ScanTerms;
@@ -1493,11 +1426,7 @@ mod called_pstar {
 
             let mut f = IntexContract::new(s.clone());
             let window = window(&s);
-            let group = Group {
-                iso_code: REFERENCE_ISO,
-                worldwide_day: series.worldwide_day(),
-                members: vec![series],
-            };
+            let group = crate::tests::group_of(&s, series);
             assert_eq!(
                 called::call_if_breached(
                     called::GroupCall {
@@ -1505,7 +1434,7 @@ mod called_pstar {
                         intex: &mut f,
                         factory: &crate::schema::IntexFactoryContract::new(s.clone()),
                     },
-                    &group,
+                    group,
                     &window,
                     day_start(LAST_DAY) + DAY_SECS
                 )
@@ -1548,35 +1477,16 @@ mod called_pstar {
 }
 
 #[test]
-fn a_series_is_called_only_from_issued() {
+fn a_group_is_called_once() {
     with_factory(|s| {
-        outbe_intex::api::create_series(
-            &s,
-            outbe_intex::CreateSeriesParams {
-                series_id: sid(9),
-                worldwide_day: 9.into(),
-                issued_units: 100,
-                promis_load_minor: PROMIS_LOAD_MINOR,
-                entry_price_minor: U256::from(ENTRY_PRICE),
-                call_price_minor: U256::from(EXPECTED_TRIGGER),
-                call_trigger: outbe_intex::IntexCallTrigger {
-                    call_window_seconds: CALL_WINDOW,
-                    call_threshold_seconds: CALL_THRESHOLD,
-                    call_notice_period_seconds: CALL_NOTICE_PERIOD,
-                },
-                issued_at: ISSUED_AT,
-                issuance_currency: 840,
-                reference_currency: 840,
-            },
-        )
-        .unwrap();
-        called::group::mark_called(&s, sid(9), ISSUED_AT + 10).unwrap();
+        runtime::issue_intex(&s, sample(9)).unwrap();
+        outbe_intex::api::call_group_of(&s, sid(9), ISSUED_AT + 10).unwrap();
         let series = outbe_intex::api::read_series(&s, sid(9)).unwrap();
+        assert_eq!(series_state(&s, sid(9)), outbe_intex::IntexState::Called);
         assert_eq!(
-            series.lifecycle_state().unwrap(),
-            outbe_intex::IntexState::Called
+            outbe_intex::api::call_stamp(&s, &series).unwrap().called_at,
+            ISSUED_AT + 10
         );
-        assert_eq!(series.called_at, ISSUED_AT + 10);
-        assert!(called::group::mark_called(&s, sid(9), ISSUED_AT + 20).is_err());
+        assert!(outbe_intex::api::call_group_of(&s, sid(9), ISSUED_AT + 20).is_err());
     });
 }
