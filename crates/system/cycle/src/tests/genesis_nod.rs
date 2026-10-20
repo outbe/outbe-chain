@@ -127,6 +127,76 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
     });
 }
 
+/// Runs a Nod call across a one-day halt: day D closes while no block is made, and the
+/// restart schedules only D+1. Returns the group's call and the sweep's newest day.
+fn call_across_a_halt(price_on_d: bool) -> (u64, u32, u64) {
+    use outbe_primitives::time::{next_date_key, previous_date_key, timestamp_to_date_key};
+
+    let midnight = GENESIS_TS + 40 * SECONDS_PER_DAY;
+    let d = timestamp_to_date_key(midnight);
+    let restart = midnight + 2 * SECONDS_PER_DAY;
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        (|| {
+            let cycle = Cycle::new(storage.clone());
+            isolate_nod_call_schedule(&cycle, midnight)?;
+            let (oracle, index) = seed_closed_day_prices(&storage, midnight)?;
+            // The sealed DEV terms call on 2 breach days of a 3-day window; 1 never breaches.
+            let back = |n: u32| (0..n).fold(d, |day, _| previous_date_key(day));
+            for day in [back(4), back(3), back(1)] {
+                oracle.record_utc_day_vwap(day, index, U256::from(1))?;
+            }
+            let group = issue_nod(&storage, Address::repeat_byte(0x51), 13)?;
+            let nod = outbe_nod::NodContract::new(storage.clone());
+
+            // Day D: the window up to D-1 holds one breach day.
+            dispatch_and_call(&BlockRuntimeContext::new(
+                block_ctx(3, midnight),
+                storage.clone(),
+            ))?;
+            assert_eq!(nod.group_called_at.read(&group)?, 0);
+            assert_eq!(nod.call_latest_day.read()?, back(1));
+
+            // No block while D closes. D+1 closes unpriced before the restart.
+            if price_on_d {
+                oracle.record_utc_day_vwap(d, index, U256::from(100))?;
+            }
+            oracle.utc_day_vwap_last_finalized.write(next_date_key(d))?;
+            let ctx = BlockRuntimeContext::new(block_ctx(4, restart), storage.clone());
+            dispatch_and_call(&ctx)?;
+            for _ in 0..8 {
+                if nod.call_sweep_day.read()? == 0 {
+                    break;
+                }
+                outbe_nodfactory::called::run_call_slice(&ctx)?;
+            }
+            assert_eq!(nod.call_sweep_day.read()?, 0);
+            Ok::<_, outbe_primitives::error::PrecompileError>((
+                nod.group_called_at.read(&group)?,
+                nod.call_latest_day.read()?,
+                restart,
+            ))
+        })()
+        .unwrap()
+    })
+}
+
+/// D's window [D-2, D-1, D] holds two breach days and D+1's [D-1, D, D+1] only one, so
+/// only a sweep that walks the day the halt skipped calls the group.
+#[test]
+fn a_halt_does_not_skip_the_day_that_calls_a_nod_group() {
+    use outbe_primitives::time::{next_date_key, timestamp_to_date_key};
+
+    let d = timestamp_to_date_key(GENESIS_TS + 40 * SECONDS_PER_DAY);
+    let (called_at, latest, restart) = call_across_a_halt(true);
+    assert_eq!(called_at, restart);
+    assert_eq!(latest, next_date_key(d));
+
+    let (called_at, latest, _) = call_across_a_halt(false);
+    assert_eq!(called_at, 0, "without D's price no window breaches twice");
+    assert_eq!(latest, next_date_key(d));
+}
+
 /// Isolates Nod's schedule. Unrelated triggers are not due, and the Nod daily
 /// call is due at `midnight`. Returns the Nod call trigger id.
 fn isolate_nod_call_schedule(
