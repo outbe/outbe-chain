@@ -218,6 +218,83 @@ fn a_paid_then_mined_gem_returns_no_capacity_while_unpaid_siblings_forfeit() {
     });
 }
 
+/// A paid gem outlives the forfeit and the cleanup of its unpaid siblings: it stays
+/// Settled, listed and counted, and its load is never returned.
+#[test]
+fn a_paid_gem_stays_live_beside_its_forfeited_siblings() {
+    use alloy_sol_types::SolCall;
+    use outbe_gem::precompile::IGem;
+
+    let (mut p, rights) = world();
+    let (paid, paid_load) = rights[0];
+    let owner = Address::repeat_byte(1);
+    StorageHandle::enter(&mut p, |s| {
+        let (item, group) = api::load_pair(&s, paid).unwrap().unwrap();
+        api::record_settled(&s, item, group).unwrap();
+    });
+    let due = ((DEADLINE / 3600) + 1) * 3600;
+    sweep(&mut p, due).unwrap();
+    sweep(&mut p, due + DAY).unwrap();
+    let total = rights.iter().map(|(_, load)| *load).sum::<U256>();
+    let group_key = StorageHandle::enter(&mut p, |s| {
+        let gem = GemContract::new(s.clone());
+        assert_eq!(gem.total_supply().unwrap(), 1);
+        let view = api::get_view(&s, paid).unwrap().unwrap();
+        assert_eq!(view.effective_state(due + DAY), GemState::Settled as u8);
+        let out = outbe_gem::precompile::dispatch(
+            s.clone(),
+            &IGem::getGemCall { gemId: paid }.abi_encode(),
+            Address::ZERO,
+            U256::ZERO,
+        )
+        .unwrap();
+        let data = IGem::getGemCall::abi_decode_returns(&out).unwrap();
+        assert_eq!(data.state, GemState::Settled as u8);
+        assert_eq!(data.promisLoadMinor, paid_load);
+        assert_eq!(data.calledAt, CALLED);
+        assert_ne!(data.settlementDeadline, 0);
+        assert_eq!(api::balance_of(&s, owner).unwrap(), 1);
+        assert_eq!(
+            api::token_of_owner_by_index(&s, owner, 0).unwrap(),
+            Some(paid)
+        );
+
+        let group_key = api::get_item(&s, paid).unwrap().unwrap().group_key;
+        let group = api::get_group(&s, group_key).unwrap().unwrap();
+        assert_eq!(group.settled_gems, 1);
+        assert_eq!(gem.group_gem_count.read(&group_key).unwrap(), 0);
+        assert_eq!(gem.group_unpaid_load.read(&group_key).unwrap(), U256::ZERO);
+        assert_eq!(gem.cleanup_group_slot.read(&group_key).unwrap(), 0);
+        assert_eq!(gem.expiry_tree_root.read().unwrap(), U256::ZERO);
+        assert_eq!(
+            PromisLimitContract::new(s).get_total_unallocated().unwrap(),
+            total - paid_load
+        );
+        group_key
+    });
+    let forfeited = p
+        .get_events(GEM_ADDRESS)
+        .iter()
+        .filter_map(|event| {
+            outbe_gem::precompile::IGem::GemGroupForfeited::decode_log_data(event).ok()
+        })
+        .map(|event| (event.gems, event.promisLoadMinor))
+        .collect::<Vec<_>>();
+    assert_eq!(forfeited, vec![(4, total - paid_load)]);
+
+    // Mining the paid gem closes the group and returns nothing more.
+    StorageHandle::enter(&mut p, |s| {
+        let (item, group) = api::load_pair(&s, paid).unwrap().unwrap();
+        api::remove_gem(&s, item, group).unwrap();
+        assert!(api::get_group(&s, group_key).unwrap().is_none());
+        assert_eq!(GemContract::new(s.clone()).total_supply().unwrap(), 0);
+        assert_eq!(
+            PromisLimitContract::new(s).get_total_unallocated().unwrap(),
+            total - paid_load
+        );
+    });
+}
+
 #[test]
 fn failures_before_and_after_every_expiry_mutation_conserve_load_and_retry_once() {
     let due = ((DEADLINE / 3600) + 1) * 3600;
