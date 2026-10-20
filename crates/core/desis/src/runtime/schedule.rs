@@ -152,17 +152,19 @@ fn start_auction(
             .map(|(iso_code, entry_price_minor)| ReferenceCurrencyPrice {
                 iso_code,
                 entry_price_minor,
+                // `fix_call_terms` fixes it once the day's rows are chosen.
+                call_price_minor: U256::ZERO,
             })
             .collect();
     let promis_load_minor = step_promis_load(contract, worldwide_day, &rows)?;
     let rows = choose_reference_prices(contract, worldwide_day, rows)?;
     let mut config = AuctionConfig::from_reference_prices(rows, promis_load_minor);
-    let iparams = fold_profile(storage, contract, &mut config)?;
+    fold_profile(storage, contract, &mut config)?;
+    fix_call_terms(storage, &mut config)?;
     contract.write_auction_config(worldwide_day, &config)?;
     let start = StageStart {
         worldwide_day,
         config: &config,
-        iparams: &iparams,
         commit_end: ts32(commit_end)?,
         reveal_end: ts32(reveal_end)?,
         issuance_end: ts32(issuance_end)?,

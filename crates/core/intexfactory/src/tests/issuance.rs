@@ -65,6 +65,75 @@ fn issue_creates_series_in_registry() {
 }
 
 #[test]
+fn call_terms_mark_up_the_entry_with_the_live_profile() {
+    with_factory(|s| {
+        let terms = crate::api::call_terms(&s).unwrap();
+        assert_eq!(
+            terms.call_price(U256::from(ENTRY_PRICE)).unwrap(),
+            U256::from(EXPECTED_TRIGGER)
+        );
+        assert_eq!(terms.call_trigger, prod_trigger());
+
+        select_dev_profile(&s);
+        let dev = outbe_intex::config::IntexParams::DEV;
+        let terms = crate::api::call_terms(&s).unwrap();
+        assert_eq!(
+            terms.call_price(U256::from(ENTRY_PRICE)).unwrap(),
+            runtime::marked_up(U256::from(ENTRY_PRICE), dev.call_rate).unwrap()
+        );
+        assert_eq!(
+            terms.call_trigger,
+            outbe_intex::IntexCallTrigger {
+                call_window_seconds: dev.call_window_seconds,
+                call_threshold_seconds: dev.call_threshold_seconds,
+                call_notice_period_seconds: dev.call_notice_period_seconds,
+            }
+        );
+    });
+}
+
+fn select_dev_profile(s: &StorageHandle<'_>) {
+    outbe_intex::IntexContract::new(s.clone())
+        .config_profile
+        .write(outbe_intex::config::PROFILE_DEV)
+        .unwrap();
+}
+
+/// The auction fixed the conditions at its start. A profile changed since then does
+/// not reach the series or the legs.
+#[test]
+fn issuance_seals_the_given_conditions_not_the_live_profile() {
+    with_factory(|s| {
+        select_dev_profile(&s);
+        let params = sample(7);
+        let legs = runtime::issue_intex(&s, params.clone()).unwrap();
+
+        let r = outbe_intex::api::read_series(&s, sid(7)).unwrap();
+        assert_eq!(r.promis_load_minor, U256::from(params.promis_load_minor));
+        assert_eq!(r.entry_price_minor, params.entry_price_minor);
+        assert_eq!(r.call_price_minor, params.call_price_minor);
+        assert_eq!(r.call_trigger(), params.call_trigger);
+        assert_eq!(r.issued_at, ISSUED_AT);
+
+        assert_eq!(legs.len(), 1);
+        let leg = &legs[0].payload;
+        assert_eq!(leg.promisLoadMinor, params.promis_load_minor);
+        assert_eq!(U256::from(leg.entryPriceMinor), params.entry_price_minor);
+        assert_eq!(U256::from(leg.callPriceMinor), params.call_price_minor);
+        assert_eq!(leg.callWindow, params.call_trigger.call_window_seconds);
+        assert_eq!(
+            leg.callThreshold,
+            params.call_trigger.call_threshold_seconds
+        );
+        assert_eq!(
+            leg.callNoticePeriod,
+            params.call_trigger.call_notice_period_seconds
+        );
+        assert_eq!(leg.issuedAt, ISSUED_AT);
+    });
+}
+
+#[test]
 fn issue_rejects_duplicate_series() {
     with_factory(|s| {
         runtime::issue_intex(&s, sample(7)).unwrap();

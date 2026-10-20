@@ -127,7 +127,7 @@ fn settle_empty_day(
         status: "COMPLETED".into(),
         action: "no tributes".into(),
     })?;
-    promis_limit.checked_credit(returned)
+    promis_limit.checked_credit(returned).map(|_| ())
 }
 
 fn settle_zero_allocation(
