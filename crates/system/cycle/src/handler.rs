@@ -364,7 +364,7 @@ fn dispatch_terminal_remainder(
 }
 
 /// Credits this block's slice of the queued WAA and SRA day pools and sends the
-/// rounding residue of the finished ones to the Promis Limit carry-over.
+/// rounding residue of the finished ones to the Promis Limit.
 pub(crate) fn credit_reward_slice(ctx: &BlockRuntimeContext) -> Result<()> {
     let residue = advance_accruals(ctx).map_err(|e| {
         tracing::error!(target: "outbe::cycle", step = "advance_accruals", error = ?e, "protocol cycle step failed");

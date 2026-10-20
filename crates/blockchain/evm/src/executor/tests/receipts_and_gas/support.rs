@@ -255,7 +255,7 @@ pub(super) fn assert_dense_agent_settlement(
         "GAS-05: one CycleTick must finish a day that fills one accrual slice"
     );
     let carry_over =
-        outbe_promislimit::PromisLimitContract::new(storage.clone()).get_total_unallocated()?;
+        outbe_promislimit::PromisLimitContract::new(storage.clone()).promis_limit()?;
     assert!(
         carry_over < U256::from(2 * address_count),
         "GAS-05: the carry-over takes only the WAA and SRA rounding residue"
