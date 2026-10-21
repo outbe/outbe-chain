@@ -40,7 +40,7 @@ pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
     call_sweep::schedule(ctx, &mut CredisCallSweep::new(ctx))
 }
 
-/// Seeds the first eligible daily pass from the chain initialization day.
+/// This function initializes the first eligible daily pass from the chain initialization day.
 pub fn initialize_daily(ctx: &BlockRuntimeContext) -> Result<()> {
     call_sweep::initialize(ctx, &mut CredisCallSweep::new(ctx))
 }
@@ -51,8 +51,8 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_sweep::continue_day(ctx, &mut CredisCallSweep::new(ctx))
 }
 
-/// Runs calls, group forfeits, and value-moving cleanup in pinned-day order.
-/// Returns the groups called, not the groups forfeited or members cleaned up.
+/// This function runs calls, group forfeits, and cleanup that moves value in pinned-day order.
+/// The return value counts called groups, not forfeited groups or deleted members.
 pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_sweep::continue_day(ctx, &mut CredisCallSweep::new(ctx))
 }

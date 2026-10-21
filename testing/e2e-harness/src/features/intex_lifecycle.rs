@@ -464,7 +464,7 @@ impl Lifecycle for IntexLifecycle {
         );
         wait_for_chain_time(world, port, deadline + EXPIRY_MARGIN_SECS);
 
-        // Arm a closed deadline day after the exact notice has elapsed.
+        // Prepare the test pass for a closed deadline day after the exact notice expires.
         test_issuance::close_call_notice(
             &url,
             DEPLOYER_KEY,

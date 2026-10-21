@@ -37,14 +37,14 @@ pub fn initialize_daily(ctx: &BlockRuntimeContext) -> Result<()> {
     call_sweep::initialize(ctx, &mut IntexCallSweep::new(ctx))
 }
 
-/// Runs the coupled daily pass, including series forfeits after calls.
-/// Returns the series called, not the pass completion state.
+/// This function runs the coupled daily pass, including series forfeits after calls.
+/// It returns the number of called series, not the pass completion state.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_sweep::continue_day(ctx, &mut IntexCallSweep::new(ctx))
 }
 
-/// Resumes the coupled daily pass, pinned to the same observation day and shared
-/// block allowance. Returns how many series were called.
+/// This function resumes the coupled daily pass with the same observation day and shared block allowance.
+/// It returns the number of called series.
 pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_sweep::continue_day(ctx, &mut IntexCallSweep::new(ctx))
 }

@@ -1,7 +1,7 @@
-//! Hooks only a throwaway e2e build answers. Lysis issues a Nod over a certified
-//! generation, so a scenario that needs one asks for it straight. The forfeit sweep opens a
-//! group only once its day has closed, so `closeCallNoticeForTest` moves a lapsed deadline
-//! into a day the sweep opens on the next block.
+//! Only a temporary E2E build responds to these hooks. Lysis issues a Nod over a certified generation.
+//! A scenario that needs a Nod requests it directly.
+//! The forfeit sweep opens a group only after its day closes.
+//! Thus, `closeCallNoticeForTest` moves a lapsed deadline into a day that the sweep opens on the next block.
 
 use alloy_primitives::{Bytes, B256};
 use alloy_sol_types::SolCall;
@@ -101,7 +101,7 @@ fn requeue_called(storage: &StorageHandle<'_>, group_key: B256, deadline: u64) -
 
 fn reopen_day(storage: &StorageHandle<'_>, day: u32) -> Result<()> {
     let nod = NodContract::new(storage.clone());
-    // The fixture may target a closed day before this throwaway chain's genesis.
+    // The fixture may target a closed day before this temporary chain's genesis.
     if nod.daily_genesis_day.read()? == 0 || day < nod.daily_genesis_day.read()? {
         nod.daily_genesis_day.write(day)?;
     }

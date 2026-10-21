@@ -384,8 +384,8 @@ pub fn seed_day_vwaps(
     )
 }
 
-/// Explicitly reopens a test-only call pass after replacing historical prices.
-/// Production completed-day scheduling remains idempotent.
+/// This function explicitly reopens a test-only call pass after the test replaces historical prices.
+/// Production scheduling for completed days remains idempotent.
 pub fn rescan_closed_day(url: &str, sender_key: &str, factory: Address) -> Result<()> {
     send_checked(
         url,
@@ -396,8 +396,8 @@ pub fn rescan_closed_day(url: &str, sender_key: &str, factory: Address) -> Resul
     )
 }
 
-/// Arms a called group in a closed deadline day's test pass, after its exact notice
-/// elapsed, rather than waiting for the next UTC midnight.
+/// This function prepares the test pass for a closed deadline day to process the called group of `series`.
+/// The group's exact notice expires before this preparation. The test does not wait until the next UTC midnight.
 pub fn close_call_notice(
     url: &str,
     sender_key: &str,

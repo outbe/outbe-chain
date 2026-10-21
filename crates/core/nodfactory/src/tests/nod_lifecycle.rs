@@ -35,7 +35,7 @@ use outbe_primitives::time::SECONDS_PER_DAY as DAY;
 /// The notice period a group seals at issuance, in the width these tests
 /// do timestamp arithmetic in.
 const NOTICE: u64 = CALL_NOTICE_PERIOD as u64;
-/// Past a deadline by enough that its UTC day has closed.
+/// Adding this delay to a deadline advances time past the end of its UTC day.
 const CLOSED_DAY_DELAY: u64 = DAY;
 const ISO: u16 = 840;
 const OTHER_ISO: u16 = 978;
@@ -197,7 +197,7 @@ fn add(storage: &StorageHandle<'_>, item: &NodItemState) {
 fn scan(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
     let nod = NodContract::new(storage.clone());
     let mut decided = 0;
-    // Simulate catch-up blocks, never refilling a pending day's allowance in one block.
+    // This loop simulates catch-up blocks. It never refills a pending day's allowance within one block.
     loop {
         decided += slice(storage, timestamp);
         let selected = outbe_primitives::sweep_budget::BlockAllowance::unpack(
@@ -1248,8 +1248,8 @@ fn a_group_over_the_cleanup_budget_is_deleted_across_blocks_and_credited_once() 
     });
 }
 
-/// Failing members of a forfeited group do not hold the cleanup. The others are
-/// deleted, and the group waits for the current UTC day to close.
+/// Failing members of a forfeited group do not prevent cleanup of the other members.
+/// The cleanup deletes the other members. The group waits for the current UTC day to close.
 #[test]
 fn failing_members_do_not_hold_the_cleanup() {
     harness(|storage| {

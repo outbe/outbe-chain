@@ -212,8 +212,8 @@ fn cycle_retries_oracle_lag_and_expires_only_the_closed_deadline_day() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut provider, |storage| {
         let cycle = Cycle::new(storage.clone());
-        // No unrelated trigger is due: exercise the per-block lifecycle continuation,
-        // including recovery after a daily scheduling attempt found no finalized day.
+        // No unrelated trigger is due. This test exercises the per-block lifecycle continuation.
+        // The test includes recovery after a daily scheduling attempt finds no finalized day.
         for spec in ACTIVE_TRIGGERS {
             cycle
                 .last_executed_at
@@ -266,7 +266,7 @@ fn cycle_retries_oracle_lag_and_expires_only_the_closed_deadline_day() {
         run_cycle_lifecycle(&ready).unwrap();
         assert_eq!(reserve.promis_limit().unwrap(), before + U256::from(11));
 
-        // The next day's deadline remains queued even though calls have no work.
+        // The queue retains the next day's deadline even though calls have no work.
         oracle
             .utc_day_vwap_last_finalized
             .write(timestamp_to_date_key(closed_at))

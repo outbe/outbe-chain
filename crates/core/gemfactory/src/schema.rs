@@ -108,7 +108,7 @@ pub struct GemFactoryContract {
     #[attribute(order = 7)]
     pub hour_capacity_minor: outbe_primitives::storage::dsl::Map<u64, U256>,
 
-    // Hour groups encoded as hour + 1, queued by UTC deadline day.
+    // The queue stores hour groups as `hour + 1` and schedules them by UTC deadline day.
     #[attribute(order = 8)]
     pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 9)]
@@ -130,7 +130,7 @@ pub struct GemFactoryContract {
     #[attribute(order = 17)]
     pub expiry_cursor: outbe_primitives::storage::dsl::Value<u64>,
 
-    // Encoded expired hour groups whose positions wait to be deleted.
+    // This queue stores encoded expired hour groups whose positions await deletion.
     #[attribute(order = 18)]
     pub cleanup_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 19)]

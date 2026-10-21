@@ -226,7 +226,7 @@ pub struct CredisContract {
     #[attribute(order = 8)]
     pub max_call_window_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
 
-    // Called groups, queued by the UTC day their settlement deadline falls in.
+    // The queue orders called groups by the UTC day that contains their settlement deadline.
     #[attribute(order = 9)]
     pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 10)]
@@ -310,7 +310,7 @@ pub struct CredisContract {
     pub group_call_notice_period_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
     #[attribute(order = 40)]
     pub group_called_at: outbe_primitives::storage::dsl::Map<B256, u64>,
-    // Forfeited groups whose Credis wait to be deleted, queued by deadline day.
+    // The queue orders forfeited groups by deadline day while their Credis await deletion.
     #[attribute(order = 42)]
     pub cleanup_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 43)]

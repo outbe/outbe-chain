@@ -615,8 +615,7 @@ mod call_sweep {
             sweep_at(&s, due(deadline) + 1);
             assert_eq!(unallocated(&s), after_first);
 
-            // The day emptied, so its day left the tree rather than being handed
-            // back every block.
+            // The day emptied, so the tree no longer returns that day every block.
             let factory = IntexContract::new(s.clone());
             assert_eq!(factory.first_expiry_day().unwrap(), None);
         });

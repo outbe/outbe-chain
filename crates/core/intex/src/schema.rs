@@ -368,7 +368,7 @@ pub struct IntexContract {
     #[attribute(order = 43)]
     pub call_bin_groups: outbe_primitives::storage::dsl::Map<B256, B256>,
 
-    // Called groups awaiting their settlement window, queued by day by the hour it closes in.
+    // This queue schedules called groups by the day when their settlement window closes.
     #[attribute(order = 44)]
     pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 45)]
@@ -385,15 +385,17 @@ pub struct IntexContract {
     #[attribute(order = 49)]
     pub min_call_threshold_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
 
-    /// Slots ever used in a day. Retired slots are zeroed in place, not compacted.
+    /// This value counts all slots ever used in a day.
+    /// Retirement sets slots to zero without compacting them.
     #[attribute(order = 50)]
     pub expiry_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 51)]
     pub expiry_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
-    /// `keccak256(day_be32 ++ slot_be32)` -> group key.
+    /// This map associates `keccak256(day_be32 ++ slot_be32)` with the group key.
     #[attribute(order = 52)]
     pub expiry_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
-    /// Group key -> `(day << 32) | slot`. 0 = not queued.
+    /// This map associates a group key with `((day + 1) << 32) | slot`.
+    /// Zero means that the group is not queued.
     #[attribute(order = 53)]
     pub called_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 54)]
@@ -414,7 +416,8 @@ pub struct IntexContract {
     #[attribute(order = 59)]
     pub call_group_called_at: outbe_primitives::storage::dsl::Map<B256, u32>,
 
-    // Expired groups whose spent series wait to be deleted, queued by day like the expiry queue.
+    // This queue stores expired groups whose spent series await deletion.
+    // It schedules groups by day, like the expiry queue.
     #[attribute(order = 60)]
     pub cleanup_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 61)]

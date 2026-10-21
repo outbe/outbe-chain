@@ -50,7 +50,7 @@ pub const REFERENCE_ISO: u16 = 978;
 
 pub use outbe_primitives::time::SECONDS_PER_DAY as DAY;
 
-/// Past any deadline by enough that its UTC day has closed.
+/// Adding this delay to any deadline advances time past the end of its UTC day.
 pub const CLOSED_DAY_DELAY: u64 = DAY;
 
 /// The settlement window a Credis seals at opening. Derived from the constant
@@ -394,8 +394,8 @@ pub fn call_credis(storage: &StorageHandle<'_>, id: U256, now: u64) -> bool {
     true
 }
 
-/// Moves the clock past the day the called Credis's deadline falls in and runs that
-/// block's forfeit and cleanup. Returns the groups forfeited.
+/// This function moves the clock past the day that contains the called Credis's deadline.
+/// It runs that block's forfeit and cleanup. The return value counts forfeited groups.
 pub fn lapse(storage: &StorageHandle<'_>, id: U256) -> u32 {
     let record = CredisContract::new(storage.clone()).get_credis(id).unwrap();
     let past = outbe_credis::settlement_deadline(&record) + CLOSED_DAY_DELAY;

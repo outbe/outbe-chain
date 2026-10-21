@@ -17,8 +17,8 @@ use outbe_intex::{ExpiryDays, IntexContract};
 use crate::errors::IntexFactoryError;
 use crate::runtime::emit_event;
 
-/// Expire every group whose settlement window has closed, earliest day first.
-/// Returns the groups expired.
+/// This function expires every group after its settlement window closes, earliest day first.
+/// It returns the number of expired groups.
 #[cfg(test)]
 pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = IntexContract::new(ctx.storage.clone());

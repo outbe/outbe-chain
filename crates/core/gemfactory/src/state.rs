@@ -11,7 +11,7 @@ use outbe_primitives::storage::indexed_list::IndexedList;
 use crate::errors::GemFactoryError;
 use crate::schema::{GemFactoryContract, GemPosition};
 
-/// Queue zero denotes an empty slot; hour zero is a valid position group.
+/// Zero denotes an empty queue slot. Hour zero is a valid position group.
 pub(crate) fn position_queue_entry(hour: u64) -> Result<u64> {
     hour.checked_add(1)
         .ok_or_else(|| GemFactoryError::Overflow.into())

@@ -371,8 +371,7 @@ fn missing_days_do_not_count_as_breaches() {
         assert_eq!(scan(&storage, at), 0);
         assert_eq!(state_of(&storage, credis_id), CredisState::Issued);
 
-        // Publishing the next day reaches the threshold, even though the
-        // rest of the window still has no price at all.
+        // The scenario reaches the threshold when it publishes the next day, although the rest of the window still has no price.
         set_vwap(&storage, last_closed_day(at + DAY), above_call());
         advance_to(&storage, at + DAY);
         assert_eq!(scan(&storage, at + DAY), 1);
@@ -1145,7 +1144,7 @@ fn a_deterministic_cleanup_failure_defers_the_group() {
     teardown();
 }
 
-/// Three Credis of one group, called and past the day their deadline falls in.
+/// This fixture creates three called Credis in one group and advances past the day that contains their deadline.
 fn lapsed_group_of_three() -> (
     outbe_primitives::storage::hashmap::HashMapStorageProvider,
     Vec<U256>,

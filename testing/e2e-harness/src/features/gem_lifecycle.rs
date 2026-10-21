@@ -51,13 +51,13 @@ const ISSUANCE_TIMEOUT_SECS: u64 = 180;
 const CALL_TIMEOUT_SECS: u64 = 300;
 /// Once the group is closed the sweep reaches the gem in the next block or two.
 const FORFEIT_TIMEOUT: Duration = Duration::from_secs(120);
-/// Queue eligibility follows the UTC day containing the exact deadline.
+/// The queue determines eligibility from the UTC day that contains the exact deadline.
 const EXPIRY_DAY_SECS: u64 = 86_400;
 /// A longer notice means the DEV parameter profile is not active.
 const MAX_DEV_NOTICE_SECS: u64 = 3_600;
 /// Slack past the deadline so the notice is spent before the group is closed.
 const EXPIRY_MARGIN_SECS: u64 = 30;
-/// Once its deadline day is armed, the sweep reaches the position in later blocks.
+/// After the test prepares the pass for the position's deadline day, the sweep reaches the position in later blocks.
 const POSITION_SWEEP_TIMEOUT_SECS: u64 = 120;
 /// The DEV validity (15 minutes) runs from parking, and most of it is spent
 /// waiting out the call notice before this step is reached.
@@ -421,7 +421,8 @@ impl Lifecycle for GemLifecycle {
         }
     }
 
-    /// Wait out the exact notice, then arm a closed deadline day in the test build.
+    /// Wait until the exact notice expires.
+    /// Prepare the pass for a closed deadline day in the test build.
     fn lapse_notice(&self, world: &mut World) {
         let url = world_url(world);
         let id = gem(world, FORFEITED);
@@ -568,8 +569,8 @@ fn position_returns_capacity(world: &mut World) {
     let url = world_url(world);
     let position_id = world.state.gem_position.expect("a position was parked");
 
-    // Hour groups retain their identity, but return capacity after their deadline day
-    // closes. Arm a closed day unless cleanup already deleted the position.
+    // Hour groups retain their identity but return capacity after their deadline day closes.
+    // Prepare the test pass for a closed day unless cleanup already deleted the position.
     let read_position = || {
         eth::read_call(
             &url,

@@ -112,8 +112,8 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
             OracleContract::new(s.clone())
                 .utc_day_vwap_last_finalized
                 .write(previous_date_key(timestamp_to_date_key(at)))?;
-            // Catch up the calendar backlog with distinct block allowances. Prices
-            // no longer matter to groups already called, but day readiness does.
+            // Process the calendar backlog with distinct block allowances.
+            // Prices no longer affect called groups, but day readiness still matters.
             for block in 0..16 {
                 let ctx = BlockRuntimeContext::new(
                     BlockContext::empty_for_tests(at * 32 + block, at, 1),

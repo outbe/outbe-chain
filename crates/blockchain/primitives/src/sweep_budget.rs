@@ -17,9 +17,17 @@ pub struct SweepBudget {
     written: bool,
 }
 
-/// Persisted allowance and the only pass day selected at this height.
-/// Packed fields: height (64 bits), calendar day (32), visits (32), writes (32),
-/// written (1), initialized (1). All remaining high bits must be zero.
+/// This structure stores the allowance and the only day selected for a pass at this block height.
+/// The packed value contains these fields:
+///
+/// - block height: 64 bits
+/// - calendar day: 32 bits
+/// - visits: 32 bits
+/// - writes: 32 bits
+/// - written flag: 1 bit
+/// - initialized flag: 1 bit
+///
+/// All remaining high bits must be zero.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BlockAllowance {
     pub height: u64,
@@ -36,9 +44,9 @@ impl BlockAllowance {
         }
     }
 
-    /// Resumes the persisted allowance, or resets it only at a newer height.
+    /// This method resumes the stored allowance. It resets the allowance only at a newer block height.
     /// Pure-deletion queues can use a separate stored allowance with `day = 0`.
-    /// Callers must persist [`Self::pack`] after successful bounded processing.
+    /// Callers must store [`Self::pack`] after processing succeeds within the budget.
     pub fn for_block(value: U256, height: u64, day: u32) -> Result<Self> {
         match Self::unpack(value)? {
             Some(previous) if previous.height > height => Err(PrecompileError::revert(
@@ -66,7 +74,7 @@ impl BlockAllowance {
             return Err(PrecompileError::revert("invalid daily sweep allowance"));
         }
         // Each mask proves the narrowing conversion fits its exact field width.
-        // Tests cover maximum height/day and malformed allowances.
+        // Tests cover the maximum height, the maximum day, and malformed allowances.
         let height = (value & U256::from(u64::MAX)).to::<u64>();
         let day = ((value >> 64usize) & U256::from(u32::MAX)).to::<u32>();
         let visits = ((value >> 96usize) & U256::from(u32::MAX)).to::<u32>();
@@ -108,8 +116,8 @@ impl SweepBudget {
         self.admit_writes(1)
     }
 
-    /// A gas-stopped member must not retry through another entrypoint this block.
-    /// Exhaust both counters and the first-write exception before persisting.
+    /// A member that exhausts gas must not retry through another entrypoint during the same block.
+    /// This method sets both counters to zero and disables the first-write exception before the caller stores the allowance.
     pub fn stop(&mut self) {
         self.visits = 0;
         self.writes = 0;

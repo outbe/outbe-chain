@@ -48,7 +48,7 @@ pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
     call_sweep::schedule(ctx, &mut NodCallSweep::new(ctx))
 }
 
-/// Seeds the first eligible daily pass from the chain initialization day.
+/// This function initializes the first eligible daily pass from the chain initialization day.
 pub fn initialize_daily(ctx: &BlockRuntimeContext) -> Result<()> {
     call_sweep::initialize(ctx, &mut NodCallSweep::new(ctx))
 }
@@ -59,8 +59,8 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_sweep::continue_day(ctx, &mut NodCallSweep::new(ctx))
 }
 
-/// Runs the next coupled call/forfeit slice against its pinned observation day.
-/// Returns how many groups were called, not how many were forfeited.
+/// This function runs the next coupled call and forfeit slice against its pinned observation day.
+/// The return value counts called groups, not forfeited groups.
 pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_sweep::continue_day(ctx, &mut NodCallSweep::new(ctx))
 }

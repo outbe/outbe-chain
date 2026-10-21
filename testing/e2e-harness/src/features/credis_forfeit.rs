@@ -185,12 +185,12 @@ fn deadline_passes(world: &mut World) {
         || format!("the chain never passed the settlement deadline {deadline}"),
         || head_time(world) > deadline,
     );
-    // Cleanup follows the closed deadline day's pass: read it before that.
+    // Cleanup follows the pass for the closed deadline day. Read the Credis before cleanup.
     let height = world
         .rpc
         .head(world.validators.primary_port())
         .expect("primary head");
-    // It may already be deleted if the deadline day closed at this boundary.
+    // The Credis may already be absent if cleanup deletes the Credis when the deadline day closes at this boundary.
     if let Some(lapsed) = eth::read_call_at(
         &url(world),
         CREDIS_ADDRESS,
@@ -237,7 +237,7 @@ fn reads_forfeited(world: &mut World) {
         f.gratis_minor
     );
     assert!(outcome.gratisBurnedMinor > U256::ZERO);
-    // Cleanup may already have deleted it if its deadline day closed at once.
+    // The Credis may already be absent if cleanup deletes the Credis as its deadline day closes.
     let (reason, height) = settlement_revert(world, f);
     let swept = forfeit_block(&url(world), f.credis_id).is_some_and(|block| block <= height);
     let expected = if swept {
@@ -248,12 +248,12 @@ fn reads_forfeited(world: &mut World) {
     assert_eq!(reason.as_ref(), expected.as_slice());
 }
 
-/// Arm a closed deadline day after the exact settlement notice has elapsed.
+/// Prepare the test pass for a closed deadline day after the exact settlement notice expires.
 #[when("the forfeit sweep reaches the lapsed Credis")]
 fn sweep_reaches(world: &mut World) {
     let url = url(world);
     let credis_id = fixture(world).credis_id;
-    // Its deadline day may have closed already, and cleanup deleted it.
+    // The Credis deadline day may already be closed, with cleanup complete.
     if forfeit_block(&url, credis_id).is_some() {
         return;
     }

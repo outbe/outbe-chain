@@ -236,7 +236,7 @@ impl IntexContract<'_> {
             .collect()
     }
 
-    /// Day since the epoch a deadline falls in: plain UTC, not a WorldwideDay.
+    /// This function returns the deadline's UTC day since the epoch, not a WorldwideDay.
     #[cfg(any(test, feature = "test-utils"))]
     pub fn deadline_day(deadline: u64) -> u32 {
         expiry_queue::deadline_day(deadline).unwrap()
@@ -270,7 +270,7 @@ impl IntexContract<'_> {
     }
 }
 
-/// Days holding a called group whose settlement window has not closed yet.
+/// This daily queue stores called groups whose settlement window remains open.
 pub struct ExpiryDays<'a, 'b>(pub &'a IntexContract<'b>);
 
 outbe_primitives::impl_expiry_queue!(ExpiryDays<B256> {
@@ -286,7 +286,7 @@ outbe_primitives::impl_expiry_queue!(ExpiryDays<B256> {
     cursor: expiry_cursor,
 });
 
-/// Days holding an expired group whose spent series wait to be deleted.
+/// This daily queue stores expired groups whose spent series await deletion.
 pub struct CleanupDays<'a, 'b>(pub &'a IntexContract<'b>);
 
 outbe_primitives::impl_expiry_queue!(CleanupDays<B256> {

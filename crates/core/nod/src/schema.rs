@@ -211,8 +211,8 @@ pub struct NodContract {
     #[attribute(order = 66)]
     pub call_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
 
-    // Called groups, queued by the UTC day their notice period closes in. The trie
-    // sits here and the group columns follow `config_profile`, whose slot genesis pins.
+    // The queue orders called groups by the UTC day when their notice period closes.
+    // The trie occupies these columns. The group columns follow `config_profile`, whose slot genesis fixes.
     #[attribute(order = 67)]
     pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 68)]
@@ -275,7 +275,7 @@ pub struct NodContract {
     #[attribute(order = 89)]
     pub group_unpaid_load: outbe_primitives::storage::dsl::Map<B256, U256>,
 
-    // Forfeited groups whose unpaid Nods wait to be deleted, queued by deadline day.
+    // The queue orders forfeited groups by deadline day while their unpaid Nods await deletion.
     #[attribute(order = 90)]
     pub cleanup_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 91)]

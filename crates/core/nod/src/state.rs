@@ -237,7 +237,7 @@ outbe_primitives::impl_call_bins!(CallBins<B256> {
     failed: call_scan_failed_day,
 });
 
-/// Called groups, queued by the UTC day their notice period closes in.
+/// This queue orders called groups by the UTC day when their notice period closes.
 pub struct ExpiryDays<'a, 'storage>(pub &'a NodContract<'storage>);
 
 outbe_primitives::impl_expiry_queue!(ExpiryDays<B256> {

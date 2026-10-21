@@ -1,7 +1,7 @@
-//! E2E-only hooks. A Credis is stamped live, so only a throwaway build can move its
-//! issuance behind the closed days a scenario seeds for the call sweep. The forfeit
-//! sweep opens a day only once it has closed, so `closeCallNoticeForTest` moves a
-//! lapsed deadline into a day the sweep opens on the next block.
+//! These hooks serve only E2E tests. A Credis receives its issuance timestamp when issued.
+//! Only a temporary build can move that timestamp before the closed days that a scenario initializes for the call sweep.
+//! The forfeit sweep opens a day only after that day closes.
+//! Thus, `closeCallNoticeForTest` moves a lapsed deadline into a day that the sweep opens on the next block.
 
 use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::{sol, SolCall};
@@ -82,7 +82,7 @@ fn requeue_called(storage: &StorageHandle<'_>, credis_id: U256, deadline: u64) -
 
 fn reopen_day(storage: &StorageHandle<'_>, day: u32) -> Result<()> {
     let credis = CredisContract::new(storage.clone());
-    // The fixture may target a closed day before this throwaway chain's genesis.
+    // The fixture may target a closed day before this temporary chain's genesis.
     if credis.daily_genesis_day.read()? == 0 || day < credis.daily_genesis_day.read()? {
         credis.daily_genesis_day.write(day)?;
     }

@@ -1,7 +1,7 @@
-//! Hooks only a throwaway e2e build answers. A scenario that runs no auction seeds the
-//! day VWAPs and issues its series straight. The forfeit sweep
-//! opens a day only once it has closed, so `closeCallNoticeForTest` moves a
-//! lapsed deadline into a closed day the sweep opens on the next block.
+//! Only a temporary e2e build responds to these hooks.
+//! A scenario without an auction seeds the daily VWAPs and issues its series directly.
+//! The forfeit sweep opens a day only after that day closes.
+//! `closeCallNoticeForTest` moves a lapsed deadline into a closed day that the sweep opens in the next block.
 
 use alloy_primitives::Bytes;
 use alloy_sol_types::{sol, SolCall};
@@ -29,8 +29,8 @@ sol! {
     }
 }
 
-/// Move the called group of `series_id` onto `deadline`, and with it into that deadline's
-/// day. A notice that lapsed minutes ago would otherwise wait for midnight.
+/// This function moves the called group of `series_id` to `deadline` and into that deadline's day.
+/// A notice that lapsed minutes ago would otherwise wait for midnight.
 fn requeue_called(storage: &StorageHandle<'_>, series_id: SeriesId, deadline: u64) -> Result<()> {
     use outbe_intex::IntexContract;
 

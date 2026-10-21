@@ -1,4 +1,4 @@
-//! Bounded queue traversal and checkpointed member expiry.
+//! This module traverses the queue within its budget and expires members within checkpoints.
 
 use super::{
     day_end, deadline_day, entry_at, first_day, pack_cursor, remove, retarget, unpack_cursor, Due,
@@ -9,17 +9,18 @@ use crate::math::constants::MAX_BIN_ID;
 use crate::storage::StorageHandle;
 use crate::sweep_budget::SweepBudget;
 
-/// Actual block time and the pinned scheduling cutoff. Catch-up must not use the
-/// cutoff as the clock for retry scheduling or expand it as block time advances.
+/// This structure stores the actual block time and the selected cutoff day for scheduling.
+/// Processing missed days must not use the cutoff as the clock for retries.
+/// The cutoff must not change as block time advances.
 #[derive(Debug, Clone, Copy)]
 pub struct SweepTime {
     pub now: u64,
     pub through_day: u32,
 }
 
-/// Sweeps closed scheduling days at or before the cutoff, earliest first.
-/// Every visited slot (including a hole or a leftover) costs a visit; every
-/// attempted member costs a write.
+/// This function processes closed scheduling days at or before the cutoff, earliest first.
+/// Each slot costs one visit, including an empty slot or a remaining entry.
+/// Each attempted member costs one write.
 pub fn sweep_through<'s, Q, H>(
     queue: &Q,
     storage: &StorageHandle<'s>,
@@ -59,7 +60,7 @@ where
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Step {
     Done,
-    /// Resume at this slot, below this member.
+    /// The sweep resumes at this slot, below the stored member index.
     Hold(u32),
 }
 
@@ -87,7 +88,7 @@ where
             self.queue.sweep_cursor().write(pack_cursor(slot, member))?;
             return Ok(false);
         }
-        // Every live slot is removed or retargeted during its charged visit.
+        // Each charged visit removes its entry or moves the entry to another day.
         Err(PrecompileError::Fatal(
             "expiry day retains entries after its last slot".into(),
         ))
@@ -132,7 +133,7 @@ where
                 return Ok(Step::Done);
             }
         }
-        // Reverse traversal keeps swap-removed members already tried above index.
+        // Descending traversal keeps previously attempted members above the current index when removal swaps members.
         let count = self.handler.member_count(entry)?;
         let mut index = match resume {
             0 => count,
@@ -168,7 +169,7 @@ where
         Ok(Step::Done)
     }
 
-    /// Handles a misplaced future deadline in the same charged traversal.
+    /// This method handles an entry with a misplaced future deadline within the same charged visit.
     fn retire_leftover(&mut self, entry: Q::Entry) -> Result<()> {
         match self.handler.due(entry)? {
             Due::Drop => self.drop_entry(entry),
@@ -181,8 +182,8 @@ where
         self.storage.with_checkpoint(|| remove(queue, entry))
     }
 
-    /// Retry at the closing timestamp of the actual current UTC day, never before
-    /// the deadline day. Historical catch-up must not backdate the retry.
+    /// This method schedules the retry when the actual current UTC day closes, but never before the deadline day closes.
+    /// Processing missed days must not schedule the retry in the past.
     fn defer(&mut self, entry: Q::Entry) -> Result<()> {
         let deadline = self.queue.entry_deadline().read(&entry)?;
         let day = deadline_day(deadline)?.max(deadline_day(self.now)?);

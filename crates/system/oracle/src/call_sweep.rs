@@ -1,5 +1,5 @@
-//! Each factory's daily pass: calls pinned to a closed day's prices, followed by
-//! its required forfeits. Every block resumes with one persisted shared allowance.
+//! Each factory uses a closed day's prices for calls, then processes its required forfeits.
+//! Each block resumes the pass with one stored allowance shared by all phases.
 
 use std::fmt::Display;
 
@@ -19,11 +19,11 @@ use crate::api::get_all_reference_currencies;
 use crate::call_window::{CallWindow, CallWindows};
 use crate::schema::OracleContract;
 
-/// One factory's coupled calls and forfeits, in persisted phase order.
+/// This trait processes one factory's calls and forfeits in the stored phase order.
 pub trait CallSweep<'storage> {
     /// Names the right in the logs of a day the Oracle has not finalized.
     const CONSUMER: &'static str;
-    /// Required forfeit stages after calls (series, then optional positions/cleanup).
+    /// This constant counts the required stages after calls: series forfeits, then optional position expiry or cleanup.
     const FORFEIT_PHASES: u8;
 
     type Bins<'a>: CallBinStore<'storage>
@@ -63,7 +63,7 @@ pub trait CallSweep<'storage> {
         budget: &mut SweepBudget,
     ) -> Result<(u32, bool)>;
 
-    /// `phase` is one-based. Counts never substitute for explicit completion.
+    /// The `phase` argument starts at one. The method reports completion explicitly rather than through counts.
     fn forfeit(
         &mut self,
         ctx: &BlockRuntimeContext,
@@ -73,7 +73,7 @@ pub trait CallSweep<'storage> {
     ) -> Result<Progress>;
 }
 
-/// Seeds the first eligible day at fresh-genesis activation, before any halt.
+/// This function initializes the first eligible day when a new genesis activates, before any halt.
 /// Repeated initialization does not change the original boundary.
 pub fn initialize<'s, S: CallSweep<'s>>(ctx: &BlockRuntimeContext, sweep: &mut S) -> Result<()> {
     if sweep.genesis_day().read()? == 0 {
@@ -123,9 +123,9 @@ pub fn schedule<'s, S: CallSweep<'s>>(ctx: &BlockRuntimeContext, sweep: &mut S) 
     }
 }
 
-/// Runs calls and every required forfeit stage with one persisted block allowance.
-/// Re-entry may resume the selected day, but cannot select a second day at this height.
-/// A local failure rolls back progress, economic mutations, and allowance together.
+/// This function runs calls and every required forfeit stage with one stored allowance for the block.
+/// Repeated calls may resume the selected day, but cannot select a second day at this block height.
+/// A local failure restores progress, economic state, and the allowance together.
 pub fn continue_day<'s, S: CallSweep<'s>>(ctx: &BlockRuntimeContext, sweep: &mut S) -> Result<u32> {
     ctx.with_checkpoint(|| continue_pass(ctx, sweep))
 }
@@ -141,8 +141,9 @@ fn continue_pass<'s, S: CallSweep<'s>>(ctx: &BlockRuntimeContext, sweep: &mut S)
     if allowance.day != pinned_day {
         return Ok(0);
     }
-    // Persist even an idle selection: scheduling later at this height cannot open
-    // a second pass, nor can another entrypoint replenish the allowance.
+    // Store the selection even when no work is pending.
+    // Later scheduling cannot open a second pass at this block height.
+    // Another entrypoint cannot reset the allowance at this block height.
     sweep.block_budget().write(allowance.pack())?;
     if day_ready(ctx, sweep, pinned_day)? {
         let (called, progress) = run_phases(ctx, sweep, pinned_day, &mut allowance.budget)?;

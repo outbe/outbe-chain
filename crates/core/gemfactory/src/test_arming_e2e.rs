@@ -1,9 +1,12 @@
-//! Hooks only a throwaway e2e build answers. Genesis cannot seed a Gem body, so a scenario
-//! that needs a paid Gem asks for one. A gem is stamped live, so only such a build can move
-//! its issuance back behind the closed days a scenario seeds for the call sweep. The forfeit
-//! sweep opens a group only once its deadline day has closed, so `closeCallNoticeForTest` moves a
-//! deadline that already lapsed into one the sweep opens on the next block, and
-//! `closePositionHourForTest` does the same for an expired position's hour.
+//! Only a temporary e2e build responds to these hooks.
+//! Genesis cannot seed a Gem body, so a scenario requests a paid Gem when necessary.
+//!
+//! A Gem receives its issuance timestamp at creation.
+//! Only this build can move that timestamp before the closed days with scenario-seeded prices for the call sweep.
+//!
+//! The forfeit sweep opens a group only after its deadline day closes.
+//! `closeCallNoticeForTest` moves a lapsed deadline into a day that the sweep opens in the next block.
+//! `closePositionHourForTest` does the same for an expired position's hour group.
 
 use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::SolCall;

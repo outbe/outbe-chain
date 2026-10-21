@@ -202,7 +202,7 @@ impl GemContract<'_> {
         expiry_queue::first_day(&CleanupDays(self))
     }
 
-    /// Day since the epoch a deadline falls in: plain UTC, not a WorldwideDay.
+    /// This function returns the deadline's UTC day since the epoch, not a WorldwideDay.
     #[cfg(any(test, feature = "test-utils"))]
     pub fn deadline_day(deadline: u64) -> u32 {
         expiry_queue::deadline_day(deadline).unwrap()
@@ -245,7 +245,7 @@ impl GemContract<'_> {
     }
 }
 
-/// Called groups, queued by the UTC day their notice period closes in.
+/// This queue schedules called groups by the UTC day when their notice period closes.
 pub struct ExpiryDays<'a, 'storage>(pub &'a GemContract<'storage>);
 
 outbe_primitives::impl_expiry_queue!(ExpiryDays<B256> {

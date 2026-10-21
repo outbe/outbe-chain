@@ -14,8 +14,8 @@ pub(super) fn seed_cycle_genesis(storage: StorageHandle<'_>) {
             TEST_BLOCK_TIMESTAMP_BASE,
         ))
         .unwrap();
-    // These fixtures start from an established parent state, including the
-    // factory watermark needed to resume its first closed day's lifecycle.
+    // These fixtures use an established parent state. This state includes the factory watermark.
+    // The lifecycle needs this watermark to resume processing for the first closed day of that parent state.
     let ctx = BlockRuntimeContext::new(
         BlockContext::empty_for_tests(
             1,

@@ -23,7 +23,7 @@ pub enum Scheduled {
     Ignored,
 }
 
-/// Completion is explicit: zero economic changes can still leave queued work.
+/// This enum reports completion explicitly. Work can remain queued even when no economic state changes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Progress {
     Pending,
@@ -31,9 +31,9 @@ pub enum Progress {
 }
 
 impl SweepDays {
-    /// Schedules `day` without disturbing a sweep in flight. Every closed day after the
-    /// newest one scheduled is walked, in order, so a sweep that fell behind catches up
-    /// rather than skipping days. Completed days cannot reopen.
+    /// This method schedules `day` without changing the active sweep.
+    /// The sweep processes each subsequent closed day in order, without skipping days.
+    /// The sweep cannot reopen completed days.
     pub fn schedule(mut self, day: u32) -> (Self, Scheduled) {
         let idle = self.current == 0;
         let scheduled = if day <= self.latest || (!idle && day <= self.current) {

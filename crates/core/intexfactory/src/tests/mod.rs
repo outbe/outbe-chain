@@ -23,7 +23,7 @@ mod called {
             .unwrap()
             == 0
         {
-            // Call-index fixtures begin with yesterday, not pre-fixture history.
+            // These call-index fixtures begin with yesterday, not with history before the fixture.
             let genesis = BlockRuntimeContext::new(
                 BlockContext::empty_for_tests(0, ctx.block.timestamp - DAY, CHAIN_ID),
                 ctx.storage.clone(),

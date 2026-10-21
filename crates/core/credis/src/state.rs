@@ -259,7 +259,7 @@ fn take_from(sums: &Map<'_, Address, U256>, owner: Address, amount: U256) -> Res
     sums.write(&owner, total)
 }
 
-/// Called groups, queued by the UTC day their settlement deadline falls in.
+/// This queue orders called groups by the UTC day that contains their settlement deadline.
 pub struct ExpiryDays<'a, 'storage>(pub &'a CredisContract<'storage>);
 
 outbe_primitives::impl_expiry_queue!(ExpiryDays<B256> {

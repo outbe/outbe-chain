@@ -32,14 +32,14 @@ pub fn initialize_daily(ctx: &BlockRuntimeContext) -> Result<()> {
     call_sweep::initialize(ctx, &mut GemCallSweep::new(ctx))
 }
 
-/// Runs the coupled daily pass, including forfeits and position expiry after calls.
-/// Returns the groups called, not the pass completion state.
+/// This function runs the coupled daily pass, including forfeits and position expiry after calls.
+/// It returns the number of called groups, not the pass completion state.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_sweep::continue_day(ctx, &mut GemCallSweep::new(ctx))
 }
 
-/// Resumes the coupled daily pass under this height's shared allowance.
-/// Returns how many groups were called.
+/// This function resumes the coupled daily pass under this block height's shared allowance.
+/// It returns the number of called groups.
 pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_sweep::continue_day(ctx, &mut GemCallSweep::new(ctx))
 }

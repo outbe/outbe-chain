@@ -209,8 +209,9 @@ fn a_group_that_outlives_its_day_is_retired_rather_than_left_in_front() {
     });
 }
 
-/// Calls a mature gem, fails its first forfeit, and checks its group moved to the
-/// next day and burned there with its credit. Returns the provider for its events.
+/// This helper calls a mature gem and causes its first forfeit to fail.
+/// It checks that the group moves to the next day and that the gem burns there with its credit.
+/// It returns the provider for access to its events.
 fn forfeit_fails_once() -> (
     outbe_primitives::storage::hashmap::HashMapStorageProvider,
     U256,
@@ -252,8 +253,8 @@ fn forfeit_fails_once() -> (
     (provider, gem_id)
 }
 
-/// A gem whose forfeit fails is not lost: its group moves to the next day with it,
-/// and it burns there.
+/// A gem whose forfeit fails remains in its group.
+/// The group moves to the next day, when the gem burns.
 #[test]
 fn a_group_whose_member_fails_to_burn_is_deferred_and_burned_later() {
     let (provider, _) = forfeit_fails_once();

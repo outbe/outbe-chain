@@ -241,7 +241,8 @@ pub struct GemContract {
     pub expiry_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 22)]
     pub expiry_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
-    /// Slots ever used in a day. Retired ones are zeroed in place, not compacted.
+    /// This value counts all slots ever used in a day.
+    /// Retirement sets slots to zero without compacting them.
     #[attribute(order = 23)]
     pub expiry_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 24)]
@@ -299,8 +300,8 @@ pub struct GemContract {
     #[attribute(order = 42)]
     pub group_unpaid_load: outbe_primitives::storage::dsl::Map<B256, U256>,
 
-    // --- Forfeited groups whose unpaid gems wait to be deleted, queued by day like the
-    // expiry queue.
+    // --- This queue stores forfeited groups whose unpaid gems await deletion.
+    // It schedules groups by day, like the expiry queue.
     #[attribute(order = 43)]
     pub cleanup_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 44)]
