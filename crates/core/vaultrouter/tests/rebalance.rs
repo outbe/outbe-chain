@@ -22,7 +22,7 @@
 //!     failure, not a silently swallowed error.
 
 use alloy_primitives::{keccak256, Address, Bytes, U256};
-use alloy_sol_types::{sol, SolCall, SolEvent};
+use alloy_sol_types::{sol, SolCall, SolError, SolEvent};
 use outbe_evm::test_support::{seed_storage, EvmWorld};
 use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::storage::{SubCallOutput, SubCallStatus};
@@ -203,9 +203,41 @@ fn return_word(code: &mut Vec<u8>, value: U256) {
 fn approval_vault() -> AccountInfo {
     let mut code = Vec::new();
     let owner = selector_jump(&mut code, "owner()");
+    let balance = selector_jump(&mut code, "balanceOf(address)");
     return_word(&mut code, U256::from_be_slice(ASSET.as_slice()));
     label(&mut code, owner);
     return_word(&mut code, U256::ZERO);
+    label(&mut code, balance);
+    return_word(&mut code, U256::ZERO);
+    code_account(&code)
+}
+
+/// One router-owned share per asset, stored in slot zero and changed only by
+/// actual deposit/withdraw calls. Unknown selectors revert rather than masking
+/// a missing fixture implementation with a canned return value.
+fn stateful_vault() -> AccountInfo {
+    let mut code = Vec::new();
+    let asset = selector_jump(&mut code, "asset()");
+    let balance = selector_jump(&mut code, "balanceOf(address)");
+    let preview = selector_jump(&mut code, "previewWithdraw(uint256)");
+    let deposit = selector_jump(&mut code, "deposit(uint256,address)");
+    let withdraw = selector_jump(&mut code, "withdraw(uint256,address,address)");
+    code.extend_from_slice(&ALWAYS_REVERT);
+    label(&mut code, asset);
+    return_word(&mut code, U256::from_be_slice(ASSET.as_slice()));
+    label(&mut code, balance);
+    code.extend_from_slice(&[0x60, 0, 0x54, 0x60, 0, 0x52, 0x60, 0x20, 0x60, 0, 0xf3]);
+    label(&mut code, deposit);
+    // SSTORE(0, SLOAD(0) + assets).
+    code.extend_from_slice(&[0x60, 4, 0x35, 0x60, 0, 0x54, 0x01, 0x60, 0, 0x55]);
+    code.extend_from_slice(&[0x61, 0, 0, 0x56]);
+    let deposited = code.len() - 3;
+    label(&mut code, withdraw);
+    // SSTORE(0, SLOAD(0) - assets); rebalance checks sufficient shares first.
+    code.extend_from_slice(&[0x60, 4, 0x35, 0x60, 0, 0x54, 0x03, 0x60, 0, 0x55]);
+    label(&mut code, deposited);
+    label(&mut code, preview);
+    code.extend_from_slice(&[0x60, 4, 0x35, 0x60, 0, 0x52, 0x60, 0x20, 0x60, 0, 0xf3]);
     code_account(&code)
 }
 
@@ -216,10 +248,15 @@ fn approval_token() -> AccountInfo {
     let iso = selector_jump(&mut code, "isoCode()");
     let approve = selector_jump(&mut code, "approve(address,uint256)");
     let set_failure = selector_jump(&mut code, "setFailure(uint256)");
+    let transfer = selector_jump(&mut code, "transfer(address,uint256)");
+    let transfer_from = selector_jump(&mut code, "transferFrom(address,address,uint256)");
     // Default getter: return the allowance stored in slot zero.
     code.extend_from_slice(&[0x60, 0, 0x54, 0x60, 0, 0x52, 0x60, 0x20, 0x60, 0, 0xf3]);
     label(&mut code, iso);
     return_word(&mut code, U256::from(840));
+    label(&mut code, transfer);
+    label(&mut code, transfer_from);
+    return_word(&mut code, U256::ONE);
     label(&mut code, set_failure);
     code.extend_from_slice(&[0x60, 4, 0x35, 0x60, 2, 0x55, 0x00]);
     label(&mut code, approve);
@@ -245,7 +282,7 @@ fn approval_token() -> AccountInfo {
     code_account(&code)
 }
 
-fn approved_world(fail: bool, kind: u8) -> EvmWorld {
+fn approved_db(fail: bool, kind: u8) -> CacheDB<EmptyDB> {
     let mut db = CacheDB::new(EmptyDB::default());
     db.insert_account_info(ASSET, approval_token());
     db.insert_account_info(VAULT_FROM, approval_vault());
@@ -279,6 +316,38 @@ fn approved_world(fail: bool, kind: u8) -> EvmWorld {
                 .unwrap();
             storage.sstore(ASSET, U256::ZERO, U256::MAX).unwrap();
         }
+    });
+    db
+}
+
+fn approved_world(fail: bool, kind: u8) -> EvmWorld {
+    EvmWorld::new(approved_db(fail, kind))
+}
+
+fn pending_removal_world() -> EvmWorld {
+    let mut db = approved_db(false, 2);
+    db.insert_account_info(VAULT_FROM, stateful_vault());
+    db.insert_account_info(VAULT_TO, stateful_vault());
+    db.insert_account_storage(VAULT_FROM, U256::ZERO, U256::from(AMOUNT))
+        .unwrap();
+    seed_storage(&mut db, 1, CCA, |storage| {
+        storage
+            .increase_balance(
+                outbe_primitives::addresses::CCA_REGISTRY_ADDRESS,
+                outbe_ccaregistry::constants::BOND_REQUIREMENT,
+            )
+            .unwrap();
+        outbe_ccaregistry::runtime::bond(
+            storage.clone(),
+            CCA,
+            outbe_ccaregistry::constants::BOND_REQUIREMENT,
+            "Test CCA".into(),
+        )
+        .unwrap();
+        VaultRouterContract::new(storage)
+            .asset_vault_set(ASSET)
+            .insert(VAULT_TO)
+            .unwrap();
     });
     EvmWorld::new(db)
 }
@@ -437,4 +506,155 @@ fn approved_apply_rejects_static_frame_without_consuming_action() {
         apply_approved(&mut world, false).status,
         SubCallStatus::Success
     ));
+}
+
+#[test]
+fn approved_remove_retries_after_active_cca_drains_real_vault_shares() {
+    let mut world = pending_removal_world();
+    let shares = |world: &mut EvmWorld, vault| {
+        world.view(
+            CCA,
+            VAULT_ROUTER_ADDRESS,
+            IVaultRouter::sharesBalanceCall { vault },
+        )
+    };
+    assert_eq!(shares(&mut world, VAULT_FROM), U256::from(AMOUNT));
+    assert_eq!(shares(&mut world, VAULT_TO), U256::ZERO);
+    let result = apply_approved(&mut world, false);
+    assert!(matches!(result.status, SubCallStatus::Revert(_)));
+    let error = IVaultRouter::ReserveVaultHasShares::abi_decode(&result.returndata).unwrap();
+    assert_eq!(error.vault, VAULT_FROM);
+    assert_eq!(error.shares, U256::from(AMOUNT));
+    let pending = world.view(
+        CCA,
+        VAULT_ROUTER_ADDRESS,
+        IVaultRouter::approvedVaultActionCall {
+            proposalId: U256::ONE,
+        },
+    );
+    assert!(matches!(
+        pending.action,
+        IVaultRouter::VaultAction::RemoveVault
+    ));
+    assert_eq!(pending.vault, VAULT_FROM);
+    assert_eq!(pending.approvedAt, 0);
+    assert_eq!(
+        world.view(CCA, ASSET, ApprovalToken::allowanceCall {}),
+        U256::MAX
+    );
+    assert_eq!(
+        world.view(
+            CCA,
+            VAULT_ROUTER_ADDRESS,
+            IVaultRouter::assetVaultsCountCall { asset: ASSET }
+        ),
+        U256::from(2)
+    );
+    assert_eq!(
+        world.view(
+            CCA,
+            VAULT_ROUTER_ADDRESS,
+            IVaultRouter::assetVaultAtCall {
+                asset: ASSET,
+                index: U256::ZERO
+            }
+        ),
+        VAULT_FROM
+    );
+    assert!(world.logs().is_empty());
+
+    let moved = rebalance(&mut world);
+    assert!(matches!(moved.status, SubCallStatus::Success));
+    assert_eq!(
+        IVaultRouter::rebalanceCall::abi_decode_returns(&moved.returndata).unwrap(),
+        U256::from(AMOUNT)
+    );
+    assert_eq!(shares(&mut world, VAULT_FROM), U256::ZERO);
+    assert_eq!(shares(&mut world, VAULT_TO), U256::from(AMOUNT));
+    assert_eq!(world.logs().len(), 1);
+    let event = IVaultRouter::LiquidityRebalanced::decode_log_data(&world.logs()[0].data).unwrap();
+    assert_eq!(event.cca, CCA);
+    assert_eq!(event.burnedShares, U256::from(AMOUNT));
+    assert_eq!(event.mintedShares, U256::from(AMOUNT));
+
+    assert!(matches!(
+        apply_approved(&mut world, false).status,
+        SubCallStatus::Success
+    ));
+    let pending = world.view(
+        CCA,
+        VAULT_ROUTER_ADDRESS,
+        IVaultRouter::approvedVaultActionCall {
+            proposalId: U256::ONE,
+        },
+    );
+    assert!(matches!(pending.action, IVaultRouter::VaultAction::Unknown));
+    assert_eq!(
+        world.view(CCA, ASSET, ApprovalToken::allowanceCall {}),
+        U256::ZERO
+    );
+    assert_eq!(
+        world.view(
+            CCA,
+            VAULT_ROUTER_ADDRESS,
+            IVaultRouter::assetVaultsCountCall { asset: ASSET }
+        ),
+        U256::ONE
+    );
+    assert_eq!(world.logs().len(), 3); // Rebalance, allowance revocation, removal.
+    assert_eq!(
+        world.view(
+            CCA,
+            VAULT_ROUTER_ADDRESS,
+            IVaultRouter::assetVaultAtCall {
+                asset: ASSET,
+                index: U256::ZERO
+            }
+        ),
+        VAULT_TO
+    );
+    let removed = IVaultRouter::VaultRemoved::decode_log_data(&world.logs()[2].data).unwrap();
+    assert_eq!(removed.vault, VAULT_FROM);
+    assert!(!matches!(
+        apply_approved(&mut world, false).status,
+        SubCallStatus::Success
+    ));
+}
+
+#[test]
+fn reserve_stables_rejects_pending_first_vault_removal_through_abi() {
+    let mut world = pending_removal_world();
+    let result = world.call(
+        CCA,
+        VAULT_ROUTER_ADDRESS,
+        IVaultRouter::reserveStablesCall {
+            credisOwner: CCA,
+            source: CCA,
+            asset: ASSET,
+            amountMinor: U256::from(AMOUNT),
+            referenceCurrency: 840,
+        }
+        .abi_encode()
+        .into(),
+        false,
+    );
+    assert!(matches!(result.status, SubCallStatus::Revert(_)));
+    let error = IVaultRouter::ReserveVaultRemovalPending::abi_decode(&result.returndata).unwrap();
+    assert_eq!(error.vault, VAULT_FROM);
+    assert_eq!(error.proposalId, U256::ONE);
+    assert_eq!(
+        world.view(
+            CCA,
+            VAULT_ROUTER_ADDRESS,
+            IVaultRouter::sharesBalanceCall { vault: VAULT_FROM }
+        ),
+        U256::from(AMOUNT)
+    );
+    let reservation = world.view(
+        CCA,
+        VAULT_ROUTER_ADDRESS,
+        IVaultRouter::reservationOfCall { id: U256::ONE },
+    );
+    assert_eq!(reservation.amountMinor, U256::ZERO);
+    assert!(world.logs().is_empty());
 }

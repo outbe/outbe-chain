@@ -40,10 +40,25 @@ pub(crate) fn reserve_stables(
             .checked_add(RESERVATION_TTL_SECS)
             .ok_or(VaultRouterError::TimestampOverflow)?;
         let vault = first_vault(&storage, asset)?;
+        let contract = VaultRouterContract::new(storage.clone());
+        let proposal_id = contract.pending_vault_proposals.read(&vault)?;
+        if !proposal_id.is_zero() {
+            let action = crate::state::approved_vault_action(&storage, proposal_id)?;
+            if action.vault != vault {
+                return Err(
+                    VaultRouterError::ApprovedVaultActionIndexInconsistent(proposal_id).into(),
+                );
+            }
+            // Expired removals still block admission until explicit cleanup or supersession.
+            if action.kind == crate::state::REMOVE_VAULT {
+                return Err(
+                    VaultRouterError::ReserveVaultRemovalPending { vault, proposal_id }.into(),
+                );
+            }
+        }
         ensure_shares_cover(&storage, vault, amount)?;
         let mut terms = crate::reservation::quote(&storage, asset, amount, reference_currency)?;
 
-        let contract = VaultRouterContract::new(storage.clone());
         let nonce = contract
             .reservation_nonce
             .read()?

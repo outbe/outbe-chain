@@ -296,6 +296,7 @@ fn add_remove_liquidity_target_enumerates() {
 #[test]
 fn add_vault_registers_asset_and_vault_then_remove() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at_selector(vault(), IERC20::balanceOfCall::SELECTOR, word(U256::ZERO));
     storage.stub_sub_call_at_selector(
         vault(),
         IVaultV2::assetCall::SELECTOR,
@@ -449,6 +450,7 @@ fn add_vault_rejects_a_vault_with_an_owner() {
 }
 
 fn stub_registrable_vault(storage: &mut HashMapStorageProvider) {
+    storage.stub_sub_call_at_selector(vault(), IERC20::balanceOfCall::SELECTOR, word(U256::ZERO));
     storage.stub_sub_call_at_selector(
         vault(),
         IVaultV2::assetCall::SELECTOR,
@@ -1949,7 +1951,16 @@ fn rebalance_rejects_invalid_live_reference_currencies() {
 // --- reservations -------------------------------------------------------------
 
 fn with_reservable_vault<R>(shares: U256, f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
+    with_reservable_vault_at_block(shares, 0, f)
+}
+
+fn with_reservable_vault_at_block<R>(
+    shares: U256,
+    block: u64,
+    f: impl FnOnce(StorageHandle<'_>) -> R,
+) -> R {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_block_number(block);
     storage.set_timestamp(U256::from(1_700_000_000u64));
     storage.stub_sub_call_at(vault(), word(shares));
     storage.enable_sub_call_stub();

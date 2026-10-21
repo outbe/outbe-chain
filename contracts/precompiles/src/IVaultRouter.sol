@@ -48,6 +48,8 @@ interface IVaultRouter {
     error ReserveVaultNotConfigured();
     error ReserveVaultAlreadyAdded();
     error ReserveVaultNotFound();
+    error ReserveVaultHasShares(address vault, uint256 shares);
+    error ReserveVaultRemovalPending(address vault, uint256 proposalId);
     error ReserveVaultOwnerNotRenounced(address currentOwner);
     error LiquiditySourceNotFound();
     error LiquidityTargetNotFound();
@@ -158,6 +160,7 @@ interface IVaultRouter {
     /// @notice Applies a pending governance-approved vault action once. Anyone may call.
     ///         A failed application remains retriable. Strictly after the governance
     ///         window, deletes the record and emits ApprovedVaultActionExpired instead.
+    ///         Removal requires the router's live share balance in the vault to be zero.
     function applyApproved(uint256 proposalId) external;
 
     /// @notice Returns the pending approved action, or Unknown if no record remains.
@@ -195,8 +198,9 @@ interface IVaultRouter {
         returns (address assetFrom, address assetTo, uint256 assetsToMinor);
 
     /// @notice Whether the asset's reserve vault can currently fund a withdrawal of
-    ///         `amountMinor` of `asset`. `withdraw` and `reserveStables` enforce the same
-    ///         predicate. Returns false rather than reverting when `asset` has no vault.
+    ///         `amountMinor` of `asset`. This checks share coverage only; `reserveStables`
+    ///         also rejects pending vault removals. Returns false rather than reverting
+    ///         when `asset` has no vault.
     function hasLiquidity(address asset, uint256 amountMinor) external view returns (bool sufficient);
 
     /// @notice Redeems `amountMinor` of `asset` from its origin vault and holds it in this
@@ -205,6 +209,8 @@ interface IVaultRouter {
     ///         may pledge the Gratis collateral for this reservation. The quote fixes the
     ///         pledge valuation and the Credis call terms: `referenceCurrency`, its previous
     ///         closed UTC-day VWAP as the call anchor, and the issuance currency's policy rate.
+    ///         Reverts if the selected vault has a pending approved removal, even after
+    ///         its deadline, until the action is cleared or superseded.
     function reserveStables(
         address credisOwner,
         address source,

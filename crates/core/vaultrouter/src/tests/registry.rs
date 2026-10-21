@@ -24,6 +24,7 @@ fn third_asset() -> Address {
 
 /// Stubs `vault` as an ownerless vault of `asset`, and `asset` as a USD token.
 fn stub_vault_of(storage: &mut HashMapStorageProvider, vault: Address, asset: Address) {
+    storage.stub_sub_call_at_selector(vault, IERC20::balanceOfCall::SELECTOR, word(U256::ZERO));
     storage.stub_sub_call_at_selector(vault, IVaultV2::assetCall::SELECTOR, word_addr(asset));
     storage.stub_sub_call_at_selector(vault, IVaultV2::ownerCall::SELECTOR, word(U256::ZERO));
     storage.stub_sub_call_at_selector(
@@ -136,6 +137,26 @@ fn remove_vault_asks_the_vault_when_no_asset_is_recorded() {
 }
 
 // --- paged reference-currency assets -----------------------------------------
+
+#[test]
+fn removal_checks_membership_before_querying_shares() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |storage| {
+        // A stale asset record is not registry membership and must not trigger balanceOf.
+        VaultRouterContract::new(storage.clone())
+            .vault_assets
+            .write(&vault(), asset())
+            .unwrap();
+        VaultRouterContract::new(storage.clone())
+            .vault_reference_currencies
+            .write(&vault(), USD_ISO_CODE)
+            .unwrap();
+        let error = runtime::remove_vault(storage.clone(), vault()).unwrap_err();
+        assert_revert::<IVaultRouter::ReserveVaultNotFound>(&error);
+    });
+    assert!(storage.sub_call_inputs().is_empty());
+    assert!(storage.get_events(VAULT_ROUTER_ADDRESS).is_empty());
+}
 
 fn page(storage: &StorageHandle<'_>, offset: U256, limit: U256) -> Vec<Address> {
     runtime::reference_currency_assets(storage, USD_ISO_CODE, offset, limit).unwrap()
