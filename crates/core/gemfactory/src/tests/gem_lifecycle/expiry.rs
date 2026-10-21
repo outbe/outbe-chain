@@ -288,7 +288,7 @@ fn a_group_whose_credit_fails_is_deferred_whole() {
         limit.checked_take_up_to(U256::MAX).unwrap();
         begin_block_at(
             storage,
-            GemContract::day_end(GemContract::deadline_day(now) + 1),
+            GemContract::day_end(GemContract::deadline_day(now)),
         );
         assert!(gems.iter().all(|gem_id| item(storage, *gem_id).is_none()));
         assert_eq!(unallocated(storage), U256::from(1_001u64));
@@ -344,6 +344,12 @@ fn a_called_group_wider_than_the_budget_is_cleaned_up_over_several_blocks() {
             live(),
             gems.len() - SWEEP_WRITES_PER_BLOCK as usize,
             "one block deletes its write budget"
+        );
+        begin_block_at(storage, now);
+        assert_eq!(
+            live(),
+            gems.len() - SWEEP_WRITES_PER_BLOCK as usize,
+            "same-height cleanup cannot replenish its independent allowance"
         );
         begin_block_at(storage, now + 1);
         assert_eq!(live(), 0);

@@ -20,12 +20,22 @@ alloy_sol_types::sol! {
         function backdateGemForTest(uint256 gemId, uint64 issuedAt) external;
         function closeCallNoticeForTest(uint256 gemId, uint64 deadline) external;
         function closePositionHourForTest(uint256 positionId, uint64 deadline) external;
+        function rescanClosedDayForTest() external;
     }
 }
 
 /// Answers a test hook, or `None` when `data` is no test hook.
 pub(crate) fn dispatch(storage: &StorageHandle<'_>, data: &[u8]) -> Option<Result<Bytes>> {
     use IGemFactoryTestArming::*;
+    if rescanClosedDayForTestCall::abi_decode(data).is_ok() {
+        return Some(guarded(storage, || {
+            let yesterday = storage
+                .now_secs()?
+                .checked_sub(outbe_primitives::time::SECONDS_PER_DAY)
+                .ok_or(GemFactoryError::Overflow)?;
+            reopen_day(storage, yesterday).map(|()| Bytes::new())
+        }));
+    }
     if let Ok(call) = issueSettledGemForTestCall::abi_decode(data) {
         return Some(guarded(storage, || {
             let gem_id = issue_settled(storage, call)?;
@@ -154,6 +164,7 @@ fn reopen_day(storage: &StorageHandle<'_>, deadline: u64) -> Result<()> {
     gem.daily_phase.write(0)?;
     for currency in outbe_oracle::api::reference_currencies(storage.clone())? {
         gem.call_bin_cursor.clear(&currency)?;
+        gem.call_scan_failed_day.clear(&currency)?;
     }
     gem.call_currency_cursor.write(0)
 }

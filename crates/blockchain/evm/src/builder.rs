@@ -221,7 +221,7 @@ mod tests {
     use alloy_evm::{block::CommitChanges, RecoveredTx};
     use alloy_primitives::{address, Address, Bytes, StorageKey, StorageValue, B256, U256};
     use outbe_primitives::addresses::REWARDS_ADDRESS;
-    use outbe_primitives::block::BlockContext;
+    use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
     use outbe_primitives::consensus::ConsensusExecutionBridge;
     use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
     use outbe_primitives::reshare_artifact::{
@@ -594,6 +594,14 @@ mod tests {
         );
         metadosis_genesis.set_block_number(1);
         metadosis_genesis.enter(|storage| {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(1, TEST_BLOCK_ONE_TIMESTAMP, chain_spec.chain().id()),
+                storage.clone(),
+            );
+            outbe_nodfactory::called::initialize_daily(&ctx).unwrap();
+            outbe_gemfactory::called::initialize_daily(&ctx).unwrap();
+            outbe_intexfactory::called::initialize_daily(&ctx).unwrap();
+            outbe_credisfactory::called::initialize_daily(&ctx).unwrap();
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(Address::ZERO).unwrap();
             vs.set_config_max_validators(128).unwrap();
@@ -647,6 +655,22 @@ mod tests {
                 ..Default::default()
             },
         );
+        for address in [
+            outbe_primitives::addresses::NOD_ADDRESS,
+            outbe_primitives::addresses::GEM_ADDRESS,
+            outbe_primitives::addresses::GEM_FACTORY_ADDRESS,
+            outbe_primitives::addresses::INTEX_ADDRESS,
+            outbe_primitives::addresses::CREDIS_ADDRESS,
+        ] {
+            db.insert_account_info(
+                address,
+                AccountInfo {
+                    code_hash: marker_code.hash_slow(),
+                    code: Some(marker_code.clone()),
+                    ..Default::default()
+                },
+            );
+        }
     }
 
     fn assert_seeded_validators(db: &mut TestDb, validators: &[Address]) {

@@ -6,7 +6,7 @@ pub(super) const TEST_BLOCK_TIMESTAMP_BASE: u64 = 1_700_000_000;
 
 pub(super) const OWNER: Address = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
 
-fn seed_cycle_genesis(storage: StorageHandle<'_>) {
+pub(super) fn seed_cycle_genesis(storage: StorageHandle<'_>) {
     let cycle = storage.contract::<outbe_cycle::schema::Cycle<'_>>();
     cycle
         .active_utc_day
@@ -281,6 +281,7 @@ pub(super) fn state_with_active_validators_seeded_at_block_with_cycle_frames(
         outbe_primitives::addresses::TRIBUTE_ADDRESS,
         NOD_ADDRESS,
         outbe_primitives::addresses::GEM_ADDRESS,
+        outbe_primitives::addresses::GEM_FACTORY_ADDRESS,
         outbe_primitives::addresses::INTEX_ADDRESS,
         outbe_primitives::addresses::CREDIS_ADDRESS,
         // marker allowlist: in production, `0xef` bytecode preserves the

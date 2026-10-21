@@ -16,6 +16,7 @@ pub(super) fn state_with_active_and_registered_candidate_seeded(
         HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, chain_spec.genesis_hash());
     let active_key = dummy_pubkey(0xA2);
     StorageHandle::enter(&mut seed_storage, |storage| {
+        super::super::fixtures::seed_cycle_genesis(storage.clone());
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(128).unwrap();
@@ -76,6 +77,22 @@ pub(super) fn state_with_active_and_registered_candidate_seeded(
             ..Default::default()
         },
     );
+    for address in [
+        outbe_primitives::addresses::NOD_ADDRESS,
+        outbe_primitives::addresses::GEM_ADDRESS,
+        outbe_primitives::addresses::GEM_FACTORY_ADDRESS,
+        outbe_primitives::addresses::INTEX_ADDRESS,
+        outbe_primitives::addresses::CREDIS_ADDRESS,
+    ] {
+        db.insert_account_info(
+            address,
+            AccountInfo {
+                code_hash: marker_code.hash_slow(),
+                code: Some(marker_code.clone()),
+                ..Default::default()
+            },
+        );
+    }
     State::builder()
         .with_database(db)
         .with_bundle_update()

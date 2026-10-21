@@ -25,6 +25,7 @@ alloy_sol_types::sol! {
             uint64 issuedAt
         ) external;
         function closeCallNoticeForTest(bytes32 groupKey, uint64 deadline) external;
+        function rescanClosedDayForTest() external;
     }
 }
 
@@ -37,6 +38,14 @@ pub(crate) fn dispatch(storage: &StorageHandle<'_>, data: &[u8]) -> Option<Resul
     if let Ok(call) = closeCallNoticeForTestCall::abi_decode(data) {
         return Some(guarded(storage, || {
             requeue_called(storage, call.groupKey, call.deadline)
+        }));
+    }
+    if rescanClosedDayForTestCall::abi_decode(data).is_ok() {
+        return Some(guarded(storage, || {
+            let day = outbe_primitives::time::previous_date_key(
+                outbe_primitives::time::timestamp_to_date_key(storage.now_secs()?),
+            );
+            reopen_day(storage, day)
         }));
     }
     None
@@ -87,8 +96,27 @@ fn requeue_called(storage: &StorageHandle<'_>, group_key: B256, deadline: u64) -
     nod.remove_called(group_key)?;
     nod.push_called(group_key, deadline)?;
     let day = outbe_primitives::time::timestamp_to_date_key(deadline);
+    reopen_day(storage, day)
+}
+
+fn reopen_day(storage: &StorageHandle<'_>, day: u32) -> Result<()> {
+    let nod = NodContract::new(storage.clone());
+    // The fixture may target a closed day before this throwaway chain's genesis.
+    if nod.daily_genesis_day.read()? == 0 || day < nod.daily_genesis_day.read()? {
+        nod.daily_genesis_day.write(day)?;
+    }
+    if day > nod.call_latest_day.read()? {
+        nod.call_latest_day.write(day)?;
+    }
     nod.call_sweep_day.write(day)?;
     nod.daily_phase.write(0)?;
     nod.call_currency_cursor.write(0)?;
+    for currency in outbe_oracle::schema::OracleContract::new(storage.clone())
+        .reference_currencies
+        .read_all()?
+    {
+        nod.call_bin_cursor.write(&currency, 0)?;
+        nod.call_scan_failed_day.clear(&currency)?;
+    }
     Ok(())
 }

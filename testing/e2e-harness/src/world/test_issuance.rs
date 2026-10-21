@@ -46,6 +46,10 @@ pub const INTEX_FACTORY: Address =
     alloy_primitives::address!("0x0000000000000000000000000000000000001015");
 
 sol! {
+    interface IDailySweepTestArming {
+        function rescanClosedDayForTest() external;
+    }
+
     interface IIntexFactoryTestArming {
         function seedDayVwapsForTest(uint16 isoCode, uint32 days, uint256 value) external;
         function closeCallNoticeForTest(bytes14 seriesId, uint64 deadline) external;
@@ -380,9 +384,20 @@ pub fn seed_day_vwaps(
     )
 }
 
-/// Re-queue the called group of `series` on a deadline already behind a closed expiry
-/// bucket, so the sweep reaches it on the next block instead of idling out the rest of
-/// the hour.
+/// Explicitly reopens a test-only call pass after replacing historical prices.
+/// Production completed-day scheduling remains idempotent.
+pub fn rescan_closed_day(url: &str, sender_key: &str, factory: Address) -> Result<()> {
+    send_checked(
+        url,
+        factory,
+        sender_key,
+        &IDailySweepTestArming::rescanClosedDayForTestCall {},
+        "rescanClosedDayForTest",
+    )
+}
+
+/// Arms a called group in a closed deadline day's test pass, after its exact notice
+/// elapsed, rather than waiting for the next UTC midnight.
 pub fn close_call_notice(
     url: &str,
     sender_key: &str,

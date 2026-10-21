@@ -61,6 +61,8 @@ fn rate_above_call_price(world: &mut World) {
     );
     test_issuance::seed_day_vwaps(&url, DEPLOYER_KEY, USD, CALL_WINDOW_SEED_DAYS, BREACH_RATE)
         .expect("seed the breaching closed days");
+    test_issuance::rescan_closed_day(&url, DEPLOYER_KEY, CREDIS_FACTORY_ADDRESS)
+        .expect("arm the Credis call pass after seeding prices");
 }
 
 #[then("the Credis is called with a settlement notice")]
