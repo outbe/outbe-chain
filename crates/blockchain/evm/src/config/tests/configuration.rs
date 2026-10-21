@@ -77,21 +77,53 @@ fn context_for_next_block_strips_plain_builder_extra_data() {
 #[test]
 fn context_for_next_block_uses_outbe_parent_hash() {
     let config = OutbeEvmConfig::new(test_chain_spec());
-    let parent = test_parent_with_millis_part(7);
-    // Post-refactor (sub-second timestamp moved into `extra_data`),
-    // the wrapper hash and the inner Ethereum hash are identical
-    // by design. This refactor guarantees that Ethereum-spec
-    // compatibility. The test still verifies that
-    // `context_for_next_block` propagates the sealed parent hash
-    // unchanged.
-    let inner_parent_hash = parent.header().inner.hash_slow();
+    use alloy_primitives::{address, b256, hex, keccak256, B64};
+
+    // Geth v1.16.5 TestBlockEncoding pins this header and its hash independently.
+    // https://github.com/ethereum/go-ethereum/blob/v1.16.5/core/types/block_test.go
+    let parent = SealedHeader::seal_slow(OutbeHeader::new(Header {
+        parent_hash: b256!("83cafc574e1f51ba9dc0568fc617a08ea2429fb384059c972f13b19fa1c8dd55"),
+        ommers_hash: b256!("1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347"),
+        beneficiary: address!("8888f1f195afa192cfee860698584c030f4c9db1"),
+        state_root: b256!("ef1552a40b7165c3cd773806b9e0c165b75356e0314bf0706f279c729f51e017"),
+        transactions_root: b256!(
+            "5fe50b260da6308036625b850b5d6ced6d0a9f814c0688bc91ffb7b7a3a54b67"
+        ),
+        receipts_root: b256!("bc37d79753ad738a6dac4921e57392f145d8887476de3f783dfa7edae9283e52"),
+        logs_bloom: Default::default(),
+        difficulty: U256::from(131_072),
+        number: 1,
+        gas_limit: 3_141_592,
+        gas_used: 21_000,
+        timestamp: 1_426_516_743,
+        extra_data: Bytes::new(),
+        mix_hash: b256!("bd4472abb6659ebe3ee06ee4d7b72a00a9f4d001caca51342001075469aff498"),
+        nonce: B64::from(0xa13a5a8c8f2bb1c4_u64.to_be_bytes()),
+        ..Default::default()
+    }));
+    let expected_rlp = hex!(
+        "f901f9a083cafc574e1f51ba9dc0568fc617a08ea2429fb384059c972f13b19fa1c8dd55a01dcc4de8dec75d7aab85b5"
+        "67b6ccd41ad312451b948a7413f0a142fd40d49347948888f1f195afa192cfee860698584c030f4c9db1a0ef1552a40b"
+        "7165c3cd773806b9e0c165b75356e0314bf0706f279c729f51e017a05fe50b260da6308036625b850b5d6ced6d0a9f81"
+        "4c0688bc91ffb7b7a3a54b67a0bc37d79753ad738a6dac4921e57392f145d8887476de3f783dfa7edae9283e52b90100"
+        "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        "000000000000000000000000000000008302000001832fefd8825208845506eb0780a0bd4472abb6659ebe3ee06ee4d7"
+        "b72a00a9f4d001caca51342001075469aff49888a13a5a8c8f2bb1c4"
+    );
+    let expected_hash = b256!("0a5843ac1cb04865017cb35a57b50b07084e5fcee39b5acadade33149f4fff9e");
+    assert_eq!(keccak256(expected_rlp), expected_hash);
+    assert_eq!(parent.hash(), expected_hash);
 
     let ctx = config
         .context_for_next_block(&parent, next_block_attrs(Bytes::new()))
         .expect("context construction must succeed");
 
     assert_eq!(ctx.inner.parent_hash, parent.hash());
-    assert_eq!(ctx.inner.parent_hash, inner_parent_hash);
+    assert_eq!(ctx.inner.parent_hash, expected_hash);
 }
 
 #[test]
@@ -239,4 +271,30 @@ fn sanitizer_preserves_late_credits() {
         "timestamp_millis_part is reset by the sanitizer"
     );
     assert!(ctx.system_layout_error.is_none());
+}
+
+#[test]
+fn published_eip155_transaction_recovers_fixed_sender_and_chain() {
+    use alloy_consensus::Transaction as _;
+    use alloy_eips::eip2718::{Decodable2718, Encodable2718};
+    use alloy_primitives::{address, hex};
+    use reth_ethereum::TransactionSigned;
+    use reth_primitives_traits::SignedTransaction as _;
+
+    // Geth v1.16.5 TestEIP155SigningVitalik, first vector, chain ID 1.
+    // https://github.com/ethereum/go-ethereum/blob/v1.16.5/core/types/transaction_signing_test.go
+    let raw = hex!(
+        "f864808504a817c800825208943535353535353535353535353535353535353535808025"
+        "a0044852b2a670ade5407e78fb2863c51de9fcb96542a07186fe3aeda6bb8a116d"
+        "a0044852b2a670ade5407e78fb2863c51de9fcb96542a07186fe3aeda6bb8a116d"
+    );
+    let mut input = raw.as_slice();
+    let tx = TransactionSigned::decode_2718(&mut input).expect("decode published transaction");
+    assert!(input.is_empty());
+    assert_eq!(tx.chain_id(), Some(1));
+    assert_eq!(
+        tx.try_recover().expect("recover published sender"),
+        address!("f0f6f18bca1b28cd68e4357452947e021241e9ce")
+    );
+    assert_eq!(tx.encoded_2718(), raw);
 }
