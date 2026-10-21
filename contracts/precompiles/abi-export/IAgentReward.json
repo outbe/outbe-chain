@@ -209,6 +209,11 @@
   },
   {
     "type": "error",
+    "name": "EntryPriceOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InsufficientClaimableBalance",
     "inputs": []
   },

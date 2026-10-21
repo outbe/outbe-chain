@@ -55,6 +55,7 @@ impl From<AgentRewardError> for PrecompileError {
             AgentRewardError::MissingPreviousDayPrice(value) => {
                 revert_with(I::MissingPreviousDayPrice { value })
             }
+            AgentRewardError::EntryPriceOverflow => revert_with(I::EntryPriceOverflow {}),
             AgentRewardError::UnknownRewardPool(value) => {
                 revert_with(I::UnknownRewardPool { value })
             }
