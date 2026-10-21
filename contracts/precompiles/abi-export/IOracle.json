@@ -19,6 +19,25 @@
   },
   {
     "type": "function",
+    "name": "currencyAlphaCode",
+    "inputs": [
+      {
+        "name": "isoCode",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "alphaCode",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "currencyCrossRate",
     "inputs": [
       {

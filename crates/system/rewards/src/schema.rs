@@ -41,6 +41,9 @@ use outbe_primitives::storage::types::{Mapping, Slot};
 ///  23:  daily_last_window_close            - mapping(uint32 => uint64)
 ///  24:  late_residue_dust_native           - uint256
 ///  25:  daily_participation_closed         - mapping(uint32 => bool)
+///  26:  settled_day_cleanup_head           - uint64
+///  27:  settled_day_cleanup_tail           - uint64
+///  28:  settled_day_cleanup_day_at         - mapping(uint64 => uint32)
 #[contract(addr = REWARDS_ADDRESS)]
 pub struct Rewards {
     /// UTC day of block 0 (yyyymmdd). 0 means uninitialized. `RewardsLifecycle::begin_block`
@@ -63,7 +66,8 @@ pub struct Rewards {
 
     /// Per-day raw fee sum from finalized metadata (`fees_raw`). Source
     /// of truth for the cap-vs-fees formula at settle time. The emission cap is
-    /// six-decimal protocol value while this sum stays raw native COEN:
+    /// six-decimal protocol value while this sum stays in native COEN minor units
+    /// (wei; 10^18 per COEN). One protocol unit equals 10^12 native units:
     ///   `topup = floor((cap * 1e12).saturating_sub(daily_fee_sum_raw) / 1e12)`
     pub daily_fee_sum_raw: Mapping<u32, U256>,
 
@@ -82,8 +86,8 @@ pub struct Rewards {
     pub daily_voter_at: Mapping<u32, Mapping<u32, Address>>,
 
     /// Per-day marker that Cycle settled the day once.
-    /// Settlement is gated by `day_participation_complete`.
-    /// `on_finalized_metadata` does not reject late metadata for a settled day.
+    /// Permanent tombstone. Settlement is distinct from participation closure:
+    /// metadata is rejected by the closure marker, not this marker alone.
     pub daily_settled: Mapping<u32, bool>,
 
     /// Per-finalized-block guard: cap/fees-raw from this block already
@@ -98,9 +102,11 @@ pub struct Rewards {
     pub metadata_fingerprint_for_block: Mapping<B256, B256>,
 
     // -- per-block fee escrow + inclusion-window credits ----------
-    /// Escrowed fees of a finalized block (key `fb_hash`), recorded instead of
+    /// Escrowed fees in native COEN minor units (wei; 10^18 per COEN), keyed by
+    /// `fb_hash`. One six-decimal protocol unit equals 10^12 native units. Recorded instead of
     /// the eager per-voter transfer. Settled at `N+K` across the credited voter
-    /// set with a decay-weighted, fixed-denominator payout. Residue burns.
+    /// set with a decay-weighted, fixed-denominator payout. Whole protocol units
+    /// of residue plus carried dust burn; the sub-unit remainder stays as dust.
     pub pending_fees: Mapping<B256, U256>,
 
     /// Per-finalized-block guard: the escrowed fee has been settled exactly once.
@@ -176,9 +182,21 @@ pub struct Rewards {
     /// Day settlement still requires a height above this close.
     pub daily_last_window_close: Mapping<u32, u64>,
 
-    /// Native late-settlement residue below one protocol unit, carried to the next settlement.
+    /// Late-settlement residue in native COEN minor units (wei; 10^18 per COEN),
+    /// carried to the next settlement. Below one six-decimal protocol unit (10^12 native units).
     pub late_residue_dust_native: Slot<U256>,
 
     /// The day's validator pool has been credited; its participation is final.
     pub daily_participation_closed: Mapping<u32, bool>,
+
+    /// Checked queue position of the next successfully settled day to reclaim.
+    /// Equal head and tail denote an empty queue (both start at zero).
+    pub settled_day_cleanup_head: Slot<u64>,
+
+    /// Checked exclusive end position of the settled-day cleanup queue.
+    pub settled_day_cleanup_tail: Slot<u64>,
+
+    /// Queue entries are removed only after all daily details are reclaimed.
+    /// Settled and participation-closed tombstones remain permanently.
+    pub settled_day_cleanup_day_at: Mapping<u64, u32>,
 }

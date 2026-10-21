@@ -86,7 +86,6 @@ SEED_SECTIONS = (
     "gem_profile",
     "nod_profile",
     "credis_profile",
-    "vault_router",
     "contracts",
     "tee_policy",
 )

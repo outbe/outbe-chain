@@ -101,6 +101,9 @@ pub fn on_finalized_metadata(
     // But the hook now ESCROWS the fees per finalized block (it does not pay them
     // eagerly), and they settle at N+K. Idempotent via `block_metadata_counted`.
     if first_seen {
+        if rewards.daily_participation_closed.read(&fb_day)? {
+            return Err(RewardsError::ParticipationAfterDayClosed.into());
+        }
         let closes_at = metadata
             .finalized_block_number
             .checked_add(outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K)

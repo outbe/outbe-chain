@@ -144,6 +144,94 @@ fn protocol_cycle_keeps_midnight_slot_pending_until_late_reward_window_closes() 
 }
 
 #[test]
+fn retention_reclaims_settled_details_without_changing_agentreward_or_forfeited_day() {
+    let mut storage = cycle_storage();
+    let hash = B256::repeat_byte(0x78);
+    let early = Address::repeat_byte(0xB0);
+    let late = Address::repeat_byte(0xB1);
+    storage.enter(|handle| {
+        anchor_with(handle.clone(), GENESIS_TS + 60, seed_fresh_reward_oracle);
+        let ctx =
+            BlockRuntimeContext::new(block_ctx(11, GENESIS_TS + SECONDS_PER_DAY), handle.clone());
+        record_parent_with_late_voter(&ctx, hash, early, late);
+        let close = BlockRuntimeContext::new(
+            block_ctx(13, GENESIS_TS + SECONDS_PER_DAY + 2),
+            handle.clone(),
+        );
+        outbe_rewards::late_settlement::record_late_credit(&close, hash, late, 3).unwrap();
+        outbe_rewards::late_settlement::settle_matured(&close, 13, 3).unwrap();
+        let settled = dispatch_at(handle.clone(), 14, GENESIS_TS + SECONDS_PER_DAY + 3);
+        assert!(outbe_rewards::api::is_day_settled(&settled, 20240101).unwrap());
+        assert_eq!(
+            outbe_rewards::api::read_voters_for_day(&settled, 20240101).unwrap(),
+            vec![(early, 1), (late, 1)]
+        );
+        let claimable = |ctx: &BlockRuntimeContext<'_>, voter| {
+            outbe_agentreward::AgentRewardContract::new(ctx.storage.clone())
+                .get_pool_claimable_reward(outbe_agentreward::schema::RewardPool::Validator, voter)
+                .unwrap()
+        };
+        let balances = [claimable(&settled, early), claimable(&settled, late)];
+        assert!(balances[0] > U256::ZERO);
+
+        // Jan 2 is active but will be forfeited by the real missed-day calendar path.
+        // It must not be enqueued just to let retention advance.
+        seed_daily_voters(&settled, 20240102, &[(early, 7)]);
+        settled
+            .storage
+            .contract::<outbe_rewards::schema::Rewards>()
+            .daily_fee_sum_raw
+            .write(&20240102, U256::from(77))
+            .unwrap();
+        let expired =
+            BlockRuntimeContext::new(block_ctx(20, GENESIS_TS + 9 * SECONDS_PER_DAY), handle);
+        account_parent(&expired, 20);
+        run_cycle_lifecycle(&expired).unwrap();
+        assert_eq!(
+            expired
+                .storage
+                .contract::<Cycle>()
+                .active_utc_day
+                .read()
+                .unwrap(),
+            20240110
+        );
+        assert!(outbe_rewards::api::read_voters_for_day(&expired, 20240101)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            outbe_rewards::api::read_daily_fee_sum_raw(&expired, 20240101).unwrap(),
+            U256::ZERO
+        );
+        assert_eq!(
+            outbe_rewards::api::read_voters_for_day(&expired, 20240102).unwrap(),
+            vec![(early, 7)]
+        );
+        assert_eq!(
+            outbe_rewards::api::read_daily_fee_sum_raw(&expired, 20240102).unwrap(),
+            U256::from(77)
+        );
+        assert!(!outbe_rewards::api::is_day_settled(&expired, 20240102).unwrap());
+        assert!(!expired
+            .storage
+            .contract::<outbe_rewards::schema::Rewards>()
+            .daily_participation_closed
+            .read(&20240102)
+            .unwrap());
+        crate::handler::settle_emission_day(&expired, 20240101).unwrap();
+        assert_eq!(
+            [claimable(&expired, early), claimable(&expired, late)],
+            balances
+        );
+        let rewards = expired.storage.contract::<outbe_rewards::schema::Rewards>();
+        assert!(rewards.daily_settled.read(&20240101).unwrap());
+        assert!(rewards.daily_participation_closed.read(&20240101).unwrap());
+        assert_eq!(rewards.settled_day_cleanup_head.read().unwrap(), 1);
+        assert_eq!(rewards.settled_day_cleanup_tail.read().unwrap(), 1);
+    });
+}
+
+#[test]
 fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
     with_anchored_cycle(|handle| {
         // Step 1: anchor at chain start.
