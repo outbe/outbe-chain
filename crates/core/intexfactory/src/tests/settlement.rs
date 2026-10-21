@@ -43,7 +43,16 @@ fn cost_amount_twelve_decimals() {
 #[test]
 fn a_minimum_the_payment_asset_cannot_express_is_refused() {
     let err = runtime::settlement_units(U256::ONE, U256::ONE, None, 0).unwrap_err();
-    assert!(err.to_string().contains("rounds to zero"), "{err}");
+    assert_eq!(
+        err.to_string(),
+        outbe_primitives::error::PrecompileError::from(
+            outbe_vaultrouter::settlement::SettlementError::Rounding(
+                outbe_primitives::settlement::RoundingError::RoundsToZero,
+            ),
+        )
+        .to_string(),
+        "{err}"
+    );
 }
 
 #[test]
@@ -71,7 +80,16 @@ fn the_purchase_minimum_precedes_asset_and_currency_conversion() {
         );
     }
     let err = runtime::settlement_units(U256::ONE, U256::ONE, fx(1, 2), 6).unwrap_err();
-    assert!(err.to_string().contains("rounds to zero"), "{err}");
+    assert_eq!(
+        err.to_string(),
+        outbe_primitives::error::PrecompileError::from(
+            outbe_vaultrouter::settlement::SettlementError::Rounding(
+                outbe_primitives::settlement::RoundingError::RoundsToZero,
+            ),
+        )
+        .to_string(),
+        "{err}"
+    );
 }
 
 #[test]
@@ -142,13 +160,31 @@ fn three_units_convert_as_one_operation_before_the_floor() {
 #[test]
 fn cost_amount_rejects_unsupported_payment_decimals() {
     let err = runtime::settlement_units(product(), U256::ONE, None, 19).unwrap_err();
-    assert!(err.to_string().contains("unsupported decimals"), "{err}");
+    assert_eq!(
+        err.to_string(),
+        outbe_primitives::error::PrecompileError::from(
+            outbe_vaultrouter::settlement::SettlementError::Rounding(
+                outbe_primitives::settlement::RoundingError::UnsupportedDecimals(19),
+            ),
+        )
+        .to_string(),
+        "{err}"
+    );
 }
 
 #[test]
 fn cost_amount_rejects_scaling_overflow() {
     let err = runtime::settlement_units(U256::MAX, U256::ONE, None, 18).unwrap_err();
-    assert!(err.to_string().to_lowercase().contains("overflow"), "{err}");
+    assert_eq!(
+        err.to_string(),
+        outbe_primitives::error::PrecompileError::from(
+            outbe_vaultrouter::settlement::SettlementError::Rounding(
+                outbe_primitives::settlement::RoundingError::Overflow,
+            ),
+        )
+        .to_string(),
+        "{err}"
+    );
 }
 
 /// Storage with an issued series 7 and a payment token the router reports
@@ -208,7 +244,16 @@ fn settlement_quote_prices_an_accepted_token() {
 fn settlement_quote_rejects_an_unregistered_token() {
     with_payment_token(0, 840, 18, |s| {
         let err = runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE).unwrap_err();
-        assert!(err.to_string().contains("no registered vault"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_vaultrouter::settlement::SettlementError::AssetNotRegistered {
+                    asset: settlement_asset(),
+                },
+            )
+            .to_string(),
+            "{err}"
+        );
     });
 }
 
@@ -216,7 +261,14 @@ fn settlement_quote_rejects_an_unregistered_token() {
 fn settlement_quote_rejects_a_foreign_currency() {
     with_payment_token(1, 978, 18, |s| {
         let err = runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE).unwrap_err();
-        assert!(err.to_string().contains("does not match"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_vaultrouter::settlement::SettlementError::CurrencyMismatch { iso_code: 978 },
+            )
+            .to_string(),
+            "{err}"
+        );
     });
 }
 
@@ -301,7 +353,14 @@ fn erc20_settle_refuses_a_transfer_that_moves_nothing_and_books_no_units() {
             },
         )
         .unwrap_err();
-        assert!(err.to_string().contains("unexpected amount"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_vaultrouter::settlement::SettlementError::AmountMismatch,
+            )
+            .to_string(),
+            "{err}"
+        );
         assert_eq!(outbe_intex::api::settled_units(&s, sid(7)).unwrap(), 0);
     });
 }
@@ -423,7 +482,13 @@ fn settle_rejects_expired_deadline() {
             },
         )
         .unwrap_err();
-        assert!(err.to_string().to_lowercase().contains("deadline"));
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::IntexFactoryError::SettlementDeadlinePassed,
+            )
+            .to_string()
+        );
     });
 }
 
@@ -450,7 +515,13 @@ fn a_series_called_past_its_deadline_stays_closed() {
             },
         )
         .unwrap_err();
-        assert!(err.to_string().to_lowercase().contains("deadline"));
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::IntexFactoryError::SettlementDeadlinePassed,
+            )
+            .to_string()
+        );
     });
 }
 
@@ -459,13 +530,18 @@ fn settled_token_id_tags_the_series_id() {
     let series_id = sid(7);
     let issued = U256::from_be_slice(series_id.as_bytes());
     let settled = runtime::settled_token_id(series_id);
+    // A series id is 14 bytes, so its space ends at bit 112. This bound does not
+    // come from either constant under test.
     let tag: U256 = U256::from(1u8) << 112;
+    const SOL: &str = include_str!("../../../../../contracts/intex/src/shared/IntexNFT1155.sol");
+    let bit = outbe_primitives::test_utils::sol_interface::sol_constant_shift(SOL, "_SETTLED_TAG")
+        .expect("_SETTLED_TAG is 1 << N");
 
-    // Solidity derives the same value. The tag sits above the 14-byte series-id space, so the two
-    // id classes cannot collide, and clearing the tag recovers the series.
     assert!(issued < tag);
     assert_eq!(settled, issued | tag);
     assert_eq!(settled & !tag, issued);
+    assert_eq!(U256::from(1u8) << bit, tag);
+    assert_eq!(crate::constants::SETTLED_TAG, tag);
 }
 
 #[test]

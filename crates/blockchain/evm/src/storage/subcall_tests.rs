@@ -1,6 +1,7 @@
 //! Storage/subcall API tests using real revm frames.
 use super::*;
 use alloy_primitives::Bytes;
+use alloy_sol_types::SolError;
 use revm::context_interface::journaled_state::account::JournaledAccountTr as _;
 use revm::context_interface::JournalTr as _;
 use revm::{
@@ -438,7 +439,14 @@ fn inbox_getter_charges_actual_work_once_and_retains_its_child_cap() {
         );
         // GAS_WORD is not a valid ABI key; INVALID becomes InboxKeyCallFailed.
         // Neither is a node failure or a reason to precharge the entire cap.
-        assert!(matches!(result, Err(PrecompileError::Revert(_))));
+        let expected = if code == GAS_WORD {
+            outbe_l2registry::precompile::IL2Registry::InvalidPublicKey {}.abi_encode()
+        } else {
+            outbe_l2registry::precompile::IL2Registry::InboxKeyCallFailed {}.abi_encode()
+        };
+        assert!(
+            matches!(result, Err(PrecompileError::RevertBytes(bytes)) if bytes.as_ref() == expected)
+        );
         let charge = p.gas.limit() - p.gas.remaining();
         if code == GAS_WORD {
             assert!(

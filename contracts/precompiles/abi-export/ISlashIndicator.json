@@ -433,5 +433,552 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "CommitmentPolynomialHashMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ConflictingVoteSignaturesInvalid",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ConflictingVotesMustBeDifferentProposals",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EvidenceAlreadyProcessed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EvidenceBlockNotInCanonicalWindow",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "number",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "EvidenceBlockTooShort",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EvidenceEpochStale",
+    "inputs": [
+      {
+        "name": "current_epoch",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "label",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "evidence_epoch",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "max_lag",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "EvidenceFieldTruncated",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EvidenceHashNotCanonical",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "hash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "number",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "canonical",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "EvidenceParentChildNumberMismatch",
+    "inputs": [
+      {
+        "name": "parent",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "child",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "EvidencePubkeySlice",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EvidenceSignatureSlice",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EvidenceSignerMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EvidenceStale",
+    "inputs": [
+      {
+        "name": "current_block",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "child_block",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "max_age",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "EvidenceTooLarge",
+    "inputs": [
+      {
+        "name": "actual",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "max_bytes",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IdenticalSeedPartials",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidBlsPublicKey",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidBlsSignature",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidCommitteePubkeyInSnapshot",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidSeedPartialIdentitySignatures",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidVrfEvidenceBadMagic",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidVrfEvidenceFieldExceedsInput",
+    "inputs": [
+      {
+        "name": "field",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "len",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "remaining",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidVrfEvidenceInputTooShort",
+    "inputs": [
+      {
+        "name": "actual",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "min_len",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidVrfEvidenceTrailingBytes",
+    "inputs": [
+      {
+        "name": "trailing",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidVrfEvidenceUnsupportedVersion",
+    "inputs": [
+      {
+        "name": "version",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "expected",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "Ipe1BadMagic",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "Ipe1BadVersion",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "Ipe1CommitmentLengthExceedsInput",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "Ipe1TooShort",
+    "inputs": [
+      {
+        "name": "min_len",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "actual",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "Ipe1TrailingBytes",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MalformedCommitmentOrPartial",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MetadataEpochMismatch",
+    "inputs": [
+      {
+        "name": "finalized_epoch",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "child_epoch",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "MetadataParentBindingMismatch",
+    "inputs": [
+      {
+        "name": "ev_parent_num",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "ev_parent_hash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "meta_num",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "meta_hash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "MissingCommitteeSnapshotForEpoch",
+    "inputs": [
+      {
+        "name": "epoch",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "MissingCommitteeSnapshotForFinalizedEpoch",
+    "inputs": [
+      {
+        "name": "finalized_epoch",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "committee_set_hash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "MissingCommitteeSnapshotForRound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MissingSnapshotPolynomialCommitment",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NonVrfVerifyRejection",
+    "inputs": [
+      {
+        "name": "err",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PartialNotIdentitySigned",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "Phase1CalldataDecodeFailed",
+    "inputs": [
+      {
+        "name": "reason",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "Phase1CalldataNotCertifiedParentAccounting",
+    "inputs": [
+      {
+        "name": "kind",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "Phase1ProposerNotInCommittee",
+    "inputs": [
+      {
+        "name": "proposer",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "epoch",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "Phase1TxInvalid",
+    "inputs": [
+      {
+        "name": "reason",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ProposalsMustBeSameRound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ProposalsMustDifferForDoubleProposal",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SignerIndexOutOfRange",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SignerNotRegisteredValidator",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SignerPubkeyMismatchAtIndex",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SlashGuardRingSeqOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "Spe1BadMagic",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "Spe1BadVersion",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "Spe1WrongLength",
+    "inputs": [
+      {
+        "name": "expected",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "actual",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SubmitterNotActiveValidator",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "status",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnexpectedEndOfVarint",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ValidSeedPartialNotSlashable",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ValidVrfProofNotSlashable",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VarintOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VotesMustBeSameRound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VrfMaterialVersionMismatch",
+    "inputs": []
   }
 ]

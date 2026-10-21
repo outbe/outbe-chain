@@ -85,8 +85,12 @@ fn precompile_transfer_paths_revert() {
 
         for data in calls {
             let err = dispatch(storage.clone(), &data, ALICE, U256::ZERO).unwrap_err();
-            assert!(
-                format!("{err:?}").contains("non-transferable"),
+            assert_eq!(
+                err.to_string(),
+                outbe_primitives::error::PrecompileError::from(
+                    crate::errors::GemError::NonTransferable
+                )
+                .to_string(),
                 "expected NonTransferable revert, got {err:?}",
             );
         }
@@ -154,9 +158,12 @@ fn precompile_balance_and_owner_views() {
             .abi_encode(),
         )
         .unwrap_err();
-        assert!(
-            format!("{err:?}").contains("index out of bounds"),
-            "{err:?}"
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::GemError::IndexOutOfBounds
+            )
+            .to_string()
         );
 
         let out = call(storage, IGem::totalSupplyCall {}.abi_encode()).unwrap();

@@ -20,13 +20,10 @@ fn expect_issue_error(
     caller: Address,
     id: U256,
     stake: U256,
-    text: &str,
+    expected: outbe_primitives::error::PrecompileError,
 ) {
     let err = runtime::issue_credis(storage.clone(), caller, id, stake).unwrap_err();
-    assert!(
-        err.to_string().contains(text),
-        "expected {text:?}, got {err}"
-    );
+    assert_eq!(err.to_string(), expected.to_string());
 }
 
 #[test]
@@ -36,19 +33,37 @@ fn issue_uses_the_reservation_pledge_once_and_rolls_back_failures() {
         bootstrap(&storage, pledge_cost() * U256::from(2));
         let id = seed_reservation(&storage, alice(), alice(), pledge_stables());
         fund_stake(&storage, pledge_stake());
-        expect_issue_error(&storage, cca(), id, pledge_stake(), "pledge not found");
+        expect_issue_error(
+            &storage,
+            cca(),
+            id,
+            pledge_stake(),
+            outbe_gratisfactory::errors::GratisFactoryError::PledgeNotFound.into(),
+        );
         expect_issue_error(
             &storage,
             cca(),
             U256::from(999),
             pledge_stake(),
-            "reservation not found",
+            crate::errors::CredisFactoryError::ReservationNotFound.into(),
         );
 
         pledge(&storage, alice(), id, 1);
         let reservation = outbe_vaultrouter::api::reservation_of(&storage, id).unwrap();
-        expect_issue_error(&storage, cca(), id, U256::ZERO, "attached COEN");
-        expect_issue_error(&storage, bob(), id, pledge_stake(), "CCA is not active");
+        expect_issue_error(
+            &storage,
+            cca(),
+            id,
+            U256::ZERO,
+            crate::errors::CredisFactoryError::CcaStakeMismatch.into(),
+        );
+        expect_issue_error(
+            &storage,
+            bob(),
+            id,
+            pledge_stake(),
+            outbe_ccaregistry::errors::CcaError::NotRegistered.into(),
+        );
         storage
             .increase_balance(
                 outbe_primitives::addresses::CCA_REGISTRY_ADDRESS,
@@ -67,7 +82,7 @@ fn issue_uses_the_reservation_pledge_once_and_rolls_back_failures() {
             bob(),
             id,
             pledge_stake(),
-            "reservation cca mismatch",
+            crate::errors::CredisFactoryError::ReservationCcaMismatch.into(),
         );
         assert_eq!(pledge_of(&storage, id).unwrap().source, alice());
 
@@ -106,9 +121,21 @@ fn issue_uses_the_reservation_pledge_once_and_rolls_back_failures() {
             reservation
         );
         fund_stake(&storage, pledge_stake());
-        expect_issue_error(&storage, cca(), id, pledge_stake(), "pledge not found");
+        expect_issue_error(
+            &storage,
+            cca(),
+            id,
+            pledge_stake(),
+            outbe_gratisfactory::errors::GratisFactoryError::PledgeNotFound.into(),
+        );
         let err = cancel_pledge(storage.clone(), alice(), id).unwrap_err();
-        assert!(err.to_string().contains("pledge not found"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_gratisfactory::errors::GratisFactoryError::PledgeNotFound
+            )
+            .to_string()
+        );
         assert_eq!(view_pledged(&storage, alice()), pledge_cost());
     });
     teardown();
@@ -126,7 +153,13 @@ fn a_cancelled_pledge_cannot_back_an_issue() {
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
         fund_stake(&storage, pledge_stake());
         let err = runtime::issue_credis(storage.clone(), cca(), id, pledge_stake()).unwrap_err();
-        assert!(err.to_string().contains("pledge not found"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_gratisfactory::errors::GratisFactoryError::PledgeNotFound
+            )
+            .to_string()
+        );
     });
     teardown();
 }
@@ -144,9 +177,12 @@ fn a_source_backs_another_owner_and_repayments_return_to_the_source() {
             auth(GratisOp::Pledge, bob(), pledge_cost(), 0),
         )
         .unwrap_err();
-        assert!(
-            err.to_string().contains("not the reservation source"),
-            "{err}"
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_gratisfactory::errors::GratisFactoryError::NotReservationSource
+            )
+            .to_string()
         );
         pledge(&storage, alice(), id, 1);
         fund_stake(&storage, pledge_stake());
@@ -283,7 +319,13 @@ fn a_token_that_moves_less_than_owed_rolls_back_credis_and_pledged_collateral() 
     );
     StorageHandle::enter(&mut provider, |storage| {
         let err = runtime::settle_credis(storage.clone(), bob(), id, pledge_stables()).unwrap_err();
-        assert!(err.to_string().contains("unexpected amount"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_vaultrouter::settlement::SettlementError::AmountMismatch
+            )
+            .to_string()
+        );
         assert_eq!(
             CredisContract::new(storage.clone()).get_credis(id).unwrap(),
             record

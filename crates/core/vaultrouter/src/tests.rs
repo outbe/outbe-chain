@@ -573,7 +573,7 @@ fn withdraw_happy_path_and_rejects_unknown_target() {
             IVaultRouter::StablesTarget::Credis,
         )
         .unwrap_err();
-        assert!(err.to_string().contains("zero address"), "{err}");
+        assert_revert::<IVaultRouter::ZeroAddress>(&err);
 
         // The precompile rejects an Unknown target discriminant before sub-calls.
         let err = runtime::withdraw(
@@ -1659,7 +1659,10 @@ fn rebalance_rejects_an_unregistered_stranger() {
             },
         )
         .unwrap_err();
-        assert!(err.to_string().contains("CCA is not active"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            PrecompileError::from(outbe_ccaregistry::errors::CcaError::NotRegistered).to_string()
+        );
     });
 }
 
@@ -2023,7 +2026,10 @@ fn reserve_stables_rejects_an_inactive_caller() {
             },
         )
         .unwrap_err();
-        assert!(err.to_string().contains("CCA is not active"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            PrecompileError::from(outbe_ccaregistry::errors::CcaError::NotRegistered).to_string()
+        );
         assert!(runtime::reservation_of(&storage, U256::ZERO)
             .unwrap()
             .asset
@@ -2046,7 +2052,7 @@ fn reserve_stables_requires_a_pledge_source() {
             },
         )
         .unwrap_err();
-        assert!(err.to_string().contains("zero address"), "{err}");
+        assert_revert::<IVaultRouter::ZeroAddress>(&err);
     });
 }
 
@@ -2069,16 +2075,17 @@ fn reserve_in(
 
 #[test]
 fn a_reservation_needs_every_call_term() {
-    let rejected = |storage: &StorageHandle<'_>, reference_currency: u16, reason: &str| {
-        let err = reserve_in(storage, reference_currency).unwrap_err();
-        assert!(err.to_string().contains(reason), "{err}");
-        let router = VaultRouterContract::new(storage.clone());
-        assert!(router.reservation_nonce.read().unwrap().is_zero());
-        assert!(runtime::reservation_of(storage, U256::ONE)
-            .unwrap()
-            .asset
-            .is_zero());
-    };
+    let rejected =
+        |storage: &StorageHandle<'_>, reference_currency: u16, expected: PrecompileError| {
+            let err = reserve_in(storage, reference_currency).unwrap_err();
+            assert_eq!(err.to_string(), expected.to_string());
+            let router = VaultRouterContract::new(storage.clone());
+            assert!(router.reservation_nonce.read().unwrap().is_zero());
+            assert!(runtime::reservation_of(storage, U256::ONE)
+                .unwrap()
+                .asset
+                .is_zero());
+        };
     with_reservable_vault(U256::from(100u64), |storage| {
         let day = outbe_primitives::time::previous_date_key(
             outbe_primitives::time::timestamp_to_date_key(1_700_000_000),
@@ -2088,21 +2095,40 @@ fn a_reservation_needs_every_call_term() {
             .unwrap()
             .unwrap();
 
-        rejected(&storage, 999, "not a registered reference currency");
+        rejected(
+            &storage,
+            999,
+            outbe_oracle::errors::OracleError::NotReferenceCurrency { iso_code: 999 }.into(),
+        );
 
         oracle.policy_rate.write(&USD_ISO_CODE, U256::ZERO).unwrap();
-        rejected(&storage, USD_ISO_CODE, "no policy rate");
+        rejected(
+            &storage,
+            USD_ISO_CODE,
+            outbe_oracle::errors::OracleError::NoPolicyRate {
+                iso_code: USD_ISO_CODE,
+            }
+            .into(),
+        );
         oracle
             .policy_rate
             .write(&USD_ISO_CODE, U256::from(43_000))
             .unwrap();
 
         oracle.utc_day_vwap_last_finalized.write(day - 1).unwrap();
-        rejected(&storage, USD_ISO_CODE, "previous day VWAP unavailable");
+        rejected(
+            &storage,
+            USD_ISO_CODE,
+            VaultRouterError::PreviousDayVwapUnavailable.into(),
+        );
         oracle.utc_day_vwap_last_finalized.write(day).unwrap();
 
         oracle.record_utc_day_vwap(day, index, U256::ZERO).unwrap();
-        rejected(&storage, USD_ISO_CODE, "previous day VWAP unavailable");
+        rejected(
+            &storage,
+            USD_ISO_CODE,
+            VaultRouterError::PreviousDayVwapUnavailable.into(),
+        );
         oracle
             .record_utc_day_vwap(day, index, U256::from(2_000_000))
             .unwrap();
@@ -2111,7 +2137,11 @@ fn a_reservation_needs_every_call_term() {
             .reference_currencies
             .push(EUR_ISO_CODE)
             .unwrap();
-        rejected(&storage, EUR_ISO_CODE, "reference pair unavailable");
+        rejected(
+            &storage,
+            EUR_ISO_CODE,
+            VaultRouterError::ReferencePairUnavailable.into(),
+        );
 
         reserve_in(&storage, USD_ISO_CODE).unwrap();
     });
@@ -2167,7 +2197,7 @@ fn reserve_stables_requires_a_credis_owner() {
             },
         )
         .unwrap_err();
-        assert!(err.to_string().contains("zero address"), "{err}");
+        assert_revert::<IVaultRouter::ZeroAddress>(&err);
     });
 }
 
@@ -2319,7 +2349,7 @@ fn a_stranger_cannot_return_a_live_reservation() {
         )
         .unwrap();
         let err = runtime::return_reservation(storage.clone(), stranger(), id).unwrap_err();
-        assert!(err.to_string().contains("unauthorized"), "{err}");
+        assert_revert::<IVaultRouter::Unauthorized>(&err);
         assert_eq!(
             runtime::reservation_of(&storage, id).unwrap().amount_minor,
             U256::from(10)
@@ -2399,12 +2429,12 @@ fn reservations_are_gated_like_a_withdrawal() {
         }
         .abi_encode();
         let err = dispatch(storage.clone(), &release_call, stranger(), U256::ZERO).unwrap_err();
-        assert!(err.to_string().contains("unauthorized"), "{err}");
+        assert_revert::<IVaultRouter::Unauthorized>(&err);
 
         runtime::add_liquidity_target(storage.clone(), target_account(), 1).unwrap();
         let err =
             dispatch(storage.clone(), &release_call, target_account(), U256::ZERO).unwrap_err();
-        assert!(err.to_string().contains("unauthorized"));
+        assert_revert::<IVaultRouter::Unauthorized>(&err);
         let factory = outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS;
         runtime::add_liquidity_target(storage.clone(), factory, 1).unwrap();
         let out = dispatch(storage.clone(), &release_call, factory, U256::ZERO).unwrap();

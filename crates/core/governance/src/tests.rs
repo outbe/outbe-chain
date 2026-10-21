@@ -38,9 +38,9 @@ fn with_governance<R>(f: impl FnOnce(&mut GovernanceContract) -> R) -> R {
 }
 
 fn assert_not_authorized<T: std::fmt::Debug>(result: outbe_primitives::error::Result<T>) {
-    let expected = GovernanceError::NotAuthorized.to_string();
+    let expected = PrecompileError::from(GovernanceError::NotAuthorized).to_string();
     assert!(
-        matches!(&result, Err(PrecompileError::Revert(msg)) if *msg == expected),
+        matches!(&result, Err(err) if err.to_string() == expected),
         "expected NotAuthorized, got {result:?}"
     );
 }
@@ -127,9 +127,9 @@ fn assert_text_too_large<T: std::fmt::Debug>(
     len: usize,
     max: usize,
 ) {
-    let expected = GovernanceError::TextTooLarge { len, max }.to_string();
+    let expected = PrecompileError::from(GovernanceError::TextTooLarge { len, max }).to_string();
     assert!(
-        matches!(&result, Err(PrecompileError::Revert(msg)) if *msg == expected),
+        matches!(&result, Err(err) if err.to_string() == expected),
         "expected TextTooLarge, got {result:?}"
     );
 }
@@ -205,12 +205,9 @@ fn submission_counters_are_checked() {
                 crate::ProposalKind::Gip => gov.submit_gip(AUTHOR, "overflow"),
             }
             .unwrap_err();
-            assert!(
-                matches!(
-                    &error,
-                    PrecompileError::Revert(reason)
-                        if *reason == GovernanceError::ProposalIdExhausted.to_string()
-                ),
+            assert_eq!(
+                error.to_string(),
+                PrecompileError::from(GovernanceError::ProposalIdExhausted).to_string(),
                 "expected ProposalIdExhausted, got {error:?}"
             );
         });
@@ -571,9 +568,9 @@ fn author_index_is_per_kind() {
 }
 
 fn assert_author_index_full<T: std::fmt::Debug>(result: outbe_primitives::error::Result<T>) {
-    let expected = GovernanceError::AuthorIndexFull.to_string();
+    let expected = PrecompileError::from(GovernanceError::AuthorIndexFull).to_string();
     assert!(
-        matches!(&result, Err(PrecompileError::Revert(msg)) if *msg == expected),
+        matches!(&result, Err(err) if err.to_string() == expected),
         "expected AuthorIndexFull, got {result:?}"
     );
 }

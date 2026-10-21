@@ -135,7 +135,13 @@ fn checked_credit_rejects_overflow() {
         c.checked_credit(near_max).unwrap();
 
         let err = c.checked_credit(U256::from(100u64)).unwrap_err();
-        assert!(err.to_string().contains("overflow"));
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::PromisLimitError::Overflow
+            )
+            .to_string()
+        );
 
         assert_eq!(c.promis_limit().unwrap(), near_max);
     });

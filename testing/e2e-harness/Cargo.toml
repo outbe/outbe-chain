@@ -54,13 +54,10 @@ outbe-common = { workspace = true }
 outbe-consensus.workspace = true
 outbe-desis.workspace = true
 outbe-gem = { workspace = true }
-outbe-gemfactory = { workspace = true }
 outbe-intexfactory = { workspace = true }
 outbe-nod = { workspace = true }
-outbe-nodfactory = { workspace = true }
 outbe-oracle = { workspace = true }
 outbe-tribute = { workspace = true, features = ["test-utils"] }
-outbe-vaultrouter = { workspace = true }
 outbe-tee-enclave = { workspace = true }
 rand.workspace = true
 reth-ethereum.workspace = true

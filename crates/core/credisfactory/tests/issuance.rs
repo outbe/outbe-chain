@@ -426,7 +426,10 @@ fn retry_issuance_and_cancel_expired(
         retry.status
     );
     if failure == 8 {
-        assert!(String::from_utf8_lossy(&retry.returndata).contains("expired"));
+        assert_eq!(
+            &retry.returndata[..4],
+            &<ICredisFactory::ReservationExpired as alloy_sol_types::SolError>::SELECTOR
+        );
         assert_eq!(source_gratis(evm)?, (U256::ZERO, U256::from(GRATIS)));
         let cancel = IGratisFactory::cancelPledgeCall {
             reservationId: U256::ONE,

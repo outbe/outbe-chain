@@ -173,10 +173,11 @@ fn invalid_json_payload_is_rejected_at_creation() {
                 &VOTE_TARGET_REGISTRY,
             )
             .unwrap_err();
-        assert!(matches!(
-            err,
-            PrecompileError::Revert(msg) if msg.contains("invalid proposal payload")
-        ));
+        assert!(
+            matches!(err, PrecompileError::RevertBytes(_))
+                || err.to_string().contains("invalid proposal payload"),
+            "unexpected error: {err:?}"
+        );
     });
 }
 
@@ -193,10 +194,10 @@ fn unknown_kind_is_rejected_at_creation() {
                 &VOTE_TARGET_REGISTRY,
             )
             .unwrap_err();
-        assert!(matches!(
-            err,
-            PrecompileError::Revert(msg) if msg.contains("invalid vote payload")
-        ));
+        assert_eq!(
+            err.to_string(),
+            PrecompileError::from(GovernanceError::InvalidPayload).to_string()
+        );
     });
 }
 
@@ -213,17 +214,18 @@ fn empty_text_is_rejected_at_creation() {
                 &VOTE_TARGET_REGISTRY,
             )
             .unwrap_err();
-        assert!(matches!(
-            err,
-            PrecompileError::Revert(msg) if msg.contains("text must not be empty")
-        ));
+        assert_eq!(
+            err.to_string(),
+            PrecompileError::from(GovernanceError::EmptyText).to_string()
+        );
     });
 }
 
 #[test]
 fn oversize_text_is_rejected_at_creation() {
     let max = MAX_PROPOSAL_TEXT_BYTES;
-    let expected = GovernanceError::TextTooLarge { len: max + 1, max }.to_string();
+    let expected =
+        PrecompileError::from(GovernanceError::TextTooLarge { len: max + 1, max }).to_string();
     for kind in KINDS {
         with_vote(|storage| {
             let mut vote = Vote::new(storage.clone());
@@ -236,8 +238,9 @@ fn oversize_text_is_rejected_at_creation() {
                     &VOTE_TARGET_REGISTRY,
                 )
                 .unwrap_err();
-            assert!(
-                matches!(&err, PrecompileError::Revert(msg) if *msg == expected),
+            assert_eq!(
+                err.to_string(),
+                expected,
                 "expected TextTooLarge, got {err:?}"
             );
             assert_absent(&GovernanceContract::new(storage), kind);

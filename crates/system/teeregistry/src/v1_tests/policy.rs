@@ -1,4 +1,7 @@
+use super::fixtures::assert_revert_bytes;
 use super::*;
+use alloy_sol_types::SolError;
+use outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1;
 
 /// The other attestation mode.
 fn other_mode(mode: AttestationMode) -> AttestationMode {
@@ -26,9 +29,9 @@ fn cross_mode_successor(current: &TeePolicyV1) -> TeePolicyV1 {
 /// attestation mode before a registry write.
 fn assert_install_rejected_without_writes(storage: StorageHandle<'_>, initial: &TeePolicyV1) {
     let mut registry = TeeRegistry::new(storage);
-    assert_reverts(
+    assert_revert_bytes(
         registry.install_initial_policy_v1(initial),
-        "attestation mode",
+        &ITeeRegistryV1::InitialV1PolicyAttestationModeDisallowed {}.abi_encode(),
     );
     assert_eq!(registry.active_v1_policy_len.read().unwrap(), 0);
     assert!(registry.active_v1_policy_hash.read().unwrap().is_zero());
@@ -99,9 +102,9 @@ fn initial_policy_is_state_authority_and_is_write_once() {
 
         let mut conflicting = first.clone();
         conflicting.minimum_tcb_evaluation_data_number = 2;
-        assert_reverts(
+        assert_revert_bytes(
             registry.install_initial_policy_v1(&conflicting),
-            "already installed",
+            &ITeeRegistryV1::InitialV1PolicyAlreadyInstalled {}.abi_encode(),
         );
     });
 
@@ -109,9 +112,9 @@ fn initial_policy_is_state_authority_and_is_write_once() {
     let mut wrong_chain = first;
     wrong_chain.chain_id = U256::from(2).to_be_bytes();
     StorageHandle::enter(&mut wrong_chain_provider, |storage| {
-        assert_reverts(
+        assert_revert_bytes(
             TeeRegistry::new(storage).install_initial_policy_v1(&wrong_chain),
-            "chain identity mismatch",
+            &ITeeRegistryV1::InitialV1PolicyChainIdentityMismatch {}.abi_encode(),
         );
     });
 }
@@ -177,23 +180,23 @@ fn stages_exactly_one_predecessor_bound_successor_policy() {
     run_installed(&current, |_storage, mut registry| {
         let mut wrong_genesis = successor.clone();
         wrong_genesis.genesis_hash = B256::repeat_byte(0xee);
-        assert_reverts(
+        assert_revert_bytes(
             registry.stage_successor_policy_v1(U256::from(5), &wrong_genesis),
-            "chain identity",
+            &ITeeRegistryV1::SuccessorV1PolicyChainIdentityMismatch {}.abi_encode(),
         );
 
         let mut wrong_version = successor.clone();
         wrong_version.policy_version = 3;
-        assert_reverts(
+        assert_revert_bytes(
             registry.stage_successor_policy_v1(U256::from(6), &wrong_version),
-            "current plus one",
+            &ITeeRegistryV1::SuccessorV1PolicyInvalidVersion {}.abi_encode(),
         );
 
         let mut wrong_mode = successor.clone();
         wrong_mode.attestation_mode = AttestationMode::GramineDirectDev;
-        assert_reverts(
+        assert_revert_bytes(
             registry.stage_successor_policy_v1(U256::from(6), &wrong_mode),
-            "attestation mode",
+            &ITeeRegistryV1::SuccessorV1PolicyCannotChangeAttestationMode {}.abi_encode(),
         );
         assert_eq!(registry.staged_successor_policy_v1().unwrap(), None);
 
@@ -210,17 +213,17 @@ fn stages_exactly_one_predecessor_bound_successor_policy() {
 
         let mut conflicting = successor.clone();
         conflicting.minimum_tcb_evaluation_data_number = 2;
-        assert_reverts(
+        assert_revert_bytes(
             registry.stage_successor_policy_v1(U256::from(8), &conflicting),
-            "already staged",
+            &ITeeRegistryV1::AnotherSuccessorV1PolicyStaged {}.abi_encode(),
         );
 
         let mut wrong_predecessor = successor.clone();
         wrong_predecessor.predecessor_policy_hash = B256::repeat_byte(0xee);
-        assert_reverts(
+        assert_revert_bytes(
             TeeRegistry::new(registry.storage.clone())
                 .stage_successor_policy_v1(U256::from(9), &wrong_predecessor),
-            "predecessor",
+            &ITeeRegistryV1::SuccessorV1PolicyPredecessorHashMismatch {}.abi_encode(),
         );
     });
 }
@@ -235,9 +238,9 @@ fn successor_policy_rejects_both_attestation_mode_switch_directions() {
         let current = policy_in_mode(genesis_hash, active_mode);
         let successor = cross_mode_successor(&current);
         run_installed(&current, |_storage, mut registry| {
-            assert_reverts(
+            assert_revert_bytes(
                 registry.stage_successor_policy_v1(U256::from(20), &successor),
-                "attestation mode",
+                &ITeeRegistryV1::SuccessorV1PolicyCannotChangeAttestationMode {}.abi_encode(),
             );
             assert_eq!(registry.staged_successor_policy_v1().unwrap(), None);
             assert_eq!(registry.active_policy_v1().unwrap(), current);
@@ -359,11 +362,11 @@ fn ambiguous_measurement_rules_reject_at_the_registry_boundary() {
     );
     let signed_intent = validator.signed_initial();
     validator.run_as_validator(|_storage, mut registry| {
-        assert_reverts(
+        assert_revert_bytes(
             registry.register_enclave_after_verifier_for_test(
                 signed_intent.with_verdict(verdict(DcapPlatformTcbStatusV1::UpToDate)),
             ),
-            "exactly one",
+            &ITeeRegistryV1::ClaimsMeasurementRuleMatchInvalid {}.abi_encode(),
         );
     });
 }

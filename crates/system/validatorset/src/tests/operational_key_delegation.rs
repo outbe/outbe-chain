@@ -1,5 +1,7 @@
 use super::*;
 use crate::delegation::ValidatorDelegateRole;
+use crate::precompile::IValidatorSet as I;
+use alloy_sol_types::SolError;
 
 const VALIDATOR_A: Address = address!("0x00000000000000000000000000000000000000A1");
 const VALIDATOR_B: Address = address!("0x00000000000000000000000000000000000000B2");
@@ -75,7 +77,7 @@ fn delegate_cannot_be_claimed_by_two_validators_for_the_same_role() {
             .set_delegate(VALIDATOR_B, ValidatorDelegateRole::Oracle, DELEGATE)
             .unwrap_err();
         assert!(
-            matches!(err, PrecompileError::Revert(message) if message == "delegate already assigned for role")
+            matches!(err, PrecompileError::RevertBytes(bytes) if bytes.len() >= 4 && bytes[..4] == I::DelegateAlreadyAssigned::SELECTOR)
         );
     });
 }
@@ -90,7 +92,7 @@ fn registered_validator_address_cannot_be_used_as_another_validators_delegate() 
             .set_delegate(VALIDATOR_A, ValidatorDelegateRole::Oracle, VALIDATOR_B)
             .unwrap_err();
         assert!(
-            matches!(err, PrecompileError::Revert(message) if message == "delegate must not be a registered validator")
+            matches!(err, PrecompileError::RevertBytes(bytes) if bytes.len() >= 4 && bytes[..4] == I::DelegateIsRegisteredValidator::SELECTOR)
         );
     });
 }
@@ -106,7 +108,7 @@ fn operational_delegate_cannot_later_register_as_a_validator() {
             .register_validator(OWNER, DELEGATE, &dummy_consensus_pubkey(2))
             .unwrap_err();
         assert!(
-            matches!(err, PrecompileError::Revert(message) if message == "validator address is already assigned as an operational delegate")
+            matches!(err, PrecompileError::RevertBytes(bytes) if bytes.len() >= 4 && bytes[..4] == I::ValidatorAlreadyOperationalDelegate::SELECTOR)
         );
         assert!(!vs.is_validator(DELEGATE).unwrap());
         assert_eq!(

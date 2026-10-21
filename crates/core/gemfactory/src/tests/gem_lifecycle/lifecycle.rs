@@ -90,7 +90,13 @@ fn a_duplicate_id_is_rejected_and_rolls_back() {
     with_storage(|storage| {
         let gem_id = add(storage, sample_params(ALICE));
         let error = crate::runtime::add_gem(storage, sample_params(ALICE)).unwrap_err();
-        assert!(format!("{error:?}").contains("already exists"), "{error:?}");
+        assert_eq!(
+            error.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_gem::errors::GemError::AlreadyExists
+            )
+            .to_string()
+        );
         assert_eq!(GemContract::new(storage.clone()).total_supply().unwrap(), 1);
         assert_eq!(owned(storage, ALICE), [gem_id]);
     });

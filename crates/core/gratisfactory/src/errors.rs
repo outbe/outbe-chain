@@ -1,5 +1,8 @@
 //! Error types for the GratisFactory precompile.
 
+use crate::precompile::IGratisFactory;
+use alloy_primitives::Bytes;
+use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
@@ -25,9 +28,23 @@ pub enum GratisFactoryError {
     NativeCoenOverflow,
 }
 
+fn revert_with<E: SolError>(error: E) -> PrecompileError {
+    PrecompileError::RevertBytes(Bytes::from(error.abi_encode()))
+}
+
 impl From<GratisFactoryError> for PrecompileError {
     fn from(err: GratisFactoryError) -> Self {
-        PrecompileError::Revert(err.to_string())
+        use IGratisFactory as I;
+        match err {
+            GratisFactoryError::FidelityNotEligible => revert_with(I::FidelityNotEligible {}),
+            GratisFactoryError::ReservationNotFound => revert_with(I::ReservationNotFound {}),
+            GratisFactoryError::ReservationExpired => revert_with(I::ReservationExpired {}),
+            GratisFactoryError::NotReservationSource => revert_with(I::NotReservationSource {}),
+            GratisFactoryError::PledgeExists => revert_with(I::PledgeExists {}),
+            GratisFactoryError::PledgeNotFound => revert_with(I::PledgeNotFound {}),
+            GratisFactoryError::PledgeMismatch => revert_with(I::PledgeMismatch {}),
+            GratisFactoryError::NativeCoenOverflow => revert_with(I::NativeCoenOverflow {}),
+        }
     }
 }
 
@@ -44,6 +61,11 @@ pub enum CollateralError {
 
 impl From<CollateralError> for PrecompileError {
     fn from(err: CollateralError) -> Self {
-        PrecompileError::Revert(err.to_string())
+        use IGratisFactory as I;
+        match err {
+            CollateralError::Exists => revert_with(I::Exists {}),
+            CollateralError::NotFound => revert_with(I::NotFound {}),
+            CollateralError::Exceeded => revert_with(I::Exceeded {}),
+        }
     }
 }

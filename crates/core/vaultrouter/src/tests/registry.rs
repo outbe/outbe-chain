@@ -338,20 +338,12 @@ fn declared_error_covers_settlement_token_failure_only() {
         decode_revert(SettlementError::TokenOperationFailed.into());
     let _: IVaultRouter::TokenOperationFailed =
         decode_revert(VaultRouterError::TokenOperationFailed.into());
-    assert!(matches!(
-        PrecompileError::from(SettlementError::AmountMismatch),
-        PrecompileError::Revert(message) if message == "settlement token moved an unexpected amount"
-    ));
+    let _: IVaultRouter::AmountMismatch = decode_revert(SettlementError::AmountMismatch.into());
 }
 
 #[test]
 fn declared_error_absent_keeps_the_string_revert() {
-    assert!(matches!(
-        PrecompileError::from(VaultRouterError::ZeroAddress),
-        PrecompileError::Revert(message) if message == "zero address"
-    ));
-    assert!(matches!(
-        PrecompileError::from(VaultRouterError::UnsupportedAssetDecimalsSimple),
-        PrecompileError::Revert(message) if message == "unsupported asset decimals"
-    ));
+    let _: IVaultRouter::ZeroAddress = decode_revert(VaultRouterError::ZeroAddress.into());
+    let _: IVaultRouter::UnsupportedAssetDecimalsSimple =
+        decode_revert(VaultRouterError::UnsupportedAssetDecimalsSimple.into());
 }

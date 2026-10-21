@@ -58,7 +58,7 @@ fn complete_exported_abis_match_golden_hashes() {
         canonical_abi_hash(vote),
         // The exported ABI includes createProposalWithVotingWindow, added in
         // e1b954dd. Its selector is independently pinned below.
-        b256!("b8055a8710bcd34616ad1f9436adf90951117435f55e7264d831e25fd311407f")
+        b256!("38af28a186c9875095a7c3e78bb587fe69564c1a03fe2dc2a3c636a706be4ee6")
     );
 }
 
