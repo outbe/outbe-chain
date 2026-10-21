@@ -36,10 +36,31 @@ pub fn sol_function_canonical(sol: &str, name: &str) -> Option<SolFnCanonical> {
 
 /// Reads a literal `constant NAME = <value>;` declaration.
 pub fn sol_constant<T: std::str::FromStr>(sol: &str, name: &str) -> Option<T> {
+    let raw = constant_expr(sol, name)?;
+    raw.replace('_', "").parse().ok()
+}
+
+/// Reads `constant NAME = 1 << N` and returns `N`.
+///
+/// The expression must be the token `1`, the operator `<<`, and a decimal
+/// integer. Spaces around those tokens are optional. Any other form returns
+/// `None`. This function does not evaluate a general Solidity expression.
+pub fn sol_constant_shift(sol: &str, name: &str) -> Option<u32> {
+    let raw = constant_expr(sol, name)?;
+    let rest = raw.strip_prefix('1')?.trim_start();
+    let rest = rest.strip_prefix("<<")?.trim_start();
+    if rest.is_empty() || !rest.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    rest.parse().ok()
+}
+
+/// Returns the trimmed text of `constant NAME = ...;` up to the semicolon.
+fn constant_expr<'a>(sol: &'a str, name: &str) -> Option<&'a str> {
     let needle = format!(" constant {name} =");
     let start = sol.find(&needle)? + needle.len();
     let end = sol[start..].find(';')? + start;
-    sol[start..end].trim().replace('_', "").parse().ok()
+    Some(sol[start..end].trim())
 }
 
 /// Returns the index of the parenthesis that closes the one at `open`.
@@ -77,7 +98,7 @@ fn canonical_type_list(list: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{sol_constant, sol_function_canonical};
+    use super::{sol_constant, sol_constant_shift, sol_function_canonical};
 
     #[test]
     fn sol_constant_reads_plain_and_separated_literals() {
@@ -90,6 +111,33 @@ mod tests {
         assert_eq!(sol_constant(SAMPLE, "MILLION"), Some(1_000_000u32));
         assert_eq!(sol_constant::<u128>(SAMPLE, "DERIVED"), None);
         assert_eq!(sol_constant::<u128>(SAMPLE, "MISSING"), None);
+    }
+
+    /// Accepts only `1 << N`. A plain number, a power expression, a name, and
+    /// a missing constant do not parse.
+    #[test]
+    fn sol_constant_shift_accepts_only_one_left_shift() {
+        assert_eq!(
+            sol_constant_shift("uint256 constant X = 1 << 112;", "X"),
+            Some(112)
+        );
+        assert_eq!(
+            sol_constant_shift("uint256 constant X = 1<<112;", "X"),
+            Some(112)
+        );
+        assert_eq!(sol_constant_shift("uint256 constant X = 5;", "X"), None);
+        assert_eq!(
+            sol_constant_shift("uint256 constant X = 2 ** 112;", "X"),
+            None
+        );
+        assert_eq!(
+            sol_constant_shift("uint256 constant X = 1 << X;", "X"),
+            None
+        );
+        assert_eq!(
+            sol_constant_shift("uint256 constant X = 1 << 112;", "MISSING"),
+            None
+        );
     }
 
     /// Pins the parser output for names, `calldata`/`memory` markers, `view` and

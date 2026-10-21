@@ -73,6 +73,7 @@ impl BlockLifecycle for CycleLifecycle {
         outbe_intexfactory::hooks::sweep_cleanup(&ctx.runtime)?;
         outbe_credisfactory::hooks::sweep_cleanup(&ctx.runtime)?;
         outbe_gemfactory::hooks::sweep_position_cleanup(&ctx.runtime)?;
+        outbe_rewards::api::prune_settled_days(&ctx.runtime)?;
         Ok(())
     }
 

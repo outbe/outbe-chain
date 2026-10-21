@@ -62,9 +62,12 @@ fn cross_currency_settlement_rejects_a_leg_the_window_never_priced() {
         )
         .unwrap_err();
 
-        assert!(
-            error.to_string().contains("oracle nominal unavailable"),
-            "{error}"
+        assert_eq!(
+            error.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_vaultrouter::settlement::SettlementError::OracleUnavailable
+            )
+            .to_string()
         );
         assert_eq!(gem_view(storage, gem_id).item.state, GemState::Issued as u8);
     });
@@ -93,7 +96,13 @@ fn settle_rejects_wrong_settlement_currency() {
                 snapshot_id: U256::ZERO,
             },
         );
-        assert!(err_msg(res).contains("does not match the right"));
+        assert_eq!(
+            res.unwrap_err().to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_vaultrouter::settlement::SettlementError::CurrencyMismatch { iso_code: 978 }
+            )
+            .to_string()
+        );
     });
 }
 

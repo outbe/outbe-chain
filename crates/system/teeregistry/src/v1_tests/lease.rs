@@ -1,4 +1,7 @@
+use super::fixtures::assert_revert_bytes;
 use super::*;
+use alloy_sol_types::SolError;
+use outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1;
 
 #[test]
 fn full_node_renewal_and_replacement_follow_the_shared_lease_lifecycle() {
@@ -90,11 +93,13 @@ fn renewal_window_is_half_open_extends_from_deadline_and_does_not_drift() {
         NOW + 1_799,
         signed_initial.with_verdict(fresh_verdict.clone()),
         |storage, mut registry| {
-            assert_reverts(
+            assert_revert_bytes(
                 registry.renew_enclave_after_verifier_for_test(
                     signed_renewal.with_verdict(fresh_verdict.clone()),
                 ),
-                "renewal window",
+                ITeeRegistryV1::RenewalWindowNotOpen {}
+                    .abi_encode()
+                    .as_slice(),
             );
 
             storage
@@ -109,11 +114,13 @@ fn renewal_window_is_half_open_extends_from_deadline_and_does_not_drift() {
                 },
                 |_| {},
             );
-            assert_reverts(
+            assert_revert_bytes(
                 registry.renew_enclave_after_verifier_for_test(
                     signed_renewal.with_conflicting_evidence(fresh_verdict.clone()),
                 ),
-                "exact evidence replay",
+                ITeeRegistryV1::MutationNotExactEvidenceReplay {}
+                    .abi_encode()
+                    .as_slice(),
             );
             let binding = validator.stored_binding(&registry);
             assert_eq!(binding.registration_version, 1);
@@ -128,11 +135,13 @@ fn renewal_window_is_half_open_extends_from_deadline_and_does_not_drift() {
             stale.registration_version = 0;
             stale.renewal_nonce = 0;
             let signed_stale = validator.sign(&stale);
-            assert_reverts(
+            assert_revert_bytes(
                 registry.renew_enclave_after_verifier_for_test(
                     signed_stale.with_verdict(fresh_verdict.clone()),
                 ),
-                "next renewal",
+                ITeeRegistryV1::RenewalVersionOrNonceMismatch {}
+                    .abi_encode()
+                    .as_slice(),
             );
         },
     );
@@ -141,11 +150,13 @@ fn renewal_window_is_half_open_extends_from_deadline_and_does_not_drift() {
         validator.initial.requested_valid_until,
         signed_initial.with_verdict(fresh_verdict.clone()),
         |_storage, mut registry| {
-            assert_reverts(
+            assert_revert_bytes(
                 registry.renew_enclave_after_verifier_for_test(
                     signed_renewal.with_verdict(fresh_verdict.clone()),
                 ),
-                "expired",
+                ITeeRegistryV1::EnclaveLeaseExpired {}
+                    .abi_encode()
+                    .as_slice(),
             );
         },
     );
@@ -196,12 +207,12 @@ fn renewal_rejects_the_wrong_evm_caller_before_replay_or_state_change() {
         signed_initial.with_verdict(accepted.clone()),
         |_storage, mut registry| {
             validator.assert_binding_unchanged_by(&mut registry, |registry| {
-                assert_reverts(
+                assert_revert_bytes(
                     registry.renew_enclave_after_verifier_for_test_as(
                         wrong.address(),
                         signed_renewal.with_verdict(accepted.clone()),
                     ),
-                    "caller",
+                    &ITeeRegistryV1::MutatorCallerNotAssociated {}.abi_encode(),
                 );
             });
 
@@ -214,12 +225,12 @@ fn renewal_rejects_the_wrong_evm_caller_before_replay_or_state_change() {
                     .unwrap(),
                 V1RegistrationOutcome::Created
             );
-            assert_reverts(
+            assert_revert_bytes(
                 registry.renew_enclave_after_verifier_for_test_as(
                     wrong.address(),
                     signed_renewal.with_verdict(accepted),
                 ),
-                "caller",
+                &ITeeRegistryV1::MutatorCallerNotAssociated {}.abi_encode(),
             );
         },
     );
@@ -242,11 +253,11 @@ fn renewal_rejects_collateral_margin_underflow_without_extending_state() {
         |_storage, mut registry| {
             validator.assert_binding_unchanged_by(&mut registry, |registry| {
                 let underflow = up_to_date_verdict_until(validator.policy.collateral_margin - 1);
-                assert_reverts(
+                assert_revert_bytes(
                     registry.renew_enclave_after_verifier_for_test(
                         signed_renewal.with_verdict(underflow),
                     ),
-                    "safety margin",
+                    &ITeeRegistryV1::CollateralMarginExhausted {}.abi_encode(),
                 );
             });
         },

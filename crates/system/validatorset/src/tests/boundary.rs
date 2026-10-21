@@ -1,4 +1,6 @@
 use super::*;
+use crate::precompile::IValidatorSet as I;
+use alloy_sol_types::SolError;
 
 fn admit_pending(vs: &mut ValidatorSet<'_>, validator: Address, key_seed: u8) {
     vs.mark_pending(validator).unwrap();
@@ -281,12 +283,16 @@ fn post_freeze_exit_is_retained_then_excluded_at_a_later_boundary() {
                 11,
             )
             .unwrap_err();
-        assert!(matches!(
-            err,
-            PrecompileError::Revert(message)
-                if message.contains("retained validator")
-                    && message.contains("exited at 11 before freeze 11")
-        ));
+        match err {
+            PrecompileError::RevertBytes(bytes) => {
+                let decoded =
+                    I::BoundaryRetainedValidatorExitedBeforeFreeze::abi_decode(&bytes).unwrap();
+                assert_eq!(decoded.account, exiting);
+                assert_eq!(decoded.changed_at, 11);
+                assert_eq!(decoded.freeze_height, 11);
+            }
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
         assert_eq!(vs.validator_lifecycle(survivor).unwrap(), survivor_before);
         assert_eq!(vs.validator_lifecycle(exiting).unwrap(), exiting_before);
         assert_eq!(vs.has_pending_set_change().unwrap(), pending_before);
@@ -348,12 +354,16 @@ fn post_freeze_jail_is_retained_then_excluded_at_a_later_boundary() {
                 11,
             )
             .unwrap_err();
-        assert!(matches!(
-            err,
-            PrecompileError::Revert(message)
-                if message.contains("retained validator")
-                    && message.contains("jailed at 11 before freeze 11")
-        ));
+        match err {
+            PrecompileError::RevertBytes(bytes) => {
+                let decoded =
+                    I::BoundaryRetainedValidatorJailedBeforeFreeze::abi_decode(&bytes).unwrap();
+                assert_eq!(decoded.account, jailed);
+                assert_eq!(decoded.jailed_at, 11);
+                assert_eq!(decoded.freeze_height, 11);
+            }
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
         assert_eq!(vs.validator_lifecycle(survivor).unwrap(), survivor_before);
         assert_eq!(vs.validator_lifecycle(jailed).unwrap(), jailed_before);
         assert_eq!(vs.has_pending_set_change().unwrap(), pending_before);
@@ -416,12 +426,16 @@ fn assert_demoted_joiner_retained_then_excluded(
     let err = vs
         .test_activate_validated_boundary_set(&[survivor, joiner], B256::with_last_byte(0xBE), 11)
         .unwrap_err();
-    assert!(matches!(
-        err,
-        PrecompileError::Revert(message)
-            if message.contains("retained validator")
-                && message.contains("exited at 11 before freeze 11")
-    ));
+    match err {
+        PrecompileError::RevertBytes(bytes) => {
+            let decoded =
+                I::BoundaryRetainedValidatorExitedBeforeFreeze::abi_decode(&bytes).unwrap();
+            assert_eq!(decoded.account, joiner);
+            assert_eq!(decoded.changed_at, 11);
+            assert_eq!(decoded.freeze_height, 11);
+        }
+        other => panic!("expected typed revert bytes, got {other:?}"),
+    }
     assert_eq!(vs.validator_lifecycle(survivor).unwrap(), survivor_before);
     assert_eq!(vs.validator_lifecycle(joiner).unwrap(), joiner_before);
     assert_eq!(vs.has_pending_set_change().unwrap(), pending_before);
@@ -496,10 +510,13 @@ fn included_waiting_for_stake_at_or_before_freeze_still_fatals() {
                 11,
             )
             .unwrap_err();
-        assert!(matches!(
-            err,
-            PrecompileError::Revert(message) if message.contains("included ineligible validator")
-        ));
+        match err {
+            PrecompileError::RevertBytes(bytes) => {
+                let decoded = I::BoundaryIncludedIneligibleValidator::abi_decode(&bytes).unwrap();
+                assert_eq!(decoded.account, joiner);
+            }
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
         assert_eq!(vs.validator_lifecycle(survivor).unwrap(), survivor_before);
         assert_eq!(vs.validator_lifecycle(joiner).unwrap(), joiner_before);
         assert_eq!(vs.has_pending_set_change().unwrap(), pending_before);
@@ -592,7 +609,7 @@ fn test_boundary_rejects_missed_active_validator_atomically() {
         // ACTIVE participant. The planner rejects it before writing anything.
         assert!(matches!(
             vs.activate_reshared_set(&[val1, val2], group_key2),
-            Err(PrecompileError::Revert(_))
+            Err(PrecompileError::RevertBytes(_))
         ));
 
         // The complete prior committee, hash, and repair signal are unchanged.

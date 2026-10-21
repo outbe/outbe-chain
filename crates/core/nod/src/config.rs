@@ -30,10 +30,11 @@ impl NodParams {
         call_notice_period_seconds: CALL_NOTICE_PERIOD,
     };
 
-    /// Short terms for dev/test, as Gem and Intex run them. The scan is day-granular,
-    /// so window and threshold stay whole days. The notice is a real wait.
+    /// Short terms for dev/test. Only the timings are the same as Gem and Intex use.
+    /// The scan is day-granular, so window and threshold stay whole days. The notice
+    /// is a real wait.
     pub const DEV: Self = Self {
-        call_rate: 10,
+        call_rate: 8,
         call_window_seconds: 3 * SECONDS_PER_DAY_U32,
         call_threshold_seconds: 2 * SECONDS_PER_DAY_U32,
         #[cfg(not(feature = "e2e-test"))]

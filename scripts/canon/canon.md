@@ -97,7 +97,7 @@ Each term lists forbidden words/phrases and the permitted anchor. When a forbidd
 
 **Tribute** - Forbidden: payment, transaction, per-purchase unit, supply. Permitted: daily aggregate of one participant's eligible spending; demand-side claim; offered by the participant.
 
-**Nod** - Forbidden: container, vessel, holds Gratis, expiring instrument, equity, option (with holding cost). Permitted: conditional right to mine Gratis at predetermined Cost Amount; no holding cost; soul-bound; no expiry.
+**Nod** - Forbidden: container, vessel, holds Gratis, expiring instrument, equity, option (with holding cost). Permitted: conditional right to mine Gratis at predetermined Cost Amount; no holding cost; soul-bound; no expiry; subject to the Call event (settle or forfeit).
 
 **Intex** - Forbidden: container, vessel, holds Promis, asset, equity, option (with holding cost). Permitted: conditional right to mine Promis at predetermined Cost Amount; no holding cost; tradable.
 
@@ -113,15 +113,15 @@ Each term lists forbidden words/phrases and the permitted anchor. When a forbidd
 
 **Settlement** - Forbidden: fair-priced at current COEN, instant gain, market-rate trade. Permitted: holder pays Cost Amount at fixed entry price; contract becomes settled; loaded mining capacity is mined to the holder's account; gain/loss arises from COEN movement between entry price and COEN sale.
 
-**Floor Price / qualification** - Forbidden: immediate availability, exercisable on issuance, denominated in issuance currency, country-influenceable. Permitted: per-contract threshold (reference-currency entry x 1.08); settlement requires 21 days elapsed AND globally-formed COEN/ref > Floor Price.
+**Settlement availability** - Forbidden: floor price, qualification, waiting period before settlement. Permitted: settlement at any time from issuance; after a Call, until the end of the notice period.
 
-**Call event** - Forbidden: automatic settlement, default trigger, forced burn-with-recovery, denominated in issuance currency, country-influenceable. Permitted: per-contract threshold (reference-currency entry x 1.64); forced choice (settle or forfeit) when globally-formed COEN/ref > Call Price for 21 of 30 days; applies to Intex and Gem only.
+**Call event** - Forbidden: automatic settlement, default trigger, forced burn-with-recovery, denominated in issuance currency, country-influenceable. Permitted: per-contract threshold (reference-currency entry x 1.64); forced choice (settle or forfeit) when globally-formed COEN/ref > Call Price for 21 of 30 days; applies to Nod, Intex and Gem.
 
 **Forfeiture** - Forbidden: default, loss to the protocol, position seizure. Permitted: holder's election not to settle at Call; contract burns; loaded capacity returns to pool.
 
 **Issuance currency** - Forbidden: equivalent to reference currency, secondary unit. Permitted: local currency in which contract values (entry price, Cost Amount) are stated for the participant; jurisdiction-dependent.
 
-**Reference currency** - Forbidden: contract-denomination unit, single global anchor, country-determined, settlement currency, FX-diversification mechanism, holding-currency, position-denomination, currency-of-payoff, hedging instrument, portfolio-construction choice. Permitted: per-contract threshold-evaluation anchor selected by participant at issuance from {USD, EUR, GBP, CNY, HKD, JPY}; fixed for the contract's lifetime; sole function is to gate qualification (Floor) and Call against globally-formed COEN/ref price; does not denominate the position, does not provide FX exposure on the holding, does not alter the economic outcome from holding COEN.
+**Reference currency** - Forbidden: contract-denomination unit, single global anchor, country-determined, settlement currency, FX-diversification mechanism, holding-currency, position-denomination, currency-of-payoff, hedging instrument, portfolio-construction choice. Permitted: per-contract threshold-evaluation anchor selected by participant at issuance from {USD, EUR, GBP, CNY, HKD, JPY}; fixed for the contract's lifetime; sole function is to gate the Call against globally-formed COEN/ref price; does not denominate the position, does not provide FX exposure on the holding, does not alter the economic outcome from holding COEN.
 
 **Credis** - Forbidden: loan, credit, borrowing, debt, lending, credit line, advance, additional purchasing power. Permitted: routing of funds the user was already committed to spending; funded by Vault liquidity.
 
@@ -175,11 +175,11 @@ Each object admits a closed set of verbs. A verb outside an object's set is a ca
 
 Non-fungible contracts (Nod, Intex, Gem) hold a conditional right to mine the loaded fungible mining capacity at a predetermined Cost Amount. Settlement: the holder pays Cost Amount; the contract becomes settled; the loaded mining capacity is mined to the holder's account.
 
-**Nod** - Permitted: issue, settle, pay Cost Amount for, burn, qualify, hold, walk away from (consumer-elects-not-to-settle sense). Forbidden: create, generate, mint, sell, trade, transfer, gift, redeem (against underlying), exercise (option-style with premium), expire, mature, default on, pay holding cost on.
+**Nod** - Permitted: issue, settle, pay Cost Amount for, burn, hold, forfeit (at Call), Call, walk away from (consumer-elects-not-to-settle sense). Forbidden: create, generate, mint, sell, trade, transfer, gift, redeem (against underlying), exercise (option-style with premium), expire, mature, default on, pay holding cost on.
 
-**Intex** - Permitted: issue, settle, pay Cost Amount for, burn, qualify, hold, auction, bid on, acquire, trade, sell, buy, fragment (into Gems), forfeit (at Call), Call. Forbidden: create, generate, mint, redeem (against underlying), exercise (option-style with premium), expire, mature, default on, pay holding cost on.
+**Intex** - Permitted: issue, settle, pay Cost Amount for, burn, hold, auction, bid on, acquire, trade, sell, buy, fragment (into Gems), forfeit (at Call), Call. Forbidden: create, generate, mint, redeem (against underlying), exercise (option-style with premium), expire, mature, default on, pay holding cost on.
 
-**Gem** - Permitted: issue (from fragmented Intex), receive (from merchant), settle, pay Cost Amount for, burn, qualify, hold, inherit (entry price from parent Intex in COEN terms), forfeit (at Call), Call. Forbidden: create, generate, mint, sell, trade, transfer, gift, re-fragment, redeem (against underlying), exercise (option-style with premium), expire, mature, default on, pay holding cost on, inherit reference currency or issuance currency from parent.
+**Gem** - Permitted: issue (from fragmented Intex), receive (from merchant), settle, pay Cost Amount for, burn, hold, inherit (entry price from parent Intex in COEN terms), forfeit (at Call), Call. Forbidden: create, generate, mint, sell, trade, transfer, gift, re-fragment, redeem (against underlying), exercise (option-style with premium), expire, mature, default on, pay holding cost on, inherit reference currency or issuance currency from parent.
 
 **Tribute** - Permitted: offer (the participant's act), aggregate, verify, seed (Intex contributions). Forbidden: submit, send, create, make, pay, transact, spend, hold, own, transfer, redeem.
 
@@ -189,7 +189,7 @@ Non-fungible contracts (Nod, Intex, Gem) hold a conditional right to mine the lo
 
 **COEN** - Permitted: mine (from burn of Gratis or Promis), burn, hold, sell, buy, trade, price, transfer. Forbidden: back, issue, redeem (against an underlying), print, distribute (as dividend), unlock, vest, receive (as primary verb for mining output).
 
-**Consumer-side acts on contract outcomes.** *Walk away* - consumer's election not to redeem pledged Gratis (Anadosis declined); no own-funds at risk; applies to the Gratis-Credis path. *Forfeit* - holder's election at Call not to pay Cost Amount; contract burns; loaded capacity returns to pool; applies to Intex and Gem. These are distinct: walk away involves no committed own-funds; forfeit is the investor-side election when own-funds would otherwise be committed at settlement.
+**Consumer-side acts on contract outcomes.** *Walk away* - consumer's election not to redeem pledged Gratis (Anadosis declined); no own-funds at risk; applies to the Gratis-Credis path. *Forfeit* - holder's election at Call not to pay Cost Amount; contract burns; loaded capacity returns to pool; applies to Nod, Intex and Gem. These are distinct: walk away involves no committed own-funds; forfeit is the investor-side election when own-funds would otherwise be committed at settlement.
 
 **Style notes.** Use *issue* for non-fungibles; never *create*, *generate*, or *mint*. Use *mine* for fungible-token creation; never *generate*, *award*, or *distribute*. Use *offer* for Tribute; never *submit*, *send*, *create*, or *make*. Avoid *receive* as the primary verb for mining outputs - participants *mine*, they do not passively *receive*; *receive* is permitted for Gems from merchants and for primary-auction proceeds in cash. Use *settle* for the holder's act on a contract; the contract *becomes settled*. *Pledge* applies only to Gratis (Credis collateral); loading Gratis or Promis into a contract at issuance is *load*, not *pledge*. *Hold* applies to all six objects; for soul-bound objects it means assigned to the account, for Intex and COEN it additionally means a tradable position.
 
@@ -207,7 +207,7 @@ These govern arguments, distinct from the term-level constraints in section 2 an
 - Do not apply the consumer's "no loss of own money" statement to acts that commit own-funds. Such acts are investor acts; the guarantee does not extend to them.
 - Do not treat the Bundle as partitioning the payment amount between the own-funds -> COEN leg and the Vault -> merchant leg. The legs are parallel at full payment amount, not partitions of it. Any aggregate-flow analysis using a "percentage of spending goes to COEN" model is wrong.
 - Do not equate full consumer enrollment with full Bundle realization. Enrollment is bounded by domestic licensing; Bundle realization is bounded by global Vault capacity. Aggregate-flow analyses must use realized Bundle flow, not enrolled population x per-capita consumption.
-- Do not conflate issuance currency with reference currency. Contract values are denominated in issuance currency; qualification and Call thresholds are evaluated in the contract's reference currency against globally-formed COEN price.
+- Do not conflate issuance currency with reference currency. Contract values are denominated in issuance currency; Call thresholds are evaluated in the contract's reference currency against globally-formed COEN price.
 - Do not treat reference currency as conferring FX diversification, multi-currency exposure, currency-of-denomination, or hedging properties on the position. It is exclusively a threshold-evaluation gate. Choices about which currency to sell COEN into are made at sale time, independent of reference currency selection at issuance.
 - Do not treat OUTBE's reference currency prices as country-determined or domestically influenceable. Prices are globally formed through CEX and DEX trading integrating worldwide participation.
 - Do not frame country-specific analysis as if the country could control or shape protocol mechanics. The country's analysis is of its participants engaging with a global system, not of a national instance.

@@ -40,7 +40,7 @@ use reth_provider::{HeaderProvider, ProviderResult};
 // same height.
 // ---------------------------------------------------------------------------
 
-/// In-memory `HeaderProvider` used by all tests in this file. `canonical`
+/// In-memory `HeaderProvider` for competing-branch mapper tests. `canonical`
 /// is the (number -> SealedHeader) mapping that `sealed_header(n)` returns.
 /// `by_hash` is the union of all known headers across branches, which
 /// `header(hash)` / `sealed_header_by_hash(hash)` return. The two maps are
@@ -124,6 +124,56 @@ fn header_with_artifact(
         ..Default::default()
     };
     SealedHeader::seal_slow(OutbeHeader::new(inner))
+}
+
+#[test]
+fn real_reth_provider_preserves_artifact_lookup_contract() {
+    use outbe_primitives::OutbeBlock;
+    use reth_primitives_traits::RecoveredBlock;
+    use reth_provider::{test_utils::create_test_provider_factory_with_node_types, BlockWriter};
+
+    // This fixture uses MDBX indices and real static-file headers.
+    let factory = create_test_provider_factory_with_node_types::<outbe_node::OutbeNode>(Arc::new(
+        ChainSpec::<OutbeHeader>::default(),
+    ));
+    let provider = RethAccountedParentArtifactProvider::new(factory.clone(), None);
+    let unknown_hash = B256::repeat_byte(0x9d);
+    assert!(provider
+        .execution_summary_by_hash(0, unknown_hash)
+        .expect("read unseen header")
+        .is_none());
+
+    let sealed = header_with_artifact(0, 1_700_000_000, U256::from(123), 0xaa);
+    let hash = sealed.hash();
+    let state_root = sealed.header().inner.state_root;
+    let block = RecoveredBlock::new_unhashed(
+        OutbeBlock {
+            header: sealed.header().clone(),
+            ..Default::default()
+        },
+        Vec::new(),
+    );
+    let writer = factory.provider_rw().expect("open real provider writer");
+    writer.insert_block(&block).expect("insert canonical block");
+    writer.commit().expect("commit canonical block");
+
+    assert_eq!(factory.sealed_header(0).unwrap().unwrap().hash(), hash);
+    let found = provider
+        .execution_summary_by_hash(0, hash)
+        .unwrap()
+        .unwrap();
+    assert_eq!(found.summary.validator_fee_sum, U256::from(123));
+    assert_eq!(found.timestamp, 1_700_000_000);
+    assert_eq!(found.state_root, Some(state_root));
+    assert!(matches!(
+        provider.execution_summary_by_hash(1, hash),
+        Err(reth_evm::execute::ProviderError::HeaderNotFound(_))
+    ));
+    // A hash miss must not return the canonical artifact for a different hash.
+    assert!(provider
+        .execution_summary_by_hash(0, unknown_hash)
+        .expect("check canonical fallback hash")
+        .is_none());
 }
 
 #[test]

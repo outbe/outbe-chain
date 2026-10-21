@@ -3,6 +3,14 @@ use outbe_primitives::consensus_p2p::{
     encode_v1, P2pAddress, P2pIngress, MAX_P2P_ADDRESS_ENCODED_LEN, P2P_ADDRESS_VERSION_V1,
 };
 use outbe_primitives::error::PrecompileError;
+
+/// Canonical text of a typed domain revert: `RevertBytes:` plus the ABI payload.
+pub(super) fn typed_revert(encoded: impl AsRef<[u8]>) -> String {
+    format!(
+        "RevertBytes:{}",
+        alloy_primitives::hex::encode(encoded.as_ref())
+    )
+}
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::validators::{validator_registration_message, VALIDATOR_REGISTRATION_DST};

@@ -86,7 +86,7 @@ fn publication_is_an_independent_record_alongside_each_consensus_artifact() {
             ..Default::default()
         };
         let encoded = encode_outbe_block_artifacts(&artifacts).unwrap();
-        assert_eq!(encoded[4], 0x0C);
+        assert_eq!(&encoded[..6], b"OART\x01\x01");
         assert_eq!(decode_outbe_block_artifacts(&encoded).unwrap(), artifacts);
     }
 }
@@ -134,7 +134,7 @@ fn full_publication_batch_fits_with_maximum_other_mandatory_records() {
 }
 
 #[test]
-fn legacy_format_stays_byte_compatible_and_new_format_requires_explicit_mode() {
+fn v1_envelope_preserves_explicit_publication_mode() {
     assert!(
         encode_outbe_block_artifacts(&OutbeBlockArtifacts::default())
             .unwrap()
@@ -144,18 +144,25 @@ fn legacy_format_stays_byte_compatible_and_new_format_requires_explicit_mode() {
         timestamp_millis_part: 999,
         ..Default::default()
     };
-    let legacy = encode_outbe_block_artifacts(&artifacts).unwrap();
-    assert_eq!(legacy[4], 0x0B);
+    let mut expected = b"OART\x01\x00\x01\x05\x00\x08".to_vec();
+    expected.extend_from_slice(&999_u64.to_be_bytes());
+    assert_eq!(
+        encode_outbe_block_artifacts(&artifacts).unwrap().as_ref(),
+        expected
+    );
     artifacts.radicle_publication = Some(batch(1));
     assert!(encode_outbe_block_artifacts(&artifacts).is_err());
     artifacts.radicle_publication_enabled = true;
-    assert_eq!(encode_outbe_block_artifacts(&artifacts).unwrap()[4], 0x0C);
+    let encoded = encode_outbe_block_artifacts(&artifacts).unwrap();
+    assert_eq!(&encoded[..6], b"OART\x01\x01");
+    assert_eq!(decode_outbe_block_artifacts(&encoded).unwrap(), artifacts);
+
     let enabled_empty = OutbeBlockArtifacts {
         radicle_publication_enabled: true,
         ..Default::default()
     };
     let encoded = encode_outbe_block_artifacts(&enabled_empty).unwrap();
-    assert_eq!(encoded.as_ref(), b"OART\x0c\x00");
+    assert_eq!(encoded.as_ref(), b"OART\x01\x01\x00");
     assert_eq!(
         decode_outbe_block_artifacts(&encoded).unwrap(),
         enabled_empty
@@ -163,24 +170,46 @@ fn legacy_format_stays_byte_compatible_and_new_format_requires_explicit_mode() {
 }
 
 #[test]
-fn publication_record_rejects_legacy_version_duplicate_record_and_bad_envelope() {
+fn v1_envelope_rejects_unknown_flags_and_unsupported_versions() {
+    for flags in [2, 3, 255] {
+        let bytes = [b'O', b'A', b'R', b'T', 1, flags, 0];
+        assert_eq!(
+            decode_outbe_block_artifacts(&bytes)
+                .unwrap_err()
+                .to_string(),
+            format!("revert: unsupported block artifact flags: {flags}")
+        );
+    }
+    for version in [0, 2, 5, 11, 12, 255] {
+        let bytes = [b'O', b'A', b'R', b'T', version, 0, 0];
+        assert_eq!(
+            decode_outbe_block_artifacts(&bytes)
+                .unwrap_err()
+                .to_string(),
+            format!("revert: unsupported block artifact version: {version}")
+        );
+    }
+}
+
+#[test]
+fn publication_record_rejects_disabled_mode_duplicate_record_and_bad_envelope() {
     let batch = batch(32);
     let encoded = encode_radicle_publication_artifact(&batch).unwrap();
-    assert_eq!(encoded.len(), 3687);
-    assert_eq!(encoded[5], 1);
-    assert_eq!(encoded[6], 0x09);
+    assert_eq!(encoded.len(), 3688);
+    assert_eq!(encoded[6], 1);
+    assert_eq!(encoded[7], 0x09);
     assert_eq!(
         decode_radicle_publication_artifact(&encoded).unwrap(),
         Some(batch)
     );
-    for version in [0x0B, 0x0D] {
+    for flags in [0, 2, 3] {
         let mut invalid = encoded.to_vec();
-        invalid[4] = version;
+        invalid[5] = flags;
         assert!(decode_outbe_block_artifacts(&invalid).is_err());
     }
     let mut duplicate = encoded.to_vec();
-    duplicate[5] = 2;
-    duplicate.extend_from_slice(&encoded[6..]);
+    duplicate[6] = 2;
+    duplicate.extend_from_slice(&encoded[7..]);
     assert!(decode_outbe_block_artifacts(&duplicate).is_err());
     assert!(decode_outbe_block_artifacts(&encoded[..encoded.len() - 1]).is_err());
     let mut trailing = encoded.to_vec();

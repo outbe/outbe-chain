@@ -19,6 +19,13 @@
 //! read-only or not, sub-call or not. This crate does not use the legacy
 //! [`outbe_primitives::storage::evm::EvmStorageProvider`].
 
+//! ## Storage gas schedule
+//!
+//! Each persistent read costs 100 gas. Each persistent write costs 5000 gas.
+//! These flat costs do not depend on slot warmth or the old and new values.
+//! Transient reads, transient writes, and `enclave_upgrade_id` do not charge this meter.
+//! These prices define current behavior, not a resource-pricing benchmark.
+
 use alloy_evm::{eth::EthEvmContext, EvmInternals};
 use alloy_primitives::{Address, Log, LogData, B256, U256};
 use core::fmt::Debug;

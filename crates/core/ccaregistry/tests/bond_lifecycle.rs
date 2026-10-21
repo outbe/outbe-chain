@@ -356,7 +356,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
             let gem = outbe_gem::api::get_view(&storage, gem_id).unwrap().unwrap();
             assert_eq!(gem.item.owner, CCA);
             assert_eq!(gem.item.promis_load_minor, U256::from(load));
-            assert_eq!(gem.item.entry_price_minor, price);
+            assert_eq!(gem.item.entry_price_minor, discounted(price));
             assert_eq!(gem.item.issuance_currency, 840);
             assert_eq!(gem.item.reference_currency, 840);
             assert_eq!(gem.item.issued_at, claim_time);
@@ -572,7 +572,7 @@ fn claim_by_tx(db: &mut CacheDB<EmptyDB>, pool: RewardPool, held: U256, requeste
         let gem = outbe_gem::api::get_view(&storage, gem_id).unwrap().unwrap();
         assert_eq!(gem.item.owner, CCA);
         assert_eq!(gem.item.promis_load_minor, load);
-        assert_eq!(gem.item.entry_price_minor, PRICE);
+        assert_eq!(gem.item.entry_price_minor, discounted(PRICE));
         assert_eq!(gem.item.issued_at, NOW);
         assert_eq!(
             AgentRewardContract::new(storage)
@@ -635,6 +635,12 @@ fn a_validator_claim_transaction_issues_the_gem_and_an_empty_pool_is_a_no_op() {
         U256::ZERO
     );
     assert!(result.logs().is_empty());
+}
+
+/// `price` less the agent discount, the entry of an agent reward Gem.
+fn discounted(price: U256) -> U256 {
+    outbe_primitives::markup::marked_down(price, outbe_agentreward::constants::AGENT_DISCOUNT_PCT)
+        .unwrap()
 }
 
 fn seed_oracle(storage: &StorageHandle<'_>) {

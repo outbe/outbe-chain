@@ -602,5 +602,253 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AlreadySettled",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AmountReadFailed",
+    "inputs": [
+      {
+        "name": "reason",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CannotIssueSettledNod",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CanonicalIdentityMismatch",
+    "inputs": [
+      {
+        "name": "expected",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "found",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "EmptyGroupMemberSlotDuringRemoval",
+    "inputs": [
+      {
+        "name": "groupKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "slot",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "EncryptedTermsMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EntityIdDerivation",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "GroupExistenceDisagreesWithMemberCount",
+    "inputs": [
+      {
+        "name": "groupId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "memberCount",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "GroupIdentityMismatch",
+    "inputs": [
+      {
+        "name": "expected",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "found",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "GroupMemberCountUnderflowDuringRemoval",
+    "inputs": [
+      {
+        "name": "groupKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "GroupMemberIndexOverflow",
+    "inputs": [
+      {
+        "name": "groupKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "GroupNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "GroupSettledCountUnderflow",
+    "inputs": [
+      {
+        "name": "groupId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "GroupUnpaidLoadOverflow",
+    "inputs": [
+      {
+        "name": "groupKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "GroupUnpaidLoadUnderflow",
+    "inputs": [
+      {
+        "name": "groupKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IndexOutOfBounds",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidNodIdHex",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidNodIdLength",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NodAlreadyExists",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NodNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NodNotIndexedInGroup",
+    "inputs": [
+      {
+        "name": "nodId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "groupKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NodStateChangedAfterLoading",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NonTransferable",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "QueryLimitExceeded",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SettledCountOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TotalSupplyOverflowDuringIssuance",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TotalSupplyUnderflowDuringRemoval",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnknownProfileSelector",
+    "inputs": [
+      {
+        "name": "selector",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ZeroReferenceCurrency",
+    "inputs": []
   }
 ]

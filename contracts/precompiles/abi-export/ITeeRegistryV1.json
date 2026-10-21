@@ -1007,5 +1007,723 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AbiIntegerExceedsHostUsize",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AlreadyBootstrapped",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AnotherSuccessorV1PolicyStaged",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AttestationEvidenceExceedsMaxBytes",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "AttestationEvidenceModeMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AttestationEvidenceNotCanonical",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "AttestationTargetsRetiredOrUnapprovedPolicy",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BindingIdAlreadyUsedByAnotherNode",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CandidateNotExactEvidenceReplay",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CandidateRequiresApprovedUpgrade",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CannotDiscardAnotherUpdateStagedPolicy",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CannotRenewMissingBinding",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CannotReplaceMissingBinding",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CannotTransitionMissingBinding",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ClaimsMeasurementRuleMatchInvalid",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CodecRevert",
+    "inputs": [
+      {
+        "name": "context",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "reason",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CollateralMarginExhausted",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CounterExhausted",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DcapEvidenceRejected",
+    "inputs": [
+      {
+        "name": "code",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DirectDevNoActiveMeasurement",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DirectDevOverlappingMeasurements",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DirectDevSignatureMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DirectDevTransitionRequiresUpgrade",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DynamicLengthOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DynamicOffsetOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DynamicPaddingOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EnclaveAlreadyBoundToAnotherNode",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EnclaveIdDerivationMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EnclaveLeaseExpired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EnclavePopInvalid",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EnclavePopSignatureLengthInvalid",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EvidenceCallFramingExceedsMaxBytes",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "EvidenceLengthExceedsCalldata",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ExpiredRejoinBindingIdAlreadyUsed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ExpiredRejoinChangesAuthorization",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ExpiredRejoinEnclaveNotAvailable",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ExpiredRejoinVersionMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "GroupPublicKeyTooLarge",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InitialAssociationTargetMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InitialRegistrationCountersNonCanonical",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InitialV1PolicyAlreadyInstalled",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InitialV1PolicyAttestationModeDisallowed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InitialV1PolicyChainIdentityMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InitialV1PolicyHashConflict",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InitialV1PolicyInvalidVersionOrHeight",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "IntentOperationOrModeMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "IntentPolicyHashMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidTeePolicy",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidTransitionKeyReadyProof",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidV1CalldataGasDimensions",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidV1RegistryGasDimensions",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "JailedValidatorCannotRejoin",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LiveBindingMustRenew",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LiveCandidateAlreadyExists",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MeasurementRolloutClosed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MissingFunctionSelector",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MissingTransitionKeyReadyProof",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MutationNotExactEvidenceReplay",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MutatorCallerNotAssociated",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoSuccessorV1PolicyStaged",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoSuccessorV1PolicyStagedForUpdate",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoV1PolicyActiveAtHeight",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NodeBindingSignatureLengthInvalid",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NodePopInvalid",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NodePopSignatureLengthInvalid",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NonCanonicalEnclaveSignatureOffset",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NonCanonicalEvidenceOffset",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NonCanonicalNodeHostBindingSignatureOffset",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NonCanonicalNodeSignatureOffset",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NonCanonicalValidatorNodeHostBindingOffset",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NonCanonicalValidatorSignatureOffset",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NonZeroDynamicPadding",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PendingUpgradeChangedOrAbsent",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PlatformTcbStatusDisallowed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PolicyChangeRequiresMeasurementTransition",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PreparedUpgradeBindingCancelledOrConsumed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RegistrationCallerAlreadyAssociated",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RegistrationCallerAssociationMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RegistrationCallerNotAssociatedWithExistingNodeHost",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RegistrationNodeIdentityInvalid",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RenewalCannotReplaceMeasurement",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RenewalDeadlineOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RenewalMustExtendOneLeasePeriod",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RenewalTargetsDifferentIdentity",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RenewalVersionOrNonceMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RenewalWindowNotOpen",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ReplacementChangesAuthorization",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ReplacementRequiresFreshIds",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ReplacementVersionMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RequestedLeaseExceedsCollateralValidity",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RequestedLeaseExpired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RequestedLeaseOutsideBounds",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "StagedSuccessorV1PolicyWrongProposal",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SuccessorIdsAlreadyUsed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SuccessorPolicyProposalIdZero",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SuccessorV1PolicyActivationHeightNotReached",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SuccessorV1PolicyActivationNotInFuture",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SuccessorV1PolicyCannotChangeAttestationMode",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SuccessorV1PolicyChainIdentityMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SuccessorV1PolicyInvalidVersion",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SuccessorV1PolicyPredecessorHashMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SuccessorV1PolicyTooLarge",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SuccessorV1PolicyTooManyChunks",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TeePolicyVersionOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TrailingAbiBytes",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TransitionChangesAuthorization",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TransitionCountersMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TransitionDoesNotMatchLiveCandidate",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TransitionRequiresFreshIds",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TruncatedArgumentHead",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TruncatedDynamicLength",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TruncatedDynamicPadding",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TruncatedDynamicValue",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UpgradeMustChangeMrenclave",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UpgradeRequiresSingleMeasurementPredecessor",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "V1PolicyNotInstalled",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "V1PolicyTooLarge",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "V1PolicyTooManyChunks",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "V1PolicyVersionOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ValidatorAlreadyBoundToAnotherNodeHost",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ValidatorBindingSignatureLengthInvalid",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ValidatorNodeBindingExpiredNodeHost",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ValidatorNodeBindingLengthInvalid",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ValidatorNodeBindingPopInvalid",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ValidatorNodeBindingRetiredEnclave",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ValidatorNodeBindingUnregisteredNodeHost",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ValidatorNodeHostBindingNotCanonical",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
   }
 ]

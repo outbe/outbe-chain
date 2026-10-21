@@ -250,5 +250,135 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AssetCurrencyUndecodable",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AssetDecimalsUndecodable",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AssetMetadataChanged",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CcaStakeMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CoenStakeOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CollateralIncreased",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CollateralReleaseMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CredisAlreadyExists",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CredisChangedDuringIssuance",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CredisChangedDuringPayment",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CredisClosed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ForfeitureCollateralMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidAmount",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidOwner",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidSource",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotCalled",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotCredisOwner",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NothingOutstanding",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PaymentBelowAccruedInterest",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PayoffOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ReservationCcaMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ReservationExpired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ReservationNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SettlementDeadlineNotPassed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SettlementDeadlinePassed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroIssueTerm",
+    "inputs": []
   }
 ]

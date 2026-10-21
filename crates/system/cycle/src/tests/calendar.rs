@@ -44,7 +44,7 @@ fn a_multi_day_halt_issues_no_emission_and_credits_no_capacity_or_native_balance
         run_cycle_lifecycle(&anchor).unwrap();
 
         let promis_limit_before = outbe_promislimit::PromisLimitContract::new(handle.clone())
-            .get_total_unallocated()
+            .promis_limit()
             .unwrap();
         let rewards_before = handle
             .balance(outbe_primitives::addresses::REWARDS_ADDRESS)
@@ -76,7 +76,7 @@ fn a_multi_day_halt_issues_no_emission_and_credits_no_capacity_or_native_balance
         }
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(handle.clone())
-                .get_total_unallocated()
+                .promis_limit()
                 .unwrap(),
             promis_limit_before,
             "missed days must not credit Promis Limit capacity"

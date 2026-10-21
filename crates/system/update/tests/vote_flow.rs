@@ -4,7 +4,7 @@
 //! update scheduling/activation, and (where needed) pre-execution hooks in one runtime.
 
 use alloy_primitives::{address, Address, Log, B256, U256};
-use alloy_sol_types::{SolCall, SolEvent};
+use alloy_sol_types::{SolCall, SolError, SolEvent};
 
 use outbe_evm::executor::run_outbe_pre_execution_hooks;
 use outbe_evm::handlers;
@@ -234,7 +234,8 @@ fn downgrade_schedule_rejected() {
         assert!(
             matches!(
                 err,
-                PrecompileError::Revert(msg) if msg.contains("downgrade")
+                PrecompileError::RevertBytes(bytes)
+                    if bytes.len() >= 4 && bytes[..4] == IUpdate::DowngradeNotAllowed::SELECTOR
             ),
             "downgrade schedule must be rejected"
         );
@@ -256,7 +257,8 @@ fn conflicting_activation_heights_rejected() {
         assert!(
             matches!(
                 err,
-                PrecompileError::Revert(msg) if msg.contains("activation height")
+                PrecompileError::RevertBytes(bytes)
+                    if bytes.len() >= 4 && bytes[..4] == IUpdate::ActivationConflict::SELECTOR
             ),
             "conflicting activation height must be rejected"
         );
@@ -391,7 +393,10 @@ fn duplicate_ballot_is_rejected_without_changing_vote_to_update_outcome() {
             .unwrap_err();
         assert!(matches!(
             error,
-            PrecompileError::Revert(message) if message.contains("already voted")
+            PrecompileError::RevertBytes(bytes)
+                if bytes.len() >= 4
+                    && bytes[..4]
+                        == alloy_primitives::keccak256(b"AlreadyVoted()")[..4]
         ));
         assert_eq!(
             vote.read_proposal_voters(proposal_id).unwrap(),

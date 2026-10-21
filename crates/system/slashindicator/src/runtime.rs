@@ -72,11 +72,15 @@ impl SlashIndicator<'_> {
 
     pub fn evidence_reward_percent(&self) -> Result<u64> {
         let v = self.config_evidence_reward_percent.read()?;
-        Ok(if v == 0 {
+        let percent = if v == 0 {
             DEFAULT_EVIDENCE_REWARD_PERCENT
         } else {
             v
-        })
+        };
+        if percent > 100 {
+            return Err(SlashIndicatorError::InvalidEvidenceRewardPercent { percent }.into());
+        }
+        Ok(percent)
     }
 
     // --- Shared slashing helpers ---
@@ -168,6 +172,7 @@ impl SlashIndicator<'_> {
         validator: Address,
         evidence_submitter: Address,
     ) -> Result<()> {
+        let reward_pct = U256::from(self.evidence_reward_percent()?);
         let block_number = self.storage.block_number().unwrap_or(0);
         let (fc, slash_percent, slashed_amount) =
             self.jail_count_and_slash(validator, "evidence_felony")?;
@@ -200,8 +205,17 @@ impl SlashIndicator<'_> {
         // The token supply decreases by (slashed - reward).
         let mut reward = U256::ZERO;
         if !slashed_amount.is_zero() {
-            let reward_pct = self.evidence_reward_percent()?;
-            reward = slashed_amount * U256::from(reward_pct) / U256::from(100u64);
+            let hundred = U256::from(100);
+            // For reward_pct <= 100, the first term and the sum cannot exceed slashed_amount.
+            // The remainder product cannot exceed 9,900.
+            reward = (slashed_amount / hundred)
+                .checked_mul(reward_pct)
+                .and_then(|whole| {
+                    (slashed_amount % hundred)
+                        .checked_mul(reward_pct)
+                        .and_then(|remainder| whole.checked_add(remainder / hundred))
+                })
+                .ok_or(SlashIndicatorError::EvidenceRewardOverflow)?;
             if !reward.is_zero() {
                 self.storage.increase_balance(evidence_submitter, reward)?;
             }

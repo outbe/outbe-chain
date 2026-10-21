@@ -108,11 +108,10 @@ fn invalid_and_duplicate_issuance_leave_one_canonical_item() {
             )
         })
         .unwrap_err();
-    assert!(matches!(
-        error,
-        PrecompileError::Revert(ref reason)
-            if reason == &NodFactoryError::InvalidOwner.to_string()
-    ));
+    assert_eq!(
+        error.to_string(),
+        PrecompileError::from(NodFactoryError::InvalidOwner).to_string()
+    );
 
     invalid.owner = Address::repeat_byte(0x22);
     let nod_id = world.issue(&invalid);
@@ -148,11 +147,10 @@ fn direct_issuance_beyond_the_issuable_entry_writes_nothing() {
         })
         .unwrap_err();
 
-    assert!(matches!(
-        error,
-        PrecompileError::Revert(ref reason)
-            if reason == &NodFactoryError::EntryPriceOutOfBounds.to_string()
-    ));
+    assert_eq!(
+        error.to_string(),
+        PrecompileError::from(NodFactoryError::EntryPriceOutOfBounds).to_string()
+    );
     assert_eq!(world.provider.storage, storage_before);
     assert_eq!(world.provider.get_ordered_events().len(), events_before);
     let nod_id = outbe_nod::identity::generate_nod_id(input.owner, input.worldwide_day).unwrap();

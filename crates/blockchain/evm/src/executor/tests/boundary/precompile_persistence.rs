@@ -34,6 +34,14 @@ fn marker_list_covers_stateful_precompiles() {
         CODE_REGISTRY_ADDRESS,
     ];
 
+    let unique: std::collections::BTreeSet<_> =
+        OUTBE_RUNTIME_MARKER_ADDRESSES.iter().copied().collect();
+    assert_eq!(
+        unique.len(),
+        OUTBE_RUNTIME_MARKER_ADDRESSES.len(),
+        "runtime marker addresses must not contain duplicates"
+    );
+
     for addr in outbe_precompile_addresses() {
         if MARKER_EXEMPT.contains(addr) {
             continue;

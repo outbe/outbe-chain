@@ -14,7 +14,7 @@ use outbe_vaultrouter::VaultRouterContract;
 
 fn unallocated(storage: &StorageHandle<'_>) -> U256 {
     PromisLimitContract::new(storage.clone())
-        .get_total_unallocated()
+        .promis_limit()
         .unwrap()
 }
 
@@ -516,9 +516,12 @@ fn repayment_deadline_is_enforced_before_cleanup_through_the_abi() {
         .abi_encode();
         let err =
             crate::precompile::dispatch(storage.clone(), &data, bob(), U256::ZERO).unwrap_err();
-        assert!(
-            err.to_string().contains("settlement deadline has passed"),
-            "{err}"
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::CredisFactoryError::SettlementDeadlinePassed
+            )
+            .to_string()
         );
         assert_eq!(credis.get_credis(id).unwrap(), before);
         assert_eq!(view_balance(&storage, alice()), balance);
@@ -546,7 +549,13 @@ fn issue_credis_requires_the_stake_to_equal_the_collateral() {
             pledge_stake() + U256::ONE,
         ] {
             let err = runtime::issue_credis(storage.clone(), cca(), id, wrong).unwrap_err();
-            assert!(err.to_string().contains("attached COEN"), "{wrong}: {err}");
+            assert_eq!(
+                err.to_string(),
+                outbe_primitives::error::PrecompileError::from(
+                    crate::errors::CredisFactoryError::CcaStakeMismatch
+                )
+                .to_string()
+            );
         }
         assert_eq!(view_pledged(&storage, alice()), pledge_cost());
     });
@@ -628,7 +637,16 @@ fn failed_origination_keeps_the_pledge_and_cca_weight_and_exit_freezes_new_credi
     provider.set_block_number(BLOCK_NUMBER + 1);
     StorageHandle::enter(&mut provider, |storage| {
         let err = runtime::issue_credis(storage.clone(), cca(), next, pledge_stake()).unwrap_err();
-        assert!(err.to_string().contains("CCA is not active"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_ccaregistry::errors::CcaError::CcaNotActive {
+                    cca: cca(),
+                    state: outbe_ccaregistry::precompile::ICcaRegistry::State::Deregistering,
+                }
+            )
+            .to_string()
+        );
         assert_eq!(
             record(&storage, credis_id).outstanding_principal_minor,
             pledge_stables()
@@ -740,7 +758,13 @@ fn the_owner_forfeits_an_issued_credis_burning_its_sources_pledge() {
             let err = forfeit_through_abi(&storage, stranger, credis_id, U256::ZERO)
                 .err()
                 .unwrap();
-            assert!(err.to_string().contains("only the Credis owner"), "{err}");
+            assert_eq!(
+                err.to_string(),
+                outbe_primitives::error::PrecompileError::from(
+                    crate::errors::CredisFactoryError::NotCredisOwner
+                )
+                .to_string()
+            );
         }
         assert!(forfeit_through_abi(&storage, bob(), credis_id, U256::from(1u64)).is_err());
 
@@ -795,7 +819,13 @@ fn the_owner_cannot_forfeit_a_lapsed_call_that_the_sweep_forfeits() {
         let err = forfeit_through_abi(&storage, alice(), id, U256::ZERO)
             .err()
             .unwrap();
-        assert!(err.to_string().contains("closed"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::CredisFactoryError::CredisClosed
+            )
+            .to_string()
+        );
         assert_eq!(expire(&storage, lapsed), 1);
         assert_eq!(unallocated(&storage), pledge_cost());
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
@@ -939,46 +969,46 @@ fn lifecycle_steps_keep_their_gas_storage_and_log_footprint() {
         [issue, partial, read, close, called_read, void],
         [
             Footprint {
-                gas: 281200,
-                reads: 112,
-                writes: 54,
+                gas: 229200,
+                reads: 92,
+                writes: 44,
                 logs: b256!("0x59b3ca3f3148e9e0003f491a3ca360375164f443e75533f2e54a2c3aded618c2"),
-                state: b256!("0x43fff2182dea0909e693070f63b55efda55f174f7099bc40ed5c1698faa18836"),
+                state: b256!("0x55dcce9f99ec08b689df6875cde8e9bbc9c078b8f79e15eb1a6a2754ef504111"),
             },
             Footprint {
-                gas: 190800,
-                reads: 158,
-                writes: 35,
+                gas: 135800,
+                reads: 108,
+                writes: 25,
                 logs: b256!("0xfa9255ee438839b0520014084f89e0ce1198398f2c6d5ac90a2deaef5d6e3cfe"),
-                state: b256!("0x075bdaa29f9c91cea9784d96e4086b5a948ab2cb525fdc42bd7dfbb48cc85d70"),
+                state: b256!("0xddb18b6c52507b66b5863726bd4880a74b7deeb973902b9fe67c6b419259b144"),
             },
             Footprint {
-                gas: 11800,
-                reads: 118,
+                gas: 7800,
+                reads: 78,
                 writes: 0,
                 logs: b256!("0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"),
-                state: b256!("0x075bdaa29f9c91cea9784d96e4086b5a948ab2cb525fdc42bd7dfbb48cc85d70"),
+                state: b256!("0xddb18b6c52507b66b5863726bd4880a74b7deeb973902b9fe67c6b419259b144"),
             },
             Footprint {
-                gas: 291800,
-                reads: 168,
-                writes: 55,
+                gas: 236800,
+                reads: 118,
+                writes: 45,
                 logs: b256!("0xd29e96c90ec5d2d18b6ba358502c03c9857a2354e6c5c6dd748b1ef1746fd260"),
-                state: b256!("0x2359cc7fceae2474948eba911c4becf4318057f2a6908dd99b1a584f6a2ddedb"),
+                state: b256!("0x8e032db3107503ef415c039ccde3d4a280cf24ab410fd5d2cd28eda559859aad"),
             },
             Footprint {
-                gas: 11800,
-                reads: 118,
+                gas: 7800,
+                reads: 78,
                 writes: 0,
                 logs: b256!("0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"),
-                state: b256!("0x5c0aadbc8420d8c71d68f0d241409eac14531311c1522845dff5a2b2cb9dde53"),
+                state: b256!("0x941889c4a3d65396ab4c17df297b1d07a82dea4ee01bb092c9d0bb642ecef5a8"),
             },
             Footprint {
-                gas: 423500,
-                reads: 185,
-                writes: 81,
+                gas: 370500,
+                reads: 155,
+                writes: 71,
                 logs: b256!("0x42350e0ceadf5f8160c7fd05f29d7c6fe163d7aa3f377817fb7a04adbf541b5c"),
-                state: b256!("0x63410ac901b31548685b4b945dd87d8957519ceef44006abcc3642e2c25a54ee"),
+                state: b256!("0xe611730c86fa786d2200274711db57bd5efba2f07ef5ec936dd2a59456d089ce"),
             },
         ]
     );

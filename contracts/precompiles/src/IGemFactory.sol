@@ -2,6 +2,33 @@
 pragma solidity ^0.8.30;
 
 interface IGemFactory {
+    error GemNotFound();
+    error GemAlreadySettled();
+    error GemNotSettled();
+    error GemNotCalled();
+    error SettlementDeadlinePassed();
+    error SourceIntexNotFound();
+    error SourceIntexNotIssued();
+    error PositionNotFound();
+    error NotPositionOwner();
+    error PositionAlreadyExists();
+    error IndexOutOfBounds();
+    error InsufficientCapacity();
+    error PositionExpired();
+    error InsufficientProofOfWork();
+    error InvalidCurrency(uint16 currency);
+    error OracleUnavailable();
+    error InvalidOwner();
+    error Overflow();
+    error ZeroPromisLoad();
+    error UndecodableReturn(string value);
+    error EmptyMemberSlotDuringCleanup(bytes32 groupKey);
+    error MissingMemberRecordDuringCleanup(bytes32 groupKey, uint256 gemId);
+    error PositionNotExpired();
+    error MissingGroupForCall(bytes32 group);
+    error IneligibleGroupMember(bytes32 groupKey, uint256 gemId);
+    error CallPriceOverflow();
+
     /// @notice Send the caller's Intex series `sourceIntexId` to the Gem Factory (burning `units`
     ///         via IntexNFT1155) and issue a GemPosition NFT to the caller.
     ///         Returns the new `positionId`.

@@ -8,16 +8,20 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use alloy_primitives::{Address, U256};
+use alloy_sol_types::SolError;
 use cucumber::{given, then, when};
 
 use crate::features::common::start_bootstrapped_localnet;
 use crate::features::negative_assertions::{
-    assert_mined_revert_reason, assert_registration_revert,
+    assert_mined_revert, assert_registration_revert, NegativeTx,
 };
 use crate::features::validator_consistency_evidence::{
     capture_felony_processes, expect_felony_guard_shutdown,
 };
-use crate::internal::{addresses::STK_ADDR, eth::IStaking};
+use crate::internal::{
+    addresses::STK_ADDR,
+    eth::{IStaking, IValidatorSet},
+};
 use crate::validator_evidence::conflicting_notarize_for_validator;
 use crate::world::localnet::{BootstrapProfile, StartOpts};
 use crate::world::rpc::ValidatorRecord;
@@ -485,7 +489,7 @@ fn old_bls_key_released_once(world: &mut World) {
         second_rebound.evm_key(),
         &second_rebound,
         second_rebound.registration_signature(),
-        "BLS consensus pubkey already registered by another validator",
+        &IValidatorSet::ConsensusPubkeyAlreadyRegistered {}.abi_encode(),
     );
     assert!(!duplicate.success, "old BLS key registered more than once");
 }
@@ -528,7 +532,7 @@ fn duplicate_new_bls_is_atomic(world: &mut World) {
         duplicate_identity.evm_key(),
         &duplicate_identity,
         duplicate_identity.registration_signature(),
-        "BLS consensus pubkey already registered by another validator",
+        &IValidatorSet::ConsensusPubkeyAlreadyRegistered {}.abi_encode(),
     );
     assert!(!outcome.success, "duplicate new BLS key was accepted");
     assert_eq!(world.rpc.validator_count(port), before_count);
@@ -620,15 +624,18 @@ fn run_accounting_lifecycle(world: &mut World) {
         .expect("record before rejected stake")
         .stake;
     let total_before_rejected = world.rpc.total_staked_on(port);
-    assert_mined_revert_reason(
+    assert_mined_revert(
         world,
-        STK_ADDR,
-        &victim_key,
-        &IStaking::stakeCall {
-            validatorAddress: victim_address.parse().expect("victim address"),
-            amount: U256::ZERO,
+        NegativeTx {
+            to: STK_ADDR,
+            key: &victim_key,
+            call: &IStaking::stakeCall {
+                validatorAddress: victim_address.parse().expect("victim address"),
+                amount: U256::ZERO,
+            },
         },
-        "amount must be non-zero",
+        U256::ZERO,
+        &IStaking::AmountZero {}.abi_encode(),
     );
     assert_eq!(
         world

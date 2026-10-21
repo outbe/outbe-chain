@@ -252,7 +252,7 @@ fn native_completion_credits_the_unused_lysis_limit_once() {
     let mut provider = fixture();
     let before = StorageHandle::enter(&mut provider, |storage| {
         outbe_promislimit::PromisLimitContract::new(storage)
-            .get_total_unallocated()
+            .promis_limit()
             .unwrap()
     });
 
@@ -280,7 +280,7 @@ fn native_completion_credits_the_unused_lysis_limit_once() {
             .read(&WWD)
             .unwrap();
         let after = outbe_promislimit::PromisLimitContract::new(storage)
-            .get_total_unallocated()
+            .promis_limit()
             .unwrap();
         assert_eq!(
             after + desis,

@@ -1,4 +1,5 @@
 use alloy_primitives::U256;
+use alloy_sol_types::SolError;
 use serde_json::Value;
 
 use crate::api::{
@@ -56,10 +57,15 @@ fn schedule_update_rejects_zero_version() {
         let err = update
             .schedule_update_from_propose(U256::from(1), &payload, 100)
             .unwrap_err();
-        assert!(matches!(
-            err,
-            outbe_primitives::error::PrecompileError::Revert(msg) if msg.contains("invalid protocol version")
-        ));
+        match err {
+            outbe_primitives::error::PrecompileError::RevertBytes(bytes) => {
+                assert_eq!(
+                    &bytes[..4],
+                    &crate::precompile::IUpdate::InvalidVersion::SELECTOR
+                );
+            }
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
     });
 }
 
@@ -86,8 +92,8 @@ fn exact_state_resolver_rejects_noncanonical_width() {
 
         assert!(matches!(
             resolve_active_version(storage),
-            Err(outbe_primitives::error::PrecompileError::Revert(message))
-                if message.contains("canonical u32 codec")
+            Err(outbe_primitives::error::PrecompileError::RevertBytes(bytes))
+                if bytes.as_ref() == crate::precompile::IUpdate::ActiveVersionDoesNotFitU32 {}.abi_encode()
         ));
     });
 }

@@ -270,3 +270,75 @@ pub struct OracleContract {
     #[slot(81)]
     pub(crate) sources_synced: Slot<u64>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+
+    #[test]
+    fn storage_slot_layout_is_pinned() {
+        let mut provider = HashMapStorageProvider::new(1);
+        let c = OracleContract::new(StorageHandle::new(&mut provider));
+
+        assert_eq!(c.config_vote_period.slot(), U256::from(0));
+        assert_eq!(c.config_reward_band.slot(), U256::from(1));
+        assert_eq!(c.config_slash_window.slot(), U256::from(2));
+        assert_eq!(c.config_min_valid_per_window.slot(), U256::from(3));
+        assert_eq!(c.config_slash_fraction.slot(), U256::from(4));
+        assert_eq!(c.config_lookback_duration.slot(), U256::from(5));
+        assert_eq!(c.config_enabled.slot(), U256::from(6));
+        assert_eq!(c.config_is_initialized.slot(), U256::from(7));
+        assert_eq!(c.pair_count.slot(), U256::from(8));
+        assert_eq!(c.pair_to_index.base_slot(), U256::from(10));
+        assert_eq!(c.vote_target.base_slot(), U256::from(11));
+        assert_eq!(c.exchange_rate.base_slot(), U256::from(12));
+        assert_eq!(c.exchange_rate_block.base_slot(), U256::from(13));
+        assert_eq!(c.exchange_rate_timestamp.base_slot(), U256::from(14));
+        assert_eq!(c.feeder_delegation.base_slot(), U256::from(15));
+        assert_eq!(c.penalty_success_count.base_slot(), U256::from(16));
+        assert_eq!(c.penalty_abstain_count.base_slot(), U256::from(17));
+        assert_eq!(c.penalty_miss_count.base_slot(), U256::from(18));
+        assert_eq!(c.vote_exists.base_slot(), U256::from(19));
+        assert_eq!(c.vote_tuple_count.base_slot(), U256::from(20));
+        assert_eq!(c.vote_pair.base_slot(), U256::from(21));
+        assert_eq!(c.vote_rate.base_slot(), U256::from(22));
+        assert_eq!(c.vote_volume.base_slot(), U256::from(23));
+        assert_eq!(c.voter_list.base_slot(), U256::from(24));
+        assert_eq!(c.snapshot_write_idx.slot(), U256::from(25));
+        assert_eq!(c.snapshot_oldest_idx.slot(), U256::from(26));
+        assert_eq!(c.snapshot_timestamp.base_slot(), U256::from(27));
+        assert_eq!(c.snapshot_pair_count.base_slot(), U256::from(28));
+        assert_eq!(c.snapshot_pair.base_slot(), U256::from(29));
+        assert_eq!(c.snapshot_rate.base_slot(), U256::from(30));
+        assert_eq!(c.snapshot_volume.base_slot(), U256::from(31));
+        assert_eq!(c.scurve_count.slot(), U256::from(34));
+        assert_eq!(c.scurve_pair.base_slot(), U256::from(35));
+        assert_eq!(c.scurve_peak_day.base_slot(), U256::from(36));
+        assert_eq!(c.scurve_peak_price.base_slot(), U256::from(37));
+        assert_eq!(c.scurve_oldest_idx.slot(), U256::from(38));
+        assert_eq!(c.scurve_last_processed_day.slot(), U256::from(39));
+        assert_eq!(c.pair_by_index.base_slot(), U256::from(43));
+        assert_eq!(c.worldwide_day_vwap_exists.base_slot(), U256::from(47));
+        assert_eq!(c.worldwide_day_vwap_start.base_slot(), U256::from(48));
+        assert_eq!(c.worldwide_day_vwap_end.base_slot(), U256::from(49));
+        assert_eq!(c.worldwide_day_vwap_value.base_slot(), U256::from(52));
+        assert_eq!(c.daily_pv_sum.base_slot(), U256::from(53));
+        assert_eq!(c.daily_vol_sum.base_slot(), U256::from(54));
+        assert_eq!(c.reference_currencies.base_slot(), U256::from(55));
+        assert_eq!(c.utc_day_vwap_value.base_slot(), U256::from(58));
+        assert_eq!(c.utc_day_vwap_last_finalized.slot(), U256::from(59));
+        assert_eq!(c.wwd_suffix_pv_sum.base_slot(), U256::from(70));
+        assert_eq!(c.wwd_suffix_vol_sum.base_slot(), U256::from(71));
+        assert_eq!(c.wwd_prefix_pv_sum.base_slot(), U256::from(72));
+        assert_eq!(c.wwd_prefix_vol_sum.base_slot(), U256::from(73));
+        assert_eq!(c.policy_rate_currencies.base_slot(), U256::from(74));
+        assert_eq!(c.policy_rate.base_slot(), U256::from(75));
+        assert_eq!(c.hourly_vwap_hour.base_slot(), U256::from(76));
+        assert_eq!(c.hourly_pv_sum.base_slot(), U256::from(77));
+        assert_eq!(c.hourly_vol_sum.base_slot(), U256::from(78));
+        assert_eq!(c.hourly_snapshot_count.base_slot(), U256::from(79));
+        assert_eq!(c.hour_first_block.base_slot(), U256::from(80));
+        assert_eq!(c.sources_synced.slot(), U256::from(81));
+    }
+}

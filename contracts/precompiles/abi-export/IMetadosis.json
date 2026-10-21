@@ -265,5 +265,98 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "DesisLimitUnavailable",
+    "inputs": [
+      {
+        "name": "desisLimitMinor",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DurationOverflow",
+    "inputs": [
+      {
+        "name": "label",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "FormedDayLimitCannotBeReplaced",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FormedDayLimitImmutable",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FormingWindowOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidLysisLimitSplit",
+    "inputs": [
+      {
+        "name": "dayLimit",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lysisLimitMinor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LookbackWindowOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LysisLimitCreditMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OfferingWindowOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnknownWorldwideDayStatus",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UtcPlus14TimestampOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VwapMustBeNonZero",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WaitingWindowOverflow",
+    "inputs": []
   }
 ]

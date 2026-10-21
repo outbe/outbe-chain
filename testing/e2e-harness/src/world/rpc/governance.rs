@@ -1,3 +1,5 @@
+use alloy_sol_types::SolError;
+
 use crate::world::rpc::*;
 
 impl Rpc {
@@ -46,21 +48,40 @@ impl Rpc {
         })
     }
 
-    /// Prove that `getScheduledUpdate(id)` rejected with the protocol's exact
-    /// not-found reason. Transport, decode, and unrelated reverts stay errors.
+    /// Prove that `getScheduledUpdate(id)` reverted with `ScheduledUpdateNotFound`.
+    /// A transport failure, a decode failure, or a different revert stays an error.
     pub fn scheduled_update_absent_on(&self, port: u16, id: u64) -> Result<bool> {
-        match eth::read_call_result(
+        let call = IUpdate::getScheduledUpdateCall {
+            proposalId: U256::from(id),
+        };
+        if eth::read_call_result(&self.url(port), addresses::UPDATE_ADDR, &call).is_ok() {
+            return Ok(false);
+        }
+        let height = self.head(port).ok_or_else(|| {
+            eyre!(
+                "scheduled update {id} absence was not observable on RPC port {port}: head unavailable"
+            )
+        })?;
+        let data = eth::read_call_revert_data_at(
             &self.url(port),
             addresses::UPDATE_ADDR,
-            &IUpdate::getScheduledUpdateCall {
-                proposalId: U256::from(id),
+            Address::ZERO,
+            &call,
+            eth::RevertAt {
+                value: U256::ZERO,
+                height,
             },
-        ) {
-            Ok(_) => Ok(false),
-            Err(error) if error.contains("scheduled update not found") => Ok(true),
-            Err(error) => Err(eyre!(
-                "scheduled update {id} absence was not observable on RPC port {port}: {error}"
-            )),
+        )
+        .map_err(|error| {
+            eyre!("scheduled update {id} absence was not observable on RPC port {port}: {error}")
+        })?;
+        let expected = IUpdate::ScheduledUpdateNotFound {}.abi_encode();
+        if data.as_ref() == expected.as_slice() {
+            Ok(true)
+        } else {
+            Err(eyre!(
+                "scheduled update {id} absence was not observable on RPC port {port}: unexpected revert"
+            ))
         }
     }
 
