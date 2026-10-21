@@ -35,3 +35,21 @@ pub struct FidelityContract {
     // slot 4: running maximum of observed user RCFI during each WWD.
     pub wwd_running_max_fidelity: Mapping<WorldwideDay, U256>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+
+    #[test]
+    fn storage_slot_layout_is_pinned() {
+        let mut provider = HashMapStorageProvider::new(1);
+        let c = FidelityContract::new(StorageHandle::new(&mut provider));
+
+        assert_eq!(c.cohorts_ct.base_slot(), U256::from(0));
+        assert_eq!(c.first_qualified_start.slot(), U256::from(1));
+        assert_eq!(c.max_fidelity_prev.slot(), U256::from(2));
+        assert_eq!(c.wwd_max_fidelity.base_slot(), U256::from(3));
+        assert_eq!(c.wwd_running_max_fidelity.base_slot(), U256::from(4));
+    }
+}

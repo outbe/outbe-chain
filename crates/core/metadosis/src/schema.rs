@@ -10,7 +10,7 @@ pub mod emission_day_state {
     pub const FAILED: u8 = 2;
 }
 
-#[storage_record(exists_field = metadosis_start)]
+#[storage_record(packed, exists_field = metadosis_start)]
 pub struct EmissionDay {
     #[key]
     pub day: u32,

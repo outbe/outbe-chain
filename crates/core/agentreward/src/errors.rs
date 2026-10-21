@@ -25,6 +25,8 @@ pub enum AgentRewardError {
     InsufficientClaimableBalance,
     #[error("agentreward has no previous-day COEN price in {0}")]
     MissingPreviousDayPrice(u16),
+    #[error("agentreward entry price overflow")]
+    EntryPriceOverflow,
     #[error("agentreward unknown reward pool {0}")]
     UnknownRewardPool(u8),
     #[error("agentreward accrual job {0} is missing")]
@@ -53,6 +55,7 @@ impl From<AgentRewardError> for PrecompileError {
             AgentRewardError::MissingPreviousDayPrice(value) => {
                 revert_with(I::MissingPreviousDayPrice { value })
             }
+            AgentRewardError::EntryPriceOverflow => revert_with(I::EntryPriceOverflow {}),
             AgentRewardError::UnknownRewardPool(value) => {
                 revert_with(I::UnknownRewardPool { value })
             }
@@ -81,6 +84,18 @@ mod tests {
             IAgentReward::MissingPreviousDayPrice { value: 840 }
                 .abi_encode()
                 .as_slice()
+        );
+    }
+
+    #[test]
+    fn entry_price_overflow_converts_to_canonical_abi_revert_bytes() {
+        let err = PrecompileError::from(AgentRewardError::EntryPriceOverflow);
+        let PrecompileError::RevertBytes(bytes) = err else {
+            panic!("expected RevertBytes, got {err:?}");
+        };
+        assert_eq!(
+            bytes.as_ref(),
+            IAgentReward::EntryPriceOverflow {}.abi_encode()
         );
     }
 }
