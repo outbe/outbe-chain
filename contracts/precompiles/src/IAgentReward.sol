@@ -29,8 +29,9 @@ interface IAgentReward {
     function getPoolPendingTotal(uint8 pool) external view returns (uint256 promisLoadMinor);
     /// @notice Issues `promisLoadMinor` of the caller's balance in `pool`
     /// as a Gem in the caller's `issuanceCurrency` and `referenceCurrency` (ISO 4217 numeric).
-    /// `referenceCurrency` must be an Oracle reference currency, and the entry price is the
-    /// previous UTC day's COEN VWAP in it. `issuanceCurrency` is any code in 1..=999.
+    /// `referenceCurrency` must be an Oracle reference currency. The entry price is the
+    /// previous UTC day's COEN VWAP in it less the agent discount; the call price marks
+    /// up the full VWAP. `issuanceCurrency` is any code in 1..=999.
     /// A `promisLoadMinor` of zero claims the whole pool balance. What is left
     /// keeps accruing and cannot be forfeited. The caller controls its own risk
     /// through the size of the claim.

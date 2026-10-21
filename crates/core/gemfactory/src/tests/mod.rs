@@ -190,6 +190,7 @@ fn issue_at_live_rate(
             issuance_currency,
             reference_currency,
             entry_price_minor: price,
+            call_anchor_price_minor: price,
         },
     )
 }
