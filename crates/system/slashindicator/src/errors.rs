@@ -67,6 +67,21 @@ pub enum SlashIndicatorError {
     #[error("varint overflow")]
     VarintOverflow,
 
+    /// The varint uses a redundant encoding.
+    #[error("noncanonical varint")]
+    NonCanonicalVarint,
+
+    /// The effective evidence reward percentage exceeds 100.
+    #[error("invalid evidence reward percent: {percent}")]
+    InvalidEvidenceRewardPercent {
+        /// The effective percentage from the configuration.
+        percent: u64,
+    },
+
+    /// The evidence reward exceeds the U256 limit.
+    #[error("evidence reward overflow")]
+    EvidenceRewardOverflow,
+
     /// The slash guard ring cursor overflowed `u64`.
     #[error("slash_guard_ring_seq overflow")]
     SlashGuardRingSeqOverflow,
@@ -441,6 +456,17 @@ impl From<SlashIndicatorError> for PrecompileError {
             SlashIndicatorError::VarintOverflow => PrecompileError::RevertBytes(Bytes::from(
                 ISlashIndicator::VarintOverflow {}.abi_encode(),
             )),
+            SlashIndicatorError::NonCanonicalVarint => PrecompileError::RevertBytes(Bytes::from(
+                ISlashIndicator::NonCanonicalVarint {}.abi_encode(),
+            )),
+            SlashIndicatorError::InvalidEvidenceRewardPercent { percent } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ISlashIndicator::InvalidEvidenceRewardPercent { percent }.abi_encode(),
+                ))
+            }
+            SlashIndicatorError::EvidenceRewardOverflow => PrecompileError::RevertBytes(
+                Bytes::from(ISlashIndicator::EvidenceRewardOverflow {}.abi_encode()),
+            ),
             SlashIndicatorError::SlashGuardRingSeqOverflow => PrecompileError::RevertBytes(
                 Bytes::from(ISlashIndicator::SlashGuardRingSeqOverflow {}.abi_encode()),
             ),
@@ -733,6 +759,23 @@ mod tests {
             PrecompileError::RevertBytes(bytes) => bytes,
             other => panic!("expected typed revert bytes, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn hardening_errors_encode_typed_payloads() {
+        assert_eq!(
+            encoded(SlashIndicatorError::NonCanonicalVarint).as_ref(),
+            ISlashIndicator::NonCanonicalVarint {}.abi_encode()
+        );
+        assert_eq!(
+            encoded(SlashIndicatorError::EvidenceRewardOverflow).as_ref(),
+            ISlashIndicator::EvidenceRewardOverflow {}.abi_encode()
+        );
+        let bytes =
+            encoded(SlashIndicatorError::InvalidEvidenceRewardPercent { percent: u64::MAX });
+        let decoded = ISlashIndicator::InvalidEvidenceRewardPercent::abi_decode(&bytes)
+            .expect("reward percent payload");
+        assert_eq!(decoded.percent, u64::MAX);
     }
 
     #[test]

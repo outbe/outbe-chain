@@ -16,6 +16,9 @@ interface IStaking {
     error UnbondingCompletionTimestampOverflow();
     error SlashedWithdrawalDelayOverflow();
     error StakeAccountingUnderflow(address validator);
+    error StakeAccountingOverflow(address validator);
+    error TotalStakeAccountingOverflow();
+    error SlashAmountOverflow();
     error MissingValidatorHistory();
     error ValidatorRegistryExceedsConsensusBound(uint32 count, uint32 bound);
     error SweepCountOverflow(string value);

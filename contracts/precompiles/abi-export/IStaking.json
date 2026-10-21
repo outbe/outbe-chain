@@ -103,8 +103,24 @@
   },
   {
     "type": "error",
+    "name": "SlashAmountOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "SlashedWithdrawalDelayOverflow",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "StakeAccountingOverflow",
+    "inputs": [
+      {
+        "name": "validator",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",
@@ -136,6 +152,11 @@
   {
     "type": "error",
     "name": "ThirdPartyStakingNotSupported",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TotalStakeAccountingOverflow",
     "inputs": []
   },
   {
