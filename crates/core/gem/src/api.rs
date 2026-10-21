@@ -20,6 +20,8 @@ pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256
         params.owner,
         params.promis_load_minor,
         storage.block_number()?,
+        params.issuance_currency,
+        params.reference_currency,
     );
     let call_price = params
         .call_terms

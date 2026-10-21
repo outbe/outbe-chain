@@ -360,7 +360,7 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
     use outbe_primitives::time::SECONDS_PER_DAY;
     // WAA and SRA recipients together fill one block's accrual slice.
     const DENSE_ADDRESS_COUNT: u64 =
-        outbe_agentreward::distribution::ACCRUAL_RECIPIENTS_PER_BLOCK as u64 / 2;
+        outbe_agentreward::constants::ACCRUAL_RECIPIENTS_PER_BLOCK as u64 / 2;
     const DENSE_VALIDATOR_COUNT: u32 = outbe_consensus::bls::MAX_VALIDATORS;
 
     let signer = test_evm_signer();

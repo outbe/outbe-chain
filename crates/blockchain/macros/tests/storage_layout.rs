@@ -330,3 +330,84 @@ fn record_and_scalar_alias_with_same_name_keep_independent_storage() {
         assert_eq!(contract.active.read_all().unwrap(), vec![record.id]);
     });
 }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[storage_record(packed, exists_field = active)]
+pub struct PackedRecord {
+    #[key]
+    pub id: u32,
+    #[attribute(order = 0)]
+    pub principal: U256,
+    #[attribute(order = 1)]
+    pub owner: Address,
+    #[attribute(order = 2)]
+    pub timestamp: u64,
+    #[attribute(order = 3)]
+    pub currency: u16,
+    #[attribute(order = 4)]
+    pub status: u8,
+    #[attribute(order = 5)]
+    pub active: bool,
+    #[attribute(order = 6)]
+    pub next_counter: u64,
+}
+
+#[contract(addr = ADDRESS)]
+pub struct PackedRecordContract {
+    pub records: outbe_primitives::storage::dsl::Map<u32, PackedRecord>,
+    pub sentinel: outbe_primitives::storage::dsl::Value<u64>,
+}
+
+#[test]
+fn packed_storage_record_packs_subword_fields_without_clobbering() {
+    // Slot 0: `principal` (U256, 32B)
+    // Slot 1: `owner` (20B @ 0) + `timestamp` (8B @ 20) + `currency` (2B @ 28) + `status` (1B @ 30) + `active` (1B @ 31) = 32B
+    // Slot 2: `next_counter` (8B @ 0)
+    assert_eq!(<PackedRecord as StorageRecord>::SLOTS, 3);
+
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        let contract = PackedRecordContract::new(storage);
+        assert_eq!(contract.records.base_slot(), U256::from(0));
+        assert_eq!(contract.sentinel.slot(), U256::from(3));
+
+        let entry = contract.records.entry(7);
+        assert_eq!(entry.principal().offset(), 0);
+        assert_eq!(entry.owner().offset(), 0);
+        assert_eq!(entry.timestamp().offset(), 20);
+        assert_eq!(entry.currency().offset(), 28);
+        assert_eq!(entry.status().offset(), 30);
+        assert_eq!(entry.active().offset(), 31);
+        assert_eq!(entry.next_counter().offset(), 0);
+        assert_eq!(entry.owner().slot(), entry.timestamp().slot());
+        assert_eq!(entry.owner().slot(), entry.active().slot());
+        assert_ne!(entry.owner().slot(), entry.next_counter().slot());
+
+        let record = PackedRecord {
+            id: 7,
+            principal: U256::from(10_000_000u64),
+            owner: alloy_primitives::address!("0x1234567890abcdef1234567890abcdef12345678"),
+            timestamp: 1_750_000_123,
+            currency: 840,
+            status: 3,
+            active: true,
+            next_counter: 99,
+        };
+        entry.create(&record).unwrap();
+        assert_eq!(entry.load().unwrap(), Some(record.clone()));
+
+        // Mutate one middle sub-word field via its Slot accessor and verify neighbors survive.
+        entry.currency().write(978).unwrap();
+        let loaded = entry.load().unwrap().unwrap();
+        assert_eq!(loaded.owner, record.owner);
+        assert_eq!(loaded.timestamp, record.timestamp);
+        assert_eq!(loaded.currency, 978);
+        assert_eq!(loaded.status, record.status);
+        assert_eq!(loaded.active, record.active);
+        assert_eq!(loaded.next_counter, record.next_counter);
+
+        entry.delete().unwrap();
+        assert!(!entry.exists().unwrap());
+        assert_eq!(entry.load().unwrap(), None);
+    });
+}

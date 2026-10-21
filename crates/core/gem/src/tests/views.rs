@@ -461,6 +461,14 @@ fn config_auto_profile_follows_the_network() {
     }
 }
 
+/// PROD keeps 2.28 times the entry price. DEV uses 1.04 times the entry price.
+#[test]
+fn config_call_rate_is_pinned_per_profile() {
+    assert_eq!(GemParams::PROD.call_rate, crate::constants::CALL_RATE_PCT);
+    assert_eq!(GemParams::PROD.call_rate, 128);
+    assert_eq!(GemParams::DEV.call_rate, 4);
+}
+
 #[test]
 fn config_unknown_selector_errors() {
     with_storage(|storage| {
