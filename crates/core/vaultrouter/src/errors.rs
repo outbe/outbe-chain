@@ -14,6 +14,12 @@ use crate::api::IVaultRouter;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum VaultRouterError {
+    #[error("approved vault action not found: {0}")]
+    ApprovedVaultActionNotFound(U256),
+    #[error("approved vault action index inconsistent: {0}")]
+    ApprovedVaultActionIndexInconsistent(U256),
+    #[error("invalid approved vault action")]
+    InvalidApprovedVaultAction,
     #[error("ERC20 operation failed or returned malformed data")]
     TokenOperationFailed,
     #[error("zero address")]
@@ -95,6 +101,19 @@ impl From<VaultRouterError> for PrecompileError {
     fn from(err: VaultRouterError) -> Self {
         use IVaultRouter as I;
         match err {
+            VaultRouterError::ApprovedVaultActionNotFound(proposal_id) => {
+                revert_with(I::ApprovedVaultActionNotFound {
+                    proposalId: proposal_id,
+                })
+            }
+            VaultRouterError::ApprovedVaultActionIndexInconsistent(proposal_id) => {
+                revert_with(I::ApprovedVaultActionIndexInconsistent {
+                    proposalId: proposal_id,
+                })
+            }
+            VaultRouterError::InvalidApprovedVaultAction => {
+                revert_with(I::InvalidApprovedVaultAction {})
+            }
             VaultRouterError::TokenOperationFailed => revert_with(I::TokenOperationFailed {}),
             VaultRouterError::InvalidLiquiditySource => revert_with(I::InvalidLiquiditySource {}),
             VaultRouterError::InvalidLiquidityTarget => revert_with(I::InvalidLiquidityTarget {}),

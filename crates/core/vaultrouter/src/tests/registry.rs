@@ -33,12 +33,11 @@ fn stub_vault_of(storage: &mut HashMapStorageProvider, vault: Address, asset: Ad
     );
 }
 
-/// Registers each of `vaults` through `runtime::add_vault` as the owner.
+/// Registers each of `vaults` through the governance-authorized runtime helper.
 fn add_vaults(storage: &mut HashMapStorageProvider, vaults: &[Address]) {
     StorageHandle::enter(storage, |storage| {
-        set_owner(&storage, owner());
         for &vault in vaults {
-            runtime::add_vault(storage.clone(), owner(), vault).unwrap();
+            runtime::add_vault(storage.clone(), vault).unwrap();
         }
     });
 }
@@ -90,7 +89,7 @@ fn vault_removable_after_asset_change() {
             let contract = VaultRouterContract::new(storage.clone());
             assert_eq!(contract.vault_assets.read(&vault()).unwrap(), asset());
 
-            runtime::remove_vault(storage.clone(), owner(), vault()).unwrap();
+            runtime::remove_vault(storage.clone(), vault()).unwrap();
 
             assert_eq!(asset_vaults_count(&storage, asset()), U256::ZERO);
             assert_eq!(contract.assets.len().unwrap(), 0);
@@ -125,7 +124,7 @@ fn remove_vault_asks_the_vault_when_no_asset_is_recorded() {
     let before = storage.sub_call_inputs().len();
 
     StorageHandle::enter(&mut storage, |storage| {
-        runtime::remove_vault(storage.clone(), owner(), vault()).unwrap();
+        runtime::remove_vault(storage.clone(), vault()).unwrap();
         assert_eq!(asset_vaults_count(&storage, asset()), U256::ZERO);
     });
 
@@ -252,9 +251,8 @@ fn declared_error_insufficient_shares_for_withdraw() {
     );
     storage.enable_sub_call_stub();
     StorageHandle::enter(&mut storage, |storage| {
-        set_owner(&storage, owner());
         register_vault(&storage, asset(), vault());
-        runtime::add_liquidity_target(storage.clone(), owner(), target_account(), 1).unwrap();
+        runtime::add_liquidity_target(storage.clone(), target_account(), 1).unwrap();
 
         let err = dispatch(
             storage.clone(),
@@ -285,14 +283,7 @@ fn declared_error_reserve_vault_owner_not_renounced() {
     );
     storage.enable_sub_call_stub();
     StorageHandle::enter(&mut storage, |storage| {
-        set_owner(&storage, owner());
-        let err = dispatch(
-            storage.clone(),
-            &IVaultRouter::addVaultCall { vault: vault() }.abi_encode(),
-            owner(),
-            U256::ZERO,
-        )
-        .unwrap_err();
+        let err = runtime::add_vault(storage.clone(), vault()).unwrap_err();
         let revert: IVaultRouter::ReserveVaultOwnerNotRenounced = decode_revert(err);
         assert_eq!(revert.currentOwner, stranger());
     });
@@ -301,7 +292,7 @@ fn declared_error_reserve_vault_owner_not_renounced() {
 #[test]
 fn declared_error_reservation_not_found() {
     with_reservable_vault(U256::from(100u64), |storage| {
-        runtime::add_liquidity_target(storage.clone(), owner(), CREDIS_FACTORY_ADDRESS, 1).unwrap();
+        runtime::add_liquidity_target(storage.clone(), CREDIS_FACTORY_ADDRESS, 1).unwrap();
         let id = U256::from(42);
         let err = dispatch(
             storage.clone(),

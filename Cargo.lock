@@ -9516,11 +9516,15 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-ccaregistry",
+ "outbe-chain-constants",
  "outbe-evm",
  "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",
+ "outbe-vote",
  "revm",
+ "serde",
+ "serde_json",
  "thiserror 2.0.18",
 ]
 

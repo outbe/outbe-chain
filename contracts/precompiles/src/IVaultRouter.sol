@@ -16,6 +16,12 @@ interface IVaultRouter {
         Credis
     }
 
+    enum VaultAction {
+        Unknown,
+        AddVault,
+        RemoveVault
+    }
+
     struct LiquidityReservation {
         address asset;
         /// @dev In `asset`'s own minor units.
@@ -57,9 +63,13 @@ interface IVaultRouter {
     error CredisOwnerMismatch();
     error ReservationInsufficient(uint256 availableMinor, uint256 requiredMinor);
     error InvalidReservationAmount();
+    error ApprovedVaultActionNotFound(uint256 proposalId);
+    error ApprovedVaultActionIndexInconsistent(uint256 proposalId);
+    error InvalidApprovedVaultAction();
 
     event VaultAdded(uint16 indexed isoCode, address indexed asset, address indexed vault);
     event VaultRemoved(uint16 indexed isoCode, address indexed asset, address indexed vault);
+    event ApprovedVaultActionExpired(uint256 indexed proposalId, address indexed vault);
     event LiquiditySourceAdded(address indexed sourceAddress, StablesSource sourceType);
     event LiquiditySourceRemoved(address indexed sourceAddress, StablesSource sourceType);
     event LiquidityTargetAdded(address indexed targetAddress, StablesTarget targetType);
@@ -145,29 +155,17 @@ interface IVaultRouter {
     /// @notice Returns the liquidity target at `index`. Reverts if out of bounds.
     function liquidityTargetAt(uint256 index) external view returns (address targetAddress, StablesTarget targetType);
 
-    // TODO remove after implementation governance
-    /// @notice Registers a vault. Reverts if already registered.
-    function addVault(address vault) external;
+    /// @notice Applies a pending governance-approved vault action once. Anyone may call.
+    ///         A failed application remains retriable. Strictly after the governance
+    ///         window, deletes the record and emits ApprovedVaultActionExpired instead.
+    function applyApproved(uint256 proposalId) external;
 
-    // TODO remove after implementation governance
-    /// @notice Removes a previously registered vault for `asset`. Reverts if not found.
-    function removeVault(address vault) external;
-
-    // TODO remove after implementation governance
-    /// @notice Registers `sourceAddress` as an authorized liquidity source of `sourceType`.
-    function addLiquiditySource(address sourceAddress, StablesSource sourceType) external;
-
-    // TODO remove after implementation governance
-    /// @notice Deregisters a previously registered liquidity source. Reverts if not found.
-    function removeLiquiditySource(address sourceAddress) external;
-
-    // TODO remove after implementation governance
-    /// @notice Registers `targetAddress` as an authorized liquidity target of `targetType`.
-    function addLiquidityTarget(address targetAddress, StablesTarget targetType) external;
-
-    // TODO remove after implementation governance
-    /// @notice Deregisters a previously registered liquidity target. Reverts if not found.
-    function removeLiquidityTarget(address targetAddress) external;
+    /// @notice Returns the pending approved action, or Unknown if no record remains.
+    /// @dev An expired action remains visible until applyApproved clears it.
+    function approvedVaultAction(uint256 proposalId)
+        external
+        view
+        returns (VaultAction action, address vault, uint64 approvedAt);
 
     /// @notice Deposits `assetsMinor` of `asset` into the asset's vault on behalf of the
     ///         caller. The caller (`msg.sender`) must be a registered liquidity source.
@@ -176,10 +174,6 @@ interface IVaultRouter {
     /// @notice Redeems `amountMinor` of `asset` from the vault and tops it up into `receiver`.
     ///         The caller (`msg.sender`) must be a registered liquidity target.
     function withdraw(address asset, uint256 amountMinor, address receiver) external returns (uint256 burnedShares);
-
-    // TODO remove after implementation governance
-    /// @notice Returns the current owner (admin) of the vault router.
-    function owner() external view returns (address);
 
     /// @notice Returns vault shares currently held by this provider.
     function sharesBalance(address vault) external view returns (uint256);

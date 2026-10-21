@@ -18,6 +18,7 @@ pub mod vote {
         FactoryReservation, StablecoinFactoryApi, ValidatedStablecoinCreate,
     };
     use outbe_update::vote_target::UpdateVoteTarget;
+    use outbe_vaultrouter::VaultRouterVoteTarget;
     use outbe_vote::handlers::{
         TargetAdmission, TargetExecutionOutcome, VoteTarget, VoteTargetContext, VoteTargetRegistry,
     };
@@ -27,6 +28,7 @@ pub mod vote {
     static GOVERNANCE_VOTE_TARGET: GovernanceVoteTarget = GovernanceVoteTarget;
     static L2_REGISTRY_VOTE_TARGET: L2RegistryVoteTarget = L2RegistryVoteTarget;
     static CODE_PATCH_VOTE_TARGET: CodePatchVoteTarget = CodePatchVoteTarget;
+    static VAULT_ROUTER_VOTE_TARGET: VaultRouterVoteTarget = VaultRouterVoteTarget;
     static STABLECOIN_FACTORY_VOTE_TARGET: StablecoinFactoryVoteTarget =
         StablecoinFactoryVoteTarget;
     static ACTIVE_VOTE_TARGETS: &[&dyn VoteTarget] = &[
@@ -34,6 +36,7 @@ pub mod vote {
         &GOVERNANCE_VOTE_TARGET,
         &L2_REGISTRY_VOTE_TARGET,
         &CODE_PATCH_VOTE_TARGET,
+        &VAULT_ROUTER_VOTE_TARGET,
         &STABLECOIN_FACTORY_VOTE_TARGET,
     ];
     static REGISTRY: VoteTargetRegistry = VoteTargetRegistry::new(ACTIVE_VOTE_TARGETS);
