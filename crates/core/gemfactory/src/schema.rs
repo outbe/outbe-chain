@@ -11,6 +11,8 @@ pub struct GemIssueParams {
     pub issuance_currency: u16,
     pub reference_currency: u16,
     pub entry_price_minor: U256,
+    /// The price the call rate marks up. The entry may sit below it.
+    pub call_anchor_price_minor: U256,
 }
 
 /// One merchant issuance, authorized by the position owner.

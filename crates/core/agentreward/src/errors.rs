@@ -22,6 +22,8 @@ pub enum AgentRewardError {
     InsufficientClaimableBalance,
     #[error("agentreward has no previous-day COEN price in {0}")]
     MissingPreviousDayPrice(u16),
+    #[error("agentreward entry price overflow")]
+    EntryPriceOverflow,
     #[error("agentreward unknown reward pool {0}")]
     UnknownRewardPool(u8),
     #[error("agentreward accrual job {0} is missing")]

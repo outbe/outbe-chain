@@ -33,6 +33,39 @@ fn issue_validator_behaves_like_wallet() {
 }
 
 #[test]
+fn the_cost_follows_the_entry_and_the_call_price_follows_the_anchor() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    with_storage(Some(rate), |storage| {
+        let entry = U256::from(1_920_000u64);
+        let load = U256::from(5u64) * six_decimal_unit();
+        let gem_id = runtime::issue_gem(
+            storage,
+            GemIssueParams {
+                owner: ALICE,
+                promis_load_minor: load,
+                issuance_currency: 840,
+                reference_currency: 840,
+                entry_price_minor: entry,
+                call_anchor_price_minor: rate,
+            },
+        )
+        .unwrap();
+
+        let item = gem_view(storage, gem_id);
+        assert_eq!(item.item.entry_price_minor, entry);
+        assert_eq!(
+            runtime::gem_cost_minor(&item).unwrap(),
+            entry * load / six_decimal_unit()
+        );
+        let call_rate = outbe_gem::config::read(storage).unwrap().call_rate;
+        assert_eq!(
+            item.terms.call_price_minor,
+            outbe_primitives::markup::marked_up(rate, call_rate).unwrap()
+        );
+    });
+}
+
+#[test]
 fn issue_wallet_cost_and_state_issued() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {

@@ -677,6 +677,7 @@ fn settlement_cost_reads_entry_price_from_the_group() {
                 issuance_currency: 840,
                 reference_currency: 840,
                 entry_price_minor: other_entry,
+                call_anchor_price_minor: other_entry,
             },
         )
         .unwrap();

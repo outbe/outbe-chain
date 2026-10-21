@@ -50,6 +50,7 @@ outbe-slashindicator = { workspace = true, features = ["test-utils"] }
 radicle.workspace = true
 outbe-tee.workspace = true
 outbe-zk-backend.workspace = true
+outbe-agentreward = { workspace = true }
 outbe-common = { workspace = true }
 outbe-consensus.workspace = true
 outbe-desis.workspace = true

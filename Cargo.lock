@@ -8202,6 +8202,7 @@ dependencies = [
  "k256 0.13.4",
  "libc",
  "multibase",
+ "outbe-agentreward",
  "outbe-chain-constants",
  "outbe-coderegistry",
  "outbe-common",
