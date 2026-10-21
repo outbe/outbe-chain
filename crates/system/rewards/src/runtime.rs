@@ -13,11 +13,48 @@ use outbe_primitives::{
     block::BlockRuntimeContext,
     consensus_metadata::CertifiedParentAccountingMetadata,
     error::Result,
-    time::{day_number_between, timestamp_to_date_key},
+    time::{
+        date_key_to_utc_timestamp, day_number_between, timestamp_to_date_key, WorldwideDay,
+        SECONDS_PER_DAY,
+    },
 };
 
 use crate::errors::RewardsError;
 use crate::schema::Rewards;
+
+/// Maximum daily voter entries reclaimed per CycleTick, independent of committee size.
+pub const SETTLED_DAY_CLEANUP_VOTER_LIMIT: u32 = 256;
+
+/// Reclaims one bounded slice of the oldest queued day, no earlier than D+8 UTC.
+/// Unsettled and forfeited days are never queued. Tombstones remain unbounded.
+pub fn prune_settled_days(ctx: &BlockRuntimeContext) -> Result<()> {
+    ctx.storage.with_checkpoint(|| {
+        let rewards = ctx.storage.contract::<Rewards>();
+        let (head, tail) = crate::state::cleanup_positions(&rewards)?;
+        if head == tail {
+            return Ok(());
+        }
+        let day = rewards.settled_day_cleanup_day_at.read(&head)?;
+        if day < 19700101 || !WorldwideDay::new(day).is_valid() {
+            return Err(RewardsError::InvalidSettledDayCleanupQueue("invalid head day").into());
+        }
+        if !rewards.daily_settled.read(&day)?
+            || !rewards.daily_participation_closed.read(&day)?
+            || !crate::api::day_participation_complete(ctx, day)?
+        {
+            return Err(RewardsError::InvalidSettledDayCleanupQueue(
+                "head day is not safely settled",
+            )
+            .into());
+        }
+        // Calendar conversion, not YYYYMMDD subtraction, preserves leap/year boundaries.
+        let midnight = date_key_to_utc_timestamp(day);
+        if ctx.block.timestamp.saturating_sub(midnight) < 8 * SECONDS_PER_DAY {
+            return Ok(());
+        }
+        crate::state::prune_day_slice(&rewards, head, day)
+    })
+}
 
 /// Outcome of [`check_and_record_metadata_fingerprint`]. The caller MUST
 /// branch on this and skip all per-block module work when

@@ -5,6 +5,7 @@ mod factory_approval;
 mod hook_events;
 mod native_sinks;
 mod patch_approval;
+mod rewards;
 mod support;
 
 use support::*;
