@@ -154,7 +154,8 @@ fn read_leb128(data: &[u8], pos: &mut usize) -> Result<u64> {
         *pos += 1;
 
         let payload = byte & 0x7F;
-        // Only bit 63 remains in byte ten; reject excess bits before shifting.
+        // Byte ten can only supply bit 63 of the decoded value.
+        // Reject excess bits before the shift.
         if shift == 63 && (payload > 1 || byte & 0x80 != 0) {
             return Err(SlashIndicatorError::VarintOverflow.into());
         }

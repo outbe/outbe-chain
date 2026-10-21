@@ -9,8 +9,8 @@ use crate::errors::StakingError;
 fn slash_percent(amount: U256, percent: u64) -> Result<U256> {
     let hundred = U256::from(100u64);
     let percent = U256::from(percent);
-    // For percent <= 100, the first term and sum are at most amount;
-    // the remainder product is at most 9,900.
+    // For percent <= 100, the first term and the sum cannot exceed amount.
+    // The remainder product cannot exceed 9,900.
     let quotient = (amount / hundred)
         .checked_mul(percent)
         .ok_or(StakingError::SlashAmountOverflow)?;
@@ -63,7 +63,8 @@ impl Staking<'_> {
         if max_pct > 0 && max_pct < 100 && !total.is_zero() {
             // Check: new_stake / new_total <= max_pct / 100
             // Equivalent to: new_stake * 100 <= max_pct * new_total
-            // Each U256 times a percentage <= 100 fits in U512 without narrowing.
+            // Each product of a U256 value and a percentage <= 100 fits in U512.
+            // The comparison does not narrow either product.
             if U512::from(new_stake) * U512::from(100u64)
                 > U512::from(max_pct) * U512::from(new_total)
             {

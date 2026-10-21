@@ -206,8 +206,8 @@ impl SlashIndicator<'_> {
         let mut reward = U256::ZERO;
         if !slashed_amount.is_zero() {
             let hundred = U256::from(100);
-            // For p <= 100, the first term and sum are <= slashed_amount;
-            // the remainder product is at most 9,900.
+            // For reward_pct <= 100, the first term and the sum cannot exceed slashed_amount.
+            // The remainder product cannot exceed 9,900.
             reward = (slashed_amount / hundred)
                 .checked_mul(reward_pct)
                 .and_then(|whole| {

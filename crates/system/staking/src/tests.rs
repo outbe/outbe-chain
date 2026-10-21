@@ -22,7 +22,7 @@ const DEFAULT_BALANCE: u64 = 1_000_000;
 #[test]
 fn stake_addition_overflows_leave_accounting_unchanged() {
     let validator = Address::repeat_byte(0x31);
-    // Deliberately inconsistent storage isolates each accounting invariant failure.
+    // This test uses inconsistent storage to isolate each failure of an accounting invariant.
     for (stake, total, expected) in [
         (
             U256::MAX,
@@ -65,7 +65,8 @@ fn aggregate_underflow_precedes_unstake_and_slash_writes() {
         with_staking(|storage, s| {
             seed_staking_balance(storage.clone(), MIN_STAKE);
             stake_registered(storage.clone(), s, validator, U256::from(MIN_STAKE)).unwrap();
-            // Corrupt aggregate only: an invariant-failure fixture, not reachable valid state.
+            // Corrupt only the aggregate total to test an accounting invariant.
+            // Valid state cannot contain this inconsistency.
             s.total_staked.write(U256::ZERO).unwrap();
             let before = ValidatorSet::new(storage.clone())
                 .validator_state(validator)
@@ -195,8 +196,8 @@ fn late_queue_slash_overflow_rolls_back_checkpointed_cross_module_effects() {
         ValidatorSet::new(storage.clone())
             .activate_validator_via_boundary_for_test(validator)
             .unwrap();
-        // Invariant-failure fixture: queue liabilities exceed all representable native supply.
-        // Prepend the small entry so it is mutated before the later MAX entry fails.
+        // This test violates an invariant: queue liabilities exceed the maximum native supply.
+        // Prepend the small entry so the slash changes it before the later MAX entry fails.
         s.enqueue_unbonding(validator, U256::MAX, 1).unwrap();
         s.enqueue_unbonding(validator, U256::from(1), 2).unwrap();
     });
@@ -206,7 +207,7 @@ fn late_queue_slash_overflow_rolls_back_checkpointed_cross_module_effects() {
         let mut validators = ValidatorSet::new(storage.clone());
         let before = validators.validator_state(validator).unwrap();
         let result = storage.with_checkpoint(|| {
-            // Jail emits an event and mutates lifecycle before staking starts.
+            // Jail emits an event and changes the lifecycle before the slash starts.
             validators.jail_validator(validator)?;
             s.slash_stake(validator, 100)
         });

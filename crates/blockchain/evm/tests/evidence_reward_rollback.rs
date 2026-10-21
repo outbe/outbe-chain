@@ -1,5 +1,5 @@
-//! Evidence rejection must roll back at the real EVM transaction boundary,
-//! including the dedup write made before reward configuration is validated.
+//! The EVM must revert all evidence effects when it rejects the transaction.
+//! This includes the deduplication write that precedes the reward configuration check.
 
 use alloy_evm::{Evm as _, EvmFactory as _};
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
@@ -113,7 +113,7 @@ fn invalid_evidence_reward_reverts_transaction_and_identical_signed_evidence_can
             ..Default::default()
         },
     );
-    // Keep native-precompile accounts alive under EIP-161, as in genesis.
+    // Preserve native-precompile accounts under EIP-161, as genesis does.
     for address in [VALIDATOR_SET_ADDRESS, SLASH_INDICATOR_ADDRESS] {
         let marker = Bytecode::new_legacy([0xef].into());
         db.insert_account_info(
@@ -202,7 +202,7 @@ fn invalid_evidence_reward_reverts_transaction_and_identical_signed_evidence_can
                 ISlashIndicator::InvalidEvidenceRewardPercent { percent: 150 }.abi_encode()
             );
             assert!(outcome.result.logs().is_empty());
-            // Check all storage, including dynamically derived dedup slots.
+            // Check all storage slots, including the slots that record evidence deduplication.
             for account in outcome.state.values() {
                 assert!(account
                     .storage
@@ -227,8 +227,8 @@ fn invalid_evidence_reward_reverts_transaction_and_identical_signed_evidence_can
                 .encode_log_data()
             );
         }
-        // Commit even the reverted outcome: this tests the actual journal result,
-        // not rollback provided by an explicit StorageHandle checkpoint.
+        // Commit the outcome even when the transaction reverts.
+        // This checks the EVM journal result, not an explicit StorageHandle checkpoint.
         db.commit(outcome.state);
         seed_storage(&mut db, 100, SUBMITTER, |storage| {
             assert_penalty_state(storage, evidence_hash, nonce == 1)

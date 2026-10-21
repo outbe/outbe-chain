@@ -180,7 +180,7 @@ fn invalid_reward_checkpoint_preserves_seed_partial_evidence_for_retry() {
         );
         assert_eq!(storage.balance(SUBMITTER).unwrap(), U256::ZERO);
     });
-    // This also covers the seed-partial dedup slot and all ordered module events.
+    // These assertions also check seed-partial deduplication and all module events in order.
     assert_eq!(provider.storage, before);
     assert_eq!(provider.get_ordered_events(), events);
     StorageHandle::enter(&mut provider, |storage| {
