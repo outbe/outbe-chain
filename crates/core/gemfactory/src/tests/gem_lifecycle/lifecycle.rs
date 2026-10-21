@@ -86,6 +86,29 @@ fn add_gem_rejects_zero_owner() {
 }
 
 #[test]
+fn same_block_issuances_with_different_currencies_have_distinct_ids() {
+    with_storage(|storage| {
+        let mut ids = Vec::new();
+        for (issuance_currency, reference_currency) in [(USD, USD), (EUR, USD), (USD, EUR)] {
+            let mut params = sample_params(ALICE);
+            params.issuance_currency = issuance_currency;
+            params.reference_currency = reference_currency;
+            let gem_id = add(storage, params);
+            assert!(!ids.contains(&gem_id));
+            let stored = item(storage, gem_id).unwrap();
+            assert_eq!(stored.issuance_currency, issuance_currency);
+            assert_eq!(stored.reference_currency, reference_currency);
+            ids.push(gem_id);
+        }
+        let mut owned = owned(storage, ALICE);
+        owned.sort_unstable();
+        ids.sort_unstable();
+        assert_eq!(owned, ids);
+        assert_eq!(GemContract::new(storage.clone()).total_supply().unwrap(), 3);
+    });
+}
+
+#[test]
 fn a_duplicate_id_is_rejected_and_rolls_back() {
     with_storage(|storage| {
         let gem_id = add(storage, sample_params(ALICE));
@@ -455,7 +478,9 @@ fn a_gem_id_is_its_raw_keccak_and_the_group_id_carries_the_day() {
             GemContract::generate_gem_id(
                 ALICE,
                 U256::from(1_000_000u64),
-                storage.block_number().unwrap()
+                storage.block_number().unwrap(),
+                USD,
+                USD,
             )
         );
         let stored = item(storage, gem_id).unwrap();

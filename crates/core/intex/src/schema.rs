@@ -222,28 +222,28 @@ pub struct CreateSeriesParams {
 /// Per-series identity + lifecycle record. Keyed by `series_id`.
 /// `issued_at == 0` means "no series".
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[storage_record(exists_field = issued_at)]
+#[storage_record(packed, exists_field = issued_at)]
 pub struct SeriesRecord {
     #[key]
     pub series_id: SeriesId,
 
     #[attribute(order = 0)]
-    pub issuance_currency: u16,
-
-    #[attribute(order = 1)]
-    pub reference_currency: u16,
-
-    #[attribute(order = 2)]
-    pub issued_units: u32,
-
-    #[attribute(order = 3)]
     pub promis_load_minor: U256,
 
-    #[attribute(order = 4)]
+    #[attribute(order = 1)]
     pub entry_price_minor: U256,
 
-    #[attribute(order = 5)]
+    #[attribute(order = 2)]
     pub call_price_minor: U256,
+
+    #[attribute(order = 3)]
+    pub issuance_currency: u16,
+
+    #[attribute(order = 4)]
+    pub reference_currency: u16,
+
+    #[attribute(order = 5)]
+    pub issued_units: u32,
 
     // call_trigger group. Storage keeps it flat (the storage DSL has no nested-struct
     // codec). `call_trigger()` exposes it nested.
