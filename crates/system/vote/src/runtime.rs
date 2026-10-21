@@ -459,7 +459,11 @@ impl Vote<'_> {
             BondSettlement::NoBond => return Ok(()),
             BondSettlement::Unsettled => {}
             BondSettlement::Refunded | BondSettlement::Burned => {
-                return Err(VoteError::PendingProposalBondAlreadySettled { proposal_id }.into());
+                return Err(VoteError::PendingProposalBondAlreadySettled {
+                    proposal_id,
+                    settlement: bond.settlement,
+                }
+                .into());
             }
         }
 

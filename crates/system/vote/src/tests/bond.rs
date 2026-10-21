@@ -1,10 +1,12 @@
 use alloy_primitives::U256;
+use alloy_sol_types::SolError;
 use outbe_primitives::addresses::{UPDATE_ADDRESS, VOTE_ADDRESS};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::dsl::StorageRecord;
 use outbe_primitives::storage::types::StorageKey;
 
 use crate::errors::VoteError;
+use crate::precompile::IVote;
 use crate::schema::{BondSettlement, ProposalRecord, ProposalStatus, Vote};
 
 use super::{
@@ -116,7 +118,7 @@ fn bond_accounting_is_checked_and_exactly_once() {
         );
         assert!(matches!(
             vote.record_proposal_bond(proposal_id, U256::from(10u64)),
-            Err(PrecompileError::Revert(_))
+            Err(PrecompileError::RevertBytes(_))
         ));
 
         assert_eq!(
@@ -131,7 +133,7 @@ fn bond_accounting_is_checked_and_exactly_once() {
         );
         assert!(matches!(
             vote.settle_proposal_bond_accounting(proposal_id, BondSettlement::Burned),
-            Err(PrecompileError::Revert(_))
+            Err(PrecompileError::RevertBytes(_))
         ));
     });
 
@@ -141,7 +143,7 @@ fn bond_accounting_is_checked_and_exactly_once() {
         vote.unsettled_bond_liabilities.write(U256::MAX).unwrap();
         assert!(matches!(
             vote.record_proposal_bond(proposal_id, U256::from(1u64)),
-            Err(PrecompileError::Revert(_))
+            Err(PrecompileError::RevertBytes(_))
         ));
         assert_eq!(
             vote.proposal_bond(proposal_id).unwrap().settlement,
@@ -160,7 +162,7 @@ fn bond_accounting_is_checked_and_exactly_once() {
             .unwrap();
         assert!(matches!(
             vote.settle_proposal_bond_accounting(proposal_id, BondSettlement::Burned),
-            Err(PrecompileError::Revert(_))
+            Err(PrecompileError::RevertBytes(_))
         ));
         assert_eq!(
             vote.proposal_bond(proposal_id).unwrap().settlement,
@@ -185,7 +187,7 @@ fn invalid_bond_enum_and_proposal_counter_exhaustion_are_typed() {
             .unwrap();
         assert!(matches!(
             vote.proposal_bond(proposal_id),
-            Err(PrecompileError::Revert(_))
+            Err(PrecompileError::RevertBytes(_))
         ));
     });
 
@@ -194,13 +196,13 @@ fn invalid_bond_enum_and_proposal_counter_exhaustion_are_typed() {
         vote.proposal_count.write(U256::MAX).unwrap();
         assert!(matches!(
             vote.peek_next_proposal_id(),
-            Err(PrecompileError::Revert(message))
-                if message == VoteError::ProposalCounterExhausted.to_string()
+            Err(PrecompileError::RevertBytes(bytes))
+                if bytes.len() >= 4 && bytes[..4] == IVote::ProposalCounterExhausted::SELECTOR
         ));
         assert!(matches!(
             create_update_proposal(&mut vote, PROPOSER, 10),
-            Err(PrecompileError::Revert(message))
-                if message == VoteError::ProposalCounterExhausted.to_string()
+            Err(PrecompileError::RevertBytes(bytes))
+                if bytes.len() >= 4 && bytes[..4] == IVote::ProposalCounterExhausted::SELECTOR
         ));
         assert_eq!(vote.proposal_count.read().unwrap(), U256::MAX);
     });

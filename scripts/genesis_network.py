@@ -78,7 +78,7 @@ SEED_SECTIONS = (
     "staking",
     "rewards",
     "validator_set",
-    "radicle_registry",
+    "code_registry",
     "metadosis",
     "oracle",
     "tributes",
@@ -86,7 +86,6 @@ SEED_SECTIONS = (
     "gem_profile",
     "nod_profile",
     "credis_profile",
-    "vault_router",
     "contracts",
     "tee_policy",
 )

@@ -8,16 +8,33 @@ fn issue_distinguishes_timestamp_narrowing_from_protocol_width() {
         for (timestamp, expected) in [
             (
                 U256::from(u32::MAX) + U256::ONE,
-                "block timestamp exceeds u32",
+                outbe_primitives::error::PrecompileError::from(
+                    crate::errors::IntexFactoryError::BlockTimestampExceedsU32,
+                ),
             ),
-            (U256::from(u64::MAX), "block timestamp exceeds u32"),
-            (U256::from(u64::MAX) + U256::ONE, "timestamp exceeds u64"),
-            (U256::MAX, "timestamp exceeds u64"),
+            (
+                U256::from(u64::MAX),
+                outbe_primitives::error::PrecompileError::from(
+                    crate::errors::IntexFactoryError::BlockTimestampExceedsU32,
+                ),
+            ),
+            (
+                U256::from(u64::MAX) + U256::ONE,
+                outbe_primitives::error::PrecompileError::Revert("timestamp exceeds u64".into()),
+            ),
+            (
+                U256::MAX,
+                outbe_primitives::error::PrecompileError::Revert("timestamp exceeds u64".into()),
+            ),
         ] {
             storage.set_block_timestamp(timestamp).unwrap();
-            assert!(matches!(runtime::issue_intex(&storage, sample(7)),
-                Err(outbe_primitives::error::PrecompileError::Revert(message))
-                    if message == expected));
+            assert_eq!(
+                runtime::issue_intex(&storage, sample(7))
+                    .err()
+                    .unwrap()
+                    .to_string(),
+                expected.to_string()
+            );
             assert!(!outbe_intex::api::series_exists(&storage, sid(7)).unwrap());
         }
         storage.set_block_timestamp(U256::from(u32::MAX)).unwrap();
@@ -61,6 +78,75 @@ fn issue_creates_series_in_registry() {
         );
         assert_eq!(r.issued_at, ISSUED_AT);
         assert_eq!(outbe_intex::api::call_stamp(&s, &r).unwrap().called_at, 0);
+    });
+}
+
+#[test]
+fn call_terms_mark_up_the_entry_with_the_live_profile() {
+    with_factory(|s| {
+        let terms = crate::api::call_terms(&s).unwrap();
+        assert_eq!(
+            terms.call_price(U256::from(ENTRY_PRICE)).unwrap(),
+            U256::from(EXPECTED_TRIGGER)
+        );
+        assert_eq!(terms.call_trigger, prod_trigger());
+
+        select_dev_profile(&s);
+        let dev = outbe_intex::config::IntexParams::DEV;
+        let terms = crate::api::call_terms(&s).unwrap();
+        assert_eq!(
+            terms.call_price(U256::from(ENTRY_PRICE)).unwrap(),
+            runtime::marked_up(U256::from(ENTRY_PRICE), dev.call_rate).unwrap()
+        );
+        assert_eq!(
+            terms.call_trigger,
+            outbe_intex::IntexCallTrigger {
+                call_window_seconds: dev.call_window_seconds,
+                call_threshold_seconds: dev.call_threshold_seconds,
+                call_notice_period_seconds: dev.call_notice_period_seconds,
+            }
+        );
+    });
+}
+
+fn select_dev_profile(s: &StorageHandle<'_>) {
+    outbe_intex::IntexContract::new(s.clone())
+        .config_profile
+        .write(outbe_intex::config::PROFILE_DEV)
+        .unwrap();
+}
+
+/// The auction fixed the conditions at its start. A profile changed since then does
+/// not reach the series or the legs.
+#[test]
+fn issuance_seals_the_given_conditions_not_the_live_profile() {
+    with_factory(|s| {
+        select_dev_profile(&s);
+        let params = sample(7);
+        let legs = runtime::issue_intex(&s, params.clone()).unwrap();
+
+        let r = outbe_intex::api::read_series(&s, sid(7)).unwrap();
+        assert_eq!(r.promis_load_minor, U256::from(params.promis_load_minor));
+        assert_eq!(r.entry_price_minor, params.entry_price_minor);
+        assert_eq!(r.call_price_minor, params.call_price_minor);
+        assert_eq!(r.call_trigger(), params.call_trigger);
+        assert_eq!(r.issued_at, ISSUED_AT);
+
+        assert_eq!(legs.len(), 1);
+        let leg = &legs[0].payload;
+        assert_eq!(leg.promisLoadMinor, params.promis_load_minor);
+        assert_eq!(U256::from(leg.entryPriceMinor), params.entry_price_minor);
+        assert_eq!(U256::from(leg.callPriceMinor), params.call_price_minor);
+        assert_eq!(leg.callWindow, params.call_trigger.call_window_seconds);
+        assert_eq!(
+            leg.callThreshold,
+            params.call_trigger.call_threshold_seconds
+        );
+        assert_eq!(
+            leg.callNoticePeriod,
+            params.call_trigger.call_notice_period_seconds
+        );
+        assert_eq!(leg.issuedAt, ISSUED_AT);
     });
 }
 
@@ -187,7 +273,7 @@ fn a_chains_series_travel_together_up_to_the_message_cap() {
 
 #[test]
 fn the_message_caps_match_the_codec() {
-    use crate::constants::{MAX_RECIPIENTS_PER_MESSAGE, MAX_SERIES_PER_MARK};
+    use crate::constants::MAX_SERIES_PER_MARK;
     use outbe_primitives::test_utils::sol_interface::sol_constant;
     const CODEC: &str =
         include_str!("../../../../../contracts/intex/src/shared/libs/BridgeMsgCodec.sol");
@@ -198,10 +284,6 @@ fn the_message_caps_match_the_codec() {
     assert_eq!(
         sol_constant(CODEC, "MAX_SERIES_PER_MARK"),
         Some(MAX_SERIES_PER_MARK)
-    );
-    assert_eq!(
-        sol_constant(CODEC, "MAX_PAYLOAD_ARRAY_LEN"),
-        Some(MAX_RECIPIENTS_PER_MESSAGE)
     );
 }
 
@@ -390,8 +472,12 @@ fn an_unpriced_issuance_currency_cannot_be_settled_in() {
         );
         // No euro pair at all.
         let err = runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE).unwrap_err();
-        assert!(
-            err.to_string().contains("oracle nominal unavailable"),
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_vaultrouter::settlement::SettlementError::OracleUnavailable,
+            )
+            .to_string(),
             "{err}"
         );
     });
@@ -411,8 +497,12 @@ fn a_rate_the_window_never_priced_cannot_be_settled_in() {
         write_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
 
         let err = runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE).unwrap_err();
-        assert!(
-            err.to_string().contains("oracle nominal unavailable"),
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_vaultrouter::settlement::SettlementError::OracleUnavailable,
+            )
+            .to_string(),
             "{err}"
         );
     });
@@ -431,7 +521,16 @@ fn issuance_currency_settlement_rejects_fx_overflow() {
         );
 
         let err = runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE).unwrap_err();
-        assert!(err.to_string().to_lowercase().contains("overflow"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_vaultrouter::settlement::SettlementError::Rounding(
+                    outbe_primitives::settlement::RoundingError::Overflow,
+                ),
+            )
+            .to_string(),
+            "{err}"
+        );
     });
 }
 

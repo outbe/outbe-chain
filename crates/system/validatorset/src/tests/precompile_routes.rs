@@ -6,7 +6,7 @@ use super::*;
 use crate::delegation::ValidatorDelegateRole;
 use crate::precompile::{dispatch, IValidatorSet as I};
 use alloy_primitives::Bytes;
-use alloy_sol_types::SolCall;
+use alloy_sol_types::{SolCall, SolError};
 use outbe_primitives::error::Result;
 
 const FIRST: Address = address!("0x00000000000000000000000000000000000000F1");
@@ -19,6 +19,7 @@ const UNKNOWN: Address = address!("0x00000000000000000000000000000000000000FF");
 fn outcome_text(result: Result<Bytes>) -> String {
     match result {
         Err(PrecompileError::Revert(message)) => format!("Revert: {message}"),
+        Err(PrecompileError::RevertBytes(bytes)) => super::typed_revert(bytes),
         Err(PrecompileError::Fatal(message)) => format!("Fatal: {message}"),
         other => format!("{other:?}"),
     }
@@ -128,7 +129,7 @@ fn validator_views_route_by_address_and_index() -> Result<()> {
             OWNER,
             &I::validatorByAddressCall { addr: UNKNOWN }
         )),
-        "Revert: validator not found"
+        super::typed_revert(I::ValidatorNotFound {}.abi_encode())
     );
     assert_eq!(
         outcome_text(send(
@@ -136,7 +137,7 @@ fn validator_views_route_by_address_and_index() -> Result<()> {
             OWNER,
             &I::validatorByIndexCall { index: 9 }
         )),
-        "Revert: validator not found at index"
+        super::typed_revert(I::ValidatorNotFoundAtIndex {}.abi_encode())
     );
     assert_returns(&mut storage, I::isValidatorCall { addr: SECOND }, true);
     assert_returns(
@@ -180,7 +181,7 @@ fn delegate_routes_decode_the_role_first() -> Result<()> {
         },
         Address::ZERO,
     );
-    let unsupported = "Revert: unsupported validator delegate role";
+    let unsupported = super::typed_revert(I::UnsupportedDelegateRole {}.abi_encode());
     let bad_role = 9;
     assert_eq!(
         outcome_text(send(
@@ -231,15 +232,15 @@ fn registration_route_checks_key_length_before_proof_length() -> Result<()> {
     };
     assert_eq!(
         outcome_text(send(&mut storage, OWNER, &register(47, 95))),
-        "Revert: consensus pubkey must be 48 bytes"
+        super::typed_revert(I::ConsensusPubkeyWrongLength {}.abi_encode())
     );
     assert_eq!(
         outcome_text(send(&mut storage, OWNER, &register(48, 95))),
-        "Revert: BLS proof of possession must be exactly 96 bytes"
+        super::typed_revert(I::BlsPopWrongLength {}.abi_encode())
     );
     assert_eq!(
         outcome_text(send(&mut storage, OWNER, &register(48, 96))),
-        "Revert: invalid BLS public key"
+        super::typed_revert(I::InvalidBlsPublicKey {}.abi_encode())
     );
     Ok(())
 }
@@ -277,7 +278,7 @@ fn p2p_lifecycle_and_value_routes_keep_their_results() -> Result<()> {
     );
     assert_eq!(
         outcome_text(send(&mut storage, FIRST, &I::confirmValidatorReadyCall {})),
-        "Revert: confirmValidatorReady requires PENDING status, got 3"
+        super::typed_revert(I::ConfirmValidatorReadyRequiresPending { status: 3 }.abi_encode())
     );
     Ok(())
 }

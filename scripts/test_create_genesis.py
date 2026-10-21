@@ -146,6 +146,12 @@ class ConfigValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "bogus"):
             CG.validate_config(config)
 
+    def test_retired_vault_router_owner_config_rejected(self):
+        config = minimal_config("./keys")
+        config["vault_router"] = {"owner": "0x" + "11" * 20}
+        with self.assertRaisesRegex(ValueError, "unknown key.*vault_router"):
+            CG.validate_config(config)
+
     def test_wrong_validator_count_rejected(self):
         config = minimal_config("./keys")
         config["validators"] = config["validators"][:3]
@@ -509,6 +515,42 @@ class SeedStageTests(unittest.TestCase):
             slot20 = "0x" + f"{20:064x}"  # validator_count
             self.assertEqual(int(validator_set["storage"][slot20], 16), 4)
 
+    def test_vault_router_has_no_owner_or_vaults_and_preserves_factory_routes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            seeded = self.seed_once(pathlib.Path(tmp), minimal_config(tmp))
+        storage = seeded["alloc"][SEED_GENESIS.VAULT_ROUTER_ADDRESS]["storage"]
+        for slot in (0, 1, 2, 3, *range(10, 33)):
+            self.assertNotIn(SEED_GENESIS.hex32(slot), storage)
+
+        sources = [
+            ("0000000000000000000000000000000000001015", 1),
+            ("0000000000000000000000000000000000001009", 2),
+            ("0000000000000000000000000000000000002013", 3),
+            ("0000000000000000000000000000000000001007", 4),
+        ]
+        targets = [("0000000000000000000000000000000000001009", 1)]
+        expected_keys = set()
+        for base, type_slot, routes in ((4, 6, sources), (7, 9, targets)):
+            length_key = SEED_GENESIS.hex32(base)
+            expected_keys.add(length_key)
+            self.assertEqual(storage[length_key], SEED_GENESIS.hex32(len(routes)))
+            for index, (address, kind) in enumerate(routes):
+                value_key = SEED_GENESIS.hex32(SEED_GENESIS.data_slot(base) + index)
+                position_key = SEED_GENESIS.mapping_key(
+                    SEED_GENESIS.address_bytes(address), base + 1
+                )
+                type_key = SEED_GENESIS.mapping_key(
+                    SEED_GENESIS.address_bytes(address), type_slot
+                )
+                expected_keys.update((value_key, position_key, type_key))
+                self.assertEqual(
+                    storage[value_key],
+                    SEED_GENESIS.hex32(SEED_GENESIS.address_as_u256(address)),
+                )
+                self.assertEqual(storage[position_key], SEED_GENESIS.hex32(index + 1))
+                self.assertEqual(storage[type_key], SEED_GENESIS.hex32(kind))
+        self.assertEqual(set(storage), expected_keys)
+
     def test_a_nod_profile_reaches_the_nod_selector_slot(self):
         with tempfile.TemporaryDirectory() as tmp:
             config = minimal_config(tmp) | {"nod_profile": {"profile": "dev"}}
@@ -553,6 +595,51 @@ class SeedStageTests(unittest.TestCase):
                         base_genesis=base_genesis, seed=seed, validators=validators
                     ),
                 )
+
+    def test_a_seed_carrying_an_unknown_section_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = minimal_config(tmp)
+            validators = self.fake_validators()
+            base_genesis = CG.build_base_genesis(config)
+            CG.prefund_validators(base_genesis, config, validators)
+            seed = CG.build_seed(config) | {"vault_routr": {}}
+            with self.assertRaisesRegex(
+                ValueError, r"^unknown key\(s\): vault_routr; allowed: balance, "
+            ):
+                CG.run_seed_stage(
+                    module=SEED_GENESIS,
+                    work_dir=pathlib.Path(tmp),
+                    config=config,
+                    quiet=True,
+                    inputs=CG.SeedInputs(
+                        base_genesis=base_genesis, seed=seed, validators=validators
+                    ),
+                )
+
+    def test_apply_seed_lists_every_unknown_section_and_the_allowed_set(self):
+        genesis = {"config": {"chainId": 1}, "alloc": {}, "timestamp": "0x0"}
+        allowed = set(CG.SEED_SECTIONS) | {"hyperlane_controller"}
+        with self.assertRaises(ValueError) as caught:
+            SEED_GENESIS.apply_seed(genesis, {"zeta": {}, "alpha": {}})
+        self.assertEqual(
+            str(caught.exception),
+            "unknown key(s): alpha, zeta; allowed: " + ", ".join(sorted(allowed)),
+        )
+
+    def test_the_named_legacy_checks_keep_their_own_messages(self):
+        genesis = {"config": {"chainId": 1}, "alloc": {}, "timestamp": "0x0"}
+        with self.assertRaisesRegex(ValueError, "renamed to intex_profile"):
+            SEED_GENESIS.apply_seed(genesis, {"intex_factory": {}, "vault_routr": {}})
+        with self.assertRaisesRegex(ValueError, "gems is no longer supported"):
+            SEED_GENESIS.apply_seed(genesis, {"gems": [], "vault_routr": {}})
+
+    def test_the_shipped_seed_files_use_only_known_sections(self):
+        allowed = set(CG.SEED_SECTIONS) | {"hyperlane_controller"}
+        for name in ("seed-testnet.json", "seed-testnet-lowstake.json"):
+            seed = json.loads(MODULE_PATH.with_name(name).read_text())
+            with self.subTest(seed=name):
+                self.assertEqual(sorted(set(seed) - allowed), [])
+                self.assertIn("code_registry", seed)
 
     def test_production_seed_stage_preserves_oracle_orientation_and_wire_scales(self):
         token = "0x1111111111111111111111111111111111111111"
@@ -714,9 +801,8 @@ class ExampleFileTests(unittest.TestCase):
             "staking",
             "rewards",
             "validator_set",
-            "radicle_registry",
+            "code_registry",
             "intex_profile",
-            "vault_router",
             "oracle",
         ):
             self.assertEqual(

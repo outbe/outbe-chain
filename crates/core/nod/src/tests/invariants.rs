@@ -166,8 +166,12 @@ fn member_count_overflow_and_underflow_roll_back_nod_mutations() {
             .write(&first.group_key, u32::MAX)
             .unwrap();
         let error = crate::test_support::add(&storage, &second).unwrap_err();
-        assert!(
-            matches!(error, PrecompileError::Revert(message) if message.contains("member index overflow"))
+        assert_eq!(
+            error.to_string(),
+            PrecompileError::from(crate::errors::NodError::GroupMemberIndexOverflow {
+                group_key: first.group_key,
+            })
+            .to_string()
         );
         assert_eq!(nod.total_supply().unwrap(), 1);
         assert_eq!(
@@ -180,8 +184,14 @@ fn member_count_overflow_and_underflow_roll_back_nod_mutations() {
         let loaded = api::load_item(&storage, first.nod_id).unwrap().unwrap();
         let group = api::load_group(&storage, group_id).unwrap().unwrap();
         let error = api::remove_nod(&storage, loaded, group).unwrap_err();
-        assert!(
-            matches!(error, PrecompileError::Revert(message) if message.contains("member count underflow"))
+        assert_eq!(
+            error.to_string(),
+            PrecompileError::from(
+                crate::errors::NodError::GroupMemberCountUnderflowDuringRemoval {
+                    group_key: first.group_key,
+                }
+            )
+            .to_string()
         );
         assert_eq!(nod.total_supply().unwrap(), 1);
         assert!(api::get_item(&storage, first.nod_id).unwrap().is_some());
@@ -192,7 +202,7 @@ fn member_count_overflow_and_underflow_roll_back_nod_mutations() {
 #[test]
 fn nod_error_and_calculation_amount_never_return_fatal() {
     let domain_error: PrecompileError = crate::errors::NodError::NodNotFound.into();
-    assert!(matches!(domain_error, PrecompileError::Revert(_)));
+    assert!(matches!(domain_error, PrecompileError::RevertBytes(_)));
 
     let mut corrupted = item(Address::repeat_byte(0x75));
     crate::test_support::uninstall();
@@ -205,7 +215,7 @@ fn nod_error_and_calculation_amount_never_return_fatal() {
     corrupted.encrypted.encrypted_gratis_amount.clear();
     assert!(matches!(
         api::calculation_amount(&corrupted),
-        Err(PrecompileError::Revert(_))
+        Err(PrecompileError::RevertBytes(_))
     ));
 }
 

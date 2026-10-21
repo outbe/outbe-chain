@@ -63,12 +63,22 @@ fn item_count(profile: Profile) -> usize {
 fn params(index: usize) -> IssuanceParams {
     let series_id = SeriesId::pack(TARGET_WWD, SERIES_CODES[index], b'U')
         .expect("benchmark Intex id is canonical");
+    // The PROD call terms, which the auction start fixes while the PROD profile is live.
+    let prod = outbe_intex::config::IntexParams::PROD;
+    let entry_price_minor = U256::from(1_000_000);
     IssuanceParams {
         series_id,
         worldwide_day: TARGET_WWD,
         issued_units: 100,
         promis_load_minor: 1_000_000,
-        entry_price_minor: U256::from(1_000_000),
+        entry_price_minor,
+        call_price_minor: outbe_intexfactory::marked_up(entry_price_minor, prod.call_rate)
+            .expect("benchmark call price fits"),
+        call_trigger: outbe_intex::IntexCallTrigger {
+            call_window_seconds: prod.call_window_seconds,
+            call_threshold_seconds: prod.call_threshold_seconds,
+            call_notice_period_seconds: prod.call_notice_period_seconds,
+        },
         issuance_currency: 840,
         reference_currency: 840,
         snapshot_chains: vec![1],

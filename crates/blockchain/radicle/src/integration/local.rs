@@ -9,6 +9,7 @@ mod preparation;
 mod progress;
 mod publication;
 mod review;
+mod serve;
 mod state;
 mod vote;
 
@@ -27,8 +28,8 @@ use crate::{
     },
 };
 use alloy_primitives::{B256, U256};
+use outbe_coderegistry::publication::PublicationReceipt;
 use outbe_primitives::radicle_publication::{PublicationBody, PUBLICATION_BODY_LEN};
-use outbe_radicleregistry::publication::PublicationReceipt;
 use std::{
     fs::{self, File, OpenOptions},
     future::Future,
@@ -234,14 +235,16 @@ impl LocalReceiptServer {
                     if clients.len() >= MAX_CONNECTIONS || peer(&stream).is_err() {
                         continue;
                     }
-                    let reader = self.reader.clone();
-                    let authority = self.authority.clone();
-                    let material = self.material.clone();
-                    let publications = self.publications.clone();
-                    let readers = readers.clone();
-                    let native_node = self.native_node;
+                    let state = serve::ServerState {
+                        reader: self.reader.clone(),
+                        authority: self.authority.clone(),
+                        material: self.material.clone(),
+                        publications: self.publications.clone(),
+                        readers: readers.clone(),
+                        native_node: self.native_node,
+                    };
                     clients.spawn(async move {
-                        let _ = tokio::time::timeout(DEADLINE, serve(stream, reader, authority, material, publications, readers, native_node)).await;
+                        let _ = tokio::time::timeout(DEADLINE, serve::serve(stream, state)).await;
                     });
                 }
             }
@@ -598,269 +601,6 @@ impl LocalReceiptClient {
     }
 }
 
-async fn serve(
-    mut stream: UnixStream,
-    reader: Arc<dyn RepositoryReceiptReader>,
-    authority: Option<Arc<dyn RepositoryAuthorityReader>>,
-    material: Option<EndpointNetworkResolver>,
-    publications: Option<Arc<Mutex<ReviewPackageStore>>>,
-    readers: Arc<Semaphore>,
-    native_node: Option<[u8; 32]>,
-) -> Result<(), Error> {
-    let request = read_frame(&mut stream, MAX_REQUEST).await?;
-    let magic = match (request.get(..4), request.len()) {
-        (Some(magic), 4) if magic == SCOPE => SCOPE,
-        (Some(magic), 4) if magic == DESCRIPTOR => DESCRIPTOR,
-        (Some(magic), length) if magic == progress::MAGIC && length == 4 + PUBLICATION_BODY_LEN => {
-            progress::MAGIC
-        }
-        (Some(magic), 4) if magic == gossip::TAKE => gossip::TAKE,
-        (Some(magic), length) if magic == gossip::SEND && length > 4 => gossip::SEND,
-        (Some(magic), 12) if magic == MAGIC => MAGIC,
-        (Some(magic), 16) if magic == vote::MAGIC => vote::MAGIC,
-        (Some(magic), 36) if magic == approval::MAGIC => approval::MAGIC,
-        (Some(magic), length) if magic == publication::ATTEST && length > 4 => publication::ATTEST,
-        (Some(magic), length) if magic == publication::QUEUE && length > 4 => publication::QUEUE,
-        (Some(magic), 4) if magic == bootstrap::MAGIC => bootstrap::MAGIC,
-        (Some(magic), 4) if magic == binding::MAGIC => binding::MAGIC,
-        (Some(magic), 36) if magic == bootstrap::SIGN_DOCUMENT => bootstrap::SIGN_DOCUMENT,
-        (Some(magic), length) if magic == bootstrap::SIGN_IDENTITY && length > 36 => {
-            bootstrap::SIGN_IDENTITY
-        }
-        (Some(magic), length) if magic == bootstrap::SIGN_REFS && length > 36 => {
-            bootstrap::SIGN_REFS
-        }
-        (Some(magic), length)
-            if (magic == review::COB || magic == review::MERGE_COB)
-                && length >= review::MIN_REQUEST =>
-        {
-            if magic == review::COB {
-                review::COB
-            } else {
-                review::MERGE_COB
-            }
-        }
-        (Some(magic), length)
-            if (magic == review::REFS || magic == review::MERGE_REFS)
-                && length >= review::MIN_REQUEST + 269 =>
-        {
-            if magic == review::REFS {
-                review::REFS
-            } else {
-                review::MERGE_REFS
-            }
-        }
-        (Some(magic), 36) if magic == state::MAGIC => state::MAGIC,
-        (Some(magic), 36) if magic == material::MAGIC => material::MAGIC,
-        (Some(magic), 36) if magic == preparation::MAGIC => preparation::MAGIC,
-        (Some(magic), length) if magic == preparation::CACHE && length > 44 => preparation::CACHE,
-        _ => return Err(Error::Protocol),
-    };
-    let permit = match readers.clone().try_acquire_owned() {
-        Ok(permit) => permit,
-        Err(_) => return write_frame(&mut stream, &[magic.as_slice(), &[0]].concat()).await,
-    };
-    if magic == DESCRIPTOR {
-        let response = tokio::task::spawn_blocking(move || {
-            let _permit = permit;
-            let descriptor = reader.read_governments_descriptor().ok().flatten()?;
-            Some([DESCRIPTOR.as_slice(), &[2], &descriptor.to_bytes().ok()?].concat())
-        })
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| [DESCRIPTOR.as_slice(), &[0]].concat());
-        return write_frame(&mut stream, &response).await;
-    }
-    if magic == vote::MAGIC {
-        let height = u64::from_be_bytes(request[4..12].try_into().map_err(|_| Error::Protocol)?);
-        let offset = u32::from_be_bytes(request[12..16].try_into().map_err(|_| Error::Protocol)?);
-        let response = vote::read(reader, permit, height, offset)
-            .await
-            .unwrap_or_else(|_| [magic.as_slice(), &[0]].concat());
-        return write_frame(&mut stream, &response).await;
-    }
-    if magic == approval::MAGIC {
-        let response = approval::read(reader, permit, U256::from_be_slice(&request[4..]))
-            .await
-            .unwrap_or_else(|_| [magic.as_slice(), &[0]].concat());
-        return write_frame(&mut stream, &response).await;
-    }
-    if magic == binding::MAGIC {
-        let response = binding::read(authority, material, permit)
-            .await
-            .unwrap_or_else(|_| [magic.as_slice(), &[0]].concat());
-        return write_frame(&mut stream, &response).await;
-    }
-    if [
-        review::COB,
-        review::REFS,
-        review::MERGE_COB,
-        review::MERGE_REFS,
-    ]
-    .contains(&magic)
-    {
-        let result = async {
-            let request = review::Request::parse(&request, native_node)?;
-            review::sign(
-                reader,
-                authority,
-                material,
-                publications,
-                readers,
-                permit,
-                request,
-            )
-            .await
-        }
-        .await;
-        let response = result.unwrap_or_else(|_| [magic.as_slice(), &[0]].concat());
-        return write_frame(&mut stream, &response).await;
-    }
-    if magic == progress::MAGIC {
-        let body = PublicationBody::from_bytes(&request[4..]).map_err(|_| Error::Protocol)?;
-        let response = progress::read(reader, permit, body)
-            .await
-            .unwrap_or_else(|_| [magic.as_slice(), &[0]].concat());
-        return write_frame(&mut stream, &response).await;
-    }
-    if magic == gossip::SEND || magic == gossip::TAKE {
-        let response = gossip::relay(material, &request)
-            .await
-            .unwrap_or_else(|_| [magic.as_slice(), &[0]].concat());
-        return write_frame(&mut stream, &response).await;
-    }
-    if magic == publication::ATTEST || magic == publication::QUEUE {
-        let result = async {
-            let request = publication::Request::parse(&request, native_node)?;
-            match request.body.action {
-                outbe_primitives::radicle_publication::PublicationAction::Bootstrap => {
-                    publication::publish(
-                        authority,
-                        material,
-                        publications,
-                        readers,
-                        permit,
-                        request,
-                    )
-                    .await
-                }
-                outbe_primitives::radicle_publication::PublicationAction::Review
-                | outbe_primitives::radicle_publication::PublicationAction::Merge => {
-                    review::publish(
-                        reader,
-                        authority,
-                        material,
-                        publications,
-                        readers,
-                        permit,
-                        request,
-                    )
-                    .await
-                }
-                outbe_primitives::radicle_publication::PublicationAction::BindMaterial => {
-                    binding::publish(
-                        reader,
-                        authority,
-                        material,
-                        publications,
-                        readers,
-                        permit,
-                        request,
-                    )
-                    .await
-                }
-            }
-        }
-        .await;
-        let response = result.unwrap_or_else(|_| [magic.as_slice(), &[0]].concat());
-        return write_frame(&mut stream, &response).await;
-    }
-    if magic == bootstrap::SIGN_IDENTITY || magic == bootstrap::SIGN_REFS {
-        let response = bootstrap::sign_native(authority, material, readers, permit, request)
-            .await
-            .unwrap_or_else(|_| [magic.as_slice(), &[0]].concat());
-        return write_frame(&mut stream, &response).await;
-    }
-    if magic == bootstrap::SIGN_DOCUMENT {
-        let response =
-            bootstrap::sign_document(authority, material, permit, B256::from_slice(&request[4..]))
-                .await
-                .unwrap_or_else(|_| [magic.as_slice(), &[0]].concat());
-        return write_frame(&mut stream, &response).await;
-    }
-    if magic == bootstrap::MAGIC {
-        let response = bootstrap::read(authority, material, permit)
-            .await
-            .unwrap_or_else(|_| [magic.as_slice(), &[0]].concat());
-        return write_frame(&mut stream, &response).await;
-    }
-    if magic == preparation::CACHE {
-        let result = preparation::cache(reader, publications, permit, request).await;
-        let response = [magic.as_slice(), &[if result.is_ok() { 2 } else { 0 }]].concat();
-        return write_frame(&mut stream, &response).await;
-    }
-    if magic == preparation::MAGIC {
-        let result = preparation::read(
-            reader,
-            authority,
-            material,
-            publications,
-            readers,
-            permit,
-            U256::from_be_slice(&request[4..]),
-        )
-        .await;
-        let response = result.unwrap_or_else(|_| [magic.as_slice(), &[0]].concat());
-        return write_frame(&mut stream, &response).await;
-    }
-    if magic == material::MAGIC {
-        let result = material::read(
-            authority,
-            material,
-            permit,
-            U256::from_be_slice(&request[4..]),
-        )
-        .await;
-        let response = result.unwrap_or_else(|_| [magic.as_slice(), &[0]].concat());
-        return write_frame(&mut stream, &response).await;
-    }
-    let result = tokio::task::spawn_blocking(move || {
-        let _permit = permit;
-        if magic == SCOPE {
-            let authority = authority
-                .ok_or(Error::Unavailable)?
-                .read_current_repository_authority()
-                .map_err(|_| Error::Unavailable)?;
-            Ok([
-                SCOPE.as_slice(),
-                &[2],
-                &authority.chain_id().to_be_bytes(),
-                authority.genesis_hash().as_slice(),
-            ]
-            .concat())
-        } else if magic == state::MAGIC {
-            let proposal_id = U256::from_be_slice(&request[4..]);
-            let current = authority
-                .ok_or(Error::Unavailable)?
-                .read_current_patch_signing_state(proposal_id)
-                .map_err(|_| Error::Unavailable)?;
-            state::encode(&current)
-        } else {
-            let sequence =
-                u64::from_be_bytes(request[4..].try_into().map_err(|_| Error::Protocol)?);
-            let receipt = reader
-                .read_current_publication_receipt(sequence)
-                .map_err(|_| Error::Unavailable)?;
-            Ok(encode_receipt(receipt.as_ref()))
-        }
-    })
-    .await
-    .map_err(|_| Error::Unavailable)?;
-    let response = result.unwrap_or_else(|_| [magic.as_slice(), &[0]].concat());
-    write_frame(&mut stream, &response).await
-}
-
 fn encode_receipt(receipt: Option<&FinalizedPublicationReceipt>) -> Vec<u8> {
     let mut response = MAGIC.to_vec();
     match receipt {
@@ -896,14 +636,12 @@ fn decode_response(
                 u64::from_be_bytes(response[45..53].try_into().map_err(|_| Error::Protocol)?);
             let receipt_hash = B256::from_slice(&response[53..85]);
             let body = PublicationBody::from_bytes(&response[85..]).map_err(|_| Error::Protocol)?;
-            if body.sequence != sequence
+            let invalid_body = body.sequence != sequence
                 || body.chain_id != chain.chain_id
                 || body.genesis_hash != chain.genesis_hash
-                || receipt_hash != body.receipt_hash()
-                || accepted_height == 0
-                || accepted_height > number
-                || hash.is_zero()
-            {
+                || receipt_hash != body.receipt_hash();
+            let invalid_height = accepted_height == 0 || accepted_height > number || hash.is_zero();
+            if invalid_body || invalid_height {
                 return Err(Error::Protocol);
             }
             Ok(Some(FinalizedPublicationReceipt {

@@ -6,13 +6,13 @@ use outbe_primitives::{
     storage::StorageHandle,
 };
 
-use crate::schema::RadicleRegistry;
+use crate::schema::CodeRegistry;
 
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
 
 sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
-    "../../../contracts/precompiles/src/IRadicleRegistry.sol"
+    "../../../contracts/precompiles/src/ICodeRegistry.sol"
 );
 
 pub fn dispatch(
@@ -24,10 +24,10 @@ pub fn dispatch(
     reject_value(&value)?;
     dispatch_call(
         data,
-        IRadicleRegistry::IRadicleRegistryCalls::abi_decode,
+        ICodeRegistry::ICodeRegistryCalls::abi_decode,
         |call| {
-            use IRadicleRegistry::IRadicleRegistryCalls::*;
-            let mut registry = RadicleRegistry::new(storage.clone());
+            use ICodeRegistry::ICodeRegistryCalls::*;
+            let mut registry = CodeRegistry::new(storage.clone());
             match call {
                 registerRepository(call) => mutate_void(&storage, call, caller, |sender, call| {
                     registry
@@ -44,13 +44,13 @@ pub fn dispatch(
                 getPatchApproval(call) => view(call, |call| {
                     let approval = registry.patch_approval(call.proposalId)?;
                     Ok(match approval {
-                        Some(approval) => IRadicleRegistry::PatchApprovalInfo {
+                        Some(approval) => ICodeRegistry::PatchApprovalInfo {
                             approved: true,
                             payload: approval.payload,
                             approvedHeight: approval.approved_height,
                             approvedTimestamp: approval.approved_timestamp,
                         },
-                        None => IRadicleRegistry::PatchApprovalInfo {
+                        None => ICodeRegistry::PatchApprovalInfo {
                             approved: false,
                             payload: String::new(),
                             approvedHeight: 0,

@@ -28,9 +28,6 @@ pub const MAX_PARKED_FAILURES_PER_FIRING: u32 = 3;
 /// Series one ISSUANCE_INSTRUCTIONS message may carry. Mirrors `MAX_SERIES_PER_ISSUANCE`.
 pub const MAX_SERIES_PER_MESSAGE: usize = 24;
 
-/// The general cross-chain array cap, mirroring `MAX_PAYLOAD_ARRAY_LEN`. Refund chunks use it.
-pub const MAX_RECIPIENTS_PER_MESSAGE: usize = 64;
-
 /// Series one MARK_CALLED message may carry. Mirrors the
 /// codec's `MAX_SERIES_PER_MARK`. A wider group is sent in several messages.
 pub const MAX_SERIES_PER_MARK: usize = 8;
@@ -38,4 +35,5 @@ pub const MAX_SERIES_PER_MARK: usize = 8;
 /// Bit that marks a Settled NFT token id. A series id is 14 bytes, so the issued id space ends at
 /// 2**112 and this bit sits directly above it. The classes cannot collide, and clearing the bit
 /// recovers the series. Mirrors `IntexNFT1155._SETTLED_TAG`.
+/// `settled_token_id_tags_the_series_id` reads that Solidity constant.
 pub const SETTLED_TAG: U256 = U256::from_limbs([0, 1 << 48, 0, 0]);

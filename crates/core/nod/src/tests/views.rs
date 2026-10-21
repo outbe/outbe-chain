@@ -118,9 +118,10 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
 }
 
 fn assert_removed_nod(error: outbe_primitives::error::PrecompileError) {
-    assert!(
-        matches!(error, outbe_primitives::error::PrecompileError::Revert(reason)
-                if reason == crate::errors::NodError::NodNotFound.to_string())
+    assert_eq!(
+        error.to_string(),
+        outbe_primitives::error::PrecompileError::from(crate::errors::NodError::NodNotFound)
+            .to_string()
     );
 }
 

@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
-use outbe_primitives::addresses::RADICLE_REGISTRY_ADDRESS;
+use outbe_primitives::addresses::CODE_REGISTRY_ADDRESS;
 use outbe_primitives::storage::types::StorageBytes;
 
 /// Approved decision awaits its separate offchain execution.
@@ -35,7 +35,7 @@ pub struct PatchApprovalRecord {
     pub approved_timestamp: u64,
 }
 
-/// Consensus storage layout for the V1 Radicle repository registry.
+/// Consensus storage layout for the V1 CodeRegistry.
 ///
 /// Slots:
 /// - 0 repository_count
@@ -53,8 +53,8 @@ pub struct PatchApprovalRecord {
 /// - 16..=18 immutable publication receipts
 /// - 19..=20 fixed pending slots keyed only by participant index
 #[storage_schema]
-#[contract(addr = RADICLE_REGISTRY_ADDRESS)]
-pub struct RadicleRegistry {
+#[contract(addr = CODE_REGISTRY_ADDRESS)]
+pub struct CodeRegistry {
     #[attribute(order = 0)]
     pub repository_count: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 1)]

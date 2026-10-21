@@ -2,7 +2,8 @@
 //! tuple outside it is dropped on its own; the vote's other tuples still count.
 
 use super::common::{
-    coen_iso, eur, register_voter, usd, with_coen840_oracle, COEN, COEN_ISO_SCALE,
+    assert_typed_revert, coen_iso, eur, register_voter, usd, with_coen840_oracle, COEN,
+    COEN_ISO_SCALE,
 };
 use outbe_primitives::address_pair::AddressPair;
 
@@ -37,9 +38,12 @@ fn submit_vote_rejects_a_price_above_one_billion() {
                 &[(COEN, usd(), coen_iso(1_000_000_001), COEN_ISO_SCALE)],
             )
             .expect_err("a whole price of 10^9 + 1 is above the ceiling");
-        assert!(
-            err.to_string().contains("vote price"),
-            "unexpected error: {err}"
+        assert_typed_revert(
+            &err,
+            crate::errors::OracleError::VotePriceExceedsCap {
+                price: coen_iso(1_000_000_001),
+                max: coen_iso(1_000_000_000),
+            },
         );
         assert!(!oracle.vote_exists.read(&validator).unwrap());
     });
@@ -56,9 +60,12 @@ fn submit_vote_rejects_a_volume_above_one_trillion() {
                 &[(COEN, usd(), coen_iso(1), coen_iso(1_000_000_000_001))],
             )
             .expect_err("a whole volume of 10^12 + 1 is above the ceiling");
-        assert!(
-            err.to_string().contains("vote volume"),
-            "unexpected error: {err}"
+        assert_typed_revert(
+            &err,
+            crate::errors::OracleError::VoteVolumeExceedsCap {
+                volume: coen_iso(1_000_000_000_001),
+                max: coen_iso(1_000_000_000_000),
+            },
         );
         assert!(!oracle.vote_exists.read(&validator).unwrap());
     });

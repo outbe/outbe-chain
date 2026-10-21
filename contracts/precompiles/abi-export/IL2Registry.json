@@ -148,5 +148,115 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "InboxKeyCallFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidChainId",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidInboxAddress",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidL1Address",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidProposalPayload",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidPublicKey",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidPublicKeyEncoding",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidPublicKeyLength",
+    "inputs": [
+      {
+        "name": "length",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidZkSignature",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "L1AddressAlreadyRegistered",
+    "inputs": [
+      {
+        "name": "l1_address",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "chain_id",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NetworkAlreadyRegistered",
+    "inputs": [
+      {
+        "name": "chain_id",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NetworkNotRegistered",
+    "inputs": [
+      {
+        "name": "chain_id",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NotNetworkOwner",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "chain_id",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ZkMerkleRootRequired",
+    "inputs": []
   }
 ]

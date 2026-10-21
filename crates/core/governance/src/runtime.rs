@@ -1,7 +1,7 @@
 use alloy_primitives::{keccak256, Address, U256};
 use outbe_primitives::error::Result;
 
-use crate::state::author_index_key;
+use crate::state::{author_index_key, page_bounds, ProposalMeta};
 
 use crate::errors::GovernanceError;
 use crate::precompile::IGovernance;
@@ -14,24 +14,36 @@ use crate::precompile::IGovernance::{
 use crate::schema::{Gip, GipEntryExt, GovernanceContract, Oip, OipEntryExt};
 use crate::status;
 
-/// Maximum size of any single normative / proposal text. Every write path
-/// enforces it. This limit keeps a full-overwrite comfortably inside one block
-/// under the permissioned gas model (flat 5000/SSTORE).
-pub const MAX_TEXT_BYTES: usize = 128 * 1024;
+/// Maximum size of the canon and meta-canon texts. Only `update_canon` and
+/// `update_meta_canon` use this bound. Both paths are authority-gated, so this
+/// bound depends on the permissioned premise. At `SSTORE_RESET` (5000 gas) a
+/// full overwrite writes 4096 words = 20.48M gas, about 68% of a 30M block.
+pub const MAX_CANON_TEXT_BYTES: usize = 128 * 1024;
 
-fn validate_text(text: &str) -> Result<()> {
+/// Maximum size of an OIP / GIP proposal text. The submit and text-update
+/// paths use this bound. These paths are open to any caller, so this bound
+/// does not depend on the permissioned premise. At `SSTORE_RESET` (5000 gas)
+/// one write is 512 words = 2.56M gas, under 9% of a 30M block. The value
+/// matches the zero-fee calldata cap `FREE_TX_DAILY_CALLDATA_BYTES` (16 KiB).
+pub const MAX_PROPOSAL_TEXT_BYTES: usize = 16 * 1024;
+
+fn validate_text(text: &str, max: usize) -> Result<()> {
     if text.is_empty() {
         return Err(GovernanceError::EmptyText.into());
     }
-    if text.len() > MAX_TEXT_BYTES {
-        return Err(GovernanceError::TextTooLarge.into());
+    if text.len() > max {
+        return Err(GovernanceError::TextTooLarge {
+            len: text.len(),
+            max,
+        }
+        .into());
     }
     Ok(())
 }
 
-/// Generates the submit / update-text / set-status methods for one proposal
-/// kind. OIP and GIP share this exact logic over separate typed maps and id
-/// counters. Only the storage target and the per-kind event types differ.
+/// Generates proposal writes and author listings for one proposal kind.
+/// OIP and GIP share this logic over separate typed maps and id counters.
+/// Only the storage target, metadata projection and per-kind events differ.
 macro_rules! impl_proposal_ops {
     (
         submit = $submit:ident,
@@ -39,6 +51,8 @@ macro_rules! impl_proposal_ops {
         update = $update:ident,
         set_status = $set_status:ident,
         apply_status = $apply_status:ident,
+        list_by_author = $list_by_author:ident,
+        meta = $meta:ident,
         record = $record:ident,
         map = $map:ident,
         counter = $counter:ident,
@@ -51,9 +65,19 @@ macro_rules! impl_proposal_ops {
     ) => {
         /// Submits a new proposal in `Draft`, open to any caller.
         pub fn $submit(&mut self, author: Address, text: &str) -> Result<U256> {
-            validate_text(text)?;
+            validate_text(text, MAX_PROPOSAL_TEXT_BYTES)?;
+            // Refuse the submit before any write when the author index is full.
+            // A wrapped counter would overwrite index slot 0.
+            let acount = self.$author_count.read(&author)?;
+            let next_acount = acount
+                .checked_add(1)
+                .ok_or(GovernanceError::AuthorIndexFull)?;
             let block = self.storage.block_number()?;
-            let next = self.$counter.read()? + 1;
+            let next = self
+                .$counter
+                .read()?
+                .checked_add(1)
+                .ok_or(GovernanceError::ProposalIdExhausted)?;
             let id = U256::from(next);
             let text_hash = keccak256(text.as_bytes());
             let record = $record {
@@ -68,10 +92,9 @@ macro_rules! impl_proposal_ops {
             self.$map.create(&record)?;
             self.$counter.write(next)?;
             // author index (append-only): append id to the author's list.
-            let acount = self.$author_count.read(&author)?;
             self.$author_ids
                 .write(&author_index_key(author, acount), id)?;
-            self.$author_count.write(&author, acount + 1)?;
+            self.$author_count.write(&author, next_acount)?;
             // status index: a new proposal joins the Draft bucket.
             self.$by_status.get_set(&status::DRAFT).insert(id)?;
             self.emit($submitted_event {
@@ -80,6 +103,24 @@ macro_rules! impl_proposal_ops {
                 textHash: text_hash,
             })?;
             Ok(id)
+        }
+
+        /// Lists an author-index page, omitting entries whose records are missing.
+        pub fn $list_by_author(
+            &self,
+            author: Address,
+            offset: U256,
+            limit: U256,
+        ) -> Result<Vec<ProposalMeta>> {
+            let (start, end) = page_bounds(self.$author_count.read(&author)?, offset, limit);
+            let mut out = Vec::with_capacity((end - start) as usize);
+            for i in start..end {
+                let id = self.$author_ids.read(&author_index_key(author, i))?;
+                if self.$map.entry(id).exists()? {
+                    out.push(self.$meta(id)?);
+                }
+            }
+            Ok(out)
         }
 
         /// Creates a proposal already in `Approved`.
@@ -99,7 +140,7 @@ macro_rules! impl_proposal_ops {
         /// Replaces a proposal's text. Author-only, and only while the proposal
         /// is `Draft` or `Rework`.
         pub fn $update(&mut self, caller: Address, id: U256, text: &str) -> Result<()> {
-            validate_text(text)?;
+            validate_text(text, MAX_PROPOSAL_TEXT_BYTES)?;
             let mut record = self
                 .$map
                 .get(id)?
@@ -187,7 +228,7 @@ impl GovernanceContract<'_> {
 
     pub fn update_meta_canon(&mut self, caller: Address, text: &str) -> Result<u64> {
         self.ensure_authority(caller)?;
-        validate_text(text)?;
+        validate_text(text, MAX_CANON_TEXT_BYTES)?;
         let version = self.meta_canon_version.read()? + 1;
         let hash = keccak256(text.as_bytes());
         self.meta_canon.write(text.as_bytes())?;
@@ -200,7 +241,7 @@ impl GovernanceContract<'_> {
 
     pub fn update_canon(&mut self, caller: Address, text: &str) -> Result<u64> {
         self.ensure_authority(caller)?;
-        validate_text(text)?;
+        validate_text(text, MAX_CANON_TEXT_BYTES)?;
         let version = self.canon_version.read()? + 1;
         let hash = keccak256(text.as_bytes());
         self.canon.write(text.as_bytes())?;
@@ -219,6 +260,8 @@ impl GovernanceContract<'_> {
         update = update_oip_text,
         set_status = set_oip_status,
         apply_status = apply_oip_status,
+        list_by_author = oips_by_author,
+        meta = oip_meta,
         record = Oip,
         map = oips,
         counter = next_oip_id,
@@ -236,6 +279,8 @@ impl GovernanceContract<'_> {
         update = update_gip_text,
         set_status = set_gip_status,
         apply_status = apply_gip_status,
+        list_by_author = gips_by_author,
+        meta = gip_meta,
         record = Gip,
         map = gips,
         counter = next_gip_id,

@@ -2,6 +2,31 @@
 pragma solidity ^0.8.30;
 
 interface ITribute {
+    error TributeNotFound();
+    error TributeAlreadyExists();
+    error InvalidOwner();
+    error SettlementAmountMustBePositive();
+    error WorldwideDaySealed();
+    error OwnerBalanceOverflow();
+    error QueryLimitExceeded();
+    error DayResponseScopeMismatch();
+    error EntityIdDerivation(string value);
+    error CalculationView(string value);
+    error WorldwideDayNotCompletedAndEmpty();
+    error PrivateAmountReadFailed(string value);
+    error CanonicalIdentityMismatch(uint256 expected, uint256 found);
+    error InvalidLeague(uint16 value);
+    error MetadosisNotCompleted();
+    error NodCreationWindowExpired();
+    error CallerNotTributeOwner();
+    error EntryPriceUnavailable(uint32 priceDay, uint16 currency);
+    error FormingWindowOverflow();
+    error LookbackWindowOverflow();
+    error OfferingWindowOverflow();
+    error DurationOverflow(string label);
+    error TributeStateChangedAfterLoading();
+    error LysisArithmetic(string reason);
+
     event TributeIssued(
         address indexed owner,
         uint256 tributeId,

@@ -207,6 +207,7 @@ contract TargetRouter is
     /// @dev Dispatch by msgType. A premature message (prerequisite stage not applied) reverts. The
     ///      bridge call reverts with it, and the transport redelivers once the prerequisite lands.
     function _dispatch(uint32 srcChainId, bytes32 receiveId, bytes calldata message) internal override {
+        if (srcChainId != OUTBE_CHAIN_ID) revert UnexpectedSourceChain(srcChainId);
         uint8 msgType = BridgeMsgCodec.readHeader(message);
         BridgeMsgCodec.assertMinLength(message, msgType);
 

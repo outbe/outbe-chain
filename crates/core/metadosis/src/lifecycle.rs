@@ -332,7 +332,7 @@ pub(crate) fn fail_emission_day(
     if let Some(mut record) = metadosis.emission_days.get(day)? {
         if !record.emission_limit_minor.is_zero() {
             PromisLimitContract::new(metadosis.storage.clone())
-                .checked_add_carry_over(record.emission_limit_minor)?;
+                .checked_credit(record.emission_limit_minor)?;
         }
         record.state = emission_day_state::FAILED;
         metadosis.emission_days.update(&record)?;

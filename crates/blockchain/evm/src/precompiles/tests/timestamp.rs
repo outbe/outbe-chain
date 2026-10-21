@@ -1,7 +1,7 @@
 use super::super::{
-    dispatch::outbe_ctx_dispatch, dispatch::OutbeDispatchRuntime, ExecutionAbortBridge,
+    extend_outbe_precompiles, OutbePrecompileExecutionContext, OutbePrecompileRuntime,
 };
-use crate::tee_attestation_activation::TeeAttestationChainSpecStateV1;
+use alloy_evm::precompiles::PrecompilesMap;
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{Revert, SolError};
 use outbe_primitives::{
@@ -11,12 +11,23 @@ use outbe_primitives::{
 use revm::{
     context_interface::JournalTr,
     database::{CacheDB, EmptyDB},
-    handler::MainContext as _,
+    handler::{EthPrecompiles, MainContext as _, PrecompileProvider},
     interpreter::{CallInput, CallInputs, CallScheme, CallValue, InstructionResult},
     primitives::hardfork::SpecId,
     state::Bytecode,
     Context,
 };
+
+fn precompiles() -> PrecompilesMap {
+    let mut precompiles =
+        PrecompilesMap::from_static(EthPrecompiles::new(SpecId::PRAGUE).precompiles);
+    extend_outbe_precompiles::<CacheDB<EmptyDB>>(
+        &mut precompiles,
+        OutbePrecompileExecutionContext::new(SpecId::PRAGUE, B256::ZERO),
+        OutbePrecompileRuntime::new(),
+    );
+    precompiles
+}
 
 fn inputs(address: Address, value: U256, gas_limit: u64, data: Bytes) -> CallInputs {
     CallInputs {
@@ -55,19 +66,7 @@ fn wide_timestamp_dispatch_reverts_before_value_admission_or_mutation_authority(
                 .base_gas(data.as_ref())
                 .max(PRECOMPILE_BASE_GAS);
             let call = inputs(address, value, base_gas + 100_000, data);
-            let abort_bridge = ExecutionAbortBridge::default();
-            let output = outbe_ctx_dispatch(
-                &mut ctx,
-                &call,
-                OutbeDispatchRuntime {
-                    abort_bridge: &abort_bridge,
-                    spec: SpecId::PRAGUE,
-                    genesis_hash: B256::ZERO,
-                    tee_attestation_v1: &TeeAttestationChainSpecStateV1::Unbound,
-                },
-            )
-            .unwrap()
-            .unwrap();
+            let output = precompiles().run(&mut ctx, &call).unwrap().unwrap();
             assert_eq!(output.result, InstructionResult::Revert);
             assert_eq!(
                 output.output.as_ref(),
@@ -90,18 +89,7 @@ fn wide_timestamp_dispatch_preserves_out_of_gas_and_unknown_routes() {
         let mut ctx = Context::mainnet().with_db(CacheDB::<EmptyDB>::default());
         ctx.block.timestamp = U256::MAX;
         let call = inputs(address, U256::ZERO, gas_limit, Bytes::new());
-        let abort_bridge = ExecutionAbortBridge::default();
-        let output = outbe_ctx_dispatch(
-            &mut ctx,
-            &call,
-            OutbeDispatchRuntime {
-                abort_bridge: &abort_bridge,
-                spec: SpecId::PRAGUE,
-                genesis_hash: B256::ZERO,
-                tee_attestation_v1: &TeeAttestationChainSpecStateV1::Unbound,
-            },
-        )
-        .unwrap();
+        let output = precompiles().run(&mut ctx, &call).unwrap();
         assert_eq!(output.map(|output| output.result), expected);
     }
 }

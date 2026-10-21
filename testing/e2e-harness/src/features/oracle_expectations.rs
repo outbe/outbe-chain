@@ -149,6 +149,7 @@ fn oracle_price_at(world: &World, port: u16, day: u32, iso: u16, height: u64) ->
     .expect("historical reference-currency day VWAP")
 }
 
+/// The Nod entry price is the VWAP of the UTC day before the Lysis completion block.
 pub(super) fn assert_native_entry_price(
     world: &World,
     terms: &outbe_primitives::nod_encryption::NodTermsV2,

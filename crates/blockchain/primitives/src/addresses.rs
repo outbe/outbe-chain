@@ -69,7 +69,7 @@ pub const EMISSION_LIMIT_ADDRESS: Address = address!("0x000000000000000000000000
 pub const METADOSIS_ADDRESS: Address = address!("0x000000000000000000000000000000000000100E");
 
 /// Promis limit precompile address. Its registered dispatch serves the public
-/// view method `totalUnallocated` to any caller.
+/// view method `promisLimit` to any caller.
 pub const PROMIS_LIMIT_ADDRESS: Address = address!("0x000000000000000000000000000000000000100F");
 
 /// Cycle precompile address (system-only). Hosts the storage of the
@@ -216,9 +216,9 @@ pub const STABLECOIN_FACTORY_ADDRESS: Address =
 pub const STABLECOIN_POLICY_REGISTRY_ADDRESS: Address =
     address!("0x000000000000000000000000000000000000EE10");
 
-/// Permissionless append-only registry of public Heartwood repository ids.
-pub const RADICLE_REGISTRY_ADDRESS: Address =
-    address!("0x000000000000000000000000000000000000EE11");
+/// CodeRegistry precompile address: permissionless append-only registry of
+/// public Heartwood repository ids and approved code-change receipts.
+pub const CODE_REGISTRY_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE11");
 
 /// HyperlaneController precompile address (stateful).
 ///

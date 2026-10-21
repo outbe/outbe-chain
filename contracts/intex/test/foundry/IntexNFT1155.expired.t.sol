@@ -70,8 +70,9 @@ contract IntexNFT1155ExpiredTest is Test {
 
     function test_BridgeStaysClosedAfterExpiry() public {
         vm.warp(deadline + 1);
+        uint32 cutoff = uint32(deadline - token.BRIDGE_CUTOFF());
         vm.prank(relayer);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeAfterDeadline.selector, iTok, uint32(deadline)));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeCutoffPassed.selector, iTok, cutoff));
         token.crosschainBurn(user, user, iTok, 1);
     }
 

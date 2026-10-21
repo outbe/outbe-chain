@@ -194,6 +194,16 @@
   },
   {
     "type": "error",
+    "name": "ActiveSetFull",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "Arithmetic",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "CcaNotActive",
     "inputs": [
       {
@@ -207,5 +217,56 @@
         "internalType": "enum ICcaRegistry.State"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "Cooldown",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CustodyShortfall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidAmount",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidName",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidState",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NoUnbond",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotRegistered",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnbondPending",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroAddress",
+    "inputs": []
   }
 ]

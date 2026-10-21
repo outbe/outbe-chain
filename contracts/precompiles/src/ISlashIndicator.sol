@@ -4,6 +4,72 @@ pragma solidity ^0.8.30;
 /// @title ISlashIndicator
 /// @notice Slash indicator precompile at 0x000000000000000000000000000000000000EE01
 interface ISlashIndicator {
+    /// Caller-facing domain revert.
+    error EvidenceSignerMismatch();
+    error ProposalsMustBeSameRound();
+    error VotesMustBeSameRound();
+    error ProposalsMustDifferForDoubleProposal();
+    error ConflictingVotesMustBeDifferentProposals();
+    error ConflictingVoteSignaturesInvalid();
+    error EvidenceAlreadyProcessed();
+    error EvidenceBlockTooShort();
+    error EvidencePubkeySlice();
+    error EvidenceSignatureSlice();
+    error InvalidBlsPublicKey();
+    error InvalidBlsSignature();
+    error UnexpectedEndOfVarint();
+    error VarintOverflow();
+    error NonCanonicalVarint();
+    error InvalidEvidenceRewardPercent(uint64 percent);
+    error EvidenceRewardOverflow();
+    error SlashGuardRingSeqOverflow();
+    error SubmitterNotActiveValidator(address caller, uint8 status);
+    error MissingCommitteeSnapshotForEpoch(uint64 epoch);
+    error InvalidCommitteePubkeyInSnapshot();
+    error SignerNotRegisteredValidator();
+    error EvidenceFieldTruncated();
+    error Spe1WrongLength(uint64 expected, uint64 actual);
+    error Spe1BadMagic();
+    error Spe1BadVersion();
+    error Ipe1TooShort(uint64 min_len, uint64 actual);
+    error Ipe1BadMagic();
+    error Ipe1BadVersion();
+    error Ipe1CommitmentLengthExceedsInput();
+    error Ipe1TrailingBytes();
+    error InvalidVrfEvidenceInputTooShort(uint64 actual, uint64 min_len);
+    error InvalidVrfEvidenceBadMagic();
+    error InvalidVrfEvidenceUnsupportedVersion(uint8 version, uint8 expected);
+    error InvalidVrfEvidenceTrailingBytes(uint64 trailing);
+    error InvalidVrfEvidenceFieldExceedsInput(string field, uint64 len, uint64 remaining);
+    error EvidenceStale(uint64 current_block, uint64 child_block, uint64 max_age);
+    error EvidenceParentChildNumberMismatch(uint64 parent, uint64 child);
+    error EvidenceBlockNotInCanonicalWindow(string role, uint64 number);
+    error EvidenceHashNotCanonical(string role, bytes32 hash, uint64 number, bytes32 canonical);
+    error Phase1TxInvalid(string reason);
+    error Phase1CalldataDecodeFailed(string reason);
+    error Phase1CalldataNotCertifiedParentAccounting(string kind);
+    error MissingCommitteeSnapshotForFinalizedEpoch(uint64 finalized_epoch, bytes32 committee_set_hash);
+    error Phase1ProposerNotInCommittee(address proposer, uint64 epoch);
+    error IdenticalSeedPartials();
+    error InvalidSeedPartialIdentitySignatures();
+    error MissingCommitteeSnapshotForRound();
+    error EvidenceTooLarge(uint64 actual, uint64 max_bytes);
+    error EvidenceEpochStale(uint64 current_epoch, string label, uint64 evidence_epoch, uint64 max_lag);
+    error MetadataParentBindingMismatch(
+        uint64 ev_parent_num, bytes32 ev_parent_hash, uint64 meta_num, bytes32 meta_hash
+    );
+    error MetadataEpochMismatch(uint64 finalized_epoch, uint64 child_epoch);
+    error ValidVrfProofNotSlashable();
+    error NonVrfVerifyRejection(string err);
+    error SignerIndexOutOfRange();
+    error SignerPubkeyMismatchAtIndex();
+    error VrfMaterialVersionMismatch();
+    error MissingSnapshotPolynomialCommitment();
+    error CommitmentPolynomialHashMismatch();
+    error PartialNotIdentitySigned();
+    error MalformedCommitmentOrPartial();
+    error ValidSeedPartialNotSlashable();
+
     /// Emitted when a proposer miss triggers a felony (forced exit + slash).
     event ProposerFelony(address indexed validator, uint64 missCount, uint64 felonyCount);
 

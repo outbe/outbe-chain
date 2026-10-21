@@ -488,7 +488,11 @@ fn claim_gem_and_assert_gas_only_cost(
             gemId: added[0],
             owner: beneficiary,
             promisLoadMinor: expected_load,
-            entryPriceMinor: terms,
+            entryPriceMinor: outbe_primitives::markup::marked_down(
+                terms,
+                outbe_agentreward::constants::AGENT_DISCOUNT_PCT,
+            )
+            .expect("discounted entry price"),
             issuanceCurrency: issuance_currency,
             referenceCurrency: reference_currency,
             issuedAt: timestamp,

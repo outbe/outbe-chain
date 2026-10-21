@@ -50,16 +50,16 @@ impl MetadosisContract<'_> {
 }
 
 /// The Desis Limit of a day: what the day earned beyond the Lysis share. The cap is what Lysis left
-/// of the day's own limit plus what the path draws from the carry-over.
+/// of the day's own limit plus what the path draws from the Promis Limit.
 pub(crate) fn desis_limit(
     nominal_total: U256,
     lysis_limit_minor: U256,
     day_limit: U256,
-    carry_over_draw: U256,
+    promis_limit_draw: U256,
 ) -> Option<U256> {
     let available = day_limit
         .checked_sub(lysis_limit_minor)?
-        .checked_add(carry_over_draw)?;
+        .checked_add(promis_limit_draw)?;
     Some(nominal_total.checked_sub(lysis_limit_minor)?.min(available))
 }
 
@@ -127,7 +127,7 @@ fn settle_empty_day(
         status: "COMPLETED".into(),
         action: "no tributes".into(),
     })?;
-    promis_limit.add_to_total_unallocated(returned)
+    promis_limit.checked_credit(returned).map(|_| ())
 }
 
 fn settle_zero_allocation(
@@ -153,7 +153,7 @@ fn settle_zero_allocation(
         .and_then(|rest| rest.checked_sub(desis_limit_minor))
         .and_then(|headroom| headroom.checked_add(to_promis))
         .ok_or(crate::errors::MetadosisStorageCorruptionError::SplitExceedsDayLimit)?;
-    promis_limit.add_to_total_unallocated(returned)?;
+    promis_limit.checked_credit(returned)?;
     complete_emission_day(metadosis, emission_day, emission_day_state::SUCCEEDED)?;
     TributeContract::new(metadosis.storage.clone()).forfeit_sealed_partition(wwd)?;
     metadosis.emit(IMetadosis::MetadosisExecuted {
@@ -189,7 +189,7 @@ fn dispatch_brief(
             has_limit: is_active,
         },
         ctx.block.timestamp,
-        outbe_desis::api::BriefOverflowPolicy::CarryOver,
+        outbe_desis::api::BriefOverflowPolicy::ReturnToPromisLimit,
     )?;
     match receipt {
         outbe_desis::api::AuctionBriefReceipt::Accepted => desis_limit_minor
@@ -198,7 +198,7 @@ fn dispatch_brief(
                 crate::errors::MetadosisStorageCorruptionError::AcceptedDesisBriefExceedsRoutingLimit
                     .into()
             }),
-        outbe_desis::api::AuctionBriefReceipt::RejectedToCarryOver {
+        outbe_desis::api::AuctionBriefReceipt::ReturnedToPromisLimit {
             reason: outbe_desis::api::AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain,
             desis_limit_minor: rejected_desis_limit_minor,
             max_accepted,

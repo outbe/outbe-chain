@@ -20,9 +20,9 @@ impl Rpc {
     pub fn register_radicle_repository(&self, key: &str, repo_id: [u8; 20]) -> Result<String> {
         let tx = eth::send_call(
             &self.cfg.rpc0,
-            outbe_primitives::addresses::RADICLE_REGISTRY_ADDRESS,
+            outbe_primitives::addresses::CODE_REGISTRY_ADDRESS,
             key,
-            &IRadicleRegistry::registerRepositoryCall {
+            &ICodeRegistry::registerRepositoryCall {
                 repoId: repo_id.into(),
             },
             None,
@@ -36,22 +36,22 @@ impl Rpc {
     }
 
     /// `(count, generation, maximum)` from the finalized repository registry view.
-    pub fn radicle_registry_state(&self) -> Option<(u32, u64, u32)> {
-        let address = outbe_primitives::addresses::RADICLE_REGISTRY_ADDRESS;
+    pub fn code_registry_state(&self) -> Option<(u32, u64, u32)> {
+        let address = outbe_primitives::addresses::CODE_REGISTRY_ADDRESS;
         let count: u32 = eth::read_call(
             &self.cfg.rpc0,
             address,
-            &IRadicleRegistry::repositoryCountCall {},
+            &ICodeRegistry::repositoryCountCall {},
         )?;
         let generation: u64 = eth::read_call(
             &self.cfg.rpc0,
             address,
-            &IRadicleRegistry::registryGenerationCall {},
+            &ICodeRegistry::registryGenerationCall {},
         )?;
         let maximum: u32 = eth::read_call(
             &self.cfg.rpc0,
             address,
-            &IRadicleRegistry::maxRepositoriesCall {},
+            &ICodeRegistry::maxRepositoriesCall {},
         )?;
         Some((count, generation, maximum))
     }

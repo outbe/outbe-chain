@@ -1,8 +1,14 @@
 use alloy_primitives::{Address, Bytes, U256};
+use alloy_sol_types::sol;
 use outbe_primitives::dispatch::reject_value;
 use outbe_primitives::error::Result;
 
 use crate::errors::RewardsError;
+
+sol!(
+    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
+    "../../../contracts/precompiles/src/IRewards.sol"
+);
 
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
@@ -12,8 +18,7 @@ pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
 /// Dispatches an ABI-encoded call to the Rewards precompile.
 ///
 /// The Rewards precompile exposes **no** callable external methods. The Rewards
-/// batch API prepares validator daily emission and delivers it as Gems
-/// (validator emission is paid in Gems, not a claimable native balance).
+/// daily emission accrues separately in AgentReward, which owns reward claims.
 /// Per-block fees settle internally via the `LateFinalizeCredits` begin-zone
 /// phase. The contract's state is accessed only in-process through the
 /// [`crate::schema::Rewards`] facade (api / lifecycle / hooks), never through

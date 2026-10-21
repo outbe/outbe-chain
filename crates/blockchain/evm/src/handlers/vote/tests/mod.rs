@@ -16,6 +16,7 @@ use outbe_vote::precompile::IVote;
 use outbe_vote::schema::{BondSettlement, Vote};
 
 mod factory;
+mod vaultrouter;
 
 const VALIDATOR_OWNER: Address = Address::repeat_byte(0xff);
 const VALIDATOR_A: Address = Address::repeat_byte(0xa1);

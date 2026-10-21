@@ -77,11 +77,12 @@ async function main() {
   // Generate random salt
   const salt = ethers.hexlify(ethers.randomBytes(32));
 
-  // Compute commit hash: keccak256(abi.encode(orderId, outputAmount, salt))
+  // Compute commit hash: keccak256(abi.encode(orderId, solver, outputAmount, salt)).
+  // The solver address binds the commitment to this wallet. The reveal must come from the same wallet.
   const commitHash = ethers.keccak256(
     ethers.AbiCoder.defaultAbiCoder().encode(
-      ['bytes32', 'uint256', 'bytes32'],
-      [orderIdHex, outputAmountWei, salt]
+      ['bytes32', 'address', 'uint256', 'bytes32'],
+      [orderIdHex, solverAddress, outputAmountWei, salt]
     )
   );
 

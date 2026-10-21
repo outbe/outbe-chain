@@ -1,7 +1,7 @@
 [
   {
     "type": "function",
-    "name": "totalUnallocated",
+    "name": "promisLimit",
     "inputs": [],
     "outputs": [
       {
@@ -13,46 +13,13 @@
     "stateMutability": "view"
   },
   {
-    "type": "event",
-    "name": "CertifiedCarryOverCredited",
-    "inputs": [
-      {
-        "name": "activationCallId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "sourceWorldwideDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "promisLimitBeforeMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "unusedLysisLimitMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "promisLimitAfterMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "stateEventDigest",
-        "type": "bytes32",
-        "indexed": false,
-        "internalType": "bytes32"
-      }
-    ],
-    "anonymous": false
+    "type": "error",
+    "name": "Overflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "Underflow",
+    "inputs": []
   }
 ]

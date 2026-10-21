@@ -493,7 +493,7 @@ fn the_call_and_the_forfeit_compose_across_runs() {
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(storage.clone())
-                .get_total_unallocated()
+                .promis_limit()
                 .unwrap(),
             pledge_cost()
         );
@@ -1039,7 +1039,7 @@ fn the_cleanup_budget_bounds_one_block_and_the_next_block_drains_the_rest() {
         // Each deleted Credis burns its Gratis into the reserve as it goes.
         let reserve = || {
             outbe_promislimit::PromisLimitContract::new(storage.clone())
-                .get_total_unallocated()
+                .promis_limit()
                 .unwrap()
         };
         assert_eq!(expire(&storage, lapsed), 1);
@@ -1162,7 +1162,7 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
     let expected = pledge_cost() * U256::from(3u64);
     let reserve = |storage: &StorageHandle<'_>| {
         outbe_promislimit::PromisLimitContract::new(storage.clone())
-            .get_total_unallocated()
+            .promis_limit()
             .unwrap()
     };
 

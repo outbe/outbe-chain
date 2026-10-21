@@ -1,10 +1,25 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
-/// @title RadicleRegistry V1
+/// @title CodeRegistry V1
 /// @notice Permissionless, append-only registry of public Heartwood repositories.
 /// @dev maxRepositories() == type(uint32).max denotes an unlimited configured capacity.
-interface IRadicleRegistry {
+interface ICodeRegistry {
+    /// Caller-facing domain revert.
+    error ZeroRepositoryId();
+    error AlreadyRegistered();
+    error CapacityReached(uint32 maximum);
+    error IndexOutOfBounds(uint32 index, uint32 count);
+    error NonZeroStorageKeyTail();
+    error InconsistentRepositoryIndex(uint32 index);
+    error InvalidPatchPayload();
+    error UnknownRepository();
+    error ApprovalProposalMismatch();
+    error ImmutableApproval();
+    error InvalidPublication(string value);
+    error NoncanonicalGovernmentsBytes();
+    error GovernmentsDescriptorMismatch();
+
     /// @dev payload is the exact canonical V1 Vote subject; execution and Merge are separate.
     struct PatchApprovalInfo {
         bool approved;

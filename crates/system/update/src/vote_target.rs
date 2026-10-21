@@ -165,7 +165,7 @@ mod tests {
         ] {
             assert!(matches!(
                 classify_domain_error(err),
-                Err(PrecompileError::Revert(_))
+                Err(PrecompileError::RevertBytes(_))
             ));
         }
     }

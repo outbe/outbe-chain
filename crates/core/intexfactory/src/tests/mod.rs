@@ -121,6 +121,15 @@ fn call_group<'s>(
     called::call_if_breached(call, group, &window, now_ts).unwrap()
 }
 
+/// The PROD call trigger: what the auction start fixes while the PROD profile is live.
+fn prod_trigger() -> outbe_intex::IntexCallTrigger {
+    outbe_intex::IntexCallTrigger {
+        call_window_seconds: CALL_WINDOW,
+        call_threshold_seconds: CALL_THRESHOLD,
+        call_notice_period_seconds: CALL_NOTICE_PERIOD,
+    }
+}
+
 fn sample(worldwide_day: u32) -> IssuanceParams {
     IssuanceParams {
         series_id: sid(worldwide_day),
@@ -128,6 +137,8 @@ fn sample(worldwide_day: u32) -> IssuanceParams {
         issued_units: 100,
         promis_load_minor: PROMIS_LOAD_MINOR,
         entry_price_minor: U256::from(ENTRY_PRICE),
+        call_price_minor: U256::from(EXPECTED_TRIGGER),
+        call_trigger: prod_trigger(),
         issuance_currency: 840,
         reference_currency: 840,
         // One target in the snapshot exercises the per-chain ISSUANCE loop.

@@ -1,4 +1,5 @@
 use super::*;
+use alloy_sol_types::SolError;
 use outbe_primitives::storage::finalized_guard_ring::{test_ring_hash, RingPosition};
 use outbe_primitives::storage::hashmap::MutationPrefixViews;
 
@@ -87,7 +88,7 @@ fn test_record_finalized_participation_accepts_historical_validators() {
         let err = vs
             .record_participation(&[val_active], &[val_unbonding])
             .unwrap_err();
-        assert!(matches!(err, PrecompileError::Revert(_)));
+        assert!(matches!(err, PrecompileError::RevertBytes(_)));
 
         // record_finalized_participation accepts both, increments missed_votes for absent.
         vs.record_finalized_participation(&[val_active], &[val_unbonding])
@@ -111,13 +112,12 @@ fn test_record_finalized_participation_rejects_unregistered() {
         // Registration check reverts (not Fatal) so the message propagates
         // cleanly instead of being masked as OutOfGas (see commit c879d4e).
         match err {
-            PrecompileError::Revert(msg) => {
-                assert!(
-                    msg.contains("not a registered validator"),
-                    "unexpected error: {msg}"
-                );
+            PrecompileError::RevertBytes(bytes) => {
+                let decoded = crate::precompile::IValidatorSet::FinalizedAbsentVoterNotRegistered::abi_decode(&bytes)
+                    .expect("absent voter");
+                assert_eq!(decoded.addr, stranger);
             }
-            other => panic!("expected Revert, got {other:?}"),
+            other => panic!("expected typed revert bytes, got {other:?}"),
         }
     });
 }
@@ -362,7 +362,7 @@ fn finalized_participation_ring_cursor_overflow_is_fatal_after_the_ring_write() 
     let mut provider = seeded_participation_ring(u64::MAX, evicted, &[evicted]);
     let result = record_ring_absence(&mut provider, fb_hash);
     assert!(
-        matches!(&result, Err(PrecompileError::Revert(message)) if message == "finalized participation ring sequence overflow"),
+        matches!(&result, Err(PrecompileError::RevertBytes(bytes)) if bytes.len() >= 4 && bytes[..4] == crate::precompile::IValidatorSet::FinalizedParticipationRingSeqOverflow::SELECTOR),
         "{result:?}"
     );
     assert_eq!(

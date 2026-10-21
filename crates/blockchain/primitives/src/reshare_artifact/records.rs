@@ -14,7 +14,7 @@ pub(super) fn decode_into(
     match tag {
         RADICLE_PUBLICATION_TAG => {
             if !artifacts.radicle_publication_enabled {
-                return Err(ReshareArtifactError::PublicationRequiresV0c.into());
+                return Err(ReshareArtifactError::PublicationFlagRequired.into());
             }
             decode_unique_slot(
                 &mut artifacts.radicle_publication,

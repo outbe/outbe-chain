@@ -1,0 +1,21 @@
+[
+  {
+    "type": "event",
+    "name": "OutbeFailure",
+    "inputs": [
+      {
+        "name": "code",
+        "type": "uint16",
+        "indexed": true,
+        "internalType": "uint16"
+      },
+      {
+        "name": "reason",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
+      }
+    ],
+    "anonymous": false
+  }
+]

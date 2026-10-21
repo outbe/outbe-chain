@@ -1,5 +1,8 @@
 //! Error types for the confidential Promis token module.
 
+use crate::precompile::IPromis;
+use alloy_primitives::Bytes;
+use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
 use outbe_tee::protocol::EnclaveResponse;
 use thiserror::Error;
@@ -13,9 +16,19 @@ pub enum PromisError {
     Rejected(String),
 }
 
+fn revert_with<E: SolError>(error: E) -> PrecompileError {
+    PrecompileError::RevertBytes(Bytes::from(error.abi_encode()))
+}
+
 impl From<PromisError> for PrecompileError {
     fn from(err: PromisError) -> Self {
-        PrecompileError::Revert(err.to_string())
+        use IPromis as I;
+        match err {
+            PromisError::InvalidOpNonce { expected, provided } => {
+                revert_with(I::InvalidOpNonce { expected, provided })
+            }
+            PromisError::Rejected(value) => revert_with(I::Rejected { value }),
+        }
     }
 }
 
@@ -38,6 +51,10 @@ pub enum PromisFatalError {
     TotalSupplyOverflow,
     #[error("promis total_supply underflow")]
     TotalSupplyUnderflow,
+    #[error("owner movement result mismatch")]
+    OwnerResultMismatch,
+    #[error("enclave returned a wrong op nonce")]
+    WrongOpNonce,
 }
 
 impl PromisFatalError {
@@ -62,9 +79,10 @@ impl From<PromisFatalError> for PrecompileError {
             | PromisFatalError::AttestationInvalid(_) => {
                 PrecompileError::EnclaveUnavailable(message)
             }
-            PromisFatalError::TotalSupplyOverflow | PromisFatalError::TotalSupplyUnderflow => {
-                PrecompileError::Revert(message)
-            }
+            PromisFatalError::TotalSupplyOverflow
+            | PromisFatalError::TotalSupplyUnderflow
+            | PromisFatalError::OwnerResultMismatch
+            | PromisFatalError::WrongOpNonce => PrecompileError::Revert(message),
         }
     }
 }
