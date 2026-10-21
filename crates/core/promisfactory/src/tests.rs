@@ -14,9 +14,7 @@ use outbe_primitives::units::{ONE_COEN, SCALE_1E6_U64};
 use outbe_promis::api::{self as promis_api, ModifyAuth};
 use outbe_promis::enclave_client::test_enclave;
 use outbe_tee::protocol::{GratisOp, PromisOp};
-use outbe_tee_enclave::promis::{
-    decrypt_balance, derive_modify_key, derive_view_key, modify_mac, ModifyOperation,
-};
+use outbe_tee_enclave::promis::{decrypt_balance, derive_view_key};
 
 use crate::precompile::{dispatch, IPromisFactory};
 use crate::runtime;

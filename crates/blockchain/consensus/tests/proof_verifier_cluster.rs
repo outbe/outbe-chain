@@ -15,13 +15,13 @@
 //! binding tests in `tests/verifier.rs` and the 5 low-level smoke tests in
 //! `tests/verifier_smoke.rs`'s full 31-test contract is covered.
 
-#[path = "parent_proof.rs"]
+#[path = "support/parent_proof.rs"]
 mod parent_proof;
 
 use alloy_primitives::B256;
 use commonware_codec::{Encode, Read};
 use commonware_consensus::{
-    simplex::types::{Finalization, Notarization, Proposal, Subject},
+    simplex::types::{Finalization, Proposal, Subject},
     types::{Epoch, Round, View},
 };
 use commonware_cryptography::{

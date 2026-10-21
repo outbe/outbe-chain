@@ -6,13 +6,13 @@
 //! variant. Happy-path tests run the full flow end-to-end against a real
 //! DKG-derived HybridCertificate.
 
-#[path = "parent_proof.rs"]
+#[path = "support/parent_proof.rs"]
 mod parent_proof;
 
 use alloy_primitives::{Address, Bytes, B256};
 use commonware_codec::{Encode, FixedSize};
 use commonware_consensus::{
-    simplex::types::{Finalization, Notarization, Proposal},
+    simplex::types::{Finalization, Proposal},
     types::{Epoch, Round, View},
 };
 use commonware_cryptography::{

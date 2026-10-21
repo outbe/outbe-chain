@@ -648,9 +648,6 @@ fn collateral_is_drawn_per_credis_and_never_reopens() {
 #[test]
 fn encrypted_nod_mint_preserves_nonce_and_combined_fidelity_state() {
     with_env(|storage| {
-        use outbe_primitives::{
-            nod_encryption::NodTermsV2, time::WorldwideDay, wwd_entity_id::WwdEntityId,
-        };
         let amount = U256::from(123);
         let nod = encrypted_nod(amount);
         let authorization = auth(GratisOp::Mint, alice(), amount, 0);
@@ -757,9 +754,6 @@ fn mine_coen_reverts_when_the_timestamp_exceeds_u64() {
 #[test]
 fn encrypted_nod_mint_reverts_when_the_timestamp_exceeds_u64() {
     with_env(|storage| {
-        use outbe_primitives::{
-            nod_encryption::NodTermsV2, time::WorldwideDay, wwd_entity_id::WwdEntityId,
-        };
         let amount = U256::from(123);
         let nod = encrypted_nod(amount);
         storage.set_block_timestamp(timestamp_above_u64()).unwrap();

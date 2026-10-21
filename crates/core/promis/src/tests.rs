@@ -3,15 +3,13 @@
 //! fixed dev state key. The tests assert balances by decrypting the ciphertext with
 //! the account's view key exactly as a client would.
 
-use alloy_primitives::{address, Address, B256, U256};
+use alloy_primitives::{address, Address, U256};
 use alloy_sol_types::SolCall;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_tee::protocol::{ModifyAuth, PromisOp};
-use outbe_tee_enclave::promis::{
-    decrypt_balance, derive_modify_key, derive_view_key, modify_mac, ModifyOperation,
-};
+use outbe_tee_enclave::promis::{decrypt_balance, derive_view_key};
 
 use crate::api;
 use crate::enclave_client::test_enclave;
@@ -20,9 +18,6 @@ use outbe_primitives::units::SCALE_1E6_U64;
 
 const CHAIN_ID: u64 = 1;
 
-fn chain_b256() -> B256 {
-    B256::from(U256::from(CHAIN_ID))
-}
 fn alice() -> Address {
     address!("0x1111111111111111111111111111111111111111")
 }
