@@ -79,10 +79,10 @@ fn seed_candidate_at(
     issued_at: u32,
     trigger_minor: u64,
 ) {
-    seed_series(s, worldwide_day, issued_at, trigger_minor, REFERENCE_ISO)
+    currencies::seed_series(s, worldwide_day, issued_at, trigger_minor, REFERENCE_ISO)
 }
 
-fn called_count(s: &StorageHandle<'_>, days: std::ops::Range<u32>) -> u32 {
+pub(super) fn called_count(s: &StorageHandle<'_>, days: std::ops::Range<u32>) -> u32 {
     days.filter(|d| {
         let series_id = SeriesId::for_pair(WorldwideDay::new(*d), 840, REFERENCE_ISO).unwrap();
         series_state(s, series_id) == outbe_intex::IntexState::Called
@@ -610,7 +610,7 @@ fn a_sweep_that_fits_in_one_run_closes_at_once() {
 /// A young series: issued inside the window, so its truncated window cannot hold
 /// the threshold however loud the days were.
 fn seed_young_candidate(s: &StorageHandle<'_>, worldwide_day: u32, issued_at: u32) {
-    seed_series(s, worldwide_day, issued_at, TRIGGER, REFERENCE_ISO);
+    currencies::seed_series(s, worldwide_day, issued_at, TRIGGER, REFERENCE_ISO);
 }
 
 /// Nothing shrinks a bin whose groups all decide against a move, so the sweep has
@@ -746,7 +746,6 @@ fn a_new_sweep_walks_the_bins_the_last_one_stopped_above() {
         );
     });
 }
-
 
 #[path = "lifecycle_call_sweep_currencies.rs"]
 mod currencies;
