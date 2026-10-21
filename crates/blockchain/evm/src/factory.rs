@@ -437,17 +437,30 @@ mod tests {
         let factory = OutbeEvmFactory::default();
         let mut evm = factory.create_evm(EmptyDB::default(), test_env());
 
-        let _ = evm.transact_system_call(
-            outbe_primitives::addresses::SYSTEM_ADDRESS,
-            outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
-            Bytes::new(),
-        );
+        let caller = outbe_primitives::addresses::SYSTEM_ADDRESS;
+        let target = outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS;
+        let data = Bytes::from_static(b"system call input");
+        // A preceding user transaction must not leak fields into the system call.
+        evm.ctx_mut().tx = TxEnv {
+            nonce: 42,
+            value: alloy_primitives::U256::from(99),
+            gas_price: 123,
+            ..Default::default()
+        };
+        let _ = evm.transact_system_call(caller, target, data.clone());
 
         assert_eq!(
             evm.ctx().tx.gas_limit,
             outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT
         );
         assert_eq!(evm.ctx().block.gas_limit, USER_BLOCK_GAS_LIMIT);
+        assert_eq!(evm.ctx().tx.caller, caller);
+        assert_eq!(evm.ctx().tx.kind, TxKind::Call(target));
+        assert_eq!(evm.ctx().tx.data, data);
+        assert_eq!(evm.ctx().tx.value, alloy_primitives::U256::ZERO);
+        assert_eq!(evm.ctx().tx.gas_price, 0);
+        assert_eq!(evm.ctx().tx.nonce, 0);
+        assert!(!evm.ctx().cfg.disable_nonce_check);
     }
 
     #[test]
