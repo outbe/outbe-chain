@@ -459,13 +459,18 @@ fn settled_token_id_tags_the_series_id() {
     let series_id = sid(7);
     let issued = U256::from_be_slice(series_id.as_bytes());
     let settled = runtime::settled_token_id(series_id);
+    // A series id is 14 bytes, so its space ends at bit 112. This bound does not
+    // come from either constant under test.
     let tag: U256 = U256::from(1u8) << 112;
+    const SOL: &str = include_str!("../../../../../contracts/intex/src/shared/IntexNFT1155.sol");
+    let bit = outbe_primitives::test_utils::sol_interface::sol_constant_shift(SOL, "_SETTLED_TAG")
+        .expect("_SETTLED_TAG is 1 << N");
 
-    // Solidity derives the same value. The tag sits above the 14-byte series-id space, so the two
-    // id classes cannot collide, and clearing the tag recovers the series.
     assert!(issued < tag);
     assert_eq!(settled, issued | tag);
     assert_eq!(settled & !tag, issued);
+    assert_eq!(U256::from(1u8) << bit, tag);
+    assert_eq!(crate::constants::SETTLED_TAG, tag);
 }
 
 #[test]
