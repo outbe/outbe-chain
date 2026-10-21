@@ -15,6 +15,7 @@ interface IAgentReward {
     error NoClaimableBalance();
     error InsufficientClaimableBalance();
     error MissingPreviousDayPrice(uint16 value);
+    error EntryPriceOverflow();
     error UnknownRewardPool(uint8 value);
     error AccrualJobMissing(uint64 value);
 
