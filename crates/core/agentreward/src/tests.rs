@@ -378,9 +378,10 @@ fn same_block_claims_with_different_currencies_have_distinct_ids() {
             .claim_reward(RewardPool::Waa, alice, load, (USD, USD))
             .unwrap_err();
         assert!(matches!(
-            error,
-            outbe_primitives::error::PrecompileError::Revert(reason)
-                if reason == outbe_gem::GemError::AlreadyExists.to_string()
+            (error, outbe_primitives::error::PrecompileError::from(outbe_gem::GemError::AlreadyExists)),
+            (outbe_primitives::error::PrecompileError::RevertBytes(actual),
+             outbe_primitives::error::PrecompileError::RevertBytes(expected))
+                if actual == expected
         ));
         assert_eq!(contract.get_claimable_reward(alice).unwrap(), remaining);
         assert_eq!(
