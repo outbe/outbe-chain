@@ -48,7 +48,7 @@ impl IntexParams {
         call_notice_period_seconds: 3 * SECONDS_PER_DAY_U32,
         #[cfg(feature = "e2e-test")]
         call_notice_period_seconds: 600,
-        call_rate: 10,
+        call_rate: 4,
         commit_bond_minor: 100 * SCALE_1E6_U128,
     };
 

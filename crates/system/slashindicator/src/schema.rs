@@ -101,3 +101,40 @@ pub struct SlashIndicator {
     pub slash_guard_ring: Mapping<u64, B256>,
     pub slash_guard_ring_seq: Slot<u64>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::U256;
+    use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+
+    #[test]
+    fn storage_slot_layout_is_pinned() {
+        let mut provider = HashMapStorageProvider::new(1);
+        let c = SlashIndicator::new(StorageHandle::new(&mut provider));
+
+        assert_eq!(
+            c.config_proposer_misdemeanor_threshold.slot(),
+            U256::from(0)
+        );
+        assert_eq!(c.config_proposer_felony_threshold.slot(), U256::from(1));
+        assert_eq!(c.config_voter_misdemeanor_threshold.slot(), U256::from(2));
+        assert_eq!(c.config_slash_amount_percent.slot(), U256::from(3));
+        assert_eq!(c.config_evidence_reward_percent.slot(), U256::from(4));
+        assert_eq!(c.proposer_miss_count.base_slot(), U256::from(5));
+        assert_eq!(c.voter_miss_count.base_slot(), U256::from(6));
+        assert_eq!(c.felony_count.base_slot(), U256::from(7));
+        assert_eq!(c.evidence_processed.base_slot(), U256::from(8));
+        assert_eq!(c.voter_window_slashed.base_slot(), U256::from(9));
+        assert_eq!(c.proposer_window_slashed.base_slot(), U256::from(10));
+        assert_eq!(c.invalid_vrf_evidence_processed.base_slot(), U256::from(11));
+        assert_eq!(c.config_voter_felony_threshold.slot(), U256::from(12));
+        assert_eq!(
+            c.seed_partial_equivocation_processed.base_slot(),
+            U256::from(13)
+        );
+        assert_eq!(c.invalid_seed_partial_processed.base_slot(), U256::from(14));
+        assert_eq!(c.slash_guard_ring.base_slot(), U256::from(15));
+        assert_eq!(c.slash_guard_ring_seq.slot(), U256::from(16));
+    }
+}

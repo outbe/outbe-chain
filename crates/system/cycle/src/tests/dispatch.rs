@@ -278,9 +278,8 @@ fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
 
 #[test]
 fn every_block_credits_a_queued_reward_slice_between_hourly_cycles() {
-    use outbe_agentreward::distribution::{
-        distribute_daily, PoolKind, ACCRUAL_RECIPIENTS_PER_BLOCK,
-    };
+    use outbe_agentreward::constants::ACCRUAL_RECIPIENTS_PER_BLOCK;
+    use outbe_agentreward::distribution::{distribute_daily, PoolKind};
     use outbe_agentreward::schema::RewardPool;
 
     with_anchored_cycle(|handle| {

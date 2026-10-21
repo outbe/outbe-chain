@@ -200,3 +200,45 @@ pub struct Rewards {
     /// Settled and participation-closed tombstones remain permanently.
     pub settled_day_cleanup_day_at: Mapping<u64, u32>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+
+    #[test]
+    fn storage_slot_layout_is_pinned() {
+        let mut provider = HashMapStorageProvider::new(1);
+        let c = Rewards::new(StorageHandle::new(&mut provider));
+
+        assert_eq!(c.genesis_utc_day.slot(), U256::from(0));
+        assert_eq!(c.participation_counted_for_block.base_slot(), U256::from(1));
+        assert_eq!(c.daily_fee_sum_raw.base_slot(), U256::from(2));
+        assert_eq!(c.daily_participation.base_slot(), U256::from(3));
+        assert_eq!(c.daily_voter_count.base_slot(), U256::from(4));
+        assert_eq!(c.daily_voter_at.base_slot(), U256::from(5));
+        assert_eq!(c.daily_settled.base_slot(), U256::from(6));
+        assert_eq!(c.block_metadata_counted.base_slot(), U256::from(7));
+        assert_eq!(c.metadata_fingerprint_for_block.base_slot(), U256::from(8));
+        assert_eq!(c.pending_fees.base_slot(), U256::from(9));
+        assert_eq!(c.fee_settled.base_slot(), U256::from(10));
+        assert_eq!(c.late_voter_k_plus1.base_slot(), U256::from(11));
+        assert_eq!(c.late_voter_count.base_slot(), U256::from(12));
+        assert_eq!(c.late_voter_at.base_slot(), U256::from(13));
+        assert_eq!(c.pending_fb_hash_at.base_slot(), U256::from(14));
+        assert_eq!(c.pending_committee_size_at.base_slot(), U256::from(15));
+        assert_eq!(c.pending_epoch_at.base_slot(), U256::from(16));
+        assert_eq!(c.pending_committee_set_hash_at.base_slot(), U256::from(17));
+        assert_eq!(c.pending_view_at.base_slot(), U256::from(18));
+        assert_eq!(c.pending_parent_view_at.base_slot(), U256::from(19));
+        assert_eq!(c.block_guard_ring.base_slot(), U256::from(20));
+        assert_eq!(c.block_guard_ring_seq.slot(), U256::from(21));
+        assert_eq!(c.pending_reward_day.base_slot(), U256::from(22));
+        assert_eq!(c.daily_last_window_close.base_slot(), U256::from(23));
+        assert_eq!(c.late_residue_dust_native.slot(), U256::from(24));
+        assert_eq!(c.daily_participation_closed.base_slot(), U256::from(25));
+        assert_eq!(c.settled_day_cleanup_head.slot(), U256::from(26));
+        assert_eq!(c.settled_day_cleanup_tail.slot(), U256::from(27));
+        assert_eq!(c.settled_day_cleanup_day_at.base_slot(), U256::from(28));
+    }
+}

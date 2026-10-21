@@ -228,6 +228,7 @@ fn measure(prepared: &PreparedGem) -> Result<Observation, String> {
                 // The reward path resolves the price for the gem's own day. The
                 // benchmark measures the mint, so the seeded rate stands in for it.
                 entry_price_minor: U256::from(2) * six_decimal_unit(),
+                call_anchor_price_minor: U256::from(2) * six_decimal_unit(),
             },
         )
         .map_err(|error| error.to_string()),
