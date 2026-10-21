@@ -25,7 +25,6 @@ sol! {
             uint32[] snapshotChains
         ) external;
         function closeCallNoticeForTest(bytes14 seriesId, uint64 deadline) external;
-        function rescanClosedDayForTest() external;
     }
 }
 
@@ -45,11 +44,6 @@ fn requeue_called(storage: &StorageHandle<'_>, series_id: SeriesId, deadline: u6
         .map_err(|_| crate::errors::IntexFactoryError::BlockTimestampExceedsU32)?;
     intex.call_group_called_at.write(&group, called_at)?;
     intex.requeue_called(group, deadline)?;
-    reopen_day(storage, deadline)
-}
-
-fn reopen_day(storage: &StorageHandle<'_>, deadline: u64) -> Result<()> {
-    let intex = outbe_intex::IntexContract::new(storage.clone());
     let day = outbe_primitives::time::timestamp_to_date_key(deadline);
     intex.call_sweep_day.write(day)?;
     intex
@@ -59,27 +53,13 @@ fn reopen_day(storage: &StorageHandle<'_>, deadline: u64) -> Result<()> {
     intex.daily_phase.write(0)?;
     for currency in outbe_oracle::api::reference_currencies(storage.clone())? {
         intex.call_bin_cursor.clear(&currency)?;
-        intex.call_scan_failed_day.clear(&currency)?;
     }
-    intex.call_currency_cursor.write(0)
+    intex.call_currency_cursor.clear()
 }
 
 /// Runs a test-arming call, or returns `None` for any other calldata.
 pub(crate) fn dispatch(storage: &StorageHandle<'_>, data: &[u8]) -> Option<Result<Bytes>> {
     use IIntexFactoryTestArming::*;
-    if rescanClosedDayForTestCall::abi_decode(data).is_ok() {
-        return Some(guarded(storage, || {
-            let yesterday = storage
-                .now_secs()?
-                .checked_sub(outbe_primitives::time::SECONDS_PER_DAY)
-                .ok_or_else(|| {
-                    outbe_primitives::error::PrecompileError::revert(
-                        "no closed UTC day for test rescan",
-                    )
-                })?;
-            reopen_day(storage, yesterday)
-        }));
-    }
     if let Ok(call) = seedDayVwapsForTestCall::abi_decode(data) {
         return Some(guarded(storage, || seed_day_vwaps_for_test(storage, call)));
     }

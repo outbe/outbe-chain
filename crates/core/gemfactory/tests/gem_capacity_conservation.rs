@@ -79,10 +79,8 @@ fn world() -> (HashMapStorageProvider, Vec<(U256, U256)>) {
         }
         oracle.utc_day_vwap_last_finalized.write(latest).unwrap();
         called::initialize_daily(&BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(0, CALLED - DAY, 1),
-            s.clone(),
-        ))
-        .unwrap();
+            BlockContext::empty_for_tests(0, CALLED - DAY, 1), s.clone(),
+        )).unwrap();
         let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(1, CALLED, 1), s.clone());
         called::scan_and_call(&ctx).unwrap();
         for (id, _) in &rights {
@@ -109,15 +107,14 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
     p.set_timestamp(U256::from(at));
     StorageHandle::enter(p, |s| {
         s.with_checkpoint(|| {
-            OracleContract::new(s.clone())
-                .utc_day_vwap_last_finalized
-                .write(previous_date_key(timestamp_to_date_key(at)))?;
+            OracleContract::new(s.clone()).utc_day_vwap_last_finalized.write(
+                previous_date_key(timestamp_to_date_key(at)),
+            )?;
             // Catch up the calendar backlog with distinct block allowances. Prices
             // no longer matter to groups already called, but day readiness does.
             for block in 0..16 {
                 let ctx = BlockRuntimeContext::new(
-                    BlockContext::empty_for_tests(at * 32 + block, at, 1),
-                    s.clone(),
+                    BlockContext::empty_for_tests(at * 32 + block, at, 1), s.clone(),
                 );
                 called::run_call_slice(&ctx)?;
                 if GemContract::new(s.clone()).call_sweep_day.read()? == 0 {
@@ -125,8 +122,7 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
                 }
             }
             let ctx = BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(at * 32 + 16, at, 1),
-                s.clone(),
+                BlockContext::empty_for_tests(at * 32 + 16, at, 1), s.clone(),
             );
             hooks::sweep_cleanup(&ctx)?;
             Ok(())

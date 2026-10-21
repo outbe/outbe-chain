@@ -17,7 +17,6 @@ sol! {
     interface ICredisFactoryTestArming {
         function backdateCredisForTest(uint256 credisId, uint64 issuedAt) external;
         function closeCallNoticeForTest(uint256 credisId, uint64 deadline) external;
-        function rescanClosedDayForTest() external;
     }
 }
 
@@ -32,14 +31,6 @@ pub(crate) fn dispatch(storage: &StorageHandle<'_>, data: &[u8]) -> Option<Resul
     if let Ok(call) = closeCallNoticeForTestCall::abi_decode(data) {
         return Some(guarded(storage, || {
             requeue_called(storage, call.credisId, call.deadline)
-        }));
-    }
-    if rescanClosedDayForTestCall::abi_decode(data).is_ok() {
-        return Some(guarded(storage, || {
-            let day = outbe_primitives::time::previous_date_key(
-                outbe_primitives::time::timestamp_to_date_key(storage.now_secs()?),
-            );
-            reopen_day(storage, day)
         }));
     }
     None
@@ -77,27 +68,8 @@ fn requeue_called(storage: &StorageHandle<'_>, credis_id: U256, deadline: u64) -
     credis.remove_called(group)?;
     credis.push_called(group, deadline)?;
     let day = outbe_primitives::time::timestamp_to_date_key(deadline);
-    reopen_day(storage, day)
-}
-
-fn reopen_day(storage: &StorageHandle<'_>, day: u32) -> Result<()> {
-    let credis = CredisContract::new(storage.clone());
-    // The fixture may target a closed day before this throwaway chain's genesis.
-    if credis.daily_genesis_day.read()? == 0 || day < credis.daily_genesis_day.read()? {
-        credis.daily_genesis_day.write(day)?;
-    }
-    if day > credis.call_latest_day.read()? {
-        credis.call_latest_day.write(day)?;
-    }
     credis.call_sweep_day.write(day)?;
     credis.daily_phase.write(0)?;
     credis.call_currency_cursor.write(0)?;
-    for currency in outbe_oracle::schema::OracleContract::new(storage.clone())
-        .reference_currencies
-        .read_all()?
-    {
-        credis.call_bin_cursor.write(&currency, 0)?;
-        credis.call_scan_failed_day.clear(&currency)?;
-    }
     Ok(())
 }

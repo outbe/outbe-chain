@@ -505,11 +505,7 @@ fn the_scan_follows_the_terms_sealed_on_the_group_not_the_constants() {
                 notice_days: 1,
             },
         );
-        assert_eq!(
-            scan(storage, at),
-            0,
-            "completed days cannot reopen after retuning"
-        );
+        assert_eq!(scan(storage, at), 0, "completed days cannot reopen after retuning");
         let at = at + DAY;
         set_vwap_for(storage, ISO, last_closed_day(at), above_call());
         assert_eq!(scan(storage, at), 1);
@@ -1222,22 +1218,13 @@ fn a_group_over_the_cleanup_budget_is_deleted_across_blocks_and_credited_once() 
         let nod = NodContract::new(storage.clone());
         assert_eq!(nod.group_nod_count.read(&group_key).unwrap(), 1);
         assert_eq!(reserve(storage), U256::from(specs.len()));
-        let allowance = outbe_primitives::sweep_budget::BlockAllowance::unpack(
-            nod.cleanup_budget.read().unwrap(),
-        )
-        .unwrap()
-        .unwrap();
+        let allowance = outbe_primitives::sweep_budget::BlockAllowance::unpack(nod.cleanup_budget.read().unwrap()).unwrap().unwrap();
         let same_height = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(allowance.height, past, CHAIN_ID),
-            storage.clone(),
+            BlockContext::empty_for_tests(allowance.height, past, CHAIN_ID), storage.clone(),
         );
         assert_eq!(crate::cleanup::sweep_cleanup(&same_height).unwrap(), 0);
         assert_eq!(nod.group_nod_count.read(&group_key).unwrap(), 1);
-        let after = outbe_primitives::sweep_budget::BlockAllowance::unpack(
-            nod.cleanup_budget.read().unwrap(),
-        )
-        .unwrap()
-        .unwrap();
+        let after = outbe_primitives::sweep_budget::BlockAllowance::unpack(nod.cleanup_budget.read().unwrap()).unwrap().unwrap();
         assert_eq!(after.budget.writes_left(), 0);
         assert!(after.budget.visits_left() <= allowance.budget.visits_left());
 
@@ -1427,9 +1414,7 @@ fn mixed_group_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_exercis
         assert_eq!(reserve(storage), U256::MAX);
         limit.checked_take_up_to(U256::MAX).unwrap();
         // The failed group retries at the next UTC midnight.
-        let retry = outbe_primitives::expiry_queue::day_end(
-            outbe_primitives::expiry_queue::deadline_day(past).unwrap(),
-        );
+        let retry = outbe_primitives::expiry_queue::day_end(outbe_primitives::expiry_queue::deadline_day(past).unwrap());
         finalize_through(storage, retry);
         assert_eq!(scan(storage, retry), 1);
         let expected = outbe_nod::api::calculation_amount(&items[0]).unwrap()
@@ -1576,11 +1561,7 @@ fn a_running_call_sweep_keeps_its_day() {
         );
         crate::called::run_call_slice(&ctx).unwrap();
         assert_eq!(called_at(storage, item.group_key), later);
-        assert_eq!(
-            nod.call_sweep_day.read().unwrap(),
-            outbe_primitives::time::next_date_key(day),
-            "only the pinned day ran at this height"
-        );
+        assert_eq!(nod.call_sweep_day.read().unwrap(), outbe_primitives::time::next_date_key(day), "only the pinned day ran at this height");
     });
 }
 

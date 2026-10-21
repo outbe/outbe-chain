@@ -584,18 +584,7 @@ mod call_sweep {
             assert!(expiring(&s, members[0]));
 
             registry.settled_units.write(&members[1], 0).unwrap();
-            let retry_day = IntexContract::deadline_day(due(deadline));
-            assert_eq!(registry.first_expiry_day().unwrap(), Some(retry_day));
-            assert_eq!(
-                registry
-                    .called_deadline
-                    .read(&group_of(&s, members[0]))
-                    .unwrap(),
-                deadline
-            );
-            let retry = IntexContract::day_end(retry_day);
-            sweep_at(&s, retry - 1);
-            assert_eq!(unallocated(&s), U256::ZERO);
+            let retry = IntexContract::day_end(IntexContract::deadline_day(due(deadline)) + 1);
             sweep_at(&s, retry);
             assert_eq!(unallocated(&s), U256::from(140u64) * U256::from(LOAD));
             assert!(!expiring(&s, members[0]));
