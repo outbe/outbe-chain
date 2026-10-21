@@ -145,7 +145,11 @@ pub struct Rewards {
     /// proposer cannot record a credit whose aggregate is over a non-canonical
     /// view of the same `fb_hash` (cross-view equivocation). The pre-exec BLS
     /// verify only ties the credit's view to its signatures. This map ties it to the
-    /// finalized certificate.
+    /// finalized certificate. Consensus certificate verification checks
+    /// `{epoch, view, parent_view, fb_hash}` against the signed proposal before
+    /// CPA processing; EVM `LateFinalizeCredits` checks the persisted binding.
+    /// This authentication is separate from the V3 economic replay fingerprint,
+    /// which does not hash `parent_view`.
     pub pending_view_at: Mapping<u64, u64>,
 
     /// Finalized block number -> its canonical `parent_view`, for

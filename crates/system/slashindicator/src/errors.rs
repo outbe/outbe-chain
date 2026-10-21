@@ -64,6 +64,21 @@ pub enum SlashIndicatorError {
     #[error("varint overflow")]
     VarintOverflow,
 
+    /// Varint uses a redundant encoding.
+    #[error("noncanonical varint")]
+    NonCanonicalVarint,
+
+    /// Effective evidence reward percentage exceeds the burned amount.
+    #[error("invalid evidence reward percent: {percent}")]
+    InvalidEvidenceRewardPercent {
+        /// Configured effective percentage.
+        percent: u64,
+    },
+
+    /// Evidence reward calculation exceeded U256.
+    #[error("evidence reward overflow")]
+    EvidenceRewardOverflow,
+
     /// The slash guard ring cursor overflowed `u64`.
     #[error("slash_guard_ring_seq overflow")]
     SlashGuardRingSeqOverflow,

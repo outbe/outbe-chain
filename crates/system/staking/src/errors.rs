@@ -28,6 +28,12 @@ pub enum StakingError {
     SlashedWithdrawalDelayOverflow,
     #[error("stake accounting underflow for validator {validator}")]
     StakeAccountingUnderflow { validator: Address },
+    #[error("stake accounting overflow for validator {validator}")]
+    StakeAccountingOverflow { validator: Address },
+    #[error("total staked accounting overflow")]
+    TotalStakeAccountingOverflow,
+    #[error("slash amount overflow")]
+    SlashAmountOverflow,
     #[error("registered validator is missing history")]
     MissingValidatorHistory,
     #[error("validator registry exceeds consensus bound: {count} > {bound}")]

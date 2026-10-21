@@ -1,10 +1,27 @@
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, U256, U512};
 use outbe_primitives::addresses::STAKING_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_validatorset::contract::ValidatorSet;
 
 use crate::contract::Staking;
 use crate::errors::StakingError;
+
+fn slash_percent(amount: U256, percent: u64) -> Result<U256> {
+    let hundred = U256::from(100u64);
+    let percent = U256::from(percent);
+    // For percent <= 100, the first term and sum are at most amount;
+    // the remainder product is at most 9,900.
+    let quotient = (amount / hundred)
+        .checked_mul(percent)
+        .ok_or(StakingError::SlashAmountOverflow)?;
+    let remainder = (amount % hundred)
+        .checked_mul(percent)
+        .ok_or(StakingError::SlashAmountOverflow)?
+        / hundred;
+    quotient
+        .checked_add(remainder)
+        .ok_or_else(|| StakingError::SlashAmountOverflow.into())
+}
 
 impl Staking<'_> {
     /// Stakes `amount` on behalf of `validator`.
@@ -33,35 +50,30 @@ impl Staking<'_> {
 
         // Update staking contract state
         let current = self.stake_amount.read(&validator)?;
-        let new_stake = current + amount;
+        let new_stake = current
+            .checked_add(amount)
+            .ok_or(StakingError::StakeAccountingOverflow { validator })?;
+        let total = self.total_staked.read()?;
+        let new_total = total
+            .checked_add(amount)
+            .ok_or(StakingError::TotalStakeAccountingOverflow)?;
 
         // Enforce max_stake_percent if configured
         let max_pct = self.config_max_stake_percent.read()?;
-        if max_pct > 0 && max_pct < 100 {
-            let total = self.total_staked.read()?;
-            if total.is_zero() {
-                self.stake_amount.write(&validator, new_stake)?;
-
-                self.total_staked.write(amount)?;
-
-                let min_stake = self.config_min_stake.read()?;
-                let mut val_set = ValidatorSet::new(self.storage.clone());
-                val_set.record_stake_increase(validator, new_stake, min_stake)?;
-
-                return Ok(());
-            }
-            let new_total = total + amount;
+        if max_pct > 0 && max_pct < 100 && !total.is_zero() {
             // Check: new_stake / new_total <= max_pct / 100
             // Equivalent to: new_stake * 100 <= max_pct * new_total
-            if new_stake * U256::from(100u64) > U256::from(max_pct) * new_total {
+            // Each U256 times a percentage <= 100 fits in U512 without narrowing.
+            if U512::from(new_stake) * U512::from(100u64)
+                > U512::from(max_pct) * U512::from(new_total)
+            {
                 return Err(StakingError::StakeExceedsMaxStakePercent.into());
             }
         }
 
         self.stake_amount.write(&validator, new_stake)?;
 
-        let total = self.total_staked.read()?;
-        self.total_staked.write(total + amount)?;
+        self.total_staked.write(new_total)?;
 
         // PoS staking: when a REGISTERED validator reaches min_stake it becomes
         // PENDING (`WaitingForReadiness`). It is admitted, not yet voting.
@@ -96,11 +108,15 @@ impl Staking<'_> {
         let unbonding_period = self.config_unbonding_period.read()?;
         let complete_time = self.checked_complete_time(timestamp, unbonding_period)?;
         let min_stake = self.config_min_stake.read()?;
-        let new_stake = current - amount;
-        self.stake_amount.write(&caller, new_stake)?;
-
+        let new_stake = current
+            .checked_sub(amount)
+            .ok_or(StakingError::StakeAccountingUnderflow { validator: caller })?;
         let total = self.total_staked.read()?;
-        self.total_staked.write(total - amount)?;
+        let new_total = total
+            .checked_sub(amount)
+            .ok_or(StakingError::StakeAccountingUnderflow { validator: caller })?;
+        self.stake_amount.write(&caller, new_stake)?;
+        self.total_staked.write(new_total)?;
 
         // Staking owns the accounting and queue. The ValidatorSet facade records
         // the complete projection only after those authoritative writes succeed.
@@ -165,12 +181,19 @@ impl Staking<'_> {
 
         // Slash active stake
         if !current.is_zero() {
-            let slash = current * U256::from(percent) / U256::from(100u64);
-            let new_stake = current - slash;
-            self.stake_amount.write(&validator, new_stake)?;
+            let slash = slash_percent(current, percent)?;
+            let new_stake = current
+                .checked_sub(slash)
+                .ok_or(StakingError::StakeAccountingUnderflow { validator })?;
             let total = self.total_staked.read()?;
-            self.total_staked.write(total - slash)?;
-            total_slashed += slash;
+            let new_total = total
+                .checked_sub(slash)
+                .ok_or(StakingError::StakeAccountingUnderflow { validator })?;
+            total_slashed = total_slashed
+                .checked_add(slash)
+                .ok_or(StakingError::SlashAmountOverflow)?;
+            self.stake_amount.write(&validator, new_stake)?;
+            self.total_staked.write(new_total)?;
         }
 
         // Slash unbonding entries proportionally.
@@ -182,11 +205,15 @@ impl Staking<'_> {
             let idx = current_stored - 1;
             let amount = self.unbonding_amount.read(&idx)?;
             if !amount.is_zero() {
-                let unbonding_slash = amount * U256::from(percent) / U256::from(100u64);
+                let unbonding_slash = slash_percent(amount, percent)?;
                 if !unbonding_slash.is_zero() {
-                    self.unbonding_amount
-                        .write(&idx, amount - unbonding_slash)?;
-                    total_slashed += unbonding_slash;
+                    let remaining = amount
+                        .checked_sub(unbonding_slash)
+                        .ok_or(StakingError::StakeAccountingUnderflow { validator })?;
+                    total_slashed = total_slashed
+                        .checked_add(unbonding_slash)
+                        .ok_or(StakingError::SlashAmountOverflow)?;
+                    self.unbonding_amount.write(&idx, remaining)?;
                 }
                 let complete_time = self.unbonding_complete_time.read(&idx)?;
                 if complete_time < slash_complete_time {
