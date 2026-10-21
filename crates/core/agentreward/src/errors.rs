@@ -9,6 +9,8 @@ use thiserror::Error;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum AgentRewardError {
+    #[error("agentreward tribute counter overflow")]
+    TributeCounterOverflow,
     #[error("agentreward distribute_daily overflow")]
     DistributeDailyOverflow,
     #[error("reward distribution arithmetic overflow")]
@@ -41,6 +43,7 @@ impl From<AgentRewardError> for PrecompileError {
     fn from(err: AgentRewardError) -> Self {
         use IAgentReward as I;
         match err {
+            AgentRewardError::TributeCounterOverflow => revert_with(I::TributeCounterOverflow {}),
             AgentRewardError::DistributeDailyOverflow => revert_with(I::DistributeDailyOverflow {}),
             AgentRewardError::DistributionOverflow => revert_with(I::DistributionOverflow {}),
             AgentRewardError::ClaimableTotalOverflow => revert_with(I::ClaimableTotalOverflow {}),
@@ -55,6 +58,7 @@ impl From<AgentRewardError> for PrecompileError {
             AgentRewardError::MissingPreviousDayPrice(value) => {
                 revert_with(I::MissingPreviousDayPrice { value })
             }
+            AgentRewardError::EntryPriceOverflow => revert_with(I::EntryPriceOverflow {}),
             AgentRewardError::UnknownRewardPool(value) => {
                 revert_with(I::UnknownRewardPool { value })
             }
@@ -74,6 +78,24 @@ mod tests {
 
     #[test]
     fn agent_reward_error_converts_to_canonical_abi_revert_bytes() {
+        let err = PrecompileError::from(AgentRewardError::EntryPriceOverflow);
+        let PrecompileError::RevertBytes(bytes) = err else {
+            panic!("expected RevertBytes, got {err:?}");
+        };
+        assert_eq!(
+            bytes.as_ref(),
+            IAgentReward::EntryPriceOverflow {}.abi_encode().as_slice()
+        );
+        let err = PrecompileError::from(AgentRewardError::TributeCounterOverflow);
+        let PrecompileError::RevertBytes(bytes) = err else {
+            panic!("expected RevertBytes, got {err:?}");
+        };
+        assert_eq!(
+            bytes.as_ref(),
+            IAgentReward::TributeCounterOverflow {}
+                .abi_encode()
+                .as_slice()
+        );
         let err = PrecompileError::from(AgentRewardError::MissingPreviousDayPrice(840));
         let PrecompileError::RevertBytes(bytes) = err else {
             panic!("expected RevertBytes, got {err:?}");

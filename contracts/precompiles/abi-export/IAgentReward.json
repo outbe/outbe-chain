@@ -209,6 +209,11 @@
   },
   {
     "type": "error",
+    "name": "EntryPriceOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InsufficientClaimableBalance",
     "inputs": []
   },
@@ -231,6 +236,11 @@
   {
     "type": "error",
     "name": "PoolTotalMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TributeCounterOverflow",
     "inputs": []
   },
   {
