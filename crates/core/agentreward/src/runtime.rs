@@ -18,28 +18,7 @@ impl AgentRewardContract<'_> {
     /// Overflow rejects activity before any write. Multi-recipient offer
     /// atomicity requires the caller's checkpoint.
     pub fn increment_waa_tribute(&mut self, day: WorldwideDay, address: Address) -> Result<()> {
-        let key = AgentRewardContract::tribute_count_key(day, address);
-        let count = self.waa_tribute_counts.read(&key)?;
-        let next_count = count
-            .checked_add(1)
-            .ok_or(AgentRewardError::TributeCounterOverflow)?;
-        let next_total = self
-            .waa_total_count
-            .read(&day)?
-            .checked_add(1)
-            .ok_or(AgentRewardError::TributeCounterOverflow)?;
-        if count == 0 {
-            // First tribute for this address+day - add to address list
-            let addr_count = self.waa_address_count.read(&day)?;
-            let next_addr_count = addr_count
-                .checked_add(1)
-                .ok_or(AgentRewardError::TributeCounterOverflow)?;
-            let idx_key = AgentRewardContract::address_index_key(day, addr_count);
-            self.waa_addresses.write(&idx_key, address)?;
-            self.waa_address_count.write(&day, next_addr_count)?;
-        }
-        self.waa_total_count.write(&day, next_total)?;
-        self.waa_tribute_counts.write(&key, next_count)
+        self.increment_tribute(RewardPool::Waa, day, address)
     }
 
     /// Increments SRA tribute count for an address on `day`.
@@ -50,28 +29,38 @@ impl AgentRewardContract<'_> {
     /// Overflow rejects activity before any write. Multi-recipient offer
     /// atomicity requires the caller's checkpoint.
     pub fn increment_sra_tribute(&mut self, day: WorldwideDay, address: Address) -> Result<()> {
+        self.increment_tribute(RewardPool::Sra, day, address)
+    }
+
+    fn increment_tribute(
+        &mut self,
+        pool: RewardPool,
+        day: WorldwideDay,
+        address: Address,
+    ) -> Result<()> {
+        let index = self.day_index(pool)?;
         let key = AgentRewardContract::tribute_count_key(day, address);
-        let count = self.sra_tribute_counts.read(&key)?;
+        let count = index.counts.read(&key)?;
         let next_count = count
             .checked_add(1)
             .ok_or(AgentRewardError::TributeCounterOverflow)?;
-        let next_total = self
-            .sra_total_count
+        let next_total = index
+            .total
             .read(&day)?
             .checked_add(1)
             .ok_or(AgentRewardError::TributeCounterOverflow)?;
         if count == 0 {
             // First tribute for this address+day - add to address list
-            let addr_count = self.sra_address_count.read(&day)?;
+            let addr_count = index.address_count.read(&day)?;
             let next_addr_count = addr_count
                 .checked_add(1)
                 .ok_or(AgentRewardError::TributeCounterOverflow)?;
             let idx_key = AgentRewardContract::address_index_key(day, addr_count);
-            self.sra_addresses.write(&idx_key, address)?;
-            self.sra_address_count.write(&day, next_addr_count)?;
+            index.addresses.write(&idx_key, address)?;
+            index.address_count.write(&day, next_addr_count)?;
         }
-        self.sra_total_count.write(&day, next_total)?;
-        self.sra_tribute_counts.write(&key, next_count)
+        index.total.write(&day, next_total)?;
+        index.counts.write(&key, next_count)
     }
 
     /// Gets the total claimable reward balance for an address across all pools.
