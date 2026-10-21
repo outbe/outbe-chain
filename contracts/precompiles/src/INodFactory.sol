@@ -2,6 +2,25 @@
 pragma solidity ^0.8.30;
 
 interface INodFactory {
+    error InvalidOwner();
+    error InvalidEncryptedNod();
+    error NodAlreadyExists();
+    error NodNotFound();
+    error EntryPriceOutOfBounds();
+    error GroupNotFound();
+    error NodAlreadySettled();
+    error NodNotSettled();
+    error InsufficientProofOfWork();
+    error SettlementDeadlinePassed();
+    error CreateNodForTest(string reason);
+    error EmptyGroupMemberSlotDuringCleanup(bytes32 groupKey);
+    error MissingGroupMemberRecordDuringCleanup(bytes32 groupKey, uint256 nodId);
+    error IneligibleGroupMember(bytes32 groupKey, uint256 nodId);
+    error MissingGroupRecordDuringCleanup(bytes32 groupKey);
+    error MissingGroupForCall(bytes32 groupKey);
+    error GroupNotQueuedForTest();
+    error CallPriceOverflow();
+
     event NodIssued(
         address indexed owner,
         uint256 nodId,

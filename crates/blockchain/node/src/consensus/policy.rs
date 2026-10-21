@@ -60,15 +60,17 @@ where
         )
         .map_err(|error| consensus_other(error.to_string()))?
         .is_some();
-        let actual = header.extra_data().starts_with(b"OART\x0c");
+        let actual = if header.extra_data().starts_with(b"OART") {
+            outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(header.extra_data())
+                .map_err(|error| consensus_other(error.to_string()))?
+                .radicle_publication_enabled
+        } else {
+            false
+        };
         if actual != enabled {
             return Err(consensus_other(
                 "OART publication format differs from seeded genesis activation",
             ));
-        }
-        if enabled {
-            outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(header.extra_data())
-                .map_err(|error| consensus_other(error.to_string()))?;
         }
         Ok(())
     }

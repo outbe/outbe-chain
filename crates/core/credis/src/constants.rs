@@ -11,7 +11,7 @@ pub const TOKEN_DESCRIPTION: &str = concat!(
     "settled by its settlement deadline, otherwise it is forfeited."
 );
 
-/// The call price adds 64% to `call_anchor_price_minor`. A sustained breach arms the call.
+/// The PROD call price adds 64% to `call_anchor_price_minor`. A sustained breach arms the call.
 pub const CALL_RATE_PCT: u16 = 64;
 
 /// Evaluation window for the call, in closed UTC days: the daily scan looks

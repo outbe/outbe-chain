@@ -8,6 +8,16 @@ pragma solidity ^0.8.30;
 ///      the group events here. `promisLoadMinor` is returned as uint256
 ///      (its storage representation). The Origin `uint128` bounds it.
 interface IIntex {
+    error SeriesNotFound();
+    error ZeroIssuedAt();
+    error InvalidStateValue(uint8 value);
+    error InvalidSeriesId();
+    error RealizedUnitsOverflow();
+    error GroupAlreadyCalled();
+    error SeriesIndexOutOfRange();
+    error UnknownProfileSelector(uint8 value);
+    error CalledGroupMemberOutOfRange();
+
     struct SeriesData {
         bytes14 seriesId;
         uint256 promisLoadMinor;

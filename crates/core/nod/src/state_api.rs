@@ -104,7 +104,7 @@ fn check_loaded(
         || contract.records.get(item.nod_id)? != Some(StoredNod::from(item))
         || contract.groups.get(group.group_key)?.as_ref() != Some(group)
     {
-        return Err(PrecompileError::revert("Nod state changed after loading"));
+        return Err(NodError::NodStateChangedAfterLoading.into());
     }
     Ok(())
 }

@@ -2,6 +2,18 @@
 pragma solidity ^0.8.30;
 
 interface IGratisFactory {
+    error FidelityNotEligible();
+    error ReservationNotFound();
+    error ReservationExpired();
+    error NotReservationSource();
+    error PledgeExists();
+    error PledgeNotFound();
+    error PledgeMismatch();
+    error NativeCoenOverflow();
+    error Exists();
+    error NotFound();
+    error Exceeded();
+
     struct ModifyAuth {
         bytes32 mac;
         uint64 opNonce;

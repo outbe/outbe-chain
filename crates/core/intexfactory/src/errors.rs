@@ -1,5 +1,8 @@
 //! Error types for the IntexFactory precompile.
 
+use crate::precompile::IIntexFactory;
+use alloy_primitives::Bytes;
+use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
@@ -80,8 +83,54 @@ impl From<outbe_common::pow::PowError> for IntexFactoryError {
     }
 }
 
+fn revert_with<E: SolError>(error: E) -> PrecompileError {
+    PrecompileError::RevertBytes(Bytes::from(error.abi_encode()))
+}
+
 impl From<IntexFactoryError> for PrecompileError {
     fn from(err: IntexFactoryError) -> Self {
-        PrecompileError::Revert(err.to_string())
+        use IIntexFactory as I;
+        match err {
+            IntexFactoryError::ZeroAddress => revert_with(I::ZeroAddress {}),
+            IntexFactoryError::ZeroAmount => revert_with(I::ZeroAmount {}),
+            IntexFactoryError::ZeroUnits => revert_with(I::ZeroUnits {}),
+            IntexFactoryError::SettlementDeadlinePassed => {
+                revert_with(I::SettlementDeadlinePassed {})
+            }
+            IntexFactoryError::ZeroBalance => revert_with(I::ZeroBalance {}),
+            IntexFactoryError::UnitsExceedBalance => revert_with(I::UnitsExceedBalance {}),
+            IntexFactoryError::InsufficientSettled => revert_with(I::InsufficientSettled {}),
+            IntexFactoryError::InsufficientProofOfWork => {
+                revert_with(I::InsufficientProofOfWork {})
+            }
+            IntexFactoryError::NotOriginRouter => revert_with(I::NotOriginRouter {}),
+            IntexFactoryError::ForfeitedPromisLoadOverflow => {
+                revert_with(I::ForfeitedPromisLoadOverflow {})
+            }
+            IntexFactoryError::NoCalledGroupForTest => revert_with(I::NoCalledGroupForTest {}),
+            IntexFactoryError::IssueForTestCurrencyCountMismatch => {
+                revert_with(I::IssueForTestCurrencyCountMismatch {})
+            }
+            IntexFactoryError::BlockTimestampExceedsU32 => {
+                revert_with(I::BlockTimestampExceedsU32 {})
+            }
+            IntexFactoryError::IssuanceChunkCountExceedsU16 => {
+                revert_with(I::IssuanceChunkCountExceedsU16 {})
+            }
+            IntexFactoryError::PriceExceedsWireType => revert_with(I::PriceExceedsWireType {}),
+            IntexFactoryError::MarkedUpPriceOverflow => revert_with(I::MarkedUpPriceOverflow {}),
+            IntexFactoryError::OwnerUnitsExceedU32 => revert_with(I::OwnerUnitsExceedU32 {}),
+            IntexFactoryError::SettledUnitsExceedU32 => revert_with(I::SettledUnitsExceedU32 {}),
+            IntexFactoryError::NftBalanceExceedsU32 => revert_with(I::NftBalanceExceedsU32 {}),
+            IntexFactoryError::NftBalanceOfUndecodable => {
+                revert_with(I::NftBalanceOfUndecodable {})
+            }
+            IntexFactoryError::RouterAnsweredNoLegs => revert_with(I::RouterAnsweredNoLegs {}),
+            IntexFactoryError::PromisOverflow => revert_with(I::PromisOverflow {}),
+            IntexFactoryError::MiningSequenceOverflow => revert_with(I::MiningSequenceOverflow {}),
+            IntexFactoryError::ExercisedUnitsExceedSeries => {
+                revert_with(I::ExercisedUnitsExceedSeries {})
+            }
+        }
     }
 }

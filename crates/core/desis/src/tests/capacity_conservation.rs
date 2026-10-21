@@ -67,7 +67,7 @@ fn world_selling(units: u16) -> HashMapStorageProvider {
                 has_limit: true,
             },
             NOW,
-            crate::api::BriefOverflowPolicy::CarryOver,
+            crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
         )
         .unwrap();
     });
@@ -137,7 +137,7 @@ fn ledger(p: &mut HashMapStorageProvider, sold: bool, terminal: bool) {
 fn ledger_selling(p: &mut HashMapStorageProvider, sold: u32, terminal: bool) {
     StorageHandle::enter(p, |s| {
         let day = DesisContract::new(s.clone());
-        let returned = PromisLimitContract::new(s).get_total_unallocated().unwrap();
+        let returned = PromisLimitContract::new(s).promis_limit().unwrap();
         let pending = day.pending_desis_limit_minor.read(&DAY).unwrap();
         let issued = day.last_clearing_issued_count.read().unwrap();
         assert_eq!(

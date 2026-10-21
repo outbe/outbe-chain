@@ -3,7 +3,9 @@
 //! through it.
 
 use super::*;
+use crate::precompile::IValidatorSet as I;
 use crate::state_machine::{HistoryCounters, ValidatorHistory};
+use alloy_sol_types::SolError;
 use outbe_primitives::storage::hashmap::MutationPrefixViews;
 
 const VALIDATOR: Address = address!("0x00000000000000000000000000000000000000E1");
@@ -14,6 +16,7 @@ fn error_text<T: std::fmt::Debug>(result: Result<T, PrecompileError>) -> String 
     match result.unwrap_err() {
         PrecompileError::Fatal(message) => format!("Fatal: {message}"),
         PrecompileError::Revert(message) => format!("Revert: {message}"),
+        PrecompileError::RevertBytes(bytes) => super::typed_revert(bytes),
         other => format!("{other:?}"),
     }
 }
@@ -49,12 +52,28 @@ fn active_with_bonded(bonded: u64) -> HashMapStorageProvider {
 #[test]
 fn hydrate_rejects_inconsistent_registry_bindings_in_order() {
     let pubkey_hash = ValidatorSet::consensus_pubkey_hash(&dummy_consensus_pubkey(0xE1));
-    let count = format!("Revert: validator {VALIDATOR} registry index 1 exceeds validator_count 0");
-    let forward = format!(
-        "Revert: validator registry forward index mismatch at 1: expected {VALIDATOR}, got {OTHER}"
+    let count = super::typed_revert(
+        I::ValidatorRegistryIndexExceedsCount {
+            addr: VALIDATOR,
+            index: 1,
+            count: 0,
+        }
+        .abi_encode(),
     );
-    let reverse = format!(
-        "Revert: validator consensus pubkey reverse mapping mismatch for {VALIDATOR}: got {OTHER}"
+    let forward = super::typed_revert(
+        I::ValidatorRegistryForwardIndexMismatch {
+            index: 1,
+            expected: VALIDATOR,
+            actual: OTHER,
+        }
+        .abi_encode(),
+    );
+    let reverse = super::typed_revert(
+        I::ValidatorConsensusPubkeyReverseMismatch {
+            addr: VALIDATOR,
+            owner: OTHER,
+        }
+        .abi_encode(),
     );
     // Each case corrupts its binding and every binding checked after it.
     let cases: [(&str, [bool; 3], String); 3] = [
@@ -95,7 +114,7 @@ fn persistence_rejects_a_registry_identity_change_before_any_write() {
     });
     assert_eq!(
         error,
-        "Revert: validator lifecycle transition attempted to change registry identity"
+        super::typed_revert(I::LifecycleTransitionChangedRegistryIdentity {}.abi_encode())
     );
     assert_eq!(storage.clear_mutation_failure(), 0);
 }
@@ -208,7 +227,7 @@ fn exit_persistence_writes_stake_then_status_then_deactivation_height() {
 
 /// An unstakeable lifecycle case: its name, its fixture setup and the exact
 /// rejection.
-type UnstakeableCase = (&'static str, fn(&mut ValidatorSet), &'static str);
+type UnstakeableCase = (&'static str, fn(&mut ValidatorSet), String);
 
 #[test]
 fn stake_increase_rejects_unstakeable_lifecycles_without_writes() {
@@ -222,12 +241,12 @@ fn stake_increase_rejects_unstakeable_lifecycles_without_writes() {
         (
             "absent",
             |_| {},
-            "Revert: cannot stake before validator registration",
+            super::typed_revert(I::CannotStakeBeforeRegistration {}.abi_encode()),
         ),
         (
             "exiting",
             exiting,
-            "Revert: cannot increase stake while validator is exiting or unbonding",
+            super::typed_revert(I::CannotIncreaseStakeWhileExitingOrUnbonding {}.abi_encode()),
         ),
         (
             "unbonding",
@@ -238,7 +257,7 @@ fn stake_increase_rejects_unstakeable_lifecycles_without_writes() {
                 vs.deactivate_validator(OWNER, VALIDATOR).unwrap();
                 vs.activate_reshared_set(&[], B256::ZERO).unwrap();
             },
-            "Revert: cannot increase stake while validator is exiting or unbonding",
+            super::typed_revert(I::CannotIncreaseStakeWhileExitingOrUnbonding {}.abi_encode()),
         ),
         (
             "inactive",
@@ -247,7 +266,7 @@ fn stake_increase_rejects_unstakeable_lifecycles_without_writes() {
                     .unwrap();
                 make_inactive_for_test(vs, VALIDATOR);
             },
-            "Revert: inactive validator must re-register before staking",
+            super::typed_revert(I::InactiveValidatorMustReregisterBeforeStaking {}.abi_encode()),
         ),
     ];
     for (name, prepare, expected) in cases {

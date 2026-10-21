@@ -412,16 +412,8 @@ pub(crate) fn deploy_settlement_fixture(world: &World) -> SettlementFixture {
         Some(asset)
     );
 
-    let owner_key = funder.evm_key().expect("VaultRouter owner key");
-    let add = eth::send_call(
-        &url,
-        addresses::VAULT_ROUTER_ADDR,
-        &owner_key,
-        &eth::IVaultRouter::addVaultCall { vault },
-        None,
-    )
-    .expect("register settlement vault");
-    assert_success(&url, &add, "register settlement vault");
+    crate::world::settlement_currency::register_vault(world, asset, vault, USD_ISO)
+        .expect("approve and apply settlement vault registration");
     assert_eq!(
         eth::read_call(
             &url,

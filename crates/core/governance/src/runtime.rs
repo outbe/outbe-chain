@@ -14,17 +14,29 @@ use crate::precompile::IGovernance::{
 use crate::schema::{Gip, GipEntryExt, GovernanceContract, Oip, OipEntryExt};
 use crate::status;
 
-/// Maximum size of any single normative / proposal text. Every write path
-/// enforces it. This limit keeps a full-overwrite comfortably inside one block
-/// under the permissioned gas model (flat 5000/SSTORE).
-pub const MAX_TEXT_BYTES: usize = 128 * 1024;
+/// Maximum size of the canon and meta-canon texts. Only `update_canon` and
+/// `update_meta_canon` use this bound. Both paths are authority-gated, so this
+/// bound depends on the permissioned premise. At `SSTORE_RESET` (5000 gas) a
+/// full overwrite writes 4096 words = 20.48M gas, about 68% of a 30M block.
+pub const MAX_CANON_TEXT_BYTES: usize = 128 * 1024;
 
-fn validate_text(text: &str) -> Result<()> {
+/// Maximum size of an OIP / GIP proposal text. The submit and text-update
+/// paths use this bound. These paths are open to any caller, so this bound
+/// does not depend on the permissioned premise. At `SSTORE_RESET` (5000 gas)
+/// one write is 512 words = 2.56M gas, under 9% of a 30M block. The value
+/// matches the zero-fee calldata cap `FREE_TX_DAILY_CALLDATA_BYTES` (16 KiB).
+pub const MAX_PROPOSAL_TEXT_BYTES: usize = 16 * 1024;
+
+fn validate_text(text: &str, max: usize) -> Result<()> {
     if text.is_empty() {
         return Err(GovernanceError::EmptyText.into());
     }
-    if text.len() > MAX_TEXT_BYTES {
-        return Err(GovernanceError::TextTooLarge.into());
+    if text.len() > max {
+        return Err(GovernanceError::TextTooLarge {
+            len: text.len(),
+            max,
+        }
+        .into());
     }
     Ok(())
 }
@@ -53,7 +65,7 @@ macro_rules! impl_proposal_ops {
     ) => {
         /// Submits a new proposal in `Draft`, open to any caller.
         pub fn $submit(&mut self, author: Address, text: &str) -> Result<U256> {
-            validate_text(text)?;
+            validate_text(text, MAX_PROPOSAL_TEXT_BYTES)?;
             // Refuse the submit before any write when the author index is full.
             // A wrapped counter would overwrite index slot 0.
             let acount = self.$author_count.read(&author)?;
@@ -128,7 +140,7 @@ macro_rules! impl_proposal_ops {
         /// Replaces a proposal's text. Author-only, and only while the proposal
         /// is `Draft` or `Rework`.
         pub fn $update(&mut self, caller: Address, id: U256, text: &str) -> Result<()> {
-            validate_text(text)?;
+            validate_text(text, MAX_PROPOSAL_TEXT_BYTES)?;
             let mut record = self
                 .$map
                 .get(id)?
@@ -216,7 +228,7 @@ impl GovernanceContract<'_> {
 
     pub fn update_meta_canon(&mut self, caller: Address, text: &str) -> Result<u64> {
         self.ensure_authority(caller)?;
-        validate_text(text)?;
+        validate_text(text, MAX_CANON_TEXT_BYTES)?;
         let version = self.meta_canon_version.read()? + 1;
         let hash = keccak256(text.as_bytes());
         self.meta_canon.write(text.as_bytes())?;
@@ -229,7 +241,7 @@ impl GovernanceContract<'_> {
 
     pub fn update_canon(&mut self, caller: Address, text: &str) -> Result<u64> {
         self.ensure_authority(caller)?;
-        validate_text(text)?;
+        validate_text(text, MAX_CANON_TEXT_BYTES)?;
         let version = self.canon_version.read()? + 1;
         let hash = keccak256(text.as_bytes());
         self.canon.write(text.as_bytes())?;

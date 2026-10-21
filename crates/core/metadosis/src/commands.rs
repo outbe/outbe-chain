@@ -39,7 +39,7 @@ pub fn apply_cycle_day_limit(ctx: &BlockRuntimeContext<'_>, amount: U256) -> Res
     Ok(U256::ZERO)
 }
 
-/// Purpose-bound late-settlement adapter. Late residue is carry-over only.
+/// Purpose-bound late-settlement adapter. Late residue is a Promis Limit credit only.
 pub fn apply_late_settlement_headroom(ctx: &BlockRuntimeContext<'_>, amount: U256) -> Result<U256> {
     crate::emission_sink::apply_late_settlement_headroom(ctx, amount)
 }

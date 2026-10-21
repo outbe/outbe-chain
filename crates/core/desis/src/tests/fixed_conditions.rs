@@ -2,7 +2,7 @@
 //! issuance read them only from the stored day config, not from the Intex profile.
 
 use super::*;
-use crate::constants::{DAY_STATE_GREEN, DAY_STATE_RED};
+use crate::constants::{DAY_STATE_CANCELLED, DAY_STATE_LIVE};
 use crate::schema::{IntexCallTrigger, ReferenceCurrencyPrice};
 use outbe_intex::config::IntexParams;
 
@@ -93,7 +93,7 @@ fn the_start_message_carries_only_the_stored_day_config() {
         // A profile change after the start does not change what the day announces.
         select_profile(&s, outbe_intex::config::PROFILE_DEV);
 
-        let message = announced(&config, DAY_STATE_GREEN);
+        let message = announced(&config, DAY_STATE_LIVE);
         assert_eq!(message.worldwideDay, WORLDWIDE_DAY.value());
         assert_eq!(message.promisLoadMinor, config.promis_load_minor);
         assert_eq!(message.minIntexBidRate, config.min_intex_bid_rate);
@@ -114,7 +114,7 @@ fn the_start_message_carries_only_the_stored_day_config() {
             assert_eq!(U256::from(wire.entryPriceMinor), row.entry_price_minor);
             assert_eq!(U256::from(wire.callPriceMinor), row.call_price_minor);
         }
-        assert_eq!(message.dayState, DAY_STATE_GREEN);
+        assert_eq!(message.dayState, DAY_STATE_LIVE);
     });
 }
 
@@ -134,7 +134,7 @@ fn an_unpriced_day_still_fixes_and_announces_the_call_trigger() {
         let config = read_config(&s);
         assert!(config.reference_prices.is_empty());
         assert_eq!(config.call_trigger, trigger_of(IntexParams::PROD));
-        let message = announced(&config, DAY_STATE_RED);
+        let message = announced(&config, DAY_STATE_CANCELLED);
         assert!(message.prices.is_empty());
         assert_eq!(message.callWindow, IntexParams::PROD.call_window_seconds);
         assert_eq!(
@@ -160,7 +160,7 @@ fn a_profile_change_after_the_start_leaves_the_series_conditions_fixed() {
         brief_at(&s, WORLDWIDE_DAY, 2 * LOAD_MINOR, true);
         runtime::schedule_tick(&s, NOW).unwrap();
         let config = read_config(&s);
-        let message = announced(&config, DAY_STATE_GREEN);
+        let message = announced(&config, DAY_STATE_LIVE);
         let wire_row = &message.prices[0];
         assert_eq!(
             U256::from(wire_row.callPriceMinor),
@@ -225,7 +225,13 @@ fn a_winner_in_an_unpriced_reference_currency_is_an_error() {
         };
         let err =
             runtime::issuance_groups(&result, &config, WORLDWIDE_DAY, &[SRC_CHAIN]).unwrap_err();
-        assert!(err.to_string().contains("unpriced currency: 978"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::DesisError::UnpricedReferenceCurrency(EUR_ISO)
+            )
+            .to_string()
+        );
     });
 }
 

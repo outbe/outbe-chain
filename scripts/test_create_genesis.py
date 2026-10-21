@@ -146,6 +146,12 @@ class ConfigValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "bogus"):
             CG.validate_config(config)
 
+    def test_retired_vault_router_owner_config_rejected(self):
+        config = minimal_config("./keys")
+        config["vault_router"] = {"owner": "0x" + "11" * 20}
+        with self.assertRaisesRegex(ValueError, "unknown key.*vault_router"):
+            CG.validate_config(config)
+
     def test_wrong_validator_count_rejected(self):
         config = minimal_config("./keys")
         config["validators"] = config["validators"][:3]
@@ -509,6 +515,42 @@ class SeedStageTests(unittest.TestCase):
             slot20 = "0x" + f"{20:064x}"  # validator_count
             self.assertEqual(int(validator_set["storage"][slot20], 16), 4)
 
+    def test_vault_router_has_no_owner_or_vaults_and_preserves_factory_routes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            seeded = self.seed_once(pathlib.Path(tmp), minimal_config(tmp))
+        storage = seeded["alloc"][SEED_GENESIS.VAULT_ROUTER_ADDRESS]["storage"]
+        for slot in (0, 1, 2, 3, *range(10, 33)):
+            self.assertNotIn(SEED_GENESIS.hex32(slot), storage)
+
+        sources = [
+            ("0000000000000000000000000000000000001015", 1),
+            ("0000000000000000000000000000000000001009", 2),
+            ("0000000000000000000000000000000000002013", 3),
+            ("0000000000000000000000000000000000001007", 4),
+        ]
+        targets = [("0000000000000000000000000000000000001009", 1)]
+        expected_keys = set()
+        for base, type_slot, routes in ((4, 6, sources), (7, 9, targets)):
+            length_key = SEED_GENESIS.hex32(base)
+            expected_keys.add(length_key)
+            self.assertEqual(storage[length_key], SEED_GENESIS.hex32(len(routes)))
+            for index, (address, kind) in enumerate(routes):
+                value_key = SEED_GENESIS.hex32(SEED_GENESIS.data_slot(base) + index)
+                position_key = SEED_GENESIS.mapping_key(
+                    SEED_GENESIS.address_bytes(address), base + 1
+                )
+                type_key = SEED_GENESIS.mapping_key(
+                    SEED_GENESIS.address_bytes(address), type_slot
+                )
+                expected_keys.update((value_key, position_key, type_key))
+                self.assertEqual(
+                    storage[value_key],
+                    SEED_GENESIS.hex32(SEED_GENESIS.address_as_u256(address)),
+                )
+                self.assertEqual(storage[position_key], SEED_GENESIS.hex32(index + 1))
+                self.assertEqual(storage[type_key], SEED_GENESIS.hex32(kind))
+        self.assertEqual(set(storage), expected_keys)
+
     def test_a_nod_profile_reaches_the_nod_selector_slot(self):
         with tempfile.TemporaryDirectory() as tmp:
             config = minimal_config(tmp) | {"nod_profile": {"profile": "dev"}}
@@ -761,7 +803,6 @@ class ExampleFileTests(unittest.TestCase):
             "validator_set",
             "code_registry",
             "intex_profile",
-            "vault_router",
             "oracle",
         ):
             self.assertEqual(

@@ -17,8 +17,8 @@ use crate::schema::{GemFactoryContract, GemIssueParams, GemPosition};
 use crate::sol_ext::IIntexNFT1155;
 use outbe_vaultrouter::settlement::{self, Currencies, SettlementCost, SettlementPayment};
 
-/// Issues one reward gem priced at `entry_price`, the COEN rate in
-/// `reference_currency` that the caller resolved for the gem's own day.
+/// Issues one reward gem priced at `entry_price`, with its call price on
+/// `call_anchor_price_minor`. The caller resolves both for the gem's own day.
 pub fn issue_gem(storage: &StorageHandle<'_>, params: GemIssueParams) -> Result<U256> {
     let GemIssueParams {
         owner,
@@ -26,11 +26,12 @@ pub fn issue_gem(storage: &StorageHandle<'_>, params: GemIssueParams) -> Result<
         issuance_currency,
         reference_currency,
         entry_price_minor: entry_price,
+        call_anchor_price_minor: call_anchor,
     } = params;
     if owner.is_zero() {
         return Err(GemFactoryError::InvalidOwner.into());
     }
-    if entry_price.is_zero() {
+    if entry_price.is_zero() || call_anchor.is_zero() {
         return Err(GemFactoryError::OracleUnavailable.into());
     }
     if promis_load.is_zero() {
@@ -56,7 +57,7 @@ pub fn issue_gem(storage: &StorageHandle<'_>, params: GemIssueParams) -> Result<
         issued_at,
         call_terms: None,
     };
-    let gem_id = add_gem(storage, params)?;
+    let gem_id = add_gem_with_call_anchor(storage, params, call_anchor)?;
 
     let factory = GemFactoryContract::new(storage.clone());
     let prev_total = factory.total_gems_issued.read()?;
@@ -70,34 +71,44 @@ pub fn issue_gem(storage: &StorageHandle<'_>, params: GemIssueParams) -> Result<
     Ok(gem_id)
 }
 
+/// Issues a gem whose call price marks up its own entry.
+pub(crate) fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256> {
+    let call_anchor = params.entry_price_minor;
+    add_gem_with_call_anchor(storage, params, call_anchor)
+}
+
 /// Issues a gem on the live profile: the group it opens seals the profile's call terms.
-pub(crate) fn add_gem(storage: &StorageHandle<'_>, mut params: GemAddParams) -> Result<U256> {
+fn add_gem_with_call_anchor(
+    storage: &StorageHandle<'_>,
+    mut params: GemAddParams,
+    call_anchor_price_minor: U256,
+) -> Result<U256> {
     if params.owner.is_zero() {
         return Err(GemFactoryError::InvalidOwner.into());
     }
     params.call_terms = derived_call_terms(
-        params.entry_price_minor,
+        call_anchor_price_minor,
         params.reference_currency,
         outbe_gem::config::read(storage)?,
     )?;
     gem_api::add_gem(storage, params)
 }
 
-/// The entry marked up by the call rate, plus the profile's other call terms.
+/// The call anchor marked up by the call rate, plus the profile's other call terms.
 ///
-/// `None` when entry is zero: a zero call price would fire on the first scan. The
+/// `None` when the anchor is zero: a zero call price would fire on the first scan. The
 /// profile is read exactly here. Every later check reads the group's sealed copy, so
 /// a retune cannot re-term an already-issued gem.
 pub(crate) fn derived_call_terms(
-    entry_price_minor: U256,
+    call_anchor_price_minor: U256,
     reference_currency: u16,
     params: GemParams,
 ) -> Result<Option<CallTerms>> {
-    if entry_price_minor.is_zero() {
+    if call_anchor_price_minor.is_zero() {
         return Ok(None);
     }
-    let call_price =
-        marked_up(entry_price_minor, params.call_rate).ok_or(GemFactoryError::CallPriceOverflow)?;
+    let call_price = marked_up(call_anchor_price_minor, params.call_rate)
+        .ok_or(GemFactoryError::CallPriceOverflow)?;
     Ok(Some(CallTerms {
         call_price_minor: call_price,
         reference_currency,

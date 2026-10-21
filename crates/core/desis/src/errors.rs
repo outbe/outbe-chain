@@ -1,7 +1,9 @@
 //! Error types for the Desis precompile.
 
-use alloy_primitives::{Address, U256};
-use outbe_primitives::time::WorldwideDay;
+use crate::precompile::IDesis;
+use alloy_primitives::{Address, Bytes, U256};
+use alloy_sol_types::SolError;
+use outbe_primitives::{error::PrecompileError, time::WorldwideDay};
 use thiserror::Error;
 
 /// Errors that the Desis runtime returns.
@@ -68,8 +70,64 @@ pub enum DesisError {
 
 impl DesisError {}
 
-impl From<DesisError> for outbe_primitives::error::PrecompileError {
+fn revert_with<E: SolError>(error: E) -> PrecompileError {
+    PrecompileError::RevertBytes(Bytes::from(error.abi_encode()))
+}
+
+impl From<DesisError> for PrecompileError {
     fn from(e: DesisError) -> Self {
-        outbe_primitives::error::PrecompileError::Revert(e.to_string())
+        use IDesis as I;
+        match e {
+            DesisError::InvalidWorldwideDay(wwd) => revert_with(I::InvalidWorldwideDay {
+                worldwideDay: wwd.value(),
+            }),
+            DesisError::InvalidStageTransition => revert_with(I::InvalidStageTransition {}),
+            DesisError::PendingClearingDataMissing(wwd) => {
+                revert_with(I::PendingClearingDataMissing {
+                    worldwideDay: wwd.value(),
+                })
+            }
+            DesisError::UnauthorizedOrigin(value) => revert_with(I::UnauthorizedOrigin { value }),
+            DesisError::UnpricedReferenceCurrency(value) => {
+                revert_with(I::UnpricedReferenceCurrency { value })
+            }
+            DesisError::RefundFanOutTooLarge(value) => revert_with(I::RefundFanOutTooLarge {
+                value: u64::try_from(value).unwrap_or(u64::MAX),
+            }),
+            DesisError::UnspellableBidCurrency(issuance, reference_currency) => {
+                revert_with(I::UnspellableBidCurrency {
+                    issuance,
+                    referenceCurrency: reference_currency,
+                })
+            }
+            DesisError::BidBatchTooLarge(count, max) => revert_with(I::BidBatchTooLarge {
+                count: u64::try_from(count).unwrap_or(u64::MAX),
+                max: u64::try_from(max).unwrap_or(u64::MAX),
+            }),
+            DesisError::DesisAllocationExceedsLimit {
+                wwd,
+                allocation,
+                limit,
+            } => revert_with(I::DesisAllocationExceedsLimit {
+                wwd: wwd.value(),
+                allocation,
+                limit,
+            }),
+            DesisError::AuctionBriefLimitExceedsDomain => {
+                revert_with(I::AuctionBriefLimitExceedsDomain {})
+            }
+            DesisError::BatchArrayLengthMismatch => revert_with(I::BatchArrayLengthMismatch {}),
+            DesisError::BriefAnchorExceedsU32 => revert_with(I::BriefAnchorExceedsU32 {}),
+            DesisError::MinBidQuantityScalingOverflow => {
+                revert_with(I::MinBidQuantityScalingOverflow {})
+            }
+            DesisError::TargetsOfUndecodable => revert_with(I::TargetsOfUndecodable {}),
+            DesisError::BatchTotalMismatch => revert_with(I::BatchTotalMismatch {}),
+            DesisError::InvalidTotalBatches => revert_with(I::InvalidTotalBatches {}),
+            DesisError::InvalidBatchIndexOrTotal => revert_with(I::InvalidBatchIndexOrTotal {}),
+            DesisError::ScheduleTimestampExceedsU32 => {
+                revert_with(I::ScheduleTimestampExceedsU32 {})
+            }
+        }
     }
 }

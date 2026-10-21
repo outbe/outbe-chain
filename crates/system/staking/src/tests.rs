@@ -1,5 +1,7 @@
-use alloy_primitives::{address, Address, B256, U256};
+use alloy_primitives::{address, Address, B256, U256, U512};
+use alloy_sol_types::SolError;
 use outbe_primitives::addresses::STAKING_ADDRESS;
+use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::checked_whole_coen_to_native;
@@ -9,12 +11,226 @@ use outbe_validatorset::ValidatorLifecycle;
 
 use crate::contract::Staking;
 use crate::hooks;
+use crate::precompile::IStaking;
 
 const CHAIN_ID: u64 = 1;
 const MIN_STAKE: u64 = 1_000;
 
 /// Default large balance seeded to callers so transfer_balance succeeds.
 const DEFAULT_BALANCE: u64 = 1_000_000;
+
+#[test]
+fn stake_addition_overflows_leave_accounting_unchanged() {
+    let validator = Address::repeat_byte(0x31);
+    // This test uses inconsistent storage to isolate each failure of an accounting invariant.
+    for (stake, total, expected) in [
+        (
+            U256::MAX,
+            U256::MAX,
+            IStaking::StakeAccountingOverflow { validator }.abi_encode(),
+        ),
+        (
+            U256::ZERO,
+            U256::MAX,
+            IStaking::TotalStakeAccountingOverflow {}.abi_encode(),
+        ),
+    ] {
+        with_staking(|storage, s| {
+            register_validator(storage.clone(), validator);
+            s.stake_amount.write(&validator, stake).unwrap();
+            s.total_staked.write(total).unwrap();
+            let before = ValidatorSet::new(storage.clone())
+                .validator_state(validator)
+                .unwrap();
+            let error = s.stake(validator, validator, U256::from(1)).unwrap_err();
+            assert!(
+                matches!(error, PrecompileError::RevertBytes(bytes) if bytes.as_ref() == expected)
+            );
+            assert_eq!(s.get_stake(validator).unwrap(), stake);
+            assert_eq!(s.get_total_staked().unwrap(), total);
+            assert_eq!(
+                ValidatorSet::new(storage)
+                    .validator_state(validator)
+                    .unwrap(),
+                before
+            );
+        });
+    }
+}
+
+#[test]
+fn aggregate_underflow_precedes_unstake_and_slash_writes() {
+    let validator = Address::repeat_byte(0x32);
+    for slash in [false, true] {
+        with_staking(|storage, s| {
+            seed_staking_balance(storage.clone(), MIN_STAKE);
+            stake_registered(storage.clone(), s, validator, U256::from(MIN_STAKE)).unwrap();
+            // Corrupt only the aggregate total to test an accounting invariant.
+            // Valid state cannot contain this inconsistency.
+            s.total_staked.write(U256::ZERO).unwrap();
+            let before = ValidatorSet::new(storage.clone())
+                .validator_state(validator)
+                .unwrap();
+            let error = if slash {
+                s.slash_stake(validator, 100).unwrap_err()
+            } else {
+                s.unstake(validator, U256::from(1)).unwrap_err()
+            };
+            assert!(matches!(error, PrecompileError::RevertBytes(bytes)
+                if bytes.as_ref() == IStaking::StakeAccountingUnderflow { validator }.abi_encode()));
+            assert_eq!(s.get_stake(validator).unwrap(), U256::from(MIN_STAKE));
+            assert_eq!(s.get_total_staked().unwrap(), U256::ZERO);
+            assert_eq!(s.unbonding_count.read().unwrap(), 0);
+            assert_eq!(
+                storage.balance(STAKING_ADDRESS).unwrap(),
+                U256::from(MIN_STAKE)
+            );
+            assert_eq!(
+                ValidatorSet::new(storage)
+                    .validator_state(validator)
+                    .unwrap(),
+                before
+            );
+        });
+    }
+}
+
+#[test]
+fn concentration_uses_wide_products_at_cap_boundaries() {
+    let other = Address::repeat_byte(0x33);
+    let validator = Address::repeat_byte(0x34);
+    let half = (U256::MAX / U256::from(4)) * U256::from(2);
+    for amount in [half - U256::from(1), half, half + U256::from(1)] {
+        with_staking(|storage, s| {
+            seed_staking_balance_u256(storage.clone(), half + amount);
+            s.config_max_stake_percent.write(50).unwrap();
+            // The first staker remains exempt even though it owns 100% of stake.
+            stake_registered(storage.clone(), s, other, half).unwrap();
+            assert!(s.stake(other, other, U256::from(1)).is_err());
+            assert_eq!(s.get_total_staked().unwrap(), half);
+            register_validator(storage.clone(), validator);
+            let result = s.stake(validator, validator, amount);
+            if amount > half {
+                assert!(
+                    matches!(result.unwrap_err(), PrecompileError::RevertBytes(bytes)
+                    if bytes.as_ref() == IStaking::StakeExceedsMaxStakePercent {}.abi_encode())
+                );
+                assert_eq!(s.get_stake(validator).unwrap(), U256::ZERO);
+                assert_eq!(s.get_total_staked().unwrap(), half);
+            } else {
+                result.unwrap();
+                assert_eq!(s.get_stake(validator).unwrap(), amount);
+                assert_eq!(s.get_total_staked().unwrap(), half + amount);
+                assert_eq!(
+                    ValidatorSet::new(storage)
+                        .validator_state(validator)
+                        .unwrap()
+                        .bonded_stake(),
+                    amount
+                );
+            }
+        });
+    }
+    for max_pct in [0, 100, 101, u64::MAX] {
+        with_staking(|storage, s| {
+            s.config_max_stake_percent.write(max_pct).unwrap();
+            stake_registered(storage.clone(), s, validator, half).unwrap();
+            s.stake(validator, validator, U256::from(1)).unwrap();
+            assert_eq!(s.get_total_staked().unwrap(), half + U256::from(1));
+        });
+    }
+}
+
+#[test]
+fn slash_large_and_remainder_amounts_match_wide_oracle_and_native_burn() {
+    let validator = Address::repeat_byte(0x35);
+    for (amount, unbonding, percent) in [
+        (U256::MAX, U256::ZERO, 100),
+        (U256::MAX, U256::from(199), 37),
+        (U256::MAX, U256::MAX, 100),
+        (U256::MAX, U256::MAX, 37),
+        (U256::from(199), U256::from(99), 1),
+        (U256::from(1), U256::ZERO, 0),
+    ] {
+        with_staking(|storage, s| {
+            seed_staking_balance_u256(storage.clone(), amount);
+            stake_registered(storage.clone(), s, validator, amount).unwrap();
+            if !unbonding.is_zero() {
+                s.unstake(validator, unbonding).unwrap();
+            }
+            let bonded = amount - unbonding;
+            let oracle = |value: U256| {
+                (U512::from(value) * U512::from(percent) / U512::from(100)).to::<U256>()
+            };
+            let expected = oracle(bonded) + oracle(unbonding);
+            assert_eq!(s.slash_stake(validator, percent).unwrap(), expected);
+            assert_eq!(s.get_stake(validator).unwrap(), bonded - oracle(bonded));
+            assert_eq!(s.get_total_staked().unwrap(), bonded - oracle(bonded));
+            if !unbonding.is_zero() {
+                assert_eq!(
+                    s.unbonding_amount.read(&0).unwrap(),
+                    unbonding - oracle(unbonding)
+                );
+            }
+            assert_eq!(storage.balance(STAKING_ADDRESS).unwrap(), amount - expected);
+            assert_eq!(
+                ValidatorSet::new(storage)
+                    .validator_state(validator)
+                    .unwrap()
+                    .bonded_stake(),
+                bonded - oracle(bonded)
+            );
+        });
+    }
+}
+
+#[test]
+fn late_queue_slash_overflow_rolls_back_checkpointed_cross_module_effects() {
+    let validator = Address::repeat_byte(0x36);
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_block_number(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut s = staking_with_unbonding_period(storage.clone(), 3600);
+        seed_staking_balance(storage.clone(), MIN_STAKE);
+        stake_registered(storage.clone(), &mut s, validator, U256::from(MIN_STAKE)).unwrap();
+        ValidatorSet::new(storage.clone())
+            .activate_validator_via_boundary_for_test(validator)
+            .unwrap();
+        // This test violates an invariant: queue liabilities exceed the maximum native supply.
+        // Prepend the small entry so the slash changes it before the later MAX entry fails.
+        s.enqueue_unbonding(validator, U256::MAX, 1).unwrap();
+        s.enqueue_unbonding(validator, U256::from(1), 2).unwrap();
+    });
+    let events_before = provider.get_ordered_events().to_vec();
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut s = Staking::new(storage.clone());
+        let mut validators = ValidatorSet::new(storage.clone());
+        let before = validators.validator_state(validator).unwrap();
+        let result = storage.with_checkpoint(|| {
+            // Jail emits an event and changes the lifecycle before the slash starts.
+            validators.jail_validator(validator)?;
+            s.slash_stake(validator, 100)
+        });
+        let error = result.unwrap_err();
+        assert!(matches!(error, PrecompileError::RevertBytes(bytes)
+            if bytes.as_ref() == IStaking::SlashAmountOverflow {}.abi_encode()));
+        assert_eq!(s.get_stake(validator).unwrap(), U256::from(MIN_STAKE));
+        assert_eq!(s.get_total_staked().unwrap(), U256::from(MIN_STAKE));
+        assert_eq!(s.unbonding_amount.read(&0).unwrap(), U256::MAX);
+        assert_eq!(s.unbonding_amount.read(&1).unwrap(), U256::from(1));
+        assert_eq!(s.unbonding_complete_time.read(&0).unwrap(), 1);
+        assert_eq!(s.unbonding_complete_time.read(&1).unwrap(), 2);
+        assert_eq!(s.unbonding_count.read().unwrap(), 2);
+        assert_eq!(s.per_val_unbonding_head.read(&validator).unwrap(), 2);
+        assert_eq!(s.unbonding_next.read(&1).unwrap(), 1);
+        assert_eq!(
+            storage.balance(STAKING_ADDRESS).unwrap(),
+            U256::from(MIN_STAKE)
+        );
+        assert_eq!(validators.validator_state(validator).unwrap(), before);
+    });
+    assert_eq!(provider.get_ordered_events(), events_before);
+}
 
 #[test]
 fn slash_timestamp_overflow_leaves_stake_balance_queue_and_events_unchanged() {

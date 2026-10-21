@@ -83,8 +83,12 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
             },
         )
         .unwrap_err();
-        assert!(
-            closed.to_string().to_lowercase().contains("deadline"),
+        assert_eq!(
+            closed.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::IntexFactoryError::SettlementDeadlinePassed,
+            )
+            .to_string(),
             "{closed}"
         );
         assert_eq!(outbe_intex::api::exercised_units(&s, sid(7)).unwrap(), 0);
@@ -184,7 +188,7 @@ fn settled_units_mine_after_the_group_expired_without_moving_the_promis_limit() 
         crate::hooks::sweep_cleanup(&ctx).unwrap();
         let reserve = || {
             outbe_promislimit::PromisLimitContract::new(s.clone())
-                .get_total_unallocated()
+                .promis_limit()
                 .unwrap()
         };
         assert_eq!(reserve(), forfeited);

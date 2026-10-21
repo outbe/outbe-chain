@@ -31,9 +31,9 @@ fn a_direct_settlement_in_a_currency_the_window_never_priced_is_refused_without_
         required,
     )
     .unwrap_err();
-    assert!(
-        error.to_string().contains("oracle nominal unavailable"),
-        "{error}"
+    assert_eq!(
+        error.to_string(),
+        PrecompileError::from(SettlementError::OracleUnavailable).to_string()
     );
 
     assert_eq!(

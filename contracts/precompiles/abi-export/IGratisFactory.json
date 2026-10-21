@@ -225,5 +225,60 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "Exceeded",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "Exists",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FidelityNotEligible",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NativeCoenOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotReservationSource",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PledgeExists",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PledgeMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PledgeNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ReservationExpired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ReservationNotFound",
+    "inputs": []
   }
 ]

@@ -8,6 +8,7 @@
 //! visible to readers.
 
 use alloy_primitives::{address, b256, Address, B256, U256};
+use alloy_sol_types::SolError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
@@ -847,11 +848,17 @@ fn boundary_activation_rolls_back_snapshots_on_failure() {
         let err = activate_boundary_atomic(storage.clone(), &inputs).expect_err(
             "activation must reject an artifact with an unregistered extra participant",
         );
-        let err_msg = format!("{err}");
-        assert!(
-            err_msg.contains("validated boundary participant membership mismatch"),
-            "unexpected error kind: {err_msg}",
-        );
+        match err {
+            outbe_primitives::error::PrecompileError::RevertBytes(bytes) => assert_eq!(
+                bytes.to_vec(),
+                outbe_validatorset::precompile::IValidatorSet::BoundaryParticipantMembershipMismatch {
+                    planned: vec![known_addr],
+                    artifact: vec![known_addr, unknown_addr],
+                }
+                .abi_encode()
+            ),
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
 
         // the outgoing snapshot was the FIRST thing written, and the
         // `exists` flag for it would normally be set by the time the failure

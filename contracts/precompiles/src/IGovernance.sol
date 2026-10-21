@@ -2,6 +2,20 @@
 pragma solidity ^0.8.30;
 
 interface IGovernance {
+    error NotAuthorized();
+    error NotAuthor();
+    error ProposalNotFound();
+    error InvalidStatusTransition();
+    error InvalidStatus();
+    error TextNotEditableInStatus();
+    error EmptyText();
+    error TextTooLarge(uint64 len, uint64 max);
+    error InvalidDiffBase();
+    error InvalidPayload();
+    error InvalidProposalPayload();
+    error AuthorIndexFull();
+    error ProposalIdExhausted();
+
     // --- proposal types (OIP / GIP have their own events) ---
 
     struct Oip {

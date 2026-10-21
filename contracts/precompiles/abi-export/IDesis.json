@@ -172,7 +172,7 @@
   },
   {
     "type": "event",
-    "name": "AuctionBriefRejectedToCarryOver",
+    "name": "AuctionBriefRejected",
     "inputs": [
       {
         "name": "worldwideDay",
@@ -521,5 +521,163 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AuctionBriefLimitExceedsDomain",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BatchArrayLengthMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BatchTotalMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BidBatchTooLarge",
+    "inputs": [
+      {
+        "name": "count",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "max",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "BriefAnchorExceedsU32",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DesisAllocationExceedsLimit",
+    "inputs": [
+      {
+        "name": "wwd",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "allocation",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "limit",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidBatchIndexOrTotal",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidStageTransition",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidTotalBatches",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidWorldwideDay",
+    "inputs": [
+      {
+        "name": "worldwideDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "MinBidQuantityScalingOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PendingClearingDataMissing",
+    "inputs": [
+      {
+        "name": "worldwideDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RefundFanOutTooLarge",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ScheduleTimestampExceedsU32",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TargetsOfUndecodable",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnauthorizedOrigin",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnpricedReferenceCurrency",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnspellableBidCurrency",
+    "inputs": [
+      {
+        "name": "issuance",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
   }
 ]

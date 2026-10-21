@@ -1,5 +1,6 @@
 use super::*;
 use crate::{payload::PatchVotePayloadV1, publication::PublicationProgress};
+use alloy_sol_types::SolError;
 use commonware_codec::Encode as _;
 use commonware_cryptography::{bls12381, Hasher as _, Sha256, Signer as _};
 use commonware_utils::TryCollect as _;
@@ -238,9 +239,16 @@ fn publication_generation_drops_pending_slots_and_preserves_accepted_history() {
     let previous_hash = binding.receipt_hash();
     binding.sequence = 3;
     binding.previous_receipt_hash = previous_hash;
-    assert!(
-        revert(fixture.apply(&binding, &[0, 1, 2]).unwrap_err()).contains("material already bound")
-    );
+    let err = fixture.apply(&binding, &[0, 1, 2]).unwrap_err();
+    match err {
+        PrecompileError::RevertBytes(bytes) => {
+            assert_eq!(&bytes[..4], &ICodeRegistry::InvalidPublication::SELECTOR);
+            let decoded =
+                ICodeRegistry::InvalidPublication::abi_decode(&bytes).expect("publication");
+            assert_eq!(decoded.value, "material already bound");
+        }
+        other => panic!("expected typed revert bytes, got {other:?}"),
+    }
 }
 
 #[test]

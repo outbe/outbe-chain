@@ -3,6 +3,8 @@
 //! validators, and the complete write set of an accepted boundary.
 
 use super::*;
+use crate::precompile::IValidatorSet as I;
+use alloy_sol_types::SolError;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::hashmap::MutationPrefixViews;
 use std::cell::RefCell;
@@ -79,6 +81,7 @@ fn jail_retained(vs: &mut ValidatorSet<'_>, validator: Address) -> Result<()> {
 fn outcome_text(result: Result<()>) -> String {
     match result {
         Err(PrecompileError::Revert(message)) => format!("Revert: {message}"),
+        Err(PrecompileError::RevertBytes(bytes)) => super::typed_revert(bytes),
         Err(PrecompileError::Fatal(message)) => format!("Fatal: {message}"),
         other => format!("{other:?}"),
     }
@@ -89,13 +92,13 @@ fn outcome_text(result: Result<()>) -> String {
 fn assert_rejected_before_writes(
     setup: impl FnOnce(&mut ValidatorSet<'_>) -> Result<()>,
     call: impl FnOnce(&mut ValidatorSet<'_>) -> Result<()>,
-    expected: String,
+    expected: &[u8],
 ) -> Result<()> {
     let (mut storage, setup) = boundary_storage(setup);
     setup?;
     storage.clear_mutation_failure();
     let result = storage.enter(|storage| call(&mut ValidatorSet::new(storage)));
-    assert_eq!(outcome_text(result), format!("Revert: {expected}"));
+    assert_eq!(outcome_text(result), super::typed_revert(expected));
     assert_eq!(
         storage.clear_mutation_failure(),
         0,
@@ -116,7 +119,7 @@ fn omitted_active_validator_is_rejected() -> Result<()> {
     assert_rejected_before_writes(
         |vs| active(vs, A),
         boundary(&[], 10),
-        format!("validated boundary omitted active validator {A}"),
+        &I::BoundaryOmittedActiveValidator { account: A }.abi_encode(),
     )
 }
 
@@ -125,7 +128,12 @@ fn included_exit_at_or_before_freeze_is_rejected() -> Result<()> {
     assert_rejected_before_writes(
         |vs| exiting(vs, A),
         boundary(&[A], 11),
-        format!("validated boundary retained validator {A} that exited at 11 before freeze 11"),
+        &I::BoundaryRetainedValidatorExitedBeforeFreeze {
+            account: A,
+            changed_at: 11,
+            freeze_height: 11,
+        }
+        .abi_encode(),
     )
 }
 
@@ -134,7 +142,12 @@ fn omitted_exit_after_freeze_is_rejected() -> Result<()> {
     assert_rejected_before_writes(
         |vs| exiting(vs, A),
         boundary(&[], 10),
-        format!("validated boundary omitted validator {A} that exited at 11 after freeze 10"),
+        &I::BoundaryOmittedValidatorExitedAfterFreeze {
+            account: A,
+            changed_at: 11,
+            freeze_height: 10,
+        }
+        .abi_encode(),
     )
 }
 
@@ -143,7 +156,12 @@ fn included_jail_at_or_before_freeze_is_rejected() -> Result<()> {
     assert_rejected_before_writes(
         |vs| jail_retained(vs, A),
         boundary(&[A], 11),
-        format!("validated boundary retained validator {A} jailed at 11 before freeze 11"),
+        &I::BoundaryRetainedValidatorJailedBeforeFreeze {
+            account: A,
+            jailed_at: 11,
+            freeze_height: 11,
+        }
+        .abi_encode(),
     )
 }
 
@@ -152,7 +170,12 @@ fn omitted_jail_after_freeze_is_rejected() -> Result<()> {
     assert_rejected_before_writes(
         |vs| jail_retained(vs, A),
         boundary(&[], 10),
-        format!("validated boundary omitted validator {A} jailed at 11 after freeze 10"),
+        &I::BoundaryOmittedValidatorJailedAfterFreeze {
+            account: A,
+            jailed_at: 11,
+            freeze_height: 10,
+        }
+        .abi_encode(),
     )
 }
 
@@ -163,7 +186,11 @@ fn assert_included_ineligible(
     assert_rejected_before_writes(
         setup,
         boundary(&[A], 11),
-        format!("validated boundary included ineligible validator {A} with status {stored_status}"),
+        &I::BoundaryIncludedIneligibleValidator {
+            account: A,
+            status: stored_status,
+        }
+        .abi_encode(),
     )
 }
 
@@ -181,7 +208,7 @@ fn included_demoted_joiner_without_height_at_the_last_freeze_is_rejected() -> Re
             vs.val_deactivated_at_height.write(&A, 0)
         },
         |vs| vs.activate_reshared_set(&[A], HASH),
-        "validator deactivation height must be non-zero".to_string(),
+        &I::ValidatorDeactivationHeightZero {}.abi_encode(),
     )
 }
 
@@ -216,29 +243,32 @@ fn tee_expiry_of_an_ineligible_validator_is_rejected_with_its_status() -> Result
     assert_rejected_before_writes(
         |vs| exiting(vs, A),
         |vs| vs.test_activate_validated_boundary_set_with_expiry_exclusions(&[], HASH, 11, &[A]),
-        format!(
-            "TEE expiry exclusion contains validator {A} with ineligible status {}",
-            status::EXITING
-        ),
+        &I::TeeExpiryExclusionIneligibleStatus {
+            account: A,
+            status: status::EXITING,
+        }
+        .abi_encode(),
     )
 }
 
 #[test]
 fn participant_membership_mismatch_is_rejected_after_planning() -> Result<()> {
     let mismatch = |planned: &[Address], artifact: &[Address]| {
-        format!(
-            "validated boundary participant membership mismatch: planned {planned:?}, artifact {artifact:?}"
-        )
+        I::BoundaryParticipantMembershipMismatch {
+            planned: planned.to_vec(),
+            artifact: artifact.to_vec(),
+        }
+        .abi_encode()
     };
     assert_rejected_before_writes(
         |vs| active(vs, A),
         boundary(&[A, A], 10),
-        mismatch(&[A], &[A, A]),
+        &mismatch(&[A], &[A, A]),
     )?;
     assert_rejected_before_writes(
         |vs| active(vs, A),
         boundary(&[A, UNREGISTERED], 10),
-        mismatch(&[A], &[A, UNREGISTERED]),
+        &mismatch(&[A], &[A, UNREGISTERED]),
     )
 }
 
@@ -250,7 +280,7 @@ fn first_rejected_validator_in_registry_order_wins() -> Result<()> {
             exiting(vs, B)
         },
         boundary(&[B], 11),
-        format!("validated boundary omitted active validator {A}"),
+        &I::BoundaryOmittedActiveValidator { account: A }.abi_encode(),
     )?;
     assert_rejected_before_writes(
         |vs| {
@@ -258,7 +288,12 @@ fn first_rejected_validator_in_registry_order_wins() -> Result<()> {
             active(vs, A)
         },
         boundary(&[B], 11),
-        format!("validated boundary retained validator {B} that exited at 11 before freeze 11"),
+        &I::BoundaryRetainedValidatorExitedBeforeFreeze {
+            account: B,
+            changed_at: 11,
+            freeze_height: 11,
+        }
+        .abi_encode(),
     )
 }
 
@@ -267,7 +302,7 @@ fn lifecycle_rejection_precedes_membership_mismatch() -> Result<()> {
     assert_rejected_before_writes(
         |vs| active(vs, A),
         boundary(&[UNREGISTERED], 10),
-        format!("validated boundary omitted active validator {A}"),
+        &I::BoundaryOmittedActiveValidator { account: A }.abi_encode(),
     )
 }
 

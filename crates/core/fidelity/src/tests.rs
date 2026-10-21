@@ -236,12 +236,16 @@ fn precompile_dispatch_query_auth_and_metadata() {
                 signature: Bytes::from(forged),
             })
             .abi_encode();
-        // ...and surfaced as a Revert carrying the reason (not an opaque Fatal,
+        // ...and surfaced as a RevertBytes carrying the reason (not an opaque Fatal,
         // which eth_call drops as data-less "missing revert data").
         let err = dispatch(storage.clone(), &bad, Address::ZERO, U256::ZERO).unwrap_err();
         assert!(
-            matches!(err, outbe_primitives::error::PrecompileError::Revert(_)),
-            "query failure must surface as Revert, got {err:?}"
+            matches!(
+                &err,
+                outbe_primitives::error::PrecompileError::RevertBytes(bytes)
+                    if bytes.starts_with(&<IFidelity::EnclaveQueryError as alloy_sol_types::SolError>::SELECTOR)
+            ),
+            "query failure must surface as EnclaveQueryError RevertBytes, got {err:?}"
         );
 
         // Plaintext metadata needs no authorization.

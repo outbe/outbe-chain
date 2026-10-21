@@ -1,4 +1,5 @@
 use super::*;
+use alloy_sol_types::SolError;
 
 fn renewal_call(node_len: usize, enclave_len: usize) -> Vec<u8> {
     ITeeRegistryV1::renewEnclaveCall {
@@ -28,11 +29,11 @@ fn valid_calls() -> [Vec<u8>; 2] {
     ]
 }
 
-fn assert_revert(encoded: &[u8], expected: &str) {
+fn assert_revert(encoded: &[u8], expected: &[u8]) {
     let error = preflight_evidence_mutator_call(encoded).err();
     assert!(
-        matches!(&error, Some(PrecompileError::Revert(message)) if message == expected),
-        "expected revert {expected:?}, got {error:?}"
+        matches!(&error, Some(PrecompileError::RevertBytes(bytes)) if bytes.as_ref() == expected),
+        "expected revert bytes {expected:02x?}, got {error:?}"
     );
 }
 
@@ -43,7 +44,7 @@ fn initial_offsets_are_decoded_before_checking_evidence_offset() {
         encoded[36] = 1;
         assert_revert(
             &encoded,
-            "invalid canonical V1 registration ABI: ABI integer exceeds host usize",
+            &ITeeRegistryV1::AbiIntegerExceedsHostUsize {}.abi_encode(),
         );
     }
 }
@@ -51,26 +52,32 @@ fn initial_offsets_are_decoded_before_checking_evidence_offset() {
 #[test]
 fn common_offsets_and_signature_lengths_keep_their_exact_errors() {
     for encoded in valid_calls() {
-        for (word, label) in [
-            (0, "evidence"),
-            (1, "node signature"),
-            (2, "enclave signature"),
+        for (word, expected) in [
+            (
+                0,
+                ITeeRegistryV1::NonCanonicalEvidenceOffset {}.abi_encode(),
+            ),
+            (
+                1,
+                ITeeRegistryV1::NonCanonicalNodeSignatureOffset {}.abi_encode(),
+            ),
+            (
+                2,
+                ITeeRegistryV1::NonCanonicalEnclaveSignatureOffset {}.abi_encode(),
+            ),
         ] {
             let mut changed = encoded.clone();
             changed[4 + word * 32..4 + (word + 1) * 32].fill(0);
-            assert_revert(
-                &changed,
-                &format!("invalid canonical V1 registration ABI: non-canonical {label} offset"),
-            );
+            assert_revert(&changed, &expected);
         }
     }
     assert_revert(
         &renewal_call(64, 64),
-        "node proof-of-possession signature must be 65 bytes",
+        &ITeeRegistryV1::NodePopSignatureLengthInvalid {}.abi_encode(),
     );
     assert_revert(
         &renewal_call(65, 63),
-        "enclave proof-of-possession signature must be 64 bytes",
+        &ITeeRegistryV1::EnclavePopSignatureLengthInvalid {}.abi_encode(),
     );
 }
 
@@ -81,7 +88,7 @@ fn validator_offsets_are_decoded_before_checking_binding_offset() {
     encoded[132] = 1;
     assert_revert(
         &encoded,
-        "invalid canonical V1 registration ABI: ABI integer exceeds host usize",
+        &ITeeRegistryV1::AbiIntegerExceedsHostUsize {}.abi_encode(),
     );
 }
 
@@ -92,22 +99,22 @@ fn validator_binding_and_signature_lengths_keep_their_exact_errors() {
             ValidatorNodeBindingV1::CANONICAL_LEN - 1,
             65,
             65,
-            format!(
-                "validator NodeHost binding must be {} bytes",
-                ValidatorNodeBindingV1::CANONICAL_LEN
-            ),
+            ITeeRegistryV1::ValidatorNodeBindingLengthInvalid {
+                value: u64::try_from(ValidatorNodeBindingV1::CANONICAL_LEN).unwrap(),
+            }
+            .abi_encode(),
         ),
         (
             ValidatorNodeBindingV1::CANONICAL_LEN,
             64,
             65,
-            "validator NodeHost binding signature must be 65 bytes".into(),
+            ITeeRegistryV1::ValidatorBindingSignatureLengthInvalid {}.abi_encode(),
         ),
         (
             ValidatorNodeBindingV1::CANONICAL_LEN,
             65,
             64,
-            "NodeHost binding signature must be 65 bytes".into(),
+            ITeeRegistryV1::NodeBindingSignatureLengthInvalid {}.abi_encode(),
         ),
     ] {
         assert_revert(
@@ -122,24 +129,21 @@ fn padding_precedes_trailing_bytes_and_missing_heads_keep_their_errors() {
     for encoded in valid_calls() {
         let mut trailing = encoded.clone();
         trailing.push(0);
-        assert_revert(
-            &trailing,
-            "invalid canonical V1 registration ABI: trailing ABI bytes",
-        );
+        assert_revert(&trailing, &ITeeRegistryV1::TrailingAbiBytes {}.abi_encode());
         let mut padding = trailing;
         let evidence_offset = U256::from_be_slice(&encoded[4..36]).to::<usize>();
         padding[4 + evidence_offset + 32 + 3] = 1;
         assert_revert(
             &padding,
-            "invalid canonical V1 registration ABI: non-zero dynamic padding",
+            &ITeeRegistryV1::NonZeroDynamicPadding {}.abi_encode(),
         );
     }
     assert_revert(
         &[0, 0, 0],
-        "invalid canonical V1 registration ABI: missing function selector",
+        &ITeeRegistryV1::MissingFunctionSelector {}.abi_encode(),
     );
     assert_revert(
         &[0, 0, 0, 0],
-        "invalid canonical V1 registration ABI: truncated argument head",
+        &ITeeRegistryV1::TruncatedArgumentHead {}.abi_encode(),
     );
 }

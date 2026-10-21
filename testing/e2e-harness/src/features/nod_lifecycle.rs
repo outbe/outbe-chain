@@ -222,7 +222,7 @@ impl Lifecycle for NodLifecycle {
         let pool = eth::read_call_at(
             &url,
             addresses::PROMIS_LIMIT_ADDR,
-            &eth::IPromisLimit::totalUnallocatedCall {},
+            &eth::IPromisLimit::promisLimitCall {},
             height,
         )
         .expect("unallocated pool before the forfeit");
@@ -282,7 +282,7 @@ impl Lifecycle for NodLifecycle {
             eth::read_call_at(
                 &url,
                 addresses::PROMIS_LIMIT_ADDR,
-                &eth::IPromisLimit::totalUnallocatedCall {},
+                &eth::IPromisLimit::promisLimitCall {},
                 height,
             ),
             Some(before + load),

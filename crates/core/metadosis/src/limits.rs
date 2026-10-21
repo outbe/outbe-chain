@@ -8,45 +8,45 @@ use crate::errors::MetadosisError;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct LimitSplit {
-    /// The day's own emission plus what it drew from the accumulator.
+    /// The day's own emission plus what it drew from the Promis Limit.
     pub day_limit: U256,
     /// Maximum Lysis capacity, in protocol units (1e6 per whole COEN).
     pub lysis_limit_minor: U256,
     /// Maximum Desis capacity, not actual Intex issuance, in protocol units.
     pub desis_limit_minor: U256,
     /// What Lysis left of the day's own emission, credited before the auction draws.
-    pub carry_over_credit: U256,
+    pub promis_limit_credit: U256,
 }
 
 impl LimitSplit {
-    /// The day's own emission bounds Lysis, and the accumulator receives the credit for what
-    /// Lysis leaves. The auction then draws from that accumulator: no more than the nominal beyond
-    /// the symbolic share, and no more than the accumulator holds.
+    /// The day's own emission bounds Lysis, and the Promis Limit receives the credit for what
+    /// Lysis leaves. The auction then draws from the Promis Limit: no more than the nominal beyond
+    /// the symbolic share, and no more than it holds.
     pub(crate) fn derive(
         base_limit: U256,
         lysis_limit_minor: U256,
         nominal_total: U256,
-        carry_over_before: U256,
+        promis_limit_before: U256,
     ) -> Result<Self> {
         let invalid = || MetadosisError::InvalidLysisLimitSplit {
             day_limit: base_limit,
             lysis_limit_minor,
         };
-        let carry_over_credit = base_limit
+        let promis_limit_credit = base_limit
             .checked_sub(lysis_limit_minor)
             .ok_or_else(invalid)?;
         let desis_limit_minor = crate::settlement::desis_limit(
             nominal_total,
             lysis_limit_minor,
             base_limit,
-            carry_over_before,
+            promis_limit_before,
         )
         .ok_or_else(invalid)?;
         Self::assemble(
             base_limit,
             lysis_limit_minor,
             desis_limit_minor,
-            carry_over_credit,
+            promis_limit_credit,
         )
     }
 
@@ -54,13 +54,13 @@ impl LimitSplit {
         base_limit: U256,
         lysis_limit_minor: U256,
         desis_limit_minor: U256,
-        carry_over_credit: U256,
+        promis_limit_credit: U256,
     ) -> Result<Self> {
         let invalid = || MetadosisError::InvalidLysisLimitSplit {
             day_limit: base_limit,
             lysis_limit_minor,
         };
-        if lysis_limit_minor.checked_add(carry_over_credit) != Some(base_limit) {
+        if lysis_limit_minor.checked_add(promis_limit_credit) != Some(base_limit) {
             return Err(invalid().into());
         }
         let day_limit = base_limit
@@ -70,7 +70,7 @@ impl LimitSplit {
             day_limit,
             lysis_limit_minor,
             desis_limit_minor,
-            carry_over_credit,
+            promis_limit_credit,
         })
     }
 }
@@ -87,29 +87,26 @@ pub(crate) fn apply_lysis_limit(
     storage: StorageHandle<'_>,
     input: LysisLimitInput,
 ) -> Result<LimitSplit> {
-    let carry_before = PromisLimitContract::new(storage.clone()).get_total_unallocated()?;
+    let carry_before = PromisLimitContract::new(storage.clone()).promis_limit()?;
     let split = LimitSplit::derive(
         input.base_limit,
         input.lysis_limit_minor,
         input.nominal_total,
         carry_before,
     )?;
-    if !split.carry_over_credit.is_zero() {
-        let delta = PromisLimitContract::new(storage.clone())
-            .checked_add_carry_over(split.carry_over_credit)?;
-        if delta.credited != split.carry_over_credit {
+    if !split.promis_limit_credit.is_zero() {
+        let delta =
+            PromisLimitContract::new(storage.clone()).checked_credit(split.promis_limit_credit)?;
+        if delta.credited != split.promis_limit_credit {
             return Err(MetadosisError::LysisLimitCreditMismatch.into());
         }
     }
     if !split.desis_limit_minor.is_zero() {
         let mut promis = PromisLimitContract::new(storage);
-        if promis
-            .checked_take_carry_over(split.desis_limit_minor)?
-            .is_none()
-        {
+        if promis.checked_take(split.desis_limit_minor)?.is_none() {
             return Err(MetadosisError::DesisLimitUnavailable {
                 desis_limit_minor: split.desis_limit_minor,
-                available: promis.get_total_unallocated()?,
+                available: promis.promis_limit()?,
             }
             .into());
         }
@@ -157,7 +154,7 @@ mod tests {
             let mut provider = HashMapStorageProvider::new(1);
             StorageHandle::enter(&mut provider, |storage| {
                 PromisLimitContract::new(storage.clone())
-                    .checked_add_carry_over(U256::from(carry as u64))
+                    .checked_credit(U256::from(carry as u64))
                     .unwrap();
                 let split = apply_lysis_limit(
                     storage.clone(),
@@ -171,7 +168,7 @@ mod tests {
                 assert_eq!(split.desis_limit_minor, U256::from(auction as u64));
                 assert_eq!(
                     PromisLimitContract::new(storage.clone())
-                        .get_total_unallocated()
+                        .promis_limit()
                         .unwrap(),
                     U256::from(remaining as u64)
                 );
@@ -187,9 +184,7 @@ mod tests {
                     u8::from(auction != 0)
                 );
                 assert_eq!(
-                    PromisLimitContract::new(storage)
-                        .get_total_unallocated()
-                        .unwrap(),
+                    PromisLimitContract::new(storage).promis_limit().unwrap(),
                     U256::from(remaining as u64)
                 );
             });
@@ -211,7 +206,7 @@ mod tests {
             let mut provider = HashMapStorageProvider::new(1);
             StorageHandle::enter(&mut provider, |storage| {
                 PromisLimitContract::new(storage)
-                    .checked_add_carry_over(carry)
+                    .checked_credit(carry)
                     .unwrap();
             });
             let before = provider.storage.clone();

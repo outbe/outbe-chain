@@ -118,7 +118,7 @@ pub(crate) fn burn_settled(storage: &StorageHandle, gem_id: U256) {
 
 pub(crate) fn unallocated(storage: &StorageHandle) -> U256 {
     outbe_promislimit::PromisLimitContract::new(storage.clone())
-        .get_total_unallocated()
+        .promis_limit()
         .unwrap()
 }
 

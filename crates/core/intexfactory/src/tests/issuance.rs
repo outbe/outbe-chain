@@ -8,16 +8,33 @@ fn issue_distinguishes_timestamp_narrowing_from_protocol_width() {
         for (timestamp, expected) in [
             (
                 U256::from(u32::MAX) + U256::ONE,
-                "block timestamp exceeds u32",
+                outbe_primitives::error::PrecompileError::from(
+                    crate::errors::IntexFactoryError::BlockTimestampExceedsU32,
+                ),
             ),
-            (U256::from(u64::MAX), "block timestamp exceeds u32"),
-            (U256::from(u64::MAX) + U256::ONE, "timestamp exceeds u64"),
-            (U256::MAX, "timestamp exceeds u64"),
+            (
+                U256::from(u64::MAX),
+                outbe_primitives::error::PrecompileError::from(
+                    crate::errors::IntexFactoryError::BlockTimestampExceedsU32,
+                ),
+            ),
+            (
+                U256::from(u64::MAX) + U256::ONE,
+                outbe_primitives::error::PrecompileError::Revert("timestamp exceeds u64".into()),
+            ),
+            (
+                U256::MAX,
+                outbe_primitives::error::PrecompileError::Revert("timestamp exceeds u64".into()),
+            ),
         ] {
             storage.set_block_timestamp(timestamp).unwrap();
-            assert!(matches!(runtime::issue_intex(&storage, sample(7)),
-                Err(outbe_primitives::error::PrecompileError::Revert(message))
-                    if message == expected));
+            assert_eq!(
+                runtime::issue_intex(&storage, sample(7))
+                    .err()
+                    .unwrap()
+                    .to_string(),
+                expected.to_string()
+            );
             assert!(!outbe_intex::api::series_exists(&storage, sid(7)).unwrap());
         }
         storage.set_block_timestamp(U256::from(u32::MAX)).unwrap();
@@ -455,8 +472,12 @@ fn an_unpriced_issuance_currency_cannot_be_settled_in() {
         );
         // No euro pair at all.
         let err = runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE).unwrap_err();
-        assert!(
-            err.to_string().contains("oracle nominal unavailable"),
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_vaultrouter::settlement::SettlementError::OracleUnavailable,
+            )
+            .to_string(),
             "{err}"
         );
     });
@@ -476,8 +497,12 @@ fn a_rate_the_window_never_priced_cannot_be_settled_in() {
         write_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
 
         let err = runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE).unwrap_err();
-        assert!(
-            err.to_string().contains("oracle nominal unavailable"),
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_vaultrouter::settlement::SettlementError::OracleUnavailable,
+            )
+            .to_string(),
             "{err}"
         );
     });
@@ -496,7 +521,16 @@ fn issuance_currency_settlement_rejects_fx_overflow() {
         );
 
         let err = runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE).unwrap_err();
-        assert!(err.to_string().to_lowercase().contains("overflow"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_vaultrouter::settlement::SettlementError::Rounding(
+                    outbe_primitives::settlement::RoundingError::Overflow,
+                ),
+            )
+            .to_string(),
+            "{err}"
+        );
     });
 }
 
