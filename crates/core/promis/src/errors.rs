@@ -51,6 +51,10 @@ pub enum PromisFatalError {
     TotalSupplyOverflow,
     #[error("promis total_supply underflow")]
     TotalSupplyUnderflow,
+    #[error("owner movement result mismatch")]
+    OwnerResultMismatch,
+    #[error("enclave returned a wrong op nonce")]
+    WrongOpNonce,
 }
 
 impl PromisFatalError {
@@ -75,9 +79,10 @@ impl From<PromisFatalError> for PrecompileError {
             | PromisFatalError::AttestationInvalid(_) => {
                 PrecompileError::EnclaveUnavailable(message)
             }
-            PromisFatalError::TotalSupplyOverflow | PromisFatalError::TotalSupplyUnderflow => {
-                PrecompileError::Revert(message)
-            }
+            PromisFatalError::TotalSupplyOverflow
+            | PromisFatalError::TotalSupplyUnderflow
+            | PromisFatalError::OwnerResultMismatch
+            | PromisFatalError::WrongOpNonce => PrecompileError::Revert(message),
         }
     }
 }
