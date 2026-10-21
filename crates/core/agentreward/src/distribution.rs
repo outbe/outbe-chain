@@ -1,3 +1,4 @@
+use crate::constants::ACCRUAL_RECIPIENTS_PER_BLOCK;
 use crate::errors::AgentRewardError;
 use crate::precompile::IAgentReward;
 use crate::schema::{AccrualJob, AgentRewardContract, RewardPool};
@@ -98,9 +99,6 @@ fn distribute_pool(
     }
     Ok(excess)
 }
-
-/// Most WAA and SRA addresses that one block credits.
-pub const ACCRUAL_RECIPIENTS_PER_BLOCK: u32 = 256;
 
 /// Queues a WAA or SRA day pool for [`advance_accruals`]. A day without tributes
 /// returns the whole pool as excess.

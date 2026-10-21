@@ -131,7 +131,7 @@ fn gas_06_agentreward_dense_daily_distribution_completes_and_clears_indexes() {
 
 #[test]
 fn a_day_beyond_one_slice_is_credited_over_several_blocks_in_queue_order() {
-    use crate::distribution::ACCRUAL_RECIPIENTS_PER_BLOCK;
+    use crate::constants::ACCRUAL_RECIPIENTS_PER_BLOCK;
     let slice = u64::from(ACCRUAL_RECIPIENTS_PER_BLOCK);
     let waa_day = WorldwideDay::new(20260525);
     let sra_day = WorldwideDay::new(20260526);
