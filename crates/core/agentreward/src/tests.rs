@@ -332,6 +332,67 @@ fn claiming_a_pool_issues_its_gem() {
 }
 
 #[test]
+fn same_block_claims_with_different_currencies_have_distinct_ids() {
+    let alice = address!("0x1111111111111111111111111111111111111111");
+    let load = U256::from(500u64);
+
+    with_contract_mut(|storage, contract| {
+        seed_oracle(&storage, ONE_COEN);
+        price_coen_in(&storage, EUR, ONE_COEN, true);
+        let mut remaining = load * U256::from(4);
+        contract
+            .add_claimable_reward(RewardPool::Waa, alice, remaining)
+            .unwrap();
+
+        let mut ids = Vec::new();
+        for currencies in [(USD, USD), (EUR, USD), (USD, EUR)] {
+            let gem_id = contract
+                .claim_reward(RewardPool::Waa, alice, load, currencies)
+                .unwrap();
+            assert!(!ids.contains(&gem_id));
+            ids.push(gem_id);
+            let gem = outbe_gem::api::get_item(&storage, gem_id).unwrap().unwrap();
+            assert_eq!(gem.owner, alice);
+            assert_eq!(gem.promis_load_minor, load);
+            assert_eq!(gem.issuance_currency, currencies.0);
+            assert_eq!(gem.reference_currency, currencies.1);
+            remaining -= load;
+            assert_eq!(contract.get_claimable_reward(alice).unwrap(), remaining);
+            assert_eq!(
+                contract.pool_claimable_total(RewardPool::Waa).unwrap(),
+                remaining
+            );
+        }
+
+        let error = contract
+            .claim_reward(RewardPool::Waa, alice, load, (USD, USD))
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            outbe_primitives::error::PrecompileError::Revert(reason)
+                if reason == outbe_gem::GemError::AlreadyExists.to_string()
+        ));
+        assert_eq!(contract.get_claimable_reward(alice).unwrap(), remaining);
+        assert_eq!(
+            contract.pool_claimable_total(RewardPool::Waa).unwrap(),
+            remaining
+        );
+        let owned = outbe_gem::api::list_by_owner(&storage, alice).unwrap();
+        assert_eq!(owned.len(), 3);
+        for gem in owned {
+            assert!(ids.contains(&gem.gem_id.to_u256()));
+        }
+        assert_eq!(
+            outbe_gem::GemContract::new(storage.clone())
+                .total_supply
+                .read()
+                .unwrap(),
+            3
+        );
+    });
+}
+
+#[test]
 fn the_sra_pool_issues_a_gem_of_the_whole_load() {
     let alice = address!("0x1111111111111111111111111111111111111111");
     let load = U256::from(1_000_000u64);
