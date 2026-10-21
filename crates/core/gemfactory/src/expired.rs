@@ -3,6 +3,7 @@ use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{Result, SweepFailure},
     expiry_queue::{self, Due, ExpiryHandler},
+    sweep_budget::SweepBudget,
 };
 
 use outbe_gem::precompile::IGem::GemGroupForfeited;
@@ -26,18 +27,11 @@ pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
 pub(crate) fn sweep_through(
     ctx: &BlockRuntimeContext,
     through_day: u32,
-    budget: &mut outbe_primitives::sweep_budget::SweepBudget,
+    budget: &mut SweepBudget,
 ) -> Result<expiry_queue::Progress> {
     let queue = GemContract::new(ctx.storage.clone());
     let mut expiry = GemExpiry::new(ctx);
-    expiry_queue::sweep_through(
-        &ExpiryDays(&queue),
-        &ctx.storage,
-        ctx.block.timestamp,
-        through_day,
-        budget,
-        &mut expiry,
-    )
+    expiry_queue::sweep_day(&ExpiryDays(&queue), ctx, through_day, budget, &mut expiry)
 }
 
 pub(crate) struct GemExpiry<'a, 's> {

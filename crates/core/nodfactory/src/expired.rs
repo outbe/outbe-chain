@@ -19,11 +19,7 @@ use outbe_nod::{precompile::INod, schema::NodContract};
 #[cfg(any(test, feature = "test-utils"))]
 pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = NodContract::new(ctx.storage.clone());
-    let mut expiry = NodExpiry {
-        storage: &ctx.storage,
-        nod: NodContract::new(ctx.storage.clone()),
-        forfeited: 0,
-    };
+    let mut expiry = NodExpiry::new(ctx);
     expiry_queue::sweep_block(&ExpiryDays(&queue), ctx, &mut expiry)?;
     Ok(expiry.forfeited)
 }
@@ -34,25 +30,24 @@ pub(crate) fn sweep_through(
     budget: &mut SweepBudget,
 ) -> Result<expiry_queue::Progress> {
     let queue = NodContract::new(ctx.storage.clone());
-    let mut expiry = NodExpiry {
-        storage: &ctx.storage,
-        nod: NodContract::new(ctx.storage.clone()),
-        forfeited: 0,
-    };
-    expiry_queue::sweep_through(
-        &ExpiryDays(&queue),
-        &ctx.storage,
-        ctx.block.timestamp,
-        through_day,
-        budget,
-        &mut expiry,
-    )
+    let mut expiry = NodExpiry::new(ctx);
+    expiry_queue::sweep_day(&ExpiryDays(&queue), ctx, through_day, budget, &mut expiry)
 }
 
 struct NodExpiry<'a, 's> {
     storage: &'a StorageHandle<'s>,
     nod: NodContract<'s>,
     forfeited: u32,
+}
+
+impl<'a, 's> NodExpiry<'a, 's> {
+    fn new(ctx: &'a BlockRuntimeContext<'s>) -> Self {
+        Self {
+            storage: &ctx.storage,
+            nod: NodContract::new(ctx.storage.clone()),
+            forfeited: 0,
+        }
+    }
 }
 
 /// A called group forfeits as one: it is its own and only member.

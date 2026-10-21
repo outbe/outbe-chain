@@ -144,8 +144,29 @@ fn continue_pass<'s, S: CallSweep<'s>>(ctx: &BlockRuntimeContext, sweep: &mut S)
     // Persist even an idle selection: scheduling later at this height cannot open
     // a second pass, nor can another entrypoint replenish the allowance.
     sweep.block_budget().write(allowance.pack())?;
+    if day_ready(ctx, sweep, pinned_day)? {
+        let (called, progress) = run_phases(ctx, sweep, pinned_day, &mut allowance.budget)?;
+        if progress == Progress::Complete {
+            if let Some(next) = sweep.days().finish(pinned_day)? {
+                sweep.days().open(next)?;
+                sweep.phase().write(0)?;
+                sweep.reset_cursors(ctx)?;
+            }
+        }
+        sweep.block_budget().write(allowance.pack())?;
+        Ok(called)
+    } else {
+        Ok(0)
+    }
+}
+
+fn day_ready<'s, S: CallSweep<'s>>(
+    ctx: &BlockRuntimeContext,
+    sweep: &S,
+    pinned_day: u32,
+) -> Result<bool> {
     if pinned_day == 0 {
-        return Ok(0);
+        return Ok(false);
     }
     if pinned_day < sweep.genesis_day().read()? || pinned_day > sweep.days().latest.read()? {
         return Err(PrecompileError::revert("invalid daily sweep day range"));
@@ -165,29 +186,33 @@ fn continue_pass<'s, S: CallSweep<'s>>(ctx: &BlockRuntimeContext, sweep: &mut S)
             finalized,
             "call sweep: pinned utc-day VWAP not finalized, holding the sweep"
         );
-        return Ok(0);
     }
+    Ok(finalized >= pinned_day)
+}
+
+fn run_phases<'s, S: CallSweep<'s>>(
+    ctx: &BlockRuntimeContext,
+    sweep: &mut S,
+    pinned_day: u32,
+    budget: &mut SweepBudget,
+) -> Result<(u32, Progress)> {
     let mut phase = sweep.phase().read()?;
     if S::FORFEIT_PHASES == 0 || S::FORFEIT_PHASES == u8::MAX || phase > S::FORFEIT_PHASES {
         return Err(PrecompileError::revert("invalid daily sweep phase"));
     }
     let mut called = 0;
     if phase == 0 {
-        let (count, complete) = sweep.slice(ctx, pinned_day, &mut allowance.budget)?;
+        let (count, complete) = sweep.slice(ctx, pinned_day, budget)?;
         called = count;
         if !complete {
-            sweep.block_budget().write(allowance.pack())?;
-            return Ok(called);
+            return Ok((called, Progress::Pending));
         }
         phase = 1;
         sweep.phase().write(phase)?;
     }
     while phase <= S::FORFEIT_PHASES {
-        match sweep.forfeit(ctx, pinned_day, phase, &mut allowance.budget)? {
-            Progress::Pending => {
-                sweep.block_budget().write(allowance.pack())?;
-                return Ok(called);
-            }
+        match sweep.forfeit(ctx, pinned_day, phase, budget)? {
+            Progress::Pending => return Ok((called, Progress::Pending)),
             Progress::Complete if phase == S::FORFEIT_PHASES => break,
             Progress::Complete => {
                 phase += 1;
@@ -195,13 +220,7 @@ fn continue_pass<'s, S: CallSweep<'s>>(ctx: &BlockRuntimeContext, sweep: &mut S)
             }
         }
     }
-    if let Some(next) = sweep.days().finish(pinned_day)? {
-        sweep.days().open(next)?;
-        sweep.phase().write(0)?;
-        sweep.reset_cursors(ctx)?;
-    }
-    sweep.block_budget().write(allowance.pack())?;
-    Ok(called)
+    Ok((called, Progress::Complete))
 }
 
 /// How a day's walk reads one right's call index. `scan_terms` names the widest terms a

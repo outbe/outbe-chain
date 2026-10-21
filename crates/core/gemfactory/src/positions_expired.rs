@@ -6,6 +6,7 @@ use outbe_primitives::{
     error::{PrecompileError, Result, SweepFailure},
     expiry_queue::{self, Due, ExpiryHandler},
     storage::StorageHandle,
+    sweep_budget::SweepBudget,
 };
 
 use crate::errors::GemFactoryError;
@@ -19,11 +20,7 @@ use alloy_primitives::U256;
 #[cfg(any(test, feature = "test-utils"))]
 pub fn sweep_expired_positions(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = GemFactoryContract::new(ctx.storage.clone());
-    let mut expiry = PositionExpiry {
-        storage: &ctx.storage,
-        factory: GemFactoryContract::new(ctx.storage.clone()),
-        expired: 0,
-    };
+    let mut expiry = PositionExpiry::new(ctx);
     expiry_queue::sweep_block(&PositionExpiryDays(&queue), ctx, &mut expiry)?;
     Ok(expiry.expired)
 }
@@ -31,18 +28,13 @@ pub fn sweep_expired_positions(ctx: &BlockRuntimeContext) -> Result<u32> {
 pub(crate) fn sweep_through(
     ctx: &BlockRuntimeContext,
     through_day: u32,
-    budget: &mut outbe_primitives::sweep_budget::SweepBudget,
+    budget: &mut SweepBudget,
 ) -> Result<expiry_queue::Progress> {
     let queue = GemFactoryContract::new(ctx.storage.clone());
-    let mut expiry = PositionExpiry {
-        storage: &ctx.storage,
-        factory: GemFactoryContract::new(ctx.storage.clone()),
-        expired: 0,
-    };
-    expiry_queue::sweep_through(
+    let mut expiry = PositionExpiry::new(ctx);
+    expiry_queue::sweep_day(
         &PositionExpiryDays(&queue),
-        &ctx.storage,
-        ctx.block.timestamp,
+        ctx,
         through_day,
         budget,
         &mut expiry,
@@ -56,21 +48,12 @@ pub fn sweep_position_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
         factory: GemFactoryContract::new(ctx.storage.clone()),
         deleted: 0,
     };
-    ctx.storage.with_checkpoint(|| {
-        let mut allowance = outbe_primitives::sweep_budget::BlockAllowance::for_block(
-            queue.cleanup_budget.read()?,
-            ctx.block.block_number,
-            0,
-        )?;
-        expiry_queue::sweep(
-            &PositionCleanupDays(&queue),
-            &ctx.storage,
-            ctx.block.timestamp,
-            &mut allowance.budget,
-            &mut cleanup,
-        )?;
-        queue.cleanup_budget.write(allowance.pack())
-    })?;
+    expiry_queue::sweep_cleanup(
+        &PositionCleanupDays(&queue),
+        ctx,
+        &queue.cleanup_budget,
+        &mut cleanup,
+    )?;
     Ok(cleanup.deleted)
 }
 
@@ -78,6 +61,16 @@ struct PositionExpiry<'a, 's> {
     storage: &'a StorageHandle<'s>,
     factory: GemFactoryContract<'s>,
     expired: u32,
+}
+
+impl<'a, 's> PositionExpiry<'a, 's> {
+    fn new(ctx: &'a BlockRuntimeContext<'s>) -> Self {
+        Self {
+            storage: &ctx.storage,
+            factory: GemFactoryContract::new(ctx.storage.clone()),
+            expired: 0,
+        }
+    }
 }
 
 /// An hour expires as one: it is its own and only member.

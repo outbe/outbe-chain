@@ -8,14 +8,17 @@
 use alloy_primitives::{keccak256, B256, U256};
 
 pub use crate::daily_sweep::Progress;
-use crate::error::{decide, Decided, PrecompileError, Result, SweepFailure};
+use crate::error::{PrecompileError, Result, SweepFailure};
 use crate::math::constants::MAX_BIN_ID;
 use crate::math::tree_math::{self, BinTreeStorage};
 use crate::storage::dsl::{Map, Value};
 use crate::storage::types::{Storable, StorageKey};
 use crate::storage::StorageHandle;
-use crate::sweep_budget::SweepBudget;
+use crate::sweep_budget::{BlockAllowance, SweepBudget};
 use crate::time::SECONDS_PER_DAY;
+
+mod walk;
+pub use walk::{sweep_through, SweepTime};
 
 /// A queue entry. The zero value marks a vacant slot and cannot be queued.
 pub trait QueueEntry: Copy + PartialEq + Storable + StorageKey {
@@ -208,13 +211,6 @@ fn retire_day<'s, Q: ExpiryQueueStore<'s>>(queue: &Q, day: u32) -> Result<()> {
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Step {
-    Done,
-    /// Resume at this slot, below this member.
-    Hold(u32),
-}
-
 /// A right's decision about a due entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Due {
@@ -263,6 +259,57 @@ where
     )
 }
 
+/// Resumes the pinned deadline day with the caller's shared block allowance.
+pub fn sweep_day<'s, Q, H>(
+    queue: &Q,
+    ctx: &crate::block::BlockRuntimeContext<'s>,
+    through_day: u32,
+    budget: &mut SweepBudget,
+    handler: &mut H,
+) -> Result<Progress>
+where
+    Q: ExpiryQueueStore<'s>,
+    H: ExpiryHandler<Q::Entry>,
+{
+    sweep_through(
+        queue,
+        &ctx.storage,
+        SweepTime {
+            now: ctx.block.timestamp,
+            through_day,
+        },
+        budget,
+        handler,
+    )
+}
+
+/// Runs pure cleanup and persists its separate allowance in the same checkpoint.
+/// Re-entry at the same height cannot replenish the allowance.
+pub fn sweep_cleanup<'s, Q, H>(
+    queue: &Q,
+    ctx: &crate::block::BlockRuntimeContext<'s>,
+    saved_budget: &Value<'s, U256>,
+    handler: &mut H,
+) -> Result<Progress>
+where
+    Q: ExpiryQueueStore<'s>,
+    H: ExpiryHandler<Q::Entry>,
+{
+    ctx.storage.with_checkpoint(|| {
+        let mut allowance =
+            BlockAllowance::for_block(saved_budget.read()?, ctx.block.block_number, 0)?;
+        let progress = sweep(
+            queue,
+            &ctx.storage,
+            ctx.block.timestamp,
+            &mut allowance.budget,
+            handler,
+        )?;
+        saved_budget.write(allowance.pack())?;
+        Ok(progress)
+    })
+}
+
 /// Sweeps through the last closed UTC day. An open day is never visited.
 pub fn sweep<'s, Q, H>(
     queue: &Q,
@@ -281,182 +328,13 @@ where
     sweep_through(
         queue,
         storage,
-        now,
-        deadline_day(closed_timestamp)?,
+        SweepTime {
+            now,
+            through_day: deadline_day(closed_timestamp)?,
+        },
         budget,
         handler,
     )
-}
-
-/// Sweeps closed scheduling days at or before `through_day`, earliest first.
-/// The cutoff does not expand during catch-up. Every visited slot (including a
-/// hole or a leftover) costs a visit; every attempted member costs a write.
-pub fn sweep_through<'s, Q, H>(
-    queue: &Q,
-    storage: &StorageHandle<'s>,
-    now: u64,
-    through_day: u32,
-    budget: &mut SweepBudget,
-    handler: &mut H,
-) -> Result<Progress>
-where
-    Q: ExpiryQueueStore<'s>,
-    H: ExpiryHandler<Q::Entry>,
-{
-    if through_day > MAX_BIN_ID {
-        return Err(PrecompileError::Revert(
-            "expiry cutoff exceeds 24-bit range".into(),
-        ));
-    }
-    let mut walk = Walk {
-        queue,
-        storage,
-        now,
-        budget,
-        handler,
-    };
-    loop {
-        let Some(day) = first_day(queue)? else {
-            return Ok(Progress::Complete);
-        };
-        if day > through_day {
-            return Ok(Progress::Complete);
-        }
-        if now < day_end(day) || walk.budget.visits_left() == 0 || !walk.day(day)? {
-            return Ok(Progress::Pending);
-        }
-    }
-}
-
-struct Walk<'w, 's, Q, H> {
-    queue: &'w Q,
-    storage: &'w StorageHandle<'s>,
-    now: u64,
-    budget: &'w mut SweepBudget,
-    handler: &'w mut H,
-}
-
-impl<'s, Q, H> Walk<'_, 's, Q, H>
-where
-    Q: ExpiryQueueStore<'s>,
-    H: ExpiryHandler<Q::Entry>,
-{
-    fn day(&mut self, day: u32) -> Result<bool> {
-        let len = self.queue.day_len().read(&day)?;
-        let (slot, member) = self.walk_slots(day, len)?;
-        if self.queue.day_live().read(&day)? == 0 {
-            return Ok(true);
-        }
-        if slot < len {
-            self.queue.sweep_day().write(day)?;
-            self.queue.sweep_cursor().write(pack_cursor(slot, member))?;
-            return Ok(false);
-        }
-        // Every live slot is removed or retargeted during its charged visit.
-        Err(PrecompileError::Fatal(
-            "expiry day retains entries after its last slot".into(),
-        ))
-    }
-
-    fn walk_slots(&mut self, day: u32, len: u32) -> Result<(u32, u32)> {
-        let (mut slot, mut member) = match self.queue.sweep_day().read()? == day {
-            true => unpack_cursor(self.queue.sweep_cursor().read()?),
-            false => (0, 0),
-        };
-        while slot < len && self.budget.visit() {
-            if let Some(entry) = entry_at(self.queue, day, slot)? {
-                let step = if self.now > self.queue.entry_deadline().read(&entry)? {
-                    self.expire(entry, member)?
-                } else {
-                    self.retire_leftover(entry)?;
-                    Step::Done
-                };
-                if let Step::Hold(held) = step {
-                    return Ok((slot, held));
-                }
-                if self.queue.day_live().read(&day)? == 0 {
-                    return Ok((len, 0));
-                }
-            }
-            // slot < len <= u32::MAX, so this increment cannot overflow.
-            slot += 1;
-            member = 0;
-        }
-        Ok((slot, 0))
-    }
-
-    fn expire(&mut self, entry: Q::Entry, resume: u32) -> Result<Step> {
-        match self.handler.due(entry)? {
-            Due::Expire => {}
-            Due::Drop => {
-                self.drop_entry(entry)?;
-                return Ok(Step::Done);
-            }
-            Due::Wait => {
-                self.defer(entry)?;
-                return Ok(Step::Done);
-            }
-        }
-        // Reverse traversal keeps swap-removed members already tried above index.
-        let count = self.handler.member_count(entry)?;
-        let mut index = match resume {
-            0 => count,
-            held => held.min(count),
-        };
-        let mut failed = count - index;
-        while index > 0 {
-            if !self.budget.write() {
-                return Ok(Step::Hold(index));
-            }
-            index -= 1;
-            let member = self.handler.member_at(entry, index)?;
-            let handler = &mut *self.handler;
-            let outcome = self
-                .storage
-                .with_checkpoint(|| handler.expire_member(entry, member));
-            match decide(outcome, |error| self.handler.classify(error))? {
-                Decided::Done(()) => {}
-                Decided::Stopped => {
-                    self.budget.stop();
-                    return Ok(Step::Hold(index + 1));
-                }
-                Decided::Skipped(error) => {
-                    tracing::warn!(target: "outbe::expiry", error = ?error, "expiry sweep: member left for a later day");
-                    failed += 1;
-                }
-            }
-        }
-        match failed {
-            0 => self.drop_entry(entry)?,
-            _ => self.defer(entry)?,
-        }
-        Ok(Step::Done)
-    }
-
-    /// Handles a misplaced future deadline in the same charged traversal.
-    fn retire_leftover(&mut self, entry: Q::Entry) -> Result<()> {
-        match self.handler.due(entry)? {
-            Due::Drop => self.drop_entry(entry),
-            Due::Expire | Due::Wait => self.defer(entry),
-        }
-    }
-
-    fn drop_entry(&mut self, entry: Q::Entry) -> Result<()> {
-        let queue = self.queue;
-        self.storage.with_checkpoint(|| remove(queue, entry))
-    }
-
-    /// Retry at the closing timestamp of the actual current UTC day, never before
-    /// the deadline day. Historical catch-up must not backdate the retry.
-    fn defer(&mut self, entry: Q::Entry) -> Result<()> {
-        let deadline = self.queue.entry_deadline().read(&entry)?;
-        let day = deadline_day(deadline)?.max(deadline_day(self.now)?);
-        let (queue, handler) = (self.queue, &mut *self.handler);
-        self.storage.with_checkpoint(|| {
-            retarget(queue, entry, day)?;
-            handler.deferred(entry, day_end(day))
-        })
-    }
 }
 
 /// Implements [`BinTreeStorage`] and [`ExpiryQueueStore`] for `Adapter(&contract)`.
@@ -674,14 +552,34 @@ mod tests {
             let mut handler = recorder();
             let mut budget = SweepBudget::new(10, 10);
             assert_eq!(
-                sweep_through(queue, storage, 20 * DAY, 11, &mut budget, &mut handler).unwrap(),
+                sweep_through(
+                    queue,
+                    storage,
+                    SweepTime {
+                        now: 20 * DAY,
+                        through_day: 11
+                    },
+                    &mut budget,
+                    &mut handler,
+                )
+                .unwrap(),
                 Progress::Complete
             );
             assert_eq!(handler.expired, vec![id(10), id(11)]);
             assert_eq!(first_day(queue).unwrap(), Some(12));
             assert_eq!((budget.visits_left(), budget.writes_left()), (8, 8));
             assert_eq!(
-                sweep_through(queue, storage, 12 * DAY, 12, &mut budget, &mut handler).unwrap(),
+                sweep_through(
+                    queue,
+                    storage,
+                    SweepTime {
+                        now: 12 * DAY,
+                        through_day: 12
+                    },
+                    &mut budget,
+                    &mut handler,
+                )
+                .unwrap(),
                 Progress::Pending
             );
         });
@@ -949,6 +847,78 @@ mod tests {
             }
             Ok(())
         }
+    }
+
+    #[test]
+    fn cleanup_persists_its_allowance_and_rolls_back_a_failed_continuation() {
+        with_queue(|queue, storage| {
+            use crate::block::{BlockContext, BlockRuntimeContext};
+            use crate::sweep_budget::{SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK};
+
+            push(queue, id(1), 10 * DAY).unwrap();
+            push(queue, id(2), 10 * DAY).unwrap();
+            let saved = Value::new(id(20), CONTRACT, storage.clone());
+            saved
+                .write(
+                    BlockAllowance {
+                        height: 4,
+                        day: 0,
+                        budget: SweepBudget::new(SWEEP_VISITS_PER_BLOCK, 1),
+                    }
+                    .pack(),
+                )
+                .unwrap();
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(4, 11 * DAY, 1),
+                storage.clone(),
+            );
+            let mut handler = recorder();
+            assert_eq!(
+                sweep_cleanup(queue, &ctx, &saved, &mut handler).unwrap(),
+                Progress::Pending
+            );
+            assert_eq!(handler.expired, vec![id(1)]);
+            assert_eq!(
+                sweep_cleanup(queue, &ctx, &saved, &mut handler).unwrap(),
+                Progress::Pending
+            );
+            assert_eq!(
+                handler.expired,
+                vec![id(1)],
+                "same-height work cannot refill writes"
+            );
+            let before = saved.read().unwrap();
+            let cursor = queue.sweep_cursor().read().unwrap();
+
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(5, 11 * DAY, 1),
+                storage.clone(),
+            );
+            let mut handler = CheckpointHandler {
+                state: Value::new(id(30), CONTRACT, storage.clone()),
+                member_error: Some(PrecompileError::Storage("injected cleanup failure".into())),
+                defer_error: false,
+            };
+            assert!(matches!(
+                sweep_cleanup(queue, &ctx, &saved, &mut handler),
+                Err(PrecompileError::Storage(_))
+            ));
+            assert_eq!(handler.state.read().unwrap(), 0);
+            assert_eq!(saved.read().unwrap(), before);
+            assert_eq!(queue.sweep_cursor().read().unwrap(), cursor);
+            assert_eq!(entry_at(queue, 10, 1).unwrap(), Some(id(2)));
+
+            assert_eq!(
+                sweep_cleanup(queue, &ctx, &saved, &mut handler).unwrap(),
+                Progress::Complete
+            );
+            assert_eq!(first_day(queue).unwrap(), None);
+            let allowance = BlockAllowance::unpack(saved.read().unwrap())
+                .unwrap()
+                .unwrap();
+            assert_eq!(allowance.height, 5);
+            assert_eq!(allowance.budget.writes_left(), SWEEP_WRITES_PER_BLOCK - 1);
+        });
     }
 
     #[test]

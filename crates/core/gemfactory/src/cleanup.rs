@@ -15,26 +15,13 @@ use crate::errors::GemFactoryError;
 /// Deletes the unpaid gems of the forfeited groups. Returns the gems deleted.
 pub fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = GemContract::new(ctx.storage.clone());
-    let mut cleanup = GemCleanup {
-        storage: &ctx.storage,
-        gem: GemContract::new(ctx.storage.clone()),
-        deleted: 0,
-    };
-    ctx.storage.with_checkpoint(|| {
-        let mut allowance = outbe_primitives::sweep_budget::BlockAllowance::for_block(
-            queue.cleanup_budget.read()?,
-            ctx.block.block_number,
-            0,
-        )?;
-        expiry_queue::sweep(
-            &CleanupDays(&queue),
-            &ctx.storage,
-            ctx.block.timestamp,
-            &mut allowance.budget,
-            &mut cleanup,
-        )?;
-        queue.cleanup_budget.write(allowance.pack())
-    })?;
+    let mut cleanup = GemCleanup::new(ctx);
+    expiry_queue::sweep_cleanup(
+        &CleanupDays(&queue),
+        ctx,
+        &queue.cleanup_budget,
+        &mut cleanup,
+    )?;
     Ok(cleanup.deleted)
 }
 
@@ -42,6 +29,16 @@ struct GemCleanup<'a, 's> {
     storage: &'a StorageHandle<'s>,
     gem: GemContract<'s>,
     deleted: u32,
+}
+
+impl<'a, 's> GemCleanup<'a, 's> {
+    fn new(ctx: &'a BlockRuntimeContext<'s>) -> Self {
+        Self {
+            storage: &ctx.storage,
+            gem: GemContract::new(ctx.storage.clone()),
+            deleted: 0,
+        }
+    }
 }
 
 /// A forfeited group's members are its unpaid gems.

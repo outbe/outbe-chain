@@ -10,33 +10,20 @@ use outbe_primitives::{
     error::{PrecompileError, Result, SweepFailure},
     expiry_queue::{self, Due, ExpiryHandler},
     storage::StorageHandle,
-    sweep_budget::BlockAllowance,
 };
 
 use crate::errors::NodFactoryError;
 
 /// Deletes the unpaid Nods of the forfeited groups. Returns the Nods deleted.
 pub fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
-    ctx.with_checkpoint(|| cleanup_block(ctx))
-}
-
-fn cleanup_block(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = NodContract::new(ctx.storage.clone());
-    let mut allowance =
-        BlockAllowance::for_block(queue.cleanup_budget.read()?, ctx.block.block_number, 0)?;
-    let mut cleanup = NodCleanup {
-        storage: &ctx.storage,
-        nod: NodContract::new(ctx.storage.clone()),
-        deleted: 0,
-    };
-    expiry_queue::sweep(
+    let mut cleanup = NodCleanup::new(ctx);
+    expiry_queue::sweep_cleanup(
         &CleanupDays(&queue),
-        &ctx.storage,
-        ctx.block.timestamp,
-        &mut allowance.budget,
+        ctx,
+        &queue.cleanup_budget,
         &mut cleanup,
     )?;
-    queue.cleanup_budget.write(allowance.pack())?;
     Ok(cleanup.deleted)
 }
 
@@ -44,6 +31,16 @@ struct NodCleanup<'a, 's> {
     storage: &'a StorageHandle<'s>,
     nod: NodContract<'s>,
     deleted: u32,
+}
+
+impl<'a, 's> NodCleanup<'a, 's> {
+    fn new(ctx: &'a BlockRuntimeContext<'s>) -> Self {
+        Self {
+            storage: &ctx.storage,
+            nod: NodContract::new(ctx.storage.clone()),
+            deleted: 0,
+        }
+    }
 }
 
 /// A forfeited group's members are its unpaid Nods.

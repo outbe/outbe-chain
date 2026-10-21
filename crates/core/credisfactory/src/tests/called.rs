@@ -121,11 +121,19 @@ fn the_scan_follows_the_terms_sealed_on_the_group_not_the_profile() {
         );
 
         reterm(&storage, credis_id, 3, 3, 1);
-        assert_eq!(scan(&storage, at), 0, "a completed day cannot reopen after retuning");
+        assert_eq!(
+            scan(&storage, at),
+            0,
+            "a completed day cannot reopen after retuning"
+        );
         let at = at + DAY;
         advance_to(&storage, at);
         set_vwap(&storage, last_closed_day(at), above_call());
-        assert_eq!(scan(&storage, at), 1, "3 of 3 meets the sealed threshold on the next day");
+        assert_eq!(
+            scan(&storage, at),
+            1,
+            "3 of 3 meets the sealed threshold on the next day"
+        );
         assert_eq!(state_of(&storage, credis_id), CredisState::Called);
 
         // And the sealed notice period governs the forfeit: one day, not seven.
@@ -329,7 +337,11 @@ fn one_breach_day_short_of_the_threshold_does_not_call() {
 
         // Raising one of them back over the call price completes the threshold.
         set_vwap(&storage, day_back(at, 1), above_call());
-        assert_eq!(scan(&storage, at), 0, "completed observation day stays complete");
+        assert_eq!(
+            scan(&storage, at),
+            0,
+            "completed observation day stays complete"
+        );
         set_vwap(&storage, last_closed_day(at + DAY), above_call());
         advance_to(&storage, at + DAY);
         assert_eq!(scan(&storage, at + DAY), 1);
@@ -361,11 +373,7 @@ fn missing_days_do_not_count_as_breaches() {
 
         // Publishing the next day reaches the threshold, even though the
         // rest of the window still has no price at all.
-        set_vwap(
-            &storage,
-            last_closed_day(at + DAY),
-            above_call(),
-        );
+        set_vwap(&storage, last_closed_day(at + DAY), above_call());
         advance_to(&storage, at + DAY);
         assert_eq!(scan(&storage, at + DAY), 1);
         assert_eq!(state_of(&storage, credis_id), CredisState::Called);
@@ -742,7 +750,11 @@ fn a_resumed_pass_starts_at_the_cursor_and_walks_down() {
             "the entry above the resume point waits for the next pass"
         );
         assert_eq!(cursor_of(&storage), 0);
-        assert_eq!(sweep_days(&storage), (0, last_closed_day(at)), "the pass ended");
+        assert_eq!(
+            sweep_days(&storage),
+            (0, last_closed_day(at)),
+            "the pass ended"
+        );
 
         // The next pass starts fresh from the top and picks it up.
         assert_eq!(scan(&storage, at), 0, "a finished day does not reopen");
@@ -896,7 +908,10 @@ fn a_pinned_day_the_oracle_has_not_finalized_holds_the_sweep() {
 
         assert_eq!(slice(&storage, at), 0);
         assert_eq!(state_of(&storage, ids[1]), CredisState::Issued);
-        assert_eq!(sweep_days(&storage), (last_closed_day(at), last_closed_day(at)));
+        assert_eq!(
+            sweep_days(&storage),
+            (last_closed_day(at), last_closed_day(at))
+        );
         assert_eq!(cursor_of(&storage), 2);
     });
     teardown();
@@ -1197,7 +1212,9 @@ fn the_daily_pass_finishes_only_after_atomic_pledge_burns_and_credits() {
         let saved = credis.daily_budget.read().unwrap();
         assert_eq!(crate::called::run_call_slice(&ctx).unwrap(), 0);
         let before_allowance = BlockAllowance::unpack(saved).unwrap().unwrap();
-        let after_allowance = BlockAllowance::unpack(credis.daily_budget.read().unwrap()).unwrap().unwrap();
+        let after_allowance = BlockAllowance::unpack(credis.daily_budget.read().unwrap())
+            .unwrap()
+            .unwrap();
         assert_eq!(after_allowance.height, before_allowance.height);
         assert_eq!(after_allowance.day, before_allowance.day);
         assert_eq!(after_allowance.budget.writes_left(), 0);

@@ -19,11 +19,7 @@ use crate::precompile::ICredisFactory::ExpiryDeferred;
 #[cfg(test)]
 pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = CredisContract::new(ctx.storage.clone());
-    let mut expiry = CredisExpiry {
-        ctx,
-        credis: CredisContract::new(ctx.storage.clone()),
-        forfeited: 0,
-    };
+    let mut expiry = CredisExpiry::new(ctx);
     expiry_queue::sweep_block(&ExpiryDays(&queue), ctx, &mut expiry)?;
     Ok(expiry.forfeited)
 }
@@ -34,25 +30,24 @@ pub(crate) fn sweep_through(
     budget: &mut SweepBudget,
 ) -> Result<expiry_queue::Progress> {
     let queue = CredisContract::new(ctx.storage.clone());
-    let mut expiry = CredisExpiry {
-        ctx,
-        credis: CredisContract::new(ctx.storage.clone()),
-        forfeited: 0,
-    };
-    expiry_queue::sweep_through(
-        &ExpiryDays(&queue),
-        &ctx.storage,
-        ctx.block.timestamp,
-        through_day,
-        budget,
-        &mut expiry,
-    )
+    let mut expiry = CredisExpiry::new(ctx);
+    expiry_queue::sweep_day(&ExpiryDays(&queue), ctx, through_day, budget, &mut expiry)
 }
 
 struct CredisExpiry<'a, 'storage> {
     ctx: &'a BlockRuntimeContext<'storage>,
     credis: CredisContract<'storage>,
     forfeited: u32,
+}
+
+impl<'a, 's> CredisExpiry<'a, 's> {
+    fn new(ctx: &'a BlockRuntimeContext<'s>) -> Self {
+        Self {
+            ctx,
+            credis: CredisContract::new(ctx.storage.clone()),
+            forfeited: 0,
+        }
+    }
 }
 
 /// A called group forfeits as one: it is its own and only member.

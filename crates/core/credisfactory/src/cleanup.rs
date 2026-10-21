@@ -14,11 +14,7 @@ use outbe_primitives::{
 #[cfg(test)]
 pub fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = CredisContract::new(ctx.storage.clone());
-    let mut cleanup = CredisCleanup {
-        ctx,
-        credis: CredisContract::new(ctx.storage.clone()),
-        deleted: 0,
-    };
+    let mut cleanup = CredisCleanup::new(ctx);
     expiry_queue::sweep_block(&CleanupDays(&queue), ctx, &mut cleanup)?;
     Ok(cleanup.deleted)
 }
@@ -29,25 +25,24 @@ pub(crate) fn sweep_through(
     budget: &mut SweepBudget,
 ) -> Result<expiry_queue::Progress> {
     let queue = CredisContract::new(ctx.storage.clone());
-    let mut cleanup = CredisCleanup {
-        ctx,
-        credis: CredisContract::new(ctx.storage.clone()),
-        deleted: 0,
-    };
-    expiry_queue::sweep_through(
-        &CleanupDays(&queue),
-        &ctx.storage,
-        ctx.block.timestamp,
-        through_day,
-        budget,
-        &mut cleanup,
-    )
+    let mut cleanup = CredisCleanup::new(ctx);
+    expiry_queue::sweep_day(&CleanupDays(&queue), ctx, through_day, budget, &mut cleanup)
 }
 
 struct CredisCleanup<'a, 'storage> {
     ctx: &'a BlockRuntimeContext<'storage>,
     credis: CredisContract<'storage>,
     deleted: u32,
+}
+
+impl<'a, 's> CredisCleanup<'a, 's> {
+    fn new(ctx: &'a BlockRuntimeContext<'s>) -> Self {
+        Self {
+            ctx,
+            credis: CredisContract::new(ctx.storage.clone()),
+            deleted: 0,
+        }
+    }
 }
 
 /// A forfeited group's members are its unsettled Credis.
