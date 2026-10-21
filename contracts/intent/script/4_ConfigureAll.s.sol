@@ -29,7 +29,7 @@ import {Router} from "../src/router/Router.sol";
 ///   REMOTE_CHAIN_IDS      - csv of remote EVM chain ids to register (skipped if unset)
 ///   AUCTION_COMMIT_PERIOD - commit window in seconds (skipped if unset. Set it per target chain.)
 ///   AUCTION_REVEAL_PERIOD - reveal window in seconds (skipped if unset. Set it per target chain.)
-///   AUCTION_MAX_QUOTES    - max revealed quotes per order (skipped if unset)
+///   AUCTION_MAX_QUOTES    - max commits per order, at most 50 (skipped if unset)
 contract ConfigureAll is Script {
     function run() public virtual {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PK");
