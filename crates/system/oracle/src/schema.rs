@@ -114,7 +114,7 @@ pub struct OracleContract {
     // slot 24: dynamic array of voter addresses (length at slot 24, data at keccak256(24))
     pub voter_list: StorageVec<Address>,
 
-    // === Price Snapshots - circular buffer (slots 25-31) ===
+    // === Price Snapshots - append-only log, expired entries cleared (slots 25-31) ===
     // slot 25: monotonic write index (tail pointer, u64 to avoid wrapping)
     pub snapshot_write_idx: Slot<u64>,
     // slot 26: oldest valid index (head pointer)
