@@ -75,5 +75,130 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "error",
+    "name": "AmountZero",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InsufficientStakedAmount",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidSlashPercent",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MissingValidatorHistory",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MsgValueMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SlashAmountOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SlashedWithdrawalDelayOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "StakeAccountingOverflow",
+    "inputs": [
+      {
+        "name": "validator",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "StakeAccountingUnderflow",
+    "inputs": [
+      {
+        "name": "validator",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "StakeExceedsMaxStakePercent",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SweepCountOverflow",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ThirdPartyStakingNotSupported",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TotalStakeAccountingOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnbondingCompletionTimestampOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnjailInsufficientStake",
+    "inputs": [
+      {
+        "name": "have",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "need",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnjailRequiresLiveEnclaveBinding",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ValidatorRegistryExceedsConsensusBound",
+    "inputs": [
+      {
+        "name": "count",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "bound",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
   }
 ]

@@ -167,7 +167,13 @@ fn burn_insufficient_reverts_atomically() {
             auth(PromisOp::Burn, alice(), U256::from(200u64), 1),
         )
         .unwrap_err();
-        assert!(matches!(err, PrecompileError::Revert(m) if m == "insufficient balance"));
+        assert_eq!(
+            err.to_string(),
+            PrecompileError::from(crate::errors::PromisError::Rejected(
+                "insufficient balance".into(),
+            ))
+            .to_string()
+        );
         // No partial state change: balance + supply intact.
         assert_eq!(view_balance(storage.clone(), alice()), U256::from(100u64));
         assert_eq!(
@@ -346,5 +352,36 @@ fn iface_id_matches_selector_xor() {
         xor,
         crate::precompile::IPROMIS_INTERFACE_ID,
         "IPROMIS_INTERFACE_ID is stale; update it to match the new selector XOR"
+    );
+}
+
+#[test]
+fn an_owner_result_that_differs_from_the_request_is_refused() {
+    use crate::runtime::ensure_owner_result;
+    use outbe_tee::protocol::{PromisOpResult, PromisOpStatus};
+    let result = |event_amount: u64, next_op_nonce: u64| PromisOpResult {
+        status: PromisOpStatus::Applied,
+        new_balance: vec![1],
+        event_amount: U256::from(event_amount),
+        next_op_nonce,
+        inputs_canonical_hash: B256::ZERO,
+        attestation_tag: Vec::new(),
+    };
+    let amount = U256::from(5u64);
+    assert!(ensure_owner_result(amount, 3, &result(5, 4)).is_ok());
+    let err = ensure_owner_result(amount, 3, &result(4, 4)).unwrap_err();
+    assert!(
+        err.to_string().contains("owner movement result mismatch"),
+        "{err}"
+    );
+    let err = ensure_owner_result(amount, 3, &result(5, 5)).unwrap_err();
+    assert!(err.to_string().contains("wrong op nonce"), "{err}");
+    assert!(ensure_owner_result(amount, u64::MAX, &result(5, u64::MAX)).is_err());
+    let mut no_balance = result(5, 4);
+    no_balance.new_balance.clear();
+    let err = ensure_owner_result(amount, 3, &no_balance).unwrap_err();
+    assert!(
+        err.to_string().contains("owner movement result mismatch"),
+        "{err}"
     );
 }

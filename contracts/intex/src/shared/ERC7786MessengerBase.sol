@@ -119,16 +119,30 @@ abstract contract ERC7786MessengerBase is IERC7786Recipient {
         if (msg.value == 0) {
             if (address(this).balance < fee) revert NotEnoughNative(address(this).balance);
         } else {
-            if (msg.value < fee) revert MsgValueBelowFee(msg.value, fee);
-            uint256 refund = msg.value - fee;
-            if (refund > 0) {
-                // slither-disable-next-line arbitrary-send-eth
-                (bool ok,) = msg.sender.call{value: refund}("");
-                if (!ok) revert RefundFailed();
-            }
+            _takeFeeFromCaller(fee);
         }
 
         return BRIDGE.sendMessage{value: fee}(recipient, payload, attributes);
+    }
+
+    /// @dev `_send` for a user entry point: the caller always pays the fee, and the native float is never used.
+    function _sendPaidByCaller(uint32 dstChainId, bytes memory payload, uint256 gasLimit) internal returns (bytes32) {
+        bytes memory recipient = _remoteMessenger(dstChainId);
+        bytes[] memory attributes = _gasAttributes(gasLimit);
+        uint256 fee = IGatewayQuote(address(BRIDGE)).quote(recipient, payload, attributes);
+        _takeFeeFromCaller(fee);
+        return BRIDGE.sendMessage{value: fee}(recipient, payload, attributes);
+    }
+
+    /// @dev Require that `msg.value` covers `fee`, and refund the excess to the caller.
+    function _takeFeeFromCaller(uint256 fee) private {
+        if (msg.value < fee) revert MsgValueBelowFee(msg.value, fee);
+        uint256 refund = msg.value - fee;
+        if (refund > 0) {
+            // slither-disable-next-line arbitrary-send-eth
+            (bool ok,) = msg.sender.call{value: refund}("");
+            if (!ok) revert RefundFailed();
+        }
     }
 
     /// @dev Native fee to deliver `payload` to the matching messenger on `dstChainId` with `gasLimit` destination gas.
@@ -182,6 +196,6 @@ abstract contract ERC7786MessengerBase is IERC7786Recipient {
     /// @param payload Encoded message body delivered verbatim from the remote messenger.
     function _dispatch(uint32 srcChainId, bytes32 receiveId, bytes calldata payload) internal virtual;
 
-    /// @notice Accept native to pre-fund the relay float (and receive any bridge fee refunds).
+    /// @notice Accept native to pre-fund the relay float of the system sends (and receive any bridge fee refunds).
     receive() external payable {}
 }

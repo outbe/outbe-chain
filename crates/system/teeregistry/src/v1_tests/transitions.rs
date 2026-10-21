@@ -1,5 +1,8 @@
+use super::fixtures::assert_revert_bytes;
 use super::*;
 use crate::v1::{NodeEnclaveBindingV1, VerifiedIntentV1};
+use alloy_sol_types::SolError;
+use outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1;
 
 /// The canonical DCAP evidence of `intent` with a key-ready proof for the
 /// resident offer key `resident_offer_public`. `enclave_signer` signs the
@@ -128,7 +131,7 @@ fn existing_validator_transitions_to_staged_measurement_before_activation() {
                 &transition_evidence_with_offer(&transition, &new_enclave, [0xc1; 32]),
                 &signed_transition,
             );
-            assert_reverts(
+            assert_revert_bytes(
                 dispatch_transition_after_verifier_for_test(
                     storage.clone(),
                     validator.node_signer.address(),
@@ -136,7 +139,11 @@ fn existing_validator_transitions_to_staged_measurement_before_activation() {
                     &transition,
                     PostVerifierDcapCapabilityV1::new(next_verdict.clone()),
                 ),
-                "measurement transition key-ready proof is invalid",
+                ITeeRegistryV1::InvalidTransitionKeyReadyProof {
+                    value: "non-canonical transition key-ready proof binding mismatch".into(),
+                }
+                .abi_encode()
+                .as_slice(),
             );
             assert_eq!(
                 validator.stored_binding(&registry).enclave_id,
@@ -212,23 +219,29 @@ fn activation_preserves_old_lease_but_old_policy_cannot_register_renew_or_replac
         assert!(registry
             .is_validator_enclave_ready_v1(validator.node_signer.address())
             .unwrap());
-        assert_reverts(
+        assert_revert_bytes(
             registry.register_enclave_after_verifier_for_test(
                 signed_newcomer.with_verdict(verdict(DcapPlatformTcbStatusV1::UpToDate)),
             ),
-            "authoritative V1 policy",
+            ITeeRegistryV1::IntentPolicyHashMismatch {}
+                .abi_encode()
+                .as_slice(),
         );
-        assert_reverts(
+        assert_revert_bytes(
             registry.renew_enclave_after_verifier_for_test(
                 signed_renewal.with_verdict(verdict(DcapPlatformTcbStatusV1::UpToDate)),
             ),
-            "authoritative V1 policy",
+            ITeeRegistryV1::IntentPolicyHashMismatch {}
+                .abi_encode()
+                .as_slice(),
         );
-        assert_reverts(
+        assert_revert_bytes(
             registry.replace_enclave_binding_after_verifier_for_test(
                 signed_replacement.with_verdict(verdict(DcapPlatformTcbStatusV1::UpToDate)),
             ),
-            "authoritative V1 policy",
+            ITeeRegistryV1::IntentPolicyHashMismatch {}
+                .abi_encode()
+                .as_slice(),
         );
     });
 }

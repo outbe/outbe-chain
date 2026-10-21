@@ -78,8 +78,8 @@ impl Rpc {
             return Some(MetadosisWorldwideDayTerminalReceiptV1 {
                 outcome: 0,
                 value_routed: U256::ZERO,
-                carry_over_before: U256::ZERO,
-                carry_over_after: U256::ZERO,
+                promis_limit_before: U256::ZERO,
+                promis_limit_after: U256::ZERO,
                 retirement_outcome: 0,
                 block_number: 0,
             });
@@ -92,8 +92,8 @@ impl Rpc {
         Some(MetadosisWorldwideDayTerminalReceiptV1 {
             outcome: if emission.state == 1 { 4 } else { 3 },
             value_routed: emission.emission_limit_minor,
-            carry_over_before: U256::ZERO,
-            carry_over_after: U256::ZERO,
+            promis_limit_before: U256::ZERO,
+            promis_limit_after: U256::ZERO,
             retirement_outcome: 0,
             block_number,
         })
@@ -276,8 +276,8 @@ pub struct MetadosisWorldwideDayStartedV1 {
 pub struct MetadosisWorldwideDayTerminalReceiptV1 {
     pub outcome: u8,
     pub value_routed: U256,
-    pub carry_over_before: U256,
-    pub carry_over_after: U256,
+    pub promis_limit_before: U256,
+    pub promis_limit_after: U256,
     pub retirement_outcome: u8,
     pub block_number: u64,
 }

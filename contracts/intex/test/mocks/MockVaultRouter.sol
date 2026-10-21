@@ -9,8 +9,8 @@ import {MockSettlementVault} from "./MockSettlementVault.sol";
 /// @notice Minimal test double mirroring `outbe-vault/VaultRouter` for the methods
 ///         `EscrowAdapter` actually calls (`deposit`).
 /// @dev Wraps `MockSettlementVault` per asset. `addVault` / `addLiquiditySource` are open
-///      (no role checks) and exist as test helpers only. Production `VaultRouter` is `onlyOwner`
-///      for both.
+///      (no role checks) and exist as test helpers only. Production vault registration requires
+///      governance approval followed by `applyApproved`; route changes execute during tally.
 contract MockVaultRouter {
     using SafeERC20 for IERC20;
 
@@ -35,7 +35,7 @@ contract MockVaultRouter {
     }
 
     /// @notice Register a vault for its underlying asset. Pre-approves the vault to pull tokens
-    ///         from this contract (mirrors `VaultRouter.addVault`).
+    ///         from this contract (mirrors an approved VaultRouter vault addition).
     function addVault(MockSettlementVault vault) external {
         address asset = vault.asset();
         assetVault[asset] = vault;
@@ -43,8 +43,8 @@ contract MockVaultRouter {
     }
 
     /// @notice Register `source` as a permitted depositor with the given enum slot.
-    /// @dev In production this is `onlyOwner` on `VaultRouter`. The mock leaves it open for
-    ///      test setup convenience.
+    /// @dev Production route changes require governance. The mock leaves this helper open for
+    ///      test setup convenience and does not implement the production interface.
     function addLiquiditySource(address source, IVaultRouter.StablesSource sourceType) external {
         liquiditySourceTypes[source] = sourceType;
     }

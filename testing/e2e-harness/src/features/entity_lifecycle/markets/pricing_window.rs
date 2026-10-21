@@ -3,7 +3,8 @@
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, Bytes, U256};
+use alloy_sol_types::SolError;
 use eyre::{bail, ensure, eyre, Result};
 use outbe_oracle::window::VwapSnapshotId;
 use outbe_primitives::addresses::ORACLE_ADDRESS;
@@ -20,7 +21,10 @@ use crate::world::World;
 const HISTORY_LIMIT: u32 = 4_096;
 const ENTER_TIMEOUT: Duration = Duration::from_secs(300);
 const DWELL_POLL: Duration = Duration::from_secs(2);
-const NO_VWAP_DATA: &str = "no VWAP data in the requested time range";
+enum ClosedWindowPrice {
+    Value(U256),
+    Reverted(Bytes),
+}
 
 /// Step through covered hours until the production Oracle prices the window for every currency.
 pub(super) fn close(world: &mut World, currencies: &[u16]) -> Result<()> {
@@ -331,15 +335,30 @@ fn closed_window_is_priced(world: &World, currencies: &[u16], cutoff: u64) -> Re
             pinned.cutoff()
         );
         for &currency in currencies {
-            let outcome = eth::read_call_at_with_revert_reason(
-                &url,
-                ORACLE_ADDRESS,
-                &eth::IOracle::getFinalizedWindowVwapCall {
-                    currency,
-                    snapshotId: snapshot,
-                },
-                checkpoint.height,
-            )?;
+            let call = eth::IOracle::getFinalizedWindowVwapCall {
+                currency,
+                snapshotId: snapshot,
+            };
+            let outcome =
+                match eth::read_call_at_result(&url, ORACLE_ADDRESS, &call, checkpoint.height) {
+                    Ok(price) => ClosedWindowPrice::Value(price),
+                    Err(error) => {
+                        let data = eth::read_call_revert_data_at(
+                            &url,
+                            ORACLE_ADDRESS,
+                            Address::ZERO,
+                            &call,
+                            eth::RevertAt {
+                                value: U256::ZERO,
+                                height: checkpoint.height,
+                            },
+                        )
+                        .map_err(|revert| {
+                            eyre!("closed Oracle view failed ({error}); revert data: {revert}")
+                        })?;
+                        ClosedWindowPrice::Reverted(data)
+                    }
+                };
             ready &= price_is_ready(outcome)?;
         }
     }
@@ -347,17 +366,19 @@ fn closed_window_is_priced(world: &World, currencies: &[u16], cutoff: u64) -> Re
     Ok(ready)
 }
 
-/// Only the exact canonical NoVwapData revert permits a new warmed cutoff.
-fn price_is_ready(outcome: eth::ViewCallOutcome<U256>) -> Result<bool> {
+/// Only the exact canonical `NoVwapData` revert permits a new warmed cutoff.
+fn price_is_ready(outcome: ClosedWindowPrice) -> Result<bool> {
     match outcome {
-        eth::ViewCallOutcome::Value(price) => {
+        ClosedWindowPrice::Value(price) => {
             ensure!(!price.is_zero(), "closed Oracle price must be positive");
             Ok(true)
         }
-        eth::ViewCallOutcome::Reverted(reason) => {
+        ClosedWindowPrice::Reverted(reason) => {
+            let expected = eth::IOracle::NoVwapData {}.abi_encode();
             ensure!(
-                reason == NO_VWAP_DATA,
-                "unexpected closed Oracle revert: {reason}"
+                reason.as_ref() == expected.as_slice(),
+                "unexpected closed Oracle revert: 0x{}",
+                alloy_primitives::hex::encode(reason)
             );
             Ok(false)
         }
@@ -390,19 +411,20 @@ mod tests {
 
     #[test]
     fn accepts_only_a_positive_production_price() {
-        assert!(price_is_ready(eth::ViewCallOutcome::Value(U256::ONE)).unwrap());
-        assert!(price_is_ready(eth::ViewCallOutcome::Value(U256::ZERO)).is_err());
+        assert!(price_is_ready(ClosedWindowPrice::Value(U256::ONE)).unwrap());
+        assert!(price_is_ready(ClosedWindowPrice::Value(U256::ZERO)).is_err());
     }
 
     #[test]
     fn only_exact_no_vwap_data_allows_another_cutoff() {
-        assert!(!price_is_ready(eth::ViewCallOutcome::Reverted(NO_VWAP_DATA.into())).unwrap());
+        let missing = Bytes::from(eth::IOracle::NoVwapData {}.abi_encode());
+        assert!(!price_is_ready(ClosedWindowPrice::Reverted(missing)).unwrap());
         for error in [
-            "invalid VWAP snapshot",
-            "body read unavailable",
-            "no VWAP data in another range",
+            eth::IOracle::InvalidVwapSnapshot {}.abi_encode(),
+            eth::IOracle::NoTwapData {}.abi_encode(),
+            Bytes::from_static(&[0x11, 0x22, 0x33, 0x44]).to_vec(),
         ] {
-            assert!(price_is_ready(eth::ViewCallOutcome::Reverted(error.into())).is_err());
+            assert!(price_is_ready(ClosedWindowPrice::Reverted(Bytes::from(error))).is_err());
         }
     }
 }

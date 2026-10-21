@@ -5,11 +5,13 @@ use std::time::{Duration, Instant};
 
 use alloy_primitives::{keccak256, Address, U256};
 use cucumber::{given, then, when};
+use outbe_credis::config::CredisParams;
 use outbe_oracle::window::VwapSnapshotId;
 use outbe_primitives::addresses::{
     CCA_REGISTRY_ADDRESS, CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, ORACLE_ADDRESS,
     VAULT_ROUTER_ADDRESS,
 };
+use outbe_primitives::markup::marked_up;
 use outbe_primitives::math::scaled_math::checked_quote;
 use outbe_tee::protocol::{GratisOp, Ledger, PromisOp};
 
@@ -25,6 +27,11 @@ use crate::world::localnet::{BootstrapProfile, StartOpts};
 use crate::world::{settlement_currency, test_issuance, World};
 
 const CALL_ANCHOR: U256 = U256::from_limbs([800_000, 0, 0, 0]);
+
+/// The localnet runs the DEV profile, so an issued Credis seals the DEV call rate.
+fn dev_call_price() -> U256 {
+    marked_up(CALL_ANCHOR, CredisParams::DEV.call_rate).unwrap()
+}
 
 alloy_sol_types::sol! {
     interface IGemFactoryTestArming {
@@ -61,15 +68,10 @@ fn prepare(world: &mut World) {
         .expect("bootstrap Credis localnet");
     crate::features::common::start_bootstrapped_localnet(world, &StartOpts::with_voting_window(6));
     let url = world.rpc.url(world.validators.primary_port());
-    let owner_key = world
-        .validators
-        .get(0)
-        .evm_key()
-        .expect("vault router owner");
     let currency = settlement_currency::deploy(
+        world,
         &crate::env::environment().repo.join("contracts/intex"),
         &url,
-        &owner_key,
     )
     .expect("deploy and register USD vault");
     let (owner_key, owner) = credis::owner();
@@ -442,7 +444,7 @@ fn issue(world: &mut World) {
             asset: f.currency.asset,
             principalMinor: PRINCIPAL,
             gratisMinor: f.gratis_minor,
-            callPriceMinor: U256::from(1_312_000),
+            callPriceMinor: dev_call_price(),
         },
     );
     assert_receipt_event(
@@ -488,7 +490,7 @@ fn issued(world: &mut World) {
     assert_eq!(p.lastSettledAt, p.issuedAt);
     assert_eq!(p.entryPriceMinor, U256::from(1_000_000));
     assert_eq!(p.call.callAnchorPriceMinor, CALL_ANCHOR);
-    assert_eq!(p.call.callPriceMinor, U256::from(1_312_000));
+    assert_eq!(p.call.callPriceMinor, dev_call_price());
     assert!(p.policyRate > U256::ZERO);
     // Credis currently pins the issuance currency's official rate with a 1x multiplier.
     assert_eq!(p.policyRate, state.policy_rate);

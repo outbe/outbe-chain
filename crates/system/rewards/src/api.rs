@@ -27,6 +27,7 @@ mod tests;
 /// the value `on_finalized_metadata` writes per finalized block via
 /// `daily_fee_sum_raw[day] += validator_fee_sum`. Returns `U256::ZERO`
 /// if no finalized metadata has been processed yet for `day`.
+/// Full historical details are retained through D+7; expired details can be pruned.
 pub fn read_daily_fee_sum_raw(ctx: &BlockRuntimeContext, day: u32) -> Result<U256> {
     let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
     rewards.daily_fee_sum_raw.read(&day)
@@ -42,6 +43,8 @@ pub fn read_daily_fee_sum_raw(ctx: &BlockRuntimeContext, day: u32) -> Result<U25
 /// is the number of finalized blocks from `day` in which the voter
 /// participated. Returns an empty vector if the module recorded no voters
 /// for `day`.
+/// Full details are guaranteed only through D+7. After expiration, bounded cleanup
+/// can expose only the remaining first-seen prefix, then an empty list.
 pub fn read_voters_for_day(ctx: &BlockRuntimeContext, day: u32) -> Result<Vec<(Address, u64)>> {
     let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
     let count = rewards.daily_voter_count.read(&day)?;
@@ -69,13 +72,17 @@ pub fn day_participation_complete(ctx: &BlockRuntimeContext, utc_day: u32) -> Re
     Ok(last_close == 0 || ctx.block.block_number > last_close)
 }
 
-/// Marks `day` settled for Cycle idempotency.
-/// `on_finalized_metadata` does not read this flag.
-/// Late metadata for a settled day is accepted.
-/// A second call writes the same value.
+/// Atomically marks `day` settled and enqueues its details for retention cleanup.
+/// Requires closed participation and completed known inclusion windows. Replay
+/// performs no writes. Closure, not settlement alone, rejects new metadata.
 pub fn mark_day_settled(ctx: &BlockRuntimeContext, day: u32) -> Result<()> {
-    let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
-    rewards.daily_settled.write(&day, true)
+    crate::state::mark_day_settled(ctx, day)
+}
+
+/// Reclaims at most 256 voters from one settled, closed day starting at D+8 UTC.
+/// Preserves permanent settled/closed tombstones and all per-block state.
+pub fn prune_settled_days(ctx: &BlockRuntimeContext) -> Result<()> {
+    crate::runtime::prune_settled_days(ctx)
 }
 
 /// Freezes the participation of `day` once its validator pool is credited.

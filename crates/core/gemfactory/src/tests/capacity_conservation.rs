@@ -57,7 +57,7 @@ fn conserved(p: &mut HashMapStorageProvider, terminal: bool) {
     StorageHandle::enter(p, |s| {
         let factory = GemFactoryContract::new(s.clone());
         let left = factory.hour_capacity_minor.read(&hour).unwrap();
-        let returned = PromisLimitContract::new(s).get_total_unallocated().unwrap();
+        let returned = PromisLimitContract::new(s).promis_limit().unwrap();
         assert_eq!(left + returned, U256::from(REMAINDER));
         if terminal {
             assert_eq!(returned, U256::from(REMAINDER));
@@ -93,7 +93,7 @@ fn position_expiry_and_cleanup_never_credit_the_remainder_twice() {
     conserved(&mut p, false);
     StorageHandle::enter(&mut p, |s| {
         assert_eq!(
-            PromisLimitContract::new(s).get_total_unallocated().unwrap(),
+            PromisLimitContract::new(s).promis_limit().unwrap(),
             U256::ZERO
         );
     });

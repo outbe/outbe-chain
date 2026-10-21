@@ -58,7 +58,7 @@ fn world() -> (HashMapStorageProvider, SeriesId) {
             .seed_called_group(id, DEADLINE)
             .unwrap();
         assert_eq!(
-            PromisLimitContract::new(s).get_total_unallocated().unwrap(),
+            PromisLimitContract::new(s).promis_limit().unwrap(),
             U256::ZERO
         );
     });
@@ -95,7 +95,7 @@ fn ledger(p: &mut HashMapStorageProvider, id: SeriesId, terminal: bool) {
         let factory = IntexContract::new(s.clone());
         let key = api::read_series(&s, id).unwrap().group_key();
         let pending = u32::from(factory.called_group_slot.read(&key).unwrap() != 0);
-        let returned = PromisLimitContract::new(s).get_total_unallocated().unwrap();
+        let returned = PromisLimitContract::new(s).promis_limit().unwrap();
         if terminal {
             assert_eq!((units.active, units.forfeited, pending), (0, 5, 0));
             assert_eq!(returned, U256::from(5 * LOAD));

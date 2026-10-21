@@ -516,7 +516,7 @@ mod tests {
         assert_metered_writes, assert_normative_gas, hardening_policy, meter_production_gas,
         normative_budget, successor_policy, MeteredCall,
     };
-    use alloy_sol_types::SolValue;
+    use alloy_sol_types::{SolError, SolValue};
     use outbe_primitives::{
         chain::TESTNET_CHAIN_ID,
         storage::{hashmap::HashMapStorageProvider, PrecompileStorageProvider},
@@ -574,7 +574,10 @@ mod tests {
             )
         });
         assert!(
-            matches!(result, Err(PrecompileError::Revert(_))),
+            matches!(
+                result,
+                Err(PrecompileError::Revert(_) | PrecompileError::RevertBytes(_))
+            ),
             "{message}: {result:?}"
         );
     }
@@ -922,7 +925,18 @@ mod tests {
         provider.set_gas_limit(u64::MAX);
         let result = provider
             .enter(|storage| dispatch(storage, &input, Address::repeat_byte(0x99), U256::ZERO));
-        assert!(matches!(result, Err(PrecompileError::Revert(_))));
+        match result {
+            Err(PrecompileError::RevertBytes(bytes)) => {
+                let decoded =
+                    ITeeRegistryV1::AttestationEvidenceExceedsMaxBytes::abi_decode(&bytes)
+                        .expect("evidence cap");
+                assert_eq!(
+                    decoded.value,
+                    u64::try_from(MAX_ATTESTATION_EVIDENCE_BYTES).unwrap()
+                );
+            }
+            other => panic!("expected typed evidence-cap revert, got {other:?}"),
+        }
         assert_eq!(provider.gas_used(), 0);
     }
 

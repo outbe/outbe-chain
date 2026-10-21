@@ -233,7 +233,7 @@ fn is_queued(storage: &StorageHandle<'_>, group_key: B256) -> bool {
 /// Promis Reserve balance - what a forfeited `gratis_load_minor` returns to.
 fn reserve(storage: &StorageHandle<'_>) -> U256 {
     outbe_promislimit::PromisLimitContract::new(storage.clone())
-        .get_total_unallocated()
+        .promis_limit()
         .unwrap()
 }
 
@@ -1327,15 +1327,15 @@ fn mixed_group_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_exercis
         finalize_through(storage, past);
         // A failed Promis credit leaves the group whole for the retry.
         let mut limit = outbe_promislimit::PromisLimitContract::new(storage.clone());
-        limit.checked_take_carry_over_up_to(U256::MAX).unwrap();
-        limit.checked_add_carry_over(U256::MAX).unwrap();
+        limit.checked_take_up_to(U256::MAX).unwrap();
+        limit.checked_credit(U256::MAX).unwrap();
         assert_eq!(scan(storage, past), 0);
         assert_eq!(nod.total_supply().unwrap(), 3);
         assert_eq!(nod.group_nod_count.read(&key).unwrap(), 2);
         assert!(api::get_item(storage, items[0].nod_id).unwrap().is_some());
         assert!(api::get_item(storage, items[2].nod_id).unwrap().is_some());
         assert_eq!(reserve(storage), U256::MAX);
-        limit.checked_take_carry_over_up_to(U256::MAX).unwrap();
+        limit.checked_take_up_to(U256::MAX).unwrap();
         // The failed group retries once the next hour closes.
         let retry = past + 2 * HOUR;
         assert_eq!(scan(storage, retry), 1);
@@ -1587,7 +1587,7 @@ fn days_closed_behind_a_stalled_call_sweep_are_walked_in_order() {
 
 /// Promis Limit moves by the unpaid loads, not by reaching
 /// Forfeited or emitting `NodGroupForfeited`. A paid-but-unexercised member is
-/// not credited. If `add_to_total_unallocated` were removed, this delta
+/// not credited. If `checked_credit` were removed, this delta
 /// would fail while the events and burns could still look complete.
 #[test]
 fn forfeit_credits_distinct_unpaid_loads_and_ignores_paid_members() {

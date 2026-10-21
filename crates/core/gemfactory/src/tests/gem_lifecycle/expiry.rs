@@ -227,8 +227,8 @@ fn forfeit_fails_once() -> (
         let hour = GemContract::deadline_hour(T_NOW + 7 * SECONDS_PER_DAY);
         // The credit overflows, so the forfeit reverts as a whole.
         let mut limit = outbe_promislimit::PromisLimitContract::new(storage.clone());
-        limit.checked_take_carry_over_up_to(U256::MAX).unwrap();
-        limit.checked_add_carry_over(U256::MAX).unwrap();
+        limit.checked_take_up_to(U256::MAX).unwrap();
+        limit.checked_credit(U256::MAX).unwrap();
 
         let now = GemContract::hour_end(hour);
         begin_block_at(&storage, now);
@@ -246,7 +246,7 @@ fn forfeit_fails_once() -> (
 
     StorageHandle::enter(&mut provider, |storage| {
         outbe_promislimit::PromisLimitContract::new(storage.clone())
-            .checked_take_carry_over_up_to(U256::MAX)
+            .checked_take_up_to(U256::MAX)
             .unwrap();
         begin_block_at(&storage, GemContract::hour_end(retry));
 
@@ -279,9 +279,9 @@ fn a_group_whose_credit_fails_is_deferred_whole() {
         let now = first_due_block(storage, gems[0]);
         // Room for the small load's credit only, not the group's.
         let mut limit = outbe_promislimit::PromisLimitContract::new(storage.clone());
-        limit.checked_take_carry_over_up_to(U256::MAX).unwrap();
+        limit.checked_take_up_to(U256::MAX).unwrap();
         limit
-            .checked_add_carry_over(U256::MAX - U256::from(500u64))
+            .checked_credit(U256::MAX - U256::from(500u64))
             .unwrap();
 
         begin_block_at(storage, now);
@@ -289,7 +289,7 @@ fn a_group_whose_credit_fails_is_deferred_whole() {
             assert_eq!(gem_state(storage, *gem_id), GemState::Called as u8);
         }
 
-        limit.checked_take_carry_over_up_to(U256::MAX).unwrap();
+        limit.checked_take_up_to(U256::MAX).unwrap();
         begin_block_at(
             storage,
             GemContract::hour_end(GemContract::deadline_hour(now) + 1),

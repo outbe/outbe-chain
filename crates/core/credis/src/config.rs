@@ -1,21 +1,23 @@
 //! Profile for the call terms a Credis seals: `PROD` (real timings) and `DEV`
 //! (short timings), picked by the `config_profile` byte. Genesis leaves it unset,
-//! which resolves by network, so only mainnet runs PROD. The call price stays a
-//! constant: the requirements fix it at 1.64 times the anchor.
+//! which resolves by network, so only mainnet runs PROD. The call rate is part of
+//! the profile. PROD keeps the call price at 1.64 times the anchor.
 
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::SECONDS_PER_DAY_U32;
 
-use crate::constants::{CALL_NOTICE_PERIOD, CALL_THRESHOLD, CALL_WINDOW};
+use crate::constants::{CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW};
 use crate::errors::CredisError;
 use crate::schema::CredisContract;
 
 pub use outbe_primitives::profile::{PROFILE_AUTO, PROFILE_DEV, PROFILE_PROD};
 
-/// Resolved Credis call terms, in seconds.
+/// Resolved Credis call terms. All periods are in seconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CredisParams {
+    /// Percentage points over the call anchor. See `crate::constants`.
+    pub call_rate: u16,
     pub call_window_seconds: u32,
     pub call_threshold_seconds: u32,
     pub call_notice_period_seconds: u32,
@@ -24,6 +26,7 @@ pub struct CredisParams {
 impl CredisParams {
     /// Real protocol terms. The default on mainnet.
     pub const PROD: Self = Self {
+        call_rate: CALL_RATE_PCT,
         call_window_seconds: CALL_WINDOW,
         call_threshold_seconds: CALL_THRESHOLD,
         call_notice_period_seconds: CALL_NOTICE_PERIOD,
@@ -31,6 +34,7 @@ impl CredisParams {
 
     /// Short terms for dev and test networks, as the other rights run them.
     pub const DEV: Self = Self {
+        call_rate: 2,
         call_window_seconds: 3 * SECONDS_PER_DAY_U32,
         call_threshold_seconds: 2 * SECONDS_PER_DAY_U32,
         #[cfg(not(feature = "e2e-test"))]

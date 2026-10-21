@@ -1,4 +1,7 @@
+use crate::precompile::IUpdate;
+use alloy_primitives::Bytes;
 use alloy_primitives::U256;
+use alloy_sol_types::SolError;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_vote::handlers::TargetExecutionOutcome;
 
@@ -62,12 +65,107 @@ pub enum UpdateError {
 }
 
 impl From<UpdateError> for PrecompileError {
-    fn from(err: UpdateError) -> Self {
-        match err {
-            UpdateError::CannotActivateVersionAboveCeiling { .. } => {
-                PrecompileError::Fatal(err.to_string())
+    fn from(error: UpdateError) -> Self {
+        match error {
+            UpdateError::ScheduledUpdateNotFound => PrecompileError::RevertBytes(Bytes::from(
+                IUpdate::ScheduledUpdateNotFound {}.abi_encode(),
+            )),
+            UpdateError::ScheduledUpdateAlreadyExists => PrecompileError::RevertBytes(Bytes::from(
+                IUpdate::ScheduledUpdateAlreadyExists {}.abi_encode(),
+            )),
+            UpdateError::HeightInPast => {
+                PrecompileError::RevertBytes(Bytes::from(IUpdate::HeightInPast {}.abi_encode()))
             }
-            _ => PrecompileError::Revert(err.to_string()),
+            UpdateError::InvalidVersion => {
+                PrecompileError::RevertBytes(Bytes::from(IUpdate::InvalidVersion {}.abi_encode()))
+            }
+            UpdateError::DowngradeNotAllowed => PrecompileError::RevertBytes(Bytes::from(
+                IUpdate::DowngradeNotAllowed {}.abi_encode(),
+            )),
+            UpdateError::InvalidPayload => {
+                PrecompileError::RevertBytes(Bytes::from(IUpdate::InvalidPayload {}.abi_encode()))
+            }
+            UpdateError::ActivationConflict => PrecompileError::RevertBytes(Bytes::from(
+                IUpdate::ActivationConflict {}.abi_encode(),
+            )),
+            UpdateError::TooManyWaitingForActivation => PrecompileError::RevertBytes(Bytes::from(
+                IUpdate::TooManyWaitingForActivation {}.abi_encode(),
+            )),
+            UpdateError::InvalidScheduledUpdateStatus => PrecompileError::RevertBytes(Bytes::from(
+                IUpdate::InvalidScheduledUpdateStatus {}.abi_encode(),
+            )),
+            UpdateError::InvalidTeePolicy => {
+                PrecompileError::RevertBytes(Bytes::from(IUpdate::InvalidTeePolicy {}.abi_encode()))
+            }
+            UpdateError::TeePolicyChainIdentityMismatch => PrecompileError::RevertBytes(
+                Bytes::from(IUpdate::TeePolicyChainIdentityMismatch {}.abi_encode()),
+            ),
+            UpdateError::TeePolicyActivationMismatch => PrecompileError::RevertBytes(Bytes::from(
+                IUpdate::TeePolicyActivationMismatch {}.abi_encode(),
+            )),
+            UpdateError::ActiveVersionDoesNotFitU32 => PrecompileError::RevertBytes(Bytes::from(
+                IUpdate::ActiveVersionDoesNotFitU32 {}.abi_encode(),
+            )),
+            error @ UpdateError::CannotActivateVersionAboveCeiling {
+                version: _,
+                ceiling: _,
+            } => PrecompileError::Fatal(error.to_string()),
+            UpdateError::UpgradeHandlerFailed { label, reason } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    IUpdate::UpgradeHandlerFailed {
+                        label: label.to_string(),
+                        reason: reason.to_string(),
+                    }
+                    .abi_encode(),
+                ))
+            }
+            UpdateError::StagedTeePolicyMissingProposal { proposal_id } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    IUpdate::StagedTeePolicyMissingProposal { proposal_id }.abi_encode(),
+                ))
+            }
+            UpdateError::TeePolicyActivationFailed {
+                proposal_id,
+                reason,
+            } => PrecompileError::RevertBytes(Bytes::from(
+                IUpdate::TeePolicyActivationFailed {
+                    proposal_id,
+                    reason: reason.to_string(),
+                }
+                .abi_encode(),
+            )),
+            UpdateError::StoredProposalPayloadInvalid(value) => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    IUpdate::StoredProposalPayloadInvalid {
+                        value: value.to_string(),
+                    }
+                    .abi_encode(),
+                ))
+            }
+            UpdateError::EnclaveRolloutRequiresExclusiveScheduledUpgrade => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    IUpdate::EnclaveRolloutRequiresExclusiveScheduledUpgrade {}.abi_encode(),
+                ))
+            }
+            UpdateError::InvalidActiveTeePolicy(value) => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    IUpdate::InvalidActiveTeePolicy {
+                        value: value.to_string(),
+                    }
+                    .abi_encode(),
+                ))
+            }
+            UpdateError::VoteTargetInvariantFailure(value) => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    IUpdate::VoteTargetInvariantFailure {
+                        value: value.to_string(),
+                    }
+                    .abi_encode(),
+                ))
+            }
+            UpdateError::UnexpectedAppliedClassification => PrecompileError::RevertBytes(
+                Bytes::from(IUpdate::UnexpectedAppliedClassification {}.abi_encode()),
+            ),
         }
     }
 }
@@ -107,6 +205,9 @@ impl UpdateError {
         match result {
             Ok(()) => Ok(TargetExecutionOutcome::Applied),
             Err(PrecompileError::Revert(reason)) => Ok(TargetExecutionOutcome::Error { reason }),
+            Err(PrecompileError::RevertBytes(reason)) => Ok(TargetExecutionOutcome::Error {
+                reason: alloy_primitives::hex::encode_prefixed(reason),
+            }),
             Err(err) => Err(err),
         }
     }
@@ -151,5 +252,52 @@ impl StartupCompatibilityError {
     /// Checks whether the error message contains the given substring.
     pub fn contains(&self, pattern: &str) -> bool {
         self.to_string().contains(pattern)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn encoded(err: UpdateError) -> Bytes {
+        match PrecompileError::from(err) {
+            PrecompileError::RevertBytes(bytes) => bytes,
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn caller_revert_keeps_string_fields_and_bytes_pass_into_the_target_outcome() {
+        let bytes = encoded(UpdateError::UpgradeHandlerFailed {
+            label: "hook".to_string(),
+            reason: "rejected".to_string(),
+        });
+        let decoded = IUpdate::UpgradeHandlerFailed::abi_decode(&bytes).expect("handler payload");
+        assert_eq!(decoded.label, "hook");
+        assert_eq!(decoded.reason, "rejected");
+
+        let bytes = encoded(UpdateError::StoredProposalPayloadInvalid(
+            "invalid vote payload".to_string(),
+        ));
+        let decoded =
+            IUpdate::StoredProposalPayloadInvalid::abi_decode(&bytes).expect("payload text");
+        assert_eq!(decoded.value, "invalid vote payload");
+
+        let outcome =
+            UpdateError::into_execution_outcome(Err(PrecompileError::RevertBytes(bytes.clone())))
+                .expect("typed revert becomes a target error");
+        let TargetExecutionOutcome::Error { reason } = outcome else {
+            panic!("expected target error");
+        };
+        assert_eq!(reason, alloy_primitives::hex::encode_prefixed(&bytes));
+
+        let fatal = PrecompileError::from(UpdateError::CannotActivateVersionAboveCeiling {
+            version: ProtocolVersion::from_raw(2),
+            ceiling: ProtocolVersion::from_raw(1),
+        });
+        assert!(matches!(
+            UpdateError::into_execution_outcome(Err(fatal)),
+            Err(PrecompileError::Fatal(_))
+        ));
     }
 }

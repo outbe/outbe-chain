@@ -7,6 +7,25 @@ pragma solidity ^0.8.30;
 ///         OriginRouter calls bid ingestion. Clearing runs from the Desis
 ///         begin-block gate.
 interface IDesis {
+    error InvalidWorldwideDay(uint32 worldwideDay);
+    error InvalidStageTransition();
+    error PendingClearingDataMissing(uint32 worldwideDay);
+    error UnauthorizedOrigin(address value);
+    error UnpricedReferenceCurrency(uint16 value);
+    error RefundFanOutTooLarge(uint64 value);
+    error UnspellableBidCurrency(uint16 issuance, uint16 referenceCurrency);
+    error BidBatchTooLarge(uint64 count, uint64 max);
+    error DesisAllocationExceedsLimit(uint32 wwd, uint256 allocation, uint256 limit);
+    error AuctionBriefLimitExceedsDomain();
+    error BatchArrayLengthMismatch();
+    error BriefAnchorExceedsU32();
+    error MinBidQuantityScalingOverflow();
+    error TargetsOfUndecodable();
+    error BatchTotalMismatch();
+    error InvalidTotalBatches();
+    error InvalidBatchIndexOrTotal();
+    error ScheduleTimestampExceedsU32();
+
     /// @notice Auction lifecycle stages. Values map 1:1 to the Rust `AuctionStage` enum.
     enum AuctionStage {
         None,
@@ -102,7 +121,7 @@ interface IDesis {
     /// @notice The only committed auction-brief rejection. Technical and
     /// invariant failures revert instead of being converted to business state.
     /// `reasonCode == 1` means the Desis Limit exceeds Desis' uint128 auction domain.
-    event AuctionBriefRejectedToCarryOver(
+    event AuctionBriefRejected(
         uint32 indexed worldwideDay, uint256 desisLimitMinor, uint256 maxAcceptedMinor, uint8 reasonCode
     );
 }

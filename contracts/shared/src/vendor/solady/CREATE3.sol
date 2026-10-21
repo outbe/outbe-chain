@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.4;
 
-// Vendored from Solady (https://github.com/Vectorized/solady, src/utils/CREATE3.sol).
+// Vendored from Solady v0.0.219 (https://github.com/Vectorized/solady, src/utils/CREATE3.sol, last changed
+// upstream in commit 5b09492cedbdeb5cd9658d1641364ca3592cbd64). The code matches upstream token for token; the
+// comments are folded to ASCII and the file is formatted by forge fmt.
 // Do not edit; re-vendor from a tagged upstream release if updating.
 
 /// @notice Deterministic deployments agnostic to the initialization code.

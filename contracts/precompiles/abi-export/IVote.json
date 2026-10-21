@@ -555,6 +555,57 @@
   },
   {
     "type": "error",
+    "name": "AlreadyVoted",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BondLiabilityOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BondLiabilityUnderflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DuplicateTargetModule",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InconsistentBondState",
+    "inputs": [
+      {
+        "name": "proposal_id",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidBondAmount",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidBondSettlement",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidElectorate",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidPayload",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidProposalBond",
     "inputs": [
       {
@@ -568,6 +619,47 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidProposalStatus",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidVoteKind",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidVotingWindow",
+    "inputs": [
+      {
+        "name": "actual",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "maximum",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NotPending",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotValidator",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ProposalBondAlreadyRecorded",
+    "inputs": []
   },
   {
     "type": "error",
@@ -603,6 +695,11 @@
   },
   {
     "type": "error",
+    "name": "ProposalBondNotUnsettled",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ProposalBondSettlementFailed",
     "inputs": [
       {
@@ -611,5 +708,61 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "ProposalCounterExhausted",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ProposalNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "StoredPayloadInvalid",
+    "inputs": [
+      {
+        "name": "module",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TooManyPending",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TooManyPendingByValidator",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TooManyPendingPublicBonded",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TooManyPendingPublicBondedByProposer",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnknownTargetModule",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VotingClosed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VotingDeadlineOverflow",
+    "inputs": []
   }
 ]

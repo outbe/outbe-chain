@@ -71,7 +71,7 @@ impl ExpiryHandler<B256> for GemExpiry<'_, '_> {
         let load = self.gem.group_unpaid_load.read(&group)?;
         if !load.is_zero() {
             outbe_promislimit::PromisLimitContract::new(self.storage.clone())
-                .add_to_total_unallocated(load)?;
+                .checked_credit(load)?;
         }
         self.gem.hand_to_cleanup(group)?;
         self.gem.emit(GemGroupForfeited {

@@ -72,5 +72,324 @@
       }
     ],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "error",
+    "name": "AmountMustBePositive",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AttestationPreimageEncode",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "BaseAmountTooManyDecimals",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CalculationView",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CreatedEncryptedOfferMissingTribute",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CreatedTributeMissingBody",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EmptyTributeOfferResult",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EnclaveRejected",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "EncryptedOfferReturnedLegacyBody",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EntityIdDerivation",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidAttoAmountFormat",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidBaseAmountFormat",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidCanonicalIdentity",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidCurrency",
+    "inputs": [
+      {
+        "name": "currency",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidSraAddress",
+    "inputs": [
+      {
+        "name": "sraAddress",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidSraAddressAtIndex",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "sraAddress",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidSuHashHex",
+    "inputs": [
+      {
+        "name": "hash",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidSuHashLength",
+    "inputs": [
+      {
+        "name": "length",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidWalletAddress",
+    "inputs": [
+      {
+        "name": "walletAddress",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidWalletAddressAtIndex",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "walletAddress",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidWorldwideDay",
+    "inputs": [
+      {
+        "name": "worldwideDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidZkProof",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "IssuanceCurrencyNotRegistered",
+    "inputs": [
+      {
+        "name": "issuanceCurrency",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "MalformedZkProof",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NominalAmountOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NominalPriceUnavailable",
+    "inputs": [
+      {
+        "name": "worldwideDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RejectedEncryptedOfferCarriesTribute",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SraAddressesRequiredWhenWalletProvided",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SuHashAlreadyUsed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TeeNotConfigured",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TributeAlreadyExists",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnknownCircuitVersion",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "version",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnsupportedZkCircuit",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WalletAddressesRequiredWhenSraProvided",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WorldwideDayNotOffering",
+    "inputs": [
+      {
+        "name": "worldwideDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ZkProofRequired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZkPublicInputMismatch",
+    "inputs": [
+      {
+        "name": "field",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ZkVerifierUnavailable",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
   }
 ]

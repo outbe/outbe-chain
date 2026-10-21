@@ -46,7 +46,7 @@ impl GemParams {
         call_notice_period_seconds: 3 * SECONDS_PER_DAY_U32,
         #[cfg(feature = "e2e-test")]
         call_notice_period_seconds: 600,
-        call_rate: 10,
+        call_rate: 4,
         #[cfg(not(feature = "e2e-test"))]
         position_validity: 7 * outbe_primitives::time::SECONDS_PER_DAY,
         #[cfg(feature = "e2e-test")]

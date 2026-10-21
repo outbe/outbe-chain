@@ -1,5 +1,8 @@
+use super::fixtures::assert_revert_bytes;
 use super::*;
 use crate::v1::NodeEnclaveBindingV1;
+use alloy_sol_types::SolError;
+use outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1;
 
 fn new_enclave_rejoin_intent(
     current: &RegistrationIntentV1,
@@ -157,7 +160,12 @@ fn expired_same_enclave_rejoin_is_authorized_monotonic_and_idempotent() {
     expired.binding.run_expired(|_storage, mut registry| {
         let node_hash = validator.initial.node_id.node_id_hash().unwrap();
 
-        assert_reverts(expired.submit_as(&mut registry, wrong.address()), "caller");
+        assert_revert_bytes(
+            expired.submit_as(&mut registry, wrong.address()),
+            ITeeRegistryV1::RegistrationCallerAssociationMismatch {}
+                .abi_encode()
+                .as_slice(),
+        );
         assert_created_then_idempotent(
             &mut registry,
             |registry| expired.submit(registry),
@@ -315,7 +323,12 @@ fn expired_jailed_validator_must_unjail_before_rejoin() {
                 .set_block_timestamp(U256::from(validator.initial.requested_valid_until))
                 .unwrap();
             validator.assert_binding_unchanged_by(&mut registry, |registry| {
-                assert_reverts(expired.submit(registry), "unjail");
+                assert_revert_bytes(
+                    expired.submit(registry),
+                    ITeeRegistryV1::JailedValidatorCannotRejoin {}
+                        .abi_encode()
+                        .as_slice(),
+                );
             });
         },
     );
@@ -356,20 +369,24 @@ fn expired_binding_rejects_replace_and_transition_without_state_change() {
             .unwrap();
 
         validator.assert_binding_unchanged_by(&mut registry, |registry| {
-            assert_reverts(
+            assert_revert_bytes(
                 registry.replace_enclave_binding_after_verifier_with_active_policy_for_test(
                     validator.node_signer.address(),
                     signed_replacement.with_verdict(expired.accepted.clone()),
                     &validator.policy,
                 ),
-                "expired",
+                ITeeRegistryV1::EnclaveLeaseExpired {}
+                    .abi_encode()
+                    .as_slice(),
             );
-            assert_reverts(
+            assert_revert_bytes(
                 registry.transition_enclave_measurement_after_verifier_for_test(
                     validator.node_signer.address(),
                     signed_transition.with_verdict(transition_verdict),
                 ),
-                "expired",
+                ITeeRegistryV1::EnclaveLeaseExpired {}
+                    .abi_encode()
+                    .as_slice(),
             );
         });
     });

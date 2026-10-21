@@ -124,7 +124,7 @@ pub fn coen_rate_for_opt(storage: StorageHandle, iso_code: u16) -> Result<Option
 
 /// Snapshot required at the current block under the active policy.
 pub fn current_vwap_snapshot(storage: StorageHandle) -> Result<VwapSnapshotId> {
-    let now = storage.timestamp()?.saturating_to::<u64>();
+    let now = storage.now_secs()?;
     get_vwap_snapshot_id(now, &active_vwap_policy())
 }
 

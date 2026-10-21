@@ -2,6 +2,9 @@
 pragma solidity ^0.8.30;
 
 interface IFidelity {
+    error EnclaveQueryError(string reason);
+    error QueryFailed(string reason);
+
     /// Fidelity Index for `account` at the current block timestamp.
     /// The cohort ledger is encrypted, so the caller must present an
     /// owner-signed, expiring authorization (EIP-191 `personal_sign` over

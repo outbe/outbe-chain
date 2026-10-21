@@ -32,10 +32,7 @@ fn submit_vote_rejects_an_unregistered_signer() {
             .submit_vote(stranger, &[(COEN, usd(), coen_iso(50), COEN_ISO_SCALE)])
             .unwrap_err();
 
-        assert!(
-            err.to_string().contains("not an active ORACLE signer"),
-            "unexpected error: {err:?}"
-        );
+        assert_typed_revert(&err, crate::errors::OracleError::NotActiveOracleSigner);
         assert_eq!(oracle.voter_list.len().unwrap(), 0);
     });
 }
@@ -52,10 +49,7 @@ fn submit_vote_rejects_a_validator_that_is_no_longer_active() {
             .submit_vote(validator, &[(COEN, usd(), coen_iso(50), COEN_ISO_SCALE)])
             .unwrap_err();
 
-        assert!(
-            err.to_string().contains("not an active ORACLE signer"),
-            "unexpected error: {err:?}"
-        );
+        assert_typed_revert(&err, crate::errors::OracleError::NotActiveOracleSigner);
         assert_eq!(oracle.voter_list.len().unwrap(), 0);
     });
 }
@@ -79,10 +73,11 @@ fn submit_vote_rejects_the_reverse_of_the_registered_direction() {
             )
             .unwrap_err();
 
-        assert!(
-            err.to_string()
-                .contains("does not match the registered orientation"),
-            "unexpected error: {err:?}"
+        assert_typed_revert(
+            &err,
+            crate::errors::OracleError::PairNotCanonical {
+                pair: AddressPair::from_addresses(registered.address2(), registered.address1()),
+            },
         );
         assert_eq!(oracle.voter_list.len().unwrap(), 0);
     });
@@ -103,10 +98,7 @@ fn submit_vote_rejects_a_duplicated_pair() {
         let err = oracle
             .submit_vote(validator, &[(COEN, USDT, rate, volume); 2])
             .unwrap_err();
-        assert!(
-            format!("{err:?}").contains("duplicate pair in vote submission"),
-            "unexpected error: {err:?}"
-        );
+        assert_typed_revert(&err, crate::errors::OracleError::DuplicatePairInVote);
         assert!(!oracle.vote_exists.read(&validator).unwrap());
     });
 }
@@ -130,10 +122,7 @@ fn submit_vote_reports_a_duplicate_before_an_inactive_vote_target() {
         let err = oracle
             .submit_vote(validator, &[(ETH, USDT, rate, volume); 2])
             .unwrap_err();
-        assert!(
-            format!("{err:?}").contains("duplicate pair in vote submission"),
-            "unexpected error: {err:?}"
-        );
+        assert_typed_revert(&err, crate::errors::OracleError::DuplicatePairInVote);
     });
 }
 

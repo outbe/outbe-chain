@@ -52,7 +52,13 @@ fn mine_promis_rejects_non_settled() {
             crate::schema::GemMiningProof { gem_id, nonce: 0 },
             no_auth(),
         );
-        assert!(err_msg(res).contains("gem is not settled"));
+        assert_eq!(
+            res.unwrap_err().to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::GemFactoryError::GemNotSettled
+            )
+            .to_string()
+        );
     });
 }
 

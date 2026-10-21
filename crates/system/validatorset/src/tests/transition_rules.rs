@@ -5,7 +5,7 @@
 
 use super::*;
 use crate::precompile::IValidatorSet;
-use alloy_sol_types::SolEvent;
+use alloy_sol_types::{SolError, SolEvent};
 use outbe_primitives::addresses::VALIDATOR_SET_ADDRESS;
 use outbe_primitives::error::Result;
 
@@ -18,6 +18,7 @@ const UNKNOWN: Address = address!("0x00000000000000000000000000000000000000EF");
 fn outcome_text<T: std::fmt::Debug>(result: Result<T>) -> String {
     match result {
         Err(PrecompileError::Revert(message)) => format!("Revert: {message}"),
+        Err(PrecompileError::RevertBytes(bytes)) => super::typed_revert(bytes),
         Err(PrecompileError::Fatal(message)) => format!("Fatal: {message}"),
         other => format!("{other:?}"),
     }
@@ -117,31 +118,49 @@ fn retained_jail(vs: &mut ValidatorSet<'_>) -> Result<()> {
 
 #[test]
 fn punishment_rejects_absent_and_waiting_validators_without_effect() -> Result<()> {
-    let absent = "Revert: validator not registered";
+    let absent = super::typed_revert(IValidatorSet::ValidatorNotRegistered {}.abi_encode());
     assert_without_effect(
         &mut seeded(|_| Ok(()))?,
         |vs| vs.jail_validator(FIRST),
-        absent,
+        absent.as_str(),
     );
     assert_without_effect(
         &mut seeded(|_| Ok(()))?,
         |vs| vs.force_exit_validator(FIRST),
-        absent,
+        absent.as_str(),
     );
     assert_without_effect(
         &mut seeded(|vs| register(vs, FIRST))?,
         |vs| vs.jail_validator(FIRST),
-        "Revert: cannot jail validator with status 0: only ACTIVE, EXITING, UNBONDING, or INACTIVE allowed",
+        &super::typed_revert(
+            IValidatorSet::CannotPunishValidatorStatus {
+                action: "jail".into(),
+                status: 0,
+            }
+            .abi_encode(),
+        ),
     );
     assert_without_effect(
         &mut seeded(|vs| waiting_for_readiness(vs, FIRST))?,
         |vs| vs.force_exit_validator(FIRST),
-        "Revert: cannot force-exit validator with status 1: only ACTIVE, EXITING, UNBONDING, or INACTIVE allowed",
+        &super::typed_revert(
+            IValidatorSet::CannotPunishValidatorStatus {
+                action: "force-exit".into(),
+                status: 1,
+            }
+            .abi_encode(),
+        ),
     );
     assert_without_effect(
         &mut seeded(retained_jail)?,
         |vs| vs.force_exit_validator(FIRST),
-        "Revert: cannot force-exit validator with status 6: only ACTIVE, EXITING, UNBONDING, or INACTIVE allowed",
+        &super::typed_revert(
+            IValidatorSet::CannotPunishValidatorStatus {
+                action: "force-exit".into(),
+                status: 6,
+            }
+            .abi_encode(),
+        ),
     );
     Ok(())
 }
@@ -307,17 +326,23 @@ fn unjail_and_tee_expiry_reject_ineligible_validators_without_effect() -> Result
     assert_without_effect(
         &mut seeded(retained_jail)?,
         |vs| vs.unjail_after_stake_check(FIRST),
-        "Revert: jailed validator is still retained in the current committee",
+        &super::typed_revert(IValidatorSet::JailedValidatorStillRetained {}.abi_encode()),
     );
     assert_without_effect(
         &mut seeded(|vs| participant(vs, FIRST))?,
         |vs| vs.unjail_after_stake_check(FIRST),
-        "Revert: unjailValidator requires JAILED status, got 2",
+        &super::typed_revert(IValidatorSet::UnjailRequiresJailedStatus { status: 2 }.abi_encode()),
     );
     assert_without_effect(
         &mut seeded(|vs| register(vs, FIRST))?,
         |vs| vs.jail_validator_for_tee_expiry(FIRST),
-        &format!("Revert: TEE expiry sweep selected validator {FIRST} with ineligible status 0"),
+        &super::typed_revert(
+            IValidatorSet::TeeExpirySweepIneligibleStatus {
+                addr: FIRST,
+                status: 0,
+            }
+            .abi_encode(),
+        ),
     );
     Ok(())
 }
@@ -327,12 +352,14 @@ fn readiness_checks_lifecycle_before_effects() -> Result<()> {
     assert_without_effect(
         &mut seeded(|_| Ok(()))?,
         |vs| vs.confirm_validator_ready(FIRST),
-        "Revert: validator not registered",
+        &super::typed_revert(IValidatorSet::ValidatorNotRegistered {}.abi_encode()),
     );
     assert_without_effect(
         &mut seeded(|vs| participant(vs, FIRST))?,
         |vs| vs.confirm_validator_ready(FIRST),
-        "Revert: confirmValidatorReady requires PENDING status, got 2",
+        &super::typed_revert(
+            IValidatorSet::ConfirmValidatorReadyRequiresPending { status: 2 }.abi_encode(),
+        ),
     );
     let mut storage = seeded(|vs| waiting_for_readiness(vs, FIRST))?;
     storage.enter(|storage| ValidatorSet::new(storage).confirm_validator_ready(FIRST))?;
@@ -353,7 +380,9 @@ fn current_participation_checks_every_voter_before_absent_voters() -> Result<()>
     assert_without_effect(
         &mut seeded(setup)?,
         |vs| vs.record_participation(&[FIRST, SECOND], &[FIRST]),
-        &format!("Revert: voter is not a current consensus participant: {SECOND}"),
+        &super::typed_revert(
+            IValidatorSet::VoterNotConsensusParticipant { addr: SECOND }.abi_encode(),
+        ),
     );
     // No checkpoint: the first absent voter keeps its missed vote.
     let mut storage = seeded(setup)?;
@@ -362,7 +391,9 @@ fn current_participation_checks_every_voter_before_absent_voters() -> Result<()>
     });
     assert_eq!(
         effect.outcome,
-        format!("Revert: absent voter is not a current consensus participant: {SECOND}")
+        super::typed_revert(
+            IValidatorSet::AbsentVoterNotConsensusParticipant { addr: SECOND }.abi_encode(),
+        )
     );
     assert_eq!(effect.mutations, 1);
     let missed =
@@ -377,7 +408,9 @@ fn finalized_participation_requires_registration_only() -> Result<()> {
     assert_without_effect(
         &mut seeded(setup)?,
         |vs| vs.record_finalized_participation(&[FIRST, UNKNOWN], &[]),
-        &format!("Revert: finalized voter is not a registered validator: {UNKNOWN}"),
+        &super::typed_revert(
+            IValidatorSet::FinalizedVoterNotRegistered { addr: UNKNOWN }.abi_encode(),
+        ),
     );
     let mut storage = seeded(setup)?;
     let effect = call_effect(&mut storage, |vs| {
@@ -385,7 +418,9 @@ fn finalized_participation_requires_registration_only() -> Result<()> {
     });
     assert_eq!(
         effect.outcome,
-        format!("Revert: finalized absent voter is not a registered validator: {UNKNOWN}")
+        super::typed_revert(
+            IValidatorSet::FinalizedAbsentVoterNotRegistered { addr: UNKNOWN }.abi_encode()
+        )
     );
     assert_eq!(effect.mutations, 1);
     Ok(())
@@ -396,7 +431,9 @@ fn proposer_and_missed_block_counters_increment_once() -> Result<()> {
     assert_without_effect(
         &mut seeded(|vs| register(vs, FIRST))?,
         |vs| vs.record_proposer(FIRST),
-        &format!("Revert: proposer is not a current consensus participant: {FIRST}"),
+        &super::typed_revert(
+            IValidatorSet::ProposerNotConsensusParticipant { addr: FIRST }.abi_encode(),
+        ),
     );
     let mut storage = seeded(|vs| participant(vs, FIRST))?;
     assert_eq!(

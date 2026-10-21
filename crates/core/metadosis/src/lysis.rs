@@ -93,8 +93,7 @@ fn finalize_lysis_settlement(
     {
         return Err(mismatch());
     }
-    let credit =
-        PromisLimitContract::new(storage.clone()).checked_add_carry_over(completion.unused)?;
+    let credit = PromisLimitContract::new(storage.clone()).checked_credit(completion.unused)?;
     if credit.credited != completion.unused {
         return Err(mismatch());
     }

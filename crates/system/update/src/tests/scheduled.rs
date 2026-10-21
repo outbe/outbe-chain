@@ -1,8 +1,10 @@
 use alloy_primitives::U256;
+use alloy_sol_types::SolError;
 
 use outbe_primitives::error::PrecompileError;
 
 use crate::api::{is_version_active_eq, is_version_active_gte};
+use crate::precompile::IUpdate;
 use crate::schema::ScheduledUpdateStatus;
 use crate::schema::Update;
 
@@ -48,10 +50,12 @@ fn rejects_downgrade_schedule() {
             10,
         )
         .unwrap_err();
-        assert!(matches!(
-            err,
-            PrecompileError::Revert(msg) if msg.contains("downgrade")
-        ));
+        match err {
+            PrecompileError::RevertBytes(bytes) => {
+                assert_eq!(&bytes[..4], &IUpdate::DowngradeNotAllowed::SELECTOR);
+            }
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
     });
 }
 
@@ -60,10 +64,15 @@ fn rejects_duplicate_proposal_id() {
     with_scheduled_update(V1_2, |_storage, update, activation| {
         let proposal_id = U256::from(1);
         let err = schedule_version(update, proposal_id, V1_2, activation + 1).unwrap_err();
-        assert!(matches!(
-            err,
-            PrecompileError::Revert(msg) if msg.contains("already exists")
-        ));
+        match err {
+            PrecompileError::RevertBytes(bytes) => {
+                assert_eq!(
+                    &bytes[..4],
+                    &IUpdate::ScheduledUpdateAlreadyExists::SELECTOR
+                );
+            }
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
     });
 }
 
@@ -71,10 +80,12 @@ fn rejects_duplicate_proposal_id() {
 fn rejects_conflicting_activation_height() {
     with_scheduled_update(V1_2, |_storage, update, activation| {
         let err = schedule_version(update, U256::from(2), V1_2, activation).unwrap_err();
-        assert!(matches!(
-            err,
-            PrecompileError::Revert(msg) if msg.contains("activation height")
-        ));
+        match err {
+            PrecompileError::RevertBytes(bytes) => {
+                assert_eq!(&bytes[..4], &IUpdate::ActivationConflict::SELECTOR);
+            }
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
     });
 }
 
@@ -95,9 +106,11 @@ fn max_waiting_for_activation_updates_is_enforced() {
 
         let err =
             schedule_version(&mut update, U256::from(65), V1_2, base_activation + 64).unwrap_err();
-        assert!(matches!(
-            err,
-            PrecompileError::Revert(msg) if msg.contains("too many scheduled updates waiting")
-        ));
+        match err {
+            PrecompileError::RevertBytes(bytes) => {
+                assert_eq!(&bytes[..4], &IUpdate::TooManyWaitingForActivation::SELECTOR);
+            }
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
     });
 }

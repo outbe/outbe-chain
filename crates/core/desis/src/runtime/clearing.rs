@@ -66,7 +66,7 @@ pub(crate) fn clearing_round_gas(
         let key = DesisContract::chain_key(WorldwideDay::new(day), chain_id);
         bids = bids.max(u64::from(contract.chain_bid_count.read(&key)?));
     }
-    let chunks = bids.div_ceil(CLEARING_BIDS_PER_CHUNK).max(1);
+    let chunks = bids.div_ceil(MAX_PAYLOAD_ARRAY_LEN as u64).max(1);
     let cost = CLEARING_FIXED_GAS
         .saturating_add(chunks.saturating_mul(CLEARING_CHUNK_GAS))
         .saturating_add(bids.saturating_mul(CLEARING_BID_GAS));
@@ -208,8 +208,7 @@ fn clear_inner(
             worldwideDay: worldwide_day.into(),
             unusedDesisLimitMinor: unused_desis_limit_minor,
         })?;
-        PromisLimitContract::new(storage.clone())
-            .add_to_total_unallocated(unused_desis_limit_minor)?;
+        PromisLimitContract::new(storage.clone()).checked_credit(unused_desis_limit_minor)?;
     }
 
     if result.issued_units != 0 {
@@ -279,7 +278,7 @@ fn clear_inner(
 /// closes the day on a chain whose bids all lost. Bounded by the codec's arrival set,
 /// which is one 256-bit word wide.
 pub(crate) fn refund_chunk_count(winners: usize) -> Result<usize> {
-    let chunks = winners.div_ceil(REFUND_CHUNK_LEN).max(1);
+    let chunks = winners.div_ceil(MAX_PAYLOAD_ARRAY_LEN).max(1);
     if chunks > MAX_REFUND_CHUNKS {
         return Err(DesisError::RefundFanOutTooLarge(winners).into());
     }
@@ -315,8 +314,8 @@ pub(crate) fn refund_chunks(result: &ClearingResult, chain_id: u32) -> Result<Ve
     let total_chunks = refund_chunk_count(winners.len())?;
     Ok((0..total_chunks)
         .map(|chunk_index| {
-            let start = chunk_index * REFUND_CHUNK_LEN;
-            let end = (start + REFUND_CHUNK_LEN).min(winners.len());
+            let start = chunk_index * MAX_PAYLOAD_ARRAY_LEN;
+            let end = (start + MAX_PAYLOAD_ARRAY_LEN).min(winners.len());
             let (partial_index, partial_won) = match partial {
                 Some((at, won)) if (start..end).contains(&at) => ((at - start) as u16, won),
                 _ => (0, 0),

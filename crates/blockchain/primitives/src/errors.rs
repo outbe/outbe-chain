@@ -247,8 +247,8 @@ impl From<ConsensusMetadataError> for PrecompileError {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ReshareArtifactError {
-    #[error("repository publication requires OART v0x0C")]
-    PublicationRequiresV0c,
+    #[error("repository publication requires the publication flag")]
+    PublicationFlagRequired,
     #[error("duplicate repository publication batch")]
     DuplicateRadiclePublication,
     #[error("too many block artifact records")]
@@ -287,6 +287,8 @@ pub enum ReshareArtifactError {
     UnknownExtraDataArtifact,
     #[error("unsupported block artifact version: {version}")]
     UnsupportedVersion { version: u8 },
+    #[error("unsupported block artifact flags: {flags}")]
+    UnsupportedFlags { flags: u8 },
     #[error("committee pre-announce payload too short for epoch")]
     CommitteePreAnnouncePayloadTooShort,
     #[error("boundary TEE expiry exclusions commitment mismatch")]

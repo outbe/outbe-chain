@@ -21,12 +21,13 @@
 //!     has not approved) propagates all the way back as the outer call's
 //!     failure, not a silently swallowed error.
 
-use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::SolCall;
+use alloy_primitives::{keccak256, Address, Bytes, U256};
+use alloy_sol_types::{sol, SolCall, SolError, SolEvent};
 use outbe_evm::test_support::{seed_storage, EvmWorld};
 use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::storage::{SubCallOutput, SubCallStatus};
 use outbe_vaultrouter::api::IVaultRouter;
+use outbe_vaultrouter::schema::ApprovedVaultAction;
 use outbe_vaultrouter::VaultRouterContract;
 use revm::{
     database::{CacheDB, EmptyDB},
@@ -170,4 +171,490 @@ fn rebalance_reverts_when_the_destination_vault_is_not_registered() {
         "an unregistered destination vault must not accept liquidity, got {:?}",
         result.status
     );
+}
+
+sol! {
+    interface ApprovalToken {
+        function setFailure(uint256 fail) external;
+        function allowance() external view returns (uint256);
+    }
+}
+
+// Tiny bytecode fixtures keep this test independent of Solidity build artifacts.
+fn selector_jump(code: &mut Vec<u8>, signature: &str) -> usize {
+    code.extend_from_slice(&[0x60, 0x00, 0x35, 0x60, 0xe0, 0x1c, 0x63]);
+    code.extend_from_slice(&keccak256(signature)[..4]);
+    code.extend_from_slice(&[0x14, 0x61, 0, 0, 0x57]);
+    code.len() - 3
+}
+
+fn label(code: &mut Vec<u8>, operand: usize) {
+    let destination = u16::try_from(code.len()).unwrap().to_be_bytes();
+    code[operand..operand + 2].copy_from_slice(&destination);
+    code.push(0x5b);
+}
+
+fn return_word(code: &mut Vec<u8>, value: U256) {
+    code.push(0x7f);
+    code.extend_from_slice(&value.to_be_bytes::<32>());
+    code.extend_from_slice(&[0x60, 0, 0x52, 0x60, 0x20, 0x60, 0, 0xf3]);
+}
+
+fn approval_vault() -> AccountInfo {
+    let mut code = Vec::new();
+    let owner = selector_jump(&mut code, "owner()");
+    let balance = selector_jump(&mut code, "balanceOf(address)");
+    return_word(&mut code, U256::from_be_slice(ASSET.as_slice()));
+    label(&mut code, owner);
+    return_word(&mut code, U256::ZERO);
+    label(&mut code, balance);
+    return_word(&mut code, U256::ZERO);
+    code_account(&code)
+}
+
+/// One router-owned share per asset, stored in slot zero and changed only by
+/// actual deposit/withdraw calls. Unknown selectors revert rather than masking
+/// a missing fixture implementation with a canned return value.
+fn stateful_vault() -> AccountInfo {
+    let mut code = Vec::new();
+    let asset = selector_jump(&mut code, "asset()");
+    let balance = selector_jump(&mut code, "balanceOf(address)");
+    let preview = selector_jump(&mut code, "previewWithdraw(uint256)");
+    let deposit = selector_jump(&mut code, "deposit(uint256,address)");
+    let withdraw = selector_jump(&mut code, "withdraw(uint256,address,address)");
+    code.extend_from_slice(&ALWAYS_REVERT);
+    label(&mut code, asset);
+    return_word(&mut code, U256::from_be_slice(ASSET.as_slice()));
+    label(&mut code, balance);
+    code.extend_from_slice(&[0x60, 0, 0x54, 0x60, 0, 0x52, 0x60, 0x20, 0x60, 0, 0xf3]);
+    label(&mut code, deposit);
+    // SSTORE(0, SLOAD(0) + assets).
+    code.extend_from_slice(&[0x60, 4, 0x35, 0x60, 0, 0x54, 0x01, 0x60, 0, 0x55]);
+    code.extend_from_slice(&[0x61, 0, 0, 0x56]);
+    let deposited = code.len() - 3;
+    label(&mut code, withdraw);
+    // SSTORE(0, SLOAD(0) - assets); rebalance checks sufficient shares first.
+    code.extend_from_slice(&[0x60, 4, 0x35, 0x60, 0, 0x54, 0x03, 0x60, 0, 0x55]);
+    label(&mut code, deposited);
+    label(&mut code, preview);
+    code.extend_from_slice(&[0x60, 4, 0x35, 0x60, 0, 0x52, 0x60, 0x20, 0x60, 0, 0xf3]);
+    code_account(&code)
+}
+
+/// approve writes the allowance, emits a log, and calls applyApproved(1) again.
+/// It requires the re-entry to fail, then optionally reverts based on slot 2.
+fn approval_token() -> AccountInfo {
+    let mut code = Vec::new();
+    let iso = selector_jump(&mut code, "isoCode()");
+    let approve = selector_jump(&mut code, "approve(address,uint256)");
+    let set_failure = selector_jump(&mut code, "setFailure(uint256)");
+    let transfer = selector_jump(&mut code, "transfer(address,uint256)");
+    let transfer_from = selector_jump(&mut code, "transferFrom(address,address,uint256)");
+    // Default getter: return the allowance stored in slot zero.
+    code.extend_from_slice(&[0x60, 0, 0x54, 0x60, 0, 0x52, 0x60, 0x20, 0x60, 0, 0xf3]);
+    label(&mut code, iso);
+    return_word(&mut code, U256::from(840));
+    label(&mut code, transfer);
+    label(&mut code, transfer_from);
+    return_word(&mut code, U256::ONE);
+    label(&mut code, set_failure);
+    code.extend_from_slice(&[0x60, 4, 0x35, 0x60, 2, 0x55, 0x00]);
+    label(&mut code, approve);
+    // SSTORE(0, amount); LOG0(0, 32).
+    code.extend_from_slice(&[0x60, 0x24, 0x35, 0x60, 0, 0x55, 0x60, 0x20, 0x60, 0, 0xa0]);
+    let mut selector = [0u8; 32];
+    selector[..4].copy_from_slice(&IVaultRouter::applyApprovedCall::SELECTOR);
+    code.push(0x7f);
+    code.extend_from_slice(&selector);
+    code.extend_from_slice(&[0x60, 0, 0x52, 0x60, 1, 0x60, 4, 0x52]);
+    // CALL(gas(), router, 0, 0, 36, 0, 0).
+    code.extend_from_slice(&[0x60, 0, 0x60, 0, 0x60, 0x24, 0x60, 0, 0x60, 0, 0x73]);
+    code.extend_from_slice(VAULT_ROUTER_ADDRESS.as_slice());
+    code.extend_from_slice(&[0x5a, 0xf1, 0x15, 0x61, 0, 0, 0x57]);
+    let reentry_rejected = code.len() - 3;
+    code.extend_from_slice(&[0x60, 0, 0x60, 0, 0xfd]);
+    label(&mut code, reentry_rejected);
+    code.extend_from_slice(&[0x60, 2, 0x54, 0x15, 0x61, 0, 0, 0x57]);
+    let succeeds = code.len() - 3;
+    code.extend_from_slice(&[0x60, 0, 0x60, 0, 0xfd]);
+    label(&mut code, succeeds);
+    return_word(&mut code, U256::ONE);
+    code_account(&code)
+}
+
+fn approved_db(fail: bool, kind: u8) -> CacheDB<EmptyDB> {
+    let mut db = CacheDB::new(EmptyDB::default());
+    db.insert_account_info(ASSET, approval_token());
+    db.insert_account_info(VAULT_FROM, approval_vault());
+    db.insert_account_storage(ASSET, U256::from(2), U256::from(u8::from(fail)))
+        .unwrap();
+    seed_storage(&mut db, 1, CCA, |storage| {
+        let router = VaultRouterContract::new(storage.clone());
+        router
+            .approved_vault_actions
+            .create(&ApprovedVaultAction {
+                id: U256::ONE,
+                vault: VAULT_FROM,
+                kind,
+                approved_at: 0,
+            })
+            .unwrap();
+        router
+            .pending_vault_proposals
+            .write(&VAULT_FROM, U256::ONE)
+            .unwrap();
+        if kind == 2 {
+            router.assets.insert(ASSET).unwrap();
+            router.asset_vault_set(ASSET).insert(VAULT_FROM).unwrap();
+            router
+                .reference_currency_vault_set(840)
+                .insert(VAULT_FROM)
+                .unwrap();
+            router
+                .vault_reference_currencies
+                .write(&VAULT_FROM, 840)
+                .unwrap();
+            storage.sstore(ASSET, U256::ZERO, U256::MAX).unwrap();
+        }
+    });
+    db
+}
+
+fn approved_world(fail: bool, kind: u8) -> EvmWorld {
+    EvmWorld::new(approved_db(fail, kind))
+}
+
+fn pending_removal_world() -> EvmWorld {
+    let mut db = approved_db(false, 2);
+    db.insert_account_info(VAULT_FROM, stateful_vault());
+    db.insert_account_info(VAULT_TO, stateful_vault());
+    db.insert_account_storage(VAULT_FROM, U256::ZERO, U256::from(AMOUNT))
+        .unwrap();
+    seed_storage(&mut db, 1, CCA, |storage| {
+        storage
+            .increase_balance(
+                outbe_primitives::addresses::CCA_REGISTRY_ADDRESS,
+                outbe_ccaregistry::constants::BOND_REQUIREMENT,
+            )
+            .unwrap();
+        outbe_ccaregistry::runtime::bond(
+            storage.clone(),
+            CCA,
+            outbe_ccaregistry::constants::BOND_REQUIREMENT,
+            "Test CCA".into(),
+        )
+        .unwrap();
+        VaultRouterContract::new(storage)
+            .asset_vault_set(ASSET)
+            .insert(VAULT_TO)
+            .unwrap();
+    });
+    EvmWorld::new(db)
+}
+
+fn apply_approved(world: &mut EvmWorld, is_static: bool) -> SubCallOutput {
+    world.call(
+        CCA,
+        VAULT_ROUTER_ADDRESS,
+        IVaultRouter::applyApprovedCall {
+            proposalId: U256::ONE,
+        }
+        .abi_encode()
+        .into(),
+        is_static,
+    )
+}
+
+#[test]
+fn approved_add_rolls_back_real_child_writes_logs_and_retries_with_reentry_denied() {
+    let mut world = approved_world(true, 1);
+    assert!(!matches!(
+        apply_approved(&mut world, false).status,
+        SubCallStatus::Success
+    ));
+    assert_eq!(
+        world.view(CCA, ASSET, ApprovalToken::allowanceCall {}),
+        U256::ZERO
+    );
+    assert_eq!(
+        world.view(CCA, VAULT_ROUTER_ADDRESS, IVaultRouter::assetsCountCall {}),
+        U256::ZERO
+    );
+    assert_eq!(
+        world.view(
+            CCA,
+            VAULT_ROUTER_ADDRESS,
+            IVaultRouter::referenceCurrencyVaultsCountCall { isoCode: 840 }
+        ),
+        U256::ZERO
+    );
+    assert_eq!(
+        world.view(
+            CCA,
+            VAULT_ROUTER_ADDRESS,
+            IVaultRouter::vaultReferenceCurrencyCall { vault: VAULT_FROM }
+        ),
+        0
+    );
+    assert!(world.logs().is_empty());
+
+    world.ok(
+        CCA,
+        ASSET,
+        ApprovalToken::setFailureCall { fail: U256::ZERO },
+    );
+    assert!(matches!(
+        apply_approved(&mut world, false).status,
+        SubCallStatus::Success
+    ));
+    assert_eq!(
+        world.view(CCA, ASSET, ApprovalToken::allowanceCall {}),
+        U256::MAX
+    );
+    assert_eq!(
+        world.view(
+            CCA,
+            VAULT_ROUTER_ADDRESS,
+            IVaultRouter::assetVaultsCountCall { asset: ASSET }
+        ),
+        U256::ONE
+    );
+    assert_eq!(world.logs().len(), 2); // Token log and VaultAdded, no re-entry effects.
+    let added = world
+        .logs()
+        .iter()
+        .find(|log| log.address == VAULT_ROUTER_ADDRESS)
+        .unwrap();
+    IVaultRouter::VaultAdded::decode_log_data(&added.data).unwrap();
+    assert!(!matches!(
+        apply_approved(&mut world, false).status,
+        SubCallStatus::Success
+    ));
+}
+
+#[test]
+fn approved_remove_rolls_back_then_clears_real_allowance_and_indexes() {
+    let mut world = approved_world(true, 2);
+    assert!(!matches!(
+        apply_approved(&mut world, false).status,
+        SubCallStatus::Success
+    ));
+    assert_eq!(
+        world.view(CCA, ASSET, ApprovalToken::allowanceCall {}),
+        U256::MAX
+    );
+    assert_eq!(
+        world.view(CCA, VAULT_ROUTER_ADDRESS, IVaultRouter::assetsCountCall {}),
+        U256::ONE
+    );
+    assert_eq!(
+        world.view(
+            CCA,
+            VAULT_ROUTER_ADDRESS,
+            IVaultRouter::referenceCurrencyVaultsCountCall { isoCode: 840 }
+        ),
+        U256::ONE
+    );
+    assert!(world.logs().is_empty());
+    world.ok(
+        CCA,
+        ASSET,
+        ApprovalToken::setFailureCall { fail: U256::ZERO },
+    );
+    assert!(matches!(
+        apply_approved(&mut world, false).status,
+        SubCallStatus::Success
+    ));
+    assert_eq!(
+        world.view(CCA, ASSET, ApprovalToken::allowanceCall {}),
+        U256::ZERO
+    );
+    assert_eq!(
+        world.view(CCA, VAULT_ROUTER_ADDRESS, IVaultRouter::assetsCountCall {}),
+        U256::ZERO
+    );
+    assert_eq!(
+        world.view(
+            CCA,
+            VAULT_ROUTER_ADDRESS,
+            IVaultRouter::referenceCurrencyVaultsCountCall { isoCode: 840 }
+        ),
+        U256::ZERO
+    );
+    assert_eq!(world.logs().len(), 2);
+    let removed = world
+        .logs()
+        .iter()
+        .find(|log| log.address == VAULT_ROUTER_ADDRESS)
+        .unwrap();
+    IVaultRouter::VaultRemoved::decode_log_data(&removed.data).unwrap();
+    assert!(!matches!(
+        apply_approved(&mut world, false).status,
+        SubCallStatus::Success
+    ));
+}
+
+#[test]
+fn approved_apply_rejects_static_frame_without_consuming_action() {
+    let mut world = approved_world(false, 1);
+    assert!(!matches!(
+        apply_approved(&mut world, true).status,
+        SubCallStatus::Success
+    ));
+    assert!(world.logs().is_empty());
+    assert!(matches!(
+        apply_approved(&mut world, false).status,
+        SubCallStatus::Success
+    ));
+}
+
+#[test]
+fn approved_remove_retries_after_active_cca_drains_real_vault_shares() {
+    let mut world = pending_removal_world();
+    let shares = |world: &mut EvmWorld, vault| {
+        world.view(
+            CCA,
+            VAULT_ROUTER_ADDRESS,
+            IVaultRouter::sharesBalanceCall { vault },
+        )
+    };
+    assert_eq!(shares(&mut world, VAULT_FROM), U256::from(AMOUNT));
+    assert_eq!(shares(&mut world, VAULT_TO), U256::ZERO);
+    let result = apply_approved(&mut world, false);
+    assert!(matches!(result.status, SubCallStatus::Revert(_)));
+    let error = IVaultRouter::ReserveVaultHasShares::abi_decode(&result.returndata).unwrap();
+    assert_eq!(error.vault, VAULT_FROM);
+    assert_eq!(error.shares, U256::from(AMOUNT));
+    let pending = world.view(
+        CCA,
+        VAULT_ROUTER_ADDRESS,
+        IVaultRouter::approvedVaultActionCall {
+            proposalId: U256::ONE,
+        },
+    );
+    assert!(matches!(
+        pending.action,
+        IVaultRouter::VaultAction::RemoveVault
+    ));
+    assert_eq!(pending.vault, VAULT_FROM);
+    assert_eq!(pending.approvedAt, 0);
+    assert_eq!(
+        world.view(CCA, ASSET, ApprovalToken::allowanceCall {}),
+        U256::MAX
+    );
+    assert_eq!(
+        world.view(
+            CCA,
+            VAULT_ROUTER_ADDRESS,
+            IVaultRouter::assetVaultsCountCall { asset: ASSET }
+        ),
+        U256::from(2)
+    );
+    assert_eq!(
+        world.view(
+            CCA,
+            VAULT_ROUTER_ADDRESS,
+            IVaultRouter::assetVaultAtCall {
+                asset: ASSET,
+                index: U256::ZERO
+            }
+        ),
+        VAULT_FROM
+    );
+    assert!(world.logs().is_empty());
+
+    let moved = rebalance(&mut world);
+    assert!(matches!(moved.status, SubCallStatus::Success));
+    assert_eq!(
+        IVaultRouter::rebalanceCall::abi_decode_returns(&moved.returndata).unwrap(),
+        U256::from(AMOUNT)
+    );
+    assert_eq!(shares(&mut world, VAULT_FROM), U256::ZERO);
+    assert_eq!(shares(&mut world, VAULT_TO), U256::from(AMOUNT));
+    assert_eq!(world.logs().len(), 1);
+    let event = IVaultRouter::LiquidityRebalanced::decode_log_data(&world.logs()[0].data).unwrap();
+    assert_eq!(event.cca, CCA);
+    assert_eq!(event.burnedShares, U256::from(AMOUNT));
+    assert_eq!(event.mintedShares, U256::from(AMOUNT));
+
+    assert!(matches!(
+        apply_approved(&mut world, false).status,
+        SubCallStatus::Success
+    ));
+    let pending = world.view(
+        CCA,
+        VAULT_ROUTER_ADDRESS,
+        IVaultRouter::approvedVaultActionCall {
+            proposalId: U256::ONE,
+        },
+    );
+    assert!(matches!(pending.action, IVaultRouter::VaultAction::Unknown));
+    assert_eq!(
+        world.view(CCA, ASSET, ApprovalToken::allowanceCall {}),
+        U256::ZERO
+    );
+    assert_eq!(
+        world.view(
+            CCA,
+            VAULT_ROUTER_ADDRESS,
+            IVaultRouter::assetVaultsCountCall { asset: ASSET }
+        ),
+        U256::ONE
+    );
+    assert_eq!(world.logs().len(), 3); // Rebalance, allowance revocation, removal.
+    assert_eq!(
+        world.view(
+            CCA,
+            VAULT_ROUTER_ADDRESS,
+            IVaultRouter::assetVaultAtCall {
+                asset: ASSET,
+                index: U256::ZERO
+            }
+        ),
+        VAULT_TO
+    );
+    let removed = IVaultRouter::VaultRemoved::decode_log_data(&world.logs()[2].data).unwrap();
+    assert_eq!(removed.vault, VAULT_FROM);
+    assert!(!matches!(
+        apply_approved(&mut world, false).status,
+        SubCallStatus::Success
+    ));
+}
+
+#[test]
+fn reserve_stables_rejects_pending_first_vault_removal_through_abi() {
+    let mut world = pending_removal_world();
+    let result = world.call(
+        CCA,
+        VAULT_ROUTER_ADDRESS,
+        IVaultRouter::reserveStablesCall {
+            credisOwner: CCA,
+            source: CCA,
+            asset: ASSET,
+            amountMinor: U256::from(AMOUNT),
+            referenceCurrency: 840,
+        }
+        .abi_encode()
+        .into(),
+        false,
+    );
+    assert!(matches!(result.status, SubCallStatus::Revert(_)));
+    let error = IVaultRouter::ReserveVaultRemovalPending::abi_decode(&result.returndata).unwrap();
+    assert_eq!(error.vault, VAULT_FROM);
+    assert_eq!(error.proposalId, U256::ONE);
+    assert_eq!(
+        world.view(
+            CCA,
+            VAULT_ROUTER_ADDRESS,
+            IVaultRouter::sharesBalanceCall { vault: VAULT_FROM }
+        ),
+        U256::from(AMOUNT)
+    );
+    let reservation = world.view(
+        CCA,
+        VAULT_ROUTER_ADDRESS,
+        IVaultRouter::reservationOfCall { id: U256::ONE },
+    );
+    assert_eq!(reservation.amountMinor, U256::ZERO);
+    assert!(world.logs().is_empty());
 }

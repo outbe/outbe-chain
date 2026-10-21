@@ -236,10 +236,9 @@ fn get_policy_rate_reverts_for_an_unregistered_iso_code() {
         )
         .unwrap();
         let err = oracle.get_policy_rate(124).unwrap_err();
-        let msg = format!("{err:?}");
-        assert!(
-            msg.contains("no policy rate for iso_code 124"),
-            "unexpected error: {msg}"
+        assert_typed_revert(
+            &err,
+            crate::errors::OracleError::NoPolicyRate { iso_code: 124 },
         );
     });
 }
