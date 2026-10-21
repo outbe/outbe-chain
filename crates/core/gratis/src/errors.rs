@@ -58,6 +58,8 @@ pub enum GratisFatalError {
     WrongOpNonce,
     #[error("collateral result mismatch")]
     CollateralResultMismatch,
+    #[error("owner movement result mismatch")]
+    OwnerResultMismatch,
     #[error("pledged supply underflow")]
     PledgedSupplyUnderflow,
 }
@@ -75,7 +77,8 @@ impl From<GratisFatalError> for PrecompileError {
             | GratisFatalError::MissingFidelityOutcome
             | GratisFatalError::InvalidOwnerMovement
             | GratisFatalError::WrongOpNonce
-            | GratisFatalError::CollateralResultMismatch => PrecompileError::Revert(message),
+            | GratisFatalError::CollateralResultMismatch
+            | GratisFatalError::OwnerResultMismatch => PrecompileError::Revert(message),
         }
     }
 }
