@@ -27,8 +27,8 @@ pub(crate) async fn validate_publication_anchor(
 ) -> Result<(), PublicationAnchorError> {
     use PublicationAnchorError::{Invalid, Unavailable};
     let extra_data = block.header().inner.extra_data.as_ref();
-    // Format activation is checked by node policy; this check adds no legacy constraints.
-    if !extra_data.starts_with(b"OART\x0c") {
+    // Node policy binds publication mode to genesis. Decode every OART envelope before reading records.
+    if !extra_data.starts_with(b"OART") {
         return Ok(());
     }
     let artifacts = outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(extra_data)

@@ -65,17 +65,13 @@ fn context_for_next_block_strips_plain_builder_extra_data() {
     let config = OutbeEvmConfig::new(test_chain_spec());
     let parent = test_parent();
 
-    let ctx = config
-        .context_for_next_block(
-            &parent,
-            next_block_attrs(Bytes::from_static(b"reth/vtest/macos")),
-        )
-        .expect("context construction must succeed");
-
-    assert!(
-        ctx.inner.extra_data.is_empty(),
-        "plain reth builder extra_data must not enter Outbe header artifact path"
-    );
+    for plain in [&b""[..], b"x", b"OAR", b"reth/vtest/macos"] {
+        let ctx = config
+            .context_for_next_block(&parent, next_block_attrs(Bytes::copy_from_slice(plain)))
+            .expect("context construction must succeed");
+        assert!(ctx.inner.extra_data.is_empty());
+        assert!(ctx.system_layout_error.is_none());
+    }
 }
 
 #[test]
@@ -132,22 +128,62 @@ fn context_for_next_block_preserves_valid_consensus_header_artifact() {
         .expect("context construction must succeed");
 
     assert_eq!(ctx.inner.extra_data, artifact);
+    assert!(ctx.system_layout_error.is_none());
 }
 
 #[test]
-fn context_for_next_block_drops_legacy_finalization_header_tag() {
+fn context_for_next_block_rejects_malformed_or_unsupported_oart_before_execution() {
+    use crate::errors::SystemTxExpectationError;
+    use alloy_evm::block::BlockExecutor as _;
+    use reth_evm::execute::BlockBuilder as _;
+    use revm::database::State;
+
     let config = OutbeEvmConfig::new(test_chain_spec());
     let parent = test_parent();
-    let extra_data = Bytes::from_static(b"OART\x05\x01\x04\x00\x00");
+    for extra_data in [
+        &b"OART"[..],
+        b"OART\x01\x00\xff",
+        b"OART\x01\x00\x01\x02\x00\x10\xaa",
+        b"OART\x01\x00\x01\xff\x00\x00",
+        b"OART\x7f\x00\x00",
+        b"OART\x05\x00\x00",
+    ] {
+        let mut attrs = next_block_attrs(Bytes::copy_from_slice(extra_data));
+        attrs.inner.suggested_fee_recipient = outbe_primitives::addresses::REWARDS_ADDRESS;
+        let ctx = config
+            .context_for_next_block(&parent, attrs.clone())
+            .unwrap();
+        assert!(
+            matches!(
+                ctx.system_layout_error,
+                Some(SystemTxExpectationError::DecodeBlockArtifacts(_))
+            ),
+            "malformed or unsupported OART must retain its decode error: {extra_data:?}"
+        );
 
-    let ctx = config
-        .context_for_next_block(&parent, next_block_attrs(extra_data))
-        .expect("context construction must succeed");
-
-    assert!(
-        ctx.inner.extra_data.is_empty(),
-        "legacy finalized-parent header tag must not survive into next-block context"
-    );
+        let mut state = State::builder().with_bundle_update().build();
+        let mut builder = config
+            .builder_for_next_block(&mut state, &parent, attrs)
+            .unwrap();
+        let error = builder
+            .apply_pre_execution_changes()
+            .expect_err("invalid OART must reject the block");
+        assert!(
+            error
+                .to_string()
+                .contains("invalid system tx layout: decode Outbe block artifacts"),
+            "{error}"
+        );
+        assert!(builder.executor().receipts().is_empty());
+        drop(builder);
+        assert!(state.bundle_state.state.is_empty());
+        assert!(state
+            .transition_state
+            .as_ref()
+            .unwrap()
+            .transitions
+            .is_empty());
+    }
 }
 
 /// `sanitize_next_block_extra_data` must PRESERVE a non-empty
@@ -202,4 +238,5 @@ fn sanitizer_preserves_late_credits() {
         decoded.timestamp_millis_part, 0,
         "timestamp_millis_part is reset by the sanitizer"
     );
+    assert!(ctx.system_layout_error.is_none());
 }

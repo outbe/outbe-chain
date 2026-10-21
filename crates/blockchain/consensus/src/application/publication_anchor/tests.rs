@@ -81,13 +81,16 @@ async fn publication_anchor_absence_and_exact_genesis_need_no_history_lookup() {
 }
 
 #[tokio::test]
-async fn publication_anchor_preserves_legacy_headers_and_rejects_malformed_enabled_frames() {
+async fn publication_anchor_preserves_opaque_headers_and_rejects_malformed_artifacts() {
     let reader = Reader::default();
     let genesis = B256::repeat_byte(7);
     for (extra_data, valid) in [
-        (b"opaque legacy header".as_slice(), true),
-        (b"OART\x0b\x00".as_slice(), true),
-        (b"OART\x0c".as_slice(), false),
+        (b"opaque builder header".as_slice(), true),
+        (b"OART\x01\x00\x00".as_slice(), true),
+        (b"OART\x01\x01\x00".as_slice(), true),
+        (b"OART\x01\x02\x00".as_slice(), false),
+        (b"OART\x0b\x00".as_slice(), false),
+        (b"OART\x01\x01".as_slice(), false),
         (b"OART\x0c\x01".as_slice(), false),
     ] {
         let mut raw = block(1, None).into_inner().into_block();
