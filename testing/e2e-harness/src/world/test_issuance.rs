@@ -150,23 +150,37 @@ fn series_id(worldwide_day: u32, issuance: [u8; 3], reference: u8) -> FixedBytes
     FixedBytes::from(bytes)
 }
 
+pub struct IssueSeries<'a> {
+    pub url: &'a str,
+    pub sender_key: &'a str,
+    pub worldwide_day: u32,
+    pub issued_at: u32,
+    pub reference_currency: u16,
+    pub reference_byte: u8,
+    pub entry_price_minor: U256,
+    pub promis_load_minor: u128,
+    pub issued_units: u32,
+    pub chains: &'a [u32],
+    pub specs: &'a [SeriesSpec],
+}
+
 /// Issue every spec into the same worldwide day and reference currency, so the
 /// sweeps see one group rather than a group per series. Each series is created on
 /// every chain named in `chains`.
-#[allow(clippy::too_many_arguments)]
-pub fn issue_series(
-    url: &str,
-    sender_key: &str,
-    worldwide_day: u32,
-    issued_at: u32,
-    reference_currency: u16,
-    reference_byte: u8,
-    entry_price_minor: U256,
-    promis_load_minor: u128,
-    issued_units: u32,
-    chains: &[u32],
-    specs: &[SeriesSpec],
-) -> Result<Vec<FixedBytes<14>>> {
+pub fn issue_series(request: IssueSeries<'_>) -> Result<Vec<FixedBytes<14>>> {
+    let IssueSeries {
+        url,
+        sender_key,
+        worldwide_day,
+        issued_at,
+        reference_currency,
+        reference_byte,
+        entry_price_minor,
+        promis_load_minor,
+        issued_units,
+        chains,
+        specs,
+    } = request;
     let ids: Vec<FixedBytes<14>> = specs
         .iter()
         .map(|spec| series_id(worldwide_day, spec.issuance, reference_byte))
@@ -194,21 +208,32 @@ pub fn issue_series(
     Ok(ids)
 }
 
+pub struct IssueToOwner<'a, Tick> {
+    pub url: &'a str,
+    pub nft: Address,
+    pub admin_key: &'a str,
+    pub owner: Address,
+    pub units: u32,
+    pub series: &'a [FixedBytes<14>],
+    pub tick: Tick,
+    pub timeout: std::time::Duration,
+}
+
 /// Put `units` of every series into `owner`'s hands on one chain's collection, as the
 /// owner's own `issueIntex` would after winning. The admin takes the issue role for that.
 /// A series reaches the chain as a message, so this waits for it and calls `tick` while
 /// waiting: a target refuses a stamp from its own future until its clock is carried over.
-#[allow(clippy::too_many_arguments)]
-pub fn issue_to_owner(
-    url: &str,
-    nft: Address,
-    admin_key: &str,
-    owner: Address,
-    units: u32,
-    series: &[FixedBytes<14>],
-    mut tick: impl FnMut(),
-    timeout: std::time::Duration,
-) -> Result<()> {
+pub fn issue_to_owner<Tick: FnMut()>(request: IssueToOwner<'_, Tick>) -> Result<()> {
+    let IssueToOwner {
+        url,
+        nft,
+        admin_key,
+        owner,
+        units,
+        series,
+        mut tick,
+        timeout,
+    } = request;
     let admin = alloy_signer::Signer::address(
         &admin_key
             .parse::<alloy_signer_local::PrivateKeySigner>()
@@ -282,18 +307,28 @@ pub fn mine_nonce(
     })
 }
 
+pub struct MinePromis<'a> {
+    pub url: &'a str,
+    pub owner_key: &'a str,
+    pub series: FixedBytes<14>,
+    pub units: u32,
+    pub nonce: u64,
+    pub mac: [u8; 32],
+    pub op_nonce: u64,
+}
+
 /// Burn settled units into Promis. `mac` authorizes the confidential mint, and the
 /// proof of work is what the engine checks before it will call it at all.
-#[allow(clippy::too_many_arguments)]
-pub fn mine_promis(
-    url: &str,
-    owner_key: &str,
-    series: FixedBytes<14>,
-    units: u32,
-    nonce: u64,
-    mac: [u8; 32],
-    op_nonce: u64,
-) -> Result<()> {
+pub fn mine_promis(request: MinePromis<'_>) -> Result<()> {
+    let MinePromis {
+        url,
+        owner_key,
+        series,
+        units,
+        nonce,
+        mac,
+        op_nonce,
+    } = request;
     let signer: alloy_signer_local::PrivateKeySigner = owner_key
         .parse()
         .map_err(|error| eyre!("invalid owner key: {error}"))?;
@@ -316,19 +351,30 @@ pub fn mine_promis(
     Ok(())
 }
 
+pub struct OpenDay<'a> {
+    pub url: &'a str,
+    pub sender_key: &'a str,
+    pub origin_router: Address,
+    pub worldwide_day: u32,
+    pub now: u32,
+    pub reference_currency: u16,
+    pub entry_price_minor: u64,
+    pub promis_load_minor: u128,
+}
+
 /// Freeze the day's target set, which the router does at STAGE_START and without
 /// which it refuses to address an issuance leg to any chain.
-#[allow(clippy::too_many_arguments)]
-pub fn open_day(
-    url: &str,
-    sender_key: &str,
-    origin_router: Address,
-    worldwide_day: u32,
-    now: u32,
-    reference_currency: u16,
-    entry_price_minor: u64,
-    promis_load_minor: u128,
-) -> Result<()> {
+pub fn open_day(request: OpenDay<'_>) -> Result<()> {
+    let OpenDay {
+        url,
+        sender_key,
+        origin_router,
+        worldwide_day,
+        now,
+        reference_currency,
+        entry_price_minor,
+        promis_load_minor,
+    } = request;
     // Stage ends sit in the past: the scenario issues directly, so no bid ever races
     // them, and a day whose windows are open would only invite one.
     let params = AuctionStageStartParams {
@@ -420,15 +466,26 @@ pub fn close_call_notice(
 ///
 /// While a series is tradable the hop may change hands. Once it is Called only a
 /// move to the owner's own address is allowed, so `to` is always the owner here.
-pub fn bridge_home(
-    url: &str,
-    owner_key: &str,
-    bridge: Address,
-    home_chain_id: u32,
-    token_id: U256,
-    owner: Address,
-    units: u32,
-) -> Result<()> {
+pub struct BridgeHome<'a> {
+    pub url: &'a str,
+    pub owner_key: &'a str,
+    pub bridge: Address,
+    pub home_chain_id: u32,
+    pub token_id: U256,
+    pub owner: Address,
+    pub units: u32,
+}
+
+pub fn bridge_home(request: BridgeHome<'_>) -> Result<()> {
+    let BridgeHome {
+        url,
+        owner_key,
+        bridge,
+        home_chain_id,
+        token_id,
+        owner,
+        units,
+    } = request;
     let params = SendParam {
         dstChainId: home_chain_id,
         to: FixedBytes::<32>::left_padding_from(owner.as_slice()),
@@ -495,14 +552,24 @@ pub fn set_remote_messenger(
 
 /// Bring several series home in one message, the way an owner with more than one
 /// would: a single burn set on this side and a single mint set at home.
-pub fn batch_bridge_home(
-    url: &str,
-    owner_key: &str,
-    bridge: Address,
-    home_chain_id: u32,
-    owner: Address,
-    tokens: &[(U256, u32)],
-) -> Result<()> {
+pub struct BatchBridgeHome<'a> {
+    pub url: &'a str,
+    pub owner_key: &'a str,
+    pub bridge: Address,
+    pub home_chain_id: u32,
+    pub owner: Address,
+    pub tokens: &'a [(U256, u32)],
+}
+
+pub fn batch_bridge_home(request: BatchBridgeHome<'_>) -> Result<()> {
+    let BatchBridgeHome {
+        url,
+        owner_key,
+        bridge,
+        home_chain_id,
+        owner,
+        tokens,
+    } = request;
     let params = BatchSendParam {
         dstChainId: home_chain_id,
         to: FixedBytes::<32>::left_padding_from(owner.as_slice()),

@@ -1,32 +1,13 @@
 //! Completed daily passes remain idle, including repeated entry at one height.
 
 use alloy_primitives::{Address, U256};
-use outbe_nod::{NodContract, NodItemState};
+use outbe_nod::NodContract;
 use outbe_nodfactory::{called, hooks};
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
-
-fn item(owner: Address, day: WorldwideDay) -> NodItemState {
-    let nod_id = outbe_nod::identity::generate_nod_id(owner, day).unwrap();
-    outbe_nod::test_support::item(
-        outbe_nod::test_support::NodItemFixture {
-            is_settled: false,
-            nod_id,
-            owner,
-            gratis_load_minor: U256::from(11),
-            worldwide_day: day,
-            league_id: 4,
-            group_key: outbe_nod::test_support::group_key(1_752_534_000, U256::from(5), 978),
-            issuance_currency: 840,
-            reference_currency: 978,
-            issued_at: 1_752_534_000,
-        },
-        U256::from(5),
-    )
-}
 
 fn provider() -> HashMapStorageProvider {
     HashMapStorageProvider::new(1)
@@ -51,7 +32,10 @@ fn idle_daily_scans_do_not_reopen_a_completed_day() {
         oracle.utc_day_vwap_last_finalized.write(20260715).unwrap();
         for (owner, entry) in [(0x51, 12u64), (0x52, 13)] {
             let entry = U256::from(entry);
-            let mut body = item(Address::repeat_byte(owner), WorldwideDay::new(20260715));
+            let mut body = outbe_nod::test_support::sample_item(
+                Address::repeat_byte(owner),
+                WorldwideDay::new(20260715),
+            );
             body.group_key = outbe_nod::test_support::group_key(body.issued_at, entry, 978);
             outbe_nod::test_support::set_entry_price(&mut body, entry);
             outbe_nod::test_support::add(&storage, &body).unwrap();

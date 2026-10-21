@@ -81,23 +81,6 @@ fn requeue_called(storage: &StorageHandle<'_>, credis_id: U256, deadline: u64) -
 }
 
 fn reopen_day(storage: &StorageHandle<'_>, day: u32) -> Result<()> {
-    let credis = CredisContract::new(storage.clone());
     // The fixture may target a closed day before this temporary chain's genesis.
-    if credis.daily_genesis_day.read()? == 0 || day < credis.daily_genesis_day.read()? {
-        credis.daily_genesis_day.write(day)?;
-    }
-    if day > credis.call_latest_day.read()? {
-        credis.call_latest_day.write(day)?;
-    }
-    credis.call_sweep_day.write(day)?;
-    credis.daily_phase.write(0)?;
-    credis.call_currency_cursor.write(0)?;
-    for currency in outbe_oracle::schema::OracleContract::new(storage.clone())
-        .reference_currencies
-        .read_all()?
-    {
-        credis.call_bin_cursor.write(&currency, 0)?;
-        credis.call_scan_failed_day.clear(&currency)?;
-    }
-    Ok(())
+    outbe_oracle::reopen_daily_call_sweep!(CredisContract::new(storage.clone()), storage, day)
 }

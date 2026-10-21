@@ -655,22 +655,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        for address in [
-            outbe_primitives::addresses::NOD_ADDRESS,
-            outbe_primitives::addresses::GEM_ADDRESS,
-            outbe_primitives::addresses::GEM_FACTORY_ADDRESS,
-            outbe_primitives::addresses::INTEX_ADDRESS,
-            outbe_primitives::addresses::CREDIS_ADDRESS,
-        ] {
-            db.insert_account_info(
-                address,
-                AccountInfo {
-                    code_hash: marker_code.hash_slow(),
-                    code: Some(marker_code.clone()),
-                    ..Default::default()
-                },
-            );
-        }
+        crate::test_support::install_call_scan_markers(db, &marker_code);
     }
 
     fn assert_seeded_validators(db: &mut TestDb, validators: &[Address]) {

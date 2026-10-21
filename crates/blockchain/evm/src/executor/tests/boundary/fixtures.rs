@@ -77,22 +77,7 @@ pub(super) fn state_with_active_and_registered_candidate_seeded(
             ..Default::default()
         },
     );
-    for address in [
-        outbe_primitives::addresses::NOD_ADDRESS,
-        outbe_primitives::addresses::GEM_ADDRESS,
-        outbe_primitives::addresses::GEM_FACTORY_ADDRESS,
-        outbe_primitives::addresses::INTEX_ADDRESS,
-        outbe_primitives::addresses::CREDIS_ADDRESS,
-    ] {
-        db.insert_account_info(
-            address,
-            AccountInfo {
-                code_hash: marker_code.hash_slow(),
-                code: Some(marker_code.clone()),
-                ..Default::default()
-            },
-        );
-    }
+    crate::test_support::install_call_scan_markers(&mut db, &marker_code);
     State::builder()
         .with_database(db)
         .with_bundle_update()

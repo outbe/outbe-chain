@@ -99,39 +99,39 @@ fn issue_four_series(world: &mut World) {
         -i64::from(CALL_LOOKBACK_DAYS * SECONDS_PER_DAY_U32),
     );
     let now = u32::try_from(head_time(world)).expect("timestamp fits a uint32");
-    test_issuance::open_day(
-        &url,
-        DEPLOYER_KEY,
+    test_issuance::open_day(test_issuance::OpenDay {
+        url: &url,
+        sender_key: DEPLOYER_KEY,
         origin_router,
-        day,
+        worldwide_day: day,
         now,
-        USD_ISO,
-        ENTRY_PRICE_MINOR,
-        PROMIS_LOAD_MINOR,
-    )
+        reference_currency: USD_ISO,
+        entry_price_minor: ENTRY_PRICE_MINOR,
+        promis_load_minor: PROMIS_LOAD_MINOR,
+    })
     .expect("open the day the series are issued into");
 
     // Same day and reference currency, different issuance currencies: one group,
     // four members, which is what makes the group promotion and the mark batch real.
-    let series = test_issuance::issue_series(
-        &url,
-        DEPLOYER_KEY,
-        day,
+    let series = test_issuance::issue_series(test_issuance::IssueSeries {
+        url: &url,
+        sender_key: DEPLOYER_KEY,
+        worldwide_day: day,
         // Issuance is stamped where the seeded days already lie behind it.
-        u32::try_from(
+        issued_at: u32::try_from(
             head_time(world).saturating_sub(u64::from(CALL_LOOKBACK_DAYS) * SECONDS_PER_DAY),
         )
         .expect("backdated stamp fits a uint32"),
-        USD_ISO,
-        REFERENCE_BYTE,
-        U256::from(ENTRY_PRICE_MINOR),
-        PROMIS_LOAD_MINOR,
-        UNITS,
-        &[
+        reference_currency: USD_ISO,
+        reference_byte: REFERENCE_BYTE,
+        entry_price_minor: U256::from(ENTRY_PRICE_MINOR),
+        promis_load_minor: PROMIS_LOAD_MINOR,
+        issued_units: UNITS,
+        chains: &[
             u32::try_from(chain_id).expect("committee chain id fits a uint32"),
             u32::try_from(world.target_chain.chain_id()).expect("target chain id fits a uint32"),
         ],
-        &[
+        specs: &[
             SeriesSpec {
                 issuance: *b"MYR",
                 issuance_currency: MYR_ISO,
@@ -153,7 +153,7 @@ fn issue_four_series(world: &mut World) {
                 issuance_currency: JPY_ISO,
             },
         ],
-    )
+    })
     .expect("issue the lifecycle series");
 
     // The capacity committee runs ahead of wall time, so advance Anvil only
@@ -178,27 +178,27 @@ fn issue_four_series(world: &mut World) {
     // Every series puts units in the owner's hands on both chains, which is what makes
     // bringing them home a real step later.
     let timeout = Duration::from_secs(DELIVERY_TIMEOUT_SECS);
-    test_issuance::issue_to_owner(
-        &url,
-        intex_nft(world),
-        DEPLOYER_KEY,
+    test_issuance::issue_to_owner(test_issuance::IssueToOwner {
+        url: &url,
+        nft: intex_nft(world),
+        admin_key: DEPLOYER_KEY,
         owner,
-        COMMITTEE_UNITS,
-        &series,
-        || {},
+        units: COMMITTEE_UNITS,
+        series: &series,
+        tick: || {},
         timeout,
-    )
+    })
     .expect("issue the committee units to the owner");
-    test_issuance::issue_to_owner(
-        &target_url,
-        target_intex_nft(world),
-        DEPLOYER_KEY,
+    test_issuance::issue_to_owner(test_issuance::IssueToOwner {
+        url: &target_url,
+        nft: target_intex_nft(world),
+        admin_key: DEPLOYER_KEY,
         owner,
-        TARGET_UNITS,
-        &series,
-        || carry_target_clock(world),
+        units: TARGET_UNITS,
+        series: &series,
+        tick: || carry_target_clock(world),
         timeout,
-    )
+    })
     .expect("issue the target units to the owner");
 
     let mut series = series;
@@ -594,8 +594,16 @@ impl Lifecycle for IntexLifecycle {
                 mint_authorization(world, Ledger::Promis, DEPLOYER_KEY, owner, promis);
             let nonce = test_issuance::mine_nonce(owner, promis, series, 0)
                 .expect("a nonce clearing two leading zero bytes");
-            test_issuance::mine_promis(&url, DEPLOYER_KEY, series, UNITS, nonce, mac.0, op_nonce)
-                .expect("mine Promis from the settled units");
+            test_issuance::mine_promis(test_issuance::MinePromis {
+                url: &url,
+                owner_key: DEPLOYER_KEY,
+                series,
+                units: UNITS,
+                nonce,
+                mac: mac.0,
+                op_nonce,
+            })
+            .expect("mine Promis from the settled units");
             // Every unit is realized and exercised, so the series is spent and deleted.
             assert_eq!(
                 eth::read_call(
@@ -785,14 +793,14 @@ fn bridge_rest_home(world: &mut World) {
         })
         .collect();
 
-    test_issuance::batch_bridge_home(
-        &target_url,
-        DEPLOYER_KEY,
+    test_issuance::batch_bridge_home(test_issuance::BatchBridgeHome {
+        url: &target_url,
+        owner_key: DEPLOYER_KEY,
         bridge,
-        home_chain,
+        home_chain_id: home_chain,
         owner,
-        &tokens,
-    )
+        tokens: &tokens,
+    })
     .expect("send the remaining units home in one batch");
 
     let deadline = Instant::now() + Duration::from_secs(DELIVERY_TIMEOUT_SECS);
@@ -838,15 +846,15 @@ fn bring_home(world: &mut World, amount: u32) {
             .0;
         let token_id = venue_probes::issued_token_id(&url, nft, series).expect("issued token id");
 
-        test_issuance::bridge_home(
-            &target_url,
-            DEPLOYER_KEY,
+        test_issuance::bridge_home(test_issuance::BridgeHome {
+            url: &target_url,
+            owner_key: DEPLOYER_KEY,
             bridge,
-            home_chain,
+            home_chain_id: home_chain,
             token_id,
             owner,
-            amount,
-        )
+            units: amount,
+        })
         .expect("send the units home");
 
         let want = before + u64::from(amount);

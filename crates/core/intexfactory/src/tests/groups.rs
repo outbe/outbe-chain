@@ -4,7 +4,6 @@ mod group_scans {
 
     use alloy_primitives::U256;
     use outbe_intex::SeriesId;
-    use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_primitives::storage::StorageHandle;
     use outbe_primitives::time::WorldwideDay;
 
@@ -13,9 +12,7 @@ mod group_scans {
     use crate::tests::group_of;
     use outbe_intex::IntexContract;
 
-    const CHAIN_ID: u64 = 1;
     const REFERENCE_ISO: u16 = 840;
-    const ISSUED_AT: u32 = 1_700_000_000;
     const ENTRY_PRICE: u64 = 1_000_000;
     const EXPECTED_TRIGGER: u64 = 2_280_000;
     const WWD: u32 = 20260212;
@@ -23,22 +20,7 @@ mod group_scans {
     /// Issuance currencies of one day's series. They share every decision input.
     const ISSUANCES: [u16; 3] = [840, 978, 392];
 
-    fn with_factory<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-        storage.set_timestamp(U256::from(ISSUED_AT as u64));
-        storage.stub_sub_call_at(
-            crate::constants::INTEX_NFT1155_ADDRESS,
-            alloy_primitives::Bytes::from(vec![0u8; 32]),
-        );
-        storage.stub_sub_call_at(
-            crate::constants::ORIGIN_ROUTER_ADDRESS,
-            alloy_primitives::Bytes::from(vec![0u8; 32]),
-        );
-        StorageHandle::enter(&mut storage, |handle| {
-            crate::tests::select_prod_profile(&handle);
-            f(handle)
-        })
-    }
+    use super::super::with_factory;
 
     fn params(worldwide_day: u32, issuance_currency: u16) -> IssuanceParams {
         IssuanceParams {

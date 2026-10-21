@@ -120,36 +120,36 @@ fn issue_source_series(world: &mut World) {
     let day = outbe_primitives::time::worldwide_day_from_timestamp(head);
     let now = u32::try_from(head).expect("timestamp fits a uint32");
 
-    test_issuance::open_day(
-        &url,
-        DEPLOYER_KEY,
+    test_issuance::open_day(test_issuance::OpenDay {
+        url: &url,
+        sender_key: DEPLOYER_KEY,
         origin_router,
-        day,
+        worldwide_day: day,
         now,
-        USD_ISO,
-        ENTRY_PRICE_MINOR,
-        PROMIS_LOAD_MINOR,
-    )
+        reference_currency: USD_ISO,
+        entry_price_minor: ENTRY_PRICE_MINOR,
+        promis_load_minor: PROMIS_LOAD_MINOR,
+    })
     .expect("open the day the source series is issued into");
 
     // One chain, one series: gems never leave the committee, so this scenario
     // needs neither a second venue nor a relay.
-    let series = test_issuance::issue_series(
-        &url,
-        DEPLOYER_KEY,
-        day,
-        now,
-        USD_ISO,
-        REFERENCE_BYTE,
-        U256::from(ENTRY_PRICE_MINOR),
-        PROMIS_LOAD_MINOR,
-        UNITS,
-        &[u32::try_from(chain_id).expect("committee chain id fits a uint32")],
-        &[SeriesSpec {
+    let series = test_issuance::issue_series(test_issuance::IssueSeries {
+        url: &url,
+        sender_key: DEPLOYER_KEY,
+        worldwide_day: day,
+        issued_at: now,
+        reference_currency: USD_ISO,
+        reference_byte: REFERENCE_BYTE,
+        entry_price_minor: U256::from(ENTRY_PRICE_MINOR),
+        promis_load_minor: PROMIS_LOAD_MINOR,
+        issued_units: UNITS,
+        chains: &[u32::try_from(chain_id).expect("committee chain id fits a uint32")],
+        specs: &[SeriesSpec {
             issuance: *b"MYR",
             issuance_currency,
         }],
-    )
+    })
     .expect("issue the source series");
 
     let series = *series.first().expect("one series was issued");
@@ -157,16 +157,16 @@ fn issue_source_series(world: &mut World) {
     // Issuance reaches the collection as its own message; parking before the
     // units land reverts with NonexistentToken.
     let nft = intex_nft(world);
-    test_issuance::issue_to_owner(
-        &url,
+    test_issuance::issue_to_owner(test_issuance::IssueToOwner {
+        url: &url,
         nft,
-        DEPLOYER_KEY,
-        merchant,
-        UNITS,
-        &[series],
-        || {},
-        Duration::from_secs(ISSUANCE_TIMEOUT_SECS),
-    )
+        admin_key: DEPLOYER_KEY,
+        owner: merchant,
+        units: UNITS,
+        series: &[series],
+        tick: || {},
+        timeout: Duration::from_secs(ISSUANCE_TIMEOUT_SECS),
+    })
     .expect("issue the source units to the merchant");
     let deadline = Instant::now() + Duration::from_secs(ISSUANCE_TIMEOUT_SECS);
     loop {

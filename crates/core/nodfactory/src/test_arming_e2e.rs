@@ -100,23 +100,6 @@ fn requeue_called(storage: &StorageHandle<'_>, group_key: B256, deadline: u64) -
 }
 
 fn reopen_day(storage: &StorageHandle<'_>, day: u32) -> Result<()> {
-    let nod = NodContract::new(storage.clone());
     // The fixture may target a closed day before this temporary chain's genesis.
-    if nod.daily_genesis_day.read()? == 0 || day < nod.daily_genesis_day.read()? {
-        nod.daily_genesis_day.write(day)?;
-    }
-    if day > nod.call_latest_day.read()? {
-        nod.call_latest_day.write(day)?;
-    }
-    nod.call_sweep_day.write(day)?;
-    nod.daily_phase.write(0)?;
-    nod.call_currency_cursor.write(0)?;
-    for currency in outbe_oracle::schema::OracleContract::new(storage.clone())
-        .reference_currencies
-        .read_all()?
-    {
-        nod.call_bin_cursor.write(&currency, 0)?;
-        nod.call_scan_failed_day.clear(&currency)?;
-    }
-    Ok(())
+    outbe_oracle::reopen_daily_call_sweep!(NodContract::new(storage.clone()), storage, day)
 }

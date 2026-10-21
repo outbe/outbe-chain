@@ -124,6 +124,26 @@ pub fn set_entry_price(item: &mut NodItemState, price: U256) {
     item.encrypted = encrypt(terms, amount);
 }
 
+/// Unsettled Nod used by execution and idle-scan fixtures.
+pub fn sample_item(owner: Address, day: WorldwideDay) -> NodItemState {
+    let nod_id = crate::identity::generate_nod_id(owner, day).unwrap();
+    item(
+        NodItemFixture {
+            is_settled: false,
+            nod_id,
+            owner,
+            gratis_load_minor: U256::from(11),
+            worldwide_day: day,
+            league_id: 4,
+            group_key: group_key(1_752_534_000, U256::from(5), 978),
+            issuance_currency: 840,
+            reference_currency: 978,
+            issued_at: 1_752_534_000,
+        },
+        U256::from(5),
+    )
+}
+
 /// The group NodFactory puts a Nod in under the production call rate the fixtures seal.
 pub fn group_key(issued_at: u64, entry_price_minor: U256, reference_currency: u16) -> B256 {
     group_key_at(
