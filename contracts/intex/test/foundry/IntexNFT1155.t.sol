@@ -503,7 +503,7 @@ contract IntexNFT1155Test is Test {
         assertEq(nft.balanceOf(user, TOKEN_ID_1), mintAmount);
     }
 
-    function test_CrosschainBurn_RevertsAfterDeadline() public {
+    function test_CrosschainBurn_RevertsAfterCutoff() public {
         uint32 callPeriod = uint32(14 days);
         _createSeries(SERIES_ID_1_DAY, callPeriod);
         vm.startPrank(bridger);
@@ -512,9 +512,10 @@ contract IntexNFT1155Test is Test {
         nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
         uint32 deadline = calledAt + callPeriod;
 
-        // One second past the settlement deadline: the owner is frozen out too.
-        vm.warp(uint256(deadline) + 1);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeAfterDeadline.selector, TOKEN_ID_1, deadline));
+        // One second past the cutoff: a hop could land after the settlement deadline.
+        uint32 cutoff = deadline - uint32(nft.BRIDGE_CUTOFF());
+        vm.warp(uint256(cutoff) + 1);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeCutoffPassed.selector, TOKEN_ID_1, cutoff));
         nft.crosschainBurn(user, user, TOKEN_ID_1, 5);
         vm.stopPrank();
     }
@@ -534,7 +535,25 @@ contract IntexNFT1155Test is Test {
         vm.stopPrank();
     }
 
-    function test_CrosschainBurn_AllowedAtDeadlineBoundary() public {
+    function test_CrosschainBurn_ShortNoticeCutsOffATenthBeforeTheDeadline() public {
+        uint32 callPeriod = 600;
+        _createSeries(SERIES_ID_1_DAY, callPeriod);
+        vm.startPrank(bridger);
+        nft.issueIntex(user, 10, SERIES_ID_1);
+        uint32 calledAt = uint32(block.timestamp);
+        nft.markCalled(SERIES_ID_1, calledAt);
+        uint32 cutoff = calledAt + callPeriod - callPeriod / 10;
+
+        vm.warp(cutoff);
+        nft.crosschainBurn(user, user, TOKEN_ID_1, 1);
+
+        vm.warp(uint256(cutoff) + 1);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeCutoffPassed.selector, TOKEN_ID_1, cutoff));
+        nft.crosschainBurn(user, user, TOKEN_ID_1, 1);
+        vm.stopPrank();
+    }
+
+    function test_CrosschainBurn_AllowedAtCutoffBoundary() public {
         uint32 callPeriod = uint32(14 days);
         _createSeries(SERIES_ID_1_DAY, callPeriod);
         vm.startPrank(bridger);
@@ -543,8 +562,8 @@ contract IntexNFT1155Test is Test {
         nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
         uint32 deadline = calledAt + callPeriod;
 
-        // Exactly at the deadline is still inside the window (the gate is strict `>`).
-        vm.warp(deadline);
+        // Exactly at the cutoff is still inside the window (the gate is strict `>`).
+        vm.warp(deadline - nft.BRIDGE_CUTOFF());
         nft.crosschainBurn(user, user, TOKEN_ID_1, 5);
         vm.stopPrank();
 

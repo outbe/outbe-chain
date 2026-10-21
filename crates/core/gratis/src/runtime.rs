@@ -86,6 +86,29 @@ fn write_account_blobs(
     Ok(())
 }
 
+/// The enclave moved exactly the requested amount of the balance and advanced the nonce by one.
+pub(crate) fn ensure_owner_result(
+    amount: U256,
+    op_nonce: u64,
+    result: &GratisOpResult,
+) -> Result<()> {
+    if result.event_amount != amount
+        || result.new_balance.is_empty()
+        || !result.new_pledged.is_empty()
+    {
+        return Err(GratisFatalError::OwnerResultMismatch.into());
+    }
+    ensure_next_nonce(op_nonce, result.next_op_nonce)
+}
+
+/// The enclave advanced the operation nonce by exactly one.
+fn ensure_next_nonce(op_nonce: u64, next_op_nonce: u64) -> Result<()> {
+    if op_nonce.checked_add(1) != Some(next_op_nonce) {
+        return Err(GratisFatalError::WrongOpNonce.into());
+    }
+    Ok(())
+}
+
 /// Apply an owner-authorized balance movement and publish its matching event.
 fn apply_owner_movement(
     storage: StorageHandle<'_>,
@@ -93,12 +116,14 @@ fn apply_owner_movement(
 ) -> Result<Option<FidelityOpOutcome>> {
     let gratis = Gratis::new(storage.clone());
     let account = request.account;
-    check_op_nonce(&gratis, account, request.modify_auth.op_nonce)?;
+    let (amount, op_nonce) = (request.amount, request.modify_auth.op_nonce);
+    check_op_nonce(&gratis, account, op_nonce)?;
     request.current_balance = crate::state::account(&gratis, account).balance_ct()?;
     let operation = request.op;
     let _scope = outbe_tee::call_context::ContextScope::from_storage(&storage)?;
     let result = apply_gratis_op(request)?;
     ensure_applied(&result)?;
+    ensure_owner_result(amount, op_nonce, &result)?;
     write_account_blobs(&gratis, account, &result)?;
     crate::state::account(&gratis, account).set_op_nonce(result.next_op_nonce)?;
     let event = match operation {
@@ -311,7 +336,8 @@ pub(crate) fn mint_encrypted_nod(
         return Err(GratisError::NodChainMismatch.into());
     }
     let gratis = Gratis::new(storage.clone());
-    check_op_nonce(&gratis, nod.terms.owner, auth.op_nonce)?;
+    let op_nonce = auth.op_nonce;
+    check_op_nonce(&gratis, nod.terms.owner, op_nonce)?;
     let request = outbe_tee::nod_mine::MineEncryptedNodRequestV2 {
         nod: nod.clone(),
         current_balance: crate::state::account(&gratis, nod.terms.owner).balance_ct()?,
@@ -320,6 +346,10 @@ pub(crate) fn mint_encrypted_nod(
     };
     let _context = outbe_tee::call_context::ContextScope::from_storage(&storage)?;
     let result = crate::enclave_client::mine_encrypted_nod(request)?;
+    ensure_next_nonce(op_nonce, result.next_op_nonce)?;
+    if result.new_balance.is_empty() {
+        return Err(GratisFatalError::OwnerResultMismatch.into());
+    }
     crate::state::account(&gratis, nod.terms.owner).write_balance_ct(&result.new_balance)?;
     crate::state::account(&gratis, nod.terms.owner).set_op_nonce(result.next_op_nonce)?;
     storage.emit_event(

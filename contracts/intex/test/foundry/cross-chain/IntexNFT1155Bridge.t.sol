@@ -5,6 +5,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
+import {ERC7786MessengerBase} from "@contracts/shared/ERC7786MessengerBase.sol";
 import {
     IIntexNFT1155Bridge,
     BatchSendParam,
@@ -119,6 +120,38 @@ contract IntexNFT1155BridgeTest is CrossChainTest {
     // ---------------------------------------------------------------
     // batchSend / quoteBatchSend - single recipient, many tokenIds
     // ---------------------------------------------------------------
+
+    function test_BatchSend_WithoutTheFee_DoesNotUseTheFloat() public {
+        BatchSendParam memory p = BatchSendParam({
+            dstChainId: DST_CHAIN_ID,
+            to: bytes32(uint256(uint160(recipientA))),
+            tokenIds: _u256(TID_A, TID_B),
+            units: _u256(5, 7)
+        });
+        vm.deal(address(srcBatch), 1 ether);
+
+        vm.prank(sender);
+        vm.expectRevert(abi.encodeWithSelector(ERC7786MessengerBase.MsgValueBelowFee.selector, 0, FEE));
+        srcBatch.batchSend(p);
+
+        assertEq(address(srcBatch).balance, 1 ether, "the float is untouched");
+    }
+
+    function test_MultiSend_WithoutTheFee_DoesNotUseTheFloat() public {
+        bytes32[] memory recipients = new bytes32[](2);
+        recipients[0] = bytes32(uint256(uint160(recipientA)));
+        recipients[1] = bytes32(uint256(uint160(recipientB)));
+        MultiRecipientSendParam memory p = MultiRecipientSendParam({
+            dstChainId: DST_CHAIN_ID, recipients: recipients, tokenIds: _u256(TID_A, TID_B), units: _u256(5, 7)
+        });
+        vm.deal(address(srcBatch), 1 ether);
+
+        vm.prank(sender);
+        vm.expectRevert(abi.encodeWithSelector(ERC7786MessengerBase.MsgValueBelowFee.selector, 0, FEE));
+        srcBatch.multiSend(p);
+
+        assertEq(address(srcBatch).balance, 1 ether, "the float is untouched");
+    }
 
     function test_BatchSend_HappyPath_CrosschainBurnsSenderAndCrosschainMintsRecipient() public {
         BatchSendParam memory p = BatchSendParam({
