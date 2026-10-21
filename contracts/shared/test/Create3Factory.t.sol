@@ -3,6 +3,7 @@ pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {Create3Factory} from "../src/Create3Factory.sol";
+import {DeployCreate3Factory} from "../script/DeployCreate3Factory.s.sol";
 
 /// @dev Minimal contract that the tests use as deployment payload. Its constructor arg is part
 ///      of its init code, so two probes with different args have different init code. The tests
@@ -28,6 +29,15 @@ contract Create3FactoryTest is Test {
 
     function _initCode(uint256 v) internal pure returns (bytes memory) {
         return abi.encodePacked(type(Probe).creationCode, abi.encode(v));
+    }
+
+    /// @dev The deploy script lands the factory on its pinned address, so every CREATE3 address the
+    ///      protocol pins stays where it is.
+    function test_DeployScript_LandsTheFactoryOnItsPinnedAddress() public {
+        DeployCreate3Factory script = new DeployCreate3Factory();
+        address deployed = script.deployCreate3Factory();
+        assertEq(deployed, script.EXPECTED_FACTORY(), "factory moved");
+        assertGt(deployed.code.length, 0, "factory not deployed");
     }
 
     function test_Predict_MatchesDeploy() public {
