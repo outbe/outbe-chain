@@ -45,7 +45,13 @@ fn transfer_surface_is_soulbound() {
             .abi_encode(),
         ] {
             let err = call(data).unwrap_err();
-            assert!(format!("{err:?}").contains("non-transferable"), "{err:?}");
+            assert_eq!(
+                err.to_string(),
+                outbe_primitives::error::PrecompileError::from(
+                    crate::errors::NodError::NonTransferable
+                )
+                .to_string()
+            );
         }
         let out = call(INod::getApprovedCall { nodId: token }.abi_encode()).unwrap();
         assert_eq!(

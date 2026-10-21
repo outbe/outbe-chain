@@ -1,12 +1,24 @@
 //! Gas model for Outbe stateful precompiles.
 //!
-//! Outbe runs a permissioned validator set and does not use a fee market.
-//! Outbe takes SLOAD/SSTORE pricing directly from revm upstream
-//! ([`revm::context_interface::cfg::gas::WARM_STORAGE_READ_COST`] and
-//! [`revm::context_interface::cfg::gas::SSTORE_RESET`]). See their use in
-//! [`super::evm::EvmStorageProvider`]. Outbe does not distinguish warm/cold
-//! accesses and does not implement SSTORE refunds. Thus Outbe bills every
-//! read at the warm price and every write at the reset price.
+//! This file prices storage access for a stateful precompile.
+//! A read uses the revm warm read cost
+//! [`WARM_STORAGE_READ_COST`](revm::context_interface::cfg::gas::WARM_STORAGE_READ_COST).
+//! A write uses the revm reset cost
+//! [`SSTORE_RESET`](revm::context_interface::cfg::gas::SSTORE_RESET).
+//! These two costs do not change when the block base fee changes.
+//! A precompile storage access is not an EIP-2929 access.
+//! This file has no warm/cold split and no SSTORE refund.
+//!
+//! [`EvmStorageProvider`](super::evm::EvmStorageProvider) applies these two costs.
+//! `CtxStorageProvider` in `crates/blockchain/evm/src/storage/ctx_provider.rs`
+//! applies the same two costs on the dispatch path.
+//!
+//! A permissioned validator set produces blocks.
+//! The node still computes an EIP-1559 base fee.
+//! Header checks call `validate_against_parent_eip1559_base_fee`
+//! in `crates/blockchain/node/src/consensus/policy.rs`.
+//! The base fee applies to ordinary EVM execution and to transaction order.
+//! The base fee does not scale the constants in this file.
 //!
 //! The Outbe-specific constants live here: [`PRECOMPILE_BASE_GAS`] for flat
 //! dispatch entry and [`ZK_VERIFY_GAS`] for one proof verification.
@@ -22,7 +34,21 @@ use crate::error::{PrecompileError, Result};
 pub const PRECOMPILE_BASE_GAS: u64 = 200;
 
 /// Flat gas cost for one UltraHonkKeccak verification. This is the protocol
-/// charge for verification; calldata and storage gas are additional.
+/// charge for verification. Calldata and storage gas are additional.
+///
+/// Rationale for the value:
+///
+/// - The charge is flat. The circuit sets the UltraHonkKeccak verification
+///   cost, not the input size. Transaction calldata gas already bills the
+///   proof bytes.
+/// - Commit `fd16ab63` (#408) lowered the value from 3_000_000 to 300_000
+///   after release measurements.
+/// - The Tribute scenario in `testing/protocol-benchmarks` is the measurement
+///   to run again before you change this value. `measure_verify_ms` measures
+///   the verifier latency. `baselines/gas-v1.json` pins the
+///   `precompile.configured_base` component at 300000.
+/// - Outbe runs a permissioned validator set with a 30M block gas limit. This
+///   limits a block to approximately 100 verifications.
 pub const ZK_VERIFY_GAS: u64 = 300_000;
 
 /// Deterministic gas meter used by [`EvmStorageProvider`](super::evm::EvmStorageProvider).

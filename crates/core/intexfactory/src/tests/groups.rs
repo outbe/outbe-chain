@@ -52,6 +52,8 @@ mod group_scans {
             issued_units: 100,
             promis_load_minor: 1_000_000_000_000_000_000,
             entry_price_minor: U256::from(ENTRY_PRICE),
+            call_price_minor: U256::from(EXPECTED_TRIGGER),
+            call_trigger: crate::tests::prod_trigger(),
             issuance_currency,
             reference_currency: REFERENCE_ISO,
             snapshot_chains: vec![1],

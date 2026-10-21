@@ -4,7 +4,7 @@
 Byte-for-byte port of `outbe-cli tribute offer`:
 
   1. read the DKG-derived offer public key from the TeeRegistry (0xEE0A)
-  2. (optional) auto-detect the WorldwideDay currently in OFFERING via Metadosis
+  2. (optional) auto-detect the WorldwideDay currently in OFFERING via Tribute (0x1101)
   3. encrypt the payload to the offer key:
         ephemeral X25519 ECDHE
         -> HKDF-SHA256(salt=OFFER_HKDF_SALT, info="tribute-factory-encryption")
@@ -65,7 +65,6 @@ from eth_account import Account
 
 # --- Protocol addresses (see crates/blockchain/primitives/src/addresses.rs) ---
 TEE_REGISTRY_ADDR = Web3.to_checksum_address("0x000000000000000000000000000000000000EE0A")
-METADOSIS_ADDR = Web3.to_checksum_address("0x000000000000000000000000000000000000100E")
 TRIBUTE_FACTORY_ADDR = Web3.to_checksum_address("0x0000000000000000000000000000000000001100")
 TRIBUTE_ADDR = Web3.to_checksum_address("0x0000000000000000000000000000000000001101")
 
@@ -76,23 +75,12 @@ TRIBUTE_ADDR = Web3.to_checksum_address("0x0000000000000000000000000000000000001
 OFFER_SALT = b"outbe/tribute/offer-salt/v1".ljust(32, b"\0")
 HKDF_INFO = b"tribute-factory-encryption"
 
-# WorldwideDay status values (crates/core/metadosis/src/schema.rs::status).
-STATUS_OFFERING = 2
-
 TEE_REGISTRY_ABI = json.loads(
     """[
       {"type":"function","name":"isBootstrapped","stateMutability":"view",
        "inputs":[],"outputs":[{"type":"bool"}]},
       {"type":"function","name":"tributeOfferPublicKey","stateMutability":"view",
        "inputs":[],"outputs":[{"type":"uint256"}]}
-    ]"""
-)
-
-METADOSIS_ABI = json.loads(
-    """[
-      {"type":"function","name":"getWorldwideDaysByStatus","stateMutability":"view",
-       "inputs":[{"type":"uint8","name":"status"}],
-       "outputs":[{"type":"uint32[]","name":"wwds"}]}
     ]"""
 )
 
@@ -121,7 +109,10 @@ TRIBUTE_ABI = json.loads(
     """[
       {"type":"function","name":"getTributesByOwner","stateMutability":"view",
        "inputs":[{"type":"address","name":"owner"}],
-       "outputs":[{"type":"uint256[]"}]}
+       "outputs":[{"type":"uint256[]"}]},
+      {"type":"function","name":"getActiveWorldwideDays","stateMutability":"view",
+       "inputs":[],
+       "outputs":[{"type":"uint32[]","name":"wwds"}]}
     ]"""
 )
 
@@ -145,13 +136,13 @@ def encrypt_offer(offer_pub: bytes, plaintext: bytes):
 
 
 def pick_offering_day(w3: Web3) -> int:
-    md = w3.eth.contract(address=METADOSIS_ADDR, abi=METADOSIS_ABI)
-    days = md.functions.getWorldwideDaysByStatus(STATUS_OFFERING).call()
+    tribute = w3.eth.contract(address=TRIBUTE_ADDR, abi=TRIBUTE_ABI)
+    days = tribute.functions.getActiveWorldwideDays().call()
     if not days:
-        sys.exit("no WorldwideDay is currently in OFFERING status")
+        sys.exit("no active WorldwideDay found")
     if len(days) > 1:
-        print(f"multiple OFFERING days {days}; using {days[0]}")
-    return int(days[0])
+        print(f"multiple active WorldwideDays {days}. Using {days[-1]}")
+    return int(days[-1])
 
 
 def canonical_amount_base(value: str) -> str:

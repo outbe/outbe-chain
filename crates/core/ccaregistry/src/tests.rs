@@ -52,10 +52,13 @@ fn the_bonded_total_follows_bonds_and_claims_and_needs_the_registry_balance() {
         );
 
         let shortfall = runtime::bond(storage.clone(), BOB, U256::ONE, "Test CCA".into());
-        assert!(shortfall
-            .unwrap_err()
+        assert_eq!(
+            shortfall.unwrap_err().to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::CcaError::CustodyShortfall
+            )
             .to_string()
-            .contains("below the bonded total"));
+        );
         assert_eq!(
             api::total_bonded(&storage).unwrap(),
             BOND_REQUIREMENT + U256::from(7u64)
@@ -92,7 +95,13 @@ fn an_unbond_claim_that_leaves_less_than_the_bonded_total_reverts() {
             .unwrap();
 
         let error = runtime::claim_unbonded(storage.clone(), ALICE).unwrap_err();
-        assert!(error.to_string().contains("below the bonded total"));
+        assert_eq!(
+            error.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::CcaError::CustodyShortfall
+            )
+            .to_string()
+        );
         assert_eq!(
             api::get_cca(&storage, ALICE).unwrap().bondedMinor,
             BOND_REQUIREMENT
@@ -127,7 +136,11 @@ fn active_set_rejects_one_past_the_cap_and_frees_a_slot_on_exit() {
             "Test CCA".into(),
         )
         .unwrap_err();
-        assert!(error.to_string().contains("CCA active set is full"));
+        assert_eq!(
+            error.to_string(),
+            outbe_primitives::error::PrecompileError::from(crate::errors::CcaError::ActiveSetFull)
+                .to_string()
+        );
         assert!(api::get_cca(&storage, rejected).is_err());
         assert_eq!(contract.active.len().unwrap(), MAX_ACTIVE_CCAS);
         assert_eq!(
@@ -144,7 +157,11 @@ fn active_set_rejects_one_past_the_cap_and_frees_a_slot_on_exit() {
         assert_eq!(contract.active.len().unwrap(), MAX_ACTIVE_CCAS);
         let error =
             runtime::bond(storage.clone(), partial, U256::ONE, "Test CCA".into()).unwrap_err();
-        assert!(error.to_string().contains("CCA active set is full"));
+        assert_eq!(
+            error.to_string(),
+            outbe_primitives::error::PrecompileError::from(crate::errors::CcaError::ActiveSetFull)
+                .to_string()
+        );
         assert_eq!(
             api::get_cca(&storage, partial).unwrap().bondedMinor,
             BOND_REQUIREMENT - U256::ONE
@@ -199,7 +216,11 @@ fn active_reward_weights_reject_a_set_past_the_cap() {
             contract.active.insert(cca_at(id)).unwrap();
         }
         let error = api::active_reward_weights(&storage, DAY).unwrap_err();
-        assert!(error.to_string().contains("CCA active set is full"));
+        assert_eq!(
+            error.to_string(),
+            outbe_primitives::error::PrecompileError::from(crate::errors::CcaError::ActiveSetFull)
+                .to_string()
+        );
     });
 }
 
@@ -258,14 +279,29 @@ fn incremental_registration_exit_and_reregistration_preserve_history() {
         assert!(api::cca_state(&storage, ALICE).is_err());
         assert!(api::get_cca(&storage, ALICE).is_err());
         assert!(!api::is_active(&storage, ALICE).unwrap());
-        assert!(api::require_active_cca(&storage, ALICE).is_err());
+        assert_eq!(
+            api::require_active_cca(&storage, ALICE)
+                .unwrap_err()
+                .to_string(),
+            outbe_primitives::error::PrecompileError::from(crate::errors::CcaError::NotRegistered)
+                .to_string()
+        );
         let first = BOND_REQUIREMENT - U256::ONE;
         bond(&storage, ALICE, first);
         assert_eq!(
             api::cca_state(&storage, ALICE).unwrap(),
             ICcaRegistry::State::Bonding
         );
-        assert!(api::require_active_cca(&storage, ALICE).is_err());
+        assert_eq!(
+            api::require_active_cca(&storage, ALICE)
+                .unwrap_err()
+                .to_string(),
+            outbe_primitives::error::PrecompileError::from(crate::errors::CcaError::CcaNotActive {
+                cca: ALICE,
+                state: ICcaRegistry::State::Bonding,
+            })
+            .to_string()
+        );
         assert!(runtime::credis_issued(&storage, ALICE, DAY, U256::ONE).is_err());
         bond(&storage, ALICE, U256::ONE);
         assert!(api::is_active(&storage, ALICE).unwrap());
@@ -280,6 +316,16 @@ fn incremental_registration_exit_and_reregistration_preserve_history() {
         assert_eq!(record.bondedMinor, BOND_REQUIREMENT + U256::from(7));
         assert_eq!(record.unbondUnlocksAfter, NOW + UNBOND_COOLDOWN_SECONDS);
         assert!(!api::is_active(&storage, ALICE).unwrap());
+        assert_eq!(
+            api::require_active_cca(&storage, ALICE)
+                .unwrap_err()
+                .to_string(),
+            outbe_primitives::error::PrecompileError::from(crate::errors::CcaError::CcaNotActive {
+                cca: ALICE,
+                state: ICcaRegistry::State::Deregistering,
+            })
+            .to_string()
+        );
         assert!(runtime::unbond(storage.clone(), ALICE).is_err());
         assert!(runtime::bond(storage.clone(), ALICE, U256::ONE, "Test CCA".into()).is_err());
         storage
@@ -398,14 +444,26 @@ fn timestamp_conversion_and_deadline_overflow_are_checked() {
     run(|storage| {
         bond(&storage, ALICE, BOND_REQUIREMENT);
         storage.set_block_timestamp(U256::from(u64::MAX)).unwrap();
-        assert!(runtime::unbond(storage.clone(), ALICE).is_err());
+        assert_eq!(
+            runtime::unbond(storage.clone(), ALICE)
+                .unwrap_err()
+                .to_string(),
+            outbe_primitives::error::PrecompileError::from(crate::errors::CcaError::Arithmetic)
+                .to_string()
+        );
         assert!(api::is_active(&storage, ALICE).unwrap());
     });
     let mut provider = HashMapStorageProvider::new(1);
     provider.set_timestamp(U256::MAX);
     StorageHandle::enter(&mut provider, |storage| {
         bond(&storage, ALICE, BOND_REQUIREMENT);
-        assert!(runtime::unbond(storage.clone(), ALICE).is_err());
+        assert_eq!(
+            runtime::unbond(storage.clone(), ALICE)
+                .unwrap_err()
+                .to_string(),
+            outbe_primitives::error::PrecompileError::Revert("timestamp exceeds u64".into())
+                .to_string()
+        );
         assert!(api::is_active(&storage, ALICE).unwrap());
     });
 }

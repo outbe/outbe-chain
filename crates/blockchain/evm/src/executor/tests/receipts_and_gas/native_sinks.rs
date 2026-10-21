@@ -91,7 +91,7 @@ fn base_fee_is_burned_tip_reaches_rewards_and_promis_limit_is_untouched() {
     StorageHandle::enter(&mut provider, |storage| {
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(storage.clone())
-                .get_total_unallocated()
+                .promis_limit()
                 .unwrap(),
             U256::ZERO,
             "fee handling must not credit Promis Limit capacity"

@@ -58,9 +58,9 @@ fn settlement_is_rejected_once_the_deadline_has_passed() {
     );
 
     let error = world.settle(nod_id, input.owner).unwrap_err();
-    assert!(
-        matches!(error, PrecompileError::Revert(ref reason)
-            if reason == &NodFactoryError::SettlementDeadlinePassed.to_string()),
+    assert_eq!(
+        error.to_string(),
+        PrecompileError::from(NodFactoryError::SettlementDeadlinePassed).to_string(),
         "unexpected error: {error:?}"
     );
     // The Nod survives for the sweep to burn. The gate only refuses to mine it.
@@ -203,8 +203,9 @@ fn unpaid_mining_is_rejected() {
             )
         })
         .unwrap_err();
-    assert!(
-        matches!(error, PrecompileError::Revert(reason) if reason == NodFactoryError::NodNotSettled.to_string())
+    assert_eq!(
+        error.to_string(),
+        PrecompileError::from(NodFactoryError::NodNotSettled).to_string()
     );
 }
 
@@ -362,8 +363,17 @@ fn settlement_over_a_broken_member_index_reverts() {
             )
         })
         .unwrap_err();
-    assert!(
-        matches!(error, PrecompileError::Revert(message) if message.contains("is not indexed"))
+    assert_eq!(
+        error.to_string(),
+        PrecompileError::from(outbe_nod::errors::NodError::NodNotIndexedInGroup {
+            nod_id,
+            group_key: world
+                .enter(|storage| nod_api::get_item(&storage, nod_id))
+                .unwrap()
+                .unwrap()
+                .group_key,
+        })
+        .to_string()
     );
 }
 

@@ -371,5 +371,125 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "BlockTimestampExceedsU32",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ExercisedUnitsExceedSeries",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ForfeitedPromisLoadOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InsufficientProofOfWork",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InsufficientSettled",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "IssuanceChunkCountExceedsU16",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "IssueForTestCurrencyCountMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MarkedUpPriceOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MiningSequenceOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NftBalanceExceedsU32",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NftBalanceOfUndecodable",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoCalledGroupForTest",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotOriginRouter",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OwnerUnitsExceedU32",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PriceExceedsWireType",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PromisOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RouterAnsweredNoLegs",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SettledUnitsExceedU32",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SettlementDeadlinePassed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnitsExceedBalance",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroAddress",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroAmount",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroBalance",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroUnits",
+    "inputs": []
   }
 ]

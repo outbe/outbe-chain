@@ -15,26 +15,17 @@ pub mod marker_addresses {
     use alloy_primitives::Address;
     use outbe_primitives::addresses::*;
 
-    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 36] = [
+    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 34] = [
         GRATIS_ADDRESS,
         GRATIS_FACTORY_ADDRESS,
         CREDIS_ADDRESS,
         CREDIS_FACTORY_ADDRESS,
         PROMIS_ADDRESS,
-        // PromisFactory is a live stateful precompile (in
-        // `outbe_precompile_addresses`) and is NOT genesis-seeded. Thus this
-        // per-block runtime marker is its only EIP-161 preservation path. This
-        // mirrors GRATIS_FACTORY / GEM_FACTORY above.
         PROMIS_FACTORY_ADDRESS,
         TRIBUTE_ADDRESS,
         NOD_ADDRESS,
         NOD_FACTORY_ADDRESS,
         TRIBUTE_FACTORY_ADDRESS,
-        // reth22-1 fix: GEM and GEM_FACTORY are live stateful precompiles
-        // (in `outbe_precompile_addresses`). They were absent from this list,
-        // so their storage was silently pruned at state-root time under EIP-161.
-        // They are NOT seeded with genesis bytecode either, so this per-block
-        // runtime marker is their only preservation path.
         GEM_ADDRESS,
         GEM_FACTORY_ADDRESS,
         INTEX_ADDRESS,
@@ -47,27 +38,15 @@ pub mod marker_addresses {
         PROMIS_LIMIT_ADDRESS,
         CYCLE_ADDRESS,
         CCA_REGISTRY_ADDRESS,
-        GEM_ADDRESS,
-        GEM_FACTORY_ADDRESS,
         VALIDATOR_SET_ADDRESS,
         SLASH_INDICATOR_ADDRESS,
         STAKING_ADDRESS,
         REWARDS_ADDRESS,
-        // V2 Phase 1 accounting-progress marker. System-only (no precompile
-        // dispatch). The `[0xef]` marker preserves slot 0 across EIP-161 cleanup.
         ACCOUNTING_PROGRESS_ADDRESS,
         ORACLE_ADDRESS,
         OUTBE_SYSTEM_TX_ADDRESS,
-        // TEE Registry (storage-backed, system-written at Phase 3b). Not
-        // genesis-seeded, so the runtime 0xEF marker is its only EIP-161
-        // preservation path (reth22-1 class).
         TEE_REGISTRY_ADDRESS,
-        // L2 network registry (storage-backed, permissionless writes). Not
-        // genesis-seeded, so the runtime 0xEF marker is its only EIP-161
-        // preservation path (reth22-1 class).
         L2_REGISTRY_ADDRESS,
-        // Hyperlane controller (router + domain->ISM table). Genesis seeds only
-        // the bootstrap admin, so the runtime 0xEF marker keeps the rest.
         HYPERLANE_CONTROLLER_ADDRESS,
         UPDATE_ADDRESS,
         VOTE_ADDRESS,
@@ -313,7 +292,8 @@ where
         use crate::errors::ExecutorValidationError;
 
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
-        let timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
+        let timestamp = outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
+            .map_err(ExecutorValidationError::from)?;
         let chain_id = self.inner.evm.chain_id();
         let db = self.inner.evm.db_mut();
         let ctx = BlockContext::new_with_genesis_hash(outbe_primitives::block::BlockContextInput {

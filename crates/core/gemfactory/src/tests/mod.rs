@@ -190,6 +190,7 @@ fn issue_at_live_rate(
             issuance_currency,
             reference_currency,
             entry_price_minor: price,
+            call_anchor_price_minor: price,
         },
     )
 }
@@ -207,8 +208,14 @@ fn admitted_at_quote(storage: &StorageHandle<'_>, gem_id: U256, asset: Address) 
             snapshot_id: snapshot,
         },
     );
-    assert!(err_msg(res).contains("unexpected amount"));
-    let now = storage.timestamp().unwrap().to::<u64>();
+    assert_eq!(
+        res.unwrap_err().to_string(),
+        outbe_primitives::error::PrecompileError::from(
+            outbe_vaultrouter::settlement::SettlementError::AmountMismatch
+        )
+        .to_string()
+    );
+    let now = storage.now_secs().unwrap();
     assert_eq!(
         gem_view(storage, gem_id).effective_state(now),
         GemState::Issued as u8
@@ -343,7 +350,13 @@ fn assert_called_source_cannot_be_sent(called_at: u64) {
     let before = provider.storage.clone();
     let events = provider.get_ordered_events().to_vec();
     StorageHandle::enter(&mut provider, |storage| {
-        assert!(err_msg(send_whole_holding(&storage)).contains("source intex is not issued"));
+        assert_eq!(
+            send_whole_holding(&storage).unwrap_err().to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::GemFactoryError::SourceIntexNotIssued
+            )
+            .to_string()
+        );
     });
     assert_eq!(provider.storage, before);
     assert_eq!(provider.get_ordered_events(), events.as_slice());
@@ -355,7 +368,7 @@ fn block_ctx<'a>(storage: &StorageHandle<'a>, now: u64) -> BlockRuntimeContext<'
 
 fn unallocated(storage: &StorageHandle) -> U256 {
     outbe_promislimit::PromisLimitContract::new(storage.clone())
-        .get_total_unallocated()
+        .promis_limit()
         .unwrap()
 }
 

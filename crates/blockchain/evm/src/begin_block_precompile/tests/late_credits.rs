@@ -102,7 +102,7 @@ fn late_finalize_window_close_settles_and_recycles_residue() {
 
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(ctx.storage.clone())
-                .get_total_unallocated()
+                .promis_limit()
                 .unwrap(),
             U256::from(1_000u64),
             "late-settlement residue is credited exactly once to carry-over"

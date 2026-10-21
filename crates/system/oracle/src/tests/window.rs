@@ -12,6 +12,30 @@ pub(super) fn default_snapshot_at(timestamp: u64) -> crate::window::VwapSnapshot
 }
 
 #[test]
+fn current_snapshot_dispatch_rejects_wide_timestamp_instead_of_panicking() {
+    use alloy_sol_types::SolCall;
+    use outbe_primitives::error::PrecompileError;
+
+    with_storage_at(ATOMIC_DAY_START, |storage| {
+        let call = crate::precompile::IOracle::getVwapSnapshotIdCall {}.abi_encode();
+        assert!(
+            crate::precompile::dispatch(storage.clone(), &call, Address::ZERO, U256::ZERO).is_ok()
+        );
+        for timestamp in [U256::from(u64::MAX) + U256::from(1), U256::MAX] {
+            storage.set_block_timestamp(timestamp).unwrap();
+            assert!(matches!(
+                crate::precompile::dispatch(storage.clone(), &call, Address::ZERO, U256::ZERO),
+                Err(PrecompileError::Revert(message)) if message == "timestamp exceeds u64"
+            ));
+            assert!(matches!(
+                crate::api::current_vwap_snapshot(storage.clone()),
+                Err(PrecompileError::Revert(message)) if message == "timestamp exceeds u64"
+            ));
+        }
+    });
+}
+
+#[test]
 fn finalized_window_vwap_weights_whole_window_volume() {
     let day = ATOMIC_DAY_START;
     let hour = 3_600;
@@ -212,10 +236,9 @@ fn get_policy_rate_reverts_for_an_unregistered_iso_code() {
         )
         .unwrap();
         let err = oracle.get_policy_rate(124).unwrap_err();
-        let msg = format!("{err:?}");
-        assert!(
-            msg.contains("no policy rate for iso_code 124"),
-            "unexpected error: {msg}"
+        assert_typed_revert(
+            &err,
+            crate::errors::OracleError::NoPolicyRate { iso_code: 124 },
         );
     });
 }

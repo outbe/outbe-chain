@@ -24,7 +24,7 @@ use crate::internal::{
     addresses,
     config::Config,
     eth::{
-        self, IAgentReward, IGovernance, IL2Registry, IMetadosis, INod, IRadicleRegistry,
+        self, IAgentReward, ICodeRegistry, IGovernance, IL2Registry, IMetadosis, INod,
         ISlashIndicator, IStaking, ITeeRegistryV1, ITribute, IUpdate, IValidatorSet,
         IValidatorSetRaw, IVote, IZeroFee,
     },
@@ -58,8 +58,8 @@ pub use client::{IOracle, ITributeFactory, Rpc, TxOutcome};
 pub use finality::{BlockCommitmentV1, FinalizedCheckpoint};
 pub use governance::StablecoinProposal;
 pub use metadosis::{
-    MetadosisWorldwideDayStartedV1, MetadosisWorldwideDayStateV1,
-    MetadosisWorldwideDayStatusChangeV1, MetadosisWorldwideDayTerminalReceiptV1,
+    MetadosisEmissionDayStateV1, MetadosisWorldwideDayStartedV1, MetadosisWorldwideDayStateV1,
+    MetadosisWorldwideDayTerminalReceiptV1,
 };
 
 pub use oracle::OracleRateDataV1;

@@ -8005,6 +8005,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "outbe-coderegistry"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "commonware-codec",
+ "commonware-cryptography",
+ "commonware-utils",
+ "outbe-consensus",
+ "outbe-macros",
+ "outbe-primitives",
+ "outbe-validatorset",
+ "outbe-vote",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "outbe-common"
 version = "0.1.0"
 dependencies = [
@@ -8131,7 +8150,6 @@ dependencies = [
  "outbe-primitives",
  "outbe-promislimit",
  "outbe-rewards",
- "outbe-tribute",
  "outbe-validatorset",
  "proptest",
  "thiserror 2.0.18",
@@ -8184,28 +8202,25 @@ dependencies = [
  "k256 0.13.4",
  "libc",
  "multibase",
+ "outbe-agentreward",
  "outbe-chain-constants",
+ "outbe-coderegistry",
  "outbe-common",
  "outbe-consensus",
  "outbe-credis",
  "outbe-desis",
  "outbe-evm",
  "outbe-gem",
- "outbe-gemfactory",
  "outbe-intexfactory",
  "outbe-l2registry",
- "outbe-metadosis",
  "outbe-nod",
- "outbe-nodfactory",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-radicle",
- "outbe-radicleregistry",
  "outbe-slashindicator",
  "outbe-tee",
  "outbe-tee-enclave",
  "outbe-tribute",
- "outbe-vaultrouter",
  "outbe-zk",
  "outbe-zk-backend",
  "radicle",
@@ -8318,6 +8333,7 @@ dependencies = [
  "outbe-agentreward",
  "outbe-ccaregistry",
  "outbe-chain-constants",
+ "outbe-coderegistry",
  "outbe-consensus",
  "outbe-credis",
  "outbe-credisfactory",
@@ -8343,7 +8359,6 @@ dependencies = [
  "outbe-promis",
  "outbe-promisfactory",
  "outbe-promislimit",
- "outbe-radicleregistry",
  "outbe-rewards",
  "outbe-slashindicator",
  "outbe-stablecoin",
@@ -8708,7 +8723,6 @@ dependencies = [
  "proptest",
  "serde_json",
  "thiserror 2.0.18",
- "tracing",
  "trybuild",
 ]
 
@@ -9042,9 +9056,9 @@ dependencies = [
  "metrics",
  "metrics-util",
  "multibase",
+ "outbe-coderegistry",
  "outbe-consensus",
  "outbe-primitives",
- "outbe-radicleregistry",
  "outbe-validatorset",
  "outbe-vote",
  "parking_lot",
@@ -9084,10 +9098,10 @@ dependencies = [
  "hex",
  "lexopt",
  "log",
+ "outbe-coderegistry",
  "outbe-consensus",
  "outbe-primitives",
  "outbe-radicle",
- "outbe-radicleregistry",
  "outbe-validatorset",
  "outbe-vote",
  "radicle",
@@ -9111,25 +9125,6 @@ dependencies = [
  "outbe-radicle-runtime",
  "radicle-log",
  "radicle-signals",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "outbe-radicleregistry"
-version = "0.1.0"
-dependencies = [
- "alloy-primitives",
- "alloy-sol-types",
- "commonware-codec",
- "commonware-cryptography",
- "commonware-utils",
- "outbe-consensus",
- "outbe-macros",
- "outbe-primitives",
- "outbe-validatorset",
- "outbe-vote",
- "serde",
- "serde_json",
  "thiserror 2.0.18",
 ]
 
@@ -9385,6 +9380,7 @@ dependencies = [
  "alloy-consensus",
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-chain-constants",
  "outbe-fidelity",
  "outbe-lysis",
  "outbe-macros",
@@ -9396,6 +9392,7 @@ dependencies = [
  "outbe-tee-enclave",
  "outbe-tribute",
  "postcard",
+ "proptest",
  "revm",
  "serde",
  "serde_json",
@@ -9421,7 +9418,6 @@ dependencies = [
  "outbe-l2registry",
  "outbe-lysis",
  "outbe-macros",
- "outbe-metadosis",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-tee",
@@ -9519,11 +9515,15 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-ccaregistry",
+ "outbe-chain-constants",
  "outbe-evm",
  "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",
+ "outbe-vote",
  "revm",
+ "serde",
+ "serde_json",
  "thiserror 2.0.18",
 ]
 
@@ -14398,7 +14398,7 @@ dependencies = [
  "rustls-webpki",
  "security-framework 3.7.0",
  "security-framework-sys",
- "webpki-root-certs 1.0.7",
+ "webpki-root-certs 1.0.10",
  "windows-sys 0.52.0",
 ]
 
@@ -14410,9 +14410,9 @@ checksum = "f87165f0995f63a9fbeea62b64d10b4d9d8e78ec6d7d51fb2125fda7bb36788f"
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.15"
+version = "0.103.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
+checksum = "4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281"
 dependencies = [
  "aws-lc-rs",
  "ring",
@@ -16917,14 +16917,14 @@ version = "0.26.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75c7f0ef91146ebfb530314f5f1d24528d7f0767efbfd31dce919275413e393e"
 dependencies = [
- "webpki-root-certs 1.0.7",
+ "webpki-root-certs 1.0.10",
 ]
 
 [[package]]
 name = "webpki-root-certs"
-version = "1.0.7"
+version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f31141ce3fc3e300ae89b78c0dd67f9708061d1d2eda54b8209346fd6be9a92c"
+checksum = "58ec80e73fd8baf57bf0d9615554c75348bda990d6d5bbeab964dd068319fecb"
 dependencies = [
  "rustls-pki-types",
 ]
@@ -16935,14 +16935,14 @@ version = "0.26.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9"
 dependencies = [
- "webpki-roots 1.0.7",
+ "webpki-roots 1.0.10",
 ]
 
 [[package]]
 name = "webpki-roots"
-version = "1.0.7"
+version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52f5ee44c96cf55f1b349600768e3ece3a8f26010c05265ab73f945bb1a2eb9d"
+checksum = "1c1c8e20c8a38fc7d65abfe74eb7280e4aa667e8eec8bc84996d2874810748d9"
 dependencies = [
  "rustls-pki-types",
 ]

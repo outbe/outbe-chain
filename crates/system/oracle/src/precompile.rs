@@ -14,6 +14,7 @@ use outbe_primitives::addresses::ORACLE_ADDRESS;
 use outbe_primitives::dispatch::{dispatch_call, metadata, mutate_void, reject_value, view};
 use outbe_primitives::error::Result;
 use outbe_primitives::math::reference_price::pair_scales;
+use outbe_primitives::stablecoin::iso_4217_alpha;
 use outbe_primitives::time::SECONDS_PER_DAY;
 
 /// Selectors on this precompile that accept native value. The route table binds
@@ -106,6 +107,7 @@ pub fn dispatch(
             getAllScurveData(_) => all_scurve_data(oracle),
             getAllScurveDataForPair(c) => all_scurve_data_for_pair(oracle, c),
             getReferenceCurrencies(_) => reference_currencies(oracle),
+            currencyAlphaCode(c) => currency_alpha_code(c),
             getPolicyRateCurrencies(_) => policy_rate_currencies(oracle),
             getPolicyRate(c) => policy_rate(oracle, c),
             getNominalPrice(c) => nominal_price(oracle, c),
@@ -154,6 +156,15 @@ fn currency_cross_rate(
 
 fn reference_currencies(oracle: &OracleContract) -> Result<Bytes> {
     metadata::<IOracle::getReferenceCurrenciesCall>(|| oracle.reference_currencies.read_all())
+}
+
+/// Reads the chain's ISO 4217 table. An unknown number returns an empty string.
+fn currency_alpha_code(c: IOracle::currencyAlphaCodeCall) -> Result<Bytes> {
+    view(c, |c| {
+        Ok(iso_4217_alpha(c.isoCode)
+            .map(|alpha| String::from_utf8_lossy(&alpha).into_owned())
+            .unwrap_or_default())
+    })
 }
 
 fn policy_rate_currencies(oracle: &OracleContract) -> Result<Bytes> {
@@ -360,7 +371,7 @@ fn submit_vote(
 fn vwap(oracle: &OracleContract, c: IOracle::getVwapCall) -> Result<Bytes> {
     view(c, |c| {
         let pair = oracle.require_pair_from(c.base, c.quote)?;
-        let now = oracle.storage.timestamp()?.to::<u64>();
+        let now = oracle.storage.now_secs()?;
         oracle.calculate_vwap_lookback(pair, now, c.lookbackSeconds)
     })
 }
@@ -421,14 +432,14 @@ fn all_price_snapshot_history(
 fn twap(oracle: &OracleContract, c: IOracle::getTwapCall) -> Result<Bytes> {
     view(c, |c| {
         let pair = oracle.require_pair_from(c.base, c.quote)?;
-        let now = oracle.storage.timestamp()?.to::<u64>();
+        let now = oracle.storage.now_secs()?;
         oracle.calculate_twap(pair, now, c.lookbackSeconds)
     })
 }
 
 fn twaps(oracle: &OracleContract, c: IOracle::getTwapsCall) -> Result<Bytes> {
     view(c, |c| {
-        let now = oracle.storage.timestamp()?.to::<u64>();
+        let now = oracle.storage.now_secs()?;
         let (pairs, twaps, lookbacks) = oracle.calculate_twaps(now, c.lookback)?;
         let (bases, quotes) = split_pairs(&pairs);
         Ok(IOracle::getTwapsReturn {
@@ -443,7 +454,7 @@ fn twaps(oracle: &OracleContract, c: IOracle::getTwapsCall) -> Result<Bytes> {
 fn day_vwap(oracle: &OracleContract, c: IOracle::getDayVwapCall) -> Result<Bytes> {
     view(c, |c| {
         let pair = oracle.require_pair_from(c.base, c.quote)?;
-        let now = oracle.storage.timestamp()?.to::<u64>();
+        let now = oracle.storage.now_secs()?;
         oracle.calculate_vwap_lookback(pair, now, SECONDS_PER_DAY)
     })
 }
@@ -461,7 +472,7 @@ fn vwap_policy() -> Result<Bytes> {
 
 fn vwap_snapshot_id(oracle: &OracleContract) -> Result<Bytes> {
     metadata::<IOracle::getVwapSnapshotIdCall>(|| {
-        let now = oracle.storage.timestamp()?.to::<u64>();
+        let now = oracle.storage.now_secs()?;
         Ok(get_vwap_snapshot_id(now, &active_vwap_policy())?.to_u256())
     })
 }
@@ -527,7 +538,7 @@ fn scurve_value(oracle: &OracleContract, c: IOracle::getScurveValueCall) -> Resu
 fn scurve_entries(oracle: &OracleContract, c: IOracle::getScurveEntriesCall) -> Result<Bytes> {
     view(c, |c| {
         let pair = oracle.require_pair_from(c.base, c.quote)?;
-        let now = oracle.storage.timestamp()?.to::<u64>();
+        let now = oracle.storage.now_secs()?;
         let (peak_days, peak_prices, current_values) =
             crate::scurve::get_scurve_entries(oracle, pair, now)?;
         Ok(IOracle::getScurveEntriesReturn {

@@ -4,6 +4,34 @@ pragma solidity ^0.8.30;
 /// @title IVote
 /// @notice Generic on-chain proposal/voting precompile at 0x000000000000000000000000000000000000EE0C
 interface IVote {
+    /// Caller-facing domain revert.
+    error NotValidator();
+    error ProposalNotFound();
+    error NotPending();
+    error VotingClosed();
+    error InvalidVotingWindow(uint64 actual, uint64 maximum);
+    error VotingDeadlineOverflow();
+    error AlreadyVoted();
+    error TooManyPending();
+    error TooManyPendingByValidator();
+    error TooManyPendingPublicBonded();
+    error TooManyPendingPublicBondedByProposer();
+    error InvalidProposalStatus();
+    error InvalidVoteKind();
+    error InvalidElectorate();
+    error InvalidBondSettlement();
+    error ProposalCounterExhausted();
+    error InvalidBondAmount();
+    error ProposalBondAlreadyRecorded();
+    error ProposalBondNotUnsettled();
+    error BondLiabilityOverflow();
+    error BondLiabilityUnderflow();
+    error InvalidPayload();
+    error UnknownTargetModule();
+    error DuplicateTargetModule();
+    error StoredPayloadInvalid(string module);
+    error InconsistentBondState(uint256 proposal_id);
+
     enum ProposalStatus {
         Pending,
         Approved,

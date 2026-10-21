@@ -263,7 +263,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
             commitBondMinor: 0
         });
         vm.prank(address(bnbRouter));
-        auction.auctionStart(WORLDWIDE_DAY, IIntexAuction.WorldwideDayState.Green, schedule, params);
+        auction.auctionStart(WORLDWIDE_DAY, IIntexAuction.WorldwideDayState.Live, schedule, params);
     }
 
     function _seedSeriesOnIntex() internal {

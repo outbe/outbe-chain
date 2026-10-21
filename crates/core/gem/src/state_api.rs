@@ -3,11 +3,7 @@ use crate::precompile::IGem;
 use crate::schema::{CallTerms, GemContract, GemGroupState, GemItemState};
 use crate::GemState;
 use alloy_primitives::{Address, B256};
-use outbe_primitives::{
-    error::{PrecompileError, Result},
-    storage::StorageHandle,
-    wwd_entity_id::WwdEntityId,
-};
+use outbe_primitives::{error::Result, storage::StorageHandle, wwd_entity_id::WwdEntityId};
 
 /// A gem exactly as stored when it was loaded; mutation re-checks storage against it.
 pub struct LoadedGem {
@@ -85,7 +81,7 @@ fn check_loaded(
         || contract.records.get(item.gem_id)?.as_ref() != Some(item)
         || contract.groups.get(group.group_key)?.as_ref() != Some(group)
     {
-        return Err(PrecompileError::revert("Gem state changed after loading"));
+        return Err(GemError::GemStateChangedAfterLoading.into());
     }
     Ok(())
 }
@@ -162,7 +158,7 @@ impl GemContract<'_> {
         self.remove_group_member(item.group_key, item.gem_id.to_u256())?;
         self.take_unpaid_load(item.group_key, item.promis_load_minor)?;
         item.called_at = self.group_called_at.read(&item.group_key)?;
-        item.settled_at = self.storage.timestamp()?.to::<u64>();
+        item.settled_at = self.storage.now_secs()?;
         item.state = GemState::Settled as u8;
         self.records.update(&item)?;
         self.groups.update(&group)?;
@@ -211,7 +207,10 @@ impl GemContract<'_> {
 mod tests {
     use super::*;
     use alloy_primitives::U256;
-    use outbe_primitives::{storage::hashmap::HashMapStorageProvider, time::WorldwideDay};
+    use alloy_sol_types::SolError;
+    use outbe_primitives::{
+        error::PrecompileError, storage::hashmap::HashMapStorageProvider, time::WorldwideDay,
+    };
 
     #[test]
     fn state_only_gem_settlement_rejects_stale_handles_and_burns_atomically() {
@@ -293,7 +292,8 @@ mod tests {
             };
             assert!(matches!(
                 add_item(&storage, &item, None),
-                Err(PrecompileError::Revert(reason)) if reason == GemError::ZeroOwner.to_string()
+                Err(PrecompileError::RevertBytes(bytes))
+                    if bytes.as_ref() == IGem::ZeroOwner {}.abi_encode().as_slice()
             ));
             let contract = GemContract::new(storage.clone());
             assert_eq!(contract.total_supply.read().unwrap(), 0);

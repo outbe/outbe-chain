@@ -46,6 +46,7 @@ fn run_from(stored_exponent: u32, days: &[Day<'_>]) -> Run {
                     .map(|&(iso_code, rate)| ReferenceCurrencyPrice {
                         iso_code,
                         entry_price_minor: U256::from(rate),
+                        call_price_minor: U256::ZERO,
                     })
                     .collect();
                 runtime::step_promis_load(&mut contract, WorldwideDay::new(key), &rows)

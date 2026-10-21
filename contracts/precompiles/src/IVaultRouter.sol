@@ -16,6 +16,12 @@ interface IVaultRouter {
         Credis
     }
 
+    enum VaultAction {
+        Unknown,
+        AddVault,
+        RemoveVault
+    }
+
     struct LiquidityReservation {
         address asset;
         /// @dev In `asset`'s own minor units.
@@ -40,9 +46,10 @@ interface IVaultRouter {
     error InvalidLiquiditySource();
     error InvalidLiquidityTarget();
     error ReserveVaultNotConfigured();
-    error ReserveVaultAssetMismatch();
     error ReserveVaultAlreadyAdded();
     error ReserveVaultNotFound();
+    error ReserveVaultHasShares(address vault, uint256 shares);
+    error ReserveVaultRemovalPending(address vault, uint256 proposalId);
     error ReserveVaultOwnerNotRenounced(address currentOwner);
     error LiquiditySourceNotFound();
     error LiquidityTargetNotFound();
@@ -58,9 +65,36 @@ interface IVaultRouter {
     error CredisOwnerMismatch();
     error ReservationInsufficient(uint256 availableMinor, uint256 requiredMinor);
     error InvalidReservationAmount();
+    error ZeroAddress();
+    error Unauthorized();
+    error ReceiverNotDeployed();
+    error UndecodableReturn(string value);
+    error TimestampOverflow();
+    error RouterCallUndecodable(string value);
+    error IndexOutOfBounds();
+    error InvalidAsset();
+    error InvalidAssetDecimals();
+    error UnsupportedAssetDecimalsSimple();
+    error InvalidAssetCurrency();
+    error PledgePriceUnavailable();
+    error PreviousDayVwapUnavailable();
+    error ReferencePairUnavailable();
+    error AssetVaultsCount();
+    error AssetNotRegistered(address asset);
+    error CurrencyMismatch(uint16 isoCode);
+    error AssetDecimals();
+    error AssetIsoCode();
+    error Rounding(string reason);
+    error OracleUnavailable();
+    error SnapshotMismatch(uint256 authorized, uint256 required);
+    error AmountMismatch();
+    error ApprovedVaultActionNotFound(uint256 proposalId);
+    error ApprovedVaultActionIndexInconsistent(uint256 proposalId);
+    error InvalidApprovedVaultAction();
 
     event VaultAdded(uint16 indexed isoCode, address indexed asset, address indexed vault);
     event VaultRemoved(uint16 indexed isoCode, address indexed asset, address indexed vault);
+    event ApprovedVaultActionExpired(uint256 indexed proposalId, address indexed vault);
     event LiquiditySourceAdded(address indexed sourceAddress, StablesSource sourceType);
     event LiquiditySourceRemoved(address indexed sourceAddress, StablesSource sourceType);
     event LiquidityTargetAdded(address indexed targetAddress, StablesTarget targetType);
@@ -124,9 +158,15 @@ interface IVaultRouter {
     /// @notice Returns the ISO 4217 currency code recorded when `vault` was registered.
     function vaultReferenceCurrency(address vault) external view returns (uint16 isoCode);
 
-    /// @notice Returns every asset registered under `isoCode`. Order is not
+    /// @notice Returns the distinct assets of the vaults at positions `[offset, offset + limit)`
+    ///         of the `isoCode` vault set. Use `referenceCurrencyVaultsCount` for the set size.
+    ///         An asset shared by vaults on different pages can occur on each page. Returns an
+    ///         empty array when `offset` is past the end or `limit` is zero. Order is not
     ///         stable across removals and carries no meaning.
-    function referenceCurrencyAssets(uint16 isoCode) external view returns (address[] memory assets);
+    function referenceCurrencyAssets(uint16 isoCode, uint256 offset, uint256 limit)
+        external
+        view
+        returns (address[] memory assets);
 
     /// @notice Returns the number of liquidity sources.
     function liquiditySourcesCount() external view returns (uint256);
@@ -140,29 +180,18 @@ interface IVaultRouter {
     /// @notice Returns the liquidity target at `index`. Reverts if out of bounds.
     function liquidityTargetAt(uint256 index) external view returns (address targetAddress, StablesTarget targetType);
 
-    // TODO remove after implementation governance
-    /// @notice Registers a vault. Reverts if already registered.
-    function addVault(address vault) external;
+    /// @notice Applies a pending governance-approved vault action once. Anyone may call.
+    ///         A failed application remains retriable. Strictly after the governance
+    ///         window, deletes the record and emits ApprovedVaultActionExpired instead.
+    ///         Removal requires the router's live share balance in the vault to be zero.
+    function applyApproved(uint256 proposalId) external;
 
-    // TODO remove after implementation governance
-    /// @notice Removes a previously registered vault for `asset`. Reverts if not found.
-    function removeVault(address vault) external;
-
-    // TODO remove after implementation governance
-    /// @notice Registers `sourceAddress` as an authorized liquidity source of `sourceType`.
-    function addLiquiditySource(address sourceAddress, StablesSource sourceType) external;
-
-    // TODO remove after implementation governance
-    /// @notice Deregisters a previously registered liquidity source. Reverts if not found.
-    function removeLiquiditySource(address sourceAddress) external;
-
-    // TODO remove after implementation governance
-    /// @notice Registers `targetAddress` as an authorized liquidity target of `targetType`.
-    function addLiquidityTarget(address targetAddress, StablesTarget targetType) external;
-
-    // TODO remove after implementation governance
-    /// @notice Deregisters a previously registered liquidity target. Reverts if not found.
-    function removeLiquidityTarget(address targetAddress) external;
+    /// @notice Returns the pending approved action, or Unknown if no record remains.
+    /// @dev An expired action remains visible until applyApproved clears it.
+    function approvedVaultAction(uint256 proposalId)
+        external
+        view
+        returns (VaultAction action, address vault, uint64 approvedAt);
 
     /// @notice Deposits `assetsMinor` of `asset` into the asset's vault on behalf of the
     ///         caller. The caller (`msg.sender`) must be a registered liquidity source.
@@ -171,10 +200,6 @@ interface IVaultRouter {
     /// @notice Redeems `amountMinor` of `asset` from the vault and tops it up into `receiver`.
     ///         The caller (`msg.sender`) must be a registered liquidity target.
     function withdraw(address asset, uint256 amountMinor, address receiver) external returns (uint256 burnedShares);
-
-    // TODO remove after implementation governance
-    /// @notice Returns the current owner (admin) of the vault router.
-    function owner() external view returns (address);
 
     /// @notice Returns vault shares currently held by this provider.
     function sharesBalance(address vault) external view returns (uint256);
@@ -196,8 +221,9 @@ interface IVaultRouter {
         returns (address assetFrom, address assetTo, uint256 assetsToMinor);
 
     /// @notice Whether the asset's reserve vault can currently fund a withdrawal of
-    ///         `amountMinor` of `asset`. `withdraw` and `reserveStables` enforce the same
-    ///         predicate. Returns false rather than reverting when `asset` has no vault.
+    ///         `amountMinor` of `asset`. This checks share coverage only; `reserveStables`
+    ///         also rejects pending vault removals. Returns false rather than reverting
+    ///         when `asset` has no vault.
     function hasLiquidity(address asset, uint256 amountMinor) external view returns (bool sufficient);
 
     /// @notice Redeems `amountMinor` of `asset` from its origin vault and holds it in this
@@ -206,6 +232,8 @@ interface IVaultRouter {
     ///         may pledge the Gratis collateral for this reservation. The quote fixes the
     ///         pledge valuation and the Credis call terms: `referenceCurrency`, its previous
     ///         closed UTC-day VWAP as the call anchor, and the issuance currency's policy rate.
+    ///         Reverts if the selected vault has a pending approved removal, even after
+    ///         its deadline, until the action is cleared or superseded.
     function reserveStables(
         address credisOwner,
         address source,

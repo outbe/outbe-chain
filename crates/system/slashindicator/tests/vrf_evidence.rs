@@ -31,6 +31,7 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{address, b256, keccak256, Address, Bytes, B256, U256};
 use alloy_signer::{Signature, SignerSync};
 use alloy_signer_local::PrivateKeySigner;
+use alloy_sol_types::SolError;
 use commonware_codec::Encode;
 use commonware_consensus::{
     simplex::types::{Finalization, Proposal},
@@ -52,9 +53,11 @@ use outbe_primitives::addresses::STAKING_ADDRESS;
 use outbe_primitives::consensus_metadata::{
     CertifiedParentAccountingMetadata, ParentParticipationProof,
 };
+use outbe_primitives::error::PrecompileError;
 use outbe_primitives::protocol_schedule::OutbeProtocolSchedule;
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_primitives::system_tx::{build_unsigned_system_tx, SystemTxInputV2, SystemTxKind};
+use outbe_slashindicator::precompile::ISlashIndicator as Isi;
 use outbe_slashindicator::runtime::classify_vrf_failure;
 use outbe_slashindicator::schema::SlashIndicator;
 use outbe_slashindicator::vrf_evidence::{InvalidVrfProofEvidence, MAGIC, VERSION};
@@ -65,6 +68,17 @@ use outbe_validatorset::test_support::{test_lifecycle_of, StorageOverrides};
 use outbe_validatorset::{StakeProjection, ValidatorLifecycle};
 use rand_commonware::rngs::ChaCha20Rng;
 use rand_commonware::SeedableRng;
+
+fn assert_selector(err: &PrecompileError, selector: [u8; 4]) {
+    assert_eq!(bytes_selector(err), selector, "{err:?}");
+}
+
+fn bytes_selector(err: &PrecompileError) -> [u8; 4] {
+    match err {
+        PrecompileError::RevertBytes(bytes) if bytes.len() >= 4 => bytes[..4].try_into().unwrap(),
+        other => panic!("expected typed revert bytes, got {other:?}"),
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Fixture constants - chosen so admissibility checks pass by default and
@@ -403,11 +417,14 @@ fn invalid_vrf_evidence_rejects_non_active_submitter() {
     with_storage_no_acl(CHILD_BLOCK_NUMBER + 1, |storage| {
         let mut si = SlashIndicator::new(storage);
         let err = si.submit_invalid_vrf_evidence(SUBMITTER, &[]).unwrap_err();
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("not an ACTIVE validator") && msg.contains(&format!("status: {}", 0u8)),
-            "non-validator submitter must be rejected; got: {msg}",
-        );
+        match &err {
+            PrecompileError::RevertBytes(bytes) => {
+                let decoded = Isi::SubmitterNotActiveValidator::abi_decode(bytes).unwrap();
+                assert_eq!(decoded.caller, SUBMITTER);
+                assert_eq!(decoded.status, 0);
+            }
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
     });
 
     // (b) registered + activated, then force-exited (status = EXITING).
@@ -423,16 +440,14 @@ fn invalid_vrf_evidence_rejects_non_active_submitter() {
 
         let mut si = SlashIndicator::new(storage);
         let err = si.submit_invalid_vrf_evidence(SUBMITTER, &[]).unwrap_err();
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("not an ACTIVE validator"),
-            "EXITING validator must be rejected; got: {msg}",
-        );
-        // The ABI-compatible stored EXITING discriminant is 3.
-        assert!(
-            msg.contains("status: 3"),
-            "rejection must echo the stored status; got: {msg}",
-        );
+        match &err {
+            PrecompileError::RevertBytes(bytes) => {
+                let decoded = Isi::SubmitterNotActiveValidator::abi_decode(bytes).unwrap();
+                assert_eq!(decoded.caller, SUBMITTER);
+                assert_eq!(decoded.status, 3);
+            }
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
     });
 }
 
@@ -447,10 +462,13 @@ fn invalid_vrf_evidence_rejects_over_max_bytes() {
         let err = si
             .submit_invalid_vrf_evidence_with_schedule(SUBMITTER, &oversized, &relaxed_schedule())
             .unwrap_err();
-        assert!(
-            format!("{err}").contains("evidence too large"),
-            "got: {err}"
-        );
+        match &err {
+            PrecompileError::RevertBytes(bytes) => {
+                let decoded = Isi::EvidenceTooLarge::abi_decode(bytes).unwrap();
+                assert!(decoded.actual > decoded.max_bytes);
+            }
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
     });
 }
 
@@ -468,7 +486,7 @@ fn invalid_vrf_evidence_rejects_after_max_age() {
         let err = si
             .submit_invalid_vrf_evidence_with_schedule(SUBMITTER, &evidence, &schedule)
             .unwrap_err();
-        assert!(format!("{err}").contains("evidence stale"), "got: {err}");
+        assert_selector(&err, Isi::EvidenceStale::SELECTOR);
     });
 }
 
@@ -488,10 +506,7 @@ fn evidence_epoch_deadline_inadmissible_after_grace_epoch() {
         let err = si
             .submit_invalid_vrf_evidence_with_schedule(SUBMITTER, &evidence, &schedule)
             .unwrap_err();
-        assert!(
-            format!("{err}").contains("evidence epoch-stale"),
-            "got: {err}"
-        );
+        assert_selector(&err, Isi::EvidenceEpochStale::SELECTOR);
     });
 }
 
@@ -508,7 +523,7 @@ fn evidence_with_bad_magic_propagates_codec_error_through_runtime() {
         let err = si
             .submit_invalid_vrf_evidence_with_schedule(SUBMITTER, &encoded, &relaxed_schedule())
             .unwrap_err();
-        assert!(format!("{err}").contains("bad magic"), "got: {err}");
+        assert_selector(&err, Isi::InvalidVrfEvidenceBadMagic::SELECTOR);
     });
 }
 
@@ -524,11 +539,17 @@ fn evidence_with_phase1_tx_not_eip2718_envelope_rejected() {
         let err = si
             .submit_invalid_vrf_evidence_with_schedule(SUBMITTER, &evidence, &relaxed_schedule())
             .unwrap_err();
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("phase1_tx invalid") && msg.contains("decode failed"),
-            "got: {msg}"
-        );
+        match &err {
+            PrecompileError::RevertBytes(bytes) => {
+                let decoded = Isi::Phase1TxInvalid::abi_decode(bytes).unwrap();
+                assert!(
+                    decoded.reason.contains("decode failed"),
+                    "{}",
+                    decoded.reason
+                );
+            }
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
     });
 }
 
@@ -551,10 +572,19 @@ fn evidence_with_phase1_tx_trailing_bytes_rejected() {
         let err = si
             .submit_invalid_vrf_evidence_with_schedule(SUBMITTER, &evidence, &relaxed_schedule())
             .unwrap_err();
-        assert!(
-            format!("{err}").contains("trailing bytes after EIP-2718 envelope"),
-            "got: {err}"
-        );
+        match &err {
+            PrecompileError::RevertBytes(bytes) => {
+                let decoded = Isi::Phase1TxInvalid::abi_decode(bytes).unwrap();
+                assert!(
+                    decoded
+                        .reason
+                        .contains("trailing bytes after EIP-2718 envelope"),
+                    "{}",
+                    decoded.reason
+                );
+            }
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
     });
 }
 
@@ -583,9 +613,9 @@ fn evidence_with_missing_committee_snapshot_rejected() {
         let err = si
             .submit_invalid_vrf_evidence_with_schedule(SUBMITTER, &evidence, &relaxed_schedule())
             .unwrap_err();
-        assert!(
-            format!("{err}").contains("no committee snapshot"),
-            "got: {err}"
+        assert_selector(
+            &err,
+            Isi::MissingCommitteeSnapshotForFinalizedEpoch::SELECTOR,
         );
     });
 }
@@ -618,7 +648,7 @@ fn invalid_vrf_evidence_without_child_proposer_attribution_rejects() {
         let err = si
             .submit_invalid_vrf_evidence_with_schedule(SUBMITTER, &evidence, &relaxed_schedule())
             .unwrap_err();
-        assert!(format!("{err}").contains("not in committee"), "got: {err}");
+        assert_selector(&err, Isi::Phase1ProposerNotInCommittee::SELECTOR);
     });
 }
 
@@ -648,7 +678,7 @@ fn evidence_with_valid_proof_rejected_as_not_slashable() {
         let err = si
             .submit_invalid_vrf_evidence_with_schedule(SUBMITTER, &evidence, &relaxed_schedule())
             .unwrap_err();
-        assert!(format!("{err}").contains("VALID proof"), "got: {err}");
+        assert_selector(&err, Isi::ValidVrfProofNotSlashable::SELECTOR);
     });
 }
 
@@ -684,11 +714,13 @@ fn invalid_vrf_evidence_for_non_vrf_failure_class_rejects() {
         let err = si
             .submit_invalid_vrf_evidence_with_schedule(SUBMITTER, &evidence, &relaxed_schedule())
             .unwrap_err();
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("non-VRF class"),
-            "expected non-VRF class rejection; got: {msg}"
-        );
+        match &err {
+            PrecompileError::RevertBytes(bytes) => {
+                let decoded = Isi::NonVrfVerifyRejection::abi_decode(bytes).unwrap();
+                assert!(!decoded.err.is_empty());
+            }
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
     });
 }
 
@@ -772,7 +804,7 @@ fn invalid_vrf_proof_evidence_slashes_child_proposer() {
             .submit_invalid_vrf_evidence_with_schedule(SUBMITTER, &evidence, &relaxed_schedule())
             .unwrap_err();
         assert!(
-            format!("{err}").contains("evidence already processed"),
+            bytes_selector(&err) == Isi::EvidenceAlreadyProcessed::SELECTOR,
             "replay must be rejected; got: {err}"
         );
     });
@@ -806,7 +838,7 @@ fn invalid_vrf_evidence_deduplicates_by_canonical_hash() {
             .submit_invalid_vrf_evidence_with_schedule(SUBMITTER, &evidence, &relaxed_schedule())
             .unwrap_err();
         assert!(
-            format!("{err}").contains("evidence already processed"),
+            bytes_selector(&err) == Isi::EvidenceAlreadyProcessed::SELECTOR,
             "second submission must dedup; got: {err}"
         );
     });
@@ -907,10 +939,10 @@ fn evidence_max_age_inadmissible_after_deadline() {
         let err = si
             .submit_invalid_vrf_evidence_with_schedule(SUBMITTER, &evidence, &schedule)
             .unwrap_err();
-        let msg = format!("{err}");
-        assert!(
-            !msg.contains("evidence stale"),
-            "on-boundary block must pass the age gate; got: {msg}",
+        assert_ne!(
+            bytes_selector(&err),
+            Isi::EvidenceStale::SELECTOR,
+            "{err:?}"
         );
     });
 
@@ -922,7 +954,7 @@ fn evidence_max_age_inadmissible_after_deadline() {
         let err = si
             .submit_invalid_vrf_evidence_with_schedule(SUBMITTER, &evidence, &schedule)
             .unwrap_err();
-        assert!(format!("{err}").contains("evidence stale"), "got: {err}");
+        assert_selector(&err, Isi::EvidenceStale::SELECTOR);
     });
 }
 
@@ -948,17 +980,13 @@ fn evidence_admissibility_reads_current_epoch_from_validator_set_storage() {
         let err = si
             .submit_invalid_vrf_evidence_with_schedule(SUBMITTER, &evidence, &schedule)
             .unwrap_err();
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("evidence epoch-stale"),
-            "precompile must read the ValidatorSet epoch from storage; got: {msg}",
-        );
-        // The current_epoch in the error message must be exactly the
-        // value we just wrote. This pins the storage-read path.
-        assert!(
-            msg.contains(&format!("current_epoch {}", CHILD_EPOCH + 7)),
-            "rejection must echo the stored epoch value; got: {msg}",
-        );
+        match &err {
+            PrecompileError::RevertBytes(bytes) => {
+                let decoded = Isi::EvidenceEpochStale::abi_decode(bytes).unwrap();
+                assert_eq!(decoded.current_epoch, CHILD_EPOCH + 7);
+            }
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
     });
 }
 
@@ -1003,7 +1031,7 @@ fn multiple_evidence_with_different_failure_codes_for_same_child_apply_at_most_o
             .submit_invalid_vrf_evidence_with_schedule(SUBMITTER, &evidence2, &relaxed_schedule())
             .unwrap_err();
         assert!(
-            format!("{err}").contains("evidence already processed"),
+            bytes_selector(&err) == Isi::EvidenceAlreadyProcessed::SELECTOR,
             "different failure_code must not bypass dedup; got: {err}",
         );
 
@@ -1093,11 +1121,7 @@ fn invalid_vrf_proof_evidence_with_non_canonical_parent_rejects() {
         let err = si
             .submit_invalid_vrf_evidence_with_schedule(SUBMITTER, &evidence, &relaxed_schedule())
             .unwrap_err();
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("not in canonical-history window"),
-            "unknown parent must be rejected as out-of-window; got: {msg}",
-        );
+        assert_selector(&err, Isi::EvidenceBlockNotInCanonicalWindow::SELECTOR);
     });
 
     // (b) parent in window but canonical hash differs -> "not canonical at block".
@@ -1109,11 +1133,7 @@ fn invalid_vrf_proof_evidence_with_non_canonical_parent_rejects() {
         let err = si
             .submit_invalid_vrf_evidence_with_schedule(SUBMITTER, &evidence, &relaxed_schedule())
             .unwrap_err();
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("is not canonical at block"),
-            "side-chain parent must be rejected as non-canonical; got: {msg}",
-        );
+        assert_selector(&err, Isi::EvidenceHashNotCanonical::SELECTOR);
     });
 }
 
@@ -1209,12 +1229,12 @@ fn invalid_vrf_evidence_uses_txpool_precompile_path_not_begin_zone() {
     with_storage(|storage| {
         let mut si = SlashIndicator::new(storage);
         let err = si.submit_invalid_vrf_evidence(SUBMITTER, &[]).unwrap_err();
-        let msg = format!("{err}");
+        let selector = bytes_selector(&err);
         assert!(
-            msg.contains("InvalidVrfProofEvidence: input too short")
-                || msg.contains("bad magic")
-                || msg.contains("decode error"),
-            "txpool precompile path must reach codec decode for ACTIVE submitter; got: {msg}",
+            selector == Isi::InvalidVrfEvidenceInputTooShort::SELECTOR
+                || selector == Isi::InvalidVrfEvidenceBadMagic::SELECTOR
+                || selector == Isi::InvalidVrfEvidenceFieldExceedsInput::SELECTOR,
+            "txpool precompile path must reach codec decode for ACTIVE submitter; got: {err:?}"
         );
     });
 }

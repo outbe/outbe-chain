@@ -103,14 +103,9 @@ fn pricing(
         }
         .into());
     }
-    if !outbe_metadosis::api::is_offering_day(storage.clone(), input.worldwide_day)? {
-        let status = outbe_metadosis::api::worldwide_day(storage.clone(), input.worldwide_day)?
-            .map(|projection| projection.status);
+    if !outbe_tribute::worldwideday::api::is_offering_day(storage.clone(), input.worldwide_day)? {
         return Err(TributeFactoryError::WorldwideDayNotOffering {
             worldwide_day: input.worldwide_day,
-            // Preserve the established diagnostic byte without granting
-            // TributeFactory raw Metadosis schema access.
-            status: status.map_or(u8::MAX, |status| status as u8),
         }
         .into());
     }

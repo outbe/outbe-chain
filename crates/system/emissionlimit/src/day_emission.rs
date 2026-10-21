@@ -4,139 +4,19 @@
 //! 2^26 COEN on day 3072. From that day onward it returns the permanent
 //! `FLOOR_DAY_EMISSION`.
 //!
-//! Consensus execution uses deterministic U256 fixed-point arithmetic. The
-//! committed reference vectors are generated independently with Python
-//! `Decimal` arithmetic.
+//! Consensus execution uses deterministic U256 fixed-point arithmetic. An
+//! independent Python `Decimal` script generates the committed reference
+//! vectors.
 
-use alloy_primitives::{uint, U256};
-use outbe_primitives::units::SCALE_1E6_U256;
-use std::sync::LazyLock;
-
-/// Initial day emission: 2^28 COEN expressed in six-decimal `unit`.
-pub const INITIAL_DAY_EMISSION: U256 = uint!(268_435_456_000_000_U256);
-
-/// Floor day emission: 2^26 COEN expressed in six-decimal `unit`.
-pub const FLOOR_DAY_EMISSION: U256 = uint!(67_108_864_000_000_U256);
-
-/// The founder curve reaches 2^26 COEN on this day and stays there forever.
-pub const FLOOR_DAY_THRESHOLD: u32 = 3_072;
-
-// Every reachable exponential has |x| <= 4. With terms 0..=64, the real
-// Taylor remainder is below 9.1e-51. The 1e30 fixed-point scale still leaves
-// more than fourteen decimal guard digits beyond the protocol's 1e-6 unit.
-// The largest amount-domain multiplication is below 6e74, over 190 times
-// below U256::MAX. Any formula/scale change must re-establish both bounds and
-// regenerate the exhaustive reference vector.
-const MATH_SCALE: U256 = uint!(1_000_000_000_000_000_000_000_000_000_000_U256);
-const EXP_TAYLOR_TERMS: u32 = 64;
-const K1: u32 = 128;
-const K2: u32 = K1 * 3;
-const PHASE_ONE_MIDPOINT_DAY: u32 = 512;
-const PHASE_SPLIT_DAY: u32 = 1_024;
-const PHASE_TWO_MIDPOINT_DAY: u32 = 2_048;
-
-// Founder formula (kept symbolically, rather than replacing it with
-// precomputed constants):
-//
-// P  = 26 * 2**26 / 3
-// K1 = 128
-// K2 = K1 * 3
-// A  = (P - 2**28) / math.tanh(512/(2*K1))
-// o1 = (2**28 + P)/2 - A/2
-// D  = (P - 2**26) / math.tanh(1024/(2*K2))
-// o2 = (P + 2**26)/2 + D/2
-static TWO_26: LazyLock<U256> =
-    LazyLock::new(|| U256::from(1u64 << 26) * SCALE_1E6_U256 * MATH_SCALE);
-static TWO_28: LazyLock<U256> =
-    LazyLock::new(|| U256::from(1u64 << 28) * SCALE_1E6_U256 * MATH_SCALE);
-static P: LazyLock<U256> = LazyLock::new(|| U256::from(26) * *TWO_26 / U256::from(3));
-static A: LazyLock<U256> = LazyLock::new(|| {
-    fixed_div(
-        *P - *TWO_28,
-        tanh_positive_ratio(PHASE_ONE_MIDPOINT_DAY, 2 * K1),
-    )
-});
-static O1: LazyLock<U256> = LazyLock::new(|| (*TWO_28 + *P) / U256::from(2) - *A / U256::from(2));
-static D: LazyLock<U256> =
-    LazyLock::new(|| fixed_div(*P - *TWO_26, tanh_positive_ratio(PHASE_SPLIT_DAY, 2 * K2)));
-static O2: LazyLock<U256> = LazyLock::new(|| (*P + *TWO_26) / U256::from(2) + *D / U256::from(2));
-
-fn exp_positive_ratio(numerator: u32, denominator: u32) -> U256 {
-    let x = U256::from(numerator) * MATH_SCALE / U256::from(denominator);
-    let mut sum = MATH_SCALE;
-    let mut term = MATH_SCALE;
-
-    for index in 1..=EXP_TAYLOR_TERMS {
-        term = term * x / (MATH_SCALE * U256::from(index));
-        if term.is_zero() {
-            break;
-        }
-        sum += term;
-    }
-
-    sum
-}
-
-fn exp_signed_ratio(numerator: i64, denominator: u32) -> U256 {
-    if numerator >= 0 {
-        exp_positive_ratio(numerator as u32, denominator)
-    } else {
-        MATH_SCALE * MATH_SCALE / exp_positive_ratio(numerator.unsigned_abs() as u32, denominator)
-    }
-}
-
-fn tanh_positive_ratio(numerator: u32, denominator: u32) -> U256 {
-    let exp_twice_x = exp_positive_ratio(numerator * 2, denominator);
-    (exp_twice_x - MATH_SCALE) * MATH_SCALE / (exp_twice_x + MATH_SCALE)
-}
-
-fn fixed_div(value: U256, divisor: U256) -> U256 {
-    value * MATH_SCALE / divisor
-}
-
-/// Returns the day emission cap for `day_number` days since the chain's
-/// genesis UTC day. It is a closed-form pure function with no storage I/O. It
-/// rounds down to whole COEN, expressed in six-decimal `unit`. It clamps the
-/// result to the floor forever once `day_number >= FLOOR_DAY_THRESHOLD`.
-pub fn day_emission_limit(day_number: u32) -> U256 {
-    if day_number >= FLOOR_DAY_THRESHOLD {
-        return FLOOR_DAY_EMISSION;
-    }
-    if day_number == 0 {
-        return INITIAL_DAY_EMISSION;
-    }
-
-    // The first access initializes the private values once in dependency order:
-    // P -> A -> O1 -> D -> O2. Later calls only read the stored values.
-    let a = *A;
-    let o1 = *O1;
-    let d = *D;
-    let o2 = *O2;
-
-    let emission = if day_number <= PHASE_SPLIT_DAY {
-        let exponent = exp_signed_ratio(
-            i64::from(PHASE_ONE_MIDPOINT_DAY) - i64::from(day_number),
-            K1,
-        );
-        o1 + a * MATH_SCALE / (MATH_SCALE + exponent)
-    } else {
-        let exponent = exp_signed_ratio(
-            i64::from(PHASE_TWO_MIDPOINT_DAY) - i64::from(day_number),
-            K2,
-        );
-        o2 - d * MATH_SCALE / (MATH_SCALE + exponent)
-    };
-    let reward = emission / (MATH_SCALE * SCALE_1E6_U256) * SCALE_1E6_U256;
-    if reward < FLOOR_DAY_EMISSION {
-        FLOOR_DAY_EMISSION
-    } else {
-        reward
-    }
-}
+pub use outbe_primitives::emission::{
+    day_emission_limit, FLOOR_DAY_EMISSION, FLOOR_DAY_THRESHOLD, INITIAL_DAY_EMISSION,
+};
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::{uint, U256};
+    use outbe_primitives::units::SCALE_1E6_U256;
 
     const REFERENCE_VECTORS: &str =
         include_str!("../../../../testing/emission-reference/vectors.json");

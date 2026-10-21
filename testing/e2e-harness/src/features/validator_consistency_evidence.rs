@@ -8,15 +8,16 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use alloy_primitives::{keccak256, Address, Bytes, U256};
+use alloy_sol_types::SolError;
 use cucumber::{given, then, when};
 
 use crate::features::common::boot_localnet;
 use crate::features::negative_assertions::{
-    assert_mined_revert_reason, assert_mined_revert_reason_on, NegativeTx,
+    assert_mined_revert, assert_mined_revert_on, NegativeTx,
 };
 use crate::internal::{
     addresses::{SLASH_ADDR, STK_ADDR},
-    eth::{ISlashIndicator, IStaking},
+    eth::{ISlashIndicator, IStaking, IValidatorSet},
 };
 use crate::validator_evidence::{conflicting_notarize_for_validator, ConflictingNotarizeEvidence};
 use crate::world::rpc::TxOutcome;
@@ -92,6 +93,30 @@ fn parse_evidence_event(outcome: &TxOutcome) -> Option<EvidenceEvent> {
         slashed_amount: U256::from_be_slice(&bytes[..32]),
         submitter_reward: U256::from_be_slice(&bytes[32..]),
     })
+}
+
+fn assert_evidence_replay_reverts(
+    world: &World,
+    ports: &[u16],
+    key: &str,
+    block1: &[u8],
+    block2: &[u8],
+) -> TxOutcome {
+    assert_mined_revert_on(
+        world,
+        ports,
+        NegativeTx {
+            to: SLASH_ADDR,
+            key,
+            call: &ISlashIndicator::submitConflictingNotarizeEvidenceCall {
+                block1: Bytes::copy_from_slice(block1),
+                block2: Bytes::copy_from_slice(block2),
+            },
+        },
+        U256::ZERO,
+        &ISlashIndicator::EvidenceAlreadyProcessed {}.abi_encode(),
+    )
+    .into()
 }
 
 fn indexed_address(topic: &str) -> Option<Address> {
@@ -442,18 +467,12 @@ fn reporter_submits_evidence_and_replays(world: &mut World) {
         "reporter balance must change only by its emitted reward minus exact gas"
     );
 
-    let exact_replay = assert_mined_revert_reason_on(
+    let exact_replay = assert_evidence_replay_reverts(
         world,
         &survivor_ports,
-        NegativeTx {
-            to: SLASH_ADDR,
-            key: &reporter_key,
-            call: &ISlashIndicator::submitConflictingNotarizeEvidenceCall {
-                block1: Bytes::copy_from_slice(&evidence.block1),
-                block2: Bytes::copy_from_slice(&evidence.block2),
-            },
-        },
-        "evidence already processed",
+        &reporter_key,
+        &evidence.block1,
+        &evidence.block2,
     );
     assert!(
         !exact_replay.success,
@@ -471,18 +490,12 @@ fn reporter_submits_evidence_and_replays(world: &mut World) {
     );
 
     assert_felony_survivors_live(world, &owned, 3);
-    let reverse_replay = assert_mined_revert_reason_on(
+    let reverse_replay = assert_evidence_replay_reverts(
         world,
         &survivor_ports,
-        NegativeTx {
-            to: SLASH_ADDR,
-            key: &reporter_key,
-            call: &ISlashIndicator::submitConflictingNotarizeEvidenceCall {
-                block1: Bytes::copy_from_slice(&evidence.block2),
-                block2: Bytes::copy_from_slice(&evidence.block1),
-            },
-        },
-        "evidence already processed",
+        &reporter_key,
+        &evidence.block2,
+        &evidence.block1,
     );
     assert!(
         !reverse_replay.success,
@@ -672,7 +685,7 @@ fn requests_early_unjail(world: &mut World) {
     // This exact guard is reached only after Staking verifies the minimum.
     // Exclusion during the observation window must fail this retained-member
     // scenario, rather than accepting a different cooldown/status rejection.
-    let outcome = assert_mined_revert_reason_on(
+    let outcome: TxOutcome = assert_mined_revert_on(
         world,
         &survivor_ports,
         NegativeTx {
@@ -680,8 +693,10 @@ fn requests_early_unjail(world: &mut World) {
             key: &victim_key,
             call: &IStaking::unjailValidatorCall {},
         },
-        "jailed validator is still retained in the current committee",
-    );
+        U256::ZERO,
+        &IValidatorSet::JailedValidatorStillRetained {}.abi_encode(),
+    )
+    .into();
     world.state.marker_count = Some(outcome.success as usize);
 }
 
@@ -1079,20 +1094,20 @@ fn submit_evicted_epoch_evidence(world: &mut World) {
     let epoch = world.state.proposed_version.expect("retained epoch");
     let evidence = evidence_for(world, 3, epoch);
     let reporter_key = world.validators.get(0).evm_key().expect("reporter key");
-    let reason = format!(
-        "no committee snapshot for evidence epoch {epoch}; cannot verify the \
-         committee-bound vote signature"
-    );
-    let outcome = assert_mined_revert_reason(
+    let outcome: TxOutcome = assert_mined_revert(
         world,
-        SLASH_ADDR,
-        &reporter_key,
-        &ISlashIndicator::submitConflictingNotarizeEvidenceCall {
-            block1: Bytes::copy_from_slice(&evidence.block1),
-            block2: Bytes::copy_from_slice(&evidence.block2),
+        NegativeTx {
+            to: SLASH_ADDR,
+            key: &reporter_key,
+            call: &ISlashIndicator::submitConflictingNotarizeEvidenceCall {
+                block1: Bytes::copy_from_slice(&evidence.block1),
+                block2: Bytes::copy_from_slice(&evidence.block2),
+            },
         },
-        &reason,
-    );
+        U256::ZERO,
+        &ISlashIndicator::MissingCommitteeSnapshotForEpoch { epoch }.abi_encode(),
+    )
+    .into();
     world.state.marker_count = Some(outcome.success as usize);
 }
 

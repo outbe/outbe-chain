@@ -78,6 +78,17 @@ pub fn dispatch(
                 let nod_id = tribute.create_nod(sender, WwdEntityId::from(c.tributeId))?;
                 Ok(nod_id.to_u256())
             }),
+            getWorldwideDay(c) => view(c, |c| {
+                crate::worldwideday::queries::worldwide_day(&tribute, c)
+            }),
+            getActiveWorldwideDays(c) => view(c, |_| {
+                Ok(tribute
+                    .active_wwd
+                    .read_all()?
+                    .into_iter()
+                    .map(u32::from)
+                    .collect())
+            }),
             supportsInterface(c) => view(c, |c| {
                 let id: [u8; 4] = c.interfaceId.0;
                 Ok(id == ERC165_INTERFACE_ID)

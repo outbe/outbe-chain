@@ -44,6 +44,12 @@ impl<'storage, K: StorageKey, V: Storable> Mapping<'storage, K, V> {
         Slot::new(slot, self.address, self.storage.clone())
     }
 
+    /// Returns a packed sub-word `Slot<V>` at `offset` bytes (`0..32`) for the given key.
+    pub fn get_with_offset(&self, key: &K, offset: usize) -> Slot<'storage, V> {
+        let slot = key.mapping_slot(self.base_slot);
+        Slot::new_with_offset(slot, offset, self.address, self.storage.clone())
+    }
+
     /// Reads the value for the given key.
     pub fn read(&self, key: &K) -> Result<V> {
         self.get(key).read()

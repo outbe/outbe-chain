@@ -10,10 +10,13 @@ pub mod runtime;
 pub mod schema;
 pub mod settlement;
 mod sol_ext;
+pub(crate) mod state;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_support;
+pub mod vote_target;
 
 pub use schema::{LiquidityReservation, VaultRouterContract};
+pub use vote_target::VaultRouterVoteTarget;
 
 #[cfg(test)]
 mod tests;

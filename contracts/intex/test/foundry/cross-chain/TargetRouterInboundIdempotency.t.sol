@@ -69,13 +69,13 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
         );
     }
 
-    function _greenStart(uint32 commitEnd) internal pure returns (bytes memory) {
-        return _start(DAY, commitEnd, 60e6, uint8(IIntexAuction.WorldwideDayState.Green));
+    function _liveStart(uint32 commitEnd) internal pure returns (bytes memory) {
+        return _start(DAY, commitEnd, 60e6, uint8(IIntexAuction.WorldwideDayState.Live));
     }
 
-    function _openGreenDay() internal returns (uint32 commitEnd) {
+    function _openLiveDay() internal returns (uint32 commitEnd) {
         commitEnd = uint32(block.timestamp + 1 days);
-        _deliver(_greenStart(commitEnd));
+        _deliver(_liveStart(commitEnd));
     }
 
     function _expectIgnored(uint8 msgType, uint8 reason) internal {
@@ -86,33 +86,33 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
     // --- START ---
 
     function test_ARepeatedStartIsADuplicate() public {
-        uint32 commitEnd = _openGreenDay();
+        uint32 commitEnd = _openLiveDay();
         _expectIgnored(BridgeMsgCodec.MSG_AUCTION_STAGE_START, InboundReason.DUPLICATE);
-        _deliver(_greenStart(commitEnd));
+        _deliver(_liveStart(commitEnd));
         assertEq(uint8(auction.getAuctionStage(DAY)), uint8(IIntexAuction.AuctionStage.CommittingBids), "unchanged");
     }
 
     function test_ARepeatedStartAfterClearingSnappedRevealEndIsStillADuplicate() public {
-        uint32 commitEnd = _openGreenDay();
+        uint32 commitEnd = _openLiveDay();
         vm.warp(commitEnd + 1);
         _deliver(BridgeMsgCodec.encodeAuctionStageClearing(DAY)); // snaps revealEnd to now
 
         _expectIgnored(BridgeMsgCodec.MSG_AUCTION_STAGE_START, InboundReason.DUPLICATE);
-        _deliver(_greenStart(commitEnd));
+        _deliver(_liveStart(commitEnd));
     }
 
     function test_AStartWithOtherTermsIsAConflict() public {
-        uint32 commitEnd = _openGreenDay();
+        uint32 commitEnd = _openLiveDay();
         _expectIgnored(BridgeMsgCodec.MSG_AUCTION_STAGE_START, InboundReason.CONFLICT);
-        _deliver(_start(DAY, commitEnd, 70e6, uint8(IIntexAuction.WorldwideDayState.Green)));
+        _deliver(_start(DAY, commitEnd, 70e6, uint8(IIntexAuction.WorldwideDayState.Live)));
         assertEq(auction.getAuctionInfo(DAY).params.minIntexBidRate, 60e6, "the first START stands");
     }
 
-    function test_ALateGreenStartIsDroppedWithoutARecord() public {
+    function test_ALateLiveStartIsDroppedWithoutARecord() public {
         uint32 commitEnd = uint32(block.timestamp + 1 days);
         vm.warp(commitEnd + 1);
         _expectIgnored(BridgeMsgCodec.MSG_AUCTION_STAGE_START, InboundReason.LATE);
-        _deliver(_greenStart(commitEnd));
+        _deliver(_liveStart(commitEnd));
         vm.expectRevert(IIntexAuction.AuctionNotFound.selector);
         auction.getAuctionInfo(DAY);
     }
@@ -132,7 +132,7 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
             0,
             1,
             0,
-            uint8(IIntexAuction.WorldwideDayState.Green)
+            uint8(IIntexAuction.WorldwideDayState.Live)
         );
         _expectIgnored(BridgeMsgCodec.MSG_AUCTION_STAGE_START, InboundReason.INVALID);
         _deliver(packet);
@@ -141,7 +141,7 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
     // --- CLEARING ---
 
     function test_AClearingAfterTheResultIsObsolete() public {
-        uint32 commitEnd = _openGreenDay();
+        uint32 commitEnd = _openLiveDay();
         vm.warp(commitEnd + 1 days + 1);
         _deliver(BridgeMsgCodec.encodeAuctionResult(DAY, 0, 0, 0));
         assertEq(uint8(auction.getAuctionStage(DAY)), uint8(IIntexAuction.AuctionStage.Completed), "cleared");
@@ -153,7 +153,7 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
     }
 
     function test_AClearingForACancelledDayIsObsolete() public {
-        _deliver(_start(DAY, uint32(block.timestamp + 1 days), 60e6, uint8(IIntexAuction.WorldwideDayState.Red)));
+        _deliver(_start(DAY, uint32(block.timestamp + 1 days), 60e6, uint8(IIntexAuction.WorldwideDayState.Cancelled)));
         _expectIgnored(BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING, InboundReason.OBSOLETE);
         _deliver(BridgeMsgCodec.encodeAuctionStageClearing(DAY));
     }
@@ -164,7 +164,7 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
     }
 
     function test_AnEarlyClearingStillRevertsSoTheBridgeRedelivers() public {
-        _openGreenDay(); // still CommittingBids
+        _openLiveDay(); // still CommittingBids
         vm.expectRevert(
             abi.encodeWithSelector(
                 IIntexAuction.StageRequired.selector,
@@ -178,7 +178,7 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
     // --- RESULT ---
 
     function test_ARepeatedResultIsADuplicate() public {
-        uint32 commitEnd = _openGreenDay();
+        uint32 commitEnd = _openLiveDay();
         vm.warp(commitEnd + 1 days + 1);
         _deliver(BridgeMsgCodec.encodeAuctionResult(DAY, 0, 0, 0));
 
@@ -187,7 +187,7 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
     }
 
     function test_AResultWithOtherNumbersIsAConflict() public {
-        uint32 commitEnd = _openGreenDay();
+        uint32 commitEnd = _openLiveDay();
         vm.warp(commitEnd + 1 days + 1);
         _deliver(BridgeMsgCodec.encodeAuctionResult(DAY, 0, 0, 0));
 
@@ -197,7 +197,7 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
     }
 
     function test_AResultFailingAPermanentBoundIsInvalid() public {
-        uint32 commitEnd = _openGreenDay();
+        uint32 commitEnd = _openLiveDay();
         vm.warp(commitEnd + 1 days + 1);
         // Nobody revealed, yet the result claims a winner: WonBidsExceedRevealed, forever.
         _expectIgnored(BridgeMsgCodec.MSG_AUCTION_RESULT, InboundReason.INVALID);
@@ -206,7 +206,7 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
     }
 
     function test_AResultForACancelledDayIsObsolete() public {
-        _deliver(_start(DAY, uint32(block.timestamp + 1 days), 60e6, uint8(IIntexAuction.WorldwideDayState.Red)));
+        _deliver(_start(DAY, uint32(block.timestamp + 1 days), 60e6, uint8(IIntexAuction.WorldwideDayState.Cancelled)));
         _expectIgnored(BridgeMsgCodec.MSG_AUCTION_RESULT, InboundReason.OBSOLETE);
         _deliver(BridgeMsgCodec.encodeAuctionResult(DAY, 0, 0, 0));
     }
@@ -217,7 +217,7 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
     }
 
     function test_AResultBeforeRevealClosedStillRevertsSoTheBridgeRedelivers() public {
-        uint32 commitEnd = _openGreenDay();
+        uint32 commitEnd = _openLiveDay();
         vm.warp(commitEnd + 1); // RevealingBids
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -232,6 +232,6 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
     function test_AWiringErrorStillRevertsSoItCanBeFixedAndRedelivered() public {
         auction.revokeRole(auction.RELAYER_ROLE(), address(router));
         vm.expectRevert();
-        _deliver(_greenStart(uint32(block.timestamp + 1 days)));
+        _deliver(_liveStart(uint32(block.timestamp + 1 days)));
     }
 }

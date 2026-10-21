@@ -1,17 +1,12 @@
 [
   {
     "type": "function",
-    "name": "addLiquiditySource",
+    "name": "applyApproved",
     "inputs": [
       {
-        "name": "sourceAddress",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "sourceType",
-        "type": "uint8",
-        "internalType": "enum IVaultRouter.StablesSource"
+        "name": "proposalId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -19,34 +14,32 @@
   },
   {
     "type": "function",
-    "name": "addLiquidityTarget",
+    "name": "approvedVaultAction",
     "inputs": [
       {
-        "name": "targetAddress",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "targetType",
-        "type": "uint8",
-        "internalType": "enum IVaultRouter.StablesTarget"
+        "name": "proposalId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "addVault",
-    "inputs": [
+    "outputs": [
+      {
+        "name": "action",
+        "type": "uint8",
+        "internalType": "enum IVaultRouter.VaultAction"
+      },
       {
         "name": "vault",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "approvedAt",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -247,19 +240,6 @@
   },
   {
     "type": "function",
-    "name": "owner",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "previewRebalance",
     "inputs": [
       {
@@ -339,6 +319,16 @@
         "name": "isoCode",
         "type": "uint16",
         "internalType": "uint16"
+      },
+      {
+        "name": "offset",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "limit",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -420,45 +410,6 @@
         "internalType": "uint256"
       }
     ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "removeLiquiditySource",
-    "inputs": [
-      {
-        "name": "sourceAddress",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "removeLiquidityTarget",
-    "inputs": [
-      {
-        "name": "targetAddress",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "removeVault",
-    "inputs": [
-      {
-        "name": "vault",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
     "stateMutability": "nonpayable"
   },
   {
@@ -686,6 +637,25 @@
       }
     ],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "ApprovedVaultActionExpired",
+    "inputs": [
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "vault",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",
@@ -1061,7 +1031,76 @@
   },
   {
     "type": "error",
+    "name": "AmountMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ApprovedVaultActionIndexInconsistent",
+    "inputs": [
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ApprovedVaultActionNotFound",
+    "inputs": [
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "AssetDecimals",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AssetIsoCode",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AssetNotRegistered",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "AssetVaultsCount",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "CredisOwnerMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CurrencyMismatch",
+    "inputs": [
+      {
+        "name": "isoCode",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IndexOutOfBounds",
     "inputs": []
   },
   {
@@ -1079,6 +1118,26 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidApprovedVaultAction",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidAsset",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidAssetCurrency",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidAssetDecimals",
+    "inputs": []
   },
   {
     "type": "error",
@@ -1112,6 +1171,21 @@
   },
   {
     "type": "error",
+    "name": "OracleUnavailable",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PledgePriceUnavailable",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PreviousDayVwapUnavailable",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RebalanceInputExceedsMax",
     "inputs": [
       {
@@ -1136,6 +1210,16 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "ReceiverNotDeployed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ReferencePairUnavailable",
+    "inputs": []
   },
   {
     "type": "error",
@@ -1193,8 +1277,19 @@
   },
   {
     "type": "error",
-    "name": "ReserveVaultAssetMismatch",
-    "inputs": []
+    "name": "ReserveVaultHasShares",
+    "inputs": [
+      {
+        "name": "vault",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "shares",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -1219,13 +1314,88 @@
   },
   {
     "type": "error",
+    "name": "ReserveVaultRemovalPending",
+    "inputs": [
+      {
+        "name": "vault",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "Rounding",
+    "inputs": [
+      {
+        "name": "reason",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RouterCallUndecodable",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SameVaultRebalance",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SnapshotMismatch",
+    "inputs": [
+      {
+        "name": "authorized",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "required",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TimestampOverflow",
     "inputs": []
   },
   {
     "type": "error",
     "name": "TokenOperationFailed",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "Unauthorized",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UndecodableReturn",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
   },
   {
     "type": "error",
@@ -1237,5 +1407,15 @@
         "internalType": "uint8"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "UnsupportedAssetDecimalsSimple",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroAddress",
+    "inputs": []
   }
 ]

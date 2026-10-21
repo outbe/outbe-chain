@@ -46,7 +46,7 @@ fn slashing_burns_exactly_the_slashed_stake_from_the_escrow_and_credits_nothing(
         };
         let before = balances(&storage);
         let promis_limit_before = PromisLimitContract::new(storage.clone())
-            .get_total_unallocated()
+            .promis_limit()
             .unwrap();
 
         let slashed = staking.slash_stake(VALIDATOR, 20).unwrap();
@@ -70,7 +70,7 @@ fn slashing_burns_exactly_the_slashed_stake_from_the_escrow_and_credits_nothing(
         );
         assert_eq!(
             PromisLimitContract::new(storage.clone())
-                .get_total_unallocated()
+                .promis_limit()
                 .unwrap(),
             promis_limit_before,
             "slashing must not credit Promis Limit capacity"

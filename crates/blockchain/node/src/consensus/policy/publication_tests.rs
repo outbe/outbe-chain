@@ -2,7 +2,7 @@ use super::*;
 use alloy_consensus::Header;
 use alloy_primitives::{B256, U256};
 use outbe_primitives::{
-    addresses::RADICLE_REGISTRY_ADDRESS,
+    addresses::CODE_REGISTRY_ADDRESS,
     radicle_genesis::{
         GovernmentsDescriptor, GENESIS_GOVERNMENTS_FIELD, GOVERNMENTS_DESCRIPTOR_HASH_SLOT,
     },
@@ -26,7 +26,7 @@ fn policy(enabled: bool) -> OutbeConsensusPolicy<ChainSpec<OutbeHeader>> {
         );
         spec.genesis
             .alloc
-            .entry(RADICLE_REGISTRY_ADDRESS)
+            .entry(CODE_REGISTRY_ADDRESS)
             .or_default()
             .storage
             .get_or_insert_default()
@@ -62,9 +62,20 @@ fn header_mode_is_derived_from_descriptor_committed_in_genesis_state() {
     assert!(policy(false).validate_header(&header(true)).is_err());
     assert!(policy(true).validate_header(&header(true)).is_ok());
     assert!(policy(true).validate_header(&header(false)).is_err());
-    let mut legacy = header(false);
-    legacy.inner.extra_data = b"opaque legacy header bytes".to_vec().into();
-    assert!(policy(false).validate_header(&legacy).is_ok());
+    let mut opaque = header(false);
+    opaque.inner.extra_data = b"opaque builder header bytes".to_vec().into();
+    assert!(policy(false).validate_header(&opaque).is_ok());
+    for bytes in [
+        &b"OART\x01\x02\x00"[..],
+        b"OART\x01\x03\x00",
+        b"OART\x0b\x00\x00",
+        b"OART\x0c\x00\x00",
+    ] {
+        opaque.inner.extra_data = bytes.to_vec().into();
+        for enabled in [false, true] {
+            assert!(policy(enabled).validate_header(&opaque).is_err());
+        }
+    }
 }
 
 #[test]
@@ -73,7 +84,7 @@ fn unseeded_missing_or_mismatched_genesis_descriptor_does_not_enable_publication
     Arc::make_mut(&mut unseeded.chain_spec)
         .genesis
         .alloc
-        .remove(&RADICLE_REGISTRY_ADDRESS);
+        .remove(&CODE_REGISTRY_ADDRESS);
     assert!(unseeded.validate_header(&header(true)).is_err());
     let mut missing = policy(true);
     Arc::make_mut(&mut missing.chain_spec)

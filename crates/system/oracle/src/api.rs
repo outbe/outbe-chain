@@ -124,7 +124,7 @@ pub fn coen_rate_for_opt(storage: StorageHandle, iso_code: u16) -> Result<Option
 
 /// Snapshot required at the current block under the active policy.
 pub fn current_vwap_snapshot(storage: StorageHandle) -> Result<VwapSnapshotId> {
-    let now = storage.timestamp()?.to::<u64>();
+    let now = storage.now_secs()?;
     get_vwap_snapshot_id(now, &active_vwap_policy())
 }
 
@@ -216,7 +216,7 @@ pub fn fresh_currency_cross_rate(
 }
 
 fn fresh_rate_at_index(storage: StorageHandle, index: PairIndex) -> Result<Option<U256>> {
-    let now = storage.timestamp()?.to::<u64>();
+    let now = storage.timestamp()?.saturating_to::<u64>();
     let oracle = OracleContract::new(storage);
     let rate = oracle.exchange_rate.read(&index)?;
     let published = oracle.exchange_rate_timestamp.read(&index)?;
@@ -396,11 +396,11 @@ pub fn priced_reference_currencies(
 /// Stored WorldwideDay VWAP for the [`DAY_TYPE_PAIR`] (`COEN/840`), or `None`
 /// when the pair is not registered or the day has no snapshot for it.
 ///
-/// This is the single entry point for the day-rate decision. Pair resolution and
-/// the snapshot lookup live here, behind one typed interface. Callers therefore
-/// never touch the oracle's internal `pair_index` map. Genuine storage faults
-/// propagate as `Err`. This keeps "no data yet" (`Ok(None)` -> caller's RED
-/// fallback) distinct from "oracle broken".
+/// Pair resolution and the snapshot lookup live here, behind one typed
+/// interface. Callers therefore never touch the oracle's internal `pair_index`
+/// map. Genuine storage faults propagate as `Err`. This keeps "no data yet"
+/// (`Ok(None)`) distinct from "oracle broken". No day colour reads this value
+/// (OIP-00320).
 pub fn day_type_pair_vwap(
     storage: StorageHandle,
     worldwide_day: WorldwideDay,

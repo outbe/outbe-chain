@@ -68,6 +68,17 @@ pub enum PrecompileError {
 /// Result type alias for precompile operations.
 pub type Result<T> = std::result::Result<T, PrecompileError>;
 
+/// An execution timestamp cannot be represented in seconds as a `u64`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("timestamp exceeds u64")]
+pub struct TimestampOverflow;
+
+impl From<TimestampOverflow> for PrecompileError {
+    fn from(error: TimestampOverflow) -> Self {
+        Self::Revert(error.to_string())
+    }
+}
+
 /// Errors that initial TEE genesis policy construction returns.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum TeeGenesisPolicyError {
@@ -236,8 +247,8 @@ impl From<ConsensusMetadataError> for PrecompileError {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ReshareArtifactError {
-    #[error("repository publication requires OART v0x0C")]
-    PublicationRequiresV0c,
+    #[error("repository publication requires the publication flag")]
+    PublicationFlagRequired,
     #[error("duplicate repository publication batch")]
     DuplicateRadiclePublication,
     #[error("too many block artifact records")]
@@ -276,6 +287,8 @@ pub enum ReshareArtifactError {
     UnknownExtraDataArtifact,
     #[error("unsupported block artifact version: {version}")]
     UnsupportedVersion { version: u8 },
+    #[error("unsupported block artifact flags: {flags}")]
+    UnsupportedFlags { flags: u8 },
     #[error("committee pre-announce payload too short for epoch")]
     CommitteePreAnnouncePayloadTooShort,
     #[error("boundary TEE expiry exclusions commitment mismatch")]

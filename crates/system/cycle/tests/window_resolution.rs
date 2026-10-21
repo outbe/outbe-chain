@@ -319,7 +319,7 @@ fn phase1_reorg_requires_branch_parent_state_for_fresh_progress() {
             let ctx = BlockRuntimeContext::new(
                 BlockContext::new(
                     storage.block_number().expect("block number"),
-                    storage.timestamp().expect("timestamp").to::<u64>(),
+                    storage.now_secs().expect("timestamp"),
                     storage.chain_id().expect("chain id"),
                     VALIDATOR,
                     vec![VALIDATOR],
@@ -334,7 +334,7 @@ fn phase1_reorg_requires_branch_parent_state_for_fresh_progress() {
             let ctx = BlockRuntimeContext::new(
                 BlockContext::new(
                     storage.block_number().expect("block number"),
-                    storage.timestamp().expect("timestamp").to::<u64>(),
+                    storage.now_secs().expect("timestamp"),
                     storage.chain_id().expect("chain id"),
                     VALIDATOR,
                     vec![VALIDATOR],

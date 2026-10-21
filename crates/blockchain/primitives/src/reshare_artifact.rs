@@ -17,50 +17,18 @@ mod publication_tests;
 mod regression;
 
 const MAGIC: &[u8; 4] = b"OART";
-/// Version 0x0B adds the bounded ordered `tee_expired_target_exclusions` list
-/// and its domain-separated commitment to the `DkgBoundaryArtifact` payload.
-/// This pre-genesis hard fork makes the exact freeze-height expiry authority
-/// committee-notarized and replayable by execution.
-///
-/// Version 0x06 extends the
-/// `DkgBoundaryArtifact` boundary payload (tag 0x02) with
-/// the V2 `committee_set_hash` (32 bytes) and the raw encoded VRF group
-/// public key bytes (length-prefixed `u32`). Both fields are needed at
-/// boundary activation so the executor can populate the V2
-/// `CommitteeSnapshotStore` without rerunning the DKG.
-///
-/// Version 0x05 (Ethereum-header-hash compatibility, see
-/// `feat/header-eth-compat-millis-in-extradata`): the sub-second
-/// `timestamp_millis_part` was previously a top-level RLP field on
-/// `OutbeHeader`. It now travels in `header.extra_data` under tag 0x05.
-/// As a result, the block hash is `keccak256(rlp(standard_ethereum_header))`
-/// without any Outbe-specific extra fields.
-///
-/// Version 0x04 dropped the
-/// `total_emission_limit` field from
-/// `ExecutionSummaryArtifact` because per-block emission no longer
-/// exists. The Cycle handler computes the daily cap directly
-/// from `outbe_emissionlimit::day_emission::day_emission_limit`.
-///
-/// Version 0x08 adds tag 0x06, which carries
-/// `LateFinalizeCreditsArtifact`. This artifact is a canonical batch of
-/// per-finalized-block late-finalize proofs
-/// (aggregate signature + signer bitmap + binding fields)
-/// gathered within the `K`-block inclusion window. Hard fork:
-/// the new mandatory begin-zone phase and this version bump both change the
-/// block hash.
-///
-/// Pre-genesis hard fork. Nodes built before this change will reject
-/// blocks carrying earlier artifact versions.
-const VERSION: u8 = 0x0B;
-const PUBLICATION_VERSION: u8 = 0x0C;
+/// Initial OART v1 format. Header: magic (4 bytes), version, flags, record count.
+/// Flag bit 0 enables repository publication. All other flag bits are invalid.
+/// Each record has a tag and a u16 payload length.
+const VERSION: u8 = 1;
+const HEADER_LEN: usize = 7;
+const PUBLICATION_FLAG: u8 = 1;
 const RADICLE_PUBLICATION_TAG: u8 = 0x09;
 const TEE_EXPIRED_TARGET_EXCLUSIONS_DOMAIN: &[u8] = b"outbe/tee-expired-target-exclusions/v1";
 const EXECUTION_SUMMARY_TAG: u8 = 0x01;
 const BOUNDARY_TAG: u8 = 0x02;
 const DEALER_LOG_TAG: u8 = 0x03;
-// Tag 0x04 is permanently retired (legacy finalized-parent cert metadata). The
-// active codec rejects it. Do not reuse it (see CLAUDE.md).
+// Tag 0x04 is reserved. The codec rejects it.
 const TIMESTAMP_MILLIS_PART_TAG: u8 = 0x05;
 const LATE_FINALIZE_CREDITS_TAG: u8 = 0x06;
 const COMMITTEE_PREANNOUNCE_TAG: u8 = 0x07;
@@ -93,7 +61,7 @@ const PER_BLOCK_CREDIT_FIXED_LEN: usize = 8 + 32 + 8 + 8 + 8 + 32;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct OutbeBlockArtifacts {
-    /// OART v0x0C is opt-in; execution/consensus bind this flag to genesis configuration.
+    /// The publication flag must match the genesis configuration.
     pub radicle_publication_enabled: bool,
     pub radicle_publication: Option<crate::radicle_publication::PublicationBatch>,
     pub execution_summary: Option<ExecutionSummaryArtifact>,
@@ -158,13 +126,8 @@ pub struct FinalizedParentAttestation {
     pub missed_proposers: Vec<Address>,
 }
 
-/// Wire payload kept inside `header.extra_data` (tag 0x01) under the
-/// `OART` v0x0B envelope (`VERSION`). Holds the only piece of execution-side data
-/// the consensus path needs: the validator fee sum that
-/// `on_finalized_metadata` distributes to voters and accumulates into
-/// `daily_fee_sum_raw`. The previous `total_emission_limit` field was
-/// removed. The Cycle handler computes daily emission from the closed-form
-/// formula. `extra_data` does not need to transport it.
+/// Execution accounting data in the OART v1 envelope, under tag 0x01.
+/// Consensus distributes this validator fee sum to voters and accumulates it in `daily_fee_sum_raw`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ExecutionSummaryArtifact {
     pub validator_fee_sum: U256,
@@ -223,7 +186,7 @@ pub fn encode_outbe_block_artifacts(artifacts: &OutbeBlockArtifacts) -> Result<B
     }
     if let Some(batch) = &artifacts.radicle_publication {
         if !artifacts.radicle_publication_enabled {
-            return Err(ReshareArtifactError::PublicationRequiresV0c.into());
+            return Err(ReshareArtifactError::PublicationFlagRequired.into());
         }
         records.push((RADICLE_PUBLICATION_TAG, batch.to_bytes()?));
     }
@@ -243,7 +206,7 @@ pub fn encode_outbe_block_artifacts(artifacts: &OutbeBlockArtifacts) -> Result<B
             acc.checked_add(1 + 2 + payload.len())
                 .ok_or_else(|| ReshareArtifactError::LengthOverflow.into())
         })?;
-    let total_len = 4 + 1 + 1 + payload_len;
+    let total_len = HEADER_LEN + payload_len;
     if total_len > OUTBE_MAX_EXTRA_DATA_SIZE {
         return Err(ReshareArtifactError::ExceedsExtraDataBudget {
             total_len,
@@ -254,11 +217,8 @@ pub fn encode_outbe_block_artifacts(artifacts: &OutbeBlockArtifacts) -> Result<B
 
     let mut buf = Vec::with_capacity(total_len);
     buf.extend_from_slice(MAGIC);
-    buf.push(if artifacts.radicle_publication_enabled {
-        PUBLICATION_VERSION
-    } else {
-        VERSION
-    });
+    buf.push(VERSION);
+    buf.push(u8::from(artifacts.radicle_publication_enabled));
     buf.push(records.len() as u8);
     for (tag, payload) in records {
         buf.push(tag);
@@ -275,9 +235,9 @@ pub fn decode_outbe_block_artifacts(extra_data: &[u8]) -> Result<OutbeBlockArtif
     }
 
     let record_count = decode_block_artifact_record_count(extra_data)?;
-    let mut offset = 6usize;
+    let mut offset = HEADER_LEN;
     let mut artifacts = OutbeBlockArtifacts {
-        radicle_publication_enabled: extra_data[4] == PUBLICATION_VERSION,
+        radicle_publication_enabled: extra_data[5] & PUBLICATION_FLAG != 0,
         ..Default::default()
     };
 
@@ -469,7 +429,7 @@ fn ensure_payload_fits_u16(name: &'static str, len: usize) -> Result<()> {
 }
 
 fn decode_block_artifact_record_count(extra_data: &[u8]) -> Result<usize> {
-    if extra_data.len() < 4 + 1 + 1 {
+    if extra_data.len() < HEADER_LEN {
         return Err(ReshareArtifactError::TooShort.into());
     }
 
@@ -477,14 +437,18 @@ fn decode_block_artifact_record_count(extra_data: &[u8]) -> Result<usize> {
         return Err(ReshareArtifactError::UnknownExtraDataArtifact.into());
     }
 
-    if extra_data[4] != VERSION && extra_data[4] != PUBLICATION_VERSION {
+    if extra_data[4] != VERSION {
         return Err(ReshareArtifactError::UnsupportedVersion {
             version: extra_data[4],
         }
         .into());
     }
 
-    Ok(extra_data[5] as usize)
+    let flags = extra_data[5];
+    if flags & !PUBLICATION_FLAG != 0 {
+        return Err(ReshareArtifactError::UnsupportedFlags { flags }.into());
+    }
+    Ok(extra_data[6] as usize)
 }
 
 #[cfg(test)]
@@ -542,20 +506,20 @@ mod tests {
         let artifact = boundary_with_expiry_exclusions(Vec::new());
         let encoded = encode_boundary_artifact(&artifact).unwrap();
 
-        // OART envelope (6 bytes) + boundary record header (3 bytes) precede the
+        // OART envelope (7 bytes) + boundary record header (3 bytes) precede the
         // payload. With empty variable-length collections, the canonical boundary
         // payload ends at the expiry-exclusions count and is exactly 216 bytes.
-        let payload_len = u16::from_be_bytes([encoded[7], encoded[8]]) as usize;
+        let payload_len = u16::from_be_bytes([encoded[8], encoded[9]]) as usize;
         assert_eq!(payload_len, 216);
-        assert_eq!(encoded.len(), 6 + 3 + payload_len);
+        assert_eq!(encoded.len(), 7 + 3 + payload_len);
     }
 
     #[test]
     fn boundary_wire_rejects_data_after_tee_expiry_exclusions() {
         let artifact = boundary_with_expiry_exclusions(Vec::new());
         let mut encoded = encode_boundary_artifact(&artifact).unwrap().to_vec();
-        let payload_len = u16::from_be_bytes([encoded[7], encoded[8]]);
-        encoded[7..9].copy_from_slice(&(payload_len + 1).to_be_bytes());
+        let payload_len = u16::from_be_bytes([encoded[8], encoded[9]]);
+        encoded[8..10].copy_from_slice(&(payload_len + 1).to_be_bytes());
         encoded.push(0);
 
         assert!(decode_boundary_artifact(&encoded).is_err());
@@ -710,6 +674,7 @@ mod tests {
         let mut buf = Vec::new();
         buf.extend_from_slice(super::MAGIC);
         buf.push(super::VERSION);
+        buf.push(0u8); // Publication is off.
         buf.push(1u8);
         buf.push(0x04);
         buf.extend_from_slice(&0u16.to_be_bytes());
@@ -934,7 +899,7 @@ mod tests {
     #[test]
     fn encode_rejects_artifacts_over_extra_data_budget() {
         // A single boundary record whose payload sits just under the per-record
-        // u16 cap (65535) but whose total framed length (6-byte envelope +
+        // u16 cap (65535) but whose total framed length (7-byte envelope +
         // 3-byte record header + payload) exceeds OUTBE_MAX_EXTRA_DATA_SIZE.
         //
         // Fixed boundary payload prefix is 216 bytes. The rest is the outcome
@@ -944,7 +909,7 @@ mod tests {
         // expiry-exclusions commitment + 2-byte exclusions count.)
         const FIXED_PREFIX: usize =
             8 + 8 + 8 + 8 + 32 + 8 + 32 + 32 + 1 + 1 + 32 + 2 + 4 + 4 + 2 + 32 + 2;
-        const ENVELOPE: usize = 4 + 1 + 1; // MAGIC + version + record count
+        const ENVELOPE: usize = 7; // Magic, version, flags, and record count.
         const RECORD_HEADER: usize = 1 + 2; // tag + u16 length
 
         // Oversize: record payload at the per-record u16 cap (65535). Framed
@@ -1000,13 +965,12 @@ mod tests {
     }
 
     #[test]
-    fn decode_rejects_legacy_tag_0x04() {
-        // Mirror the encoder's wire framing: MAGIC + VERSION + record_count
-        // then one record of `tag (1) | len (u16 BE) | payload`. Tag 0x04 is the
-        // rejected legacy finalized-parent metadata tag.
+    fn decode_rejects_reserved_tag_0x04() {
+        // The v1 header precedes one record with the reserved tag 0x04.
         let mut buf = Vec::new();
         buf.extend_from_slice(super::MAGIC);
         buf.push(super::VERSION);
+        buf.push(0u8); // Publication is off.
         buf.push(1u8); // one record
         buf.push(0x04u8); // legacy tag
         let payload: &[u8] = b"legacy-finalized-parent-metadata";
@@ -1033,8 +997,8 @@ mod tests {
             late_finalize_credits: None,
         })
         .expect("boundary encode");
-        // Byte 6 is the first record's tag (after MAGIC[0..4] + version + count).
-        assert_eq!(boundary_encoded[6], super::BOUNDARY_TAG);
+        // Byte 7 is the first record tag after the v1 header.
+        assert_eq!(boundary_encoded[7], super::BOUNDARY_TAG);
         assert!(decode_outbe_block_artifacts(&boundary_encoded).is_ok());
 
         let dealer_encoded = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
@@ -1048,7 +1012,7 @@ mod tests {
             late_finalize_credits: None,
         })
         .expect("dealer encode");
-        assert_eq!(dealer_encoded[6], super::DEALER_LOG_TAG);
+        assert_eq!(dealer_encoded[7], super::DEALER_LOG_TAG);
         assert!(decode_outbe_block_artifacts(&dealer_encoded).is_ok());
     }
 
@@ -1075,7 +1039,7 @@ mod tests {
             ..Default::default()
         })
         .expect("encode late credits");
-        assert_eq!(encoded[4], super::VERSION, "artifact version is 0x0B");
+        assert_eq!(encoded[4], super::VERSION, "artifact version is 1");
         assert!(encoded.len() <= super::OUTBE_MAX_EXTRA_DATA_SIZE);
         let decoded = decode_outbe_block_artifacts(&encoded).expect("decode");
         assert_eq!(decoded.late_finalize_credits, Some(artifact));
@@ -1191,7 +1155,7 @@ mod tests {
             ..Default::default()
         })
         .unwrap();
-        let mut expected = b"OART\x0B\x01\x01\x00\x20".to_vec();
+        let mut expected = b"OART\x01\x00\x01\x01\x00\x20".to_vec();
         expected.extend_from_slice(&[0_u8; 32]);
         assert_eq!(encoded.as_ref(), expected);
     }
@@ -1219,7 +1183,7 @@ mod tests {
     #[test]
     fn retired_ce_tag_is_rejected_instead_of_becoming_authority() {
         for length in [0u16, 35, 36, 37] {
-            let mut encoded = b"OART\x0B\x01\x08".to_vec();
+            let mut encoded = b"OART\x01\x00\x01\x08".to_vec();
             encoded.extend_from_slice(&length.to_be_bytes());
             encoded.extend(std::iter::repeat_n(0, length as usize));
             assert!(decode_outbe_block_artifacts(&encoded).is_err());

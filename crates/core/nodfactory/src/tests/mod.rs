@@ -242,7 +242,7 @@ impl World {
                 outbe_oracle::api::RateObservation {
                     rate,
                     block_number: 1,
-                    timestamp: storage.timestamp().unwrap().to::<u64>(),
+                    timestamp: storage.now_secs().unwrap(),
                 },
             )
             .unwrap();
@@ -258,9 +258,7 @@ impl World {
             let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso_code)
                 .unwrap()
                 .expect("COEN pair registered");
-            let day = previous_date_key(timestamp_to_date_key(
-                storage.timestamp().unwrap().to::<u64>(),
-            ));
+            let day = previous_date_key(timestamp_to_date_key(storage.now_secs().unwrap()));
             outbe_oracle::schema::OracleContract::new(storage.clone())
                 .record_utc_day_vwap(day, index, rate)
                 .unwrap();

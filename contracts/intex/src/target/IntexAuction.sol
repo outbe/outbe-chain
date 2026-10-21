@@ -190,11 +190,11 @@ contract IntexAuction is
         if ($.auctions[worldwideDay].schedule.commitEnd != 0) revert AuctionAlreadyExists();
         if (dayState == IIntexAuction.WorldwideDayState.Unknown) revert InvalidDayState();
 
-        // Schedule timestamps must be strictly increasing. A live (green) auction's
-        // commit stage must end in the future. A red day is a cancelled record only.
+        // Schedule timestamps must be strictly increasing. A live auction's
+        // commit stage must end in the future. A cancelled day is a cancelled record only.
         if (
             schedule.revealEnd <= schedule.commitEnd || schedule.issuanceEnd <= schedule.revealEnd
-                || (dayState == IIntexAuction.WorldwideDayState.Green && schedule.commitEnd <= block.timestamp)
+                || (dayState == IIntexAuction.WorldwideDayState.Live && schedule.commitEnd <= block.timestamp)
         ) {
             revert InvalidSchedule();
         }
@@ -208,12 +208,12 @@ contract IntexAuction is
             })
         });
 
-        if (dayState == IIntexAuction.WorldwideDayState.Red) {
+        if (dayState == IIntexAuction.WorldwideDayState.Cancelled) {
             emit AuctionStageUpdated(
                 worldwideDay,
                 IIntexAuction.AuctionStage.Cancelled,
                 uint32(block.timestamp),
-                "Red day - auction cancelled"
+                "Day cancelled - no auction"
             );
         } else {
             emit AuctionStageUpdated(
@@ -550,7 +550,7 @@ contract IntexAuction is
     // --- Internal helpers ---
     /// @notice Compute the current auction stage from the schedule and worldwide-day state.
     /// @dev Reverts `AuctionNotFound` when the series has no entry. Stage resolution:
-    ///      - A red day short-circuits to `Cancelled`.
+    ///      - A cancelled day short-circuits to `Cancelled`.
     ///      - A cleared auction short-circuits to `Completed`. The `cleared` flag, set by
     ///        `executeAuctionClearing`, also covers a no-sale clearing whose rate is 0.
     ///      - In all other cases the stage follows the stored schedule timestamps.
@@ -560,7 +560,7 @@ contract IntexAuction is
         IIntexAuction.AuctionData storage a = _s().auctions[worldwideDay];
         if (a.schedule.commitEnd == 0) revert AuctionNotFound();
 
-        if (a.worldwideDayState == IIntexAuction.WorldwideDayState.Red) {
+        if (a.worldwideDayState == IIntexAuction.WorldwideDayState.Cancelled) {
             return IIntexAuction.AuctionStage.Cancelled;
         }
 

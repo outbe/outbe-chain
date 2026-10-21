@@ -573,7 +573,7 @@ fn a_group_requeued_at_retirement_is_expired_and_credited_once() {
         f.called_deadline.write(&group, now + 3 * DAY).unwrap();
         let unallocated = || {
             outbe_promislimit::PromisLimitContract::new(s.clone())
-                .get_total_unallocated()
+                .promis_limit()
                 .unwrap()
         };
 

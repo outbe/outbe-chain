@@ -10,11 +10,6 @@ Feature: Intex from auction to Promis
   # the whole path runs on one chain: a day whose result lands must end with an
   # auction open on the venue.
   #
-  # The public capacity fixture is what makes this reachable at all: it seeds a
-  # rising pair of Oracle rates, and only a day whose rate rose is green. A day
-  # with no prior rate is red by definition, briefs no supply, and can never
-  # open an auction.
-  #
   # The venue is deployed before the day settles because the dispatch is a plain
   # contract call - with no code at the address the node was built against, the
   # start is lost rather than retried into existence.
@@ -23,7 +18,7 @@ Feature: Intex from auction to Promis
   # closed day's VWAP, and the fixture's seeded pair is small enough that Lysis
   # would floor the monetary cost to zero without one.
   @intex-auction
-  Scenario: A settled green day runs its auction through to an issued Intex
+  Scenario: A settled day runs its auction through to an issued Intex
     Given a fresh four-validator native Lysis localnet
     When a local target chain is started
     And the intex venue is deployed on the target chain

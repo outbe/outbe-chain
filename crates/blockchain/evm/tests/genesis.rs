@@ -231,7 +231,7 @@ fn seed_genesis_writes_committee_snapshot_slots_31_to_40_matching_rust_schema() 
 #[test]
 fn every_stateful_precompile_preserved_by_marker_or_genesis() {
     use outbe_evm::executor::marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES;
-    use outbe_primitives::addresses::ZKPROOF_GROTH16_ADDRESS;
+    use outbe_primitives::addresses::ZKPROOF_VERIFY_ADDRESS;
 
     let (_tmp, genesis, _raw) = run_seed_genesis(
         FIXTURE_GENESIS,
@@ -241,7 +241,7 @@ fn every_stateful_precompile_preserved_by_marker_or_genesis() {
 
     // These routes own no storage, so neither runtime markers nor genesis code
     // need to cover them.
-    let storage_free = [ZKPROOF_GROTH16_ADDRESS];
+    let storage_free = [ZKPROOF_VERIFY_ADDRESS];
 
     let mut checked = 0usize;
     for addr in outbe_evm::precompiles::outbe_precompile_addresses() {

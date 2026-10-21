@@ -11,15 +11,17 @@ use std::time::{Duration, Instant};
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::sol;
-use eyre::{eyre, Result};
+use eyre::{ensure, eyre, Result};
 
 use crate::internal::{addresses, eth};
 use crate::world::forge::{self, address_from};
+use crate::world::{validators::Operator, World};
 
 /// ISO 4217 numeric for USD, the reference currency every e2e series uses.
 pub(crate) const USD_ISO: u16 = 840;
 
 const REGISTRATION_TIMEOUT_SECS: u64 = 60;
+const APPROVAL_TIMEOUT_SECS: u64 = 180;
 
 sol! {
     interface ISettlementAsset {
@@ -42,22 +44,21 @@ pub struct SettlementCurrency {
 
 /// Deploy the asset and its vault, then register the vault with the VaultRouter.
 ///
-/// `owner_key` must be the router's owner. `addVault` admits nobody else. The
-/// vault renounces its own owner in its constructor, which the router demands
-/// before it will adopt one.
+/// The vault renounces its own owner in its constructor, then ACTIVE validators
+/// approve its registration before the permissionless apply transaction.
 pub(crate) fn deploy(
+    world: &World,
     repo_intex: &std::path::Path,
     url: &str,
-    owner_key: &str,
 ) -> Result<SettlementCurrency> {
-    deploy_for(repo_intex, url, owner_key, USD_ISO)
+    deploy_for(world, repo_intex, url, USD_ISO)
 }
 
 /// [`deploy`] for a stablecoin answering `iso_code` instead of USD.
 pub(crate) fn deploy_for(
+    world: &World,
     repo_intex: &std::path::Path,
     url: &str,
-    owner_key: &str,
     iso_code: u16,
 ) -> Result<SettlementCurrency> {
     let asset = address_from(
@@ -95,30 +96,114 @@ pub(crate) fn deploy_for(
         return Err(eyre!("settlement vault has not renounced its owner"));
     }
 
-    eth::send_call(
-        url,
+    register_vault(world, asset, vault, iso_code)?;
+    Ok(SettlementCurrency { asset, vault })
+}
+
+/// Register a deployed vault through the same vote-and-apply boundary as users.
+pub(crate) fn register_vault(
+    world: &World,
+    asset: Address,
+    vault: Address,
+    iso_code: u16,
+) -> Result<()> {
+    let port = world.validators.primary_port();
+    let url = world.rpc.url(port);
+    let active = world
+        .rpc
+        .active_validators(port)
+        .ok_or_else(|| eyre!("read ACTIVE validators for vault registration"))?;
+    let mut voters = Vec::new();
+    for index in world.localnet.owned_validator_indices() {
+        let validator = world.validators.get(index);
+        let key = validator.evm_key()?;
+        let address = world
+            .rpc
+            .address_of(&key)
+            .ok_or_else(|| eyre!("read validator-{index} address"))?
+            .parse::<Address>()?;
+        if active.contains(&address) {
+            voters.push(validator);
+        }
+    }
+    let proposer = voters
+        .first()
+        .ok_or_else(|| eyre!("no discovered ACTIVE validator can propose vault registration"))?;
+    let target = format!("{:#x}", addresses::VAULT_ROUTER_ADDR);
+    let payload = serde_json::json!({
+        "operation": "addVault",
+        "vault": format!("{vault:#x}"),
+        "asset": format!("{asset:#x}"),
+        "isoCode": iso_code,
+    })
+    .to_string();
+    let tx = world
+        .rpc
+        .send_propose(&Operator(proposer.clone()), &target, &payload)?;
+    ensure!(
+        world.rpc.wait_successful_receipt(&tx, 60),
+        "vault registration proposal transaction failed: {tx}"
+    );
+    let proposal_id = world.rpc.proposal_id_from_receipt(port, &tx)?;
+    let mut ballots = Vec::new();
+    for voter in &voters {
+        ballots.push(world.rpc.cast_vote(voter, proposal_id, true)?);
+    }
+    for ballot in ballots {
+        ensure!(
+            world.rpc.wait_successful_receipt(&ballot, 60),
+            "vault registration proposal #{proposal_id} ballot failed: {ballot}"
+        );
+    }
+    // Poll the staged action directly: block/CLI polling can consume much of its
+    // short apply window. Keep the slower status query for timeout diagnostics.
+    let deadline = Instant::now() + Duration::from_secs(APPROVAL_TIMEOUT_SECS);
+    loop {
+        if eth::read_call(
+            &url,
+            addresses::VAULT_ROUTER_ADDR,
+            &eth::IVaultRouter::approvedVaultActionCall {
+                proposalId: U256::from(proposal_id),
+            },
+        )
+        .is_some_and(|record| {
+            matches!(record.action, eth::IVaultRouter::VaultAction::AddVault)
+                && record.vault == vault
+        }) {
+            break;
+        }
+        if Instant::now() >= deadline {
+            let proposal = world.rpc.vote_status_on(port, proposal_id)?;
+            return Err(eyre!(
+                "vault proposal #{proposal_id} approval timed out (status: {})",
+                proposal.status
+            ));
+        }
+        sleep(Duration::from_millis(250));
+    }
+    let applied = eth::send_call(
+        &url,
         addresses::VAULT_ROUTER_ADDR,
-        owner_key,
-        &eth::IVaultRouter::addVaultCall { vault },
+        &proposer.evm_key()?,
+        &eth::IVaultRouter::applyApprovedCall {
+            proposalId: U256::from(proposal_id),
+        },
         None,
     )?;
+    ensure!(
+        world.rpc.wait_successful_receipt(&applied, 60),
+        "apply vault proposal #{proposal_id} transaction failed: {applied}"
+    );
 
-    // Confirm the registration itself rather than its receipt. `settle` reads this
-    // count, and a zero here is the failure the whole fixture exists to avoid.
+    // An expired apply succeeds without registration, so verify the exact vault.
     let deadline = Instant::now() + Duration::from_secs(REGISTRATION_TIMEOUT_SECS);
     loop {
-        let registered = eth::read_call(
-            url,
-            addresses::VAULT_ROUTER_ADDR,
-            &eth::IVaultRouter::assetVaultsCountCall { asset },
-        )
-        .is_some_and(|count| !count.is_zero());
-        if registered {
-            return Ok(SettlementCurrency { asset, vault });
+        if registered_vaults(&url, asset).contains(&vault) {
+            return Ok(());
         }
         if Instant::now() >= deadline {
             return Err(eyre!(
-                "VaultRouter still holds no vault for the settlement asset"
+                "vault proposal #{proposal_id} applied but vault {vault:#x} is not registered (possibly expired)"
             ));
         }
         sleep(Duration::from_millis(500));

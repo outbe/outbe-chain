@@ -312,7 +312,7 @@ fn issue_five_gems(world: &mut World) {
     let pool = eth::read_call_at(
         &url,
         addresses::PROMIS_LIMIT_ADDR,
-        &eth::IPromisLimit::totalUnallocatedCall {},
+        &eth::IPromisLimit::promisLimitCall {},
         height,
     )
     .expect("unallocated pool at the baseline");
@@ -675,7 +675,7 @@ fn assert_expiry_returns(world: &World, height: u64, require_position_expiry: bo
         eth::read_call_at(
             &url,
             addresses::PROMIS_LIMIT_ADDR,
-            &eth::IPromisLimit::totalUnallocatedCall {},
+            &eth::IPromisLimit::promisLimitCall {},
             height
         ),
         Some(before + returned),

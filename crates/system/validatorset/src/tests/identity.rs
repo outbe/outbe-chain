@@ -1,4 +1,6 @@
 use super::*;
+use crate::precompile::IValidatorSet as I;
+use alloy_sol_types::SolError;
 
 fn symmetric_p2p(port: u16) -> Vec<u8> {
     encode_v1(&P2pAddress::Symmetric(SocketAddr::new(
@@ -46,24 +48,40 @@ fn test_set_p2p_address_rejects_unauthorized_and_malformed() {
         let err = vs
             .set_p2p_address(stranger, val_addr, P2P_ADDRESS_VERSION_V1, &encoded)
             .unwrap_err();
-        assert!(
-            matches!(err, PrecompileError::Revert(message) if message.contains("unauthorized"))
-        );
+        match err {
+            PrecompileError::RevertBytes(bytes) => {
+                assert_eq!(&bytes[..4], &I::UnauthorizedOwnerOrValidator::SELECTOR);
+            }
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
 
         let err = vs
             .set_p2p_address(OWNER, val_addr, 2, &encoded)
             .unwrap_err();
-        assert!(
-            matches!(err, PrecompileError::Revert(message) if message.contains("unsupported p2p address version"))
-        );
+        match err {
+            PrecompileError::RevertBytes(bytes) => {
+                let decoded = I::UnsupportedP2pAddressVersion::abi_decode(&bytes).expect("version");
+                assert_eq!(decoded.version, 2);
+            }
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
 
         let malformed = [0u8; 3];
         let err = vs
             .set_p2p_address(OWNER, val_addr, P2P_ADDRESS_VERSION_V1, &malformed)
             .unwrap_err();
-        assert!(
-            matches!(err, PrecompileError::Revert(message) if message.contains("invalid p2p address"))
-        );
+        match err {
+            PrecompileError::RevertBytes(bytes) => {
+                assert_eq!(
+                    bytes.to_vec(),
+                    I::InvalidP2pAddress {
+                        reason: "invalid p2p ip kind 0".into(),
+                    }
+                    .abi_encode()
+                );
+            }
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
     });
 }
 
@@ -79,9 +97,13 @@ fn test_set_p2p_address_rejects_oversized_and_accepts_asymmetric() {
         let err = vs
             .set_p2p_address(OWNER, val_addr, P2P_ADDRESS_VERSION_V1, &oversized)
             .unwrap_err();
-        assert!(
-            matches!(err, PrecompileError::Revert(message) if message.contains("exceeds max length"))
-        );
+        match err {
+            PrecompileError::RevertBytes(bytes) => {
+                let decoded = I::P2pAddressPayloadTooLong::abi_decode(&bytes).expect("length");
+                assert_eq!(decoded.max_len, MAX_P2P_ADDRESS_ENCODED_LEN as u64);
+            }
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
 
         let asymmetric = encode_v1(&P2pAddress::Asymmetric {
             ingress: P2pIngress::Dns {
@@ -118,15 +140,15 @@ fn malformed_p2p_fails_all_complete_record_projections_closed() {
         // Malformed coupled P2P fields therefore fail closed consistently.
         assert!(matches!(
             vs.get_validator(val_addr),
-            Err(PrecompileError::Revert(_))
+            Err(PrecompileError::RevertBytes(_))
         ));
         assert!(matches!(
             vs.get_all_validators(),
-            Err(PrecompileError::Revert(_))
+            Err(PrecompileError::RevertBytes(_))
         ));
         assert!(matches!(
             vs.validator_state(val_addr),
-            Err(PrecompileError::Revert(_))
+            Err(PrecompileError::RevertBytes(_))
         ));
     });
 }
@@ -141,7 +163,7 @@ fn typed_storage_adapter_rejects_pre_registration_stake_and_fails_closed() {
 
         assert!(matches!(
             vs.validator_state(addr),
-            Err(PrecompileError::Revert(_))
+            Err(PrecompileError::RevertBytes(_))
         ));
 
         vs.val_stake.write(&addr, U256::ZERO).unwrap();
@@ -154,14 +176,14 @@ fn typed_storage_adapter_rejects_pre_registration_stake_and_fails_closed() {
         vs.val_join_confirmed.write(&addr, true).unwrap();
         assert!(matches!(
             vs.validator_state(addr),
-            Err(PrecompileError::Revert(_))
+            Err(PrecompileError::RevertBytes(_))
         ));
 
         vs.val_join_confirmed.write(&addr, false).unwrap();
         vs.val_status.write(&addr, 7).unwrap();
         assert!(matches!(
             vs.validator_state(addr),
-            Err(PrecompileError::Revert(_))
+            Err(PrecompileError::RevertBytes(_))
         ));
     });
 }
@@ -179,11 +201,11 @@ fn full_and_hot_lifecycle_reads_both_reject_combined_residue() {
 
         assert!(matches!(
             vs.validator_state(addr),
-            Err(PrecompileError::Revert(_))
+            Err(PrecompileError::RevertBytes(_))
         ));
         assert!(matches!(
             vs.validator_lifecycle(addr),
-            Err(PrecompileError::Revert(_))
+            Err(PrecompileError::RevertBytes(_))
         ));
     });
 }
@@ -241,9 +263,13 @@ fn radicle_node_id_registration_is_bidirectional_and_signature_bound() {
                 Some(&signature),
             )
             .unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("invalid BLS registration signature"));
+        match err {
+            PrecompileError::RevertBytes(bytes) => assert_eq!(
+                bytes.to_vec(),
+                I::InvalidBlsRegistrationSignature {}.abi_encode()
+            ),
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
     });
 }
 
@@ -268,7 +294,12 @@ fn radicle_node_id_rejects_zero_and_duplicate_without_partial_state() {
                 Some(&zero_signature),
             )
             .unwrap_err();
-        assert!(zero.to_string().contains("Radicle NodeId must not be zero"));
+        match zero {
+            PrecompileError::RevertBytes(bytes) => {
+                assert_eq!(bytes.to_vec(), I::ZeroRadicleNodeId {}.abi_encode());
+            }
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
         assert_eq!(vs.validator_count().unwrap(), 0);
 
         vs.register_validator_with_sig(first, first, &first_key, node_id, Some(&first_signature))
@@ -282,9 +313,15 @@ fn radicle_node_id_rejects_zero_and_duplicate_without_partial_state() {
                 Some(&second_signature),
             )
             .unwrap_err();
-        assert!(duplicate
-            .to_string()
-            .contains("Radicle NodeId already registered"));
+        match duplicate {
+            PrecompileError::RevertBytes(bytes) => {
+                assert_eq!(
+                    bytes.to_vec(),
+                    I::RadicleNodeIdAlreadyRegistered {}.abi_encode()
+                );
+            }
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
         assert_eq!(vs.validator_count().unwrap(), 1);
         assert!(vs.get_radicle_node_id(second).unwrap().is_zero());
         assert_eq!(vs.validator_by_radicle_node_id(node_id).unwrap(), first);
@@ -323,9 +360,13 @@ fn inactive_reregistration_preserves_node_id_until_final_cleanup() {
                 Some(&second_node_signature),
             )
             .unwrap_err();
-        assert!(changed
-            .to_string()
-            .contains("inactive validator must keep its Radicle NodeId"));
+        match changed {
+            PrecompileError::RevertBytes(bytes) => assert_eq!(
+                bytes.to_vec(),
+                I::InactiveValidatorMustKeepRadicleNodeId {}.abi_encode()
+            ),
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
 
         vs.register_validator_with_sig(
             validator,

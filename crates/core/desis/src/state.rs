@@ -58,6 +58,7 @@ impl<'storage> DesisContract<'storage> {
             rows.push(ReferenceCurrencyPrice {
                 iso_code: self.reference_price_iso.read(&key)? as u16,
                 entry_price_minor: self.reference_entry_price_minor.read(&key)?,
+                call_price_minor: self.reference_call_price_minor.read(&key)?,
             });
         }
         Ok(rows)
@@ -92,6 +93,8 @@ impl<'storage> DesisContract<'storage> {
                 .write(&key, u32::from(row.iso_code))?;
             self.reference_entry_price_minor
                 .write(&key, row.entry_price_minor)?;
+            self.reference_call_price_minor
+                .write(&key, row.call_price_minor)?;
         }
         Ok(())
     }

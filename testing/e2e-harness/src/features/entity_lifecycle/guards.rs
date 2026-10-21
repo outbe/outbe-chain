@@ -1,13 +1,8 @@
-//! The refusals that guard a lifecycle, each read as the exact revert text of the
-//! product's own error: paying on wrong terms, mining unpaid or twice, moving.
+//! Lifecycle refusals. Each refusal must match the canonical error ABI bytes.
+//! The cases are a wrong payment, unpaid mining, a second mine, and a transfer.
 
 use alloy_primitives::{Address, FixedBytes, B256, U256};
-use alloy_sol_types::SolCall;
-use outbe_gemfactory::errors::GemFactoryError;
-use outbe_intexfactory::errors::IntexFactoryError;
-use outbe_nodfactory::errors::NodFactoryError;
-use outbe_vaultrouter::settlement::SettlementError;
-use std::fmt::Display;
+use alloy_sol_types::{SolCall, SolError};
 
 use super::entity::{Item, Target};
 use super::markets::{currency, EUR_ISO, MYR_ISO};
@@ -49,17 +44,18 @@ fn refuse_wrong_terms<C: SolCall>(
         payer,
         factory(target),
         &payment(currency(world, MYR_ISO).asset),
-        SettlementError::SnapshotMismatch {
+        &eth::IVaultRouter::SnapshotMismatch {
             authorized: U256::ZERO,
             required,
-        },
+        }
+        .abi_encode(),
     );
     assert_refused(
         world,
         payer,
         factory(target),
         &payment(currency(world, EUR_ISO).asset),
-        SettlementError::CurrencyMismatch { iso_code: EUR_ISO },
+        &eth::IVaultRouter::CurrencyMismatch { isoCode: EUR_ISO }.abi_encode(),
     );
 }
 
@@ -68,9 +64,9 @@ pub(crate) fn assert_unpaid_unminable(world: &World, target: &Target) {
     refuse_mining(
         world,
         target,
-        &GemFactoryError::GemNotSettled,
-        &IntexFactoryError::InsufficientSettled,
-        &NodFactoryError::NodNotSettled,
+        &eth::IGemFactory::GemNotSettled {}.abi_encode(),
+        &eth::IIntexFactory::InsufficientSettled {}.abi_encode(),
+        &eth::INodFactory::NodNotSettled {}.abi_encode(),
     );
 }
 
@@ -79,20 +75,14 @@ pub(crate) fn assert_mined_unminable(world: &World, target: &Target) {
     refuse_mining(
         world,
         target,
-        &GemFactoryError::GemNotFound,
-        &IntexFactoryError::InsufficientSettled,
-        &NodFactoryError::NodNotFound,
+        &eth::IGemFactory::GemNotFound {}.abi_encode(),
+        &eth::IIntexFactory::InsufficientSettled {}.abi_encode(),
+        &eth::INodFactory::NodNotFound {}.abi_encode(),
     );
 }
 
 /// The owner mines the holding and reads the refusal its product names.
-fn refuse_mining(
-    world: &World,
-    target: &Target,
-    gem: &dyn Display,
-    series: &dyn Display,
-    nod: &dyn Display,
-) {
+fn refuse_mining(world: &World, target: &Target, gem: &[u8], series: &[u8], nod: &[u8]) {
     let (owner, to) = (target.owner, factory(target));
     match &target.item {
         Item::Gem(id) => assert_refused(world, owner, to, &mine_gem(*id), gem),
@@ -116,7 +106,7 @@ pub(crate) fn assert_soulbound(world: &World, target: &Target) {
                 to,
                 gemId: *id,
             },
-            outbe_gem::errors::GemError::NonTransferable,
+            &eth::IGem::NonTransferable {}.abi_encode(),
         ),
         Item::Series { .. } => unreachable!("an issued Intex trades freely until it is called"),
         Item::Nod(id) => assert_refused(
@@ -128,7 +118,7 @@ pub(crate) fn assert_soulbound(world: &World, target: &Target) {
                 to,
                 nodId: *id,
             },
-            outbe_nod::errors::NodError::NonTransferable,
+            &eth::INod::NonTransferable {}.abi_encode(),
         ),
     }
 }

@@ -296,7 +296,7 @@ impl TributeContract<'_> {
                 total_interest,
                 lysis_limit_minor,
             )
-            .map_err(|e| outbe_primitives::error::PrecompileError::revert(e.to_string()))?
+            .map_err(|e| TributeError::LysisArithmetic(e.to_string()))?
         };
         let fractions: std::collections::BTreeMap<u16, u64> = u256_fractions
             .iter()
@@ -326,7 +326,7 @@ impl TributeContract<'_> {
             if completed_at == 0 {
                 return Err(TributeError::MetadosisNotCompleted.into());
             }
-            let now = u64::try_from(storage.timestamp()?).unwrap_or(u64::MAX);
+            let now = storage.now_secs()?;
             if now < completed_at
                 || now > completed_at.saturating_add(7 * outbe_primitives::time::SECONDS_PER_DAY)
             {
@@ -351,7 +351,7 @@ impl TributeContract<'_> {
             let nod_max: U256 = lysis_limit >> 10usize;
             let gratis_load_minor =
                 outbe_lysis::program_v1::calculate_gratis_load(nominal, fraction, nod_max, 0)
-                    .map_err(|e| outbe_primitives::error::PrecompileError::revert(e.to_string()))?;
+                    .map_err(|e| TributeError::LysisArithmetic(e.to_string()))?;
 
             let price_day = outbe_nod::openings::entry_price_day(completed_at);
             let gratis_day_price = outbe_oracle::api::get_utc_day_vwap_for_iso(
@@ -359,14 +359,10 @@ impl TributeContract<'_> {
                 price_day,
                 record.reference_currency,
             )?
-            .filter(|p| !p.is_zero())
-            .unwrap_or_else(|| {
-                if !record.tribute_price_minor.is_zero() {
-                    record.tribute_price_minor
-                } else {
-                    U256::from(1_000_000u64)
-                }
-            });
+            .ok_or(TributeError::EntryPriceUnavailable {
+                price_day,
+                currency: record.reference_currency,
+            })?;
 
             let encrypted_nod = outbe_primitives::nod_encryption::encode_v1_nod(
                 outbe_primitives::nod_encryption::NodTermsV2 {

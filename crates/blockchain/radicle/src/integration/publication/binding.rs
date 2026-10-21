@@ -46,15 +46,14 @@ fn body(
     let before = state.checkpoint().receipt();
     let bound = &state.material().receipt().body;
     let authority = state.authority();
-    if material.authority() != authority
+    let invalid_authority = material.authority() != authority
         || before.body.chain_id != authority.chain_id()
         || before.body.genesis_hash != authority.genesis_hash()
         || before.body.owner_bls_public.as_slice()
-            != authority.committee().vrf_group_public_key_bytes.as_slice()
-        || (bound.epoch == authority.epoch()
-            && bound.material_version == authority.committee().vrf_material_version)
-        || state.anchor().number > authority.block().number
-    {
+            != authority.committee().vrf_group_public_key_bytes.as_slice();
+    let already_bound = bound.epoch == authority.epoch()
+        && bound.material_version == authority.committee().vrf_material_version;
+    if invalid_authority || already_bound || state.anchor().number > authority.block().number {
         return Err(Error::Context);
     }
     let mut body = before.body.clone();
@@ -107,16 +106,28 @@ pub fn prepare_material_publication(
         witness_hash: Sha256::hash(&[&witness.to_bytes()?]).0.into(),
     })
 }
-pub fn verify_material_publication(
+super::review::with_legacy_signature! {
+    pub fn verify_material_publication(
+        state: &FinalizedMaterialSigningState,
+        snapshot: &CheckpointOwnerSnapshot,
+        material: &RepositorySigningMaterial,
+        body: &PublicationBody,
+        manifest: &PublicationManifest,
+        witness: &RepositoryWitnessBundle,
+    ) -> Result<VerifiedMaterialPublication, Error> {
+        verify_material_publication_with(state, snapshot, material, (body, manifest), witness)
+    }
+}
+
+fn verify_material_publication_with(
     state: &FinalizedMaterialSigningState,
     snapshot: &CheckpointOwnerSnapshot,
     material: &RepositorySigningMaterial,
-    body: &PublicationBody,
-    manifest: &PublicationManifest,
+    package: (&PublicationBody, &PublicationManifest),
     witness: &RepositoryWitnessBundle,
 ) -> Result<VerifiedMaterialPublication, Error> {
     let expected = prepare_material_publication(state, snapshot, material, witness)?;
-    if expected.body != *body || expected.manifest != *manifest {
+    if expected.body != *package.0 || expected.manifest != *package.1 {
         return Err(Error::Package);
     }
     Ok(expected)
@@ -137,21 +148,23 @@ pub fn verify_accepted_material_publication(
     let receipt = verifier.receipt();
     let body = &receipt.receipt().body;
     let old = previous.checkpoint().receipt();
-    if body.action != PublicationAction::BindMaterial
+    let invalid_sequence = body.action != PublicationAction::BindMaterial
         || body.sequence != old.body.sequence.checked_add(1).ok_or(Error::Context)?
-        || body.previous_receipt_hash != old.receipt_hash
-        || body.chain_id != old.body.chain_id
+        || body.previous_receipt_hash != old.receipt_hash;
+    let invalid_scope = body.chain_id != old.body.chain_id
         || body.genesis_hash != old.body.genesis_hash
         || body.repo_id != old.body.repo_id
-        || body.owner_bls_public != old.body.owner_bls_public
-        || body.descriptor_hash != old.body.descriptor_hash
-        || (body.epoch == old.body.epoch && body.material_version == old.body.material_version)
-        || verifier.manifest().owner_refs()? != *previous.owner_refs()
-        || !body.proposal_id.is_zero()
+        || body.owner_bls_public != old.body.owner_bls_public;
+    let already_bound =
+        body.epoch == old.body.epoch && body.material_version == old.body.material_version;
+    let invalid_snapshot = body.descriptor_hash != old.body.descriptor_hash
+        || already_bound
+        || verifier.manifest().owner_refs()? != *previous.owner_refs();
+    let invalid_patch_fields = !body.proposal_id.is_zero()
         || !body.patch_id.is_zero()
         || !body.revision_id.is_zero()
-        || !body.expected_target_head.is_zero()
-    {
+        || !body.expected_target_head.is_zero();
+    if invalid_sequence || invalid_scope || invalid_snapshot || invalid_patch_fields {
         return Err(Error::Context);
     }
     verifier.verify_native(&[])?;
@@ -214,7 +227,7 @@ mod tests {
         package.authorize_current(&state, &material).unwrap();
         let receipt = FinalizedPublicationReceipt {
             block: state.authority.block,
-            receipt: outbe_radicleregistry::publication::PublicationReceipt {
+            receipt: outbe_coderegistry::publication::PublicationReceipt {
                 accepted_height: state.authority.block.number,
                 receipt_hash: package.body.receipt_hash(),
                 body: package.body.clone(),

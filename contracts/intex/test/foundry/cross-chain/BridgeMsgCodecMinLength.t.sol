@@ -34,20 +34,20 @@ contract BridgeMsgCodecMinLengthTest is Test {
     function test_StageStartFloorIsADayWithNoPricedCurrency() public view {
         // A day the oracle could price in nothing is cancelled, and its message carries no rows.
         bytes memory smallest = this.encodeStageStart(
-            new IOriginRouter.ReferenceCurrencyPrice[](0), uint8(IIntexAuction.WorldwideDayState.Red)
+            new IOriginRouter.ReferenceCurrencyPrice[](0), uint8(IIntexAuction.WorldwideDayState.Cancelled)
         );
         assertEq(smallest.length, BridgeMsgCodec.MIN_LEN_AUCTION_STAGE_START, "stage start floor");
 
         (, IIntexAuction.WorldwideDayState dayState,, IIntexAuction.AuctionParams memory params) =
             BridgeMsgCodec.decodeAuctionParams(smallest);
-        assertEq(uint8(dayState), uint8(IIntexAuction.WorldwideDayState.Red), "red");
+        assertEq(uint8(dayState), uint8(IIntexAuction.WorldwideDayState.Cancelled), "cancelled");
         assertEq(params.prices.length, 0, "no rows");
     }
 
     function test_ALiveDayMustPriceSomething() public {
         vm.expectRevert(BridgeMsgCodec.MissingReferencePrices.selector);
         this.encodeStageStart(
-            new IOriginRouter.ReferenceCurrencyPrice[](0), uint8(IIntexAuction.WorldwideDayState.Green)
+            new IOriginRouter.ReferenceCurrencyPrice[](0), uint8(IIntexAuction.WorldwideDayState.Live)
         );
     }
 

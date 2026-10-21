@@ -162,8 +162,7 @@ impl TributeFactoryContract<'_> {
             return Ok(());
         }
 
-        let timestamp = u64::try_from(self.storage.timestamp()?)
-            .map_err(|_| TributeFactoryError::TimestampExceedsU64)?;
+        let timestamp = self.storage.now_secs()?;
         let reward_utc_day = WorldwideDay::new(timestamp_to_date_key(timestamp));
         let mut agent_reward = AgentRewardContract::new(self.storage.clone());
 
@@ -362,7 +361,11 @@ mod tests {
             Some(&expected),
         )
         .unwrap_err();
-        assert!(error.to_string().contains("nft_hash"));
+        assert_eq!(
+            error.to_string(),
+            PrecompileError::from(TributeFactoryError::ZkPublicInputMismatch { field: "nft_hash" })
+                .to_string()
+        );
     }
 
     #[test]
@@ -380,7 +383,13 @@ mod tests {
             Some(&expected),
         )
         .unwrap_err();
-        assert!(error.to_string().contains("binding_hash"));
+        assert_eq!(
+            error.to_string(),
+            PrecompileError::from(TributeFactoryError::ZkPublicInputMismatch {
+                field: "binding_hash"
+            })
+            .to_string()
+        );
     }
 
     #[test]
@@ -409,10 +418,16 @@ mod tests {
             (DEVNET_CHAIN_ID, 0xdead, ""),
             (DEVNET_CHAIN_ID, 0xdead, "1.2.0"),
         ] {
-            assert!(matches!(
-                resolve_verification_key(host_chain_id, l2_chain_id, version),
-                Err(PrecompileError::Revert(_))
-            ));
+            assert_eq!(
+                resolve_verification_key(host_chain_id, l2_chain_id, version)
+                    .unwrap_err()
+                    .to_string(),
+                PrecompileError::from(TributeFactoryError::UnknownCircuitVersion {
+                    chain_id: l2_chain_id,
+                    version: version.to_owned(),
+                })
+                .to_string()
+            );
         }
     }
 
@@ -430,7 +445,7 @@ mod tests {
         for malformed in [wrong_count, noncanonical, truncated, trailing] {
             assert!(matches!(
                 decode_zk_public_inputs(&malformed, verification_key()),
-                Err(PrecompileError::Revert(_))
+                Err(PrecompileError::RevertBytes(_))
             ));
         }
     }

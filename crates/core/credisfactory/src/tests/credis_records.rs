@@ -275,12 +275,16 @@ fn issuance_seals_the_call_price_from_the_call_anchor() {
 fn issuance_rejects_duplicates_and_zero_amounts() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
-        rules::issue(&mut credis, params(alice())).unwrap();
+        let _id = rules::issue(&mut credis, params(alice())).unwrap();
 
-        let err = rules::issue(&mut credis, params(alice()))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("already exists"), "got: {err}");
+        let err = rules::issue(&mut credis, params(alice())).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::CredisFactoryError::CredisAlreadyExists
+            )
+            .to_string()
+        );
 
         let mut zero_principal = params(alice());
         zero_principal.principal_minor = U256::ZERO;
@@ -298,7 +302,13 @@ fn issuance_requires_a_pledge_source() {
         let mut no_source = params(alice());
         no_source.source = Address::ZERO;
         let err = rules::issue(&mut CredisContract::new(storage), no_source).unwrap_err();
-        assert!(err.to_string().contains("pledge source is zero"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::CredisFactoryError::InvalidSource
+            )
+            .to_string()
+        );
     });
 }
 
@@ -308,7 +318,13 @@ fn issuance_requires_an_owner() {
         let mut no_owner = params(alice());
         no_owner.owner = Address::ZERO;
         let err = rules::issue(&mut CredisContract::new(storage), no_owner).unwrap_err();
-        assert!(err.to_string().contains("Credis owner is zero"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::CredisFactoryError::InvalidOwner
+            )
+            .to_string()
+        );
     });
 }
 
@@ -417,10 +433,14 @@ fn settle_rejects_a_payment_below_the_accrued_interest() {
         let interest = CredisContract::accrued_interest(&record, at(100)).unwrap();
         assert!(!interest.is_zero());
 
-        let err = rules::settle(&mut credis, id, interest - U256::from(1u64), at(100))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("below the interest"), "got: {err}");
+        let err = rules::settle(&mut credis, id, interest - U256::from(1u64), at(100)).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::CredisFactoryError::PaymentBelowAccruedInterest
+            )
+            .to_string()
+        );
 
         // Nothing moved.
         let after = credis.get_credis(id).unwrap();
@@ -646,10 +666,15 @@ fn settle_below_the_accrued_interest_reverts_and_changes_nothing() {
 
         // Reject at the first settlement: one unit short of the $8.00 coupon.
         let before = credis.get_credis(id).unwrap();
-        let err = rules::settle(&mut credis, id, U256::from(7_999_999u64), at(FIFTH_YEAR))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("below the interest"), "got: {err}");
+        let err =
+            rules::settle(&mut credis, id, U256::from(7_999_999u64), at(FIFTH_YEAR)).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::CredisFactoryError::PaymentBelowAccruedInterest
+            )
+            .to_string()
+        );
 
         let after = credis.get_credis(id).unwrap();
         assert_eq!(
@@ -681,9 +706,14 @@ fn settle_below_the_accrued_interest_reverts_and_changes_nothing() {
             U256::from(3_999_999u64),
             at(2 * FIFTH_YEAR),
         )
-        .unwrap_err()
-        .to_string();
-        assert!(err.contains("below the interest"), "got: {err}");
+        .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::CredisFactoryError::PaymentBelowAccruedInterest
+            )
+            .to_string()
+        );
         let rejected = credis.get_credis(id).unwrap();
         assert_eq!(
             rejected.outstanding_principal_minor,
@@ -757,10 +787,15 @@ fn rejected_settlement_leaves_lifetime_interest_and_emits_nothing() {
         let mut credis = CredisContract::new(storage);
         let id = open_pos(&mut credis);
 
-        let err = rules::settle(&mut credis, id, U256::from(7_999_999u64), at(FIFTH_YEAR))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("below the interest"), "got: {err}");
+        let err =
+            rules::settle(&mut credis, id, U256::from(7_999_999u64), at(FIFTH_YEAR)).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::CredisFactoryError::PaymentBelowAccruedInterest
+            )
+            .to_string()
+        );
         assert!(credis.get_credis(id).unwrap().interest_paid_minor.is_zero());
 
         rules::settle(&mut credis, id, U256::from(8_000_000u64), at(FIFTH_YEAR)).unwrap();
@@ -773,9 +808,14 @@ fn rejected_settlement_leaves_lifetime_interest_and_emits_nothing() {
             U256::from(7_999_999u64),
             at(2 * FIFTH_YEAR),
         )
-        .unwrap_err()
-        .to_string();
-        assert!(err.contains("below the interest"), "got: {err}");
+        .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::CredisFactoryError::PaymentBelowAccruedInterest
+            )
+            .to_string()
+        );
         assert_eq!(credis.get_credis(id).unwrap().interest_paid_minor, paid);
     });
 
@@ -798,10 +838,14 @@ fn settle_runs_from_issuance_and_is_rejected_after_closing() {
 
         rules::settle(&mut credis, id, U256::from(999_999_999_999u64), at(100)).unwrap();
 
-        let err = rules::settle(&mut credis, id, U256::from(1_000u64), at(200))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("closed"), "got: {err}");
+        let err = rules::settle(&mut credis, id, U256::from(1_000u64), at(200)).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::CredisFactoryError::CredisClosed
+            )
+            .to_string()
+        );
     });
 }
 
@@ -988,10 +1032,14 @@ fn dust_settlements_cannot_evade_the_coupon() {
         // trick just under the next day boundary now owes a full day of
         // interest, and settle rejects it. An anchor that jumped to the payment time
         // would let this repeat forever and never pay a coupon.
-        let err = rules::settle(&mut credis, id, U256::from(1u64), at(1) + DAY - 1)
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("below the interest"), "got: {err}");
+        let err = rules::settle(&mut credis, id, U256::from(1u64), at(1) + DAY - 1).unwrap_err();
+        assert!(matches!(
+            &err,
+            outbe_primitives::error::PrecompileError::RevertBytes(bytes)
+                if bytes.starts_with(
+                    &<crate::precompile::ICredisFactory::PaymentBelowAccruedInterest as alloy_sol_types::SolError>::SELECTOR
+                )
+        ));
 
         // A full year on, the whole coupon is still owed. The coupon is on the
         // principal less the one minor unit that the dust settlement retired:
@@ -1072,13 +1120,22 @@ fn called_repayment_and_forfeit_have_complementary_deadline_boundaries() {
                 assert_eq!(result.unwrap().principal_paid, U256::ONE);
                 let repaid = credis.get_credis(id).unwrap();
                 let error = forfeit_lapsed(&mut credis, id, now).unwrap_err();
-                assert!(error.to_string().contains("deadline has not passed"));
+                assert_eq!(
+                    error.to_string(),
+                    outbe_primitives::error::PrecompileError::from(
+                        crate::errors::CredisFactoryError::SettlementDeadlineNotPassed
+                    )
+                    .to_string()
+                );
                 assert_eq!(credis.get_credis(id).unwrap(), repaid);
             } else {
-                assert!(result
-                    .unwrap_err()
+                assert_eq!(
+                    result.unwrap_err().to_string(),
+                    outbe_primitives::error::PrecompileError::from(
+                        crate::errors::CredisFactoryError::SettlementDeadlinePassed
+                    )
                     .to_string()
-                    .contains("settlement deadline has passed"));
+                );
                 assert_eq!(credis.get_credis(id).unwrap(), before);
                 assert_ne!(
                     credis.called_group_slot.read(&group).unwrap(),
@@ -1103,26 +1160,35 @@ fn forfeit_requires_a_called_credis_past_its_deadline_with_a_remainder() {
         let mut credis = CredisContract::new(storage);
         let id = open_pos(&mut credis);
 
-        let err = forfeit_lapsed(&mut credis, id, at(500))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("not called"), "got: {err}");
+        let err = forfeit_lapsed(&mut credis, id, at(500)).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::CredisFactoryError::NotCalled
+            )
+            .to_string()
+        );
 
         call(&mut credis, id, at(10)).unwrap();
         let deadline = settlement_deadline(&credis.get_credis(id).unwrap());
-        let err = forfeit_lapsed(&mut credis, id, deadline - 1)
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("deadline has not passed"), "got: {err}");
+        let err = forfeit_lapsed(&mut credis, id, deadline - 1).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::CredisFactoryError::SettlementDeadlineNotPassed
+            )
+            .to_string()
+        );
 
         // Fully settled inside the window. Nothing is left to forfeit.
         rules::settle(&mut credis, id, U256::from(999_999_999_999u64), at(11)).unwrap();
-        let err = forfeit_lapsed(&mut credis, id, deadline + 1)
-            .unwrap_err()
-            .to_string();
-        assert!(
-            err.contains("closed") || err.contains("not called"),
-            "got: {err}"
+        let err = forfeit_lapsed(&mut credis, id, deadline + 1).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::CredisFactoryError::CredisClosed
+            )
+            .to_string()
         );
     });
 }
@@ -1180,7 +1246,13 @@ fn only_the_owner_forfeits_an_open_credis() {
         let id = open_pos(&mut credis);
         for stranger in [bob(), source(), cca()] {
             let err = rules::forfeit_by_owner(&mut credis, id, stranger).unwrap_err();
-            assert!(err.to_string().contains("only the Credis owner"), "{err}");
+            assert_eq!(
+                err.to_string(),
+                outbe_primitives::error::PrecompileError::from(
+                    crate::errors::CredisFactoryError::NotCredisOwner
+                )
+                .to_string()
+            );
         }
         assert_eq!(
             credis.get_credis(id).unwrap().lifecycle_state().unwrap(),
@@ -1210,7 +1282,10 @@ fn the_owner_forfeits_an_issued_credis_out_of_the_call_index() {
         );
 
         let err = rules::forfeit_by_owner(&mut credis, id, alice()).unwrap_err();
-        assert!(err.to_string().contains("not found"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(CredisError::CredisNotFound).to_string()
+        );
         assert!(rules::settle(&mut credis, id, U256::from(1u64), at(1)).is_err());
     });
 }
@@ -1233,7 +1308,13 @@ fn the_owner_forfeits_a_called_credis_only_before_its_deadline() {
             let group = credis.get_credis(id).unwrap().group_key();
             let forfeit = rules::forfeit_by_owner(&mut credis, id, alice());
             if past_deadline {
-                assert!(forfeit.unwrap_err().to_string().contains("closed"));
+                assert_eq!(
+                    forfeit.unwrap_err().to_string(),
+                    outbe_primitives::error::PrecompileError::from(
+                        crate::errors::CredisFactoryError::CredisClosed
+                    )
+                    .to_string()
+                );
                 assert_ne!(credis.called_group_slot.read(&group).unwrap(), 0);
             } else {
                 forfeit.unwrap();
@@ -1407,18 +1488,27 @@ fn enumeration_rejects_an_out_of_range_index() {
 
         // One Credis exists, so index 1 is past the end of both indexes. An
         // out-of-range read must fail rather than report a zeroed Credis.
-        assert!(matches!(
-            credis.token_by_index(1),
-            Err(e) if e.to_string().contains("index out of bounds")
-        ));
-        assert!(matches!(
-            credis.token_of_owner_by_index(alice(), 1),
-            Err(e) if e.to_string().contains("index out of bounds")
-        ));
-        assert!(matches!(
-            credis.token_of_owner_by_index(bob(), 0),
-            Err(e) if e.to_string().contains("index out of bounds")
-        ));
+        assert_eq!(
+            credis.token_by_index(1).unwrap_err().to_string(),
+            outbe_primitives::error::PrecompileError::from(CredisError::IndexOutOfBounds)
+                .to_string()
+        );
+        assert_eq!(
+            credis
+                .token_of_owner_by_index(alice(), 1)
+                .unwrap_err()
+                .to_string(),
+            outbe_primitives::error::PrecompileError::from(CredisError::IndexOutOfBounds)
+                .to_string()
+        );
+        assert_eq!(
+            credis
+                .token_of_owner_by_index(bob(), 0)
+                .unwrap_err()
+                .to_string(),
+            outbe_primitives::error::PrecompileError::from(CredisError::IndexOutOfBounds)
+                .to_string()
+        );
     });
 }
 
@@ -1584,7 +1674,10 @@ fn precompile_enumerates_credis_globally_and_per_owner() {
         }
         .abi_encode();
         let err = dispatch(storage.clone(), &unknown, alice(), U256::ZERO).unwrap_err();
-        assert!(err.to_string().contains("not found"), "got: {err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(CredisError::CredisNotFound).to_string()
+        );
     });
 }
 
@@ -1613,6 +1706,44 @@ fn precompile_reports_principal_and_outstanding_together() {
             U256::from(PRINCIPAL) * U256::from(2u64)
         );
         assert_eq!(decoded.outstandingPrincipalMinor, U256::from(PRINCIPAL));
+    });
+}
+
+#[test]
+fn precompile_time_views_reject_wide_timestamps_after_record_lookup() {
+    let mut provider = credis_provider();
+    let id = open_at_block(&mut provider, 1, params(alice()));
+    StorageHandle::enter(&mut provider, |storage| {
+        let calls = [
+            ICredis::tokenURICall { credisId: id }.abi_encode(),
+            ICredis::getCredisCall { credisId: id }.abi_encode(),
+            ICredis::interestAccruedMinorCall { credisId: id }.abi_encode(),
+        ];
+        storage.set_block_timestamp(U256::from(u64::MAX)).unwrap();
+        for data in &calls {
+            dispatch(storage.clone(), data, alice(), U256::ZERO).unwrap();
+        }
+        for timestamp in [U256::from(u64::MAX) + U256::ONE, U256::MAX] {
+            storage.set_block_timestamp(timestamp).unwrap();
+            for data in &calls {
+                assert!(
+                    matches!(dispatch(storage.clone(), data, alice(), U256::ZERO).unwrap_err(),
+                    outbe_primitives::error::PrecompileError::Revert(message)
+                        if message == "timestamp exceeds u64")
+                );
+            }
+            let data = ICredis::getCredisCall {
+                credisId: U256::MAX,
+            }
+            .abi_encode();
+            assert_eq!(
+                dispatch(storage.clone(), &data, alice(), U256::ZERO)
+                    .unwrap_err()
+                    .to_string(),
+                outbe_primitives::error::PrecompileError::from(CredisError::CredisNotFound)
+                    .to_string()
+            );
+        }
     });
 }
 
@@ -1711,7 +1842,11 @@ fn a_credis_forfeited_by_its_owner_is_gone_from_every_read() {
             ICredis::ownerOfCall { credisId: id }.abi_encode(),
         ] {
             let err = dispatch(storage.clone(), &data, alice(), U256::ZERO).unwrap_err();
-            assert!(err.to_string().contains("not found"), "{err}");
+            assert_eq!(
+                err.to_string(),
+                outbe_primitives::error::PrecompileError::from(CredisError::CredisNotFound)
+                    .to_string()
+            );
         }
     });
 }
@@ -1860,9 +1995,15 @@ fn oversized_timestamp_rolls_back_issuance_and_forfeit() {
                 invalid.asset,
                 storage.block_number().unwrap(),
             );
-            assert!(rules::issue(&mut credis, invalid).is_err());
+            assert!(matches!(rules::issue(&mut credis, invalid).unwrap_err(),
+                outbe_primitives::error::PrecompileError::Revert(message)
+                    if message == "timestamp exceeds u64"));
             assert!(!credis.credis_exists(new_id).unwrap());
-            assert!(forfeit_lapsed(&mut credis, id, deadline + 1).is_err());
+            assert!(
+                matches!(forfeit_lapsed(&mut credis, id, deadline + 1).unwrap_err(),
+                outbe_primitives::error::PrecompileError::Revert(message)
+                    if message == "timestamp exceeds u64")
+            );
             assert_eq!(credis.get_credis(id).unwrap(), before);
         }
         let day = timestamp_to_date_key(ORIGINATED_AT);
@@ -1921,7 +2062,11 @@ fn precompile_names_the_collection_and_is_soulbound() {
             .abi_encode(),
         ] {
             let err = call(data).unwrap_err();
-            assert!(format!("{err:?}").contains("non-transferable"), "{err:?}");
+            assert_eq!(
+                err.to_string(),
+                outbe_primitives::error::PrecompileError::from(CredisError::NonTransferable)
+                    .to_string()
+            );
         }
         let out = call(ICredis::getApprovedCall { credisId: record }.abi_encode()).unwrap();
         assert_eq!(

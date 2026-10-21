@@ -1,9 +1,5 @@
 use alloy_primitives::{Address, Bytes, B256, U256};
 use outbe_agentreward::AgentRewardContract;
-use outbe_metadosis::{
-    genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay},
-    WwdDayType, WwdStatus,
-};
 use outbe_oracle::{
     genesis::{init_from_genesis, OracleGenesisConfig},
     schema::OracleContract,
@@ -14,7 +10,10 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::date_key_to_utc_timestamp;
 use outbe_primitives::time::WorldwideDay;
-use outbe_tribute::TributeContract;
+use outbe_tribute::{
+    worldwideday::genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay},
+    TributeContract,
+};
 
 use crate::runtime::{validate_agent_reward_addresses, OfferTributeInput};
 use crate::schema::TributeFactoryContract;
@@ -68,13 +67,6 @@ mod l2_zk_gate {
         proof.extend_from_slice(&root);
         proof.resize(DEMO_TRIBUTE_COMBINED_LEN, 0);
         proof.into()
-    }
-
-    fn revert_message(err: PrecompileError) -> String {
-        match err {
-            PrecompileError::Revert(msg) => msg,
-            other => panic!("expected revert, got {other:?}"),
-        }
     }
 
     // A signed, well-framed proof envelope lets these tests reach business
@@ -131,7 +123,13 @@ mod l2_zk_gate {
 
             // The factory rejects a missing signature before oracle/metadosis/enclave work.
             let err = factory.offer_tribute(offer(&root, &[])).unwrap_err();
-            assert!(revert_message(err).contains("invalid BLS signature"));
+            assert_eq!(
+                err.to_string(),
+                PrecompileError::from(
+                    outbe_l2registry::errors::L2RegistryError::InvalidZkSignature
+                )
+                .to_string()
+            );
 
             // A valid signature passes this gate (no OFFERING day in this fixture).
             let good_sig = sign_message::<MinSig>(
@@ -152,7 +150,10 @@ mod l2_zk_gate {
                     chain_id: u32::try_from(L2_CHAIN_ID).unwrap(),
                     version: version.to_owned(),
                 };
-                assert_eq!(revert_message(error), expected.to_string());
+                assert_eq!(
+                    error.to_string(),
+                    PrecompileError::from(expected).to_string()
+                );
             }
             let mut valid_gate = offer(&root, &good_sig);
             // The submitter need not be the registered network operator.
@@ -160,7 +161,15 @@ mod l2_zk_gate {
             valid_gate.zk_proof = dummy_demo_tribute_proof(root);
             let mut factory = TributeFactoryContract::new(storage.clone());
             let err = factory.offer_tribute(valid_gate).unwrap_err();
-            assert!(revert_message(err).contains("is not in OFFERING status"));
+            assert_eq!(
+                err.to_string(),
+                PrecompileError::from(
+                    crate::errors::TributeFactoryError::WorldwideDayNotOffering {
+                        worldwide_day: DAY.into(),
+                    }
+                )
+                .to_string()
+            );
 
             // A caller's registration on another chain cannot authorize an
             // offer for a chain that is no longer registered.
@@ -172,7 +181,10 @@ mod l2_zk_gate {
             let expected = outbe_l2registry::errors::L2RegistryError::NetworkNotRegistered {
                 chain_id: L2_CHAIN_ID,
             };
-            assert_eq!(revert_message(error), expected.to_string());
+            assert_eq!(
+                error.to_string(),
+                PrecompileError::from(expected).to_string()
+            );
         });
     }
 
@@ -206,13 +218,23 @@ mod l2_zk_gate {
 
             let mut factory = TributeFactoryContract::new(storage.clone());
             let missing = factory.offer_tribute(offer(&root, &signature)).unwrap_err();
-            assert!(revert_message(missing).contains("zkProof is required"));
+            assert_eq!(
+                missing.to_string(),
+                PrecompileError::from(crate::errors::TributeFactoryError::ZkProofRequired)
+                    .to_string()
+            );
 
             let mut wrong_root = offer(&root, &signature);
             wrong_root.zk_proof = dummy_demo_tribute_proof([0x24; 32]);
             let mut factory = TributeFactoryContract::new(storage.clone());
             let mismatch = factory.offer_tribute(wrong_root).unwrap_err();
-            assert!(revert_message(mismatch).contains("merkle_root"));
+            assert_eq!(
+                mismatch.to_string(),
+                PrecompileError::from(crate::errors::TributeFactoryError::ZkPublicInputMismatch {
+                    field: "merkle_root",
+                })
+                .to_string()
+            );
         });
     }
 
@@ -230,7 +252,7 @@ mod l2_zk_gate {
             let expected = outbe_l2registry::errors::L2RegistryError::NetworkNotRegistered {
                 chain_id: L2_CHAIN_ID,
             };
-            assert_eq!(revert_message(err), expected.to_string());
+            assert_eq!(err.to_string(), PrecompileError::from(expected).to_string());
         });
     }
 
@@ -248,10 +270,12 @@ mod l2_zk_gate {
 
             let mut factory = TributeFactoryContract::new(storage);
             let err = factory.offer_tribute(bad_day).unwrap_err();
-            let message = revert_message(err);
-            assert!(
-                message.contains("not a valid YYYYMMDD calendar date"),
-                "unexpected revert: {message}"
+            assert_eq!(
+                err.to_string(),
+                PrecompileError::from(crate::errors::TributeFactoryError::InvalidWorldwideDay {
+                    worldwide_day: 20250230u32.into(),
+                })
+                .to_string()
             );
         });
     }
@@ -270,10 +294,14 @@ mod l2_zk_gate {
 
             let mut factory = TributeFactoryContract::new(storage);
             let err = factory.offer_tribute(unpriced).unwrap_err();
-            let message = revert_message(err);
-            assert!(
-                message.contains("is not in OFFERING status"),
-                "unexpected revert: {message}"
+            assert_eq!(
+                err.to_string(),
+                PrecompileError::from(
+                    crate::errors::TributeFactoryError::WorldwideDayNotOffering {
+                        worldwide_day: DAY.into(),
+                    }
+                )
+                .to_string()
             );
         });
     }
@@ -315,21 +343,17 @@ const REWARD_WALLET: Address = Address::repeat_byte(0x71);
 const REWARD_SRA: Address = Address::repeat_byte(0x72);
 
 fn seed_offer_world(storage: StorageHandle<'_>, target_days: &[WorldwideDay]) {
+    let now = u64::try_from(storage.timestamp().unwrap()).unwrap();
     let mut metadosis = FreshDevnetGenesisBuilder::new();
     for (index, worldwide_day) in target_days.iter().copied().enumerate() {
         let offset = u64::try_from(index).unwrap() * 10;
         metadosis = metadosis.seed_active_worldwide_day(GenesisWorldwideDay {
             worldwide_day,
-            status: WwdStatus::Offering,
-            day_type: WwdDayType::Green,
+            day: 0,
             forming_start: offset + 1,
             forming_end: offset + 2,
-            lookback_end: offset + 3,
-            offering_end: offset + 4,
-            scheduled_process_time: offset + 5,
-            metadosis_limit_minor: U256::from(100),
-            previous_vwap_minor: U256::from(90),
-            current_vwap_minor: U256::from(100),
+            offerings_start: offset + 3,
+            offering_end: now.max(offset + 3) + 86_400,
         });
     }
     metadosis.apply(storage.clone()).unwrap();
@@ -567,7 +591,7 @@ fn assert_real_zk_offer_with_key_source(
                 Ok(process_tribute_offer_batch(&key, offers).0)
             })
             .unwrap_err();
-        assert!(matches!(replay, PrecompileError::Revert(_)));
+        assert!(matches!(replay, PrecompileError::RevertBytes(_)));
         let rewards = AgentRewardContract::new(storage);
         assert_eq!(
             rewards.get_all_waa_counts(REWARD_DAY.into()).unwrap(),
@@ -581,7 +605,7 @@ fn assert_real_zk_offer_with_key_source(
     });
 
     // Fail the final mutation of the real offer, after Tribute issuance and
-    // reward writes have begun, inside the enclosing VM transaction checkpoint.
+    // reward writes start, inside the enclosing VM transaction checkpoint.
     provider.storage = before_offer.clone();
     provider.fail_after_mutation_at(mutations - 1);
     StorageHandle::enter(&mut provider, |storage| {
@@ -605,9 +629,12 @@ fn assert_real_zk_offer_with_key_source(
 fn su_hash_can_only_be_used_once() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
-        let expect_reused = |err: PrecompileError| {
-            assert!(matches!(err, PrecompileError::Revert(ref m)
-                if m.contains("SU hash already used")));
+        let expect_reused = |err: PrecompileError, _expected_hash: B256| {
+            assert_eq!(
+                err.to_string(),
+                PrecompileError::from(crate::errors::TributeFactoryError::SuHashAlreadyUsed)
+                    .to_string()
+            );
         };
 
         // Distinct hashes across the array all succeed.
@@ -621,6 +648,7 @@ fn su_hash_can_only_be_used_once() {
             TributeFactoryContract::new(storage.clone())
                 .mark_su_hashes_used(&[a])
                 .unwrap_err(),
+            a,
         );
 
         // The factory rejects a duplicate within a single array.
@@ -629,6 +657,7 @@ fn su_hash_can_only_be_used_once() {
             TributeFactoryContract::new(storage.clone())
                 .mark_su_hashes_used(&[dup, dup])
                 .unwrap_err(),
+            dup,
         );
     });
 }
