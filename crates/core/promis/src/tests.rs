@@ -30,23 +30,8 @@ fn bob() -> Address {
     address!("0x2222222222222222222222222222222222222222")
 }
 
-/// Build the modify authorization a client would send for `op`.
 fn auth(op: PromisOp, account: Address, amount: U256, nonce: u64) -> ModifyAuth {
-    let sk = test_enclave::state_key();
-    let mk = derive_modify_key(&sk, account).unwrap();
-    ModifyAuth {
-        mac: modify_mac(
-            &mk,
-            &ModifyOperation {
-                account,
-                op,
-                amount,
-                op_nonce: nonce,
-                chain_id: chain_b256(),
-            },
-        ),
-        op_nonce: nonce,
-    }
+    test_enclave::modify_auth(op, account, amount, nonce)
 }
 
 fn view_balance(storage: StorageHandle<'_>, account: Address) -> U256 {

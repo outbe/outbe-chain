@@ -24,6 +24,31 @@ use std::{
 };
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
+pub(super) async fn finish_selected(
+    signer: &EndpointNetworkResolver,
+    selected: std::sync::Arc<crate::integration::publication::store::SelectedReviewPublication>,
+    batch: Option<PublicationBatch>,
+) -> Result<Vec<u8>, Error> {
+    if let Some(batch) = batch {
+        signer
+            .queue_review_publication(selected, batch)
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        return Ok([QUEUE.as_slice(), &[2]].concat());
+    }
+    let attestation = signer
+        .attest_review(selected.clone())
+        .await
+        .map_err(|_| Error::Unavailable)?;
+    let encoded = PublicationBatch {
+        body: selected.body().clone(),
+        attestations: vec![attestation],
+    }
+    .to_bytes()
+    .map_err(|_| Error::Protocol)?;
+    Ok([ATTEST.as_slice(), &[2], &encoded].concat())
+}
+
 pub(super) const ATTEST: &[u8; 4] = b"OCA1";
 pub(super) const QUEUE: &[u8; 4] = b"OCQ1";
 pub(super) const ATTEST_FRAME: usize = 5 + PUBLICATION_BODY_LEN + 1 + 100;

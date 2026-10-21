@@ -276,25 +276,7 @@ pub(super) async fn publish(
     })
     .await
     .map_err(|_| Error::Unavailable)??;
-    if let Some(batch) = batch {
-        signer
-            .queue_review_publication(selected, batch)
-            .await
-            .map_err(|_| Error::Unavailable)?;
-        Ok([publication::QUEUE.as_slice(), &[2]].concat())
-    } else {
-        let attestation = signer
-            .attest_review(selected.clone())
-            .await
-            .map_err(|_| Error::Unavailable)?;
-        let batch = outbe_primitives::radicle_publication::PublicationBatch {
-            body: selected.body().clone(),
-            attestations: vec![attestation],
-        }
-        .to_bytes()
-        .map_err(|_| Error::Protocol)?;
-        Ok([publication::ATTEST.as_slice(), &[2], &batch].concat())
-    }
+    publication::finish_selected(&signer, selected, batch).await
 }
 
 fn request(

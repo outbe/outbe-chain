@@ -553,23 +553,7 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
             runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE).unwrap()
         })
     };
-    let settle = |storage: &mut HashMapStorageProvider, snapshot: U256| {
-        StorageHandle::enter(storage, |s| {
-            runtime::settle_intex(
-                &s,
-                sid(7),
-                owner(),
-                U256::ONE,
-                SettlementPayment {
-                    payer: owner(),
-                    asset: settlement_asset(),
-                    snapshot_id: snapshot,
-                },
-            )
-            .unwrap_err()
-            .to_string()
-        })
-    };
+    let settle = refused_settlement;
     StorageHandle::enter(&mut storage, |s| {
         let oracle = OracleContract::new(s.clone());
         write_day_rate(
@@ -639,23 +623,7 @@ fn the_hourly_rollover_at_the_call_deadline_grants_no_grace() {
                 .2
         })
     };
-    let settle = |storage: &mut HashMapStorageProvider, snapshot: U256| {
-        StorageHandle::enter(storage, |s| {
-            runtime::settle_intex(
-                &s,
-                sid(7),
-                owner(),
-                U256::ONE,
-                SettlementPayment {
-                    payer: owner(),
-                    asset: settlement_asset(),
-                    snapshot_id: snapshot,
-                },
-            )
-            .unwrap_err()
-            .to_string()
-        })
-    };
+    let settle = refused_settlement;
     StorageHandle::enter(&mut storage, |s| {
         let oracle = OracleContract::new(s.clone());
         write_day_rate(
@@ -726,4 +694,22 @@ fn a_reference_payment_ignores_the_snapshot_it_names() {
             .to_string()
         );
     });
+}
+
+fn refused_settlement(storage: &mut HashMapStorageProvider, snapshot: U256) -> String {
+    StorageHandle::enter(storage, |s| {
+        runtime::settle_intex(
+            &s,
+            sid(7),
+            owner(),
+            U256::ONE,
+            SettlementPayment {
+                payer: owner(),
+                asset: settlement_asset(),
+                snapshot_id: snapshot,
+            },
+        )
+        .unwrap_err()
+        .to_string()
+    })
 }

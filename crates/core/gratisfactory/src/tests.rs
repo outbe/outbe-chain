@@ -651,24 +651,8 @@ fn encrypted_nod_mint_preserves_nonce_and_combined_fidelity_state() {
         use outbe_primitives::{
             nod_encryption::NodTermsV2, time::WorldwideDay, wwd_entity_id::WwdEntityId,
         };
-        let day = WorldwideDay::new(20250115);
         let amount = U256::from(123);
-        let nod = outbe_tee_enclave::nod_encryption::encrypt_nod(
-            &[0x5a; 32],
-            &[9; 32],
-            NodTermsV2 {
-                chain_id: CHAIN_ID,
-                nod_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(7)),
-                owner: alice(),
-                worldwide_day: day,
-                league_id: 0,
-                entry_price_minor: U256::ONE,
-                issuance_currency: 840,
-                reference_currency: 978,
-            },
-            amount,
-        )
-        .unwrap();
+        let nod = encrypted_nod(amount);
         let authorization = auth(GratisOp::Mint, alice(), amount, 0);
         crate::api::mint_encrypted_nod(storage.clone(), &nod, authorization.clone()).unwrap();
         assert_eq!(view_balance(&storage, alice()), amount);
@@ -691,6 +675,29 @@ fn encrypted_nod_mint_preserves_nonce_and_combined_fidelity_state() {
 }
 
 /// One second past the largest block timestamp that fits in `u64`.
+fn encrypted_nod(amount: U256) -> outbe_primitives::nod_encryption::EncryptedNodV2 {
+    use outbe_primitives::{
+        nod_encryption::NodTermsV2, time::WorldwideDay, wwd_entity_id::WwdEntityId,
+    };
+    let day = WorldwideDay::new(20250115);
+    outbe_tee_enclave::nod_encryption::encrypt_nod(
+        &[0x5a; 32],
+        &[9; 32],
+        NodTermsV2 {
+            chain_id: CHAIN_ID,
+            nod_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(7)),
+            owner: alice(),
+            worldwide_day: day,
+            league_id: 0,
+            entry_price_minor: U256::ONE,
+            issuance_currency: 840,
+            reference_currency: 978,
+        },
+        amount,
+    )
+    .unwrap()
+}
+
 fn timestamp_above_u64() -> U256 {
     U256::from(u64::MAX) + U256::from(1)
 }
@@ -753,24 +760,8 @@ fn encrypted_nod_mint_reverts_when_the_timestamp_exceeds_u64() {
         use outbe_primitives::{
             nod_encryption::NodTermsV2, time::WorldwideDay, wwd_entity_id::WwdEntityId,
         };
-        let day = WorldwideDay::new(20250115);
         let amount = U256::from(123);
-        let nod = outbe_tee_enclave::nod_encryption::encrypt_nod(
-            &[0x5a; 32],
-            &[9; 32],
-            NodTermsV2 {
-                chain_id: CHAIN_ID,
-                nod_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(7)),
-                owner: alice(),
-                worldwide_day: day,
-                league_id: 0,
-                entry_price_minor: U256::ONE,
-                issuance_currency: 840,
-                reference_currency: 978,
-            },
-            amount,
-        )
-        .unwrap();
+        let nod = encrypted_nod(amount);
         storage.set_block_timestamp(timestamp_above_u64()).unwrap();
 
         let err = crate::api::mint_encrypted_nod(
