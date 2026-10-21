@@ -4,6 +4,7 @@ pragma solidity 0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {Create3Factory} from "../src/Create3Factory.sol";
 import {DeployCreate3Factory} from "../script/DeployCreate3Factory.s.sol";
+import {CREATE3} from "../src/vendor/solady/CREATE3.sol";
 
 /// @dev Minimal contract that the tests use as deployment payload. Its constructor arg is part
 ///      of its init code, so two probes with different args have different init code. The tests
@@ -14,6 +15,11 @@ contract Probe {
     constructor(uint256 _value) {
         value = _value;
     }
+}
+
+/// @dev Deployment payload whose constructor accepts value.
+contract PayableProbe {
+    constructor() payable {}
 }
 
 contract Create3FactoryTest is Test {
@@ -105,5 +111,26 @@ contract Create3FactoryTest is Test {
         address afterWipe = factory.deploy(SALT, _initCode(9));
         assertEq(afterWipe, before, "address changed across wipe");
         assertEq(afterWipe, predicted, "address != predicted across wipe");
+    }
+
+    function test_Deploy_ForwardsValueToThePayableConstructor() public {
+        vm.deal(alice, 1 ether);
+        vm.prank(alice);
+        address deployed = factory.deploy{value: 1 ether}(SALT, type(PayableProbe).creationCode);
+        assertEq(deployed.balance, 1 ether, "value not forwarded");
+        assertEq(address(factory).balance, 0, "factory kept value");
+    }
+
+    function test_Deploy_RevertsWhenTheConstructorRefusesValue() public {
+        vm.deal(alice, 1 ether);
+        vm.prank(alice);
+        vm.expectRevert(CREATE3.DeploymentFailed.selector);
+        factory.deploy{value: 1 ether}(SALT, _initCode(1));
+    }
+
+    function test_Deploy_RevertsOnEmptyInitCode() public {
+        vm.prank(alice);
+        vm.expectRevert(CREATE3.DeploymentFailed.selector);
+        factory.deploy(SALT, "");
     }
 }
