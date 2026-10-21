@@ -2,6 +2,7 @@ use super::*;
 use crate::state::{self, ADD_VAULT, REMOVE_VAULT};
 
 fn stub_vault(provider: &mut HashMapStorageProvider) {
+    provider.stub_sub_call_at_selector(vault(), IERC20::balanceOfCall::SELECTOR, word(U256::ZERO));
     provider.stub_sub_call_at_selector(vault(), IVaultV2::assetCall::SELECTOR, word_addr(asset()));
     provider.stub_sub_call_at_selector(vault(), IVaultV2::ownerCall::SELECTOR, word(U256::ZERO));
     provider.stub_sub_call_at_selector(
@@ -404,4 +405,325 @@ fn inconsistent_index_and_nonpayable_apply_do_not_consume_record() {
         .is_err());
         assert!(router.approved_vault_actions.exists(U256::ONE).unwrap());
     });
+}
+
+#[test]
+fn removal_with_live_shares_preserves_pending_and_indexes_then_retries_at_zero() {
+    let other_vault = address!("0x0000000000000000000000000000000000000666");
+    for shares in [U256::ONE, U256::MAX] {
+        for has_other_vault in [false, true] {
+            let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+            stub_vault(&mut provider);
+            provider.stub_sub_call_at_selector(
+                vault(),
+                IERC20::balanceOfCall::SELECTOR,
+                word(shares),
+            );
+            StorageHandle::enter(&mut provider, |storage| {
+                runtime::add_vault(storage.clone(), vault()).unwrap();
+                if has_other_vault {
+                    crate::test_support::register_vault(
+                        &storage,
+                        asset(),
+                        other_vault,
+                        USD_ISO_CODE,
+                    )
+                    .unwrap();
+                }
+                stage(&storage, 7, REMOVE_VAULT, 0);
+            });
+            let calls_before = provider.sub_call_inputs().len();
+            let events_before = provider.get_events(VAULT_ROUTER_ADDRESS).len();
+            StorageHandle::enter(&mut provider, |storage| {
+                let record = state::approved_vault_action(&storage, U256::from(7)).unwrap();
+                let error = apply(&storage, 7).unwrap_err();
+                let PrecompileError::RevertBytes(bytes) = error else {
+                    panic!("expected ReserveVaultHasShares");
+                };
+                let error = IVaultRouter::ReserveVaultHasShares::abi_decode(&bytes).unwrap();
+                assert_eq!((error.vault, error.shares), (vault(), shares));
+                assert_eq!(
+                    state::approved_vault_action(&storage, U256::from(7)).unwrap(),
+                    record
+                );
+                assert_registered_removal_indexes(&storage, has_other_vault);
+            });
+            assert_eq!(
+                provider.get_events(VAULT_ROUTER_ADDRESS).len(),
+                events_before
+            );
+            let calls = &provider.sub_call_inputs()[calls_before..];
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0].target, vault());
+            assert_eq!(
+                calls[0].calldata.as_ref(),
+                IERC20::balanceOfCall {
+                    account: VAULT_ROUTER_ADDRESS
+                }
+                .abi_encode()
+                .as_slice()
+            );
+
+            provider.stub_sub_call_at_selector(
+                vault(),
+                IERC20::balanceOfCall::SELECTOR,
+                word(U256::ZERO),
+            );
+            StorageHandle::enter(&mut provider, |storage| {
+                apply(&storage, 7).unwrap();
+                let router = VaultRouterContract::new(storage.clone());
+                assert!(!router.approved_vault_actions.exists(U256::from(7)).unwrap());
+                assert_eq!(
+                    router.pending_vault_proposals.read(&vault()).unwrap(),
+                    U256::ZERO
+                );
+                assert!(!router.asset_vault_set(asset()).contains(&vault()).unwrap());
+                assert!(!router
+                    .reference_currency_vault_set(USD_ISO_CODE)
+                    .contains(&vault())
+                    .unwrap());
+                assert_eq!(router.vault_assets.read(&vault()).unwrap(), Address::ZERO);
+                assert_eq!(router.vault_reference_currencies.read(&vault()).unwrap(), 0);
+                assert_eq!(router.assets.contains(&asset()).unwrap(), has_other_vault);
+                if has_other_vault {
+                    assert_eq!(
+                        router.asset_vault_set(asset()).at(0).unwrap(),
+                        Some(other_vault)
+                    );
+                    assert_eq!(
+                        router
+                            .reference_currency_vault_set(USD_ISO_CODE)
+                            .at(0)
+                            .unwrap(),
+                        Some(other_vault)
+                    );
+                }
+            });
+            let events = provider.get_events(VAULT_ROUTER_ADDRESS);
+            assert_eq!(events.len(), events_before + 1);
+            let removed =
+                IVaultRouter::VaultRemoved::decode_log_data(events.last().unwrap()).unwrap();
+            assert_eq!(removed.vault, vault());
+        }
+    }
+}
+
+fn assert_registered_removal_indexes(storage: &StorageHandle<'_>, has_other_vault: bool) {
+    let router = VaultRouterContract::new(storage.clone());
+    let count = if has_other_vault { 2 } else { 1 };
+    assert_eq!(router.asset_vault_set(asset()).len().unwrap(), count);
+    assert_eq!(
+        router.asset_vault_set(asset()).at(0).unwrap(),
+        Some(vault())
+    );
+    assert_eq!(
+        router
+            .reference_currency_vault_set(USD_ISO_CODE)
+            .len()
+            .unwrap(),
+        count
+    );
+    assert_eq!(
+        router
+            .reference_currency_vault_set(USD_ISO_CODE)
+            .at(0)
+            .unwrap(),
+        Some(vault())
+    );
+    assert_eq!(router.assets.len().unwrap(), 1);
+    assert_eq!(router.assets.at(0).unwrap(), Some(asset()));
+    assert_eq!(router.vault_assets.read(&vault()).unwrap(), asset());
+    assert_eq!(
+        router.vault_reference_currencies.read(&vault()).unwrap(),
+        USD_ISO_CODE
+    );
+    assert_eq!(
+        router.pending_vault_proposals.read(&vault()).unwrap(),
+        U256::from(7)
+    );
+}
+
+#[test]
+fn removal_missing_or_malformed_share_query_fails_closed() {
+    for response in [None, Some(Bytes::new()), Some(Bytes::from(vec![0u8; 31]))] {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        if let Some(response) = response {
+            provider.stub_sub_call_at_selector(vault(), IERC20::balanceOfCall::SELECTOR, response);
+        }
+        StorageHandle::enter(&mut provider, |storage| {
+            crate::test_support::register_vault(&storage, asset(), vault(), USD_ISO_CODE).unwrap();
+            stage(&storage, 7, REMOVE_VAULT, 0);
+            assert!(apply(&storage, 7).is_err());
+            assert_registered_removal_indexes(&storage, false);
+            assert!(state::approved_vault_action(&storage, U256::from(7)).is_ok());
+        });
+        assert!(provider.get_events(VAULT_ROUTER_ADDRESS).is_empty());
+        let calls = provider.sub_call_inputs();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].target, vault());
+        assert!(calls[0]
+            .calldata
+            .starts_with(&IERC20::balanceOfCall::SELECTOR));
+    }
+}
+
+#[test]
+fn expired_removal_cleans_pending_without_querying_live_shares_or_changing_registry() {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_block_number(1 + outbe_chain_constants::get_governance_voting_window_blocks());
+    StorageHandle::enter(&mut provider, |storage| {
+        crate::test_support::register_vault(&storage, asset(), vault(), USD_ISO_CODE).unwrap();
+        stage(&storage, 7, REMOVE_VAULT, 0);
+        apply(&storage, 7).unwrap();
+        let router = VaultRouterContract::new(storage.clone());
+        assert!(router.asset_vault_set(asset()).contains(&vault()).unwrap());
+        assert!(router
+            .reference_currency_vault_set(USD_ISO_CODE)
+            .contains(&vault())
+            .unwrap());
+        assert_eq!(router.vault_assets.read(&vault()).unwrap(), asset());
+        assert!(!router.approved_vault_actions.exists(U256::from(7)).unwrap());
+        assert_eq!(
+            router.pending_vault_proposals.read(&vault()).unwrap(),
+            U256::ZERO
+        );
+    });
+    assert!(provider.sub_call_inputs().is_empty());
+    let events = provider.get_events(VAULT_ROUTER_ADDRESS);
+    assert_eq!(events.len(), 1);
+    let expired = IVaultRouter::ApprovedVaultActionExpired::decode_log_data(&events[0]).unwrap();
+    assert_eq!(
+        (expired.proposalId, expired.vault),
+        (U256::from(7), vault())
+    );
+}
+
+#[test]
+fn pending_removal_blocks_new_reservations_even_after_expiry_until_cleanup() {
+    let window = outbe_chain_constants::get_governance_voting_window_blocks();
+    for block in [0, window, window + 1] {
+        with_reservable_vault_at_block(U256::from(100), block, |storage| {
+            stage(&storage, 9, ADD_VAULT, 0);
+            stage(&storage, 7, REMOVE_VAULT, 0);
+            let error = reserve_in(&storage, USD_ISO_CODE).unwrap_err();
+            let PrecompileError::RevertBytes(bytes) = error else {
+                panic!("expected ReserveVaultRemovalPending");
+            };
+            let error = IVaultRouter::ReserveVaultRemovalPending::abi_decode(&bytes).unwrap();
+            assert_eq!((error.vault, error.proposalId), (vault(), U256::from(7)));
+            let router = VaultRouterContract::new(storage.clone());
+            assert_eq!(router.reservation_nonce.read().unwrap(), U256::ZERO);
+            assert!(!router.reservations.exists(U256::ONE).unwrap());
+            assert!(state::approved_vault_action(&storage, U256::from(7)).is_ok());
+            if block > window {
+                apply(&storage, 7).unwrap();
+                assert_eq!(reserve_in(&storage, USD_ISO_CODE).unwrap(), U256::ONE);
+            }
+        });
+    }
+}
+
+#[test]
+fn reservation_admission_uses_current_action_for_the_selected_vault_only() {
+    for scenario in 0..4 {
+        with_reservable_vault(U256::from(100), |storage| {
+            match scenario {
+                0 => {} // No pending action.
+                1 => stage(&storage, 1, ADD_VAULT, 0),
+                2 => {
+                    stage(&storage, 9, REMOVE_VAULT, 0);
+                    stage(&storage, 1, ADD_VAULT, 0);
+                }
+                _ => state::record_approved_vault_action(
+                    &storage,
+                    U256::ONE,
+                    vault_to(),
+                    REMOVE_VAULT,
+                    0,
+                )
+                .unwrap(),
+            }
+            assert_eq!(reserve_in(&storage, USD_ISO_CODE).unwrap(), U256::ONE);
+        });
+    }
+}
+
+#[test]
+fn reservation_admission_fails_closed_on_corrupt_pending_records() {
+    for scenario in 0..3 {
+        with_reservable_vault(U256::from(100), |storage| {
+            stage(&storage, 7, ADD_VAULT, 0);
+            let router = VaultRouterContract::new(storage.clone());
+            let mut record = router
+                .approved_vault_actions
+                .get(U256::from(7))
+                .unwrap()
+                .unwrap();
+            router.approved_vault_actions.delete(U256::from(7)).unwrap();
+            match scenario {
+                0 => {} // Dangling pending ID.
+                1 => {
+                    record.kind = 3;
+                    router.approved_vault_actions.create(&record).unwrap();
+                }
+                _ => {
+                    record.vault = vault_to();
+                    router.approved_vault_actions.create(&record).unwrap();
+                    router
+                        .pending_vault_proposals
+                        .write(&vault_to(), U256::from(7))
+                        .unwrap();
+                }
+            }
+            let error = reserve_in(&storage, USD_ISO_CODE).unwrap_err();
+            match scenario {
+                0 => assert_revert::<IVaultRouter::ApprovedVaultActionNotFound>(&error),
+                1 => assert_revert::<IVaultRouter::InvalidApprovedVaultAction>(&error),
+                _ => assert_revert::<IVaultRouter::ApprovedVaultActionIndexInconsistent>(&error),
+            }
+            assert_eq!(router.reservation_nonce.read().unwrap(), U256::ZERO);
+            assert!(!router.reservations.exists(U256::ONE).unwrap());
+            assert_eq!(
+                router.pending_vault_proposals.read(&vault()).unwrap(),
+                U256::from(7)
+            );
+        });
+    }
+}
+
+#[test]
+fn pending_removal_does_not_block_settlement_of_existing_reservations() {
+    for release in [false, true] {
+        with_reservable_vault(U256::from(100), |storage| {
+            let id = reserve_in(&storage, USD_ISO_CODE).unwrap();
+            stage(&storage, 7, REMOVE_VAULT, 0);
+            assert_revert::<IVaultRouter::ReserveVaultRemovalPending>(
+                &reserve_in(&storage, USD_ISO_CODE).unwrap_err(),
+            );
+            if release {
+                // Partial release also redeposits the unused amount into the origin vault.
+                assert_eq!(
+                    runtime::release_reservation(
+                        storage.clone(),
+                        id,
+                        receiver(),
+                        U256::from(4),
+                        IVaultRouter::StablesTarget::Credis,
+                    )
+                    .unwrap(),
+                    U256::from(4)
+                );
+            } else {
+                assert_eq!(
+                    runtime::return_reservation(storage.clone(), cca(), id).unwrap(),
+                    U256::from(100)
+                );
+            }
+            assert!(runtime::reservation_of(&storage, id)
+                .unwrap()
+                .asset
+                .is_zero());
+            assert!(state::approved_vault_action(&storage, U256::from(7)).is_ok());
+        });
+    }
 }

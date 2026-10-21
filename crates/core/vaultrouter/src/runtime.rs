@@ -117,6 +117,7 @@ pub(crate) fn reference_currency_assets(
 }
 
 /// `removeVault`: deregister `vault` for its asset and revoke the allowance.
+/// Requires the router's live share balance to be zero.
 /// The asset comes from the registration record, so a vault whose `asset()`
 /// changes or reverts stays removable.
 pub(crate) fn remove_vault(storage: StorageHandle<'_>, vault: Address) -> Result<()> {
@@ -137,9 +138,14 @@ pub(crate) fn remove_vault(storage: StorageHandle<'_>, vault: Address) -> Result
         // introduced: resolve their immutable asset metadata on first removal.
         iso_code = asset_iso_code(&storage, asset)?;
     }
-    if !contract.asset_vault_set(asset).remove(&vault)? {
+    if !contract.asset_vault_set(asset).contains(&vault)? {
         return Err(VaultRouterError::ReserveVaultNotFound.into());
     }
+    let shares = erc20_balance_of(&storage, vault, SELF)?;
+    if !shares.is_zero() {
+        return Err(VaultRouterError::ReserveVaultHasShares { vault, shares }.into());
+    }
+    contract.asset_vault_set(asset).remove(&vault)?;
     if contract.asset_vault_set(asset).is_empty()? {
         contract.assets.remove(&asset)?;
     }

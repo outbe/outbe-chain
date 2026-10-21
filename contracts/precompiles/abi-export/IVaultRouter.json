@@ -1190,6 +1190,22 @@
   },
   {
     "type": "error",
+    "name": "ReserveVaultHasShares",
+    "inputs": [
+      {
+        "name": "vault",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "shares",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ReserveVaultNotConfigured",
     "inputs": []
   },
@@ -1206,6 +1222,22 @@
         "name": "currentOwner",
         "type": "address",
         "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ReserveVaultRemovalPending",
+    "inputs": [
+      {
+        "name": "vault",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },

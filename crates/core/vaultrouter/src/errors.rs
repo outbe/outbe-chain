@@ -36,6 +36,10 @@ pub enum VaultRouterError {
     ReserveVaultAlreadyAdded,
     #[error("reserve vault not found")]
     ReserveVaultNotFound,
+    #[error("reserve vault has router shares: vault={vault}, shares={shares}")]
+    ReserveVaultHasShares { vault: Address, shares: U256 },
+    #[error("reserve vault removal pending: vault={vault}, proposal_id={proposal_id}")]
+    ReserveVaultRemovalPending { vault: Address, proposal_id: U256 },
     #[error("reserve vault owner not renounced: {0}")]
     ReserveVaultOwnerNotRenounced(Address),
     #[error("liquidity source not found")]
@@ -124,6 +128,15 @@ impl From<VaultRouterError> for PrecompileError {
                 revert_with(I::ReserveVaultAlreadyAdded {})
             }
             VaultRouterError::ReserveVaultNotFound => revert_with(I::ReserveVaultNotFound {}),
+            VaultRouterError::ReserveVaultHasShares { vault, shares } => {
+                revert_with(I::ReserveVaultHasShares { vault, shares })
+            }
+            VaultRouterError::ReserveVaultRemovalPending { vault, proposal_id } => {
+                revert_with(I::ReserveVaultRemovalPending {
+                    vault,
+                    proposalId: proposal_id,
+                })
+            }
             VaultRouterError::ReserveVaultOwnerNotRenounced(current_owner) => {
                 revert_with(I::ReserveVaultOwnerNotRenounced {
                     currentOwner: current_owner,
