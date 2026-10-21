@@ -16,6 +16,8 @@ interface IOracle {
     event TallyCompleted(uint64 blockNumber, uint32 pairsUpdated);
     event ValidatorSlashed(address indexed validator, uint64 slashPercent);
     event ValidatorForcedExit(address indexed validator);
+    /// @dev `peakDay` is the UTC midnight of the peak, in Unix seconds.
+    ///      It is not a yyyymmdd date key.
     event ScurvePeakDetected(address indexed base, address indexed quote, uint256 peakPrice, uint64 peakDay);
     /// @notice Emitted once per pair when a closed UTC calendar day's VWAP is
     /// finalized into state. `utcDay` is a yyyymmdd UTC date key (e.g. 20260625).
@@ -77,7 +79,9 @@ interface IOracle {
         view
         returns (uint256 vwap);
 
-    /// @notice Returns the maximum active S-curve value in the pair's scale.
+    /// @notice Returns the maximum active S-curve value at `timestamp`.
+    /// @dev A COEN/ISO S-curve value uses 6 decimals.
+    ///      The coefficient table is the COEN/840 six-decimal table.
     function getScurveValue(address base, address quote, uint64 timestamp) external view returns (uint256 value);
 
     /// @notice Returns oracle parameters.
@@ -183,12 +187,16 @@ interface IOracle {
             uint256[] memory volumes
         );
 
-    /// @notice Returns TWAP (time-weighted average price) for a pair.
+    /// @notice Returns the TWAP for a pair in that pair's registered scale.
+    /// @dev COEN/ISO uses 6 decimals. A generic pair uses 18 decimals.
+    ///      This read does not rescale a stored rate.
     function getTwap(address base, address quote, uint64 lookbackSeconds) external view returns (uint256 twap);
 
-    /// @notice Returns TWAPs for all active vote-target pairs. The input
-    /// `lookback` is the requested lookback window in seconds. The returned
-    /// `lookbackSeconds` array reports the lookback actually used per pair.
+    /// @notice Returns one TWAP per active vote-target pair.
+    /// @dev Each value uses that pair's registered scale.
+    ///      COEN/ISO uses 6 decimals. A generic pair uses 18 decimals.
+    ///      `lookback` is the requested window in seconds.
+    ///      `lookbackSeconds` is the window this call used for that pair.
     function getTwaps(uint64 lookback)
         external
         view
@@ -199,7 +207,10 @@ interface IOracle {
             uint64[] memory lookbackSeconds
         );
 
-    /// @notice Returns VWAP over the last 24 hours for a pair.
+    /// @notice Returns the VWAP for the last 24 hours for one pair.
+    /// @dev The window rolls. It is not a UTC calendar day and not a WorldwideDay.
+    ///      The value uses the pair's registered scale.
+    ///      COEN/ISO uses 6 decimals. A generic pair uses 18 decimals.
     function getDayVwap(address base, address quote) external view returns (uint256 vwap);
 
     /// @notice Returns the trailing VWAP policy pinned by the protocol constants:
@@ -230,15 +241,21 @@ interface IOracle {
     ///      window's rounds.
     function getFinalizedWindowVwap(uint16 currency, uint256 snapshotId) external view returns (uint256 vwap);
 
-    /// @notice Returns the finalized VWAP for a full UTC calendar day.
+    /// @notice Returns the finalized VWAP for one UTC calendar day.
     /// @param utcDay yyyymmdd UTC date key (e.g. 20260625). Reverts if the day
     ///        is not yet finalized or had no oracle data for the pair. For the
     ///        in-progress current day use `getVwapForTimeRange` instead.
+    /// @return vwap Finalized VWAP in the pair's registered scale.
+    /// @dev `utcDay` is a UTC date. It is not a WorldwideDay.
+    ///      A WorldwideDay key uses UTC+14.
+    ///      The UTC day starts at 00:00 UTC and lasts 86400 seconds.
+    ///      COEN/ISO uses 6 decimals. A generic pair uses 18 decimals.
     function getUtcDayVwap(address base, address quote, uint32 utcDay) external view returns (uint256 vwap);
 
-    /// @notice Returns VWAPs for all active vote-target pairs over an explicit
-    ///         WorldwideDay-style window.
-    /// @dev Reverts when the range is wider than the `lookbackDuration` parameter.
+    /// @notice Returns VWAPs for all active vote-target pairs over an explicit range.
+    /// @dev `startTime` and `endTime` are Unix seconds.
+    ///      A WorldwideDay key is a separate yyyymmdd value at UTC+14.
+    ///      Reverts when the range is wider than the `lookbackDuration` parameter.
     function getWorldwideDayVwap(uint64 startTime, uint64 endTime)
         external
         view
@@ -249,7 +266,9 @@ interface IOracle {
             uint64[] memory lookbackSeconds
         );
 
-    /// @notice Returns a stored WorldwideDay VWAP snapshot by WWD key.
+    /// @notice Returns one stored WorldwideDay VWAP snapshot.
+    /// @param worldwideDay WorldwideDay key in yyyymmdd form.
+    /// @dev A WorldwideDay uses UTC+14. It is not a UTC calendar day.
     function getWorldwideDayVwapSnapshot(uint32 worldwideDay)
         external
         view
@@ -262,34 +281,59 @@ interface IOracle {
             uint64[] memory lookbackSeconds
         );
 
-    /// @notice Returns all active S-curve entries for a pair.
+    /// @notice Returns the active S-curve entry for a pair.
+    /// @dev Each `peakDay` is the UTC midnight of that peak, in Unix seconds.
+    ///      It is not a yyyymmdd date key.
+    ///      A COEN/ISO peak price and current value use 6 decimals.
     function getScurveEntries(address base, address quote)
         external
         view
         returns (uint64[] memory peakDays, uint256[] memory peakPrices, uint256[] memory currentValues);
 
-    /// @notice Returns S-curve values for a pair at a timestamp.
+    /// @notice Returns S-curve values for a pair at `timestamp`.
+    /// @return targetDay UTC midnight of `timestamp`, in Unix seconds.
+    /// @dev Each `peakDay` uses that same UTC-midnight unit.
+    ///      A COEN/ISO price and value use 6 decimals.
     function getScurveValues(address base, address quote, uint64 timestamp)
         external
         view
         returns (uint64 targetDay, uint64[] memory peakDays, uint256[] memory peakPrices, uint256[] memory values);
 
-    /// @notice Returns all S-curve data across all pairs.
+    /// @notice Returns the S-curve peak for every stored pair.
+    /// @dev Each `peakDay` is a UTC midnight in Unix seconds.
+    ///      It is not a yyyymmdd date key.
+    ///      A COEN/ISO peak price uses 6 decimals.
     function getAllScurveData()
         external
         view
         returns (address[] memory bases, address[] memory quotes, uint64[] memory peakDays, uint256[] memory peakPrices);
 
-    /// @notice Returns all S-curve data for one pair.
+    /// @notice Returns the stored S-curve peak for one pair.
+    /// @dev Each `peakDay` is a UTC midnight in Unix seconds.
+    ///      It is not a yyyymmdd date key.
+    ///      A COEN/ISO peak price uses 6 decimals.
     function getAllScurveDataForPair(address base, address quote)
         external
         view
         returns (uint64[] memory peakDays, uint256[] memory peakPrices);
 
-    /// @notice Returns the S-curve adjusted nominal price for a pair at a timestamp.
+    /// @notice Returns the nominal price for a pair at `timestamp`.
+    /// @dev Nominal price is the larger of that UTC day's VWAP and the S-curve value.
+    ///      VWAP uses the pair's registered scale.
+    ///      COEN/ISO VWAP uses 6 decimals. A generic pair VWAP uses 18 decimals.
+    ///      A COEN/ISO S-curve value uses 6 decimals.
+    ///      Policy rate uses a separate 1e6 scale. It is not this price.
     function getNominalPrice(address base, address quote, uint64 timestamp) external view returns (uint256 price);
 
-    /// @notice Returns nominal price components where nominal = max(VWAP, S-curve).
+    /// @notice Returns the parts of the nominal price at `timestamp`.
+    /// @dev Nominal price is the larger of `vwap` and `maxScurve`.
+    ///      `vwap` uses the pair's registered scale.
+    ///      COEN/ISO VWAP uses 6 decimals. A generic pair VWAP uses 18 decimals.
+    ///      A COEN/ISO S-curve value uses 6 decimals.
+    ///      Policy rate uses a separate 1e6 scale. It is not `maxScurve`.
+    /// @return nominalPrice The larger of `vwap` and `maxScurve`.
+    /// @return vwap VWAP for the UTC day that contains `timestamp`.
+    /// @return maxScurve Active S-curve value. A COEN/ISO value uses 6 decimals.
     function getNominalPriceComponents(address base, address quote, uint64 timestamp)
         external
         view
