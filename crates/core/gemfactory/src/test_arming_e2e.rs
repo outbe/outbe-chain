@@ -155,5 +155,5 @@ fn reopen_day(storage: &StorageHandle<'_>, deadline: u64) -> Result<()> {
     for currency in outbe_oracle::api::reference_currencies(storage.clone())? {
         gem.call_bin_cursor.clear(&currency)?;
     }
-    gem.call_currency_cursor.clear()
+    gem.call_currency_cursor.write(0)
 }

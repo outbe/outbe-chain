@@ -54,7 +54,7 @@ fn requeue_called(storage: &StorageHandle<'_>, series_id: SeriesId, deadline: u6
     for currency in outbe_oracle::api::reference_currencies(storage.clone())? {
         intex.call_bin_cursor.clear(&currency)?;
     }
-    intex.call_currency_cursor.clear()
+    intex.call_currency_cursor.write(0)
 }
 
 /// Runs a test-arming call, or returns `None` for any other calldata.
