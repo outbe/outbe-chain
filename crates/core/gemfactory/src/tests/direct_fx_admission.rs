@@ -58,8 +58,13 @@ fn a_direct_settlement_through_a_leg_the_window_never_priced_is_refused_without_
             },
         )
     });
-    let error = err_msg(result);
-    assert!(error.contains("oracle nominal unavailable"), "{error}");
+    assert_eq!(
+        result.unwrap_err().to_string(),
+        outbe_primitives::error::PrecompileError::from(
+            outbe_vaultrouter::settlement::SettlementError::OracleUnavailable
+        )
+        .to_string()
+    );
 
     assert_eq!(
         provider.clear_mutation_failure(),

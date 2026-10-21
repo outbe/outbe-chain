@@ -126,7 +126,10 @@ fn partial_aggregate_overflow_rolls_back_the_entire_snapshot() {
         let error = oracle
             .write_snapshot(day + 60 * 60, &[(pair, coen_iso(1), coen_iso(1))])
             .unwrap_err();
-        assert!(error.to_string().contains("VWAP overflow"));
+        assert_typed_revert(
+            &error,
+            crate::errors::OracleError::VwapOverflow("WWD prefix sum accumulation"),
+        );
         assert_eq!(oracle.snapshot_write_idx.read().unwrap(), 0);
         assert_eq!(
             oracle.daily_pv_sum.get_nested(&pair).read(&day).unwrap(),
@@ -427,22 +430,13 @@ fn bulk_calculators_propagate_argument_errors_instead_of_reporting_no_data() {
             .unwrap();
 
         let err = oracle.calculate_twaps(2000, 0).unwrap_err();
-        assert!(
-            err.to_string().contains("lookback_seconds"),
-            "zero lookback must surface as an argument error, got {err:?}"
-        );
+        assert_typed_revert(&err, crate::errors::OracleError::InvalidLookbackSeconds);
 
         let err = oracle.calculate_vwaps(2000, 2000).unwrap_err();
-        assert!(
-            err.to_string().contains("start_time must be less than"),
-            "empty range must surface as an argument error, got {err:?}"
-        );
+        assert_typed_revert(&err, crate::errors::OracleError::InvalidVwapRange);
 
         // A well-formed window with no samples still reports the no-data revert.
         let err = oracle.calculate_vwaps(5000, 6000).unwrap_err();
-        assert!(
-            err.to_string().contains("no VWAP data"),
-            "empty window must stay a no-data revert, got {err:?}"
-        );
+        assert_typed_revert(&err, crate::errors::OracleError::NoVwapData);
     });
 }

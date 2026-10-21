@@ -225,7 +225,13 @@ fn a_winner_in_an_unpriced_reference_currency_is_an_error() {
         };
         let err =
             runtime::issuance_groups(&result, &config, WORLDWIDE_DAY, &[SRC_CHAIN]).unwrap_err();
-        assert!(err.to_string().contains("unpriced currency: 978"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::DesisError::UnpricedReferenceCurrency(EUR_ISO)
+            )
+            .to_string()
+        );
     });
 }
 

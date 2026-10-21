@@ -1,5 +1,8 @@
 //! Error types for the Fidelity module.
 
+use crate::precompile::IFidelity;
+use alloy_primitives::Bytes;
+use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
 use outbe_tee::protocol::EnclaveResponse;
 use thiserror::Error;
@@ -22,9 +25,19 @@ impl FidelityError {
     }
 }
 
+fn revert_with<E: SolError>(error: E) -> PrecompileError {
+    PrecompileError::RevertBytes(Bytes::from(error.abi_encode()))
+}
+
 impl From<FidelityError> for PrecompileError {
     fn from(err: FidelityError) -> Self {
-        PrecompileError::Revert(err.to_string())
+        use IFidelity as I;
+        match err {
+            FidelityError::EnclaveQueryError { reason } => {
+                revert_with(I::EnclaveQueryError { reason })
+            }
+            FidelityError::QueryFailed { reason } => revert_with(I::QueryFailed { reason }),
+        }
     }
 }
 
@@ -129,9 +142,15 @@ mod tests {
         ));
 
         let fatal_err = PrecompileError::Fatal("auth rejected".into());
-        assert!(matches!(
-            surface_query_error(fatal_err),
-            PrecompileError::Revert(_)
-        ));
+        assert_eq!(
+            surface_query_error(fatal_err).to_string(),
+            PrecompileError::RevertBytes(Bytes::from(
+                IFidelity::QueryFailed {
+                    reason: "fatal: auth rejected".into(),
+                }
+                .abi_encode()
+            ))
+            .to_string()
+        );
     }
 }

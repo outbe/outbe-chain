@@ -1,4 +1,6 @@
-use alloy_primitives::B256;
+use crate::precompile::INodFactory;
+use alloy_primitives::{Bytes, B256};
+use alloy_sol_types::SolError;
 use outbe_common::pow::PowError;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
@@ -69,9 +71,59 @@ pub enum NodFactoryError {
     CallPriceOverflow,
 }
 
+fn revert_with<E: SolError>(error: E) -> PrecompileError {
+    PrecompileError::RevertBytes(Bytes::from(error.abi_encode()))
+}
+
 impl From<NodFactoryError> for PrecompileError {
     fn from(value: NodFactoryError) -> Self {
-        PrecompileError::Revert(value.to_string())
+        use INodFactory as I;
+        match value {
+            NodFactoryError::InvalidOwner => revert_with(I::InvalidOwner {}),
+            NodFactoryError::InvalidEncryptedNod => revert_with(I::InvalidEncryptedNod {}),
+            NodFactoryError::NodAlreadyExists => revert_with(I::NodAlreadyExists {}),
+            NodFactoryError::NodNotFound => revert_with(I::NodNotFound {}),
+            NodFactoryError::EntryPriceOutOfBounds => revert_with(I::EntryPriceOutOfBounds {}),
+            NodFactoryError::GroupNotFound => revert_with(I::GroupNotFound {}),
+            NodFactoryError::NodAlreadySettled => revert_with(I::NodAlreadySettled {}),
+            NodFactoryError::NodNotSettled => revert_with(I::NodNotSettled {}),
+            NodFactoryError::InsufficientProofOfWork => revert_with(I::InsufficientProofOfWork {}),
+            NodFactoryError::SettlementDeadlinePassed => {
+                revert_with(I::SettlementDeadlinePassed {})
+            }
+            NodFactoryError::CreateNodForTest(err) => revert_with(I::CreateNodForTest {
+                reason: err.to_string(),
+            }),
+            NodFactoryError::EmptyGroupMemberSlotDuringCleanup { group_key } => {
+                revert_with(I::EmptyGroupMemberSlotDuringCleanup {
+                    groupKey: group_key,
+                })
+            }
+            NodFactoryError::MissingGroupMemberRecordDuringCleanup { group_key, nod_id } => {
+                revert_with(I::MissingGroupMemberRecordDuringCleanup {
+                    groupKey: group_key,
+                    nodId: nod_id.to_u256(),
+                })
+            }
+            NodFactoryError::IneligibleGroupMember { group_key, nod_id } => {
+                revert_with(I::IneligibleGroupMember {
+                    groupKey: group_key,
+                    nodId: nod_id.to_u256(),
+                })
+            }
+            NodFactoryError::MissingGroupRecordDuringCleanup { group_key } => {
+                revert_with(I::MissingGroupRecordDuringCleanup {
+                    groupKey: group_key,
+                })
+            }
+            NodFactoryError::MissingGroupForCall { group_key } => {
+                revert_with(I::MissingGroupForCall {
+                    groupKey: group_key,
+                })
+            }
+            NodFactoryError::GroupNotQueuedForTest => revert_with(I::GroupNotQueuedForTest {}),
+            NodFactoryError::CallPriceOverflow => revert_with(I::CallPriceOverflow {}),
+        }
     }
 }
 

@@ -89,7 +89,13 @@ fn mine_rejects_zero_amount() {
             auth(PromisOp::Mint, alice(), U256::ZERO, 0),
         )
         .unwrap_err();
-        assert!(err.to_string().contains("amount must be positive"));
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_promis::errors::PromisError::Rejected("amount must be positive".into())
+            )
+            .to_string()
+        );
     });
 }
 
@@ -133,7 +139,13 @@ fn mine_coen_rejects_insufficient_balance() {
             &auth(PromisOp::Burn, alice(), U256::from(200u64), 1),
         );
         let err = dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap_err();
-        assert!(err.to_string().contains("insufficient balance"));
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_promis::errors::PromisError::Rejected("insufficient balance".into())
+            )
+            .to_string()
+        );
 
         // No native COEN minted, promis untouched (atomic revert).
         assert_eq!(storage.balance(alice()).unwrap(), U256::ZERO);
@@ -318,9 +330,12 @@ fn mine_gratis_rejects_insufficient_balance() {
         };
         let call = mine_gratis_call(U256::from(200u64), &pa, &placeholder);
         let err = dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap_err();
-        assert!(
-            err.to_string().contains("insufficient balance"),
-            "got: {err}"
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_promis::errors::PromisError::Rejected("insufficient balance".into())
+            )
+            .to_string()
         );
 
         // No gratis minted (no ciphertext ever written), promis untouched.

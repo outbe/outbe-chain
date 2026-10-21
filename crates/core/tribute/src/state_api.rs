@@ -157,9 +157,7 @@ pub fn burn_loaded(storage: &StorageHandle<'_>, loaded: LoadedTribute) -> Result
     storage.with_checkpoint(|| {
         contract.ensure_day_accepts_tributes(record.worldwide_day)?;
         if contract.retained_state_record(record.tribute_id)?.as_ref() != Some(&current) {
-            return Err(PrecompileError::revert(
-                "Tribute state changed after loading",
-            ));
+            return Err(TributeError::TributeStateChangedAfterLoading.into());
         }
         contract.bump_day_bucket_record(&record, false)?;
         let league = contract.tribute_leagues.read(&record.tribute_id)?;

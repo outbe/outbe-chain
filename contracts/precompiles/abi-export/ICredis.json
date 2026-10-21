@@ -752,5 +752,47 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "ArithmeticOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CredisNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "IndexOutOfBounds",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidStateValue",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NonTransferable",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnknownProfileSelector",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
   }
 ]

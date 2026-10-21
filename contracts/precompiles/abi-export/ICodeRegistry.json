@@ -179,5 +179,99 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AlreadyRegistered",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ApprovalProposalMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CapacityReached",
+    "inputs": [
+      {
+        "name": "maximum",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "GovernmentsDescriptorMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ImmutableApproval",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InconsistentRepositoryIndex",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IndexOutOfBounds",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "count",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidPatchPayload",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidPublication",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NonZeroStorageKeyTail",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoncanonicalGovernmentsBytes",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnknownRepository",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroRepositoryId",
+    "inputs": []
   }
 ]

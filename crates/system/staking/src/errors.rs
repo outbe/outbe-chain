@@ -1,4 +1,7 @@
+use crate::precompile::IStaking;
+use alloy_primitives::Bytes;
 use alloy_primitives::{Address, U256};
+use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
@@ -37,7 +40,87 @@ pub enum StakingError {
 }
 
 impl From<StakingError> for PrecompileError {
-    fn from(err: StakingError) -> Self {
-        PrecompileError::Revert(err.to_string())
+    fn from(error: StakingError) -> Self {
+        match error {
+            StakingError::AmountZero => {
+                PrecompileError::RevertBytes(Bytes::from(IStaking::AmountZero {}.abi_encode()))
+            }
+            StakingError::ThirdPartyStakingNotSupported => PrecompileError::RevertBytes(
+                Bytes::from(IStaking::ThirdPartyStakingNotSupported {}.abi_encode()),
+            ),
+            StakingError::StakeExceedsMaxStakePercent => PrecompileError::RevertBytes(Bytes::from(
+                IStaking::StakeExceedsMaxStakePercent {}.abi_encode(),
+            )),
+            StakingError::InsufficientStakedAmount => PrecompileError::RevertBytes(Bytes::from(
+                IStaking::InsufficientStakedAmount {}.abi_encode(),
+            )),
+            StakingError::UnjailRequiresLiveEnclaveBinding => PrecompileError::RevertBytes(
+                Bytes::from(IStaking::UnjailRequiresLiveEnclaveBinding {}.abi_encode()),
+            ),
+            StakingError::UnjailInsufficientStake { have, need } => PrecompileError::RevertBytes(
+                Bytes::from(IStaking::UnjailInsufficientStake { have, need }.abi_encode()),
+            ),
+            StakingError::InvalidSlashPercent => PrecompileError::RevertBytes(Bytes::from(
+                IStaking::InvalidSlashPercent {}.abi_encode(),
+            )),
+            StakingError::MsgValueMismatch => PrecompileError::RevertBytes(Bytes::from(
+                IStaking::MsgValueMismatch {}.abi_encode(),
+            )),
+            StakingError::UnbondingCompletionTimestampOverflow => PrecompileError::RevertBytes(
+                Bytes::from(IStaking::UnbondingCompletionTimestampOverflow {}.abi_encode()),
+            ),
+            StakingError::SlashedWithdrawalDelayOverflow => PrecompileError::RevertBytes(
+                Bytes::from(IStaking::SlashedWithdrawalDelayOverflow {}.abi_encode()),
+            ),
+            StakingError::StakeAccountingUnderflow { validator } => PrecompileError::RevertBytes(
+                Bytes::from(IStaking::StakeAccountingUnderflow { validator }.abi_encode()),
+            ),
+            StakingError::MissingValidatorHistory => PrecompileError::RevertBytes(Bytes::from(
+                IStaking::MissingValidatorHistory {}.abi_encode(),
+            )),
+            StakingError::ValidatorRegistryExceedsConsensusBound { count, bound } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    IStaking::ValidatorRegistryExceedsConsensusBound { count, bound }.abi_encode(),
+                ))
+            }
+            StakingError::SweepCountOverflow(value) => PrecompileError::RevertBytes(Bytes::from(
+                IStaking::SweepCountOverflow {
+                    value: value.to_string(),
+                }
+                .abi_encode(),
+            )),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn encoded(err: StakingError) -> Bytes {
+        match PrecompileError::from(err) {
+            PrecompileError::RevertBytes(bytes) => bytes,
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn caller_revert_keeps_integer_address_and_string_fields() {
+        let have = U256::from(1u64);
+        let need = U256::from(2u64);
+        let bytes = encoded(StakingError::UnjailInsufficientStake { have, need });
+        let decoded = IStaking::UnjailInsufficientStake::abi_decode(&bytes).expect("stake payload");
+        assert_eq!(decoded.have, have);
+        assert_eq!(decoded.need, need);
+
+        let validator = Address::repeat_byte(0x11);
+        let bytes = encoded(StakingError::StakeAccountingUnderflow { validator });
+        let decoded =
+            IStaking::StakeAccountingUnderflow::abi_decode(&bytes).expect("validator payload");
+        assert_eq!(decoded.validator, validator);
+
+        let bytes = encoded(StakingError::SweepCountOverflow("cursor"));
+        let decoded = IStaking::SweepCountOverflow::abi_decode(&bytes).expect("string payload");
+        assert_eq!(decoded.value, "cursor");
     }
 }

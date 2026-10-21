@@ -23,10 +23,15 @@ pub fn is_active(storage: &StorageHandle<'_>, cca: Address) -> Result<bool> {
 
 /// Reverts unless `cca` is recorded in `Active` standing.
 pub fn require_active_cca(storage: &StorageHandle<'_>, cca: Address) -> Result<()> {
-    if is_active(storage, cca)? {
+    let record = CcaContract::new(storage.clone()).load(cca)?;
+    if record.state == ICcaRegistry::State::Active {
         Ok(())
     } else {
-        Err(CcaError::CcaNotActive(cca).into())
+        Err(CcaError::CcaNotActive {
+            cca,
+            state: record.state,
+        }
+        .into())
     }
 }
 

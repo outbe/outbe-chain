@@ -1,5 +1,8 @@
 //! Error types for the confidential Gratis token module.
 
+use crate::precompile::IGratis;
+use alloy_primitives::Bytes;
+use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
 use outbe_tee::protocol::EnclaveResponse;
 use thiserror::Error;
@@ -19,9 +22,22 @@ pub enum GratisError {
     NodChainMismatch,
 }
 
+fn revert_with<E: SolError>(error: E) -> PrecompileError {
+    PrecompileError::RevertBytes(Bytes::from(error.abi_encode()))
+}
+
 impl From<GratisError> for PrecompileError {
     fn from(err: GratisError) -> Self {
-        PrecompileError::Revert(err.to_string())
+        use IGratis as I;
+        match err {
+            GratisError::TransferNotAllowed => revert_with(I::TransferNotAllowed {}),
+            GratisError::InvalidOpNonce { expected, provided } => {
+                revert_with(I::InvalidOpNonce { expected, provided })
+            }
+            GratisError::Rejected(value) => revert_with(I::Rejected { value }),
+            GratisError::PledgedSupplyOverflow => revert_with(I::PledgedSupplyOverflow {}),
+            GratisError::NodChainMismatch => revert_with(I::NodChainMismatch {}),
+        }
     }
 }
 

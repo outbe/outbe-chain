@@ -1443,9 +1443,15 @@ fn process_bids_rejects_an_oversized_batch() {
             bids(over, 200),
         )
         .unwrap_err();
-        assert!(
-            format!("{error:?}").contains("over the"),
-            "unexpected error: {error:?}"
+        assert_eq!(
+            error.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::DesisError::BidBatchTooLarge(
+                    MAX_PAYLOAD_ARRAY_LEN + 1,
+                    MAX_PAYLOAD_ARRAY_LEN,
+                )
+            )
+            .to_string()
         );
         // Refused at the intake, so clearing never sees a day it cannot refund.
         let contract = s.contract::<DesisContract>();
@@ -2778,7 +2784,13 @@ fn a_relayed_bid_naming_an_unspellable_currency_is_refused_at_intake() {
             relayed,
         )
         .unwrap_err();
-        assert!(err.to_string().contains("no series id can spell"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::DesisError::UnspellableBidCurrency(1949, 840)
+            )
+            .to_string()
+        );
     });
 }
 
@@ -2985,9 +2997,12 @@ fn dispatch_auction_brief_oversized_limit_rejects_under_the_reject_policy() {
             crate::api::BriefOverflowPolicy::Reject,
         )
         .unwrap_err();
-        assert!(
-            format!("{error:?}").contains("exceeds Desis u128 domain"),
-            "unexpected error: {error:?}"
+        assert_eq!(
+            error.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::DesisError::AuctionBriefLimitExceedsDomain
+            )
+            .to_string()
         );
         let contract = s.contract::<DesisContract>();
         assert_eq!(

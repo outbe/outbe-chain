@@ -204,7 +204,13 @@ fn precompile_transfer_reverts() {
         .abi_encode(),
     );
     let err = run_dispatch(call, alice()).unwrap_err();
-    assert!(err.to_string().contains("transfers are not allowed"));
+    assert_eq!(
+        err.to_string(),
+        outbe_primitives::error::PrecompileError::from(
+            crate::errors::GratisError::TransferNotAllowed
+        )
+        .to_string()
+    );
 }
 
 #[test]
@@ -257,9 +263,15 @@ fn folded_fidelity_section_failure_reverts_the_whole_op() {
             bad_section,
         )
         .unwrap_err();
+        let outbe_primitives::error::PrecompileError::RevertBytes(bytes) = &err else {
+            panic!("expected RevertBytes, got: {err:?}");
+        };
+        let decoded = <IGratis::Rejected as alloy_sol_types::SolError>::abi_decode(bytes)
+            .expect("expected IGratis::Rejected");
         assert!(
-            err.to_string().contains("fidelity section failed"),
-            "expected a fidelity-section rejection, got: {err}"
+            decoded.value.contains("fidelity section failed"),
+            "expected a fidelity-section rejection, got: {}",
+            decoded.value
         );
 
         // Atomic revert: no gratis state was written (balance, op_nonce).

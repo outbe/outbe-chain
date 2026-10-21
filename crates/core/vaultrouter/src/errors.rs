@@ -148,21 +148,31 @@ impl From<VaultRouterError> for PrecompileError {
             VaultRouterError::InvalidReservationAmount => {
                 revert_with(I::InvalidReservationAmount {})
             }
-            undeclared @ (VaultRouterError::ZeroAddress
-            | VaultRouterError::Unauthorized
-            | VaultRouterError::ReceiverNotDeployed
-            | VaultRouterError::UndecodableReturn(_)
-            | VaultRouterError::TimestampOverflow
-            | VaultRouterError::RouterCallUndecodable(_)
-            | VaultRouterError::IndexOutOfBounds
-            | VaultRouterError::InvalidAsset
-            | VaultRouterError::InvalidAssetDecimals
-            | VaultRouterError::UnsupportedAssetDecimalsSimple
-            | VaultRouterError::InvalidAssetCurrency
-            | VaultRouterError::PledgePriceUnavailable
-            | VaultRouterError::PreviousDayVwapUnavailable
-            | VaultRouterError::ReferencePairUnavailable) => {
-                PrecompileError::Revert(undeclared.to_string())
+            VaultRouterError::ZeroAddress => revert_with(I::ZeroAddress {}),
+            VaultRouterError::Unauthorized => revert_with(I::Unauthorized {}),
+            VaultRouterError::ReceiverNotDeployed => revert_with(I::ReceiverNotDeployed {}),
+            VaultRouterError::UndecodableReturn(value) => revert_with(I::UndecodableReturn {
+                value: value.to_string(),
+            }),
+            VaultRouterError::TimestampOverflow => revert_with(I::TimestampOverflow {}),
+            VaultRouterError::RouterCallUndecodable(value) => {
+                revert_with(I::RouterCallUndecodable {
+                    value: value.to_string(),
+                })
+            }
+            VaultRouterError::IndexOutOfBounds => revert_with(I::IndexOutOfBounds {}),
+            VaultRouterError::InvalidAsset => revert_with(I::InvalidAsset {}),
+            VaultRouterError::InvalidAssetDecimals => revert_with(I::InvalidAssetDecimals {}),
+            VaultRouterError::UnsupportedAssetDecimalsSimple => {
+                revert_with(I::UnsupportedAssetDecimalsSimple {})
+            }
+            VaultRouterError::InvalidAssetCurrency => revert_with(I::InvalidAssetCurrency {}),
+            VaultRouterError::PledgePriceUnavailable => revert_with(I::PledgePriceUnavailable {}),
+            VaultRouterError::PreviousDayVwapUnavailable => {
+                revert_with(I::PreviousDayVwapUnavailable {})
+            }
+            VaultRouterError::ReferencePairUnavailable => {
+                revert_with(I::ReferencePairUnavailable {})
             }
         }
     }
@@ -197,11 +207,30 @@ pub enum SettlementError {
 
 impl From<SettlementError> for PrecompileError {
     fn from(error: SettlementError) -> Self {
+        use IVaultRouter as I;
         match error {
-            SettlementError::TokenOperationFailed => {
-                revert_with(IVaultRouter::TokenOperationFailed {})
+            SettlementError::AssetVaultsCount => revert_with(I::AssetVaultsCount {}),
+            SettlementError::AssetNotRegistered { asset } => {
+                revert_with(I::AssetNotRegistered { asset })
             }
-            undeclared => PrecompileError::Revert(undeclared.to_string()),
+            SettlementError::CurrencyMismatch { iso_code } => {
+                revert_with(I::CurrencyMismatch { isoCode: iso_code })
+            }
+            SettlementError::AssetDecimals => revert_with(I::AssetDecimals {}),
+            SettlementError::AssetIsoCode => revert_with(I::AssetIsoCode {}),
+            SettlementError::Rounding(reason) => revert_with(I::Rounding {
+                reason: reason.to_string(),
+            }),
+            SettlementError::OracleUnavailable => revert_with(I::OracleUnavailable {}),
+            SettlementError::SnapshotMismatch {
+                authorized,
+                required,
+            } => revert_with(I::SnapshotMismatch {
+                authorized,
+                required,
+            }),
+            SettlementError::TokenOperationFailed => revert_with(I::TokenOperationFailed {}),
+            SettlementError::AmountMismatch => revert_with(I::AmountMismatch {}),
         }
     }
 }

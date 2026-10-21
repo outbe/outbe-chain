@@ -1,5 +1,5 @@
 use alloy_primitives::{address, b256, Address, B256, U256};
-use alloy_sol_types::SolEvent;
+use alloy_sol_types::{SolError, SolEvent};
 use outbe_primitives::addresses::{SLASH_INDICATOR_ADDRESS, STAKING_ADDRESS};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::finalized_guard_ring::{test_ring_hash, RingPosition};
@@ -1350,7 +1350,7 @@ fn prune_slash_guards_cursor_overflow_reverts_after_the_ring_write() {
     let mut provider = seeded_slash_ring(u64::MAX, evicted, &[evicted]);
     let result = provider.enter(|storage| hooks::prune_slash_guards(storage, fb_hash));
     assert!(
-        matches!(&result, Err(PrecompileError::Revert(message)) if message == "slash_guard_ring_seq overflow"),
+        matches!(&result, Err(PrecompileError::RevertBytes(bytes)) if bytes.len() >= 4 && bytes[..4] == ISlashIndicator::SlashGuardRingSeqOverflow::SELECTOR),
         "{result:?}"
     );
     assert_eq!(

@@ -1,4 +1,6 @@
 use super::*;
+use crate::precompile::IValidatorSet as I;
+use alloy_sol_types::SolError;
 
 #[test]
 fn test_activate_missing_validator_returns_revert() {
@@ -51,8 +53,8 @@ fn deactivation_rejection_reasons_preserve_validator_state() {
         let pending = vs.pending_set_change.read().unwrap();
         assert!(matches!(
             vs.deactivate_validator(outsider, validator),
-            Err(PrecompileError::Revert(reason))
-                if reason == "unauthorized: caller must be owner or validator itself"
+            Err(PrecompileError::RevertBytes(bytes))
+                if bytes.len() >= 4 && bytes[..4] == I::UnauthorizedOwnerOrValidator::SELECTOR
         ));
         assert_eq!(vs.validator_state(validator).unwrap(), active);
         assert_eq!(vs.pending_set_change.read().unwrap(), pending);
@@ -62,8 +64,8 @@ fn deactivation_rejection_reasons_preserve_validator_state() {
         let pending = vs.pending_set_change.read().unwrap();
         assert!(matches!(
             vs.deactivate_validator(validator, validator),
-            Err(PrecompileError::Revert(reason))
-                if reason == "can only deactivate an active validator"
+            Err(PrecompileError::RevertBytes(bytes))
+                if bytes.len() >= 4 && bytes[..4] == I::CanOnlyDeactivateActiveValidator::SELECTOR
         ));
         assert_eq!(vs.validator_state(validator).unwrap(), exiting);
         assert_eq!(vs.pending_set_change.read().unwrap(), pending);
@@ -213,10 +215,16 @@ fn test_reregistration_cooldown_gates_then_allows() {
         let err = vs
             .register_validator(OWNER, val, &dummy_consensus_pubkey(0xDD))
             .unwrap_err();
-        assert!(
-            err.to_string().contains("cooldown"),
-            "error should mention cooldown"
-        );
+        match err {
+            PrecompileError::RevertBytes(bytes) => {
+                assert_eq!(
+                    bytes.to_vec(),
+                    crate::precompile::IValidatorSet::ReregistrationCooldownNotExpired {}
+                        .abi_encode()
+                );
+            }
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
     });
 
     // h1100: 1000 blocks elapsed -> allowed.

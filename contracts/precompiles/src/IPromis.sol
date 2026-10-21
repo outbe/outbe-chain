@@ -2,6 +2,9 @@
 pragma solidity ^0.8.30;
 
 interface IPromis {
+    error InvalidOpNonce(uint64 expected, uint64 provided);
+    error Rejected(string value);
+
     /// @notice `promisMinor` PROMIS (6 decimals) was minted; `totalSupplyMinor` is the supply after it.
     event PromisMinted(address indexed account, uint256 promisMinor, uint256 totalSupplyMinor);
     /// @notice `promisMinor` PROMIS (6 decimals) was burned; `totalSupplyMinor` is the supply after it.

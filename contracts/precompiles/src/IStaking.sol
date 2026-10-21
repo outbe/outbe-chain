@@ -4,6 +4,22 @@ pragma solidity ^0.8.30;
 /// @title IStaking
 /// @notice Staking precompile at 0x000000000000000000000000000000000000EE02
 interface IStaking {
+    /// Caller-facing domain revert.
+    error AmountZero();
+    error ThirdPartyStakingNotSupported();
+    error StakeExceedsMaxStakePercent();
+    error InsufficientStakedAmount();
+    error UnjailRequiresLiveEnclaveBinding();
+    error UnjailInsufficientStake(uint256 have, uint256 need);
+    error InvalidSlashPercent();
+    error MsgValueMismatch();
+    error UnbondingCompletionTimestampOverflow();
+    error SlashedWithdrawalDelayOverflow();
+    error StakeAccountingUnderflow(address validator);
+    error MissingValidatorHistory();
+    error ValidatorRegistryExceedsConsensusBound(uint32 count, uint32 bound);
+    error SweepCountOverflow(string value);
+
     /// Bond `amount` to `validatorAddress`. The caller must be the validator.
     /// The implementation rejects third-party delegation. The call must carry
     /// `msg.value == amount`. The EVM moves the stake into the precompile account,

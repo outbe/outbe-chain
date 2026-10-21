@@ -1,3 +1,6 @@
+use crate::precompile::ITribute;
+use alloy_primitives::Bytes;
+use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::time::WorldwideDay;
 use thiserror::Error;
@@ -18,9 +21,21 @@ pub enum WwdCallerError {
     DurationOverflow { label: &'static str },
 }
 
+fn revert_with<E: SolError>(error: E) -> PrecompileError {
+    PrecompileError::RevertBytes(Bytes::from(error.abi_encode()))
+}
+
 impl From<WwdCallerError> for PrecompileError {
     fn from(value: WwdCallerError) -> Self {
-        PrecompileError::Revert(value.to_string())
+        use ITribute as I;
+        match value {
+            WwdCallerError::FormingWindowOverflow => revert_with(I::FormingWindowOverflow {}),
+            WwdCallerError::LookbackWindowOverflow => revert_with(I::LookbackWindowOverflow {}),
+            WwdCallerError::OfferingWindowOverflow => revert_with(I::OfferingWindowOverflow {}),
+            WwdCallerError::DurationOverflow { label } => revert_with(I::DurationOverflow {
+                label: label.to_string(),
+            }),
+        }
     }
 }
 

@@ -14,6 +14,22 @@ pragma solidity ^0.8.30;
 /// Explicit registry keys take precedence.
 /// The registry rejects compressed inputs. Inbox keys and updates must be nonidentity.
 interface IL2Registry {
+    /// Caller-facing domain revert.
+    error InvalidProposalPayload();
+    error InvalidPublicKeyEncoding();
+    error InvalidChainId();
+    error InvalidL1Address();
+    error InvalidInboxAddress();
+    error InvalidPublicKeyLength(uint64 length);
+    error InvalidPublicKey();
+    error InboxKeyCallFailed();
+    error NetworkAlreadyRegistered(uint64 chain_id);
+    error L1AddressAlreadyRegistered(address l1_address, uint64 chain_id);
+    error NetworkNotRegistered(uint64 chain_id);
+    error NotNetworkOwner(address caller, uint64 chain_id);
+    error ZkMerkleRootRequired();
+    error InvalidZkSignature();
+
     event L2NetworkRegistered(uint64 indexed chainId, address indexed l1Address, bytes publicKey);
     event L2NetworkRemoved(uint64 indexed chainId);
     event L2PublicKeyUpdated(uint64 indexed chainId, bytes publicKey);

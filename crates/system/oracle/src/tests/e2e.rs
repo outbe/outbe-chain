@@ -357,7 +357,10 @@ fn fresh_rate_accepts_the_ttl_boundary_and_rejects_the_next_second() {
                 ))
                 .unwrap();
             let error = crate::api::fresh_coen_rate_for(storage.clone(), 840).unwrap_err();
-            assert!(error.to_string().contains("stale"), "{error}");
+            assert_typed_revert(
+                &error,
+                crate::errors::OracleError::StaleCoenRate { iso_code: 840 },
+            );
             assert_eq!(
                 crate::api::fresh_coen_rate_for_opt(storage, 840).unwrap(),
                 None
@@ -1075,10 +1078,7 @@ fn explicit_long_vwap_rejects_an_evicted_partial_edge_instead_of_approximating()
         oracle.snapshot_oldest_idx.write(1).unwrap();
 
         let error = oracle.try_calculate_vwap(pair, start, end).unwrap_err();
-        assert!(
-            error.to_string().contains("no VWAP data"),
-            "an unavailable raw edge must fail instead of using the full-day aggregate: {error:?}"
-        );
+        assert_typed_revert(&error, crate::errors::OracleError::NoVwapData);
     });
 }
 
@@ -1097,15 +1097,9 @@ fn range_vwap_rejects_a_window_wider_than_the_lookback_duration() {
             coen_iso(10)
         );
         let error = oracle.calculate_vwap(pair, day, day + 86_401).unwrap_err();
-        assert!(
-            error.to_string().contains("lookback_duration"),
-            "unexpected error: {error}"
-        );
+        assert_typed_revert(&error, crate::errors::OracleError::VwapRangeTooWide);
         let error = oracle.calculate_vwaps(day, day + 86_401).unwrap_err();
-        assert!(
-            error.to_string().contains("lookback_duration"),
-            "unexpected error: {error}"
-        );
+        assert_typed_revert(&error, crate::errors::OracleError::VwapRangeTooWide);
     });
 }
 
@@ -1122,9 +1116,7 @@ fn worldwide_day_snapshot_rejects_noncanonical_bounds_without_writes() {
         let error = oracle
             .store_worldwide_day_vwap_snapshot(worldwide_day, start + 1, end)
             .unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("start_time must be less than end_time"));
+        assert_typed_revert(&error, crate::errors::OracleError::InvalidVwapRange);
         assert!(!oracle
             .worldwide_day_vwap_exists
             .read(&worldwide_day)
@@ -1538,11 +1530,7 @@ fn init_from_genesis_rejects_a_zero_reference_iso_code() {
             ..crate::genesis::OracleGenesisConfig::default_config()
         };
         let err = crate::genesis::init_from_genesis(oracle, &config).unwrap_err();
-        let msg = format!("{err:?}");
-        assert!(
-            msg.contains("reference iso_code must be non-zero"),
-            "unexpected error: {msg}"
-        );
+        assert_typed_revert(&err, crate::errors::OracleError::ReferenceIsoCodeZero);
     });
 }
 
@@ -1554,10 +1542,9 @@ fn init_from_genesis_rejects_a_duplicate_reference_iso_code() {
             ..crate::genesis::OracleGenesisConfig::default_config()
         };
         let err = crate::genesis::init_from_genesis(oracle, &config).unwrap_err();
-        let msg = format!("{err:?}");
-        assert!(
-            msg.contains("duplicate reference iso_code"),
-            "unexpected error: {msg}"
+        assert_typed_revert(
+            &err,
+            crate::errors::OracleError::DuplicateReferenceIsoCode { iso_code: 840 },
         );
     });
 }
@@ -1570,9 +1557,10 @@ fn init_from_genesis_rejects_unsorted_reference_currencies() {
             ..crate::genesis::OracleGenesisConfig::default_config()
         };
         let error = crate::genesis::init_from_genesis(oracle, &config).unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("reference currencies must be sorted"));
+        assert_typed_revert(
+            &error,
+            crate::errors::OracleError::ReferenceCurrenciesNotSorted,
+        );
     });
 }
 
@@ -1584,9 +1572,10 @@ fn init_from_genesis_requires_usd_in_reference_currencies() {
             ..crate::genesis::OracleGenesisConfig::default_config()
         };
         let error = crate::genesis::init_from_genesis(oracle, &config).unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("reference currencies must include USD 840"));
+        assert_typed_revert(
+            &error,
+            crate::errors::OracleError::MissingUsdReferenceCurrency,
+        );
     });
 }
 
@@ -1625,7 +1614,13 @@ fn init_from_genesis_rejects_a_ratio_above_one() {
             ..crate::genesis::OracleGenesisConfig::default_config()
         };
         let error = crate::genesis::init_from_genesis(oracle, &config).unwrap_err();
-        assert!(error.to_string().contains("slash_fraction"), "{error}");
+        assert_typed_revert(
+            &error,
+            crate::errors::OracleError::RatioAboveOne {
+                field: "slash_fraction",
+                value: SCALE_1E18 + U256::from(1u64),
+            },
+        );
     });
 }
 
@@ -1638,7 +1633,7 @@ fn init_from_genesis_rejects_noncanonical_policy_rates() {
                 iso_code: 0,
                 annual_rate_1e6: TEST_RATE,
             }],
-            "policy iso_code must be non-zero",
+            crate::errors::OracleError::PolicyIsoCodeZero,
         ),
         (
             "zero rate",
@@ -1646,22 +1641,22 @@ fn init_from_genesis_rejects_noncanonical_policy_rates() {
                 iso_code: 840,
                 annual_rate_1e6: U256::ZERO,
             }],
-            "policy rate must be non-zero",
+            crate::errors::OracleError::PolicyRateZero { iso_code: 840 },
         ),
         (
             "duplicate",
             vec![policy_rate(840), policy_rate(840)],
-            "duplicate policy iso_code",
+            crate::errors::OracleError::DuplicatePolicyIsoCode { iso_code: 840 },
         ),
         (
             "unsorted",
             vec![policy_rate(978), policy_rate(840)],
-            "policy rates must be sorted",
+            crate::errors::OracleError::PolicyRatesNotSorted,
         ),
         (
             "reference currency without a rate",
             vec![policy_rate(840)],
-            "reference currency 156 has no policy rate",
+            crate::errors::OracleError::MissingPolicyRate { iso_code: 156 },
         ),
     ] {
         with_bare_oracle(|_storage, oracle| {
@@ -1670,7 +1665,16 @@ fn init_from_genesis_rejects_noncanonical_policy_rates() {
                 ..crate::genesis::OracleGenesisConfig::default_config()
             };
             let error = crate::genesis::init_from_genesis(oracle, &config).unwrap_err();
-            assert!(error.to_string().contains(expected), "{name}: {error}");
+            let expected = outbe_primitives::error::PrecompileError::from(expected);
+            match (&error, expected) {
+                (
+                    outbe_primitives::error::PrecompileError::RevertBytes(actual),
+                    outbe_primitives::error::PrecompileError::RevertBytes(expected),
+                ) => assert_eq!(actual, &expected, "{name}"),
+                (actual, expected) => {
+                    panic!("{name}: expected typed revert bytes\nactual: {actual:?}\nexpected: {expected:?}")
+                }
+            }
         });
     }
 }
@@ -1725,10 +1729,9 @@ fn check_reference_currency_rejects_an_unseeded_code() {
             storage,
         );
         let err = crate::api::check_reference_currency(&ctx, 124).unwrap_err();
-        let msg = format!("{err:?}");
-        assert!(
-            msg.contains("not a registered reference currency"),
-            "unexpected error: {msg}"
+        assert_typed_revert(
+            &err,
+            crate::errors::OracleError::NotReferenceCurrency { iso_code: 124 },
         );
     });
 }
@@ -1800,9 +1803,10 @@ fn policy_rate_precompile_enumerates_and_rejects_absence() {
         let absent = IOracle::getPolicyRateCall { isoCode: 978 }.abi_encode();
         let error =
             crate::precompile::dispatch(storage, &absent, Address::ZERO, U256::ZERO).unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("no policy rate for iso_code 978"));
+        assert_typed_revert(
+            &error,
+            crate::errors::OracleError::NoPolicyRate { iso_code: 978 },
+        );
     });
 }
 
@@ -1951,9 +1955,11 @@ fn currency_cross_rate_reverts_when_a_leg_has_no_rate() {
         for (from, to) in [(978, 840), (840, 978)] {
             let error = crate::api::currency_cross_rate(storage.clone(), from, to, coen_iso(10))
                 .unwrap_err();
-            assert!(
-                error.to_string().contains("No rate for pair"),
-                "{from}->{to}: {error}"
+            assert_typed_revert(
+                &error,
+                crate::errors::OracleError::NoRateForPair {
+                    pair: AddressPair::new_coen_to(978),
+                },
             );
         }
     });

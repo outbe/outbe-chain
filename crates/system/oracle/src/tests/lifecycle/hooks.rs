@@ -142,9 +142,12 @@ fn slash_window_rejects_unbounded_validator_work() {
         }
 
         let err = crate::tally::slash_and_reset_counters(oracle, 10_000).unwrap_err();
-        assert!(
-            err.to_string().contains("exceeds cap"),
-            "unexpected error: {err}"
+        assert_typed_revert(
+            &err,
+            crate::errors::OracleError::SlashWindowValidatorSetExceedsCap {
+                actual: crate::tally::MAX_ORACLE_SLASH_WINDOW_VALIDATORS + 1,
+                cap: crate::tally::MAX_ORACLE_SLASH_WINDOW_VALIDATORS,
+            },
         );
     });
 }
@@ -161,9 +164,11 @@ fn slash_window_errors_instead_of_panicking_on_an_oversized_slash_fraction() {
         oracle.config_slash_fraction.write(U256::MAX).unwrap();
 
         let err = crate::tally::slash_and_reset_counters(oracle, 10_000).unwrap_err();
-        assert!(
-            err.to_string().contains("exceeds u64"),
-            "unexpected error: {err}"
+        assert_typed_revert(
+            &err,
+            crate::errors::OracleError::SlashPercentOutOfRange {
+                slash_fraction: U256::MAX,
+            },
         );
     });
 }
@@ -193,7 +198,13 @@ fn slash_window_rolls_back_slash_state_when_force_exit_fails() {
         oracle.increment_miss(&validator).unwrap();
 
         let err = crate::tally::slash_and_reset_counters(oracle, 10_000).unwrap_err();
-        assert!(err.to_string().contains("cannot jail validator"));
+        assert_typed_revert(
+            &err,
+            outbe_validatorset::errors::ValidatorSetError::CannotPunishValidatorStatus {
+                action: "jail",
+                status: outbe_validatorset::runtime::status::PENDING,
+            },
+        );
 
         let staking = outbe_staking::contract::Staking::new(storage.clone());
         assert_eq!(staking.stake_amount.read(&validator).unwrap(), stake);

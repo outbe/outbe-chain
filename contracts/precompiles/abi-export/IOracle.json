@@ -1409,5 +1409,472 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AggregateVoteAlreadyExists",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AggregateVotePairNotRegistered",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AggregateVotePairNotVoteTarget",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AggregateVoteTupleCountExceedsPairCount",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AggregateVoteValidatorZero",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AlreadyVotedThisPeriod",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CrossRateOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DuplicateAggregateVoteValidator",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DuplicatePairInAggregateVote",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DuplicatePairInVote",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DuplicatePolicyIsoCode",
+    "inputs": [
+      {
+        "name": "iso_code",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DuplicateReferenceIsoCode",
+    "inputs": [
+      {
+        "name": "iso_code",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidLookbackSeconds",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidVwapPolicy",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidVwapRange",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidVwapSnapshot",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LookbackExceedsRetention",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MissingAggregateVoteValidator",
+    "inputs": [
+      {
+        "name": "voter_index",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "MissingPairMetadata",
+    "inputs": [
+      {
+        "name": "pair_id",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "MissingPolicyRate",
+    "inputs": [
+      {
+        "name": "iso_code",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "MissingTwapData",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MissingUsdReferenceCurrency",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoFinalizedUtcDayVwap",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoPolicyRate",
+    "inputs": [
+      {
+        "name": "iso_code",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NoRateForPair",
+    "inputs": [
+      {
+        "name": "pairBase",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "pairQuote",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NoTwapData",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoVwapData",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotActiveOracleSigner",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotReferenceCurrency",
+    "inputs": [
+      {
+        "name": "iso_code",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "OnlySystem",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PairAlreadyRegistered",
+    "inputs": [
+      {
+        "name": "pairBase",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "pairQuote",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PairBaseQuoteIdentical",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PairIndexOutOfRange",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PairNotCanonical",
+    "inputs": [
+      {
+        "name": "pairBase",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "pairQuote",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PairNotRegistered",
+    "inputs": [
+      {
+        "name": "pairBase",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "pairQuote",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PairNotVoteTarget",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PolicyIsoCodeZero",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PolicyRateZero",
+    "inputs": [
+      {
+        "name": "iso_code",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PolicyRatesNotSorted",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RatioAboveOne",
+    "inputs": [
+      {
+        "name": "field",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ReferenceCurrenciesNotSorted",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ReferenceIsoCodeZero",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ScurveWriteIndexOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SlashPercentOutOfRange",
+    "inputs": [
+      {
+        "name": "slash_fraction",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SlashWindowValidatorSetExceedsCap",
+    "inputs": [
+      {
+        "name": "actual",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "cap",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SlashWindowZero",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SnapshotOutOfOrder",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SnapshotWriteIndexOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "StaleCoenRate",
+    "inputs": [
+      {
+        "name": "iso_code",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TallyArithmeticOverflow",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TwapOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VotePeriodZero",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VotePriceExceedsCap",
+    "inputs": [
+      {
+        "name": "price",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "max",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "VoteTupleCountExceedsPairCount",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VoteVolumeExceedsCap",
+    "inputs": [
+      {
+        "name": "volume",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "max",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "VoterListEntryWithoutVote",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VwapOverflow",
+    "inputs": [
+      {
+        "name": "reason",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "VwapRangeTooWide",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WorldwideDayVwapSnapshotNotFound",
+    "inputs": []
   }
 ]

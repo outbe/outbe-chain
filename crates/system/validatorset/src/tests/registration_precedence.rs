@@ -5,6 +5,8 @@
 
 use super::*;
 use crate::delegation::ValidatorDelegateRole;
+use crate::precompile::IValidatorSet as I;
+use alloy_sol_types::SolError;
 use blst::min_pk::SecretKey;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::hashmap::MutationPrefixViews;
@@ -40,6 +42,7 @@ fn proof_of_possession(secret: &SecretKey, validator: Address, node: B256) -> [u
 fn outcome_text(result: Result<()>) -> String {
     match result {
         Err(PrecompileError::Revert(message)) => format!("Revert: {message}"),
+        Err(PrecompileError::RevertBytes(bytes)) => super::typed_revert(bytes),
         Err(PrecompileError::Fatal(message)) => format!("Fatal: {message}"),
         other => format!("{other:?}"),
     }
@@ -83,7 +86,7 @@ fn zero_key_is_rejected_before_authorization() -> Result<()> {
         40,
         |_| Ok(()),
         |vs| vs.register_validator_with_sig(STRANGER, VALIDATOR, &[0; 48], B256::ZERO, None),
-        "Revert: consensus public key must not be zero",
+        &super::typed_revert(I::ZeroConsensusPublicKey {}.abi_encode()),
     )
 }
 
@@ -96,7 +99,7 @@ fn unauthorized_caller_is_rejected_before_delegate_and_node_checks() -> Result<(
             let key = dummy_consensus_pubkey(0xD3);
             vs.register_validator_with_sig(STRANGER, DELEGATE, &key, B256::ZERO, None)
         },
-        "Revert: unauthorized: caller must be owner or validator itself",
+        &super::typed_revert(I::UnauthorizedOwnerOrValidator {}.abi_encode()),
     )
 }
 
@@ -109,7 +112,7 @@ fn operational_delegate_is_rejected_before_node_checks() -> Result<()> {
             let key = dummy_consensus_pubkey(0xD3);
             vs.register_validator_with_sig(OWNER, DELEGATE, &key, B256::ZERO, None)
         },
-        "Revert: validator address is already assigned as an operational delegate",
+        &super::typed_revert(I::ValidatorAlreadyOperationalDelegate {}.abi_encode()),
     )
 }
 
@@ -122,7 +125,7 @@ fn zero_node_id_is_rejected_before_proof_of_possession() -> Result<()> {
             let key = dummy_consensus_pubkey(0xD1);
             vs.register_validator_with_sig(OWNER, VALIDATOR, &key, B256::ZERO, None)
         },
-        "Revert: Radicle NodeId must not be zero",
+        &super::typed_revert(I::ZeroRadicleNodeId {}.abi_encode()),
     )
 }
 
@@ -135,7 +138,7 @@ fn taken_node_id_is_rejected_before_proof_of_possession() -> Result<()> {
             let key = dummy_consensus_pubkey(0xD1);
             vs.register_validator_with_sig(OWNER, VALIDATOR, &key, node_id(OTHER), None)
         },
-        "Revert: Radicle NodeId already registered by another validator",
+        &super::typed_revert(I::RadicleNodeIdAlreadyRegistered {}.abi_encode()),
     )
 }
 
@@ -148,7 +151,7 @@ fn missing_proof_of_possession_is_rejected_before_key_reuse() -> Result<()> {
             let reused = dummy_consensus_pubkey(0xD2);
             vs.register_validator_with_sig(OWNER, VALIDATOR, &reused, node_id(VALIDATOR), None)
         },
-        "Revert: validator registration requires BLS proof-of-possession signature",
+        &super::typed_revert(I::RegistrationRequiresBlsPop {}.abi_encode()),
     )
 }
 
@@ -161,7 +164,7 @@ fn malformed_proof_inputs_are_rejected_key_first() -> Result<()> {
             let node = node_id(VALIDATOR);
             vs.register_validator_with_sig(OWNER, VALIDATOR, &NOT_A_POINT, node, Some(&[0; 96]))
         },
-        "Revert: invalid BLS public key",
+        &super::typed_revert(I::InvalidBlsPublicKey {}.abi_encode()),
     )?;
     let key: [u8; 48] = bls_key(0x31)?.sk_to_pk().to_bytes();
     assert_rejected_first(
@@ -171,7 +174,7 @@ fn malformed_proof_inputs_are_rejected_key_first() -> Result<()> {
             let node = node_id(VALIDATOR);
             vs.register_validator_with_sig(OWNER, VALIDATOR, &key, node, Some(&[0; 96]))
         },
-        "Revert: invalid BLS signature",
+        &super::typed_revert(I::InvalidBlsSignature {}.abi_encode()),
     )
 }
 
@@ -187,7 +190,7 @@ fn wrong_proof_of_possession_is_rejected_before_key_reuse() -> Result<()> {
             let node = node_id(VALIDATOR);
             vs.register_validator_with_sig(OWNER, VALIDATOR, &key, node, Some(&wrong_node))
         },
-        "Revert: invalid BLS registration signature",
+        &super::typed_revert(I::InvalidBlsRegistrationSignature {}.abi_encode()),
     )
 }
 
@@ -206,8 +209,7 @@ fn self_registration_cap_is_checked_before_key_reuse() -> Result<()> {
             other_registered(vs)
         },
         |vs| vs.register_validator(VALIDATOR, VALIDATOR, &dummy_consensus_pubkey(0xD2)),
-        "Revert: self-registration limit reached: too many unstaked REGISTERED validators \
-         (owner may register directly)",
+        &super::typed_revert(I::SelfRegistrationLimitReached {}.abi_encode()),
     )
 }
 
@@ -221,7 +223,7 @@ fn key_reuse_is_rejected_before_registry_state_checks() -> Result<()> {
             other_registered(vs)
         },
         |vs| vs.register_validator(OWNER, VALIDATOR, &dummy_consensus_pubkey(0xD2)),
-        "Revert: BLS consensus pubkey already registered by another validator",
+        &super::typed_revert(I::ConsensusPubkeyAlreadyRegistered {}.abi_encode()),
     )
 }
 
@@ -235,7 +237,7 @@ fn registered_validator_that_is_not_inactive_is_rejected() -> Result<()> {
             Ok(())
         },
         |vs| vs.register_validator(OWNER, VALIDATOR, &dummy_consensus_pubkey(0xD5)),
-        "Revert: validator already registered",
+        &super::typed_revert(I::ValidatorAlreadyRegistered {}.abi_encode()),
     )
 }
 
@@ -253,7 +255,7 @@ fn reregistration_with_another_node_id_is_rejected_before_cooldown() -> Result<(
             vs.config_reregistration_cooldown.write(10)
         },
         |vs| vs.register_validator_with_sig(OWNER, VALIDATOR, &key, new_node, Some(&proof)),
-        "Revert: inactive validator must keep its Radicle NodeId until final cleanup",
+        &super::typed_revert(I::InactiveValidatorMustKeepRadicleNodeId {}.abi_encode()),
     )
 }
 
@@ -267,7 +269,7 @@ fn reregistration_cooldown_rejects_before_any_write() -> Result<()> {
             vs.config_reregistration_cooldown.write(10)
         },
         |vs| vs.register_validator(OWNER, VALIDATOR, &dummy_consensus_pubkey(0xD5)),
-        "Revert: re-registration cooldown not expired",
+        &super::typed_revert(I::ReregistrationCooldownNotExpired {}.abi_encode()),
     )
 }
 
@@ -277,7 +279,7 @@ fn full_registry_is_rejected_before_any_write() -> Result<()> {
         1,
         other_registered,
         |vs| vs.register_validator(OWNER, VALIDATOR, &dummy_consensus_pubkey(0xD1)),
-        "Revert: max validators reached",
+        &super::typed_revert(I::MaxValidatorsReached {}.abi_encode()),
     )
 }
 

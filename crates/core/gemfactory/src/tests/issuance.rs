@@ -87,7 +87,13 @@ fn issue_zero_owner_rejected() {
             840,
             840,
         );
-        assert!(err_msg(res).contains("invalid owner"));
+        assert_eq!(
+            res.unwrap_err().to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::GemFactoryError::InvalidOwner
+            )
+            .to_string()
+        );
     });
 }
 
@@ -103,7 +109,15 @@ fn issue_no_oracle_setup_rejected() {
             840,
             840,
         );
-        assert!(err_msg(res).contains("not registered"));
+        assert_eq!(
+            res.unwrap_err().to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_oracle::errors::OracleError::PairNotRegistered {
+                    pair: outbe_oracle::api::DAY_TYPE_PAIR,
+                }
+            )
+            .to_string()
+        );
     });
 }
 
@@ -111,6 +125,7 @@ fn issue_no_oracle_setup_rejected() {
 fn issue_rejects_a_stale_oracle_rate_before_writing_a_gem() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
+        let obs_ts = T_NOW - outbe_oracle::constants::FX_RATE_MAX_AGE_SECONDS - 1;
         outbe_oracle::api::set_exchange_rate(
             storage.clone(),
             Address::ZERO,
@@ -118,14 +133,20 @@ fn issue_rejects_a_stale_oracle_rate_before_writing_a_gem() {
             outbe_oracle::api::RateObservation {
                 rate,
                 block_number: 1,
-                timestamp: T_NOW - outbe_oracle::constants::FX_RATE_MAX_AGE_SECONDS - 1,
+                timestamp: obs_ts,
             },
         )
         .unwrap();
 
         let error = issue_at_live_rate(storage, ALICE, six_decimal_unit(), 840, 840).unwrap_err();
 
-        assert!(error.to_string().contains("stale"), "{error}");
+        assert_eq!(
+            error.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_oracle::errors::OracleError::StaleCoenRate { iso_code: 840 }
+            )
+            .to_string()
+        );
         assert_eq!(
             GemFactoryContract::new(storage.clone())
                 .total_gems_issued

@@ -6,6 +6,29 @@ pragma solidity ^0.8.30;
 /// @dev Vote manages this precompile. After approval, the inner cross-module API
 /// handles the proposal. (see: /crates/system/update/)
 interface IUpdate {
+    /// Caller-facing domain revert.
+    error ScheduledUpdateNotFound();
+    error ScheduledUpdateAlreadyExists();
+    error HeightInPast();
+    error InvalidVersion();
+    error DowngradeNotAllowed();
+    error InvalidPayload();
+    error ActivationConflict();
+    error TooManyWaitingForActivation();
+    error InvalidScheduledUpdateStatus();
+    error InvalidTeePolicy();
+    error TeePolicyChainIdentityMismatch();
+    error TeePolicyActivationMismatch();
+    error ActiveVersionDoesNotFitU32();
+    error UpgradeHandlerFailed(string label, string reason);
+    error StagedTeePolicyMissingProposal(uint256 proposal_id);
+    error TeePolicyActivationFailed(uint256 proposal_id, string reason);
+    error StoredProposalPayloadInvalid(string value);
+    error EnclaveRolloutRequiresExclusiveScheduledUpgrade();
+    error InvalidActiveTeePolicy(string value);
+    error VoteTargetInvariantFailure(string value);
+    error UnexpectedAppliedClassification();
+
     enum ScheduledUpdateStatus {
         Scheduled,
         Activated,

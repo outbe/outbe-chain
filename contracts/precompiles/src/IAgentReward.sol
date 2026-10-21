@@ -7,6 +7,17 @@ pragma solidity ^0.8.30;
 /// keeps the two in sync. Every `promisLoadMinor` is a PROMIS load in protocol units
 /// (6 decimals); pools are 0 = WAA, 1 = SRA, 2 = CCA, 3 = Validator.
 interface IAgentReward {
+    error DistributeDailyOverflow();
+    error DistributionOverflow();
+    error ClaimableTotalOverflow();
+    error PoolTotalMismatch();
+    error ClaimableRewardsOverflow();
+    error NoClaimableBalance();
+    error InsufficientClaimableBalance();
+    error MissingPreviousDayPrice(uint16 value);
+    error UnknownRewardPool(uint8 value);
+    error AccrualJobMissing(uint64 value);
+
     event RewardAccrued(address indexed account, uint8 indexed pool, uint32 indexed utcDay, uint256 promisLoadMinor);
     event RewardsClaimed(address indexed account, uint8 indexed pool, uint256 promisLoadMinor, uint256 gemId);
 

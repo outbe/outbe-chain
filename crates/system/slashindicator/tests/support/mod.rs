@@ -1,7 +1,24 @@
 //! Shared harness for the slashindicator integration test binaries.
 
 use alloy_primitives::{Address, U256};
+use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
+use outbe_slashindicator::precompile::ISlashIndicator;
+
+/// Asserts that `err` is the typed revert `selector`.
+pub fn assert_selector(err: &PrecompileError, selector: [u8; 4]) {
+    match err {
+        PrecompileError::RevertBytes(bytes) if bytes.len() >= 4 => {
+            assert_eq!(&bytes[..4], &selector, "{err:?}");
+        }
+        other => panic!("expected typed revert bytes, got {other:?}"),
+    }
+}
+
+/// Selector of `ISlashIndicator::EvidenceAlreadyProcessed`.
+pub fn evidence_already_processed() -> [u8; 4] {
+    ISlashIndicator::EvidenceAlreadyProcessed::SELECTOR
+}
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_validatorset::contract::ValidatorSet;
 

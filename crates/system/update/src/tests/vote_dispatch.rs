@@ -1,7 +1,7 @@
 use super::tee_fixture::initial_tee_policy;
 use super::TEST_CHAIN_ID;
 use alloy_primitives::{address, B256};
-use alloy_sol_types::SolEvent;
+use alloy_sol_types::{SolError, SolEvent};
 use outbe_primitives::addresses::UPDATE_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::PrecompileError;
@@ -11,6 +11,7 @@ use outbe_vote::constants::VOTING_WINDOW_BLOCKS;
 use outbe_vote::handlers::{
     TargetExecutionOutcome, VoteTarget, VoteTargetContext, VoteTargetRegistry,
 };
+use outbe_vote::precompile::IVote;
 use outbe_vote::schema::ProposalStatus;
 use outbe_vote::schema::Vote;
 
@@ -553,10 +554,12 @@ fn invalid_json_payload_is_rejected_at_creation() {
                 &VOTE_TARGET_REGISTRY,
             )
             .unwrap_err();
-        assert!(matches!(
-            err,
-            PrecompileError::Revert(msg) if msg.contains("invalid proposal payload")
-        ));
+        match err {
+            PrecompileError::RevertBytes(bytes) => {
+                assert_eq!(&bytes[..4], &IVote::InvalidPayload::SELECTOR);
+            }
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
     });
 }
 
@@ -573,7 +576,7 @@ fn invalid_update_payload_is_rejected_at_creation() {
                 &VOTE_TARGET_REGISTRY,
             )
             .unwrap_err();
-        assert!(matches!(err, PrecompileError::Revert(_)));
+        assert!(matches!(err, PrecompileError::RevertBytes(_)));
     });
 }
 
@@ -651,10 +654,12 @@ fn unknown_target_is_rejected_at_creation() {
                 &VOTE_TARGET_REGISTRY,
             )
             .unwrap_err();
-        assert!(matches!(
-            err,
-            PrecompileError::Revert(msg) if msg.contains("unknown vote target module")
-        ));
+        match err {
+            PrecompileError::RevertBytes(bytes) => {
+                assert_eq!(&bytes[..4], &IVote::UnknownTargetModule::SELECTOR);
+            }
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
     });
 }
 
@@ -721,14 +726,14 @@ fn validate_reverts_with_exact_reason_for_malformed_payload() {
     for payload in NOT_JSON_PAYLOADS {
         let outcome = UPDATE_VOTE_TARGET.validate(payload, payload_context());
         assert!(
-            matches!(&outcome, Err(PrecompileError::Revert(reason)) if reason == "invalid proposal payload"),
+            matches!(&outcome, Err(PrecompileError::RevertBytes(bytes)) if bytes.len() >= 4 && bytes[..4] == IVote::InvalidPayload::SELECTOR),
             "{payload:?}: {outcome:?}"
         );
     }
     for payload in WRONG_SHAPE_PAYLOADS {
         let outcome = UPDATE_VOTE_TARGET.validate(payload, payload_context());
         assert!(
-            matches!(&outcome, Err(PrecompileError::Revert(reason)) if reason == "invalid vote payload"),
+            matches!(&outcome, Err(PrecompileError::RevertBytes(bytes)) if bytes.len() >= 4 && bytes[..4] == IUpdate::InvalidPayload::SELECTOR),
             "{payload:?}: {outcome:?}"
         );
     }
@@ -738,14 +743,9 @@ fn validate_reverts_with_exact_reason_for_malformed_payload() {
 fn handle_approved_fails_fatally_without_mutation_for_malformed_payload() {
     let cases = NOT_JSON_PAYLOADS
         .iter()
-        .map(|payload| (*payload, "stored Update proposal payload is invalid"))
-        .chain(WRONG_SHAPE_PAYLOADS.iter().map(|payload| {
-            (
-                *payload,
-                "stored Update proposal payload is invalid: invalid vote payload",
-            )
-        }));
-    for (payload, expected) in cases {
+        .map(|payload| (*payload, true))
+        .chain(WRONG_SHAPE_PAYLOADS.iter().map(|payload| (*payload, false)));
+    for (payload, stored_vote_payload) in cases {
         let mut provider =
             outbe_primitives::storage::hashmap::HashMapStorageProvider::new_with_chain_identity(
                 TEST_CHAIN_ID,
@@ -761,10 +761,24 @@ fn handle_approved_fails_fatally_without_mutation_for_malformed_payload() {
                 payload_context(),
             )
         });
-        assert!(
-            matches!(&outcome, Err(PrecompileError::Revert(reason)) if reason == expected),
-            "{payload:?}: {outcome:?}"
-        );
+        match &outcome {
+            Err(PrecompileError::RevertBytes(bytes)) if stored_vote_payload => {
+                assert_eq!(&bytes[..4], &IVote::StoredPayloadInvalid::SELECTOR);
+                let decoded =
+                    IVote::StoredPayloadInvalid::abi_decode(bytes).expect("stored payload");
+                assert_eq!(decoded.module, "Update");
+            }
+            Err(PrecompileError::RevertBytes(bytes)) => {
+                assert_eq!(
+                    &bytes[..4],
+                    &IUpdate::StoredProposalPayloadInvalid::SELECTOR
+                );
+                let decoded = IUpdate::StoredProposalPayloadInvalid::abi_decode(bytes)
+                    .expect("stored update payload");
+                assert_eq!(decoded.value, "invalid vote payload");
+            }
+            other => panic!("{payload:?}: {other:?}"),
+        }
         assert_eq!(
             provider.clear_mutation_failure(),
             0,

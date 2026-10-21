@@ -143,11 +143,53 @@ fn custom_window_does_not_change_existing_proposal_or_quorum() {
 #[test]
 fn custom_window_rejects_invalid_duration_overflow_and_unauthorized_creation() {
     for (height, window, caller, value, expected) in [
-        (100, 0, PROPOSER, U256::ZERO, "voting window"),
-        (100, 86_401, PROPOSER, U256::ZERO, "voting window"),
-        (100, u64::MAX, PROPOSER, U256::ZERO, "voting window"),
-        (u64::MAX, 1, PROPOSER, U256::ZERO, "overflows"),
-        (100, 1_000, Address::ZERO, U256::ZERO, "active validator"),
+        (
+            100,
+            0,
+            PROPOSER,
+            U256::ZERO,
+            IVote::InvalidVotingWindow {
+                actual: 0,
+                maximum: 86_400,
+            }
+            .abi_encode(),
+        ),
+        (
+            100,
+            86_401,
+            PROPOSER,
+            U256::ZERO,
+            IVote::InvalidVotingWindow {
+                actual: 86_401,
+                maximum: 86_400,
+            }
+            .abi_encode(),
+        ),
+        (
+            100,
+            u64::MAX,
+            PROPOSER,
+            U256::ZERO,
+            IVote::InvalidVotingWindow {
+                actual: u64::MAX,
+                maximum: 86_400,
+            }
+            .abi_encode(),
+        ),
+        (
+            u64::MAX,
+            1,
+            PROPOSER,
+            U256::ZERO,
+            IVote::VotingDeadlineOverflow {}.abi_encode(),
+        ),
+        (
+            100,
+            1_000,
+            Address::ZERO,
+            U256::ZERO,
+            IVote::NotValidator {}.abi_encode(),
+        ),
     ] {
         let provider = with_vote_provider(height, |storage| {
             let data = IVote::createProposalWithVotingWindowCall {
@@ -158,7 +200,9 @@ fn custom_window_rejects_invalid_duration_overflow_and_unauthorized_creation() {
             .abi_encode();
             let before = Vote::new(storage.clone()).proposal_count.read().unwrap();
             let err = dispatch(storage.clone(), &data, caller, value).unwrap_err();
-            assert!(err.to_string().contains(expected), "{err}");
+            assert!(
+                matches!(err, PrecompileError::RevertBytes(bytes) if bytes.as_ref() == expected)
+            );
             assert_eq!(Vote::new(storage).proposal_count.read().unwrap(), before);
         });
         assert!(!has_event(

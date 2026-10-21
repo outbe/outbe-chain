@@ -4,6 +4,67 @@ pragma solidity ^0.8.30;
 /// @title IOracle
 /// @notice Oracle precompile at 0x000000000000000000000000000000000000EE05
 interface IOracle {
+    /// Caller-facing domain revert.
+    error PairBaseQuoteIdentical();
+    error PairNotCanonical(address pairBase, address pairQuote);
+    error PairAlreadyRegistered(address pairBase, address pairQuote);
+    error PairNotRegistered(address pairBase, address pairQuote);
+    error PairIndexOutOfRange(uint32 index);
+    error OnlySystem(string value);
+    error NotActiveOracleSigner();
+    error VoteTupleCountExceedsPairCount();
+    error DuplicatePairInVote();
+    error PairNotVoteTarget();
+    error AlreadyVotedThisPeriod();
+    error VotePriceExceedsCap(uint256 price, uint256 max);
+    error VoteVolumeExceedsCap(uint256 volume, uint256 max);
+    error NoVwapData();
+    error NoTwapData();
+    error MissingTwapData();
+    error VwapOverflow(string reason);
+    error TwapOverflow();
+    error CrossRateOverflow();
+    error TallyArithmeticOverflow(string value);
+    error StaleCoenRate(uint16 iso_code);
+    error InvalidLookbackSeconds();
+    error InvalidVwapRange();
+    error VwapRangeTooWide();
+    error WorldwideDayVwapSnapshotNotFound();
+    error NoFinalizedUtcDayVwap();
+    error InvalidVwapPolicy();
+    error InvalidVwapSnapshot();
+    error NotReferenceCurrency(uint16 iso_code);
+    error NoPolicyRate(uint16 iso_code);
+    error SlashWindowValidatorSetExceedsCap(uint64 actual, uint64 cap);
+    error VotePeriodZero();
+    error SlashWindowZero();
+    error LookbackExceedsRetention();
+    error RatioAboveOne(string field, uint256 value);
+    error SlashPercentOutOfRange(uint256 slash_fraction);
+    error ReferenceIsoCodeZero();
+    error DuplicateReferenceIsoCode(uint16 iso_code);
+    error ReferenceCurrenciesNotSorted();
+    error MissingUsdReferenceCurrency();
+    error PolicyIsoCodeZero();
+    error DuplicatePolicyIsoCode(uint16 iso_code);
+    error PolicyRatesNotSorted();
+    error PolicyRateZero(uint16 iso_code);
+    error MissingPolicyRate(uint16 iso_code);
+    error AggregateVoteValidatorZero();
+    error DuplicateAggregateVoteValidator();
+    error AggregateVoteAlreadyExists();
+    error AggregateVoteTupleCountExceedsPairCount();
+    error AggregateVotePairNotRegistered();
+    error DuplicatePairInAggregateVote();
+    error AggregateVotePairNotVoteTarget();
+    error MissingAggregateVoteValidator(uint32 voter_index);
+    error VoterListEntryWithoutVote();
+    error MissingPairMetadata(uint32 pair_id);
+    error SnapshotWriteIndexOverflow();
+    error ScurveWriteIndexOverflow();
+    error SnapshotOutOfOrder();
+    error NoRateForPair(address pairBase, address pairQuote);
+
     // Events - precompile dispatch (appear in transaction receipts)
     event VoteSubmitted(address indexed validator, uint32 tupleCount);
     event FeederDelegated(address indexed validator, address indexed feeder);

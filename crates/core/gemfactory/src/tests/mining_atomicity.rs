@@ -45,7 +45,10 @@ fn a_rejected_promis_mint_leaves_the_settled_gem_and_its_nonce_untouched() {
         )
         .unwrap_err();
         assert!(
-            matches!(error, outbe_primitives::error::PrecompileError::Revert(_)),
+            matches!(
+                error,
+                outbe_primitives::error::PrecompileError::RevertBytes(_)
+            ),
             "{error:?}"
         );
 
