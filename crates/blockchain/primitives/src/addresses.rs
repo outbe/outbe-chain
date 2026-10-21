@@ -69,7 +69,7 @@ pub const EMISSION_LIMIT_ADDRESS: Address = address!("0x000000000000000000000000
 pub const METADOSIS_ADDRESS: Address = address!("0x000000000000000000000000000000000000100E");
 
 /// Promis limit precompile address. Its registered dispatch serves the public
-/// view method `totalUnallocated` to any caller.
+/// view method `promisLimit` to any caller.
 pub const PROMIS_LIMIT_ADDRESS: Address = address!("0x000000000000000000000000000000000000100F");
 
 /// Cycle precompile address (system-only). Hosts the storage of the

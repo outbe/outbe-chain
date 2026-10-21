@@ -4,6 +4,7 @@
 //! within one view and jails + slashes it.
 
 use alloy_primitives::{address, Address, B256, U256};
+use alloy_sol_types::SolError;
 use blst::min_pk::SecretKey;
 use commonware_cryptography::{bls12381, Signer as _};
 use commonware_utils::ordered::Set;
@@ -19,7 +20,9 @@ use outbe_validatorset::test_support::{test_lifecycle_of, StorageOverrides};
 use outbe_validatorset::ValidatorLifecycle;
 
 mod support;
-use support::{register_active_submitter, with_storage};
+use support::{
+    assert_selector, evidence_already_processed, register_active_submitter, with_storage,
+};
 
 const OWNER: Address = address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC");
 const SUBMITTER: Address = address!("0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD");
@@ -115,11 +118,11 @@ fn conflicting_notarize_slashes_and_dedups() {
 
         // SlashIndicator rejects a replay (either order).
         let mut si = SlashIndicator::new(storage.clone());
-        assert!(si
-            .submit_conflicting_notarize_evidence(SUBMITTER, &b2, &b1)
-            .unwrap_err()
-            .to_string()
-            .contains("already processed"));
+        assert_selector(
+            &si.submit_conflicting_notarize_evidence(SUBMITTER, &b2, &b1)
+                .unwrap_err(),
+            evidence_already_processed(),
+        );
     });
 }
 
@@ -163,7 +166,10 @@ fn identical_notarize_proposals_rejected() {
         let err = si
             .submit_conflicting_notarize_evidence(SUBMITTER, &b1, &b2)
             .unwrap_err();
-        assert!(err.to_string().contains("different proposals"));
+        assert_selector(
+            &err,
+            outbe_slashindicator::precompile::ISlashIndicator::ConflictingVotesMustBeDifferentProposals::SELECTOR,
+        );
     });
 }
 
@@ -198,7 +204,10 @@ fn different_signers_rejected() {
         let err = si
             .submit_conflicting_notarize_evidence(SUBMITTER, &b1, &b2)
             .unwrap_err();
-        assert!(err.to_string().contains("same signer"));
+        assert_selector(
+            &err,
+            outbe_slashindicator::precompile::ISlashIndicator::EvidenceSignerMismatch::SELECTOR,
+        );
     });
 }
 
@@ -215,9 +224,9 @@ fn non_active_submitter_is_rejected() {
         let err = si
             .submit_conflicting_notarize_evidence(outsider, &b1, &b2)
             .unwrap_err();
-        assert!(
-            err.to_string().contains("not an ACTIVE validator"),
-            "got: {err:?}"
+        assert_selector(
+            &err,
+            outbe_slashindicator::precompile::ISlashIndicator::SubmitterNotActiveValidator::SELECTOR,
         );
     });
 }

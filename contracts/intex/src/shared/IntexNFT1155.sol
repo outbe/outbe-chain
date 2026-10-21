@@ -40,6 +40,11 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     ///      rather than by hash luck. Clearing it recovers the series a Settled id belongs to.
     uint256 constant _SETTLED_TAG = 1 << 112;
 
+    /// @notice Upper bound on how early a `Called` series stops leaving a chain before its settlement
+    ///         deadline. The margin is a tenth of the notice period, capped at this value, and leaves a
+    ///         hop in flight time to land before the deadline.
+    uint256 public constant BRIDGE_CUTOFF = 1 hours;
+
     /// @custom:storage-location erc7201:outbe.intex.IntexNFT1155
     struct IntexNFT1155Storage {
         /// @dev Series-level data, stored once per series under its Issued token id. The Settled
@@ -232,7 +237,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     ///      - Series state `Issued`: bridge allowed for `RELAYER_ROLE`
     ///        (voluntary, owner-initiated moves while the series is tradable).
     ///      - Series state `Called`: allowed only when the destination owner is the source owner,
-    ///        and only inside the call window. Ownership is frozen once a series is Called.
+    ///        and only until the bridge cutoff before the deadline. Ownership is frozen once a series is Called.
     function crosschainBurn(address from, address to, uint256 tokenId, uint256 amount) external onlyRole(RELAYER_ROLE) {
         if (_isSettledTokenId(tokenId)) {
             revert BridgeOnSettledForbidden(tokenId);
@@ -245,12 +250,12 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             // A bridge hop that changes owner is a transfer, which Called forbids.
             if (to != from) revert TransferOnCalledForbidden(tokenId);
             // Past `calledAt + callNoticePeriod` the series is settlement-complete and balances
-            // freeze. Thus no hop may still move one out (or `crosschainMint` re-inflate one back
-            // in).
-            uint256 deadline = _settlementDeadline(data);
-            if (block.timestamp > deadline) {
+            // freeze. A hop leaves no later than the cutoff, so its `crosschainMint` has the
+            // margin to land before the deadline.
+            uint256 cutoff = _bridgeCutoff(data);
+            if (block.timestamp > cutoff) {
                 // forge-lint: disable-next-line(unsafe-typecast) -- below block.timestamp, so within uint32
-                revert BridgeAfterDeadline(tokenId, uint32(deadline));
+                revert BridgeCutoffPassed(tokenId, uint32(cutoff));
             }
         }
 
@@ -307,7 +312,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
         // A called series settles until its deadline.
         if (data.state == IIntexNFT1155.IntexState.Called) {
-            // No new Settled tokens past the call window (mirrors the crosschainBurn/crosschainMint freeze).
+            // No new Settled tokens past the deadline (mirrors the crosschainMint freeze).
             uint256 deadline = _settlementDeadline(data);
             if (block.timestamp > deadline) {
                 // forge-lint: disable-next-line(unsafe-typecast) -- below block.timestamp, so within uint32
@@ -408,6 +413,14 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     /// @dev `calledAt + callNoticePeriod`, widened so the sum cannot overflow.
     function _settlementDeadline(IIntexNFT1155.SeriesData storage data) internal view returns (uint256) {
         return uint256(data.calledAt) + data.callTrigger.callNoticePeriod;
+    }
+
+    /// @dev Last second a `Called` series may leave a chain: the deadline less a tenth of the notice
+    ///      period, capped at `BRIDGE_CUTOFF`.
+    function _bridgeCutoff(IIntexNFT1155.SeriesData storage data) internal view returns (uint256) {
+        uint256 margin = data.callTrigger.callNoticePeriod / 10;
+        if (margin > BRIDGE_CUTOFF) margin = BRIDGE_CUTOFF;
+        return _settlementDeadline(data) - margin;
     }
 
     /// @dev Whether the id belongs to the Settled class. Derived from the id, so it holds for a

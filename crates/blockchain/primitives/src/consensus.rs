@@ -212,7 +212,7 @@ pub struct DkgBoundaryArtifact {
     /// Per-validator TEE recipient X25519 public keys for the activated
     /// committee. The artifact carries them so the tribute TEE DKG can address
     /// share-relay to the right enclaves. Empty until the tribute DKG slice
-    /// populates it. OART wire `v0.07`.
+    /// populates it.
     pub tee_recipient_pubkeys: Vec<(Address, B256)>,
     /// List, in canonical storage order, of ValidatorSet target members
     /// excluded at the exact DKG freeze block because their DcapRequired lease

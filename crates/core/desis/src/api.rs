@@ -30,10 +30,10 @@ impl AuctionBriefRejectionReason {
 }
 
 /// How callers handle an oversized auction limit. Settlement can return it to
-/// the unallocated pool. Native Lysis requires the prepared brief to succeed.
+/// the Promis Limit. Native Lysis requires the prepared brief to succeed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BriefOverflowPolicy {
-    CarryOver,
+    ReturnToPromisLimit,
     Reject,
 }
 
@@ -41,7 +41,7 @@ pub enum BriefOverflowPolicy {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AuctionBriefReceipt {
     Accepted,
-    RejectedToCarryOver {
+    ReturnedToPromisLimit {
         reason: AuctionBriefRejectionReason,
         desis_limit_minor: U256,
         max_accepted: U256,
@@ -80,13 +80,13 @@ pub fn dispatch_auction_brief(
                 return Err(crate::errors::DesisError::AuctionBriefLimitExceedsDomain.into());
             }
             let mut contract = storage.contract::<DesisContract>();
-            contract.emit(IDesis::AuctionBriefRejectedToCarryOver {
+            contract.emit(IDesis::AuctionBriefRejected {
                 worldwideDay: worldwide_day.into(),
                 desisLimitMinor: desis_limit_minor,
                 maxAcceptedMinor: max_accepted,
                 reasonCode: reason.code(),
             })?;
-            return Ok(AuctionBriefReceipt::RejectedToCarryOver {
+            return Ok(AuctionBriefReceipt::ReturnedToPromisLimit {
                 reason,
                 desis_limit_minor,
                 max_accepted,

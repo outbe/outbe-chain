@@ -38,10 +38,13 @@ fn three_day_halt_forfeits_every_missed_day() {
 #[test]
 fn active_day_after_block_day_is_rejected() {
     let error = protocol_day_action(20_260_820, 20_260_819).unwrap_err();
-    assert!(matches!(
-        error,
-        outbe_primitives::error::PrecompileError::Revert(ref msg) if msg.contains("active UTC day")
-    ));
+    match error {
+        outbe_primitives::error::PrecompileError::RevertBytes(bytes) => {
+            let selector = alloy_primitives::keccak256(b"ActiveUtcDayAfterBlock(uint32,uint32)");
+            assert_eq!(&bytes[..4], &selector[..4]);
+        }
+        other => panic!("expected typed revert bytes, got {other:?}"),
+    }
 }
 
 #[test]
@@ -53,8 +56,11 @@ fn invalid_calendar_day_is_rejected() {
     ));
 
     let block_error = protocol_day_action(20_260_228, 20_260_231).unwrap_err();
-    assert!(matches!(
-        block_error,
-        outbe_primitives::error::PrecompileError::Revert(ref msg) if msg.contains("invalid UTC day")
-    ));
+    match block_error {
+        outbe_primitives::error::PrecompileError::RevertBytes(bytes) => {
+            let selector = alloy_primitives::keccak256(b"InvalidBlockUtcDay(uint32,uint32)");
+            assert_eq!(&bytes[..4], &selector[..4]);
+        }
+        other => panic!("expected typed revert bytes, got {other:?}"),
+    }
 }

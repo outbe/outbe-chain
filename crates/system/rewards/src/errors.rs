@@ -7,6 +7,12 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum RewardsError {
+    #[error("settled-day cleanup queue position overflow")]
+    SettledDayCleanupQueueOverflow,
+    #[error("inconsistent settled-day cleanup queue: {0}")]
+    InvalidSettledDayCleanupQueue(&'static str),
+    #[error("day settlement requires closed participation and completed inclusion windows")]
+    DaySettlementNotReady,
     #[error("block_guard_ring_seq overflow")]
     BlockGuardRingSeqOverflow,
     #[error("reward window height overflow")]

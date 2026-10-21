@@ -155,7 +155,7 @@ fn certified_activation_rejects_registered_and_unconfirmed_pending_members() {
         let error = vs
             .activate_reshared_set(&[registered], B256::repeat_byte(0xA1))
             .unwrap_err();
-        assert!(matches!(error, PrecompileError::Revert(_)));
+        assert!(matches!(error, PrecompileError::RevertBytes(_)));
         assert_eq!(vs.val_status.read(&registered).unwrap(), status::REGISTERED);
     });
 
@@ -166,7 +166,7 @@ fn certified_activation_rejects_registered_and_unconfirmed_pending_members() {
         let error = vs
             .activate_reshared_set(&[pending], B256::repeat_byte(0xA2))
             .unwrap_err();
-        assert!(matches!(error, PrecompileError::Revert(_)));
+        assert!(matches!(error, PrecompileError::RevertBytes(_)));
         assert_eq!(vs.val_status.read(&pending).unwrap(), status::PENDING);
         assert!(!vs.val_has_bls_share.read(&pending).unwrap());
     });

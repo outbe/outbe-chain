@@ -2,6 +2,36 @@
 pragma solidity ^0.8.30;
 
 interface INod {
+    error InvalidNodIdLength();
+    error InvalidNodIdHex();
+    error NodNotFound();
+    error GroupNotFound();
+    error IndexOutOfBounds();
+    error QueryLimitExceeded();
+    error ZeroReferenceCurrency();
+    error NonTransferable();
+    error UnknownProfileSelector(uint8 selector);
+    error EntityIdDerivation(string value);
+    error CanonicalIdentityMismatch(uint256 expected, uint256 found);
+    error EncryptedTermsMismatch();
+    error CannotIssueSettledNod();
+    error GroupIdentityMismatch(bytes32 expected, bytes32 found);
+    error NodAlreadyExists();
+    error GroupExistenceDisagreesWithMemberCount(uint256 groupId, uint32 memberCount);
+    error TotalSupplyOverflowDuringIssuance();
+    error GroupUnpaidLoadOverflow(bytes32 groupKey);
+    error GroupUnpaidLoadUnderflow(bytes32 groupKey);
+    error TotalSupplyUnderflowDuringRemoval();
+    error GroupSettledCountUnderflow(uint256 groupId);
+    error AlreadySettled();
+    error SettledCountOverflow();
+    error GroupMemberIndexOverflow(bytes32 groupKey);
+    error GroupMemberCountUnderflowDuringRemoval(bytes32 groupKey);
+    error NodNotIndexedInGroup(uint256 nodId, bytes32 groupKey);
+    error EmptyGroupMemberSlotDuringRemoval(bytes32 groupKey, uint32 slot);
+    error AmountReadFailed(string reason);
+    error NodStateChangedAfterLoading();
+
     /// Emitted when a Nod is issued and when it is burned by forfeit or mining.
     event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);
     // Declared for ERC-721 shape only: Nods are soulbound, so these two are never emitted.

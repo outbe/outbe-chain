@@ -2,6 +2,45 @@
 pragma solidity ^0.8.30;
 
 interface ITributeFactory {
+    error TeeNotConfigured();
+    error EnclaveRejected(string value);
+    error ZkProofRequired();
+    error UnknownCircuitVersion(uint32 chainId, string version);
+    error UnsupportedZkCircuit();
+    error MalformedZkProof(string value);
+    error ZkPublicInputMismatch(string field);
+    error InvalidZkProof();
+    error InvalidWorldwideDay(uint32 worldwideDay);
+    error WorldwideDayNotOffering(uint32 worldwideDay);
+    error TributeAlreadyExists();
+    error InvalidCanonicalIdentity();
+    error SuHashAlreadyUsed();
+    error InvalidSuHashHex(string hash);
+    error InvalidSuHashLength(uint64 length);
+    error AmountMustBePositive();
+    error NominalPriceUnavailable(uint32 worldwideDay);
+    error NominalAmountOverflow();
+    error InvalidWalletAddress(string walletAddress);
+    error InvalidSraAddress(string sraAddress);
+    error IssuanceCurrencyNotRegistered(uint16 issuanceCurrency);
+    error InvalidCurrency(uint16 currency);
+    error WalletAddressesRequiredWhenSraProvided();
+    error SraAddressesRequiredWhenWalletProvided();
+    error InvalidWalletAddressAtIndex(uint64 index, string walletAddress);
+    error InvalidSraAddressAtIndex(uint64 index, string sraAddress);
+    error BaseAmountTooManyDecimals();
+    error InvalidBaseAmountFormat();
+    error InvalidAttoAmountFormat();
+    error RejectedEncryptedOfferCarriesTribute();
+    error CreatedEncryptedOfferMissingTribute();
+    error EmptyTributeOfferResult();
+    error CreatedTributeMissingBody();
+    error EncryptedOfferReturnedLegacyBody();
+    error ZkVerifierUnavailable(string value);
+    error EntityIdDerivation(string value);
+    error CalculationView(string value);
+    error AttestationPreimageEncode(string value);
+
     // The caller need not be a registered L2 operator.
     // `chainId` selects a registered L2 and `version` selects an exact
     // circuit binding. Devnet may use its development binding stub. Verification is real.

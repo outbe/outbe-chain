@@ -204,7 +204,13 @@ fn precompile_transfer_reverts() {
         .abi_encode(),
     );
     let err = run_dispatch(call, alice()).unwrap_err();
-    assert!(err.to_string().contains("transfers are not allowed"));
+    assert_eq!(
+        err.to_string(),
+        outbe_primitives::error::PrecompileError::from(
+            crate::errors::GratisError::TransferNotAllowed
+        )
+        .to_string()
+    );
 }
 
 #[test]
@@ -257,9 +263,15 @@ fn folded_fidelity_section_failure_reverts_the_whole_op() {
             bad_section,
         )
         .unwrap_err();
+        let outbe_primitives::error::PrecompileError::RevertBytes(bytes) = &err else {
+            panic!("expected RevertBytes, got: {err:?}");
+        };
+        let decoded = <IGratis::Rejected as alloy_sol_types::SolError>::abi_decode(bytes)
+            .expect("expected IGratis::Rejected");
         assert!(
-            err.to_string().contains("fidelity section failed"),
-            "expected a fidelity-section rejection, got: {err}"
+            decoded.value.contains("fidelity section failed"),
+            "expected a fidelity-section rejection, got: {}",
+            decoded.value
         );
 
         // Atomic revert: no gratis state was written (balance, op_nonce).
@@ -436,5 +448,45 @@ fn burning_pledged_collateral_reports_the_supply_drop() {
     assert_eq!(
         (burned[0].account, burned[0].gratisMinor),
         (alice(), U256::from(40u64))
+    );
+}
+
+#[test]
+fn an_owner_result_that_differs_from_the_request_is_refused() {
+    use crate::runtime::ensure_owner_result;
+    use outbe_tee::protocol::{GratisOpResult, GratisOpStatus};
+    let result = |event_amount: u64, next_op_nonce: u64| GratisOpResult {
+        status: GratisOpStatus::Applied,
+        new_balance: vec![1],
+        new_pledged: Vec::new(),
+        event_amount: U256::from(event_amount),
+        next_op_nonce,
+        fidelity: None,
+        inputs_canonical_hash: B256::ZERO,
+        attestation_tag: Vec::new(),
+    };
+    let amount = U256::from(5u64);
+    assert!(ensure_owner_result(amount, 3, &result(5, 4)).is_ok());
+    let err = ensure_owner_result(amount, 3, &result(4, 4)).unwrap_err();
+    assert!(
+        err.to_string().contains("owner movement result mismatch"),
+        "{err}"
+    );
+    let err = ensure_owner_result(amount, 3, &result(5, 5)).unwrap_err();
+    assert!(err.to_string().contains("wrong op nonce"), "{err}");
+    assert!(ensure_owner_result(amount, u64::MAX, &result(5, u64::MAX)).is_err());
+    let mut no_balance = result(5, 4);
+    no_balance.new_balance.clear();
+    let err = ensure_owner_result(amount, 3, &no_balance).unwrap_err();
+    assert!(
+        err.to_string().contains("owner movement result mismatch"),
+        "{err}"
+    );
+    let mut pledged = result(5, 4);
+    pledged.new_pledged = vec![1];
+    let err = ensure_owner_result(amount, 3, &pledged).unwrap_err();
+    assert!(
+        err.to_string().contains("owner movement result mismatch"),
+        "{err}"
     );
 }

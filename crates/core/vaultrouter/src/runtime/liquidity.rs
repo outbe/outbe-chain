@@ -1,4 +1,4 @@
-//! Owner-managed registries of the callers allowed to deposit (sources) and
+//! Governance-managed registries of the callers allowed to deposit (sources) and
 //! withdraw (targets) liquidity.
 
 use alloy_primitives::{Address, LogData};
@@ -9,7 +9,6 @@ use outbe_primitives::error::Result;
 use outbe_primitives::storage::dsl::{Map, Set};
 use outbe_primitives::storage::StorageHandle;
 
-use super::ensure_owner;
 use crate::api::IVaultRouter;
 use crate::errors::VaultRouterError;
 use crate::schema::{VaultRouterContract, UNKNOWN};
@@ -92,12 +91,10 @@ impl Registry {
 
 fn add_member(
     storage: StorageHandle<'_>,
-    sender: Address,
     member: Address,
     kind: u8,
     registry: Registry,
 ) -> Result<()> {
-    ensure_owner(&storage, sender)?;
     if member.is_zero() {
         return Err(VaultRouterError::ZeroAddress.into());
     }
@@ -111,13 +108,7 @@ fn add_member(
     storage.emit_event(VAULT_ROUTER_ADDRESS, registry.added(member, kind))
 }
 
-fn remove_member(
-    storage: StorageHandle<'_>,
-    sender: Address,
-    member: Address,
-    registry: Registry,
-) -> Result<()> {
-    ensure_owner(&storage, sender)?;
+fn remove_member(storage: StorageHandle<'_>, member: Address, registry: Registry) -> Result<()> {
     let contract = VaultRouterContract::new(storage.clone());
     let (members, kinds) = registry.entries(&contract);
     if !members.remove(&member)? {
@@ -128,38 +119,28 @@ fn remove_member(
     storage.emit_event(VAULT_ROUTER_ADDRESS, registry.removed(member, kind))
 }
 
-pub fn add_liquidity_source(
+pub(crate) fn add_liquidity_source(
     storage: StorageHandle<'_>,
-    sender: Address,
     source: Address,
     source_type: u8,
 ) -> Result<()> {
-    add_member(storage, sender, source, source_type, Registry::Sources)
+    add_member(storage, source, source_type, Registry::Sources)
 }
 
-pub fn remove_liquidity_source(
-    storage: StorageHandle<'_>,
-    sender: Address,
-    source: Address,
-) -> Result<()> {
-    remove_member(storage, sender, source, Registry::Sources)
+pub(crate) fn remove_liquidity_source(storage: StorageHandle<'_>, source: Address) -> Result<()> {
+    remove_member(storage, source, Registry::Sources)
 }
 
-pub fn add_liquidity_target(
+pub(crate) fn add_liquidity_target(
     storage: StorageHandle<'_>,
-    sender: Address,
     target: Address,
     target_type: u8,
 ) -> Result<()> {
-    add_member(storage, sender, target, target_type, Registry::Targets)
+    add_member(storage, target, target_type, Registry::Targets)
 }
 
-pub fn remove_liquidity_target(
-    storage: StorageHandle<'_>,
-    sender: Address,
-    target: Address,
-) -> Result<()> {
-    remove_member(storage, sender, target, Registry::Targets)
+pub(crate) fn remove_liquidity_target(storage: StorageHandle<'_>, target: Address) -> Result<()> {
+    remove_member(storage, target, Registry::Targets)
 }
 
 /// Resolves the `StablesSource` registered for `caller`. Returns `Unknown`

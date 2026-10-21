@@ -57,8 +57,12 @@ fn a_mining_sequence_at_its_maximum_refuses_the_next_mining_without_writes() {
         )
         .unwrap_err()
     });
-    assert!(
-        format!("{error:?}").contains("mining sequence overflow"),
+    assert_eq!(
+        error.to_string(),
+        outbe_primitives::error::PrecompileError::from(
+            crate::errors::IntexFactoryError::MiningSequenceOverflow,
+        )
+        .to_string(),
         "{error:?}"
     );
 

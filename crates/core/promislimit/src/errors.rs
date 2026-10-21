@@ -1,5 +1,8 @@
 //! Error types for the PromisLimit module.
 
+use crate::precompile::IPromisLimit;
+use alloy_primitives::Bytes;
+use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
@@ -7,14 +10,22 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum PromisLimitError {
-    #[error("promislimit total_unallocated overflow")]
-    TotalUnallocatedOverflow,
-    #[error("promislimit total_unallocated underflow")]
-    TotalUnallocatedUnderflow,
+    #[error("promis limit overflow")]
+    Overflow,
+    #[error("promis limit underflow")]
+    Underflow,
+}
+
+fn revert_with<E: SolError>(error: E) -> PrecompileError {
+    PrecompileError::RevertBytes(Bytes::from(error.abi_encode()))
 }
 
 impl From<PromisLimitError> for PrecompileError {
     fn from(err: PromisLimitError) -> Self {
-        PrecompileError::Revert(err.to_string())
+        use IPromisLimit as I;
+        match err {
+            PromisLimitError::Overflow => revert_with(I::Overflow {}),
+            PromisLimitError::Underflow => revert_with(I::Underflow {}),
+        }
     }
 }

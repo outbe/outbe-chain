@@ -13,11 +13,48 @@ use outbe_primitives::{
     block::BlockRuntimeContext,
     consensus_metadata::CertifiedParentAccountingMetadata,
     error::Result,
-    time::{day_number_between, timestamp_to_date_key},
+    time::{
+        date_key_to_utc_timestamp, day_number_between, timestamp_to_date_key, WorldwideDay,
+        SECONDS_PER_DAY,
+    },
 };
 
 use crate::errors::RewardsError;
 use crate::schema::Rewards;
+
+/// Maximum daily voter entries reclaimed per CycleTick, independent of committee size.
+pub const SETTLED_DAY_CLEANUP_VOTER_LIMIT: u32 = 256;
+
+/// Reclaims one bounded slice of the oldest queued day, no earlier than D+8 UTC.
+/// Unsettled and forfeited days are never queued. Tombstones remain unbounded.
+pub fn prune_settled_days(ctx: &BlockRuntimeContext) -> Result<()> {
+    ctx.storage.with_checkpoint(|| {
+        let rewards = ctx.storage.contract::<Rewards>();
+        let (head, tail) = crate::state::cleanup_positions(&rewards)?;
+        if head == tail {
+            return Ok(());
+        }
+        let day = rewards.settled_day_cleanup_day_at.read(&head)?;
+        if day < 19700101 || !WorldwideDay::new(day).is_valid() {
+            return Err(RewardsError::InvalidSettledDayCleanupQueue("invalid head day").into());
+        }
+        if !rewards.daily_settled.read(&day)?
+            || !rewards.daily_participation_closed.read(&day)?
+            || !crate::api::day_participation_complete(ctx, day)?
+        {
+            return Err(RewardsError::InvalidSettledDayCleanupQueue(
+                "head day is not safely settled",
+            )
+            .into());
+        }
+        // Calendar conversion, not YYYYMMDD subtraction, preserves leap/year boundaries.
+        let midnight = date_key_to_utc_timestamp(day);
+        if ctx.block.timestamp.saturating_sub(midnight) < 8 * SECONDS_PER_DAY {
+            return Ok(());
+        }
+        crate::state::prune_day_slice(&rewards, head, day)
+    })
+}
 
 /// Outcome of [`check_and_record_metadata_fingerprint`]. The caller MUST
 /// branch on this and skip all per-block module work when
@@ -182,6 +219,14 @@ pub fn check_and_record_metadata_fingerprint(
 /// compute the V3 fingerprint. See
 /// [`check_and_record_metadata_fingerprint`] for the canonical byte
 /// layout. Public for unit-test access from `tests/v2_fingerprint.rs`.
+///
+/// This fingerprint detects economic replay. It does not authenticate certificates.
+/// V3 does not hash `parent_view`.
+///
+/// Consensus checks `{epoch, view, parent_view, fb_hash}` against the signed proposal
+/// before it processes certified parent accounting (CPA) metadata.
+/// EVM `LateFinalizeCredits` checks the stored binding, including `parent_view`,
+/// when it authenticates a late credit.
 pub fn compute_metadata_fingerprint(
     metadata: &CertifiedParentAccountingMetadata,
     validator_fee_sum: U256,

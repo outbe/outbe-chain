@@ -984,10 +984,12 @@ fn create_nod_reverts_without_a_completion_day_price() {
         .abi_encode();
         let unpriced =
             crate::precompile::dispatch(storage.clone(), &call, tribute.owner, U256::ZERO);
-        assert!(
-            matches!(&unpriced, Err(PrecompileError::Revert(msg)) if msg.contains("no finalized entry price")),
-            "{unpriced:?}"
-        );
+        let expected_err: PrecompileError = crate::errors::TributeError::EntryPriceUnavailable {
+            price_day: outbe_nod::openings::entry_price_day(completed_at),
+            currency: 840,
+        }
+        .into();
+        assert_eq!(unpriced.unwrap_err().to_string(), expected_err.to_string());
         assert!(tc.get_record(tribute.tribute_id).unwrap().is_some());
         assert_eq!(tc.total_supply().unwrap(), 1);
         assert!(outbe_nod::api::get_item(&storage, tribute.tribute_id)

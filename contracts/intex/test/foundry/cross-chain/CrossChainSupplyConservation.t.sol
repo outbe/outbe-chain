@@ -253,8 +253,10 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
             dstChainId: A_CHAIN_ID, to: bytes32(uint256(uint160(user))), tokenIds: tokenIds, units: amounts
         });
         uint256 fee = adapterB.quoteBatchSend(back);
+        // A 60 s notice leaves a tenth of it, 6 s, before the deadline for the hop to land.
+        uint32 cutoff = uint32(deadlineB - 6);
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeAfterDeadline.selector, id, uint32(deadlineB)));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeCutoffPassed.selector, id, cutoff));
         adapterB.batchSend{value: fee}(back);
     }
 

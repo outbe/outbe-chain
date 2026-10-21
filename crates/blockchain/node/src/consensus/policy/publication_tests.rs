@@ -62,9 +62,20 @@ fn header_mode_is_derived_from_descriptor_committed_in_genesis_state() {
     assert!(policy(false).validate_header(&header(true)).is_err());
     assert!(policy(true).validate_header(&header(true)).is_ok());
     assert!(policy(true).validate_header(&header(false)).is_err());
-    let mut legacy = header(false);
-    legacy.inner.extra_data = b"opaque legacy header bytes".to_vec().into();
-    assert!(policy(false).validate_header(&legacy).is_ok());
+    let mut opaque = header(false);
+    opaque.inner.extra_data = b"opaque builder header bytes".to_vec().into();
+    assert!(policy(false).validate_header(&opaque).is_ok());
+    for bytes in [
+        &b"OART\x01\x02\x00"[..],
+        b"OART\x01\x03\x00",
+        b"OART\x0b\x00\x00",
+        b"OART\x0c\x00\x00",
+    ] {
+        opaque.inner.extra_data = bytes.to_vec().into();
+        for enabled in [false, true] {
+            assert!(policy(enabled).validate_header(&opaque).is_err());
+        }
+    }
 }
 
 #[test]

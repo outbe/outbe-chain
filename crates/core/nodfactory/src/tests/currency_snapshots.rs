@@ -339,9 +339,9 @@ fn issuance_rail_rejects_a_missing_cross_rate() {
         U256::ZERO,
     )
     .unwrap_err();
-    assert!(
-        error.to_string().contains("oracle nominal unavailable"),
-        "unexpected error: {error}"
+    assert_eq!(
+        error.to_string(),
+        PrecompileError::from(SettlementError::OracleUnavailable).to_string()
     );
     assert!(!is_settled(&mut world, nod_id));
 }

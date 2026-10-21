@@ -17,15 +17,14 @@ use commonware_cryptography::bls12381::primitives::{
     variant::MinSig,
 };
 use outbe_l2registry::{
-    api::ZK_MERKLE_ROOT_NAMESPACE, errors::L2RegistryError, precompile::IL2Registry, public_key,
-    schema::L2RegistryContract,
+    api::ZK_MERKLE_ROOT_NAMESPACE, precompile::IL2Registry, public_key, schema::L2RegistryContract,
 };
 use outbe_primitives::{
     addresses::{L2_REGISTRY_ADDRESS, TRIBUTE_FACTORY_ADDRESS},
     block::BlockContext,
     storage::{direct::DirectStorageProvider, StorageHandle},
 };
-use outbe_tributefactory::{errors::TributeFactoryError, precompile::ITributeFactory};
+use outbe_tributefactory::precompile::ITributeFactory;
 use reth_ethereum::evm::primitives::EvmEnv;
 use revm::{
     context::{
@@ -279,14 +278,12 @@ fn offer(db: &mut CacheDB<EmptyDB>, chain_id: u64, key: &NetworkKey) -> Executio
     call(db, TRIBUTE_FACTORY_ADDRESS, calldata.into())
 }
 
-/// Solidity `Error(string)` reason, when the call reverted with one.
-fn revert_reason(outcome: &ExecutionResult) -> Option<String> {
-    let ExecutionResult::Revert { output, .. } = outcome else {
-        return None;
-    };
-    alloy_sol_types::Revert::abi_decode(output)
-        .ok()
-        .map(|revert| revert.reason)
+/// Return the exact revert payload, including an empty child revert.
+fn revert_data(outcome: &ExecutionResult) -> Option<Vec<u8>> {
+    match outcome {
+        ExecutionResult::Revert { output, .. } => Some(output.to_vec()),
+        _ => None,
+    }
 }
 
 #[test]
@@ -294,8 +291,8 @@ fn unset_key_resolves_from_the_inbox_and_gates_tribute() {
     let key = network_key(1);
     let rotated = network_key(2);
     let stranger = network_key(3);
-    let proof_required = TributeFactoryError::ZkProofRequired.to_string();
-    let invalid_signature = L2RegistryError::InvalidZkSignature.to_string();
+    let proof_required = ITributeFactory::ZkProofRequired {}.abi_encode();
+    let invalid_signature = IL2Registry::InvalidZkSignature {}.abi_encode();
     let mut db = database(&key.public_key);
     // The empty key selects live resolution instead of a pinned key.
     register(&mut db, L2_CHAIN_ID, INBOX, &[]);
@@ -308,13 +305,13 @@ fn unset_key_resolves_from_the_inbox_and_gates_tribute() {
     // the proof gate and not at the signature gate.
     let outcome = offer(&mut db, L2_CHAIN_ID, &key);
     assert_eq!(
-        revert_reason(&outcome).as_deref(),
-        Some(proof_required.as_str())
+        revert_data(&outcome).as_deref(),
+        Some(proof_required.as_slice())
     );
     let outcome = offer(&mut db, L2_CHAIN_ID, &stranger);
     assert_eq!(
-        revert_reason(&outcome).as_deref(),
-        Some(invalid_signature.as_str()),
+        revert_data(&outcome).as_deref(),
+        Some(invalid_signature.as_slice()),
     );
 
     // Nothing is cached: rotating the inbox answer rotates the accepted key,
@@ -324,14 +321,14 @@ fn unset_key_resolves_from_the_inbox_and_gates_tribute() {
     assert_eq!(answer.l1Address, INBOX);
     assert_eq!(answer.publicKey.as_ref(), rotated.public_key.as_slice());
     assert_eq!(
-        revert_reason(&offer(&mut db, L2_CHAIN_ID, &key)).as_deref(),
-        Some(invalid_signature.as_str()),
+        revert_data(&offer(&mut db, L2_CHAIN_ID, &key)).as_deref(),
+        Some(invalid_signature.as_slice()),
         "the key the inbox no longer reports must stop authenticating"
     );
     let outcome = offer(&mut db, L2_CHAIN_ID, &rotated);
     assert_eq!(
-        revert_reason(&outcome).as_deref(),
-        Some(proof_required.as_str())
+        revert_data(&outcome).as_deref(),
+        Some(proof_required.as_slice())
     );
 }
 
@@ -339,7 +336,7 @@ fn unset_key_resolves_from_the_inbox_and_gates_tribute() {
 fn pinned_key_wins_over_the_inbox() {
     let pinned = network_key(4);
     let live = network_key(5);
-    let proof_required = TributeFactoryError::ZkProofRequired.to_string();
+    let proof_required = ITributeFactory::ZkProofRequired {}.abi_encode();
     // `INBOX` answers `live`, so a pinned network must not consult it.
     let mut db = database(&live.public_key);
 
@@ -356,12 +353,12 @@ fn pinned_key_wins_over_the_inbox() {
         );
         let outcome = offer(&mut db, chain_id, &pinned);
         assert_eq!(
-            revert_reason(&outcome).as_deref(),
-            Some(proof_required.as_str())
+            revert_data(&outcome).as_deref(),
+            Some(proof_required.as_slice())
         );
         assert_eq!(
-            revert_reason(&offer(&mut db, chain_id, &live)),
-            Some(L2RegistryError::InvalidZkSignature.to_string()),
+            revert_data(&offer(&mut db, chain_id, &live)),
+            Some(IL2Registry::InvalidZkSignature {}.abi_encode()),
             "the inbox key must not authenticate a network with a pinned key"
         );
     }
@@ -370,18 +367,18 @@ fn pinned_key_wins_over_the_inbox() {
 #[test]
 fn unresolvable_inbox_keys_fail_closed() {
     let key = network_key(6);
-    let invalid_key = L2RegistryError::InvalidPublicKey.to_string();
-    let failed_call = L2RegistryError::InboxKeyCallFailed.to_string();
+    let invalid_key = IL2Registry::InvalidPublicKey {}.abi_encode();
+    let failed_call = IL2Registry::InboxKeyCallFailed {}.abi_encode();
     let mut db = database(&key.public_key);
 
     let targets = [
-        (NO_CODE, Some(invalid_key.as_str())),
-        (EMPTY_RETURN, Some(invalid_key.as_str())),
-        (JUNK_RETURN, Some(invalid_key.as_str())),
-        (SHORT_RETURN, Some(invalid_key.as_str())),
-        (REVERTER, None),
-        (LOOPING, Some(failed_call.as_str())),
-        (INVALID_OPCODE, Some(failed_call.as_str())),
+        (NO_CODE, Some(invalid_key.as_slice())),
+        (EMPTY_RETURN, Some(invalid_key.as_slice())),
+        (JUNK_RETURN, Some(invalid_key.as_slice())),
+        (SHORT_RETURN, Some(invalid_key.as_slice())),
+        (REVERTER, Some(&[][..])),
+        (LOOPING, Some(failed_call.as_slice())),
+        (INVALID_OPCODE, Some(failed_call.as_slice())),
     ];
     for (index, (l1_address, reason)) in targets.into_iter().enumerate() {
         let chain_id = L2_CHAIN_ID + index as u64;
@@ -393,10 +390,10 @@ fn unresolvable_inbox_keys_fail_closed() {
             matches!(outcome, ExecutionResult::Revert { .. }),
             "getNetwork must fail closed for {l1_address}: {outcome:?}"
         );
-        assert_eq!(revert_reason(&outcome).as_deref(), reason);
+        assert_eq!(revert_data(&outcome).as_deref(), reason);
         let offered = offer(&mut db, chain_id, &key);
         assert!(matches!(offered, ExecutionResult::Revert { .. }));
-        assert_eq!(revert_reason(&offered).as_deref(), reason);
+        assert_eq!(revert_data(&offered).as_deref(), reason);
     }
 }
 
@@ -454,8 +451,8 @@ fn unset_or_invalid_inbox_point_rejects_until_the_inbox_recovers() {
             offer(&mut db, L2_CHAIN_ID, &key),
         ] {
             assert_eq!(
-                revert_reason(&outcome),
-                Some(L2RegistryError::InvalidPublicKey.to_string()),
+                revert_data(&outcome),
+                Some(IL2Registry::InvalidPublicKey {}.abi_encode()),
             );
         }
     }
@@ -467,7 +464,7 @@ fn unset_or_invalid_inbox_point_rejects_until_the_inbox_recovers() {
         &key.public_key
     );
     assert_eq!(
-        revert_reason(&offer(&mut db, L2_CHAIN_ID, &key)),
-        Some(TributeFactoryError::ZkProofRequired.to_string()),
+        revert_data(&offer(&mut db, L2_CHAIN_ID, &key)),
+        Some(ITributeFactory::ZkProofRequired {}.abi_encode()),
     );
 }

@@ -2,6 +2,33 @@
 pragma solidity ^0.8.30;
 
 interface ICredisFactory {
+    error InvalidAmount();
+    error CcaStakeMismatch();
+    error ReservationNotFound();
+    error ReservationExpired();
+    error ReservationCcaMismatch();
+    error ZeroIssueTerm();
+    error InvalidSource();
+    error InvalidOwner();
+    error CredisAlreadyExists();
+    error CredisClosed();
+    error PaymentBelowAccruedInterest();
+    error NotCalled();
+    error SettlementDeadlineNotPassed();
+    error SettlementDeadlinePassed();
+    error NothingOutstanding();
+    error NotCredisOwner();
+    error PayoffOverflow();
+    error AssetDecimalsUndecodable();
+    error AssetCurrencyUndecodable();
+    error AssetMetadataChanged();
+    error CoenStakeOverflow();
+    error CredisChangedDuringIssuance();
+    error CollateralIncreased();
+    error CollateralReleaseMismatch();
+    error CredisChangedDuringPayment();
+    error ForfeitureCollateralMismatch();
+
     event CredisIssued(
         uint256 indexed credisId,
         address indexed owner,

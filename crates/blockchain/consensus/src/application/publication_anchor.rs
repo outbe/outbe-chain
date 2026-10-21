@@ -13,8 +13,16 @@ mod tests;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum PublicationAnchorError {
-    #[error("invalid repository publication anchor: {0}")]
-    Invalid(&'static str),
+    #[error("invalid repository publication anchor: malformed header artifacts")]
+    MalformedHeaderArtifacts(#[source] outbe_primitives::errors::PrecompileError),
+    #[error("invalid repository publication anchor: chain or height")]
+    ChainOrHeightMismatch,
+    #[error("invalid repository publication anchor: genesis hash")]
+    GenesisHashMismatch,
+    #[error(
+        "invalid repository publication anchor: hash differs from canonical finalized history"
+    )]
+    FinalizedHashMismatch,
     #[error("repository publication finalized history is locally unavailable")]
     Unavailable,
 }
@@ -25,14 +33,17 @@ pub(crate) async fn validate_publication_anchor(
     genesis_hash: B256,
     reader: &impl FinalizedBlockReader,
 ) -> Result<(), PublicationAnchorError> {
-    use PublicationAnchorError::{Invalid, Unavailable};
+    use PublicationAnchorError::{
+        ChainOrHeightMismatch, FinalizedHashMismatch, GenesisHashMismatch,
+        MalformedHeaderArtifacts, Unavailable,
+    };
     let extra_data = block.header().inner.extra_data.as_ref();
-    // Format activation is checked by node policy; this check adds no legacy constraints.
-    if !extra_data.starts_with(b"OART\x0c") {
+    // Node policy binds publication mode to genesis. Decode every OART envelope before reading records.
+    if !extra_data.starts_with(b"OART") {
         return Ok(());
     }
     let artifacts = outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(extra_data)
-        .map_err(|_| Invalid("malformed header artifacts"))?;
+        .map_err(MalformedHeaderArtifacts)?;
     let Some(batch) = artifacts.radicle_publication else {
         return Ok(());
     };
@@ -42,13 +53,13 @@ pub(crate) async fn validate_publication_anchor(
         || body.finalized_anchor_height >= block.number()
         || body.finalized_anchor_hash.is_zero()
     {
-        return Err(Invalid("chain or height"));
+        return Err(ChainOrHeightMismatch);
     }
     if body.finalized_anchor_height == 0 {
         return if body.finalized_anchor_hash == genesis_hash {
             Ok(())
         } else {
-            Err(Invalid("genesis hash"))
+            Err(GenesisHashMismatch)
         };
     }
     let finalized = reader
@@ -56,10 +67,10 @@ pub(crate) async fn validate_publication_anchor(
         .await
         .ok_or(Unavailable)?;
     if finalized.number() != body.finalized_anchor_height {
-        return Err(Unavailable);
+        Err(Unavailable)
+    } else if finalized.block_hash() != body.finalized_anchor_hash {
+        Err(FinalizedHashMismatch)
+    } else {
+        Ok(())
     }
-    if finalized.block_hash() != body.finalized_anchor_hash {
-        return Err(Invalid("hash differs from canonical finalized history"));
-    }
-    Ok(())
 }

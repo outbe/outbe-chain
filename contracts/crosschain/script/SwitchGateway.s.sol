@@ -27,8 +27,11 @@ contract SwitchGateway is Script {
         address deployer = vm.addr(deployerPk);
 
         address bridgeAddr = _compute(factory, salt, deployer, "ERC7786Bridge");
-        string memory label =
-            keccak256(bytes(active)) == keccak256("hyperlane") ? "HyperlaneGatewayAdapter" : "LayerZeroGatewayAdapter";
+        bytes32 gateway = keccak256(bytes(active));
+        require(
+            gateway == keccak256("lz") || gateway == keccak256("hyperlane"), "ACTIVE_GATEWAY must be lz or hyperlane"
+        );
+        string memory label = gateway == keccak256("hyperlane") ? "HyperlaneGatewayAdapter" : "LayerZeroGatewayAdapter";
         address adapter = _compute(factory, salt, deployer, label);
 
         vm.startBroadcast(deployerPk);

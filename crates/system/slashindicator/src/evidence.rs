@@ -153,8 +153,17 @@ fn read_leb128(data: &[u8], pos: &mut usize) -> Result<u64> {
         let byte = data[*pos];
         *pos += 1;
 
-        result |= ((byte & 0x7F) as u64) << shift;
+        let payload = byte & 0x7F;
+        // Byte ten can only supply bit 63 of the decoded value.
+        // Reject excess bits before the shift.
+        if shift == 63 && (payload > 1 || byte & 0x80 != 0) {
+            return Err(SlashIndicatorError::VarintOverflow.into());
+        }
+        result |= u64::from(payload) << shift;
         if byte & 0x80 == 0 {
+            if shift != 0 && payload == 0 {
+                return Err(SlashIndicatorError::NonCanonicalVarint.into());
+            }
             return Ok(result);
         }
         shift += 7;
@@ -167,7 +176,9 @@ fn read_leb128(data: &[u8], pos: &mut usize) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::precompile::ISlashIndicator;
     use crate::test_signing::{self, signed_evidence, POP_DST};
+    use alloy_sol_types::SolError;
     use blst::min_pk::{PublicKey, SecretKey};
     use commonware_codec::{varint::UInt, Encode as _};
     use commonware_cryptography::Signer as _;
@@ -192,6 +203,46 @@ mod tests {
             let decoded = read_leb128(&buf, &mut pos).unwrap();
             assert_eq!(value, decoded, "failed for {value}");
             assert_eq!(pos, buf.len());
+        }
+    }
+
+    #[test]
+    fn leb128_rejects_noncanonical_overflowing_and_truncated_inputs() {
+        for bytes in [
+            vec![0x80, 0],
+            vec![0x81, 0],
+            vec![0xff, 0x80, 0],
+            [vec![0x80; 9], vec![0]].concat(),
+        ] {
+            let err = read_leb128(&bytes, &mut 0).unwrap_err();
+            assert!(matches!(err, PrecompileError::RevertBytes(bytes)
+                if bytes.as_ref() == ISlashIndicator::NonCanonicalVarint {}.abi_encode()));
+        }
+        for terminal in [2, 127, 128, 129, 255] {
+            let bytes = [vec![0xff; 9], vec![terminal]].concat();
+            let err = read_leb128(&bytes, &mut 0).unwrap_err();
+            assert!(matches!(err, PrecompileError::RevertBytes(bytes)
+                if bytes.as_ref() == ISlashIndicator::VarintOverflow {}.abi_encode()));
+        }
+        for bytes in [vec![], vec![0x80], vec![0xff; 9]] {
+            let err = read_leb128(&bytes, &mut 0).unwrap_err();
+            assert!(matches!(err, PrecompileError::RevertBytes(bytes)
+                if bytes.as_ref() == ISlashIndicator::UnexpectedEndOfVarint {}.abi_encode()));
+        }
+    }
+
+    #[test]
+    fn leb128_preserves_cursor_and_subsequent_fields() {
+        for value in [0, 1, 127, 128, 16384, u64::MAX] {
+            let encoded = UInt(value).encode().to_vec();
+            let mut data = vec![0xaa, 0xbb];
+            data.extend_from_slice(&encoded);
+            data.extend_from_slice(&[0xcc, 0xdd]);
+            let mut pos = 2;
+            let decoded = read_leb128(&data, &mut pos).unwrap();
+            assert_eq!(decoded, value);
+            assert_eq!(UInt(decoded).encode().as_ref(), &data[2..pos]);
+            assert_eq!(&data[pos..], &[0xcc, 0xdd]);
         }
     }
 

@@ -1,5 +1,8 @@
 //! Typed error definitions for the ProtocolCycle system precompile.
 
+use crate::ICycle;
+use alloy_primitives::Bytes;
+use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
@@ -36,21 +39,62 @@ pub enum CycleError {
 }
 
 impl From<CycleError> for PrecompileError {
-    fn from(err: CycleError) -> Self {
-        match err {
-            CycleError::InvalidActiveUtcDay { .. } => PrecompileError::Fatal(err.to_string()),
-            CycleError::InvalidBlockUtcDay { .. }
-            | CycleError::ActiveUtcDayAfterBlock { .. }
-            | CycleError::NativeValidatorBudgetOverflow
-            | CycleError::SettlementBeforeParticipationWindowsClose
-            | CycleError::DailySettledWithoutMetadosisReceipt
-            | CycleError::MetadosisReceiptWithoutDailySettled
-            | CycleError::MetadosisTerminalOverflow
-            | CycleError::ValidatorTopupExceedsAllocation
-            | CycleError::AllocationWithoutMetadosisReceipt
-            | CycleError::AllocationDisagreesWithMetadosisReceipt
-            | CycleError::ActiveUtcDayNotInitialized
-            | CycleError::BlockNumberRegression { .. } => PrecompileError::Revert(err.to_string()),
+    fn from(error: CycleError) -> Self {
+        match error {
+            error @ CycleError::InvalidActiveUtcDay {
+                active: _,
+                block: _,
+            } => PrecompileError::Fatal(error.to_string()),
+            CycleError::InvalidBlockUtcDay { active, block } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ICycle::InvalidBlockUtcDay {
+                        active,
+                        blockDay: block,
+                    }
+                    .abi_encode(),
+                ))
+            }
+            CycleError::ActiveUtcDayAfterBlock { active, block } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ICycle::ActiveUtcDayAfterBlock {
+                        active,
+                        blockDay: block,
+                    }
+                    .abi_encode(),
+                ))
+            }
+            CycleError::NativeValidatorBudgetOverflow => PrecompileError::RevertBytes(Bytes::from(
+                ICycle::NativeValidatorBudgetOverflow {}.abi_encode(),
+            )),
+            CycleError::SettlementBeforeParticipationWindowsClose => PrecompileError::RevertBytes(
+                Bytes::from(ICycle::SettlementBeforeParticipationWindowsClose {}.abi_encode()),
+            ),
+            CycleError::DailySettledWithoutMetadosisReceipt => PrecompileError::RevertBytes(
+                Bytes::from(ICycle::DailySettledWithoutMetadosisReceipt {}.abi_encode()),
+            ),
+            CycleError::MetadosisReceiptWithoutDailySettled => PrecompileError::RevertBytes(
+                Bytes::from(ICycle::MetadosisReceiptWithoutDailySettled {}.abi_encode()),
+            ),
+            CycleError::MetadosisTerminalOverflow => PrecompileError::RevertBytes(Bytes::from(
+                ICycle::MetadosisTerminalOverflow {}.abi_encode(),
+            )),
+            CycleError::ValidatorTopupExceedsAllocation => PrecompileError::RevertBytes(
+                Bytes::from(ICycle::ValidatorTopupExceedsAllocation {}.abi_encode()),
+            ),
+            CycleError::AllocationWithoutMetadosisReceipt => PrecompileError::RevertBytes(
+                Bytes::from(ICycle::AllocationWithoutMetadosisReceipt {}.abi_encode()),
+            ),
+            CycleError::AllocationDisagreesWithMetadosisReceipt => PrecompileError::RevertBytes(
+                Bytes::from(ICycle::AllocationDisagreesWithMetadosisReceipt {}.abi_encode()),
+            ),
+            CycleError::ActiveUtcDayNotInitialized => PrecompileError::RevertBytes(Bytes::from(
+                ICycle::ActiveUtcDayNotInitialized {}.abi_encode(),
+            )),
+            CycleError::BlockNumberRegression { current, attempted } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ICycle::BlockNumberRegression { current, attempted }.abi_encode(),
+                ))
+            }
         }
     }
 }
@@ -71,34 +115,80 @@ mod tests {
             PrecompileError::Fatal(msg) if msg == fatal_msg
         ));
 
-        for err in [
-            CycleError::InvalidBlockUtcDay {
-                active: 20_260_228,
-                block: 20_260_231,
-            },
-            CycleError::ActiveUtcDayAfterBlock {
-                active: 20_260_820,
-                block: 20_260_819,
-            },
-            CycleError::NativeValidatorBudgetOverflow,
-            CycleError::SettlementBeforeParticipationWindowsClose,
-            CycleError::DailySettledWithoutMetadosisReceipt,
-            CycleError::MetadosisReceiptWithoutDailySettled,
-            CycleError::MetadosisTerminalOverflow,
-            CycleError::ValidatorTopupExceedsAllocation,
-            CycleError::AllocationWithoutMetadosisReceipt,
-            CycleError::AllocationDisagreesWithMetadosisReceipt,
-            CycleError::ActiveUtcDayNotInitialized,
-            CycleError::BlockNumberRegression {
-                current: 10,
-                attempted: 9,
-            },
-        ] {
-            let msg = err.to_string();
-            assert!(matches!(
-                PrecompileError::from(err),
-                PrecompileError::Revert(m) if m == msg
-            ));
+        let cases = [
+            (
+                CycleError::InvalidBlockUtcDay {
+                    active: 20_260_228,
+                    block: 20_260_231,
+                },
+                ICycle::InvalidBlockUtcDay::SELECTOR,
+            ),
+            (
+                CycleError::ActiveUtcDayAfterBlock {
+                    active: 20_260_820,
+                    block: 20_260_819,
+                },
+                ICycle::ActiveUtcDayAfterBlock::SELECTOR,
+            ),
+            (
+                CycleError::NativeValidatorBudgetOverflow,
+                ICycle::NativeValidatorBudgetOverflow::SELECTOR,
+            ),
+            (
+                CycleError::SettlementBeforeParticipationWindowsClose,
+                ICycle::SettlementBeforeParticipationWindowsClose::SELECTOR,
+            ),
+            (
+                CycleError::DailySettledWithoutMetadosisReceipt,
+                ICycle::DailySettledWithoutMetadosisReceipt::SELECTOR,
+            ),
+            (
+                CycleError::MetadosisReceiptWithoutDailySettled,
+                ICycle::MetadosisReceiptWithoutDailySettled::SELECTOR,
+            ),
+            (
+                CycleError::MetadosisTerminalOverflow,
+                ICycle::MetadosisTerminalOverflow::SELECTOR,
+            ),
+            (
+                CycleError::ValidatorTopupExceedsAllocation,
+                ICycle::ValidatorTopupExceedsAllocation::SELECTOR,
+            ),
+            (
+                CycleError::AllocationWithoutMetadosisReceipt,
+                ICycle::AllocationWithoutMetadosisReceipt::SELECTOR,
+            ),
+            (
+                CycleError::AllocationDisagreesWithMetadosisReceipt,
+                ICycle::AllocationDisagreesWithMetadosisReceipt::SELECTOR,
+            ),
+            (
+                CycleError::ActiveUtcDayNotInitialized,
+                ICycle::ActiveUtcDayNotInitialized::SELECTOR,
+            ),
+            (
+                CycleError::BlockNumberRegression {
+                    current: 10,
+                    attempted: 9,
+                },
+                ICycle::BlockNumberRegression::SELECTOR,
+            ),
+        ];
+        for (err, selector) in cases {
+            match PrecompileError::from(err) {
+                PrecompileError::RevertBytes(bytes) => assert_eq!(&bytes[..4], &selector),
+                other => panic!("expected typed revert bytes, got {other:?}"),
+            }
         }
+        let encoded = match PrecompileError::from(CycleError::InvalidBlockUtcDay {
+            active: 20_260_228,
+            block: 20_260_231,
+        }) {
+            PrecompileError::RevertBytes(bytes) => bytes,
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        };
+        let decoded = ICycle::InvalidBlockUtcDay::abi_decode(&encoded).expect("day payload");
+        assert_eq!(decoded.active, 20_260_228);
+        assert_eq!(decoded.blockDay, 20_260_231);
     }
 }

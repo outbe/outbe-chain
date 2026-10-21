@@ -158,8 +158,8 @@ fn check_batch_shape(batch_index: u16, total_batches: u16, bids: &[BidData]) -> 
     }
     // Same reason as the currency check below: an over-wide batch is admissible
     // here but not at clearing, where the refund fan-out would reject the day.
-    if bids.len() > MAX_BIDS_PER_BATCH {
-        return Err(DesisError::BidBatchTooLarge(bids.len(), MAX_BIDS_PER_BATCH).into());
+    if bids.len() > MAX_PAYLOAD_ARRAY_LEN {
+        return Err(DesisError::BidBatchTooLarge(bids.len(), MAX_PAYLOAD_ARRAY_LEN).into());
     }
     // Checked here because clearing cannot recover from it: an unspellable code would
     // otherwise surface as a day whose clearing reverts every block.
