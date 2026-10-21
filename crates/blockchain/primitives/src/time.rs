@@ -289,6 +289,8 @@ impl StorableType for WorldwideDay {
 }
 
 impl Storable for WorldwideDay {
+    const BYTES: usize = 4;
+
     fn from_word(word: U256) -> Self {
         Self(word.to::<u32>())
     }

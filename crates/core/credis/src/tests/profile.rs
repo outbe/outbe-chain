@@ -36,7 +36,7 @@ fn config_profile_slot_matches_seeder_layout() {
     StorageHandle::enter(&mut provider, |storage| {
         assert_eq!(
             CredisContract::new(storage).config_profile.slot(),
-            U256::from(50)
+            U256::from(40)
         );
     });
 }
