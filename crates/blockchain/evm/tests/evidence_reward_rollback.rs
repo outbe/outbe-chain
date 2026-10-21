@@ -198,8 +198,8 @@ fn invalid_evidence_reward_reverts_transaction_and_identical_signed_evidence_can
                 panic!("invalid configuration must revert: {:?}", outcome.result);
             };
             assert_eq!(
-                alloy_sol_types::Revert::abi_decode(output).unwrap().reason,
-                "invalid evidence reward percent: 150"
+                output.as_ref(),
+                ISlashIndicator::InvalidEvidenceRewardPercent { percent: 150 }.abi_encode()
             );
             assert!(outcome.result.logs().is_empty());
             // Check all storage, including dynamically derived dedup slots.

@@ -12,7 +12,13 @@ fn distribute_rejects_non_origin_router() {
         s.increase_balance(INTEX_FACTORY_ADDRESS, U256::from(100u64))
             .unwrap();
         let err = runtime::distribute(&s, owner(), 7.into(), 10, U256::from(100u64)).unwrap_err();
-        assert!(err.to_string().to_lowercase().contains("origin router"));
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::IntexFactoryError::NotOriginRouter,
+            )
+            .to_string()
+        );
     });
 }
 
@@ -149,13 +155,14 @@ fn distribute_receives_the_call_value() {
 
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
+        let zero_amount_err = outbe_primitives::error::PrecompileError::from(
+            crate::errors::IntexFactoryError::ZeroAmount,
+        )
+        .to_string();
         let unfunded = dispatch(storage.clone(), &data, ORIGIN_ROUTER_ADDRESS, U256::ZERO);
-        assert!(
-            matches!(
-                unfunded,
-                Err(outbe_primitives::error::PrecompileError::Revert(ref message))
-                    if message == "amount must be positive"
-            ),
+        assert_eq!(
+            unfunded.as_ref().map_err(ToString::to_string),
+            Err(zero_amount_err.clone()),
             "a zero-value distribute must reach the handler with nothing, got {unfunded:?}"
         );
 
@@ -165,12 +172,9 @@ fn distribute_receives_the_call_value() {
             ORIGIN_ROUTER_ADDRESS,
             U256::from(1_000u64),
         );
-        assert!(
-            !matches!(
-                funded,
-                Err(outbe_primitives::error::PrecompileError::Revert(ref message))
-                    if message == "amount must be positive"
-            ),
+        assert_ne!(
+            funded.as_ref().map_err(ToString::to_string),
+            Err(zero_amount_err),
             "a funded distribute must reach the handler with the value, got {funded:?}"
         );
     });

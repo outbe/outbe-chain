@@ -167,7 +167,13 @@ fn burn_insufficient_reverts_atomically() {
             auth(PromisOp::Burn, alice(), U256::from(200u64), 1),
         )
         .unwrap_err();
-        assert!(matches!(err, PrecompileError::Revert(m) if m == "insufficient balance"));
+        assert_eq!(
+            err.to_string(),
+            PrecompileError::from(crate::errors::PromisError::Rejected(
+                "insufficient balance".into(),
+            ))
+            .to_string()
+        );
         // No partial state change: balance + supply intact.
         assert_eq!(view_balance(storage.clone(), alice()), U256::from(100u64));
         assert_eq!(

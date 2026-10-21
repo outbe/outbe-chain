@@ -1,10 +1,12 @@
 //! User-controlled call envelopes must settle inside the EVM, so the next
 //! transaction can execute even when a precompile rejects the current call.
 use alloy_evm::{Evm as _, EvmFactory as _};
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{keccak256, Address, Bytes, U256};
+use alloy_sol_types::SolCall;
+use outbe_ccaregistry::precompile::ICcaRegistry;
 use outbe_evm::OutbeEvmFactory;
 use outbe_primitives::{
-    addresses::{OUTBE_SYSTEM_TX_ADDRESS, STAKING_ADDRESS, SYSTEM_ADDRESS},
+    addresses::{CCA_REGISTRY_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS, STAKING_ADDRESS, SYSTEM_ADDRESS},
     storage::gas::PRECOMPILE_BASE_GAS,
     system_tx::SystemTxInputV2,
 };
@@ -226,4 +228,33 @@ fn former_debug_address_does_not_invoke_a_calldata_selected_contract() {
     assert!(
         matches!(result, ExecutionResult::Success { output: Output::Call(ref bytes), .. } if bytes.is_empty())
     );
+}
+
+/// A real precompile rejection must retain its custom error through a child CALL.
+#[test]
+fn caller_domain_error_keeps_its_selector_in_direct_and_child_calls() {
+    let calldata: Bytes = ICcaRegistry::getCcaCall {
+        cca: Address::repeat_byte(0x55),
+    }
+    .abi_encode()
+    .into();
+    let expected = &keccak256("NotRegistered()")[..4];
+    let direct = transact(funded_db(), CCA_REGISTRY_ADDRESS, calldata.clone(), 100_000);
+    let ExecutionResult::Revert { output, .. } = direct else {
+        panic!("expected a caller rejection, got {direct:?}")
+    };
+    assert_eq!(output.as_ref(), expected);
+
+    let mut db = funded_db();
+    install(&mut db, PROXY, proxy(CCA_REGISTRY_ADDRESS, 0xf1, 50_000));
+    let child = transact(db, PROXY, calldata, 100_000);
+    let ExecutionResult::Success {
+        output: Output::Call(output),
+        ..
+    } = child
+    else {
+        panic!("the proxy must catch the child rejection, got {child:?}")
+    };
+    assert_eq!(U256::from_be_slice(&output[..32]), U256::ZERO);
+    assert_eq!(&output[32..], expected);
 }

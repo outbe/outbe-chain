@@ -1,16 +1,19 @@
+use super::fixtures::assert_revert_bytes;
 use super::*;
 use crate::v1::NodeHostAssociationV1;
+use alloy_sol_types::SolError;
+use outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1;
 
 /// Asserts the rejections that both node roles share for the initial intent
 /// `initial`, in this order: a signature of `other_enclave` over the intent
-/// hash, the stale intent `signed_stale` with `stale_message`, and a wrong
+/// hash, the stale intent `signed_stale` with `stale_error`, and a wrong
 /// measurement.
 fn assert_shared_initial_rejections(
     registry: &mut TeeRegistry<'_>,
     initial: &SignedIntent<'_>,
     other_enclave: &ed25519_dalek::SigningKey,
     signed_stale: &SignedIntent<'_>,
-    stale_message: &str,
+    stale_error: Vec<u8>,
 ) {
     let wrong_enclave = SignedIntent {
         enclave_signature: other_enclave
@@ -18,23 +21,25 @@ fn assert_shared_initial_rejections(
             .to_bytes(),
         ..*initial
     };
-    assert_reverts(
+    assert_revert_bytes(
         registry.register_enclave_after_verifier_for_test(
             wrong_enclave.with_verdict(verdict(DcapPlatformTcbStatusV1::UpToDate)),
         ),
-        "enclave proof",
+        ITeeRegistryV1::EnclavePopInvalid {}.abi_encode().as_slice(),
     );
-    assert_reverts(
+    assert_revert_bytes(
         registry.register_enclave_after_verifier_for_test(
             signed_stale.with_verdict(verdict(DcapPlatformTcbStatusV1::UpToDate)),
         ),
-        stale_message,
+        &stale_error,
     );
     let mut wrong_measurement = verdict(DcapPlatformTcbStatusV1::UpToDate);
     wrong_measurement.mrenclave = B256::repeat_byte(0x99);
-    assert_reverts(
+    assert_revert_bytes(
         registry.register_enclave_after_verifier_for_test(initial.with_verdict(wrong_measurement)),
-        "measurement rule",
+        ITeeRegistryV1::ClaimsMeasurementRuleMatchInvalid {}
+            .abi_encode()
+            .as_slice(),
     );
 }
 
@@ -49,11 +54,11 @@ fn assert_node_proof_rejected(
         node_signature,
         ..*signed
     };
-    assert_reverts(
+    assert_revert_bytes(
         registry.register_enclave_after_verifier_for_test(
             forged.with_verdict(verdict(DcapPlatformTcbStatusV1::UpToDate)),
         ),
-        "node proof",
+        ITeeRegistryV1::NodePopInvalid {}.abi_encode().as_slice(),
     );
 }
 
@@ -74,11 +79,13 @@ fn assert_enclave_bound_to_other_node(
     existing: &RegistrationIntentV1,
 ) {
     assert_eq!(other.intent.enclave_id, existing.enclave_id);
-    assert_reverts(
+    assert_revert_bytes(
         registry.register_enclave_after_verifier_for_test(
             other.with_verdict(verdict(DcapPlatformTcbStatusV1::UpToDate)),
         ),
-        "already bound to another node",
+        ITeeRegistryV1::EnclaveAlreadyBoundToAnotherNode {}
+            .abi_encode()
+            .as_slice(),
     );
 }
 
@@ -190,12 +197,14 @@ fn atomic_initial_registration_is_active_idempotent_and_expires_without_relay_au
             },
         );
 
-        assert_reverts(
+        assert_revert_bytes(
             registry.register_enclave_and_bind_after_verifier_for_test(
                 signed_intent.with_conflicting_evidence(accepted_verdict),
                 association.input(),
             ),
-            "not an exact evidence replay",
+            ITeeRegistryV1::MutationNotExactEvidenceReplay {}
+                .abi_encode()
+                .as_slice(),
         );
 
         storage
@@ -297,7 +306,7 @@ fn invalid_or_conflicting_initial_association_rolls_back_the_node_registration()
     first.run_installed(|_storage, mut registry| {
         let mut invalid_validator_signature = first_association.validator_signature;
         invalid_validator_signature[0] ^= 1;
-        assert_reverts(
+        assert_revert_bytes(
             registry.register_enclave_and_bind_after_verifier_for_test(
                 signed_first_intent.with_verdict(verdict(DcapPlatformTcbStatusV1::UpToDate)),
                 NodeHostAssociationV1 {
@@ -306,7 +315,9 @@ fn invalid_or_conflicting_initial_association_rolls_back_the_node_registration()
                     node_binding_signature: &first_association.node_binding_signature,
                 },
             ),
-            "proof of possession",
+            ITeeRegistryV1::ValidatorNodeBindingPopInvalid {}
+                .abi_encode()
+                .as_slice(),
         );
         assert_node_registration_rolled_back(&registry, &first.initial, admission_signer.address());
 
@@ -316,12 +327,14 @@ fn invalid_or_conflicting_initial_association_rolls_back_the_node_registration()
                 second_node_own_association.input(),
             )
             .unwrap();
-        assert_reverts(
+        assert_revert_bytes(
             registry.register_enclave_and_bind_after_verifier_for_test(
                 signed_first_intent.with_verdict(verdict(DcapPlatformTcbStatusV1::UpToDate)),
                 second_association.input(),
             ),
-            "same NodeHost",
+            ITeeRegistryV1::InitialAssociationTargetMismatch {}
+                .abi_encode()
+                .as_slice(),
         );
         assert_node_registration_rolled_back(&registry, &first.initial, admission_signer.address());
 
@@ -331,12 +344,14 @@ fn invalid_or_conflicting_initial_association_rolls_back_the_node_registration()
                 first_association.input(),
             )
             .unwrap();
-        assert_reverts(
+        assert_revert_bytes(
             registry.register_enclave_and_bind_after_verifier_for_test(
                 signed_second_intent.with_verdict(verdict(DcapPlatformTcbStatusV1::UpToDate)),
                 second_association.input(),
             ),
-            "not associated with the existing NodeHost",
+            ITeeRegistryV1::RegistrationCallerNotAssociatedWithExistingNodeHost {}
+                .abi_encode()
+                .as_slice(),
         );
         assert_eq!(
             registry
@@ -414,17 +429,19 @@ fn full_node_binding_is_idempotent_expires_and_rejects_validator_credentials() {
             &signed_intent,
             &other_enclave,
             &signed_stale,
-            "must renew",
+            ITeeRegistryV1::LiveBindingMustRenew {}.abi_encode(),
         );
 
         let mut excessive_lease = full_node.initial.clone();
         excessive_lease.requested_valid_until = NOW + full_node.policy.maximum_lease + 1;
         let signed_excessive_lease = full_node.sign(&excessive_lease);
-        assert_reverts(
+        assert_revert_bytes(
             registry.register_enclave_after_verifier_for_test(
                 signed_excessive_lease.with_verdict(verdict(DcapPlatformTcbStatusV1::UpToDate)),
             ),
-            "must renew",
+            ITeeRegistryV1::LiveBindingMustRenew {}
+                .abi_encode()
+                .as_slice(),
         );
 
         let same_enclave_other_node = full_node_registration_intent(
@@ -444,11 +461,13 @@ fn full_node_binding_is_idempotent_expires_and_rejects_validator_credentials() {
             &full_node.initial,
         );
 
-        assert_reverts(
+        assert_revert_bytes(
             registry.register_enclave_after_verifier_for_test(
                 signed_intent.with_conflicting_evidence(verdict(DcapPlatformTcbStatusV1::UpToDate)),
             ),
-            "not an exact evidence replay",
+            ITeeRegistryV1::MutationNotExactEvidenceReplay {}
+                .abi_encode()
+                .as_slice(),
         );
 
         storage
@@ -499,7 +518,7 @@ fn role_neutral_registration_rejects_node_enclave_nonce_and_measurement_errors()
             &signed_intent,
             &other_enclave,
             &signed_stale,
-            "versions and nonces",
+            ITeeRegistryV1::InitialRegistrationCountersNonCanonical {}.abi_encode(),
         );
 
         assert!(registry
@@ -539,11 +558,13 @@ fn one_to_one_binding_and_strict_platform_policy_reject_conflicts() {
             );
             let signed_second_enclave =
                 first_validator.sign_with_enclave(&second_enclave, &replacement_enclave);
-            assert_reverts(
+            assert_revert_bytes(
                 registry.register_enclave_after_verifier_for_test(
                     signed_second_enclave.with_verdict(verdict(DcapPlatformTcbStatusV1::UpToDate)),
                 ),
-                "must renew",
+                ITeeRegistryV1::LiveBindingMustRenew {}
+                    .abi_encode()
+                    .as_slice(),
             );
 
             let mut same_enclave_other_node = registration_intent(
@@ -584,11 +605,13 @@ fn one_to_one_binding_and_strict_platform_policy_reject_conflicts() {
             DcapPlatformTcbStatusV1::SWHardeningNeeded,
             DcapPlatformTcbStatusV1::ConfigurationAndSWHardeningNeeded,
         ] {
-            assert_reverts(
+            assert_revert_bytes(
                 registry.register_enclave_after_verifier_for_test(
                     signed_strict_intent.with_verdict(verdict(status)),
                 ),
-                "stricter than active policy",
+                ITeeRegistryV1::PlatformTcbStatusDisallowed {}
+                    .abi_encode()
+                    .as_slice(),
             );
         }
     });

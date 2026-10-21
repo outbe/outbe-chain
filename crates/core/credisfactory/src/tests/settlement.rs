@@ -516,9 +516,12 @@ fn repayment_deadline_is_enforced_before_cleanup_through_the_abi() {
         .abi_encode();
         let err =
             crate::precompile::dispatch(storage.clone(), &data, bob(), U256::ZERO).unwrap_err();
-        assert!(
-            err.to_string().contains("settlement deadline has passed"),
-            "{err}"
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::CredisFactoryError::SettlementDeadlinePassed
+            )
+            .to_string()
         );
         assert_eq!(credis.get_credis(id).unwrap(), before);
         assert_eq!(view_balance(&storage, alice()), balance);
@@ -546,7 +549,13 @@ fn issue_credis_requires_the_stake_to_equal_the_collateral() {
             pledge_stake() + U256::ONE,
         ] {
             let err = runtime::issue_credis(storage.clone(), cca(), id, wrong).unwrap_err();
-            assert!(err.to_string().contains("attached COEN"), "{wrong}: {err}");
+            assert_eq!(
+                err.to_string(),
+                outbe_primitives::error::PrecompileError::from(
+                    crate::errors::CredisFactoryError::CcaStakeMismatch
+                )
+                .to_string()
+            );
         }
         assert_eq!(view_pledged(&storage, alice()), pledge_cost());
     });
@@ -628,7 +637,16 @@ fn failed_origination_keeps_the_pledge_and_cca_weight_and_exit_freezes_new_credi
     provider.set_block_number(BLOCK_NUMBER + 1);
     StorageHandle::enter(&mut provider, |storage| {
         let err = runtime::issue_credis(storage.clone(), cca(), next, pledge_stake()).unwrap_err();
-        assert!(err.to_string().contains("CCA is not active"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_ccaregistry::errors::CcaError::CcaNotActive {
+                    cca: cca(),
+                    state: outbe_ccaregistry::precompile::ICcaRegistry::State::Deregistering,
+                }
+            )
+            .to_string()
+        );
         assert_eq!(
             record(&storage, credis_id).outstanding_principal_minor,
             pledge_stables()
@@ -740,7 +758,13 @@ fn the_owner_forfeits_an_issued_credis_burning_its_sources_pledge() {
             let err = forfeit_through_abi(&storage, stranger, credis_id, U256::ZERO)
                 .err()
                 .unwrap();
-            assert!(err.to_string().contains("only the Credis owner"), "{err}");
+            assert_eq!(
+                err.to_string(),
+                outbe_primitives::error::PrecompileError::from(
+                    crate::errors::CredisFactoryError::NotCredisOwner
+                )
+                .to_string()
+            );
         }
         assert!(forfeit_through_abi(&storage, bob(), credis_id, U256::from(1u64)).is_err());
 
@@ -795,7 +819,13 @@ fn the_owner_cannot_forfeit_a_lapsed_call_that_the_sweep_forfeits() {
         let err = forfeit_through_abi(&storage, alice(), id, U256::ZERO)
             .err()
             .unwrap();
-        assert!(err.to_string().contains("closed"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::CredisFactoryError::CredisClosed
+            )
+            .to_string()
+        );
         assert_eq!(expire(&storage, lapsed), 1);
         assert_eq!(unallocated(&storage), pledge_cost());
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);

@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, Bytes, B256, U256};
-use alloy_sol_types::{sol, SolCall, SolEvent, SolValue};
+use alloy_sol_types::{sol, SolCall, SolError, SolEvent, SolValue};
 use commonware_codec::Encode;
 use commonware_cryptography::bls12381::primitives::{
     group::{Private, G2},
@@ -61,10 +61,12 @@ fn inbox_key_returns(key: &[u8]) -> Bytes {
     Bytes::from((Bytes::copy_from_slice(key),).abi_encode_params())
 }
 
-fn revert_message(err: PrecompileError) -> String {
+fn revert_selector(err: PrecompileError) -> [u8; 4] {
     match err {
-        PrecompileError::Revert(msg) => msg,
-        other => panic!("expected revert, got {other:?}"),
+        PrecompileError::RevertBytes(bytes) if bytes.len() >= 4 => {
+            bytes[..4].try_into().expect("selector")
+        }
+        other => panic!("expected typed revert, got {other:?}"),
     }
 }
 
@@ -164,7 +166,10 @@ fn register_rejects_invalid_inputs() {
             let err = registry
                 .register_network(chain_id, l1_address, &public_key)
                 .unwrap_err();
-            assert!(matches!(err, PrecompileError::Revert(_)));
+            assert!(matches!(
+                err,
+                PrecompileError::Revert(_) | PrecompileError::RevertBytes(_)
+            ));
         }
 
         // Every rejection left the registry untouched.
@@ -187,12 +192,18 @@ fn register_rejects_duplicates() {
         let err = registry
             .register_network(L2_CHAIN_ID, Address::repeat_byte(0x22), &public)
             .unwrap_err();
-        assert!(revert_message(err).contains("already registered"));
+        assert_eq!(
+            revert_selector(err),
+            precompile::IL2Registry::NetworkAlreadyRegistered::SELECTOR
+        );
 
         let err = registry
             .register_network(L2_CHAIN_ID + 1, l1_addr(), &public)
             .unwrap_err();
-        assert!(revert_message(err).contains("already registered"));
+        assert_eq!(
+            revert_selector(err),
+            precompile::IL2Registry::L1AddressAlreadyRegistered::SELECTOR
+        );
     });
 }
 
@@ -206,7 +217,10 @@ fn zero_chain_id_is_rejected_on_every_host_network() {
             let error = registry
                 .register_network(0, l1_addr(), &public)
                 .unwrap_err();
-            assert!(matches!(error, PrecompileError::Revert(_)));
+            assert!(matches!(
+                error,
+                PrecompileError::Revert(_) | PrecompileError::RevertBytes(_)
+            ));
             assert!(!registry.networks.exists(0).unwrap());
             assert_eq!(registry.l1_to_chain.read(&l1_addr()).unwrap(), 0);
             registry
@@ -226,7 +240,10 @@ fn owner_remove_requires_registration() {
     StorageHandle::enter(&mut storage, |storage| {
         let mut registry = L2RegistryContract::new(storage.clone());
         let err = registry.remove_network(l1_addr(), L2_CHAIN_ID).unwrap_err();
-        assert!(revert_message(err).contains("not registered"));
+        assert_eq!(
+            revert_selector(err),
+            precompile::IL2Registry::NetworkNotRegistered::SELECTOR
+        );
     });
 }
 
@@ -271,7 +288,10 @@ fn public_remove_rejects_non_owner_without_effects() {
         let err = precompile::dispatch(storage.clone(), &call.abi_encode(), stranger, U256::ZERO)
             .unwrap_err();
 
-        assert!(revert_message(err).contains("owner"));
+        assert_eq!(
+            revert_selector(err),
+            precompile::IL2Registry::NotNetworkOwner::SELECTOR
+        );
         let registry = L2RegistryContract::new(storage);
         assert_eq!(
             registry.load_network(L2_CHAIN_ID).unwrap().l1_address,
@@ -301,7 +321,10 @@ fn public_remove_allows_owner_and_replay_is_not_registered() {
 
         let err =
             precompile::dispatch(storage, &call.abi_encode(), l1_addr(), U256::ZERO).unwrap_err();
-        assert!(revert_message(err).contains("not registered"));
+        assert_eq!(
+            revert_selector(err),
+            precompile::IL2Registry::NetworkNotRegistered::SELECTOR
+        );
     });
 }
 
@@ -342,12 +365,18 @@ fn zk_signature_check_paths() {
         // Empty root.
         let err = check_zk_merkle_root_signature(storage.clone(), L2_CHAIN_ID, &[], &good_sig)
             .unwrap_err();
-        assert!(revert_message(err).contains("exactly 32 bytes"));
+        assert_eq!(
+            revert_selector(err),
+            precompile::IL2Registry::ZkMerkleRootRequired::SELECTOR
+        );
 
         // Malformed signature bytes.
         let err = check_zk_merkle_root_signature(storage.clone(), L2_CHAIN_ID, &root, &[0x01; 8])
             .unwrap_err();
-        assert!(revert_message(err).contains("invalid BLS signature"));
+        assert_eq!(
+            revert_selector(err),
+            precompile::IL2Registry::InvalidZkSignature::SELECTOR
+        );
 
         // Signature over a different message.
         let wrong_sig = sign_message::<MinSig>(&private, ZK_MERKLE_ROOT_NAMESPACE, &[0x24; 32])
@@ -355,7 +384,10 @@ fn zk_signature_check_paths() {
             .to_vec();
         let err = check_zk_merkle_root_signature(storage.clone(), L2_CHAIN_ID, &root, &wrong_sig)
             .unwrap_err();
-        assert!(revert_message(err).contains("invalid BLS signature"));
+        assert_eq!(
+            revert_selector(err),
+            precompile::IL2Registry::InvalidZkSignature::SELECTOR
+        );
 
         // Another registered network's signature cannot authenticate this chain.
         let (other_private, other_public) = keypair();
@@ -367,7 +399,10 @@ fn zk_signature_check_paths() {
             .to_vec();
         let err = check_zk_merkle_root_signature(storage.clone(), L2_CHAIN_ID, &root, &foreign_sig)
             .unwrap_err();
-        assert!(revert_message(err).contains("invalid BLS signature"));
+        assert_eq!(
+            revert_selector(err),
+            precompile::IL2Registry::InvalidZkSignature::SELECTOR
+        );
         assert_eq!(
             check_zk_merkle_root_signature(storage, L2_CHAIN_ID + 1, &root, &foreign_sig).unwrap(),
             ZkOfferCheck::Verified {
@@ -456,7 +491,10 @@ fn update_public_key_rotates_owner_key() {
         );
         let retired =
             check_zk_merkle_root_signature(storage, L2_CHAIN_ID, &root, &sign(&old_private));
-        assert!(matches!(retired, Err(PrecompileError::Revert(_))));
+        assert!(matches!(
+            retired,
+            Err(PrecompileError::Revert(_) | PrecompileError::RevertBytes(_))
+        ));
     });
 
     let event = provider
@@ -498,7 +536,10 @@ fn update_public_key_rejects_other_operators_and_unknown_chains() {
             };
             let err = precompile::dispatch(storage.clone(), &call.abi_encode(), caller, U256::ZERO)
                 .unwrap_err();
-            assert!(matches!(err, PrecompileError::Revert(_)));
+            assert!(matches!(
+                err,
+                PrecompileError::Revert(_) | PrecompileError::RevertBytes(_)
+            ));
         }
 
         let registry = L2RegistryContract::new(storage.clone());
@@ -577,7 +618,10 @@ fn update_public_key_rejects_malformed_key() {
             let err =
                 precompile::dispatch(storage.clone(), &call.abi_encode(), l1_addr(), U256::ZERO)
                     .unwrap_err();
-            assert!(matches!(err, PrecompileError::Revert(_)));
+            assert!(matches!(
+                err,
+                PrecompileError::Revert(_) | PrecompileError::RevertBytes(_)
+            ));
 
             // The stored key, the reverse index, and the ABI view are all
             // exactly what they were before the rejected call.
@@ -700,7 +744,10 @@ fn register_accepts_unset_key_and_keeps_ownership() {
             let err = registry
                 .register_network(L2_CHAIN_ID, l1_addr(), malformed)
                 .unwrap_err();
-            assert!(matches!(err, PrecompileError::Revert(_)));
+            assert!(matches!(
+                err,
+                PrecompileError::Revert(_) | PrecompileError::RevertBytes(_)
+            ));
             assert!(!registry.networks.exists(L2_CHAIN_ID).unwrap());
             assert_eq!(registry.l1_to_chain.read(&l1_addr()).unwrap(), 0);
         }
@@ -795,7 +842,10 @@ fn zk_signature_gate_resolves_unset_key_from_inbox() {
         );
         let err = check_zk_merkle_root_signature(storage.clone(), L2_CHAIN_ID + 1, &root, &signed)
             .unwrap_err();
-        assert!(matches!(err, PrecompileError::Revert(_)));
+        assert!(matches!(
+            err,
+            PrecompileError::Revert(_) | PrecompileError::RevertBytes(_)
+        ));
     });
 
     // Rotating the getter's answer rotates the accepted key. The registry caches
@@ -804,7 +854,10 @@ fn zk_signature_gate_resolves_unset_key_from_inbox() {
     StorageHandle::enter(&mut provider, |storage| {
         let err = check_zk_merkle_root_signature(storage.clone(), L2_CHAIN_ID, &root, &signed)
             .unwrap_err();
-        assert!(matches!(err, PrecompileError::Revert(_)));
+        assert!(matches!(
+            err,
+            PrecompileError::Revert(_) | PrecompileError::RevertBytes(_)
+        ));
         assert_eq!(
             check_zk_merkle_root_signature(storage, L2_CHAIN_ID, &root, &rotated_sig).unwrap(),
             ZkOfferCheck::Verified {
@@ -822,7 +875,10 @@ fn zk_signature_gate_resolves_unset_key_from_inbox() {
     StorageHandle::enter(&mut provider, |storage| {
         let err =
             check_zk_merkle_root_signature(storage, L2_CHAIN_ID, &root, &rotated_sig).unwrap_err();
-        assert!(matches!(err, PrecompileError::Revert(_)));
+        assert!(matches!(
+            err,
+            PrecompileError::Revert(_) | PrecompileError::RevertBytes(_)
+        ));
     });
 
     // The operator pins a key on the inbox-backed network; the getter's answer,
@@ -844,7 +900,10 @@ fn zk_signature_gate_resolves_unset_key_from_inbox() {
         );
         let from_inbox =
             check_zk_merkle_root_signature(storage.clone(), L2_CHAIN_ID, &root, &rotated_sig);
-        assert!(matches!(from_inbox, Err(PrecompileError::Revert(_))));
+        assert!(matches!(
+            from_inbox,
+            Err(PrecompileError::Revert(_) | PrecompileError::RevertBytes(_))
+        ));
 
         let query = precompile::IL2Registry::getNetworkCall {
             chainId: L2_CHAIN_ID,

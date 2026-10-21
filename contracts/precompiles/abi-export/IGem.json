@@ -543,5 +543,136 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AlreadyExists",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AlreadySettled",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EmptyGroup",
+    "inputs": [
+      {
+        "name": "group",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "EmptyGroupSlotOnRemoval",
+    "inputs": [
+      {
+        "name": "group",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "slot",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "GemNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "GemNotInGroup",
+    "inputs": [
+      {
+        "name": "gemId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "group",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "GemStateChangedAfterLoading",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "GroupExistenceMismatch",
+    "inputs": [
+      {
+        "name": "groupId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "memberCount",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IndexOutOfBounds",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NonTransferable",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SettledCountOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SettledCountUnderflow",
+    "inputs": [
+      {
+        "name": "groupId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TotalSupplyOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TotalSupplyUnderflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnknownProfileSelector",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ZeroOwner",
+    "inputs": []
   }
 ]

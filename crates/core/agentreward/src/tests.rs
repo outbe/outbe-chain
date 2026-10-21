@@ -411,9 +411,13 @@ fn a_claim_without_a_previous_day_vwap_keeps_the_balance() {
         seed_oracle(&storage, ONE_COEN);
         seed_day_vwap(&storage, U256::ZERO);
         let err = claim_waa(contract, alice, load).unwrap_err();
-        assert!(err
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::AgentRewardError::MissingPreviousDayPrice(USD)
+            )
             .to_string()
-            .contains("no previous-day COEN price in 840"));
+        );
         assert_eq!(contract.get_claimable_reward(alice).unwrap(), load);
     });
 }
@@ -436,9 +440,13 @@ fn a_claim_with_no_price_leaves_the_balance_for_the_next_day() {
         let err = contract
             .claim_reward(RewardPool::Waa, alice, U256::ZERO, (USD, USD))
             .unwrap_err();
-        assert!(err
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::AgentRewardError::MissingPreviousDayPrice(USD)
+            )
             .to_string()
-            .contains("no previous-day COEN price in 840"));
+        );
         assert_eq!(contract.get_claimable_reward(alice).unwrap(), load);
     });
 }
@@ -471,9 +479,13 @@ fn a_claim_refuses_a_reference_outside_the_reference_set() {
                 price_coen_in(&storage, MYR, ONE_COEN, false);
             }
             let err = claim_waa_in(contract, alice, load, USD, MYR).unwrap_err();
-            assert!(err
+            assert_eq!(
+                err.to_string(),
+                outbe_primitives::error::PrecompileError::from(
+                    outbe_oracle::errors::OracleError::NotReferenceCurrency { iso_code: MYR }
+                )
                 .to_string()
-                .contains("458 is not a registered reference currency"));
+            );
             assert_eq!(contract.get_claimable_reward(alice).unwrap(), load);
         });
     }
@@ -491,9 +503,13 @@ fn a_claim_in_an_unpriced_reference_keeps_the_balance() {
             .push(EUR)
             .unwrap();
         let err = claim_waa_in(contract, alice, load, USD, EUR).unwrap_err();
-        assert!(err
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::AgentRewardError::MissingPreviousDayPrice(EUR)
+            )
             .to_string()
-            .contains("no previous-day COEN price in 978"));
+        );
         assert_eq!(contract.get_claimable_reward(alice).unwrap(), load);
     });
 }
@@ -507,9 +523,15 @@ fn a_claim_refuses_an_issuance_that_is_not_an_iso_code() {
         with_contract_mut(|storage, contract| {
             seed_oracle(&storage, ONE_COEN);
             let err = claim_waa_in(contract, alice, load, issuance, USD).unwrap_err();
-            assert!(err
+            assert_eq!(
+                err.to_string(),
+                outbe_primitives::error::PrecompileError::from(
+                    outbe_gemfactory::errors::GemFactoryError::InvalidCurrency {
+                        currency: issuance,
+                    }
+                )
                 .to_string()
-                .contains(&format!("{issuance} is not an ISO 4217 currency code")));
+            );
             assert_eq!(contract.get_claimable_reward(alice).unwrap(), load);
         });
     }
@@ -575,7 +597,13 @@ fn claiming_more_than_the_pool_holds_is_refused() {
         let err = contract
             .claim_reward(RewardPool::Waa, alice, load + U256::from(1u64), (USD, USD))
             .unwrap_err();
-        assert!(err.to_string().contains("insufficient claimable balance"));
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::AgentRewardError::InsufficientClaimableBalance
+            )
+            .to_string()
+        );
         assert_eq!(contract.get_claimable_reward(alice).unwrap(), load);
     });
 }
@@ -593,7 +621,13 @@ fn claiming_an_empty_pool_is_refused() {
         let err = contract
             .claim_reward(RewardPool::Sra, alice, U256::ZERO, (USD, USD))
             .unwrap_err();
-        assert!(err.to_string().contains("no claimable balance"));
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::AgentRewardError::NoClaimableBalance
+            )
+            .to_string()
+        );
     });
 }
 
@@ -648,7 +682,13 @@ fn test_add_claimable_reward_rejects_overflow() {
         let err = contract
             .add_claimable_reward(RewardPool::Waa, alice, U256::from(100u64))
             .unwrap_err();
-        assert!(err.to_string().contains("overflow"));
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::AgentRewardError::ClaimableRewardsOverflow
+            )
+            .to_string()
+        );
 
         assert_eq!(contract.get_claimable_reward(alice).unwrap(), near_max);
     });

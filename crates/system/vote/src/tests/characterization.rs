@@ -103,7 +103,8 @@ fn execution_receives_original_payload_and_exact_context() {
 fn registry_rejects_duplicate_target_modules() {
     assert!(matches!(
         DUPLICATE_REGISTRY.lookup(UPDATE_ADDRESS),
-        Err(PrecompileError::Revert(message)) if message.contains("duplicate")
+        Err(PrecompileError::RevertBytes(bytes))
+            if bytes.len() >= 4 && bytes[..4] == IVote::DuplicateTargetModule::SELECTOR
     ));
 }
 
@@ -197,8 +198,9 @@ fn public_bonded_second_pending_proposal_of_a_proposer_fails() {
         .unwrap();
     assert!(matches!(
         vote.create_proposal_with_value(submission, &PUBLIC_BONDED_REGISTRY),
-        Err(PrecompileError::Revert(message))
-            if message == "proposer already has a pending public bonded proposal"
+        Err(PrecompileError::RevertBytes(bytes))
+            if bytes.len() >= 4
+                && bytes[..4] == IVote::TooManyPendingPublicBondedByProposer::SELECTOR
     ));
     assert_eq!(vote.proposal_count.read().unwrap(), U256::from(1u64));
     assert_eq!(vote.bond_liabilities().unwrap(), U256::from(123u64));
@@ -224,8 +226,8 @@ fn public_bonded_global_cap_fails_before_allocation() {
             raw_bonded_submission(Address::repeat_byte(0xaa), U256::from(123u64)),
             &PUBLIC_BONDED_REGISTRY,
         ),
-        Err(PrecompileError::Revert(message))
-            if message == "too many pending public bonded proposals"
+        Err(PrecompileError::RevertBytes(bytes))
+            if bytes.len() >= 4 && bytes[..4] == IVote::TooManyPendingPublicBonded::SELECTOR
     ));
     assert_eq!(vote.proposal_count.read().unwrap(), U256::from(cap));
     assert_eq!(

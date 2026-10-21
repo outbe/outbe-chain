@@ -1,5 +1,5 @@
 use alloy_primitives::{address, b256, Address, B256, U256, U512};
-use alloy_sol_types::SolEvent;
+use alloy_sol_types::{SolError, SolEvent};
 use outbe_primitives::addresses::{SLASH_INDICATOR_ADDRESS, STAKING_ADDRESS};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::finalized_guard_ring::{test_ring_hash, RingPosition};
@@ -614,10 +614,9 @@ fn invalid_evidence_reward_is_rejected_before_any_penalty_even_without_stake() {
             StorageHandle::enter(&mut provider, |storage| {
                 let mut si = SlashIndicator::new(storage.clone());
                 let expected =
-                    crate::errors::SlashIndicatorError::InvalidEvidenceRewardPercent { percent }
-                        .to_string();
+                    ISlashIndicator::InvalidEvidenceRewardPercent { percent }.abi_encode();
                 assert!(matches!(si.apply_evidence_felony(VAL_A, SUBMITTER),
-                    Err(PrecompileError::Revert(reason)) if reason == expected));
+                    Err(PrecompileError::RevertBytes(bytes)) if bytes.as_ref() == expected));
                 assert_eq!(si.get_felony_count(VAL_A).unwrap(), 0);
                 assert!(test_lifecycle_of(storage.clone(), VAL_A)
                     .unwrap()
@@ -659,7 +658,7 @@ fn signed_evidence_invalid_reward_checkpoint_rolls_back_and_allows_identical_ret
         let result = storage
             .with_checkpoint(|| si.submit_double_proposal_evidence(SUBMITTER, &first, &second));
         assert!(
-            matches!(result, Err(PrecompileError::Revert(reason)) if reason == "invalid evidence reward percent: 150")
+            matches!(result, Err(PrecompileError::RevertBytes(bytes)) if bytes.as_ref() == ISlashIndicator::InvalidEvidenceRewardPercent { percent: 150 }.abi_encode())
         );
         assert!(!si.is_evidence_processed(hash).unwrap());
         assert_eq!(si.get_felony_count(VAL_A).unwrap(), 0);
@@ -740,7 +739,7 @@ fn signed_noncanonical_epoch_or_view_rejects_before_dedup_and_slash() {
             let mut si = SlashIndicator::new(storage);
             assert!(
                 matches!(si.submit_double_proposal_evidence(SUBMITTER, &first, &second),
-                Err(PrecompileError::Revert(reason)) if reason == "noncanonical varint")
+                Err(PrecompileError::RevertBytes(bytes)) if bytes.as_ref() == ISlashIndicator::NonCanonicalVarint {}.abi_encode())
             );
             assert!(!si
                 .is_evidence_processed(crate::runtime::canonical_evidence_hash(&first, &second))
@@ -1533,7 +1532,7 @@ fn prune_slash_guards_cursor_overflow_reverts_after_the_ring_write() {
     let mut provider = seeded_slash_ring(u64::MAX, evicted, &[evicted]);
     let result = provider.enter(|storage| hooks::prune_slash_guards(storage, fb_hash));
     assert!(
-        matches!(&result, Err(PrecompileError::Revert(message)) if message == "slash_guard_ring_seq overflow"),
+        matches!(&result, Err(PrecompileError::RevertBytes(bytes)) if bytes.len() >= 4 && bytes[..4] == ISlashIndicator::SlashGuardRingSeqOverflow::SELECTOR),
         "{result:?}"
     );
     assert_eq!(

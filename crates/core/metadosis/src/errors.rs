@@ -7,9 +7,15 @@ pub use corruption::MetadosisStorageCorruptionError;
 #[cfg(any(test, feature = "test-utils"))]
 pub use test_support::MetadosisTestSupportError;
 
-use alloy_primitives::U256;
+use crate::precompile::IMetadosis;
+use alloy_primitives::{Bytes, U256};
+use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
+
+alloy_sol_types::sol! {
+    error VwapOverflow(string accumulator);
+}
 
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -37,14 +43,40 @@ pub enum MetadosisError {
     },
 }
 
+fn revert_with<E: SolError>(error: E) -> PrecompileError {
+    PrecompileError::RevertBytes(Bytes::from(error.abi_encode()))
+}
+
 impl From<MetadosisError> for PrecompileError {
     fn from(value: MetadosisError) -> Self {
-        PrecompileError::Revert(value.to_string())
+        use IMetadosis as I;
+        match value {
+            MetadosisError::VwapMustBeNonZero => revert_with(I::VwapMustBeNonZero {}),
+            MetadosisError::InvalidLysisLimitSplit {
+                day_limit,
+                lysis_limit_minor,
+            } => revert_with(I::InvalidLysisLimitSplit {
+                dayLimit: day_limit,
+                lysisLimitMinor: lysis_limit_minor,
+            }),
+            MetadosisError::LysisLimitCreditMismatch => revert_with(I::LysisLimitCreditMismatch {}),
+            MetadosisError::DesisLimitUnavailable {
+                desis_limit_minor,
+                available,
+            } => revert_with(I::DesisLimitUnavailable {
+                desisLimitMinor: desis_limit_minor,
+                available,
+            }),
+        }
     }
 }
 
 pub type MetadosisResult<T> = std::result::Result<T, MetadosisError>;
 
 pub(crate) fn is_vwap_overflow(error: &PrecompileError) -> bool {
-    matches!(error, PrecompileError::Revert(message) if message.starts_with("VWAP overflow:"))
+    matches!(
+        error,
+        PrecompileError::RevertBytes(bytes)
+            if bytes.len() >= 4 && bytes[..4] == VwapOverflow::SELECTOR
+    )
 }

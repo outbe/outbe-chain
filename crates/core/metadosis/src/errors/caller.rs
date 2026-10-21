@@ -1,3 +1,6 @@
+use crate::precompile::IMetadosis;
+use alloy_primitives::Bytes;
+use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
@@ -32,8 +35,37 @@ pub enum MetadosisCallerError {
     UtcPlus14TimestampOverflow,
 }
 
+fn revert_with<E: SolError>(error: E) -> PrecompileError {
+    PrecompileError::RevertBytes(Bytes::from(error.abi_encode()))
+}
+
 impl From<MetadosisCallerError> for PrecompileError {
     fn from(value: MetadosisCallerError) -> Self {
-        PrecompileError::Revert(value.to_string())
+        use IMetadosis as I;
+        match value {
+            MetadosisCallerError::FormedDayLimitCannotBeReplaced => {
+                revert_with(I::FormedDayLimitCannotBeReplaced {})
+            }
+            MetadosisCallerError::UnknownWorldwideDayStatus => {
+                revert_with(I::UnknownWorldwideDayStatus {})
+            }
+            MetadosisCallerError::FormedDayLimitImmutable => {
+                revert_with(I::FormedDayLimitImmutable {})
+            }
+            MetadosisCallerError::FormingWindowOverflow => revert_with(I::FormingWindowOverflow {}),
+            MetadosisCallerError::LookbackWindowOverflow => {
+                revert_with(I::LookbackWindowOverflow {})
+            }
+            MetadosisCallerError::OfferingWindowOverflow => {
+                revert_with(I::OfferingWindowOverflow {})
+            }
+            MetadosisCallerError::WaitingWindowOverflow => revert_with(I::WaitingWindowOverflow {}),
+            MetadosisCallerError::DurationOverflow { label } => revert_with(I::DurationOverflow {
+                label: label.to_string(),
+            }),
+            MetadosisCallerError::UtcPlus14TimestampOverflow => {
+                revert_with(I::UtcPlus14TimestampOverflow {})
+            }
+        }
     }
 }

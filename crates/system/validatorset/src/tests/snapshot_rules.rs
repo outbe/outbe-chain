@@ -14,6 +14,7 @@ const EPOCH: u64 = 9;
 fn outcome_text<T: std::fmt::Debug>(result: Result<T>) -> String {
     match result {
         Err(PrecompileError::Revert(message)) => format!("Revert: {message}"),
+        Err(PrecompileError::RevertBytes(bytes)) => super::typed_revert(bytes),
         Err(PrecompileError::Fatal(message)) => format!("Fatal: {message}"),
         other => format!("{other:?}"),
     }

@@ -49,6 +49,23 @@ pub(super) fn coen_iso(whole: u64) -> U256 {
     U256::from(whole) * COEN_ISO_SCALE
 }
 
+/// The caller-facing revert is the declared Solidity error, byte for byte.
+pub(super) fn assert_typed_revert(
+    actual: &outbe_primitives::error::PrecompileError,
+    expected: impl Into<outbe_primitives::error::PrecompileError>,
+) {
+    let expected = expected.into();
+    match (actual, expected) {
+        (
+            outbe_primitives::error::PrecompileError::RevertBytes(actual),
+            outbe_primitives::error::PrecompileError::RevertBytes(expected),
+        ) => assert_eq!(actual, &expected),
+        (actual, expected) => {
+            panic!("expected typed revert bytes\nactual: {actual:?}\nexpected: {expected:?}")
+        }
+    }
+}
+
 /// Builds a whole value for an existing generic decimal18 fixture. This does
 /// not impose one global scale on generic Oracle pairs.
 pub(super) fn fixed18(whole: u64) -> U256 {

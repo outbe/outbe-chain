@@ -1,6 +1,7 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use alloy_primitives::{Address, U256};
+use alloy_sol_types::SolError;
 use outbe_primitives::consensus_p2p::{encode_v1, P2pAddress, P2P_ADDRESS_VERSION_V1};
 
 use crate::runtime::status::{ACTIVE, EXITING, INACTIVE, JAILED, PENDING, REGISTERED, UNBONDING};
@@ -650,17 +651,19 @@ impl RawColumns {
     }
 }
 
-/// The variant and message of an error result.
-fn error_text<T: std::fmt::Debug>(result: outbe_primitives::error::Result<T>) -> String {
+fn revert_data<T: std::fmt::Debug>(result: outbe_primitives::error::Result<T>) -> Vec<u8> {
     match result.unwrap_err() {
-        PrecompileError::Fatal(message) => format!("Fatal: {message}"),
-        PrecompileError::Revert(message) => format!("Revert: {message}"),
-        other => format!("{other:?}"),
+        outbe_primitives::error::PrecompileError::RevertBytes(bytes) => bytes.to_vec(),
+        other => panic!("expected typed revert bytes, got {other:?}"),
     }
 }
 
-fn corrupt(detail: &str) -> String {
-    format!("Revert: corrupt validator state for {ADDRESS}: {detail}")
+fn corrupt(detail: &str) -> Vec<u8> {
+    crate::precompile::IValidatorSet::CorruptValidatorState {
+        account: ADDRESS,
+        detail: detail.to_owned(),
+    }
+    .abi_encode()
 }
 
 /// A retained column: its field name and the write that retains it in an
@@ -691,7 +694,7 @@ fn absent_columns_fail_on_each_retained_field_with_one_exact_error() {
         let mut raw = RawColumns::absent();
         retain(&mut raw);
         assert_eq!(
-            error_text(raw.decode()),
+            revert_data(raw.decode()),
             corrupt("absent validator retains registry, stake, or lifecycle data"),
             "{field}"
         );
@@ -700,7 +703,7 @@ fn absent_columns_fail_on_each_retained_field_with_one_exact_error() {
 
 #[test]
 fn raw_column_checks_keep_their_precedence() {
-    let cases: [(&str, RawColumns, String); 7] = [
+    let cases: [(&str, RawColumns, Vec<u8>); 7] = [
         (
             "hint sentinel before absent residue",
             RawColumns {
@@ -726,7 +729,7 @@ fn raw_column_checks_keep_their_precedence() {
                 consensus_pubkey: [0; 48],
                 ..RawColumns::active()
             },
-            "Revert: unknown validator status 9".to_string(),
+            crate::precompile::IValidatorSet::UnknownValidatorStatus { status: 9 }.abi_encode(),
         ),
         (
             "zero key before jail height",
@@ -765,7 +768,7 @@ fn raw_column_checks_keep_their_precedence() {
         ),
     ];
     for (name, raw, expected) in cases {
-        assert_eq!(error_text(raw.decode()), expected, "{name}");
+        assert_eq!(revert_data(raw.decode()), expected, "{name}");
     }
 }
 
@@ -893,7 +896,7 @@ fn decoded_lifecycles_enforce_exact_history_invariants() {
         ),
     ];
     for (name, raw, detail) in cases {
-        assert_eq!(error_text(raw.decode()), corrupt(detail), "{name}");
+        assert_eq!(revert_data(raw.decode()), corrupt(detail), "{name}");
     }
 }
 
@@ -914,65 +917,68 @@ fn history_updates_keep_exact_errors_and_precedence() {
             },
         )
     };
-    let cases: [(&str, ValidatorLifecycle, ValidatorHistory, &str); 9] = [
+    let cases: [(&str, ValidatorLifecycle, ValidatorHistory, Vec<u8>); 9] = [
         (
             "zero sentinel before absence",
             ValidatorLifecycle::Absent,
             deactivated(Some(0)),
-            "Revert: deactivation height must not use the zero sentinel",
+            crate::precompile::IValidatorSet::DeactivationHeightZeroSentinel {}.abi_encode(),
         ),
         (
             "absent",
             ValidatorLifecycle::Absent,
             deactivated(None),
-            "Revert: validator not registered",
+            crate::precompile::IValidatorSet::ValidatorNotRegistered {}.abi_encode(),
         ),
         (
             "active",
             lifecycle(ACTIVE, true, false, 0),
             deactivated(Some(5)),
-            "Revert: active history must not contain a deactivation height",
+            crate::precompile::IValidatorSet::ActiveHistoryHasDeactivationHeight {}.abi_encode(),
         ),
         (
             "retained jail",
             lifecycle(JAILED, true, false, 55),
             deactivated(Some(54)),
-            "Revert: retained jail history must match the jail height",
+            crate::precompile::IValidatorSet::RetainedJailHistoryHeightMismatch {}.abi_encode(),
         ),
         (
             "excluded jail",
             lifecycle(JAILED, false, false, 55),
             deactivated(Some(54)),
-            "Revert: jail history must match the jail height",
+            crate::precompile::IValidatorSet::JailHistoryHeightMismatch {}.abi_encode(),
         ),
         (
             "exiting",
             lifecycle(EXITING, true, false, 0),
             deactivated(None),
-            "Revert: exiting history requires a deactivation height",
+            crate::precompile::IValidatorSet::ExitingHistoryMissingDeactivationHeight {}
+                .abi_encode(),
         ),
         (
             "unbonding",
             lifecycle(UNBONDING, false, false, 0),
             deactivated(None),
-            "Revert: unbonding history requires a deactivation height",
+            crate::precompile::IValidatorSet::UnbondingHistoryMissingDeactivationHeight {}
+                .abi_encode(),
         ),
         (
             "inactive",
             lifecycle(INACTIVE, false, false, 0),
             deactivated(None),
-            "Revert: inactive history requires a deactivation height",
+            crate::precompile::IValidatorSet::InactiveHistoryMissingDeactivationHeight {}
+                .abi_encode(),
         ),
         (
             "zero sentinel before the active rule",
             lifecycle(ACTIVE, true, false, 0),
             deactivated(Some(0)),
-            "Revert: deactivation height must not use the zero sentinel",
+            crate::precompile::IValidatorSet::DeactivationHeightZeroSentinel {}.abi_encode(),
         ),
     ];
     for (name, lifecycle, history, expected) in cases {
         assert_eq!(
-            error_text(with_history(lifecycle, history)),
+            revert_data(with_history(lifecycle, history)),
             expected,
             "{name}"
         );
@@ -999,23 +1005,24 @@ fn stake_and_p2p_updates_keep_exact_errors_and_precedence() {
     let inactive = canonical(INACTIVE, false, false, 0).into_lifecycle();
     let stake = StakeProjection::new(U256::from(1), None);
     assert_eq!(
-        error_text(with_stake(
+        revert_data(with_stake(
             ValidatorLifecycle::Absent,
             StakeProjection::new(U256::from(1), Some(0))
         )),
-        "Revert: unbonding-end hint must not use the zero sentinel"
+        crate::precompile::IValidatorSet::UnbondingEndHintZeroSentinel {}.abi_encode()
     );
     assert_eq!(
-        error_text(with_stake(ValidatorLifecycle::Absent, stake)),
-        "Revert: cannot stake before validator registration"
+        revert_data(with_stake(ValidatorLifecycle::Absent, stake)),
+        crate::precompile::IValidatorSet::CannotStakeBeforeRegistration {}.abi_encode()
     );
     assert_eq!(
-        error_text(with_stake(inactive.clone(), stake)),
-        "Revert: inactive validator must re-register before staking"
+        revert_data(with_stake(inactive.clone(), stake)),
+        crate::precompile::IValidatorSet::InactiveValidatorMustReregisterBeforeStaking {}
+            .abi_encode()
     );
     assert_eq!(
-        error_text(with_p2p(ValidatorLifecycle::Absent, P2pInfo::Unset)),
-        "Revert: validator not registered"
+        revert_data(with_p2p(ValidatorLifecycle::Absent, P2pInfo::Unset)),
+        crate::precompile::IValidatorSet::ValidatorNotRegistered {}.abi_encode()
     );
     let ValidatorLifecycle::Inactive(updated) = with_p2p(inactive, P2pInfo::Unset).unwrap() else {
         panic!("p2p update changed the lifecycle variant");
@@ -1031,8 +1038,8 @@ fn demoted_joiner_exit_requires_a_nonzero_height() {
         panic!("REGISTERED did not decode to WaitingForStake");
     };
     assert_eq!(
-        error_text(exit_waiting_for_stake_at_boundary(waiting.clone(), 0)),
-        "Revert: validator deactivation height must be non-zero"
+        revert_data(exit_waiting_for_stake_at_boundary(waiting.clone(), 0)),
+        crate::precompile::IValidatorSet::ValidatorDeactivationHeightZero {}.abi_encode()
     );
     let exiting = exit_waiting_for_stake_at_boundary(waiting.clone(), 77).unwrap();
     assert_eq!(exiting.history.last_deactivated_at_height, Some(77));

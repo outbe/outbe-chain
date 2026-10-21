@@ -240,6 +240,8 @@ impl InvalidSeedPartialEvidence {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::precompile::ISlashIndicator as I;
+    use alloy_sol_types::SolError;
 
     fn sample_bytes() -> Vec<u8> {
         let mut data = Vec::with_capacity(SPE1_LEN);
@@ -345,10 +347,11 @@ mod tests {
         let b = SeedPartialEquivocationEvidence::decode(&swapped).unwrap();
         assert_eq!(a.dedup_hash(), b.dedup_hash());
     }
-    /// The revert reason of a decode result, or `None` for success or another
-    /// error kind.
-    fn revert_reason<T>(result: Result<T>) -> Option<String> {
-        crate::errors::revert_reason(result)
+    fn revert_data<T>(result: Result<T>) -> Option<Vec<u8>> {
+        match result {
+            Err(PrecompileError::RevertBytes(bytes)) => Some(bytes.to_vec()),
+            _ => None,
+        }
     }
 
     /// Bytes `start, start + 1, ...` (wrapping), so each field is distinct.
@@ -388,30 +391,42 @@ mod tests {
         short.pop();
         short[0] = b'X';
         assert_eq!(
-            revert_reason(SeedPartialEquivocationEvidence::decode(&short)),
-            Some("SPE1 evidence must be exactly 365 bytes, got 364".to_string())
+            revert_data(SeedPartialEquivocationEvidence::decode(&short)),
+            Some(
+                I::Spe1WrongLength {
+                    expected: 365,
+                    actual: 364
+                }
+                .abi_encode()
+            )
         );
 
         let mut trailing = sample_bytes();
         trailing.push(0);
         assert_eq!(
-            revert_reason(SeedPartialEquivocationEvidence::decode(&trailing)),
-            Some("SPE1 evidence must be exactly 365 bytes, got 366".to_string())
+            revert_data(SeedPartialEquivocationEvidence::decode(&trailing)),
+            Some(
+                I::Spe1WrongLength {
+                    expected: 365,
+                    actual: 366
+                }
+                .abi_encode()
+            )
         );
 
         let mut bad_magic = sample_bytes();
         bad_magic[0] = b'X';
         bad_magic[4] = 0x09;
         assert_eq!(
-            revert_reason(SeedPartialEquivocationEvidence::decode(&bad_magic)),
-            Some("SPE1 evidence bad magic".to_string())
+            revert_data(SeedPartialEquivocationEvidence::decode(&bad_magic)),
+            Some(I::Spe1BadMagic {}.abi_encode())
         );
 
         let mut bad_version = sample_bytes();
         bad_version[4] = 0x09;
         assert_eq!(
-            revert_reason(SeedPartialEquivocationEvidence::decode(&bad_version)),
-            Some("SPE1 evidence bad version".to_string())
+            revert_data(SeedPartialEquivocationEvidence::decode(&bad_version)),
+            Some(I::Spe1BadVersion {}.abi_encode())
         );
     }
 
@@ -454,40 +469,43 @@ mod tests {
         short.pop();
         short[0] = b'X';
         assert_eq!(
-            revert_reason(InvalidSeedPartialEvidence::decode(&short)),
-            Some(format!(
-                "IPE1 evidence too short: need at least {IPE1_PREFIX_LEN} bytes, got {}",
-                IPE1_PREFIX_LEN - 1
-            ))
+            revert_data(InvalidSeedPartialEvidence::decode(&short)),
+            Some(
+                I::Ipe1TooShort {
+                    min_len: 261,
+                    actual: 260
+                }
+                .abi_encode()
+            )
         );
 
         let mut bad_magic = ipe1_sample(4);
         bad_magic[0] = b'X';
         bad_magic[4] = 0x09;
         assert_eq!(
-            revert_reason(InvalidSeedPartialEvidence::decode(&bad_magic)),
-            Some("IPE1 evidence bad magic".to_string())
+            revert_data(InvalidSeedPartialEvidence::decode(&bad_magic)),
+            Some(I::Ipe1BadMagic {}.abi_encode())
         );
 
         let mut bad_version = ipe1_sample(4);
         bad_version[4] = 0x09;
         assert_eq!(
-            revert_reason(InvalidSeedPartialEvidence::decode(&bad_version)),
-            Some("IPE1 evidence bad version".to_string())
+            revert_data(InvalidSeedPartialEvidence::decode(&bad_version)),
+            Some(I::Ipe1BadVersion {}.abi_encode())
         );
 
         let mut overlong = ipe1_sample(4);
         overlong.truncate(IPE1_PREFIX_LEN + 3);
         assert_eq!(
-            revert_reason(InvalidSeedPartialEvidence::decode(&overlong)),
-            Some("IPE1 commitment length exceeds input".to_string())
+            revert_data(InvalidSeedPartialEvidence::decode(&overlong)),
+            Some(I::Ipe1CommitmentLengthExceedsInput {}.abi_encode())
         );
 
         let mut trailing = ipe1_sample(4);
         trailing.push(0);
         assert_eq!(
-            revert_reason(InvalidSeedPartialEvidence::decode(&trailing)),
-            Some("IPE1 evidence has trailing bytes".to_string())
+            revert_data(InvalidSeedPartialEvidence::decode(&trailing)),
+            Some(I::Ipe1TrailingBytes {}.abi_encode())
         );
     }
 }

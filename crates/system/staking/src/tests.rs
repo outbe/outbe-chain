@@ -1,5 +1,7 @@
 use alloy_primitives::{address, Address, B256, U256, U512};
+use alloy_sol_types::SolError;
 use outbe_primitives::addresses::STAKING_ADDRESS;
+use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::checked_whole_coen_to_native;
@@ -9,6 +11,7 @@ use outbe_validatorset::ValidatorLifecycle;
 
 use crate::contract::Staking;
 use crate::hooks;
+use crate::precompile::IStaking;
 
 const CHAIN_ID: u64 = 1;
 const MIN_STAKE: u64 = 1_000;
@@ -24,9 +27,13 @@ fn stake_addition_overflows_leave_accounting_unchanged() {
         (
             U256::MAX,
             U256::MAX,
-            "stake accounting overflow for validator",
+            IStaking::StakeAccountingOverflow { validator }.abi_encode(),
         ),
-        (U256::ZERO, U256::MAX, "total staked accounting overflow"),
+        (
+            U256::ZERO,
+            U256::MAX,
+            IStaking::TotalStakeAccountingOverflow {}.abi_encode(),
+        ),
     ] {
         with_staking(|storage, s| {
             register_validator(storage.clone(), validator);
@@ -36,7 +43,9 @@ fn stake_addition_overflows_leave_accounting_unchanged() {
                 .validator_state(validator)
                 .unwrap();
             let error = s.stake(validator, validator, U256::from(1)).unwrap_err();
-            assert!(error.to_string().contains(expected), "{error}");
+            assert!(
+                matches!(error, PrecompileError::RevertBytes(bytes) if bytes.as_ref() == expected)
+            );
             assert_eq!(s.get_stake(validator).unwrap(), stake);
             assert_eq!(s.get_total_staked().unwrap(), total);
             assert_eq!(
@@ -66,7 +75,8 @@ fn aggregate_underflow_precedes_unstake_and_slash_writes() {
             } else {
                 s.unstake(validator, U256::from(1)).unwrap_err()
             };
-            assert!(error.to_string().contains("stake accounting underflow"));
+            assert!(matches!(error, PrecompileError::RevertBytes(bytes)
+                if bytes.as_ref() == IStaking::StakeAccountingUnderflow { validator }.abi_encode()));
             assert_eq!(s.get_stake(validator).unwrap(), U256::from(MIN_STAKE));
             assert_eq!(s.get_total_staked().unwrap(), U256::ZERO);
             assert_eq!(s.unbonding_count.read().unwrap(), 0);
@@ -100,10 +110,10 @@ fn concentration_uses_wide_products_at_cap_boundaries() {
             register_validator(storage.clone(), validator);
             let result = s.stake(validator, validator, amount);
             if amount > half {
-                assert!(result
-                    .unwrap_err()
-                    .to_string()
-                    .contains("max_stake_percent"));
+                assert!(
+                    matches!(result.unwrap_err(), PrecompileError::RevertBytes(bytes)
+                    if bytes.as_ref() == IStaking::StakeExceedsMaxStakePercent {}.abi_encode())
+                );
                 assert_eq!(s.get_stake(validator).unwrap(), U256::ZERO);
                 assert_eq!(s.get_total_staked().unwrap(), half);
             } else {
@@ -201,10 +211,8 @@ fn late_queue_slash_overflow_rolls_back_checkpointed_cross_module_effects() {
             s.slash_stake(validator, 100)
         });
         let error = result.unwrap_err();
-        assert!(
-            error.to_string().contains("slash amount overflow"),
-            "{error}"
-        );
+        assert!(matches!(error, PrecompileError::RevertBytes(bytes)
+            if bytes.as_ref() == IStaking::SlashAmountOverflow {}.abi_encode()));
         assert_eq!(s.get_stake(validator).unwrap(), U256::from(MIN_STAKE));
         assert_eq!(s.get_total_staked().unwrap(), U256::from(MIN_STAKE));
         assert_eq!(s.unbonding_amount.read(&0).unwrap(), U256::MAX);

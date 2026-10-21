@@ -175,7 +175,9 @@ fn read_leb128(data: &[u8], pos: &mut usize) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::precompile::ISlashIndicator;
     use crate::test_signing::{self, signed_evidence, POP_DST};
+    use alloy_sol_types::SolError;
     use blst::min_pk::{PublicKey, SecretKey};
     use commonware_codec::{varint::UInt, Encode as _};
     use commonware_cryptography::Signer as _;
@@ -212,25 +214,19 @@ mod tests {
             [vec![0x80; 9], vec![0]].concat(),
         ] {
             let err = read_leb128(&bytes, &mut 0).unwrap_err();
-            assert_eq!(
-                err.to_string(),
-                PrecompileError::from(SlashIndicatorError::NonCanonicalVarint).to_string()
-            );
+            assert!(matches!(err, PrecompileError::RevertBytes(bytes)
+                if bytes.as_ref() == ISlashIndicator::NonCanonicalVarint {}.abi_encode()));
         }
         for terminal in [2, 127, 128, 129, 255] {
             let bytes = [vec![0xff; 9], vec![terminal]].concat();
             let err = read_leb128(&bytes, &mut 0).unwrap_err();
-            assert_eq!(
-                err.to_string(),
-                PrecompileError::from(SlashIndicatorError::VarintOverflow).to_string()
-            );
+            assert!(matches!(err, PrecompileError::RevertBytes(bytes)
+                if bytes.as_ref() == ISlashIndicator::VarintOverflow {}.abi_encode()));
         }
         for bytes in [vec![], vec![0x80], vec![0xff; 9]] {
             let err = read_leb128(&bytes, &mut 0).unwrap_err();
-            assert_eq!(
-                err.to_string(),
-                PrecompileError::from(SlashIndicatorError::UnexpectedEndOfVarint).to_string()
-            );
+            assert!(matches!(err, PrecompileError::RevertBytes(bytes)
+                if bytes.as_ref() == ISlashIndicator::UnexpectedEndOfVarint {}.abi_encode()));
         }
     }
 
