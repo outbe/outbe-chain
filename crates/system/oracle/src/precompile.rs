@@ -14,6 +14,7 @@ use outbe_primitives::addresses::ORACLE_ADDRESS;
 use outbe_primitives::dispatch::{dispatch_call, metadata, mutate_void, reject_value, view};
 use outbe_primitives::error::Result;
 use outbe_primitives::math::reference_price::pair_scales;
+use outbe_primitives::stablecoin::iso_4217_alpha;
 use outbe_primitives::time::SECONDS_PER_DAY;
 
 /// Selectors on this precompile that accept native value. The route table binds
@@ -106,6 +107,7 @@ pub fn dispatch(
             getAllScurveData(_) => all_scurve_data(oracle),
             getAllScurveDataForPair(c) => all_scurve_data_for_pair(oracle, c),
             getReferenceCurrencies(_) => reference_currencies(oracle),
+            currencyAlphaCode(c) => currency_alpha_code(c),
             getPolicyRateCurrencies(_) => policy_rate_currencies(oracle),
             getPolicyRate(c) => policy_rate(oracle, c),
             getNominalPrice(c) => nominal_price(oracle, c),
@@ -154,6 +156,15 @@ fn currency_cross_rate(
 
 fn reference_currencies(oracle: &OracleContract) -> Result<Bytes> {
     metadata::<IOracle::getReferenceCurrenciesCall>(|| oracle.reference_currencies.read_all())
+}
+
+/// Reads the chain's ISO 4217 table. An unknown number returns an empty string.
+fn currency_alpha_code(c: IOracle::currencyAlphaCodeCall) -> Result<Bytes> {
+    view(c, |c| {
+        Ok(iso_4217_alpha(c.isoCode)
+            .map(|alpha| String::from_utf8_lossy(&alpha).into_owned())
+            .unwrap_or_default())
+    })
 }
 
 fn policy_rate_currencies(oracle: &OracleContract) -> Result<Bytes> {

@@ -298,6 +298,11 @@ interface IOracle {
     /// @notice Returns all registered reference currencies as ISO 4217 numeric codes.
     function getReferenceCurrencies() external view returns (uint16[] memory isoCodes);
 
+    /// @notice Returns the ISO 4217 letter code (for example "EUR") of an ISO 4217 number,
+    ///         from the chain's ISO 4217 table. Returns an empty string for a number that
+    ///         the table does not have.
+    function currencyAlphaCode(uint16 isoCode) external view returns (string memory alphaCode);
+
     /// @notice Returns every ISO code with an independently configured policy rate.
     function getPolicyRateCurrencies() external view returns (uint16[] memory isoCodes);
 
