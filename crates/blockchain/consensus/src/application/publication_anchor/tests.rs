@@ -75,7 +75,7 @@ async fn publication_anchor_absence_and_exact_genesis_need_no_history_lookup() {
             &reader
         )
         .await,
-        Err(PublicationAnchorError::Invalid(_))
+        Err(PublicationAnchorError::GenesisHashMismatch)
     ));
     assert_eq!(reader.calls.load(Ordering::SeqCst), 0);
 }
@@ -96,12 +96,16 @@ async fn publication_anchor_preserves_opaque_headers_and_rejects_malformed_artif
         let mut raw = block(1, None).into_inner().into_block();
         raw.header.inner.extra_data = extra_data.to_vec().into();
         let candidate = ConsensusBlock::from_sealed(SealedBlock::seal_slow(raw));
-        assert_eq!(
-            validate_publication_anchor(&candidate, 2026, genesis, &reader)
-                .await
-                .is_ok(),
-            valid
-        );
+        let result = validate_publication_anchor(&candidate, 2026, genesis, &reader).await;
+        if valid {
+            assert!(result.is_ok());
+        } else {
+            assert!(matches!(
+                result,
+                Err(PublicationAnchorError::MalformedHeaderArtifacts(_))
+            ));
+            assert!(std::error::Error::source(&result.unwrap_err()).is_some());
+        }
     }
     assert_eq!(reader.calls.load(Ordering::SeqCst), 0);
 }
@@ -129,7 +133,7 @@ async fn publication_anchor_requires_the_exact_local_finalized_block_with_one_lo
             &reader
         )
         .await,
-        Err(PublicationAnchorError::Invalid(_))
+        Err(PublicationAnchorError::FinalizedHashMismatch)
     ));
     assert_eq!(reader.calls.load(Ordering::SeqCst), 2);
 }
@@ -165,20 +169,20 @@ async fn publication_anchor_rejects_foreign_chain_or_non_ancestor_height_before_
                 &reader
             )
             .await,
-            Err(PublicationAnchorError::Invalid(_))
+            Err(PublicationAnchorError::ChainOrHeightMismatch)
         ));
     }
     let mut foreign = batch(5, genesis);
     foreign.body.chain_id += 1;
     assert!(matches!(
         validate_publication_anchor(&block(10, Some(foreign)), 2026, genesis, &reader).await,
-        Err(PublicationAnchorError::Invalid(_))
+        Err(PublicationAnchorError::ChainOrHeightMismatch)
     ));
     let mut foreign = batch(5, genesis);
     foreign.body.genesis_hash = B256::repeat_byte(8);
     assert!(matches!(
         validate_publication_anchor(&block(10, Some(foreign)), 2026, genesis, &reader).await,
-        Err(PublicationAnchorError::Invalid(_))
+        Err(PublicationAnchorError::ChainOrHeightMismatch)
     ));
     assert_eq!(reader.calls.load(Ordering::SeqCst), 0);
 }
