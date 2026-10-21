@@ -1,7 +1,7 @@
 //! Scheduling of a sweep that walks one closed UTC day at a time, every closed day in
 //! order.
 
-use crate::error::Result;
+use crate::error::{PrecompileError, Result};
 use crate::storage::dsl::Value;
 use crate::time::next_date_key;
 
@@ -23,17 +23,24 @@ pub enum Scheduled {
     Ignored,
 }
 
+/// Completion is explicit: zero economic changes can still leave queued work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Progress {
+    Pending,
+    Complete,
+}
+
 impl SweepDays {
     /// Schedules `day` without disturbing a sweep in flight. Every closed day after the
     /// newest one scheduled is walked, in order, so a sweep that fell behind catches up
-    /// rather than skipping days. An idle sweep walks the newest day again.
+    /// rather than skipping days. Completed days cannot reopen.
     pub fn schedule(mut self, day: u32) -> (Self, Scheduled) {
         let idle = self.current == 0;
-        let scheduled = if day < self.latest || (!idle && day <= self.current.max(self.latest)) {
+        let scheduled = if day <= self.latest || (!idle && day <= self.current) {
             Scheduled::Ignored
         } else if idle {
             let first = match self.latest {
-                latest if latest == 0 || latest == day => day,
+                0 => day,
                 latest => next_date_key(latest),
             };
             self = Self {
@@ -50,6 +57,9 @@ impl SweepDays {
 
     /// The current day was walked to its end, so the next one starts, or the sweep idles.
     pub fn finish(self) -> Self {
+        if self.current == 0 {
+            return self;
+        }
         let current = match self.current < self.latest {
             true => next_date_key(self.current),
             false => 0,
@@ -100,6 +110,9 @@ impl PinnedDay<'_, '_> {
 
     /// Ends the walk of `pinned`. Returns the days to open next, or `None` once idle.
     pub fn finish(&self, pinned: u32) -> Result<Option<SweepDays>> {
+        if pinned == 0 || self.current.read()? != pinned || self.latest.read()? < pinned {
+            return Err(PrecompileError::revert("invalid daily sweep completion"));
+        }
         let next = SweepDays {
             current: pinned,
             latest: self.latest.read()?,
@@ -159,12 +172,9 @@ mod tests {
     }
 
     #[test]
-    fn a_finished_day_can_be_walked_again() {
+    fn a_finished_day_cannot_be_walked_again() {
         let finished = days(TODAY, TODAY).finish();
-        assert_eq!(
-            finished.schedule(TODAY),
-            (days(TODAY, TODAY), Scheduled::Opened)
-        );
+        assert_eq!(finished.schedule(TODAY), (finished, Scheduled::Ignored));
     }
 
     #[test]
@@ -186,6 +196,7 @@ mod tests {
     fn finishing_starts_the_next_day_or_goes_idle() {
         assert_eq!(days(YESTERDAY, TODAY).finish(), days(TODAY, TODAY));
         assert_eq!(days(TODAY, TODAY).finish(), days(0, TODAY));
+        assert_eq!(days(0, TODAY).finish(), days(0, TODAY));
     }
 
     fn with_pinned(test: impl FnOnce(&PinnedDay<'_, '_>)) {
@@ -246,6 +257,16 @@ mod tests {
             pinned.pass(YESTERDAY).unwrap();
             assert_eq!(pinned.latest.read().unwrap(), TODAY);
             assert_eq!(pinned.current.read().unwrap(), 0);
+        });
+    }
+
+    #[test]
+    fn completion_rejects_a_stale_or_missing_pinned_day() {
+        with_pinned(|pinned| {
+            assert!(pinned.finish(0).is_err());
+            pinned.open(days(YESTERDAY, TODAY)).unwrap();
+            assert!(pinned.finish(TODAY).is_err());
+            assert_eq!(pinned.current.read().unwrap(), YESTERDAY);
         });
     }
 

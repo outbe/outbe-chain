@@ -78,9 +78,11 @@ fn sending_every_unit_deletes_the_spent_source_series() {
     });
 }
 
-/// When the hour of `at` has closed.
-fn hour_closed(at: u64) -> u64 {
-    (at / 3_600 + 1) * 3_600
+/// When the deadline day of `at` has closed.
+fn day_closed(at: u64) -> u64 {
+    outbe_primitives::expiry_queue::day_end(
+        outbe_primitives::expiry_queue::deadline_day(at).unwrap(),
+    )
 }
 
 /// An expired position reads empty at once, returns its remainder with its hour and is
@@ -103,7 +105,7 @@ fn an_expired_position_returns_its_remainder() {
             U256::ZERO
         );
 
-        let ctx = block_ctx(storage, hour_closed(expires));
+        let ctx = block_ctx(storage, day_closed(expires));
         assert_eq!(positions_expired::sweep_expired_positions(&ctx).unwrap(), 1);
         assert_eq!(unallocated(storage), capacity);
         assert_eq!(positions_expired::sweep_position_cleanup(&ctx).unwrap(), 1);
@@ -125,7 +127,7 @@ fn a_storage_fault_in_the_position_sweep_fails_the_block() {
 
     provider.fail_mutation_at_address(outbe_primitives::addresses::PROMIS_LIMIT_ADDRESS);
     StorageHandle::enter(&mut provider, |storage| {
-        let ctx = block_ctx(&storage, hour_closed(T_NOW + POSITION_VALIDITY_SECONDS));
+        let ctx = block_ctx(&storage, day_closed(T_NOW + POSITION_VALIDITY_SECONDS));
         assert!(matches!(
             positions_expired::sweep_expired_positions(&ctx).unwrap_err(),
             outbe_primitives::error::PrecompileError::Storage(_)
@@ -158,7 +160,7 @@ fn a_drained_position_returns_nothing_and_is_deleted() {
         )
         .unwrap();
 
-        let ctx = block_ctx(storage, hour_closed(T_NOW + POSITION_VALIDITY_SECONDS));
+        let ctx = block_ctx(storage, day_closed(T_NOW + POSITION_VALIDITY_SECONDS));
         assert_eq!(positions_expired::sweep_expired_positions(&ctx).unwrap(), 1);
         assert_eq!(unallocated(storage), U256::ZERO);
         assert_eq!(positions_expired::sweep_position_cleanup(&ctx).unwrap(), 1);

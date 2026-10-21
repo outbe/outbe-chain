@@ -11,6 +11,18 @@ use outbe_primitives::storage::indexed_list::IndexedList;
 use crate::errors::GemFactoryError;
 use crate::schema::{GemFactoryContract, GemPosition};
 
+/// Queue zero denotes an empty slot; hour zero is a valid position group.
+pub(crate) fn position_queue_entry(hour: u64) -> Result<u64> {
+    hour.checked_add(1)
+        .ok_or_else(|| GemFactoryError::Overflow.into())
+}
+
+pub(crate) fn position_queue_hour(entry: u64) -> Result<u64> {
+    entry
+        .checked_sub(1)
+        .ok_or_else(|| GemFactoryError::IndexOutOfBounds.into())
+}
+
 impl<'s> GemFactoryContract<'s> {
     fn owner_index(&self, owner: Address) -> IndexedList<'s, U256> {
         IndexedList::new(
@@ -37,7 +49,11 @@ impl<'s> GemFactoryContract<'s> {
         self.owner_index(pos.merchant).insert(pos.position_id)?;
         let hour = pos.expiry_hour();
         if self.hour_position_count(hour)? == 0 {
-            expiry_queue::push(&PositionExpiryHours(self), hour, pos.expires_at)?;
+            expiry_queue::push(
+                &PositionExpiryDays(self),
+                position_queue_entry(hour)?,
+                pos.expires_at,
+            )?;
         }
         self.hour_index(hour).insert(pos.position_id)?;
         let capacity = self
@@ -72,9 +88,10 @@ impl<'s> GemFactoryContract<'s> {
     /// Moves an expired hour from the expiry queue to the cleanup, which deletes its
     /// positions. Done with the hour's credit, so a retry never credits it twice.
     pub(crate) fn hand_hour_to_cleanup(&mut self, hour: u64) -> Result<()> {
-        let deadline = self.expiry_deadline.read(&hour)?;
-        expiry_queue::remove(&PositionExpiryHours(self), hour)?;
-        expiry_queue::push(&PositionCleanupHours(self), hour, deadline)
+        let entry = position_queue_entry(hour)?;
+        let deadline = self.expiry_deadline.read(&entry)?;
+        expiry_queue::remove(&PositionExpiryDays(self), entry)?;
+        expiry_queue::push(&PositionCleanupDays(self), entry, deadline)
     }
 
     /// Deletes an expired position, and forgets its hour with the last one.
@@ -86,8 +103,9 @@ impl<'s> GemFactoryContract<'s> {
         self.positions.delete(record.position_id)?;
         if self.hour_position_count(hour)? == 0 {
             self.hour_capacity_minor.clear(&hour)?;
-            expiry_queue::remove(&PositionExpiryHours(self), hour)?;
-            expiry_queue::remove(&PositionCleanupHours(self), hour)?;
+            let entry = position_queue_entry(hour)?;
+            expiry_queue::remove(&PositionExpiryDays(self), entry)?;
+            expiry_queue::remove(&PositionCleanupDays(self), entry)?;
         }
         Ok(())
     }
@@ -146,33 +164,33 @@ impl<'s> GemFactoryContract<'s> {
 }
 
 /// Positions' expiry hours, each queued as one entry.
-pub struct PositionExpiryHours<'a, 'storage>(pub &'a GemFactoryContract<'storage>);
+pub struct PositionExpiryDays<'a, 'storage>(pub &'a GemFactoryContract<'storage>);
 
-outbe_primitives::impl_expiry_queue!(PositionExpiryHours<u64> {
+outbe_primitives::impl_expiry_queue!(PositionExpiryDays<u64> {
     root: expiry_tree_root,
     mid: expiry_tree_mid,
     leaf: expiry_tree_leaf,
-    len: expiry_bucket_len,
-    live: expiry_bucket_live,
-    at: expiry_bucket_at,
-    slot: expiry_hour_slot,
+    len: expiry_day_len,
+    live: expiry_day_live,
+    at: expiry_day_at,
+    slot: expiry_entry_slot,
     deadline: expiry_deadline,
-    sweep_bucket: expiry_sweep_hour,
+    sweep_day: expiry_sweep_day,
     cursor: expiry_cursor,
 });
 
 /// Expired hours whose positions wait to be deleted.
-pub struct PositionCleanupHours<'a, 'storage>(pub &'a GemFactoryContract<'storage>);
+pub struct PositionCleanupDays<'a, 'storage>(pub &'a GemFactoryContract<'storage>);
 
-outbe_primitives::impl_expiry_queue!(PositionCleanupHours<u64> {
+outbe_primitives::impl_expiry_queue!(PositionCleanupDays<u64> {
     root: cleanup_tree_root,
     mid: cleanup_tree_mid,
     leaf: cleanup_tree_leaf,
-    len: cleanup_bucket_len,
-    live: cleanup_bucket_live,
-    at: cleanup_bucket_at,
-    slot: cleanup_hour_slot,
+    len: cleanup_day_len,
+    live: cleanup_day_live,
+    at: cleanup_day_at,
+    slot: cleanup_entry_slot,
     deadline: cleanup_deadline,
-    sweep_bucket: cleanup_sweep_hour,
+    sweep_day: cleanup_sweep_day,
     cursor: cleanup_cursor,
 });

@@ -108,17 +108,20 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
             let ctx = BlockRuntimeContext::new(block_ctx(5, late), storage.clone());
             dispatch_and_call(&ctx)?;
             let nod = outbe_nod::NodContract::new(storage.clone());
-            for _ in 0..8 {
+            for height in 6..14 {
                 if nod.call_sweep_day.read()? == 0 {
                     break;
                 }
-                outbe_nodfactory::called::run_call_slice(&ctx)?;
+                outbe_nodfactory::called::run_call_slice(&BlockRuntimeContext::new(
+                    block_ctx(height, late),
+                    storage.clone(),
+                ))?;
             }
             assert_eq!(nod.call_sweep_day.read()?, 0);
             assert_eq!(called_at(second), late);
             assert_eq!(cycle.last_executed_at.read(&trigger)?, late);
             let third = issue_nod(&storage, Address::repeat_byte(0x53), 15)?;
-            let ctx = BlockRuntimeContext::new(block_ctx(6, late + 1), storage.clone());
+            let ctx = BlockRuntimeContext::new(block_ctx(14, late + 1), storage.clone());
             dispatch_and_call(&ctx)?;
             assert_eq!(called_at(third), 0);
             Ok::<_, outbe_primitives::error::PrecompileError>(())
@@ -164,11 +167,14 @@ fn call_across_a_halt(price_on_d: bool) -> (u64, u32, u64) {
             oracle.utc_day_vwap_last_finalized.write(next_date_key(d))?;
             let ctx = BlockRuntimeContext::new(block_ctx(4, restart), storage.clone());
             dispatch_and_call(&ctx)?;
-            for _ in 0..8 {
+            for height in 5..13 {
                 if nod.call_sweep_day.read()? == 0 {
                     break;
                 }
-                outbe_nodfactory::called::run_call_slice(&ctx)?;
+                outbe_nodfactory::called::run_call_slice(&BlockRuntimeContext::new(
+                    block_ctx(height, restart),
+                    storage.clone(),
+                ))?;
             }
             assert_eq!(nod.call_sweep_day.read()?, 0);
             Ok::<_, outbe_primitives::error::PrecompileError>((
@@ -197,6 +203,83 @@ fn a_halt_does_not_skip_the_day_that_calls_a_nod_group() {
     assert_eq!(latest, next_date_key(d));
 }
 
+#[test]
+fn cycle_retries_oracle_lag_and_expires_only_the_closed_deadline_day() {
+    use outbe_primitives::time::timestamp_to_date_key;
+
+    let day_start = GENESIS_TS + 40 * SECONDS_PER_DAY;
+    let deadline = day_start + 10 * 3_600;
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        let cycle = Cycle::new(storage.clone());
+        // No unrelated trigger is due: exercise the per-block lifecycle continuation,
+        // including recovery after a daily scheduling attempt found no finalized day.
+        for spec in ACTIVE_TRIGGERS {
+            cycle
+                .last_executed_at
+                .write(&spec.id, day_start + 10 * SECONDS_PER_DAY)
+                .unwrap();
+        }
+        let (oracle, _) = seed_closed_day_prices(&storage, day_start).unwrap();
+        let init = BlockRuntimeContext::new(block_ctx(2, deadline), storage.clone());
+        outbe_nodfactory::called::initialize_daily(&init).unwrap();
+        let mut nod = outbe_nod::NodContract::new(storage.clone());
+        for (owner, entry, due) in [(0x61, 13, deadline), (0x62, 14, deadline + SECONDS_PER_DAY)] {
+            let group = issue_nod(&storage, Address::repeat_byte(owner), entry).unwrap();
+            let notice = u64::from(nod.group_call_notice_period_seconds.read(&group).unwrap());
+            nod.record_group_called(group, due - notice, due).unwrap();
+        }
+        let reserve = outbe_promislimit::PromisLimitContract::new(storage.clone());
+        let before = reserve.promis_limit().unwrap();
+
+        run_cycle_lifecycle(&BlockRuntimeContext::new(
+            block_ctx(3, day_start + 11 * 3_600),
+            storage.clone(),
+        ))
+        .unwrap();
+        assert_eq!(
+            reserve.promis_limit().unwrap(),
+            before,
+            "no intraday forfeit"
+        );
+
+        let closed_at = day_start + SECONDS_PER_DAY;
+        run_cycle_lifecycle(&BlockRuntimeContext::new(
+            block_ctx(4, closed_at),
+            storage.clone(),
+        ))
+        .unwrap();
+        assert_eq!(
+            reserve.promis_limit().unwrap(),
+            before,
+            "Oracle is not ready"
+        );
+
+        oracle
+            .utc_day_vwap_last_finalized
+            .write(timestamp_to_date_key(day_start))
+            .unwrap();
+        let ready = BlockRuntimeContext::new(block_ctx(5, closed_at + 1), storage.clone());
+        run_cycle_lifecycle(&ready).unwrap();
+        assert_eq!(reserve.promis_limit().unwrap(), before + U256::from(11));
+        assert_eq!(nod.call_sweep_day.read().unwrap(), 0);
+        run_cycle_lifecycle(&ready).unwrap();
+        assert_eq!(reserve.promis_limit().unwrap(), before + U256::from(11));
+
+        // The next day's deadline remains queued even though calls have no work.
+        oracle
+            .utc_day_vwap_last_finalized
+            .write(timestamp_to_date_key(closed_at))
+            .unwrap();
+        run_cycle_lifecycle(&BlockRuntimeContext::new(
+            block_ctx(6, closed_at + SECONDS_PER_DAY),
+            storage.clone(),
+        ))
+        .unwrap();
+        assert_eq!(reserve.promis_limit().unwrap(), before + U256::from(22));
+    });
+}
+
 /// Isolates Nod's schedule. Unrelated triggers are not due, and the Nod daily
 /// call is due at `midnight`. Returns the Nod call trigger id.
 fn isolate_nod_call_schedule(
@@ -222,6 +305,10 @@ fn seed_closed_day_prices<'s>(
 ) -> outbe_primitives::error::Result<(outbe_oracle::schema::OracleContract<'s>, u32)> {
     use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
+    initialize_daily_passes(&BlockRuntimeContext::new(
+        block_ctx(1, midnight - SECONDS_PER_DAY),
+        storage.clone(),
+    ));
     let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
     let index = outbe_oracle::api::register_pair(
         storage.clone(),

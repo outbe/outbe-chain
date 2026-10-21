@@ -155,7 +155,7 @@ impl GemContract<'_> {
         self.group_call_notice_period_seconds.clear(&group)?;
         self.group_called_at.clear(&group)?;
         self.group_unpaid_load.clear(&group)?;
-        expiry_queue::remove(&CleanupHours(self), group)?;
+        expiry_queue::remove(&CleanupDays(self), group)?;
         self.group_gem_count.clear(&group)
     }
 
@@ -182,45 +182,45 @@ impl GemContract<'_> {
     // --- Expiry queue -------------------------------------------------------------
 
     pub fn push_called(&mut self, group: B256, deadline: u64) -> Result<()> {
-        expiry_queue::push(&ExpiryHours(self), group, deadline)
+        expiry_queue::push(&ExpiryDays(self), group, deadline)
     }
 
     pub fn remove_called(&mut self, group: B256) -> Result<()> {
-        expiry_queue::remove(&ExpiryHours(self), group)
+        expiry_queue::remove(&ExpiryDays(self), group)
     }
 
     /// Moves a forfeited group from the expiry queue to the cleanup, which deletes its
     /// unpaid gems. Done with the group's credit, so a retry never credits it twice.
     pub fn hand_to_cleanup(&mut self, group: B256) -> Result<()> {
         let deadline = self.called_deadline.read(&group)?;
-        expiry_queue::remove(&ExpiryHours(self), group)?;
-        expiry_queue::push(&CleanupHours(self), group, deadline)
+        expiry_queue::remove(&ExpiryDays(self), group)?;
+        expiry_queue::push(&CleanupDays(self), group, deadline)
     }
 
     #[cfg(any(test, feature = "test-utils"))]
-    pub fn first_cleanup_hour(&self) -> Result<Option<u32>> {
-        expiry_queue::first_bucket(&CleanupHours(self))
+    pub fn first_cleanup_day(&self) -> Result<Option<u32>> {
+        expiry_queue::first_day(&CleanupDays(self))
     }
 
-    /// Hour since the epoch a deadline falls in: plain UTC, not a WorldwideDay.
+    /// Day since the epoch a deadline falls in: plain UTC, not a WorldwideDay.
     #[cfg(any(test, feature = "test-utils"))]
-    pub const fn deadline_hour(deadline: u64) -> u32 {
-        expiry_queue::bucket_of(deadline)
+    pub fn deadline_day(deadline: u64) -> u32 {
+        expiry_queue::deadline_day(deadline).unwrap()
     }
 
     #[cfg(any(test, feature = "test-utils"))]
-    pub const fn hour_end(day: u32) -> u64 {
-        expiry_queue::bucket_end(day)
+    pub const fn day_end(day: u32) -> u64 {
+        expiry_queue::day_end(day)
     }
 
     #[cfg(any(test, feature = "test-utils"))]
     pub fn expiry_slot(&self, day: u32, slot: u32) -> Result<Option<B256>> {
-        expiry_queue::entry_at(&ExpiryHours(self), day, slot)
+        expiry_queue::entry_at(&ExpiryDays(self), day, slot)
     }
 
     #[cfg(any(test, feature = "test-utils"))]
     pub fn first_expiry_day(&self) -> Result<Option<u32>> {
-        expiry_queue::first_bucket(&ExpiryHours(self))
+        expiry_queue::first_day(&ExpiryDays(self))
     }
 
     // --- Group bins: uncalled groups by call price --------------------------------
@@ -245,35 +245,35 @@ impl GemContract<'_> {
     }
 }
 
-/// Called groups, queued by the hour their notice period closes in.
-pub struct ExpiryHours<'a, 'storage>(pub &'a GemContract<'storage>);
+/// Called groups, queued by the UTC day their notice period closes in.
+pub struct ExpiryDays<'a, 'storage>(pub &'a GemContract<'storage>);
 
-outbe_primitives::impl_expiry_queue!(ExpiryHours<B256> {
+outbe_primitives::impl_expiry_queue!(ExpiryDays<B256> {
     root: expiry_tree_root,
     mid: expiry_tree_mid,
     leaf: expiry_tree_leaf,
-    len: expiry_bucket_len,
-    live: expiry_bucket_live,
-    at: expiry_bucket_at,
+    len: expiry_day_len,
+    live: expiry_day_live,
+    at: expiry_day_at,
     slot: called_group_slot,
     deadline: called_deadline,
-    sweep_bucket: expiry_sweep_hour,
+    sweep_day: expiry_sweep_day,
     cursor: expiry_cursor,
 });
 
 /// Forfeited groups whose unpaid gems wait to be deleted.
-pub struct CleanupHours<'a, 'storage>(pub &'a GemContract<'storage>);
+pub struct CleanupDays<'a, 'storage>(pub &'a GemContract<'storage>);
 
-outbe_primitives::impl_expiry_queue!(CleanupHours<B256> {
+outbe_primitives::impl_expiry_queue!(CleanupDays<B256> {
     root: cleanup_tree_root,
     mid: cleanup_tree_mid,
     leaf: cleanup_tree_leaf,
-    len: cleanup_bucket_len,
-    live: cleanup_bucket_live,
-    at: cleanup_bucket_at,
+    len: cleanup_day_len,
+    live: cleanup_day_live,
+    at: cleanup_day_at,
     slot: cleanup_group_slot,
     deadline: cleanup_deadline,
-    sweep_bucket: cleanup_sweep_hour,
+    sweep_day: cleanup_sweep_day,
     cursor: cleanup_cursor,
 });
 

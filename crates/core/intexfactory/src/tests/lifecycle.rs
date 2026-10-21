@@ -187,7 +187,7 @@ mod call_sweep {
     //! A call sweep too large for one run continues across blocks, pinned to the
     //! day it opened on.
 
-    use crate::tests::{group_of, series_state};
+    use crate::tests::{at_height, group_of, series_state};
 
     use alloy_primitives::U256;
     use outbe_intex::SeriesId;
@@ -199,7 +199,7 @@ mod call_sweep {
     use outbe_primitives::time::WorldwideDay;
     use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
-    use crate::called;
+    use crate::tests::called;
     use crate::tests::owner;
     use outbe_intex::IntexContract;
     use outbe_primitives::sweep_budget::{SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK};
@@ -335,15 +335,15 @@ mod call_sweep {
 
             // The group left its bin and keeps its members for the expiry sweep.
             assert_eq!(factory.call_group_slot.read(&key).unwrap(), 0);
-            let bucket = IntexContract::deadline_bucket(scan_ts + 7 * DAY);
+            let day = IntexContract::deadline_day(scan_ts + 7 * DAY);
             assert_eq!(
                 factory
-                    .expiry_bucket_at
-                    .read(&IntexContract::bucket_slot_key(bucket, 0))
+                    .expiry_day_at
+                    .read(&IntexContract::day_slot_key(day, 0))
                     .unwrap(),
                 key
             );
-            assert_eq!(factory.expiry_bucket_live.read(&bucket).unwrap(), 1);
+            assert_eq!(factory.expiry_day_live.read(&day).unwrap(), 1);
             assert_eq!(
                 factory.called_deadline.read(&key).unwrap(),
                 scan_ts + 7 * DAY
@@ -376,7 +376,7 @@ mod call_sweep {
     /// First instant a group with this deadline can be retired: the sweep works a
     /// deadline day only once that day has closed.
     fn due(deadline: u64) -> u64 {
-        IntexContract::bucket_end(IntexContract::deadline_bucket(deadline))
+        IntexContract::day_end(IntexContract::deadline_day(deadline))
     }
 
     fn sweep_at(s: &StorageHandle<'_>, now: u64) {
@@ -561,7 +561,7 @@ mod call_sweep {
             assert!(!expiring(&s, members[0]));
             assert_eq!(unallocated(&s), U256::from(width) * U256::from(LOAD));
             assert!(IntexContract::new(s.clone())
-                .first_cleanup_hour()
+                .first_cleanup_day()
                 .unwrap()
                 .is_some());
         });
@@ -584,8 +584,7 @@ mod call_sweep {
             assert!(expiring(&s, members[0]));
 
             registry.settled_units.write(&members[1], 0).unwrap();
-            let retry =
-                IntexContract::bucket_end(IntexContract::deadline_bucket(due(deadline)) + 1);
+            let retry = IntexContract::day_end(IntexContract::deadline_day(due(deadline)) + 1);
             sweep_at(&s, retry);
             assert_eq!(unallocated(&s), U256::from(140u64) * U256::from(LOAD));
             assert!(!expiring(&s, members[0]));
@@ -605,7 +604,7 @@ mod call_sweep {
             sweep_at(&s, due(deadline) + 1);
             assert_eq!(unallocated(&s), after_first);
 
-            // The bucket emptied, so its day left the tree rather than being handed
+            // The day emptied, so its day left the tree rather than being handed
             // back every block.
             let factory = IntexContract::new(s.clone());
             assert_eq!(factory.first_expiry_day().unwrap(), None);
@@ -626,9 +625,12 @@ mod call_sweep {
                 BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
                 s.clone(),
             );
-            while called::run_call_slice(&ctx).unwrap() > 0 {}
             called::scan_and_call(&ctx).unwrap();
-            while called::run_call_slice(&ctx).unwrap() > 0 {}
+            called::run_call_slice(&at_height(&ctx, 2)).unwrap();
+            assert_eq!(
+                IntexContract::new(s.clone()).call_sweep_day.read().unwrap(),
+                0
+            );
 
             let deadline = scan_ts + 7 * DAY;
             let per_group = U256::from(100u64) * U256::from(1_000_000_000_000_000_000u128);
@@ -676,7 +678,12 @@ mod call_sweep {
             );
 
             // The next block's slice finishes it and closes the sweep.
-            let second = called::run_call_slice(&ctx).unwrap();
+            assert_eq!(
+                called::run_call_slice(&ctx).unwrap(),
+                0,
+                "same-height entry retains the spent allowance"
+            );
+            let second = called::run_call_slice(&at_height(&ctx, 2)).unwrap();
             assert_eq!(first + second, groups);
             assert_eq!(called_count(&s, days), groups);
             assert_eq!(
@@ -771,7 +778,7 @@ mod call_sweep {
     }
 
     #[test]
-    fn a_slice_without_an_open_sweep_does_nothing() {
+    fn a_slice_schedules_a_ready_day_without_waiting_for_a_trigger() {
         with_factory(|s| {
             let oracle = OracleContract::new(s.clone());
             let pair = setup_pair(&oracle);
@@ -784,9 +791,10 @@ mod call_sweep {
                 BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
                 s.clone(),
             );
-            // No trigger has opened one, so the block hook leaves the group alone.
+            // Every block retries scheduling, independently of daily trigger success.
+            assert_eq!(called::run_call_slice(&ctx).unwrap(), 1);
+            assert_eq!(called_count(&s, 20260101..20260102), 1);
             assert_eq!(called::run_call_slice(&ctx).unwrap(), 0);
-            assert_eq!(called_count(&s, 20260101..20260102), 0);
         });
     }
 
@@ -871,8 +879,8 @@ mod call_sweep {
             );
 
             // The next slices must reach the end of the range and close the sweep.
-            for _ in 0..4 {
-                called::run_call_slice(&ctx).unwrap();
+            for height in 2..=5 {
+                called::run_call_slice(&at_height(&ctx, height)).unwrap();
             }
             assert_eq!(
                 IntexContract::new(s.clone()).call_sweep_day.read().unwrap(),
@@ -960,11 +968,11 @@ mod call_sweep {
             called::scan_and_call(&later).unwrap();
             // The in-flight day finishes, then every day up to the new one is walked.
             let factory = IntexContract::new(s.clone());
-            for _ in 0..64 {
+            for height in 3..=66 {
                 if factory.call_sweep_day.read().unwrap() == 0 {
                     break;
                 }
-                called::run_call_slice(&later).unwrap();
+                called::run_call_slice(&at_height(&later, height)).unwrap();
             }
             assert_eq!(factory.call_sweep_day.read().unwrap(), 0);
 
@@ -1144,8 +1152,11 @@ mod call_sweep {
                 s.clone(),
             );
             let mut walked = vec![closed[0]];
-            while walked.last() != Some(&0) && walked.len() < 8 {
-                called::run_call_slice(&ctx).unwrap();
+            for height in 4..20 {
+                if walked.last() == Some(&0) {
+                    break;
+                }
+                called::run_call_slice(&at_height(&ctx, height)).unwrap();
                 let day = factory.call_sweep_day.read().unwrap();
                 if walked.last() != Some(&day) {
                     walked.push(day);
@@ -1181,8 +1192,8 @@ mod call_sweep {
                 s.clone(),
             );
             called::scan_and_call(&ctx).unwrap();
-            for _ in 0..3 {
-                called::run_call_slice(&ctx).unwrap();
+            for height in 2..=4 {
+                called::run_call_slice(&at_height(&ctx, height)).unwrap();
             }
             assert_eq!(
                 IntexContract::new(s.clone()).call_sweep_day.read().unwrap(),

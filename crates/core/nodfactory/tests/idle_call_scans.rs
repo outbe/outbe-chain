@@ -1,5 +1,4 @@
-//! An idle call scan reads and never writes: a CycleTick with nothing in flight
-//! issues no SSTORE.
+//! Completed daily passes remain idle, including repeated entry at one height.
 
 use alloy_primitives::{Address, U256};
 use outbe_nod::{NodContract, NodItemState};
@@ -34,7 +33,7 @@ fn provider() -> HashMapStorageProvider {
 }
 
 #[test]
-fn idle_daily_scans_do_not_write_storage() {
+fn idle_daily_scans_do_not_reopen_a_completed_day() {
     let mut provider = provider();
     let midnight = outbe_primitives::time::date_key_to_utc_timestamp(20260716);
     StorageHandle::enter(&mut provider, |storage| {
@@ -61,8 +60,12 @@ fn idle_daily_scans_do_not_write_storage() {
             BlockContext::empty_for_tests(1, midnight, 1),
             storage.clone(),
         );
+        called::initialize_daily(&BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(0, midnight - 86_400, 1),
+            storage.clone(),
+        ))
+        .unwrap();
         called::run_daily(&ctx).unwrap();
-        hooks::sweep_forfeits(&ctx).unwrap();
         called::run_call_slice(&ctx).unwrap();
         assert_eq!(
             NodContract::new(storage).call_sweep_day.read().unwrap(),
@@ -70,15 +73,38 @@ fn idle_daily_scans_do_not_write_storage() {
             "both groups wait below their call price, so the sweep closes at once"
         );
     });
-    // An idle CycleTick only continues an in-flight sweep, so it issues no SSTORE.
+    // A new height records its idle allowance but does not reopen the completed day.
     provider.enable_production_storage_gas_metering();
     StorageHandle::enter(&mut provider, |storage| {
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(2, midnight, 1),
+            storage.clone(),
+        );
+        called::run_call_slice(&ctx).unwrap();
+        hooks::sweep_cleanup(&ctx).unwrap();
+        let nod = NodContract::new(storage);
+        assert_eq!(nod.call_sweep_day.read().unwrap(), 0);
+        assert_eq!(nod.call_latest_day.read().unwrap(), 20260715);
+        let allowance = outbe_primitives::sweep_budget::BlockAllowance::unpack(
+            nod.daily_budget.read().unwrap(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(allowance.height, 2);
+        assert_eq!(allowance.day, 0);
+        assert_eq!(
+            allowance.budget,
+            outbe_primitives::sweep_budget::SweepBudget::per_block()
+        );
+    });
+    let before = provider.storage.clone();
+    StorageHandle::enter(&mut provider, |storage| {
         let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, midnight, 1), storage);
-        hooks::sweep_forfeits(&ctx).unwrap();
         called::run_call_slice(&ctx).unwrap();
         hooks::sweep_cleanup(&ctx).unwrap();
     });
-    let (reads, writes) = provider.metered_storage_operations();
-    assert!(reads > 0);
-    assert_eq!(writes, 0);
+    assert_eq!(
+        provider.storage, before,
+        "same-height idle reentry preserves all state"
+    );
 }

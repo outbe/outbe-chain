@@ -241,14 +241,14 @@ pub struct GemContract {
     pub expiry_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 22)]
     pub expiry_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
-    /// Slots ever used in a bucket. Retired ones are zeroed in place, not compacted.
+    /// Slots ever used in a day. Retired ones are zeroed in place, not compacted.
     #[attribute(order = 23)]
-    pub expiry_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub expiry_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 24)]
-    pub expiry_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub expiry_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     /// `keccak256(hour_be32 ++ slot_be32)` -> a called group's key.
     #[attribute(order = 25)]
-    pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    pub expiry_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
     /// Group key -> `(hour << 32) | slot`. 0 = not queued.
     #[attribute(order = 26)]
     pub called_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
@@ -256,7 +256,7 @@ pub struct GemContract {
     #[attribute(order = 27)]
     pub called_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 28)]
-    pub expiry_sweep_hour: outbe_primitives::storage::dsl::Value<u32>,
+    pub expiry_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 29)]
     pub expiry_cursor: outbe_primitives::storage::dsl::Value<u64>,
 
@@ -299,7 +299,7 @@ pub struct GemContract {
     #[attribute(order = 42)]
     pub group_unpaid_load: outbe_primitives::storage::dsl::Map<B256, U256>,
 
-    // --- Forfeited groups whose unpaid gems wait to be deleted, bucketed like the
+    // --- Forfeited groups whose unpaid gems wait to be deleted, queued by day like the
     // expiry queue.
     #[attribute(order = 43)]
     pub cleanup_tree_root: outbe_primitives::storage::dsl::Value<U256>,
@@ -308,19 +308,28 @@ pub struct GemContract {
     #[attribute(order = 45)]
     pub cleanup_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 46)]
-    pub cleanup_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub cleanup_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 47)]
-    pub cleanup_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub cleanup_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 48)]
-    pub cleanup_bucket_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    pub cleanup_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
     #[attribute(order = 49)]
     pub cleanup_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 50)]
     pub cleanup_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 51)]
-    pub cleanup_sweep_hour: outbe_primitives::storage::dsl::Value<u32>,
+    pub cleanup_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 52)]
     pub cleanup_cursor: outbe_primitives::storage::dsl::Value<u64>,
+
+    #[attribute(order = 53)]
+    pub daily_phase: outbe_primitives::storage::dsl::Value<u8>,
+    #[attribute(order = 54)]
+    pub daily_budget: outbe_primitives::storage::dsl::Value<U256>,
+    #[attribute(order = 55)]
+    pub daily_genesis_day: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 56)]
+    pub cleanup_budget: outbe_primitives::storage::dsl::Value<U256>,
 }
 
 impl GemContract<'_> {

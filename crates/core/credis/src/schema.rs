@@ -226,7 +226,7 @@ pub struct CredisContract {
     #[attribute(order = 8)]
     pub max_call_window_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
 
-    // Called groups, queued by the hour their settlement deadline falls in.
+    // Called groups, queued by the UTC day their settlement deadline falls in.
     #[attribute(order = 9)]
     pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 10)]
@@ -234,17 +234,17 @@ pub struct CredisContract {
     #[attribute(order = 11)]
     pub expiry_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 12)]
-    pub expiry_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub expiry_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 13)]
-    pub expiry_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub expiry_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 14)]
-    pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    pub expiry_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
     #[attribute(order = 15)]
     pub called_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 16)]
     pub called_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 17)]
-    pub expiry_sweep_hour: outbe_primitives::storage::dsl::Value<u32>,
+    pub expiry_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 18)]
     pub expiry_cursor: outbe_primitives::storage::dsl::Value<u64>,
 
@@ -310,7 +310,7 @@ pub struct CredisContract {
     pub group_call_notice_period_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
     #[attribute(order = 40)]
     pub group_called_at: outbe_primitives::storage::dsl::Map<B256, u64>,
-    // Forfeited groups whose Credis wait to be deleted, bucketed like the expiry queue.
+    // Forfeited groups whose Credis wait to be deleted, queued by deadline day.
     #[attribute(order = 42)]
     pub cleanup_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 43)]
@@ -318,17 +318,17 @@ pub struct CredisContract {
     #[attribute(order = 44)]
     pub cleanup_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 45)]
-    pub cleanup_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub cleanup_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 46)]
-    pub cleanup_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub cleanup_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 47)]
-    pub cleanup_bucket_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    pub cleanup_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
     #[attribute(order = 48)]
     pub cleanup_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 49)]
     pub cleanup_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 50)]
-    pub cleanup_sweep_hour: outbe_primitives::storage::dsl::Value<u32>,
+    pub cleanup_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 51)]
     pub cleanup_cursor: outbe_primitives::storage::dsl::Value<u64>,
 
@@ -337,6 +337,12 @@ pub struct CredisContract {
     pub owner_principal_minor: outbe_primitives::storage::dsl::Map<Address, U256>,
     #[attribute(order = 53)]
     pub owner_outstanding_minor: outbe_primitives::storage::dsl::Map<Address, U256>,
+    #[attribute(order = 54)]
+    pub daily_phase: outbe_primitives::storage::dsl::Value<u8>,
+    #[attribute(order = 55)]
+    pub daily_budget: outbe_primitives::storage::dsl::Value<U256>,
+    #[attribute(order = 56)]
+    pub daily_genesis_day: outbe_primitives::storage::dsl::Value<u32>,
 }
 
 impl CredisContract<'_> {

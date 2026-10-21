@@ -2,7 +2,7 @@
 //! the expiry already returned their load.
 
 use alloy_primitives::{B256, U256};
-use outbe_gem::{api as gem_api, CleanupHours, GemContract};
+use outbe_gem::{api as gem_api, CleanupDays, GemContract};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result, SweepFailure},
@@ -20,7 +20,21 @@ pub fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
         gem: GemContract::new(ctx.storage.clone()),
         deleted: 0,
     };
-    expiry_queue::sweep_block(&CleanupHours(&queue), ctx, &mut cleanup)?;
+    ctx.storage.with_checkpoint(|| {
+        let mut allowance = outbe_primitives::sweep_budget::BlockAllowance::for_block(
+            queue.cleanup_budget.read()?,
+            ctx.block.block_number,
+            0,
+        )?;
+        expiry_queue::sweep(
+            &CleanupDays(&queue),
+            &ctx.storage,
+            ctx.block.timestamp,
+            &mut allowance.budget,
+            &mut cleanup,
+        )?;
+        queue.cleanup_budget.write(allowance.pack())
+    })?;
     Ok(cleanup.deleted)
 }
 

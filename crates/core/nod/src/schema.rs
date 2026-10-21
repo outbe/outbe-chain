@@ -211,7 +211,7 @@ pub struct NodContract {
     #[attribute(order = 66)]
     pub call_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
 
-    // Called groups, queued by the hour their notice period closes in. The trie
+    // Called groups, queued by the UTC day their notice period closes in. The trie
     // sits here and the group columns follow `config_profile`, whose slot genesis pins.
     #[attribute(order = 67)]
     pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
@@ -231,17 +231,17 @@ pub struct NodContract {
     pub config_profile: outbe_primitives::storage::dsl::Value<u8>,
 
     #[attribute(order = 74)]
-    pub expiry_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub expiry_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 75)]
-    pub expiry_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub expiry_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 76)]
-    pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    pub expiry_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
     #[attribute(order = 77)]
     pub called_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 78)]
     pub called_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 79)]
-    pub expiry_sweep_hour: outbe_primitives::storage::dsl::Value<u32>,
+    pub expiry_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 80)]
     pub expiry_cursor: outbe_primitives::storage::dsl::Value<u64>,
 
@@ -275,7 +275,7 @@ pub struct NodContract {
     #[attribute(order = 89)]
     pub group_unpaid_load: outbe_primitives::storage::dsl::Map<B256, U256>,
 
-    // Forfeited groups whose unpaid Nods wait to be deleted, bucketed like the expiry queue.
+    // Forfeited groups whose unpaid Nods wait to be deleted, queued by deadline day.
     #[attribute(order = 90)]
     pub cleanup_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 91)]
@@ -283,17 +283,25 @@ pub struct NodContract {
     #[attribute(order = 92)]
     pub cleanup_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 93)]
-    pub cleanup_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub cleanup_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 94)]
-    pub cleanup_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub cleanup_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 95)]
-    pub cleanup_bucket_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    pub cleanup_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
     #[attribute(order = 96)]
     pub cleanup_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 97)]
     pub cleanup_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 98)]
-    pub cleanup_sweep_hour: outbe_primitives::storage::dsl::Value<u32>,
+    pub cleanup_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 99)]
     pub cleanup_cursor: outbe_primitives::storage::dsl::Value<u64>,
+    #[attribute(order = 100)]
+    pub daily_phase: outbe_primitives::storage::dsl::Value<u8>,
+    #[attribute(order = 101)]
+    pub daily_budget: outbe_primitives::storage::dsl::Value<U256>,
+    #[attribute(order = 102)]
+    pub daily_genesis_day: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 103)]
+    pub cleanup_budget: outbe_primitives::storage::dsl::Value<U256>,
 }

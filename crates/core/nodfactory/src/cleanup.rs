@@ -2,7 +2,7 @@
 //! the forfeit already returned their load.
 
 use alloy_primitives::B256;
-use outbe_nod::state::CleanupHours;
+use outbe_nod::state::CleanupDays;
 use outbe_nod::{api, schema::NodContract};
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_primitives::{
@@ -10,19 +10,33 @@ use outbe_primitives::{
     error::{PrecompileError, Result, SweepFailure},
     expiry_queue::{self, Due, ExpiryHandler},
     storage::StorageHandle,
+    sweep_budget::BlockAllowance,
 };
 
 use crate::errors::NodFactoryError;
 
 /// Deletes the unpaid Nods of the forfeited groups. Returns the Nods deleted.
 pub fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
+    ctx.with_checkpoint(|| cleanup_block(ctx))
+}
+
+fn cleanup_block(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = NodContract::new(ctx.storage.clone());
+    let mut allowance =
+        BlockAllowance::for_block(queue.cleanup_budget.read()?, ctx.block.block_number, 0)?;
     let mut cleanup = NodCleanup {
         storage: &ctx.storage,
         nod: NodContract::new(ctx.storage.clone()),
         deleted: 0,
     };
-    expiry_queue::sweep_block(&CleanupHours(&queue), ctx, &mut cleanup)?;
+    expiry_queue::sweep(
+        &CleanupDays(&queue),
+        &ctx.storage,
+        ctx.block.timestamp,
+        &mut allowance.budget,
+        &mut cleanup,
+    )?;
+    queue.cleanup_budget.write(allowance.pack())?;
     Ok(cleanup.deleted)
 }
 

@@ -4,17 +4,19 @@
 use alloy_primitives::B256;
 use alloy_sol_types::SolEvent;
 use outbe_credis::precompile::ICredis;
-use outbe_credis::{CredisContract, ExpiryHours};
+use outbe_credis::{CredisContract, ExpiryDays};
 use outbe_primitives::{
     addresses::CREDIS_FACTORY_ADDRESS,
     block::BlockRuntimeContext,
     error::Result,
     expiry_queue::{self, Due, ExpiryHandler},
+    sweep_budget::SweepBudget,
 };
 
 use crate::precompile::ICredisFactory::ExpiryDeferred;
 
 /// Runs from CycleTick every block. Returns the groups forfeited.
+#[cfg(test)]
 pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = CredisContract::new(ctx.storage.clone());
     let mut expiry = CredisExpiry {
@@ -22,8 +24,29 @@ pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
         credis: CredisContract::new(ctx.storage.clone()),
         forfeited: 0,
     };
-    expiry_queue::sweep_block(&ExpiryHours(&queue), ctx, &mut expiry)?;
+    expiry_queue::sweep_block(&ExpiryDays(&queue), ctx, &mut expiry)?;
     Ok(expiry.forfeited)
+}
+
+pub(crate) fn sweep_through(
+    ctx: &BlockRuntimeContext,
+    through_day: u32,
+    budget: &mut SweepBudget,
+) -> Result<expiry_queue::Progress> {
+    let queue = CredisContract::new(ctx.storage.clone());
+    let mut expiry = CredisExpiry {
+        ctx,
+        credis: CredisContract::new(ctx.storage.clone()),
+        forfeited: 0,
+    };
+    expiry_queue::sweep_through(
+        &ExpiryDays(&queue),
+        &ctx.storage,
+        ctx.block.timestamp,
+        through_day,
+        budget,
+        &mut expiry,
+    )
 }
 
 struct CredisExpiry<'a, 'storage> {

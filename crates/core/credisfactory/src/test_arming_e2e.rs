@@ -1,7 +1,7 @@
 //! E2E-only hooks. A Credis is stamped live, so only a throwaway build can move its
 //! issuance behind the closed days a scenario seeds for the call sweep. The forfeit
-//! sweep opens an hour only once it has closed, so `closeCallNoticeForTest` moves a
-//! lapsed deadline into an hour the sweep opens on the next block.
+//! sweep opens a day only once it has closed, so `closeCallNoticeForTest` moves a
+//! lapsed deadline into a day the sweep opens on the next block.
 
 use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::{sol, SolCall};
@@ -66,5 +66,10 @@ fn requeue_called(storage: &StorageHandle<'_>, credis_id: U256, deadline: u64) -
         .group_called_at
         .write(&group, deadline.saturating_sub(notice).max(1))?;
     credis.remove_called(group)?;
-    credis.push_called(group, deadline)
+    credis.push_called(group, deadline)?;
+    let day = outbe_primitives::time::timestamp_to_date_key(deadline);
+    credis.call_sweep_day.write(day)?;
+    credis.daily_phase.write(0)?;
+    credis.call_currency_cursor.write(0)?;
+    Ok(())
 }

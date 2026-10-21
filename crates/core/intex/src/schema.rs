@@ -368,7 +368,7 @@ pub struct IntexContract {
     #[attribute(order = 43)]
     pub call_bin_groups: outbe_primitives::storage::dsl::Map<B256, B256>,
 
-    // Called groups awaiting their settlement window, bucketed by the hour it closes in.
+    // Called groups awaiting their settlement window, queued by day by the hour it closes in.
     #[attribute(order = 44)]
     pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 45)]
@@ -385,19 +385,19 @@ pub struct IntexContract {
     #[attribute(order = 49)]
     pub min_call_threshold_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
 
-    /// Slots ever used in a bucket. Retired slots are zeroed in place, not compacted.
+    /// Slots ever used in a day. Retired slots are zeroed in place, not compacted.
     #[attribute(order = 50)]
-    pub expiry_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub expiry_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 51)]
-    pub expiry_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
-    /// `keccak256(bucket_be32 ++ slot_be32)` -> group key.
+    pub expiry_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    /// `keccak256(day_be32 ++ slot_be32)` -> group key.
     #[attribute(order = 52)]
-    pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, B256>,
-    /// Group key -> `(bucket << 32) | slot`. 0 = not queued.
+    pub expiry_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    /// Group key -> `(day << 32) | slot`. 0 = not queued.
     #[attribute(order = 53)]
     pub called_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 54)]
-    pub expiry_sweep_hour: outbe_primitives::storage::dsl::Value<u32>,
+    pub expiry_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 55)]
     pub expiry_cursor: outbe_primitives::storage::dsl::Value<u64>,
     #[attribute(order = 56)]
@@ -414,7 +414,7 @@ pub struct IntexContract {
     #[attribute(order = 59)]
     pub call_group_called_at: outbe_primitives::storage::dsl::Map<B256, u32>,
 
-    // Expired groups whose spent series wait to be deleted, bucketed like the expiry queue.
+    // Expired groups whose spent series wait to be deleted, queued by day like the expiry queue.
     #[attribute(order = 60)]
     pub cleanup_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 61)]
@@ -422,19 +422,28 @@ pub struct IntexContract {
     #[attribute(order = 62)]
     pub cleanup_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 63)]
-    pub cleanup_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub cleanup_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 64)]
-    pub cleanup_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub cleanup_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 65)]
-    pub cleanup_bucket_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    pub cleanup_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
     #[attribute(order = 66)]
     pub cleanup_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 67)]
     pub cleanup_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 68)]
-    pub cleanup_sweep_hour: outbe_primitives::storage::dsl::Value<u32>,
+    pub cleanup_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 69)]
     pub cleanup_cursor: outbe_primitives::storage::dsl::Value<u64>,
+
+    #[attribute(order = 73)]
+    pub daily_phase: outbe_primitives::storage::dsl::Value<u8>,
+    #[attribute(order = 74)]
+    pub daily_budget: outbe_primitives::storage::dsl::Value<U256>,
+    #[attribute(order = 75)]
+    pub daily_genesis_day: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 76)]
+    pub cleanup_budget: outbe_primitives::storage::dsl::Value<U256>,
 
     /// The call terms a group's first series sealed: every member is called and
     /// expires on them.

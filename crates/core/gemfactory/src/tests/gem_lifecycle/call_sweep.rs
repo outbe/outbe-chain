@@ -12,7 +12,6 @@ use outbe_primitives::time::SECONDS_PER_DAY_U32;
 use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key};
 
 use super::*;
-use crate::called::{run_call_slice, run_daily, scan_and_call};
 use outbe_gem::config::GemParams;
 use outbe_gem::schema::{GemContract, GemState};
 
@@ -180,7 +179,7 @@ fn call_then_forfeit_lifecycle() {
         assert!(crate::called::call_if_breached(
             &mut gem,
             &window,
-            bucket_of(storage, gem_id),
+            group_of(storage, gem_id),
             T_NOW
         )
         .unwrap());
@@ -194,7 +193,7 @@ fn call_then_forfeit_lifecycle() {
         // Past the deadline: forfeit-burned.
         begin_block_at(
             storage,
-            GemContract::hour_end(GemContract::deadline_hour(T_NOW + 7 * SECONDS_PER_DAY)),
+            GemContract::day_end(GemContract::deadline_day(T_NOW + 7 * SECONDS_PER_DAY)),
         );
         assert!(item(storage, gem_id).is_none());
     });
@@ -225,7 +224,7 @@ fn the_issue_day_counts_only_for_a_gem_issued_at_midnight() {
                 crate::called::call_if_breached(
                     &mut gem,
                     &window,
-                    bucket_of(storage, gem_id),
+                    group_of(storage, gem_id),
                     T_NOW
                 )
                 .unwrap(),
@@ -254,18 +253,18 @@ fn a_later_gem_of_a_midnight_gems_day_does_not_count_the_partial_day() {
         let mut second = sample_params(BOB);
         second.issued_at = midnight + 3_600;
         let second = add(storage, second);
-        assert_ne!(bucket_of(storage, first), bucket_of(storage, second));
+        assert_ne!(group_of(storage, first), group_of(storage, second));
 
         let threshold = view(storage, first).terms.call_price_minor;
         let window = breach_window(T_NOW, threshold + U256::from(1u64), threshold_days);
         let mut gem = GemContract::new(storage.clone());
         assert!(
-            crate::called::call_if_breached(&mut gem, &window, bucket_of(storage, first), T_NOW)
+            crate::called::call_if_breached(&mut gem, &window, group_of(storage, first), T_NOW)
                 .unwrap(),
             "the midnight gem counts its whole first day"
         );
         assert!(
-            !crate::called::call_if_breached(&mut gem, &window, bucket_of(storage, second), T_NOW)
+            !crate::called::call_if_breached(&mut gem, &window, group_of(storage, second), T_NOW)
                 .unwrap(),
             "the later gem counts from the next day, one short"
         );
@@ -286,7 +285,7 @@ fn call_skips_below_threshold() {
         assert!(!crate::called::call_if_breached(
             &mut gem,
             &window,
-            bucket_of(storage, gem_id),
+            group_of(storage, gem_id),
             T_NOW
         )
         .unwrap());
@@ -514,9 +513,12 @@ fn days_closed_behind_a_running_call_sweep_are_walked_in_order() {
         assert_eq!(gem.call_sweep_day.read().unwrap(), closed[0]);
         assert_eq!(gem.call_latest_day.read().unwrap(), closed[2]);
 
-        let ctx = block_ctx_at(storage, T_NOW + 2 * SECONDS_PER_DAY);
         let mut walked = vec![closed[0]];
-        while walked.last() != Some(&0) && walked.len() < 8 {
+        for block in 0..16 {
+            if walked.last() == Some(&0) {
+                break;
+            }
+            let ctx = block_ctx_at(storage, T_NOW + 2 * SECONDS_PER_DAY + block);
             run_call_slice(&ctx).unwrap();
             let day = gem.call_sweep_day.read().unwrap();
             if walked.last() != Some(&day) {
@@ -553,8 +555,8 @@ fn a_call_sweep_over_several_currencies_always_ends() {
 
         let ctx = block_ctx_at(storage, T_NOW);
         scan_and_call(&ctx).unwrap();
-        for _ in 0..3 {
-            run_call_slice(&ctx).unwrap();
+        for block in 1..=3 {
+            run_call_slice(&block_ctx_at(storage, T_NOW + block)).unwrap();
         }
         assert_eq!(gem.call_sweep_day.read().unwrap(), 0, "the sweep closed");
     });

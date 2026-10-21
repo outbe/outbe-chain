@@ -255,7 +255,7 @@ fn nod_contract_slot_layout_is_pinned() {
         assert_eq!(nod.call_currency_cursor.slot(), U256::from(23));
         assert_eq!(nod.call_bin_cursor.base_slot(), U256::from(24));
         assert_eq!(nod.config_profile.slot(), U256::from(25));
-        assert_eq!(nod.expiry_bucket_len.base_slot(), U256::from(26));
+        assert_eq!(nod.expiry_day_len.base_slot(), U256::from(26));
         assert_eq!(nod.expiry_cursor.slot(), U256::from(32));
     });
 }

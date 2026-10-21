@@ -11,11 +11,12 @@ use outbe_primitives::{
 use crate::errors::GemFactoryError;
 use crate::runtime::emit_event;
 use crate::schema::GemFactoryContract;
-use crate::state::{PositionCleanupHours, PositionExpiryHours};
+use crate::state::{PositionCleanupDays, PositionExpiryDays};
 use alloy_primitives::U256;
 
 /// Returns the unissued capacity of the hours whose positions expired. Returns the
 /// hours expired.
+#[cfg(any(test, feature = "test-utils"))]
 pub fn sweep_expired_positions(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = GemFactoryContract::new(ctx.storage.clone());
     let mut expiry = PositionExpiry {
@@ -23,8 +24,29 @@ pub fn sweep_expired_positions(ctx: &BlockRuntimeContext) -> Result<u32> {
         factory: GemFactoryContract::new(ctx.storage.clone()),
         expired: 0,
     };
-    expiry_queue::sweep_block(&PositionExpiryHours(&queue), ctx, &mut expiry)?;
+    expiry_queue::sweep_block(&PositionExpiryDays(&queue), ctx, &mut expiry)?;
     Ok(expiry.expired)
+}
+
+pub(crate) fn sweep_through(
+    ctx: &BlockRuntimeContext,
+    through_day: u32,
+    budget: &mut outbe_primitives::sweep_budget::SweepBudget,
+) -> Result<expiry_queue::Progress> {
+    let queue = GemFactoryContract::new(ctx.storage.clone());
+    let mut expiry = PositionExpiry {
+        storage: &ctx.storage,
+        factory: GemFactoryContract::new(ctx.storage.clone()),
+        expired: 0,
+    };
+    expiry_queue::sweep_through(
+        &PositionExpiryDays(&queue),
+        &ctx.storage,
+        ctx.block.timestamp,
+        through_day,
+        budget,
+        &mut expiry,
+    )
 }
 
 /// Deletes the positions of the expired hours. Returns the positions deleted.
@@ -34,7 +56,21 @@ pub fn sweep_position_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
         factory: GemFactoryContract::new(ctx.storage.clone()),
         deleted: 0,
     };
-    expiry_queue::sweep_block(&PositionCleanupHours(&queue), ctx, &mut cleanup)?;
+    ctx.storage.with_checkpoint(|| {
+        let mut allowance = outbe_primitives::sweep_budget::BlockAllowance::for_block(
+            queue.cleanup_budget.read()?,
+            ctx.block.block_number,
+            0,
+        )?;
+        expiry_queue::sweep(
+            &PositionCleanupDays(&queue),
+            &ctx.storage,
+            ctx.block.timestamp,
+            &mut allowance.budget,
+            &mut cleanup,
+        )?;
+        queue.cleanup_budget.write(allowance.pack())
+    })?;
     Ok(cleanup.deleted)
 }
 
@@ -49,6 +85,7 @@ impl ExpiryHandler<u64> for PositionExpiry<'_, '_> {
     type Member = u64;
 
     fn due(&mut self, hour: u64) -> Result<Due> {
+        let hour = crate::state::position_queue_hour(hour)?;
         Ok(match self.factory.hour_position_count(hour)? {
             0 => Due::Drop,
             _ => Due::Expire,
@@ -60,11 +97,12 @@ impl ExpiryHandler<u64> for PositionExpiry<'_, '_> {
     }
 
     fn member_at(&self, hour: u64, _index: u32) -> Result<u64> {
-        Ok(hour)
+        crate::state::position_queue_hour(hour)
     }
 
     /// Nobody issued the capacity, so it goes back to the Promis reserve.
     fn expire_member(&mut self, hour: u64, _member: u64) -> Result<()> {
+        let hour = crate::state::position_queue_hour(hour)?;
         let positions = self.factory.hour_position_count(hour)?;
         let returned = self.factory.hour_capacity_minor.read(&hour)?;
         if !returned.is_zero() {
@@ -86,6 +124,7 @@ impl ExpiryHandler<u64> for PositionExpiry<'_, '_> {
     }
 
     fn deferred(&mut self, hour: u64, retry_at: u64) -> Result<()> {
+        let hour = crate::state::position_queue_hour(hour)?;
         tracing::warn!(target: "outbe::gemfactory", hour, retry_at, "position expiry: hour deferred");
         Ok(())
     }
@@ -101,6 +140,7 @@ impl ExpiryHandler<u64> for PositionCleanup<'_> {
     type Member = U256;
 
     fn due(&mut self, hour: u64) -> Result<Due> {
+        let hour = crate::state::position_queue_hour(hour)?;
         Ok(match self.factory.hour_position_count(hour)? {
             0 => Due::Drop,
             _ => Due::Expire,
@@ -108,11 +148,13 @@ impl ExpiryHandler<u64> for PositionCleanup<'_> {
     }
 
     fn member_count(&self, hour: u64) -> Result<u32> {
-        self.factory.hour_position_count(hour)
+        self.factory
+            .hour_position_count(crate::state::position_queue_hour(hour)?)
     }
 
     fn member_at(&self, hour: u64, index: u32) -> Result<U256> {
-        self.factory.hour_position(hour, index)
+        self.factory
+            .hour_position(crate::state::position_queue_hour(hour)?, index)
     }
 
     fn classify(&self, error: &PrecompileError) -> SweepFailure {
@@ -131,6 +173,7 @@ impl ExpiryHandler<u64> for PositionCleanup<'_> {
     }
 
     fn deferred(&mut self, hour: u64, retry_at: u64) -> Result<()> {
+        let hour = crate::state::position_queue_hour(hour)?;
         tracing::warn!(target: "outbe::gemfactory", hour, retry_at, "position cleanup: hour deferred");
         Ok(())
     }

@@ -51,27 +51,27 @@ impl BlockLifecycle for CycleLifecycle {
     fn begin_block(ctx: &Self::Context<'_, '_>) -> Result<()> {
         if ctx.runtime.block.block_number == ctx.metadosis_genesis_activation_height {
             outbe_metadosis::commands::init_genesis_day(&ctx.runtime)?;
+            outbe_nodfactory::called::initialize_daily(&ctx.runtime)?;
+            outbe_gemfactory::called::initialize_daily(&ctx.runtime)?;
+            outbe_intexfactory::called::initialize_daily(&ctx.runtime)?;
+            outbe_credisfactory::called::initialize_daily(&ctx.runtime)?;
         }
-        // What fell due is settled first, so its returns reach the ProtocolCycle
-        // that forms the day.
-        outbe_nodfactory::hooks::sweep_forfeits(&ctx.runtime)?;
-        outbe_gemfactory::hooks::sweep_forfeits(&ctx.runtime)?;
-        outbe_intexfactory::hooks::sweep_forfeits(&ctx.runtime)?;
-        outbe_credisfactory::hooks::sweep_forfeits(&ctx.runtime)?;
-        outbe_gemfactory::hooks::sweep_expired_positions(&ctx.runtime)?;
+        // ProtocolCycle does not wait for multi-block factory passes. Capacity
+        // returned below is available to subsequent reserve consumers.
         crate::runtime::dispatch_triggers(&ctx.runtime)?;
         crate::handler::credit_reward_slice(&ctx.runtime)?;
-        // The daily triggers only schedule. Each right walks one slice of its pinned day.
+        // Each factory finishes calls before forfeits for its pinned closed day.
+        // Gem includes position expiry; Credis includes collateral-return cleanup.
         outbe_nodfactory::called::run_call_slice(&ctx.runtime)?;
         outbe_gemfactory::called::run_call_slice(&ctx.runtime)?;
         outbe_intexfactory::called::run_call_slice(&ctx.runtime)?;
         outbe_credisfactory::called::run_call_slice(&ctx.runtime)?;
         outbe_intexfactory::notify::send_notices(&ctx.runtime)?;
-        // Last: deleting what already expired decides nothing.
+        // Last: pure deletion after value was already accounted for. Credis's
+        // value-moving cleanup belongs to its coupled pass above instead.
         outbe_nodfactory::hooks::sweep_cleanup(&ctx.runtime)?;
         outbe_gemfactory::hooks::sweep_cleanup(&ctx.runtime)?;
         outbe_intexfactory::hooks::sweep_cleanup(&ctx.runtime)?;
-        outbe_credisfactory::hooks::sweep_cleanup(&ctx.runtime)?;
         outbe_gemfactory::hooks::sweep_position_cleanup(&ctx.runtime)?;
         outbe_rewards::api::prune_settled_days(&ctx.runtime)?;
         Ok(())

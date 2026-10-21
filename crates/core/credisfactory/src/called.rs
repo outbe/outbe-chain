@@ -27,9 +27,10 @@ use outbe_primitives::{
     block::BlockRuntimeContext,
     call_bins,
     call_breach::{BreachTerms, ScanTerms},
-    daily_sweep::PinnedDay,
+    daily_sweep::{PinnedDay, Progress},
     error::Result,
     storage::{dsl::Value, StorageHandle},
+    sweep_budget::SweepBudget,
 };
 
 use crate::precompile::ICredisFactory::CallScanSkipped;
@@ -39,16 +40,19 @@ pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
     call_sweep::schedule(ctx, &mut CredisCallSweep::new(ctx))
 }
 
+/// Seeds the first eligible daily pass from the chain initialization day.
+pub fn initialize_daily(ctx: &BlockRuntimeContext) -> Result<()> {
+    call_sweep::initialize(ctx, &mut CredisCallSweep::new(ctx))
+}
+
 /// Schedules the closed day and walks a slice of the day in flight. Returns the
 /// groups called.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
-    let mut sweep = CredisCallSweep::new(ctx);
-    call_sweep::schedule(ctx, &mut sweep)?;
-    call_sweep::continue_day(ctx, &mut sweep)
+    call_sweep::continue_day(ctx, &mut CredisCallSweep::new(ctx))
 }
 
-/// Walks the next slice of the day in flight, pinned to the day it opened on so
-/// later blocks decide against the same prices. Returns the groups called.
+/// Runs calls, group forfeits, and value-moving cleanup in pinned-day order.
+/// Returns the groups called, not the groups forfeited or members cleaned up.
 pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_sweep::continue_day(ctx, &mut CredisCallSweep::new(ctx))
 }
@@ -67,6 +71,33 @@ impl<'storage> CredisCallSweep<'storage> {
 
 impl<'storage> CallSweep<'storage> for CredisCallSweep<'storage> {
     const CONSUMER: &'static str = "credis";
+    const FORFEIT_PHASES: u8 = 2;
+
+    fn phase(&self) -> &Value<'storage, u8> {
+        &self.credis.daily_phase
+    }
+    fn block_budget(&self) -> &Value<'storage, U256> {
+        &self.credis.daily_budget
+    }
+    fn genesis_day(&self) -> &Value<'storage, u32> {
+        &self.credis.daily_genesis_day
+    }
+
+    fn forfeit(
+        &mut self,
+        ctx: &BlockRuntimeContext,
+        pinned_day: u32,
+        phase: u8,
+        budget: &mut SweepBudget,
+    ) -> Result<Progress> {
+        let through_day = outbe_primitives::expiry_queue::deadline_day(
+            outbe_primitives::time::date_key_to_utc_timestamp(pinned_day),
+        )?;
+        match phase {
+            1 => crate::expired::sweep_through(ctx, through_day, budget),
+            _ => crate::cleanup::sweep_through(ctx, through_day, budget),
+        }
+    }
 
     type Bins<'a>
         = CallBins<'a, 'storage>
@@ -88,7 +119,12 @@ impl<'storage> CallSweep<'storage> for CredisCallSweep<'storage> {
         &self.credis.call_currency_cursor
     }
 
-    fn slice(&mut self, ctx: &BlockRuntimeContext, pinned_day: u32) -> Result<(u32, bool)> {
+    fn slice(
+        &mut self,
+        ctx: &BlockRuntimeContext,
+        pinned_day: u32,
+        budget: &mut SweepBudget,
+    ) -> Result<(u32, bool)> {
         let live = outbe_credis::config::read(&ctx.storage)?;
         let mut caller = CredisContract::new(ctx.storage.clone());
         let mut called: u32 = 0;
@@ -96,6 +132,7 @@ impl<'storage> CallSweep<'storage> for CredisCallSweep<'storage> {
         let finished = call_sweep::walk_day(
             ctx,
             pinned_day,
+            budget,
             call_sweep::CallIndex {
                 currency_cursor: &index.call_currency_cursor,
                 bins: |iso_code| CallBins(index, iso_code),

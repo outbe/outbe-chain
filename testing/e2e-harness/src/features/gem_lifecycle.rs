@@ -51,11 +51,13 @@ const ISSUANCE_TIMEOUT_SECS: u64 = 180;
 const CALL_TIMEOUT_SECS: u64 = 300;
 /// Once the group is closed the sweep reaches the gem in the next block or two.
 const FORFEIT_TIMEOUT: Duration = Duration::from_secs(120);
-/// The expiry queue groups deadlines by the hour they fall in.
-const EXPIRY_BUCKET_SECS: u64 = 3_600;
+/// Queue eligibility follows the UTC day containing the exact deadline.
+const EXPIRY_DAY_SECS: u64 = 86_400;
+/// A longer notice means the DEV parameter profile is not active.
+const MAX_DEV_NOTICE_SECS: u64 = 3_600;
 /// Slack past the deadline so the notice is spent before the group is closed.
 const EXPIRY_MARGIN_SECS: u64 = 30;
-/// Once the position's hour is closed the sweep reaches it in the next block or two.
+/// Once its deadline day is armed, the sweep reaches the position in later blocks.
 const POSITION_SWEEP_TIMEOUT_SECS: u64 = 120;
 /// The DEV validity (15 minutes) runs from parking, and most of it is spent
 /// waiting out the call notice before this step is reached.
@@ -419,8 +421,7 @@ impl Lifecycle for GemLifecycle {
         }
     }
 
-    /// Wait out the notice on the chain's clock, then re-queue the gem behind a closed
-    /// expiry bucket, which saves only the rest of the bucket's hour.
+    /// Wait out the exact notice, then arm a closed deadline day in the test build.
     fn lapse_notice(&self, world: &mut World) {
         let url = world_url(world);
         let id = gem(world, FORFEITED);
@@ -432,7 +433,7 @@ impl Lifecycle for GemLifecycle {
         );
         let notice = u64::from(called.callNoticePeriod);
         assert!(
-            notice <= EXPIRY_BUCKET_SECS,
+            notice <= MAX_DEV_NOTICE_SECS,
             "call notice is {notice}s: the DEV parameter profile is not active, so this \
              scenario would wait out the production window"
         );
@@ -462,12 +463,12 @@ impl Lifecycle for GemLifecycle {
             DEPLOYER_KEY,
             &IGemFactoryTestArming::closeCallNoticeForTestCall {
                 gemId: id,
-                deadline: head_time(world).saturating_sub(EXPIRY_BUCKET_SECS),
+                deadline: head_time(world).saturating_sub(EXPIRY_DAY_SECS),
             },
             None,
         )
-        .expect("close the expiry bucket the gem sits in");
-        assert_mined_success(&closed, "close the expiry bucket the gem sits in");
+        .expect("arm the gem's closed deadline day");
+        assert_mined_success(&closed, "arm the gem's closed deadline day");
     }
 
     fn assert_forfeited(&self, world: &World) {
@@ -567,9 +568,8 @@ fn position_returns_capacity(world: &mut World) {
     let url = world_url(world);
     let position_id = world.state.gem_position.expect("a position was parked");
 
-    // An expired position's hour returns its capacity, and the cleanup deletes it. The
-    // sweep opens an hour only once it has closed, so move it into a closed one, unless
-    // its own hour has closed and the cleanup deleted it already.
+    // Hour groups retain their identity, but return capacity after their deadline day
+    // closes. Arm a closed day unless cleanup already deleted the position.
     let read_position = || {
         eth::read_call(
             &url,
@@ -586,13 +586,13 @@ fn position_returns_capacity(world: &mut World) {
             DEPLOYER_KEY,
             &IGemFactoryTestArming::closePositionHourForTestCall {
                 positionId: position_id,
-                deadline: head_time(world).saturating_sub(EXPIRY_BUCKET_SECS),
+                deadline: head_time(world).saturating_sub(EXPIRY_DAY_SECS),
             },
             None,
         )
-        .expect("close the expiry hour the position sits in");
+        .expect("arm the position group's closed deadline day");
         if read_position().is_some() {
-            assert_mined_success(&closed, "close the expiry hour the position sits in");
+            assert_mined_success(&closed, "arm the position group's closed deadline day");
         }
     }
     poll_until(

@@ -1,7 +1,7 @@
 //! Hooks only a throwaway e2e build answers. Lysis issues a Nod over a certified
 //! generation, so a scenario that needs one asks for it straight. The forfeit sweep opens a
-//! group only once its hour has closed, so `closeCallNoticeForTest` moves a lapsed deadline
-//! into an hour the sweep opens on the next block.
+//! group only once its day has closed, so `closeCallNoticeForTest` moves a lapsed deadline
+//! into a day the sweep opens on the next block.
 
 use alloy_primitives::{Bytes, B256};
 use alloy_sol_types::SolCall;
@@ -85,5 +85,10 @@ fn requeue_called(storage: &StorageHandle<'_>, group_key: B256, deadline: u64) -
     nod.group_called_at
         .write(&group_key, deadline.saturating_sub(notice).max(1))?;
     nod.remove_called(group_key)?;
-    nod.push_called(group_key, deadline)
+    nod.push_called(group_key, deadline)?;
+    let day = outbe_primitives::time::timestamp_to_date_key(deadline);
+    nod.call_sweep_day.write(day)?;
+    nod.daily_phase.write(0)?;
+    nod.call_currency_cursor.write(0)?;
+    Ok(())
 }

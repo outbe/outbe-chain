@@ -1,7 +1,7 @@
 //! Hooks only a throwaway e2e build answers. Genesis cannot seed a Gem body, so a scenario
 //! that needs a paid Gem asks for one. A gem is stamped live, so only such a build can move
 //! its issuance back behind the closed days a scenario seeds for the call sweep. The forfeit
-//! sweep opens a group only once its hour has closed, so `closeCallNoticeForTest` moves a
+//! sweep opens a group only once its deadline day has closed, so `closeCallNoticeForTest` moves a
 //! deadline that already lapsed into one the sweep opens on the next block, and
 //! `closePositionHourForTest` does the same for an expired position's hour.
 
@@ -66,9 +66,11 @@ fn requeue_position_hour(
     if now < position.expires_at {
         return Err(GemFactoryError::PositionNotExpired.into());
     }
-    let hours = crate::state::PositionExpiryHours(&factory);
-    expiry_queue::remove(&hours, position.expiry_hour())?;
-    expiry_queue::push(&hours, position.expiry_hour(), deadline)
+    let days = crate::state::PositionExpiryDays(&factory);
+    let entry = crate::state::position_queue_entry(position.expiry_hour())?;
+    expiry_queue::remove(&days, entry)?;
+    expiry_queue::push(&days, entry, deadline)?;
+    reopen_day(storage, deadline)
 }
 
 fn guarded(storage: &StorageHandle<'_>, hook: impl FnOnce() -> Result<Bytes>) -> Result<Bytes> {
@@ -138,5 +140,20 @@ fn requeue_called(storage: &StorageHandle<'_>, gem_id: U256, deadline: u64) -> R
     gem.group_called_at
         .write(&group, deadline.saturating_sub(notice).max(1))?;
     gem.remove_called(group)?;
-    gem.push_called(group, deadline)
+    gem.push_called(group, deadline)?;
+    reopen_day(storage, deadline)
+}
+
+fn reopen_day(storage: &StorageHandle<'_>, deadline: u64) -> Result<()> {
+    let gem = GemContract::new(storage.clone());
+    let day = outbe_primitives::time::timestamp_to_date_key(deadline);
+    gem.call_sweep_day.write(day)?;
+    gem.call_latest_day
+        .write(gem.call_latest_day.read()?.max(day))?;
+    gem.daily_genesis_day.write(day)?;
+    gem.daily_phase.write(0)?;
+    for currency in outbe_oracle::api::reference_currencies(storage.clone())? {
+        gem.call_bin_cursor.clear(&currency)?;
+    }
+    gem.call_currency_cursor.clear()
 }

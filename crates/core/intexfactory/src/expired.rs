@@ -11,13 +11,14 @@ use outbe_primitives::{
 };
 
 use outbe_intex::precompile::IIntex;
-use outbe_intex::{ExpiryHours, IntexContract};
+use outbe_intex::{ExpiryDays, IntexContract};
 
 use crate::errors::IntexFactoryError;
 use crate::runtime::emit_event;
 
-/// Expire every group whose settlement window has closed, earliest bucket first.
+/// Expire every group whose settlement window has closed, earliest day first.
 /// Returns the groups expired.
+#[cfg(test)]
 pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = IntexContract::new(ctx.storage.clone());
     let mut expiry = IntexExpiry {
@@ -25,8 +26,29 @@ pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
         intex: IntexContract::new(ctx.storage.clone()),
         expired: 0,
     };
-    expiry_queue::sweep_block(&ExpiryHours(&queue), ctx, &mut expiry)?;
+    expiry_queue::sweep_block(&ExpiryDays(&queue), ctx, &mut expiry)?;
     Ok(expiry.expired)
+}
+
+pub(crate) fn sweep_through(
+    ctx: &BlockRuntimeContext,
+    through_day: u32,
+    budget: &mut outbe_primitives::sweep_budget::SweepBudget,
+) -> Result<expiry_queue::Progress> {
+    let queue = IntexContract::new(ctx.storage.clone());
+    let mut expiry = IntexExpiry {
+        storage: &ctx.storage,
+        intex: IntexContract::new(ctx.storage.clone()),
+        expired: 0,
+    };
+    expiry_queue::sweep_through(
+        &ExpiryDays(&queue),
+        &ctx.storage,
+        ctx.block.timestamp,
+        through_day,
+        budget,
+        &mut expiry,
+    )
 }
 
 struct IntexExpiry<'a, 'storage> {

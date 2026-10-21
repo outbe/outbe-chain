@@ -155,9 +155,9 @@ fn burn_leaves_the_owners_other_gems_listed() {
 fn a_group_holds_the_gems_of_one_first_full_day_call_price_and_currency() {
     with_storage(|storage| {
         let gems = alice_gems(storage, &[1, 2]);
-        let group = bucket_of(storage, gems[0]);
+        let group = group_of(storage, gems[0]);
         assert!(!group.is_zero());
-        assert_eq!(bucket_of(storage, gems[1]), group, "the load is not a term");
+        assert_eq!(group_of(storage, gems[1]), group, "the load is not a term");
         assert_eq!(
             group,
             outbe_primitives::call_breach::group_key(
@@ -173,7 +173,7 @@ fn a_group_holds_the_gems_of_one_first_full_day_call_price_and_currency() {
             nonce.set(nonce.get() + 1);
             params.promis_load_minor = U256::from(nonce.get());
             edit(&mut params);
-            bucket_of(storage, add(storage, params))
+            group_of(storage, add(storage, params))
         };
         assert_ne!(
             apart(&|p| p.issued_at += SECONDS_PER_DAY),
@@ -205,9 +205,9 @@ fn a_midnight_gem_and_a_later_one_that_day_are_in_different_groups() {
         let first = add(storage, first);
         let later = add(storage, later);
 
-        assert_ne!(bucket_of(storage, first), bucket_of(storage, later));
+        assert_ne!(group_of(storage, first), group_of(storage, later));
         let group_day = |gem_id| {
-            api::get_group(storage, bucket_of(storage, gem_id))
+            api::get_group(storage, group_of(storage, gem_id))
                 .unwrap()
                 .unwrap()
                 .full_day_after_issue
@@ -235,7 +235,7 @@ fn profile_change_after_open_does_not_reterm_the_group() {
         p.issued_at += 3_600;
         let second = add(storage, p);
 
-        assert_ne!(bucket_of(storage, first), bucket_of(storage, second));
+        assert_ne!(group_of(storage, first), group_of(storage, second));
         let terms = view(storage, first).terms;
         assert_eq!(
             terms.call_window_seconds,
@@ -253,7 +253,7 @@ fn profile_change_after_open_does_not_reterm_the_group() {
 fn leaving_a_group_moves_its_last_member_into_the_hole() {
     with_storage(|storage| {
         let gems = alice_gems(storage, &[1, 2, 3]);
-        let group = bucket_of(storage, gems[0]);
+        let group = group_of(storage, gems[0]);
         let gem = GemContract::new(storage.clone());
 
         settle(storage, gems[0]);
@@ -280,7 +280,7 @@ fn leaving_a_group_moves_its_last_member_into_the_hole() {
 fn group_and_terms_survive_until_unpaid_and_settled_are_zero() {
     with_storage(|storage| {
         let gem_id = add(storage, sample_params(ALICE));
-        let group = bucket_of(storage, gem_id);
+        let group = group_of(storage, gem_id);
         let group_id = item(storage, gem_id).unwrap().group_key;
         let gem = GemContract::new(storage.clone());
         let bin =
@@ -342,7 +342,7 @@ fn unpaid_removal_preserves_group_state_settled_removal_decrements() {
         // Forfeit the unpaid one: the group body stays as it is.
         begin_block_at(
             &storage,
-            GemContract::hour_end(GemContract::deadline_hour(
+            GemContract::day_end(GemContract::deadline_day(
                 T_NOW + u64::from(GemParams::DEV.call_notice_period_seconds),
             )),
         );
@@ -388,7 +388,7 @@ fn settling_one_gem_of_a_called_group_leaves_the_rest_called() {
         assert_eq!(settled.called_at, T_NOW);
         assert_eq!(gem_state(storage, gems[0]), GemState::Settled as u8);
         assert_eq!(gem_state(storage, gems[1]), GemState::Called as u8);
-        let entry = bucket_of(storage, gems[1]);
+        let entry = group_of(storage, gems[1]);
         assert_ne!(
             GemContract::new(storage.clone())
                 .called_group_slot
@@ -406,12 +406,12 @@ fn leaving_called_frees_the_expiry_slot() {
         let gem_id = mature_gem(storage);
         let gem = GemContract::new(storage.clone());
         call_gem(storage, gem_id, T_NOW);
-        let hour = GemContract::deadline_hour(T_NOW + 7 * SECONDS_PER_DAY);
-        assert_eq!(gem.expiry_bucket_live.read(&hour).unwrap(), 1);
+        let day = GemContract::deadline_day(T_NOW + 7 * SECONDS_PER_DAY);
+        assert_eq!(gem.expiry_day_live.read(&day).unwrap(), 1);
 
         settle(storage, gem_id);
         burn_settled(storage, gem_id);
-        assert_eq!(gem.expiry_bucket_live.read(&hour).unwrap(), 0);
+        assert_eq!(gem.expiry_day_live.read(&day).unwrap(), 0);
         assert_eq!(gem.first_expiry_day().unwrap(), None);
     });
 }
@@ -436,7 +436,7 @@ fn stale_group_capability_is_rejected() {
 fn member_count_overflow_and_underflow_roll_back_gem_mutations() {
     with_storage(|storage| {
         let gem_id = add(storage, sample_params(ALICE));
-        let group = bucket_of(storage, gem_id);
+        let group = group_of(storage, gem_id);
         let gem = GemContract::new(storage.clone());
         gem.group_gem_count.write(&group, 0).unwrap();
         call_gem(storage, gem_id, T_NOW);

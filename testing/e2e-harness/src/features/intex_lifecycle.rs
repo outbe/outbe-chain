@@ -55,8 +55,10 @@ const CALLED: u8 = 1;
 const EXPIRED: u8 = 2;
 /// Slack past the deadline so the sweep has a block to run in.
 const EXPIRY_MARGIN_SECS: u64 = 30;
-/// The expiry queue buckets deadlines by the hour they fall in.
-const EXPIRY_BUCKET_SECS: u64 = 3_600;
+/// Forfeits become eligible after the UTC day containing the deadline closes.
+const EXPIRY_DAY_SECS: u64 = 86_400;
+/// A longer notice means the DEV parameter profile is not active.
+const MAX_DEV_NOTICE_SECS: u64 = 3_600;
 /// Settled out of the expiring series, so the forfeit is the tirage less these.
 const EXPIRING_SETTLED_UNITS: u32 = 2;
 /// The credit lands in the block the sweep reaches the queue head.
@@ -452,7 +454,7 @@ impl Lifecycle for IntexLifecycle {
             venue_probes::series_called_at(&url, nft, series).expect("the series was Called"),
         ));
         assert!(
-            notice <= EXPIRY_BUCKET_SECS,
+            notice <= MAX_DEV_NOTICE_SECS,
             "call notice is {notice}s: the DEV parameter profile is not active, so this \
              scenario would wait out the production window"
         );
@@ -462,15 +464,14 @@ impl Lifecycle for IntexLifecycle {
         );
         wait_for_chain_time(world, port, deadline + EXPIRY_MARGIN_SECS);
 
-        // The sweep opens an expiry bucket once its hour has closed: re-queue the group
-        // behind a closed one.
+        // Arm a closed deadline day after the exact notice has elapsed.
         test_issuance::close_call_notice(
             &url,
             DEPLOYER_KEY,
             series,
-            head_time(world).saturating_sub(EXPIRY_BUCKET_SECS),
+            head_time(world).saturating_sub(EXPIRY_DAY_SECS),
         )
-        .expect("close the expiry bucket the group sits in");
+        .expect("arm the group's closed deadline day");
     }
 
     /// One series was settled in part and one was never touched. The credit owed is

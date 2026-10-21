@@ -12,7 +12,43 @@ use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::time::SECONDS_PER_DAY_U32;
 use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key};
 
-use crate::called;
+mod called {
+    use super::*;
+    pub(crate) use crate::called::{call_if_breached, GroupCall};
+
+    fn prepare(ctx: &BlockRuntimeContext) {
+        if IntexContract::new(ctx.storage.clone())
+            .daily_genesis_day
+            .read()
+            .unwrap()
+            == 0
+        {
+            // Call-index fixtures begin with yesterday, not pre-fixture history.
+            let genesis = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(0, ctx.block.timestamp - DAY, CHAIN_ID),
+                ctx.storage.clone(),
+            );
+            crate::called::initialize_daily(&genesis).unwrap();
+        }
+    }
+
+    pub(super) fn scan_and_call(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<u32> {
+        prepare(ctx);
+        crate::called::scan_and_call(ctx)
+    }
+
+    pub(super) fn run_call_slice(
+        ctx: &BlockRuntimeContext,
+    ) -> outbe_primitives::error::Result<u32> {
+        prepare(ctx);
+        crate::called::run_call_slice(ctx)
+    }
+
+    pub(super) fn run_daily(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<()> {
+        prepare(ctx);
+        crate::called::run_daily(ctx)
+    }
+}
 use crate::constants::MAX_SERIES_PER_MESSAGE;
 use crate::precompile::{self, IIntexFactory};
 use crate::runtime;
@@ -36,6 +72,13 @@ const CHAIN_ID: u64 = 1;
 const ISSUED_AT: u32 = 1_700_000_000;
 const PROMIS_LOAD_MINOR: u128 = 1_000_000; // 1 PROMIS in PROMIS-unit
 const CALL_NOTICE_PERIOD: u32 = 7 * SECONDS_PER_DAY_U32;
+
+fn at_height<'s>(ctx: &BlockRuntimeContext<'s>, height: u64) -> BlockRuntimeContext<'s> {
+    BlockRuntimeContext::new(
+        BlockContext::empty_for_tests(height, ctx.block.timestamp, CHAIN_ID),
+        ctx.storage.clone(),
+    )
+}
 
 // COEN clearing price and the trigger derived from it at issuance.
 const ENTRY_PRICE: u64 = 1_000_000;

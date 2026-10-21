@@ -42,6 +42,7 @@ pub(super) fn cycle_storage_for(chain_id: u64) -> HashMapStorageProvider {
             BlockContext::empty_for_tests(1, GENESIS_TS, chain_id),
             handle,
         );
+        initialize_daily_passes(&ctx);
         ctx.storage
             .contract::<Cycle<'_>>()
             .active_utc_day
@@ -248,7 +249,15 @@ pub(super) fn last_executed_at(ctx: &BlockRuntimeContext<'_>) -> u64 {
 pub(super) fn genesis_block(handle: StorageHandle<'_>, timestamp: u64) -> BlockRuntimeContext<'_> {
     let ctx = BlockRuntimeContext::new(block_ctx(1, timestamp), handle);
     anchor_genesis(&ctx);
+    initialize_daily_passes(&ctx);
     ctx
+}
+
+pub(super) fn initialize_daily_passes(ctx: &BlockRuntimeContext<'_>) {
+    outbe_nodfactory::called::initialize_daily(ctx).unwrap();
+    outbe_gemfactory::called::initialize_daily(ctx).unwrap();
+    outbe_intexfactory::called::initialize_daily(ctx).unwrap();
+    outbe_credisfactory::called::initialize_daily(ctx).unwrap();
 }
 
 /// Runs `run` on `storage` and asserts that it writes no storage slot and

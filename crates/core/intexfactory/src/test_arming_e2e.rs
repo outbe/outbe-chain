@@ -1,7 +1,7 @@
 //! Hooks only a throwaway e2e build answers. A scenario that runs no auction seeds the
 //! day VWAPs and issues its series straight. The forfeit sweep
-//! opens a bucket only once its hour has closed, so `closeCallNoticeForTest` moves a
-//! lapsed deadline into an hour the sweep opens on the next block.
+//! opens a day only once it has closed, so `closeCallNoticeForTest` moves a
+//! lapsed deadline into a closed day the sweep opens on the next block.
 
 use alloy_primitives::Bytes;
 use alloy_sol_types::{sol, SolCall};
@@ -29,8 +29,7 @@ sol! {
 }
 
 /// Move the called group of `series_id` onto `deadline`, and with it into that deadline's
-/// bucket. The sweep opens a bucket only once its hour has closed, so a notice that lapsed
-/// minutes ago would otherwise idle out the rest of the hour.
+/// day. A notice that lapsed minutes ago would otherwise wait for midnight.
 fn requeue_called(storage: &StorageHandle<'_>, series_id: SeriesId, deadline: u64) -> Result<()> {
     use outbe_intex::IntexContract;
 
@@ -44,7 +43,18 @@ fn requeue_called(storage: &StorageHandle<'_>, series_id: SeriesId, deadline: u6
     let called_at = u32::try_from(deadline.saturating_sub(notice).max(1))
         .map_err(|_| crate::errors::IntexFactoryError::BlockTimestampExceedsU32)?;
     intex.call_group_called_at.write(&group, called_at)?;
-    intex.requeue_called(group, deadline)
+    intex.requeue_called(group, deadline)?;
+    let day = outbe_primitives::time::timestamp_to_date_key(deadline);
+    intex.call_sweep_day.write(day)?;
+    intex
+        .call_latest_day
+        .write(intex.call_latest_day.read()?.max(day))?;
+    intex.daily_genesis_day.write(day)?;
+    intex.daily_phase.write(0)?;
+    for currency in outbe_oracle::api::reference_currencies(storage.clone())? {
+        intex.call_bin_cursor.clear(&currency)?;
+    }
+    intex.call_currency_cursor.clear()
 }
 
 /// Runs a test-arming call, or returns `None` for any other calldata.
