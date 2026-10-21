@@ -47,6 +47,8 @@ abstract contract DestinationSettler is DestinationSettlerBase {
 
         (address winner, uint256 outputAmount) = _auction().getWinner(_orderId);
         OrderData memory orderData = OrderValidator.decodeAndCheck(_originData, _orderId, outputAmount);
+        // An order for another chain can never be filled here, so a claim would only lock collateral.
+        if (orderData.destinationDomain != _localDomain()) revert InvalidOrderDomain();
 
         // Check if the winner can cover the collateral. If not, restart the auction.
         ISolverEscrow escrow = _solverEscrow();

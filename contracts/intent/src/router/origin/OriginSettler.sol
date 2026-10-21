@@ -34,7 +34,10 @@ abstract contract OriginSettler is OriginSettlerBase {
     {
         (bool isEligible, OrderData memory orderData) = _checkOrderEligibility(_messageOrigin, _messageSender, _orderId);
 
-        if (!isEligible) return;
+        if (!isEligible) {
+            emit SettleSkipped(_orderId);
+            return;
+        }
 
         orderStatus[_orderId] = SETTLED;
 
@@ -65,7 +68,10 @@ abstract contract OriginSettler is OriginSettlerBase {
     function _handleRefundOrder(uint32 _messageOrigin, bytes32 _messageSender, bytes32 _orderId) internal virtual {
         (bool isEligible, OrderData memory orderData) = _checkOrderEligibility(_messageOrigin, _messageSender, _orderId);
 
-        if (!isEligible) return;
+        if (!isEligible) {
+            emit RefundSkipped(_orderId);
+            return;
+        }
 
         orderStatus[_orderId] = REFUNDED;
 
@@ -184,6 +190,9 @@ abstract contract OriginSettler is OriginSettlerBase {
         if (orderData.originDomain != _localDomain()) {
             revert InvalidOriginDomain(orderData.originDomain);
         }
+        if (orderData.amountIn == 0) revert ZeroAmountIn();
+        // A zero recipient would make the fill send the output to address(0).
+        if (orderData.recipient == bytes32(0)) revert ZeroRecipient();
 
         orderData.fillDeadline = _fillDeadline;
         orderData.sender = TypeCasts.addressToBytes32(_sender);
