@@ -6,8 +6,8 @@ use outbe_primitives::{
     emission::metadosis_day_emission_limit,
     error::Result,
     time::{
-        date_key_to_utc_timestamp, day_number_between, first_full_day, next_date_key,
-        previous_date_key, timestamp_to_date_key, WorldwideDay, SECONDS_PER_DAY,
+        date_key_to_utc_timestamp, day_number_between, next_date_key, previous_date_key,
+        timestamp_to_date_key, WorldwideDay, SECONDS_PER_DAY,
     },
 };
 use outbe_promislimit::PromisLimitContract;
@@ -88,7 +88,7 @@ pub(crate) fn compute_wwd_schedule(wwd: WorldwideDay) -> Result<(NewWwdSchedule,
     let offering_end = offerings_start
         .checked_add(outbe_chain_constants::get_metadosis_offering_period_seconds())
         .ok_or(MetadosisCallerError::OfferingWindowOverflow)?;
-    let day = first_full_day(offering_end);
+    let day = timestamp_to_date_key(offering_end);
     let metadosis_start = date_key_to_utc_timestamp(next_date_key(day))
         .checked_add(1)
         .ok_or(MetadosisCallerError::WaitingWindowOverflow)?;
@@ -272,13 +272,6 @@ pub(crate) fn find_due_emission_day(
     ctx: &BlockRuntimeContext<'_>,
 ) -> Result<Option<EmissionDay>> {
     let now = ctx.block.timestamp;
-    let prev_utc_day = previous_date_key(timestamp_to_date_key(now));
-    if let Some(record) = metadosis.emission_days.get(prev_utc_day)? {
-        if record.state == emission_day_state::NONE && now >= record.metadosis_start {
-            return Ok(Some(record));
-        }
-    }
-
     let aggregate = ValidatedWwdAggregate::load_and_validate(ctx.storage.clone())?;
     for wwd_record in aggregate.active_records() {
         if let Some(record) = metadosis.emission_days.get(wwd_record.day)? {
@@ -295,6 +288,13 @@ pub(crate) fn find_due_emission_day(
             if record.state == emission_day_state::NONE && now >= record.metadosis_start {
                 return Ok(Some(record));
             }
+        }
+    }
+
+    let prev_utc_day = previous_date_key(timestamp_to_date_key(now));
+    if let Some(record) = metadosis.emission_days.get(prev_utc_day)? {
+        if record.state == emission_day_state::NONE && now >= record.metadosis_start {
+            return Ok(Some(record));
         }
     }
     Ok(None)
