@@ -37,6 +37,11 @@ contract DeployHarness is DeployAll {
     function _deployer() internal view override returns (address) {
         return address(this);
     }
+
+    /// @dev There is no Outbe node in tests.
+    function _controllerAccount(uint32) internal pure override returns (address) {
+        return address(uint160(0x1CA));
+    }
 }
 
 /// @dev Every test here relies on the constant env values that `setUp` writes. That is
@@ -67,7 +72,6 @@ contract DeployGuardsTest is Test {
         vm.setEnv("DEPLOYER_PK", "0xA11CE");
         vm.setEnv("BRIDGE_ADDRESS", "0x0000000000000000000000000000000000B41D6E");
         vm.setEnv("REMOTE_CHAIN_IDS", "11155111,54322345");
-        vm.setEnv("CONTROLLER_ICA_ADDRESS", "0x00000000000000000000000000000000000001CA");
 
         // The hub only needs code for `_requireCode`. Deploying a mock and writing its address into
         // the environment would put a computed value into shared state. The note above forbids

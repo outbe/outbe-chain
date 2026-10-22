@@ -18,7 +18,7 @@ import {DeployRoutes} from "./1_DeployRoutes.s.sol";
 /// wiring step follows.
 ///
 /// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `BRIDGE_ADDRESS`, `OUTBE_CHAIN_ID`, `EXTERNAL_CHAIN_ID`,
-///   `REMOTE_CHAIN_IDS`, and `CONTROLLER_ICA_ADDRESS` on a chain other than Outbe.
+///   `REMOTE_CHAIN_IDS`. A chain other than Outbe also reads the bridge owner from Outbe (`OUTBE_RPC`).
 /// Optional env: `INITIAL_MINT_AMOUNT`, `INITIAL_MINT_RECIPIENT`.
 contract DeployAll is DeployRoutes {
     function run() public override {

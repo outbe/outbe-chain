@@ -5,6 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
 
 import {Create3Factory} from "@shared/Create3Factory.sol";
+import {IHyperlaneController} from "@precompiles/IHyperlaneController.sol";
 import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
 
 enum SyntheticSource {
@@ -41,9 +42,9 @@ struct RouteSpec {
 ///      before the remote chain is deployed.
 ///
 /// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `BRIDGE_ADDRESS`, `OUTBE_CHAIN_ID`, `EXTERNAL_CHAIN_ID`,
-///   `REMOTE_CHAIN_IDS`, and `CONTROLLER_ICA_ADDRESS` on a chain other than Outbe.
-/// Optional env: `CREATE3_FACTORY_ADDRESS`, the route's `canonicalTokenEnv`, `INITIAL_MINT_AMOUNT`,
-///   `INITIAL_MINT_RECIPIENT`.
+///   `REMOTE_CHAIN_IDS`.
+/// Optional env: `CREATE3_FACTORY_ADDRESS`, `OUTBE_RPC` (an `rpc_endpoints` alias, default `outbe-testnet`), the
+///   route's `canonicalTokenEnv`, `INITIAL_MINT_AMOUNT`, `INITIAL_MINT_RECIPIENT`.
 abstract contract BaseRoute is Script {
     /// @dev The HyperlaneController precompile. Governance votes drive it, so it owns the bridges on Outbe.
     address internal constant HYPERLANE_CONTROLLER = 0x000000000000000000000000000000000000EE14;
@@ -66,9 +67,24 @@ abstract contract BaseRoute is Script {
     }
 
     /// @dev Governance owns every bridge. On Outbe that is the HyperlaneController precompile. On
-    ///      another chain it is the controller's Interchain Account, which the ICA router derives.
-    function _bridgeOwner() internal view returns (address) {
-        return _isOutbe() ? HYPERLANE_CONTROLLER : vm.envAddress("CONTROLLER_ICA_ADDRESS");
+    ///      another chain it is the controller's Interchain Account there.
+    function _bridgeOwner() internal returns (address) {
+        return _isOutbe() ? HYPERLANE_CONTROLLER : _controllerAccount(_toDomain(block.chainid));
+    }
+
+    /// @dev Asks the controller on Outbe for its Interchain Account on `domain`. A fork cannot run
+    ///      the precompile, so this is a raw `eth_call` to the Outbe node. `virtual` so a test
+    ///      harness, which has no Outbe node, can supply the account.
+    function _controllerAccount(uint32 domain) internal virtual returns (address) {
+        string memory params = string.concat(
+            '[{"to":"',
+            vm.toString(HYPERLANE_CONTROLLER),
+            '","data":"',
+            vm.toString(abi.encodeCall(IHyperlaneController.remoteAccount, (domain))),
+            '"},"latest"]'
+        );
+        string memory outbe = vm.envOr("OUTBE_RPC", string("outbe-testnet"));
+        return abi.decode(vm.rpc(outbe, "eth_call", params), (address));
     }
 
     /// @dev One peer per `REMOTE_CHAIN_IDS` entry other than this chain. CREATE3 puts the peer at
