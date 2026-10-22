@@ -12,8 +12,8 @@ use outbe_tee::{
 use std::cell::Cell;
 
 const WWD: WorldwideDay = WorldwideDay::new(20260920);
-const DAY: u32 = 20261015;
-pub(crate) const CLOCK: u64 = 1_792_108_800 + 3_600;
+const DAY: u32 = 20261014;
+pub(crate) const CLOCK: u64 = 1_792_022_400 + 3_600;
 const NOMINAL: u64 = 7_654_321;
 const LIMIT: u64 = 1_000_000;
 thread_local! {

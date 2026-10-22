@@ -40,7 +40,6 @@ const PROPOSER_FELONY_SLOT: u64 = 1;
 const VOTER_FELONY_SLOT: u64 = 12;
 const LOCALNET_METADOSIS_LOOKBACK_SECONDS: u64 = 0;
 const LOCALNET_METADOSIS_OFFERING_SECONDS: u64 = 120;
-const LOCALNET_METADOSIS_WAITING_SECONDS: u64 = 30;
 const LOCALNET_METADOSIS_ADVANCE_SECONDS: u64 = 10;
 const DEFAULT_EPOCH_LENGTH_BLOCKS: u64 = 300;
 const DEFAULT_DKG_PREPARE_WINDOW_BLOCKS: u64 = 30;
@@ -295,7 +294,6 @@ impl Localnet {
                         "lookbackDelaySeconds": LOCALNET_METADOSIS_LOOKBACK_SECONDS,
                         "offeringPeriodSeconds":
                             localnet_metadosis_offering_period_seconds(profile),
-                        "waitingPeriodSeconds": LOCALNET_METADOSIS_WAITING_SECONDS,
                         "advanceIntervalSeconds": LOCALNET_METADOSIS_ADVANCE_SECONDS,
                     },
                 },
