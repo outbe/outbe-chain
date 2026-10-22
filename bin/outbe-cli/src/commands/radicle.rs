@@ -4,9 +4,9 @@ use alloy_primitives::{FixedBytes, U256};
 use alloy_sol_types::SolCall;
 use clap::Subcommand;
 use eyre::{Result, WrapErr};
-use outbe_primitives::addresses::RADICLE_REGISTRY_ADDRESS;
+use outbe_primitives::addresses::CODE_REGISTRY_ADDRESS;
 
-use crate::{abi::IRadicleRegistry, errors::RadicleError, rpc::Rpc};
+use crate::{abi::ICodeRegistry, errors::RadicleError, rpc::Rpc};
 
 type RepoId = FixedBytes<20>;
 
@@ -40,14 +40,9 @@ impl RadicleCmd {
         match self {
             Self::RegisterRepository { repo_id } => {
                 let signer = super::require_signer(private_key)?;
-                let call = IRadicleRegistry::registerRepositoryCall { repoId: repo_id };
+                let call = ICodeRegistry::registerRepositoryCall { repoId: repo_id };
                 let tx = signer
-                    .send_tx(
-                        client,
-                        RADICLE_REGISTRY_ADDRESS,
-                        call.abi_encode(),
-                        U256::ZERO,
-                    )
+                    .send_tx(client, CODE_REGISTRY_ADDRESS, call.abi_encode(), U256::ZERO)
                     .await?;
                 println!("Radicle repository registration transaction sent: {tx}");
                 Ok(())
@@ -61,22 +56,22 @@ impl RadicleCmd {
 async fn list(client: &(impl Rpc + Sync)) -> Result<()> {
     let output = client
         .eth_call(
-            RADICLE_REGISTRY_ADDRESS,
-            &IRadicleRegistry::repositoryCountCall {}.abi_encode(),
+            CODE_REGISTRY_ADDRESS,
+            &ICodeRegistry::repositoryCountCall {}.abi_encode(),
         )
         .await
         .wrap_err("Radicle repositoryCount eth_call failed")?;
-    let count = IRadicleRegistry::repositoryCountCall::abi_decode_returns(&output)
+    let count = ICodeRegistry::repositoryCountCall::abi_decode_returns(&output)
         .wrap_err("decode Radicle repository count")?;
     for index in 0..count {
         let output = client
             .eth_call(
-                RADICLE_REGISTRY_ADDRESS,
-                &IRadicleRegistry::repositoryAtCall { index }.abi_encode(),
+                CODE_REGISTRY_ADDRESS,
+                &ICodeRegistry::repositoryAtCall { index }.abi_encode(),
             )
             .await
             .wrap_err_with(|| format!("Radicle repositoryAt({index}) eth_call failed"))?;
-        let repo_id = IRadicleRegistry::repositoryAtCall::abi_decode_returns(&output)
+        let repo_id = ICodeRegistry::repositoryAtCall::abi_decode_returns(&output)
             .wrap_err("decode Radicle RepoId")?;
         println!("{index}: 0x{}", hex::encode(repo_id));
     }
@@ -86,12 +81,12 @@ async fn list(client: &(impl Rpc + Sync)) -> Result<()> {
 async fn show(client: &(impl Rpc + Sync), repo_id: RepoId) -> Result<()> {
     let output = client
         .eth_call(
-            RADICLE_REGISTRY_ADDRESS,
-            &IRadicleRegistry::repositoryRegistrantCall { repoId: repo_id }.abi_encode(),
+            CODE_REGISTRY_ADDRESS,
+            &ICodeRegistry::repositoryRegistrantCall { repoId: repo_id }.abi_encode(),
         )
         .await
         .wrap_err("Radicle repositoryRegistrant eth_call failed")?;
-    let registrant = IRadicleRegistry::repositoryRegistrantCall::abi_decode_returns(&output)
+    let registrant = ICodeRegistry::repositoryRegistrantCall::abi_decode_returns(&output)
         .wrap_err("decode Radicle repository registrant")?;
     println!("RepoId: 0x{}", hex::encode(repo_id));
     println!("Registrant: {registrant}");
@@ -127,10 +122,10 @@ mod tests {
     #[tokio::test]
     async fn register_sends_the_exact_precompile_call() {
         let repo_id = RepoId::repeat_byte(0x44);
-        let call = IRadicleRegistry::registerRepositoryCall { repoId: repo_id };
+        let call = ICodeRegistry::registerRepositoryCall { repoId: repo_id };
         let rpc = recording_send_tx_rpc(
             PRIVATE_KEY,
-            RADICLE_REGISTRY_ADDRESS,
+            CODE_REGISTRY_ADDRESS,
             call.abi_encode(),
             U256::ZERO,
         )

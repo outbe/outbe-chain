@@ -35,9 +35,7 @@ fn the_issuance_rail_converts_at_the_trailing_window_not_the_closed_day() {
 
     let quoted = world.enter(|storage| {
         use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
-        let day = previous_date_key(timestamp_to_date_key(
-            storage.timestamp().unwrap().to::<u64>(),
-        ));
+        let day = previous_date_key(timestamp_to_date_key(storage.now_secs().unwrap()));
         let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), 978)
             .unwrap()
             .unwrap();
@@ -341,9 +339,9 @@ fn issuance_rail_rejects_a_missing_cross_rate() {
         U256::ZERO,
     )
     .unwrap_err();
-    assert!(
-        error.to_string().contains("oracle nominal unavailable"),
-        "unexpected error: {error}"
+    assert_eq!(
+        error.to_string(),
+        PrecompileError::from(SettlementError::OracleUnavailable).to_string()
     );
     assert!(!is_settled(&mut world, nod_id));
 }

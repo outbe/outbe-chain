@@ -48,7 +48,7 @@ fn checkpoint_chain() -> Vec<(FinalizedPublicationReceipt, PublicationManifest)>
                 number: 20,
                 hash: B256::repeat_byte(20),
             },
-            receipt: outbe_radicleregistry::publication::PublicationReceipt {
+            receipt: outbe_coderegistry::publication::PublicationReceipt {
                 body: body.clone(),
                 accepted_height: sequence,
                 receipt_hash: body.receipt_hash(),

@@ -77,6 +77,44 @@
     "stateMutability": "view"
   },
   {
+    "type": "function",
+    "name": "getPoolClaimableTotal",
+    "inputs": [
+      {
+        "name": "pool",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "promisLoadMinor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getPoolPendingTotal",
+    "inputs": [
+      {
+        "name": "pool",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "promisLoadMinor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
     "type": "event",
     "name": "RewardAccrued",
     "inputs": [
@@ -137,5 +175,78 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AccrualJobMissing",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ClaimableRewardsOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ClaimableTotalOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DistributeDailyOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DistributionOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EntryPriceOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InsufficientClaimableBalance",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MissingPreviousDayPrice",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NoClaimableBalance",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PoolTotalMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnknownRewardPool",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
   }
 ]

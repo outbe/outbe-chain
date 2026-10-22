@@ -53,3 +53,24 @@ pub struct Accounting {
     /// this chain (fresh genesis).
     pub last_accounted_block_number: Slot<u64>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::U256;
+    use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+
+    #[test]
+    fn storage_slot_layout_is_pinned() {
+        let mut provider = HashMapStorageProvider::new(1);
+        let handle = StorageHandle::new(&mut provider);
+
+        let cycle = Cycle::new(handle.clone());
+        assert_eq!(cycle.last_executed_at.base_slot(), U256::from(0));
+        assert_eq!(cycle.last_executed_block_number.base_slot(), U256::from(1));
+        assert_eq!(cycle.active_utc_day.slot(), U256::from(2));
+
+        let accounting = Accounting::new(handle);
+        assert_eq!(accounting.last_accounted_block_number.slot(), U256::from(0));
+    }
+}

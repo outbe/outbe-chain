@@ -117,10 +117,14 @@ fn mine_rejects_zero_amount() {
             auth(GratisOp::Mint, alice(), U256::ZERO, 0),
         )
         .unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("amount and account must be nonzero"),
-            "got: {err}"
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_gratis::errors::GratisError::Rejected(
+                    "amount and account must be nonzero".into(),
+                )
+            )
+            .to_string()
         );
     });
 }
@@ -191,9 +195,14 @@ fn mine_coen_rejects_insufficient_balance() {
             .abi_encode(),
         );
         let err = dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap_err();
-        assert!(
-            err.to_string().contains("insufficient balance"),
-            "got: {err}"
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_gratis::errors::GratisError::Rejected(
+                    "insufficient balance or balance overflow".into()
+                )
+            )
+            .to_string()
         );
 
         // Atomic revert: no COEN minted, gratis untouched.
@@ -296,14 +305,13 @@ fn pledge(
     caller: Address,
     id: U256,
     nonce: u64,
-) -> Result<(), String> {
+) -> Result<(), outbe_primitives::error::PrecompileError> {
     runtime::pledge_gratis(
         storage.clone(),
         caller,
         id,
         auth(GratisOp::Pledge, caller, U256::from(RESERVED), nonce),
     )
-    .map_err(|e| e.to_string())
 }
 
 #[test]
@@ -314,9 +322,21 @@ fn only_the_source_pledges_exactly_the_reserved_gratis_once() {
             .cohorts_ct_of(alice())
             .unwrap();
         let err = pledge(&storage, bob(), id, 0).unwrap_err();
-        assert!(err.contains("not the reservation source"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::GratisFactoryError::NotReservationSource
+            )
+            .to_string()
+        );
         let err = pledge(&storage, alice(), U256::from(2u64), 1).unwrap_err();
-        assert!(err.contains("reservation not found"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::GratisFactoryError::ReservationNotFound
+            )
+            .to_string()
+        );
         let wrong_amount = auth(GratisOp::Pledge, alice(), U256::from(RESERVED - 1), 1);
         assert!(runtime::pledge_gratis(storage.clone(), alice(), id, wrong_amount).is_err());
         assert_eq!(view_balance(&storage, alice()), U256::from(1_000u64));
@@ -357,7 +377,13 @@ fn only_the_source_pledges_exactly_the_reserved_gratis_once() {
         );
 
         let err = pledge(&storage, alice(), id, 2).unwrap_err();
-        assert!(err.contains("already pledged"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::GratisFactoryError::PledgeExists
+            )
+            .to_string()
+        );
         assert_eq!(view_pledged(&storage, alice()), U256::from(RESERVED));
     });
 }
@@ -370,7 +396,13 @@ fn an_expired_reservation_cannot_be_pledged() {
             .set_block_timestamp(U256::from(CREATED_AT + 901))
             .unwrap();
         let err = pledge(&storage, alice(), id, 1).unwrap_err();
-        assert!(err.contains("reservation expired"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::GratisFactoryError::ReservationExpired
+            )
+            .to_string()
+        );
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
     });
 }
@@ -384,9 +416,12 @@ fn only_the_source_cancels_an_unused_pledge_even_after_expiry() {
             .set_block_timestamp(U256::from(CREATED_AT + 901))
             .unwrap();
         let err = runtime::cancel_pledge(storage.clone(), bob(), id).unwrap_err();
-        assert!(
-            err.to_string().contains("not the reservation source"),
-            "{err}"
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::GratisFactoryError::NotReservationSource
+            )
+            .to_string()
         );
         assert_eq!(view_pledged(&storage, alice()), U256::from(RESERVED));
 
@@ -399,7 +434,13 @@ fn only_the_source_cancels_an_unused_pledge_even_after_expiry() {
         );
         assert!(runtime::pledge_of(&storage, id).unwrap().source.is_zero());
         let err = runtime::cancel_pledge(storage.clone(), alice(), id).unwrap_err();
-        assert!(err.to_string().contains("pledge not found"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::GratisFactoryError::PledgeNotFound
+            )
+            .to_string()
+        );
     });
 }
 
@@ -411,9 +452,21 @@ fn credis_takes_a_pledge_once_and_cancel_then_fails() {
         let record = U256::from(7u64);
         let err =
             runtime::send_to_credis(&storage, id, record, bob(), U256::from(RESERVED)).unwrap_err();
-        assert!(err.to_string().contains("does not match"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::GratisFactoryError::PledgeMismatch
+            )
+            .to_string()
+        );
         let err = runtime::send_to_credis(&storage, id, record, alice(), U256::ONE).unwrap_err();
-        assert!(err.to_string().contains("does not match"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::GratisFactoryError::PledgeMismatch
+            )
+            .to_string()
+        );
 
         runtime::send_to_credis(&storage, id, record, alice(), U256::from(RESERVED)).unwrap();
         let collateral = runtime::collateral_of(&storage, record).unwrap();
@@ -428,9 +481,21 @@ fn credis_takes_a_pledge_once_and_cancel_then_fails() {
         );
         let err = runtime::send_to_credis(&storage, id, record, alice(), U256::from(RESERVED))
             .unwrap_err();
-        assert!(err.to_string().contains("pledge not found"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::GratisFactoryError::PledgeNotFound
+            )
+            .to_string()
+        );
         let err = runtime::cancel_pledge(storage.clone(), alice(), id).unwrap_err();
-        assert!(err.to_string().contains("pledge not found"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::GratisFactoryError::PledgeNotFound
+            )
+            .to_string()
+        );
         assert_eq!(view_pledged(&storage, alice()), U256::from(RESERVED));
     });
 }
@@ -515,14 +580,20 @@ fn collateral_is_drawn_per_credis_and_never_reopens() {
 
         // The source's pledged total would cover it, but Credis A only holds RESERVED.
         let err = runtime::return_from_credis(&storage, a, reserved + U256::ONE).unwrap_err();
-        assert!(
-            err.to_string().contains("exceeds the Credis's collateral"),
-            "{err}"
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::CollateralError::Exceeded
+            )
+            .to_string()
         );
         let err = runtime::burn_from_credis(&storage, a, reserved + U256::ONE).unwrap_err();
-        assert!(
-            err.to_string().contains("exceeds the Credis's collateral"),
-            "{err}"
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::CollateralError::Exceeded
+            )
+            .to_string()
         );
         assert_eq!(view_pledged(&storage, alice()), reserved * U256::from(2u64));
         assert_eq!(
@@ -551,7 +622,13 @@ fn collateral_is_drawn_per_credis_and_never_reopens() {
             U256::from(1_000u64) - (reserved - returned)
         );
         let err = runtime::return_from_credis(&storage, a, U256::ONE).unwrap_err();
-        assert!(err.to_string().contains("collateral not found"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::CollateralError::NotFound
+            )
+            .to_string()
+        );
         assert_eq!(
             runtime::collateral_of(&storage, b).unwrap().remaining_minor,
             reserved
@@ -559,7 +636,11 @@ fn collateral_is_drawn_per_credis_and_never_reopens() {
 
         let third = reserve_and_pledge(&storage, alice(), 3, 3);
         let err = runtime::send_to_credis(&storage, third, b, alice(), reserved).unwrap_err();
-        assert!(err.to_string().contains("already has collateral"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(crate::errors::CollateralError::Exists)
+                .to_string()
+        );
         assert_eq!(runtime::pledge_of(&storage, third).unwrap().source, alice());
     });
 }
@@ -606,5 +687,100 @@ fn encrypted_nod_mint_preserves_nonce_and_combined_fidelity_state() {
         );
         assert_eq!(fidelity.cohorts_ct_of(alice()).unwrap(), cohorts);
         assert_eq!(outbe_gratis::api::op_nonce(storage, alice()).unwrap(), 1);
+    });
+}
+
+/// One second past the largest block timestamp that fits in `u64`.
+fn timestamp_above_u64() -> U256 {
+    U256::from(u64::MAX) + U256::from(1)
+}
+
+fn assert_timestamp_overflow(err: impl std::fmt::Display) {
+    let err = err.to_string();
+    assert!(err.contains("timestamp exceeds u64"), "got: {err}");
+}
+
+#[test]
+fn mint_reverts_when_the_timestamp_exceeds_u64() {
+    with_env(|storage| {
+        storage.set_block_timestamp(timestamp_above_u64()).unwrap();
+        let amount = U256::from(1_000u64);
+        let err = runtime::mint(
+            storage.clone(),
+            alice(),
+            amount,
+            auth(GratisOp::Mint, alice(), amount, 0),
+        )
+        .unwrap_err();
+        assert_timestamp_overflow(err);
+        assert_eq!(view_balance(&storage, alice()), U256::ZERO);
+    });
+}
+
+#[test]
+fn mine_coen_reverts_when_the_timestamp_exceeds_u64() {
+    with_env(|storage| {
+        let amount = U256::from(1_000u64);
+        outbe_gratis::api::mint(
+            storage.clone(),
+            alice(),
+            amount,
+            auth(GratisOp::Mint, alice(), amount, 0),
+        )
+        .unwrap();
+        storage.set_block_timestamp(timestamp_above_u64()).unwrap();
+
+        let call = Bytes::from(
+            IGratisFactory::IGratisFactoryCalls::mineCoen(IGratisFactory::mineCoenCall {
+                gratisMinor: amount,
+                mac: FixedBytes(auth(GratisOp::Burn, alice(), amount, 1).mac),
+                opNonce: 1,
+            })
+            .abi_encode(),
+        );
+        let err = dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap_err();
+        assert_timestamp_overflow(err);
+
+        // No COEN minted, gratis untouched.
+        assert_eq!(storage.balance(alice()).unwrap(), U256::ZERO);
+        assert_eq!(view_balance(&storage, alice()), amount);
+    });
+}
+
+#[test]
+fn encrypted_nod_mint_reverts_when_the_timestamp_exceeds_u64() {
+    with_env(|storage| {
+        use outbe_primitives::{
+            nod_encryption::NodTermsV2, time::WorldwideDay, wwd_entity_id::WwdEntityId,
+        };
+        let day = WorldwideDay::new(20250115);
+        let amount = U256::from(123);
+        let nod = outbe_tee_enclave::nod_encryption::encrypt_nod(
+            &[0x5a; 32],
+            &[9; 32],
+            NodTermsV2 {
+                chain_id: CHAIN_ID,
+                nod_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(7)),
+                owner: alice(),
+                worldwide_day: day,
+                league_id: 0,
+                entry_price_minor: U256::ONE,
+                issuance_currency: 840,
+                reference_currency: 978,
+            },
+            amount,
+        )
+        .unwrap();
+        storage.set_block_timestamp(timestamp_above_u64()).unwrap();
+
+        let err = crate::api::mint_encrypted_nod(
+            storage.clone(),
+            &nod,
+            auth(GratisOp::Mint, alice(), amount, 0),
+        )
+        .unwrap_err();
+        assert_timestamp_overflow(err);
+        assert_eq!(view_balance(&storage, alice()), U256::ZERO);
+        assert_eq!(outbe_gratis::api::op_nonce(storage, alice()).unwrap(), 0);
     });
 }

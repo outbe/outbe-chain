@@ -45,7 +45,7 @@ const LOCALNET_METADOSIS_ADVANCE_SECONDS: u64 = 10;
 const DEFAULT_EPOCH_LENGTH_BLOCKS: u64 = 300;
 const DEFAULT_DKG_PREPARE_WINDOW_BLOCKS: u64 = 30;
 const DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS: u64 = 30;
-const RADICLE_REGISTRY_ADDRESS: &str = "000000000000000000000000000000000000ee11";
+const CODE_REGISTRY_ADDRESS: &str = "000000000000000000000000000000000000ee11";
 const RADICLE_MAX_REPOSITORIES_SLOT: &str =
     "0x0000000000000000000000000000000000000000000000000000000000000005";
 
@@ -357,7 +357,7 @@ impl Localnet {
 
         let seed: serde_json::Value = serde_json::from_str(&fs::read_to_string(seed)?)?;
         let genesis: serde_json::Value = serde_json::from_str(&fs::read_to_string(genesis)?)?;
-        validate_radicle_registry_genesis(&seed, &genesis)
+        validate_code_registry_genesis(&seed, &genesis)
     }
 
     /// Lower the SlashIndicator felony thresholds so downtime slashing triggers
@@ -422,10 +422,10 @@ impl Localnet {
         if profile.governments {
             use sha2::{Digest as _, Sha256};
             let registry = root
-                .entry("radicle_registry")
+                .entry("code_registry")
                 .or_insert_with(|| json!({}))
                 .as_object_mut()
-                .ok_or_else(|| eyre!("genesis seed radicle_registry is not an object"))?;
+                .ok_or_else(|| eyre!("genesis seed code_registry is not an object"))?;
             let tree =
                 radicle::git::raw::Oid::hash_object(radicle::git::raw::ObjectType::Tree, b"")?;
             registry.insert(
@@ -637,11 +637,11 @@ fn json_u32(value: &serde_json::Value) -> Option<u32> {
         .or_else(|| value.as_str().and_then(|raw| raw.parse::<u32>().ok()))
 }
 
-fn validate_radicle_registry_genesis(
+fn validate_code_registry_genesis(
     seed: &serde_json::Value,
     genesis: &serde_json::Value,
 ) -> Result<()> {
-    let Some(configured) = seed.pointer("/radicle_registry/max_repositories") else {
+    let Some(configured) = seed.pointer("/code_registry/max_repositories") else {
         return Ok(());
     };
     let parsed = configured.as_i64().map(i128::from).or_else(|| {
@@ -657,7 +657,7 @@ fn validate_radicle_registry_genesis(
         Some(value) if (1..i128::from(u32::MAX)).contains(&value) => value as u32,
         _ => {
             return Err(eyre!(
-                "radicle_registry.max_repositories must be -1 or in 1..=4294967294"
+                "code_registry.max_repositories must be -1 or in 1..=4294967294"
             ));
         }
     };
@@ -673,22 +673,22 @@ fn validate_radicle_registry_genesis(
             let address = address.strip_prefix("0x").unwrap_or(&address);
             (address.len() <= 40
                 && address.bytes().all(|byte| byte.is_ascii_hexdigit())
-                && format!("{address:0>40}") == RADICLE_REGISTRY_ADDRESS)
+                && format!("{address:0>40}") == CODE_REGISTRY_ADDRESS)
                 .then_some(account)
         })
-        .ok_or_else(|| eyre!("generated genesis has no RadicleRegistry marker account"))?;
+        .ok_or_else(|| eyre!("generated genesis has no CodeRegistry marker account"))?;
     eyre::ensure!(
         account.get("code").and_then(serde_json::Value::as_str) == Some("0xef"),
-        "generated genesis has an invalid RadicleRegistry marker"
+        "generated genesis has an invalid CodeRegistry marker"
     );
     let actual = account
         .pointer(&format!("/storage/{RADICLE_MAX_REPOSITORIES_SLOT}"))
         .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| eyre!("generated genesis has no RadicleRegistry maxRepositories slot"))?;
+        .ok_or_else(|| eyre!("generated genesis has no CodeRegistry maxRepositories slot"))?;
     let expected = format!("0x{maximum:064x}");
     eyre::ensure!(
         actual.eq_ignore_ascii_case(&expected),
-        "generated genesis RadicleRegistry maxRepositories mismatch: expected {expected}, got {actual}"
+        "generated genesis CodeRegistry maxRepositories mismatch: expected {expected}, got {actual}"
     );
     Ok(())
 }
@@ -753,8 +753,8 @@ mod tests {
     }
 
     #[test]
-    fn radicle_registry_genesis() {
-        let seed = json!({ "radicle_registry": { "max_repositories": "0x25" } });
+    fn code_registry_genesis() {
+        let seed = json!({ "code_registry": { "max_repositories": "0x25" } });
         let genesis = json!({
             "alloc": {
                 "0x000000000000000000000000000000000000EE11": {
@@ -767,21 +767,21 @@ mod tests {
             }
         });
 
-        validate_radicle_registry_genesis(&seed, &genesis).unwrap();
-        validate_radicle_registry_genesis(&json!({}), &json!({})).unwrap();
+        validate_code_registry_genesis(&seed, &genesis).unwrap();
+        validate_code_registry_genesis(&json!({}), &json!({})).unwrap();
 
         let mut wrong = genesis;
         wrong["alloc"]["0x000000000000000000000000000000000000EE11"]["storage"]
             [RADICLE_MAX_REPOSITORIES_SLOT] = json!("0x01");
-        assert!(validate_radicle_registry_genesis(&seed, &wrong)
+        assert!(validate_code_registry_genesis(&seed, &wrong)
             .unwrap_err()
             .to_string()
             .contains("maxRepositories mismatch"));
     }
 
     #[test]
-    fn radicle_registry_unlimited_genesis() {
-        let seed = json!({ "radicle_registry": { "max_repositories": -1 } });
+    fn code_registry_unlimited_genesis() {
+        let seed = json!({ "code_registry": { "max_repositories": -1 } });
         let genesis = json!({
             "alloc": {
                 "0x000000000000000000000000000000000000EE11": {
@@ -794,15 +794,15 @@ mod tests {
             }
         });
 
-        validate_radicle_registry_genesis(&seed, &genesis).unwrap();
+        validate_code_registry_genesis(&seed, &genesis).unwrap();
         for invalid in [
             json!(-2),
             json!(0),
             json!(4_294_967_295_u64),
             json!(4_294_967_296_u64),
         ] {
-            let invalid_seed = json!({ "radicle_registry": { "max_repositories": invalid } });
-            assert!(validate_radicle_registry_genesis(&invalid_seed, &genesis).is_err());
+            let invalid_seed = json!({ "code_registry": { "max_repositories": invalid } });
+            assert!(validate_code_registry_genesis(&invalid_seed, &genesis).is_err());
         }
     }
 
@@ -1012,7 +1012,7 @@ mod tests {
         let mut cfg = crate::internal::config::Config::for_scenario(&env, 1);
         cfg.seed = directory.path().join("input-seed.json");
         fs::create_dir_all(&cfg.dir).unwrap();
-        let original = json!({"radicle_registry": {"max_repositories": 8}});
+        let original = json!({"code_registry": {"max_repositories": 8}});
         fs::write(&cfg.seed, serde_json::to_vec(&original).unwrap()).unwrap();
         let localnet = Localnet::new(cfg);
         let profile = BootstrapProfile::default().with_governments().unwrap();
@@ -1077,7 +1077,7 @@ mod tests {
             .prepare_scenario_seed(&BootstrapProfile::default())
             .unwrap();
         let legacy: serde_json::Value = serde_json::from_slice(&fs::read(legacy).unwrap()).unwrap();
-        assert!(legacy["radicle_registry"].get("governments").is_none());
+        assert!(legacy["code_registry"].get("governments").is_none());
         assert!(profile
             .with_dkg_timing(60, 15, 20)
             .unwrap()

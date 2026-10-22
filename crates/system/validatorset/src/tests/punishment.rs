@@ -1,38 +1,33 @@
 use super::*;
 
 #[test]
-fn tee_expiry_jail_is_non_slashing_and_idempotent() {
+fn tee_expiry_jail_counts_one_slash_and_is_idempotent() {
     let validator = address!("0x0000000000000000000000000000000000000A13");
     let mut storage = registry_storage(17, 10).unwrap();
     at_height(&mut storage, 17, |vs| {
         register_validators(vs, &[(validator, 0xA3)]).unwrap();
         activate_staked_for_test(vs, validator);
 
-        let before = vs.get_validator(validator).unwrap().unwrap();
-        let before_stake = before.stake;
-        let before_slash_count = before.slash_count;
+        let before_slash_count = vs.get_validator(validator).unwrap().unwrap().slash_count;
 
         assert!(vs.jail_validator_for_tee_expiry(validator).unwrap());
         let jailed = vs.get_validator(validator).unwrap().unwrap();
         assert_eq!(jailed.status, status::JAILED);
-        assert_eq!(jailed.stake, before_stake);
-        assert_eq!(jailed.slash_count, before_slash_count);
+        assert_eq!(jailed.slash_count, before_slash_count + 1);
         assert_eq!(vs.val_jailed_at_height.read(&validator).unwrap(), 17);
         assert!(vs.has_pending_set_change().unwrap());
 
         assert!(!vs.jail_validator_for_tee_expiry(validator).unwrap());
         let replayed = vs.get_validator(validator).unwrap().unwrap();
         assert_eq!(replayed, jailed);
-        assert_eq!(replayed.stake, before_stake);
-        assert_eq!(replayed.slash_count, before_slash_count);
+        assert_eq!(replayed.slash_count, before_slash_count + 1);
 
         vs.test_activate_validated_boundary_set(&[], B256::ZERO, 17)
             .unwrap();
         let excluded = vs.get_validator(validator).unwrap().unwrap();
         assert_eq!(excluded.status, status::JAILED);
         assert!(!excluded.has_bls_share);
-        assert_eq!(excluded.stake, before_stake);
-        assert_eq!(excluded.slash_count, before_slash_count);
+        assert_eq!(excluded.slash_count, before_slash_count + 1);
         assert!(!vs.is_consensus_participant(validator).unwrap());
     });
 }

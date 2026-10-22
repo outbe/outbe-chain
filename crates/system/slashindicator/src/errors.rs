@@ -1,9 +1,33 @@
 //! Domain error types for the slash indicator precompile.
 
-use alloy_primitives::{Address, B256};
+use crate::precompile::ISlashIndicator;
+use alloy_primitives::Bytes;
+use alloy_primitives::{Address, B256, U256};
+use alloy_sol_types::SolError;
 use outbe_consensus::proof::V2VerifyError;
 use outbe_primitives::error::{PrecompileError, Result};
 use thiserror::Error;
+
+/// A stored or genesis percent word is not admitted.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum PercentAdmissionError {
+    /// The word fits in `u64` and is above 100.
+    #[error("slash config percent {field}={value} is above 100")]
+    Above100 {
+        /// Storage field name.
+        field: &'static str,
+        /// Percent that was rejected.
+        value: u64,
+    },
+    /// The word does not fit in `u64`, so it must not be narrowed.
+    #[error("slash config percent {field} word {word} exceeds u64")]
+    WordExceedsU64 {
+        /// Storage field name.
+        field: &'static str,
+        /// Raw storage word.
+        word: U256,
+    },
+}
 
 /// Domain errors for the slash indicator precompile.
 #[derive(Debug, Error)]
@@ -63,6 +87,21 @@ pub enum SlashIndicatorError {
     /// Varint shift reached or exceeded 64 bits.
     #[error("varint overflow")]
     VarintOverflow,
+
+    /// The varint uses a redundant encoding.
+    #[error("noncanonical varint")]
+    NonCanonicalVarint,
+
+    /// The effective evidence reward percentage exceeds 100.
+    #[error("invalid evidence reward percent: {percent}")]
+    InvalidEvidenceRewardPercent {
+        /// The effective percentage from the configuration.
+        percent: u64,
+    },
+
+    /// The evidence reward exceeds the U256 limit.
+    #[error("evidence reward overflow")]
+    EvidenceRewardOverflow,
 
     /// The slash guard ring cursor overflowed `u64`.
     #[error("slash_guard_ring_seq overflow")]
@@ -369,6 +408,15 @@ pub enum SlashIndicatorError {
     /// The VRF seed partial is valid and cannot trigger slashing.
     #[error("seed partial is valid; nothing to slash")]
     ValidSeedPartialNotSlashable,
+
+    /// Stored slash-amount or evidence-reward percent is above 100.
+    #[error("slash config percent {field}={value} is above 100")]
+    SlashConfigPercentAbove100 {
+        /// Storage field name.
+        field: &'static str,
+        /// Stored percent that was rejected.
+        value: u64,
+    },
 }
 
 impl SlashIndicatorError {
@@ -390,8 +438,346 @@ impl SlashIndicatorError {
 }
 
 impl From<SlashIndicatorError> for PrecompileError {
-    fn from(err: SlashIndicatorError) -> Self {
-        Self::Revert(err.to_string())
+    fn from(error: SlashIndicatorError) -> Self {
+        match error {
+            SlashIndicatorError::EvidenceSignerMismatch => PrecompileError::RevertBytes(
+                Bytes::from(ISlashIndicator::EvidenceSignerMismatch {}.abi_encode()),
+            ),
+            SlashIndicatorError::ProposalsMustBeSameRound => PrecompileError::RevertBytes(
+                Bytes::from(ISlashIndicator::ProposalsMustBeSameRound {}.abi_encode()),
+            ),
+            SlashIndicatorError::VotesMustBeSameRound => PrecompileError::RevertBytes(Bytes::from(
+                ISlashIndicator::VotesMustBeSameRound {}.abi_encode(),
+            )),
+            SlashIndicatorError::ProposalsMustDifferForDoubleProposal => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ISlashIndicator::ProposalsMustDifferForDoubleProposal {}.abi_encode(),
+                ))
+            }
+            SlashIndicatorError::ConflictingVotesMustBeDifferentProposals => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ISlashIndicator::ConflictingVotesMustBeDifferentProposals {}.abi_encode(),
+                ))
+            }
+            SlashIndicatorError::ConflictingVoteSignaturesInvalid => PrecompileError::RevertBytes(
+                Bytes::from(ISlashIndicator::ConflictingVoteSignaturesInvalid {}.abi_encode()),
+            ),
+            SlashIndicatorError::EvidenceAlreadyProcessed => PrecompileError::RevertBytes(
+                Bytes::from(ISlashIndicator::EvidenceAlreadyProcessed {}.abi_encode()),
+            ),
+            SlashIndicatorError::EvidenceBlockTooShort => PrecompileError::RevertBytes(
+                Bytes::from(ISlashIndicator::EvidenceBlockTooShort {}.abi_encode()),
+            ),
+            SlashIndicatorError::EvidencePubkeySlice => PrecompileError::RevertBytes(Bytes::from(
+                ISlashIndicator::EvidencePubkeySlice {}.abi_encode(),
+            )),
+            SlashIndicatorError::EvidenceSignatureSlice => PrecompileError::RevertBytes(
+                Bytes::from(ISlashIndicator::EvidenceSignatureSlice {}.abi_encode()),
+            ),
+            SlashIndicatorError::InvalidBlsPublicKey => PrecompileError::RevertBytes(Bytes::from(
+                ISlashIndicator::InvalidBlsPublicKey {}.abi_encode(),
+            )),
+            SlashIndicatorError::InvalidBlsSignature => PrecompileError::RevertBytes(Bytes::from(
+                ISlashIndicator::InvalidBlsSignature {}.abi_encode(),
+            )),
+            SlashIndicatorError::UnexpectedEndOfVarint => PrecompileError::RevertBytes(
+                Bytes::from(ISlashIndicator::UnexpectedEndOfVarint {}.abi_encode()),
+            ),
+            SlashIndicatorError::VarintOverflow => PrecompileError::RevertBytes(Bytes::from(
+                ISlashIndicator::VarintOverflow {}.abi_encode(),
+            )),
+            SlashIndicatorError::NonCanonicalVarint => PrecompileError::RevertBytes(Bytes::from(
+                ISlashIndicator::NonCanonicalVarint {}.abi_encode(),
+            )),
+            SlashIndicatorError::InvalidEvidenceRewardPercent { percent } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ISlashIndicator::InvalidEvidenceRewardPercent { percent }.abi_encode(),
+                ))
+            }
+            SlashIndicatorError::EvidenceRewardOverflow => PrecompileError::RevertBytes(
+                Bytes::from(ISlashIndicator::EvidenceRewardOverflow {}.abi_encode()),
+            ),
+            SlashIndicatorError::SlashGuardRingSeqOverflow => PrecompileError::RevertBytes(
+                Bytes::from(ISlashIndicator::SlashGuardRingSeqOverflow {}.abi_encode()),
+            ),
+            SlashIndicatorError::SubmitterNotActiveValidator { caller, status } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ISlashIndicator::SubmitterNotActiveValidator { caller, status }.abi_encode(),
+                ))
+            }
+            SlashIndicatorError::MissingCommitteeSnapshotForEpoch { epoch } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ISlashIndicator::MissingCommitteeSnapshotForEpoch { epoch }.abi_encode(),
+                ))
+            }
+            SlashIndicatorError::InvalidCommitteePubkeyInSnapshot => PrecompileError::RevertBytes(
+                Bytes::from(ISlashIndicator::InvalidCommitteePubkeyInSnapshot {}.abi_encode()),
+            ),
+            SlashIndicatorError::SignerNotRegisteredValidator => PrecompileError::RevertBytes(
+                Bytes::from(ISlashIndicator::SignerNotRegisteredValidator {}.abi_encode()),
+            ),
+            SlashIndicatorError::EvidenceFieldTruncated => PrecompileError::RevertBytes(
+                Bytes::from(ISlashIndicator::EvidenceFieldTruncated {}.abi_encode()),
+            ),
+            SlashIndicatorError::Spe1WrongLength { expected, actual } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ISlashIndicator::Spe1WrongLength {
+                        expected: expected as u64,
+                        actual: actual as u64,
+                    }
+                    .abi_encode(),
+                ))
+            }
+            SlashIndicatorError::Spe1BadMagic => PrecompileError::RevertBytes(Bytes::from(
+                ISlashIndicator::Spe1BadMagic {}.abi_encode(),
+            )),
+            SlashIndicatorError::Spe1BadVersion => PrecompileError::RevertBytes(Bytes::from(
+                ISlashIndicator::Spe1BadVersion {}.abi_encode(),
+            )),
+            SlashIndicatorError::Ipe1TooShort { min_len, actual } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ISlashIndicator::Ipe1TooShort {
+                        min_len: min_len as u64,
+                        actual: actual as u64,
+                    }
+                    .abi_encode(),
+                ))
+            }
+            SlashIndicatorError::Ipe1BadMagic => PrecompileError::RevertBytes(Bytes::from(
+                ISlashIndicator::Ipe1BadMagic {}.abi_encode(),
+            )),
+            SlashIndicatorError::Ipe1BadVersion => PrecompileError::RevertBytes(Bytes::from(
+                ISlashIndicator::Ipe1BadVersion {}.abi_encode(),
+            )),
+            SlashIndicatorError::Ipe1CommitmentLengthExceedsInput => PrecompileError::RevertBytes(
+                Bytes::from(ISlashIndicator::Ipe1CommitmentLengthExceedsInput {}.abi_encode()),
+            ),
+            SlashIndicatorError::Ipe1TrailingBytes => PrecompileError::RevertBytes(Bytes::from(
+                ISlashIndicator::Ipe1TrailingBytes {}.abi_encode(),
+            )),
+            SlashIndicatorError::InvalidVrfEvidenceInputTooShort { actual, min_len } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ISlashIndicator::InvalidVrfEvidenceInputTooShort {
+                        actual: actual as u64,
+                        min_len: min_len as u64,
+                    }
+                    .abi_encode(),
+                ))
+            }
+            SlashIndicatorError::InvalidVrfEvidenceBadMagic => PrecompileError::RevertBytes(
+                Bytes::from(ISlashIndicator::InvalidVrfEvidenceBadMagic {}.abi_encode()),
+            ),
+            SlashIndicatorError::InvalidVrfEvidenceUnsupportedVersion { version, expected } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ISlashIndicator::InvalidVrfEvidenceUnsupportedVersion { version, expected }
+                        .abi_encode(),
+                ))
+            }
+            SlashIndicatorError::InvalidVrfEvidenceTrailingBytes { trailing } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ISlashIndicator::InvalidVrfEvidenceTrailingBytes {
+                        trailing: trailing as u64,
+                    }
+                    .abi_encode(),
+                ))
+            }
+            SlashIndicatorError::InvalidVrfEvidenceFieldExceedsInput {
+                field,
+                len,
+                remaining,
+            } => PrecompileError::RevertBytes(Bytes::from(
+                ISlashIndicator::InvalidVrfEvidenceFieldExceedsInput {
+                    field: field.to_string(),
+                    len: len as u64,
+                    remaining: remaining as u64,
+                }
+                .abi_encode(),
+            )),
+            SlashIndicatorError::EvidenceStale {
+                current_block,
+                child_block,
+                max_age,
+            } => PrecompileError::RevertBytes(Bytes::from(
+                ISlashIndicator::EvidenceStale {
+                    current_block,
+                    child_block,
+                    max_age,
+                }
+                .abi_encode(),
+            )),
+            SlashIndicatorError::EvidenceParentChildNumberMismatch { parent, child } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ISlashIndicator::EvidenceParentChildNumberMismatch { parent, child }
+                        .abi_encode(),
+                ))
+            }
+            SlashIndicatorError::EvidenceBlockNotInCanonicalWindow { role, number } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ISlashIndicator::EvidenceBlockNotInCanonicalWindow {
+                        role: role.to_string(),
+                        number,
+                    }
+                    .abi_encode(),
+                ))
+            }
+            SlashIndicatorError::EvidenceHashNotCanonical {
+                role,
+                hash,
+                number,
+                canonical,
+            } => PrecompileError::RevertBytes(Bytes::from(
+                ISlashIndicator::EvidenceHashNotCanonical {
+                    role: role.to_string(),
+                    hash,
+                    number,
+                    canonical,
+                }
+                .abi_encode(),
+            )),
+            SlashIndicatorError::Phase1TxInvalid { reason } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ISlashIndicator::Phase1TxInvalid {
+                        reason: reason.to_string(),
+                    }
+                    .abi_encode(),
+                ))
+            }
+            SlashIndicatorError::Phase1CalldataDecodeFailed { reason } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ISlashIndicator::Phase1CalldataDecodeFailed {
+                        reason: reason.to_string(),
+                    }
+                    .abi_encode(),
+                ))
+            }
+            SlashIndicatorError::Phase1CalldataNotCertifiedParentAccounting { kind } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ISlashIndicator::Phase1CalldataNotCertifiedParentAccounting {
+                        kind: kind.to_string(),
+                    }
+                    .abi_encode(),
+                ))
+            }
+            SlashIndicatorError::MissingCommitteeSnapshotForFinalizedEpoch {
+                finalized_epoch,
+                committee_set_hash,
+            } => PrecompileError::RevertBytes(Bytes::from(
+                ISlashIndicator::MissingCommitteeSnapshotForFinalizedEpoch {
+                    finalized_epoch,
+                    committee_set_hash,
+                }
+                .abi_encode(),
+            )),
+            SlashIndicatorError::Phase1ProposerNotInCommittee { proposer, epoch } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ISlashIndicator::Phase1ProposerNotInCommittee { proposer, epoch }.abi_encode(),
+                ))
+            }
+            SlashIndicatorError::IdenticalSeedPartials => PrecompileError::RevertBytes(
+                Bytes::from(ISlashIndicator::IdenticalSeedPartials {}.abi_encode()),
+            ),
+            SlashIndicatorError::InvalidSeedPartialIdentitySignatures => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ISlashIndicator::InvalidSeedPartialIdentitySignatures {}.abi_encode(),
+                ))
+            }
+            SlashIndicatorError::MissingCommitteeSnapshotForRound => PrecompileError::RevertBytes(
+                Bytes::from(ISlashIndicator::MissingCommitteeSnapshotForRound {}.abi_encode()),
+            ),
+            SlashIndicatorError::EvidenceTooLarge { actual, max_bytes } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ISlashIndicator::EvidenceTooLarge {
+                        actual: actual as u64,
+                        max_bytes: max_bytes as u64,
+                    }
+                    .abi_encode(),
+                ))
+            }
+            SlashIndicatorError::EvidenceEpochStale {
+                current_epoch,
+                label,
+                evidence_epoch,
+                max_lag,
+            } => PrecompileError::RevertBytes(Bytes::from(
+                ISlashIndicator::EvidenceEpochStale {
+                    current_epoch,
+                    label: label.to_string(),
+                    evidence_epoch,
+                    max_lag,
+                }
+                .abi_encode(),
+            )),
+            SlashIndicatorError::MetadataParentBindingMismatch {
+                ev_parent_num,
+                ev_parent_hash,
+                meta_num,
+                meta_hash,
+            } => PrecompileError::RevertBytes(Bytes::from(
+                ISlashIndicator::MetadataParentBindingMismatch {
+                    ev_parent_num,
+                    ev_parent_hash,
+                    meta_num,
+                    meta_hash,
+                }
+                .abi_encode(),
+            )),
+            SlashIndicatorError::MetadataEpochMismatch {
+                finalized_epoch,
+                child_epoch,
+            } => PrecompileError::RevertBytes(Bytes::from(
+                ISlashIndicator::MetadataEpochMismatch {
+                    finalized_epoch,
+                    child_epoch,
+                }
+                .abi_encode(),
+            )),
+            SlashIndicatorError::ValidVrfProofNotSlashable => PrecompileError::RevertBytes(
+                Bytes::from(ISlashIndicator::ValidVrfProofNotSlashable {}.abi_encode()),
+            ),
+            SlashIndicatorError::NonVrfVerifyRejection { err } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ISlashIndicator::NonVrfVerifyRejection {
+                        err: err.to_string(),
+                    }
+                    .abi_encode(),
+                ))
+            }
+            SlashIndicatorError::SignerIndexOutOfRange => PrecompileError::RevertBytes(
+                Bytes::from(ISlashIndicator::SignerIndexOutOfRange {}.abi_encode()),
+            ),
+            SlashIndicatorError::SignerPubkeyMismatchAtIndex => PrecompileError::RevertBytes(
+                Bytes::from(ISlashIndicator::SignerPubkeyMismatchAtIndex {}.abi_encode()),
+            ),
+            SlashIndicatorError::VrfMaterialVersionMismatch => PrecompileError::RevertBytes(
+                Bytes::from(ISlashIndicator::VrfMaterialVersionMismatch {}.abi_encode()),
+            ),
+            SlashIndicatorError::MissingSnapshotPolynomialCommitment => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ISlashIndicator::MissingSnapshotPolynomialCommitment {}.abi_encode(),
+                ))
+            }
+            SlashIndicatorError::CommitmentPolynomialHashMismatch => PrecompileError::RevertBytes(
+                Bytes::from(ISlashIndicator::CommitmentPolynomialHashMismatch {}.abi_encode()),
+            ),
+            SlashIndicatorError::PartialNotIdentitySigned => PrecompileError::RevertBytes(
+                Bytes::from(ISlashIndicator::PartialNotIdentitySigned {}.abi_encode()),
+            ),
+            SlashIndicatorError::MalformedCommitmentOrPartial => PrecompileError::RevertBytes(
+                Bytes::from(ISlashIndicator::MalformedCommitmentOrPartial {}.abi_encode()),
+            ),
+            SlashIndicatorError::ValidSeedPartialNotSlashable => PrecompileError::RevertBytes(
+                Bytes::from(ISlashIndicator::ValidSeedPartialNotSlashable {}.abi_encode()),
+            ),
+            SlashIndicatorError::SlashConfigPercentAbove100 { field, value } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ISlashIndicator::SlashConfigPercentAbove100 {
+                        field: field.to_string(),
+                        value,
+                    }
+                    .abi_encode(),
+                ))
+            }
+        }
     }
 }
 
@@ -400,5 +786,87 @@ pub fn revert_reason<T>(result: Result<T>) -> Option<String> {
     match result {
         Err(PrecompileError::Revert(reason)) => Some(reason),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn encoded(err: SlashIndicatorError) -> Bytes {
+        match PrecompileError::from(err) {
+            PrecompileError::RevertBytes(bytes) => bytes,
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn hardening_errors_encode_typed_payloads() {
+        assert_eq!(
+            encoded(SlashIndicatorError::NonCanonicalVarint).as_ref(),
+            ISlashIndicator::NonCanonicalVarint {}.abi_encode()
+        );
+        assert_eq!(
+            encoded(SlashIndicatorError::EvidenceRewardOverflow).as_ref(),
+            ISlashIndicator::EvidenceRewardOverflow {}.abi_encode()
+        );
+        let bytes =
+            encoded(SlashIndicatorError::InvalidEvidenceRewardPercent { percent: u64::MAX });
+        let decoded = ISlashIndicator::InvalidEvidenceRewardPercent::abi_decode(&bytes)
+            .expect("reward percent payload");
+        assert_eq!(decoded.percent, u64::MAX);
+    }
+
+    #[test]
+    fn caller_revert_keeps_address_integer_hash_and_string_fields() {
+        let caller = Address::repeat_byte(0x11);
+        let bytes = encoded(SlashIndicatorError::SubmitterNotActiveValidator { caller, status: 3 });
+        let decoded = ISlashIndicator::SubmitterNotActiveValidator::abi_decode(&bytes)
+            .expect("submitter payload");
+        assert_eq!(decoded.caller, caller);
+        assert_eq!(decoded.status, 3);
+
+        let bytes = encoded(SlashIndicatorError::EvidenceStale {
+            current_block: 30,
+            child_block: 10,
+            max_age: 15,
+        });
+        let decoded = ISlashIndicator::EvidenceStale::abi_decode(&bytes).expect("stale payload");
+        assert_eq!(decoded.current_block, 30);
+        assert_eq!(decoded.child_block, 10);
+        assert_eq!(decoded.max_age, 15);
+
+        let hash = B256::repeat_byte(0xab);
+        let canonical = B256::repeat_byte(0xcd);
+        let bytes = encoded(SlashIndicatorError::EvidenceHashNotCanonical {
+            role: "child",
+            hash,
+            number: 10,
+            canonical,
+        });
+        let decoded =
+            ISlashIndicator::EvidenceHashNotCanonical::abi_decode(&bytes).expect("hash payload");
+        assert_eq!(decoded.role, "child");
+        assert_eq!(decoded.hash, hash);
+        assert_eq!(decoded.number, 10);
+        assert_eq!(decoded.canonical, canonical);
+
+        let bytes = encoded(SlashIndicatorError::Phase1TxInvalid {
+            reason: "decode failed".to_string(),
+        });
+        let decoded = ISlashIndicator::Phase1TxInvalid::abi_decode(&bytes).expect("reason payload");
+        assert_eq!(decoded.reason, "decode failed");
+    }
+
+    #[test]
+    fn slash_config_percent_above_100_reverts_with_field_and_value() {
+        let bytes = encoded(SlashIndicatorError::SlashConfigPercentAbove100 {
+            field: "evidence_reward_percent",
+            value: 101,
+        });
+        let decoded = ISlashIndicator::SlashConfigPercentAbove100::abi_decode(&bytes)
+            .expect("percent payload");
+        assert_eq!(decoded.field, "evidence_reward_percent");
+        assert_eq!(decoded.value, 101);
     }
 }

@@ -361,8 +361,6 @@ pub enum BeginBlockPrecompileError {
     NativeValueRejected,
     #[error("invalid system tx input: {0}")]
     InvalidSystemTxInput(String),
-    #[error("{name} exceeds u64 range: {value}")]
-    ValueExceedsU64 { name: &'static str, value: U256 },
     #[error("Cycle execution body read authority was not supplied")]
     MissingCycleBodyReadAuthority,
     #[error("proposer is not a current consensus participant: {proposer}")]
@@ -554,7 +552,6 @@ impl From<BeginBlockPrecompileError> for PrecompileError {
             | BeginBlockPrecompileError::InvalidSystemCaller
             | BeginBlockPrecompileError::NativeValueRejected
             | BeginBlockPrecompileError::InvalidSystemTxInput(_)
-            | BeginBlockPrecompileError::ValueExceedsU64 { .. }
             | BeginBlockPrecompileError::ProposerNotConsensusParticipant { .. }
             | BeginBlockPrecompileError::IdenticalReplayUnexpectedProgress { .. }
             | BeginBlockPrecompileError::ProgressGap { .. }
@@ -638,8 +635,6 @@ pub enum ExecutorHookError {
     UnregisteredBoundaryValidator { address: Address },
     #[error("Staking min_stake must be initialized in genesis")]
     StakingMinStakeUninitialized,
-    #[error("genesis validator {address} stake mismatch between ValidatorSet and Staking")]
-    GenesisValidatorStakeMismatch { address: Address },
     #[error("genesis total stake overflow")]
     GenesisTotalStakeOverflow,
     #[error("genesis total_staked mismatch: state={state}, expected={expected}")]
@@ -682,7 +677,6 @@ impl From<ExecutorHookError> for PrecompileError {
             ExecutorHookError::ValidatorSetEpochExceedsU64
             | ExecutorHookError::ValidatorSetEpochOverflow
             | ExecutorHookError::StakingMinStakeUninitialized
-            | ExecutorHookError::GenesisValidatorStakeMismatch { .. }
             | ExecutorHookError::GenesisTotalStakeOverflow
             | ExecutorHookError::GenesisTotalStakedMismatch { .. }
             | ExecutorHookError::ValidatorSetUninitializedInGenesis

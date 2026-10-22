@@ -1,4 +1,5 @@
 use alloy_primitives::{address, Address, B256, U256};
+use alloy_sol_types::SolError;
 
 use outbe_primitives::addresses::{UPDATE_ADDRESS, VOTE_ADDRESS};
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
@@ -8,6 +9,7 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_validatorset::contract::ValidatorSet;
 use outbe_validatorset::ValidatorLifecycle;
 
+use crate::abi::IVote;
 use crate::api::{get_proposal, get_proposal_voters, list_proposals, list_proposals_by_status};
 use crate::constants::VOTING_WINDOW_BLOCKS;
 use crate::errors::VoteError;
@@ -117,12 +119,34 @@ pub(super) fn assert_proposal_view(
     assert_eq!(info.voters_count, voters_count);
 }
 
-/// Asserts that `result` is a revert whose message contains `needle`.
+/// Asserts that `result` reverts for `needle`.
+///
+/// `non-payable` stays an `Error(string)` from the shared dispatcher.
+/// Domain needles use the declared `IVote` selector.
 pub(super) fn assert_reverts_with<T>(result: Result<T>, needle: &str) {
-    assert!(matches!(
-        &result,
-        Err(PrecompileError::Revert(message)) if message.contains(needle)
-    ));
+    if needle == "non-payable" {
+        assert!(matches!(
+            &result,
+            Err(PrecompileError::Revert(message)) if message.contains(needle)
+        ));
+        return;
+    }
+    let selector = match needle {
+        "not an active validator" => IVote::NotValidator::SELECTOR,
+        "voting window is closed" => IVote::VotingClosed::SELECTOR,
+        "not pending" => IVote::NotPending::SELECTOR,
+        "validator has too many pending" => IVote::TooManyPendingByValidator::SELECTOR,
+        "too many pending" => IVote::TooManyPending::SELECTOR,
+        "already voted" => IVote::AlreadyVoted::SELECTOR,
+        other => panic!("no IVote selector for {other}"),
+    };
+    match result {
+        Err(PrecompileError::RevertBytes(bytes)) if bytes.len() >= 4 => {
+            assert_eq!(&bytes[..4], &selector, "selector mismatch for {needle}");
+        }
+        Err(other) => panic!("expected typed revert for {needle}, got {other:?}"),
+        Ok(_) => panic!("expected typed revert for {needle}"),
+    }
 }
 
 /// Runs the begin-block tally one block after the voting window of a proposal

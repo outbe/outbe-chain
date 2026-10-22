@@ -2,6 +2,31 @@
 pragma solidity ^0.8.30;
 
 interface ITribute {
+    error TributeNotFound();
+    error TributeAlreadyExists();
+    error InvalidOwner();
+    error SettlementAmountMustBePositive();
+    error WorldwideDaySealed();
+    error OwnerBalanceOverflow();
+    error QueryLimitExceeded();
+    error DayResponseScopeMismatch();
+    error EntityIdDerivation(string value);
+    error CalculationView(string value);
+    error WorldwideDayNotCompletedAndEmpty();
+    error PrivateAmountReadFailed(string value);
+    error CanonicalIdentityMismatch(uint256 expected, uint256 found);
+    error InvalidLeague(uint16 value);
+    error MetadosisNotCompleted();
+    error NodCreationWindowExpired();
+    error CallerNotTributeOwner();
+    error EntryPriceUnavailable(uint32 priceDay, uint16 currency);
+    error FormingWindowOverflow();
+    error LookbackWindowOverflow();
+    error OfferingWindowOverflow();
+    error DurationOverflow(string label);
+    error TributeStateChangedAfterLoading();
+    error LysisArithmetic(string reason);
+
     event TributeIssued(
         address indexed owner,
         uint256 tributeId,
@@ -15,9 +40,17 @@ interface ITribute {
 
     event TributeWorldwideDaySealed(uint32 indexed worldwideDay, bool isSealed);
 
+    event WorldwideDayStarted(
+        uint32 indexed worldwideDay,
+        uint32 indexed day,
+        uint64 formingStart,
+        uint64 formingEnd,
+        uint64 offeringsStart,
+        uint64 offeringEnd
+    );
+
     /// @notice Canonical projection event for certified Lysis retirement and
-    /// the two closed Metadosis terminal authorities (empty missed OFFERING or
-    /// exact-aggregate capacity forfeiture). No arbitrary FAILED day may emit it.
+    /// Metadosis terminal authorities.
     event TributePartitionRetired(uint32 indexed worldwideDay);
 
     event CertifiedTributePartitionRetired(
@@ -40,6 +73,11 @@ interface ITribute {
         external
         view
         returns (uint32 tributeCount, bytes memory tributeNominalTotalMinor, bool isSealed);
+    function getWorldwideDay(uint32 wwd)
+        external
+        view
+        returns (uint32 day, uint64 formingStart, uint64 formingEnd, uint64 offeringsStart, uint64 offeringEnd);
+    function getActiveWorldwideDays() external view returns (uint32[] memory wwds);
     function getTributesByOwner(address owner) external view returns (uint256[] memory tributeIds);
     function getTributesByDay(uint32 worldwideDay) external view returns (uint256[] memory tributeIds);
     function getLeague(uint256 tributeId) external view returns (uint16 league);

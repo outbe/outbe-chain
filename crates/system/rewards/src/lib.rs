@@ -24,6 +24,7 @@ pub mod lifecycle;
 pub mod precompile;
 pub mod runtime;
 pub mod schema;
+mod state;
 #[cfg(test)]
 mod test_support;
 

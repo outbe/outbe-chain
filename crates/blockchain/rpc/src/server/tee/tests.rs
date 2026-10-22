@@ -182,7 +182,13 @@ fn upgrade_candidate_preserves_order_repeated_binding_read_and_short_circuit() {
     // Missing policy rejects before even the mismatched candidate context read.
     let missing = HashMapStorageProvider::new_with_chain_identity(TESTNET_CHAIN_ID, GENESIS);
     let (result, reads) = check(&missing, &context, false, None);
-    assert!(result.unwrap_err().contains("policy is not installed"));
+    assert_eq!(
+        result.unwrap_err(),
+        outbe_primitives::error::PrecompileError::from(
+            outbe_teeregistry::errors::TeeRegistryError::V1PolicyNotInstalled
+        )
+        .to_string()
+    );
     assert_eq!(reads.len(), 1);
 }
 #[test]

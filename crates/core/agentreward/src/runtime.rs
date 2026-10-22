@@ -1,8 +1,10 @@
+use crate::constants::AGENT_DISCOUNT_PCT;
 use crate::errors::AgentRewardError;
 use crate::precompile::IAgentReward;
 use crate::schema::{AgentRewardContract, RewardPool};
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::error::Result;
+use outbe_primitives::markup::marked_down;
 use outbe_primitives::storage::dsl::Map;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
@@ -23,6 +25,8 @@ impl AgentRewardContract<'_> {
             self.waa_addresses.write(&idx_key, address)?;
             self.waa_address_count.write(&day, addr_count + 1)?;
         }
+        let total = self.waa_total_count.read(&day)?;
+        self.waa_total_count.write(&day, total + 1)?;
         self.waa_tribute_counts.write(&key, count + 1)
     }
 
@@ -41,6 +45,8 @@ impl AgentRewardContract<'_> {
             self.sra_addresses.write(&idx_key, address)?;
             self.sra_address_count.write(&day, addr_count + 1)?;
         }
+        let total = self.sra_total_count.read(&day)?;
+        self.sra_total_count.write(&day, total + 1)?;
         self.sra_tribute_counts.write(&key, count + 1)
     }
 
@@ -70,6 +76,16 @@ impl AgentRewardContract<'_> {
         }
     }
 
+    /// The claimable reward of a pool summed over its addresses.
+    pub fn pool_claimable_total(&self, pool: RewardPool) -> Result<U256> {
+        self.claimable_total_minor.read(&(pool as u8))
+    }
+
+    /// The part of the pool's queued day pools not yet credited.
+    pub fn pool_pending_total(&self, pool: RewardPool) -> Result<U256> {
+        self.pending_total_minor.read(&(pool as u8))
+    }
+
     /// Adds amount to an address's claimable reward in one pool.
     pub fn add_claimable_reward(
         &mut self,
@@ -90,6 +106,14 @@ impl AgentRewardContract<'_> {
         address: Address,
         amount: U256,
     ) -> Result<()> {
+        let previous = self.get_pool_claimable_reward(pool, address)?;
+        let total = self
+            .claimable_total_minor
+            .read(&(pool as u8))?
+            .checked_sub(previous)
+            .and_then(|rest| rest.checked_add(amount))
+            .ok_or(AgentRewardError::PoolTotalMismatch)?;
+        self.claimable_total_minor.write(&(pool as u8), total)?;
         match pool {
             RewardPool::Waa => self.waa_claimable_minor.write(&address, amount),
             RewardPool::Sra => self.sra_claimable_minor.write(&address, amount),
@@ -106,8 +130,9 @@ impl AgentRewardContract<'_> {
     /// own risk control. The part that the agent does not claim keeps accruing.
     ///
     /// The Gem carries the caller's `(issuance, reference)` currencies. Its entry
-    /// price is the previous UTC day's COEN VWAP in the reference currency, which
-    /// must be an Oracle reference currency.
+    /// price is the previous UTC day's COEN VWAP in the reference currency less
+    /// [`AGENT_DISCOUNT_PCT`]; its call price marks up the full VWAP. The reference
+    /// currency must be an Oracle reference currency.
     ///
     /// Any failure reverts the call and leaves the balance intact. A missing VWAP
     /// waits for the next day, which brings a new VWAP with it.
@@ -179,7 +204,7 @@ impl AgentRewardContract<'_> {
             }
         }
         self.waa_address_count.write(&day, 0)?;
-        Ok(())
+        self.waa_total_count.write(&day, 0)
     }
 
     /// Clears SRA tribute counts and address list for a day. The distribution
@@ -196,7 +221,7 @@ impl AgentRewardContract<'_> {
             }
         }
         self.sra_address_count.write(&day, 0)?;
-        Ok(())
+        self.sra_total_count.write(&day, 0)
     }
 }
 
@@ -232,9 +257,11 @@ pub(crate) fn issue_reward_gem(
 ) -> Result<U256> {
     let (owner, load) = recipient;
     outbe_oracle::api::check_reference_currency_with_storage(storage.clone(), reference_currency)?;
-    let entry_price = resolve_gem_entry_price(storage, reference_currency)?.ok_or(
+    let vwap = previous_day_vwap(storage, reference_currency)?.ok_or(
         AgentRewardError::MissingPreviousDayPrice(reference_currency),
     )?;
+    let entry_price =
+        marked_down(vwap, AGENT_DISCOUNT_PCT).ok_or(AgentRewardError::EntryPriceOverflow)?;
     outbe_gemfactory::api::issue_gem(
         storage,
         outbe_gemfactory::GemIssueParams {
@@ -243,19 +270,13 @@ pub(crate) fn issue_reward_gem(
             issuance_currency,
             reference_currency,
             entry_price_minor: entry_price,
+            call_anchor_price_minor: vwap,
         },
     )
 }
 
-fn resolve_gem_entry_price(
-    storage: &StorageHandle<'_>,
-    reference_currency: u16,
-) -> Result<Option<U256>> {
-    // Unix seconds must fit u64. Reject malformed timestamps instead of truncating.
-    let now: u64 = storage
-        .timestamp()?
-        .try_into()
-        .map_err(|_| AgentRewardError::TimestampOverflow)?;
+fn previous_day_vwap(storage: &StorageHandle<'_>, reference_currency: u16) -> Result<Option<U256>> {
+    let now = storage.now_secs()?;
     let day = previous_date_key(timestamp_to_date_key(now));
     outbe_oracle::api::get_utc_day_vwap_for_iso(storage.clone(), day, reference_currency)
 }

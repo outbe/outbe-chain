@@ -267,7 +267,7 @@ library BridgeMsgCodec {
     /// @param _minIntexBidQuantity The minimum acceptable intex bid quantity.
     /// @param _commitBondMinor The commit-entry bond (payment-token minor units). 0 disables the
     ///        bond.
-    /// @param _dayState The final worldwide-day state (1 = Green, 2 = Red).
+    /// @param _dayState The final worldwide-day state (1 = Live, 2 = Cancelled).
     /// @return The wire-encoded AUCTION_STAGE_START message.
     function encodeAuctionStageStart(
         uint32 _worldwideDay,
@@ -289,7 +289,7 @@ library BridgeMsgCodec {
             revert PayloadArrayTooLong(_prices.length, type(uint8).max);
         }
         // A live day must price something to bid against. A cancelled one is a closed record.
-        if (_prices.length == 0 && _dayState != uint8(IIntexAuction.WorldwideDayState.Red)) {
+        if (_prices.length == 0 && _dayState != uint8(IIntexAuction.WorldwideDayState.Cancelled)) {
             revert MissingReferencePrices();
         }
         bytes memory rows = abi.encodePacked(uint8(_prices.length));
@@ -376,7 +376,7 @@ library BridgeMsgCodec {
     ///         [callThreshold(4)][minIntexBidQuantity(2)][commitBondMinor(16)][dayState(1)][priceCount(1)]
     /// @param _msg The wire-encoded AUCTION_STAGE_START message.
     /// @return worldwideDay The worldwide day (yyyymmdd).
-    /// @return dayState The final worldwide-day state (Green or Red).
+    /// @return dayState The final worldwide-day state (Live or Cancelled).
     /// @return schedule The decoded commit/reveal/issuance schedule.
     /// @return params The decoded auction params.
     function decodeAuctionParams(bytes calldata _msg)
@@ -393,7 +393,7 @@ library BridgeMsgCodec {
         _assertBodyVersion(_msg);
         worldwideDay = uint32(bytes4(_msg[2:6]));
         uint8 rawDayState = uint8(_msg[68]);
-        if (rawDayState > uint8(IIntexAuction.WorldwideDayState.Red)) revert IIntexAuction.InvalidDayState();
+        if (rawDayState > uint8(IIntexAuction.WorldwideDayState.Cancelled)) revert IIntexAuction.InvalidDayState();
         dayState = IIntexAuction.WorldwideDayState(rawDayState);
         schedule = IIntexAuction.AuctionSchedule({
             commitEnd: uint32(bytes4(_msg[6:10])),

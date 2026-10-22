@@ -156,7 +156,7 @@ fn governments_bootstrapped(world: &mut World) {
     }
     assert!(native_refs.iter().all(|refs| refs == &native_refs[0]));
     wait_repositories(world, &hex::encode(root.body.repo_id), "available");
-    assert_eq!(world.rpc.radicle_registry_state(), Some((1, 1, u32::MAX)));
+    assert_eq!(world.rpc.code_registry_state(), Some((1, 1, u32::MAX)));
     world.state.radicle.genesis_hash = Some(format!("{:#x}", root.body.genesis_hash));
     world.state.radicle.repo_id = Some(rid.to_string());
     world.state.radicle.repo_id_hex = Some(hex::encode(root.body.repo_id));
@@ -187,7 +187,7 @@ fn fresh(world: &mut World) {
 
 #[then("Radicle genesis and the signed validator mesh are ready")]
 fn mesh_ready(world: &mut World) {
-    assert_eq!(world.rpc.radicle_registry_state(), Some((0, 0, u32::MAX)));
+    assert_eq!(world.rpc.code_registry_state(), Some((0, 0, u32::MAX)));
     observe_mesh(world);
 }
 

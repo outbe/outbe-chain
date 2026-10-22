@@ -26,9 +26,14 @@ from genesis_seed_codec import (
     u64_bytes,
     write_mapping_bytes,
 )
+
 from genesis_keccak import keccak256
 from genesis_seed_economy import seed_vault_router
 from genesis_seed_p2p import encode_p2p_address_payload
+
+# `CONSENSUS_VALIDATOR_BOUND` in crates/system/validatorset/src/runtime/mod.rs
+# (`outbe_consensus::bls::MAX_VALIDATORS`).
+CONSENSUS_VALIDATOR_BOUND = 256
 
 
 def seed_validator_set(
@@ -51,7 +56,6 @@ def seed_validator_set(
     epoch_length_blocks = terms.epoch_length_blocks
     epoch_start_timestamp = terms.epoch_start_timestamp
     min_stake = terms.min_stake
-    validator_stake = terms.validator_stake
     radicle_node_ids = [
         radicle_node_id_bytes(validator.get("radicle_node_id"), validator_index=index)
         for index, validator in enumerate(validators)
@@ -65,7 +69,15 @@ def seed_validator_set(
             config.get("owner", "0x0000000000000000000000000000000000000000")
         ),
     )
-    storage.set_slot(1, parse_int(config.get("max_validators", 128)))
+    max_validators = parse_int(config.get("max_validators", 128))
+    # Same bound as ValidatorSet::set_config_max_validators. The Oracle slash
+    # window processes at most this many registered validators.
+    if max_validators > CONSENSUS_VALIDATOR_BOUND:
+        raise ValueError(
+            f"validator_set.max_validators {max_validators} exceeds the consensus "
+            f"bound {CONSENSUS_VALIDATOR_BOUND}"
+        )
+    storage.set_slot(1, max_validators)
     if "epoch_duration" in config:
         raise ValueError(
             "validator_set.epoch_duration is deprecated; use config.epochLengthBlocks"
@@ -105,7 +117,7 @@ def seed_validator_set(
 
         storage.set_mapping_b256(5, address_bytes(addr), pk[:32])
         storage.set_mapping_b256(6, address_bytes(addr), pk_hi)
-        storage.set_mapping(7, address_bytes(addr), validator_stake)
+        # Slot 7 is reserved. Current bonded stake is Staking mapping slot 3.
         storage.set_mapping(8, address_bytes(addr), 2)  # ACTIVE
         storage.set_mapping(13, address_bytes(addr), 0)
         storage.set_mapping(16, address_bytes(addr), index)
@@ -164,7 +176,7 @@ def seed_rewards(storage: StorageBuilder, genesis_timestamp: int):
     Rewards storage layout:
       slot 0: genesis_utc_day (uint32 yyyymmdd of genesis timestamp).
 
-    NOTE: `genesis_utc_day` moved from slot 1 to slot 0 when the leading
+    Layout history: `genesis_utc_day` moved from slot 1 to slot 0 when the leading
     `pending_rewards` field was removed (PR #12 / 941c4eb). The runtime also
     lazily anchors this value at block 0 via `rewards::ensure_genesis_anchor`
     (= timestamp_to_date_key(block0.timestamp)). Seeding it here keeps genesis
@@ -219,16 +231,13 @@ def _seed_founders(genesis, seed, validators, alloc):
         validator_storage.entries
     )
 
-    # VaultRouter owner: validator0 by default (overridable via
-    # seed["vault_router"]["owner"]). The owner can later register vaults
-    # and liquidity sources/targets on the precompile.
-    vault_owner = seed.get("vault_router", {}).get("owner", validators[0]["address"])
+    # Seed only factory liquidity routes. Vault registration requires governance.
     vault_router_storage = StorageBuilder()
-    seed_vault_router(vault_router_storage, vault_owner)
+    seed_vault_router(vault_router_storage)
     alloc[VAULT_ROUTER_ADDRESS].setdefault("storage", {}).update(
         vault_router_storage.entries
     )
-    print(f"  VaultRouter: owner={vault_owner}, slot 0 seeded")
+    print("  VaultRouter: factory liquidity routes seeded, no owner or vaults")
 
     # HyperlaneController bootstrap admin: the only caller of the one-shot
     # `initialize`. Validator0 by default (overridable via

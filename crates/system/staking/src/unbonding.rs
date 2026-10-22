@@ -9,6 +9,7 @@ use outbe_validatorset::{ValidatorLifecycle, ValidatorState};
 
 use crate::contract::Staking;
 use crate::errors::StakingError;
+use crate::precompile::IStaking;
 
 impl Staking<'_> {
     pub(crate) fn checked_complete_time(&self, timestamp: u64, period: u64) -> Result<u64> {
@@ -28,14 +29,16 @@ impl Staking<'_> {
             .ok_or_else(|| StakingError::SlashedWithdrawalDelayOverflow.into())
     }
 
+    /// Allocates the next queue index and returns it. A zero amount does not
+    /// allocate an index and does not emit.
     pub(crate) fn enqueue_unbonding(
         &mut self,
         validator: Address,
         amount: U256,
         complete_time: u64,
-    ) -> Result<()> {
+    ) -> Result<Option<u32>> {
         if amount.is_zero() {
-            return Ok(());
+            return Ok(None);
         }
 
         let idx = self.unbonding_count.read()?;
@@ -48,7 +51,7 @@ impl Staking<'_> {
         self.unbonding_next.write(&idx, prev_head_stored)?;
         self.per_val_unbonding_head.write(&validator, idx + 1)?;
 
-        Ok(())
+        Ok(Some(idx))
     }
 
     fn has_pending_unbonding(&self, validator: Address) -> Result<bool> {
@@ -85,8 +88,9 @@ impl Staking<'_> {
     /// zeroes out mature entries, rebuilds the list without them,
     /// and transfers the total claimable amount to the caller.
     pub fn claim_unbonded(&mut self, caller: Address) -> Result<()> {
-        let timestamp = self.storage.timestamp()?.to::<u64>();
+        let timestamp = self.storage.now_secs()?;
         let mut total_claimable = U256::ZERO;
+        let mut paid_entries = Vec::new();
 
         // Walk per-validator linked list (stored = idx + 1, 0 = empty/end)
         let mut current_stored = self.per_val_unbonding_head.read(&caller)?;
@@ -102,6 +106,9 @@ impl Staking<'_> {
                 // Mature: claim it
                 let amount = self.unbonding_amount.read(&idx)?;
                 total_claimable += amount;
+                if !amount.is_zero() {
+                    paid_entries.push((idx, amount));
+                }
                 // Zero the entry (for tail-trim compaction by process_unbonding)
                 self.unbonding_validator.write(&idx, Address::ZERO)?;
                 self.unbonding_amount.write(&idx, U256::ZERO)?;
@@ -136,6 +143,14 @@ impl Staking<'_> {
 
         let mut val_set = ValidatorSet::new(self.storage.clone());
         self.finalize_inactive_if_complete(&mut val_set, caller)?;
+
+        for (index, paid) in paid_entries {
+            self.emit_staking_event(IStaking::UnbondedClaimed {
+                validator: caller,
+                index,
+                paid,
+            })?;
+        }
 
         Ok(())
     }
@@ -198,8 +213,18 @@ impl Staking<'_> {
             self.config_unbonding_period.read()?
         };
         let complete_time = self.checked_complete_time(timestamp, period)?;
-        self.enqueue_unbonding(validator, stake, complete_time)?;
-        val_set.record_unstake(validator, U256::ZERO, U256::ZERO, complete_time)
+        let started = self.enqueue_unbonding(validator, stake, complete_time)?;
+        val_set.record_unstake(validator, U256::ZERO, U256::ZERO, complete_time)?;
+        if let Some(index) = started {
+            self.emit_staking_event(IStaking::UnbondingStarted {
+                validator,
+                index,
+                amount: stake,
+                completeTime: complete_time,
+                automatic: true,
+            })?;
+        }
+        Ok(())
     }
 
     /// Trims zeroed entries from the queue tail only, which keeps the indices

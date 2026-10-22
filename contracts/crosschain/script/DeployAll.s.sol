@@ -85,6 +85,7 @@ contract DeployAll is DeployAdapters, DeployBridge, ConfigureBridge {
             require(lz != address(0), "lz adapter not deployed");
             return lz;
         }
+        require(a == keccak256(""), "ACTIVE_GATEWAY must be lz or hyperlane");
         return lz != address(0) ? lz : hl; // default: prefer LayerZero, else Hyperlane
     }
 }

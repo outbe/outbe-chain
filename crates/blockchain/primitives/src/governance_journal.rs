@@ -373,21 +373,14 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let nested = dir.path().join("nested");
         let path = journal_path(&nested);
-        let exe = std::env::current_exe().expect("current test binary");
 
         for block_number in ["19200", "19201"] {
-            let output = std::process::Command::new(&exe)
-                .arg("--exact")
-                .arg("governance_journal::tests::init_then_record_writes_lines_and_survives_reopen")
-                .arg("--nocapture")
-                .env(CHILD_DIR_ENV, &nested)
-                .env(CHILD_BLOCK_ENV, block_number)
-                .output()
-                .expect("spawn child process");
-            assert!(
-                output.status.success(),
-                "child failed: {}",
-                String::from_utf8_lossy(&output.stderr)
+            crate::journal_writer::append_record_in_reopened_child(
+                "governance_journal::tests::init_then_record_writes_lines_and_survives_reopen",
+                CHILD_DIR_ENV,
+                CHILD_BLOCK_ENV,
+                &nested,
+                block_number,
             );
         }
 

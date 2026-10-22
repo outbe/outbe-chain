@@ -13,6 +13,40 @@ use crate::precompile::dispatch;
 use crate::schema::{GemContract, GemState};
 
 #[test]
+fn timestamp_overflow_rolls_back_settlement_and_rejects_time_views() {
+    let mut provider = provider_at(T_NOW);
+    let gem_id = StorageHandle::enter(&mut provider, |storage| add(&storage, sample_params(ALICE)));
+    let before_storage = provider.storage.clone();
+    let before_events = provider.get_ordered_events().to_vec();
+    for timestamp in [U256::from(u64::MAX) + U256::ONE, U256::MAX] {
+        provider.set_timestamp(timestamp);
+        StorageHandle::enter(&mut provider, |storage| {
+            for data in [
+                IGem::getGemCall { gemId: gem_id }.abi_encode(),
+                IGem::tokenURICall { gemId: gem_id }.abi_encode(),
+            ] {
+                assert!(matches!(call(&storage, data).unwrap_err(),
+                    outbe_primitives::error::PrecompileError::Revert(message)
+                        if message == "timestamp exceeds u64"));
+            }
+            let (item, group) = api::load_pair(&storage, gem_id).unwrap().unwrap();
+            assert!(
+                matches!(api::record_settled(&storage, item, group).unwrap_err(),
+                outbe_primitives::error::PrecompileError::Revert(message)
+                    if message == "timestamp exceeds u64")
+            );
+        });
+        assert_eq!(provider.storage, before_storage);
+        assert_eq!(provider.get_ordered_events(), before_events);
+    }
+    provider.set_timestamp(U256::from(T_NOW + 1));
+    StorageHandle::enter(&mut provider, |storage| {
+        settle(&storage, gem_id);
+        assert_eq!(item(&storage, gem_id).unwrap().settled_at, T_NOW + 1);
+    });
+}
+
+#[test]
 fn precompile_transfer_paths_revert() {
     with_storage(|storage| {
         let gem_id = add(storage, sample_params(ALICE));
@@ -51,8 +85,12 @@ fn precompile_transfer_paths_revert() {
 
         for data in calls {
             let err = dispatch(storage.clone(), &data, ALICE, U256::ZERO).unwrap_err();
-            assert!(
-                format!("{err:?}").contains("non-transferable"),
+            assert_eq!(
+                err.to_string(),
+                outbe_primitives::error::PrecompileError::from(
+                    crate::errors::GemError::NonTransferable
+                )
+                .to_string(),
                 "expected NonTransferable revert, got {err:?}",
             );
         }
@@ -120,9 +158,12 @@ fn precompile_balance_and_owner_views() {
             .abi_encode(),
         )
         .unwrap_err();
-        assert!(
-            format!("{err:?}").contains("index out of bounds"),
-            "{err:?}"
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::GemError::IndexOutOfBounds
+            )
+            .to_string()
         );
 
         let out = call(storage, IGem::totalSupplyCall {}.abi_encode()).unwrap();
@@ -418,6 +459,14 @@ fn config_auto_profile_follows_the_network() {
             GemParams::DEV
         );
     }
+}
+
+/// PROD keeps 2.28 times the entry price. DEV uses 1.04 times the entry price.
+#[test]
+fn config_call_rate_is_pinned_per_profile() {
+    assert_eq!(GemParams::PROD.call_rate, crate::constants::CALL_RATE_PCT);
+    assert_eq!(GemParams::PROD.call_rate, 128);
+    assert_eq!(GemParams::DEV.call_rate, 4);
 }
 
 #[test]

@@ -1,5 +1,8 @@
 //! Error types for the CredisFactory precompile.
 
+use crate::precompile::ICredisFactory;
+use alloy_primitives::Bytes;
+use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
@@ -39,8 +42,6 @@ pub enum CredisFactoryError {
     NothingOutstanding,
     #[error("only the Credis owner can forfeit it")]
     NotCredisOwner,
-    #[error("timestamp exceeds u64")]
-    TimestampOverflow,
     #[error("payoff overflow")]
     PayoffOverflow,
     #[error("asset decimals undecodable")]
@@ -63,8 +64,58 @@ pub enum CredisFactoryError {
     ForfeitureCollateralMismatch,
 }
 
+fn revert_with<E: SolError>(error: E) -> PrecompileError {
+    PrecompileError::RevertBytes(Bytes::from(error.abi_encode()))
+}
+
 impl From<CredisFactoryError> for PrecompileError {
     fn from(err: CredisFactoryError) -> Self {
-        PrecompileError::Revert(err.to_string())
+        use ICredisFactory as I;
+        match err {
+            CredisFactoryError::InvalidAmount => revert_with(I::InvalidAmount {}),
+            CredisFactoryError::CcaStakeMismatch => revert_with(I::CcaStakeMismatch {}),
+            CredisFactoryError::ReservationNotFound => revert_with(I::ReservationNotFound {}),
+            CredisFactoryError::ReservationExpired => revert_with(I::ReservationExpired {}),
+            CredisFactoryError::ReservationCcaMismatch => revert_with(I::ReservationCcaMismatch {}),
+            CredisFactoryError::ZeroIssueTerm => revert_with(I::ZeroIssueTerm {}),
+            CredisFactoryError::InvalidSource => revert_with(I::InvalidSource {}),
+            CredisFactoryError::InvalidOwner => revert_with(I::InvalidOwner {}),
+            CredisFactoryError::CredisAlreadyExists => revert_with(I::CredisAlreadyExists {}),
+            CredisFactoryError::CredisClosed => revert_with(I::CredisClosed {}),
+            CredisFactoryError::PaymentBelowAccruedInterest => {
+                revert_with(I::PaymentBelowAccruedInterest {})
+            }
+            CredisFactoryError::NotCalled => revert_with(I::NotCalled {}),
+            CredisFactoryError::SettlementDeadlineNotPassed => {
+                revert_with(I::SettlementDeadlineNotPassed {})
+            }
+            CredisFactoryError::SettlementDeadlinePassed => {
+                revert_with(I::SettlementDeadlinePassed {})
+            }
+            CredisFactoryError::NothingOutstanding => revert_with(I::NothingOutstanding {}),
+            CredisFactoryError::NotCredisOwner => revert_with(I::NotCredisOwner {}),
+            CredisFactoryError::PayoffOverflow => revert_with(I::PayoffOverflow {}),
+            CredisFactoryError::AssetDecimalsUndecodable => {
+                revert_with(I::AssetDecimalsUndecodable {})
+            }
+            CredisFactoryError::AssetCurrencyUndecodable => {
+                revert_with(I::AssetCurrencyUndecodable {})
+            }
+            CredisFactoryError::AssetMetadataChanged => revert_with(I::AssetMetadataChanged {}),
+            CredisFactoryError::CoenStakeOverflow => revert_with(I::CoenStakeOverflow {}),
+            CredisFactoryError::CredisChangedDuringIssuance => {
+                revert_with(I::CredisChangedDuringIssuance {})
+            }
+            CredisFactoryError::CollateralIncreased => revert_with(I::CollateralIncreased {}),
+            CredisFactoryError::CollateralReleaseMismatch => {
+                revert_with(I::CollateralReleaseMismatch {})
+            }
+            CredisFactoryError::CredisChangedDuringPayment => {
+                revert_with(I::CredisChangedDuringPayment {})
+            }
+            CredisFactoryError::ForfeitureCollateralMismatch => {
+                revert_with(I::ForfeitureCollateralMismatch {})
+            }
+        }
     }
 }

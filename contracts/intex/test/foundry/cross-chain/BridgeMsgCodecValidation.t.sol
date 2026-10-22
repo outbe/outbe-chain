@@ -131,7 +131,7 @@ contract BridgeMsgCodecValidationTest is Test {
         this.exposedDecodeMarkCalled(tooShort);
     }
 
-    function testFuzz_AuctionStageStart_DayStateByteAboveRed_Reverts(uint8 state) public {
+    function testFuzz_AuctionStageStart_DayStateByteAboveCancelled_Reverts(uint8 state) public {
         state = uint8(bound(state, 3, 255));
         bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(
             1, 100, 200, 300, 1e6, 1e6, ReferenceCurrencyPriceLib.one(840, 2e6, 4e6), 5, 6, 7, 1, 9e6, 1

@@ -26,7 +26,7 @@ members = [
     "crates/system/tee",
     "crates/system/teeregistry",
     "crates/system/l2registry",
-    "crates/system/radicleregistry",
+    "crates/system/coderegistry",
     "crates/system/radicle",
     "crates/system/update",
     "crates/system/vote",
@@ -130,7 +130,7 @@ outbe-tee-enclave = { path = "bin/outbe-tee-enclave" }
 outbe-teeregistry = { path = "crates/system/teeregistry" }
 outbe-l2registry = { path = "crates/system/l2registry" }
 outbe-hyperlanecontroller = { path = "crates/system/hyperlanecontroller" }
-outbe-radicleregistry = { path = "crates/system/radicleregistry" }
+outbe-coderegistry = { path = "crates/system/coderegistry" }
 outbe-update = { path = "crates/system/update" }
 outbe-vote = { path = "crates/system/vote" }
 outbe-radicle-runtime = { path = "crates/system/radicle" }
@@ -272,13 +272,13 @@ ark-ff = { version = "0.6", features = ["std"] }
 base64 = "0.22"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-serde_yaml_ng = "0.10"
+serde_yaml_ng = { package = "yaml_serde", version = "=0.10.4" }
 idna = "1.1"
 multibase = "0.9"
 # Compact binary serde format for the node<->enclave wire (postcard): the offer
 # ciphertext rides as length-prefixed raw bytes (1x) instead of a JSON number
 # array (~4x), and alloy U256/Address/B256 serialize as bytes, not hex strings.
-postcard = { version = "1", features = ["use-std"] }
+postcard = { version = "1", default-features = false, features = ["use-std"] }
 
 # CLI / IO
 clap = { version = "4", features = ["derive"] }

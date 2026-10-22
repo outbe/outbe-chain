@@ -19,8 +19,19 @@ interface ICcaRegistry {
         uint64 unbondUnlocksAfter;
     }
 
+    error InvalidAmount();
+    error InvalidName();
+    error NotRegistered();
     /// @notice Thrown when a CCA is not in Active standing.
     error CcaNotActive(address cca, State state);
+    error UnbondPending();
+    error NoUnbond();
+    error Cooldown();
+    error InvalidState(uint8 value);
+    error Arithmetic();
+    error ZeroAddress();
+    error ActiveSetFull();
+    error CustodyShortfall();
 
     /// @notice Bond and unbond amounts are native COEN, 18 decimals.
     event Bonded(address indexed cca, uint256 amountMinor, State state);
@@ -33,5 +44,7 @@ interface ICcaRegistry {
     function claimUnbonded() external;
     function getCca(address cca) external view returns (Cca memory);
     function getCcaState(address cca) external view returns (State);
+    /// @notice Native COEN (18 decimals) bonded across all CCAs, not yet claimed back.
+    function getTotalBonded() external view returns (uint256 bondedMinor);
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 }

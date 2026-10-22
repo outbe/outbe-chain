@@ -83,7 +83,7 @@ contract BodyVersionTest is Test {
         ) = BridgeMsgCodec.decodeAuctionParams(packet);
 
         assertEq(worldwideDay, 42);
-        assertEq(uint8(dayState), uint8(IIntexAuction.WorldwideDayState.Green));
+        assertEq(uint8(dayState), uint8(IIntexAuction.WorldwideDayState.Live));
         assertEq(schedule.commitEnd, 100);
         assertEq(schedule.revealEnd, 200);
         assertEq(schedule.issuanceEnd, 300);

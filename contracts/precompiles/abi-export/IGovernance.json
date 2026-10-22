@@ -931,5 +931,81 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AuthorIndexFull",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EmptyText",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidDiffBase",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidPayload",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidProposalPayload",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidStatus",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidStatusTransition",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotAuthor",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotAuthorized",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ProposalIdExhausted",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ProposalNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TextNotEditableInStatus",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TextTooLarge",
+    "inputs": [
+      {
+        "name": "len",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "max",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
   }
 ]

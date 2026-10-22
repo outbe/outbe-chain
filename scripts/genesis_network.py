@@ -78,7 +78,7 @@ SEED_SECTIONS = (
     "staking",
     "rewards",
     "validator_set",
-    "radicle_registry",
+    "code_registry",
     "metadosis",
     "oracle",
     "tributes",
@@ -86,7 +86,6 @@ SEED_SECTIONS = (
     "gem_profile",
     "nod_profile",
     "credis_profile",
-    "vault_router",
     "contracts",
     "tee_policy",
 )
@@ -130,6 +129,7 @@ TOP_LEVEL_KEYS = {
     "price_feed_rest",
     "price_feed_websocket",
     "feeder_pairs",
+    "feeder_seeds",
     *launch_bundle.DEFAULT_PORTS,
     *SEED_SECTIONS,
 }

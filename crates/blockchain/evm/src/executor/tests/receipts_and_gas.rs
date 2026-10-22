@@ -1,11 +1,11 @@
 use super::*;
 
-mod capacity;
 mod expiry;
 mod factory_approval;
 mod hook_events;
 mod native_sinks;
 mod patch_approval;
+mod rewards;
 mod support;
 
 use support::*;
@@ -355,16 +355,12 @@ fn tee_expiry_worst_case_active_sweep_fits_cycle_tick_budget() {
 }
 
 #[test]
-fn capacity_forfeiture_cycle_tick_keeps_twenty_percent_block_headroom() {
-    let _enclave = outbe_tribute::enclave_client::test_enclave::scope();
-    capacity::run();
-}
-
-#[test]
 fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
     const GENESIS_TS: u64 = 1_704_067_200;
     use outbe_primitives::time::SECONDS_PER_DAY;
-    const DENSE_ADDRESS_COUNT: u64 = 512;
+    // WAA and SRA recipients together fill one block's accrual slice.
+    const DENSE_ADDRESS_COUNT: u64 =
+        outbe_agentreward::constants::ACCRUAL_RECIPIENTS_PER_BLOCK as u64 / 2;
     const DENSE_VALIDATOR_COUNT: u32 = outbe_consensus::bls::MAX_VALIDATORS;
 
     let signer = test_evm_signer();
@@ -376,6 +372,13 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
     let emission_trigger = outbe_cycle::triggers::TriggerId::ProtocolCycle.as_u32();
     let mut state =
         state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
+            assert_eq!(
+                outbe_promislimit::PromisLimitContract::new(storage.clone())
+                    .promis_limit()
+                    .unwrap(),
+                U256::ZERO,
+                "GAS-05 fixture must start with zero carry-over"
+            );
             let genesis_ctx = BlockRuntimeContext::new(
                 BlockContext::new(0, GENESIS_TS, CHAIN_ID, proposer, vec![proposer]),
                 storage.clone(),

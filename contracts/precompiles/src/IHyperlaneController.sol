@@ -9,6 +9,35 @@ pragma solidity ^0.8.30;
 /// in the ISMs themselves. The validator vote target applies every mutation except
 /// `initialize` and `fund` (see the crate README for the JSON payloads).
 interface IHyperlaneController {
+    /// Caller-facing domain revert.
+    error AlreadyInitialized();
+    error NotInitialized();
+    error LocalDomainMissing(uint32 domain);
+    error NotBootstrapAdmin(address caller, address admin);
+    error NotIsmOwner(address caller, address owner);
+    error IsmNotPendingToController(address pending);
+    error NotOwnedByController(address target, address owner);
+    error InvalidAddress();
+    error InvalidDomain();
+    error IsmLengthMismatch();
+    error HookLengthMismatch();
+    error UnknownHook(uint32 domain);
+    error NotActiveValidator(address caller);
+    error SignerMismatch(address validator, address expected, address recovered);
+    error SignerTaken(address signer, address validator);
+    error StaleIndex(uint32 index, uint32 submitted);
+    error InvalidSignatureLength(uint64 length);
+    error UnknownDomain(uint32 domain);
+    error LocalDomainNotAllowed(uint32 domain);
+    error InvalidValidatorCount(uint64 count);
+    error InvalidThreshold(uint8 threshold, uint64 validators);
+    error InvalidValidator(address validator);
+    error EmptyCalls();
+    error ZeroFund();
+    error InsufficientBalance(uint256 required, uint256 available);
+    error UndecodableReturn(string value);
+    error InvalidProposalPayload(string value);
+
     event Initialized(address indexed icaRouter);
     event DomainAdded(uint32 indexed domain, address indexed ism);
     event DomainRemoved(uint32 indexed domain);

@@ -1,8 +1,11 @@
 //! The existing native Merge action and its complete signed refs form one publication.
 use super::{
-    review::{patch_body, AcceptedReviewPublication, Error},
-    CheckpointOwnerSnapshot, NativeSubject, ObjectCommitment, ObjectKind, OwnerRef,
-    PublicationManifest, RefUpdate,
+    review::{
+        patch_body, unpinned_object_commitments, verify_accepted_patch_context,
+        with_legacy_signature, AcceptedReviewPublication, Error, PatchPublicationInput,
+        ReconstructInput,
+    },
+    CheckpointOwnerSnapshot, NativeSubject, OwnerRef, PublicationManifest, RefUpdate,
 };
 use crate::{
     integration::{
@@ -16,8 +19,8 @@ use crate::{
     manager::{FinalizedPatchApproval, FinalizedPatchSigningState, FinalizedPublicationReceipt},
 };
 use commonware_cryptography::{Hasher as _, Sha256};
+use outbe_coderegistry::{payload::PatchVotePayloadV1, PatchApprovalRecord};
 use outbe_primitives::radicle_publication::{PublicationAction, PublicationBody};
-use outbe_radicleregistry::{payload::PatchVotePayloadV1, PatchApprovalRecord};
 use radicle::{
     crypto::{BlsEnvelope, RepositorySubject},
     git,
@@ -61,15 +64,64 @@ impl VerifiedMergePublication {
     }
 }
 
-pub fn prepare_merge_publication(
-    repo: &Repository,
-    state: &FinalizedPatchSigningState,
-    snapshot: &CheckpointOwnerSnapshot,
+with_legacy_signature! {
+    pub fn prepare_merge_publication(
+        repo: &Repository,
+        state: &FinalizedPatchSigningState,
+        snapshot: &CheckpointOwnerSnapshot,
+        accepted_review: &AcceptedReviewPublication,
+        material: &RepositorySigningMaterial,
+        signatures: [&BlsEnvelope; 2],
+        witness: &RepositoryWitnessBundle,
+    ) -> Result<VerifiedMergePublication, Error> {
+        prepare_merge_publication_with(
+            PatchPublicationInput {
+                repo,
+                state,
+                snapshot,
+                material,
+            },
+            accepted_review,
+            signatures,
+            witness,
+        )
+    }
+
+    pub fn verify_merge_publication(
+        repo: &Repository,
+        state: &FinalizedPatchSigningState,
+        snapshot: &CheckpointOwnerSnapshot,
+        accepted_review: &AcceptedReviewPublication,
+        material: &RepositorySigningMaterial,
+        candidate: (&PublicationBody, &PublicationManifest),
+        witness: &RepositoryWitnessBundle,
+    ) -> Result<VerifiedMergePublication, Error> {
+        verify_merge_publication_with(
+            PatchPublicationInput {
+                repo,
+                state,
+                snapshot,
+                material,
+            },
+            accepted_review,
+            candidate,
+            witness,
+        )
+    }
+}
+
+fn prepare_merge_publication_with(
+    input: PatchPublicationInput<'_>,
     accepted_review: &AcceptedReviewPublication,
-    material: &RepositorySigningMaterial,
     signatures: [&BlsEnvelope; 2],
     witness: &RepositoryWitnessBundle,
 ) -> Result<VerifiedMergePublication, Error> {
+    let PatchPublicationInput {
+        repo,
+        state,
+        snapshot,
+        material,
+    } = input;
     let mut body = patch_body(
         state,
         snapshot.checkpoint(),
@@ -77,12 +129,15 @@ pub fn prepare_merge_publication(
         material,
         PublicationAction::Merge,
     )?;
-    let manifest = reconstruct(
-        repo,
-        state.approval(),
-        snapshot,
+    let context = material.review_context(body.previous_receipt_hash.0);
+    let manifest = reconstruct_with(
+        ReconstructInput {
+            repo,
+            approval: state.approval(),
+            snapshot,
+            context: &context,
+        },
         accepted_review,
-        &material.review_context(body.previous_receipt_hash.0),
         signatures,
         |actual| witness.verify(material, actual),
     )?;
@@ -97,12 +152,9 @@ pub fn prepare_merge_publication(
     })
 }
 
-pub fn verify_merge_publication(
-    repo: &Repository,
-    state: &FinalizedPatchSigningState,
-    snapshot: &CheckpointOwnerSnapshot,
+fn verify_merge_publication_with(
+    input: PatchPublicationInput<'_>,
     accepted_review: &AcceptedReviewPublication,
-    material: &RepositorySigningMaterial,
     candidate: (&PublicationBody, &PublicationManifest),
     witness: &RepositoryWitnessBundle,
 ) -> Result<VerifiedMergePublication, Error> {
@@ -115,12 +167,9 @@ pub fn verify_merge_publication(
         BlsEnvelope::from_hex(&manifest.subjects()[0].envelope)?,
         BlsEnvelope::from_hex(&manifest.subjects()[1].envelope)?,
     ];
-    let expected = prepare_merge_publication(
-        repo,
-        state,
-        snapshot,
+    let expected = prepare_merge_publication_with(
+        input,
         accepted_review,
-        material,
         [&signatures[0], &signatures[1]],
         witness,
     )?;
@@ -130,17 +179,46 @@ pub fn verify_merge_publication(
     Ok(expected)
 }
 
-pub(super) fn reconstruct(
-    repo: &Repository,
-    approval: &FinalizedPatchApproval,
-    snapshot: &CheckpointOwnerSnapshot,
+with_legacy_signature! {
+    pub(super) fn reconstruct(
+        repo: &Repository,
+        approval: &FinalizedPatchApproval,
+        snapshot: &CheckpointOwnerSnapshot,
+        accepted_review: &AcceptedReviewPublication,
+        context: &crate::integration::review::ReviewSigningContext,
+        signatures: [&BlsEnvelope; 2],
+        verify: impl FnOnce(
+            &[(RepositorySubject, BlsEnvelope)],
+        ) -> Result<(), crate::integration::signing::Error>,
+    ) -> Result<PublicationManifest, Error> {
+        reconstruct_with(
+            ReconstructInput {
+                repo,
+                approval,
+                snapshot,
+                context,
+            },
+            accepted_review,
+            signatures,
+            verify,
+        )
+    }
+}
+
+fn reconstruct_with(
+    input: ReconstructInput<'_>,
     accepted_review: &AcceptedReviewPublication,
-    context: &crate::integration::review::ReviewSigningContext,
     signatures: [&BlsEnvelope; 2],
     verify: impl FnOnce(
         &[(RepositorySubject, BlsEnvelope)],
     ) -> Result<(), crate::integration::signing::Error>,
 ) -> Result<PublicationManifest, Error> {
+    let ReconstructInput {
+        repo,
+        approval,
+        snapshot,
+        context,
+    } = input;
     let decision = PatchVotePayloadV1::decode(approval.approval.payload.as_bytes())
         .map_err(|_| Error::Context)?;
     let mut old_roots: Vec<_> = snapshot.owner_refs().iter().map(|(_, oid)| *oid).collect();
@@ -161,25 +239,7 @@ pub(super) fn reconstruct(
         (refs_subject, signatures[1].clone()),
     ])?;
     let sigrefs = refs.attach(repo.raw(), signatures[1].clone())?.oid();
-    let new_objects = object_closure(repo.raw(), vec![entry.id, sigrefs, result], false)?;
-    let odb = repo.raw().odb()?;
-    let objects = new_objects
-        .difference(&pinned)
-        .map(|oid| {
-            let object = odb.read((*oid).into())?;
-            let kind = match object.kind() {
-                git::raw::ObjectType::Blob => ObjectKind::Blob,
-                git::raw::ObjectType::Tree => ObjectKind::Tree,
-                git::raw::ObjectType::Commit => ObjectKind::Commit,
-                _ => return Err(Error::Package),
-            };
-            Ok(ObjectCommitment {
-                kind,
-                oid: oid.to_string(),
-                sha256: hex::encode(Sha256::hash(&[object.data()]).0),
-            })
-        })
-        .collect::<Result<Vec<_>, Error>>()?;
+    let objects = unpinned_object_commitments(repo, vec![entry.id, sigrefs, result], &pinned)?;
     let patch = git::Oid::from_sha1(decision.patch_id.0).into();
     let name = git::refs::storage::cob(&owner, &radicle::cob::patch::TYPENAME, &patch)
         .strip_namespace_recursive();
@@ -250,43 +310,16 @@ pub fn verify_accepted_merge_publication(
     verifier: &AcceptedPublicationVerifier,
 ) -> Result<AcceptedMergePublication, Error> {
     let receipt = verifier.receipt();
-    let body = &receipt.receipt().body;
-    let before = previous.checkpoint().receipt();
-    let decision = PatchVotePayloadV1::decode(approval.approval.payload.as_bytes())
-        .map_err(|_| Error::Context)?;
-    if body.action != PublicationAction::Merge
-        || verifier.manifest().subjects().len() != 2
-        || body.proposal_id != approval.approval.proposal_id
-        || body.repo_id != decision.repo_id
-        || body.patch_id != decision.patch_id
-        || body.revision_id != decision.revision_id
-        || body.expected_target_head != decision.expected_target_head
-        || approval.approval.approved_height > receipt.receipt().accepted_height
-        || body.finalized_anchor_height
-            != approval
-                .approval
-                .approved_height
-                .max(before.accepted_height)
-        || before.body.sequence.checked_add(1) != Some(body.sequence)
-        || body.previous_receipt_hash != before.receipt_hash
-        || body.chain_id != before.body.chain_id
-        || body.genesis_hash != before.body.genesis_hash
-        || body.owner_bls_public != before.body.owner_bls_public
-        || body.descriptor_hash != before.body.descriptor_hash
-        || body.players_commitment != before.body.players_commitment
-    {
-        return Err(Error::Context);
-    }
-    let signatures = [
-        BlsEnvelope::from_hex(&verifier.manifest().subjects()[0].envelope)?,
-        BlsEnvelope::from_hex(&verifier.manifest().subjects()[1].envelope)?,
-    ];
-    let expected = reconstruct(
-        repo,
-        approval,
-        previous,
+    let signatures =
+        verify_accepted_patch_context(approval, previous, verifier, PublicationAction::Merge)?;
+    let expected = reconstruct_with(
+        ReconstructInput {
+            repo,
+            approval,
+            snapshot: previous,
+            context: &verifier.review_context(),
+        },
         accepted_review,
-        &verifier.review_context(),
         [&signatures[0], &signatures[1]],
         |actual| verifier.verify_native(actual),
     )?;

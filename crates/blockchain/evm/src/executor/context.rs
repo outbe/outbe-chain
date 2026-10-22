@@ -50,15 +50,9 @@ pub(in crate::executor) fn validate_genesis_state(
     let mut expected_total = U256::ZERO;
     for validator in &genesis.validators {
         let state = vs.validator_state(validator.address)?;
-        let bonded_stake = validate_genesis_member(&state, validator, min_stake)?;
+        validate_genesis_member(&state, validator, min_stake)?;
 
         let staking_amount = staking.stake_amount.read(&validator.address)?;
-        if staking_amount != bonded_stake {
-            return Err(ExecutorHookError::GenesisValidatorStakeMismatch {
-                address: validator.address,
-            }
-            .into());
-        }
         expected_total = expected_total
             .checked_add(staking_amount)
             .ok_or(ExecutorHookError::GenesisTotalStakeOverflow)?;

@@ -44,7 +44,7 @@ use crate::{
 
 mod fixtures;
 use fixtures::{
-    assert_created_then_idempotent, assert_replicas_match, assert_reverts, capped_lease_policy,
+    assert_created_then_idempotent, assert_replicas_match, capped_lease_policy,
     evidence_mutator_calldata, fixed_lease_policy, full_node_public, full_node_registration_intent,
     full_node_signatures, initial_intent_for_manifest, initialization_manifest_for_intent,
     installed_registry, max_lease_renewal, measurement_successor, measurement_transition_intent,

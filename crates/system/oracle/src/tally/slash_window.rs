@@ -34,6 +34,8 @@ pub fn slash_and_reset_counters(oracle: &mut OracleContract, _timestamp: u64) ->
         .into());
     }
 
+    // Reject invalid time before any validator's counters or penalties change.
+    oracle.storage.now_secs()?;
     for addr in validator_addresses {
         close_validator_window(oracle, addr, policy)?;
     }
@@ -102,7 +104,10 @@ fn slash_stake(oracle: &mut OracleContract, addr: Address) -> Result<()> {
         return Ok(());
     }
     // Convert 1e18-scaled fraction to percent: fraction * 100 / 1e18
-    let slash_pct = (slash_fraction * U256::from(100u64) / SCALE_1E18).to::<u64>();
+    // A panic here would stop every node on the same block. An error only
+    // fails this soft phase.
+    let slash_pct = u64::try_from(slash_fraction.saturating_mul(U256::from(100u64)) / SCALE_1E18)
+        .map_err(|_| OracleError::SlashPercentOutOfRange { slash_fraction })?;
     if slash_pct > 0 {
         let mut staking = outbe_staking::contract::Staking::new(oracle.storage.clone());
         staking.slash_stake(addr, slash_pct)?;

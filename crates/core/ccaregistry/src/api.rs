@@ -23,10 +23,15 @@ pub fn is_active(storage: &StorageHandle<'_>, cca: Address) -> Result<bool> {
 
 /// Reverts unless `cca` is recorded in `Active` standing.
 pub fn require_active_cca(storage: &StorageHandle<'_>, cca: Address) -> Result<()> {
-    if is_active(storage, cca)? {
+    let record = CcaContract::new(storage.clone()).load(cca)?;
+    if record.state == ICcaRegistry::State::Active {
         Ok(())
     } else {
-        Err(CcaError::CcaNotActive(cca).into())
+        Err(CcaError::CcaNotActive {
+            cca,
+            state: record.state,
+        }
+        .into())
     }
 }
 
@@ -47,6 +52,11 @@ pub fn get_cca(storage: &StorageHandle<'_>, cca: Address) -> Result<ICcaRegistry
         bondedMinor: record.bonded_minor,
         unbondUnlocksAfter: record.unbond_unlocks_after,
     })
+}
+
+/// Native COEN bonded across all records and not yet claimed back.
+pub fn total_bonded(storage: &StorageHandle<'_>) -> Result<U256> {
+    CcaContract::new(storage.clone()).total_bonded_minor.read()
 }
 
 /// Positive net Gratis weights for CCAs active at the time of settlement.

@@ -8,9 +8,9 @@ import pathlib
 import unittest
 from contextlib import redirect_stdout
 
-from genesis_seed_alloc import seed_governments_descriptor, seed_radicle_registry
+from genesis_seed_alloc import seed_governments_descriptor, seed_code_registry
 from genesis_seed_codec import (
-    RADICLE_REGISTRY_ADDRESS,
+    CODE_REGISTRY_ADDRESS,
     StorageBuilder,
     data_slot,
     hex32,
@@ -37,7 +37,7 @@ class GovernmentsGenesisTests(unittest.TestCase):
     def test_seeded_words_match_p0_descriptor_and_rust_storage_fixture(self):
         base = genesis()
         storage = StorageBuilder()
-        seed_radicle_registry(storage, configuration())
+        seed_code_registry(storage, configuration())
         seed_governments_descriptor(base, storage, configuration())
         descriptor = bytes.fromhex(base["config"]["radicleGovernments"][2:])
         self.assertEqual(
@@ -55,7 +55,7 @@ class GovernmentsGenesisTests(unittest.TestCase):
         self.assertEqual(stored[: len(descriptor)], descriptor)
         fixture = (
             pathlib.Path(__file__).parents[1]
-            / "crates/system/radicleregistry/tests/fixtures/governments-genesis-storage.json"
+            / "crates/system/coderegistry/tests/fixtures/governments-genesis-storage.json"
         )
         self.assertEqual(
             json.loads(fixture.read_text()),
@@ -68,17 +68,17 @@ class GovernmentsGenesisTests(unittest.TestCase):
 
     def test_real_seed_pipeline_is_opt_in_and_commits_descriptor(self):
         with redirect_stdout(io.StringIO()):
-            enabled = apply_seed(genesis(), {"radicle_registry": configuration()})
+            enabled = apply_seed(genesis(), {"code_registry": configuration()})
             disabled = apply_seed(
-                genesis(), {"radicle_registry": {"max_repositories": 8}}
+                genesis(), {"code_registry": {"max_repositories": 8}}
             )
-        account = enabled["alloc"][RADICLE_REGISTRY_ADDRESS]
+        account = enabled["alloc"][CODE_REGISTRY_ADDRESS]
         self.assertEqual(account["code"], "0xef")
         self.assertIn(hex32(10), account["storage"])
         self.assertIn("radicleGovernments", enabled["config"])
         self.assertNotIn("radicleGovernments", disabled["config"])
         self.assertEqual(
-            disabled["alloc"][RADICLE_REGISTRY_ADDRESS]["storage"], {hex32(5): hex32(8)}
+            disabled["alloc"][CODE_REGISTRY_ADDRESS]["storage"], {hex32(5): hex32(8)}
         )
 
     def test_dkg_window_uses_effective_prepare_and_preserves_legacy(self):

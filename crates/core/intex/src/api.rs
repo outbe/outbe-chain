@@ -54,7 +54,7 @@ pub fn call_stamp(storage: &StorageHandle<'_>, record: &SeriesRecord) -> Result<
 
 /// The series' state as of this block.
 pub fn state(storage: &StorageHandle<'_>, record: &SeriesRecord) -> Result<IntexState> {
-    let now = storage.timestamp()?.to::<u64>();
+    let now = storage.now_secs()?;
     Ok(call_stamp(storage, record)?.state(now))
 }
 

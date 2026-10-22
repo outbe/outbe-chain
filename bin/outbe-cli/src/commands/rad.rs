@@ -3,7 +3,7 @@
 //! A stock `rad auth` writes a config that points at the public Radicle seeds
 //! and seeds every repository it is offered. Neither is right for an Outbe
 //! network: the peers are this chain's validators, and the repositories worth
-//! holding are the ones registered in the `RadicleRegistry` precompile.
+//! holding are the ones registered in the `CodeRegistry` precompile.
 //!
 //! `rad init` rewrites the network-facing part of that config from chain
 //! state and leaves the identity keys untouched. It reads the validator set,

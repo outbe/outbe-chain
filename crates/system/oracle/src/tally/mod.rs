@@ -19,9 +19,11 @@ pub use cross_rate::to_cross_rate;
 pub use slash_window::slash_and_reset_counters;
 
 /// Maximum validator records processed by the receipt-visible Oracle slash-window
-/// system transaction. The configured genesis maximum is 128. An explicit cap
-/// makes the gas bound of the mandatory phase protocol-visible.
-pub const MAX_ORACLE_SLASH_WINDOW_VALIDATORS: usize = 128;
+/// system transaction. It is the bound of `config_max_validators`, so every
+/// registry that registration admits fits. An explicit cap makes the gas bound
+/// of the mandatory phase protocol-visible.
+pub const MAX_ORACLE_SLASH_WINDOW_VALIDATORS: usize =
+    outbe_validatorset::runtime::CONSENSUS_VALIDATOR_BOUND as usize;
 
 /// A single vote entry in a ballot for one trading pair.
 #[derive(Clone, Debug)]

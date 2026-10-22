@@ -1,6 +1,8 @@
 //! Error types for the Gem precompile.
 
-use alloy_primitives::{B256, U256};
+use crate::precompile::IGem;
+use alloy_primitives::{Bytes, B256, U256};
+use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 use thiserror::Error;
@@ -56,6 +58,9 @@ pub enum GemError {
 
     #[error("gem group {group} member slot {slot} is empty during removal")]
     EmptyGroupSlotOnRemoval { group: B256, slot: u32 },
+
+    #[error("Gem state changed after loading")]
+    GemStateChangedAfterLoading,
 }
 
 /// Fatal errors that the Gem runtime returns.
@@ -81,9 +86,46 @@ pub enum GemFatalError {
     UnpaidLoadUnderflow { group: B256 },
 }
 
+fn revert_with<E: SolError>(error: E) -> PrecompileError {
+    PrecompileError::RevertBytes(Bytes::from(error.abi_encode()))
+}
+
 impl From<GemError> for PrecompileError {
     fn from(value: GemError) -> Self {
-        PrecompileError::Revert(value.to_string())
+        use IGem as I;
+        match value {
+            GemError::NonTransferable => revert_with(I::NonTransferable {}),
+            GemError::GemNotFound => revert_with(I::GemNotFound {}),
+            GemError::AlreadySettled => revert_with(I::AlreadySettled {}),
+            GemError::IndexOutOfBounds => revert_with(I::IndexOutOfBounds {}),
+            GemError::AlreadyExists => revert_with(I::AlreadyExists {}),
+            GemError::ZeroOwner => revert_with(I::ZeroOwner {}),
+            GemError::UnknownProfileSelector(value) => {
+                revert_with(I::UnknownProfileSelector { value })
+            }
+            GemError::GroupExistenceMismatch {
+                group_id,
+                member_count,
+            } => revert_with(I::GroupExistenceMismatch {
+                groupId: group_id.to_u256(),
+                memberCount: member_count,
+            }),
+            GemError::TotalSupplyOverflow => revert_with(I::TotalSupplyOverflow {}),
+            GemError::SettledCountOverflow => revert_with(I::SettledCountOverflow {}),
+            GemError::TotalSupplyUnderflow => revert_with(I::TotalSupplyUnderflow {}),
+            GemError::SettledCountUnderflow { group_id } => revert_with(I::SettledCountUnderflow {
+                groupId: group_id.to_u256(),
+            }),
+            GemError::EmptyGroup { group } => revert_with(I::EmptyGroup { group }),
+            GemError::GemNotInGroup { gem_id, group } => revert_with(I::GemNotInGroup {
+                gemId: gem_id,
+                group,
+            }),
+            GemError::EmptyGroupSlotOnRemoval { group, slot } => {
+                revert_with(I::EmptyGroupSlotOnRemoval { group, slot })
+            }
+            GemError::GemStateChangedAfterLoading => revert_with(I::GemStateChangedAfterLoading {}),
+        }
     }
 }
 

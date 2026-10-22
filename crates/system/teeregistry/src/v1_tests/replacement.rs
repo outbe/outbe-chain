@@ -1,4 +1,7 @@
+use super::fixtures::assert_revert_bytes;
 use super::*;
+use alloy_sol_types::SolError;
+use outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1;
 use std::{
     os::unix::net::UnixListener,
     path::Path,
@@ -347,11 +350,13 @@ fn replacement_candidate_intent_reaches_registry_unchanged_and_never_reuses_cons
             storage
                 .set_block_timestamp(U256::from(NOW + 2_400))
                 .unwrap();
-            assert_reverts(
+            assert_revert_bytes(
                 registry.renew_enclave_after_verifier_for_test(
                     signed_old_renewal.with_verdict(accepted.clone()),
                 ),
-                "superseded",
+                ITeeRegistryV1::RenewalTargetsDifferentIdentity {}
+                    .abi_encode()
+                    .as_slice(),
             );
 
             let current = replacement.clone();
@@ -362,11 +367,13 @@ fn replacement_candidate_intent_reaches_registry_unchanged_and_never_reuses_cons
                 NOW + 6_000,
             );
             let signed_attempted_reuse = validator.sign(&attempted_reuse);
-            assert_reverts(
+            assert_revert_bytes(
                 registry.replace_enclave_binding_after_verifier_for_test(
                     signed_attempted_reuse.with_verdict(accepted),
                 ),
-                "already been used",
+                ITeeRegistryV1::SuccessorIdsAlreadyUsed {}
+                    .abi_encode()
+                    .as_slice(),
             );
         },
     );

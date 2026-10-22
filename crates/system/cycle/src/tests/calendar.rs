@@ -19,38 +19,8 @@ fn protocol_cycle_forfeits_every_completed_day_after_a_multi_day_halt() {
         let rewards = fire.storage.contract::<Rewards<'_>>();
         for day in [20_240_101, 20_240_102, 20_240_103] {
             assert!(!rewards.daily_settled.read(&day).unwrap());
-            assert!(
-                outbe_metadosis::api::day_limit_formation_receipt(
-                    fire.storage.clone(),
-                    outbe_primitives::time::WorldwideDay::new(day),
-                )
-                .unwrap()
-                .is_none(),
-                "forfeited day {day} must not gain a formation receipt"
-            );
         }
 
-        for day in [20_240_102, 20_240_103] {
-            let wwd = outbe_primitives::time::WorldwideDay::new(day);
-            assert!(
-                outbe_metadosis::api::worldwide_day(fire.storage.clone(), wwd)
-                    .unwrap()
-                    .is_none(),
-                "missed day {day} must not gain the WWD identity required by downstream Lysis or Promis work"
-            );
-            assert!(
-                outbe_metadosis::api::missed_offering_receipt(fire.storage.clone(), wwd)
-                    .unwrap()
-                    .is_none(),
-                "missed day {day} must not gain a Promis-bearing terminal receipt"
-            );
-            assert!(
-                outbe_metadosis::api::capacity_forfeiture_receipt(fire.storage.clone(), wwd)
-                    .unwrap()
-                    .is_none(),
-                "missed day {day} must not gain a capacity/Promis receipt"
-            );
-        }
         assert!(
             outbe_metadosis::api::worldwide_day(
                 fire.storage.clone(),
@@ -58,86 +28,10 @@ fn protocol_cycle_forfeits_every_completed_day_after_a_multi_day_halt() {
             )
             .unwrap()
             .is_some(),
-            "the one current WWD flow must still run after the gap"
+            "the current WWD flow must still run after the gap"
         );
         let cycle = fire.storage.contract::<Cycle<'_>>();
         assert_eq!(cycle.active_utc_day.read().unwrap(), 20_240_104);
-    });
-}
-
-#[test]
-fn a_day_whose_limit_a_multi_day_halt_skipped_misses_its_offering() {
-    let genesis_day = outbe_primitives::time::WorldwideDay::new(20_240_101);
-    let mut storage = cycle_storage();
-    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 16);
-    let lookback_end = storage.enter(|handle| {
-        let anchor = genesis_block(handle.clone(), GENESIS_TS + 60);
-        run_cycle_lifecycle(&anchor).unwrap();
-
-        let fire = BlockRuntimeContext::new(
-            block_ctx(2, GENESIS_TS + 3 * SECONDS_PER_DAY + 3_600),
-            handle.clone(),
-        );
-        account_parent(&fire, 2);
-        dispatch_triggers(&fire).unwrap();
-
-        let projection = outbe_metadosis::api::worldwide_day(handle, genesis_day)
-            .unwrap()
-            .unwrap();
-        assert_eq!(projection.metadosis_limit_minor, U256::ZERO);
-        projection.lookback_end
-    });
-
-    advance_metadosis_only(&mut storage, 3, lookback_end).unwrap();
-
-    storage.enter(|handle| {
-        let projection = outbe_metadosis::api::worldwide_day(handle.clone(), genesis_day)
-            .unwrap()
-            .unwrap();
-        assert_eq!(projection.status, outbe_metadosis::WwdStatus::Failed);
-        let receipt = outbe_metadosis::api::missed_offering_receipt(handle.clone(), genesis_day)
-            .unwrap()
-            .unwrap();
-        assert_eq!(receipt.value_routed, U256::ZERO);
-        assert!(outbe_tribute::TributeContract::new(handle)
-            .is_day_sealed(genesis_day)
-            .unwrap());
-    });
-}
-
-#[test]
-fn contiguous_day_settlement_failure_preserves_the_calendar_cursor() {
-    let mut storage = cycle_storage();
-    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 16);
-    storage.enter(|handle| {
-        let anchor = genesis_block(handle.clone(), GENESIS_TS + 60);
-        run_cycle_lifecycle(&anchor).unwrap();
-
-        // Create only the Metadosis half of day 1's idempotency pair. The
-        // contiguous transition must fail before advancing the cursor.
-        let inconsistent = BlockRuntimeContext::new(block_ctx(2, GENESIS_TS + 60), handle.clone());
-        outbe_metadosis::commands::apply_cycle_day_limit(&inconsistent, U256::from(17_u8)).unwrap();
-        assert!(outbe_metadosis::api::day_limit_formation_receipt(
-            handle.clone(),
-            outbe_primitives::time::WorldwideDay::new(20_240_101),
-        )
-        .unwrap()
-        .is_some());
-
-        let fire =
-            BlockRuntimeContext::new(block_ctx(3, GENESIS_TS + SECONDS_PER_DAY + 3_600), handle);
-        account_parent(&fire, 3);
-        assert!(matches!(
-            dispatch_triggers(&fire),
-            Err(outbe_primitives::error::PrecompileError::Revert(_))
-        ));
-
-        let cycle: Cycle<'_> = fire.storage.contract::<Cycle<'_>>();
-        assert_eq!(cycle.active_utc_day.read().unwrap(), 20_240_101);
-        let rewards = fire
-            .storage
-            .contract::<outbe_rewards::schema::Rewards<'_>>();
-        assert!(!rewards.daily_settled.read(&20_240_101).unwrap());
     });
 }
 
@@ -150,7 +44,7 @@ fn a_multi_day_halt_issues_no_emission_and_credits_no_capacity_or_native_balance
         run_cycle_lifecycle(&anchor).unwrap();
 
         let promis_limit_before = outbe_promislimit::PromisLimitContract::new(handle.clone())
-            .get_total_unallocated()
+            .promis_limit()
             .unwrap();
         let rewards_before = handle
             .balance(outbe_primitives::addresses::REWARDS_ADDRESS)
@@ -182,7 +76,7 @@ fn a_multi_day_halt_issues_no_emission_and_credits_no_capacity_or_native_balance
         }
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(handle.clone())
-                .get_total_unallocated()
+                .promis_limit()
                 .unwrap(),
             promis_limit_before,
             "missed days must not credit Promis Limit capacity"

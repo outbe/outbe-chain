@@ -38,7 +38,13 @@ fn erc20_settle_refuses_a_transfer_that_moves_nothing() {
             snapshotId: U256::ZERO,
         };
         let res = crate::precompile::dispatch(storage.clone(), &call.abi_encode(), BOB, U256::ZERO);
-        assert!(err_msg(res).contains("unexpected amount"));
+        assert_eq!(
+            res.unwrap_err().to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_vaultrouter::settlement::SettlementError::AmountMismatch
+            )
+            .to_string()
+        );
         assert_eq!(gem_view(storage, gem_id).item.state, GemState::Issued as u8);
     });
 }
@@ -65,7 +71,13 @@ fn erc20_settle_rejects_a_foreign_currency_asset_before_paying() {
                 snapshot_id: U256::ZERO,
             },
         );
-        assert!(err_msg(res).contains("does not match"));
+        assert_eq!(
+            res.unwrap_err().to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_vaultrouter::settlement::SettlementError::CurrencyMismatch { iso_code: 978 }
+            )
+            .to_string()
+        );
         assert_eq!(gem_view(storage, gem_id).item.state, GemState::Issued as u8);
     });
 }
@@ -150,8 +162,17 @@ fn the_settlement_minimum_precedes_asset_and_currency_conversion() {
         // The minimum is one reference minor unit, which a narrower asset and an
         // unfavourable rate still floor away, as they do for Nod.
         for (rate, decimals) in [(None, 0), (fx(1, 2), 6)] {
-            assert!(err_msg(runtime::settlement_units(&item, rate, decimals))
-                .contains("settlement cost rounds to zero"));
+            assert_eq!(
+                runtime::settlement_units(&item, rate, decimals)
+                    .unwrap_err()
+                    .to_string(),
+                outbe_primitives::error::PrecompileError::from(
+                    outbe_vaultrouter::settlement::SettlementError::Rounding(
+                        outbe_primitives::settlement::RoundingError::RoundsToZero
+                    )
+                )
+                .to_string()
+            );
         }
     });
 }
@@ -184,7 +205,13 @@ fn settling_on_an_unregistered_issuance_leg_is_refused() {
                 snapshot_id: U256::ZERO,
             },
         );
-        assert!(err_msg(res).contains("oracle nominal unavailable"));
+        assert_eq!(
+            res.unwrap_err().to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_vaultrouter::settlement::SettlementError::OracleUnavailable
+            )
+            .to_string()
+        );
         assert_eq!(gem_view(storage, gem_id).item.state, GemState::Issued as u8);
     });
 }
@@ -237,7 +264,15 @@ fn settle_rejects_an_asset_with_no_registered_vault() {
                 snapshot_id: U256::ZERO,
             },
         );
-        assert!(err_msg(res).contains("no registered vault"));
+        assert_eq!(
+            res.unwrap_err().to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_vaultrouter::settlement::SettlementError::AssetNotRegistered {
+                    asset: SETTLEMENT_ASSET,
+                }
+            )
+            .to_string()
+        );
     });
 }
 
@@ -288,7 +323,13 @@ fn issue_rejects_an_issuance_code_outside_the_three_digit_range() {
     with_storage(Some(rate), |storage| {
         for iso in [0u16, 1000u16] {
             let res = issue_at_live_rate(storage, ALICE, six_decimal_unit(), iso, 840);
-            assert!(err_msg(res).contains("is not an ISO 4217 currency code"));
+            assert_eq!(
+                res.unwrap_err().to_string(),
+                outbe_primitives::error::PrecompileError::from(
+                    crate::errors::GemFactoryError::InvalidCurrency { currency: iso }
+                )
+                .to_string()
+            );
         }
     });
 }
@@ -316,7 +357,13 @@ fn sending_rejects_a_series_whose_reference_currency_is_unregistered() {
         .unwrap();
         let res =
             runtime::issue_gem_position(storage, ALICE, source_intex_id(), U256::from(SENT_UNITS));
-        assert!(err_msg(res).contains("reference currency"));
+        assert_eq!(
+            res.unwrap_err().to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_oracle::errors::OracleError::NotReferenceCurrency { iso_code: 978 }
+            )
+            .to_string()
+        );
     });
 }
 
@@ -473,7 +520,13 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
                 snapshot_id: quoted,
             },
         );
-        assert!(err_msg(res).contains("unexpected amount"));
+        assert_eq!(
+            res.unwrap_err().to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_vaultrouter::settlement::SettlementError::AmountMismatch
+            )
+            .to_string()
+        );
     });
 
     provider.set_timestamp(U256::from(cutoff + 3_600));
@@ -540,7 +593,15 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
                 snapshot_id: quoted,
             },
         );
-        assert!(err_msg(reference).contains("unexpected amount"));
+        assert_eq!(
+            err_msg(reference),
+            format!(
+                "{:?}",
+                outbe_primitives::error::PrecompileError::from(
+                    outbe_vaultrouter::settlement::SettlementError::AmountMismatch
+                )
+            )
+        );
         assert_eq!(
             gem_view(&storage, gem_id).item.state,
             GemState::Issued as u8
@@ -677,6 +738,7 @@ fn settlement_cost_reads_entry_price_from_the_group() {
                 issuance_currency: 840,
                 reference_currency: 840,
                 entry_price_minor: other_entry,
+                call_anchor_price_minor: other_entry,
             },
         )
         .unwrap();

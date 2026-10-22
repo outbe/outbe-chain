@@ -108,11 +108,10 @@ fn invalid_and_duplicate_issuance_leave_one_canonical_item() {
             )
         })
         .unwrap_err();
-    assert!(matches!(
-        error,
-        PrecompileError::Revert(ref reason)
-            if reason == &NodFactoryError::InvalidOwner.to_string()
-    ));
+    assert_eq!(
+        error.to_string(),
+        PrecompileError::from(NodFactoryError::InvalidOwner).to_string()
+    );
 
     invalid.owner = Address::repeat_byte(0x22);
     let nod_id = world.issue(&invalid);
@@ -148,11 +147,10 @@ fn direct_issuance_beyond_the_issuable_entry_writes_nothing() {
         })
         .unwrap_err();
 
-    assert!(matches!(
-        error,
-        PrecompileError::Revert(ref reason)
-            if reason == &NodFactoryError::EntryPriceOutOfBounds.to_string()
-    ));
+    assert_eq!(
+        error.to_string(),
+        PrecompileError::from(NodFactoryError::EntryPriceOutOfBounds).to_string()
+    );
     assert_eq!(world.provider.storage, storage_before);
     assert_eq!(world.provider.get_ordered_events().len(), events_before);
     let nod_id = outbe_nod::identity::generate_nod_id(input.owner, input.worldwide_day).unwrap();
@@ -305,27 +303,41 @@ fn a_stranger_can_mine_with_the_owners_auth() {
     let nonce = world.pow_nonce(nod_id);
     let stranger = Address::repeat_byte(0x6b);
 
+    let auth = mine_auth(input.owner, input.gratis_load_minor);
+    let call = INodFactory::mineGratisCall {
+        nodId: nod_id.to_u256(),
+        nonce,
+        mac: B256::from(auth.mac),
+        opNonce: auth.op_nonce,
+    };
     let minted = world
         .enter(|storage| {
-            api::mine_gratis(
-                &storage,
-                api::MineGratisRequest {
-                    caller: stranger,
-                    nod_id,
-                    nonce,
-                    auth: mine_auth(input.owner, input.gratis_load_minor),
-                },
-            )
+            crate::precompile::dispatch(storage, &call.abi_encode(), stranger, U256::ZERO)
         })
         .unwrap();
+    let minted = INodFactory::mineGratisCall::abi_decode_returns(&minted).unwrap();
     assert_eq!(
         decrypt_gratis(input.owner, &minted),
         input.gratis_load_minor
     );
-    assert!(world
-        .enter(|storage| nod_api::get_item(&storage, nod_id))
-        .unwrap()
-        .is_none());
+    world.enter(|storage| {
+        assert_eq!(
+            gratis_balance(&storage, input.owner),
+            input.gratis_load_minor
+        );
+        assert!(outbe_gratis::api::balance_ct(storage.clone(), stranger)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            outbe_gratis::api::op_nonce(storage.clone(), input.owner).unwrap(),
+            1
+        );
+        assert_eq!(
+            outbe_gratis::api::op_nonce(storage.clone(), stranger).unwrap(),
+            0
+        );
+        assert!(nod_api::get_item(&storage, nod_id).unwrap().is_none());
+    });
     let exercised = world
         .provider
         .get_ordered_events()

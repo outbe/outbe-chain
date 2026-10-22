@@ -5,7 +5,7 @@
 
 use super::*;
 use crate::precompile::IValidatorSet;
-use alloy_sol_types::SolEvent;
+use alloy_sol_types::{SolError, SolEvent};
 use outbe_primitives::addresses::VALIDATOR_SET_ADDRESS;
 use outbe_primitives::error::Result;
 
@@ -18,6 +18,7 @@ const UNKNOWN: Address = address!("0x00000000000000000000000000000000000000EF");
 fn outcome_text<T: std::fmt::Debug>(result: Result<T>) -> String {
     match result {
         Err(PrecompileError::Revert(message)) => format!("Revert: {message}"),
+        Err(PrecompileError::RevertBytes(bytes)) => super::typed_revert(bytes),
         Err(PrecompileError::Fatal(message)) => format!("Fatal: {message}"),
         other => format!("{other:?}"),
     }
@@ -117,31 +118,49 @@ fn retained_jail(vs: &mut ValidatorSet<'_>) -> Result<()> {
 
 #[test]
 fn punishment_rejects_absent_and_waiting_validators_without_effect() -> Result<()> {
-    let absent = "Revert: validator not registered";
+    let absent = super::typed_revert(IValidatorSet::ValidatorNotRegistered {}.abi_encode());
     assert_without_effect(
         &mut seeded(|_| Ok(()))?,
         |vs| vs.jail_validator(FIRST),
-        absent,
+        absent.as_str(),
     );
     assert_without_effect(
         &mut seeded(|_| Ok(()))?,
         |vs| vs.force_exit_validator(FIRST),
-        absent,
+        absent.as_str(),
     );
     assert_without_effect(
         &mut seeded(|vs| register(vs, FIRST))?,
         |vs| vs.jail_validator(FIRST),
-        "Revert: cannot jail validator with status 0: only ACTIVE, EXITING, UNBONDING, or INACTIVE allowed",
+        &super::typed_revert(
+            IValidatorSet::CannotPunishValidatorStatus {
+                action: "jail".into(),
+                status: 0,
+            }
+            .abi_encode(),
+        ),
     );
     assert_without_effect(
         &mut seeded(|vs| waiting_for_readiness(vs, FIRST))?,
         |vs| vs.force_exit_validator(FIRST),
-        "Revert: cannot force-exit validator with status 1: only ACTIVE, EXITING, UNBONDING, or INACTIVE allowed",
+        &super::typed_revert(
+            IValidatorSet::CannotPunishValidatorStatus {
+                action: "force-exit".into(),
+                status: 1,
+            }
+            .abi_encode(),
+        ),
     );
     assert_without_effect(
         &mut seeded(retained_jail)?,
         |vs| vs.force_exit_validator(FIRST),
-        "Revert: cannot force-exit validator with status 6: only ACTIVE, EXITING, UNBONDING, or INACTIVE allowed",
+        &super::typed_revert(
+            IValidatorSet::CannotPunishValidatorStatus {
+                action: "force-exit".into(),
+                status: 6,
+            }
+            .abi_encode(),
+        ),
     );
     Ok(())
 }
@@ -307,17 +326,23 @@ fn unjail_and_tee_expiry_reject_ineligible_validators_without_effect() -> Result
     assert_without_effect(
         &mut seeded(retained_jail)?,
         |vs| vs.unjail_after_stake_check(FIRST),
-        "Revert: jailed validator is still retained in the current committee",
+        &super::typed_revert(IValidatorSet::JailedValidatorStillRetained {}.abi_encode()),
     );
     assert_without_effect(
         &mut seeded(|vs| participant(vs, FIRST))?,
         |vs| vs.unjail_after_stake_check(FIRST),
-        "Revert: unjailValidator requires JAILED status, got 2",
+        &super::typed_revert(IValidatorSet::UnjailRequiresJailedStatus { status: 2 }.abi_encode()),
     );
     assert_without_effect(
         &mut seeded(|vs| register(vs, FIRST))?,
         |vs| vs.jail_validator_for_tee_expiry(FIRST),
-        &format!("Revert: TEE expiry sweep selected validator {FIRST} with ineligible status 0"),
+        &super::typed_revert(
+            IValidatorSet::TeeExpirySweepIneligibleStatus {
+                addr: FIRST,
+                status: 0,
+            }
+            .abi_encode(),
+        ),
     );
     Ok(())
 }
@@ -327,15 +352,32 @@ fn readiness_checks_lifecycle_before_effects() -> Result<()> {
     assert_without_effect(
         &mut seeded(|_| Ok(()))?,
         |vs| vs.confirm_validator_ready(FIRST),
-        "Revert: validator not registered",
+        &super::typed_revert(IValidatorSet::ValidatorNotRegistered {}.abi_encode()),
     );
     assert_without_effect(
         &mut seeded(|vs| participant(vs, FIRST))?,
         |vs| vs.confirm_validator_ready(FIRST),
-        "Revert: confirmValidatorReady requires PENDING status, got 2",
+        &super::typed_revert(
+            IValidatorSet::ConfirmValidatorReadyRequiresPending { status: 2 }.abi_encode(),
+        ),
     );
     let mut storage = seeded(|vs| waiting_for_readiness(vs, FIRST))?;
-    storage.enter(|storage| ValidatorSet::new(storage).confirm_validator_ready(FIRST))?;
+    let effect = call_effect(&mut storage, |vs| vs.confirm_validator_ready(FIRST));
+    assert_eq!(effect.outcome, "Ok(())");
+    assert_eq!(
+        effect.events,
+        vec![IValidatorSet::ValidatorReadyConfirmed::SIGNATURE_HASH]
+    );
+    let confirmed = storage
+        .get_ordered_events()
+        .iter()
+        .rev()
+        .find_map(|log| IValidatorSet::ValidatorReadyConfirmed::decode_log(log).ok())
+        .expect("ready confirmation log");
+    assert_eq!(confirmed.data.validator, FIRST);
+    let repeat = call_effect(&mut storage, |vs| vs.confirm_validator_ready(FIRST));
+    assert_eq!(repeat.outcome, "Ok(())");
+    assert_eq!(repeat.events, Vec::<B256>::new());
     storage.enter(|storage| -> Result<()> {
         let vs = ValidatorSet::new(storage);
         assert!(vs.val_join_confirmed.read(&FIRST)?);
@@ -353,7 +395,9 @@ fn current_participation_checks_every_voter_before_absent_voters() -> Result<()>
     assert_without_effect(
         &mut seeded(setup)?,
         |vs| vs.record_participation(&[FIRST, SECOND], &[FIRST]),
-        &format!("Revert: voter is not a current consensus participant: {SECOND}"),
+        &super::typed_revert(
+            IValidatorSet::VoterNotConsensusParticipant { addr: SECOND }.abi_encode(),
+        ),
     );
     // No checkpoint: the first absent voter keeps its missed vote.
     let mut storage = seeded(setup)?;
@@ -362,7 +406,9 @@ fn current_participation_checks_every_voter_before_absent_voters() -> Result<()>
     });
     assert_eq!(
         effect.outcome,
-        format!("Revert: absent voter is not a current consensus participant: {SECOND}")
+        super::typed_revert(
+            IValidatorSet::AbsentVoterNotConsensusParticipant { addr: SECOND }.abi_encode(),
+        )
     );
     assert_eq!(effect.mutations, 1);
     let missed =
@@ -377,7 +423,9 @@ fn finalized_participation_requires_registration_only() -> Result<()> {
     assert_without_effect(
         &mut seeded(setup)?,
         |vs| vs.record_finalized_participation(&[FIRST, UNKNOWN], &[]),
-        &format!("Revert: finalized voter is not a registered validator: {UNKNOWN}"),
+        &super::typed_revert(
+            IValidatorSet::FinalizedVoterNotRegistered { addr: UNKNOWN }.abi_encode(),
+        ),
     );
     let mut storage = seeded(setup)?;
     let effect = call_effect(&mut storage, |vs| {
@@ -385,7 +433,9 @@ fn finalized_participation_requires_registration_only() -> Result<()> {
     });
     assert_eq!(
         effect.outcome,
-        format!("Revert: finalized absent voter is not a registered validator: {UNKNOWN}")
+        super::typed_revert(
+            IValidatorSet::FinalizedAbsentVoterNotRegistered { addr: UNKNOWN }.abi_encode()
+        )
     );
     assert_eq!(effect.mutations, 1);
     Ok(())
@@ -396,7 +446,9 @@ fn proposer_and_missed_block_counters_increment_once() -> Result<()> {
     assert_without_effect(
         &mut seeded(|vs| register(vs, FIRST))?,
         |vs| vs.record_proposer(FIRST),
-        &format!("Revert: proposer is not a current consensus participant: {FIRST}"),
+        &super::typed_revert(
+            IValidatorSet::ProposerNotConsensusParticipant { addr: FIRST }.abi_encode(),
+        ),
     );
     let mut storage = seeded(|vs| participant(vs, FIRST))?;
     assert_eq!(
@@ -415,5 +467,128 @@ fn proposer_and_missed_block_counters_increment_once() -> Result<()> {
         ))
     })?;
     assert_eq!(counters, (1, 1));
+    Ok(())
+}
+
+fn pending_logs(storage: &HashMapStorageProvider) -> Vec<Address> {
+    storage
+        .get_ordered_events()
+        .iter()
+        .filter(|log| log.address == VALIDATOR_SET_ADDRESS)
+        .filter_map(|log| IValidatorSet::ValidatorPending::decode_log(log).ok())
+        .map(|event| event.data.validator)
+        .collect()
+}
+
+#[test]
+fn stake_increase_emits_pending_only_when_minimum_is_reached() -> Result<()> {
+    let minimum = U256::from(1_000u64);
+    let mut storage = seeded(|vs| register(vs, FIRST))?;
+    let below = call_effect(&mut storage, |vs| {
+        vs.record_stake_increase(FIRST, U256::from(1u64), minimum)
+    });
+    assert_eq!(below.outcome, "Ok(())");
+    assert_eq!(below.events, Vec::<B256>::new());
+
+    let seed = || seeded(|vs| register(vs, FIRST)).unwrap();
+    let view = |storage: &mut HashMapStorageProvider| {
+        let columns = storage.enter(|storage| -> Result<_> {
+            let vs = ValidatorSet::new(storage);
+            Ok((vs.val_status.read(&FIRST)?, vs.has_pending_set_change()?))
+        });
+        (outcome_text(columns), pending_logs(storage))
+    };
+    let initial = view(&mut seed());
+    let views = HashMapStorageProvider::mutation_prefix_views(
+        seed,
+        |storage| ValidatorSet::new(storage).record_stake_increase(FIRST, minimum, minimum),
+        view,
+    )?;
+    assert!(views.mutations > 0);
+    assert!(views
+        .before_mutation
+        .iter()
+        .all(|before| *before == initial));
+    assert_eq!(views.complete, ("Ok((1, true))".to_string(), vec![FIRST]));
+
+    let mut pending = seeded(|vs| register(vs, FIRST))?;
+    pending.enter(|storage| {
+        ValidatorSet::new(storage).record_stake_increase(FIRST, minimum, minimum)
+    })?;
+    let repeat = call_effect(&mut pending, |vs| {
+        vs.record_stake_increase(FIRST, minimum, minimum)
+    });
+    assert_eq!(repeat.outcome, "Ok(())");
+    assert_eq!(repeat.events, Vec::<B256>::new());
+    Ok(())
+}
+
+#[test]
+fn mark_pending_and_unjail_do_not_emit_validator_pending() -> Result<()> {
+    let mut storage = seeded(|vs| register(vs, FIRST))?;
+    let effect = call_effect(&mut storage, |vs| vs.mark_pending(FIRST));
+    assert_eq!(effect.outcome, "Ok(())");
+    assert_eq!(effect.events, Vec::<B256>::new());
+    assert_eq!(pending_logs(&storage), Vec::<Address>::new());
+
+    let mut unjailed = seeded(|vs| {
+        retained_jail(vs)?;
+        vs.activate_reshared_set(&[], B256::ZERO)
+    })?;
+    let effect = call_effect(&mut unjailed, |vs| vs.unjail_after_stake_check(FIRST));
+    assert_eq!(
+        effect.events,
+        vec![IValidatorSet::ValidatorUnjailed::SIGNATURE_HASH]
+    );
+    assert_eq!(pending_logs(&unjailed), Vec::<Address>::new());
+    Ok(())
+}
+
+#[test]
+fn demotion_and_slash_do_not_emit_pending_or_ready() -> Result<()> {
+    let minimum = U256::from(1_000u64);
+    let mut demoted = seeded(|vs| waiting_for_readiness(vs, FIRST))?;
+    let effect = call_effect(&mut demoted, |vs| {
+        vs.record_unstake(FIRST, U256::from(1u64), minimum, 0)
+    });
+    assert_eq!(effect.outcome, "Ok(())");
+    assert_eq!(effect.events, Vec::<B256>::new());
+
+    let mut slashed = seeded(|vs| participant(vs, FIRST))?;
+    let effect = call_effect(&mut slashed, |vs| {
+        vs.record_stake_slash(FIRST, U256::from(1u64), minimum, None)
+    });
+    assert_eq!(effect.outcome, "Ok(())");
+    assert_eq!(effect.events, Vec::<B256>::new());
+    Ok(())
+}
+
+#[test]
+fn ready_confirmation_is_atomic_with_its_event() -> Result<()> {
+    let seed = || seeded(|vs| waiting_for_readiness(vs, FIRST)).unwrap();
+    let view = |storage: &mut HashMapStorageProvider| {
+        let joined =
+            storage.enter(|storage| ValidatorSet::new(storage).val_join_confirmed.read(&FIRST));
+        let ready = storage
+            .get_ordered_events()
+            .iter()
+            .filter(|log| log.address == VALIDATOR_SET_ADDRESS)
+            .filter_map(|log| IValidatorSet::ValidatorReadyConfirmed::decode_log(log).ok())
+            .map(|event| event.data.validator)
+            .collect::<Vec<_>>();
+        (outcome_text(joined), ready)
+    };
+    let initial = view(&mut seed());
+    let views = HashMapStorageProvider::mutation_prefix_views(
+        seed,
+        |storage| ValidatorSet::new(storage).confirm_validator_ready(FIRST),
+        view,
+    )?;
+    assert!(views.mutations > 0);
+    assert!(views
+        .before_mutation
+        .iter()
+        .all(|before| *before == initial));
+    assert_eq!(views.complete, ("Ok(true)".to_string(), vec![FIRST]));
     Ok(())
 }

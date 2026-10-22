@@ -21,26 +21,27 @@ SEED_PROFILES = {
     },
 }
 SPEC = importlib.util.spec_from_file_location("seed_genesis", MODULE_PATH)
+if SPEC is None or SPEC.loader is None:
+    raise ImportError(f"Cannot load seed_genesis from {MODULE_PATH}")
 seed_genesis = importlib.util.module_from_spec(SPEC)
-assert SPEC.loader is not None
 SPEC.loader.exec_module(seed_genesis)
 
 
 class ProtocolConstantsSeedTests(unittest.TestCase):
     def test_oracle_seed_preserves_configured_generic_pair_orientation(self):
         storage = seed_genesis.StorageBuilder()
-        token = "0x1111111111111111111111111111111111111111"
+        asset_contract_address = "0x1111111111111111111111111111111111111111"
 
         seed_genesis.seed_oracle(
             storage,
-            {"pairs": [{"base": token, "quote": "840"}]},
+            {"pairs": [{"base": asset_contract_address, "quote": "840"}]},
         )
 
         slot = int(seed_genesis.mapping_key(seed_genesis.u32_bytes(1), 43), 16)
         self.assertEqual(
             storage.entries[seed_genesis.hex32(slot)],
             seed_genesis.hex32(
-                int.from_bytes(seed_genesis.asset_address(token), "big")
+                int.from_bytes(seed_genesis.asset_address(asset_contract_address), "big")
             ),
         )
         self.assertEqual(
@@ -75,8 +76,12 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
             )
 
     def test_oracle_seed_rejects_pairs_whose_assets_resolve_to_the_same_address(self):
-        token = "0x1111111111111111111111111111111111111111"
-        for base, quote in (("COEN", "native"), ("840", "840"), (token, token)):
+        asset_contract_address = "0x1111111111111111111111111111111111111111"
+        for base, quote in (
+            ("COEN", "native"),
+            ("840", "840"),
+            (asset_contract_address, asset_contract_address),
+        ):
             with self.subTest(base=base, quote=quote):
                 storage = seed_genesis.StorageBuilder()
                 with self.assertRaisesRegex(ValueError, "same asset"):
@@ -118,7 +123,9 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
                     self.assertNotIn("metadosis", seed)
                 else:
                     day = seed["metadosis"]["worldwide_days"][0]
-                    self.assertEqual(day["current_vwap_minor"], "1000000")
+                    # The day record has no colour fields (OIP-00320).
+                    for retired in ("day_type", "previous_vwap_minor", "current_vwap_minor"):
+                        self.assertNotIn(retired, day)
                     self.assertEqual(day["day_limit"], "500000000")
                 self.assertEqual(
                     seed["staking"]["min_stake"], staking_expected["min_stake"]
@@ -150,13 +157,24 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
         self.assertNotIn(
             seed_genesis.mapping_key(seed_genesis.u32_bytes(840), 60), storage.entries
         )
-        self.assertEqual(storage.entries[seed_genesis.hex32(74)], seed_genesis.hex32(1))
-        self.assertEqual(
-            storage.entries[seed_genesis.hex32(seed_genesis.data_slot(74))],
-            seed_genesis.hex32(840),
-        )
+        self.assertEqual(storage.entries[seed_genesis.hex32(74)], seed_genesis.hex32(6))
+        for index, iso_code in enumerate((156, 344, 392, 826, 840, 978)):
+            self.assertEqual(
+                storage.entries[seed_genesis.hex32(seed_genesis.data_slot(74) + index)],
+                seed_genesis.hex32(iso_code),
+            )
         slot = seed_genesis.mapping_key(seed_genesis.u32_bytes(840), 75)
-        self.assertEqual(storage.entries[slot], seed_genesis.hex32(36_300))
+        self.assertEqual(storage.entries[slot], seed_genesis.hex32(38_800))
+
+    def test_every_reference_currency_needs_a_policy_rate(self):
+        with self.assertRaisesRegex(ValueError, r"no policy rate: \[978\]"):
+            seed_genesis.seed_oracle(
+                seed_genesis.StorageBuilder(),
+                {
+                    "reference_currencies": [840, 978],
+                    "policy_rates": [{"iso_code": 840, "annual_rate_1e6": 38_800}],
+                },
+            )
 
     def test_optional_seed_profile_is_copied_to_genesis_config(self):
         genesis = {"config": {"chainId": 1}, "alloc": {}}
@@ -256,6 +274,24 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
                 storage.entries[seed_genesis.mapping_key(node_id, 51)],
                 seed_genesis.hex32(seed_genesis.address_as_u256(validator["address"])),
             )
+            self.assertNotIn(
+                seed_genesis.mapping_key(address, 7),
+                storage.entries,
+            )
+
+        staking = seed_genesis.StorageBuilder()
+        seed_genesis.seed_staking(
+            staking,
+            validators,
+            {},
+            terms=seed_genesis.StakeSeedTerms(min_stake=1, validator_stake=1),
+        )
+        for validator in validators:
+            address = seed_genesis.address_bytes(validator["address"])
+            self.assertEqual(
+                staking.entries[seed_genesis.mapping_key(address, 3)],
+                seed_genesis.hex32(1),
+            )
 
         missing = [dict(validators[0])]
         missing[0].pop("radicle_node_id")
@@ -279,6 +315,19 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
                 seed_genesis.StorageBuilder(),
                 duplicate,
                 {},
+                terms=seed_genesis.ValidatorSeedTerms(
+                    epoch_length_blocks=300,
+                    epoch_start_timestamp=1,
+                    min_stake=1,
+                    validator_stake=1,
+                ),
+            )
+
+        with self.assertRaisesRegex(ValueError, "exceeds the consensus bound 256"):
+            seed_genesis.seed_validator_set(
+                seed_genesis.StorageBuilder(),
+                validators,
+                {"max_validators": 257},
                 terms=seed_genesis.ValidatorSeedTerms(
                     epoch_length_blocks=300,
                     epoch_start_timestamp=1,

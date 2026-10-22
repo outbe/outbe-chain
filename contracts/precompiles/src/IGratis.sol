@@ -2,6 +2,12 @@
 pragma solidity ^0.8.30;
 
 interface IGratis {
+    error TransferNotAllowed();
+    error InvalidOpNonce(uint64 expected, uint64 provided);
+    error Rejected(string value);
+    error PledgedSupplyOverflow();
+    error NodChainMismatch();
+
     // ERC-20 events, declared for ABI completeness. They are never emitted because
     // gratis is non-transferable.
     event Transfer(address indexed from, address indexed to, uint256 value);

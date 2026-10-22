@@ -100,6 +100,8 @@ jobs:
       # header was only present when something else had installed the Intel
       # stack on the same machine first, so the pass fired at random. With
       # dcap-replay gone this is the only lane that compiles native-dcap at all.
+      - name: Trust the container checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Clippy
         run: mise run lint
       # The `test` job runs under llvm-cov, which does NOT execute doctests

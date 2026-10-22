@@ -126,6 +126,16 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         assertEq(_countLogs(keccak256("BidsDoneSent(bytes32,uint32,uint16,uint32)")), 0, "no re-relay");
     }
 
+    // --- Source: only Outbe drives a target router ---
+    function test_aMessageFromAnotherChainIsRefused() public {
+        uint32 otherChain = 77;
+        address otherPeer = makeAddr("otherPeer");
+        bnbRouter.setRemoteMessenger(otherChain, _interop(otherChain, otherPeer));
+
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.UnexpectedSourceChain.selector, otherChain));
+        _deliver(otherChain, otherPeer, address(bnbRouter), BridgeMsgCodec.encodeAuctionStageClearing(WORLDWIDE_DAY));
+    }
+
     // --- _handleMarkCalled: the mark is a pure state flip and never touches balances ---
     function test_handleMarkCalled_leavesBalancesUntouched() public {
         uint32 local = uint32(block.chainid);
@@ -263,7 +273,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
             commitBondMinor: 0
         });
         vm.prank(address(bnbRouter));
-        auction.auctionStart(WORLDWIDE_DAY, IIntexAuction.WorldwideDayState.Green, schedule, params);
+        auction.auctionStart(WORLDWIDE_DAY, IIntexAuction.WorldwideDayState.Live, schedule, params);
     }
 
     function _seedSeriesOnIntex() internal {

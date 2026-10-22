@@ -297,7 +297,7 @@ fn receipt(
             number: 10 + body.sequence,
             hash: B256::repeat_byte(12),
         },
-        receipt: outbe_radicleregistry::publication::PublicationReceipt {
+        receipt: outbe_coderegistry::publication::PublicationReceipt {
             accepted_height: body.sequence,
             receipt_hash: body.receipt_hash(),
             body,

@@ -63,7 +63,7 @@ impl<'storage> StorageHandle<'storage> {
     pub fn require_metadosis_process_ready(&self) -> Result<()> {
         let chain_id = self.chain_id()?;
         let block_number = self.block_number()?;
-        let timestamp = self.timestamp()?.to::<u64>();
+        let timestamp = self.now_secs()?;
         let binding = super::metadosis_process_ready_binding(chain_id, block_number, timestamp);
         self.with_provider(|provider| {
             provider.require_metadosis_mutation_frame(
@@ -85,6 +85,11 @@ impl<'storage> StorageHandle<'storage> {
 
     pub fn timestamp(&self) -> Result<U256> {
         self.with_provider(|provider| Ok(provider.timestamp()))
+    }
+
+    /// Read execution time in Unix seconds, rejecting values above `u64::MAX`.
+    pub fn now_secs(&self) -> Result<u64> {
+        Ok(crate::time::timestamp_secs(self.timestamp()?)?)
     }
 
     /// Test fixtures only: advance the provider's reported block timestamp.
@@ -425,6 +430,34 @@ where
 mod tests {
     use super::*;
     use crate::storage::hashmap::HashMapStorageProvider;
+
+    #[test]
+    fn checked_timestamp_preserves_bounds_and_rejects_overflow() {
+        let mut provider = HashMapStorageProvider::new(1);
+        let handle = StorageHandle::new(&mut provider);
+        for timestamp in [0, 1_734_706_800, u64::MAX] {
+            handle.set_block_timestamp(U256::from(timestamp)).unwrap();
+            assert_eq!(handle.now_secs().unwrap(), timestamp);
+        }
+        for timestamp in [U256::from(u64::MAX) + U256::from(1), U256::MAX] {
+            handle.set_block_timestamp(timestamp).unwrap();
+            assert!(
+                matches!(handle.now_secs(), Err(PrecompileError::Revert(message))
+                if message == "timestamp exceeds u64")
+            );
+        }
+    }
+
+    #[test]
+    fn checked_timestamp_preserves_provider_borrow_failure() {
+        let mut provider = HashMapStorageProvider::new(1);
+        let handle = StorageHandle::new(&mut provider);
+        let _borrow = handle.inner.borrow_mut();
+        assert!(
+            matches!(handle.now_secs(), Err(PrecompileError::Revert(message))
+            if message == "storage provider is already mutably borrowed")
+        );
+    }
 
     #[test]
     #[should_panic(expected = "already borrowed")]

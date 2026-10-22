@@ -19,16 +19,18 @@ use crate::api::IVaultRouter;
 use crate::errors::VaultRouterError;
 use crate::schema::VaultRouterContract;
 
+mod approved;
 mod calls;
 mod liquidity;
 mod rebalance;
 mod reservations;
 
+pub(crate) use approved::{apply_approved, approved_vault_action};
 use calls::{
     asset_iso_code, erc20_approve, erc20_balance_of, erc20_transfer, erc20_transfer_from,
     vault_asset, vault_deposit, vault_owner, vault_preview_withdraw, vault_withdraw,
 };
-pub use liquidity::{
+pub(crate) use liquidity::{
     add_liquidity_source, add_liquidity_target, registered_liquidity_source,
     registered_liquidity_target, remove_liquidity_source, remove_liquidity_target,
 };
@@ -40,27 +42,13 @@ pub(crate) use reservations::{release_reservation, reserve_stables, return_reser
 const SELF: Address = VAULT_ROUTER_ADDRESS;
 
 // ---------------------------------------------------------------------------
-// owner gate
-// ---------------------------------------------------------------------------
-
-/// Reverts unless `sender` is the configured owner. Replaces `onlyOwner`.
-fn ensure_owner(storage: &StorageHandle<'_>, sender: Address) -> Result<()> {
-    let contract = VaultRouterContract::new(storage.clone());
-    if contract.owner.read()? != sender {
-        return Err(VaultRouterError::Unauthorized.into());
-    }
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// vault management (owner-only)
+// governance-authorized vault management
 // ---------------------------------------------------------------------------
 
 /// Register an ownerless `vault` for its underlying asset and ISO 4217 reference currency.
 /// The router grants the vault an unlimited allowance so the vault can transfer assets during
 /// deposits.
-pub fn add_vault(storage: StorageHandle<'_>, sender: Address, vault: Address) -> Result<()> {
-    ensure_owner(&storage, sender)?;
+pub(crate) fn add_vault(storage: StorageHandle<'_>, vault: Address) -> Result<()> {
     if vault.is_zero() {
         return Err(VaultRouterError::ZeroAddress.into());
     }
@@ -89,6 +77,7 @@ pub fn add_vault(storage: StorageHandle<'_>, sender: Address, vault: Address) ->
     contract
         .vault_reference_currencies
         .write(&vault, iso_code)?;
+    contract.vault_assets.write(&vault, asset)?;
 
     erc20_approve(&storage, asset, vault, U256::MAX)?;
 
@@ -99,14 +88,26 @@ pub fn add_vault(storage: StorageHandle<'_>, sender: Address, vault: Address) ->
     })
 }
 
-/// Distinct assets whose vaults are registered under `iso_code`.
+/// Distinct assets of the vaults at positions `[offset, offset + limit)` of the
+/// `iso_code` vault set, in set order. Makes at most `limit` `asset()` sub-calls.
+/// Assets are deduplicated within the page only. An `offset` past the end or a
+/// zero `limit` returns an empty page. Values above `u32::MAX` saturate.
 pub(crate) fn reference_currency_assets(
     storage: &StorageHandle<'_>,
     iso_code: u16,
+    offset: U256,
+    limit: U256,
 ) -> Result<Vec<Address>> {
     let contract = VaultRouterContract::new(storage.clone());
+    let vaults = contract.reference_currency_vault_set(iso_code);
+    let offset = u32::try_from(offset).unwrap_or(u32::MAX);
+    let limit = u32::try_from(limit).unwrap_or(u32::MAX);
+    let end = offset.saturating_add(limit).min(vaults.len()?);
     let mut assets: Vec<Address> = Vec::new();
-    for vault in contract.reference_currency_vault_set(iso_code).read_all()? {
+    for index in offset..end {
+        let Some(vault) = vaults.at(index)? else {
+            break;
+        };
         let asset = vault_asset(storage, vault)?;
         if !assets.contains(&asset) {
             assets.push(asset);
@@ -116,24 +117,35 @@ pub(crate) fn reference_currency_assets(
 }
 
 /// `removeVault`: deregister `vault` for its asset and revoke the allowance.
-pub fn remove_vault(storage: StorageHandle<'_>, sender: Address, vault: Address) -> Result<()> {
-    ensure_owner(&storage, sender)?;
+/// Requires the router's live share balance to be zero.
+/// The asset comes from the registration record, so a vault whose `asset()`
+/// changes or reverts stays removable.
+pub(crate) fn remove_vault(storage: StorageHandle<'_>, vault: Address) -> Result<()> {
     if vault.is_zero() {
         return Err(VaultRouterError::ZeroAddress.into());
     }
 
-    let asset = vault_asset(&storage, vault)?;
-
     let mut contract = VaultRouterContract::new(storage.clone());
+    let mut asset = contract.vault_assets.read(&vault)?;
+    if asset.is_zero() {
+        // Upgrade compatibility for vaults registered before the asset record was
+        // introduced: ask the vault for its asset on first removal.
+        asset = vault_asset(&storage, vault)?;
+    }
     let mut iso_code = contract.vault_reference_currencies.read(&vault)?;
     if iso_code == 0 {
         // Upgrade compatibility for vaults registered before the ISO index was
         // introduced: resolve their immutable asset metadata on first removal.
         iso_code = asset_iso_code(&storage, asset)?;
     }
-    if !contract.asset_vault_set(asset).remove(&vault)? {
+    if !contract.asset_vault_set(asset).contains(&vault)? {
         return Err(VaultRouterError::ReserveVaultNotFound.into());
     }
+    let shares = erc20_balance_of(&storage, vault, SELF)?;
+    if !shares.is_zero() {
+        return Err(VaultRouterError::ReserveVaultHasShares { vault, shares }.into());
+    }
+    contract.asset_vault_set(asset).remove(&vault)?;
     if contract.asset_vault_set(asset).is_empty()? {
         contract.assets.remove(&asset)?;
     }
@@ -141,6 +153,7 @@ pub fn remove_vault(storage: StorageHandle<'_>, sender: Address, vault: Address)
         .reference_currency_vault_set(iso_code)
         .remove(&vault)?;
     contract.vault_reference_currencies.clear(&vault)?;
+    contract.vault_assets.clear(&vault)?;
 
     erc20_approve(&storage, asset, vault, U256::ZERO)?;
 

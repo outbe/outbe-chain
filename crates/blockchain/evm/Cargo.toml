@@ -31,7 +31,7 @@ outbe-stablecoinfactory.workspace = true
 outbe-teeregistry = { workspace = true, features = ["tee-attestation-v1"] }
 outbe-l2registry.workspace = true
 outbe-hyperlanecontroller.workspace = true
-outbe-radicleregistry.workspace = true
+outbe-coderegistry.workspace = true
 outbe-vote.workspace = true
 outbe-update.workspace = true
 outbe-agentreward.workspace = true
@@ -85,6 +85,7 @@ tracing.workspace = true
 parking_lot.workspace = true
 
 [dev-dependencies]
+outbe-consensus = { workspace = true, features = ["test-utils"] }
 outbe-evm = { path = ".", features = ["test-utils"] }
 outbe-tribute = { workspace = true, features = ["test-enclave"] }
 outbe-chain-constants.workspace = true

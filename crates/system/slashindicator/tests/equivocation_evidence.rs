@@ -4,22 +4,27 @@
 //! within one view and jails + slashes it.
 
 use alloy_primitives::{address, Address, B256, U256};
+use alloy_sol_types::SolError;
 use blst::min_pk::SecretKey;
 use commonware_cryptography::{bls12381, Signer as _};
 use commonware_utils::ordered::Set;
 use outbe_consensus::proof::{finalize_namespace, notarize_namespace, nullify_namespace};
 use outbe_consensus::test_harness::committee_entries;
+use outbe_primitives::addresses::STAKING_ADDRESS;
 use outbe_primitives::storage::StorageHandle;
 use outbe_slashindicator::schema::SlashIndicator;
 use outbe_slashindicator::test_signing;
 use outbe_slashindicator::test_signing::nullify_payload as nullify_bytes;
+use outbe_staking::contract::Staking;
 use outbe_validatorset::contract::ValidatorSet;
 use outbe_validatorset::state::CommitteeSnapshot;
 use outbe_validatorset::test_support::{test_lifecycle_of, StorageOverrides};
 use outbe_validatorset::ValidatorLifecycle;
 
 mod support;
-use support::{register_active_submitter, with_storage};
+use support::{
+    assert_selector, evidence_already_processed, register_active_submitter, with_storage,
+};
 
 const OWNER: Address = address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC");
 const SUBMITTER: Address = address!("0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD");
@@ -78,7 +83,16 @@ fn setup(storage: StorageHandle, sk: &SecretKey) {
     epoch.number = U256::from(1u64);
     vs.test_set_epoch_snapshot(epoch).unwrap();
     let pk: [u8; 48] = sk.sk_to_pk().to_bytes();
-    vs.test_register_active_validator(ACCUSED, &pk, U256::from(1_000_000u64))
+    let bonded = U256::from(1_000_000u64);
+    vs.test_register_active_validator(ACCUSED, &pk, bonded)
+        .unwrap();
+    // The registration seeds Staking.stake_amount. Slash burns the same
+    // deposit from the STAKING_ADDRESS escrow and subtracts it from total.
+    let staking = Staking::new(storage.clone());
+    staking.total_staked.write(bonded).unwrap();
+    staking
+        .storage
+        .increase_balance(STAKING_ADDRESS, bonded)
         .unwrap();
 
     // evidence precompiles require an ACTIVE-validator submitter.
@@ -98,6 +112,11 @@ fn assert_jailed_once(storage: &StorageHandle) {
     ));
     let si = SlashIndicator::new(storage.clone());
     assert_eq!(si.felony_count.read(&ACCUSED).unwrap(), 1);
+    // 8% of the funded 1_000_000 deposit. One check for every real slash.
+    assert_eq!(
+        Staking::new(storage.clone()).get_stake(ACCUSED).unwrap(),
+        U256::from(920_000u64)
+    );
 }
 
 #[test]
@@ -115,11 +134,11 @@ fn conflicting_notarize_slashes_and_dedups() {
 
         // SlashIndicator rejects a replay (either order).
         let mut si = SlashIndicator::new(storage.clone());
-        assert!(si
-            .submit_conflicting_notarize_evidence(SUBMITTER, &b2, &b1)
-            .unwrap_err()
-            .to_string()
-            .contains("already processed"));
+        assert_selector(
+            &si.submit_conflicting_notarize_evidence(SUBMITTER, &b2, &b1)
+                .unwrap_err(),
+            evidence_already_processed(),
+        );
     });
 }
 
@@ -163,7 +182,10 @@ fn identical_notarize_proposals_rejected() {
         let err = si
             .submit_conflicting_notarize_evidence(SUBMITTER, &b1, &b2)
             .unwrap_err();
-        assert!(err.to_string().contains("different proposals"));
+        assert_selector(
+            &err,
+            outbe_slashindicator::precompile::ISlashIndicator::ConflictingVotesMustBeDifferentProposals::SELECTOR,
+        );
     });
 }
 
@@ -198,7 +220,10 @@ fn different_signers_rejected() {
         let err = si
             .submit_conflicting_notarize_evidence(SUBMITTER, &b1, &b2)
             .unwrap_err();
-        assert!(err.to_string().contains("same signer"));
+        assert_selector(
+            &err,
+            outbe_slashindicator::precompile::ISlashIndicator::EvidenceSignerMismatch::SELECTOR,
+        );
     });
 }
 
@@ -215,9 +240,9 @@ fn non_active_submitter_is_rejected() {
         let err = si
             .submit_conflicting_notarize_evidence(outsider, &b1, &b2)
             .unwrap_err();
-        assert!(
-            err.to_string().contains("not an ACTIVE validator"),
-            "got: {err:?}"
+        assert_selector(
+            &err,
+            outbe_slashindicator::precompile::ISlashIndicator::SubmitterNotActiveValidator::SELECTOR,
         );
     });
 }

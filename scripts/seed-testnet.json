@@ -8,7 +8,7 @@
     "max_validators": 128,
     "reregistration_cooldown_blocks": 151200
   },
-  "radicle_registry": {
+  "code_registry": {
     "max_repositories": -1
   },
   "staking": {
@@ -22,9 +22,6 @@
     "proposer_reward_percent": 50,
     "staking_reward_percent": 30,
     "treasury_percent": 20
-  },
-  "vault_router": {
-    "owner": "0x2Af7d3C5C3f82Fee4eA037A674f55fa2eD011c05"
   },
   "oracle": {
     "config": {

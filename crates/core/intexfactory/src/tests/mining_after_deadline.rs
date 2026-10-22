@@ -9,6 +9,8 @@ use outbe_tee_enclave::promis::{
 };
 use outbe_vaultrouter::settlement::SettlementPayment;
 
+const RELAYER: Address = Address::repeat_byte(0x5e);
+
 fn promis_auth(account: Address, amount: U256, nonce: u64) -> outbe_promisfactory::api::ModifyAuth {
     let sk = outbe_promis::enclave_client::test_enclave::state_key();
     let mk = derive_modify_key(&sk, account).unwrap();
@@ -64,7 +66,7 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
             ISSUED_AT
         );
         assert!(
-            s.timestamp().unwrap().to::<u64>() > deadline,
+            s.now_secs().unwrap() > deadline,
             "the fixture sits past the settlement deadline"
         );
 
@@ -81,25 +83,32 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
             },
         )
         .unwrap_err();
-        assert!(
-            closed.to_string().to_lowercase().contains("deadline"),
+        assert_eq!(
+            closed.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::IntexFactoryError::SettlementDeadlinePassed,
+            )
+            .to_string(),
             "{closed}"
         );
         assert_eq!(outbe_intex::api::exercised_units(&s, sid(7)).unwrap(), 0);
 
-        // The paid unit still mines.
-        let minted = runtime::mine_promis(
-            &s,
-            sid(7),
-            owner(),
-            U256::ONE,
-            runtime::MiningProof {
-                nonce,
-                auth: promis_auth(owner(), promis_minor, 0),
-            },
-        )
-        .unwrap();
-        assert_eq!(minted, promis_minor);
+        // The paid unit still mines, relayed by a stranger.
+        let call = IIntexFactory::minePromisCall {
+            seriesId: sid(7).into(),
+            owner: owner(),
+            units: U256::ONE,
+            nonce,
+            mac: B256::from(promis_auth(owner(), promis_minor, 0).mac),
+            opNonce: 0,
+        };
+        let minted =
+            crate::precompile::dispatch(s.clone(), &call.abi_encode(), RELAYER, U256::ZERO)
+                .unwrap();
+        assert_eq!(
+            IIntexFactory::minePromisCall::abi_decode_returns(&minted).unwrap(),
+            promis_minor
+        );
         assert!(
             outbe_intex::api::series_exists(&s, sid(7)).unwrap(),
             "its unpaid unit waits for the group's expiry to return it"
@@ -116,6 +125,16 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
                 .read_mine_seq(sid(7), owner())
                 .unwrap(),
             1
+        );
+        assert!(outbe_promis::api::balance_ct(s.clone(), RELAYER)
+            .unwrap()
+            .is_empty());
+        assert_eq!(outbe_promis::api::op_nonce(s.clone(), RELAYER).unwrap(), 0);
+        assert_eq!(
+            IntexFactoryContract::new(s.clone())
+                .read_mine_seq(sid(7), RELAYER)
+                .unwrap(),
+            0
         );
     });
     let mined: Vec<_> = storage
@@ -169,7 +188,7 @@ fn settled_units_mine_after_the_group_expired_without_moving_the_promis_limit() 
         crate::hooks::sweep_cleanup(&ctx).unwrap();
         let reserve = || {
             outbe_promislimit::PromisLimitContract::new(s.clone())
-                .get_total_unallocated()
+                .promis_limit()
                 .unwrap()
         };
         assert_eq!(reserve(), forfeited);

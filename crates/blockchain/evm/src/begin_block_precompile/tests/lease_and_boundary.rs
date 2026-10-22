@@ -1,6 +1,27 @@
 use super::super::cycle::enforce_tee_lease_deadlines;
 use super::*;
+use alloy_primitives::address;
+use outbe_primitives::addresses::STAKING_ADDRESS;
 use outbe_primitives::time::SECONDS_PER_DAY;
+
+/// Same funded base the felony path burns by the admitted 8% (`1_000_000 * 8 / 100`).
+const FUNDED_STAKE: u64 = 1_000_000;
+const STAKE_AFTER_EIGHT_PERCENT: u64 = 920_000;
+
+fn fund_staking_escrow(storage: StorageHandle<'_>, validators: &[Address], escrow: u64) {
+    let staking = outbe_staking::contract::Staking::new(storage.clone());
+    let amount = U256::from(FUNDED_STAKE);
+    for validator in validators {
+        staking.stake_amount.write(validator, amount).unwrap();
+    }
+    staking
+        .total_staked
+        .write(amount * U256::from(validators.len()))
+        .unwrap();
+    storage
+        .increase_balance(STAKING_ADDRESS, U256::from(escrow))
+        .unwrap();
+}
 
 fn install_validator_lease(provider: &mut HashMapStorageProvider, valid_until: u64) {
     provider.enter(|storage| {
@@ -58,14 +79,36 @@ fn tee_lease_sweep_skips_bootstrap_then_jails_at_exact_deadline_once() {
     let mut at_deadline = configured_storage(2, deadline);
     install_validator_lease(&mut at_deadline, deadline);
     at_deadline.enter(|storage| {
+        fund_staking_escrow(storage.clone(), &[VALIDATOR], FUNDED_STAKE);
         let ctx = runtime_ctx(storage.clone());
         assert_eq!(enforce_tee_lease_deadlines(&ctx).unwrap(), 1);
-        let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
+        let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         let jailed = vs.get_validator(VALIDATOR).unwrap().unwrap();
         assert_eq!(jailed.status, outbe_validatorset::runtime::status::JAILED);
-        assert_eq!(jailed.slash_count, 0);
+        let staking = outbe_staking::contract::Staking::new(storage.clone());
+        assert_eq!(
+            staking.get_stake(VALIDATOR).unwrap(),
+            U256::from(STAKE_AFTER_EIGHT_PERCENT)
+        );
+        assert_eq!(jailed.slash_count, 1);
+        assert_eq!(
+            staking.get_total_staked().unwrap(),
+            U256::from(STAKE_AFTER_EIGHT_PERCENT)
+        );
+        assert_eq!(
+            storage.balance(STAKING_ADDRESS).unwrap(),
+            U256::from(STAKE_AFTER_EIGHT_PERCENT)
+        );
         assert_eq!(enforce_tee_lease_deadlines(&ctx).unwrap(), 0);
         assert_eq!(vs.get_validator(VALIDATOR).unwrap().unwrap(), jailed);
+        assert_eq!(
+            staking.get_stake(VALIDATOR).unwrap(),
+            U256::from(STAKE_AFTER_EIGHT_PERCENT)
+        );
+        assert_eq!(
+            storage.balance(STAKING_ADDRESS).unwrap(),
+            U256::from(STAKE_AFTER_EIGHT_PERCENT)
+        );
     });
 }
 
@@ -73,12 +116,23 @@ fn tee_lease_sweep_skips_bootstrap_then_jails_at_exact_deadline_once() {
 fn tee_lease_sweep_treats_missing_post_bootstrap_binding_as_overdue() {
     let mut provider = configured_storage(2, 1_700_000_200);
     provider.enter(|storage| {
+        fund_staking_escrow(storage.clone(), &[VALIDATOR], FUNDED_STAKE);
         let ctx = runtime_ctx(storage.clone());
         assert_eq!(enforce_tee_lease_deadlines(&ctx).unwrap(), 1);
-        let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
+        let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         let jailed = vs.get_validator(VALIDATOR).unwrap().unwrap();
         assert_eq!(jailed.status, outbe_validatorset::runtime::status::JAILED);
-        assert_eq!(jailed.slash_count, 0);
+        assert_eq!(jailed.slash_count, 1);
+        assert_eq!(
+            outbe_staking::contract::Staking::new(storage.clone())
+                .get_stake(VALIDATOR)
+                .unwrap(),
+            U256::from(STAKE_AFTER_EIGHT_PERCENT)
+        );
+        assert_eq!(
+            storage.balance(STAKING_ADDRESS).unwrap(),
+            U256::from(STAKE_AFTER_EIGHT_PERCENT)
+        );
     });
 }
 
@@ -103,6 +157,51 @@ fn tee_lease_sweep_reexecution_and_timestamp_jump_are_deterministic() {
     let replay = run();
     assert_eq!(first.0, 1);
     assert_eq!(first, replay);
+}
+
+#[test]
+fn tee_lease_sweep_later_failure_rolls_back_whole_sweep() {
+    let deadline = 1_700_000_100;
+    let later = address!("0x2222222222222222222222222222222222222222");
+    let mut provider = configured_storage(2, deadline);
+    install_validator_lease(&mut provider, deadline);
+    provider.enter(|storage| {
+        let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+        vs.register_validator(OWNER, later, &[8u8; 48]).unwrap();
+        vs.mark_pending(later).unwrap();
+        vs.confirm_validator_ready(later).unwrap();
+        vs.activate_validator_via_boundary_for_test(later).unwrap();
+        // One 8% burn is 80_000. The second overdue validator cannot be paid.
+        fund_staking_escrow(storage, &[VALIDATOR, later], 80_000);
+    });
+
+    let storage_before = provider.storage.clone();
+    let logs_before = provider.get_ordered_events().to_vec();
+    let swept = provider.enter(|storage| {
+        let ctx = runtime_ctx(storage);
+        enforce_tee_lease_deadlines(&ctx)
+    });
+    assert!(swept.is_err());
+    assert_eq!(provider.storage, storage_before);
+    assert_eq!(provider.get_ordered_events(), logs_before.as_slice());
+
+    provider.enter(|storage| {
+        let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+        let staking = outbe_staking::contract::Staking::new(storage.clone());
+        for validator in [VALIDATOR, later] {
+            let record = vs.get_validator(validator).unwrap().unwrap();
+            assert_eq!(record.status, outbe_validatorset::runtime::status::ACTIVE);
+            assert_eq!(record.slash_count, 0);
+            assert_eq!(
+                staking.get_stake(validator).unwrap(),
+                U256::from(FUNDED_STAKE)
+            );
+        }
+        assert_eq!(
+            storage.balance(STAKING_ADDRESS).unwrap(),
+            U256::from(80_000u64)
+        );
+    });
 }
 
 #[test]

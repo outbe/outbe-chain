@@ -1,5 +1,8 @@
 use std::fmt::Display;
 
+use crate::precompile::ITributeFactory;
+use alloy_primitives::Bytes;
+use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::time::WorldwideDay;
 use thiserror::Error;
@@ -38,11 +41,8 @@ pub enum TributeFactoryError {
     #[error("worldwide_day {worldwide_day} is not a valid YYYYMMDD calendar date")]
     InvalidWorldwideDay { worldwide_day: WorldwideDay },
 
-    #[error("worldwide_day {worldwide_day} is not in OFFERING status (status={status})")]
-    WorldwideDayNotOffering {
-        worldwide_day: WorldwideDay,
-        status: u8,
-    },
+    #[error("worldwide_day {worldwide_day} is not in OFFERING status")]
+    WorldwideDayNotOffering { worldwide_day: WorldwideDay },
 
     #[error("tribute already exists for this combination of parameters")]
     TributeAlreadyExists,
@@ -152,9 +152,6 @@ pub enum TributeFactoryError {
     #[error("encrypted offer returned a legacy body")]
     EncryptedOfferReturnedLegacyBody,
 
-    #[error("TributeFactory block timestamp exceeds u64")]
-    TimestampExceedsU64,
-
     #[error("ZK verifier unavailable: zk verification backend failed: {0}")]
     ZkVerifierUnavailable(String),
 
@@ -190,8 +187,13 @@ impl TributeFactoryError {
     }
 }
 
+fn revert_with<E: SolError>(error: E) -> PrecompileError {
+    PrecompileError::RevertBytes(Bytes::from(error.abi_encode()))
+}
+
 impl From<TributeFactoryError> for PrecompileError {
     fn from(value: TributeFactoryError) -> Self {
+        use ITributeFactory as I;
         match value {
             enclave @ (TributeFactoryError::TeeSidecarUnavailable
             | TributeFactoryError::TeeSidecarUnavailableWithReason(_)
@@ -207,16 +209,129 @@ impl From<TributeFactoryError> for PrecompileError {
             | TributeFactoryError::EncryptedTributeContextMismatch) => {
                 PrecompileError::EnclaveUnavailable(enclave.to_string())
             }
-            TributeFactoryError::ZkVerifierUnavailable(_)
-            | TributeFactoryError::TimestampExceedsU64
-            | TributeFactoryError::RejectedEncryptedOfferCarriesTribute
-            | TributeFactoryError::CreatedEncryptedOfferMissingTribute
-            | TributeFactoryError::EmptyTributeOfferResult
-            | TributeFactoryError::CreatedTributeMissingBody
-            | TributeFactoryError::EncryptedOfferReturnedLegacyBody
-            | TributeFactoryError::EntityIdDerivation(_)
-            | TributeFactoryError::CalculationView(_) => PrecompileError::Revert(value.to_string()),
-            other => PrecompileError::Revert(other.to_string()),
+            TributeFactoryError::TeeNotConfigured => revert_with(I::TeeNotConfigured {}),
+            TributeFactoryError::EnclaveRejected(value) => {
+                revert_with(I::EnclaveRejected { value })
+            }
+            TributeFactoryError::ZkProofRequired => revert_with(I::ZkProofRequired {}),
+            TributeFactoryError::UnknownCircuitVersion { chain_id, version } => {
+                revert_with(I::UnknownCircuitVersion {
+                    chainId: chain_id,
+                    version,
+                })
+            }
+            TributeFactoryError::UnsupportedZkCircuit => revert_with(I::UnsupportedZkCircuit {}),
+            TributeFactoryError::MalformedZkProof(value) => {
+                revert_with(I::MalformedZkProof { value })
+            }
+            TributeFactoryError::ZkPublicInputMismatch { field } => {
+                revert_with(I::ZkPublicInputMismatch {
+                    field: field.to_string(),
+                })
+            }
+            TributeFactoryError::InvalidZkProof => revert_with(I::InvalidZkProof {}),
+            TributeFactoryError::InvalidWorldwideDay { worldwide_day } => {
+                revert_with(I::InvalidWorldwideDay {
+                    worldwideDay: worldwide_day.value(),
+                })
+            }
+            TributeFactoryError::WorldwideDayNotOffering { worldwide_day } => {
+                revert_with(I::WorldwideDayNotOffering {
+                    worldwideDay: worldwide_day.value(),
+                })
+            }
+            TributeFactoryError::TributeAlreadyExists => revert_with(I::TributeAlreadyExists {}),
+            TributeFactoryError::InvalidCanonicalIdentity => {
+                revert_with(I::InvalidCanonicalIdentity {})
+            }
+            TributeFactoryError::SuHashAlreadyUsed => revert_with(I::SuHashAlreadyUsed {}),
+            TributeFactoryError::InvalidSuHashHex { hash } => {
+                revert_with(I::InvalidSuHashHex { hash })
+            }
+            TributeFactoryError::InvalidSuHashLength { length } => {
+                revert_with(I::InvalidSuHashLength {
+                    length: u64::try_from(length).unwrap_or(u64::MAX),
+                })
+            }
+            TributeFactoryError::AmountMustBePositive => revert_with(I::AmountMustBePositive {}),
+            TributeFactoryError::NominalPriceUnavailable { worldwide_day } => {
+                revert_with(I::NominalPriceUnavailable {
+                    worldwideDay: worldwide_day.value(),
+                })
+            }
+            TributeFactoryError::NominalAmountOverflow => revert_with(I::NominalAmountOverflow {}),
+            TributeFactoryError::InvalidWalletAddress { address } => {
+                revert_with(I::InvalidWalletAddress {
+                    walletAddress: address,
+                })
+            }
+            TributeFactoryError::InvalidSraAddress { address } => {
+                revert_with(I::InvalidSraAddress {
+                    sraAddress: address,
+                })
+            }
+            TributeFactoryError::IssuanceCurrencyNotRegistered { issuance_currency } => {
+                revert_with(I::IssuanceCurrencyNotRegistered {
+                    issuanceCurrency: issuance_currency,
+                })
+            }
+            TributeFactoryError::InvalidCurrency { currency } => {
+                revert_with(I::InvalidCurrency { currency })
+            }
+            TributeFactoryError::WalletAddressesRequiredWhenSraProvided => {
+                revert_with(I::WalletAddressesRequiredWhenSraProvided {})
+            }
+            TributeFactoryError::SraAddressesRequiredWhenWalletProvided => {
+                revert_with(I::SraAddressesRequiredWhenWalletProvided {})
+            }
+            TributeFactoryError::InvalidWalletAddressAtIndex { index, address } => {
+                revert_with(I::InvalidWalletAddressAtIndex {
+                    index: u64::try_from(index).unwrap_or(u64::MAX),
+                    walletAddress: address,
+                })
+            }
+            TributeFactoryError::InvalidSraAddressAtIndex { index, address } => {
+                revert_with(I::InvalidSraAddressAtIndex {
+                    index: u64::try_from(index).unwrap_or(u64::MAX),
+                    sraAddress: address,
+                })
+            }
+            TributeFactoryError::BaseAmountTooManyDecimals => {
+                revert_with(I::BaseAmountTooManyDecimals {})
+            }
+            TributeFactoryError::InvalidBaseAmountFormat => {
+                revert_with(I::InvalidBaseAmountFormat {})
+            }
+            TributeFactoryError::InvalidAttoAmountFormat => {
+                revert_with(I::InvalidAttoAmountFormat {})
+            }
+            TributeFactoryError::RejectedEncryptedOfferCarriesTribute => {
+                revert_with(I::RejectedEncryptedOfferCarriesTribute {})
+            }
+            TributeFactoryError::CreatedEncryptedOfferMissingTribute => {
+                revert_with(I::CreatedEncryptedOfferMissingTribute {})
+            }
+            TributeFactoryError::EmptyTributeOfferResult => {
+                revert_with(I::EmptyTributeOfferResult {})
+            }
+            TributeFactoryError::CreatedTributeMissingBody => {
+                revert_with(I::CreatedTributeMissingBody {})
+            }
+            TributeFactoryError::EncryptedOfferReturnedLegacyBody => {
+                revert_with(I::EncryptedOfferReturnedLegacyBody {})
+            }
+            TributeFactoryError::ZkVerifierUnavailable(value) => {
+                revert_with(I::ZkVerifierUnavailable { value })
+            }
+            TributeFactoryError::EntityIdDerivation(err) => revert_with(I::EntityIdDerivation {
+                value: err.to_string(),
+            }),
+            TributeFactoryError::CalculationView(err) => revert_with(I::CalculationView {
+                value: err.to_string(),
+            }),
+            TributeFactoryError::AttestationPreimageEncode(value) => {
+                revert_with(I::AttestationPreimageEncode { value })
+            }
         }
     }
 }

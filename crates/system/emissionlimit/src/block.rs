@@ -11,8 +11,8 @@
 //! - forwards the Metadosis terminal portion through [`dispatch_terminal_remainder_at`] below.
 //!
 //! This file is intentionally tiny. It owns the purpose-bound terminal dispatch calls that
-//! Cycle and late fee settlement use. Keeping them distinct prevents a non-daily residue from
-//! becoming a daily base-limit producer.
+//! Cycle, late fee settlement and reward accrual use. Keeping them distinct prevents a
+//! non-daily residue from becoming a daily base-limit producer.
 
 use alloy_primitives::U256;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
@@ -44,11 +44,12 @@ pub fn dispatch_terminal_remainder_at(
     Ok(())
 }
 
-/// Recycles a late fee-settlement residue into terminal Metadosis headroom.
+/// Recycles a late residue, from fee settlement or from a finished WAA or SRA
+/// reward pool, into terminal Metadosis headroom.
 ///
 /// This function is deliberately distinct from [`dispatch_terminal_remainder_at`].
 /// Only the daily Cycle allocation forms a base day limit. Late residues
-/// accumulate as carry-over for the next unformed limit.
+/// accumulate in the Promis Limit for the next unformed limit.
 pub fn dispatch_late_settlement_residue_at(
     ctx: &BlockRuntimeContext,
     amount: U256,

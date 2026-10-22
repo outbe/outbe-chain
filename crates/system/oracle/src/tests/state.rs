@@ -135,9 +135,11 @@ fn require_pair_rejects_a_pair_quoted_in_the_wrong_direction() {
         // peak - cannot answer a backwards quote, so they refuse it. Only the
         // spot rate has a reciprocal.
         let err = oracle.require_pair_from(USDT, COEN).unwrap_err();
-        assert!(
-            format!("{err:?}").contains("registered orientation"),
-            "expected a registered-orientation revert, got {err:?}"
+        assert_typed_revert(
+            &err,
+            crate::errors::OracleError::PairNotCanonical {
+                pair: AddressPair::from_addresses(USDT, COEN),
+            },
         );
         assert!(oracle.get_exchange_rate(USDT, COEN).is_ok());
     });

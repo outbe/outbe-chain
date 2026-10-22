@@ -8,10 +8,10 @@
 
 use alloy_primitives::U256;
 
-use outbe_agentreward::distribution::{distribute_daily, PoolKind};
+use outbe_agentreward::distribution::{advance_accruals, distribute_daily, PoolKind};
 use outbe_emissionlimit::{
     allocation::{allocate_emission, EmissionSinkId},
-    block::dispatch_terminal_remainder_at,
+    block::{dispatch_late_settlement_residue_at, dispatch_terminal_remainder_at},
     day_emission::day_emission_limit,
 };
 use outbe_primitives::{
@@ -37,9 +37,9 @@ pub enum ProtocolDayAction {
 
 /// Selects the daily action for an hourly ProtocolCycle execution.
 ///
-/// Only a contiguous UTC-day transition is settled. If the chain advances by
-/// more than one calendar day, every completed day in that gap is deliberately
-/// forfeited: no economic state is synthesized after the halt.
+/// The handler settles only a contiguous UTC-day transition. If the chain
+/// advances by more than one calendar day, the protocol forfeits every
+/// completed day in that gap. It synthesizes no economic state after the halt.
 pub fn protocol_day_action(active_utc_day: u32, block_utc_day: u32) -> Result<ProtocolDayAction> {
     if !is_valid_utc_day(active_utc_day) {
         return Err(CycleError::InvalidActiveUtcDay {
@@ -209,22 +209,16 @@ fn day_settlement(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<DaySettlem
         tracing::error!(target: "outbe::cycle", step = "is_day_settled", prev_day, error = ?e, "emission_limit_daily step failed");
         e
     })?;
-    let existing_formation =
-        outbe_metadosis::api::day_limit_formation_receipt(ctx.storage.clone(), prev_day.into())?;
-    match (settled, existing_formation.is_some()) {
-        (true, false) => Err(CycleError::DailySettledWithoutMetadosisReceipt.into()),
-        (false, true) => Err(CycleError::MetadosisReceiptWithoutDailySettled.into()),
-        (true, true) => {
-            tracing::debug!(
-                target: "outbe::cycle",
-                prev_day,
-                block_number = ctx.block.block_number,
-                "emission_limit_daily: prev_day already settled - skipping (idempotent)"
-            );
-            Ok(DaySettlement::Settled)
-        }
-        (false, false) => Ok(DaySettlement::Pending),
+    if settled {
+        tracing::debug!(
+            target: "outbe::cycle",
+            prev_day,
+            block_number = ctx.block.block_number,
+            "emission_limit_daily: prev_day already settled - skipping (idempotent)"
+        );
+        return Ok(DaySettlement::Settled);
     }
+    Ok(DaySettlement::Pending)
 }
 
 /// Logs the calendar inputs of one settlement. The genesis UTC day read stays
@@ -348,19 +342,26 @@ fn dispatch_terminal_remainder(
         "dispatch_terminal_remainder_at",
         dispatch_terminal_remainder_at(ctx, metadosis_total, prev_day_ts),
     )?;
-    let formation =
-        outbe_metadosis::api::day_limit_formation_receipt(ctx.storage.clone(), prev_day.into())?
-            .ok_or(CycleError::AllocationWithoutMetadosisReceipt)?;
-    match formation {
-        outbe_metadosis::DayLimitFormationReceipt::Formed(formed)
-            if formed.worldwide_day.value() == prev_day && formed.base_limit == metadosis_total =>
-        {
-            Ok(())
-        }
-        outbe_metadosis::DayLimitFormationReceipt::Formed(_) => {
-            Err(CycleError::AllocationDisagreesWithMetadosisReceipt.into())
-        }
+    let emission_day = outbe_metadosis::api::emission_day(ctx.storage.clone(), prev_day)?
+        .ok_or(CycleError::AllocationWithoutMetadosisReceipt)?;
+    if emission_day.day == prev_day && emission_day.emission_limit_minor == metadosis_total {
+        Ok(())
+    } else {
+        Err(CycleError::AllocationDisagreesWithMetadosisReceipt.into())
     }
+}
+
+/// Credits this block's slice of the queued WAA and SRA day pools and sends the
+/// rounding residue of the finished ones to the Promis Limit.
+pub(crate) fn credit_reward_slice(ctx: &BlockRuntimeContext) -> Result<()> {
+    let residue = advance_accruals(ctx).map_err(|e| {
+        tracing::error!(target: "outbe::cycle", step = "advance_accruals", error = ?e, "protocol cycle step failed");
+        e
+    })?;
+    wrap(
+        "dispatch_late_settlement_residue_at",
+        dispatch_late_settlement_residue_at(ctx, residue, ctx.block.timestamp),
+    )
 }
 
 /// Runs the single hourly protocol orchestration entry point.

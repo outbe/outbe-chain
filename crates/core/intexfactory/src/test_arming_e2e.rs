@@ -82,7 +82,7 @@ fn seed_day_vwaps_for_test(
     let oracle = OracleContract::new(storage.clone());
     let pair = outbe_oracle::api::AddressPair::new_coen_to(call.isoCode);
     let pair_id = oracle.pair_index_of(pair)?;
-    let mut day = previous_date_key(timestamp_to_date_key(storage.timestamp()?.to::<u64>()));
+    let mut day = previous_date_key(timestamp_to_date_key(storage.now_secs()?));
     for _ in 0..call.days {
         oracle.record_utc_day_vwap(day, pair_id, call.value)?;
         if oracle.utc_day_vwap_last_finalized.read()? < day {
@@ -103,6 +103,9 @@ fn issue_for_test(
     if call.seriesIds.len() != call.issuanceCurrencies.len() {
         return Err(crate::errors::IntexFactoryError::IssueForTestCurrencyCountMismatch.into());
     }
+    // The clearing engine fixes the call terms at the auction start. This hook has no
+    // auction, so it fixes them from the profile that is live now.
+    let terms = crate::api::call_terms(storage)?;
     let mut legs = Vec::new();
     let ids = call.seriesIds.clone();
     for (series_id, issuance_currency) in call.seriesIds.into_iter().zip(call.issuanceCurrencies) {
@@ -114,6 +117,8 @@ fn issue_for_test(
                 issued_units: call.issuedUnits,
                 promis_load_minor: call.promisLoadMinor,
                 entry_price_minor: call.entryPriceMinor,
+                call_price_minor: terms.call_price(call.entryPriceMinor)?,
+                call_trigger: terms.call_trigger,
                 issuance_currency,
                 reference_currency: call.referenceCurrency,
                 snapshot_chains: call.snapshotChains.clone(),

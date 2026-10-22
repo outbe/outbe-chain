@@ -6,15 +6,17 @@
 //! returndata. This matches the convention in `outbe_credisfactory::tests`.
 
 use alloy_primitives::{address, Address, Bytes, U256};
-use alloy_sol_types::{SolCall, SolEvent};
+use alloy_sol_types::{SolCall, SolError, SolEvent};
 
 use outbe_oracle::api::AddressPair;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
+use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::{Bytecode, StorageHandle};
 
 use crate::api::IVaultRouter;
+use crate::errors::VaultRouterError;
 use crate::precompile::dispatch;
 use crate::runtime;
 use crate::schema::{LiquidityReservation, VaultRouterContract};
@@ -22,6 +24,7 @@ use crate::sol_ext::IReferenceCurrency;
 use crate::sol_ext::{IVaultV2, IERC20};
 
 const CHAIN_ID: u64 = 1;
+mod approved;
 const USD_ISO_CODE: u16 = 840;
 
 fn owner() -> Address {
@@ -99,44 +102,47 @@ fn write_oracle_rate(
         .unwrap();
 }
 
-fn set_owner(storage: &StorageHandle<'_>, who: Address) {
-    VaultRouterContract::new(storage.clone())
-        .owner
-        .write(who)
-        .unwrap();
+/// Checks that `err` reverts with the ABI encoding of the declared error `E`.
+fn assert_revert<E: SolError>(err: &PrecompileError) {
+    match err {
+        PrecompileError::RevertBytes(bytes) => {
+            assert_eq!(&bytes[..4], E::SELECTOR, "expected {}", E::SIGNATURE)
+        }
+        other => panic!("expected {} revert, got {other:?}", E::SIGNATURE),
+    }
 }
 
-// --- ownership ---------------------------------------------------------------
+// --- retired ABI -------------------------------------------------------------
 
 #[test]
-fn owner_view_returns_seeded_owner() {
+fn retired_selectors_reject_former_owner_and_zero_caller() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
-        set_owner(&storage, owner());
-        let out = dispatch(
-            storage.clone(),
-            &IVaultRouter::ownerCall {}.abi_encode(),
+        for signature in [
+            "owner()",
+            "addVault(address)",
+            "removeVault(address)",
+            "addLiquiditySource(address,uint8)",
+            "removeLiquiditySource(address)",
+            "addLiquidityTarget(address,uint8)",
+            "removeLiquidityTarget(address)",
+        ] {
+            let mut calldata = alloy_primitives::keccak256(signature)[..4].to_vec();
+            calldata.extend_from_slice(&[0u8; 64]);
+            for caller in [owner(), Address::ZERO] {
+                assert!(
+                    dispatch(storage.clone(), &calldata, caller, U256::ZERO).is_err(),
+                    "{signature}"
+                );
+            }
+        }
+        dispatch(
+            storage,
+            &IVaultRouter::assetsCountCall {}.abi_encode(),
             stranger(),
             U256::ZERO,
         )
         .unwrap();
-        let got = IVaultRouter::ownerCall::abi_decode_returns(&out).unwrap();
-        assert_eq!(got, owner());
-    });
-}
-
-#[test]
-fn management_methods_reject_non_owner() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    StorageHandle::enter(&mut storage, |storage| {
-        set_owner(&storage, owner());
-        // The precompile checks onlyOwner before any sub-call, so the test needs no stubs.
-        let err = runtime::add_liquidity_source(storage.clone(), stranger(), source_account(), 1)
-            .unwrap_err();
-        assert!(err.to_string().contains("unauthorized"), "{err}");
-
-        let err = runtime::add_vault(storage.clone(), stranger(), vault()).unwrap_err();
-        assert!(err.to_string().contains("unauthorized"), "{err}");
     });
 }
 
@@ -146,31 +152,30 @@ fn management_methods_reject_non_owner() {
 fn liquidity_registries_validate_entries_and_log_each_change() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
-        set_owner(&storage, owner());
         let rejects = [
-            runtime::add_liquidity_source(storage.clone(), stranger(), source_account(), 1),
-            runtime::add_liquidity_source(storage.clone(), owner(), Address::ZERO, 1),
-            runtime::add_liquidity_source(storage.clone(), owner(), source_account(), 0),
-            runtime::add_liquidity_target(storage.clone(), owner(), target_account(), 0),
-            runtime::remove_liquidity_source(storage.clone(), owner(), source_account()),
-            runtime::remove_liquidity_target(storage.clone(), owner(), target_account()),
+            runtime::add_liquidity_source(storage.clone(), Address::ZERO, 1),
+            runtime::add_liquidity_source(storage.clone(), source_account(), 0),
+            runtime::add_liquidity_target(storage.clone(), target_account(), 0),
+            runtime::remove_liquidity_source(storage.clone(), source_account()),
+            runtime::remove_liquidity_target(storage.clone(), target_account()),
         ];
         let expected = [
-            "unauthorized",
-            "zero address",
-            "invalid liquidity source",
-            "invalid liquidity target",
-            "liquidity source not found",
-            "liquidity target not found",
+            VaultRouterError::ZeroAddress,
+            VaultRouterError::InvalidLiquiditySource,
+            VaultRouterError::InvalidLiquidityTarget,
+            VaultRouterError::LiquiditySourceNotFound,
+            VaultRouterError::LiquidityTargetNotFound,
         ];
-        for (result, text) in rejects.into_iter().zip(expected) {
-            let err = result.unwrap_err().to_string();
-            assert!(err.contains(text), "expected {text:?}, got {err}");
+        for (result, error) in rejects.into_iter().zip(expected) {
+            assert_eq!(
+                result.unwrap_err().to_string(),
+                PrecompileError::from(error).to_string()
+            );
         }
-        runtime::add_liquidity_source(storage.clone(), owner(), source_account(), 1).unwrap();
-        runtime::add_liquidity_target(storage.clone(), owner(), target_account(), 1).unwrap();
-        runtime::remove_liquidity_source(storage.clone(), owner(), source_account()).unwrap();
-        runtime::remove_liquidity_target(storage.clone(), owner(), target_account()).unwrap();
+        runtime::add_liquidity_source(storage.clone(), source_account(), 1).unwrap();
+        runtime::add_liquidity_target(storage.clone(), target_account(), 1).unwrap();
+        runtime::remove_liquidity_source(storage.clone(), source_account()).unwrap();
+        runtime::remove_liquidity_target(storage.clone(), target_account()).unwrap();
         assert!(matches!(
             runtime::registered_liquidity_source(&storage, source_account()).unwrap(),
             IVaultRouter::StablesSource::Unknown
@@ -208,10 +213,8 @@ fn liquidity_registries_validate_entries_and_log_each_change() {
 fn add_remove_liquidity_source_enumerates_and_round_trips_type() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
-        set_owner(&storage, owner());
-
         // IntexCostAmount == 1.
-        runtime::add_liquidity_source(storage.clone(), owner(), source_account(), 1).unwrap();
+        runtime::add_liquidity_source(storage.clone(), source_account(), 1).unwrap();
 
         let out = dispatch(
             storage.clone(),
@@ -237,7 +240,7 @@ fn add_remove_liquidity_source_enumerates_and_round_trips_type() {
         assert_eq!(got.sourceType as u8, 1);
 
         // Removal clears it.
-        runtime::remove_liquidity_source(storage.clone(), owner(), source_account()).unwrap();
+        runtime::remove_liquidity_source(storage.clone(), source_account()).unwrap();
         assert_eq!(
             VaultRouterContract::new(storage.clone())
                 .liquidity_sources
@@ -252,21 +255,11 @@ fn add_remove_liquidity_source_enumerates_and_round_trips_type() {
 fn add_liquidity_source_rejects_unknown_type_and_remove_rejects_missing() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
-        set_owner(&storage, owner());
+        let err = runtime::add_liquidity_source(storage.clone(), source_account(), 0).unwrap_err();
+        assert_revert::<IVaultRouter::InvalidLiquiditySource>(&err);
 
-        let err = runtime::add_liquidity_source(storage.clone(), owner(), source_account(), 0)
-            .unwrap_err();
-        assert!(
-            err.to_string().contains("invalid liquidity source"),
-            "{err}"
-        );
-
-        let err = runtime::remove_liquidity_source(storage.clone(), owner(), source_account())
-            .unwrap_err();
-        assert!(
-            err.to_string().contains("liquidity source not found"),
-            "{err}"
-        );
+        let err = runtime::remove_liquidity_source(storage.clone(), source_account()).unwrap_err();
+        assert_revert::<IVaultRouter::LiquiditySourceNotFound>(&err);
     });
 }
 
@@ -274,10 +267,8 @@ fn add_liquidity_source_rejects_unknown_type_and_remove_rejects_missing() {
 fn add_remove_liquidity_target_enumerates() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
-        set_owner(&storage, owner());
-
         // Credis == 1.
-        runtime::add_liquidity_target(storage.clone(), owner(), target_account(), 1).unwrap();
+        runtime::add_liquidity_target(storage.clone(), target_account(), 1).unwrap();
         let out = dispatch(
             storage.clone(),
             &IVaultRouter::liquidityTargetAtCall { index: U256::ZERO }.abi_encode(),
@@ -289,7 +280,7 @@ fn add_remove_liquidity_target_enumerates() {
         assert_eq!(got.targetAddress, target_account());
         assert_eq!(got.targetType as u8, 1);
 
-        runtime::remove_liquidity_target(storage.clone(), owner(), target_account()).unwrap();
+        runtime::remove_liquidity_target(storage.clone(), target_account()).unwrap();
         assert_eq!(
             VaultRouterContract::new(storage.clone())
                 .liquidity_targets
@@ -305,6 +296,7 @@ fn add_remove_liquidity_target_enumerates() {
 #[test]
 fn add_vault_registers_asset_and_vault_then_remove() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at_selector(vault(), IERC20::balanceOfCall::SELECTOR, word(U256::ZERO));
     storage.stub_sub_call_at_selector(
         vault(),
         IVaultV2::assetCall::SELECTOR,
@@ -318,9 +310,7 @@ fn add_vault_registers_asset_and_vault_then_remove() {
     );
     storage.enable_sub_call_stub();
     StorageHandle::enter(&mut storage, |storage| {
-        set_owner(&storage, owner());
-
-        runtime::add_vault(storage.clone(), owner(), vault()).unwrap();
+        runtime::add_vault(storage.clone(), vault()).unwrap();
 
         let contract = VaultRouterContract::new(storage.clone());
         assert_eq!(contract.assets.len().unwrap(), 1);
@@ -386,11 +376,11 @@ fn add_vault_registers_asset_and_vault_then_remove() {
         );
 
         // Duplicate registration reverts.
-        let err = runtime::add_vault(storage.clone(), owner(), vault()).unwrap_err();
-        assert!(err.to_string().contains("already added"), "{err}");
+        let err = runtime::add_vault(storage.clone(), vault()).unwrap_err();
+        assert_revert::<IVaultRouter::ReserveVaultAlreadyAdded>(&err);
 
         // Remove drops both the vault and its (now-empty) asset.
-        runtime::remove_vault(storage.clone(), owner(), vault()).unwrap();
+        runtime::remove_vault(storage.clone(), vault()).unwrap();
         let contract = VaultRouterContract::new(storage.clone());
         assert_eq!(contract.asset_vault_set(asset()).len().unwrap(), 0);
         assert_eq!(contract.assets.len().unwrap(), 0);
@@ -425,8 +415,7 @@ fn add_vault_rejects_an_asset_without_a_reference_currency() {
     storage.enable_sub_call_stub();
 
     StorageHandle::enter(&mut storage, |storage| {
-        set_owner(&storage, owner());
-        let err = runtime::add_vault(storage.clone(), owner(), vault()).unwrap_err();
+        let err = runtime::add_vault(storage.clone(), vault()).unwrap_err();
         assert_eq!(err.to_string(), "revert: Invalid currency code 0");
 
         let contract = VaultRouterContract::new(storage.clone());
@@ -451,9 +440,8 @@ fn add_vault_rejects_a_vault_with_an_owner() {
     storage.enable_sub_call_stub();
 
     StorageHandle::enter(&mut storage, |storage| {
-        set_owner(&storage, owner());
-        let err = runtime::add_vault(storage.clone(), owner(), vault()).unwrap_err();
-        assert!(err.to_string().contains("owner not renounced"), "{err}");
+        let err = runtime::add_vault(storage.clone(), vault()).unwrap_err();
+        assert_revert::<IVaultRouter::ReserveVaultOwnerNotRenounced>(&err);
 
         let contract = VaultRouterContract::new(storage.clone());
         assert_eq!(contract.assets.len().unwrap(), 0);
@@ -462,6 +450,7 @@ fn add_vault_rejects_a_vault_with_an_owner() {
 }
 
 fn stub_registrable_vault(storage: &mut HashMapStorageProvider) {
+    storage.stub_sub_call_at_selector(vault(), IERC20::balanceOfCall::SELECTOR, word(U256::ZERO));
     storage.stub_sub_call_at_selector(
         vault(),
         IVaultV2::assetCall::SELECTOR,
@@ -485,9 +474,8 @@ fn add_vault_rejects_a_false_or_malformed_approve() {
         storage.stub_sub_call_at_selector(asset(), IERC20::approveCall::SELECTOR, returndata);
 
         StorageHandle::enter(&mut storage, |storage| {
-            set_owner(&storage, owner());
-            let err = runtime::add_vault(storage.clone(), owner(), vault()).unwrap_err();
-            assert!(err.to_string().contains("ERC20 operation failed"), "{err}");
+            let err = runtime::add_vault(storage.clone(), vault()).unwrap_err();
+            assert_revert::<IVaultRouter::TokenOperationFailed>(&err);
         });
     }
 }
@@ -497,14 +485,13 @@ fn remove_vault_rejects_a_false_approve() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     stub_registrable_vault(&mut storage);
     StorageHandle::enter(&mut storage, |storage| {
-        set_owner(&storage, owner());
-        runtime::add_vault(storage.clone(), owner(), vault()).unwrap();
+        runtime::add_vault(storage.clone(), vault()).unwrap();
     });
 
     storage.stub_sub_call_at_selector(asset(), IERC20::approveCall::SELECTOR, word(U256::ZERO));
     StorageHandle::enter(&mut storage, |storage| {
-        let err = runtime::remove_vault(storage.clone(), owner(), vault()).unwrap_err();
-        assert!(err.to_string().contains("ERC20 operation failed"), "{err}");
+        let err = runtime::remove_vault(storage.clone(), vault()).unwrap_err();
+        assert_revert::<IVaultRouter::TokenOperationFailed>(&err);
     });
 }
 
@@ -518,8 +505,6 @@ fn deposit_happy_path_and_rejects_unknown_source() {
     storage.stub_sub_call_at(vault(), word(shares));
     storage.enable_sub_call_stub();
     StorageHandle::enter(&mut storage, |storage| {
-        set_owner(&storage, owner());
-
         // The precompile rejects an Unknown source discriminant before any sub-call.
         let err = runtime::deposit(
             storage.clone(),
@@ -529,10 +514,7 @@ fn deposit_happy_path_and_rejects_unknown_source() {
             IVaultRouter::StablesSource::Unknown,
         )
         .unwrap_err();
-        assert!(
-            err.to_string().contains("invalid liquidity source"),
-            "{err}"
-        );
+        assert_revert::<IVaultRouter::InvalidLiquiditySource>(&err);
 
         // Register a vault for the asset. Seed the set directly so that the
         // vault.asset() stub does not collide with vault.deposit(). Then deposit
@@ -558,7 +540,6 @@ fn deposit_reverts_when_no_vault_configured() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.enable_sub_call_stub();
     StorageHandle::enter(&mut storage, |storage| {
-        set_owner(&storage, owner());
         let err = runtime::deposit(
             storage.clone(),
             source_account(),
@@ -567,10 +548,7 @@ fn deposit_reverts_when_no_vault_configured() {
             IVaultRouter::StablesSource::IntexCostAmount,
         )
         .unwrap_err();
-        assert!(
-            err.to_string().contains("reserve vault not configured"),
-            "{err}"
-        );
+        assert_revert::<IVaultRouter::ReserveVaultNotConfigured>(&err);
     });
 }
 
@@ -583,8 +561,6 @@ fn withdraw_happy_path_and_rejects_unknown_target() {
     storage.stub_sub_call_at(vault(), word(x));
     storage.enable_sub_call_stub();
     StorageHandle::enter(&mut storage, |storage| {
-        set_owner(&storage, owner());
-
         // The precompile rejects a zero receiver first.
         let err = runtime::withdraw(
             storage.clone(),
@@ -597,7 +573,7 @@ fn withdraw_happy_path_and_rejects_unknown_target() {
             IVaultRouter::StablesTarget::Credis,
         )
         .unwrap_err();
-        assert!(err.to_string().contains("zero address"), "{err}");
+        assert_revert::<IVaultRouter::ZeroAddress>(&err);
 
         // The precompile rejects an Unknown target discriminant before sub-calls.
         let err = runtime::withdraw(
@@ -611,10 +587,7 @@ fn withdraw_happy_path_and_rejects_unknown_target() {
             IVaultRouter::StablesTarget::Unknown,
         )
         .unwrap_err();
-        assert!(
-            err.to_string().contains("invalid liquidity target"),
-            "{err}"
-        );
+        assert_revert::<IVaultRouter::InvalidLiquidityTarget>(&err);
 
         // Register a vault, then withdraw declaring a valid target.
         VaultRouterContract::new(storage.clone())
@@ -649,7 +622,6 @@ fn withdraw_transfers_to_an_undeployed_receiver() {
     storage.stub_sub_call_at(vault(), word(x));
     storage.enable_sub_call_stub();
     StorageHandle::enter(&mut storage, |storage| {
-        set_owner(&storage, owner());
         VaultRouterContract::new(storage.clone())
             .asset_vault_set(asset())
             .insert(vault())
@@ -682,7 +654,6 @@ fn deposit_rejects_a_false_transfer_from() {
     );
     storage.enable_sub_call_stub();
     StorageHandle::enter(&mut storage, |storage| {
-        set_owner(&storage, owner());
         VaultRouterContract::new(storage.clone())
             .asset_vault_set(asset())
             .insert(vault())
@@ -696,7 +667,7 @@ fn deposit_rejects_a_false_transfer_from() {
             IVaultRouter::StablesSource::IntexCostAmount,
         )
         .unwrap_err();
-        assert!(err.to_string().contains("ERC20 operation failed"), "{err}");
+        assert_revert::<IVaultRouter::TokenOperationFailed>(&err);
     });
 }
 
@@ -707,7 +678,6 @@ fn withdraw_rejects_a_false_transfer() {
     storage.stub_sub_call_at_selector(asset(), IERC20::transferCall::SELECTOR, word(U256::ZERO));
     storage.enable_sub_call_stub();
     StorageHandle::enter(&mut storage, |storage| {
-        set_owner(&storage, owner());
         VaultRouterContract::new(storage.clone())
             .asset_vault_set(asset())
             .insert(vault())
@@ -724,7 +694,7 @@ fn withdraw_rejects_a_false_transfer() {
             IVaultRouter::StablesTarget::Credis,
         )
         .unwrap_err();
-        assert!(err.to_string().contains("ERC20 operation failed"), "{err}");
+        assert_revert::<IVaultRouter::TokenOperationFailed>(&err);
     });
 }
 
@@ -737,7 +707,6 @@ fn abi_deposit_gates_msg_sender_against_registry() {
     storage.stub_sub_call_at(vault(), word(shares));
     storage.enable_sub_call_stub();
     StorageHandle::enter(&mut storage, |storage| {
-        set_owner(&storage, owner());
         // Register a vault for the asset so the deposit can resolve one.
         let contract = VaultRouterContract::new(storage.clone());
         contract.asset_vault_set(asset()).insert(vault()).unwrap();
@@ -751,14 +720,11 @@ fn abi_deposit_gates_msg_sender_against_registry() {
 
         // Unregistered caller resolves to Unknown -> rejected.
         let err = dispatch(storage.clone(), &calldata, source_account(), U256::ZERO).unwrap_err();
-        assert!(
-            err.to_string().contains("invalid liquidity source"),
-            "{err}"
-        );
+        assert_revert::<IVaultRouter::InvalidLiquiditySource>(&err);
 
         // Register the caller as a source, then the same ABI call succeeds and
         // the precompile resolves the discriminant from the registry.
-        runtime::add_liquidity_source(storage.clone(), owner(), source_account(), 1).unwrap();
+        runtime::add_liquidity_source(storage.clone(), source_account(), 1).unwrap();
         let out = dispatch(storage.clone(), &calldata, source_account(), U256::ZERO).unwrap();
         assert_eq!(
             IVaultRouter::depositCall::abi_decode_returns(&out).unwrap(),
@@ -774,7 +740,6 @@ fn abi_withdraw_gates_msg_sender_against_registry() {
     storage.stub_sub_call_at(vault(), word(x));
     storage.enable_sub_call_stub();
     StorageHandle::enter(&mut storage, |storage| {
-        set_owner(&storage, owner());
         VaultRouterContract::new(storage.clone())
             .asset_vault_set(asset())
             .insert(vault())
@@ -792,13 +757,10 @@ fn abi_withdraw_gates_msg_sender_against_registry() {
 
         // Unregistered caller resolves to Unknown -> rejected.
         let err = dispatch(storage.clone(), &calldata, target_account(), U256::ZERO).unwrap_err();
-        assert!(
-            err.to_string().contains("invalid liquidity target"),
-            "{err}"
-        );
+        assert_revert::<IVaultRouter::InvalidLiquidityTarget>(&err);
 
         // Register the caller as a target, then the ABI call succeeds.
-        runtime::add_liquidity_target(storage.clone(), owner(), target_account(), 1).unwrap();
+        runtime::add_liquidity_target(storage.clone(), target_account(), 1).unwrap();
         let out = dispatch(storage.clone(), &calldata, target_account(), U256::ZERO).unwrap();
         assert_eq!(
             IVaultRouter::withdrawCall::abi_decode_returns(&out).unwrap(),
@@ -836,16 +798,17 @@ fn reference_currency_assets_deduplicates_vaults_of_one_asset() {
     storage.enable_sub_call_stub();
 
     StorageHandle::enter(&mut storage, |storage| {
-        set_owner(&storage, owner());
         for v in [
             vault(),
             second_vault,
             address!("0x0000000000000000000000000000000000000444"),
         ] {
-            runtime::add_vault(storage.clone(), owner(), v).unwrap();
+            runtime::add_vault(storage.clone(), v).unwrap();
         }
 
-        let assets = runtime::reference_currency_assets(&storage, USD_ISO_CODE).unwrap();
+        let assets =
+            runtime::reference_currency_assets(&storage, USD_ISO_CODE, U256::ZERO, U256::MAX)
+                .unwrap();
         assert_eq!(assets.len(), 2);
         assert!(assets.contains(&asset()));
         assert!(assets.contains(&second_asset));
@@ -869,13 +832,14 @@ fn reference_currency_assets_dispatch() {
     storage.enable_sub_call_stub();
 
     StorageHandle::enter(&mut storage, |storage| {
-        set_owner(&storage, owner());
-        runtime::add_vault(storage.clone(), owner(), vault()).unwrap();
+        runtime::add_vault(storage.clone(), vault()).unwrap();
 
         let assets_out = dispatch(
             storage.clone(),
             &IVaultRouter::referenceCurrencyAssetsCall {
                 isoCode: USD_ISO_CODE,
+                offset: U256::ZERO,
+                limit: U256::MAX,
             }
             .abi_encode(),
             stranger(),
@@ -918,7 +882,7 @@ fn rebalance_rejects_same_vault() {
             },
         )
         .unwrap_err();
-        assert!(err.to_string().contains("same vault"), "{err}");
+        assert_revert::<IVaultRouter::SameVaultRebalance>(&err);
     });
 }
 
@@ -938,10 +902,7 @@ fn rebalance_rejects_zero_amount() {
             },
         )
         .unwrap_err();
-        assert!(
-            err.to_string().contains("invalid rebalance amount"),
-            "{err}"
-        );
+        assert_revert::<IVaultRouter::InvalidRebalanceAmount>(&err);
     });
 }
 
@@ -974,7 +935,7 @@ fn rebalance_rejects_an_unregistered_source_vault() {
             },
         )
         .unwrap_err();
-        assert!(err.to_string().contains("not registered"), "{err}");
+        assert_revert::<IVaultRouter::RebalanceVaultNotRegistered>(&err);
     });
 }
 
@@ -1007,7 +968,7 @@ fn rebalance_rejects_an_unregistered_destination_vault() {
             },
         )
         .unwrap_err();
-        assert!(err.to_string().contains("not registered"), "{err}");
+        assert_revert::<IVaultRouter::RebalanceVaultNotRegistered>(&err);
     });
 }
 
@@ -1110,7 +1071,7 @@ fn rebalance_rejects_insufficient_source_shares() {
             },
         )
         .unwrap_err();
-        assert!(err.to_string().contains("insufficient shares"), "{err}");
+        assert_revert::<IVaultRouter::InsufficientSharesForWithdraw>(&err);
     });
 }
 
@@ -1147,7 +1108,7 @@ fn rebalance_rejects_when_the_required_input_exceeds_max() {
             },
         )
         .unwrap_err();
-        assert!(err.to_string().contains("exceeds max"), "{err}");
+        assert_revert::<IVaultRouter::RebalanceInputExceedsMax>(&err);
     });
 }
 
@@ -1506,10 +1467,7 @@ fn rebalance_rejects_assets_with_more_than_eighteen_decimals() {
             },
         )
         .unwrap_err();
-        assert!(
-            err.to_string().contains("unsupported asset decimals"),
-            "{err}"
-        );
+        assert_revert::<IVaultRouter::UnsupportedAssetDecimals>(&err);
     });
 }
 
@@ -1701,7 +1659,10 @@ fn rebalance_rejects_an_unregistered_stranger() {
             },
         )
         .unwrap_err();
-        assert!(err.to_string().contains("CCA is not active"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            PrecompileError::from(outbe_ccaregistry::errors::CcaError::NotRegistered).to_string()
+        );
     });
 }
 
@@ -1993,7 +1954,16 @@ fn rebalance_rejects_invalid_live_reference_currencies() {
 // --- reservations -------------------------------------------------------------
 
 fn with_reservable_vault<R>(shares: U256, f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
+    with_reservable_vault_at_block(shares, 0, f)
+}
+
+fn with_reservable_vault_at_block<R>(
+    shares: U256,
+    block: u64,
+    f: impl FnOnce(StorageHandle<'_>) -> R,
+) -> R {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_block_number(block);
     storage.set_timestamp(U256::from(1_700_000_000u64));
     storage.stub_sub_call_at(vault(), word(shares));
     storage.enable_sub_call_stub();
@@ -2004,7 +1974,6 @@ fn with_reservable_vault<R>(shares: U256, f: impl FnOnce(StorageHandle<'_>) -> R
         word(U256::from(USD_ISO_CODE)),
     );
     StorageHandle::enter(&mut storage, |storage| {
-        set_owner(&storage, owner());
         storage
             .set_code(asset(), Bytecode::new_raw(vec![0x00].into()))
             .unwrap();
@@ -2057,7 +2026,10 @@ fn reserve_stables_rejects_an_inactive_caller() {
             },
         )
         .unwrap_err();
-        assert!(err.to_string().contains("CCA is not active"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            PrecompileError::from(outbe_ccaregistry::errors::CcaError::NotRegistered).to_string()
+        );
         assert!(runtime::reservation_of(&storage, U256::ZERO)
             .unwrap()
             .asset
@@ -2080,7 +2052,7 @@ fn reserve_stables_requires_a_pledge_source() {
             },
         )
         .unwrap_err();
-        assert!(err.to_string().contains("zero address"), "{err}");
+        assert_revert::<IVaultRouter::ZeroAddress>(&err);
     });
 }
 
@@ -2103,16 +2075,17 @@ fn reserve_in(
 
 #[test]
 fn a_reservation_needs_every_call_term() {
-    let rejected = |storage: &StorageHandle<'_>, reference_currency: u16, reason: &str| {
-        let err = reserve_in(storage, reference_currency).unwrap_err();
-        assert!(err.to_string().contains(reason), "{err}");
-        let router = VaultRouterContract::new(storage.clone());
-        assert!(router.reservation_nonce.read().unwrap().is_zero());
-        assert!(runtime::reservation_of(storage, U256::ONE)
-            .unwrap()
-            .asset
-            .is_zero());
-    };
+    let rejected =
+        |storage: &StorageHandle<'_>, reference_currency: u16, expected: PrecompileError| {
+            let err = reserve_in(storage, reference_currency).unwrap_err();
+            assert_eq!(err.to_string(), expected.to_string());
+            let router = VaultRouterContract::new(storage.clone());
+            assert!(router.reservation_nonce.read().unwrap().is_zero());
+            assert!(runtime::reservation_of(storage, U256::ONE)
+                .unwrap()
+                .asset
+                .is_zero());
+        };
     with_reservable_vault(U256::from(100u64), |storage| {
         let day = outbe_primitives::time::previous_date_key(
             outbe_primitives::time::timestamp_to_date_key(1_700_000_000),
@@ -2122,21 +2095,40 @@ fn a_reservation_needs_every_call_term() {
             .unwrap()
             .unwrap();
 
-        rejected(&storage, 999, "not a registered reference currency");
+        rejected(
+            &storage,
+            999,
+            outbe_oracle::errors::OracleError::NotReferenceCurrency { iso_code: 999 }.into(),
+        );
 
         oracle.policy_rate.write(&USD_ISO_CODE, U256::ZERO).unwrap();
-        rejected(&storage, USD_ISO_CODE, "no policy rate");
+        rejected(
+            &storage,
+            USD_ISO_CODE,
+            outbe_oracle::errors::OracleError::NoPolicyRate {
+                iso_code: USD_ISO_CODE,
+            }
+            .into(),
+        );
         oracle
             .policy_rate
             .write(&USD_ISO_CODE, U256::from(43_000))
             .unwrap();
 
         oracle.utc_day_vwap_last_finalized.write(day - 1).unwrap();
-        rejected(&storage, USD_ISO_CODE, "previous day VWAP unavailable");
+        rejected(
+            &storage,
+            USD_ISO_CODE,
+            VaultRouterError::PreviousDayVwapUnavailable.into(),
+        );
         oracle.utc_day_vwap_last_finalized.write(day).unwrap();
 
         oracle.record_utc_day_vwap(day, index, U256::ZERO).unwrap();
-        rejected(&storage, USD_ISO_CODE, "previous day VWAP unavailable");
+        rejected(
+            &storage,
+            USD_ISO_CODE,
+            VaultRouterError::PreviousDayVwapUnavailable.into(),
+        );
         oracle
             .record_utc_day_vwap(day, index, U256::from(2_000_000))
             .unwrap();
@@ -2145,7 +2137,11 @@ fn a_reservation_needs_every_call_term() {
             .reference_currencies
             .push(EUR_ISO_CODE)
             .unwrap();
-        rejected(&storage, EUR_ISO_CODE, "reference pair unavailable");
+        rejected(
+            &storage,
+            EUR_ISO_CODE,
+            VaultRouterError::ReferencePairUnavailable.into(),
+        );
 
         reserve_in(&storage, USD_ISO_CODE).unwrap();
     });
@@ -2201,7 +2197,7 @@ fn reserve_stables_requires_a_credis_owner() {
             },
         )
         .unwrap_err();
-        assert!(err.to_string().contains("zero address"), "{err}");
+        assert_revert::<IVaultRouter::ZeroAddress>(&err);
     });
 }
 
@@ -2258,7 +2254,7 @@ fn a_reservation_holds_then_releases_once() {
             IVaultRouter::StablesTarget::Credis,
         )
         .unwrap_err();
-        assert!(err.to_string().contains("reservation not found"), "{err}");
+        assert_revert::<IVaultRouter::ReservationNotFound>(&err);
     });
 }
 
@@ -2286,7 +2282,7 @@ fn release_rejects_a_different_receiver_and_returns_excess_to_the_origin_vault()
             IVaultRouter::StablesTarget::Credis,
         )
         .unwrap_err();
-        assert!(err.to_string().contains("Credis owner mismatch"), "{err}");
+        assert_revert::<IVaultRouter::CredisOwnerMismatch>(&err);
         assert_eq!(
             runtime::reservation_of(&storage, id).unwrap().amount_minor,
             U256::from(50),
@@ -2353,7 +2349,7 @@ fn a_stranger_cannot_return_a_live_reservation() {
         )
         .unwrap();
         let err = runtime::return_reservation(storage.clone(), stranger(), id).unwrap_err();
-        assert!(err.to_string().contains("unauthorized"), "{err}");
+        assert_revert::<IVaultRouter::Unauthorized>(&err);
         assert_eq!(
             runtime::reservation_of(&storage, id).unwrap().amount_minor,
             U256::from(10)
@@ -2404,7 +2400,7 @@ fn release_rejects_an_expired_reservation() {
             IVaultRouter::StablesTarget::Credis,
         )
         .unwrap_err();
-        assert!(err.to_string().contains("reservation expired"), "{err}");
+        assert_revert::<IVaultRouter::ReservationExpired>(&err);
         assert_eq!(
             runtime::reservation_of(&storage, id).unwrap().amount_minor,
             U256::from(10)
@@ -2433,14 +2429,14 @@ fn reservations_are_gated_like_a_withdrawal() {
         }
         .abi_encode();
         let err = dispatch(storage.clone(), &release_call, stranger(), U256::ZERO).unwrap_err();
-        assert!(err.to_string().contains("unauthorized"), "{err}");
+        assert_revert::<IVaultRouter::Unauthorized>(&err);
 
-        runtime::add_liquidity_target(storage.clone(), owner(), target_account(), 1).unwrap();
+        runtime::add_liquidity_target(storage.clone(), target_account(), 1).unwrap();
         let err =
             dispatch(storage.clone(), &release_call, target_account(), U256::ZERO).unwrap_err();
-        assert!(err.to_string().contains("unauthorized"));
+        assert_revert::<IVaultRouter::Unauthorized>(&err);
         let factory = outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS;
-        runtime::add_liquidity_target(storage.clone(), owner(), factory, 1).unwrap();
+        runtime::add_liquidity_target(storage.clone(), factory, 1).unwrap();
         let out = dispatch(storage.clone(), &release_call, factory, U256::ZERO).unwrap();
         assert_eq!(
             IVaultRouter::releaseReservationCall::abi_decode_returns(&out).unwrap(),
@@ -2465,7 +2461,6 @@ fn a_reservation_cannot_exceed_the_vaults_shares() {
     );
     storage.enable_sub_call_stub();
     StorageHandle::enter(&mut storage, |storage| {
-        set_owner(&storage, owner());
         bond_cca(&storage);
         register_vault(&storage, asset(), vault());
         let err = runtime::reserve_stables(
@@ -2480,7 +2475,7 @@ fn a_reservation_cannot_exceed_the_vaults_shares() {
             },
         )
         .unwrap_err();
-        assert!(err.to_string().contains("insufficient shares"), "{err}");
+        assert_revert::<IVaultRouter::InsufficientSharesForWithdraw>(&err);
         assert!(!runtime::has_liquidity(&storage, asset(), U256::from(10)).unwrap());
     });
 }
@@ -2535,3 +2530,5 @@ fn reservation_expiry_boundary_and_repeated_permissionless_return() {
         );
     });
 }
+
+mod registry;

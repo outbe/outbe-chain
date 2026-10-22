@@ -66,9 +66,10 @@ impl SlashIndicator<'_> {
     ///    misbehavior, not for re-litigating BLS quorum or accounting
     ///    binding failures.
     /// 10. Mark dedup BEFORE applying effects, then call
-    ///     `apply_evidence_felony` for jail + 8% slash +
-    ///     10% submitter reward. This reuses the existing felony helper. The
-    ///     other evidence types share the same economics.
+    ///     `apply_evidence_felony` for jail + 8% slash + 100% of the
+    ///     slashed amount as the submitter reward. This reuses the
+    ///     existing felony helper. The other evidence types share the
+    ///     same economics.
     pub fn submit_invalid_vrf_evidence(
         &mut self,
         caller: Address,
@@ -135,13 +136,15 @@ impl SlashIndicator<'_> {
         // (11) Re-verify the proof. Only a VRF-class failure is slashable.
         let failure_class = vrf_failure_class(&metadata, &snapshot, ev.parent_block_hash)?;
 
+        self.storage.now_secs()?;
         // (12) Mark dedup BEFORE applying effects so a panic / abort
         // between this point and the felony cannot enable replay.
         self.invalid_vrf_evidence_processed
             .write(&evidence_hash, true)?;
 
-        // (13) Apply felony: jail + 8% slash + 10% submitter
-        // reward. This uses the same helper that the other evidence types call.
+        // (13) Apply felony: jail + 8% slash + 100% of the slashed
+        // amount as the submitter reward. The other evidence types use
+        // the same helper.
         self.apply_evidence_felony(proposer, caller)?;
 
         // (14) Canonical event with re-derived failure class.
@@ -384,6 +387,7 @@ impl SlashIndicator<'_> {
         if self.seed_partial_equivocation_processed.read(&dedup)? {
             return Err(SlashIndicatorError::EvidenceAlreadyProcessed.into());
         }
+        self.storage.now_secs()?;
         self.seed_partial_equivocation_processed
             .write(&dedup, true)?;
 
@@ -462,6 +466,7 @@ impl SlashIndicator<'_> {
         if self.invalid_seed_partial_processed.read(&dedup)? {
             return Err(SlashIndicatorError::EvidenceAlreadyProcessed.into());
         }
+        self.storage.now_secs()?;
         self.invalid_seed_partial_processed.write(&dedup, true)?;
 
         // (13) Felony.

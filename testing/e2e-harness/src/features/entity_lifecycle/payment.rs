@@ -305,21 +305,30 @@ pub(crate) fn assert_payments_settled(world: &World, payments: &[Payment]) {
     verify_checkpoint(world, checkpoint);
 }
 
-/// The call reverts with exactly `expected`, the product error's own text.
+/// The call reverts with exactly `expected` canonical error ABI bytes.
 pub(crate) fn assert_refused<C: SolCall>(
     world: &World,
     from: Address,
     to: Address,
     call: &C,
-    expected: impl std::fmt::Display,
+    expected: &[u8],
 ) {
     let url = world.rpc.url(world.validators.primary_port());
     let height = eth::block_number(&url).expect("head for the refused call");
-    let reason = eth::read_call_revert_reason_at(&url, to, from, call, height)
-        .unwrap_or_else(|error| panic!("{} did not revert: {error:#}", C::SIGNATURE));
+    let reason = eth::read_call_revert_data_at(
+        &url,
+        to,
+        from,
+        call,
+        eth::RevertAt {
+            value: U256::ZERO,
+            height,
+        },
+    )
+    .unwrap_or_else(|error| panic!("{} did not revert: {error:#}", C::SIGNATURE));
     assert_eq!(
-        reason,
-        expected.to_string(),
+        reason.as_ref(),
+        expected,
         "{} refused for the wrong reason",
         C::SIGNATURE
     );

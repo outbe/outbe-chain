@@ -76,6 +76,10 @@ fn expected_cycle_entitlements() -> MetadosisMutationEntitlements {
         Purpose::CycleLifecycle,
         metadosis_process_ready_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
     ))
+    .union(MetadosisMutationEntitlements::exact(
+        Purpose::CertifiedFinality,
+        metadosis_late_settlement_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
+    ))
 }
 
 #[test]

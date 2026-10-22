@@ -13,6 +13,14 @@ use ::time::{Date, Month};
 
 use crate::storage::types::{Storable, StorableType, StorageKey};
 
+/// Convert an execution timestamp in Unix seconds without consulting the wall clock.
+///
+/// Values through `u64::MAX` are preserved exactly. Wider values are rejected,
+/// never saturated, so malformed execution contexts cannot silently change time.
+pub fn timestamp_secs(timestamp: U256) -> Result<u64, crate::errors::TimestampOverflow> {
+    u64::try_from(timestamp).map_err(|_| crate::errors::TimestampOverflow)
+}
+
 /// Seconds in one calendar day. Public so consumers can do day-aligned
 /// timestamp arithmetic without redefining the constant.
 pub const SECONDS_PER_DAY: u64 = 86_400;
@@ -281,6 +289,8 @@ impl StorableType for WorldwideDay {
 }
 
 impl Storable for WorldwideDay {
+    const BYTES: usize = 4;
+
     fn from_word(word: U256) -> Self {
         Self(word.to::<u32>())
     }
@@ -299,6 +309,26 @@ impl StorageKey for WorldwideDay {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn execution_timestamp_boundaries() {
+        for secs in [0, 1_734_706_800, u64::MAX] {
+            assert_eq!(timestamp_secs(U256::from(secs)), Ok(secs));
+        }
+        for timestamp in [U256::from(u64::MAX) + U256::from(1), U256::MAX] {
+            assert_eq!(
+                timestamp_secs(timestamp),
+                Err(crate::errors::TimestampOverflow)
+            );
+        }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn execution_timestamp_preserves_u64(secs: u64) {
+            proptest::prop_assert_eq!(timestamp_secs(U256::from(secs)), Ok(secs));
+        }
+    }
 
     #[test]
     fn iso8601_renders_utc_with_milliseconds() {
