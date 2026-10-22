@@ -167,14 +167,10 @@ fn removal_can_collide_with_a_surviving_same_block_issuance() {
 #[test]
 fn gem_id_derivation_binds_each_currency_and_live_supply() {
     let derive = |issuance, reference, supply| {
-        GemContract::generate_gem_id(
-            ALICE,
-            U256::from(1_000_000u64),
-            1,
-            issuance,
-            reference,
-            supply,
-        )
+        let mut params = sample_params(ALICE);
+        params.issuance_currency = issuance;
+        params.reference_currency = reference;
+        GemContract::generate_gem_id(&params, 1, supply)
     };
     let baseline = derive(USD, USD, 0);
     assert_eq!(baseline, derive(USD, USD, 0));
@@ -535,11 +531,8 @@ fn a_gem_id_is_its_raw_keccak_and_the_group_id_carries_the_day() {
         assert_eq!(
             gem_id,
             GemContract::generate_gem_id(
-                ALICE,
-                U256::from(1_000_000u64),
+                &sample_params(ALICE),
                 storage.block_number().unwrap(),
-                USD,
-                USD,
                 supply,
             )
         );

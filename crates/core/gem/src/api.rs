@@ -17,14 +17,7 @@ pub use crate::state_api::{LoadedGem, LoadedGemGroup};
 /// opening that group if it is the first. Returns the gem id. GemFactory decides the issue.
 pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256> {
     let total_supply = GemContract::new(storage.clone()).total_supply()?;
-    let gem_id = GemContract::generate_gem_id(
-        params.owner,
-        params.promis_load_minor,
-        storage.block_number()?,
-        params.issuance_currency,
-        params.reference_currency,
-        total_supply,
-    );
+    let gem_id = GemContract::generate_gem_id(&params, storage.block_number()?, total_supply);
     let call_price = params
         .call_terms
         .map_or(U256::ZERO, |terms| terms.call_price_minor);
