@@ -1,12 +1,10 @@
 //! ABI dispatch for the zero-fee paymaster precompile.
 //!
 //! The precompile exposes only view methods. `recordUse` is **not** an ABI
-//! method. Only the executor pre-fee hook mutates the counter, through the
-//! direct Rust function [`crate::record_sponsorship_use`]. A successful
-//! [`crate::authorize_sponsorship`] gates that call. Out-of-band
-//! `recordUse` calls would let a sponsored signer burn their own quota
-//! through a regular sub-call. That sub-call would race the executor's
-//! pre-fee write.
+//! method. The executor records quota only after transaction inclusion through
+//! [`crate::record_sponsorship_use`], consuming the opaque result of
+//! [`crate::authorize_sponsorship`]. An ABI `recordUse` entry would let contract
+//! subcalls spend quota outside that executor-owned transaction flow.
 //!
 //! ABI tests call the real dispatch through `IZeroFee.sol` types and compare
 //! their signatures, selectors, and return types with the annotation-generated

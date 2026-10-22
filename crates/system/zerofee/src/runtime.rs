@@ -242,15 +242,37 @@ fn check_sponsored_target(to: Option<Address>) -> Result<(), ZeroFeePolicyError>
     Ok(())
 }
 
-/// Result of a successful sponsorship authorization.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Single-use result of successful authorization for one signer and UTC day.
+///
+/// A caller cannot fabricate an authorization from a day and counter value:
+///
+/// ```compile_fail
+/// use alloy_primitives::Address;
+/// use outbe_zerofee::SponsorshipAuthorization;
+///
+/// let forged = SponsorshipAuthorization {
+///     signer: Address::ZERO,
+///     current_day: 20_260_401,
+///     next_count: 1,
+/// };
+/// ```
+#[derive(Debug)]
 pub struct SponsorshipAuthorization {
-    /// UTC date key (`yyyymmdd`) used for the lazy-reset bookkeeping.
-    pub current_day: u32,
-    /// Sponsorship counter value AFTER applying the implied increment.
-    /// Callers MUST persist this through `record_use` to make the
-    /// authorization visible across blocks.
-    pub next_count: u32,
+    signer: Address,
+    current_day: u32,
+    next_count: u32,
+}
+
+impl SponsorshipAuthorization {
+    /// UTC date key (`yyyymmdd`) approved by the authorization check.
+    pub const fn current_day(&self) -> u32 {
+        self.current_day
+    }
+
+    /// Counter value predicted by authorization, before transaction inclusion.
+    pub const fn next_count(&self) -> u32 {
+        self.next_count
+    }
 }
 
 /// Stateless prechecks for the sponsored free-tx path, sufficient for
@@ -297,24 +319,55 @@ pub fn authorize_sponsorship(
     }
 
     Ok(SponsorshipAuthorization {
+        signer,
         current_day,
         next_count: used.saturating_add(1),
     })
 }
 
-/// Convenience helper: persists the use of a sponsored free-tx after
-/// [`authorize_sponsorship`] succeeded. The executor calls it through
-/// an outer `StorageHandle` whose write survives the inner tx's revert
-/// journal. So a `REVERT` cannot un-burn the daily slot.
+/// Consumes an authorization and records its signer's sponsored transaction.
+///
+/// The executor calls this only after inclusion, including an included revert.
+/// A failed authorization, execution error, or declined commit must not call it.
+/// Callers must keep authorization and recording within the same sequential
+/// transaction flow; this token does not reserve quota or isolate storage.
 ///
 /// Emits a [`SponsorshipAuthorized`] log at [`ZEROFEE_ADDRESS`] with
 /// the post-write counter so off-chain tooling can observe sponsorship
 /// grants via `eth_getLogs`.
+///
+/// A caller cannot record use by supplying an arbitrary day:
+///
+/// ```compile_fail
+/// use alloy_primitives::Address;
+/// use outbe_primitives::storage::StorageHandle;
+/// use outbe_zerofee::record_sponsorship_use;
+///
+/// fn bypass(storage: StorageHandle<'_>, signer: Address) {
+///     let _ = record_sponsorship_use(storage, signer, 20_260_401);
+/// }
+/// ```
+///
+/// An authorization cannot be reused for another quota increment:
+///
+/// ```compile_fail
+/// use outbe_primitives::storage::StorageHandle;
+/// use outbe_zerofee::{record_sponsorship_use, SponsorshipAuthorization};
+///
+/// fn reuse(storage: StorageHandle<'_>, auth: SponsorshipAuthorization) {
+///     let _ = record_sponsorship_use(storage.clone(), auth);
+///     let _ = record_sponsorship_use(storage, auth);
+/// }
+/// ```
 pub fn record_sponsorship_use(
     storage: StorageHandle<'_>,
-    signer: Address,
-    current_day: u32,
+    auth: SponsorshipAuthorization,
 ) -> Result<u32, ZeroFeePolicyError> {
+    let SponsorshipAuthorization {
+        signer,
+        current_day,
+        ..
+    } = auth;
     let new_count = {
         let mut contract = ZeroFeeContract::new(storage.clone());
         contract.record_use(signer, current_day)?
@@ -709,8 +762,8 @@ mod tests {
     fn authorize_accepts_non_paymaster_signer() {
         with_storage(|storage| {
             let auth = authorize_sponsorship(storage, SIGNER, BLOCK_TS).unwrap();
-            assert_eq!(auth.current_day, BLOCK_DAY);
-            assert_eq!(auth.next_count, 1);
+            assert_eq!(auth.current_day(), BLOCK_DAY);
+            assert_eq!(auth.next_count(), 1);
         });
     }
 
@@ -748,8 +801,8 @@ mod tests {
                     .unwrap();
             }
             let auth = authorize_sponsorship(storage, SIGNER, BLOCK_TS).unwrap();
-            assert_eq!(auth.current_day, BLOCK_DAY);
-            assert_eq!(auth.next_count, 1);
+            assert_eq!(auth.current_day(), BLOCK_DAY);
+            assert_eq!(auth.next_count(), 1);
         });
     }
 
@@ -759,9 +812,8 @@ mod tests {
             // Two consecutive authorize+record cycles for the same day.
             for expected in 1..=3 {
                 let auth = authorize_sponsorship(storage.clone(), SIGNER, BLOCK_TS).unwrap();
-                assert_eq!(auth.next_count, expected);
-                let written =
-                    record_sponsorship_use(storage.clone(), SIGNER, auth.current_day).unwrap();
+                assert_eq!(auth.next_count(), expected);
+                let written = record_sponsorship_use(storage.clone(), auth).unwrap();
                 assert_eq!(written, expected);
             }
             // Direct slot inspection confirms the packed counter.
@@ -791,7 +843,7 @@ mod tests {
                     .unwrap();
             }
             let auth = authorize_sponsorship(storage, SIGNER, BLOCK_TS).unwrap();
-            assert_eq!(auth.current_day, BLOCK_DAY);
+            assert_eq!(auth.current_day(), BLOCK_DAY);
         });
     }
 
@@ -801,7 +853,7 @@ mod tests {
             let just_before = BLOCK_TS - 1;
             let auth = authorize_sponsorship(storage, SIGNER, just_before).unwrap();
             assert_eq!(
-                auth.current_day,
+                auth.current_day(),
                 outbe_primitives::time::previous_date_key(BLOCK_DAY)
             );
         });
@@ -885,52 +937,14 @@ mod tests {
     }
 
     #[test]
-    fn counter_survives_storage_handle_checkpoint_revert() {
-        // The executor pre-fee design commits the counter increment
-        // through `DirectStorageProvider::flush` BEFORE the inner tx
-        // runs. So a `REVERT` inside the user's tx cannot un-burn the
-        // daily slot. At the storage-primitive level, this test proves
-        // the equivalent invariant: a write that happens BEFORE a
-        // `checkpoint_revert` is preserved. Only writes after the
-        // checkpoint are rolled back.
-        with_storage(|storage| {
-            // Step 1: burn one slot for today. This mimics the flush() commit.
-            let auth = authorize_sponsorship(storage.clone(), SIGNER, BLOCK_TS).unwrap();
-            record_sponsorship_use(storage.clone(), SIGNER, auth.current_day).unwrap();
-            let after_first = ZeroFeeContract::new(storage.clone())
-                .effective_count(SIGNER, BLOCK_DAY)
-                .unwrap();
-            assert_eq!(after_first, 1);
-
-            // Step 2: open a checkpoint and make a doomed write to
-            // some unrelated slot, then revert. The pre-checkpoint
-            // counter must remain visible.
-            let checkpoint = storage.checkpoint();
-            // Simulate a tx-internal side effect by bumping the
-            // counter again, then revert via the checkpoint.
-            record_sponsorship_use(storage.clone(), SIGNER, BLOCK_DAY).unwrap();
-            storage.checkpoint_revert(checkpoint);
-
-            // The reverted second increment is gone. The pre-checkpoint
-            // write survives.
-            let after_revert = ZeroFeeContract::new(storage.clone())
-                .effective_count(SIGNER, BLOCK_DAY)
-                .unwrap();
-            assert_eq!(
-                after_revert, 1,
-                "checkpoint_revert must NOT undo the pre-tx counter write"
-            );
-        });
-    }
-
-    #[test]
     fn record_use_emits_sponsorship_event_at_zerofee_address() {
         use alloy_sol_types::SolEvent;
 
         let mut provider = HashMapStorageProvider::new(1);
         // First record produces newCount=1.
         StorageHandle::enter(&mut provider, |storage| {
-            let new_count = record_sponsorship_use(storage, SIGNER, BLOCK_DAY).unwrap();
+            let auth = authorize_sponsorship(storage.clone(), SIGNER, BLOCK_TS).unwrap();
+            let new_count = record_sponsorship_use(storage, auth).unwrap();
             assert_eq!(new_count, 1);
         });
 
@@ -953,19 +967,21 @@ mod tests {
 
     #[test]
     fn record_use_persists_across_multiple_storage_handle_scopes() {
-        // The executor's pre-fee path opens a fresh `DirectStorageProvider`
-        // scope per transaction. This test simulates the same shape.
+        // The executor opens separate storage scopes for authorization and
+        // recording. The authorization must survive the first scope.
         // Each authorize+record cycle re-enters the storage handle. The
         // counter must be observable in the next scope. If the
         // contract ever started caching state inside the facade, this
         // test would catch the regression.
         let mut provider = HashMapStorageProvider::new(1);
         for expected in 1..=3 {
+            let auth = StorageHandle::enter(&mut provider, |storage| {
+                authorize_sponsorship(storage, SIGNER, BLOCK_TS).unwrap()
+            });
+            assert_eq!(auth.current_day(), BLOCK_DAY);
+            assert_eq!(auth.next_count(), expected);
             StorageHandle::enter(&mut provider, |storage| {
-                let auth = authorize_sponsorship(storage.clone(), SIGNER, BLOCK_TS).unwrap();
-                assert_eq!(auth.current_day, BLOCK_DAY);
-                assert_eq!(auth.next_count, expected);
-                let new_count = record_sponsorship_use(storage, SIGNER, auth.current_day).unwrap();
+                let new_count = record_sponsorship_use(storage, auth).unwrap();
                 assert_eq!(new_count, expected);
             });
         }

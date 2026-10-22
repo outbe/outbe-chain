@@ -38,7 +38,7 @@ proptest! {
     ) {
         with_storage(|storage| {
             let auth = authorize_sponsorship(storage, SIGNER, ts).unwrap();
-            prop_assert_eq!(auth.current_day, timestamp_to_date_key(ts));
+            prop_assert_eq!(auth.current_day(), timestamp_to_date_key(ts));
             Ok(())
         })?;
     }
@@ -86,10 +86,9 @@ proptest! {
             for expected in 1..=FREE_TX_DAILY_LIMIT {
                 let auth = authorize_sponsorship(storage.clone(), SIGNER, ts)
                 .unwrap();
-                prop_assert_eq!(auth.next_count, expected);
-                prop_assert_eq!(auth.current_day, day);
-                let written = record_sponsorship_use(storage.clone(), SIGNER, auth.current_day)
-                    .unwrap();
+                prop_assert_eq!(auth.next_count(), expected);
+                prop_assert_eq!(auth.current_day(), day);
+                let written = record_sponsorship_use(storage.clone(), auth).unwrap();
                 prop_assert_eq!(written, expected);
             }
 
@@ -132,8 +131,8 @@ proptest! {
             // regardless of how saturated yesterday was.
             let auth = authorize_sponsorship(storage, SIGNER, today_ts)
             .unwrap();
-            prop_assert_eq!(auth.current_day, today);
-            prop_assert_eq!(auth.next_count, 1);
+            prop_assert_eq!(auth.current_day(), today);
+            prop_assert_eq!(auth.next_count(), 1);
             Ok(())
         })?;
     }
