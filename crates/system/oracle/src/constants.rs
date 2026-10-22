@@ -23,7 +23,7 @@ pub const DEFAULT_POLICY_RATES: [(u16, u64); 6] = [
 pub const FX_RATE_MAX_AGE_SECONDS: u64 = 6 * 60 * 60;
 
 /// Raw snapshots older than this are no longer readable.
-pub(crate) const MAX_SNAPSHOT_RETENTION_SECONDS: u64 = 365 * SECONDS_PER_DAY;
+pub(crate) const MAX_SNAPSHOT_RETENTION_SECONDS: u64 = 182 * SECONDS_PER_DAY;
 
 /// Maximum expired snapshots that one snapshot write clears. A steady chain
 /// expires about one snapshot per write. The cap bounds the work when a backlog
