@@ -44,13 +44,15 @@ export interface WalletClientLike {
 // Type Guards
 // =============================================================================
 
+function hasNetwork(value: unknown): value is { network: unknown } {
+  return typeof value === "object" && value !== null && "network" in value;
+}
+
 export function isHardhatRuntimeEnvironment(
   value: unknown,
 ): value is HardhatRuntimeEnvironmentLike {
   return (
-    typeof value === "object" &&
-    value !== null &&
-    "network" in value &&
+    hasNetwork(value) &&
     typeof (value as { network: unknown }).network === "object" &&
     (value as { network: { connect?: unknown } }).network !== null &&
     typeof (value as { network: { connect?: unknown } }).network.connect === "function"

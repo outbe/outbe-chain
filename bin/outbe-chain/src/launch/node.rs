@@ -202,9 +202,11 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             &node,
             &args,
             (radicle_preflight, radicle_status.clone()),
-            radicle_shutdown_token.clone(),
-            shutdown.clone(),
-            bridge.repository_publication_mailbox(),
+            (
+                radicle_shutdown_token.clone(),
+                shutdown.clone(),
+                bridge.repository_publication_mailbox(),
+            ),
         )?;
 
         // Pending staleness eviction. This is node-local pool policy, so it runs in

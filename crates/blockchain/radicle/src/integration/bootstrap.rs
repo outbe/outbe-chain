@@ -444,14 +444,23 @@ impl VerifiedBootstrapPublication {
     }
 }
 
+pub struct BootstrapPublicationInput<'a> {
+    pub state: &'a crate::manager::FinalizedBootstrapSigningState,
+    pub material: &'a RepositorySigningMaterial,
+    pub content_manifest: &'a [u8],
+}
+
 pub fn prepare_bootstrap_publication(
     repo: &Repository,
-    state: &crate::manager::FinalizedBootstrapSigningState,
-    material: &RepositorySigningMaterial,
-    content_manifest: &[u8],
+    input: BootstrapPublicationInput<'_>,
     signatures: [&BlsEnvelope; 3],
     witness: &super::signing::witness::RepositoryWitnessBundle,
 ) -> Result<VerifiedBootstrapPublication, Error> {
+    let BootstrapPublicationInput {
+        state,
+        material,
+        content_manifest,
+    } = input;
     if material.authority() != state.authority() {
         return Err(Error::Descriptor);
     }
@@ -472,9 +481,7 @@ pub fn prepare_bootstrap_publication(
 /// Reverify a persisted/received candidate; commitments alone do not authorize publication.
 pub fn verify_bootstrap_publication(
     repo: &Repository,
-    state: &crate::manager::FinalizedBootstrapSigningState,
-    material: &RepositorySigningMaterial,
-    content_manifest: &[u8],
+    input: BootstrapPublicationInput<'_>,
     body: &PublicationBody,
     manifest: &PublicationManifest,
     witness: &super::signing::witness::RepositoryWitnessBundle,
@@ -490,9 +497,7 @@ pub fn verify_bootstrap_publication(
         .collect::<Result<Vec<_>, _>>()?;
     let expected = prepare_bootstrap_publication(
         repo,
-        state,
-        material,
-        content_manifest,
+        input,
         [&signatures[0], &signatures[1], &signatures[2]],
         witness,
     )?;
@@ -624,11 +629,17 @@ fn accepted_document(
     if body.action != PublicationAction::Bootstrap
         || body.sequence != 1
         || !body.previous_receipt_hash.is_zero()
-        || !body.proposal_id.is_zero()
+    {
+        return Err(Error::Descriptor);
+    }
+    if !body.proposal_id.is_zero()
         || !body.patch_id.is_zero()
         || !body.revision_id.is_zero()
         || !body.expected_target_head.is_zero()
-        || body.finalized_anchor_height != 0
+    {
+        return Err(Error::Descriptor);
+    }
+    if body.finalized_anchor_height != 0
         || body.finalized_anchor_hash != body.genesis_hash
         || body.descriptor_hash != descriptor.hash().map_err(|_| Error::Descriptor)?
     {
