@@ -1192,7 +1192,8 @@ fn policy_lanes_drive_public_erc7943_results_without_registry_errors() {
         assert!(token.can_send(alice).unwrap());
         assert!(!token.can_send(bob).unwrap());
         assert!(token.can_receive(bob).unwrap());
-        assert!(token.can_transfer(alice, bob, U256::from(1_000)).unwrap());
+        assert!(token.can_transfer(alice, bob, U256::from(100)).unwrap());
+        assert!(!token.can_transfer(alice, bob, U256::from(101)).unwrap());
         assert!(!token.can_transfer(bob, alice, U256::ZERO).unwrap());
 
         token.transfer(alice, bob, U256::from(10)).unwrap();

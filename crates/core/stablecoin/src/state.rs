@@ -195,7 +195,7 @@ impl StablecoinContract<'_> {
         }
         let balance = self.balances.read(&from)?;
         let frozen = self.frozen.read(&from)?;
-        Ok(frozen.is_zero() || value <= Self::unfrozen(balance, frozen))
+        Ok(value <= Self::unfrozen(balance, frozen))
     }
 
     fn require_nonzero(&self, account: Address) -> Result<()> {
