@@ -54,6 +54,13 @@ export function getEnvRpcAndPk(networkName: string): { rpc: string; pk: string }
   if (process.env.WIRE_RPC_URL && networkName === process.env.WIRE_NETWORK) {
     return { rpc: process.env.WIRE_RPC_URL, pk: process.env.WIRE_PRIVATE_KEY ?? "" };
   }
+  if (["outbeDevnet", "outbePrivnet", "outbeTestnet", "outbeTestnetNew"].includes(networkName)) {
+    return getOutbeRpcAndPk(networkName as keyof typeof OUTBE_CHAINS);
+  }
+  return getBscRpcAndPk(networkName);
+}
+
+function getOutbeRpcAndPk(networkName: keyof typeof OUTBE_CHAINS): { rpc: string; pk: string } {
   switch (networkName) {
     case "outbeDevnet":
       return { rpc: process.env.OUTBE_RPC_URL ?? "https://eth.d.outbe.net", pk: process.env.OUTBE_PRIVATE_KEY ?? "" };
@@ -63,6 +70,11 @@ export function getEnvRpcAndPk(networkName: string): { rpc: string; pk: string }
       return { rpc: process.env.OUTBE_RPC_URL ?? "https://eth.testnet.outbe.net", pk: process.env.OUTBE_PRIVATE_KEY ?? "" };
     case "outbeTestnetNew":
       return { rpc: process.env.OUTBE_RPC_URL ?? "https://rpc.testnet.outbe.net", pk: process.env.OUTBE_PRIVATE_KEY ?? "" };
+  }
+}
+
+function getBscRpcAndPk(networkName: string): { rpc: string; pk: string } {
+  switch (networkName) {
     case "bscTestnet":
       return { rpc: process.env.BSC_TESTNET_RPC_URL ?? "https://bsc-testnet.publicnode.com", pk: process.env.BSC_TESTNET_PRIVATE_KEY ?? "" };
     case "bsc":

@@ -204,6 +204,11 @@ fn render_scenario(output: &mut String, report: &ScenarioReport) {
         output.push_str(&format!("TOTAL {ledger:?}: {total}\n"));
     }
 
+    render_storage(output, report);
+    render_execution_evidence(output, report);
+}
+
+fn render_storage(output: &mut String, report: &ScenarioReport) {
     let mut storage_by_module = BTreeMap::<(String, StorageOperationKind), (u64, u64)>::new();
     for entry in &report.storage {
         let totals = storage_by_module
@@ -234,7 +239,9 @@ fn render_scenario(output: &mut String, report: &ScenarioReport) {
             entry.module, entry.address, entry.slot, entry.operation, entry.count, entry.gas
         ));
     }
+}
 
+fn render_execution_evidence(output: &mut String, report: &ScenarioReport) {
     output.push_str("\nEVENTS\n");
     for event in &report.events {
         output.push_str(&format!(

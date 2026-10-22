@@ -108,34 +108,7 @@ impl AccountStorageProof {
         {
             return Err(StateProofError::SlotOrder);
         }
-        let mut bytes = self
-            .slots
-            .len()
-            .checked_mul(64)
-            .ok_or(StateProofError::ByteLimit)?;
-        let mut nodes = 0usize;
-        for node in self
-            .account_nodes
-            .iter()
-            .chain(self.slots.iter().flat_map(|slot| slot.nodes.iter()))
-        {
-            if node.is_empty() {
-                return Err(StateProofError::EmptyNode);
-            }
-            nodes = nodes.checked_add(1).ok_or(StateProofError::NodeLimit)?;
-            bytes = bytes
-                .checked_add(node.len())
-                .ok_or(StateProofError::ByteLimit)?;
-            if nodes > limits.max_nodes {
-                return Err(StateProofError::NodeLimit);
-            }
-            if bytes > limits.max_bytes {
-                return Err(StateProofError::ByteLimit);
-            }
-        }
-        if bytes > limits.max_bytes {
-            return Err(StateProofError::ByteLimit);
-        }
+        self.validate_resource_limits(limits)?;
         AccountProof {
             address: self.address,
             info: Some(Account {
@@ -169,6 +142,41 @@ impl AccountStorageProof {
             state_root: finalized_state_root,
             slots,
         })
+    }
+
+    fn validate_resource_limits(
+        &self,
+        limits: StateProofLimits,
+    ) -> std::result::Result<(), StateProofError> {
+        let mut bytes = self
+            .slots
+            .len()
+            .checked_mul(64)
+            .ok_or(StateProofError::ByteLimit)?;
+        let mut nodes = 0usize;
+        for node in self
+            .account_nodes
+            .iter()
+            .chain(self.slots.iter().flat_map(|slot| slot.nodes.iter()))
+        {
+            if node.is_empty() {
+                return Err(StateProofError::EmptyNode);
+            }
+            nodes = nodes.checked_add(1).ok_or(StateProofError::NodeLimit)?;
+            bytes = bytes
+                .checked_add(node.len())
+                .ok_or(StateProofError::ByteLimit)?;
+            if nodes > limits.max_nodes {
+                return Err(StateProofError::NodeLimit);
+            }
+            if bytes > limits.max_bytes {
+                return Err(StateProofError::ByteLimit);
+            }
+        }
+        if bytes > limits.max_bytes {
+            return Err(StateProofError::ByteLimit);
+        }
+        Ok(())
     }
 }
 

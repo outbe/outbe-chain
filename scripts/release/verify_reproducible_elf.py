@@ -8,12 +8,10 @@ import hashlib
 import importlib.metadata
 import importlib.util
 import json
-import subprocess
 from pathlib import Path
 from typing import Any
 
 from jsonschema import Draft202012Validator
-
 
 EXPECTED_ARTIFACTS = (
     "outbe-chain",
@@ -64,6 +62,19 @@ def _load_version_verifier():
 version_verifier = _load_version_verifier()
 
 
+def _load_helper(name: str):
+    path = Path(__file__).with_name(f"reproducible_elf_{name}.py")
+    spec = importlib.util.spec_from_file_location(f"reproducible_elf_{name}", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_materials = _load_helper("materials")
+_artifacts = _load_helper("artifacts")
+_identity = _load_helper("identity")
+
+
 def _canonical_json(value: Any) -> bytes:
     return (
         json.dumps(
@@ -81,65 +92,8 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _safe_material_path(root: Path, relative: str) -> Path | None:
-    candidate = Path(relative)
-    if candidate.is_absolute():
-        return None
-    resolved = (root / candidate).resolve()
-    try:
-        resolved.relative_to(root.resolve())
-    except ValueError:
-        return None
-    return resolved
-
-
-def _verify_material(
-    root: Path,
-    record: dict[str, Any],
-    label: str,
-    differences: list[str],
-) -> None:
-    relative = record.get("path", "")
-    path = _safe_material_path(root, relative)
-    if path is None or not path.is_file() or path.is_symlink():
-        differences.append(f"{label}: missing or unsafe material path: {relative}")
-        return
-    raw = path.read_bytes()
-    if record.get("size") != len(raw):
-        differences.append(f"{label}: material size mismatch: {relative}")
-    if record.get("digest", {}).get("value") != _sha256(raw):
-        differences.append(f"{label}: material digest mismatch: {relative}")
-
-
 def _verify_checksum_file(output: Path, label: str, differences: list[str]) -> bytes:
-    checksum_path = output / "SHA256SUMS"
-    if not checksum_path.is_file() or checksum_path.is_symlink():
-        differences.append(f"{label}: missing regular SHA256SUMS")
-        return b""
-    raw = checksum_path.read_bytes()
-    declared: dict[str, str] = {}
-    try:
-        for line in raw.decode("ascii").splitlines():
-            digest, relative = line.split("  ", 1)
-            if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
-                raise ValueError(f"invalid digest for {relative}")
-            if relative in declared:
-                raise ValueError(f"duplicate path: {relative}")
-            declared[relative] = digest
-    except (UnicodeDecodeError, ValueError) as error:
-        differences.append(f"{label}: invalid SHA256SUMS: {error}")
-        return raw
-
-    if frozenset(declared) != EXPECTED_CHECKSUM_PATHS:
-        differences.append(f"{label}: SHA256SUMS does not declare the exact output matrix")
-    for relative, expected in declared.items():
-        path = _safe_material_path(output, relative)
-        if path is None or not path.is_file() or path.is_symlink():
-            differences.append(f"{label}: checksum path missing or unsafe: {relative}")
-            continue
-        if _sha256(path.read_bytes()) != expected:
-            differences.append(f"{label}: checksum mismatch: {relative}")
-    return raw
+    return _materials._verify_checksum_file(output, label, differences, EXPECTED_CHECKSUM_PATHS)
 
 
 def _verify_environment(differences: list[str]) -> None:
@@ -223,17 +177,7 @@ def verify_outputs(
         ("builder-a", first, first_manifest),
         ("builder-b", second, second_manifest),
     ):
-        if manifest is None:
-            continue
-        for record in manifest.get("inputs", []):
-            _verify_material(repo_root, record, f"{label} source input", differences)
-        packages = manifest.get("build", {}).get("builder", {}).get(
-            "resolved_system_packages"
-        )
-        if packages is None:
-            differences.append(f"{label}: missing resolved system package material")
-        else:
-            _verify_material(output, packages, f"{label} package inventory", differences)
+        _materials.verify_manifest_materials(output, manifest, repo_root, label, differences)
 
     checksum_values = [
         _verify_checksum_file(first, "builder-a", differences),
@@ -247,117 +191,19 @@ def verify_outputs(
         ("builder-a", first, first_manifest),
         ("builder-b", second, second_manifest),
     ):
-        path = output / "metadata/outbe-chain.version.txt"
-        if not path.is_file() or path.is_symlink():
-            differences.append(f"{label}: missing regular outbe-chain version evidence")
-            version_values.append(b"")
-            continue
-        raw = path.read_bytes()
-        version_values.append(raw)
-        if manifest is not None:
-            try:
-                version_differences = version_verifier.verify_version_text(
-                    raw.decode("utf-8"),
-                    source_commit=manifest["release"]["source"]["commit"],
-                    source_date_epoch=manifest["build"]["source_date_epoch"],
-                    target=manifest["build"]["target"],
-                    profile=manifest["build"]["profile"],
-                )
-            except UnicodeDecodeError:
-                differences.append(f"{label}: version evidence is not UTF-8")
-            else:
-                differences.extend(
-                    f"{label}: version identity mismatch: {difference}"
-                    for difference in version_differences
-                )
+        version_values.append(
+            _identity.verify_version_evidence(
+                output, manifest, label, differences, version_verifier
+            )
+        )
     if version_values[0] != version_values[1]:
         differences.append("outbe-chain version evidence differs between builders")
 
-    artifact_evidence = []
-    for name in EXPECTED_ARTIFACTS:
-        paths = (first / "bin" / name, second / "bin" / name)
-        raw_values: list[bytes] = []
-        hashes: list[str | None] = []
-        sizes: list[int | None] = []
-        for label, path in zip(("builder-a", "builder-b"), paths, strict=True):
-            if not path.is_file() or path.is_symlink():
-                differences.append(f"{label}: missing regular ELF: {name}")
-                raw_values.append(b"")
-                hashes.append(None)
-                sizes.append(None)
-                continue
-            raw = path.read_bytes()
-            raw_values.append(raw)
-            hashes.append(_sha256(raw))
-            sizes.append(len(raw))
-            if not raw.startswith(b"\x7fELF"):
-                differences.append(f"{label}: {name} is not an ELF file")
-            for forbidden in FORBIDDEN_PATHS:
-                if forbidden in raw:
-                    differences.append(
-                        f"{label}: forbidden absolute build path in {name}: {forbidden.decode()}"
-                    )
-            if name == "outbe-tee-enclave":
-                for marker in PRODUCTION_TEE_FORBIDDEN_MARKERS:
-                    if marker in raw:
-                        differences.append(
-                            f"{label}: forbidden production TEE marker: {marker.decode('ascii')}"
-                        )
-
-            record = (first_records if label == "builder-a" else second_records).get(name)
-            if record is not None:
-                recorded_hash = record.get("digest", {}).get("value")
-                if recorded_hash != hashes[-1]:
-                    differences.append(f"{label}: manifest digest mismatch for {name}")
-                if record.get("size") != sizes[-1]:
-                    differences.append(f"{label}: manifest size mismatch for {name}")
-
-        if raw_values[0] != raw_values[1]:
-            differences.append(f"ELF bytes differ between builders: {name}")
-        artifact_evidence.append(
-            {
-                "builder_a_sha256": hashes[0],
-                "builder_b_sha256": hashes[1],
-                "byte_identical": raw_values[0] == raw_values[1],
-                "name": name,
-                "size": sizes[0] if sizes[0] == sizes[1] else None,
-            }
-        )
-
-    identity: dict[str, Any] = {}
-    if first_manifest is not None:
-        identity = {
-            "release_tag": first_manifest["release"]["tag"],
-            "source_commit": first_manifest["release"]["source"]["commit"],
-            "source_date_epoch": first_manifest["build"]["source_date_epoch"],
-            "target": first_manifest["build"]["target"],
-            "profile": first_manifest["build"]["profile"],
-            "builder_base_images": first_manifest["build"]["builder"]["base_images"],
-            "builder_recipe": first_manifest["build"]["builder"]["recipe"],
-        }
-        if check_git_identity:
-            try:
-                head = subprocess.run(
-                    ["git", "-C", str(repo_root), "rev-parse", "--verify", "HEAD^{commit}"],
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                ).stdout.strip()
-                status = subprocess.run(
-                    ["git", "-C", str(repo_root), "status", "--porcelain=v1", "--untracked-files=all"],
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                ).stdout
-            except subprocess.CalledProcessError as error:
-                differences.append(f"source identity check failed: {error}")
-            else:
-                if head != identity["source_commit"]:
-                    differences.append(
-                        f"source checkout HEAD {head} does not match manifest {identity['source_commit']}"
-                    )
-                if status:
-                    differences.append("source checkout is dirty during independent verification")
+    artifact_checks = _artifacts.ArtifactChecks(
+        (first, second), (first_records, second_records), differences, globals()
+    )
+    artifact_evidence = [artifact_checks.compare(name) for name in EXPECTED_ARTIFACTS]
+    identity = _identity.build_identity(first_manifest, repo_root, check_git_identity, differences)
 
     return {
         "artifacts": artifact_evidence,

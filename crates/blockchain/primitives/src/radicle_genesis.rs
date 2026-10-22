@@ -33,13 +33,13 @@ pub struct GovernmentsDescriptor {
 
 impl GovernmentsDescriptor {
     pub fn validate(&self, chain_id: u64, genesis_timestamp: u64) -> Result<()> {
-        if self.chain_id != chain_id
-            || self.genesis_timestamp != genesis_timestamp
-            || self.description.len() > MAX_GOVERNMENTS_DESCRIPTION_BYTES
-            || self.description.contains(['\r', '\0'])
-            || self.initial_tree_oid.is_zero()
-            || self.initial_content_manifest_sha256.is_zero()
-        {
+        let wrong_genesis =
+            self.chain_id != chain_id || self.genesis_timestamp != genesis_timestamp;
+        let invalid_description = self.description.len() > MAX_GOVERNMENTS_DESCRIPTION_BYTES
+            || self.description.contains(['\r', '\0']);
+        let missing_content =
+            self.initial_tree_oid.is_zero() || self.initial_content_manifest_sha256.is_zero();
+        if wrong_genesis || invalid_description || missing_content {
             return Err(PrecompileError::revert(
                 "invalid governments genesis descriptor",
             ));
