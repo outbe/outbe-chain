@@ -40,27 +40,31 @@ const WEEK: u64 = 7 * DAY;
 const MONTH: u64 = 30 * DAY;
 
 fn gated_spec(period_seconds: u64) -> TriggerSpec {
-    TriggerSpec {
-        id: 4242,
-        label: "test_gated",
+    let mut spec = TriggerSpec::new(
+        4242,
+        "test_gated",
         period_seconds,
-        start_offset_seconds: 0,
-        requires_accounting_window: true,
-        coalesces_backlog: false,
-        handler: TriggerHandler::IntexCallDaily,
-    }
+        0,
+        TriggerHandler::IntexCallDaily,
+    )
+    .expect("test period is nonzero");
+    spec.requires_accounting_window = true;
+    spec.coalesces_backlog = false;
+    spec
 }
 
 fn ungated_spec(period_seconds: u64) -> TriggerSpec {
-    TriggerSpec {
-        id: 4243,
-        label: "test_ungated",
+    let mut spec = TriggerSpec::new(
+        4243,
+        "test_ungated",
         period_seconds,
-        start_offset_seconds: 0,
-        requires_accounting_window: false,
-        coalesces_backlog: false,
-        handler: TriggerHandler::IntexCallDaily,
-    }
+        0,
+        TriggerHandler::IntexCallDaily,
+    )
+    .expect("test period is nonzero");
+    spec.requires_accounting_window = false;
+    spec.coalesces_backlog = false;
+    spec
 }
 
 fn block_ctx(block_number: u64, timestamp: u64) -> BlockContext {
@@ -390,15 +394,16 @@ proptest! {
         block_ts in 86_400u64..2_000_000_000,
     ) {
         let offset = offset_raw % period;
-        let spec = TriggerSpec {
-            id: 99,
-            label: "proptest",
-            period_seconds: period,
-            start_offset_seconds: offset,
-            requires_accounting_window: true,
-            coalesces_backlog: false,
-            handler: TriggerHandler::IntexCallDaily,
-        };
+        let mut spec = TriggerSpec::new(
+            99,
+            "proptest",
+            period,
+            offset,
+            TriggerHandler::IntexCallDaily,
+        )
+        .expect("period is at least 60");
+        spec.requires_accounting_window = true;
+        spec.coalesces_backlog = false;
         let block = block_ctx(block_number, block_ts);
 
         let a = resolve_accounting_window(&spec, &block);

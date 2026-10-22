@@ -15,7 +15,7 @@
 //! ## Resolution contract
 //!
 //! [`resolve_accounting_window`] is a pure function over
-//! `(spec.period_seconds, spec.start_offset_seconds, block.timestamp,
+//! `(spec.period_seconds(), spec.start_offset_seconds, block.timestamp,
 //! block.block_number)`. It returns:
 //!
 //! * `None` when the trigger opted out of accounting gating
@@ -135,9 +135,7 @@ pub fn resolve_accounting_window(
     if block.block_number <= 1 {
         return None;
     }
-    if spec.period_seconds == 0 {
-        return None;
-    }
+    let period_seconds = spec.period_seconds();
 
     // end_inclusive = parent block. The Phase 1 -> Phase 2 ordering
     // invariant means that a correctly-built block has Phase 1
@@ -151,13 +149,9 @@ pub fn resolve_accounting_window(
     // timestamp itself as an opaque deterministic marker. The proptest
     // pins it only on the property of determinism, not on a specific
     // numeric meaning.
-    let offset_in_period = spec.start_offset_seconds % spec.period_seconds;
-    let period_start_ts = block
-        .timestamp
-        .saturating_sub(offset_in_period)
-        .checked_div(spec.period_seconds)
-        .unwrap_or(0)
-        .saturating_mul(spec.period_seconds)
+    let offset_in_period = spec.start_offset_seconds % period_seconds;
+    let period_start_ts = (block.timestamp.saturating_sub(offset_in_period) / period_seconds)
+        .saturating_mul(period_seconds)
         .saturating_add(offset_in_period);
     Some(AccountingWindow {
         start_block: period_start_ts,

@@ -24,7 +24,8 @@ use crate::ICycle;
 /// fires ProtocolCycle only on the first block whose timestamp crosses
 /// the next UTC-hour boundary.
 pub fn dispatch_triggers(ctx: &BlockRuntimeContext) -> Result<()> {
-    let triggers = active_triggers(outbe_chain_constants::get_metadosis_advance_interval_seconds());
+    let triggers =
+        active_triggers(outbe_chain_constants::get_metadosis_advance_interval_seconds())?;
 
     for spec in &triggers {
         if let Some(slot) = due_slot(ctx, spec)? {
@@ -62,10 +63,10 @@ fn due_slot(ctx: &BlockRuntimeContext, spec: &TriggerSpec) -> Result<Option<DueS
     }
 
     let scheduled_at = next_fire_at(
-        spec.period_seconds,
+        spec.period_seconds(),
         spec.start_offset_seconds,
         last_executed_at,
-    );
+    )?;
     if block_ts < scheduled_at || slot_deferred(ctx, spec, &cycle)? {
         return Ok(None);
     }
@@ -73,7 +74,7 @@ fn due_slot(ctx: &BlockRuntimeContext, spec: &TriggerSpec) -> Result<Option<DueS
     // A poll records the latest due slot, so a gap costs one firing rather
     // than one per missed slot.
     let recorded_at = if spec.coalesces_backlog {
-        last_fire_at(spec.period_seconds, spec.start_offset_seconds, block_ts)
+        last_fire_at(spec.period_seconds(), spec.start_offset_seconds, block_ts)?
     } else {
         scheduled_at
     };

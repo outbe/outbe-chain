@@ -7,7 +7,7 @@ use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
 /// Represents errors returned by the ProtocolCycle runtime.
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CycleError {
     #[error("ProtocolCycle received invalid UTC day: active={active}, block={block}")]
@@ -36,6 +36,16 @@ pub enum CycleError {
     ActiveUtcDayNotInitialized,
     #[error("last_accounted_block_number regression: current={current}, attempted={attempted}")]
     BlockNumberRegression { current: u64, attempted: u64 },
+    #[error("trigger period is zero")]
+    ZeroTriggerPeriod,
+    #[error(
+        "schedule slot does not fit in u64: period={period}, offset={offset}, timestamp={timestamp}"
+    )]
+    ScheduleArithmeticOverflow {
+        period: u64,
+        offset: u64,
+        timestamp: u64,
+    },
 }
 
 impl From<CycleError> for PrecompileError {
@@ -95,6 +105,21 @@ impl From<CycleError> for PrecompileError {
                     ICycle::BlockNumberRegression { current, attempted }.abi_encode(),
                 ))
             }
+            CycleError::ZeroTriggerPeriod => {
+                PrecompileError::RevertBytes(Bytes::from(ICycle::ZeroTriggerPeriod {}.abi_encode()))
+            }
+            CycleError::ScheduleArithmeticOverflow {
+                period,
+                offset,
+                timestamp,
+            } => PrecompileError::RevertBytes(Bytes::from(
+                ICycle::ScheduleArithmeticOverflow {
+                    period,
+                    offset,
+                    timestamp,
+                }
+                .abi_encode(),
+            )),
         }
     }
 }
@@ -173,6 +198,18 @@ mod tests {
                 },
                 ICycle::BlockNumberRegression::SELECTOR,
             ),
+            (
+                CycleError::ZeroTriggerPeriod,
+                ICycle::ZeroTriggerPeriod::SELECTOR,
+            ),
+            (
+                CycleError::ScheduleArithmeticOverflow {
+                    period: 2,
+                    offset: 0,
+                    timestamp: u64::MAX,
+                },
+                ICycle::ScheduleArithmeticOverflow::SELECTOR,
+            ),
         ];
         for (err, selector) in cases {
             match PrecompileError::from(err) {
@@ -190,5 +227,19 @@ mod tests {
         let decoded = ICycle::InvalidBlockUtcDay::abi_decode(&encoded).expect("day payload");
         assert_eq!(decoded.active, 20_260_228);
         assert_eq!(decoded.blockDay, 20_260_231);
+
+        let overflow = match PrecompileError::from(CycleError::ScheduleArithmeticOverflow {
+            period: 100,
+            offset: u64::MAX - 50,
+            timestamp: u64::MAX - 50,
+        }) {
+            PrecompileError::RevertBytes(bytes) => bytes,
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        };
+        let decoded =
+            ICycle::ScheduleArithmeticOverflow::abi_decode(&overflow).expect("overflow payload");
+        assert_eq!(decoded.period, 100);
+        assert_eq!(decoded.offset, u64::MAX - 50);
+        assert_eq!(decoded.timestamp, u64::MAX - 50);
     }
 }

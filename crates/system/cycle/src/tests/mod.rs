@@ -21,7 +21,7 @@ use outbe_validatorset::contract::ValidatorSet;
 
 use crate::lifecycle::{CycleLifecycle, CycleLifecycleContext};
 use crate::schema::Cycle;
-use crate::triggers::{next_fire_at, TriggerId, ACTIVE_TRIGGERS};
+use crate::triggers::{last_fire_at, next_fire_at, TriggerId, ACTIVE_TRIGGERS};
 
 pub(super) const CHAIN_ID: u64 = 1;
 /// Genesis at midnight UTC of 2024-01-01.

@@ -18,6 +18,8 @@ interface ICycle {
     error AllocationDisagreesWithMetadosisReceipt();
     error ActiveUtcDayNotInitialized();
     error BlockNumberRegression(uint64 current, uint64 attempted);
+    error ZeroTriggerPeriod();
+    error ScheduleArithmeticOverflow(uint64 period, uint64 offset, uint64 timestamp);
 
     /// Emitted exactly once per slot when a trigger handler completes
     /// successfully. Indexed by the trigger's stable u32 id.
