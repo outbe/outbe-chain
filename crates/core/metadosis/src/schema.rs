@@ -15,6 +15,9 @@ pub struct EmissionDay {
     #[key]
     pub day: u32,
 
+    /// Six-decimal protocol COEN minor units. 1_000_000 minor units equal 1 COEN.
+    /// The scale matches `metadosis_day_emission_limit` and `tribute_nominal_total_minor`.
+    /// This value is not 18-decimal native wei.
     #[attribute(order = 1, default = U256::ZERO)]
     pub emission_limit_minor: U256,
 
