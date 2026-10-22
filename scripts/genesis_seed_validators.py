@@ -26,9 +26,14 @@ from genesis_seed_codec import (
     u64_bytes,
     write_mapping_bytes,
 )
+
 from genesis_keccak import keccak256
 from genesis_seed_economy import seed_vault_router
 from genesis_seed_p2p import encode_p2p_address_payload
+
+# `CONSENSUS_VALIDATOR_BOUND` in crates/system/validatorset/src/runtime/mod.rs
+# (`outbe_consensus::bls::MAX_VALIDATORS`).
+CONSENSUS_VALIDATOR_BOUND = 256
 
 
 def seed_validator_set(
@@ -64,7 +69,15 @@ def seed_validator_set(
             config.get("owner", "0x0000000000000000000000000000000000000000")
         ),
     )
-    storage.set_slot(1, parse_int(config.get("max_validators", 128)))
+    max_validators = parse_int(config.get("max_validators", 128))
+    # Same bound as ValidatorSet::set_config_max_validators. The Oracle slash
+    # window processes at most this many registered validators.
+    if max_validators > CONSENSUS_VALIDATOR_BOUND:
+        raise ValueError(
+            f"validator_set.max_validators {max_validators} exceeds the consensus "
+            f"bound {CONSENSUS_VALIDATOR_BOUND}"
+        )
+    storage.set_slot(1, max_validators)
     if "epoch_duration" in config:
         raise ValueError(
             "validator_set.epoch_duration is deprecated; use config.epochLengthBlocks"

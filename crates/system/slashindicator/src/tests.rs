@@ -1,4 +1,4 @@
-use alloy_primitives::{address, b256, Address, LogData, B256, U256};
+use alloy_primitives::{address, b256, Address, LogData, B256, U256, U512};
 use alloy_sol_types::{SolError, SolEvent};
 use outbe_primitives::addresses::{SLASH_INDICATOR_ADDRESS, STAKING_ADDRESS};
 use outbe_primitives::error::PrecompileError;
@@ -528,6 +528,191 @@ fn test_evidence_reward() {
         let ctx = storage.clone();
         assert_eq!(ctx.balance(SUBMITTER).unwrap(), U256::from(80_000u64));
     });
+}
+
+#[test]
+fn evidence_reward_matches_wide_oracle_at_full_range() {
+    for stake in [
+        U256::ZERO,
+        U256::from(1),
+        U256::from(99),
+        U256::from(101),
+        U256::MAX,
+    ] {
+        for configured in [0u64, 1, 37, 100] {
+            with_storage(|storage| {
+                register_and_activate_with_stake(storage.clone(), VAL_A, 1, stake);
+                let mut si = SlashIndicator::new(storage.clone());
+                si.config_slash_amount_percent.write(100).unwrap();
+                si.config_evidence_reward_percent.write(configured).unwrap();
+                let effective = si.evidence_reward_percent().unwrap();
+                si.apply_evidence_felony(VAL_A, SUBMITTER).unwrap();
+                let expected =
+                    (U512::from(stake) * U512::from(effective) / U512::from(100)).to::<U256>();
+                assert_eq!(storage.balance(SUBMITTER).unwrap(), expected);
+                assert!(expected <= stake);
+                assert_eq!(storage.balance(STAKING_ADDRESS).unwrap(), U256::ZERO);
+                assert_eq!(Staking::new(storage).get_stake(VAL_A).unwrap(), U256::ZERO);
+            });
+        }
+    }
+}
+
+#[test]
+fn invalid_evidence_reward_is_rejected_before_any_penalty_even_without_stake() {
+    for stake in [U256::ZERO, U256::from(1_000_000)] {
+        for percent in [101u64, 150, u64::MAX] {
+            let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+            provider.set_block_number(1);
+            StorageHandle::enter(&mut provider, |storage| {
+                register_and_activate_with_stake(storage.clone(), VAL_A, 1, stake);
+                SlashIndicator::new(storage)
+                    .config_evidence_reward_percent
+                    .write(percent)
+                    .unwrap();
+            });
+            let before = provider.storage.clone();
+            let events = provider.get_ordered_events().to_vec();
+            StorageHandle::enter(&mut provider, |storage| {
+                let mut si = SlashIndicator::new(storage.clone());
+                let expected = ISlashIndicator::SlashConfigPercentAbove100 {
+                    field: "evidence_reward_percent".into(),
+                    value: percent,
+                }
+                .abi_encode();
+                assert!(matches!(si.apply_evidence_felony(VAL_A, SUBMITTER),
+                    Err(PrecompileError::RevertBytes(bytes)) if bytes.as_ref() == expected));
+                assert_eq!(si.get_felony_count(VAL_A).unwrap(), 0);
+                assert!(test_lifecycle_of(storage.clone(), VAL_A)
+                    .unwrap()
+                    .is_active_status());
+                assert_eq!(storage.balance(STAKING_ADDRESS).unwrap(), stake);
+                assert_eq!(storage.balance(SUBMITTER).unwrap(), U256::ZERO);
+            });
+            assert_eq!(provider.storage, before);
+            assert_eq!(provider.get_ordered_events(), events);
+        }
+    }
+}
+
+#[test]
+fn signed_evidence_invalid_reward_checkpoint_rolls_back_and_allows_identical_retry() {
+    let (sk, pk) = test_signing::keypair(99).unwrap();
+    let first = sign_notarize_evidence(&sk, &pk, &test_signing::proposal(1, 5, 0, [0xAA; 32]));
+    let second = sign_notarize_evidence(&sk, &pk, &test_signing::proposal(1, 5, 0, [0xBB; 32]));
+    let hash = crate::runtime::canonical_evidence_hash(&first, &second);
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_block_number(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        register_and_activate_with_pubkey_and_stake(
+            storage.clone(),
+            VAL_A,
+            &pk.to_bytes(),
+            U256::from(1_000_000),
+        );
+        write_test_committee(&storage);
+        SlashIndicator::new(storage)
+            .config_evidence_reward_percent
+            .write(150)
+            .unwrap();
+    });
+    let before = provider.storage.clone();
+    let events = provider.get_ordered_events().to_vec();
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut si = SlashIndicator::new(storage.clone());
+        let result = storage
+            .with_checkpoint(|| si.submit_double_proposal_evidence(SUBMITTER, &first, &second));
+        assert!(
+            matches!(result, Err(PrecompileError::RevertBytes(bytes)) if bytes.as_ref() == ISlashIndicator::SlashConfigPercentAbove100 { field: "evidence_reward_percent".into(), value: 150 }.abi_encode())
+        );
+        assert!(!si.is_evidence_processed(hash).unwrap());
+        assert_eq!(si.get_felony_count(VAL_A).unwrap(), 0);
+        assert!(test_lifecycle_of(storage.clone(), VAL_A)
+            .unwrap()
+            .is_active_status());
+        assert_eq!(
+            Staking::new(storage.clone()).get_stake(VAL_A).unwrap(),
+            U256::from(1_000_000)
+        );
+        assert_eq!(
+            storage.balance(STAKING_ADDRESS).unwrap(),
+            U256::from(1_000_000)
+        );
+        assert_eq!(storage.balance(SUBMITTER).unwrap(), U256::ZERO);
+    });
+    assert_eq!(provider.storage, before);
+    assert_eq!(provider.get_ordered_events(), events);
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut si = SlashIndicator::new(storage.clone());
+        si.config_evidence_reward_percent.write(10).unwrap();
+        storage
+            .with_checkpoint(|| si.submit_double_proposal_evidence(SUBMITTER, &first, &second))
+            .unwrap();
+        assert!(si.is_evidence_processed(hash).unwrap());
+        assert_eq!(si.get_felony_count(VAL_A).unwrap(), 1);
+        assert!(matches!(
+            test_lifecycle_of(storage.clone(), VAL_A).unwrap(),
+            ValidatorLifecycle::JailRetained(_)
+        ));
+        assert_eq!(
+            Staking::new(storage.clone()).get_stake(VAL_A).unwrap(),
+            U256::from(920_000)
+        );
+        assert_eq!(
+            storage.balance(STAKING_ADDRESS).unwrap(),
+            U256::from(920_000)
+        );
+        assert_eq!(storage.balance(SUBMITTER).unwrap(), U256::from(8_000));
+    });
+    assert_eq!(
+        provider.get_events(SLASH_INDICATOR_ADDRESS).last(),
+        Some(
+            &ISlashIndicator::EvidenceFelonyApplied {
+                validator: VAL_A,
+                submitter: SUBMITTER,
+                slashedAmount: U256::from(80_000),
+                submitterReward: U256::from(8_000),
+            }
+            .encode_log_data()
+        )
+    );
+}
+
+#[test]
+fn signed_noncanonical_epoch_or_view_rejects_before_dedup_and_slash() {
+    let (sk, pk) = test_signing::keypair(99).unwrap();
+    for field in [0, 1] {
+        let mut proposal = test_signing::proposal(1, 5, 0, [0xAA; 32]);
+        proposal[field] |= 0x80;
+        proposal.insert(field + 1, 0);
+        let first = sign_notarize_evidence(&sk, &pk, &proposal);
+        let second = sign_notarize_evidence(&sk, &pk, &test_signing::proposal(1, 5, 0, [0xBB; 32]));
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        provider.set_block_number(1);
+        StorageHandle::enter(&mut provider, |storage| {
+            register_and_activate_with_pubkey_and_stake(
+                storage.clone(),
+                VAL_A,
+                &pk.to_bytes(),
+                U256::from(1_000_000),
+            );
+            write_test_committee(&storage);
+        });
+        let before = provider.storage.clone();
+        let events = provider.get_ordered_events().to_vec();
+        StorageHandle::enter(&mut provider, |storage| {
+            let mut si = SlashIndicator::new(storage);
+            assert!(
+                matches!(si.submit_double_proposal_evidence(SUBMITTER, &first, &second),
+                Err(PrecompileError::RevertBytes(bytes)) if bytes.as_ref() == ISlashIndicator::NonCanonicalVarint {}.abi_encode())
+            );
+            assert!(!si
+                .is_evidence_processed(crate::runtime::canonical_evidence_hash(&first, &second))
+                .unwrap());
+        });
+        assert_eq!(provider.storage, before);
+        assert_eq!(provider.get_ordered_events(), events);
+    }
 }
 
 // ---------------------------------------------------------------------------

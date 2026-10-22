@@ -21,6 +21,19 @@
     },
     {
       "type": "function",
+      "name": "BRIDGE_CUTOFF",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "DEFAULT_ADMIN_ROLE",
       "inputs": [],
       "outputs": [
@@ -1499,6 +1512,22 @@
         },
         {
           "name": "deadline",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "BridgeCutoffPassed",
+      "inputs": [
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "cutoff",
           "type": "uint32",
           "internalType": "uint32"
         }

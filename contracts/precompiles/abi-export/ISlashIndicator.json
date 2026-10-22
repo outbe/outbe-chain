@@ -530,6 +530,11 @@
   },
   {
     "type": "error",
+    "name": "EvidenceRewardOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "EvidenceSignatureSlice",
     "inputs": []
   },
@@ -594,6 +599,17 @@
     "type": "error",
     "name": "InvalidCommitteePubkeyInSnapshot",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidEvidenceRewardPercent",
+    "inputs": [
+      {
+        "name": "percent",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
   },
   {
     "type": "error",
@@ -787,6 +803,11 @@
   {
     "type": "error",
     "name": "MissingSnapshotPolynomialCommitment",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NonCanonicalVarint",
     "inputs": []
   },
   {

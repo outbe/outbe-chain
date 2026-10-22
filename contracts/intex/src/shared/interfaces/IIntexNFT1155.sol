@@ -162,9 +162,12 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     error TransferOnCalledForbidden(uint256 tokenId);
     /// @notice Bridge crosschainBurn/crosschainMint attempted on a Settled token.
     error BridgeOnSettledForbidden(uint256 tokenId);
-    /// @notice Bridge crosschainBurn/crosschainMint attempted on a `Called` series after the
-    ///         settlement deadline (`calledAt + callNoticePeriod`) has passed.
+    /// @notice Bridge crosschainMint attempted on a `Called` series after the settlement deadline
+    ///         (`calledAt + callNoticePeriod`) has passed.
     error BridgeAfterDeadline(uint256 tokenId, uint32 deadline);
+    /// @notice Bridge crosschainBurn attempted on a `Called` series after its bridge cutoff (the
+    ///         deadline less a tenth of the notice period, at most `BRIDGE_CUTOFF`).
+    error BridgeCutoffPassed(uint256 tokenId, uint32 cutoff);
     /// @notice Settle attempted on a `Called` series after the settlement deadline
     ///         (`calledAt + callNoticePeriod`) has passed.
     error SettleAfterDeadline(uint256 tokenId, uint32 deadline);

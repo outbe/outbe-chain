@@ -323,6 +323,19 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
                 ),
             )
 
+        with self.assertRaisesRegex(ValueError, "exceeds the consensus bound 256"):
+            seed_genesis.seed_validator_set(
+                seed_genesis.StorageBuilder(),
+                validators,
+                {"max_validators": 257},
+                terms=seed_genesis.ValidatorSeedTerms(
+                    epoch_length_blocks=300,
+                    epoch_start_timestamp=1,
+                    min_stake=1,
+                    validator_stake=1,
+                ),
+            )
+
         zero = [dict(validators[0])]
         zero[0]["radicle_node_id"] = "00" * 32
         with self.assertRaisesRegex(ValueError, "must not be zero"):

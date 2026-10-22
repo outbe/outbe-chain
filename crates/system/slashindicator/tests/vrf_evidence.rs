@@ -757,6 +757,41 @@ fn invalid_vrf_proof_evidence_slashes_child_proposer() {
         let initial_stake = Staking::new(storage.clone()).get_stake(proposer).unwrap();
 
         let mut si = SlashIndicator::new(storage.clone());
+        si.config_evidence_reward_percent.write(101).unwrap();
+        let initial_burn_balance = storage.balance(STAKING_ADDRESS).unwrap();
+        let error = storage
+            .with_checkpoint(|| {
+                si.submit_invalid_vrf_evidence_with_schedule(
+                    SUBMITTER,
+                    &evidence,
+                    &relaxed_schedule(),
+                )
+            })
+            .unwrap_err();
+        assert!(matches!(error,
+            PrecompileError::RevertBytes(bytes)
+                if bytes.as_ref() == Isi::SlashConfigPercentAbove100 { field: "evidence_reward_percent".into(), value: 101 }.abi_encode()));
+        assert!(!si
+            .invalid_vrf_evidence_processed
+            .read(&invalid_vrf_evidence_hash_v2(CHILD_BLOCK_HASH, phase1_hash))
+            .unwrap());
+        assert_eq!(si.get_felony_count(proposer).unwrap(), 0);
+        assert!(test_lifecycle_of(storage.clone(), proposer)
+            .unwrap()
+            .is_active_status());
+        assert_eq!(
+            Staking::new(storage.clone()).get_stake(proposer).unwrap(),
+            initial_stake
+        );
+        assert_eq!(
+            storage.balance(STAKING_ADDRESS).unwrap(),
+            initial_burn_balance
+        );
+        assert_eq!(
+            storage.balance(SUBMITTER).unwrap(),
+            initial_submitter_balance
+        );
+        si.config_evidence_reward_percent.write(0).unwrap();
         si.submit_invalid_vrf_evidence_with_schedule(SUBMITTER, &evidence, &relaxed_schedule())
             .unwrap();
 

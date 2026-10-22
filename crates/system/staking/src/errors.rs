@@ -31,6 +31,12 @@ pub enum StakingError {
     SlashedWithdrawalDelayOverflow,
     #[error("stake accounting underflow for validator {validator}")]
     StakeAccountingUnderflow { validator: Address },
+    #[error("stake accounting overflow for validator {validator}")]
+    StakeAccountingOverflow { validator: Address },
+    #[error("total staked accounting overflow")]
+    TotalStakeAccountingOverflow,
+    #[error("slash amount overflow")]
+    SlashAmountOverflow,
     #[error("registered validator is missing history")]
     MissingValidatorHistory,
     #[error("validator registry exceeds consensus bound: {count} > {bound}")]
@@ -75,6 +81,15 @@ impl From<StakingError> for PrecompileError {
             error @ StakingError::StakeAccountingUnderflow { .. } => {
                 PrecompileError::FatalWithCause(Box::new(error))
             }
+            StakingError::StakeAccountingOverflow { validator } => PrecompileError::RevertBytes(
+                Bytes::from(IStaking::StakeAccountingOverflow { validator }.abi_encode()),
+            ),
+            StakingError::TotalStakeAccountingOverflow => PrecompileError::RevertBytes(
+                Bytes::from(IStaking::TotalStakeAccountingOverflow {}.abi_encode()),
+            ),
+            StakingError::SlashAmountOverflow => PrecompileError::RevertBytes(Bytes::from(
+                IStaking::SlashAmountOverflow {}.abi_encode(),
+            )),
             StakingError::MissingValidatorHistory => PrecompileError::RevertBytes(Bytes::from(
                 IStaking::MissingValidatorHistory {}.abi_encode(),
             )),

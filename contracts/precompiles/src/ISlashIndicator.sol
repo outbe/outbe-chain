@@ -19,6 +19,9 @@ interface ISlashIndicator {
     error InvalidBlsSignature();
     error UnexpectedEndOfVarint();
     error VarintOverflow();
+    error NonCanonicalVarint();
+    error InvalidEvidenceRewardPercent(uint64 percent);
+    error EvidenceRewardOverflow();
     error SlashGuardRingSeqOverflow();
     error SubmitterNotActiveValidator(address caller, uint8 status);
     error MissingCommitteeSnapshotForEpoch(uint64 epoch);

@@ -113,7 +113,7 @@ contract IntexNFT1155Bridge is
     function send(SendParam calldata _sendParam) external payable nonReentrant returns (bytes32 sendId) {
         bytes memory message = _buildSingleMsg(_sendParam);
         token.crosschainBurn(msg.sender, _toAddress(_sendParam.to), _sendParam.tokenId, _sendParam.units);
-        sendId = _send(_sendParam.dstChainId, message, IntexGas.nftMint(1));
+        sendId = _sendPaidByCaller(_sendParam.dstChainId, message, IntexGas.nftMint(1));
         emit Bridged(sendId, _sendParam.dstChainId, msg.sender, _sendParam.tokenId, _sendParam.units);
     }
 
@@ -154,7 +154,7 @@ contract IntexNFT1155Bridge is
             token.crosschainBurn(msg.sender, _toAddress(_sendParam.to), _sendParam.tokenIds[i], _sendParam.units[i]);
         }
 
-        sendId = _send(_sendParam.dstChainId, message, IntexGas.nftMint(_sendParam.tokenIds.length));
+        sendId = _sendPaidByCaller(_sendParam.dstChainId, message, IntexGas.nftMint(_sendParam.tokenIds.length));
         emit BatchBridged(sendId, _sendParam.dstChainId, msg.sender, _sendParam.tokenIds, _sendParam.units);
     }
 
@@ -198,7 +198,7 @@ contract IntexNFT1155Bridge is
             );
         }
 
-        sendId = _send(_sendParam.dstChainId, message, IntexGas.nftMint(_sendParam.recipients.length));
+        sendId = _sendPaidByCaller(_sendParam.dstChainId, message, IntexGas.nftMint(_sendParam.recipients.length));
         emit MultiBridged(
             sendId, _sendParam.dstChainId, msg.sender, _sendParam.recipients, _sendParam.tokenIds, _sendParam.units
         );
@@ -312,7 +312,7 @@ contract IntexNFT1155Bridge is
     /// @notice Permissionless reclaim of a batch item that the destination gate rejects
     ///         terminally. It re-mints the owner on the origin chain via a reverse one-item
     ///         transfer. This is the only exit that does not re-hit the destination lifecycle gate.
-    ///         The caller funds it. It consumes the entry once (CEI delete first).
+    ///         The caller pays the fee (see `quoteReclaimToSource`). It consumes the entry once (CEI delete first).
     /// @param receiveId Inbound message id where the item's crosschainMint is stranded.
     /// @param idx Position of the stranded item in that batch.
     function reclaimToSource(bytes32 receiveId, uint256 idx) external payable nonReentrant returns (bytes32 sendId) {
@@ -321,17 +321,28 @@ contract IntexNFT1155Bridge is
         if (!f.exists) revert NoSuchFailedCrosschainMint(receiveId, idx);
         delete $.failedCrosschainMints[receiveId][idx];
 
+        sendId = _sendPaidByCaller(f.srcChainId, _buildReclaimMsg(f), IntexGas.nftMint(1));
+        emit CrosschainMintReclaimed(receiveId, idx, f.srcChainId, f.to, f.tokenId, f.units);
+    }
+
+    /// @notice Native fee that `reclaimToSource(receiveId, idx)` takes.
+    function quoteReclaimToSource(bytes32 receiveId, uint256 idx) external view returns (uint256) {
+        FailedCrosschainMint memory f = _bs().failedCrosschainMints[receiveId][idx];
+        if (!f.exists) revert NoSuchFailedCrosschainMint(receiveId, idx);
+        return _quoteFee(f.srcChainId, _buildReclaimMsg(f), IntexGas.nftMint(1));
+    }
+
+    /// @dev The reverse one-item transfer that returns a stranded item to its owner on the origin chain.
+    function _buildReclaimMsg(FailedCrosschainMint memory f) private pure returns (bytes memory) {
         bytes32[] memory recipients = new bytes32[](1);
         recipients[0] = bytes32(uint256(uint160(f.to)));
         uint256[] memory tokenIds = new uint256[](1);
         tokenIds[0] = f.tokenId;
         uint256[] memory units = new uint256[](1);
         units[0] = f.units;
-        bytes memory message = IntexNFT1155BridgeCodec.encodeMulti(
+        return IntexNFT1155BridgeCodec.encodeMulti(
             IntexNFT1155BridgeCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, units: units})
         );
-        sendId = _send(f.srcChainId, message, IntexGas.nftMint(1));
-        emit CrosschainMintReclaimed(receiveId, idx, f.srcChainId, f.to, f.tokenId, f.units);
     }
 
     /// @inheritdoc IIntexNFT1155Bridge
