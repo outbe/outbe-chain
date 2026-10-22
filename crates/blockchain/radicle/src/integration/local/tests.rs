@@ -1087,9 +1087,11 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
     .unwrap();
     let package = verify_bootstrap_publication(
         &repo,
-        &bootstrap.state,
-        &bootstrap.material,
-        b"[]",
+        crate::integration::bootstrap::BootstrapPublicationInput {
+            state: &bootstrap.state,
+            material: &bootstrap.material,
+            content_manifest: b"[]",
+        },
         &body,
         &package_manifest,
         &witness,
@@ -1155,9 +1157,11 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
         publication::ATTEST,
         &repo,
         manifest,
-        package.body(),
-        package.manifest(),
-        &witness,
+        publication::PublicationInput {
+            body: package.body(),
+            manifest: package.manifest(),
+            witness: &witness,
+        },
     )
     .unwrap();
     for malformed in [

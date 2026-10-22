@@ -200,17 +200,29 @@ pub fn verify_signed_bundle(
     sigstruct_view: &str,
 ) -> Result<()> {
     bundle_spec.validate()?;
-    if manifest.schema_version != "1.0.0"
-        || manifest.authorization_scope != bundle_spec.authorization_scope
-        || manifest.bundle_version != bundle_spec.bundle_version
-        || manifest.chain_id != bundle_spec.chain_id
-        || manifest.gramine != bundle_spec.gramine
-        || manifest.install_root != bundle_spec.install_root
-        || manifest.network != bundle_spec.network
-        || manifest.network_name != bundle_spec.network_name
-        || manifest.platform != bundle_spec.platform
-        || manifest.sealed_state_schema != bundle_spec.sealed_state_schema
-    {
+    if (
+        manifest.schema_version.as_str(),
+        &manifest.authorization_scope,
+        &manifest.bundle_version,
+        manifest.chain_id,
+        &manifest.gramine,
+        &manifest.install_root,
+        &manifest.network,
+        &manifest.network_name,
+        &manifest.platform,
+        manifest.sealed_state_schema,
+    ) != (
+        "1.0.0",
+        &bundle_spec.authorization_scope,
+        &bundle_spec.bundle_version,
+        bundle_spec.chain_id,
+        &bundle_spec.gramine,
+        &bundle_spec.install_root,
+        &bundle_spec.network,
+        &bundle_spec.network_name,
+        &bundle_spec.platform,
+        bundle_spec.sealed_state_schema,
+    ) {
         bail!("bundle metadata does not match the SGX network contract");
     }
     if manifest.files != bundle_files(bundle_root)? {

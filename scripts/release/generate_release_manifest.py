@@ -18,8 +18,7 @@ import hashlib
 import json
 import re
 from pathlib import Path
-from typing import Any
-
+from typing import Any, NamedTuple
 
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -145,7 +144,10 @@ def validate_build_spec(build_spec: dict[str, Any]) -> None:
     if build_spec.get("cargo", {}).get("auditable") is not False:
         raise ValueError("recipe v1 must explicitly record cargo-auditable as disabled")
 
-    artifacts = build_spec.get("artifacts", [])
+    _validate_artifacts(build_spec.get("artifacts", []))
+
+
+def _validate_artifacts(artifacts: list[dict[str, Any]]) -> None:
     names = [artifact.get("name") for artifact in artifacts]
     if not names or len(names) != len(set(names)):
         raise ValueError("release artifacts must have unique non-empty names")
@@ -153,16 +155,12 @@ def validate_build_spec(build_spec: dict[str, Any]) -> None:
     production_enclaves = [
         artifact
         for artifact in artifacts
-        if artifact.get("role") == "tee-enclave"
-        and artifact.get("classification") == "production"
+        if artifact.get("role") == "tee-enclave" and artifact.get("classification") == "production"
     ]
     if len(production_enclaves) != 1:
         raise ValueError("release artifacts must contain exactly one production enclave")
     enclave = production_enclaves[0]
-    if (
-        enclave.get("name") != "outbe-tee-enclave"
-        or enclave.get("package") != "outbe-tee-enclave"
-    ):
+    if enclave.get("name") != "outbe-tee-enclave" or enclave.get("package") != "outbe-tee-enclave":
         raise ValueError("production enclave package and binary must be outbe-tee-enclave")
     enclave_features = enclave.get("features")
     if enclave_features != ["production-dcap-release"]:
@@ -177,9 +175,16 @@ def validate_build_spec(build_spec: dict[str, Any]) -> None:
         )
     for artifact in artifacts:
         if artifact is not enclave and artifact.get("features") != []:
-            raise ValueError(
-                "non-enclave release artifacts must not enable application features"
-            )
+            raise ValueError("non-enclave release artifacts must not enable application features")
+
+
+class _ReleaseMetadata(NamedTuple):
+    release_tag: str
+    source_commit: str
+    source_date_epoch: int
+    lifecycle: str
+    verification_gates: list[dict[str, Any]]
+    resolved_system_packages: Path | None = None
 
 
 def build_manifest(
@@ -187,15 +192,17 @@ def build_manifest(
     build_spec: dict[str, Any],
     source_root: Path,
     artifact_dir: Path,
-    release_tag: str,
-    source_commit: str,
-    source_date_epoch: int,
-    lifecycle: str,
-    verification_gates: list[dict[str, Any]],
-    resolved_system_packages: Path | None = None,
+    **release: Any,
 ) -> dict[str, Any]:
     """Build a path-independent manifest value from one completed ELF build."""
 
+    metadata = _ReleaseMetadata(**release)
+    release_tag = metadata.release_tag
+    source_commit = metadata.source_commit
+    source_date_epoch = metadata.source_date_epoch
+    lifecycle = metadata.lifecycle
+    verification_gates = metadata.verification_gates
+    resolved_system_packages = metadata.resolved_system_packages
     validate_build_spec(build_spec)
     if not release_tag or not release_tag.isascii():
         raise ValueError("release tag must be non-empty ASCII")

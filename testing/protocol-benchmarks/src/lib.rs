@@ -304,14 +304,25 @@ impl Observation {
     }
 
     fn deterministic_eq(&self, other: &Self) -> bool {
-        self.calldata == other.calldata
-            && self.gas_totals == other.gas_totals
-            && self.gas_components == other.gas_components
-            && self.storage == other.storage
-            && self.events == other.events
-            && self.child_frames == other.child_frames
-            && self.postconditions == other.postconditions
-            && self.artifacts == other.artifacts
+        (
+            &self.calldata,
+            &self.gas_totals,
+            &self.gas_components,
+            &self.storage,
+            &self.events,
+            &self.child_frames,
+            &self.postconditions,
+            &self.artifacts,
+        ) == (
+            &other.calldata,
+            &other.gas_totals,
+            &other.gas_components,
+            &other.storage,
+            &other.events,
+            &other.child_frames,
+            &other.postconditions,
+            &other.artifacts,
+        )
     }
 }
 

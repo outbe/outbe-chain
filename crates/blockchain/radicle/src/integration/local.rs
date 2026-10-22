@@ -361,9 +361,11 @@ impl LocalReceiptClient {
             publication::ATTEST,
             repo,
             content_manifest,
-            package.body(),
-            package.manifest(),
-            witness,
+            publication::PublicationInput {
+                body: package.body(),
+                manifest: package.manifest(),
+                witness,
+            },
         )?;
         let response = self.exchange(&request, publication::ATTEST_FRAME).await?;
         if response == [publication::ATTEST.as_slice(), &[0]].concat() {
@@ -403,9 +405,11 @@ impl LocalReceiptClient {
             publication::QUEUE,
             repo,
             content_manifest,
-            package.body(),
-            package.manifest(),
-            witness,
+            publication::PublicationInput {
+                body: package.body(),
+                manifest: package.manifest(),
+                witness,
+            },
         )?;
         request.extend(batch.to_bytes().map_err(|_| Error::Protocol)?);
         let response = self.exchange(&request, 5).await?;
