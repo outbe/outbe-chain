@@ -2,6 +2,7 @@
 pragma solidity ^0.8.30;
 
 import {RouteSpec, BaseRoute, SyntheticSource} from "./BaseRoute.sol";
+import {EURC} from "../../src/canonical/EURC.sol";
 import {USDC} from "../../src/canonical/USDC.sol";
 import {USDT} from "../../src/canonical/USDT.sol";
 import {WCOEN} from "../../src/canonical/WCOEN.sol";
@@ -29,7 +30,7 @@ abstract contract Routes is BaseRoute {
 
     /// @dev Labels are part of the CREATE3 address. Changing one relocates every deployment of that route.
     function routes() public returns (Route[] memory list) {
-        list = new Route[](3);
+        list = new Route[](4);
 
         // Canonical USDT on the external chain, ERC-7802 synthetic on Outbe. Point
         // `CANONICAL_USDT_TOKEN` at the issuer's USDT on a real network. Leave it unset on a
@@ -63,6 +64,16 @@ abstract contract Routes is BaseRoute {
             syntheticSource: SyntheticSource.Erc7802
         });
         list[2] = Route(wcoen, _wcoenInitCode(_isCanonicalHere(wcoen)), false);
+
+        // The same shape as USDC, in euros: canonical EURC on the external chain, ERC-7802 synthetic on Outbe.
+        RouteSpec memory eurc = RouteSpec({
+            tokenLabel: "EURC",
+            canonicalOnOutbe: false,
+            canonicalTokenEnv: "CANONICAL_EURC_TOKEN",
+            syntheticTokenEnv: "",
+            syntheticSource: SyntheticSource.Erc7802
+        });
+        list[3] = Route(eurc, _eurcInitCode(_isCanonicalHere(eurc)), true);
     }
 
     function routeByLabel(string memory label) public returns (Route memory) {
@@ -88,7 +99,7 @@ abstract contract Routes is BaseRoute {
         (token, tokenBridge) = _deployRoute(factory, salt, route.spec, route.initCode);
 
         // Bootstrap the mock on first deploy. Keyed on `totalSupply` rather than on "was just deployed", so a re-run
-        // does not mint twice. USDT and USDC share the mock surface, so one cast covers both.
+        // does not mint twice. USDT, USDC and EURC share the mock surface, so one cast covers all three.
         if (route.mintsCanonicalMock && _isCanonicalHere(route.spec) && USDT(token).totalSupply() == 0) {
             USDT(token).mint(_mintRecipient(), vm.envOr("INITIAL_MINT_AMOUNT", uint256(1_000_000_000e6)));
         }
@@ -109,6 +120,14 @@ abstract contract Routes is BaseRoute {
             ? type(USDC).creationCode
             : abi.encodePacked(
                 type(BridgeableERC20Stable).creationCode, abi.encode("USDC", "USDC", uint8(6), uint16(840), _owner())
+            );
+    }
+
+    function _eurcInitCode(bool canonical) internal returns (bytes memory) {
+        return canonical
+            ? type(EURC).creationCode
+            : abi.encodePacked(
+                type(BridgeableERC20Stable).creationCode, abi.encode("EURC", "EURC", uint8(6), uint16(978), _owner())
             );
     }
 
