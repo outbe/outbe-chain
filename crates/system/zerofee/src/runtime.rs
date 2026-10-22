@@ -944,15 +944,11 @@ mod tests {
             "exactly one SponsorshipAuthorized event per record_use"
         );
 
-        // Topic 0 must be the canonical event signature. Topic 1 holds
-        // the indexed signer. Topic 2 holds the day. The new_count rides
-        // in the data body.
-        let log = &events[0];
-        assert_eq!(
-            log.topics()[0],
-            IZeroFee::SponsorshipAuthorized::SIGNATURE_HASH,
-            "topic0 must match the sol! signature hash"
-        );
+        let event = IZeroFee::SponsorshipAuthorized::decode_log_data_validate(&events[0])
+            .expect("emitted sponsorship log must decode with the published ABI");
+        assert_eq!(event.signer, SIGNER);
+        assert_eq!(event.day, BLOCK_DAY);
+        assert_eq!(event.newCount, 1);
     }
 
     #[test]
