@@ -13,7 +13,7 @@ use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::constants::min_activation_buffer;
+use crate::constants::MIN_ACTIVATION_BUFFER;
 use crate::errors::UpdateError;
 use crate::version::{
     protocol_version_major, protocol_version_minor, try_parse_protocol_version, ProtocolVersion,
@@ -67,16 +67,12 @@ impl ScheduleUpdatePayload {
         Self::parse_version(&self.version)
     }
 
-    pub fn validate(
-        &self,
-        current_height: u64,
-        chain_id: u64,
-    ) -> std::result::Result<(), UpdateError> {
+    pub fn validate(&self, current_height: u64) -> std::result::Result<(), UpdateError> {
         let version = self.protocol_version()?;
         if version.is_zero() {
             return Err(UpdateError::InvalidVersion);
         }
-        let min_activation = current_height.saturating_add(min_activation_buffer(chain_id));
+        let min_activation = current_height.saturating_add(MIN_ACTIVATION_BUFFER);
         if self.activation_height < min_activation {
             return Err(UpdateError::HeightInPast);
         }
@@ -146,19 +142,15 @@ pub fn decode_schedule_update_json(
 pub fn validate_schedule_update_json(
     payload: &Value,
     current_height: u64,
-    chain_id: u64,
 ) -> std::result::Result<(), UpdateError> {
-    ScheduleUpdatePayload::from_value(payload)?.validate(current_height, chain_id)
+    ScheduleUpdatePayload::from_value(payload)?.validate(current_height)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::MIN_ACTIVATION_BUFFER;
     use crate::encode_protocol_version;
     use alloy_primitives::B256;
-    const LOCALNET_CHAIN_ID: u64 = 54_322_345;
-    const OTHER_CHAIN_ID: u64 = 1;
 
     fn payload(activation_height: u64) -> ScheduleUpdatePayload {
         ScheduleUpdatePayload::new(ProtocolVersion::from(2), activation_height, "notes")
@@ -178,7 +170,7 @@ mod tests {
             }
             let decoded = ScheduleUpdatePayload::from_value(&json).unwrap();
             assert_eq!(decoded.mrenclave, None);
-            decoded.validate(100, OTHER_CHAIN_ID).unwrap();
+            decoded.validate(100).unwrap();
         }
     }
 
@@ -208,11 +200,12 @@ mod tests {
     }
 
     #[test]
-    fn measurement_payload_roundtrips_without_external_policy_and_requires_future_height() {
-        let mut value = payload(100);
+    fn measurement_payload_roundtrips_without_external_policy_and_requires_notice() {
+        let current = 100;
+        let mut value = payload(current + MIN_ACTIVATION_BUFFER);
         value.mrenclave = Some(B256::repeat_byte(1));
-        value.validate(99, LOCALNET_CHAIN_ID).unwrap();
-        assert!(value.validate(100, LOCALNET_CHAIN_ID).is_err());
+        value.validate(current).unwrap();
+        assert_eq!(value.validate(current + 1), Err(UpdateError::HeightInPast));
         let encoded = serde_json::to_string(&value).unwrap();
         assert!(!encoded.contains("predecessorTeePolicyHash"));
         assert!(!encoded.contains("teePolicy"));
@@ -221,25 +214,19 @@ mod tests {
             value
         );
         value.mrenclave = Some(B256::ZERO);
-        assert!(value.validate(99, LOCALNET_CHAIN_ID).is_err());
+        assert_eq!(value.validate(current), Err(UpdateError::InvalidTeePolicy));
     }
 
     #[test]
-    fn localnet_allows_immediate_activation() {
-        // buffer is 0 on localnet: activation at the current height is accepted.
-        assert!(payload(100).validate(100, LOCALNET_CHAIN_ID).is_ok());
-    }
-
-    #[test]
-    fn other_chains_still_require_the_buffer() {
+    fn activation_requires_the_standard_notice_period() {
         let current = 100;
         let just_under = current + MIN_ACTIVATION_BUFFER - 1;
         assert!(matches!(
-            payload(just_under).validate(current, OTHER_CHAIN_ID),
+            payload(just_under).validate(current),
             Err(UpdateError::HeightInPast)
         ));
         assert!(payload(current + MIN_ACTIVATION_BUFFER)
-            .validate(current, OTHER_CHAIN_ID)
+            .validate(current)
             .is_ok());
     }
 
@@ -282,7 +269,7 @@ mod tests {
         let value: Value =
             serde_json::from_str(r#"{"version":"0.0","activationHeight":1000,"info":""}"#).unwrap();
         assert_eq!(
-            validate_schedule_update_json(&value, 0, LOCALNET_CHAIN_ID).unwrap_err(),
+            validate_schedule_update_json(&value, 0).unwrap_err(),
             UpdateError::InvalidVersion
         );
     }
