@@ -143,6 +143,22 @@ interface IValidatorSet {
     /// PENDING (then ACTIVE via the next reshare).
     event ValidatorUnjailed(address indexed validator, uint64 atHeight);
 
+    /// Emitted when stake moves a validator from WaitingForStake to
+    /// WaitingForReadiness. `validator` is that account.
+    event ValidatorPending(address indexed validator);
+
+    /// Emitted when readiness confirmation moves a validator from
+    /// WaitingForReadiness to Joining. `validator` is that account.
+    event ValidatorReadyConfirmed(address indexed validator);
+
+    /// Emitted when cleanup removes an INACTIVE validator.
+    /// `index` is that validator's dense registry index before the removal.
+    event ValidatorRemoved(address indexed validator, uint64 index);
+
+    /// Emitted when cleanup moves the tail validator into a removed slot.
+    /// `oldIndex` is the tail index. `newIndex` is the removed slot.
+    event ValidatorIndexRemapped(address indexed validator, uint64 oldIndex, uint64 newIndex);
+
     /// Emitted on epoch transition.
     event EpochTransition(uint256 indexed newEpochNumber, uint64 timestamp, uint32 activeValidatorCount);
 

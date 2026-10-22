@@ -21,26 +21,27 @@ SEED_PROFILES = {
     },
 }
 SPEC = importlib.util.spec_from_file_location("seed_genesis", MODULE_PATH)
+if SPEC is None or SPEC.loader is None:
+    raise ImportError(f"Cannot load seed_genesis from {MODULE_PATH}")
 seed_genesis = importlib.util.module_from_spec(SPEC)
-assert SPEC.loader is not None
 SPEC.loader.exec_module(seed_genesis)
 
 
 class ProtocolConstantsSeedTests(unittest.TestCase):
     def test_oracle_seed_preserves_configured_generic_pair_orientation(self):
         storage = seed_genesis.StorageBuilder()
-        token = "0x1111111111111111111111111111111111111111"
+        asset_contract_address = "0x1111111111111111111111111111111111111111"
 
         seed_genesis.seed_oracle(
             storage,
-            {"pairs": [{"base": token, "quote": "840"}]},
+            {"pairs": [{"base": asset_contract_address, "quote": "840"}]},
         )
 
         slot = int(seed_genesis.mapping_key(seed_genesis.u32_bytes(1), 43), 16)
         self.assertEqual(
             storage.entries[seed_genesis.hex32(slot)],
             seed_genesis.hex32(
-                int.from_bytes(seed_genesis.asset_address(token), "big")
+                int.from_bytes(seed_genesis.asset_address(asset_contract_address), "big")
             ),
         )
         self.assertEqual(
@@ -75,8 +76,12 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
             )
 
     def test_oracle_seed_rejects_pairs_whose_assets_resolve_to_the_same_address(self):
-        token = "0x1111111111111111111111111111111111111111"
-        for base, quote in (("COEN", "native"), ("840", "840"), (token, token)):
+        asset_contract_address = "0x1111111111111111111111111111111111111111"
+        for base, quote in (
+            ("COEN", "native"),
+            ("840", "840"),
+            (asset_contract_address, asset_contract_address),
+        ):
             with self.subTest(base=base, quote=quote):
                 storage = seed_genesis.StorageBuilder()
                 with self.assertRaisesRegex(ValueError, "same asset"):
@@ -268,6 +273,24 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
             self.assertEqual(
                 storage.entries[seed_genesis.mapping_key(node_id, 51)],
                 seed_genesis.hex32(seed_genesis.address_as_u256(validator["address"])),
+            )
+            self.assertNotIn(
+                seed_genesis.mapping_key(address, 7),
+                storage.entries,
+            )
+
+        staking = seed_genesis.StorageBuilder()
+        seed_genesis.seed_staking(
+            staking,
+            validators,
+            {},
+            terms=seed_genesis.StakeSeedTerms(min_stake=1, validator_stake=1),
+        )
+        for validator in validators:
+            address = seed_genesis.address_bytes(validator["address"])
+            self.assertEqual(
+                staking.entries[seed_genesis.mapping_key(address, 3)],
+                seed_genesis.hex32(1),
             )
 
         missing = [dict(validators[0])]

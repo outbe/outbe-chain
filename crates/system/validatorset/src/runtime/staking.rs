@@ -1,5 +1,6 @@
 use super::status;
 use crate::errors::ValidatorSetError;
+use crate::precompile::IValidatorSet;
 use crate::schema::ValidatorSet;
 use crate::state_machine::{self, StakeProjection, ValidatorLifecycle};
 use alloy_primitives::{Address, U256};
@@ -9,9 +10,9 @@ impl ValidatorSet<'_> {
     /// Records a successful stake increase from Staking and performs the
     /// REGISTERED -> PENDING threshold transition when required.
     ///
-    /// Staking owns the authoritative balance.
-    /// `record_unstake`, `record_stake_slash`,
-    /// and `complete_unbonding` also write the mirror and its lifecycle fields.
+    /// Staking owns the authoritative balance and passes the post-write amount.
+    /// This method, `record_unstake`, `record_stake_slash`, and
+    /// `complete_unbonding` update lifecycle columns only.
     pub fn record_stake_increase(
         &mut self,
         addr: Address,
@@ -36,11 +37,16 @@ impl ValidatorSet<'_> {
             lifecycle => (state_machine::with_stake(lifecycle, stake)?, false),
         };
         let after = before.clone().with_lifecycle(lifecycle)?;
-
-        self.commit_transition(&before, &after, became_pending)?;
         if became_pending {
+            let guard = self.storage.checkpoint_guard();
+            self.persist_validator_state_delta(&before, &after)?;
+            self.pending_set_change.write(true)?;
+            self.emit(IValidatorSet::ValidatorPending { validator: addr })?;
+            guard.commit();
             crate::metrics::record_validator_status(addr, status::PENDING);
             crate::metrics::record_pending_set_change(true);
+        } else {
+            self.commit_transition(&before, &after, false)?;
         }
         Ok(())
     }

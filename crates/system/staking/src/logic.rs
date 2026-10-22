@@ -1,12 +1,19 @@
 use alloy_primitives::{Address, U256};
+use alloy_sol_types::SolEvent;
 use outbe_primitives::addresses::STAKING_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_validatorset::contract::ValidatorSet;
 
 use crate::contract::Staking;
 use crate::errors::StakingError;
+use crate::precompile::IStaking;
 
 impl Staking<'_> {
+    pub(crate) fn emit_staking_event<E: SolEvent>(&self, event: E) -> Result<()> {
+        self.storage
+            .emit_event(STAKING_ADDRESS, event.encode_log_data())
+    }
+
     /// Stakes `amount` on behalf of `validator`.
     ///
     /// - Adds amount to stake_amount[validator] and total_staked.
@@ -14,7 +21,7 @@ impl Staking<'_> {
     ///   moves it to PENDING (`WaitingForReadiness`).
     ///   ACTIVE comes later, from reshare activation.
     /// - Enforces max_stake_percent if configured.
-    /// - Updates val_stake in ValidatorSet.
+    /// - Passes the post-write amount to ValidatorSet for the lifecycle transition.
     pub fn stake(&mut self, caller: Address, validator: Address, amount: U256) -> Result<()> {
         if amount.is_zero() {
             return Err(StakingError::AmountZero.into());
@@ -47,6 +54,11 @@ impl Staking<'_> {
                 let min_stake = self.config_min_stake.read()?;
                 let mut val_set = ValidatorSet::new(self.storage.clone());
                 val_set.record_stake_increase(validator, new_stake, min_stake)?;
+                self.emit_staking_event(IStaking::Staked {
+                    validator,
+                    amount,
+                    bonded: new_stake,
+                })?;
 
                 return Ok(());
             }
@@ -71,6 +83,11 @@ impl Staking<'_> {
         let min_stake = self.config_min_stake.read()?;
         let mut val_set = ValidatorSet::new(self.storage.clone());
         val_set.record_stake_increase(validator, new_stake, min_stake)?;
+        self.emit_staking_event(IStaking::Staked {
+            validator,
+            amount,
+            bonded: new_stake,
+        })?;
 
         Ok(())
     }
@@ -81,7 +98,7 @@ impl Staking<'_> {
     /// - If stake falls below min_stake and validator is ACTIVE, transitions
     ///   to EXITING (awaiting DKG reshare to exclude from consensus set).
     /// - Enqueues an unbonding entry with complete_time = now + unbonding_period.
-    /// - Updates val_stake in ValidatorSet.
+    /// - Passes the post-write amount to ValidatorSet for the lifecycle transition.
     pub fn unstake(&mut self, caller: Address, amount: U256) -> Result<()> {
         if amount.is_zero() {
             return Err(StakingError::AmountZero.into());
@@ -105,9 +122,18 @@ impl Staking<'_> {
         // Staking owns the accounting and queue. The ValidatorSet facade records
         // the complete projection only after those authoritative writes succeed.
         // The outer call-frame checkpoint keeps the sequence atomic on failure.
-        self.enqueue_unbonding(caller, amount, complete_time)?;
+        let started = self.enqueue_unbonding(caller, amount, complete_time)?;
         let mut val_set = ValidatorSet::new(self.storage.clone());
         val_set.record_unstake(caller, new_stake, min_stake, complete_time)?;
+        if let Some(index) = started {
+            self.emit_staking_event(IStaking::UnbondingStarted {
+                validator: caller,
+                index,
+                amount,
+                completeTime: complete_time,
+                automatic: false,
+            })?;
+        }
 
         Ok(())
     }
@@ -144,12 +170,62 @@ impl Staking<'_> {
         val_set.unjail_after_stake_check(caller)
     }
 
+    /// Slashes one unbonding row. A zero amount returns before the deadline read.
+    ///
+    /// The event is deferred. The caller emits it only after the native burn and
+    /// the ValidatorSet record succeed. Amount uses the same floor division.
+    /// The amount write stays before the deadline read. The deadline write is
+    /// the max of the stored time and `slash_complete_time`. A money change or
+    /// a time change returns an update, including remaining zero.
+    fn slash_unbonding_entry(
+        &mut self,
+        validator: Address,
+        index: u32,
+        percent: u64,
+        slash_complete_time: u64,
+    ) -> Result<(U256, Option<IStaking::UnbondingUpdated>)> {
+        let amount = self.unbonding_amount.read(&index)?;
+        if amount.is_zero() {
+            return Ok((U256::ZERO, None));
+        }
+
+        let unbonding_slash = amount * U256::from(percent) / U256::from(100u64);
+        let mut remaining = amount;
+        let mut changed = false;
+        if !unbonding_slash.is_zero() {
+            remaining = amount - unbonding_slash;
+            self.unbonding_amount.write(&index, remaining)?;
+            changed = true;
+        }
+
+        let complete_time = self.unbonding_complete_time.read(&index)?;
+        let mut effective = complete_time;
+        if complete_time < slash_complete_time {
+            self.unbonding_complete_time
+                .write(&index, slash_complete_time)?;
+            effective = slash_complete_time;
+            changed = true;
+        }
+
+        let update = if changed {
+            Some(IStaking::UnbondingUpdated {
+                validator,
+                index,
+                remaining,
+                completeTime: effective,
+            })
+        } else {
+            None
+        };
+        Ok((unbonding_slash, update))
+    }
+
     /// Slashes a validator by `percent` of their staked amount and unbonding entries.
     ///
     /// - Reduces stake_amount[validator] and total_staked by the slash amount.
     /// - Also proportionally reduces pending unbonding entries.
     /// - Burns slashed tokens from STAKING_ADDRESS native balance.
-    /// - Updates val_stake in ValidatorSet.
+    /// - Passes the post-write amount to ValidatorSet for the lifecycle transition.
     /// - Returns the total slashed amount (for evidence reward calculation).
     /// - Can change lifecycle when the remaining stake falls below the minimum.
     ///   PENDING moves to `WaitingForStake`. ACTIVE moves to EXITING.
@@ -162,6 +238,7 @@ impl Staking<'_> {
         let current = self.stake_amount.read(&validator)?;
         let timestamp = self.storage.now_secs()?;
         let mut total_slashed = U256::ZERO;
+        let mut bonded_slashed = U256::ZERO;
 
         // Slash active stake
         if !current.is_zero() {
@@ -171,6 +248,7 @@ impl Staking<'_> {
             let total = self.total_staked.read()?;
             self.total_staked.write(total - slash)?;
             total_slashed += slash;
+            bonded_slashed = slash;
         }
 
         // Slash unbonding entries proportionally.
@@ -178,21 +256,18 @@ impl Staking<'_> {
         let mut current_stored = self.per_val_unbonding_head.read(&validator)?;
         let slash_complete_time =
             self.checked_complete_time(timestamp, self.slashed_withdrawal_delay()?)?;
+        let mut unbonding_slashed = U256::ZERO;
+        let mut updates = Vec::new();
         while current_stored != 0 {
             let idx = current_stored - 1;
-            let amount = self.unbonding_amount.read(&idx)?;
-            if !amount.is_zero() {
-                let unbonding_slash = amount * U256::from(percent) / U256::from(100u64);
-                if !unbonding_slash.is_zero() {
-                    self.unbonding_amount
-                        .write(&idx, amount - unbonding_slash)?;
-                    total_slashed += unbonding_slash;
-                }
-                let complete_time = self.unbonding_complete_time.read(&idx)?;
-                if complete_time < slash_complete_time {
-                    self.unbonding_complete_time
-                        .write(&idx, slash_complete_time)?;
-                }
+            let (unbonding_slash, update) =
+                self.slash_unbonding_entry(validator, idx, percent, slash_complete_time)?;
+            if !unbonding_slash.is_zero() {
+                total_slashed += unbonding_slash;
+                unbonding_slashed += unbonding_slash;
+            }
+            if let Some(event) = update {
+                updates.push(event);
             }
             current_stored = self.unbonding_next.read(&idx)?;
         }
@@ -204,13 +279,24 @@ impl Staking<'_> {
                 .decrease_balance(STAKING_ADDRESS, total_slashed)?;
         }
 
-        // Cross-call: mirror the authoritative stake after all stake, claim, and
-        // burn accounting succeeds. Preserve the existing unbonding-end hint.
+        // Cross-call: pass the post-write amount after stake, claim, and burn
+        // accounting succeeds. Preserve the existing unbonding-end hint.
         // Individual Staking claim timestamps remain authoritative.
         let remaining_stake = self.stake_amount.read(&validator)?;
         let min_stake = self.config_min_stake.read()?;
         let mut val_set = ValidatorSet::new(self.storage.clone());
         val_set.record_stake_slash(validator, remaining_stake, min_stake, None)?;
+
+        for event in updates {
+            self.emit_staking_event(event)?;
+        }
+        if !bonded_slashed.is_zero() || !unbonding_slashed.is_zero() {
+            self.emit_staking_event(IStaking::Slashed {
+                validator,
+                bondedSlashed: bonded_slashed,
+                unbondingSlashed: unbonding_slashed,
+            })?;
+        }
 
         Ok(total_slashed)
     }

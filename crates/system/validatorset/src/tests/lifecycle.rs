@@ -1,6 +1,7 @@
 use super::*;
 use crate::precompile::IValidatorSet as I;
-use alloy_sol_types::SolError;
+use alloy_sol_types::{SolError, SolEvent};
+use outbe_primitives::addresses::VALIDATOR_SET_ADDRESS;
 
 #[test]
 fn test_activate_missing_validator_returns_revert() {
@@ -103,18 +104,77 @@ fn test_forced_exit_preserves_staking_lifecycle() {
 
         register_boundary_active(vs, val_addr, 0x33).unwrap();
 
-        // Set stake above min then force exit.
-        vs.val_stake.write(&val_addr, U256::from(1000u64)).unwrap();
         vs.force_exit_validator(val_addr).unwrap();
         assert_eq!(vs.val_status.read(&val_addr).unwrap(), status::EXITING);
-
-        // Simulate slash reducing stake below min_stake
-        vs.val_stake.write(&val_addr, U256::from(500u64)).unwrap();
 
         // Forced exit never returns through REGISTERED. Staking moves
         // UNBONDING validators to INACTIVE after withdrawability completes.
         assert_eq!(vs.val_status.read(&val_addr).unwrap(), status::EXITING);
     });
+}
+
+/// One cleanup log. `index` on `Removed` is the removed validator's old dense
+/// index. `Remapped` names the validator that moved from the tail into that slot.
+#[derive(Debug, PartialEq, Eq)]
+enum CleanupLog {
+    Removed {
+        validator: Address,
+        index: u64,
+    },
+    Remapped {
+        validator: Address,
+        old_index: u64,
+        new_index: u64,
+    },
+}
+
+fn removal_logs(storage: &HashMapStorageProvider) -> Vec<CleanupLog> {
+    storage
+        .get_ordered_events()
+        .iter()
+        .filter_map(|log| {
+            if log.address != VALIDATOR_SET_ADDRESS {
+                return None;
+            }
+            if let Ok(event) = I::ValidatorRemoved::decode_log(log) {
+                Some(CleanupLog::Removed {
+                    validator: event.data.validator,
+                    index: event.data.index,
+                })
+            } else {
+                I::ValidatorIndexRemapped::decode_log(log)
+                    .ok()
+                    .map(|event| CleanupLog::Remapped {
+                        validator: event.data.validator,
+                        old_index: event.data.oldIndex,
+                        new_index: event.data.newIndex,
+                    })
+            }
+        })
+        .collect()
+}
+
+fn cleanup_logs(storage: &HashMapStorageProvider, start: usize) -> Vec<CleanupLog> {
+    storage.get_ordered_events()[start..]
+        .iter()
+        .filter(|log| log.address == VALIDATOR_SET_ADDRESS)
+        .map(|log| {
+            if let Ok(event) = I::ValidatorRemoved::decode_log(log) {
+                CleanupLog::Removed {
+                    validator: event.data.validator,
+                    index: event.data.index,
+                }
+            } else if let Ok(event) = I::ValidatorIndexRemapped::decode_log(log) {
+                CleanupLog::Remapped {
+                    validator: event.data.validator,
+                    old_index: event.data.oldIndex,
+                    new_index: event.data.newIndex,
+                }
+            } else {
+                panic!("cleanup emitted an unexpected ValidatorSet log");
+            }
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -128,9 +188,11 @@ fn test_cleanup_inactive_validators() {
     let val4 = address!("0x00000000000000000000000000000000000000A4");
     let val5 = address!("0x00000000000000000000000000000000000000A5");
 
-    with_vs_configured(10, |vs| {
+    let mut storage = configured_storage(10);
+    storage.enter(|storage| {
+        let mut vs = ValidatorSet::new(storage);
         register_validators(
-            vs,
+            &mut vs,
             &[
                 (val1, 0xA1),
                 (val2, 0xA2),
@@ -141,25 +203,49 @@ fn test_cleanup_inactive_validators() {
         )
         .unwrap();
         assert_eq!(vs.validator_count.read().unwrap(), 5);
+        make_inactive_for_test(&mut vs, val2);
+        make_inactive_for_test(&mut vs, val4);
+    });
 
-        // Move val2 and val4 through the canonical exit and claim-completion
-        // transitions before cleaning their registry slots.
-        make_inactive_for_test(vs, val2);
-        make_inactive_for_test(vs, val4);
-
-        // Cleanup all INACTIVE entries
-        let removed = vs.cleanup_inactive_validators(0).unwrap();
-        assert_eq!(removed, 2);
+    let start = storage.get_ordered_events().len();
+    let removed = storage.enter(|storage| {
+        ValidatorSet::new(storage)
+            .cleanup_inactive_validators(0)
+            .unwrap()
+    });
+    assert_eq!(removed, 2);
+    // A2 is dense index 2. The tail A5 moves into that slot. A4 is then the
+    // tail at index 4, so its removal has no remap.
+    assert_eq!(
+        cleanup_logs(&storage, start),
+        vec![
+            CleanupLog::Removed {
+                validator: val2,
+                index: 2,
+            },
+            CleanupLog::Remapped {
+                validator: val5,
+                old_index: 5,
+                new_index: 2,
+            },
+            CleanupLog::Removed {
+                validator: val4,
+                index: 4,
+            },
+        ]
+    );
+    storage.enter(|storage| {
+        let vs = ValidatorSet::new(storage);
         assert_eq!(vs.validator_count.read().unwrap(), 3);
-
-        // Cleaned-up validators have index 0
         assert_eq!(vs.address_to_index.read(&val2).unwrap(), 0);
         assert_eq!(vs.address_to_index.read(&val4).unwrap(), 0);
-
-        // Remaining validators are still accessible
-        assert!(vs.address_to_index.read(&val1).unwrap() > 0);
-        assert!(vs.address_to_index.read(&val3).unwrap() > 0);
-        assert!(vs.address_to_index.read(&val5).unwrap() > 0);
+        assert_eq!(
+            vs.registered_validator_addresses().unwrap(),
+            vec![val1, val5, val3]
+        );
+        assert_eq!(vs.address_to_index.read(&val1).unwrap(), 1);
+        assert_eq!(vs.address_to_index.read(&val5).unwrap(), 2);
+        assert_eq!(vs.address_to_index.read(&val3).unwrap(), 3);
     });
 }
 
@@ -172,24 +258,138 @@ fn test_cleanup_capped() {
     let val2 = address!("0x00000000000000000000000000000000000000B2");
     let val3 = address!("0x00000000000000000000000000000000000000B3");
 
-    with_vs_configured(10, |vs| {
-        register_validators(vs, &[(val1, 0xB1), (val2, 0xB2), (val3, 0xB3)]).unwrap();
-
-        // Move all three through canonical INACTIVE records.
-        make_inactive_for_test(vs, val1);
-        make_inactive_for_test(vs, val2);
-        make_inactive_for_test(vs, val3);
-
-        // Cap at 2
-        let removed = vs.cleanup_inactive_validators(2).unwrap();
-        assert_eq!(removed, 2);
-        assert_eq!(vs.validator_count.read().unwrap(), 1);
-
-        // Second call gets the remaining one
-        let removed2 = vs.cleanup_inactive_validators(2).unwrap();
-        assert_eq!(removed2, 1);
-        assert_eq!(vs.validator_count.read().unwrap(), 0);
+    let mut storage = configured_storage(10);
+    storage.enter(|storage| {
+        let mut vs = ValidatorSet::new(storage);
+        register_validators(&mut vs, &[(val1, 0xB1), (val2, 0xB2), (val3, 0xB3)]).unwrap();
+        make_inactive_for_test(&mut vs, val1);
+        make_inactive_for_test(&mut vs, val2);
+        make_inactive_for_test(&mut vs, val3);
     });
+
+    let start = storage.get_ordered_events().len();
+    let removed = storage.enter(|storage| {
+        ValidatorSet::new(storage)
+            .cleanup_inactive_validators(2)
+            .unwrap()
+    });
+    assert_eq!(removed, 2);
+    // Cap 2 removes B1 (tail B3 moves to 1) and then B3 (tail B2 moves to 1).
+    assert_eq!(
+        cleanup_logs(&storage, start),
+        vec![
+            CleanupLog::Removed {
+                validator: val1,
+                index: 1,
+            },
+            CleanupLog::Remapped {
+                validator: val3,
+                old_index: 3,
+                new_index: 1,
+            },
+            CleanupLog::Removed {
+                validator: val3,
+                index: 1,
+            },
+            CleanupLog::Remapped {
+                validator: val2,
+                old_index: 2,
+                new_index: 1,
+            },
+        ]
+    );
+    storage.enter(|storage| {
+        let vs = ValidatorSet::new(storage);
+        assert_eq!(vs.validator_count.read().unwrap(), 1);
+        assert_eq!(vs.registered_validator_addresses().unwrap(), vec![val2]);
+    });
+
+    let start = storage.get_ordered_events().len();
+    let removed2 = storage.enter(|storage| {
+        ValidatorSet::new(storage)
+            .cleanup_inactive_validators(2)
+            .unwrap()
+    });
+    assert_eq!(removed2, 1);
+    assert_eq!(
+        cleanup_logs(&storage, start),
+        vec![CleanupLog::Removed {
+            validator: val2,
+            index: 1,
+        }]
+    );
+    let start = storage.get_ordered_events().len();
+    let removed3 = storage.enter(|storage| {
+        ValidatorSet::new(storage)
+            .cleanup_inactive_validators(2)
+            .unwrap()
+    });
+    assert_eq!(removed3, 0);
+    assert_eq!(cleanup_logs(&storage, start), Vec::new());
+    storage.enter(|storage| {
+        assert_eq!(
+            ValidatorSet::new(storage).validator_count.read().unwrap(),
+            0
+        );
+    });
+}
+
+#[test]
+fn cleanup_rolls_back_when_a_later_removal_fails() {
+    let first = address!("0x00000000000000000000000000000000000000D1");
+    let second = address!("0x00000000000000000000000000000000000000D2");
+    let seed = || {
+        let mut storage = configured_storage(10);
+        storage.enter(|storage| {
+            let mut vs = ValidatorSet::new(storage);
+            register_validators(&mut vs, &[(first, 0xD1), (second, 0xD2)]).unwrap();
+            make_inactive_for_test(&mut vs, first);
+            make_inactive_for_test(&mut vs, second);
+        });
+        storage
+    };
+    let view = |storage: &mut HashMapStorageProvider| {
+        let (count, addresses) = storage.enter(|storage| {
+            let vs = ValidatorSet::new(storage);
+            (
+                vs.validator_count.read().unwrap(),
+                vs.registered_validator_addresses().unwrap(),
+            )
+        });
+        (count, addresses, removal_logs(storage))
+    };
+    let initial = view(&mut seed());
+    let views = HashMapStorageProvider::mutation_prefix_views(
+        seed,
+        |storage| ValidatorSet::new(storage).cleanup_inactive_validators(0),
+        view,
+    )
+    .unwrap();
+    assert!(views.mutations > 0);
+    assert!(views
+        .before_mutation
+        .iter()
+        .all(|before| *before == initial));
+    assert_eq!(
+        views.complete.2,
+        vec![
+            CleanupLog::Removed {
+                validator: first,
+                index: 1,
+            },
+            CleanupLog::Remapped {
+                validator: second,
+                old_index: 2,
+                new_index: 1,
+            },
+            CleanupLog::Removed {
+                validator: second,
+                index: 1,
+            },
+        ]
+    );
+    assert_eq!(views.complete.0, 0);
+    assert_eq!(views.complete.1, Vec::<Address>::new());
 }
 
 // ---------------------------------------------------------------------------
@@ -211,6 +411,11 @@ fn test_reregistration_cooldown_gates_then_allows() {
     });
 
     // h500: only 400 blocks elapsed -> rejected with a cooldown error.
+    // Cleanup of that same row is a no-op and emits no registry log.
+    let index_at_registration = at_height(&mut storage, 100, |vs| {
+        vs.address_to_index.read(&val).unwrap()
+    });
+    let logs_before_cleanup = storage.get_ordered_events().len();
     at_height(&mut storage, 500, |vs| {
         let err = vs
             .register_validator(OWNER, val, &dummy_consensus_pubkey(0xDD))
@@ -225,7 +430,13 @@ fn test_reregistration_cooldown_gates_then_allows() {
             }
             other => panic!("expected typed revert bytes, got {other:?}"),
         }
+        assert_eq!(vs.cleanup_inactive_validators(0).unwrap(), 0);
+        assert_eq!(
+            vs.address_to_index.read(&val).unwrap(),
+            index_at_registration
+        );
     });
+    assert_eq!(cleanup_logs(&storage, logs_before_cleanup), Vec::new());
 
     // h1100: 1000 blocks elapsed -> allowed.
     at_height(&mut storage, 1100, |vs| {

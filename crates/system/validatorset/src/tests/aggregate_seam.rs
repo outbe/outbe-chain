@@ -34,7 +34,29 @@ fn two_registered() -> HashMapStorageProvider {
     storage
 }
 
-/// Configured storage with VALIDATOR ACTIVE and `bonded` mirrored.
+/// Current bonded stake is Staking slot 3. ValidatorSet slot 7 stays empty.
+#[test]
+fn projection_reads_staking_amount_and_leaves_slot7_empty() {
+    use outbe_primitives::addresses::{STAKING_ADDRESS, VALIDATOR_SET_ADDRESS};
+    use outbe_primitives::storage::types::Mapping;
+
+    let amount = U256::from(1_000u64);
+    let mut storage = two_registered();
+    storage.enter(|storage| {
+        Mapping::<Address, U256>::new(U256::from(3u64), STAKING_ADDRESS, storage.clone())
+            .write(&VALIDATOR, amount)
+            .unwrap();
+        let vs = ValidatorSet::new(storage.clone());
+        let state = vs.validator_state(VALIDATOR).unwrap();
+        assert_eq!(state.bonded_stake(), amount);
+        assert_eq!(vs.get_validator(VALIDATOR).unwrap().unwrap().stake, amount);
+        let mirror =
+            Mapping::<Address, U256>::new(U256::from(7u64), VALIDATOR_SET_ADDRESS, storage);
+        assert_eq!(mirror.read(&VALIDATOR).unwrap(), U256::ZERO);
+    });
+}
+
+/// Configured storage with VALIDATOR ACTIVE and `bonded` in Staking.
 fn active_with_bonded(bonded: u64) -> HashMapStorageProvider {
     let mut storage = configured_storage(10);
     storage.enter(|storage| {
@@ -119,7 +141,7 @@ fn persistence_rejects_a_registry_identity_change_before_any_write() {
     assert_eq!(storage.clear_mutation_failure(), 0);
 }
 
-/// The mirrored stake, status, deactivation height, unbonding hint and
+/// Staking bonded amount, status, deactivation height, unbonding hint and
 /// pending-set-change flag of VALIDATOR.
 #[derive(Debug, Clone, PartialEq)]
 struct ExitView {
@@ -134,7 +156,7 @@ fn exit_view(provider: &mut HashMapStorageProvider) -> ExitView {
     provider.enter(|storage| {
         let vs = ValidatorSet::new(storage);
         ExitView {
-            bonded: vs.val_stake.read(&VALIDATOR).unwrap(),
+            bonded: vs.read_authoritative_bonded(&VALIDATOR).unwrap(),
             status: vs.val_status.read(&VALIDATOR).unwrap(),
             deactivated_at: vs.val_deactivated_at_height.read(&VALIDATOR).unwrap(),
             unbonding_end: vs.val_unbonding_end.read(&VALIDATOR).unwrap(),
@@ -153,8 +175,9 @@ fn view(bonded: u64, status: u8, deactivated_at: u64, pending: bool) -> ExitView
     }
 }
 
-/// The stake slash commits its four writes in one checkpoint. A failure at
-/// any write leaves the stored validator unchanged.
+/// The stake slash commits status, deactivation, and the set-change flag in
+/// one checkpoint. A failure at any write leaves the stored validator
+/// unchanged. Bonded stake stays in Staking.
 #[test]
 fn stake_slash_below_minimum_commits_exit_fields_and_set_change_atomically() {
     let views = HashMapStorageProvider::mutation_prefix_views(
@@ -174,22 +197,17 @@ fn stake_slash_below_minimum_commits_exit_fields_and_set_change_atomically() {
     assert_eq!(
         views,
         MutationPrefixViews {
-            before_mutation: vec![
-                unchanged.clone(),
-                unchanged.clone(),
-                unchanged.clone(),
-                unchanged,
-            ],
-            complete: view(100, status::EXITING, 1, true),
-            mutations: 4,
+            before_mutation: vec![unchanged.clone(), unchanged.clone(), unchanged],
+            complete: view(1_000, status::EXITING, 1, true),
+            mutations: 3,
         }
     );
 }
 
-/// Persistence of an ACTIVE -> EXITING delta writes the stake, then the
-/// status, then the deactivation height. It does not touch the set-change flag.
+/// Persistence of an ACTIVE -> EXITING delta writes the status, then the
+/// deactivation height. It does not write bonded stake or the set-change flag.
 #[test]
-fn exit_persistence_writes_stake_then_status_then_deactivation_height() {
+fn exit_persistence_writes_status_then_deactivation_height() {
     let views = HashMapStorageProvider::mutation_prefix_views(
         || active_with_bonded(1_000),
         |storage| {
@@ -216,11 +234,10 @@ fn exit_persistence_writes_stake_then_status_then_deactivation_height() {
         MutationPrefixViews {
             before_mutation: vec![
                 view(1_000, status::ACTIVE, 0, false),
-                view(100, status::ACTIVE, 0, false),
-                view(100, status::EXITING, 0, false),
+                view(1_000, status::EXITING, 0, false),
             ],
-            complete: view(100, status::EXITING, 1, false),
-            mutations: 3,
+            complete: view(1_000, status::EXITING, 1, false),
+            mutations: 2,
         }
     );
 }

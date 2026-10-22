@@ -108,11 +108,3 @@ impl<'storage> SlashIndicator<'storage> {
         }
     }
 }
-
-/// Wrapper for [`SlashIndicator::slash_byzantine`].
-/// No production caller invokes this wrapper.
-/// Evidence classes use the `submit_*_evidence` methods instead.
-pub fn slash_byzantine(storage: StorageHandle, validator: Address) -> Result<()> {
-    let mut si = SlashIndicator::new(storage);
-    si.slash_byzantine(validator)
-}

@@ -769,6 +769,135 @@ fn verifier_rejects_begin_system_tx_signer_mismatch() {
 }
 
 #[test]
+fn corrupt_unbonding_aborts_the_whole_hook_with_typed_validator_cause() {
+    for corrupt_first in [false, true] {
+        assert_corrupt_unbonding_hook_rollback(corrupt_first);
+    }
+}
+
+fn assert_corrupt_unbonding_hook_rollback(corrupt_first: bool) {
+    use outbe_staking::{contract::Staking, errors::StakingError};
+    use outbe_validatorset::contract::ValidatorSet;
+
+    let healthy = Address::repeat_byte(0x71);
+    let corrupt = Address::repeat_byte(0x72);
+    let order = if corrupt_first {
+        [corrupt, healthy]
+    } else {
+        [healthy, corrupt]
+    };
+    let db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+    let mut state = State::builder()
+        .with_database(db)
+        .with_bundle_update()
+        .build();
+    let setup = BlockContext::new(7, 1_000, CHAIN_ID, OWNER, Vec::new());
+    super::run_atomic_storage_hooks(&mut state, setup, |ctx| {
+        for address in [
+            outbe_primitives::addresses::VALIDATOR_SET_ADDRESS,
+            STAKING_ADDRESS,
+        ] {
+            ctx.storage
+                .set_code(address, Bytecode::new_raw(Bytes::from_static(&[0xef])))?;
+        }
+        let mut vs = ValidatorSet::new(ctx.storage.clone());
+        vs.test_configure_registry(OWNER)?;
+        for (index, validator) in order.into_iter().enumerate() {
+            vs.test_register_active_validator(
+                validator,
+                &dummy_pubkey(index as u8 + 1),
+                U256::from(1_000u64),
+            )?;
+        }
+        for validator in order {
+            vs.deactivate_validator(OWNER, validator)?;
+        }
+        vs.test_activate_validated_boundary_set(&[], B256::ZERO, 7)?;
+        let staking = Staking::new(ctx.storage.clone());
+        staking.config_unbonding_period.write(3_600)?;
+        staking.stake_amount.write(&healthy, U256::from(1_000u64))?;
+        staking.stake_amount.write(&corrupt, U256::from(2_000u64))?;
+        staking.total_staked.write(U256::from(1_500u64))?;
+        ctx.storage
+            .set_balance(STAKING_ADDRESS, U256::from(3_000u64))?;
+        for validator in [healthy, corrupt] {
+            assert!(matches!(
+                vs.validator_lifecycle(validator)?,
+                outbe_validatorset::ValidatorLifecycle::Unbonding(_)
+            ));
+        }
+        Ok(())
+    })
+    .expect("unbonding fixture");
+
+    let run = BlockContext::new(8, 2_000, CHAIN_ID, OWNER, Vec::new());
+    let error = super::run_atomic_storage_hooks(&mut state, run, |ctx| {
+        assert_eq!(
+            ValidatorSet::new(ctx.storage.clone()).registered_validator_addresses()?,
+            order
+        );
+        ctx.storage
+            .transfer_balance(STAKING_ADDRESS, healthy, U256::from(50u64))?;
+        ctx.storage.emit_event(
+            STAKING_ADDRESS,
+            alloy_primitives::LogData::new_unchecked(
+                Vec::new(),
+                Bytes::from_static(b"earlier hook"),
+            ),
+        )?;
+        let result = outbe_staking::hooks::process_unbonding(ctx.storage.clone(), 2_000);
+        let staking = Staking::new(ctx.storage.clone());
+        assert_eq!(
+            staking.unbonding_count.read()?,
+            u32::from(!corrupt_first),
+            "unbonding result: {result:?}"
+        );
+        assert_eq!(
+            staking.stake_amount.read(&healthy)?,
+            if corrupt_first {
+                U256::from(1_000u64)
+            } else {
+                U256::ZERO
+            }
+        );
+        result
+    })
+    .expect_err("corruption must abort the complete hook");
+    let cause = error
+        .as_internal()
+        .and_then(|inner| inner.downcast_other::<outbe_primitives::error::PrecompileError>())
+        .and_then(std::error::Error::source)
+        .and_then(|cause| cause.downcast_ref::<StakingError>());
+    assert!(
+        matches!(cause, Some(StakingError::StakeAccountingUnderflow { validator }) if *validator == corrupt)
+    );
+
+    let read = BlockContext::new(8, 2_000, CHAIN_ID, OWNER, Vec::new());
+    let (_, logs) = super::run_atomic_storage_hooks(&mut state, read, |ctx| {
+        let staking = Staking::new(ctx.storage.clone());
+        assert_eq!(staking.stake_amount.read(&healthy)?, U256::from(1_000u64));
+        assert_eq!(staking.stake_amount.read(&corrupt)?, U256::from(2_000u64));
+        assert_eq!(staking.total_staked.read()?, U256::from(1_500u64));
+        assert_eq!(staking.unbonding_count.read()?, 0);
+        assert_eq!(staking.per_val_unbonding_head.read(&healthy)?, 0);
+        assert_eq!(staking.unbonding_amount.read(&0)?, U256::ZERO);
+        assert_eq!(staking.unbonding_complete_time.read(&0)?, 0);
+        assert_eq!(ctx.storage.balance(STAKING_ADDRESS)?, U256::from(3_000u64));
+        assert_eq!(ctx.storage.balance(healthy)?, U256::ZERO);
+        let vs = ValidatorSet::new(ctx.storage.clone());
+        for validator in [healthy, corrupt] {
+            assert!(matches!(
+                vs.validator_lifecycle(validator)?,
+                outbe_validatorset::ValidatorLifecycle::Unbonding(_)
+            ));
+        }
+        Ok(())
+    })
+    .expect("rolled-back state remains readable");
+    assert!(logs.is_empty());
+}
+
+#[test]
 fn begin_block_hook_batch_rolls_back_code_and_reports_committed_code_changes() {
     let db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
     let mut state = State::builder()
