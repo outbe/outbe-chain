@@ -25,8 +25,7 @@ impl VoteTarget for UpdateVoteTarget {
 
     fn validate(&self, payload: &[u8], context: VoteTargetContext) -> Result<()> {
         let payload = decode_proposal_payload(payload)?;
-        validate_schedule_update_json(&payload, context.block_number, context.chain_id)
-            .map_err(Into::into)
+        validate_schedule_update_json(&payload, context.block_number).map_err(Into::into)
     }
 
     fn handle_approved(

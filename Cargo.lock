@@ -8094,6 +8094,7 @@ dependencies = [
  "outbe-tee",
  "outbe-tee-enclave",
  "outbe-tribute",
+ "outbe-update",
  "outbe-zk",
  "outbe-zk-backend",
  "radicle",

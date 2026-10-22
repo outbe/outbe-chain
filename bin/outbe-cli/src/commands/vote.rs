@@ -197,7 +197,7 @@ async fn prepare_enclave_upgrade_payload(
     if policy.chain_id != U256::from(chain_id).to_be_bytes() {
         return Err(VoteError::TeePolicyChainMismatch.into());
     }
-    update.validate(height, chain_id)?;
+    update.validate(height)?;
     let payload = serde_json::to_string(&update)?;
     println!("Enclave upgrade proposal: {payload}");
     Ok(payload)
