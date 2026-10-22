@@ -21,6 +21,12 @@
 //!    transaction through the same `disable_balance_check`,
 //!    `disable_base_fee`, and `disable_fee_charge` machinery that already
 //!    serves oracle votes.
+//!
+//! Sponsorship authorization is read-only and returns an opaque signer/day token.
+//! The executor consumes it only after inclusion, including an included revert.
+//! Authorization failures, execution errors, and declined commits do not spend
+//! quota. This guards the in-process convenience API, not arbitrary writes via
+//! a storage handle or the public storage schema.
 
 pub mod constants;
 mod envelope;
