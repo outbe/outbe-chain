@@ -56,7 +56,6 @@ def seed_validator_set(
     epoch_length_blocks = terms.epoch_length_blocks
     epoch_start_timestamp = terms.epoch_start_timestamp
     min_stake = terms.min_stake
-    validator_stake = terms.validator_stake
     radicle_node_ids = [
         radicle_node_id_bytes(validator.get("radicle_node_id"), validator_index=index)
         for index, validator in enumerate(validators)
@@ -118,7 +117,7 @@ def seed_validator_set(
 
         storage.set_mapping_b256(5, address_bytes(addr), pk[:32])
         storage.set_mapping_b256(6, address_bytes(addr), pk_hi)
-        storage.set_mapping(7, address_bytes(addr), validator_stake)
+        # Slot 7 is reserved. Current bonded stake is Staking mapping slot 3.
         storage.set_mapping(8, address_bytes(addr), 2)  # ACTIVE
         storage.set_mapping(13, address_bytes(addr), 0)
         storage.set_mapping(16, address_bytes(addr), index)
@@ -177,7 +176,7 @@ def seed_rewards(storage: StorageBuilder, genesis_timestamp: int):
     Rewards storage layout:
       slot 0: genesis_utc_day (uint32 yyyymmdd of genesis timestamp).
 
-    NOTE: `genesis_utc_day` moved from slot 1 to slot 0 when the leading
+    Layout history: `genesis_utc_day` moved from slot 1 to slot 0 when the leading
     `pending_rewards` field was removed (PR #12 / 941c4eb). The runtime also
     lazily anchors this value at block 0 via `rewards::ensure_genesis_anchor`
     (= timestamp_to_date_key(block0.timestamp)). Seeding it here keeps genesis

@@ -635,8 +635,6 @@ pub enum ExecutorHookError {
     UnregisteredBoundaryValidator { address: Address },
     #[error("Staking min_stake must be initialized in genesis")]
     StakingMinStakeUninitialized,
-    #[error("genesis validator {address} stake mismatch between ValidatorSet and Staking")]
-    GenesisValidatorStakeMismatch { address: Address },
     #[error("genesis total stake overflow")]
     GenesisTotalStakeOverflow,
     #[error("genesis total_staked mismatch: state={state}, expected={expected}")]
@@ -679,7 +677,6 @@ impl From<ExecutorHookError> for PrecompileError {
             ExecutorHookError::ValidatorSetEpochExceedsU64
             | ExecutorHookError::ValidatorSetEpochOverflow
             | ExecutorHookError::StakingMinStakeUninitialized
-            | ExecutorHookError::GenesisValidatorStakeMismatch { .. }
             | ExecutorHookError::GenesisTotalStakeOverflow
             | ExecutorHookError::GenesisTotalStakedMismatch { .. }
             | ExecutorHookError::ValidatorSetUninitializedInGenesis

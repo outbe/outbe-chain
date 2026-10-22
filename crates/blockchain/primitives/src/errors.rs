@@ -60,6 +60,10 @@ pub enum PrecompileError {
     #[error("fatal: {0}")]
     Fatal(String),
 
+    /// Unrecoverable error that retains its typed domain cause.
+    #[error("fatal: {0}")]
+    FatalWithCause(#[source] Box<dyn std::error::Error + Send + Sync>),
+
     /// This node enclave could not serve the request.
     #[error("enclave unavailable: {0}")]
     EnclaveUnavailable(String),
@@ -821,6 +825,7 @@ impl PrecompileError {
             | Self::BodyReadUnavailable(_)
             | Self::BodyReadRequestDeadline
             | Self::Fatal(_)
+            | Self::FatalWithCause(_)
             | Self::EnclaveUnavailable(_)) => {
                 Err(revm::precompile::PrecompileError::Fatal(error.to_string()))
             }
@@ -856,13 +861,15 @@ impl PrecompileError {
             | Self::Halt(_)
             | Self::SubCall(_)
             | Self::Unsupported
-            | Self::Fatal(_) => false,
+            | Self::Fatal(_)
+            | Self::FatalWithCause(_) => false,
         }
     }
 
     pub fn sweep_failure(&self) -> SweepFailure {
         match self {
             error if error.is_node_local() => SweepFailure::Propagate,
+            Self::FatalWithCause(_) => SweepFailure::Propagate,
             Self::OutOfGas => SweepFailure::Stop,
             _ => SweepFailure::Skip,
         }
@@ -958,6 +965,11 @@ mod tests {
                 PrecompileError::Fatal("x".into()),
                 false,
                 SweepFailure::Skip,
+            ),
+            (
+                PrecompileError::FatalWithCause(Box::new(super::TimestampOverflow)),
+                false,
+                SweepFailure::Propagate,
             ),
             (
                 PrecompileError::EnclaveUnavailable("x".into()),

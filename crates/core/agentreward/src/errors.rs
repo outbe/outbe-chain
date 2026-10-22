@@ -75,18 +75,21 @@ mod tests {
 
     #[test]
     fn agent_reward_error_converts_to_canonical_abi_revert_bytes() {
-        let err = PrecompileError::from(AgentRewardError::EntryPriceOverflow);
-        assert!(matches!(err, PrecompileError::RevertBytes(bytes)
-            if bytes.as_ref() == IAgentReward::EntryPriceOverflow {}.abi_encode()));
-        let err = PrecompileError::from(AgentRewardError::MissingPreviousDayPrice(840));
-        let PrecompileError::RevertBytes(bytes) = err else {
-            panic!("expected RevertBytes, got {err:?}");
-        };
-        assert_eq!(
-            bytes.as_ref(),
-            IAgentReward::MissingPreviousDayPrice { value: 840 }
-                .abi_encode()
-                .as_slice()
-        );
+        for (error, expected) in [
+            (
+                AgentRewardError::MissingPreviousDayPrice(840),
+                IAgentReward::MissingPreviousDayPrice { value: 840 }.abi_encode(),
+            ),
+            (
+                AgentRewardError::EntryPriceOverflow,
+                IAgentReward::EntryPriceOverflow {}.abi_encode(),
+            ),
+        ] {
+            let err = PrecompileError::from(error);
+            let PrecompileError::RevertBytes(bytes) = err else {
+                panic!("expected RevertBytes, got {err:?}");
+            };
+            assert_eq!(bytes.as_ref(), expected.as_slice());
+        }
     }
 }

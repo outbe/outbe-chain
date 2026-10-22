@@ -186,6 +186,7 @@ where
                 || matches!(
                     error,
                     PrecompileError::Fatal(_)
+                        | PrecompileError::FatalWithCause(_)
                         | PrecompileError::SubCall(_)
                         | PrecompileError::Unsupported
                 ) =>

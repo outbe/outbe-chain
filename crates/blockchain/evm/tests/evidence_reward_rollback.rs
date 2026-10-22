@@ -1,5 +1,5 @@
 //! The EVM must revert all evidence effects when it rejects the transaction.
-//! This includes the deduplication write that precedes the reward configuration check.
+//! Invalid reward configuration must leave evidence available for an identical retry.
 
 use alloy_evm::{Evm as _, EvmFactory as _};
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
@@ -16,7 +16,7 @@ use outbe_primitives::{
     storage::StorageHandle,
 };
 use outbe_slashindicator::{precompile::ISlashIndicator, schema::SlashIndicator};
-use outbe_staking::contract::Staking;
+use outbe_staking::{contract::Staking, precompile::IStaking};
 use outbe_validatorset::{
     contract::ValidatorSet,
     state::{CommitteeEntry, CommitteeSnapshot},
@@ -199,7 +199,11 @@ fn invalid_evidence_reward_reverts_transaction_and_identical_signed_evidence_can
             };
             assert_eq!(
                 output.as_ref(),
-                ISlashIndicator::InvalidEvidenceRewardPercent { percent: 150 }.abi_encode()
+                ISlashIndicator::SlashConfigPercentAbove100 {
+                    field: "evidence_reward_percent".into(),
+                    value: 150
+                }
+                .abi_encode()
             );
             assert!(outcome.result.logs().is_empty());
             // Check all storage slots, including the slots that record evidence deduplication.
@@ -214,7 +218,20 @@ fn invalid_evidence_reward_reverts_transaction_and_identical_signed_evidence_can
             let logs = outcome.result.logs();
             assert_eq!(
                 logs.iter().map(|log| log.address).collect::<Vec<_>>(),
-                vec![VALIDATOR_SET_ADDRESS, SLASH_INDICATOR_ADDRESS]
+                vec![
+                    VALIDATOR_SET_ADDRESS,
+                    STAKING_ADDRESS,
+                    SLASH_INDICATOR_ADDRESS
+                ]
+            );
+            assert_eq!(
+                logs[1].data,
+                IStaking::Slashed {
+                    validator: ACCUSED,
+                    bondedSlashed: U256::from(80_000),
+                    unbondingSlashed: U256::ZERO,
+                }
+                .encode_log_data()
             );
             assert_eq!(
                 logs.last().unwrap().data,

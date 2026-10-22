@@ -150,10 +150,13 @@ impl ValidatorSet<'_> {
 
     /// Jails an ACTIVE validator whose canonical TEE lease reached its deadline.
     ///
-    /// This is an availability/safety transition, not a slash. It preserves bonded
-    /// stake and `slash_count` exactly. The old committee share remains
-    /// accountable in `JailRetained` until the normal validated boundary removes
-    /// it. Re-execution after the first transition is an idempotent no-op.
+    /// Increments `slash_count` once on the first transition to `JailRetained`.
+    /// The monetary penalty is `Staking::slash_stake` in the EVM sweep, after
+    /// this returns `true`. ValidatorSet does not call Staking. The old
+    /// committee share remains accountable in `JailRetained` until the validated
+    /// boundary removes it. A second call is an idempotent no-op and does not
+    /// count again. Metrics stay with the sweep so a reverted checkpoint does
+    /// not publish them.
     pub fn jail_validator_for_tee_expiry(&mut self, addr: Address) -> Result<bool> {
         let before = self.validator_state(addr)?;
         let active = match before.lifecycle().clone() {
@@ -173,25 +176,25 @@ impl ValidatorSet<'_> {
             }
         };
         let block_number = self.storage.block_number()?;
-        let next = ValidatorLifecycle::JailRetained(state_machine::jail(active, block_number)?);
-        let after = before.clone().with_lifecycle(next)?;
+        let history = before
+            .history()
+            .copied()
+            .ok_or(ValidatorSetError::RegisteredValidatorMissingHistory)?;
+        let after = punished_state(
+            &before,
+            active,
+            history,
+            Punishment {
+                jail: true,
+                block_number,
+            },
+        )?;
         self.commit_set_change(&before, &after, |vs| {
             vs.emit(IValidatorSet::ValidatorJailed {
                 validator: addr,
                 atHeight: block_number,
             })
         })?;
-
-        crate::metrics::record_validator_status(addr, status::JAILED);
-        crate::metrics::record_validator_tee_expiry(addr, "deadline_jailed");
-        crate::metrics::record_pending_set_change(true);
-        warn!(
-            target: "outbe::validatorset",
-            event = "validator_tee_lease_expired",
-            validator = %addr,
-            block_number,
-            "validator jailed without slashing after TEE lease deadline",
-        );
         Ok(true)
     }
 
