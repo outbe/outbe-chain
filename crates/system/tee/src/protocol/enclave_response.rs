@@ -159,14 +159,14 @@ pub fn eip191_hash(message: &[u8]) -> B256 {
 pub fn tribute_offer_attestation_preimage(
     inputs_canonical_hash: B256,
     results: &[TributeOfferResult],
-) -> Vec<u8> {
-    let results_json = serde_json::to_vec(results).unwrap_or_default();
+) -> Result<Vec<u8>, serde_json::Error> {
+    let results_json = serde_json::to_vec(results)?;
     let mut buf = Vec::with_capacity(30 + 32 + 4 + results_json.len());
     buf.extend_from_slice(b"outbe/tee/offer-attestation/v1");
     buf.extend_from_slice(inputs_canonical_hash.as_slice());
     buf.extend_from_slice(&(results_json.len() as u32).to_be_bytes());
     buf.extend_from_slice(&results_json);
-    buf
+    Ok(buf)
 }
 
 /// Responses returned from the enclave to the node.
@@ -511,20 +511,20 @@ pub fn gratis_op_canonical_hash(req: &GratisOpRequest) -> B256 {
 pub fn gratis_op_attestation_preimage(
     inputs_canonical_hash: B256,
     result: &GratisOpResult,
-) -> Vec<u8> {
+) -> Result<Vec<u8>, serde_json::Error> {
     // Hash the ciphertext-bearing result fields deterministically. serde_json of a
     // fixed-field struct is deterministic (declaration order, no maps/floats). We
     // exclude the tag itself to avoid self-reference.
     let mut probe = result.clone();
     probe.attestation_tag = Vec::new();
-    let result_json = serde_json::to_vec(&probe).unwrap_or_default();
+    let result_json = serde_json::to_vec(&probe)?;
     // v3: the result JSON carries the pledged blob.
     let mut buf = Vec::with_capacity(31 + 32 + 4 + result_json.len());
     buf.extend_from_slice(b"outbe/tee/gratis-attestation/v3");
     buf.extend_from_slice(inputs_canonical_hash.as_slice());
     buf.extend_from_slice(&(result_json.len() as u32).to_be_bytes());
     buf.extend_from_slice(&result_json);
-    buf
+    Ok(buf)
 }
 
 /// Deterministic hash over the canonical inputs of a single Promis op (the
@@ -552,16 +552,16 @@ pub fn promis_op_canonical_hash(req: &PromisOpRequest) -> B256 {
 pub fn promis_op_attestation_preimage(
     inputs_canonical_hash: B256,
     result: &PromisOpResult,
-) -> Vec<u8> {
+) -> Result<Vec<u8>, serde_json::Error> {
     let mut probe = result.clone();
     probe.attestation_tag = Vec::new();
-    let result_json = serde_json::to_vec(&probe).unwrap_or_default();
+    let result_json = serde_json::to_vec(&probe)?;
     let mut buf = Vec::with_capacity(31 + 32 + 4 + result_json.len());
     buf.extend_from_slice(b"outbe/tee/promis-attestation/v1");
     buf.extend_from_slice(inputs_canonical_hash.as_slice());
     buf.extend_from_slice(&(result_json.len() as u32).to_be_bytes());
     buf.extend_from_slice(&result_json);
-    buf
+    Ok(buf)
 }
 
 /// Deterministic hash over the canonical inputs of a standalone Fidelity cohort
@@ -585,16 +585,16 @@ pub fn fidelity_cohort_canonical_hash(req: &FidelityCohortRequest) -> B256 {
 pub fn fidelity_cohort_attestation_preimage(
     inputs_canonical_hash: B256,
     result: &FidelityCohortResult,
-) -> Vec<u8> {
+) -> Result<Vec<u8>, serde_json::Error> {
     let mut probe = result.clone();
     probe.attestation_tag = Vec::new();
-    let result_json = serde_json::to_vec(&probe).unwrap_or_default();
+    let result_json = serde_json::to_vec(&probe)?;
     let mut buf = Vec::with_capacity(39 + 32 + 4 + result_json.len());
     buf.extend_from_slice(b"outbe/tee/fidelity-cohort-attestation/v1");
     buf.extend_from_slice(inputs_canonical_hash.as_slice());
     buf.extend_from_slice(&(result_json.len() as u32).to_be_bytes());
     buf.extend_from_slice(&result_json);
-    buf
+    Ok(buf)
 }
 
 /// Deterministic hash over the canonical inputs of a Fidelity league snapshot
@@ -619,14 +619,14 @@ pub fn fidelity_snapshot_canonical_hash(req: &FidelitySnapshotRequest) -> B256 {
 pub fn fidelity_snapshot_attestation_preimage(
     inputs_canonical_hash: B256,
     leagues: &[FidelityLeagueEntry],
-) -> Vec<u8> {
-    let leagues_json = serde_json::to_vec(leagues).unwrap_or_default();
+) -> Result<Vec<u8>, serde_json::Error> {
+    let leagues_json = serde_json::to_vec(leagues)?;
     let mut buf = Vec::with_capacity(41 + 32 + 4 + leagues_json.len());
     buf.extend_from_slice(b"outbe/tee/fidelity-snapshot-attestation/v1");
     buf.extend_from_slice(inputs_canonical_hash.as_slice());
     buf.extend_from_slice(&(leagues_json.len() as u32).to_be_bytes());
     buf.extend_from_slice(&leagues_json);
-    buf
+    Ok(buf)
 }
 
 /// Deterministic hash over the canonical inputs of a single Fidelity index
@@ -652,14 +652,14 @@ pub fn fidelity_query_canonical_hash(req: &FidelityQueryRequest) -> B256 {
 pub fn fidelity_query_attestation_preimage(
     inputs_canonical_hash: B256,
     result: &FidelityQueryResult,
-) -> Vec<u8> {
+) -> Result<Vec<u8>, serde_json::Error> {
     let mut probe = result.clone();
     probe.attestation_tag = Vec::new();
-    let result_json = serde_json::to_vec(&probe).unwrap_or_default();
+    let result_json = serde_json::to_vec(&probe)?;
     let mut buf = Vec::with_capacity(38 + 32 + 4 + result_json.len());
     buf.extend_from_slice(b"outbe/tee/fidelity-query-attestation/v1");
     buf.extend_from_slice(inputs_canonical_hash.as_slice());
     buf.extend_from_slice(&(result_json.len() as u32).to_be_bytes());
     buf.extend_from_slice(&result_json);
-    buf
+    Ok(buf)
 }
