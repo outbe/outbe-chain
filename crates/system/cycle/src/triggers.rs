@@ -12,7 +12,8 @@ use crate::errors::CycleError;
 
 /// Stable on-chain identifier for each trigger. The module emits it as
 /// the indexed `id` in [`crate::ICycle::CycleTriggerExecuted`] and
-/// persists it in the [`crate::schema::Cycle`] mappings.
+/// [`crate::ICycle::CycleTriggerFailed`], and persists it in the
+/// [`crate::schema::Cycle`] mappings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum TriggerId {
@@ -60,8 +61,13 @@ pub struct TriggerSpec {
     /// replaying every missed one. ProtocolCycle owns its UTC-day decision,
     /// so replaying every missed hourly slot would duplicate orchestration.
     pub coalesces_backlog: bool,
-    /// Handler invoked when a slot fires. Failure rolls back the
-    /// trigger's checkpoint and leaves `last_executed_at` unchanged.
+    /// Triggers whose failure in the current walk blocks this trigger.
+    /// Empty means the trigger is independent. The dispatcher reads this
+    /// only after the trigger is due.
+    pub depends_on: &'static [TriggerId],
+    /// Handler invoked when a slot fires. A revert rolls back the handler
+    /// checkpoint. The dispatcher then records the slot. Any other error
+    /// leaves `last_executed_at` unchanged.
     pub handler: TriggerHandler,
 }
 
@@ -80,7 +86,8 @@ pub enum TriggerHandler {
 impl TriggerSpec {
     /// Builds a schedule. A zero period is the only rejected setting.
     /// `start_offset_seconds >= period_seconds` stays valid.
-    /// The two behavior flags start false. The trigger table and fixtures set them.
+    /// The two behavior flags start false. `depends_on` starts empty.
+    /// The trigger table and fixtures set them.
     pub const fn new(
         id: u32,
         label: &'static str,
@@ -98,6 +105,7 @@ impl TriggerSpec {
             start_offset_seconds,
             requires_accounting_window: false,
             coalesces_backlog: false,
+            depends_on: &[],
             handler,
         })
     }
@@ -158,7 +166,10 @@ macro_rules! const_spec {
 
 /// Active trigger table in permanent numeric-id order.
 /// The dispatcher walks this array in order inside one block.
-/// The first handler error stops the walk.
+/// A handler revert records the slot and continues the walk.
+/// Any other handler error stops the walk.
+/// A due trigger whose dependency failed in this walk records its slot
+/// and does not run.
 /// AuctionAdvance must stay after ProtocolCycle.
 /// Same-slot brief and auction order depends on that sequence.
 pub const fn active_triggers(
@@ -214,6 +225,7 @@ pub const fn active_triggers(
             ));
             spec.requires_accounting_window = true;
             spec.coalesces_backlog = true;
+            spec.depends_on = &[TriggerId::ProtocolCycle];
             spec
         },
         // Reads finalized oracle VWAP history to force-call gems. It has
@@ -247,6 +259,7 @@ pub const fn active_triggers(
             ));
             spec.requires_accounting_window = false;
             spec.coalesces_backlog = true;
+            spec.depends_on = &[TriggerId::AuctionAdvance];
             spec
         },
         // Reads finalized oracle VWAP history to call credis

@@ -39,6 +39,7 @@ fn zero_period_is_rejected_and_an_offset_at_or_above_the_period_stays_valid() {
             .expect("offset at or above the period");
     assert_eq!(wide_offset.period_seconds(), 600);
     assert_eq!(wide_offset.start_offset_seconds, 5_000);
+    assert!(wide_offset.depends_on.is_empty());
     assert!(matches!(
         next_fire_at(0, 0, 0),
         Err(CycleError::ZeroTriggerPeriod)
@@ -91,7 +92,7 @@ fn next_slot_arithmetic_rejects_a_quotient_increment_a_product_and_a_sum_past_u6
 
 #[test]
 fn dispatch_propagates_schedule_overflow_instead_of_skipping_the_trigger() {
-    use alloy_sol_types::SolError;
+    use alloy_sol_types::{SolError, SolEvent};
     use outbe_primitives::error::PrecompileError;
 
     let mut storage = cycle_storage();
@@ -120,6 +121,25 @@ fn dispatch_propagates_schedule_overflow_instead_of_skipping_the_trigger() {
             u64::MAX
         );
     });
+    assert!(storage
+        .get_events(outbe_primitives::addresses::CYCLE_ADDRESS)
+        .iter()
+        .all(|log| crate::ICycle::CycleTriggerFailed::decode_log_data(log).is_err()));
+}
+
+#[test]
+fn only_the_two_auction_edges_declare_a_dependency() {
+    use crate::triggers::{active_triggers, TriggerId};
+
+    let specs = active_triggers(3_600).expect("nonzero interval");
+    assert!(specs[0].depends_on.is_empty());
+    assert!(specs[1].depends_on.is_empty());
+    assert_eq!(specs[2].depends_on, &[TriggerId::ProtocolCycle]);
+    assert!(specs[3].depends_on.is_empty());
+    assert_eq!(specs[4].depends_on, &[TriggerId::AuctionAdvance]);
+    assert!(specs[5].depends_on.is_empty());
+    assert!(specs[6].depends_on.is_empty());
+    assert!(specs[7].depends_on.is_empty());
 }
 
 #[test]

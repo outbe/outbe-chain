@@ -1,6 +1,9 @@
 //! Trigger dispatch, emission settlement and validator top-up conservation.
 
+use alloy_sol_types::SolEvent;
 use outbe_emissionlimit::allocation::EmissionSinkId;
+use outbe_primitives::addresses::CYCLE_ADDRESS;
+use outbe_primitives::error::PrecompileError;
 
 use super::*;
 
@@ -455,12 +458,16 @@ const TOPUP_VOTERS: [Address; 3] = [
 const TOPUP_FIRE_TS: u64 = GENESIS_TS + SECONDS_PER_DAY + 60;
 
 /// Anchors with a bonded CCA, then runs the first settlement dispatch without
-/// Metadosis mutation frames, so the terminal sink fails. Returns the storage
-/// and the dispatch error.
-fn failed_terminal_dispatch() -> (
-    HashMapStorageProvider,
-    outbe_primitives::error::PrecompileError,
-) {
+/// Metadosis mutation frames, so the terminal sink reverts. The slot is consumed.
+fn failed_terminal_dispatch() -> HashMapStorageProvider {
+    failed_terminal_dispatch_after(|_| {})
+}
+
+/// [`failed_terminal_dispatch`] with `before_dispatch` run after the fixture
+/// writes and before the dispatcher.
+fn failed_terminal_dispatch_after(
+    before_dispatch: impl FnOnce(&BlockRuntimeContext<'_>),
+) -> HashMapStorageProvider {
     let mut storage = cycle_storage();
     storage.enter(|handle| {
         anchor_with(handle, GENESIS_TS + 60, |anchor| {
@@ -469,14 +476,37 @@ fn failed_terminal_dispatch() -> (
     });
 
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 0);
-    let error = storage.enter(|handle| {
+    storage.enter(|handle| {
         let fire = BlockRuntimeContext::new(block_ctx(2, TOPUP_FIRE_TS), handle);
         account_parent(&fire, 2);
         seed_fresh_reward_oracle(&fire);
         seed_daily_voters(&fire, 20_240_101, &TOPUP_VOTERS.map(|voter| (voter, 1)));
-        dispatch_triggers(&fire).unwrap_err()
+        before_dispatch(&fire);
+        dispatch_triggers(&fire).unwrap();
     });
-    (storage, error)
+    storage
+}
+
+fn cycle_failure(
+    storage: &HashMapStorageProvider,
+    id: u32,
+) -> Option<crate::ICycle::CycleTriggerFailed> {
+    storage.get_events(CYCLE_ADDRESS).iter().find_map(|log| {
+        crate::ICycle::CycleTriggerFailed::decode_log_data(log)
+            .ok()
+            .filter(|event| event.id == id)
+    })
+}
+
+fn cycle_executed(
+    storage: &HashMapStorageProvider,
+    id: u32,
+) -> Option<crate::ICycle::CycleTriggerExecuted> {
+    storage.get_events(CYCLE_ADDRESS).iter().find_map(|log| {
+        crate::ICycle::CycleTriggerExecuted::decode_log_data(log)
+            .ok()
+            .filter(|event| event.id == id)
+    })
 }
 
 fn topup_voters_claimable(ctx: &BlockRuntimeContext<'_>) -> U256 {
@@ -491,13 +521,23 @@ fn topup_voters_claimable(ctx: &BlockRuntimeContext<'_>) -> U256 {
 
 #[test]
 fn failed_terminal_dispatch_rolls_back_validator_topup() {
-    let (mut storage, error) = failed_terminal_dispatch();
-    assert!(
-        error
-            .to_string()
-            .contains("no matching Metadosis mutation lease"),
-        "the injected downstream failure must reach the terminal sink: {error}"
-    );
+    let mut storage = failed_terminal_dispatch();
+    let recorded_at = GENESIS_TS + SECONDS_PER_DAY;
+    let failed = cycle_failure(&storage, EMISSION_LIMIT_1_ID).expect("protocol failure receipt");
+    assert_eq!(failed.scheduledAt, recorded_at);
+    assert_eq!(failed.blockTimestamp, TOPUP_FIRE_TS);
+    assert_eq!(failed.blockNumber, 2);
+    assert!(cycle_executed(&storage, EMISSION_LIMIT_1_ID).is_none());
+    for id in [
+        TriggerId::AuctionAdvance.as_u32(),
+        TriggerId::AuctionClearing.as_u32(),
+    ] {
+        assert!(cycle_failure(&storage, id).is_none());
+        assert!(cycle_executed(&storage, id).is_none());
+    }
+    let independent = cycle_executed(&storage, TriggerId::IntexCallDaily.as_u32())
+        .expect("an independent trigger still runs");
+    assert_eq!(independent.scheduledAt, recorded_at);
     storage.enter(|handle| {
         let fire = BlockRuntimeContext::new(block_ctx(2, TOPUP_FIRE_TS), handle);
         let rewards = fire
@@ -525,19 +565,39 @@ fn failed_terminal_dispatch_rolls_back_validator_topup() {
         let cycle: Cycle<'_> = fire.storage.contract::<Cycle<'_>>();
         assert_eq!(
             cycle.last_executed_at.read(&EMISSION_LIMIT_1_ID).unwrap(),
-            GENESIS_TS + 60,
-            "the failed trigger must remain due for retry"
+            recorded_at
         );
+        for id in [
+            TriggerId::AuctionAdvance.as_u32(),
+            TriggerId::AuctionClearing.as_u32(),
+            TriggerId::IntexCallDaily.as_u32(),
+        ] {
+            assert_eq!(cycle.last_executed_at.read(&id).unwrap(), recorded_at);
+        }
         assert_eq!(cycle.active_utc_day.read().unwrap(), 20_240_101);
     });
 }
 
 #[test]
 fn retry_after_failed_terminal_dispatch_settles_once() {
-    let (mut storage, _) = failed_terminal_dispatch();
-    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
+    let mut storage = failed_terminal_dispatch();
     storage.enter(|handle| {
-        let retry = BlockRuntimeContext::new(block_ctx(2, TOPUP_FIRE_TS), handle);
+        let same_window = BlockRuntimeContext::new(block_ctx(3, TOPUP_FIRE_TS), handle);
+        account_parent(&same_window, 3);
+        dispatch_triggers(&same_window).unwrap();
+        let rewards = same_window
+            .storage
+            .contract::<outbe_rewards::schema::Rewards<'_>>();
+        assert!(!rewards.daily_settled.read(&20_240_101).unwrap());
+        assert_eq!(last_executed_at(&same_window), GENESIS_TS + SECONDS_PER_DAY);
+    });
+    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
+    let next_window = GENESIS_TS
+        + SECONDS_PER_DAY
+        + outbe_chain_constants::get_metadosis_advance_interval_seconds();
+    storage.enter(|handle| {
+        let retry = BlockRuntimeContext::new(block_ctx(4, next_window), handle);
+        account_parent(&retry, 4);
         dispatch_triggers(&retry).unwrap();
 
         let rewards = retry
@@ -577,8 +637,114 @@ fn retry_after_failed_terminal_dispatch_settles_once() {
             expected_promis_load * U256::from(TOPUP_VOTERS.len()),
             "retry must credit the validator pool exactly once"
         );
-        assert_eq!(last_executed_at(&retry), GENESIS_TS + SECONDS_PER_DAY);
+        assert_eq!(last_executed_at(&retry), next_window);
     });
+}
+
+#[test]
+fn a_dependency_that_is_not_due_keeps_its_watermark() {
+    let held_at = TOPUP_FIRE_TS;
+    let storage = failed_terminal_dispatch_after(|fire| {
+        fire.storage
+            .contract::<Cycle<'_>>()
+            .last_executed_at
+            .write(&TriggerId::AuctionAdvance.as_u32(), held_at)
+            .unwrap();
+    });
+    let recorded_at = GENESIS_TS + SECONDS_PER_DAY;
+    assert!(cycle_failure(&storage, EMISSION_LIMIT_1_ID).is_some());
+    assert!(cycle_failure(&storage, TriggerId::AuctionAdvance.as_u32()).is_none());
+    assert!(cycle_executed(&storage, TriggerId::AuctionAdvance.as_u32()).is_none());
+    let clearing = cycle_executed(&storage, TriggerId::AuctionClearing.as_u32())
+        .expect("clearing runs when advance was not marked failed");
+    assert_eq!(clearing.scheduledAt, recorded_at);
+    // The provider is only read above. Re-enter to read the untouched slot.
+    let mut storage = storage;
+    storage.enter(|handle| {
+        let fire = BlockRuntimeContext::new(block_ctx(2, TOPUP_FIRE_TS), handle);
+        let cycle: Cycle<'_> = fire.storage.contract::<Cycle<'_>>();
+        assert_eq!(
+            cycle
+                .last_executed_at
+                .read(&TriggerId::AuctionAdvance.as_u32())
+                .unwrap(),
+            held_at
+        );
+        assert_eq!(
+            cycle
+                .last_executed_at
+                .read(&TriggerId::AuctionClearing.as_u32())
+                .unwrap(),
+            recorded_at
+        );
+    });
+}
+
+#[test]
+fn invalid_active_utc_day_does_not_consume_the_slot_or_emit_failure() {
+    let mut storage = cycle_storage();
+    storage.enter(|handle| {
+        anchor_at(handle.clone(), GENESIS_TS + 60);
+        let fire = BlockRuntimeContext::new(block_ctx(2, TOPUP_FIRE_TS), handle);
+        account_parent(&fire, 2);
+        fire.storage
+            .contract::<Cycle<'_>>()
+            .active_utc_day
+            .write(0)
+            .unwrap();
+        let err = dispatch_triggers(&fire).expect_err("invalid day must fail the block");
+        assert!(matches!(err, PrecompileError::Fatal(_)));
+        assert_eq!(last_executed_at(&fire), GENESIS_TS + 60);
+    });
+    assert!(cycle_failure(&storage, EMISSION_LIMIT_1_ID).is_none());
+}
+
+#[test]
+fn storage_error_from_the_handler_does_not_consume_the_slot() {
+    let mut storage = prepared_settlement_storage();
+    storage.fail_mutation_at(0);
+    storage.enter(|handle| {
+        let fire = BlockRuntimeContext::new(block_ctx(2, TOPUP_FIRE_TS), handle);
+        let err = dispatch_triggers(&fire).expect_err("storage failure must fail the block");
+        assert!(matches!(err, PrecompileError::Storage(_)));
+        assert_eq!(last_executed_at(&fire), GENESIS_TS + 60);
+        assert!(!fire
+            .storage
+            .contract::<outbe_rewards::schema::Rewards<'_>>()
+            .daily_settled
+            .read(&20_240_101)
+            .unwrap());
+    });
+    assert!(cycle_failure(&storage, EMISSION_LIMIT_1_ID).is_none());
+}
+
+#[test]
+fn out_of_gas_from_the_handler_does_not_consume_the_slot() {
+    let mut storage = prepared_settlement_storage();
+    storage.enable_production_storage_gas_metering();
+    // Due-slot reads cost 100. The handler's first write costs 5000 and does not fit.
+    storage.set_gas_limit(4_999);
+    storage.enter(|handle| {
+        let fire = BlockRuntimeContext::new(block_ctx(2, TOPUP_FIRE_TS), handle);
+        let err = dispatch_triggers(&fire).expect_err("out of gas must fail the block");
+        assert!(matches!(err, PrecompileError::OutOfGas));
+        assert_eq!(last_executed_at(&fire), GENESIS_TS + 60);
+    });
+    assert!(cycle_failure(&storage, EMISSION_LIMIT_1_ID).is_none());
+}
+
+fn prepared_settlement_storage() -> HashMapStorageProvider {
+    let mut storage = cycle_storage();
+    storage.enter(|handle| {
+        anchor_with(handle.clone(), GENESIS_TS + 60, |anchor| {
+            seed_reward_cca(&anchor.storage)
+        });
+        let fire = BlockRuntimeContext::new(block_ctx(2, TOPUP_FIRE_TS), handle);
+        account_parent(&fire, 2);
+        seed_fresh_reward_oracle(&fire);
+        seed_daily_voters(&fire, 20_240_101, &TOPUP_VOTERS.map(|voter| (voter, 1)));
+    });
+    storage
 }
 
 /// A second `run_emission_limit_daily` call for an already-settled `prev_day`
