@@ -73,7 +73,6 @@ def _load_helper(name: str):
 _materials = _load_helper("materials")
 _artifacts = _load_helper("artifacts")
 _identity = _load_helper("identity")
-_safe_material_path = _materials._safe_material_path
 _verify_material = _materials._verify_material
 
 
