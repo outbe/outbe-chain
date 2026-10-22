@@ -34,6 +34,14 @@
     },
     {
       "classification": "production",
+      "features": [],
+      "install_profiles": ["validator"],
+      "name": "outbe-radicle",
+      "package": "outbe-radicle",
+      "role": "operator-sidecar"
+    },
+    {
+      "classification": "production",
       "features": ["production-dcap-release"],
       "install_profiles": ["full-node", "validator"],
       "name": "outbe-tee-enclave",

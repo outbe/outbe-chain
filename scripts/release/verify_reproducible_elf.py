@@ -20,6 +20,7 @@ EXPECTED_ARTIFACTS = (
     "outbe-cli",
     "outbe-keygen",
     "outbe-feeder",
+    "outbe-radicle",
     "outbe-tee-enclave",
 )
 FORBIDDEN_PATHS = (b"/workspace", b"/usr/local/cargo", b"/usr/local/rustup")
