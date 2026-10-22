@@ -254,6 +254,235 @@ fn the_day_total_counts_every_tribute_and_clears_with_the_day() {
     });
 }
 
+fn increment_tribute_counter(
+    contract: &mut AgentRewardContract<'_>,
+    pool: RewardPool,
+    day: WorldwideDay,
+    address: Address,
+) -> outbe_primitives::error::Result<()> {
+    match pool {
+        RewardPool::Waa => contract.increment_waa_tribute(day, address),
+        RewardPool::Sra => contract.increment_sra_tribute(day, address),
+        _ => panic!("tribute counters require WAA or SRA"),
+    }
+}
+
+fn assert_tribute_counter_rejected_without_writes(
+    provider: &mut HashMapStorageProvider,
+    pool: RewardPool,
+    day: WorldwideDay,
+    address: Address,
+) {
+    let slots = provider.storage.clone();
+    let events = provider.events.clone();
+    let ordered_events = provider.get_ordered_events().to_vec();
+    provider.clear_mutation_failure();
+    // Like with_contract_mut, this supplies no checkpoint: validation must precede all writes.
+    let error = StorageHandle::enter(provider, |storage| {
+        increment_tribute_counter(&mut AgentRewardContract::new(storage), pool, day, address)
+    })
+    .unwrap_err();
+    let expected = outbe_primitives::error::PrecompileError::from(
+        crate::errors::AgentRewardError::TributeCounterOverflow,
+    );
+    match (error, expected) {
+        (
+            outbe_primitives::error::PrecompileError::RevertBytes(actual),
+            outbe_primitives::error::PrecompileError::RevertBytes(expected),
+        ) => assert_eq!(actual, expected, "{pool:?}"),
+        (actual, expected) => panic!("expected canonical {expected:?}, got {actual:?}"),
+    }
+    assert_eq!(provider.clear_mutation_failure(), 0, "{pool:?}");
+    assert_eq!(provider.storage, slots, "{pool:?}");
+    assert_eq!(provider.events, events, "{pool:?}");
+    assert_eq!(provider.get_ordered_events(), ordered_events, "{pool:?}");
+}
+
+#[test]
+fn tribute_counter_recipient_max_succeeds_then_rejects_without_zero_wrap_or_duplicate() {
+    let day = WorldwideDay::new(20260525);
+    let alice = numbered_address(1);
+    let bob = numbered_address(2);
+    for pool in [RewardPool::Waa, RewardPool::Sra] {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        StorageHandle::enter(&mut provider, |storage| {
+            let mut contract = AgentRewardContract::new(storage);
+            let index = contract.day_index(pool).unwrap();
+            index
+                .counts
+                .write(
+                    &AgentRewardContract::tribute_count_key(day, alice),
+                    u64::MAX - 1,
+                )
+                .unwrap();
+            // Keep the total below its own limit to isolate the recipient counter.
+            index.total.write(&day, 1).unwrap();
+            index.address_count.write(&day, 1).unwrap();
+            index
+                .addresses
+                .write(&AgentRewardContract::address_index_key(day, 0), alice)
+                .unwrap();
+            index
+                .addresses
+                .write(&AgentRewardContract::address_index_key(day, 1), bob)
+                .unwrap();
+            increment_tribute_counter(&mut contract, pool, day, alice).unwrap();
+            let index = contract.day_index(pool).unwrap();
+            assert_eq!(
+                index
+                    .counts
+                    .read(&AgentRewardContract::tribute_count_key(day, alice))
+                    .unwrap(),
+                u64::MAX
+            );
+            assert_eq!(index.total.read(&day).unwrap(), 2);
+            assert_eq!(index.address_count.read(&day).unwrap(), 1);
+            assert_eq!(
+                index
+                    .addresses
+                    .read(&AgentRewardContract::address_index_key(day, 1))
+                    .unwrap(),
+                bob
+            );
+        });
+        assert_tribute_counter_rejected_without_writes(&mut provider, pool, day, alice);
+    }
+}
+
+#[test]
+fn tribute_counter_daily_total_max_succeeds_then_rejects_fresh_recipient_without_writes() {
+    let day = WorldwideDay::new(20260525);
+    let alice = numbered_address(1);
+    let bob = numbered_address(2);
+    for pool in [RewardPool::Waa, RewardPool::Sra] {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        StorageHandle::enter(&mut provider, |storage| {
+            let mut contract = AgentRewardContract::new(storage);
+            contract
+                .day_index(pool)
+                .unwrap()
+                .total
+                .write(&day, u64::MAX - 1)
+                .unwrap();
+            increment_tribute_counter(&mut contract, pool, day, alice).unwrap();
+            let index = contract.day_index(pool).unwrap();
+            assert_eq!(index.total.read(&day).unwrap(), u64::MAX);
+            assert_eq!(index.address_count.read(&day).unwrap(), 1);
+            assert_eq!(
+                index
+                    .counts
+                    .read(&AgentRewardContract::tribute_count_key(day, alice))
+                    .unwrap(),
+                1
+            );
+            assert_eq!(
+                index
+                    .counts
+                    .read(&AgentRewardContract::tribute_count_key(day, bob))
+                    .unwrap(),
+                0
+            );
+            assert_eq!(
+                index
+                    .addresses
+                    .read(&AgentRewardContract::address_index_key(day, 0))
+                    .unwrap(),
+                alice
+            );
+            assert_eq!(
+                index
+                    .addresses
+                    .read(&AgentRewardContract::address_index_key(day, 1))
+                    .unwrap(),
+                Address::ZERO
+            );
+        });
+        assert_tribute_counter_rejected_without_writes(&mut provider, pool, day, bob);
+    }
+}
+
+#[test]
+fn tribute_counter_address_count_max_succeeds_then_rejects_without_slot_overwrite() {
+    let day = WorldwideDay::new(20260525);
+    let alice = numbered_address(1);
+    let bob = numbered_address(2);
+    let sentinel = numbered_address(3);
+    for pool in [RewardPool::Waa, RewardPool::Sra] {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        StorageHandle::enter(&mut provider, |storage| {
+            let mut contract = AgentRewardContract::new(storage);
+            let index = contract.day_index(pool).unwrap();
+            index.address_count.write(&day, u32::MAX - 1).unwrap();
+            for slot in [0, u32::MAX] {
+                index
+                    .addresses
+                    .write(&AgentRewardContract::address_index_key(day, slot), sentinel)
+                    .unwrap();
+            }
+            increment_tribute_counter(&mut contract, pool, day, alice).unwrap();
+            let index = contract.day_index(pool).unwrap();
+            assert_eq!(index.address_count.read(&day).unwrap(), u32::MAX);
+            assert_eq!(index.total.read(&day).unwrap(), 1);
+            assert_eq!(
+                index
+                    .counts
+                    .read(&AgentRewardContract::tribute_count_key(day, alice))
+                    .unwrap(),
+                1
+            );
+            assert_eq!(
+                index
+                    .addresses
+                    .read(&AgentRewardContract::address_index_key(day, u32::MAX - 1))
+                    .unwrap(),
+                alice
+            );
+            for slot in [0, u32::MAX] {
+                assert_eq!(
+                    index
+                        .addresses
+                        .read(&AgentRewardContract::address_index_key(day, slot))
+                        .unwrap(),
+                    sentinel
+                );
+            }
+        });
+        assert_tribute_counter_rejected_without_writes(&mut provider, pool, day, bob);
+
+        // A full list limits new recipients, not further tributes for an indexed recipient.
+        StorageHandle::enter(&mut provider, |storage| {
+            let mut contract = AgentRewardContract::new(storage);
+            increment_tribute_counter(&mut contract, pool, day, alice).unwrap();
+            let index = contract.day_index(pool).unwrap();
+            assert_eq!(index.address_count.read(&day).unwrap(), u32::MAX);
+            assert_eq!(index.total.read(&day).unwrap(), 2);
+            assert_eq!(
+                index
+                    .counts
+                    .read(&AgentRewardContract::tribute_count_key(day, alice))
+                    .unwrap(),
+                2
+            );
+            assert_eq!(
+                index
+                    .addresses
+                    .read(&AgentRewardContract::address_index_key(day, u32::MAX - 1))
+                    .unwrap(),
+                alice
+            );
+            for slot in [0, u32::MAX] {
+                assert_eq!(
+                    index
+                        .addresses
+                        .read(&AgentRewardContract::address_index_key(day, slot))
+                        .unwrap(),
+                    sentinel
+                );
+            }
+        });
+    }
+}
+
 /// Registers COEN/840 with `price` as its spot and previous-day VWAP.
 fn seed_oracle(storage: &StorageHandle<'_>, price: U256) {
     outbe_oracle::test_support::publish_day_type_quote(storage, price, 1, T_NOW).unwrap();
@@ -342,7 +571,7 @@ fn claiming_a_pool_issues_its_gem() {
 }
 
 #[test]
-fn same_block_claims_with_different_currencies_have_distinct_ids() {
+fn same_block_claims_with_repeated_currencies_have_distinct_ids() {
     let alice = address!("0x1111111111111111111111111111111111111111");
     let load = U256::from(500u64);
 
@@ -355,7 +584,7 @@ fn same_block_claims_with_different_currencies_have_distinct_ids() {
             .unwrap();
 
         let mut ids = Vec::new();
-        for currencies in [(USD, USD), (EUR, USD), (USD, EUR)] {
+        for currencies in [(USD, USD), (EUR, USD), (USD, EUR), (USD, USD)] {
             let gem_id = contract
                 .claim_reward(RewardPool::Waa, alice, load, currencies)
                 .unwrap();
@@ -374,23 +603,14 @@ fn same_block_claims_with_different_currencies_have_distinct_ids() {
             );
         }
 
-        let error = contract
-            .claim_reward(RewardPool::Waa, alice, load, (USD, USD))
-            .unwrap_err();
-        assert!(matches!(
-            error,
-            outbe_primitives::error::PrecompileError::RevertBytes(bytes)
-                if bytes.as_ref() == alloy_sol_types::SolError::abi_encode(
-                    &outbe_gem::precompile::IGem::AlreadyExists {}
-                ).as_slice()
-        ));
-        assert_eq!(contract.get_claimable_reward(alice).unwrap(), remaining);
+        assert_eq!(remaining, U256::ZERO);
+        assert_eq!(contract.get_claimable_reward(alice).unwrap(), U256::ZERO);
         assert_eq!(
             contract.pool_claimable_total(RewardPool::Waa).unwrap(),
-            remaining
+            U256::ZERO
         );
         let owned = outbe_gem::api::list_by_owner(&storage, alice).unwrap();
-        assert_eq!(owned.len(), 3);
+        assert_eq!(owned.len(), 4);
         for gem in owned {
             assert!(ids.contains(&gem.gem_id.to_u256()));
         }
@@ -399,7 +619,7 @@ fn same_block_claims_with_different_currencies_have_distinct_ids() {
                 .total_supply
                 .read()
                 .unwrap(),
-            3
+            4
         );
     });
 }

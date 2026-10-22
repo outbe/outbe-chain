@@ -256,42 +256,7 @@ impl AcceptedHistory {
                     .unwrap_or([0; 20]),
                 &refs,
             )?;
-            let name = if body.action == PublicationAction::Bootstrap {
-                IDENTITY_ROOT.clone()
-            } else {
-                git::fmt::Qualified::from_refstr(&git::fmt::RefString::try_from(format!(
-                    "refs/cobs/xyz.radicle.patch/{}",
-                    git::Oid::from_sha1(body.patch_id.0)
-                ))?)
-                .ok_or(Error::Denied)?
-                .to_owned()
-            };
-            let entry = canonical.get(&name).ok_or(Error::Denied)?;
-            let bytes = object(
-                repo,
-                entry,
-                git::raw::ObjectType::Commit,
-                radicle::crypto::repository::MAX_NATIVE_PAYLOAD,
-            )?;
-            let cob = SignedCommit::parse(&bytes)?;
-            let cob_signature = BlsEnvelope::from_hex(cob.envelope())?;
-            let mut signatures = vec![cob_signature, signature];
-            if body.action == PublicationAction::Bootstrap {
-                let action: identity::Action = serde_json::from_slice(&blob(
-                    repo,
-                    git::Oid::from_sha1(cob.unsigned().tree()),
-                    "0",
-                    MAX_MANIFEST_BYTES,
-                )?)?;
-                let identity::Action::Revision {
-                    signature: RepositorySignature::Bls12381G2(document),
-                    ..
-                } = action
-                else {
-                    return Err(Error::Denied.into());
-                };
-                signatures.insert(0, *document);
-            }
+            let signatures = native_signatures(repo, body, &canonical, signature)?;
             if checkpoints
                 .insert(
                     body.sequence,
@@ -311,6 +276,51 @@ impl AcceptedHistory {
         }
         Err(Error::Denied.into())
     }
+}
+
+fn native_signatures(
+    repo: &Repository,
+    body: &outbe_primitives::radicle_publication::PublicationBody,
+    canonical: &Refs,
+    signature: BlsEnvelope,
+) -> Result<Vec<BlsEnvelope>, Box<dyn std::error::Error + Send + Sync>> {
+    let name = if body.action == PublicationAction::Bootstrap {
+        IDENTITY_ROOT.clone()
+    } else {
+        git::fmt::Qualified::from_refstr(&git::fmt::RefString::try_from(format!(
+            "refs/cobs/xyz.radicle.patch/{}",
+            git::Oid::from_sha1(body.patch_id.0)
+        ))?)
+        .ok_or(Error::Denied)?
+        .to_owned()
+    };
+    let entry = canonical.get(&name).ok_or(Error::Denied)?;
+    let bytes = object(
+        repo,
+        entry,
+        git::raw::ObjectType::Commit,
+        radicle::crypto::repository::MAX_NATIVE_PAYLOAD,
+    )?;
+    let cob = SignedCommit::parse(&bytes)?;
+    let cob_signature = BlsEnvelope::from_hex(cob.envelope())?;
+    let mut signatures = vec![cob_signature, signature];
+    if body.action == PublicationAction::Bootstrap {
+        let action: identity::Action = serde_json::from_slice(&blob(
+            repo,
+            git::Oid::from_sha1(cob.unsigned().tree()),
+            "0",
+            MAX_MANIFEST_BYTES,
+        )?)?;
+        let identity::Action::Revision {
+            signature: RepositorySignature::Bls12381G2(document),
+            ..
+        } = action
+        else {
+            return Err(Error::Denied.into());
+        };
+        signatures.insert(0, *document);
+    }
+    Ok(signatures)
 }
 
 fn object(

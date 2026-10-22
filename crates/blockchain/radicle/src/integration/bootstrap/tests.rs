@@ -287,7 +287,15 @@ async fn independent_collectors_prepare_identical_bootstrap_without_promoting_re
         .unwrap();
         let verified = Arc::new(
             verify_bootstrap_publication(
-                &repo, &state, &material, b"[]", &body, &manifest, &witness,
+                &repo,
+                BootstrapPublicationInput {
+                    state: &state,
+                    material: &material,
+                    content_manifest: b"[]",
+                },
+                &body,
+                &manifest,
+                &witness,
             )
             .unwrap(),
         );
@@ -370,9 +378,11 @@ async fn independent_collectors_prepare_identical_bootstrap_without_promoting_re
         assert_eq!(loaded.manifest, manifest);
         verify_bootstrap_publication(
             &replay_repo,
-            &state,
-            &material,
-            b"[]",
+            BootstrapPublicationInput {
+                state: &state,
+                material: &material,
+                content_manifest: b"[]",
+            },
             &loaded.body,
             &loaded.manifest,
             &loaded.witness,
@@ -380,11 +390,27 @@ async fn independent_collectors_prepare_identical_bootstrap_without_promoting_re
         .unwrap();
         assert_eq!(replay_repo.raw().references().unwrap().count(), 0);
         assert!(verify_bootstrap_publication(
-            &repo, &state, &material, b"[]", &body, &manifest, &short,
+            &repo,
+            BootstrapPublicationInput {
+                state: &state,
+                material: &material,
+                content_manifest: b"[]"
+            },
+            &body,
+            &manifest,
+            &short,
         )
         .is_err());
         assert!(verify_bootstrap_publication(
-            &repo, &state, &material, b"[]\n", &body, &manifest, &witness,
+            &repo,
+            BootstrapPublicationInput {
+                state: &state,
+                material: &material,
+                content_manifest: b"[]\n"
+            },
+            &body,
+            &manifest,
+            &witness,
         )
         .is_err());
         // An accepted history reader needs neither the old q transcript nor creation artifact.

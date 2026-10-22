@@ -22,6 +22,11 @@
 //!    `disable_base_fee`, and `disable_fee_charge` machinery that already
 //!    serves oracle votes.
 //!
+//! Sponsorship authorization returns an opaque signer/day token without writing state.
+//! The executor consumes it only after inclusion, including an included revert.
+//! Authorization failures, execution errors, and declined commits do not spend quota.
+//! This protects the typed Rust API and storage schema, not raw storage writes.
+//!
 //! External crates cannot construct a sponsorship grant, pass a bare day to
 //! the recorder, or write the quota map. The three examples below are the
 //! compile-fail boundary for that interface.

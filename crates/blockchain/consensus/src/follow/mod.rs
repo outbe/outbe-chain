@@ -166,6 +166,34 @@ impl CommitteeChain {
             });
         }
 
+        self.validate_committee_registration(epoch, &participants)?;
+
+        // Every successful DKG activation increments epoch and material version
+        // exactly once, including after a restored local anchor.
+        // Restore the authenticated epoch's material version explicitly:
+        // `HybridScheme::verifier` defaults it to zero, which verifies the BLS
+        // certificate but produces a non-canonical committee_set_hash_v2 after
+        // epoch 0.
+        let vrf_materials =
+            VrfMaterialProvider::new(epoch.get(), decoded.output.public().clone(), None);
+        let verifier = HybridScheme::<MinSig>::verifier_with_vrf_provider(
+            &crate::config::outbe_app_namespace(),
+            participants.clone(),
+            vrf_materials,
+        )
+        .ok_or_else(|| FollowError::BuildCommitteeVerifier { epoch: epoch.get() })?;
+        Ok(PreparedCommittee {
+            epoch,
+            participants,
+            install: Some((verifier, outcome_hash)),
+        })
+    }
+
+    fn validate_committee_registration(
+        &self,
+        epoch: Epoch,
+        participants: &Set<bls12381::PublicKey>,
+    ) -> Result<()> {
         if let Some(highest) = self.highest_registered {
             let expected = highest.get().saturating_add(1);
             if epoch.get() != expected {
@@ -187,7 +215,7 @@ impl CommitteeChain {
         // participant set. Consensus finality is a multisig over these MinPk keys,
         // so matching the participant set (NOT the VRF group key) authenticates
         // the committee. Compare as ordered sets (both pubkey-sorted).
-        if epoch == self.anchor_epoch && participants != self.anchor_participants {
+        if epoch == self.anchor_epoch && participants != &self.anchor_participants {
             return Err(FollowError::AnchorMismatch {
                 epoch: epoch.get(),
                 committee_len: participants.len(),
@@ -196,25 +224,7 @@ impl CommitteeChain {
             .into());
         }
 
-        // Every successful DKG activation increments epoch and material version
-        // exactly once, including after a restored local anchor.
-        // Restore the authenticated epoch's material version explicitly:
-        // `HybridScheme::verifier` defaults it to zero, which verifies the BLS
-        // certificate but produces a non-canonical committee_set_hash_v2 after
-        // epoch 0.
-        let vrf_materials =
-            VrfMaterialProvider::new(epoch.get(), decoded.output.public().clone(), None);
-        let verifier = HybridScheme::<MinSig>::verifier_with_vrf_provider(
-            &crate::config::outbe_app_namespace(),
-            participants.clone(),
-            vrf_materials,
-        )
-        .ok_or_else(|| FollowError::BuildCommitteeVerifier { epoch: epoch.get() })?;
-        Ok(PreparedCommittee {
-            epoch,
-            participants,
-            install: Some((verifier, outcome_hash)),
-        })
+        Ok(())
     }
 
     fn commit_committee(&mut self, prepared: PreparedCommittee) -> Set<bls12381::PublicKey> {

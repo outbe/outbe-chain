@@ -9,6 +9,8 @@ use thiserror::Error;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum AgentRewardError {
+    #[error("agentreward tribute counter overflow")]
+    TributeCounterOverflow,
     #[error("agentreward distribute_daily overflow")]
     DistributeDailyOverflow,
     #[error("reward distribution arithmetic overflow")]
@@ -41,6 +43,7 @@ impl From<AgentRewardError> for PrecompileError {
     fn from(err: AgentRewardError) -> Self {
         use IAgentReward as I;
         match err {
+            AgentRewardError::TributeCounterOverflow => revert_with(I::TributeCounterOverflow {}),
             AgentRewardError::DistributeDailyOverflow => revert_with(I::DistributeDailyOverflow {}),
             AgentRewardError::DistributionOverflow => revert_with(I::DistributionOverflow {}),
             AgentRewardError::ClaimableTotalOverflow => revert_with(I::ClaimableTotalOverflow {}),
@@ -83,6 +86,10 @@ mod tests {
             (
                 AgentRewardError::EntryPriceOverflow,
                 IAgentReward::EntryPriceOverflow {}.abi_encode(),
+            ),
+            (
+                AgentRewardError::TributeCounterOverflow,
+                IAgentReward::TributeCounterOverflow {}.abi_encode(),
             ),
         ] {
             let err = PrecompileError::from(error);
