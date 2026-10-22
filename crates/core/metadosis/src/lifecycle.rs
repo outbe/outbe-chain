@@ -40,24 +40,7 @@ pub(crate) fn init_genesis_day_inner(
     metadosis: &mut MetadosisContract,
     ctx: &BlockRuntimeContext,
 ) -> Result<()> {
-    create_lookahead_days(metadosis, ctx, ctx.block.timestamp)?;
-    initialize_bootstrap_if_needed(metadosis)
-}
-
-fn initialize_bootstrap_if_needed(metadosis: &mut MetadosisContract) -> Result<()> {
-    if metadosis.bootstrap_end_time.read()? != 0 {
-        return Ok(());
-    }
-    let tribute = TributeContract::new(metadosis.storage.clone());
-    let active = tribute.active_wwd.read_all()?;
-    let first = *active
-        .first()
-        .ok_or(MetadosisStorageCorruptionError::BootstrapNeedsGenesisWorldwideDay)?;
-    let record = tribute
-        .worldwide_days
-        .get(first)?
-        .ok_or(MetadosisStorageCorruptionError::GenesisWorldwideDayRecordDisappeared)?;
-    metadosis.bootstrap_end_time.write(record.offerings_start)
+    create_lookahead_days(metadosis, ctx, ctx.block.timestamp)
 }
 
 pub(crate) fn create_lookahead_days(

@@ -1,19 +1,6 @@
 [
   {
     "type": "function",
-    "name": "getBootstrapEndTime",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "endTime",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "getEmissionDay",
     "inputs": [
       {

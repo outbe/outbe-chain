@@ -53,8 +53,6 @@ interface IMetadosis {
         string action
     );
 
-    function getBootstrapEndTime() external view returns (uint64 endTime);
-
     function getEmissionDay(uint32 day)
         external
         view

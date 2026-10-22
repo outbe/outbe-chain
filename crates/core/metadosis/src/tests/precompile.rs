@@ -57,22 +57,12 @@ fn worldwide_day_and_emission_day_abi_preserve_bidirectional_link() {
             query_tribute(storage.clone(), ITribute::getActiveWorldwideDaysCall {});
         assert_eq!(active, vec![20260920]);
 
-        let ed = query(
-            storage.clone(),
-            IMetadosis::getEmissionDayCall { day: 20261015 },
-        );
+        let ed = query(storage, IMetadosis::getEmissionDayCall { day: 20261015 });
         assert_eq!(ed.emissionDay, 20261015);
         assert_eq!(ed.emissionLimitMinor, U256::from(100));
         assert_eq!(ed.wwd, 20260920);
         assert_eq!(ed.metadosisStart, 50);
         assert_eq!(ed.state, emission_day_state::NONE);
-
-        MetadosisContract::new(storage.clone())
-            .bootstrap_end_time
-            .write(123)
-            .unwrap();
-        let bootstrap: u64 = query(storage, IMetadosis::getBootstrapEndTimeCall {});
-        assert_eq!(bootstrap, 123);
     });
 }
 
