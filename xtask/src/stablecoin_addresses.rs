@@ -42,7 +42,7 @@ fn check_planned_class(class: PlannedAddressClass) -> Result<CheckedAddressClass
     if class.owner.is_empty() {
         bail!("planned address class {} has no owner", class.name);
     }
-    if class.prefix_bits == 0 || class.prefix_bits % 8 != 0 {
+    if class.prefix_bits == 0 || !class.prefix_bits.is_multiple_of(8) {
         bail!(
             "planned address class {} prefixBits must be nonzero and byte-aligned",
             class.name
