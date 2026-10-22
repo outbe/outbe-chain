@@ -19,6 +19,7 @@ alloy-sol-types.workspace = true
 [dev-dependencies]
 outbe-gem = { workspace = true, features = ["test-utils"] }
 outbe-oracle = { workspace = true, features = ["test-utils"] }
+proptest.workspace = true
 
 [package.metadata.cargo-machete]
 ignored = ["alloy-sol-types"]
