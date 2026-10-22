@@ -12,22 +12,16 @@ import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
 import {USDT} from "../../src/canonical/USDT.sol";
 import {MockERC7786Bridge} from "../mocks/MockERC7786Bridge.sol";
 
-contract ContractOwnerMock {}
-
 contract DeployHarness is DeployAll {
-    function exposedRequireContractOwnerOnGuardedChain(address owner, bool allowEoaOwner) external view {
-        _requireContractOwnerOnGuardedChain(owner, allowEoaOwner);
-    }
-
     function exposedRequireDeclaredChain() external view {
         _requireDeclaredChain();
     }
 
-    function exposedDeployRoute(address factory, string memory salt, RouteSpec memory spec, bytes memory tokenInitCode)
+    function exposedDeployRoute(address factory, string memory salt, RouteSpec memory spec)
         external
         returns (address, address)
     {
-        return _deployRoute(factory, salt, spec, tokenInitCode);
+        return _deployRoute(factory, salt, spec);
     }
 
     function exposedBridgeAddress(address factory, string memory salt, RouteSpec memory spec)
@@ -38,9 +32,8 @@ contract DeployHarness is DeployAll {
         return _bridgeAddress(factory, salt, spec);
     }
 
-    /// @dev The harness is the deployer, so it can make the owner-only `setTokenBridge` call itself.
-    ///      Under a real run `vm.startBroadcast` puts the deployer key behind those calls. There is no
-    ///      broadcast in tests.
+    /// @dev The harness is the deployer. Under a real run `vm.startBroadcast` puts the deployer key
+    ///      behind the calls. There is no broadcast in tests.
     function _deployer() internal view override returns (address) {
         return address(this);
     }
@@ -63,6 +56,7 @@ contract DeployGuardsTest is Test {
     /// @dev Stands in for a canonical token that already exists on chain - see the adoption test.
     address internal constant ADOPTED_USDT = address(uint160(0xADD7ED));
     string internal constant SALT = "TEST_V1";
+    address internal constant CONTROLLER_ICA = address(uint160(0x1CA));
 
     DeployHarness internal deploy;
     Create3Factory internal factory;
@@ -71,8 +65,9 @@ contract DeployGuardsTest is Test {
         vm.setEnv("EXTERNAL_CHAIN_ID", "11155111");
         vm.setEnv("OUTBE_CHAIN_ID", "54322345");
         vm.setEnv("DEPLOYER_PK", "0xA11CE");
-        vm.setEnv("ALLOW_EOA_OWNER", "true");
         vm.setEnv("BRIDGE_ADDRESS", "0x0000000000000000000000000000000000B41D6E");
+        vm.setEnv("REMOTE_CHAIN_IDS", "11155111,54322345");
+        vm.setEnv("CONTROLLER_ICA_ADDRESS", "0x00000000000000000000000000000000000001CA");
 
         // The hub only needs code for `_requireCode`. Deploying a mock and writing its address into
         // the environment would put a computed value into shared state. The note above forbids
@@ -84,53 +79,6 @@ contract DeployGuardsTest is Test {
 
         deploy = new DeployHarness();
         factory = new Create3Factory();
-    }
-
-    // === Owner guard ===
-    // The mint-trust root must sit behind a multisig on every chain the route declares. An
-    // undeclared chain (a local node, a scratch fork) stays unguarded so the guard does not block
-    // dev flows.
-
-    function test_Guards_RevertForEOAOwnerOnDeclaredExternalChain() public {
-        vm.chainId(EXTERNAL_CHAIN);
-        address owner = makeAddr("owner");
-
-        vm.expectRevert(abi.encodeWithSelector(BaseRoute.OwnerMustBeMultisigContract.selector, owner, EXTERNAL_CHAIN));
-        deploy.exposedRequireContractOwnerOnGuardedChain(owner, false);
-    }
-
-    function test_Guards_RevertForEOAOwnerOnOutbeChain() public {
-        vm.chainId(OUTBE_CHAIN);
-        address owner = makeAddr("owner");
-
-        vm.expectRevert(abi.encodeWithSelector(BaseRoute.OwnerMustBeMultisigContract.selector, owner, OUTBE_CHAIN));
-        deploy.exposedRequireContractOwnerOnGuardedChain(owner, false);
-    }
-
-    function test_Guards_AllowContractOwnerOnGuardedChain() public {
-        vm.chainId(EXTERNAL_CHAIN);
-
-        deploy.exposedRequireContractOwnerOnGuardedChain(address(new ContractOwnerMock()), false);
-    }
-
-    /// @dev A hardcoded chain id used to guard BSC testnet. Once BSC testnet is not part of the
-    ///      declared route, it must behave like any other undeclared chain.
-    function test_Guards_AllowEOAOwnerOnUndeclaredChain() public {
-        vm.chainId(UNDECLARED_CHAIN);
-
-        deploy.exposedRequireContractOwnerOnGuardedChain(makeAddr("owner"), false);
-    }
-
-    function test_Guards_AllowEOAOwnerOnLocalChain() public {
-        vm.chainId(LOCAL_CHAIN);
-
-        deploy.exposedRequireContractOwnerOnGuardedChain(makeAddr("owner"), false);
-    }
-
-    function test_Guards_AllowEOAOwnerOnGuardedChainWithExplicitOverride() public {
-        vm.chainId(EXTERNAL_CHAIN);
-
-        deploy.exposedRequireContractOwnerOnGuardedChain(makeAddr("owner"), true);
     }
 
     // === Declared-chain guard ===
@@ -246,7 +194,7 @@ contract DeployGuardsTest is Test {
         address predictedBridge = deploy.exposedBridgeAddress(address(factory), SALT, spec);
         spec.canonicalTokenEnv = "ADOPTED_USDT_TOKEN";
 
-        (address token, address tokenBridge) = deploy.exposedDeployRoute(address(factory), SALT, spec, "");
+        (address token, address tokenBridge) = deploy.exposedDeployRoute(address(factory), SALT, spec);
 
         assertEq(token, ADOPTED_USDT, "did not adopt the configured canonical token");
         assertEq(tokenBridge, predictedBridge, "bridge address moved because of the adopted token");
@@ -258,6 +206,20 @@ contract DeployGuardsTest is Test {
         (address usdt, address usdtBridge) = deploy.deployRoute(address(factory), SALT, deploy.routeByLabel("USDT"));
 
         assertEq(BridgeableERC20(usdt).tokenBridge(), usdtBridge, "synthetic not wired to its bridge");
+    }
+
+    /// @dev Governance owns the bridge: the controller precompile on Outbe, its Interchain Account elsewhere.
+    ///      The peer on the other chain is the same CREATE3 address, and the local chain is skipped.
+    function test_Bridge_HasGovernanceOwnerAndPeers() public {
+        vm.chainId(OUTBE_CHAIN);
+        (, address outbeBridge) = deploy.deployRoute(address(factory), SALT, deploy.routeByLabel("USDT"));
+        assertEq(ERC7786TokenBridge(outbeBridge).owner(), 0x000000000000000000000000000000000000EE14);
+        assertEq(ERC7786TokenBridge(outbeBridge).remoteBridges(uint32(EXTERNAL_CHAIN)), outbeBridge);
+        assertEq(ERC7786TokenBridge(outbeBridge).remoteBridges(uint32(OUTBE_CHAIN)), address(0));
+
+        vm.chainId(EXTERNAL_CHAIN);
+        (, address extBridge) = deploy.deployRoute(address(factory), "TEST_V2", deploy.routeByLabel("USDT"));
+        assertEq(ERC7786TokenBridge(extBridge).owner(), CONTROLLER_ICA);
     }
 
     /// @dev Create3Factory reverts on a re-used salt, so a re-run is only safe because of the code-existence guards.
