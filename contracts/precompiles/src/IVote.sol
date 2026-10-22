@@ -102,6 +102,8 @@ interface IVote {
     error InvalidProposalBond(string reason);
 
     /// @notice Creates a generic proposal.
+    /// @dev Vote enforces its raw UTF-8 payload byte limit before target decoding
+    /// or storage writes. This admission-only bound is separate from decoded field limits.
     /// @param targetModule Target system module precompile address.
     /// @param payload JSON payload decoded only by the target module handler.
     function createProposal(address targetModule, string calldata payload) external payable returns (uint256 proposalId);

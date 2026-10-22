@@ -5,14 +5,14 @@ use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_vote::constants::VOTING_WINDOW_BLOCKS;
+use outbe_vote::constants::{MAX_PAYLOAD_BYTES, VOTING_WINDOW_BLOCKS};
+use outbe_vote::errors::VoteError;
 use outbe_vote::handlers::{VoteTarget, VoteTargetRegistry};
 use outbe_vote::schema::ProposalStatus;
 use outbe_vote::schema::Vote;
 
 use crate::errors::GovernanceError;
 use crate::precompile::IGovernance;
-use crate::runtime::MAX_PROPOSAL_TEXT_BYTES;
 use crate::schema::GovernanceContract;
 use crate::status;
 use crate::vote_target::GovernanceVoteTarget;
@@ -222,10 +222,8 @@ fn empty_text_is_rejected_at_creation() {
 }
 
 #[test]
-fn oversize_text_is_rejected_at_creation() {
-    let max = MAX_PROPOSAL_TEXT_BYTES;
-    let expected =
-        PrecompileError::from(GovernanceError::TextTooLarge { len: max + 1, max }).to_string();
+fn oversize_raw_payload_is_rejected_at_creation() {
+    let expected = PrecompileError::from(VoteError::InvalidPayload).to_string();
     for kind in KINDS {
         with_vote(|storage| {
             let mut vote = Vote::new(storage.clone());
@@ -233,7 +231,7 @@ fn oversize_text_is_rejected_at_creation() {
                 .create_proposal(
                     PROPOSER,
                     GOVERNANCE_ADDRESS,
-                    &GovernanceVotePayload::encode(kind, &"a".repeat(max + 1)),
+                    &GovernanceVotePayload::encode(kind, &"a".repeat(MAX_PAYLOAD_BYTES)),
                     200,
                     &VOTE_TARGET_REGISTRY,
                 )
@@ -241,7 +239,7 @@ fn oversize_text_is_rejected_at_creation() {
             assert_eq!(
                 err.to_string(),
                 expected,
-                "expected TextTooLarge, got {err:?}"
+                "expected InvalidPayload, got {err:?}"
             );
             assert_absent(&GovernanceContract::new(storage), kind);
         });
@@ -249,9 +247,10 @@ fn oversize_text_is_rejected_at_creation() {
 }
 
 #[test]
-fn approved_vote_creates_proposal_at_proposal_bound() {
+fn approved_vote_creates_proposal_at_raw_payload_bound() {
     for kind in KINDS {
-        let text = "a".repeat(MAX_PROPOSAL_TEXT_BYTES);
+        let envelope_len = GovernanceVotePayload::encode(kind, "").len();
+        let text = "a".repeat(MAX_PAYLOAD_BYTES - envelope_len);
         with_vote(|storage| {
             let mut vote = Vote::new(storage.clone());
             let current = 300u64;
