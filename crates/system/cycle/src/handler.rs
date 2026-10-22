@@ -93,6 +93,10 @@ fn gas(ctx: &BlockRuntimeContext) -> u64 {
     ctx.storage.gas_used().unwrap_or(0)
 }
 
+fn gas_sample_delta(later: u64, earlier: u64) -> u64 {
+    later.saturating_sub(earlier)
+}
+
 /// Applies raw 18-decimal gas fees to a six-decimal validator emission budget,
 /// then floors only the remaining native amount back to protocol precision.
 fn validator_topup_protocol(validator_amount: U256, fees_native: U256) -> Result<U256> {
@@ -105,8 +109,7 @@ fn validator_topup_protocol(validator_amount: U256, fees_native: U256) -> Result
 
 fn wrap(step: &str, r: Result<()>) -> Result<()> {
     r.map_err(|e| {
-        let bt = std::backtrace::Backtrace::force_capture();
-        tracing::error!(target: "outbe::cycle", step, error = ?e, backtrace = %bt, "emission_limit_daily step failed");
+        tracing::error!(target: "outbe::cycle", step, error = ?e, "emission_limit_daily step failed");
         e
     })
 }
@@ -131,7 +134,7 @@ pub fn settle_emission_day(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<(
     let shares = EmissionShares::allocate(cap)?;
 
     let g1 = gas(ctx);
-    tracing::debug!(target: "outbe::cycle::gas", step_gas = g1 - g0, cumulative = g1, "after allocate_emission");
+    tracing::debug!(target: "outbe::cycle::gas", step_gas = gas_sample_delta(g1, g0), cumulative = g1, "after allocate_emission");
 
     let validator_topup = validator_topup(ctx, prev_day, shares.validator)?;
     wrap(
@@ -144,18 +147,18 @@ pub fn settle_emission_day(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<(
         .ok_or(CycleError::ValidatorTopupExceedsAllocation)?;
 
     let g2 = gas(ctx);
-    tracing::debug!(target: "outbe::cycle::gas", step_gas = g2 - g1, cumulative = g2, "after validator top-up");
+    tracing::debug!(target: "outbe::cycle::gas", step_gas = gas_sample_delta(g2, g1), cumulative = g2, "after validator top-up");
 
     let pool_excess = distribute_reward_pools(ctx, prev_day, &shares, validator_topup)?;
 
     let g3 = gas(ctx);
-    tracing::debug!(target: "outbe::cycle::gas", step_gas = g3 - g2, cumulative = g3, "after reward distribute");
+    tracing::debug!(target: "outbe::cycle::gas", step_gas = gas_sample_delta(g3, g2), cumulative = g3, "after reward distribute");
 
     let metadosis_total = shares.terminal_total(fee_covered, pool_excess)?;
     dispatch_terminal_remainder(ctx, prev_day, metadosis_total)?;
 
     let g4 = gas(ctx);
-    tracing::debug!(target: "outbe::cycle::gas", step_gas = g4 - g3, cumulative = g4, "after terminal dispatch");
+    tracing::debug!(target: "outbe::cycle::gas", step_gas = gas_sample_delta(g4, g3), cumulative = g4, "after terminal dispatch");
 
     wrap(
         "mark_day_settled",
@@ -163,7 +166,7 @@ pub fn settle_emission_day(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<(
     )?;
 
     let g5 = gas(ctx);
-    tracing::debug!(target: "outbe::cycle::gas", step_gas = g5 - g4, cumulative = g5, total = g5 - g0, "completed");
+    tracing::debug!(target: "outbe::cycle::gas", step_gas = gas_sample_delta(g5, g4), cumulative = g5, total = gas_sample_delta(g5, g0), "completed");
 
     tracing::info!(
         target: "outbe::cycle",
@@ -174,7 +177,7 @@ pub fn settle_emission_day(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<(
         validator_topup = %validator_topup,
         pool_excess = %pool_excess,
         metadosis_total = %metadosis_total,
-        total_gas = g5 - g0,
+        total_gas = gas_sample_delta(g5, g0),
         "emission_limit_daily handler completed"
     );
 
@@ -243,8 +246,6 @@ fn day_number(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<u32> {
     outbe_rewards::runtime::day_number_since_genesis(ctx, prev_day)
         .map_err(|e| {
             tracing::error!(target: "outbe::cycle", step = "day_number_since_genesis", prev_day, error = ?e, "emission_limit_daily step failed");
-            let _bt = std::backtrace::Backtrace::force_capture();
-            tracing::error!(target: "outbe::cycle", backtrace = %_bt, "stacktrace");
             e
         })
 }
@@ -450,5 +451,11 @@ mod unit_tests {
                 .unwrap(),
             U256::ZERO
         );
+    }
+
+    #[test]
+    fn a_decreasing_gas_sample_reports_zero_and_an_increase_keeps_the_difference() {
+        assert_eq!(gas_sample_delta(3, 10), 0);
+        assert_eq!(gas_sample_delta(10, 3), 7);
     }
 }
