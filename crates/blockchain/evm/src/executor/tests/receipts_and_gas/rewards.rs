@@ -128,7 +128,11 @@ fn assert_real_cpa_and_late_settlement(invalid_slash_percent: bool) {
         storage
             .set_balance(REWARDS_ADDRESS, matured_fee + parent_fee)
             .unwrap();
-        outbe_cycle::record_phase1_progress(&ctx, parent_number - 1).unwrap();
+        ctx.storage
+            .contract::<outbe_cycle::schema::Accounting<'_>>()
+            .last_accounted_block_number
+            .write(parent_number - 1)
+            .unwrap();
     });
     let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
     let mut env = test_evm_env(block_number, REWARDS_ADDRESS);

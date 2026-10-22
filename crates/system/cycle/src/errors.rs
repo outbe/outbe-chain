@@ -36,6 +36,10 @@ pub enum CycleError {
     ActiveUtcDayNotInitialized,
     #[error("last_accounted_block_number regression: current={current}, attempted={attempted}")]
     BlockNumberRegression { current: u64, attempted: u64 },
+    #[error("accounting progress input is zero")]
+    ZeroAccountingProgress,
+    #[error("accounting progress is not the next block: current={current}, attempted={attempted}")]
+    AccountingProgressGap { current: u64, attempted: u64 },
     #[error("trigger period is zero")]
     ZeroTriggerPeriod,
     #[error(
@@ -103,6 +107,14 @@ impl From<CycleError> for PrecompileError {
             CycleError::BlockNumberRegression { current, attempted } => {
                 PrecompileError::RevertBytes(Bytes::from(
                     ICycle::BlockNumberRegression { current, attempted }.abi_encode(),
+                ))
+            }
+            CycleError::ZeroAccountingProgress => PrecompileError::RevertBytes(Bytes::from(
+                ICycle::ZeroAccountingProgress {}.abi_encode(),
+            )),
+            CycleError::AccountingProgressGap { current, attempted } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ICycle::AccountingProgressGap { current, attempted }.abi_encode(),
                 ))
             }
             CycleError::ZeroTriggerPeriod => {
@@ -199,6 +211,17 @@ mod tests {
                 ICycle::BlockNumberRegression::SELECTOR,
             ),
             (
+                CycleError::ZeroAccountingProgress,
+                ICycle::ZeroAccountingProgress::SELECTOR,
+            ),
+            (
+                CycleError::AccountingProgressGap {
+                    current: 4,
+                    attempted: 9,
+                },
+                ICycle::AccountingProgressGap::SELECTOR,
+            ),
+            (
                 CycleError::ZeroTriggerPeriod,
                 ICycle::ZeroTriggerPeriod::SELECTOR,
             ),
@@ -241,5 +264,16 @@ mod tests {
         assert_eq!(decoded.period, 100);
         assert_eq!(decoded.offset, u64::MAX - 50);
         assert_eq!(decoded.timestamp, u64::MAX - 50);
+
+        let gap = match PrecompileError::from(CycleError::AccountingProgressGap {
+            current: 4,
+            attempted: 9,
+        }) {
+            PrecompileError::RevertBytes(bytes) => bytes,
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        };
+        let decoded = ICycle::AccountingProgressGap::abi_decode(&gap).expect("gap payload");
+        assert_eq!(decoded.current, 4);
+        assert_eq!(decoded.attempted, 9);
     }
 }

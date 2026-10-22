@@ -119,13 +119,16 @@ pub(super) fn seed_daily_voters(ctx: &BlockRuntimeContext, day: u32, voters: &[(
         .unwrap();
 }
 
-/// Seeds V2 Phase 1 accounting progress so the parent block satisfies the
-/// dispatcher gate (`last_accounted_block_number >= block_number - 1`) for
-/// tests that fire the trigger at `block_number >= 2`. Mirrors what
-/// `apply_phase1_commit_in_preexec` records in production.
+/// Writes the parent height into the accounting slot for tests that fire a
+/// trigger at `block_number >= 2`. This is fixture setup. It does not call
+/// the progress recorder.
 pub(super) fn account_parent(ctx: &BlockRuntimeContext, block_number: u64) {
     if block_number >= 2 {
-        crate::record_phase1_progress(ctx, block_number - 1).unwrap();
+        ctx.storage
+            .contract::<crate::schema::Accounting<'_>>()
+            .last_accounted_block_number
+            .write(block_number - 1)
+            .unwrap();
     }
 }
 

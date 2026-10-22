@@ -70,17 +70,32 @@ pub(crate) fn set_last_accounted_block_number(
     accounting.last_accounted_block_number.write(block_number)
 }
 
-/// Records that V2 Phase 1 for `block_number` committed successfully.
+/// Records exact V2 Phase 1 progress for `block_number`.
 ///
-/// Intended writer for `ACCOUNTING_PROGRESS_ADDRESS` slot 0 (INV4).
-/// The V2 executor Phase 1 path calls this function. The caller is
-/// responsible for ordering. Phase 1 commits an exact-parent successor
-/// block, so `block_number` should equal the parent height being
-/// accounted for.
+/// Input `0` returns [`CycleError::ZeroAccountingProgress`] and does not
+/// read or write the progress slot. A lower height returns
+/// [`CycleError::BlockNumberRegression`]. A positive height equal to the
+/// stored height returns `Ok` and does not write or log. The only write is
+/// the exact successor `current + 1`, including the first commit `0 -> 1`.
+/// Any other forward height returns [`CycleError::AccountingProgressGap`]
+/// and does not write or log.
 pub fn record_phase1_progress(ctx: &BlockRuntimeContext, block_number: u64) -> Result<()> {
+    if block_number == 0 {
+        return Err(CycleError::ZeroAccountingProgress.into());
+    }
     let current = last_accounted_block_number(ctx)?;
     if block_number < current {
         return Err(CycleError::BlockNumberRegression {
+            current,
+            attempted: block_number,
+        }
+        .into());
+    }
+    if block_number == current {
+        return Ok(());
+    }
+    if current.checked_add(1) != Some(block_number) {
+        return Err(CycleError::AccountingProgressGap {
             current,
             attempted: block_number,
         }

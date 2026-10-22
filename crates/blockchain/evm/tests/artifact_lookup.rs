@@ -349,7 +349,11 @@ fn full_node_import_installs_provider_backed_accounted_parent_artifact_lookup_wi
                 BlockContext::new(5, parent_timestamp, 1, proposer, vec![proposer]),
                 storage,
             );
-            outbe_cycle::record_phase1_progress(&ctx, 4).unwrap();
+            ctx.storage
+                .contract::<outbe_cycle::schema::Accounting<'_>>()
+                .last_accounted_block_number
+                .write(4)
+                .unwrap();
         });
         let marker_code = revm::state::Bytecode::new_legacy([0xef].into());
         let marker_info = || AccountInfo {

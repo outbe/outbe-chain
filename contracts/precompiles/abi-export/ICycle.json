@@ -32,6 +32,22 @@
   },
   {
     "type": "error",
+    "name": "AccountingProgressGap",
+    "inputs": [
+      {
+        "name": "current",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "attempted",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ActiveUtcDayAfterBlock",
     "inputs": [
       {
@@ -142,6 +158,11 @@
   {
     "type": "error",
     "name": "ValidatorTopupExceedsAllocation",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroAccountingProgress",
     "inputs": []
   },
   {
