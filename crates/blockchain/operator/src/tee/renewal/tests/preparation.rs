@@ -59,7 +59,7 @@ impl RelayPreparationRpc for PreparationRpc {
     }
 
     async fn balance(&self, _address: Address) -> Result<U256> {
-        Ok(U256::MAX)
+        Ok(U256::ZERO)
     }
 }
 
@@ -291,6 +291,10 @@ async fn direct_dev_prepare_builds_the_shared_calldata_and_relay_transaction() {
         direct_calls: 0,
     };
 
+    assert_eq!(
+        PreparationRpc.balance(relay.address()).await.unwrap(),
+        U256::ZERO
+    );
     let attempt = prepare_attempt(
         &mut RenewalPreparation {
             rpc: &PreparationRpc,
@@ -340,7 +344,11 @@ async fn direct_dev_prepare_builds_the_shared_calldata_and_relay_transaction() {
     let mut raw = raw_variant.raw_transaction.as_slice();
     let envelope = EthereumTxEnvelope::<TxEip4844>::decode_2718(&mut raw).unwrap();
     assert!(raw.is_empty());
-    assert!(matches!(&envelope, EthereumTxEnvelope::Legacy(_)));
+    let EthereumTxEnvelope::Eip1559(signed) = &envelope else {
+        panic!("new renewal attempt must be EIP-1559");
+    };
+    assert_eq!(signed.tx().max_priority_fee_per_gas, 0);
+    assert!(signed.tx().access_list.is_empty());
     assert_eq!(envelope.recover_signer().unwrap(), relay.address());
     assert_eq!(envelope.chain_id(), Some(DEVNET_CHAIN_ID));
     assert_eq!(envelope.nonce(), 7);
@@ -356,9 +364,10 @@ async fn direct_dev_prepare_builds_the_shared_calldata_and_relay_transaction() {
     assert_eq!(raw_variant.gas_limit, normative_gas);
     assert_eq!(envelope.gas_limit(), raw_variant.gas_limit);
     assert_eq!(
-        envelope.gas_price(),
-        Some(raw_variant.gas_price.to::<u128>())
+        envelope.max_fee_per_gas(),
+        raw_variant.gas_price.to::<u128>()
     );
+    assert_eq!(envelope.max_priority_fee_per_gas(), Some(0));
     assert_eq!(envelope.kind(), TxKind::Call(TEE_REGISTRY_ADDRESS));
     assert_eq!(envelope.value(), U256::ZERO);
     assert_eq!(envelope.input().as_ref(), attempt.calldata.as_slice());

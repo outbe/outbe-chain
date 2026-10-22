@@ -189,6 +189,56 @@ alloy_sol_types::sol! {
     );
 }
 
+fn renew_enclave_input() -> Bytes {
+    use outbe_primitives::{
+        tee_attestation_v1::{
+            AttestationEvidenceV1, AttestationMode, AttestationOperationV1,
+            GramineDirectEvidenceV1, NodeIdV1, RegistrationIntentV1,
+        },
+        tee_registry_abi_v1::ITeeRegistryV1,
+    };
+    let intent = RegistrationIntentV1 {
+        chain_id: [1; 32],
+        genesis_hash: B256::repeat_byte(1),
+        operation: AttestationOperationV1::RenewEnclave,
+        attestation_mode: AttestationMode::GramineDirectDev,
+        policy_hash: B256::repeat_byte(2),
+        node_id: NodeIdV1 {
+            reth_p2p_public: [
+                0x02, 0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac, 0x55, 0xa0, 0x62, 0x95, 0xce,
+                0x87, 0x0b, 0x07, 0x02, 0x9b, 0xfc, 0xdb, 0x2d, 0xce, 0x28, 0xd9, 0x59, 0xf2, 0x81,
+                0x5b, 0x16, 0xf8, 0x17, 0x98,
+            ],
+        },
+        enclave_id: B256::repeat_byte(3),
+        binding_id: B256::repeat_byte(4),
+        binding_version: 1,
+        registration_version: 1,
+        renewal_nonce: 1,
+        transition_nonce: 0,
+        requested_valid_until: 1,
+        recipient_x25519: [5; 32],
+        attestation_ed25519: [6; 32],
+        noise_responder_x25519: [7; 32],
+        node_host_authorization_hash: B256::repeat_byte(8),
+    };
+    let evidence = AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+        intent,
+        dev_attestation_public: [6; 32],
+        dev_signature: [9; 64],
+        transition_key_ready_proof: None,
+    })
+    .encode_canonical()
+    .unwrap();
+    ITeeRegistryV1::renewEnclaveCall {
+        evidence: evidence.into(),
+        nodeSignature: vec![1; 65].into(),
+        enclaveSignature: vec![2; 64].into(),
+    }
+    .abi_encode()
+    .into()
+}
+
 fn hyperlane_submit_checkpoint_input() -> Bytes {
     submitCheckpointCall {
         domain: 54_322_345,
@@ -218,6 +268,11 @@ fn zero_fee_hooks_order_above_any_fee_paying_transaction() {
             ZeroFeeHookId::HyperlaneSubmitCheckpoint,
             HYPERLANE_CONTROLLER_ADDRESS,
             hyperlane_submit_checkpoint_input(),
+        ),
+        (
+            ZeroFeeHookId::RenewEnclave,
+            outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
+            renew_enclave_input(),
         ),
     ] {
         assert_eq!(zero_fee_priority_class(hook), Some(1));

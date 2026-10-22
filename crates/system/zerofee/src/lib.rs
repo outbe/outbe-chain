@@ -33,6 +33,7 @@ pub mod hooks;
 mod hyperlane;
 mod oracle;
 pub mod precompile;
+mod renewal;
 pub mod runtime;
 pub mod schema;
 pub mod state;

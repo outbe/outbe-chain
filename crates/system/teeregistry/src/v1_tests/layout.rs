@@ -1,4 +1,5 @@
 use super::*;
+use outbe_primitives::zero_fee::VALIDATOR_V1_NODE_HASH_SLOT;
 
 #[test]
 fn finalized_admission_slot_contract_matches_the_physical_registry_layout() {
@@ -28,6 +29,10 @@ fn finalized_admission_slot_contract_matches_the_physical_registry_layout() {
         assert_eq!(
             registry.v1_node_intent_hash.base_slot(),
             U256::from(TEE_REGISTRY_NODE_INTENT_HASH_SLOT_V1)
+        );
+        assert_eq!(
+            registry.validator_v1_node_hash.base_slot(),
+            U256::from(VALIDATOR_V1_NODE_HASH_SLOT)
         );
         assert_eq!(
             registry.v1_node_policy_hash.base_slot(),
