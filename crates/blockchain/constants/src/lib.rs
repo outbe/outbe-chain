@@ -48,10 +48,9 @@ const _: () = {
     assert!(
         DEFAULTS.metadosis_offering_period_seconds == DEFAULT_METADOSIS_OFFERING_PERIOD_SECONDS
     );
-    assert!(
-        (DEFAULTS.metadosis_forming_period_seconds + DEFAULTS.metadosis_lookback_delay_seconds)
-            .is_multiple_of(SECONDS_PER_DAY)
-    );
+    assert!((DEFAULTS.metadosis_forming_period_seconds
+        + DEFAULTS.metadosis_lookback_delay_seconds)
+        .is_multiple_of(SECONDS_PER_DAY));
 };
 
 impl Default for GenesisProtocolParametersV1 {

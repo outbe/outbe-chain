@@ -134,9 +134,11 @@ fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_
             BlockContext::empty_for_tests(2, expected_metadosis_start - 1, CHAIN_ID),
             storage.clone(),
         );
-        assert!(crate::lifecycle::find_due_emission_day(&metadosis, &before_start)
-            .unwrap()
-            .is_none());
+        assert!(
+            crate::lifecycle::find_due_emission_day(&metadosis, &before_start)
+                .unwrap()
+                .is_none()
+        );
 
         let at_start = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(3, expected_metadosis_start, CHAIN_ID),
