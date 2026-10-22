@@ -447,13 +447,15 @@ fn pool_admits_delegated_sponsored_tx_even_when_daily_quota_is_exhausted() {
             .counter
             .write(&signer, pack_counter(current_day, FREE_TX_DAILY_LIMIT))
             .unwrap();
+        // Successful authorization is opaque; compare only the rejection.
+        let error = authorize_sponsorship(storage, signer, 0)
+            .expect_err("execution-layer sponsorship must reject exhausted quota");
         assert_eq!(
-            authorize_sponsorship(storage, signer, 0),
-            Err(ZeroFeePolicyError::FreeTxDailyExhausted {
+            error,
+            ZeroFeePolicyError::FreeTxDailyExhausted {
                 used: FREE_TX_DAILY_LIMIT,
                 limit: FREE_TX_DAILY_LIMIT,
-            }),
-            "execution-layer sponsorship must reject when daily quota is exhausted"
+            }
         );
     });
     let zerofee_slots = storage_provider
