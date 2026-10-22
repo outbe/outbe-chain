@@ -17,6 +17,10 @@ contract DeployCreate3Factory is Script {
     /// @notice Pinned salt for the factory itself. Bumping it moves every CREATE3 address.
     bytes32 internal constant FACTORY_SALT = keccak256("outbe:Create3Factory:v1.0.0");
 
+    /// @notice Where the factory lives on every chain. Its init code and `FACTORY_SALT` produce this
+    ///         address. A change of either moves it, so both change together with this constant.
+    address public constant EXPECTED_FACTORY = 0xe78edad9Cd60f3d368C625b1f32b2469c6cFd14b;
+
     function run() public virtual {
         vm.startBroadcast(vm.envUint("DEPLOYER_PK"));
         address factory = deployCreate3Factory();
@@ -32,6 +36,7 @@ contract DeployCreate3Factory is Script {
 
         bytes memory initCode = type(Create3Factory).creationCode;
         address predicted = vm.computeCreate2Address(FACTORY_SALT, keccak256(initCode), CREATE2_FACTORY);
+        require(predicted == EXPECTED_FACTORY, "Create3Factory init code no longer yields EXPECTED_FACTORY");
         if (predicted.code.length != 0) {
             console2.log("Create3Factory already deployed, reusing:", predicted);
             return predicted;

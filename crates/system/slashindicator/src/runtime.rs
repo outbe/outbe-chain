@@ -17,7 +17,7 @@ use crate::constants::{
     DEFAULT_PROPOSER_MISDEMEANOR_THRESHOLD, DEFAULT_SLASH_AMOUNT_PERCENT,
     DEFAULT_VOTER_FELONY_THRESHOLD, DEFAULT_VOTER_MISDEMEANOR_THRESHOLD,
 };
-use crate::errors::SlashIndicatorError;
+use crate::errors::{PercentAdmissionError, SlashIndicatorError};
 use crate::evidence::EvidenceCommittee;
 use crate::precompile::ISlashIndicator;
 use crate::schema::SlashIndicator;
@@ -62,21 +62,17 @@ impl SlashIndicator<'_> {
     }
 
     pub fn slash_amount_percent(&self) -> Result<u64> {
-        let v = self.config_slash_amount_percent.read()?;
-        Ok(if v == 0 {
-            DEFAULT_SLASH_AMOUNT_PERCENT
-        } else {
-            v
-        })
+        let stored = self.config_slash_amount_percent.read()?;
+        admitted_percent(stored, DEFAULT_SLASH_AMOUNT_PERCENT, "slash_amount_percent")
     }
 
     pub fn evidence_reward_percent(&self) -> Result<u64> {
-        let v = self.config_evidence_reward_percent.read()?;
-        Ok(if v == 0 {
-            DEFAULT_EVIDENCE_REWARD_PERCENT
-        } else {
-            v
-        })
+        let stored = self.config_evidence_reward_percent.read()?;
+        admitted_percent(
+            stored,
+            DEFAULT_EVIDENCE_REWARD_PERCENT,
+            "evidence_reward_percent",
+        )
     }
 
     // --- Shared slashing helpers ---
@@ -111,6 +107,10 @@ impl SlashIndicator<'_> {
             }
             .into());
         }
+        // Evidence entry points call this before dedup and effects. Reject an
+        // illegal percent here so a later felony cannot mark evidence first.
+        self.slash_amount_percent()?;
+        self.evidence_reward_percent()?;
         Ok(())
     }
 
@@ -137,15 +137,16 @@ impl SlashIndicator<'_> {
         Ok(Set::from_iter_dedup(keys))
     }
 
-    /// Felony core shared by evidence and byzantine felonies, in this order:
-    /// jail (not force-exit), felony count, then slash. Jail runs before
-    /// slash_stake, which leaves a JAILED status untouched. Returns the felony
-    /// count, the slash percent and the slashed amount.
+    /// Shared evidence felony core, in this order: admit the slash percent,
+    /// read the clock, jail (not force-exit), felony count, then slash. Jail
+    /// runs before slash_stake, which leaves a JAILED status untouched.
+    /// Returns the felony count, the slash percent and the slashed amount.
     fn jail_count_and_slash(
         &mut self,
         validator: Address,
         slashed_label: &'static str,
     ) -> Result<(u64, u64, U256)> {
+        let slash_percent = self.slash_amount_percent()?;
         self.storage.now_secs()?;
         let mut vs = ValidatorSet::new(self.storage.clone());
         vs.jail_validator(validator)?;
@@ -153,7 +154,6 @@ impl SlashIndicator<'_> {
         let fc = self.felony_count.read(&validator)? + 1;
         self.felony_count.write(&validator, fc)?;
 
-        let slash_percent = self.slash_amount_percent()?;
         let mut staking = Staking::new(self.storage.clone());
         let slashed_amount = staking.slash_stake(validator, slash_percent)?;
 
@@ -168,6 +168,7 @@ impl SlashIndicator<'_> {
         validator: Address,
         evidence_submitter: Address,
     ) -> Result<()> {
+        let reward_pct = self.evidence_reward_percent()?;
         let block_number = self.storage.block_number().unwrap_or(0);
         let (fc, slash_percent, slashed_amount) =
             self.jail_count_and_slash(validator, "evidence_felony")?;
@@ -194,17 +195,13 @@ impl SlashIndicator<'_> {
             "evidence-based felony applied - validator force-exited, stake slashed, submitter rewarded",
         );
 
-        // Reward evidence submitter: mint evidence_reward_percent of slashed amount.
+        // Reward evidence submitter: mint floor(slashed * percent / 100).
         // slash_stake burns slashed tokens from STAKING_ADDRESS.
         // This method mints the reward directly to the submitter.
         // The token supply decreases by (slashed - reward).
-        let mut reward = U256::ZERO;
-        if !slashed_amount.is_zero() {
-            let reward_pct = self.evidence_reward_percent()?;
-            reward = slashed_amount * U256::from(reward_pct) / U256::from(100u64);
-            if !reward.is_zero() {
-                self.storage.increase_balance(evidence_submitter, reward)?;
-            }
+        let reward = floor_percent(slashed_amount, reward_pct);
+        if !reward.is_zero() {
+            self.storage.increase_balance(evidence_submitter, reward)?;
         }
 
         self.emit(ISlashIndicator::EvidenceFelonyApplied {
@@ -212,48 +209,6 @@ impl SlashIndicator<'_> {
             submitter: evidence_submitter,
             slashedAmount: slashed_amount,
             submitterReward: reward,
-        })?;
-
-        Ok(())
-    }
-
-    /// Applies a felony for byzantine behavior.
-    ///
-    /// No production caller invokes this method. The same three evidence classes
-    /// go through `submit_conflicting_notarize_evidence`,
-    /// `submit_conflicting_finalize_evidence`, and
-    /// `submit_nullify_finalize_evidence`.
-    /// Unlike `apply_evidence_felony`, there is no external evidence submitter.
-    /// Thus this method distributes no reward.
-    pub fn slash_byzantine(&mut self, validator: Address) -> Result<()> {
-        let block_number = self.storage.block_number().unwrap_or(0);
-        let (fc, slash_percent, slashed_amount) =
-            self.jail_count_and_slash(validator, "byzantine")?;
-
-        journal_record(JournalRecord::ByzantineFelony {
-            wall_clock: iso8601_now(),
-            block_number,
-            validator: format!("{validator:?}"),
-            felony_count: fc,
-            slash_percent,
-            slashed_amount: slashed_amount.to_string(),
-        });
-
-        warn!(
-            target: "outbe::slashing",
-            event = "byzantine_felony",
-            %validator,
-            felony_count = fc,
-            slash_percent,
-            slashed_amount = %slashed_amount,
-            block_number,
-            "byzantine felony - equivocation detected, validator force-exited and slashed",
-        );
-
-        self.emit(ISlashIndicator::ByzantineFelony {
-            validator,
-            slashedAmount: slashed_amount,
-            felonyCount: fc,
         })?;
 
         Ok(())
@@ -317,6 +272,51 @@ pub(crate) fn registered_validator(vs: &ValidatorSet<'_>, pubkey_hash: B256) -> 
         return Err(SlashIndicatorError::SignerNotRegisteredValidator.into());
     }
     Ok(validator)
+}
+
+/// Admits a raw percent word. Zero selects `default_percent`.
+/// A word above `u64::MAX` is rejected before narrowing. A percent above 100 is rejected.
+pub fn admit_percent_word(
+    word: U256,
+    default_percent: u64,
+    field: &'static str,
+) -> std::result::Result<u64, PercentAdmissionError> {
+    if !word.is_zero() && word > U256::from(u64::MAX) {
+        return Err(PercentAdmissionError::WordExceedsU64 { field, word });
+    }
+    let stored = if word.is_zero() { 0 } else { word.to::<u64>() };
+    let percent = if stored == 0 { default_percent } else { stored };
+    if percent > 100 {
+        return Err(PercentAdmissionError::Above100 {
+            field,
+            value: percent,
+        });
+    }
+    Ok(percent)
+}
+
+/// Reads a stored `u64` percent through [`admit_percent_word`].
+fn admitted_percent(stored: u64, default_percent: u64, field: &'static str) -> Result<u64> {
+    admit_percent_word(U256::from(stored), default_percent, field).map_err(|error| {
+        let (field, value) = match error {
+            PercentAdmissionError::Above100 { field, value } => (field, value),
+            PercentAdmissionError::WordExceedsU64 { field, .. } => (field, u64::MAX),
+        };
+        SlashIndicatorError::SlashConfigPercentAbove100 { field, value }.into()
+    })
+}
+
+/// `floor(amount * percent / 100)` for an admitted `percent` in `0..=100`.
+///
+/// `amount / 100 * percent` fits in `U256` because `percent <= 100`. The
+/// remainder term is at most `99 * 100`.
+pub(crate) fn floor_percent(amount: U256, percent: u64) -> U256 {
+    debug_assert!(percent <= 100, "floor_percent requires an admitted percent");
+    let hundred = U256::from(100u64);
+    let percent = U256::from(percent);
+    let quotient = amount / hundred;
+    let remainder = amount % hundred;
+    quotient * percent + (remainder * percent) / hundred
 }
 
 /// Computes a canonical evidence hash that is order-independent.

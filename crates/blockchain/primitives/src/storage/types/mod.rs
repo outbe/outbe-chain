@@ -6,6 +6,8 @@ mod deque;
 mod mapping;
 mod set;
 mod slot;
+#[cfg(test)]
+mod test_support;
 mod vec;
 
 pub use array::StorageArray;

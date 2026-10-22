@@ -62,9 +62,11 @@ pub(super) fn start(
         Option<Preflight>,
         outbe_radicle::integration::RadicleStatusHandle,
     ),
-    radicle_shutdown_token: tokio_util::sync::CancellationToken,
-    shutdown: outbe_node::shutdown::NodeShutdown,
-    publication_mailbox: outbe_primitives::radicle_publication::RepositoryPublicationMailbox,
+    (radicle_shutdown_token, shutdown, publication_mailbox): (
+        tokio_util::sync::CancellationToken,
+        outbe_node::shutdown::NodeShutdown,
+        outbe_primitives::radicle_publication::RepositoryPublicationMailbox,
+    ),
 ) -> eyre::Result<RadicleLaunch> {
     let proof_chain_id = node.chain_spec().chain().id();
     let genesis_hash = node.chain_spec().genesis_hash();

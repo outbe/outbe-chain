@@ -13,13 +13,13 @@ pub struct Staking {
     pub config_min_stake: Slot<U256>,
     // slot 1: unbonding period in seconds
     pub config_unbonding_period: Slot<u64>,
-    // slot 2: maximum stake percent of total staked (e.g. 5 = 5%)
+    // slot 2: maximum stake percent of total staked (5 = 5%). A value outside (0, 100) disables the cap.
     pub config_max_stake_percent: Slot<u64>,
     // slot 3: mapping(validator address => staked amount)
     pub stake_amount: Mapping<Address, U256>,
     // slot 4: total amount staked across all validators
     pub total_staked: Slot<U256>,
-    // slot 5: number of unbonding queue entries (ever-incrementing tail pointer)
+    // slot 5: unbonding queue tail. Trimmed zero entries free the index for reuse.
     pub unbonding_count: Slot<u32>,
     // slot 6: mapping(index => validator address) for unbonding queue
     pub unbonding_validator: Mapping<u32, Address>,

@@ -187,31 +187,6 @@
   },
   {
     "type": "event",
-    "name": "ByzantineFelony",
-    "inputs": [
-      {
-        "name": "validator",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "slashedAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "felonyCount",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "EvidenceFelonyApplied",
     "inputs": [
       {
@@ -555,6 +530,11 @@
   },
   {
     "type": "error",
+    "name": "EvidenceRewardOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "EvidenceSignatureSlice",
     "inputs": []
   },
@@ -619,6 +599,17 @@
     "type": "error",
     "name": "InvalidCommitteePubkeyInSnapshot",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidEvidenceRewardPercent",
+    "inputs": [
+      {
+        "name": "percent",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
   },
   {
     "type": "error",
@@ -816,6 +807,11 @@
   },
   {
     "type": "error",
+    "name": "NonCanonicalVarint",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NonVrfVerifyRejection",
     "inputs": [
       {
@@ -903,6 +899,22 @@
     "type": "error",
     "name": "SignerPubkeyMismatchAtIndex",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SlashConfigPercentAbove100",
+    "inputs": [
+      {
+        "name": "field",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "value",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
   },
   {
     "type": "error",

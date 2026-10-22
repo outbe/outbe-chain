@@ -2,6 +2,7 @@
 
 use alloy_primitives::B256;
 use outbe_primitives::tee_attestation_v1::AttestationMode;
+use outbe_slashindicator::errors::PercentAdmissionError;
 
 /// Represents errors during node launch, TEE admission, and shutdown.
 #[derive(Debug, thiserror::Error)]
@@ -211,6 +212,12 @@ pub(crate) enum LaunchError {
     ConsensusStackFailedWhileReaping {
         /// Task failure details.
         details: String,
+    },
+    /// Genesis slash-indicator percent is above 100 or wider than `u64`.
+    #[error("genesis slash indicator percent rejected before startup: {cause}")]
+    InvalidSlashIndicatorGenesisPercent {
+        /// Shared admission failure. The same rule backs the runtime getters.
+        cause: PercentAdmissionError,
     },
 }
 

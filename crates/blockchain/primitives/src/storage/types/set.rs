@@ -122,16 +122,9 @@ impl<'storage, T: Storable + StorageKey> StorageSet<'storage, T> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::test_support::with_storage;
     use super::*;
-    use crate::storage::hashmap::HashMapStorageProvider;
-    use crate::storage::StorageHandle;
     use alloy_primitives::address;
-
-    fn with_storage<F: FnOnce(StorageHandle)>(f: F) {
-        let mut provider = HashMapStorageProvider::new(1);
-        let storage = StorageHandle::new(&mut provider);
-        f(storage);
-    }
 
     const ADDR: Address = address!("0x0000000000000000000000000000000000001003");
 

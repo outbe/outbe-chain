@@ -33,9 +33,10 @@ pub fn execute(
     fidelity_key: &[u8; 32],
     request: &LysisRequest,
 ) -> Result<LysisResult> {
-    if request.chain_id == 0
+    let invalid_request_metadata = request.chain_id == 0
         || request.tributes.is_empty()
-        || request.fidelity.timestamp != request.timestamp
+        || request.fidelity.timestamp != request.timestamp;
+    if invalid_request_metadata
         || request.fidelity.entries.len() != request.tributes.len()
         || request
             .tributes
@@ -62,11 +63,12 @@ pub fn execute(
         .zip(&request.fidelity.entries)
     {
         let context = &tribute.context;
-        if context.chain_id != request.chain_id
+        let invalid_context = context.chain_id != request.chain_id
             || context.worldwide_day != request.worldwide_day
-            || context.owner.is_zero()
-            || fidelity.owner != context.owner
-            || entry.owner != context.owner
+            || context.owner.is_zero();
+        let invalid_owners = || fidelity.owner != context.owner || entry.owner != context.owner;
+        if invalid_context
+            || invalid_owners()
             || derive_poseidon_entity_id(context.owner, context.worldwide_day)
                 .map_err(|_| rejected())?
                 != context.tribute_id

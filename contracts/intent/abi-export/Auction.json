@@ -12,6 +12,19 @@
   },
   {
     "type": "function",
+    "name": "MAX_QUOTES_PER_ORDER",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "acceptOwnership",
     "inputs": [],
     "outputs": [],
@@ -266,7 +279,7 @@
     "name": "renounceOwnership",
     "inputs": [],
     "outputs": [],
-    "stateMutability": "nonpayable"
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -666,6 +679,11 @@
   },
   {
     "type": "error",
+    "name": "RenounceDisabled",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RevealNotEnded",
     "inputs": []
   },
@@ -677,6 +695,11 @@
   {
     "type": "error",
     "name": "UnauthorizedRouter",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroOutputAmount",
     "inputs": []
   },
   {

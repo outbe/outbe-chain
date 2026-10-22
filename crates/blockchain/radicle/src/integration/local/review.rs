@@ -67,26 +67,27 @@ impl Request {
     }
 }
 
-pub(super) async fn sign(
-    reader: Arc<dyn RepositoryReceiptReader>,
-    authority: Option<Arc<dyn RepositoryAuthorityReader>>,
-    resolver: Option<EndpointNetworkResolver>,
-    store: Option<Arc<Mutex<ReviewPackageStore>>>,
-    readers: Arc<Semaphore>,
-    permit: OwnedSemaphorePermit,
-    request: Request,
-) -> Result<Vec<u8>, Error> {
-    let signer = resolver.clone().ok_or(Error::Unavailable)?;
+pub(super) struct ReviewInput {
+    pub state: super::serve::ServerState,
+    pub permit: OwnedSemaphorePermit,
+}
+
+pub(super) async fn sign(input: ReviewInput, request: Request) -> Result<Vec<u8>, Error> {
+    let signer = input.state.material.clone().ok_or(Error::Unavailable)?;
     let context = preparation::current(
-        reader.clone(),
-        authority,
-        resolver,
-        store.clone(),
-        readers.clone(),
-        permit,
+        preparation::PreparationInput {
+            state: input.state.clone(),
+            permit: input.permit,
+        },
         request.proposal,
     )
     .await?;
+    let super::serve::ServerState {
+        reader,
+        publications: store,
+        readers,
+        ..
+    } = input.state;
     let permit = readers
         .try_acquire_owned()
         .map_err(|_| Error::Unavailable)?;
@@ -187,25 +188,24 @@ pub(super) async fn sign(
 }
 
 pub(super) async fn publish(
-    reader: Arc<dyn RepositoryReceiptReader>,
-    authority: Option<Arc<dyn RepositoryAuthorityReader>>,
-    resolver: Option<EndpointNetworkResolver>,
-    store: Option<Arc<Mutex<ReviewPackageStore>>>,
-    readers: Arc<Semaphore>,
-    permit: OwnedSemaphorePermit,
+    input: ReviewInput,
     request: publication::Request,
 ) -> Result<Vec<u8>, Error> {
-    let signer = resolver.clone().ok_or(Error::Unavailable)?;
+    let signer = input.state.material.clone().ok_or(Error::Unavailable)?;
     let context = preparation::current(
-        reader.clone(),
-        authority,
-        resolver,
-        store.clone(),
-        readers.clone(),
-        permit,
+        preparation::PreparationInput {
+            state: input.state.clone(),
+            permit: input.permit,
+        },
         request.body.proposal_id,
     )
     .await?;
+    let super::serve::ServerState {
+        reader,
+        publications: store,
+        readers,
+        ..
+    } = input.state;
     let permit = readers
         .try_acquire_owned()
         .map_err(|_| Error::Unavailable)?;
@@ -276,17 +276,99 @@ pub(super) async fn publish(
     })
     .await
     .map_err(|_| Error::Unavailable)??;
-    publication::finish_selected(&signer, selected, batch).await
+    publication_response(signer, selected, batch).await
+}
+
+pub(super) async fn publication_response(
+    signer: EndpointNetworkResolver,
+    selected: Arc<crate::integration::publication::store::SelectedReviewPublication>,
+    batch: Option<outbe_primitives::radicle_publication::PublicationBatch>,
+) -> Result<Vec<u8>, Error> {
+    if let Some(batch) = batch {
+        signer
+            .queue_review_publication(selected, batch)
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        Ok([publication::QUEUE.as_slice(), &[2]].concat())
+    } else {
+        let attestation = signer
+            .attest_review(selected.clone())
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        let batch = outbe_primitives::radicle_publication::PublicationBatch {
+            body: selected.body().clone(),
+            attestations: vec![attestation],
+        }
+        .to_bytes()
+        .map_err(|_| Error::Protocol)?;
+        Ok([publication::ATTEST.as_slice(), &[2], &batch].concat())
+    }
+}
+
+struct SigningRequest<'a> {
+    magic: &'a [u8; 4],
+    subject: &'a RepositorySubject,
+    signature: Option<&'a BlsEnvelope>,
+}
+
+enum SigningJob<'a> {
+    Merge(&'a crate::integration::merge::CheckpointPreparedMerge),
+    MergeRefs(
+        &'a crate::integration::merge::CheckpointPreparedMergeRefs,
+        &'a BlsEnvelope,
+    ),
+    Review(&'a CheckpointPreparedReview),
+    ReviewRefs(&'a CheckpointPreparedReviewRefs, &'a BlsEnvelope),
+}
+
+impl SigningJob<'_> {
+    fn request(&self) -> SigningRequest<'_> {
+        let (magic, subject, signature) = match self {
+            Self::Merge(job) => (MERGE_COB, job.subject(), None),
+            Self::MergeRefs(job, signature) => (MERGE_REFS, job.subject(), Some(*signature)),
+            Self::Review(job) => (COB, job.subject(), None),
+            Self::ReviewRefs(job, signature) => (REFS, job.subject(), Some(*signature)),
+        };
+        SigningRequest {
+            magic,
+            subject,
+            signature,
+        }
+    }
+
+    fn verify(
+        &self,
+        context: &PatchPreparationContext,
+        sender: &commonware_cryptography::bls12381::PublicKey,
+        frame: &RepositoryPartial,
+    ) -> Result<(), Error> {
+        let material = &context.material;
+        let state = &context.state;
+        match self {
+            Self::Merge(job) => material.verify_current_merge_partial(job, state, sender, frame),
+            Self::MergeRefs(job, _) => {
+                material.verify_current_merge_refs_partial(job, state, sender, frame)
+            }
+            Self::Review(job) => material.verify_current_review_partial(job, state, sender, frame),
+            Self::ReviewRefs(job, _) => {
+                material.verify_current_review_refs_partial(job, state, sender, frame)
+            }
+        }
+        .map_err(|_| Error::Protocol)
+    }
 }
 
 fn request(
-    magic: &[u8; 4],
     chain: ChainIdentity,
     context: &PatchPreparationContext,
     repo: &Repository,
-    subject: &RepositorySubject,
-    signature: Option<&BlsEnvelope>,
+    input: SigningRequest<'_>,
 ) -> Result<Vec<u8>, Error> {
+    let SigningRequest {
+        magic,
+        subject,
+        signature,
+    } = input;
     if context.state.authority().chain_id() != chain.chain_id
         || context.state.authority().genesis_hash() != chain.genesis_hash
         || repo.id().into_sha1() != Some(context.state.checkpoint().receipt().body.repo_id.0)
@@ -316,6 +398,21 @@ fn request(
 }
 
 impl LocalReceiptClient {
+    async fn signing_partial(
+        &self,
+        context: &PatchPreparationContext,
+        repo: &Repository,
+        job: SigningJob<'_>,
+    ) -> Result<RepositoryPartial, Error> {
+        let input = job.request();
+        let magic = input.magic;
+        let request = request(self.chain, context, repo, input)?;
+        let bytes = self.exchange(&request, bootstrap::SIGN_FRAME).await?;
+        let (frame, sender) = bootstrap::decode_partial(&bytes, magic, &context.material)?;
+        job.verify(context, &sender, &frame)?;
+        Ok(frame)
+    }
+
     pub async fn attest_review_publication(
         &self,
         context: &PatchPreparationContext,
@@ -363,9 +460,11 @@ impl LocalReceiptClient {
             publication::ATTEST,
             repo,
             git::Oid::ZERO_SHA1,
-            body,
-            manifest,
-            witness,
+            publication::PublicationInput {
+                body,
+                manifest,
+                witness,
+            },
         )?;
         let bytes = self.exchange(&request, publication::ATTEST_FRAME).await?;
         if bytes == [publication::ATTEST.as_slice(), &[0]].concat() {
@@ -425,9 +524,11 @@ impl LocalReceiptClient {
             publication::QUEUE,
             repo,
             git::Oid::ZERO_SHA1,
-            body,
-            manifest,
-            witness,
+            publication::PublicationInput {
+                body,
+                manifest,
+                witness,
+            },
         )?;
         request.extend(batch.to_bytes().map_err(|_| Error::Protocol)?);
         let response = self.exchange(&request, 5).await?;
@@ -446,14 +547,8 @@ impl LocalReceiptClient {
         repo: &Repository,
         job: &crate::integration::merge::CheckpointPreparedMerge,
     ) -> Result<RepositoryPartial, Error> {
-        let request = request(MERGE_COB, self.chain, context, repo, job.subject(), None)?;
-        let bytes = self.exchange(&request, bootstrap::SIGN_FRAME).await?;
-        let (frame, sender) = bootstrap::decode_partial(&bytes, MERGE_COB, &context.material)?;
-        context
-            .material
-            .verify_current_merge_partial(job, &context.state, &sender, &frame)
-            .map_err(|_| Error::Protocol)?;
-        Ok(frame)
+        self.signing_partial(context, repo, SigningJob::Merge(job))
+            .await
     }
     pub async fn sign_merge_refs(
         &self,
@@ -462,21 +557,8 @@ impl LocalReceiptClient {
         job: &crate::integration::merge::CheckpointPreparedMergeRefs,
         signature: &BlsEnvelope,
     ) -> Result<RepositoryPartial, Error> {
-        let request = request(
-            MERGE_REFS,
-            self.chain,
-            context,
-            repo,
-            job.subject(),
-            Some(signature),
-        )?;
-        let bytes = self.exchange(&request, bootstrap::SIGN_FRAME).await?;
-        let (frame, sender) = bootstrap::decode_partial(&bytes, MERGE_REFS, &context.material)?;
-        context
-            .material
-            .verify_current_merge_refs_partial(job, &context.state, &sender, &frame)
-            .map_err(|_| Error::Protocol)?;
-        Ok(frame)
+        self.signing_partial(context, repo, SigningJob::MergeRefs(job, signature))
+            .await
     }
     pub async fn sign_review(
         &self,
@@ -484,14 +566,8 @@ impl LocalReceiptClient {
         repo: &Repository,
         job: &CheckpointPreparedReview,
     ) -> Result<RepositoryPartial, Error> {
-        let request = request(COB, self.chain, context, repo, job.subject(), None)?;
-        let bytes = self.exchange(&request, bootstrap::SIGN_FRAME).await?;
-        let (frame, sender) = bootstrap::decode_partial(&bytes, COB, &context.material)?;
-        context
-            .material
-            .verify_current_review_partial(job, &context.state, &sender, &frame)
-            .map_err(|_| Error::Protocol)?;
-        Ok(frame)
+        self.signing_partial(context, repo, SigningJob::Review(job))
+            .await
     }
     pub async fn sign_review_refs(
         &self,
@@ -500,21 +576,8 @@ impl LocalReceiptClient {
         job: &CheckpointPreparedReviewRefs,
         review_signature: &BlsEnvelope,
     ) -> Result<RepositoryPartial, Error> {
-        let request = request(
-            REFS,
-            self.chain,
-            context,
-            repo,
-            job.subject(),
-            Some(review_signature),
-        )?;
-        let bytes = self.exchange(&request, bootstrap::SIGN_FRAME).await?;
-        let (frame, sender) = bootstrap::decode_partial(&bytes, REFS, &context.material)?;
-        context
-            .material
-            .verify_current_review_refs_partial(job, &context.state, &sender, &frame)
-            .map_err(|_| Error::Protocol)?;
-        Ok(frame)
+        self.signing_partial(context, repo, SigningJob::ReviewRefs(job, review_signature))
+            .await
     }
 }
 

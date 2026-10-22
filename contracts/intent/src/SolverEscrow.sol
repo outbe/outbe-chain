@@ -79,7 +79,6 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
     event CollateralSlashed(bytes32 indexed orderId, address indexed solver, address token, uint256 amount);
     event CollateralBpsUpdated(uint256 oldBps, uint256 newBps);
     event RewardDistributed(address indexed receiver, address indexed token, uint256 amount);
-    event SlashedPoolSwept(address indexed token, address indexed to, uint256 amount);
 
     // ============ Errors ============
 
