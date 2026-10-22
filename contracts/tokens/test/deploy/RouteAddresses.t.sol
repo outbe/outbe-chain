@@ -90,6 +90,10 @@ contract RouteAddressesTest is Test {
         _assertRoute(deploy.routeByLabel("USDC").spec, "USDC");
     }
 
+    function test_EurcRoute_DerivesFromItsLabels() public {
+        _assertRoute(deploy.routeByLabel("EURC").spec, "EURC");
+    }
+
     function test_WcoenRoute_DerivesFromItsLabels() public {
         _assertRoute(deploy.routeByLabel("WCOEN").spec, "WCOEN");
     }

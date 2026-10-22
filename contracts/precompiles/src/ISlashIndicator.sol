@@ -19,6 +19,9 @@ interface ISlashIndicator {
     error InvalidBlsSignature();
     error UnexpectedEndOfVarint();
     error VarintOverflow();
+    error NonCanonicalVarint();
+    error InvalidEvidenceRewardPercent(uint64 percent);
+    error EvidenceRewardOverflow();
     error SlashGuardRingSeqOverflow();
     error SubmitterNotActiveValidator(address caller, uint8 status);
     error MissingCommitteeSnapshotForEpoch(uint64 epoch);
@@ -66,6 +69,8 @@ interface ISlashIndicator {
     error PartialNotIdentitySigned();
     error MalformedCommitmentOrPartial();
     error ValidSeedPartialNotSlashable();
+    /// Stored slash-amount or evidence-reward percent is above 100.
+    error SlashConfigPercentAbove100(string field, uint64 value);
 
     /// Emitted when a proposer miss triggers a felony (forced exit + slash).
     event ProposerFelony(address indexed validator, uint64 missCount, uint64 felonyCount);
@@ -83,10 +88,6 @@ interface ISlashIndicator {
     event EvidenceFelonyApplied(
         address indexed validator, address indexed submitter, uint256 slashedAmount, uint256 submitterReward
     );
-
-    /// Emitted when the consensus layer detects byzantine behavior
-    /// (equivocation: ConflictingNotarize/ConflictingFinalize/NullifyFinalize).
-    event ByzantineFelony(address indexed validator, uint256 slashedAmount, uint64 felonyCount);
 
     /// Emitted when `submitInvalidVrfProofEvidence` accepts a VRF-class
     /// verifier failure and applies the felony to the child block's Phase 1

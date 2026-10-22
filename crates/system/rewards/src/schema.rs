@@ -145,13 +145,19 @@ pub struct Rewards {
     /// authentication. See `pending_epoch_at`.
     pub pending_committee_set_hash_at: Mapping<u64, B256>,
 
-    /// Finalized block number -> its canonical consensus `view`, for
-    /// authentication. Together with `pending_parent_view_at`, this pins the FULL
-    /// signed binding `{epoch, view, parent_view, fb_hash}` at the body. Thus a
-    /// proposer cannot record a credit whose aggregate is over a non-canonical
-    /// view of the same `fb_hash` (cross-view equivocation). The pre-exec BLS
-    /// verify only ties the credit's view to its signatures. This map ties it to the
-    /// finalized certificate.
+    /// Maps each finalized block number to its canonical consensus `view`.
+    /// Together with `pending_parent_view_at`, this map stores the full signed
+    /// binding `{epoch, view, parent_view, fb_hash}` at the body.
+    /// This binding prevents a proposer from recording a credit for a noncanonical
+    /// view of the same `fb_hash` (cross-view equivocation).
+    /// Pre-execution BLS verification only checks the credit's view against its signatures.
+    /// These maps bind the credit to the finalized certificate.
+    ///
+    /// Consensus checks the binding against the signed proposal before it processes
+    /// certified parent accounting (CPA) metadata.
+    /// EVM `LateFinalizeCredits` checks the stored binding.
+    /// The V3 economic replay fingerprint does not hash `parent_view`.
+    /// It does not authenticate certificates.
     pub pending_view_at: Mapping<u64, u64>,
 
     /// Finalized block number -> its canonical `parent_view`, for

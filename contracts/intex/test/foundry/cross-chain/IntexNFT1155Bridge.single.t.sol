@@ -116,6 +116,19 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
         assertEq(tokenB.balanceOf(user, TOKEN_ID), AMOUNT);
     }
 
+    function test_send_without_the_fee_does_not_use_the_float() public {
+        SendParam memory sendParam =
+            SendParam({dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), tokenId: TOKEN_ID, units: AMOUNT});
+        vm.deal(address(adapterA), 1 ether);
+
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(ERC7786MessengerBase.MsgValueBelowFee.selector, 0, FEE));
+        adapterA.send(sendParam);
+
+        assertEq(address(adapterA).balance, 1 ether, "the float is untouched");
+        assertEq(tokenA.balanceOf(user, TOKEN_ID), AMOUNT, "nothing burned");
+    }
+
     function test_send_partial_amount() public {
         uint256 sendAmount = AMOUNT / 2;
 
@@ -325,6 +338,13 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
         assertEq(tokenA.balanceOf(user, failTokenId), 0, "source burned");
         (,,, bool parked) = adapterB.failedCrosschainMints(receiveId, 0);
         assertTrue(parked, "parked on B");
+
+        // The reclaimer pays the fee: the quote names it, and B's native float is never used.
+        assertEq(adapterB.quoteReclaimToSource(receiveId, 0), FEE);
+        vm.deal(address(adapterB), 1 ether);
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(ERC7786MessengerBase.MsgValueBelowFee.selector, 0, FEE));
+        adapterB.reclaimToSource(receiveId, 0);
 
         // Reclaim: B sends the transfer back to its origin A - the only exit that skips B's gate.
         vm.prank(user);

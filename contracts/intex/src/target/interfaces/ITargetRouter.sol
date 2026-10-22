@@ -145,6 +145,8 @@ interface ITargetRouter {
     error AlreadyResolved(uint256 idx);
     /// @notice A day's proceeds are in a token the proceeds bridge does not move.
     error ProceedsTokenNotBridged(address dayToken, address bridgeToken);
+    /// @notice An inbound message came from a chain other than Outbe.
+    error UnexpectedSourceChain(uint32 srcChainId);
 
     // --- Admin ---
     /// @notice Wire contract dependencies.

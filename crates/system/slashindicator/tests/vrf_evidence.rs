@@ -17,7 +17,7 @@
 //!     -> verifier -> felony chain is wired correctly.
 //!   * the recovered proposer is byte-equal to the EVM address derived
 //!     from the test's `PrivateKeySigner`.
-//!   * the felony helper credits the submitter with 10% of the slashed
+//!   * the felony helper credits the submitter with 100% of the slashed
 //!     amount and jails the proposer.
 //!
 //! The tests use `submit_invalid_vrf_evidence_with_schedule`. This
@@ -731,7 +731,7 @@ fn invalid_vrf_evidence_for_non_vrf_failure_class_rejects() {
 //     validator (ecrecover <-> ValidatorSet identity wiring is correct)
 //   * proposer status flips ACTIVE -> JAILED
 //   * stake is slashed by 8% (the helper's config default)
-//   * submitter receives 10% of slashed amount in their balance
+//   * submitter receives 100% of slashed amount in their balance
 //   * dedup slot is marked
 //   * second submission of the same evidence is rejected with
 //     "evidence already processed"
@@ -757,6 +757,41 @@ fn invalid_vrf_proof_evidence_slashes_child_proposer() {
         let initial_stake = Staking::new(storage.clone()).get_stake(proposer).unwrap();
 
         let mut si = SlashIndicator::new(storage.clone());
+        si.config_evidence_reward_percent.write(101).unwrap();
+        let initial_burn_balance = storage.balance(STAKING_ADDRESS).unwrap();
+        let error = storage
+            .with_checkpoint(|| {
+                si.submit_invalid_vrf_evidence_with_schedule(
+                    SUBMITTER,
+                    &evidence,
+                    &relaxed_schedule(),
+                )
+            })
+            .unwrap_err();
+        assert!(matches!(error,
+            PrecompileError::RevertBytes(bytes)
+                if bytes.as_ref() == Isi::SlashConfigPercentAbove100 { field: "evidence_reward_percent".into(), value: 101 }.abi_encode()));
+        assert!(!si
+            .invalid_vrf_evidence_processed
+            .read(&invalid_vrf_evidence_hash_v2(CHILD_BLOCK_HASH, phase1_hash))
+            .unwrap());
+        assert_eq!(si.get_felony_count(proposer).unwrap(), 0);
+        assert!(test_lifecycle_of(storage.clone(), proposer)
+            .unwrap()
+            .is_active_status());
+        assert_eq!(
+            Staking::new(storage.clone()).get_stake(proposer).unwrap(),
+            initial_stake
+        );
+        assert_eq!(
+            storage.balance(STAKING_ADDRESS).unwrap(),
+            initial_burn_balance
+        );
+        assert_eq!(
+            storage.balance(SUBMITTER).unwrap(),
+            initial_submitter_balance
+        );
+        si.config_evidence_reward_percent.write(0).unwrap();
         si.submit_invalid_vrf_evidence_with_schedule(SUBMITTER, &evidence, &relaxed_schedule())
             .unwrap();
 
@@ -777,14 +812,14 @@ fn invalid_vrf_proof_evidence_slashes_child_proposer() {
             "stake must be 92% of original after 8% slash"
         );
 
-        // (c) Submitter received 10% of slashed amount.
+        // (c) Submitter received 100% of the slashed amount.
         let slashed = initial_stake - remaining_stake;
-        let expected_reward = slashed * U256::from(10u64) / U256::from(100u64);
+        let expected_reward = slashed * U256::from(100u64) / U256::from(100u64);
         let final_submitter_balance = storage.balance(SUBMITTER).unwrap();
         assert_eq!(
             final_submitter_balance - initial_submitter_balance,
             expected_reward,
-            "submitter must receive 10% of slashed stake"
+            "submitter must receive 100% of slashed stake"
         );
 
         // (d) Dedup slot marked at the canonical (child, phase1) key.
@@ -1047,11 +1082,11 @@ fn multiple_evidence_with_different_failure_codes_for_same_child_apply_at_most_o
 // ===========================================================================
 // body test #10 - confirms the new entry-point reuses the
 // existing `apply_evidence_felony` helper rather than reimplementing
-// 8%/10% economics inline. Asserts the same conservation that the
+// 8%/100% economics inline. Asserts the same conservation that the
 // double-proposal and conflicting-vote paths already enforce:
 //
 //   * slashed = 8% of initial stake
-//   * submitter reward = 10% of slashed
+//   * submitter reward = 100% of slashed
 //   * destroyed supply = slashed - reward (slash burns from STAKING_ADDRESS,
 //     reward is minted back to submitter, so net burn is the remainder)
 // ===========================================================================
@@ -1086,14 +1121,14 @@ fn invalid_vrf_evidence_uses_existing_evidence_felony_economics() {
             "slash must equal 8% of stake (apply_evidence_felony default)",
         );
 
-        // 10% of slashed goes to submitter. The rest is burned from
-        // STAKING_ADDRESS (same conservation as
+        // 100% of slashed goes to the submitter. STAKING_ADDRESS still
+        // loses the slashed amount (same conservation as
         // submitDoubleProposalEvidence / submitConflictingVoteEvidence).
-        let expected_reward = expected_slashed * U256::from(10u64) / U256::from(100u64);
+        let expected_reward = expected_slashed * U256::from(100u64) / U256::from(100u64);
         let submitter_delta = storage.balance(SUBMITTER).unwrap() - initial_submitter_balance;
         assert_eq!(
             submitter_delta, expected_reward,
-            "submitter reward must equal 10% of slashed (apply_evidence_felony default)",
+            "submitter reward must equal 100% of slashed (apply_evidence_felony default)",
         );
 
         let staking_delta = initial_staking_balance - storage.balance(STAKING_ADDRESS).unwrap();

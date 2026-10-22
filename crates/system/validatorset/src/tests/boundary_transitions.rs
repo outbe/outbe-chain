@@ -323,7 +323,7 @@ struct BoundaryColumns {
 impl BoundaryColumns {
     fn read(vs: &ValidatorSet<'_>, validator: Address) -> Result<Self> {
         Ok(Self {
-            stake: vs.val_stake.read(&validator)?,
+            stake: vs.read_authoritative_bonded(&validator)?,
             status: vs.val_status.read(&validator)?,
             history: [
                 vs.val_slash_count.read(&validator)?,
@@ -504,4 +504,147 @@ fn accepted_boundary_writes_exactly_the_changed_columns_then_hash_flag_and_event
         }
     );
     Ok(())
+}
+
+#[test]
+fn mixed_boundary_replicas_agree() -> Result<()> {
+    let activate = |storage: &mut HashMapStorageProvider| {
+        storage.enter(|storage| {
+            ValidatorSet::new(storage).test_activate_validated_boundary_set_with_expiry_exclusions(
+                &[A, B, E],
+                HASH,
+                11,
+                &[F, G],
+            )
+        })
+    };
+    let (mut left, left_setup) = mixed_boundary_storage();
+    let (mut right, right_setup) = mixed_boundary_storage();
+    left_setup?;
+    right_setup?;
+    activate(&mut left)?;
+    activate(&mut right)?;
+    assert_eq!(boundary_view(&mut left), boundary_view(&mut right));
+    Ok(())
+}
+
+#[test]
+fn omitted_joining_without_share_keeps_pending_flag() -> Result<()> {
+    let (mut storage, setup) = boundary_storage(|vs| joining(vs, A));
+    setup?;
+    storage.enter(|storage| -> Result<()> {
+        let vs = ValidatorSet::new(storage);
+        assert!(!vs.val_has_bls_share.read(&A)?);
+        assert!(vs.has_pending_set_change()?);
+        Ok(())
+    })?;
+    storage.enter(|storage| {
+        ValidatorSet::new(storage).test_activate_validated_boundary_set(&[], HASH, 11)
+    })?;
+    storage.enter(|storage| -> Result<()> {
+        let vs = ValidatorSet::new(storage);
+        assert!(matches!(
+            vs.validator_lifecycle(A)?,
+            ValidatorLifecycle::Joining(_)
+        ));
+        assert!(!vs.val_has_bls_share.read(&A)?);
+        assert!(vs.has_pending_set_change()?);
+        Ok(())
+    })
+}
+
+#[test]
+fn included_post_freeze_retained_and_exiting_keep_share_and_flag() -> Result<()> {
+    let (mut storage, setup) = boundary_storage(|vs| {
+        active(vs, A)?;
+        active(vs, B)
+    });
+    setup?;
+    storage.set_block_number(12);
+    storage.enter(|storage| -> Result<()> {
+        let mut vs = ValidatorSet::new(storage);
+        vs.jail_validator(A)?;
+        vs.deactivate_validator(OWNER, B)?;
+        vs.val_has_bls_share.write(&A, true)?;
+        vs.val_has_bls_share.write(&B, true)?;
+        vs.test_set_pending_set_change(false)
+    })?;
+    storage.enter(|storage| {
+        ValidatorSet::new(storage).test_activate_validated_boundary_set(&[A, B], HASH, 11)
+    })?;
+    storage.enter(|storage| -> Result<()> {
+        let vs = ValidatorSet::new(storage);
+        assert!(matches!(
+            vs.validator_lifecycle(A)?,
+            ValidatorLifecycle::JailRetained(_)
+        ));
+        assert!(matches!(
+            vs.validator_lifecycle(B)?,
+            ValidatorLifecycle::Exiting(_)
+        ));
+        assert!(vs.val_has_bls_share.read(&A)?);
+        assert!(vs.val_has_bls_share.read(&B)?);
+        assert!(vs.has_pending_set_change()?);
+        Ok(())
+    })
+}
+
+#[test]
+fn omitted_pre_freeze_jail_retained_clears_pending_flag() -> Result<()> {
+    let (mut storage, setup) = boundary_storage(|vs| {
+        jail_retained(vs, A)?;
+        vs.test_set_pending_set_change(true)
+    });
+    setup?;
+    storage.enter(|storage| {
+        ValidatorSet::new(storage).test_activate_validated_boundary_set(&[], HASH, 11)
+    })?;
+    storage.enter(|storage| -> Result<()> {
+        let vs = ValidatorSet::new(storage);
+        assert!(matches!(
+            vs.validator_lifecycle(A)?,
+            ValidatorLifecycle::Jail(_)
+        ));
+        assert!(!vs.has_pending_set_change()?);
+        Ok(())
+    })
+}
+
+#[test]
+fn jail_unstake_to_unbonding_does_not_set_pending_flag() -> Result<()> {
+    let (mut storage, setup) = boundary_storage(|vs| {
+        jail_retained(vs, A)?;
+        vs.activate_reshared_set(&[], B256::ZERO)?;
+        vs.test_set_pending_set_change(false)
+    });
+    setup?;
+    storage.enter(|storage| -> Result<()> {
+        let mut vs = ValidatorSet::new(storage);
+        vs.record_unstake(A, U256::ZERO, U256::from(MINIMUM), 0)?;
+        assert!(matches!(
+            vs.validator_lifecycle(A)?,
+            ValidatorLifecycle::Unbonding(_)
+        ));
+        assert!(!vs.has_pending_set_change()?);
+        Ok(())
+    })
+}
+
+#[test]
+fn jail_retained_full_unstake_sets_pending_flag() -> Result<()> {
+    let (mut storage, setup) = boundary_storage(|vs| {
+        jail_retained(vs, A)?;
+        vs.test_set_pending_set_change(false)
+    });
+    setup?;
+    storage.enter(|storage| -> Result<()> {
+        let mut vs = ValidatorSet::new(storage);
+        vs.record_unstake(A, U256::ZERO, U256::from(MINIMUM), 0)?;
+        assert!(matches!(
+            vs.validator_lifecycle(A)?,
+            ValidatorLifecycle::Exiting(_)
+        ));
+        assert!(vs.has_pending_set_change()?);
+        Ok(())
+    })
 }

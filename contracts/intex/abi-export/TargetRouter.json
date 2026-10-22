@@ -1666,6 +1666,17 @@
     },
     {
       "type": "error",
+      "name": "UnexpectedSourceChain",
+      "inputs": [
+        {
+          "name": "srcChainId",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "UnknownMsgType",
       "inputs": [
         {

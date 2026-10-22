@@ -2,11 +2,32 @@
 
 use crate::precompile::ISlashIndicator;
 use alloy_primitives::Bytes;
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolError;
 use outbe_consensus::proof::V2VerifyError;
 use outbe_primitives::error::{PrecompileError, Result};
 use thiserror::Error;
+
+/// A stored or genesis percent word is not admitted.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum PercentAdmissionError {
+    /// The word fits in `u64` and is above 100.
+    #[error("slash config percent {field}={value} is above 100")]
+    Above100 {
+        /// Storage field name.
+        field: &'static str,
+        /// Percent that was rejected.
+        value: u64,
+    },
+    /// The word does not fit in `u64`, so it must not be narrowed.
+    #[error("slash config percent {field} word {word} exceeds u64")]
+    WordExceedsU64 {
+        /// Storage field name.
+        field: &'static str,
+        /// Raw storage word.
+        word: U256,
+    },
+}
 
 /// Domain errors for the slash indicator precompile.
 #[derive(Debug, Error)]
@@ -66,6 +87,21 @@ pub enum SlashIndicatorError {
     /// Varint shift reached or exceeded 64 bits.
     #[error("varint overflow")]
     VarintOverflow,
+
+    /// The varint uses a redundant encoding.
+    #[error("noncanonical varint")]
+    NonCanonicalVarint,
+
+    /// The effective evidence reward percentage exceeds 100.
+    #[error("invalid evidence reward percent: {percent}")]
+    InvalidEvidenceRewardPercent {
+        /// The effective percentage from the configuration.
+        percent: u64,
+    },
+
+    /// The evidence reward exceeds the U256 limit.
+    #[error("evidence reward overflow")]
+    EvidenceRewardOverflow,
 
     /// The slash guard ring cursor overflowed `u64`.
     #[error("slash_guard_ring_seq overflow")]
@@ -372,6 +408,15 @@ pub enum SlashIndicatorError {
     /// The VRF seed partial is valid and cannot trigger slashing.
     #[error("seed partial is valid; nothing to slash")]
     ValidSeedPartialNotSlashable,
+
+    /// Stored slash-amount or evidence-reward percent is above 100.
+    #[error("slash config percent {field}={value} is above 100")]
+    SlashConfigPercentAbove100 {
+        /// Storage field name.
+        field: &'static str,
+        /// Stored percent that was rejected.
+        value: u64,
+    },
 }
 
 impl SlashIndicatorError {
@@ -441,6 +486,17 @@ impl From<SlashIndicatorError> for PrecompileError {
             SlashIndicatorError::VarintOverflow => PrecompileError::RevertBytes(Bytes::from(
                 ISlashIndicator::VarintOverflow {}.abi_encode(),
             )),
+            SlashIndicatorError::NonCanonicalVarint => PrecompileError::RevertBytes(Bytes::from(
+                ISlashIndicator::NonCanonicalVarint {}.abi_encode(),
+            )),
+            SlashIndicatorError::InvalidEvidenceRewardPercent { percent } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ISlashIndicator::InvalidEvidenceRewardPercent { percent }.abi_encode(),
+                ))
+            }
+            SlashIndicatorError::EvidenceRewardOverflow => PrecompileError::RevertBytes(
+                Bytes::from(ISlashIndicator::EvidenceRewardOverflow {}.abi_encode()),
+            ),
             SlashIndicatorError::SlashGuardRingSeqOverflow => PrecompileError::RevertBytes(
                 Bytes::from(ISlashIndicator::SlashGuardRingSeqOverflow {}.abi_encode()),
             ),
@@ -712,6 +768,15 @@ impl From<SlashIndicatorError> for PrecompileError {
             SlashIndicatorError::ValidSeedPartialNotSlashable => PrecompileError::RevertBytes(
                 Bytes::from(ISlashIndicator::ValidSeedPartialNotSlashable {}.abi_encode()),
             ),
+            SlashIndicatorError::SlashConfigPercentAbove100 { field, value } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ISlashIndicator::SlashConfigPercentAbove100 {
+                        field: field.to_string(),
+                        value,
+                    }
+                    .abi_encode(),
+                ))
+            }
         }
     }
 }
@@ -733,6 +798,23 @@ mod tests {
             PrecompileError::RevertBytes(bytes) => bytes,
             other => panic!("expected typed revert bytes, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn hardening_errors_encode_typed_payloads() {
+        assert_eq!(
+            encoded(SlashIndicatorError::NonCanonicalVarint).as_ref(),
+            ISlashIndicator::NonCanonicalVarint {}.abi_encode()
+        );
+        assert_eq!(
+            encoded(SlashIndicatorError::EvidenceRewardOverflow).as_ref(),
+            ISlashIndicator::EvidenceRewardOverflow {}.abi_encode()
+        );
+        let bytes =
+            encoded(SlashIndicatorError::InvalidEvidenceRewardPercent { percent: u64::MAX });
+        let decoded = ISlashIndicator::InvalidEvidenceRewardPercent::abi_decode(&bytes)
+            .expect("reward percent payload");
+        assert_eq!(decoded.percent, u64::MAX);
     }
 
     #[test]
@@ -774,5 +856,17 @@ mod tests {
         });
         let decoded = ISlashIndicator::Phase1TxInvalid::abi_decode(&bytes).expect("reason payload");
         assert_eq!(decoded.reason, "decode failed");
+    }
+
+    #[test]
+    fn slash_config_percent_above_100_reverts_with_field_and_value() {
+        let bytes = encoded(SlashIndicatorError::SlashConfigPercentAbove100 {
+            field: "evidence_reward_percent",
+            value: 101,
+        });
+        let decoded = ISlashIndicator::SlashConfigPercentAbove100::abi_decode(&bytes)
+            .expect("percent payload");
+        assert_eq!(decoded.field, "evidence_reward_percent");
+        assert_eq!(decoded.value, 101);
     }
 }

@@ -1136,6 +1136,22 @@
     },
     {
       "type": "error",
+      "name": "BridgeCutoffPassed",
+      "inputs": [
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "cutoff",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "BridgeOnSettledForbidden",
       "inputs": [
         {

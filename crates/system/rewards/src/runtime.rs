@@ -219,6 +219,14 @@ pub fn check_and_record_metadata_fingerprint(
 /// compute the V3 fingerprint. See
 /// [`check_and_record_metadata_fingerprint`] for the canonical byte
 /// layout. Public for unit-test access from `tests/v2_fingerprint.rs`.
+///
+/// This fingerprint detects economic replay. It does not authenticate certificates.
+/// V3 does not hash `parent_view`.
+///
+/// Consensus checks `{epoch, view, parent_view, fb_hash}` against the signed proposal
+/// before it processes certified parent accounting (CPA) metadata.
+/// EVM `LateFinalizeCredits` checks the stored binding, including `parent_view`,
+/// when it authenticates a late credit.
 pub fn compute_metadata_fingerprint(
     metadata: &CertifiedParentAccountingMetadata,
     validator_fee_sum: U256,

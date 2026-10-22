@@ -1,7 +1,8 @@
 use crate::errors::ValidatorSetError;
+use crate::precompile::IValidatorSet;
 use crate::schema::ValidatorSet;
 use crate::state_machine::{self, ValidatorHistory, ValidatorLifecycle};
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256};
 use outbe_primitives::error::Result;
 
 impl ValidatorSet<'_> {
@@ -49,16 +50,30 @@ impl ValidatorSet<'_> {
 
             // Swap with last entry
             let count_u64 = count as u64;
-            if i < count_u64 {
+            let moved = if i < count_u64 {
                 let last_addr = self.index_to_address.read(&count_u64)?;
                 self.index_to_address.write(&i, last_addr)?;
                 self.address_to_index.write(&last_addr, i)?;
-            }
+                Some(last_addr)
+            } else {
+                None
+            };
             // Clear the last slot
             self.index_to_address.write(&count_u64, Address::ZERO)?;
             self.address_to_index.write(&addr, 0)?;
             count -= 1;
             removed += 1;
+            self.emit(IValidatorSet::ValidatorRemoved {
+                validator: addr,
+                index: i,
+            })?;
+            if let Some(last_addr) = moved {
+                self.emit(IValidatorSet::ValidatorIndexRemapped {
+                    validator: last_addr,
+                    oldIndex: count_u64,
+                    newIndex: i,
+                })?;
+            }
             // Don't increment i. The swapped-in entry still needs checking.
         }
 
@@ -81,7 +96,7 @@ impl ValidatorSet<'_> {
         self.val_radicle_node_id.write(addr, B256::ZERO)?;
 
         self.write_consensus_pubkey(addr, &[0u8; 48])?;
-        self.val_stake.write(addr, U256::ZERO)?;
+        // Staking.stake_amount stays. Cleanup does not own current bonded stake.
         self.val_status.write(addr, 0)?;
         self.val_slash_count.write(addr, 0)?;
         self.val_missed_blocks.write(addr, 0)?;

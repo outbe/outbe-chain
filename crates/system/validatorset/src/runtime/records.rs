@@ -1,12 +1,14 @@
 use crate::errors::ValidatorSetError;
-use crate::schema::ValidatorSet;
+use crate::schema::{ValidatorSet, AUTHORITATIVE_BONDED_BASE_SLOT};
 use crate::state_machine::{
     HistoryCounters, P2pInfo, StakeProjection, StoredValidatorFields, ValidatorHistory,
     ValidatorLifecycle, ValidatorState,
 };
-use alloy_primitives::{keccak256, Address, B256};
+use alloy_primitives::{keccak256, Address, B256, U256};
+use outbe_primitives::addresses::STAKING_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::{Mapping, Storable};
+
 use std::num::NonZeroU64;
 
 impl ValidatorSet<'_> {
@@ -49,13 +51,26 @@ impl ValidatorSet<'_> {
         Ok(state)
     }
 
+    /// Reads current bonded stake from `Staking.stake_amount`.
+    ///
+    /// The amount is native COEN base units: one whole COEN is 10^18 base units.
+    /// ValidatorSet does not store a second copy and does not write this slot.
+    pub(crate) fn read_authoritative_bonded(&self, addr: &Address) -> Result<U256> {
+        Mapping::<Address, U256>::new(
+            U256::from(AUTHORITATIVE_BONDED_BASE_SLOT),
+            STAKING_ADDRESS,
+            self.storage.clone(),
+        )
+        .read(addr)
+    }
+
     /// Reads the raw validator columns in their storage order.
     fn read_stored_fields(&self, addr: Address) -> Result<StoredValidatorFields> {
         let registry_index = self.address_to_index.read(&addr)?;
         let stored_status = self.val_status.read(&addr)?;
 
         let consensus_pubkey = self.read_consensus_pubkey(&addr)?;
-        let bonded = self.val_stake.read(&addr)?;
+        let bonded = self.read_authoritative_bonded(&addr)?;
         let unbonding_end = self.val_unbonding_end.read(&addr)?;
         let stake = StakeProjection::new(bonded, (unbonding_end != 0).then_some(unbonding_end));
         let slash_count = self.val_slash_count.read(&addr)?;
@@ -185,12 +200,6 @@ impl ValidatorSet<'_> {
             self.persist_registry_identity(before, after)?;
         }
         let addr = after.address();
-        write_changed(
-            &self.val_stake,
-            &addr,
-            before.bonded_stake(),
-            after.bonded_stake(),
-        )?;
         if before.stored_status() != after.stored_status() {
             let status = after
                 .stored_status()

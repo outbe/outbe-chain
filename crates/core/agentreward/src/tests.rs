@@ -608,8 +608,10 @@ fn same_block_claims_with_different_currencies_have_distinct_ids() {
             .unwrap_err();
         assert!(matches!(
             error,
-            outbe_primitives::error::PrecompileError::Revert(reason)
-                if reason == outbe_gem::GemError::AlreadyExists.to_string()
+            outbe_primitives::error::PrecompileError::RevertBytes(bytes)
+                if bytes.as_ref() == alloy_sol_types::SolError::abi_encode(
+                    &outbe_gem::precompile::IGem::AlreadyExists {}
+                ).as_slice()
         ));
         assert_eq!(contract.get_claimable_reward(alice).unwrap(), remaining);
         assert_eq!(
@@ -1062,61 +1064,11 @@ mod distribute_daily_tests {
         ] {
             run(|ctx| {
                 let mut contract = AgentRewardContract::new(ctx.storage.clone());
-                for &(byte, weight, _) in recipients {
-                    for _ in 0..weight {
-                        let address = Address::repeat_byte(byte);
-                        if kind == PoolKind::Waa {
-                            contract.increment_waa_tribute(DAY, address).unwrap();
-                        } else {
-                            contract.increment_sra_tribute(DAY, address).unwrap();
-                        }
-                    }
-                }
+                seed_tribute_weights(&mut contract, &kind, recipients);
                 let excess = distribute_and_credit(ctx, DAY, &[(kind, U256::from(pool))]).unwrap();
                 assert_eq!(excess, U256::from(expected_excess));
-                let (counts, address_count, addresses) = if kind == PoolKind::Waa {
-                    (
-                        &contract.waa_tribute_counts,
-                        &contract.waa_address_count,
-                        &contract.waa_addresses,
-                    )
-                } else {
-                    (
-                        &contract.sra_tribute_counts,
-                        &contract.sra_address_count,
-                        &contract.sra_addresses,
-                    )
-                };
-                let mut credited = U256::ZERO;
-                for &(byte, _, expected) in recipients {
-                    let address = Address::repeat_byte(byte);
-                    let reward = contract
-                        .get_pool_claimable_reward(reward_pool, address)
-                        .unwrap();
-                    assert_eq!(reward, U256::from(expected));
-                    credited += reward;
-                    assert_eq!(
-                        counts
-                            .read(&AgentRewardContract::tribute_count_key(DAY, address))
-                            .unwrap(),
-                        0
-                    );
-                }
-                let remaining = if kind == PoolKind::Waa {
-                    contract.get_all_waa_counts(DAY).unwrap()
-                } else {
-                    contract.get_all_sra_counts(DAY).unwrap()
-                };
-                assert!(remaining.is_empty());
-                assert_eq!(address_count.read(&DAY).unwrap(), 0);
-                for index in 0..u32::try_from(recipients.len()).unwrap() {
-                    assert_eq!(
-                        addresses
-                            .read(&AgentRewardContract::address_index_key(DAY, index))
-                            .unwrap(),
-                        Address::ZERO
-                    );
-                }
+                let credited =
+                    assert_tribute_credits_and_cleanup(&contract, kind, reward_pool, recipients);
                 assert_eq!(
                     ctx.storage
                         .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
@@ -1126,6 +1078,75 @@ mod distribute_daily_tests {
                 assert_eq!(credited + U256::from(expected_excess), U256::from(pool));
             });
         }
+    }
+
+    fn seed_tribute_weights(
+        contract: &mut AgentRewardContract<'_>,
+        kind: &PoolKind,
+        recipients: &[(u8, u64, u64)],
+    ) {
+        for &(byte, weight, _) in recipients {
+            for _ in 0..weight {
+                let address = Address::repeat_byte(byte);
+                if kind == &PoolKind::Waa {
+                    contract.increment_waa_tribute(DAY, address).unwrap();
+                } else {
+                    contract.increment_sra_tribute(DAY, address).unwrap();
+                }
+            }
+        }
+    }
+
+    fn assert_tribute_credits_and_cleanup(
+        contract: &AgentRewardContract<'_>,
+        kind: PoolKind,
+        reward_pool: RewardPool,
+        recipients: &[(u8, u64, u64)],
+    ) -> U256 {
+        let (counts, address_count, addresses) = if kind == PoolKind::Waa {
+            (
+                &contract.waa_tribute_counts,
+                &contract.waa_address_count,
+                &contract.waa_addresses,
+            )
+        } else {
+            (
+                &contract.sra_tribute_counts,
+                &contract.sra_address_count,
+                &contract.sra_addresses,
+            )
+        };
+        let mut credited = U256::ZERO;
+        for &(byte, _, expected) in recipients {
+            let address = Address::repeat_byte(byte);
+            let reward = contract
+                .get_pool_claimable_reward(reward_pool, address)
+                .unwrap();
+            assert_eq!(reward, U256::from(expected));
+            credited += reward;
+            assert_eq!(
+                counts
+                    .read(&AgentRewardContract::tribute_count_key(DAY, address))
+                    .unwrap(),
+                0
+            );
+        }
+        let remaining = if kind == PoolKind::Waa {
+            contract.get_all_waa_counts(DAY).unwrap()
+        } else {
+            contract.get_all_sra_counts(DAY).unwrap()
+        };
+        assert!(remaining.is_empty());
+        assert_eq!(address_count.read(&DAY).unwrap(), 0);
+        for index in 0..u32::try_from(recipients.len()).unwrap() {
+            assert_eq!(
+                addresses
+                    .read(&AgentRewardContract::address_index_key(DAY, index))
+                    .unwrap(),
+                Address::ZERO
+            );
+        }
+        credited
     }
 
     #[test]

@@ -450,3 +450,43 @@ fn burning_pledged_collateral_reports_the_supply_drop() {
         (alice(), U256::from(40u64))
     );
 }
+
+#[test]
+fn an_owner_result_that_differs_from_the_request_is_refused() {
+    use crate::runtime::ensure_owner_result;
+    use outbe_tee::protocol::{GratisOpResult, GratisOpStatus};
+    let result = |event_amount: u64, next_op_nonce: u64| GratisOpResult {
+        status: GratisOpStatus::Applied,
+        new_balance: vec![1],
+        new_pledged: Vec::new(),
+        event_amount: U256::from(event_amount),
+        next_op_nonce,
+        fidelity: None,
+        inputs_canonical_hash: B256::ZERO,
+        attestation_tag: Vec::new(),
+    };
+    let amount = U256::from(5u64);
+    assert!(ensure_owner_result(amount, 3, &result(5, 4)).is_ok());
+    let err = ensure_owner_result(amount, 3, &result(4, 4)).unwrap_err();
+    assert!(
+        err.to_string().contains("owner movement result mismatch"),
+        "{err}"
+    );
+    let err = ensure_owner_result(amount, 3, &result(5, 5)).unwrap_err();
+    assert!(err.to_string().contains("wrong op nonce"), "{err}");
+    assert!(ensure_owner_result(amount, u64::MAX, &result(5, u64::MAX)).is_err());
+    let mut no_balance = result(5, 4);
+    no_balance.new_balance.clear();
+    let err = ensure_owner_result(amount, 3, &no_balance).unwrap_err();
+    assert!(
+        err.to_string().contains("owner movement result mismatch"),
+        "{err}"
+    );
+    let mut pledged = result(5, 4);
+    pledged.new_pledged = vec![1];
+    let err = ensure_owner_result(amount, 3, &pledged).unwrap_err();
+    assert!(
+        err.to_string().contains("owner movement result mismatch"),
+        "{err}"
+    );
+}

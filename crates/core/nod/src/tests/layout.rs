@@ -37,6 +37,15 @@ fn the_profile_selector_resolves_like_gem_and_intex() {
     assert!(NodParams::from_selector(3, 1).is_err());
 }
 
+/// PROD keeps 3.56 times the entry price. DEV uses 1.08 times the entry price.
+#[test]
+fn the_call_rate_is_pinned_per_profile() {
+    use crate::config::NodParams;
+    assert_eq!(NodParams::PROD.call_rate, crate::constants::CALL_RATE_PCT);
+    assert_eq!(NodParams::PROD.call_rate, 256);
+    assert_eq!(NodParams::DEV.call_rate, 8);
+}
+
 /// Dense `order`-packing puts these fields at contiguous offsets 0..=8.
 #[test]
 fn nod_contract_slot_layout_is_pinned() {
