@@ -9,8 +9,9 @@
 //!   produces the same authorization outcome, regardless of pre-existing
 //!   storage history from a different day.
 
-use alloy_primitives::{address, Address};
+use alloy_primitives::{address, Address, U256};
 use outbe_primitives::{
+    addresses::ZEROFEE_ADDRESS,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
     time::{previous_date_key, timestamp_to_date_key, SECONDS_PER_DAY},
 };
@@ -25,6 +26,13 @@ const SIGNER: Address = address!("0x1111111111111111111111111111111111111111");
 fn with_storage<R>(f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, f)
+}
+
+fn seed_packed(storage: &StorageHandle<'_>, day: u32, count: u32) {
+    let slot = ZeroFeeContract::new(storage.clone()).counter_slot(SIGNER);
+    storage
+        .sstore(ZEROFEE_ADDRESS, slot, U256::from(pack_counter(day, count)))
+        .unwrap();
 }
 
 proptest! {
@@ -54,11 +62,7 @@ proptest! {
         block_ts in 0u64..=4_102_444_800u64,
     ) {
         with_storage(|storage| {
-            let zerofee = ZeroFeeContract::new(storage.clone());
-            zerofee
-                .counter
-                .write(&SIGNER, pack_counter(stored_day, stored_count))
-                .unwrap();
+            seed_packed(&storage, stored_day, stored_count);
 
             let current_day = timestamp_to_date_key(block_ts);
             let effective = ZeroFeeContract::new(storage)
@@ -122,10 +126,7 @@ proptest! {
 
         with_storage(|storage| {
             // Seed yesterday at `burned_yesterday`.
-            ZeroFeeContract::new(storage.clone())
-                .counter
-                .write(&SIGNER, pack_counter(yesterday, burned_yesterday))
-                .unwrap();
+            seed_packed(&storage, yesterday, burned_yesterday);
 
             // Today's first authorize must produce next_count == 1
             // regardless of how saturated yesterday was.

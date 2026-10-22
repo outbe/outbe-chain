@@ -242,29 +242,26 @@ fn check_sponsored_target(to: Option<Address>) -> Result<(), ZeroFeePolicyError>
     Ok(())
 }
 
-/// Single-use result of successful authorization for one signer and UTC day.
+/// Opaque sponsorship grant bound to one signer and one UTC day.
 ///
-/// A caller cannot fabricate an authorization from a day and counter value:
-///
-/// ```compile_fail
-/// use alloy_primitives::Address;
-/// use outbe_zerofee::SponsorshipAuthorization;
-///
-/// let forged = SponsorshipAuthorization {
-///     signer: Address::ZERO,
-///     current_day: 20_260_401,
-///     next_count: 1,
-/// };
-/// ```
+/// Only [`authorize_sponsorship`] constructs it. [`record_sponsorship_use`]
+/// consumes it and records that signer and day.
 #[derive(Debug)]
 pub struct SponsorshipAuthorization {
     signer: Address,
+    /// UTC date key (`yyyymmdd`) used for the lazy-reset bookkeeping.
     current_day: u32,
+    /// Count [`authorize_sponsorship`] predicted for this grant.
     next_count: u32,
 }
 
 impl SponsorshipAuthorization {
-    /// UTC date key (`yyyymmdd`) approved by the authorization check.
+    /// Signer this grant authorizes.
+    pub const fn signer(&self) -> Address {
+        self.signer
+    }
+
+    /// UTC day this grant authorizes.
     pub const fn current_day(&self) -> u32 {
         self.current_day
     }
@@ -336,18 +333,6 @@ pub fn authorize_sponsorship(
 /// the post-write counter so off-chain tooling can observe sponsorship
 /// grants via `eth_getLogs`.
 ///
-/// A caller cannot record use by supplying an arbitrary day:
-///
-/// ```compile_fail
-/// use alloy_primitives::Address;
-/// use outbe_primitives::storage::StorageHandle;
-/// use outbe_zerofee::record_sponsorship_use;
-///
-/// fn bypass(storage: StorageHandle<'_>, signer: Address) {
-///     let _ = record_sponsorship_use(storage, signer, 20_260_401);
-/// }
-/// ```
-///
 /// An authorization cannot be reused for another quota increment:
 ///
 /// ```compile_fail
@@ -361,16 +346,13 @@ pub fn authorize_sponsorship(
 /// ```
 pub fn record_sponsorship_use(
     storage: StorageHandle<'_>,
-    auth: SponsorshipAuthorization,
+    authorization: SponsorshipAuthorization,
 ) -> Result<u32, ZeroFeePolicyError> {
-    let SponsorshipAuthorization {
-        signer,
-        current_day,
-        ..
-    } = auth;
+    let signer = authorization.signer();
+    let current_day = authorization.current_day();
     let new_count = {
         let mut contract = ZeroFeeContract::new(storage.clone());
-        contract.record_use(signer, current_day)?
+        contract.record_use(&authorization)?
     };
     let event = IZeroFee::SponsorshipAuthorized {
         signer,
@@ -750,6 +732,13 @@ mod tests {
         StorageHandle::enter(&mut provider, f)
     }
 
+    fn seed_packed(storage: &StorageHandle<'_>, signer: Address, day: u32, count: u32) {
+        let slot = ZeroFeeContract::new(storage.clone()).counter_slot(signer);
+        storage
+            .sstore(ZEROFEE_ADDRESS, slot, U256::from(pack_counter(day, count)))
+            .unwrap();
+    }
+
     #[test]
     fn authorize_rejects_self_sponsorship() {
         with_storage(|storage| {
@@ -771,13 +760,7 @@ mod tests {
     fn authorize_rejects_ninth_tx_same_day() {
         with_storage(|storage| {
             // Seed the contract with a count of 8 for today.
-            {
-                let zerofee = ZeroFeeContract::new(storage.clone());
-                zerofee
-                    .counter
-                    .write(&SIGNER, pack_counter(BLOCK_DAY, 8))
-                    .unwrap();
-            }
+            seed_packed(&storage, SIGNER, BLOCK_DAY, 8);
             let err = authorize_sponsorship(storage, SIGNER, BLOCK_TS).unwrap_err();
             assert!(matches!(
                 err,
@@ -790,16 +773,12 @@ mod tests {
     fn authorize_applies_lazy_reset_on_new_day() {
         with_storage(|storage| {
             // Yesterday's count was 8. The policy should treat it as 0 today.
-            {
-                let zerofee = ZeroFeeContract::new(storage.clone());
-                zerofee
-                    .counter
-                    .write(
-                        &SIGNER,
-                        pack_counter(outbe_primitives::time::previous_date_key(BLOCK_DAY), 8),
-                    )
-                    .unwrap();
-            }
+            seed_packed(
+                &storage,
+                SIGNER,
+                outbe_primitives::time::previous_date_key(BLOCK_DAY),
+                8,
+            );
             let auth = authorize_sponsorship(storage, SIGNER, BLOCK_TS).unwrap();
             assert_eq!(auth.current_day(), BLOCK_DAY);
             assert_eq!(auth.next_count(), 1);
@@ -818,7 +797,7 @@ mod tests {
             }
             // Direct slot inspection confirms the packed counter.
             let zerofee = ZeroFeeContract::new(storage);
-            let packed = zerofee.counter.read(&SIGNER).unwrap();
+            let packed = zerofee.read_packed(SIGNER).unwrap();
             assert_eq!(crate::schema::unpack_counter(packed), (BLOCK_DAY, 3));
         });
     }
@@ -832,16 +811,12 @@ mod tests {
             // Seed yesterday at the limit so any lazy-reset failure
             // would surface as `FreeTxDailyExhausted` instead of a
             // pass-through.
-            {
-                let zerofee = ZeroFeeContract::new(storage.clone());
-                zerofee
-                    .counter
-                    .write(
-                        &SIGNER,
-                        pack_counter(outbe_primitives::time::previous_date_key(BLOCK_DAY), 8),
-                    )
-                    .unwrap();
-            }
+            seed_packed(
+                &storage,
+                SIGNER,
+                outbe_primitives::time::previous_date_key(BLOCK_DAY),
+                8,
+            );
             let auth = authorize_sponsorship(storage, SIGNER, BLOCK_TS).unwrap();
             assert_eq!(auth.current_day(), BLOCK_DAY);
         });
@@ -989,7 +964,7 @@ mod tests {
         // After three cycles the counter must read 3 in a fresh scope.
         StorageHandle::enter(&mut provider, |storage| {
             let zerofee = ZeroFeeContract::new(storage);
-            let packed = zerofee.counter.read(&SIGNER).unwrap();
+            let packed = zerofee.read_packed(SIGNER).unwrap();
             assert_eq!(crate::schema::unpack_counter(packed), (BLOCK_DAY, 3));
         });
     }
