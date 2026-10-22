@@ -1,5 +1,7 @@
 //! Minimal JSON-RPC client for Ethereum-compatible nodes.
 
+use std::time::Duration;
+
 use alloy_primitives::{Address, U256};
 use eyre::{Result, WrapErr};
 use outbe_primitives::tee_operator_v1::TeeRenewalScheduleV1;
@@ -116,6 +118,9 @@ pub trait Rpc {
     ) -> impl std::future::Future<Output = Result<Vec<Value>>> + Send;
 }
 
+const RPC_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const RPC_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// JSON-RPC client backed by reqwest.
 pub struct RpcClient {
     url: String,
@@ -145,12 +150,16 @@ struct JsonRpcError {
 }
 
 impl RpcClient {
-    pub fn new(url: &str) -> Self {
-        Self {
+    pub fn new(url: &str) -> Result<Self> {
+        Ok(Self {
             url: url.to_string(),
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .connect_timeout(RPC_CONNECT_TIMEOUT)
+                .timeout(RPC_REQUEST_TIMEOUT)
+                .build()
+                .map_err(RpcError::ClientBuild)?,
             id: std::sync::atomic::AtomicU64::new(1),
-        }
+        })
     }
 
     async fn call_rpc(&self, method: &str, params: Value) -> Result<Value> {

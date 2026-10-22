@@ -670,7 +670,7 @@ async fn reset_expired_upgrade_submission_v1(
         .map_err(UpgradeError::InvalidTransitionEvidence)?;
     let view = read_finalized_bound_renewal_view_v1(rpc, selector).await?;
     if view.schedule.finalized_timestamp < evidence.intent().requested_valid_until
-        || transition_target_matches_v1(&view.binding, evidence.intent())
+        || transition_target_matches_v1(&view.binding, evidence.intent())?
     {
         return Ok(false);
     }

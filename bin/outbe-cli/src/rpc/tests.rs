@@ -106,7 +106,7 @@ fn content_length(headers: &str) -> usize {
 async fn test_rpc_client_eth_call_sends_exact_body_and_decodes_bytes() {
     let (url, body_rx) =
         serve_rpc_once("200 OK", r#"{"jsonrpc":"2.0","result":"0xaabb","id":1}"#).await;
-    let client = RpcClient::new(&url);
+    let client = RpcClient::new(&url).expect("rpc client");
     let to = address!("0x000000000000000000000000000000000000EE02");
 
     let result = client.eth_call(to, &[0x12, 0x34]).await.unwrap();
@@ -134,7 +134,7 @@ async fn test_rpc_client_eth_call_sends_exact_body_and_decodes_bytes() {
 async fn test_rpc_client_estimate_gas_sends_exact_body() {
     let (url, body_rx) =
         serve_rpc_once("200 OK", r#"{"jsonrpc":"2.0","result":"0x5208","id":1}"#).await;
-    let client = RpcClient::new(&url);
+    let client = RpcClient::new(&url).expect("rpc client");
     let from = address!("0x1111111111111111111111111111111111111111");
     let to = address!("0x000000000000000000000000000000000000EE02");
 
@@ -166,7 +166,7 @@ async fn test_rpc_client_estimate_gas_sends_exact_body() {
 async fn test_rpc_client_send_raw_transaction_sends_hex_body() {
     let (url, body_rx) =
         serve_rpc_once("200 OK", r#"{"jsonrpc":"2.0","result":"0xfeed","id":1}"#).await;
-    let client = RpcClient::new(&url);
+    let client = RpcClient::new(&url).expect("rpc client");
 
     let tx_hash = client
         .eth_send_raw_transaction(&[0xde, 0xad, 0xbe, 0xef])
@@ -190,7 +190,7 @@ async fn test_rpc_client_send_raw_transaction_sends_hex_body() {
 async fn test_rpc_client_send_raw_transaction_non_string_errors() {
     let (url, _body_rx) =
         serve_rpc_once("200 OK", r#"{"jsonrpc":"2.0","result":123,"id":1}"#).await;
-    let client = RpcClient::new(&url);
+    let client = RpcClient::new(&url).expect("rpc client");
 
     let err = client
         .eth_send_raw_transaction(&[0xde, 0xad])
@@ -207,7 +207,7 @@ async fn test_rpc_client_send_raw_transaction_non_string_errors() {
 async fn test_rpc_client_get_balance_sends_exact_body_and_decodes_u256() {
     let (url, body_rx) =
         serve_rpc_once("200 OK", r#"{"jsonrpc":"2.0","result":"0xf4240","id":1}"#).await;
-    let client = RpcClient::new(&url);
+    let client = RpcClient::new(&url).expect("rpc client");
     let address = address!("0x1111111111111111111111111111111111111111");
 
     let balance = client.eth_get_balance(address).await.unwrap();
@@ -230,7 +230,7 @@ async fn test_rpc_client_get_block_by_number_sends_hex_block_and_false() {
     let result = json!({"number": "0x2a", "hash": "0xabc"});
     let response = json!({"jsonrpc": "2.0", "result": result, "id": 1}).to_string();
     let (url, body_rx) = serve_rpc_once("200 OK", response).await;
-    let client = RpcClient::new(&url);
+    let client = RpcClient::new(&url).expect("rpc client");
 
     let block = client.eth_get_block_by_number(42).await.unwrap();
 
@@ -252,7 +252,7 @@ async fn test_rpc_client_get_latest_block_sends_latest_and_false() {
     let result = json!({"number": "0x2b", "hash": "0xdef"});
     let response = json!({"jsonrpc": "2.0", "result": result, "id": 1}).to_string();
     let (url, body_rx) = serve_rpc_once("200 OK", response).await;
-    let client = RpcClient::new(&url);
+    let client = RpcClient::new(&url).expect("rpc client");
 
     let block = client.eth_get_latest_block().await.unwrap();
 
@@ -274,7 +274,7 @@ async fn test_rpc_client_get_vrf_seed_sends_null_block_param() {
     let result = json!({"seed": "0x1234"});
     let response = json!({"jsonrpc": "2.0", "result": result, "id": 1}).to_string();
     let (url, body_rx) = serve_rpc_once("200 OK", response).await;
-    let client = RpcClient::new(&url);
+    let client = RpcClient::new(&url).expect("rpc client");
 
     let seed = client.outbe_get_vrf_seed().await.unwrap();
 
@@ -296,7 +296,7 @@ async fn test_rpc_client_get_vrf_seed_at_sends_numeric_block_param() {
     let result = json!({"seed": "0xabcd"});
     let response = json!({"jsonrpc": "2.0", "result": result, "id": 1}).to_string();
     let (url, body_rx) = serve_rpc_once("200 OK", response).await;
-    let client = RpcClient::new(&url);
+    let client = RpcClient::new(&url).expect("rpc client");
 
     let seed = client.outbe_get_vrf_seed_at(99).await.unwrap();
 
@@ -324,7 +324,7 @@ async fn test_rpc_client_get_logs_sends_exact_filter_and_decodes_array() {
     ]);
     let response = json!({"jsonrpc": "2.0", "result": result, "id": 1}).to_string();
     let (url, body_rx) = serve_rpc_once("200 OK", response).await;
-    let client = RpcClient::new(&url);
+    let client = RpcClient::new(&url).expect("rpc client");
     let address = address!("0x0000000000000000000000000000000000001006");
     let topics = [Some("0xaaa".to_string()), None, Some("0xccc".to_string())];
 
@@ -362,7 +362,7 @@ async fn test_rpc_client_get_logs_sends_exact_filter_and_decodes_array() {
 async fn test_rpc_client_get_logs_non_array_errors() {
     let (url, _body_rx) =
         serve_rpc_once("200 OK", r#"{"jsonrpc":"2.0","result":{"log":1},"id":1}"#).await;
-    let client = RpcClient::new(&url);
+    let client = RpcClient::new(&url).expect("rpc client");
     let address = address!("0x0000000000000000000000000000000000001006");
 
     let err = client
@@ -384,7 +384,7 @@ async fn test_rpc_client_ids_increment_across_calls() {
         r#"{"jsonrpc":"2.0","result":"0x3","id":3}"#,
     ])
     .await;
-    let client = RpcClient::new(&url);
+    let client = RpcClient::new(&url).expect("rpc client");
 
     assert_eq!(client.eth_block_number().await.unwrap(), 1);
     assert_eq!(client.net_peer_count().await.unwrap(), 2);
@@ -430,7 +430,7 @@ async fn test_rpc_client_quantity_wrappers_send_exact_bodies_and_decode() {
         r#"{"jsonrpc":"2.0","result":"0x7","id":2}"#,
     ])
     .await;
-    let client = RpcClient::new(&url);
+    let client = RpcClient::new(&url).expect("rpc client");
     let address = address!("0x1111111111111111111111111111111111111111");
 
     assert_eq!(
@@ -475,7 +475,7 @@ async fn test_rpc_client_outbe_no_param_wrappers_send_exact_bodies() {
         json!({"jsonrpc": "2.0", "result": slash, "id": 4}).to_string(),
     ])
     .await;
-    let client = RpcClient::new(&url);
+    let client = RpcClient::new(&url).expect("rpc client");
 
     assert_eq!(
         client.outbe_consensus_status().await.unwrap(),
@@ -539,7 +539,7 @@ async fn test_rpc_client_outbe_no_param_wrappers_send_exact_bodies() {
 
 async fn assert_block_number_rpc_error(status: &str, response_body: &str, expected_msg: &str) {
     let (url, _body_rx) = serve_rpc_once(status, response_body).await;
-    let client = RpcClient::new(&url);
+    let client = RpcClient::new(&url).expect("rpc client");
     let err = client.eth_block_number().await.unwrap_err();
     assert!(
         err.to_string().contains(expected_msg),
@@ -574,6 +574,86 @@ async fn test_rpc_client_http_status_error() {
         "500 Internal Server Error",
         r#"{"jsonrpc":"2.0","result":"0x1","id":1}"#,
         "RPC HTTP request failed",
+    )
+    .await;
+}
+
+/// Loopback peer that accepts one TCP connection and writes nothing.
+/// `https` stalls inside the connect timeout (TLS handshake). `http` stalls
+/// on the response-header wait.
+async fn silent_loopback(scheme: &str) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        if let Ok((socket, _)) = listener.accept().await {
+            let _hold = socket;
+            std::future::pending::<()>().await;
+        }
+    });
+    format!("{scheme}://{addr}")
+}
+
+async fn assert_block_number_fails_between(
+    url: &str,
+    ceiling_secs: u64,
+    floor_secs: u64,
+    label: &str,
+) {
+    let client = RpcClient::new(url).expect("rpc client");
+    let started = std::time::Instant::now();
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(ceiling_secs),
+        client.eth_block_number(),
+    )
+    .await;
+    assert!(result.is_ok(), "{label} exceeded {ceiling_secs}s");
+    assert!(result.unwrap().is_err());
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed >= std::time::Duration::from_secs(floor_secs),
+        "{elapsed:?}"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(ceiling_secs),
+        "{elapsed:?}"
+    );
+}
+
+#[tokio::test]
+async fn stalled_response_returns_inside_the_request_timeout() {
+    let url = silent_loopback("http").await;
+    assert_block_number_fails_between(&url, 45, 25, "stalled response headers").await;
+}
+
+#[tokio::test]
+async fn stalled_connect_returns_inside_the_connect_timeout() {
+    let url = silent_loopback("https").await;
+    assert_block_number_fails_between(&url, 15, 8, "stalled TLS handshake").await;
+}
+
+#[tokio::test]
+async fn stalled_partial_body_returns_inside_the_request_timeout() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let Ok((mut socket, _)) = listener.accept().await else {
+            return;
+        };
+        let mut request = [0u8; 2048];
+        let _ = socket.read(&mut request).await;
+        let _ = socket
+            .write_all(
+                b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 200\r\n\r\n{\"incomplete\":",
+            )
+            .await;
+        let _ = socket.flush().await;
+        std::future::pending::<()>().await;
+    });
+    assert_block_number_fails_between(
+        &format!("http://{addr}"),
+        45,
+        25,
+        "stalled partial response body",
     )
     .await;
 }

@@ -147,10 +147,7 @@ pub(super) async fn finalized_transition_matches_v1(
     }
     let view = read_finalized_bound_renewal_view_v1(rpc, selector).await?;
     ensure_transition_source_or_target_v1(&view.binding, durable_evidence.intent())?;
-    Ok(transition_target_matches_v1(
-        &view.binding,
-        durable_evidence.intent(),
-    ))
+    transition_target_matches_v1(&view.binding, durable_evidence.intent())
 }
 
 fn transition_calldata(durable: &ReplacementCandidateSubmissionV1) -> Vec<u8> {

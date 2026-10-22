@@ -17,7 +17,7 @@ use outbe_primitives::{
     tee_test_utils::sign_node_host_hash_for_test,
 };
 
-fn renewal_services<'a, R, E, N>(
+pub(super) fn renewal_services<'a, R, E, N>(
     rpc: &'a R,
     evm_signer: &'a RelaySignerV1,
     enclave: &'a mut E,
@@ -31,14 +31,14 @@ fn renewal_services<'a, R, E, N>(
     }
 }
 
-struct ReplayRpc {
-    policy: outbe_primitives::tee_attestation_v1::TeePolicyV1,
-    binding: RenewalBindingV1,
-    schedule: TeeRenewalScheduleV1,
-    receipt: Arc<Mutex<Option<serde_json::Value>>>,
-    send_error: Option<&'static str>,
-    receipt_after_send_error: Option<serde_json::Value>,
-    sent: Arc<Mutex<Vec<Vec<u8>>>>,
+pub(super) struct ReplayRpc {
+    pub(super) policy: outbe_primitives::tee_attestation_v1::TeePolicyV1,
+    pub(super) binding: RenewalBindingV1,
+    pub(super) schedule: TeeRenewalScheduleV1,
+    pub(super) receipt: Arc<Mutex<Option<serde_json::Value>>>,
+    pub(super) send_error: Option<&'static str>,
+    pub(super) receipt_after_send_error: Option<serde_json::Value>,
+    pub(super) sent: Arc<Mutex<Vec<Vec<u8>>>>,
 }
 
 impl TransactionReceiptRpc for ReplayRpc {
@@ -119,7 +119,7 @@ impl RegistryRpc for ReplayRpc {
     }
 }
 
-struct ReplayMustNotPrepare;
+pub(super) struct ReplayMustNotPrepare;
 
 impl RenewalEnclaveV1 for ReplayMustNotPrepare {
     fn generate_dcap_quote(
@@ -390,7 +390,7 @@ fn replay_attempt(identity: &ReplayIdentity) -> (RelaySignerV1, PreparedRenewalV
     (relay, attempt)
 }
 
-fn replay_fixture(
+pub(super) fn replay_fixture(
     node_data_dir: &std::path::Path,
     mode: AttestationMode,
 ) -> (
