@@ -27,7 +27,6 @@ fn boundary_with_expiry_exclusions(exclusions: Vec<Address>) -> DkgBoundaryArtif
             new_active_set: Vec::new(),
             active_set_hash: B256::ZERO,
         },
-        tee_recipient_pubkeys: Vec::new(),
         tee_expired_target_exclusions: exclusions,
         tee_expired_target_exclusions_hash: exclusions_hash,
     }
@@ -53,9 +52,9 @@ fn boundary_wire_ends_after_tee_expiry_exclusions() {
 
     // OART envelope (7 bytes) + boundary record header (3 bytes) precede the
     // payload. With empty variable-length collections, the canonical boundary
-    // payload ends at the expiry-exclusions count and is exactly 216 bytes.
+    // payload ends at the expiry-exclusions count and is exactly 214 bytes.
     let payload_len = u16::from_be_bytes([encoded[8], encoded[9]]) as usize;
-    assert_eq!(payload_len, 216);
+    assert_eq!(payload_len, 214);
     assert_eq!(encoded.len(), 7 + 3 + payload_len);
 }
 
@@ -105,7 +104,6 @@ pub(super) fn roundtrip_boundary_fixture() -> DkgBoundaryArtifact {
         is_validator_set_change: true,
         outcome: Bytes::from_static(b"dkg-outcome"),
         is_full_dkg: true,
-        tee_recipient_pubkeys: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
         tee_expired_target_exclusions_hash: B256::ZERO,
         reshare: ReshareResult {
@@ -240,7 +238,6 @@ fn truncated_payload_is_rejected() {
         is_validator_set_change: false,
         outcome: Bytes::from_static(b"x"),
         is_full_dkg: false,
-        tee_recipient_pubkeys: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
         tee_expired_target_exclusions_hash: B256::ZERO,
         reshare: ReshareResult {
@@ -252,30 +249,6 @@ fn truncated_payload_is_rejected() {
     let truncated_len = encoded.len() - 1;
     encoded.truncate(truncated_len);
     assert!(decode_outbe_block_artifacts(&encoded).is_err());
-}
-
-#[test]
-fn boundary_roundtrip_carries_tee_recipient_pubkeys() {
-    let mut boundary = make_boundary(2, 8, 0, true, false);
-    boundary.tee_recipient_pubkeys = vec![
-        (
-            address!("0x1111111111111111111111111111111111111111"),
-            B256::repeat_byte(0xA1),
-        ),
-        (
-            address!("0x2222222222222222222222222222222222222222"),
-            B256::repeat_byte(0xA2),
-        ),
-    ];
-    let encoded = encode_boundary_artifact(&boundary).expect("encodes");
-    let decoded = decode_boundary_artifact(&encoded)
-        .expect("decodes")
-        .expect("boundary present");
-    assert_eq!(
-        decoded.tee_recipient_pubkeys,
-        boundary.tee_recipient_pubkeys
-    );
-    assert_eq!(decoded, boundary);
 }
 
 // ---- TC-8: codec coverage (round-trip variety, size limit, tag rejection) ----
@@ -314,7 +287,6 @@ fn make_boundary(
         is_validator_set_change,
         outcome: Bytes::from(vec![0xABu8; outcome_len]),
         is_full_dkg,
-        tee_recipient_pubkeys: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
         tee_expired_target_exclusions_hash: B256::ZERO,
         reshare: ReshareResult {
@@ -445,13 +417,12 @@ fn encode_rejects_artifacts_over_extra_data_budget() {
     // u16 cap (65535) but whose total framed length (7-byte envelope +
     // 3-byte record header + payload) exceeds OUTBE_MAX_EXTRA_DATA_SIZE.
     //
-    // Fixed boundary payload prefix is 216 bytes. The rest is the outcome
+    // Fixed boundary payload prefix is 214 bytes. The rest is the outcome
     // blob. We size the outcome so the total framed length is just over the
     // 64 KiB budget while the record payload stays <= 65535.
-    // (180 base fields + 2-byte tee_recipient_pubkeys count + 32-byte
-    // expiry-exclusions commitment + 2-byte exclusions count.)
-    const FIXED_PREFIX: usize =
-        8 + 8 + 8 + 8 + 32 + 8 + 32 + 32 + 1 + 1 + 32 + 2 + 4 + 4 + 2 + 32 + 2;
+    // (180 base fields + 32-byte expiry-exclusions commitment + 2-byte
+    // exclusions count.)
+    const FIXED_PREFIX: usize = 8 + 8 + 8 + 8 + 32 + 8 + 32 + 32 + 1 + 1 + 32 + 2 + 4 + 4 + 32 + 2;
     const ENVELOPE: usize = 7; // Magic, version, flags, and record count.
     const RECORD_HEADER: usize = 1 + 2; // tag + u16 length
 

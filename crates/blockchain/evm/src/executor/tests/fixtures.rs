@@ -729,7 +729,6 @@ pub(super) fn boundary_with_epoch(
         is_validator_set_change,
         outcome: Bytes::new(),
         is_full_dkg: false,
-        tee_recipient_pubkeys: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
         tee_expired_target_exclusions_hash: B256::ZERO,
         reshare: outbe_primitives::consensus::ReshareResult {

@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, B256};
+use alloy_primitives::B256;
 use outbe_primitives::error::Result;
 
 use crate::{errors::TeeRegistryError, schema::TeeRegistry};
@@ -51,25 +51,6 @@ impl TeeRegistry<'_> {
     /// accepted production authority.
     pub fn policy_hash(&self) -> Result<B256> {
         self.policy_hash.read()
-    }
-
-    /// Record the recipient X25519 pubkeys announced by a `BoundaryOutcome`
-    /// (`DkgBoundaryArtifact::tee_recipient_pubkeys`). Latest announcement wins
-    /// (key rotation). The boundary system-tx handler calls this function. The
-    /// keys ride in the hash-committed block artifact, so every validator records
-    /// the same ordered set deterministically. A `B256::ZERO` key clears the announcement.
-    pub fn record_boundary_recipient_keys(&mut self, keys: &[(Address, B256)]) -> Result<()> {
-        for (validator, recipient_x25519) in keys {
-            self.announced_recipient_x25519
-                .write(validator, *recipient_x25519)?;
-        }
-        Ok(())
-    }
-
-    /// Read a validator's boundary-announced recipient X25519 pubkey
-    /// (`B256::ZERO` if none has been announced).
-    pub fn announced_recipient_key(&self, validator: Address) -> Result<B256> {
-        self.announced_recipient_x25519.read(&validator)
     }
 
     /// Store the founding committee's DKG group public key from the canonical

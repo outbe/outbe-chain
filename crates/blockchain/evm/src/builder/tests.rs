@@ -745,7 +745,6 @@ fn genesis_block_with_header_artifact_reexecutes_deterministically() {
         is_validator_set_change: true,
         outcome: Bytes::from_static(b"test-outcome"),
         is_full_dkg: true,
-        tee_recipient_pubkeys: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
         tee_expired_target_exclusions_hash: B256::ZERO,
         reshare: ReshareResult {

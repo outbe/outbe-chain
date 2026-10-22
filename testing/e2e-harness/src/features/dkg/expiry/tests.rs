@@ -316,7 +316,6 @@ fn a_valid_boundary_outcome_cannot_pass_as_an_unactivated_terminal_header() {
             new_active_set: Vec::new(),
             active_set_hash: B256::ZERO,
         },
-        tee_recipient_pubkeys: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
         tee_expired_target_exclusions_hash: tee_expired_target_exclusions_hash(&[]).unwrap(),
     };

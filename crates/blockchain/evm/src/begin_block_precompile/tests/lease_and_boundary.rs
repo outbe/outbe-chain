@@ -204,43 +204,6 @@ fn tee_lease_sweep_later_failure_rolls_back_whole_sweep() {
     });
 }
 
-#[test]
-fn boundary_outcome_records_announced_tee_recipient_pubkeys() {
-    let mut provider = configured_storage(2, 2);
-    let recipient = B256::repeat_byte(0x7A);
-    let offer_public_key = B256::repeat_byte(0x7B);
-    let node_hash = B256::repeat_byte(0x7C);
-
-    provider.enter(|storage| {
-        let reg = outbe_teeregistry::TeeRegistry::new(storage.clone());
-        reg.tribute_offer_public_key
-            .write(offer_public_key)
-            .unwrap();
-        reg.validator_v1_node_hash
-            .write(&VALIDATOR, node_hash)
-            .unwrap();
-        assert_eq!(reg.announced_recipient_key(VALIDATOR).unwrap(), B256::ZERO);
-
-        let mut artifact = boundary_noop();
-        artifact.tee_recipient_pubkeys = vec![(VALIDATOR, recipient)];
-        let input = SystemTxInputV2::BoundaryOutcome { artifact }
-            .encode()
-            .unwrap();
-        dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO).unwrap();
-    });
-
-    // The boundary-announced recipient key is now readable from the registry.
-    provider.enter(|storage| {
-        let reg = outbe_teeregistry::TeeRegistry::new(storage);
-        assert_eq!(reg.announced_recipient_key(VALIDATOR).unwrap(), recipient);
-        assert_eq!(reg.offer_public_key().unwrap(), offer_public_key);
-        assert_eq!(
-            reg.validator_v1_node_hash.read(&VALIDATOR).unwrap(),
-            node_hash
-        );
-    });
-}
-
 /// The bridge sync at the boundary is best effort: with no sub-call driver
 /// (this provider stubs nothing) the controller call fails, and the boundary
 /// still commits epoch 1, its active-set hash, and the epoch-1 committee snapshot.
