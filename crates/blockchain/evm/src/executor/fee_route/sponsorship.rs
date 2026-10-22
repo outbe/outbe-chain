@@ -30,8 +30,8 @@ where
             let storage = StorageHandle::new(&mut provider);
             outbe_zerofee::authorize_sponsorship(storage, signer, ctx.timestamp)
         };
-        let current_day = match authorized {
-            Ok(auth) => auth.current_day,
+        let auth = match authorized {
+            Ok(auth) => auth,
             Err(error) => return self.include_zero_fee_soft_failure(recovered.tx(), error),
         };
         let result = self.execute_without_user_fee(tx_env, recovered, f);
@@ -46,7 +46,7 @@ where
             let mut provider = DirectStorageProvider::new(db, ctx);
             let recorded = {
                 let storage = StorageHandle::new(&mut provider);
-                outbe_zerofee::record_sponsorship_use(storage, signer, current_day)
+                outbe_zerofee::record_sponsorship_use(storage, auth)
             };
             if let Err(err) = recorded {
                 return Err(match err {

@@ -120,6 +120,13 @@ mod tests {
     const BLOCK_TS: u64 = 1_775_001_600;
     const BLOCK_DAY: u32 = 20_260_401;
 
+    fn seed_counter(storage: &StorageHandle<'_>, day: u32, count: u32) {
+        let slot = ZeroFeeContract::new(storage.clone()).counter_slot(SIGNER);
+        storage
+            .sstore(ZEROFEE_ADDRESS, slot, U256::from(pack_counter(day, count)))
+            .unwrap();
+    }
+
     fn dispatch(storage: StorageHandle<'_>, data: &[u8]) -> Vec<u8> {
         super::dispatch(storage, data, Address::ZERO, U256::ZERO)
             .expect("dispatch should succeed")
@@ -131,10 +138,7 @@ mod tests {
         let mut provider = HashMapStorageProvider::new(1);
         provider.set_timestamp(U256::from(BLOCK_TS));
         StorageHandle::enter(&mut provider, |storage| {
-            ZeroFeeContract::new(storage.clone())
-                .counter
-                .write(&SIGNER, pack_counter(BLOCK_DAY, 5))
-                .unwrap();
+            seed_counter(&storage, BLOCK_DAY, 5);
             let call = abi::getCounterCall { signer: SIGNER }.abi_encode();
             let out = dispatch(storage, &call);
             let ret = abi::getCounterCall::abi_decode_returns(&out).unwrap();
@@ -152,10 +156,7 @@ mod tests {
             // report today with count 0 (lazy reset applied on read),
             // NOT the stale (day-1, 8) raw slot. This is the whole
             // reason getCounter is timestamp-anchored rather than raw.
-            ZeroFeeContract::new(storage.clone())
-                .counter
-                .write(&SIGNER, pack_counter(BLOCK_DAY - 1, 8))
-                .unwrap();
+            seed_counter(&storage, BLOCK_DAY - 1, 8);
             let call = abi::getCounterCall { signer: SIGNER }.abi_encode();
             let out = dispatch(storage, &call);
             let ret = abi::getCounterCall::abi_decode_returns(&out).unwrap();
@@ -222,10 +223,7 @@ mod tests {
             );
 
             // Quota exhausted for today -> false.
-            ZeroFeeContract::new(storage.clone())
-                .counter
-                .write(&SIGNER, pack_counter(BLOCK_DAY, crate::FREE_TX_DAILY_LIMIT))
-                .unwrap();
+            seed_counter(&storage, BLOCK_DAY, crate::FREE_TX_DAILY_LIMIT);
             let call = abi::authorizeSponsorshipCall { signer: SIGNER }.abi_encode();
             let out = dispatch(storage, &call);
             assert!(
@@ -245,7 +243,7 @@ mod tests {
             StorageHandle::enter(&mut provider, |storage| {
                 let contract = ZeroFeeContract::new(storage.clone());
                 let packed = pack_counter(BLOCK_DAY, 5);
-                contract.counter.write(&SIGNER, packed).unwrap();
+                seed_counter(&storage, BLOCK_DAY, 5);
                 for call in [
                     abi::getCounterCall { signer: SIGNER }.abi_encode(),
                     abi::authorizeSponsorshipCall { signer: SIGNER }.abi_encode(),
@@ -254,7 +252,7 @@ mod tests {
                         super::dispatch(storage.clone(), &call, Address::ZERO, U256::ZERO),
                         Err(PrecompileError::Revert(message)) if message == "timestamp exceeds u64"
                     ));
-                    assert_eq!(contract.counter.read(&SIGNER).unwrap(), packed);
+                    assert_eq!(contract.read_packed(SIGNER).unwrap(), packed);
                 }
             });
             assert!(provider.get_ordered_events().is_empty());

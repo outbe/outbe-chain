@@ -386,10 +386,7 @@ fn zerofee_counter_for(
     // state as a raw U256 and narrow to u64.
     let mut slot_storage = HashMapStorageProvider::new(CHAIN_ID);
     let slot = StorageHandle::enter(&mut slot_storage, |storage| {
-        outbe_zerofee::ZeroFeeContract::new(storage.clone())
-            .counter
-            .slot(&signer)
-            .slot()
+        outbe_zerofee::ZeroFeeContract::new(storage.clone()).counter_slot(signer)
     });
     state
         .bundle_state
@@ -604,10 +601,7 @@ fn eip7702_sponsored_tx_accepts_fresh_zero_balance_signer() {
 fn zerofee_counter_slot(signer: Address) -> U256 {
     let mut slot_storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut slot_storage, |storage| {
-        outbe_zerofee::ZeroFeeContract::new(storage.clone())
-            .counter
-            .slot(&signer)
-            .slot()
+        outbe_zerofee::ZeroFeeContract::new(storage.clone()).counter_slot(signer)
     })
 }
 
