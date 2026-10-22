@@ -94,22 +94,36 @@ pub(super) fn decode(
         return Err(Error::Protocol);
     }
     if bytes.get(4) == Some(&2) {
-        let receipt =
-            super::decode_response(&bytes[5..], body.sequence, chain)?.ok_or(Error::Protocol)?;
-        if receipt.receipt().body != *body {
-            return Err(Error::Protocol);
-        }
-        return Ok(FinalizedPublicationProgress {
-            block: receipt.block(),
-            body_hash: body.receipt_hash(),
-            attesters: vec![],
-            receipt: Some(receipt),
-        });
+        return decode_receipt(&bytes[5..], body, chain);
     }
     if bytes.get(4) != Some(&1) {
         return Err(Error::Protocol);
     }
-    let mut input = super::state::Input(&bytes[5..]);
+    decode_attesters(&bytes[5..], body)
+}
+
+fn decode_receipt(
+    bytes: &[u8],
+    body: &PublicationBody,
+    chain: ChainIdentity,
+) -> Result<FinalizedPublicationProgress, Error> {
+    let receipt = super::decode_response(bytes, body.sequence, chain)?.ok_or(Error::Protocol)?;
+    if receipt.receipt().body != *body {
+        return Err(Error::Protocol);
+    }
+    Ok(FinalizedPublicationProgress {
+        block: receipt.block(),
+        body_hash: body.receipt_hash(),
+        attesters: vec![],
+        receipt: Some(receipt),
+    })
+}
+
+fn decode_attesters(
+    bytes: &[u8],
+    body: &PublicationBody,
+) -> Result<FinalizedPublicationProgress, Error> {
+    let mut input = super::state::Input(bytes);
     let block = FinalizedBlock {
         number: u64::from_be_bytes(input.array()?),
         hash: input.array::<32>()?.into(),

@@ -86,46 +86,7 @@ impl CommitteeChain {
 
         match (policy, artifact) {
             (AdmissionPolicy::Routed { routed_epoch }, artifact) => {
-                if certified != routed_epoch
-                    && !matches!(
-                        &artifact,
-                        Some(Cha::BoundaryOutcome(boundary)) if boundary.epoch == certified.get()
-                    )
-                {
-                    return Err(FollowError::EpochChangedWithoutBoundaryOutcome {
-                        from: routed_epoch.get(),
-                        to: certified.get(),
-                    }
-                    .into());
-                }
-                match artifact {
-                    Some(Cha::CommitteePreAnnounce { epoch, outcome }) => {
-                        if successor != Some(epoch) {
-                            return Err(FollowError::PreAnnouncesNonSuccessor {
-                                certified: certified.get(),
-                                announced: epoch,
-                            }
-                            .into());
-                        }
-                        self.register_epoch_from_outcome(Epoch::new(epoch), &outcome)?;
-                        Ok(Admission::SuccessorRegistered(Epoch::new(epoch)))
-                    }
-                    Some(Cha::BoundaryOutcome(boundary)) => {
-                        if boundary.epoch != certified.get() {
-                            return Err(FollowError::BoundaryEpochDiffersFromCertificate {
-                                boundary: boundary.epoch,
-                                certificate: certified.get(),
-                            }
-                            .into());
-                        }
-                        self.register_epoch_from_outcome(certified, &boundary.outcome)
-                            .map_err(|error| {
-                                FollowError::boundary_outcome_conflicts(certified.get(), error)
-                            })?;
-                        Ok(Admission::BoundaryRegistered(certified))
-                    }
-                    Some(Cha::DealerLog(_)) | None => Ok(Admission::Unchanged),
-                }
+                self.admit_routed_artifact(certified, routed_epoch, artifact)
             }
             (AdmissionPolicy::Successor, Some(Cha::CommitteePreAnnounce { epoch, outcome })) => {
                 if successor != Some(epoch) {
@@ -159,6 +120,54 @@ impl CommitteeChain {
                 )
                 | None,
             ) => Ok(Admission::Unchanged),
+        }
+    }
+
+    fn admit_routed_artifact(
+        &mut self,
+        certified: Epoch,
+        routed_epoch: Epoch,
+        artifact: Option<Cha>,
+    ) -> Result<Admission> {
+        if certified != routed_epoch
+            && !matches!(
+                &artifact,
+                Some(Cha::BoundaryOutcome(boundary)) if boundary.epoch == certified.get()
+            )
+        {
+            return Err(FollowError::EpochChangedWithoutBoundaryOutcome {
+                from: routed_epoch.get(),
+                to: certified.get(),
+            }
+            .into());
+        }
+        match artifact {
+            Some(Cha::CommitteePreAnnounce { epoch, outcome }) => {
+                if certified.get().checked_add(1) != Some(epoch) {
+                    return Err(FollowError::PreAnnouncesNonSuccessor {
+                        certified: certified.get(),
+                        announced: epoch,
+                    }
+                    .into());
+                }
+                self.register_epoch_from_outcome(Epoch::new(epoch), &outcome)?;
+                Ok(Admission::SuccessorRegistered(Epoch::new(epoch)))
+            }
+            Some(Cha::BoundaryOutcome(boundary)) => {
+                if boundary.epoch != certified.get() {
+                    return Err(FollowError::BoundaryEpochDiffersFromCertificate {
+                        boundary: boundary.epoch,
+                        certificate: certified.get(),
+                    }
+                    .into());
+                }
+                self.register_epoch_from_outcome(certified, &boundary.outcome)
+                    .map_err(|error| {
+                        FollowError::boundary_outcome_conflicts(certified.get(), error)
+                    })?;
+                Ok(Admission::BoundaryRegistered(certified))
+            }
+            Some(Cha::DealerLog(_)) | None => Ok(Admission::Unchanged),
         }
     }
 
