@@ -14,8 +14,8 @@ use outbe_primitives::{
     sweep_budget::SweepBudget,
 };
 
-use crate::api::get_all_reference_currencies;
 use crate::call_window::{CallWindow, CallWindows};
+use crate::constants::REFERENCE_CURRENCIES;
 use crate::schema::OracleContract;
 
 /// One right's call sweep.
@@ -39,8 +39,8 @@ pub trait CallSweep<'storage> {
     }
 
     /// Whether anything is left to call. An idle right schedules nothing.
-    fn has_work(&self, ctx: &BlockRuntimeContext) -> Result<bool> {
-        for reference_currency in get_all_reference_currencies(ctx)? {
+    fn has_work(&self) -> Result<bool> {
+        for reference_currency in REFERENCE_CURRENCIES {
             if tree_math::find_first_left_inclusive(&self.bins(reference_currency), 0)?.is_some() {
                 return Ok(true);
             }
@@ -49,9 +49,9 @@ pub trait CallSweep<'storage> {
     }
 
     /// Points every cursor at the start of a freshly opened day.
-    fn reset_cursors(&self, ctx: &BlockRuntimeContext) -> Result<()> {
+    fn reset_cursors(&self) -> Result<()> {
         self.currency_cursor().write(0)?;
-        for reference_currency in get_all_reference_currencies(ctx)? {
+        for reference_currency in REFERENCE_CURRENCIES {
             self.bins(reference_currency)
                 .scan_cursor()
                 .write(&reference_currency, 0)?;
@@ -74,13 +74,13 @@ pub fn schedule<'s, S: CallSweep<'s>>(ctx: &BlockRuntimeContext, sweep: &mut S) 
     else {
         return Ok(());
     };
-    if sweep.days().current.read()? == 0 && !sweep.has_work(ctx)? {
+    if sweep.days().current.read()? == 0 && !sweep.has_work()? {
         return sweep.days().pass(day);
     }
     match sweep.days().schedule(day)? {
         (next, Scheduled::Opened) => {
             sweep.days().open(next)?;
-            sweep.reset_cursors(ctx)
+            sweep.reset_cursors()
         }
         (_, Scheduled::Queued | Scheduled::Ignored) => Ok(()),
     }
@@ -110,7 +110,7 @@ pub fn continue_day<'s, S: CallSweep<'s>>(ctx: &BlockRuntimeContext, sweep: &mut
     if finished {
         if let Some(next) = sweep.days().finish(pinned_day)? {
             sweep.days().open(next)?;
-            sweep.reset_cursors(ctx)?;
+            sweep.reset_cursors()?;
         }
     }
     Ok(called)
@@ -146,7 +146,7 @@ where
         mut scan_terms,
         mut skipped,
     } = index;
-    let currencies = get_all_reference_currencies(ctx)?;
+    let currencies = REFERENCE_CURRENCIES;
     let mut windows = CallWindows::new(ctx.storage.clone(), pinned_day);
     let mut budget = SweepBudget::per_block();
     call_bins::walk_currencies(

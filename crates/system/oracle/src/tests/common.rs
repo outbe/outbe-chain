@@ -99,6 +99,14 @@ pub(super) fn policy_rate(iso_code: u16) -> crate::genesis::PolicyRate {
     }
 }
 
+/// A test policy rate for every reference currency, as genesis requires.
+pub(super) fn reference_policy_rates() -> Vec<crate::genesis::PolicyRate> {
+    crate::constants::REFERENCE_CURRENCIES
+        .into_iter()
+        .map(policy_rate)
+        .collect()
+}
+
 pub(super) const ATOMIC_DAY_START: u64 = 1_753_228_800;
 
 pub(super) type OracleFixture = fn(&mut HashMapStorageProvider);

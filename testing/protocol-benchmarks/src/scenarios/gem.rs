@@ -93,13 +93,8 @@ fn seed_oracle(storage: StorageHandle<'_>) -> Result<(), String> {
         },
     )
     .map_err(|error| error.to_string())?;
-    let oracle = OracleContract::new(storage);
-    oracle
+    OracleContract::new(storage)
         .record_utc_day_vwap(previous_date_key(timestamp_to_date_key(T_NOW)), index, rate)
-        .map_err(|error| error.to_string())?;
-    oracle
-        .reference_currencies
-        .push(840_u16)
         .map_err(|error| error.to_string())
 }
 

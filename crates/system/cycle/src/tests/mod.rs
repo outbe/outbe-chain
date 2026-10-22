@@ -91,7 +91,6 @@ pub(super) fn seed_fresh_reward_oracle(ctx: &BlockRuntimeContext) {
     let oracle = ctx
         .storage
         .contract::<outbe_oracle::schema::OracleContract<'_>>();
-    oracle.reference_currencies.push(840).unwrap();
     oracle
         .utc_day_vwap_last_finalized
         .write(29_991_231)

@@ -179,7 +179,6 @@ fn register_pair(oracle: &OracleContract, iso_code: u16, pair_id: u32) {
     oracle.pair_to_index.write(&pair, pair_id).unwrap();
     oracle.pair_count.write(pair_id).unwrap();
     oracle.pair_by_index.write_pair(&pair_id, pair).unwrap();
-    oracle.reference_currencies.push(iso_code).unwrap();
 }
 
 /// Price COEN/`iso_code` into the UTC day an auction starting at `now` reads.

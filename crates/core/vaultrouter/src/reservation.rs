@@ -38,8 +38,8 @@ pub(crate) fn quote(
     )?;
     let currency = IReferenceCurrency::isoCodeCall::abi_decode_returns_validate(&data)
         .map_err(|_| VaultRouterError::InvalidAssetCurrency)?;
-    api::check_reference_currency_with_storage(storage.clone(), currency)?;
-    api::check_reference_currency_with_storage(storage.clone(), reference_currency)?;
+    api::check_reference_currency(currency)?;
+    api::check_reference_currency(reference_currency)?;
     let snapshot = current_vwap_snapshot(storage.clone())?;
     let valuation = get_finalized_window_vwap(storage.clone(), currency, snapshot)?
         .filter(|v| !v.is_zero())

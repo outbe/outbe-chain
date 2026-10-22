@@ -39,7 +39,6 @@ pub fn export_genesis(
     let aggregate_votes = export_aggregate_votes(oracle)?;
     let snapshots = export_snapshots(oracle)?;
     let scurve_entries = export_scurve_entries(oracle)?;
-    let reference_currencies = oracle.reference_currencies.read_all()?;
     let policy_rates = export_policy_rates(oracle)?;
 
     Ok(OracleGenesisConfig {
@@ -52,7 +51,6 @@ pub fn export_genesis(
         pairs,
         initial_rates,
         feeder_delegations,
-        reference_currencies,
         policy_rates,
         penalty_counters,
         aggregate_votes,

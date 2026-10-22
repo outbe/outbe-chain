@@ -27,7 +27,7 @@ pub fn init_from_genesis(oracle: &mut OracleContract, config: &OracleGenesisConf
     write_config_slots(oracle, config)?;
     import_pairs(oracle, config)?;
     import_feeder_delegations(oracle, &config.feeder_delegations)?;
-    import_currency_registries(oracle, &config.reference_currencies, &config.policy_rates)?;
+    import_policy_rates(oracle, &config.policy_rates)?;
     import_penalty_counters(oracle, &config.penalty_counters)?;
     import_aggregate_votes(oracle, &config.aggregate_votes)?;
     import_snapshots(oracle, &config.snapshots)?;
@@ -88,15 +88,8 @@ fn import_feeder_delegations(
     Ok(())
 }
 
-/// Import the independent reference-currency and policy-rate registries.
-fn import_currency_registries(
-    oracle: &mut OracleContract,
-    reference_currencies: &[u16],
-    policy_rates: &[PolicyRate],
-) -> Result<()> {
-    for iso_code in reference_currencies {
-        oracle.reference_currencies.push(*iso_code)?;
-    }
+/// Import the policy-rate registry.
+fn import_policy_rates(oracle: &mut OracleContract, policy_rates: &[PolicyRate]) -> Result<()> {
     for policy in policy_rates {
         oracle.policy_rate_currencies.push(policy.iso_code)?;
         oracle

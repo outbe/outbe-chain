@@ -4,55 +4,6 @@ use alloy_primitives::{Address, U256};
 
 use super::common::*;
 
-/// Probes the macro-assigned slot for `reference_currencies` so that
-/// `scripts/seed_genesis.py` can mirror the layout. The StorageVec stores
-/// its length at the base slot. The test pushes two values. Then it scans
-/// slots 0..128 linearly for the length cell (== 2) to recover the slot.
-#[test]
-fn reference_currencies_occupies_slot_55() {
-    use outbe_primitives::addresses::ORACLE_ADDRESS;
-
-    with_bare_oracle(|storage, oracle| {
-        oracle.reference_currencies.push(840).unwrap();
-        oracle.reference_currencies.push(978).unwrap();
-
-        // Linear scan to find the slot whose word equals 2 (the length).
-        let mut found: Option<u64> = None;
-        for slot in 0u64..128 {
-            let word = storage.sload(ORACLE_ADDRESS, U256::from(slot)).unwrap();
-            if word == U256::from(2u64) {
-                found = Some(slot);
-                break;
-            }
-        }
-        let slot = found.expect("could not locate reference_currencies length slot");
-
-        println!("reference_currencies base slot = {slot}");
-
-        // Verify the data lives at keccak256(slot) + 0 / + 1.
-        use alloy_primitives::keccak256;
-        let data_start = U256::from_be_bytes(keccak256(U256::from(slot).to_be_bytes::<32>()).0);
-        assert_eq!(
-            storage.sload(ORACLE_ADDRESS, data_start).unwrap(),
-            U256::from(840u64),
-            "data[0] mismatch at slot {slot}"
-        );
-        assert_eq!(
-            storage
-                .sload(ORACLE_ADDRESS, data_start + U256::from(1u64))
-                .unwrap(),
-            U256::from(978u64),
-            "data[1] mismatch at slot {slot}"
-        );
-
-        // Hard-coded slot that scripts/seed_genesis.py uses. Keep in sync.
-        assert_eq!(
-            slot, 55,
-            "macro-assigned reference_currencies slot changed; update scripts/seed_genesis.py"
-        );
-    });
-}
-
 /// Pins `pair_by_index` to slot 43, and its quote word to that slot plus one.
 ///
 /// It sits immediately after the retired settlement hole (40-42). Thus only the

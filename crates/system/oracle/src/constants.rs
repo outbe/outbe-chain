@@ -51,6 +51,37 @@ pub const MAX_UTC_DAY_VWAP_BACKFILL_DAYS: u32 = 366;
 /// ISO 4217 code the day-type pair is quoted in.
 pub const DAY_TYPE_ISO: u16 = 840;
 
+/// The reference currencies as ISO 4217 numeric codes: CNY, HKD, JPY, GBP, USD,
+/// EUR. A new reference currency is a code change.
+pub const REFERENCE_CURRENCIES: [u16; 6] = [156, 344, 392, 826, 840, 978];
+
+// The list is sorted and unique, contains the day-type currency, and every code
+// has an ISO 4217 letter code. An Intex series id holds only the first letter of
+// that code, so the first letters must also be distinct.
+const _: () = {
+    let mut has_day_type = false;
+    let mut i = 0;
+    while i < REFERENCE_CURRENCIES.len() {
+        let code = REFERENCE_CURRENCIES[i];
+        assert!(i == 0 || REFERENCE_CURRENCIES[i - 1] < code);
+        has_day_type |= code == DAY_TYPE_ISO;
+        let Some(alpha) = outbe_primitives::stablecoin::iso_4217_alpha(code) else {
+            panic!("reference currency without an ISO 4217 letter code");
+        };
+        let mut j = 0;
+        while j < i {
+            let Some(other) = outbe_primitives::stablecoin::iso_4217_alpha(REFERENCE_CURRENCIES[j])
+            else {
+                panic!("reference currency without an ISO 4217 letter code");
+            };
+            assert!(other[0] != alpha[0]);
+            j += 1;
+        }
+        i += 1;
+    }
+    assert!(has_day_type);
+};
+
 /// The day-type pair: COEN quoted in ISO 840. COEN is the zero address, so this
 /// is also its sorted storage-key form.
 ///

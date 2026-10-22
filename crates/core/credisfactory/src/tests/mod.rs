@@ -234,10 +234,6 @@ pub fn register_reference_pair(storage: &StorageHandle<'_>, iso: u16) {
         )
         .unwrap();
     }
-    let oracle = OracleContract::new(storage.clone());
-    if outbe_oracle::api::check_reference_currency_with_storage(storage.clone(), iso).is_err() {
-        oracle.reference_currencies.push(iso).unwrap();
-    }
 }
 
 /// Re-publishes the COEN/840 current price. Distinct from the finalized daily

@@ -10,7 +10,7 @@ use outbe_primitives::{error::Result, storage::StorageHandle};
 use crate::api::{
     current_vwap_snapshot, register_pair, set_exchange_rate, AddressPair, RateObservation,
 };
-use crate::constants::{DAY_TYPE_ISO, DAY_TYPE_PAIR};
+use crate::constants::DAY_TYPE_PAIR;
 use crate::schema::OracleContract;
 
 /// Registers the COEN/840 pair. Then publishes `rate` as the COEN/840 rate
@@ -32,20 +32,6 @@ pub fn publish_day_type_rate(
             timestamp,
         },
     )
-}
-
-/// Does the steps of [`publish_day_type_rate`]. Then adds ISO 840 to the
-/// reference currencies.
-pub fn publish_day_type_quote(
-    storage: &StorageHandle<'_>,
-    rate: U256,
-    block_number: u64,
-    timestamp: u64,
-) -> Result<()> {
-    publish_day_type_rate(storage, rate, block_number, timestamp)?;
-    OracleContract::new(storage.clone())
-        .reference_currencies
-        .push(DAY_TYPE_ISO)
 }
 
 /// Registers COEN/`iso` if it is new, records `vwap` for UTC day `day` and

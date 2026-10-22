@@ -41,10 +41,6 @@ interface IOracle {
     error LookbackExceedsRetention();
     error RatioAboveOne(string field, uint256 value);
     error SlashPercentOutOfRange(uint256 slash_fraction);
-    error ReferenceIsoCodeZero();
-    error DuplicateReferenceIsoCode(uint16 iso_code);
-    error ReferenceCurrenciesNotSorted();
-    error MissingUsdReferenceCurrency();
     error PolicyIsoCodeZero();
     error DuplicatePolicyIsoCode(uint16 iso_code);
     error PolicyRatesNotSorted();

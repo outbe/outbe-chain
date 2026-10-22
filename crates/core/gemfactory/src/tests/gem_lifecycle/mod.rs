@@ -135,7 +135,6 @@ pub(crate) fn set_profile(storage: &StorageHandle, profile: u8) {
 /// `rate` is given. Returns the pair index, or 0 when no pair was registered.
 pub(crate) fn seed_currency(storage: &StorageHandle, iso_code: u16, rate: Option<U256>) -> u32 {
     let oracle = OracleContract::new(storage.clone());
-    oracle.reference_currencies.push(iso_code).unwrap();
     let Some(rate) = rate else {
         return 0;
     };
