@@ -3,7 +3,7 @@
 //! fixed dev state key. The tests assert balances by decrypting the ciphertext with
 //! the account's view key exactly as a client would.
 
-use alloy_primitives::{address, Address, U256};
+use alloy_primitives::{address, Address, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
