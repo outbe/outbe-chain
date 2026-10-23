@@ -30,6 +30,7 @@ use commonware_cryptography::bls12381::primitives::variant::MinSig;
 use commonware_parallel::Sequential;
 use commonware_utils::ordered::Set;
 use eyre::Result;
+use tracing::info;
 
 use crate::digest::Digest;
 use crate::errors::FollowError;
@@ -234,6 +235,12 @@ impl CommitteeChain {
             install,
         } = prepared;
         if let Some((verifier, outcome_hash)) = install {
+            let fingerprint = crate::proof::participant_set_commitment(&participants);
+            info!(
+                epoch = epoch.get(),
+                committee_fingerprint = %hex::encode(fingerprint),
+                "committed follower committee"
+            );
             self.scheme_provider.register(epoch, verifier);
             self.outcome_hashes.insert(epoch.get(), outcome_hash);
             self.highest_registered = Some(match self.highest_registered {
@@ -255,8 +262,8 @@ impl CommitteeChain {
     ///   authenticated path. The trust chains from genesis through each E-1.
     /// - [`BoundaryOutcome`](outbe_primitives::reshare_artifact::ConsensusHeaderArtifact::BoundaryOutcome)
     ///   the activating boundary at `E*L+1`, finalized by `E` ITSELF. We register
-    ///   from it ONLY for a not-yet-known epoch: the genesis anchor and, until the
-    ///   pre-announce producer is wired, epochs lacking a pre-announce. We must NOT
+    ///   from it ONLY for a not-yet-known epoch: the genesis anchor and an epoch
+    ///   that has no pre-announce. We must NOT
     ///   let it OVERRIDE a committee already registered via its `E-1` pre-announce.
     ///   A self-finalized boundary overriding the chained committee is exactly the
     ///   D1 self-certification bug.

@@ -101,10 +101,9 @@ pub struct HybridRandomElector<V: Variant> {
 }
 
 /// Largest descending span [`elect`] probes to recover a certificate's true
-/// certified seed-round. The value equals `MAX_MISSED_PROPOSERS` (`reporter.rs`), the
-/// cap on a view gap. Thus any anchor certificate that can legitimately reach `elect`
-/// through the missed-proposer recompute loop is within range. That loop already
-/// truncates a gap wider than this value, and `elect` degrades safely (fail-closed).
+/// certified seed-round. `elect` does not receive that round. It tries at most
+/// this many earlier views. A wider gap does not match, and `elect` fails closed
+/// to the fallback leader. Missed-proposer attribution is not a caller.
 const SEED_ROUND_WINDOW: u64 = u8::MAX as u64;
 
 impl<V: Variant> elector::Elector<HybridScheme<V>> for HybridRandomElector<V> {
@@ -131,21 +130,14 @@ impl<V: Variant> elector::Elector<HybridScheme<V>> for HybridRandomElector<V> {
                         // `elect` probes a bounded descending window of candidate
                         // seed-rounds and takes the first (hence only) match.
                         //
-                        // LIVE consensus path: commonware always supplies the cert
-                        // of the immediately preceding view, so dv == 1 matches and
-                        // this is a single verify. The leader is byte-identical to
-                        // the leader of the previous single-guess code. Larger dv
-                        // occurs ONLY in the missed-proposer attribution recompute
-                        // (`missed_proposers::elected_leaders_for_gap`). That
-                        // recompute feeds one finalized anchor certificate (from an
-                        // earlier view) to `elect` for every interior view of a
-                        // multi-view gap. The old code mis-verified that anchor
-                        // against `view - 1` and spuriously degraded. The probe
-                        // recovers the anchor's true round instead. Thus the
-                        // recompute no longer trips the
-                        // `outbe_vrf_degraded_leader_selection_total` alarm. That
-                        // alarm is now reserved for a genuinely unverifiable live
-                        // cert.
+                        // Commonware supplies the certificate of the immediately
+                        // preceding view on the live path, so dv == 1 matches and
+                        // this is a single verify. A caller can also pass an older
+                        // anchor. The probe recovers that anchor's round. It does
+                        // not attribute missed proposers. A certificate that matches
+                        // no probed round fails closed and does not increment the
+                        // degraded-leader alarm here. That alarm stays on
+                        // `degraded_seed`.
                         let namespace = crate::config::simplex_namespace();
                         let cur_view = round.view().get();
                         (1..=SEED_ROUND_WINDOW)
@@ -163,12 +155,10 @@ impl<V: Variant> elector::Elector<HybridScheme<V>> for HybridRandomElector<V> {
                             .map(|dv| {
                                 let mut seed = proof.threshold_signature.encode().to_vec();
                                 // When the anchor certificate is older than view - 1
-                                // (dv > 1, the recompute case), one certificate
-                                // serves multiple gap views. Bind the seed to the
-                                // ELECTED round so each view gets a distinct leader
-                                // instead of collapsing to one. The live path
-                                // (dv == 1) keeps the raw threshold-signature seed,
-                                // so its leader selection is unchanged.
+                                // (dv > 1), one certificate can serve more than one
+                                // elected view. Bind the seed to the elected round
+                                // so each view gets a distinct leader. The live path
+                                // (dv == 1) keeps the raw threshold-signature seed.
                                 if dv > 1 {
                                     seed.extend_from_slice(round.encode().as_ref());
                                 }
@@ -238,8 +228,6 @@ impl<V: Variant> HybridRandomElector<V> {
 /// Epoch-scoped provider of leader elector configs.
 ///
 /// The config includes the epoch bootstrap seed used by the Simplex elector.
-/// Metadata validation uses this to recompute missed-proposer attribution with
-/// the same deterministic inputs as the reporter path.
 #[derive(Clone, Debug)]
 pub struct HybridElectorConfigProvider<V: Variant> {
     inner: crate::epoch_registry::EpochRegistry<HybridRandom<V>>,

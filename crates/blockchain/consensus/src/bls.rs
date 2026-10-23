@@ -43,17 +43,28 @@ static SECRET_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 // ---------------------------------------------------------------------------
 
 /// Backend for BLS key storage at rest.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub enum KeyBackend {
-    /// Plaintext hex files (default for development/testing).
+    /// Plaintext hex files. This is the default for every role, including production.
     #[default]
     Plaintext,
     /// AES-256-GCM encryption with passphrase-derived key (Argon2id KDF).
+    /// The passphrase is absent from [`Debug`] output.
     Encrypted(String),
     /// OS keychain (macOS Keychain / Linux Secret Service via `keyring` crate).
     /// This backend stores key material in the OS secret store. A marker file
     /// on disk points to the keychain entry.
     OsLevel,
+}
+
+impl std::fmt::Debug for KeyBackend {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Plaintext => formatter.write_str("Plaintext"),
+            Self::Encrypted(_) => formatter.write_str("Encrypted(..)"),
+            Self::OsLevel => formatter.write_str("OsLevel"),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -743,5 +754,20 @@ mod tests {
 
         // Cannot load with plaintext backend (encrypted file).
         assert!(load_signing_share(&share_path, &KeyBackend::Plaintext).is_err());
+    }
+
+    #[test]
+    fn encrypted_backend_debug_redacts_passphrase() {
+        let secret = "passphrase-should-not-appear";
+        let backend = KeyBackend::Encrypted(secret.to_string());
+        let rendered = format!("{backend:?}");
+        assert!(
+            !rendered.contains(secret),
+            "Debug rendered the passphrase: {rendered}"
+        );
+        assert!(
+            rendered.contains("Encrypted"),
+            "Debug dropped the backend name: {rendered}"
+        );
     }
 }

@@ -150,7 +150,8 @@ pub fn participant_set_commitment(committee: &Set<bls12381::PublicKey>) -> [u8; 
     );
     buf.extend_from_slice(COMMITTEE_COMMITMENT_DOMAIN);
     // Length prefix binds the cardinality so a prefix/superset of one committee
-    // cannot collide with another.
+    // cannot collide with another. Live committees are bounded by
+    // `crate::bls::MAX_VALIDATORS` (256), so the `u32` length is the real bound.
     buf.extend_from_slice(&(committee.len() as u32).to_be_bytes());
     for pk in committee.iter() {
         buf.extend_from_slice(commonware_codec::Encode::encode(pk).as_ref());

@@ -35,10 +35,6 @@ pub const TEE_DKG_CHANNEL: u64 = 7;
 pub const RADICLE_ENDPOINT_CHANNEL: u64 = 8;
 /// Per-peer signed Radicle endpoint messages accepted per second.
 pub const RADICLE_ENDPOINT_CHANNEL_QUOTA: u32 = 32;
-/// Maximum extra_data size in block headers (bytes).
-/// Enough for 128-validator participation bitmap (23 bytes) with room to grow.
-pub const MAX_EXTRA_DATA_SIZE: usize = 256;
-
 /// Default timeouts for Simplex consensus.
 ///
 /// These constants re-export the single source of truth in [`crate::timing`]. Thus
@@ -76,17 +72,20 @@ pub const MAX_P2P_MESSAGE_SIZE: u32 = 2 * 1024 * 1024;
 pub const ENGINE_MAILBOX_SIZE: usize = 256;
 
 /// Default epoch length in blocks. The node uses it when genesis.json does not
-/// specify `config.epochLengthBlocks`. This is ~1 hour at a ~3s block. It is the
-/// cadence for DKG reshare, active-set rotation, and the per-epoch slash-counter
-/// reset. A felony threshold must stay below this (see `outbe_slashindicator`). The
-/// DKG prepare/grace windows below are lookback/fallback bounds and stay < this
-/// epoch. The operational windows come from `config.dkg{Prepare,Grace}*` in genesis.
+/// specify `config.epochLengthBlocks`. At
+/// [`crate::timing::DEFAULT_MIN_BLOCK_TIME_MS`] (2000 ms) this is 40 minutes.
+/// It is the cadence for DKG reshare, active-set rotation, and the per-epoch
+/// slash-counter reset. A felony threshold must stay below this (see
+/// `outbe_slashindicator`). The DKG prepare/grace windows below are
+/// lookback/fallback bounds and stay < this epoch. The operational windows come
+/// from `config.dkg{Prepare,Grace}*` in genesis.
 pub const DEFAULT_EPOCH_LENGTH_BLOCKS: u32 = 1_200;
 
 /// Activity timeout in views (track this many behind finalized tip).
 pub const ACTIVITY_TIMEOUT: u32 = 1000;
 
-/// Default DKG prepare window before planned activation (~10 minutes at ~1s/block).
+/// Default DKG prepare window before planned activation.
+/// 600 blocks at [`crate::timing::DEFAULT_MIN_BLOCK_TIME_MS`] (2000 ms) is 20 minutes.
 pub const DEFAULT_DKG_PREPARE_WINDOW_BLOCKS: u64 = 600;
 /// Default late activation grace window after planned activation.
 pub const DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS: u64 = 600;

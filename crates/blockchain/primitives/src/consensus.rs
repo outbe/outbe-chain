@@ -251,9 +251,8 @@ pub struct ConsensusData {
     pub finalized_certificate: FinalizedParentCertificateData,
     /// VRF seed derived from the BLS threshold signature (if available).
     pub vrf_seed: Option<B256>,
-    /// Canonical missed proposer events for skipped views before this
-    /// finalization. This is an event list, so a validator may appear multiple
-    /// times when it missed multiple views.
+    /// V2 requires this list to be empty. Proof verification rejects a nonempty
+    /// list. The field stays so the canonical header layout does not change.
     pub missed_proposers: Vec<Address>,
 }
 
