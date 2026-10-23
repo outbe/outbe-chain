@@ -5,7 +5,7 @@ use outbe_primitives::test_utils::sol_interface::sol_function_canonical;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
 
 use crate::distribution::{advance_accruals, distribute_daily, PoolKind};
-use crate::schema::{AgentRewardContract, RewardPool};
+use crate::schema::{AgentRewardContract, DayIndex, RewardPool};
 
 const CHAIN_ID: u64 = 1;
 const T_NOW: u64 = 1_700_000_000;
@@ -298,6 +298,30 @@ fn assert_tribute_counter_rejected_without_writes(
     assert_eq!(provider.get_ordered_events(), ordered_events, "{pool:?}");
 }
 
+/// The address-list ends exercised by the full-list counter: slot 0 and `u32::MAX`.
+const BOUNDARY_ADDRESS_SLOTS: [u32; 2] = [0, u32::MAX];
+
+fn write_boundary_address_slots(index: &DayIndex<'_, '_>, day: WorldwideDay, value: Address) {
+    for slot in BOUNDARY_ADDRESS_SLOTS {
+        index
+            .addresses
+            .write(&AgentRewardContract::address_index_key(day, slot), value)
+            .unwrap();
+    }
+}
+
+fn assert_boundary_address_slots(index: &DayIndex<'_, '_>, day: WorldwideDay, expected: Address) {
+    for slot in BOUNDARY_ADDRESS_SLOTS {
+        assert_eq!(
+            index
+                .addresses
+                .read(&AgentRewardContract::address_index_key(day, slot))
+                .unwrap(),
+            expected
+        );
+    }
+}
+
 #[test]
 fn tribute_counter_recipient_max_succeeds_then_rejects_without_zero_wrap_or_duplicate() {
     let day = WorldwideDay::new(20260525);
@@ -413,12 +437,7 @@ fn tribute_counter_address_count_max_succeeds_then_rejects_without_slot_overwrit
             let mut contract = AgentRewardContract::new(storage);
             let index = contract.day_index(pool).unwrap();
             index.address_count.write(&day, u32::MAX - 1).unwrap();
-            for slot in [0, u32::MAX] {
-                index
-                    .addresses
-                    .write(&AgentRewardContract::address_index_key(day, slot), sentinel)
-                    .unwrap();
-            }
+            write_boundary_address_slots(&index, day, sentinel);
             increment_tribute_counter(&mut contract, pool, day, alice).unwrap();
             let index = contract.day_index(pool).unwrap();
             assert_eq!(index.address_count.read(&day).unwrap(), u32::MAX);
@@ -437,15 +456,7 @@ fn tribute_counter_address_count_max_succeeds_then_rejects_without_slot_overwrit
                     .unwrap(),
                 alice
             );
-            for slot in [0, u32::MAX] {
-                assert_eq!(
-                    index
-                        .addresses
-                        .read(&AgentRewardContract::address_index_key(day, slot))
-                        .unwrap(),
-                    sentinel
-                );
-            }
+            assert_boundary_address_slots(&index, day, sentinel);
         });
         assert_tribute_counter_rejected_without_writes(&mut provider, pool, day, bob);
 
@@ -470,15 +481,7 @@ fn tribute_counter_address_count_max_succeeds_then_rejects_without_slot_overwrit
                     .unwrap(),
                 alice
             );
-            for slot in [0, u32::MAX] {
-                assert_eq!(
-                    index
-                        .addresses
-                        .read(&AgentRewardContract::address_index_key(day, slot))
-                        .unwrap(),
-                    sentinel
-                );
-            }
+            assert_boundary_address_slots(&index, day, sentinel);
         });
     }
 }
@@ -494,7 +497,7 @@ fn seed_day_vwap(storage: &StorageHandle<'_>, vwap: U256) {
     let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), 840)
         .unwrap()
         .expect("COEN/840 registered");
-    let day = previous_date_key(timestamp_to_date_key(T_NOW));
+    let day = previous_date_key(timestamp_to_date_key(T_NOW)).expect("date step");
     outbe_oracle::schema::OracleContract::new(storage.clone())
         .record_utc_day_vwap(day, index, vwap)
         .unwrap();
@@ -512,7 +515,11 @@ fn price_coen_in(storage: &StorageHandle<'_>, iso: u16, vwap: U256, reference: b
         .unwrap();
     let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
     oracle
-        .record_utc_day_vwap(previous_date_key(timestamp_to_date_key(T_NOW)), index, vwap)
+        .record_utc_day_vwap(
+            previous_date_key(timestamp_to_date_key(T_NOW)).expect("date step"),
+            index,
+            vwap,
+        )
         .unwrap();
     if reference {
         oracle.reference_currencies.push(iso).unwrap();
@@ -1077,14 +1084,22 @@ mod distribute_daily_tests {
         recipients: &[(u8, u64, u64)],
     ) {
         for &(byte, weight, _) in recipients {
+            let address = Address::repeat_byte(byte);
             for _ in 0..weight {
-                let address = Address::repeat_byte(byte);
-                if kind == &PoolKind::Waa {
-                    contract.increment_waa_tribute(DAY, address).unwrap();
-                } else {
-                    contract.increment_sra_tribute(DAY, address).unwrap();
-                }
+                record_one_tribute(contract, kind, address);
             }
+        }
+    }
+
+    fn record_one_tribute(
+        contract: &mut AgentRewardContract<'_>,
+        kind: &PoolKind,
+        address: Address,
+    ) {
+        if kind == &PoolKind::Waa {
+            contract.increment_waa_tribute(DAY, address).unwrap();
+        } else {
+            contract.increment_sra_tribute(DAY, address).unwrap();
         }
     }
 
@@ -1498,6 +1513,25 @@ fn every_pool_day() -> HashMapStorageProvider {
     provider
 }
 
+fn assert_retry_credits(
+    provider: &mut HashMapStorageProvider,
+    expected: &[(RewardPool, Address, u64)],
+    failure_at: usize,
+) {
+    StorageHandle::enter(provider, |storage| {
+        let contract = AgentRewardContract::new(storage);
+        for (reward_pool, address, credit) in expected {
+            assert_eq!(
+                contract
+                    .get_pool_claimable_reward(*reward_pool, *address)
+                    .unwrap(),
+                U256::from(*credit),
+                "failure {failure_at}"
+            );
+        }
+    });
+}
+
 #[test]
 fn a_distribution_that_fails_after_any_write_reverts_and_credits_once_on_retry() {
     let day = WorldwideDay::new(timestamp_to_date_key(T_NOW));
@@ -1555,18 +1589,7 @@ fn a_distribution_that_fails_after_any_write_reverts_and_credits_once_on_retry()
 
         provider.clear_mutation_failure();
         assert_eq!(distribute(&mut provider).unwrap(), U256::ONE);
-        StorageHandle::enter(&mut provider, |storage| {
-            let contract = AgentRewardContract::new(storage);
-            for (reward_pool, address, credit) in expected {
-                assert_eq!(
-                    contract
-                        .get_pool_claimable_reward(reward_pool, address)
-                        .unwrap(),
-                    U256::from(credit),
-                    "failure {failure_at}"
-                );
-            }
-        });
+        assert_retry_credits(&mut provider, &expected, failure_at);
         assert_eq!(
             provider
                 .get_events(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)

@@ -58,6 +58,44 @@ fn lifecycle_activates_scheduled_update() {
 }
 
 #[test]
+fn historical_testnet_schedule_keeps_its_recorded_activation_height() {
+    use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
+    use outbe_primitives::chain::TESTNET_CHAIN_ID;
+    use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+
+    let mut provider = HashMapStorageProvider::new(TESTNET_CHAIN_ID);
+    let storage = StorageHandle::new(&mut provider);
+    let mut update = Update::new(storage.clone());
+    let proposal_id = U256::from(1);
+    let activation = 10;
+    // Persist the pre-existing schedule directly, bypassing new admission rules.
+    update
+        .write_scheduled_update(proposal_id, PV, activation, "historical")
+        .unwrap();
+    for height in [activation - 1, activation] {
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(height, 0, TESTNET_CHAIN_ID),
+            storage.clone(),
+        );
+        update
+            .process_begin_block_with_handlers(&ctx, &super::EMPTY_UPGRADE_HANDLER_REGISTRY)
+            .unwrap();
+        let scheduled = update.read_scheduled_update(proposal_id).unwrap().unwrap();
+        assert_eq!(scheduled.activation_height, activation);
+        assert_eq!(
+            scheduled.status,
+            if height == activation {
+                ScheduledUpdateStatus::Activated
+            } else {
+                ScheduledUpdateStatus::Scheduled
+            }
+        );
+    }
+    assert_eq!(update.get_active_version().unwrap(), PV);
+    assert_eq!(update.get_active_version_height().unwrap(), activation);
+}
+
+#[test]
 fn waiting_index_tracks_pending_scheduled_updates() {
     with_scheduled_update(V1_2, |_storage, update, _activation| {
         let proposal_id = U256::from(1);

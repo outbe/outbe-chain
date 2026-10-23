@@ -312,7 +312,8 @@ mod enclave_responses {
             inputs_canonical_hash: HASH,
             attestation_tag: Vec::new(),
         };
-        let preimage = fidelity_cohort_attestation_preimage(HASH, &result);
+        let preimage =
+            fidelity_cohort_attestation_preimage(HASH, &result).expect("cohort preimage");
         result.attestation_tag = signer().sign(&preimage).to_bytes().to_vec();
         result.attestation_tag[0] ^= u8::from(tag_flip);
         result
@@ -326,7 +327,7 @@ mod enclave_responses {
             inputs_canonical_hash: HASH,
             attestation_tag: Vec::new(),
         };
-        let preimage = fidelity_query_attestation_preimage(HASH, &result);
+        let preimage = fidelity_query_attestation_preimage(HASH, &result).expect("query preimage");
         result.attestation_tag = signer().sign(&preimage).to_bytes().to_vec();
         result.attestation_tag[0] ^= u8::from(tag_flip);
         result
@@ -338,7 +339,8 @@ mod enclave_responses {
             league: 2,
             rcfi: U256::ZERO,
         }];
-        let preimage = fidelity_snapshot_attestation_preimage(hash, &leagues);
+        let preimage =
+            fidelity_snapshot_attestation_preimage(hash, &leagues).expect("snapshot preimage");
         let mut attestation_tag = signer().sign(&preimage).to_bytes().to_vec();
         attestation_tag[0] ^= u8::from(tag_flip);
         EnclaveResponse::FidelityLeaguesSnapshotted {

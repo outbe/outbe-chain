@@ -431,7 +431,7 @@ fn the_issuance_rail_converts_at_the_trailing_window_not_the_closed_day() {
             U256::from(2u64) * COEN_ISO_RATE_SCALE,
         );
         write_day_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
-        let day = previous_date_key(timestamp_to_date_key(ISSUED_AT as u64));
+        let day = previous_date_key(timestamp_to_date_key(ISSUED_AT as u64)).expect("date step");
         oracle
             .record_utc_day_vwap(day, EUR_PAIR_ID, U256::from(4u64) * COEN_ISO_RATE_SCALE)
             .unwrap();
@@ -544,6 +544,24 @@ fn the_reference_currency_settles_without_reading_any_rate() {
     });
 }
 
+fn settle_series_7(storage: &mut HashMapStorageProvider, snapshot: U256) -> String {
+    StorageHandle::enter(storage, |s| {
+        runtime::settle_intex(
+            &s,
+            sid(7),
+            owner(),
+            U256::ONE,
+            SettlementPayment {
+                payer: owner(),
+                asset: settlement_asset(),
+                snapshot_id: snapshot,
+            },
+        )
+        .unwrap_err()
+        .to_string()
+    })
+}
+
 #[test]
 fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
     let mut storage = dual_currency_series(EUR_ISO as u64);
@@ -551,23 +569,6 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
     let quote = |storage: &mut HashMapStorageProvider| {
         StorageHandle::enter(storage, |s| {
             runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE).unwrap()
-        })
-    };
-    let settle = |storage: &mut HashMapStorageProvider, snapshot: U256| {
-        StorageHandle::enter(storage, |s| {
-            runtime::settle_intex(
-                &s,
-                sid(7),
-                owner(),
-                U256::ONE,
-                SettlementPayment {
-                    payer: owner(),
-                    asset: settlement_asset(),
-                    snapshot_id: snapshot,
-                },
-            )
-            .unwrap_err()
-            .to_string()
         })
     };
     StorageHandle::enter(&mut storage, |s| {
@@ -590,13 +591,13 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
     .to_string();
 
     storage.set_timestamp(U256::from(cutoff + 3_599));
-    assert_eq!(settle(&mut storage, quoted), reached_payment);
+    assert_eq!(settle_series_7(&mut storage, quoted), reached_payment);
 
     storage.set_timestamp(U256::from(cutoff + 3_600));
     let (_, next_amount, required) = quote(&mut storage);
     assert_eq!(next_amount, amount, "the next window holds the same price");
     assert_eq!(
-        settle(&mut storage, quoted),
+        settle_series_7(&mut storage, quoted),
         outbe_primitives::error::PrecompileError::from(
             outbe_vaultrouter::settlement::SettlementError::SnapshotMismatch {
                 authorized: quoted,
@@ -614,7 +615,7 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
     )
     .unwrap();
     assert_eq!(
-        settle(&mut storage, other_policy.to_u256()),
+        settle_series_7(&mut storage, other_policy.to_u256()),
         outbe_primitives::error::PrecompileError::from(
             outbe_vaultrouter::settlement::SettlementError::SnapshotMismatch {
                 authorized: other_policy.to_u256(),
@@ -637,23 +638,6 @@ fn the_hourly_rollover_at_the_call_deadline_grants_no_grace() {
             runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::ONE)
                 .unwrap()
                 .2
-        })
-    };
-    let settle = |storage: &mut HashMapStorageProvider, snapshot: U256| {
-        StorageHandle::enter(storage, |s| {
-            runtime::settle_intex(
-                &s,
-                sid(7),
-                owner(),
-                U256::ONE,
-                SettlementPayment {
-                    payer: owner(),
-                    asset: settlement_asset(),
-                    snapshot_id: snapshot,
-                },
-            )
-            .unwrap_err()
-            .to_string()
         })
     };
     StorageHandle::enter(&mut storage, |s| {
@@ -681,7 +665,7 @@ fn the_hourly_rollover_at_the_call_deadline_grants_no_grace() {
     storage.set_timestamp(U256::from(deadline));
     let required = quote(&mut storage);
     assert_eq!(
-        settle(&mut storage, quoted),
+        settle_series_7(&mut storage, quoted),
         outbe_primitives::error::PrecompileError::from(
             outbe_vaultrouter::settlement::SettlementError::SnapshotMismatch {
                 authorized: quoted,
@@ -693,7 +677,7 @@ fn the_hourly_rollover_at_the_call_deadline_grants_no_grace() {
 
     storage.set_timestamp(U256::from(deadline + 1));
     assert_eq!(
-        settle(&mut storage, required),
+        settle_series_7(&mut storage, required),
         outbe_primitives::error::PrecompileError::from(
             crate::errors::IntexFactoryError::SettlementDeadlinePassed
         )

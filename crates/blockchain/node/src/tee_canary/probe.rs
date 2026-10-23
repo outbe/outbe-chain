@@ -335,9 +335,10 @@ mod tests {
         let results = [created_result()];
         let hash = inputs_canonical_hash(&[]);
         let signature = signer
-            .sign(&outbe_tee::protocol::tribute_offer_attestation_preimage(
-                hash, &results,
-            ))
+            .sign(
+                &outbe_tee::protocol::tribute_offer_attestation_preimage(hash, &results)
+                    .expect("tribute preimage"),
+            )
             .to_bytes();
         let pinned = requester(Some(signer.verifying_key().to_bytes()));
         let batch = || CanaryBatch {

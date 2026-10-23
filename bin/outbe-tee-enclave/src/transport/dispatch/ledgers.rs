@@ -91,8 +91,13 @@ fn apply_gratis(
     }
     // Sign (inputs_canonical_hash || result) with the attestation key so the
     // host can prove the result came from this attested enclave.
-    let preimage =
-        outbe_tee::protocol::gratis_op_attestation_preimage(result.inputs_canonical_hash, &result);
+    let preimage = match outbe_tee::protocol::gratis_op_attestation_preimage(
+        result.inputs_canonical_hash,
+        &result,
+    ) {
+        Ok(preimage) => preimage,
+        Err(error) => return into_response(Err(crate::errors::TeeError::from(error))),
+    };
     result.attestation_tag = keys.sign_attestation(&preimage).to_vec();
     EnclaveResponse::GratisOpApplied {
         result: Box::new(result),
@@ -108,7 +113,7 @@ fn apply_fidelity(
         let preimage = outbe_tee::protocol::fidelity_cohort_attestation_preimage(
             result.inputs_canonical_hash,
             &result,
-        );
+        )?;
         result.attestation_tag = context.keys.sign_attestation(&preimage).to_vec();
         Ok(EnclaveResponse::FidelityCohortApplied {
             result: Box::new(result),
@@ -126,7 +131,7 @@ fn snapshot_fidelity(
         let preimage = outbe_tee::protocol::fidelity_snapshot_attestation_preimage(
             inputs_canonical_hash,
             &leagues,
-        );
+        )?;
         let attestation_tag = context.keys.sign_attestation(&preimage).to_vec();
         Ok(EnclaveResponse::FidelityLeaguesSnapshotted {
             leagues,
@@ -145,7 +150,7 @@ fn query_fidelity(
         let preimage = outbe_tee::protocol::fidelity_query_attestation_preimage(
             result.inputs_canonical_hash,
             &result,
-        );
+        )?;
         result.attestation_tag = context.keys.sign_attestation(&preimage).to_vec();
         Ok(EnclaveResponse::FidelityIndexQueried {
             result: Box::new(result),
@@ -179,8 +184,13 @@ fn apply_promis(
         }
     };
     let mut result = crate::promis::apply_op(&state_key, &request);
-    let preimage =
-        outbe_tee::protocol::promis_op_attestation_preimage(result.inputs_canonical_hash, &result);
+    let preimage = match outbe_tee::protocol::promis_op_attestation_preimage(
+        result.inputs_canonical_hash,
+        &result,
+    ) {
+        Ok(preimage) => preimage,
+        Err(error) => return into_response(Err(crate::errors::TeeError::from(error))),
+    };
     result.attestation_tag = keys.sign_attestation(&preimage).to_vec();
     EnclaveResponse::PromisOpApplied {
         result: Box::new(result),

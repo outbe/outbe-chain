@@ -28,6 +28,7 @@ interface IGemFactory {
     error MissingGroupForCall(bytes32 group);
     error IneligibleGroupMember(bytes32 groupKey, uint256 gemId);
     error CallPriceOverflow();
+    error DateStep(uint8 kind, uint32 dateKey);
 
     /// @notice Send the caller's Intex series `sourceIntexId` to the Gem Factory (burning `units`
     ///         via IntexNFT1155) and issue a GemPosition NFT to the caller.

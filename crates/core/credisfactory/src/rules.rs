@@ -19,6 +19,15 @@ fn reward_day(storage: &StorageHandle<'_>) -> Result<u32> {
     Ok(timestamp_to_date_key(storage.now_secs()?))
 }
 
+fn date_step_error(
+    err: outbe_primitives::time::TimeError,
+) -> outbe_primitives::error::PrecompileError {
+    match err.date_step() {
+        Some((kind, date_key)) => CredisError::DateStep { kind, date_key }.into(),
+        None => outbe_primitives::error::PrecompileError::Fatal(err.to_string()),
+    }
+}
+
 /// Terms captured when a Credis is issued. Grouped rather than passed positionally
 /// so a mis-ordered `U256` cannot silently swap principal for collateral.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -245,7 +254,7 @@ pub fn settle(
     if closed {
         record.state = CredisState::Settled as u8;
     }
-    let group = record.group_key();
+    let group = record.group_key().map_err(date_step_error)?;
     // A settled Credis keeps the call and terms it read from its group.
     credis.update_credis_record(&record)?;
     credis.take_owner_outstanding(record.owner, principal_paid)?;
@@ -330,7 +339,7 @@ pub fn delete_forfeited(credis: &mut CredisContract<'_>, record: Credis) -> Resu
         reward_day(&credis.storage)?,
         forfeit.gratis_burned_minor,
     )?;
-    credis.leave_group(record.group_key(), credis_id)?;
+    credis.leave_group(record.group_key().map_err(date_step_error)?, credis_id)?;
     credis.delete_credis_record(credis_id)?;
 
     credis.emit(outbe_credis::precompile::ICredis::CredisForfeited {

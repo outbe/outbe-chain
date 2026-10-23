@@ -59,6 +59,12 @@ pub enum RewardsError {
     FinalizedBlockPredatesGenesis { utc_day: u32, genesis_utc_day: u32 },
     #[error("time helper error: {0}")]
     TimeHelper(String),
+    #[error("date key {date_key} is before 20200101")]
+    DateBeforeMinimum { date_key: u32 },
+    #[error("date step from {date_key} does not fit u32")]
+    DateOverflow { date_key: u32 },
+    #[error("date step from {date_key} does not fit u64")]
+    TimestampStepOverflow { date_key: u32 },
     #[error(
         "contradictory consensus metadata for fb_hash={fb_hash}: \
          stored fingerprint={stored}, new fingerprint={new}"
@@ -80,6 +86,12 @@ impl From<TimeError> for RewardsError {
                 utc_day,
                 genesis_utc_day,
             },
+            TimeError::DateBeforeMinimum { date_key } => Self::DateBeforeMinimum { date_key },
+            TimeError::DateOverflow { date_key } => Self::DateOverflow { date_key },
+            TimeError::TimestampStepOverflow { date_key } => {
+                Self::TimestampStepOverflow { date_key }
+            }
+            // `TimeError` is non_exhaustive. The three step variants above stay explicit.
             _ => Self::TimeHelper(err.to_string()),
         }
     }

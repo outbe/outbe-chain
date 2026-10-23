@@ -93,6 +93,8 @@ impl Drop for ObservedUpstream {
 }
 
 fn forward(mut client: TcpStream, port: u16, evidence: &mut File) -> Result<()> {
+    // Accepted sockets can inherit the listener's nonblocking mode.
+    client.set_nonblocking(false)?;
     client.set_read_timeout(Some(Duration::from_secs(30)))?;
     client.set_write_timeout(Some(Duration::from_secs(30)))?;
     let mut input = BufReader::new(&mut client);

@@ -3,6 +3,7 @@ pragma solidity ^0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 
 import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
@@ -13,7 +14,28 @@ import {BridgeableERC20 as SyntheticWCOEN} from "../../src/synthetic/BridgeableE
 import {MockERC7786Bridge} from "../mocks/MockERC7786Bridge.sol";
 import {MockStablecoin} from "../mocks/MockStablecoin.sol";
 
+/// @dev Burns 1% of every transfer between two holders.
+contract FeeOnTransferToken is ERC20("Fee", "FEE") {
+    function decimals() public pure override returns (uint8) {
+        return 6;
+    }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+
+    function _update(address from, address to, uint256 value) internal override {
+        if (from == address(0) || to == address(0)) return super._update(from, to, value);
+        uint256 fee = value / 100;
+        super._update(from, address(0), fee);
+        super._update(from, to, value - fee);
+    }
+}
+
 contract ERC7786TokenBridgeTest is Test {
+    ERC7786TokenBridge.TokenBridgeMode internal constant LOCK = ERC7786TokenBridge.TokenBridgeMode.LockUnlock;
+    ERC7786TokenBridge.TokenBridgeMode internal constant BURN = ERC7786TokenBridge.TokenBridgeMode.BurnMint;
+
     uint32 internal constant BNB = 97;
     uint32 internal constant OUTBE = 54322345;
 
@@ -121,19 +143,6 @@ contract ERC7786TokenBridgeTest is Test {
         assertEq(outbeUsdt0Bridge.quoteSend(BNB, sourceAddr, 1, "", 0), 123);
     }
 
-    function test_RevertWhen_RemoteBridgeNotSet() public {
-        ERC7786TokenBridge bridge = new ERC7786TokenBridge(
-            address(usdt), address(bnbGateway), address(this), ERC7786TokenBridge.TokenBridgeMode.LockUnlock
-        );
-        usdt.mint(sourceAddr, 1);
-
-        vm.startPrank(sourceAddr);
-        usdt.approve(address(bridge), 1);
-        vm.expectRevert(abi.encodeWithSelector(ERC7786TokenBridge.RemoteBridgeNotSet.selector, OUTBE));
-        bridge.send(OUTBE, targetAddr, 1);
-        vm.stopPrank();
-    }
-
     function test_RevertWhen_SendToZeroRecipient() public {
         usdt.mint(sourceAddr, 1);
 
@@ -159,6 +168,39 @@ contract ERC7786TokenBridgeTest is Test {
         vm.prank(address(outbeGateway));
         vm.expectRevert(abi.encodeWithSelector(ERC7786TokenBridge.UnauthorizedRemoteBridge.selector, wrongSender));
         outbeUsdt0Bridge.receiveMessage(bytes32(0), wrongSender, "");
+    }
+
+    function test_FeeOnTransferLock_CreditsReceivedAmount() public {
+        FeeOnTransferToken feeToken = new FeeOnTransferToken();
+        ERC7786TokenBridge feeBridge = _bridge(address(feeToken), bnbGateway, LOCK, OUTBE, _nextAddress(2));
+        SyntheticWCOEN feeSynthetic = new SyntheticWCOEN("Fee", "FEE", 6, _nextAddress(1));
+        _bridge(address(feeSynthetic), outbeGateway, BURN, BNB, address(feeBridge));
+        feeToken.mint(sourceAddr, 100e6);
+
+        vm.startPrank(sourceAddr);
+        feeToken.approve(address(feeBridge), 100e6);
+        feeBridge.send(OUTBE, targetAddr, 100e6);
+        vm.stopPrank();
+
+        assertEq(feeToken.balanceOf(address(feeBridge)), 99e6);
+        assertEq(feeSynthetic.balanceOf(targetAddr), 99e6);
+    }
+
+    function test_AddPeer_ConnectsNewDomain() public {
+        address peer = makeAddr("peer");
+        bnbUsdtBridge.addPeer(1, peer);
+        assertEq(bnbUsdtBridge.remoteBridges(1), peer);
+    }
+
+    function test_RevertWhen_AddPeerChangesExistingPeer() public {
+        vm.expectRevert(abi.encodeWithSelector(ERC7786TokenBridge.InvalidPeer.selector, OUTBE));
+        bnbUsdtBridge.addPeer(OUTBE, intruder);
+    }
+
+    function test_RevertWhen_AddPeerByNonOwner() public {
+        vm.prank(intruder);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, intruder));
+        bnbUsdtBridge.addPeer(1, intruder);
     }
 
     function test_RevertWhen_LockSideHasNoAllowance() public {
@@ -239,49 +281,49 @@ contract ERC7786TokenBridgeTest is Test {
     function _setUpStablecoinRoute() internal {
         stable = new MockStablecoin("USD Tether", "USDT", address(this));
 
-        bnbStableBridge = new ERC7786TokenBridge(
-            address(usdt), address(bnbGateway), address(this), ERC7786TokenBridge.TokenBridgeMode.LockUnlock
-        );
-        outbeStableBridge = new ERC7786TokenBridge(
-            address(stable), address(outbeGateway), address(this), ERC7786TokenBridge.TokenBridgeMode.IssuerBurnMint
+        bnbStableBridge = _bridge(address(usdt), bnbGateway, LOCK, OUTBE, _nextAddress(1));
+        outbeStableBridge = _bridge(
+            address(stable),
+            outbeGateway,
+            ERC7786TokenBridge.TokenBridgeMode.IssuerBurnMint,
+            BNB,
+            address(bnbStableBridge)
         );
 
-        // No setTokenBridge: the issuer side is authorized by role, not by a token->bridge link.
+        // The issuer side is authorized by role, not by a token->bridge link.
         stable.grantIssuer(address(outbeStableBridge));
-        bnbStableBridge.setRemoteBridge(OUTBE, _interop(OUTBE, address(outbeStableBridge)));
-        outbeStableBridge.setRemoteBridge(BNB, _interop(BNB, address(bnbStableBridge)));
     }
 
     function _setUpUsdtRoute() internal {
         usdt = new USDT();
-        usdt0 = new BridgeableERC20Stable("USDT0", "USDT0", 6, 840, address(this));
-
-        bnbUsdtBridge = new ERC7786TokenBridge(
-            address(usdt), address(bnbGateway), address(this), ERC7786TokenBridge.TokenBridgeMode.LockUnlock
-        );
-        outbeUsdt0Bridge = new ERC7786TokenBridge(
-            address(usdt0), address(outbeGateway), address(this), ERC7786TokenBridge.TokenBridgeMode.BurnMint
-        );
-
-        usdt0.setTokenBridge(address(outbeUsdt0Bridge));
-        bnbUsdtBridge.setRemoteBridge(OUTBE, _interop(OUTBE, address(outbeUsdt0Bridge)));
-        outbeUsdt0Bridge.setRemoteBridge(BNB, _interop(BNB, address(bnbUsdtBridge)));
+        bnbUsdtBridge = _bridge(address(usdt), bnbGateway, LOCK, OUTBE, _nextAddress(2));
+        usdt0 = new BridgeableERC20Stable("USDT0", "USDT0", 6, 840, _nextAddress(1));
+        outbeUsdt0Bridge = _bridge(address(usdt0), outbeGateway, BURN, BNB, address(bnbUsdtBridge));
     }
 
     function _setUpWcoenRoute() internal {
         outbeWcoen = new NativeWCOEN();
-        bnbWcoen = new SyntheticWCOEN("Wrapped COEN", "WCOEN", 18, address(this));
+        outbeWcoenBridge = _bridge(address(outbeWcoen), outbeGateway, LOCK, BNB, _nextAddress(2));
+        bnbWcoen = new SyntheticWCOEN("Wrapped COEN", "WCOEN", 18, _nextAddress(1));
+        bnbWcoenBridge = _bridge(address(bnbWcoen), bnbGateway, BURN, OUTBE, address(outbeWcoenBridge));
+    }
 
-        outbeWcoenBridge = new ERC7786TokenBridge(
-            address(outbeWcoen), address(outbeGateway), address(this), ERC7786TokenBridge.TokenBridgeMode.LockUnlock
-        );
-        bnbWcoenBridge = new ERC7786TokenBridge(
-            address(bnbWcoen), address(bnbGateway), address(this), ERC7786TokenBridge.TokenBridgeMode.BurnMint
-        );
+    /// @dev The address of the contract this test deploys after `skip` other deployments.
+    function _nextAddress(uint256 skip) internal view returns (address) {
+        return vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + skip);
+    }
 
-        bnbWcoen.setTokenBridge(address(bnbWcoenBridge));
-        outbeWcoenBridge.setRemoteBridge(BNB, _interop(BNB, address(bnbWcoenBridge)));
-        bnbWcoenBridge.setRemoteBridge(OUTBE, _interop(OUTBE, address(outbeWcoenBridge)));
+    /// @dev A bridge owned by this test, with one peer.
+    function _bridge(
+        address token,
+        MockERC7786Bridge gateway,
+        ERC7786TokenBridge.TokenBridgeMode mode,
+        uint32 peerDomain,
+        address peer
+    ) internal returns (ERC7786TokenBridge) {
+        ERC7786TokenBridge.Peer[] memory peers = new ERC7786TokenBridge.Peer[](1);
+        peers[0] = ERC7786TokenBridge.Peer(peerDomain, peer);
+        return new ERC7786TokenBridge(token, address(gateway), mode, address(this), peers);
     }
 
     function _interop(uint256 chainId, address addr) internal pure returns (bytes memory) {

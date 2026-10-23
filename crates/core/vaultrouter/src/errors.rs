@@ -94,6 +94,15 @@ pub enum VaultRouterError {
     PreviousDayVwapUnavailable,
     #[error("reference pair unavailable")]
     ReferencePairUnavailable,
+    #[error("date step kind {kind} from date key {date_key}")]
+    DateStep { kind: u8, date_key: u32 },
+}
+
+pub(crate) fn date_step_error(err: outbe_primitives::time::TimeError) -> PrecompileError {
+    match err.date_step() {
+        Some((kind, date_key)) => VaultRouterError::DateStep { kind, date_key }.into(),
+        None => PrecompileError::Fatal(err.to_string()),
+    }
 }
 
 /// Reverts with the ABI encoding of a declared `IVaultRouter` error.
@@ -206,6 +215,10 @@ impl From<VaultRouterError> for PrecompileError {
             VaultRouterError::ReferencePairUnavailable => {
                 revert_with(I::ReferencePairUnavailable {})
             }
+            VaultRouterError::DateStep { kind, date_key } => revert_with(I::DateStep {
+                kind,
+                dateKey: date_key,
+            }),
         }
     }
 }

@@ -412,6 +412,22 @@ fn remote_and_local_generic_calls() {
 }
 
 #[test]
+fn remote_account_is_the_router_derived_account() {
+    let mut p = initialized_provider();
+    p.stub_sub_call_at_selector(
+        ica_router(),
+        IInterchainAccountRouter::getRemoteInterchainAccountCall::SELECTOR,
+        word_addr(v(0x1c)),
+    );
+    StorageHandle::enter(&mut p, |storage| {
+        let call = IHyperlaneController::remoteAccountCall { domain: SEPOLIA };
+        let ret = dispatch(storage, &call.abi_encode(), stranger(), U256::ZERO).unwrap();
+        let account = IHyperlaneController::remoteAccountCall::abi_decode_returns(&ret).unwrap();
+        assert_eq!(account, v(0x1c));
+    });
+}
+
+#[test]
 fn domains_can_be_added_and_removed_except_the_local_one() {
     let mut p = initialized_provider();
     StorageHandle::enter(&mut p, |storage| {

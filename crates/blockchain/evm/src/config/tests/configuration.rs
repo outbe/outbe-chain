@@ -144,7 +144,6 @@ fn context_for_next_block_preserves_valid_consensus_header_artifact() {
             is_validator_set_change: true,
             outcome: Bytes::from_static(b"outcome"),
             is_full_dkg: true,
-            tee_recipient_pubkeys: Vec::new(),
             tee_expired_target_exclusions: Vec::new(),
             tee_expired_target_exclusions_hash: B256::ZERO,
             reshare: ReshareResult {

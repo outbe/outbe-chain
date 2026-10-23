@@ -301,4 +301,40 @@ mod validation_regression {
         oversized[1..5].copy_from_slice(&u32::MAX.to_be_bytes());
         assert!(Ost3WireMessage::decode(&oversized).is_none());
     }
+
+    fn independent_signature_wire() -> (Ost3WireMessage, Vec<u8>) {
+        let signing_hash = B256::repeat_byte(0x41);
+        let validator = Address::repeat_byte(0x42);
+        let signature = [0x43; 65];
+        let message = Ost3WireMessage::Signature {
+            signing_hash,
+            validator,
+            signature,
+        };
+        let mut bytes = Vec::with_capacity(118);
+        bytes.push(0x31);
+        bytes.extend_from_slice(signing_hash.as_slice());
+        bytes.extend_from_slice(validator.as_slice());
+        bytes.extend_from_slice(&signature);
+        assert_eq!(bytes.len(), 118);
+        (message, bytes)
+    }
+
+    #[test]
+    fn signature_wire_round_trips_known_layout() {
+        let (message, bytes) = independent_signature_wire();
+        assert_eq!(Ost3WireMessage::decode(&bytes).unwrap(), message);
+        assert_eq!(message.encode().unwrap(), bytes);
+    }
+
+    #[test]
+    fn signature_wire_rejects_a_wrong_length() {
+        let (_, bytes) = independent_signature_wire();
+        let mut short = bytes.clone();
+        short.pop();
+        assert!(Ost3WireMessage::decode(&short).is_none());
+        let mut long = bytes;
+        long.push(0x44);
+        assert!(Ost3WireMessage::decode(&long).is_none());
+    }
 }

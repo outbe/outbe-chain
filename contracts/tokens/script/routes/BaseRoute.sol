@@ -4,10 +4,8 @@ pragma solidity ^0.8.30;
 import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-
 import {Create3Factory} from "@shared/Create3Factory.sol";
-import {BridgeableERC20} from "../../src/synthetic/BridgeableERC20.sol";
+import {IHyperlaneController} from "@precompiles/IHyperlaneController.sol";
 import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
 
 enum SyntheticSource {
@@ -38,19 +36,20 @@ struct RouteSpec {
 ///      directory.
 ///
 ///      Addresses come from CREATE3, so they depend only on (factory, salt, deployer). They never
-///      depend on the owner, the ERC-7786 hub, the bridge mode or the token metadata. That is what
-///      lets one address hold the canonical token on one chain and the ERC-7802 synthetic on
-///      another.
+///      depend on the ERC-7786 hub, the bridge mode or the token metadata. That is what lets one
+///      address hold the canonical token on one chain and the ERC-7802 synthetic on another. It
+///      also puts each bridge at the same address on every chain, so the script knows every peer
+///      before the remote chain is deployed.
 ///
-/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `BRIDGE_ADDRESS`, `OUTBE_CHAIN_ID`, `EXTERNAL_CHAIN_ID`.
-/// Optional env: `OWNER_ADDRESS` (default: deployer), `ALLOW_EOA_OWNER`, `CREATE3_FACTORY_ADDRESS`,
-///   the route's `canonicalTokenEnv`, `INITIAL_MINT_AMOUNT`, `INITIAL_MINT_RECIPIENT`.
+/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `BRIDGE_ADDRESS`, `OUTBE_CHAIN_ID`, `EXTERNAL_CHAIN_ID`,
+///   `REMOTE_CHAIN_IDS`.
+/// Optional env: `CREATE3_FACTORY_ADDRESS`, `OUTBE_RPC` (an `rpc_endpoints` alias, default `outbe-testnet`), the
+///   route's `canonicalTokenEnv`, `INITIAL_MINT_AMOUNT`, `INITIAL_MINT_RECIPIENT`.
 abstract contract BaseRoute is Script {
-    bytes4 internal constant SET_TOKEN_BRIDGE_SELECTOR = bytes4(keccak256("setTokenBridge(address)"));
+    /// @dev The HyperlaneController precompile. Governance votes drive it, so it owns the bridges on Outbe.
+    address internal constant HYPERLANE_CONTROLLER = 0x000000000000000000000000000000000000EE14;
 
     error MissingCode(address target);
-    error UnauthorizedSigner(address signer, address expectedOwner);
-    error OwnerMustBeMultisigContract(address owner, uint256 chainId);
     error DomainTooLarge(uint256 chainId);
     error UndeclaredChain(uint256 chainId);
     error SyntheticTokenNotSet(string env);
@@ -61,16 +60,48 @@ abstract contract BaseRoute is Script {
         return vm.envUint("DEPLOYER_PK");
     }
 
-    /// @dev `virtual` so a test harness can act as the deployer. The deployer signs the owner-only
-    ///      calls and is also part of every salt. A harness that cannot override it cannot exercise
-    ///      a deployment at all.
+    /// @dev `virtual` so a test harness can act as the deployer. The deployer is part of every salt.
+    ///      A harness that cannot override it cannot exercise a deployment at all.
     function _deployer() internal view virtual returns (address) {
         return vm.addr(_pk());
     }
 
-    function _owner() internal view returns (address) {
-        address owner = vm.envOr("OWNER_ADDRESS", address(0));
-        return owner != address(0) ? owner : _deployer();
+    /// @dev Governance owns every bridge. On Outbe that is the HyperlaneController precompile. On
+    ///      another chain it is the controller's Interchain Account there.
+    function _bridgeOwner() internal returns (address) {
+        return _isOutbe() ? HYPERLANE_CONTROLLER : _controllerAccount(_toDomain(block.chainid));
+    }
+
+    /// @dev Asks the controller on Outbe for its Interchain Account on `domain`. A fork cannot run
+    ///      the precompile, so this is a raw `eth_call` to the Outbe node. `virtual` so a test
+    ///      harness, which has no Outbe node, can supply the account.
+    function _controllerAccount(uint32 domain) internal virtual returns (address) {
+        string memory params = string.concat(
+            '[{"to":"',
+            vm.toString(HYPERLANE_CONTROLLER),
+            '","data":"',
+            vm.toString(abi.encodeCall(IHyperlaneController.remoteAccount, (domain))),
+            '"},"latest"]'
+        );
+        string memory outbe = vm.envOr("OUTBE_RPC", string("outbe-testnet"));
+        return abi.decode(vm.rpc(outbe, "eth_call", params), (address));
+    }
+
+    /// @dev One peer per `REMOTE_CHAIN_IDS` entry other than this chain. CREATE3 puts the peer at
+    ///      `tokenBridge` on every chain.
+    function _bridgePeers(address tokenBridge) internal view returns (ERC7786TokenBridge.Peer[] memory peers) {
+        uint256[] memory remotes = vm.envUint("REMOTE_CHAIN_IDS", ",");
+        uint256 count;
+        for (uint256 i = 0; i < remotes.length; i++) {
+            if (remotes[i] != block.chainid) count++;
+        }
+        peers = new ERC7786TokenBridge.Peer[](count);
+        count = 0;
+        for (uint256 i = 0; i < remotes.length; i++) {
+            if (remotes[i] != block.chainid) {
+                peers[count++] = ERC7786TokenBridge.Peer(_toDomain(remotes[i]), tokenBridge);
+            }
+        }
     }
 
     function _mintRecipient() internal view returns (address) {
@@ -116,10 +147,6 @@ abstract contract BaseRoute is Script {
         if (target.code.length == 0) revert MissingCode(target);
     }
 
-    function _requireOwner(address signer, address expectedOwner) internal pure {
-        if (signer != expectedOwner) revert UnauthorizedSigner(signer, expectedOwner);
-    }
-
     function _toDomain(uint256 chainId) internal pure returns (uint32) {
         if (chainId > type(uint32).max) revert DomainTooLarge(chainId);
         return uint32(chainId);
@@ -141,72 +168,28 @@ abstract contract BaseRoute is Script {
         return outbeChainId != 0 && block.chainid == outbeChainId;
     }
 
-    function _requireContractOwnerOnGuardedChain(address owner) internal view {
-        _requireContractOwnerOnGuardedChain(owner, vm.envOr("ALLOW_EOA_OWNER", false));
-    }
-
-    function _requireContractOwnerOnGuardedChain(address owner, bool allowEoaOwner) internal view {
-        if (_isGuardedChain() && owner.code.length == 0 && !allowEoaOwner) {
-            revert OwnerMustBeMultisigContract(owner, block.chainid);
-        }
-    }
-
-    function _requireBridgeOwnerOnGuardedChain(address tokenBridge) internal view {
-        _requireContractOwnerOnGuardedChain(Ownable(tokenBridge).owner());
-    }
-
-    // ================================================ Owner calls ==================================================
-
-    function _shouldBroadcastOwnerCall(
-        address signer,
-        address owner,
-        address target,
-        bytes memory data,
-        string memory description
-    ) internal view returns (bool) {
-        if (signer == owner) return true;
-        if (owner.code.length != 0) {
-            _logSafeTransaction(description, owner, target, data);
-            return false;
-        }
-
-        _requireOwner(signer, owner);
-        return false;
-    }
-
-    function _logSafeTransaction(string memory description, address safe, address target, bytes memory data)
-        internal
-        pure
-    {
-        console2.log(description);
-        console2.log("Safe owner detected; submit this transaction through the owner Safe:");
-        console2.log("  safe=", safe);
-        console2.log("  to=", target);
-        console2.log("  value=0");
-        console2.log("  data=");
-        console2.logBytes(data);
-    }
-
     // =================================================== Deploy ====================================================
 
-    /// @dev Deploys one route's token and bridge on the connected chain. The caller supplies the token's creation
-    ///      code because `type(T).creationCode` cannot be carried in a struct. Everything else
-    ///      comes from `spec`. Each step checks on-chain state first. Thus a re-run is a no-op, and
-    ///      this function completes a partially finished chain (the Safe has not executed
-    ///      `setTokenBridge` yet) rather than skipping it.
+    /// @dev Creation code plus constructor arguments of the token that this chain holds for `spec`.
+    ///      A synthetic token takes `tokenBridge` as its fixed mint authority.
+    function _tokenInitCode(RouteSpec memory spec, bool canonical, address tokenBridge)
+        internal
+        virtual
+        returns (bytes memory);
+
+    /// @dev Deploys one route's token and bridge on the connected chain. Everything comes from `spec`.
+    ///      Each step checks on-chain state first. Thus a re-run is a no-op, and this function
+    ///      completes a partially finished chain rather than skipping it.
     ///
     ///      This function opens no broadcast on purpose. The entrypoints open a single one, and the
     ///      tests call this function directly.
-    function _deployRoute(address factory, string memory salt, RouteSpec memory spec, bytes memory tokenInitCode)
+    function _deployRoute(address factory, string memory salt, RouteSpec memory spec)
         internal
         returns (address token, address tokenBridge)
     {
         _requireDeclaredChain();
 
-        address owner = _owner();
         bool canonical = _isCanonicalHere(spec);
-
-        _requireContractOwnerOnGuardedChain(owner);
         address hub = vm.envAddress("BRIDGE_ADDRESS");
         _requireCode(hub);
 
@@ -220,6 +203,9 @@ abstract contract BaseRoute is Script {
         //   - `predicted`: where CREATE3 will put it if this script places it.
         address configured = vm.envOr(canonical ? spec.canonicalTokenEnv : spec.syntheticTokenEnv, address(0));
         address predicted = Create3Factory(factory).predict(_deployer(), tokenSalt);
+        // Known before the bridge exists: CREATE3 ignores the constructor arguments. A synthetic
+        // token takes it as its fixed mint authority.
+        tokenBridge = Create3Factory(factory).predict(_deployer(), bridgeSalt);
 
         if (configured != address(0)) {
             token = configured;
@@ -229,21 +215,16 @@ abstract contract BaseRoute is Script {
             revert SyntheticTokenNotSet(spec.syntheticTokenEnv);
         } else {
             token = predicted;
-            if (token.code.length == 0) Create3Factory(factory).deploy(tokenSalt, tokenInitCode);
+            if (token.code.length == 0) {
+                Create3Factory(factory).deploy(tokenSalt, _tokenInitCode(spec, canonical, tokenBridge));
+            }
         }
-
-        // Known before the bridge exists, and unaffected by which branch above ran: the token only enters the
-        // constructor args, and CREATE3 ignores those.
-        tokenBridge = Create3Factory(factory).predict(_deployer(), bridgeSalt);
 
         if (tokenBridge.code.length == 0) {
-            bytes memory args = abi.encode(token, hub, owner, _bridgeMode(spec, canonical));
+            bytes memory args =
+                abi.encode(token, hub, _bridgeMode(spec, canonical), _bridgeOwner(), _bridgePeers(tokenBridge));
             Create3Factory(factory).deploy(bridgeSalt, abi.encodePacked(type(ERC7786TokenBridge).creationCode, args));
         }
-        _requireBridgeOwnerOnGuardedChain(tokenBridge);
-
-        // Only the ERC-7802 side has a token->bridge link, and it must be set after the bridge exists.
-        if (configured == address(0) && !canonical) _setTokenBridge(token, tokenBridge, spec.tokenLabel);
     }
 
     /// @dev The canonical side always takes custody. The synthetic side follows how its token is
@@ -256,23 +237,6 @@ abstract contract BaseRoute is Script {
         if (canonical) return ERC7786TokenBridge.TokenBridgeMode.LockUnlock;
         if (spec.syntheticSource == SyntheticSource.Erc7802) return ERC7786TokenBridge.TokenBridgeMode.BurnMint;
         return ERC7786TokenBridge.TokenBridgeMode.IssuerBurnMint;
-    }
-
-    function _setTokenBridge(address token, address tokenBridge, string memory label) internal {
-        _requireCode(token);
-        _requireCode(tokenBridge);
-
-        BridgeableERC20 synthetic = BridgeableERC20(token);
-        if (synthetic.tokenBridge() == tokenBridge) return;
-
-        address owner = synthetic.owner();
-        _requireContractOwnerOnGuardedChain(owner);
-
-        bytes memory data = abi.encodeWithSelector(SET_TOKEN_BRIDGE_SELECTOR, tokenBridge);
-        if (!_shouldBroadcastOwnerCall(_deployer(), owner, token, data, "Set token bridge")) return;
-
-        synthetic.setTokenBridge(tokenBridge);
-        console2.log(string.concat(label, " token bridge set:"), tokenBridge);
     }
 
     function _logRoute(string memory prefix, address token, address tokenBridge) internal pure {

@@ -24,7 +24,10 @@ fn issue(s: &StorageHandle, day: u32, issued_at: u32, call_price: u64) -> Series
 }
 
 fn group_of(s: &StorageHandle, id: SeriesId) -> alloy_primitives::B256 {
-    api::read_series(s, id).unwrap().group_key()
+    api::read_series(s, id)
+        .unwrap()
+        .group_key()
+        .expect("date step")
 }
 
 #[test]

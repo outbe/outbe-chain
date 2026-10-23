@@ -17,6 +17,7 @@ interface IIntex {
     error SeriesIndexOutOfRange();
     error UnknownProfileSelector(uint8 value);
     error CalledGroupMemberOutOfRange();
+    error DateStep(uint8 kind, uint32 dateKey);
 
     struct SeriesData {
         bytes14 seriesId;

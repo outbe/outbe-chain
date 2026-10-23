@@ -560,38 +560,7 @@
   },
   {
     "type": "error",
-    "name": "BondLiabilityOverflow",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "BondLiabilityUnderflow",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "DuplicateTargetModule",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InconsistentBondState",
-    "inputs": [
-      {
-        "name": "proposal_id",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "InvalidBondAmount",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidBondSettlement",
     "inputs": []
   },
   {
@@ -609,14 +578,9 @@
     "name": "InvalidProposalBond",
     "inputs": [
       {
-        "name": "expected",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "actual",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "reason",
+        "type": "string",
+        "internalType": "string"
       }
     ]
   },
@@ -655,59 +619,6 @@
     "type": "error",
     "name": "NotValidator",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ProposalBondAlreadyRecorded",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ProposalBondAlreadySettled",
-    "inputs": [
-      {
-        "name": "proposalId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "settlement",
-        "type": "uint8",
-        "internalType": "enum IVote.BondSettlement"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ProposalBondLiabilityInvariant",
-    "inputs": [
-      {
-        "name": "balance",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "liabilities",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ProposalBondNotUnsettled",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ProposalBondSettlementFailed",
-    "inputs": [
-      {
-        "name": "proposalId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
   },
   {
     "type": "error",

@@ -5,12 +5,6 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum MetadosisStorageCorruptionError {
-    #[error("Metadosis bootstrap needs the genesis Worldwide Day")]
-    BootstrapNeedsGenesisWorldwideDay,
-
-    #[error("genesis Worldwide Day record disappeared")]
-    GenesisWorldwideDayRecordDisappeared,
-
     #[error("Metadosis EmissionDay {day} WWD link mismatch (expected {expected_wwd}, found {found_wwd})")]
     EmissionDayWwdLinkMismatch {
         day: u32,

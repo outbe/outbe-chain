@@ -7,7 +7,7 @@ use outbe_primitives::addresses::INTEX_ADDRESS;
 use outbe_primitives::call_breach::group_key;
 use outbe_primitives::stablecoin::iso_4217_alpha;
 use outbe_primitives::storage::types::{Storable, StorableType, StorageKey};
-use outbe_primitives::time::{first_full_day, WorldwideDay};
+use outbe_primitives::time::{first_full_day, TimeError, WorldwideDay};
 use std::fmt;
 
 use crate::errors::IntexError;
@@ -266,12 +266,12 @@ pub struct SeriesRecord {
 
 impl SeriesRecord {
     /// The call group the series belongs to.
-    pub fn group_key(&self) -> B256 {
-        group_key(
-            first_full_day(u64::from(self.issued_at)),
+    pub fn group_key(&self) -> Result<B256, TimeError> {
+        Ok(group_key(
+            first_full_day(u64::from(self.issued_at))?,
             self.call_price_minor,
             self.reference_currency,
-        )
+        ))
     }
 
     /// The call terms the series was issued with.

@@ -536,7 +536,6 @@ pub fn build_boundary_artifact(input: BoundaryArtifactInput<'_>) -> Result<DkgBo
         is_validator_set_change,
         outcome,
         is_full_dkg,
-        tee_recipient_pubkeys: Vec::new(),
         tee_expired_target_exclusions,
         tee_expired_target_exclusions_hash,
         reshare: ReshareResult {

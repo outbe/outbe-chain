@@ -31,6 +31,53 @@
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "CycleTriggerFailed",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "scheduledAt",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "blockTimestamp",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "blockNumber",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AccountingProgressGap",
+    "inputs": [
+      {
+        "name": "current",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "attempted",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
     "type": "error",
     "name": "ActiveUtcDayAfterBlock",
     "inputs": [
@@ -84,6 +131,22 @@
   },
   {
     "type": "error",
+    "name": "DateStep",
+    "inputs": [
+      {
+        "name": "kind",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "dateKey",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InvalidBlockUtcDay",
     "inputs": [
       {
@@ -115,12 +178,43 @@
   },
   {
     "type": "error",
+    "name": "ScheduleArithmeticOverflow",
+    "inputs": [
+      {
+        "name": "period",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "offset",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "timestamp",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SettlementBeforeParticipationWindowsClose",
     "inputs": []
   },
   {
     "type": "error",
     "name": "ValidatorTopupExceedsAllocation",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroAccountingProgress",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroTriggerPeriod",
     "inputs": []
   }
 ]

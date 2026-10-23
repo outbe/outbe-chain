@@ -19,6 +19,9 @@ pub enum WwdCallerError {
 
     #[error("Metadosis {label} duration overflow")]
     DurationOverflow { label: &'static str },
+
+    #[error("date step kind {kind} from date key {date_key}")]
+    DateStep { kind: u8, date_key: u32 },
 }
 
 fn revert_with<E: SolError>(error: E) -> PrecompileError {
@@ -34,6 +37,10 @@ impl From<WwdCallerError> for PrecompileError {
             WwdCallerError::OfferingWindowOverflow => revert_with(I::OfferingWindowOverflow {}),
             WwdCallerError::DurationOverflow { label } => revert_with(I::DurationOverflow {
                 label: label.to_string(),
+            }),
+            WwdCallerError::DateStep { kind, date_key } => revert_with(I::DateStep {
+                kind,
+                dateKey: date_key,
             }),
         }
     }

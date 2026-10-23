@@ -52,7 +52,6 @@ fn encode_boundary_payload(result: &DkgBoundaryArtifact) -> Result<Vec<u8>> {
         "boundary vrf group public key",
         result.vrf_group_public_key_bytes.len(),
     )?;
-    ensure_count_fits_u16("tee recipient pubkeys", result.tee_recipient_pubkeys.len())?;
     validate_tee_expired_target_exclusions(&result.tee_expired_target_exclusions)?;
     let exclusions_hash =
         tee_expired_target_exclusions_hash(&result.tee_expired_target_exclusions)?;
@@ -77,8 +76,6 @@ fn encode_boundary_payload(result: &DkgBoundaryArtifact) -> Result<Vec<u8>> {
             + result.outcome.len()
             + 4 // V2 vrf_group_public_key_bytes length prefix
             + result.vrf_group_public_key_bytes.len()
-            + 2 // V0.07 tee_recipient_pubkeys count
-            + (result.tee_recipient_pubkeys.len() * (20 + 32))
             + 32 // V0.0B expiry exclusions commitment
             + 2 // V0.0B expiry exclusions count
             + (result.tee_expired_target_exclusions.len() * 20),
@@ -102,11 +99,6 @@ fn encode_boundary_payload(result: &DkgBoundaryArtifact) -> Result<Vec<u8>> {
     payload.extend_from_slice(result.outcome.as_ref());
     payload.extend_from_slice(&(result.vrf_group_public_key_bytes.len() as u32).to_be_bytes());
     payload.extend_from_slice(result.vrf_group_public_key_bytes.as_ref());
-    payload.extend_from_slice(&(result.tee_recipient_pubkeys.len() as u16).to_be_bytes());
-    for (address, recipient_pubkey) in &result.tee_recipient_pubkeys {
-        payload.extend_from_slice(address.as_slice());
-        payload.extend_from_slice(recipient_pubkey.as_slice());
-    }
     // V0.0B: exact freeze-height TEE expiry exclusions. The payload carries the
     // explicit commitment with the ordered unique list, so proposal equality
     // and execution bind the same authority.
@@ -197,8 +189,6 @@ pub(super) fn decode_boundary_payload(payload: &[u8]) -> Result<DkgBoundaryArtif
 
     let vrf_group_public_key_bytes = decode_boundary_vrf_key(payload, &mut offset)?;
 
-    let tee_recipient_pubkeys = decode_boundary_recipients(payload, &mut offset)?;
-
     let (tee_expired_target_exclusions, carried_tee_expired_target_exclusions_hash) =
         decode_boundary_exclusions(payload, &mut offset)?;
 
@@ -219,7 +209,6 @@ pub(super) fn decode_boundary_payload(payload: &[u8]) -> Result<DkgBoundaryArtif
             new_active_set,
             active_set_hash,
         },
-        tee_recipient_pubkeys,
         tee_expired_target_exclusions,
         tee_expired_target_exclusions_hash: carried_tee_expired_target_exclusions_hash,
     })
@@ -258,40 +247,18 @@ fn decode_boundary_vrf_key(payload: &[u8], offset: &mut usize) -> Result<Bytes> 
     Ok(vrf_group_public_key_bytes)
 }
 
-fn decode_boundary_recipients(payload: &[u8], offset: &mut usize) -> Result<Vec<(Address, B256)>> {
-    // V0.07: tee_recipient_pubkeys (u16 count + entries of Address(20)+B256(32)).
-    if payload.len() < *offset + 2 {
-        return Err(ReshareArtifactError::MissingTeeRecipientCount.into());
-    }
-    let tee_count = u16::from_be_bytes([payload[*offset], payload[*offset + 1]]) as usize;
-    *offset += 2;
-    let tee_bytes = tee_count
-        .checked_mul(20 + 32)
-        .ok_or(ReshareArtifactError::TeeRecipientPubkeysLengthOverflow)?;
-    let needed_after_recipients = offset
-        .checked_add(tee_bytes)
-        .and_then(|v| v.checked_add(32 + 2))
+fn decode_boundary_exclusions(payload: &[u8], offset: &mut usize) -> Result<(Vec<Address>, B256)> {
+    // The commitment and count occupy 34 bytes. Check them before any slice.
+    let needed_header = offset
+        .checked_add(32 + 2)
         .ok_or(ReshareArtifactError::BoundaryPayloadLengthOverflow)?;
-    if payload.len() < needed_after_recipients {
+    if payload.len() < needed_header {
         return Err(ReshareArtifactError::BoundaryPayloadLengthTooShort {
             actual: payload.len(),
-            needed: needed_after_recipients,
+            needed: needed_header,
         }
         .into());
     }
-    let mut tee_recipient_pubkeys = Vec::with_capacity(tee_count);
-    for _ in 0..tee_count {
-        let address = Address::from_slice(&payload[*offset..*offset + 20]);
-        *offset += 20;
-        let recipient_pubkey = B256::from_slice(&payload[*offset..*offset + 32]);
-        *offset += 32;
-        tee_recipient_pubkeys.push((address, recipient_pubkey));
-    }
-
-    Ok(tee_recipient_pubkeys)
-}
-
-fn decode_boundary_exclusions(payload: &[u8], offset: &mut usize) -> Result<(Vec<Address>, B256)> {
     // V0.0B: domain-separated commitment plus bounded ordered unique list.
     let carried_tee_expired_target_exclusions_hash =
         B256::from_slice(&payload[*offset..*offset + 32]);
