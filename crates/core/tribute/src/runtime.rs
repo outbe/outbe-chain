@@ -177,6 +177,8 @@ impl TributeContract<'_> {
         )
     }
 
+    /// Test helper. Production deletion is only `create_nod` after Nod issuance.
+    #[cfg(test)]
     pub fn burn(&mut self, tribute_id: WwdEntityId) -> Result<()> {
         let loaded = self
             .load_tribute(tribute_id)?
@@ -189,11 +191,14 @@ impl TributeContract<'_> {
         crate::state_api::load(&self.storage_handle(), tribute_id)
     }
 
-    /// Burns the exact state record retained by the loaded capability.
+    /// Test helper. Production deletion is only `create_nod` after Nod issuance.
+    #[cfg(test)]
     pub fn burn_loaded(&mut self, loaded: LoadedTribute) -> Result<()> {
         crate::state_api::burn_loaded(&self.storage_handle(), loaded)
     }
 
+    /// Test helper. Production deletion is only `create_nod` after Nod issuance.
+    #[cfg(test)]
     pub fn burn_all_by_wwd(&mut self, day: WorldwideDay) -> Result<()> {
         let storage = self.storage_handle();
         storage.with_checkpoint(|| {

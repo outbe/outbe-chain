@@ -80,6 +80,12 @@ fn v1_mechanics_fi_groups_fractions_and_late_create_nod_burns_tribute() {
         assert!(fractions.get(&4000).copied().unwrap_or(0) > 0);
         assert!(fractions.get(&100).copied().unwrap_or(0) > 0);
         assert!(allocated > U256::ZERO);
+        assert!(tc.get_record(t1.tribute_id).unwrap().is_some());
+        assert!(tc.get_record(t2.tribute_id).unwrap().is_some());
+        assert_eq!(tc.total_supply().unwrap(), 2);
+        assert_eq!(tc.balance_of(owner1).unwrap(), 1);
+        assert_eq!(tc.balance_of(owner2).unwrap(), 1);
+        assert_eq!(tc.get_day_totals(day).unwrap().tribute_count, 2);
         seed_entry_price(
             &storage,
             840,

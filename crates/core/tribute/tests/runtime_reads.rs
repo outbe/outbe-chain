@@ -181,14 +181,5 @@ fn encrypted_issue_rejects_tampering_without_mutating_supply_or_day_amount() {
                 .unwrap(),
             live
         );
-        contract.burn(body.context.tribute_id).unwrap();
-        assert_eq!(contract.total_supply().unwrap(), 0);
-        assert_eq!(
-            contract
-                .get_day_totals(body.context.worldwide_day)
-                .unwrap()
-                .tribute_nominal_total_minor,
-            U256::ZERO
-        );
     });
 }

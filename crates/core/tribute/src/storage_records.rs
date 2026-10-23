@@ -1,8 +1,8 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_macros::storage_record;
-use outbe_primitives::storage::indexed_list::{
-    create_indexed, delete_indexed, delete_loaded_indexed, IndexedList,
-};
+#[cfg(test)]
+use outbe_primitives::storage::indexed_list::delete_indexed;
+use outbe_primitives::storage::indexed_list::{create_indexed, delete_loaded_indexed, IndexedList};
 use outbe_primitives::{time::WorldwideDay, wwd_entity_id::WwdEntityId};
 
 /// Stored tribute. `tribute_price_minor` is the public six-decimal price.
@@ -181,11 +181,16 @@ impl<'storage> crate::TributeContract<'storage> {
         create_indexed(&self.records, record, self.record_indexes(record))
     }
 
-    pub fn delete_state_record(&self, id: WwdEntityId) -> outbe_primitives::error::Result<()> {
+    /// Test helper. `create_nod` deletes through [`Self::delete_loaded_state_record`].
+    #[cfg(test)]
+    pub(crate) fn delete_state_record(
+        &self,
+        id: WwdEntityId,
+    ) -> outbe_primitives::error::Result<()> {
         delete_indexed(&self.records, id, |record| self.record_indexes(record))
     }
 
-    pub fn delete_loaded_state_record(
+    pub(crate) fn delete_loaded_state_record(
         &self,
         record: &crate::TributeRecord,
     ) -> outbe_primitives::error::Result<()> {
