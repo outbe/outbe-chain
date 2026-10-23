@@ -6,12 +6,12 @@ from __future__ import annotations
 import argparse
 import ctypes
 import hashlib
+import importlib.util
 import json
 import re
 import subprocess
 import time
 from pathlib import Path
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 NATIVE_MANIFEST = REPO_ROOT / "release/dcap-native-qvl-v1.json"
@@ -66,113 +66,19 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def extract_type5_pck_chain(quote: bytes) -> bytes:
-    """Return the exact type-5 certification data from a complete SGX quote v3."""
-    fixed_quote_size = 436
-    fixed_authentication_size = 64 + 64 + 384 + 64
-    if len(quote) < fixed_quote_size + fixed_authentication_size + 8:
-        raise ValueError("quote is shorter than the SGX v3 authentication structure")
-    if int.from_bytes(quote[0:2], "little") != 3:
-        raise ValueError("quote version is not SGX quote v3")
-    if int.from_bytes(quote[4:8], "little") != 0:
-        raise ValueError("quote tee_type is not SGX")
-
-    authentication_size = int.from_bytes(quote[432:436], "little")
-    if fixed_quote_size + authentication_size != len(quote):
-        raise ValueError("quote has trailing or truncated authentication bytes")
-
-    cursor = fixed_quote_size + fixed_authentication_size
-    qe_authentication_size = int.from_bytes(quote[cursor : cursor + 2], "little")
-    cursor += 2 + qe_authentication_size
-    if cursor + 6 > len(quote):
-        raise ValueError("quote certification-data header is truncated")
-    certification_data_type = int.from_bytes(quote[cursor : cursor + 2], "little")
-    certification_data_size = int.from_bytes(quote[cursor + 2 : cursor + 6], "little")
-    cursor += 6
-    end = cursor + certification_data_size
-    if certification_data_type != 5:
-        raise ValueError("quote certification data is not type 5")
-    if end != len(quote):
-        raise ValueError("quote has trailing or truncated certification data")
-
-    pck_chain = quote[cursor:end]
-    if (
-        not pck_chain.startswith(b"-----BEGIN CERTIFICATE-----\n")
-        or not pck_chain.endswith(b"\0")
-        or b"\0" in pck_chain[:-1]
-    ):
-        raise ValueError("type-5 PCK certificate chain is not canonical PEM plus NUL")
-    return pck_chain
+def _load_encoding():
+    path = Path(__file__).with_name("dcap_collateral_encoding.py")
+    spec = importlib.util.spec_from_file_location("dcap_collateral_encoding", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
-def canonical_text_component(value: bytes, label: str) -> bytes:
-    """Remove the QPL ABI terminator while rejecting ambiguous text bytes."""
-    if not value.endswith(b"\0") or value.endswith(b"\0\0") or b"\0" in value[:-1]:
-        raise ValueError(f"{label} is not terminated by exactly one NUL")
-    canonical = value[:-1]
-    if not canonical:
-        raise ValueError(f"{label} is empty")
-    try:
-        canonical.decode("utf-8")
-    except UnicodeDecodeError as error:
-        raise ValueError(f"{label} is not UTF-8") from error
-    return canonical
-
-
-def canonical_der_component(value: bytes, label: str) -> bytes:
-    """Return one complete DER SEQUENCE, dropping only an ABI terminator."""
-    if len(value) < 2 or value[0] != 0x30:
-        raise ValueError(f"{label} is not a DER SEQUENCE")
-
-    encoded_length = value[1]
-    if encoded_length < 0x80:
-        header_size = 2
-        content_size = encoded_length
-    else:
-        length_size = encoded_length & 0x7F
-        if length_size == 0 or length_size > 4 or len(value) < 2 + length_size:
-            raise ValueError(f"{label} has an invalid DER length")
-        length_bytes = value[2 : 2 + length_size]
-        if length_bytes[0] == 0:
-            raise ValueError(f"{label} has a non-canonical DER length")
-        content_size = int.from_bytes(length_bytes, "big")
-        if content_size < 0x80:
-            raise ValueError(f"{label} has a non-canonical DER length")
-        header_size = 2 + length_size
-
-    object_size = header_size + content_size
-    if len(value) == object_size:
-        return value
-    if len(value) == object_size + 1 and value[object_size] == 0:
-        return value[:object_size]
-    raise ValueError(f"{label} has trailing or truncated DER bytes")
-
-
-def canonical_crl_component(value: bytes, minor_version: int, label: str) -> bytes:
-    """Normalize legacy hex and size-delimited raw CRLs to canonical DER."""
-    if minor_version not in (0, 1):
-        raise ValueError(f"{label} uses unsupported collateral minor version")
-
-    # Intel PCS-backed QPL 1.26 can return raw DER plus one ABI NUL while
-    # reporting collateral version 3.0.  The top-level DER length, rather than
-    # the version field or embedded zero bytes, unambiguously bounds the CRL.
-    if value.startswith(b"\x30"):
-        return canonical_der_component(value, label)
-    if minor_version == 1:
-        raise ValueError(f"{label} v3.1 payload is not raw DER")
-
-    encoded = value[:-1] if value.endswith(b"\0") else value
-    if not encoded or b"\0" in encoded:
-        raise ValueError(f"{label} contains an invalid NUL")
-    if len(encoded) % 2 != 0:
-        raise ValueError(f"{label} contains odd-length hexadecimal DER")
-    try:
-        encoded_text = encoded.decode("ascii")
-    except UnicodeDecodeError as error:
-        raise ValueError(f"{label} is not canonical hexadecimal DER") from error
-    if not re.fullmatch(r"[0-9A-Fa-f]+", encoded_text):
-        raise ValueError(f"{label} is not canonical hexadecimal DER")
-    return canonical_der_component(bytes.fromhex(encoded_text), label)
+_encoding = _load_encoding()
+extract_type5_pck_chain = _encoding.extract_type5_pck_chain
+canonical_text_component = _encoding.canonical_text_component
+canonical_der_component = _encoding.canonical_der_component
+canonical_crl_component = _encoding.canonical_crl_component
 
 
 def _bytes_at(pointer: int | None, size: int, label: str) -> bytes:
@@ -201,21 +107,19 @@ def _package_version(name: str) -> str:
 def load_host_qpl_pin() -> dict[str, str]:
     pin = json.loads(PROJECT_PIN.read_text(encoding="utf-8"))
     packages = pin.get("host_only_packages")
-    if not isinstance(packages, dict) or set(packages) != {
-        "libsgx-dcap-default-qpl"
-    }:
+    if not isinstance(packages, dict) or set(packages) != {"libsgx-dcap-default-qpl"}:
         raise ValueError("single project pin lacks the exact host-only QPL package")
     version = packages["libsgx-dcap-default-qpl"]
-    if not isinstance(version, str) or not version or any(
-        character.isspace() for character in version
+    if (
+        not isinstance(version, str)
+        or not version
+        or any(character.isspace() for character in version)
     ):
         raise ValueError("single project pin has an invalid host-only QPL version")
     return {"package": "libsgx-dcap-default-qpl", "version": version}
 
 
-def _library_provenance(
-    path: Path, package: str, expected_version: str | None = None
-) -> dict:
+def _library_provenance(path: Path, package: str, expected_version: str | None = None) -> dict:
     resolved = path.resolve(strict=True)
     package_version = _package_version(package)
     if expected_version is not None and package_version != expected_version:
@@ -311,15 +215,11 @@ def capture_collateral(quote: bytes) -> tuple[dict[str, bytes], dict]:
     try:
         if collateral_size.value < ctypes.sizeof(_QuoteCollateral):
             raise ValueError("QPL collateral allocation is smaller than its ABI header")
-        collateral = ctypes.cast(
-            collateral_pointer, ctypes.POINTER(_QuoteCollateral)
-        ).contents
+        collateral = ctypes.cast(collateral_pointer, ctypes.POINTER(_QuoteCollateral)).contents
         expected = manifest["intel_dcap"]
         if (
-            collateral.version.parts.major_version
-            != expected["collateral_major_version"]
-            or collateral.version.parts.minor_version
-            not in (0, 1)
+            collateral.version.parts.major_version != expected["collateral_major_version"]
+            or collateral.version.parts.minor_version not in (0, 1)
             or collateral.tee_type != 0
         ):
             raise ValueError("QPL collateral ABI/profile does not match the pinned SGX contract")
@@ -335,9 +235,7 @@ def capture_collateral(quote: bytes) -> tuple[dict[str, bytes], dict]:
                 collateral.tcb_info_issuer_chain_size,
                 "TCB Info issuer chain",
             ),
-            "tcb-info.json": _bytes_at(
-                collateral.tcb_info, collateral.tcb_info_size, "TCB Info"
-            ),
+            "tcb-info.json": _bytes_at(collateral.tcb_info, collateral.tcb_info_size, "TCB Info"),
             "qe-identity-issuer-chain.pem": _bytes_at(
                 collateral.qe_identity_issuer_chain,
                 collateral.qe_identity_issuer_chain_size,
@@ -351,9 +249,7 @@ def capture_collateral(quote: bytes) -> tuple[dict[str, bytes], dict]:
         }
         components = {
             "pck-certificate-chain.pem0": extract_type5_pck_chain(quote),
-            "pck.crl.der": _bytes_at(
-                collateral.pck_crl, collateral.pck_crl_size, "PCK CRL"
-            ),
+            "pck.crl.der": _bytes_at(collateral.pck_crl, collateral.pck_crl_size, "PCK CRL"),
             "root-ca.crl.der": _bytes_at(
                 collateral.root_ca_crl,
                 collateral.root_ca_crl_size,
@@ -371,10 +267,7 @@ def capture_collateral(quote: bytes) -> tuple[dict[str, bytes], dict]:
             "root CA CRL",
         )
         components.update(
-            {
-                name: canonical_text_component(value, name)
-                for name, value in raw_text.items()
-            }
+            {name: canonical_text_component(value, name) for name, value in raw_text.items()}
         )
         qpl_pin = load_host_qpl_pin()
         provenance = {
@@ -445,9 +338,7 @@ def main() -> int:
     )
     parser.add_argument("--quote", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
-    parser.add_argument(
-        "--expected-pck-ca", required=True, choices=("processor", "platform")
-    )
+    parser.add_argument("--expected-pck-ca", required=True, choices=("processor", "platform"))
     arguments = parser.parse_args()
     write_capture(arguments.quote, arguments.output_dir, arguments.expected_pck_ca)
     return 0

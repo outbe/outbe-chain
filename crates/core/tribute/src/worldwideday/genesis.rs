@@ -1,13 +1,12 @@
 //! Typed fresh-devnet genesis adaptation for cross-crate test harnesses.
 
-use outbe_primitives::time::{first_full_day, WorldwideDay};
+use outbe_primitives::time::{timestamp_to_date_key, WorldwideDay};
 use outbe_primitives::{error::Result, storage::StorageHandle};
 
 use crate::schema::TributeContract;
 
 use super::{
-    aggregate::ValidatedWwdAggregate,
-    errors::{date_step_error, WwdStorageCorruptionError},
+    aggregate::ValidatedWwdAggregate, errors::WwdStorageCorruptionError,
     schema::WorldwideDay as WorldwideDayRecord,
 };
 
@@ -39,7 +38,7 @@ impl GenesisWorldwideDay {
             return Err(WwdStorageCorruptionError::GenesisWwdPhaseOrderInvalid.into());
         }
         if self.day == 0 {
-            self.day = first_full_day(self.offering_end).map_err(date_step_error)?;
+            self.day = timestamp_to_date_key(self.offering_end);
         }
         Ok(self)
     }

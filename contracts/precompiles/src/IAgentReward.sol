@@ -7,6 +7,7 @@ pragma solidity ^0.8.30;
 /// keeps the two in sync. Every `promisLoadMinor` is a PROMIS load in protocol units
 /// (6 decimals); pools are 0 = WAA, 1 = SRA, 2 = CCA, 3 = Validator.
 interface IAgentReward {
+    error TributeCounterOverflow();
     error DistributeDailyOverflow();
     error DistributionOverflow();
     error ClaimableTotalOverflow();

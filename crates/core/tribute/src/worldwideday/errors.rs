@@ -24,14 +24,6 @@ pub enum WwdCallerError {
     DateStep { kind: u8, date_key: u32 },
 }
 
-#[cfg(any(test, feature = "test-utils"))]
-pub(crate) fn date_step_error(err: outbe_primitives::time::TimeError) -> PrecompileError {
-    match err.date_step() {
-        Some((kind, date_key)) => WwdCallerError::DateStep { kind, date_key }.into(),
-        None => PrecompileError::Fatal(err.to_string()),
-    }
-}
-
 fn revert_with<E: SolError>(error: E) -> PrecompileError {
     PrecompileError::RevertBytes(Bytes::from(error.abi_encode()))
 }

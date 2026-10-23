@@ -18,5 +18,9 @@ pub const MAX_PENDING_PROPOSALS: u32 = 64;
 /// Maximum pending proposals a single active validator may have open at once.
 pub const MAX_PENDING_PROPOSALS_PER_VALIDATOR: u32 = 1;
 
+/// Maximum UTF-8 byte length of raw proposal JSON, checked at admission before
+/// target decoding. Stored proposals are not subject to this admission bound.
+pub const MAX_PAYLOAD_BYTES: usize = 128 * 1024;
+
 /// Maximum page size for paginated vote reads.
 pub const MAX_PAGE_SIZE: u64 = 100;

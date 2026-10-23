@@ -240,6 +240,11 @@
   },
   {
     "type": "error",
+    "name": "TributeCounterOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "UnknownRewardPool",
     "inputs": [
       {

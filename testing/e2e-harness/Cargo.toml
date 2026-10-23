@@ -44,6 +44,7 @@ outbe-primitives.workspace = true
 outbe-zk.workspace = true
 outbe-radicle.workspace = true
 outbe-coderegistry.workspace = true
+outbe-update.workspace = true
 # The signer-side evidence encoder that the SlashIndicator tests also use.
 outbe-slashindicator = { workspace = true, features = ["test-utils"] }
 # Read-only policy/COB storage from the same vendored Heartwood as the sidecar.

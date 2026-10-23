@@ -351,7 +351,7 @@ fn seed_public_measurement_day(
     let report = FreshDevnetGenesisBuilder::new()
         .seed_active_worldwide_day(GenesisWorldwideDay {
             worldwide_day,
-            day: outbe_primitives::time::first_full_day(day.offering_end).expect("date step"),
+            day: outbe_primitives::time::timestamp_to_date_key(day.offering_end),
             forming_start: day.forming_start,
             forming_end: day.genesis_timestamp,
             offerings_start: day.genesis_timestamp,

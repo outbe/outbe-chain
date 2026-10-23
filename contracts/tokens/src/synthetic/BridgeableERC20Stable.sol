@@ -11,8 +11,8 @@ import {IReferenceCurrency} from "../interfaces/IReferenceCurrency.sol";
 contract BridgeableERC20Stable is BridgeableERC20, IReferenceCurrency {
     uint16 private immutable _ISO_CODE;
 
-    constructor(string memory name_, string memory symbol_, uint8 decimals_, uint16 isoCode_, address owner_)
-        BridgeableERC20(name_, symbol_, decimals_, owner_)
+    constructor(string memory name_, string memory symbol_, uint8 decimals_, uint16 isoCode_, address tokenBridge_)
+        BridgeableERC20(name_, symbol_, decimals_, tokenBridge_)
     {
         _ISO_CODE = isoCode_;
     }

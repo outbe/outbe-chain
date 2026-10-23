@@ -443,17 +443,23 @@ fn pool_admits_delegated_sponsored_tx_even_when_daily_quota_is_exhausted() {
     let current_day = timestamp_to_date_key(0);
     let mut storage_provider = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage_provider, |storage| {
-        ZeroFeeContract::new(storage.clone())
-            .counter
-            .write(&signer, pack_counter(current_day, FREE_TX_DAILY_LIMIT))
+        let slot = ZeroFeeContract::new(storage.clone()).counter_slot(signer);
+        storage
+            .sstore(
+                ZEROFEE_ADDRESS,
+                slot,
+                U256::from(pack_counter(current_day, FREE_TX_DAILY_LIMIT)),
+            )
             .unwrap();
+        // Successful authorization is opaque; compare only the rejection.
+        let error = authorize_sponsorship(storage, signer, 0)
+            .expect_err("execution-layer sponsorship must reject exhausted quota");
         assert_eq!(
-            authorize_sponsorship(storage, signer, 0),
-            Err(ZeroFeePolicyError::FreeTxDailyExhausted {
+            error,
+            ZeroFeePolicyError::FreeTxDailyExhausted {
                 used: FREE_TX_DAILY_LIMIT,
                 limit: FREE_TX_DAILY_LIMIT,
-            }),
-            "execution-layer sponsorship must reject when daily quota is exhausted"
+            }
         );
     });
     let zerofee_slots = storage_provider
