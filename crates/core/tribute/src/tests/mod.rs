@@ -9,6 +9,28 @@ use outbe_primitives::wwd_entity_id::{derive_poseidon_entity_id, WwdEntityId};
 use crate::{TributeContract, TributeData};
 
 mod create_nod;
+mod metadosis_boundary;
+
+fn with_process_ready_tribute<R>(f: impl FnOnce(&mut TributeContract<'_>) -> R) -> R {
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.enable_metadosis_mutation_frame(
+        outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
+    );
+    StorageHandle::enter(&mut provider, |storage| {
+        let _enclave = crate::enclave_client::test_enclave::scope();
+        let binding = outbe_primitives::storage::metadosis_process_ready_binding(
+            storage.chain_id().unwrap(),
+            storage.block_number().unwrap(),
+            storage.now_secs().unwrap(),
+        );
+        storage
+            .with_metadosis_mutation::<outbe_primitives::storage::MetadosisCycleLifecycle, _>(
+                binding,
+                || Ok(f(&mut TributeContract::new(storage.clone()))),
+            )
+            .unwrap()
+    })
+}
 
 fn with_tribute<R>(f: impl FnOnce(&mut TributeContract<'_>) -> R) -> R {
     let mut provider = HashMapStorageProvider::new(1);
@@ -328,7 +350,7 @@ fn test_seal_day() {
 
 #[test]
 fn lysis_bulk_accounting_rejects_count_and_nominal_mismatch_before_zeroing() {
-    with_tribute(|tc| {
+    with_process_ready_tribute(|tc| {
         let tribute = sample_tribute();
         open_sample_day(tc);
         tc.issue(&tribute).unwrap();
@@ -740,7 +762,7 @@ fn failed_burn_transaction_restores_tribute_state_and_events() {
 
 #[test]
 fn encrypted_retirement_preserves_frozen_nominal_after_live_total_is_zero() {
-    with_tribute(|tc| {
+    with_process_ready_tribute(|tc| {
         let plain = sample_tribute();
         let context = outbe_primitives::tribute_encryption::TributeContextV2 {
             chain_id: 1,

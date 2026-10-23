@@ -6,6 +6,9 @@ use outbe_primitives::addresses::TRIBUTE_ADDRESS;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::storage::{
+    metadosis_process_ready_binding, MetadosisCycleLifecycle, MetadosisMutationPurposeTag,
+};
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 fn seed_entry_price(storage: &StorageHandle<'_>, iso: u16, utc_day: u32, vwap: U256) {
@@ -26,6 +29,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_create_nod_burns_tribute() {
     let mut provider = HashMapStorageProvider::new(1);
     let base_ts = 1_750_000_000u64;
     provider.set_timestamp(U256::from(base_ts));
+    provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
 
     let day: outbe_primitives::time::WorldwideDay = 20241220u32.into();
     let owner1 = address!("0x1111111111111111111111111111111111111111");
@@ -63,8 +67,15 @@ fn v1_mechanics_fi_groups_fractions_and_late_create_nod_burns_tribute() {
         // Stage 3: Seal day and compute Metadosis fractions for WWD
         tc.seal_day(day).unwrap();
         let lysis_limit = U256::from(500_000_000_000u64); // large enough so nod_max = lysis_limit / 1024 >= loads
-        let (fractions, allocated) = tc
-            .compute_and_record_metadosis_fractions(day, lysis_limit, base_ts)
+        let binding = metadosis_process_ready_binding(
+            storage.chain_id().unwrap(),
+            storage.block_number().unwrap(),
+            storage.now_secs().unwrap(),
+        );
+        let (fractions, allocated) = storage
+            .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {
+                tc.compute_and_record_metadosis_fractions(day, lysis_limit, base_ts)
+            })
             .unwrap();
         assert!(fractions.get(&4000).copied().unwrap_or(0) > 0);
         assert!(fractions.get(&100).copied().unwrap_or(0) > 0);
@@ -190,6 +201,7 @@ fn create_nod_reverts_without_a_completion_day_price() {
     let mut provider = HashMapStorageProvider::new(1);
     let completed_at = 1_750_000_000u64;
     provider.set_timestamp(U256::from(completed_at));
+    provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
     let tribute = sample_tribute();
     let day = tribute.worldwide_day;
 
@@ -199,12 +211,20 @@ fn create_nod_reverts_without_a_completion_day_price() {
         tc.unseal_day(day).unwrap();
         tc.issue_with_league(&tribute, Some(100)).unwrap();
         tc.seal_day(day).unwrap();
-        tc.compute_and_record_metadosis_fractions(
-            day,
-            U256::from(500_000_000_000u64),
-            completed_at,
-        )
-        .unwrap();
+        let binding = metadosis_process_ready_binding(
+            storage.chain_id().unwrap(),
+            storage.block_number().unwrap(),
+            storage.now_secs().unwrap(),
+        );
+        storage
+            .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {
+                tc.compute_and_record_metadosis_fractions(
+                    day,
+                    U256::from(500_000_000_000u64),
+                    completed_at,
+                )
+            })
+            .unwrap();
         storage
             .set_block_timestamp(U256::from(
                 completed_at + outbe_primitives::time::SECONDS_PER_DAY,

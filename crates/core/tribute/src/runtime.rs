@@ -95,6 +95,7 @@ impl TributeContract<'_> {
         verified_count: u32,
         verified_nominal: alloy_primitives::U256,
     ) -> Result<()> {
+        self.storage_handle().require_metadosis_process_ready()?;
         self.consume_lysis_partition_inner(day, verified_count, verified_nominal)
     }
 
@@ -127,6 +128,7 @@ impl TributeContract<'_> {
     /// Retires a sealed empty day in the same state checkpoint as completion.
     pub fn retire_completed_partition(&mut self, day: WorldwideDay) -> Result<RetirementOutcome> {
         let storage = self.storage_handle();
+        storage.require_metadosis_process_ready()?;
         storage.with_checkpoint(|| self.retire_completed_partition_inner(day))
     }
 
@@ -136,6 +138,7 @@ impl TributeContract<'_> {
         day: WorldwideDay,
     ) -> Result<RetirementOutcome> {
         let storage = self.storage_handle();
+        storage.require_metadosis_process_ready()?;
         storage.with_checkpoint(|| {
             let totals = self.get_day_totals(day)?;
             if !totals.initialized
@@ -156,6 +159,7 @@ impl TributeContract<'_> {
         day: WorldwideDay,
     ) -> Result<TributeForfeitureReceipt> {
         let storage = self.storage_handle();
+        storage.require_metadosis_process_ready()?;
         storage.with_checkpoint(|| forfeiture::apply(self, day))
     }
 
@@ -276,6 +280,7 @@ impl TributeContract<'_> {
         lysis_limit_minor: U256,
         completed_at: u64,
     ) -> Result<(std::collections::BTreeMap<u16, u64>, U256)> {
+        self.storage_handle().require_metadosis_process_ready()?;
         let fi_groups = self.get_fi_groups(day)?;
         let mut tribute_count = 0u32;
         let mut total_interest = U256::ZERO;
