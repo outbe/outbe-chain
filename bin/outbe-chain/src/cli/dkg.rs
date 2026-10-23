@@ -12,6 +12,22 @@ pub(crate) struct DkgCli {
     #[arg(long = "bls-passphrase", env = "BLS_PASSPHRASE", global = true)]
     bls_passphrase: Option<String>,
 
+    /// Validator EVM key storage backend: plaintext, encrypted, or os-level.
+    #[arg(long = "evm-key-backend", default_value = "plaintext", global = true)]
+    evm_key_backend: String,
+
+    /// Passphrase for the encrypted validator EVM key backend.
+    #[arg(long = "evm-passphrase", env = "EVM_PASSPHRASE", global = true)]
+    evm_passphrase: Option<String>,
+
+    /// Reth P2P key storage backend: plaintext, encrypted, or os-level.
+    #[arg(long = "reth-key-backend", default_value = "plaintext", global = true)]
+    reth_key_backend: String,
+
+    /// Passphrase for the encrypted Reth P2P key backend.
+    #[arg(long = "reth-passphrase", env = "RETH_P2P_PASSPHRASE", global = true)]
+    reth_passphrase: Option<String>,
+
     #[command(subcommand)]
     command: DkgCommand,
 }
@@ -92,25 +108,55 @@ enum DkgCommand {
     },
 }
 
+#[derive(Debug)]
+pub(crate) struct ParsedRoleBackends {
+    pub(crate) bls: outbe_consensus::bls::KeyBackend,
+    pub(crate) evm: outbe_consensus::bls::KeyBackend,
+    pub(crate) reth: outbe_consensus::bls::KeyBackend,
+}
+
+fn parse_backend(
+    name: &str,
+    passphrase: Option<String>,
+    missing: crate::errors::CliError,
+    unknown: impl FnOnce(String) -> crate::errors::CliError,
+) -> eyre::Result<outbe_consensus::bls::KeyBackend> {
+    use outbe_consensus::bls::{parse_key_backend_name, KeyBackendNameError};
+    parse_key_backend_name(name, passphrase).map_err(|error| match error {
+        KeyBackendNameError::MissingPassphrase => missing.into(),
+        KeyBackendNameError::Unknown(name) => unknown(name).into(),
+    })
+}
+
 /// Parse DKG CLI's --bls-key-backend into a KeyBackend.
 pub(crate) fn parse_dkg_key_backend(
     cli: &DkgCli,
 ) -> eyre::Result<outbe_consensus::bls::KeyBackend> {
-    match cli.bls_key_backend.as_str() {
-        "plaintext" => Ok(outbe_consensus::bls::KeyBackend::Plaintext),
-        "encrypted" => {
-            let passphrase = cli
-                .bls_passphrase
-                .clone()
-                .ok_or(crate::errors::CliError::MissingBlsPassphrase)?;
-            Ok(outbe_consensus::bls::KeyBackend::Encrypted(passphrase))
-        }
-        "os-level" => Ok(outbe_consensus::bls::KeyBackend::OsLevel),
-        other => Err(crate::errors::CliError::UnknownBlsKeyBackend {
-            backend: other.to_owned(),
-        }
-        .into()),
-    }
+    parse_backend(
+        &cli.bls_key_backend,
+        cli.bls_passphrase.clone(),
+        crate::errors::CliError::MissingBlsPassphrase,
+        |backend| crate::errors::CliError::UnknownBlsKeyBackend { backend },
+    )
+}
+
+/// Parse the three role backends. A missing passphrase fails every subcommand.
+pub(crate) fn parse_role_key_backends(cli: &DkgCli) -> eyre::Result<ParsedRoleBackends> {
+    Ok(ParsedRoleBackends {
+        bls: parse_dkg_key_backend(cli)?,
+        evm: parse_backend(
+            &cli.evm_key_backend,
+            cli.evm_passphrase.clone(),
+            crate::errors::CliError::MissingEvmPassphrase,
+            |backend| crate::errors::CliError::UnknownEvmKeyBackend { backend },
+        )?,
+        reth: parse_backend(
+            &cli.reth_key_backend,
+            cli.reth_passphrase.clone(),
+            crate::errors::CliError::MissingRethPassphrase,
+            |backend| crate::errors::CliError::UnknownRethKeyBackend { backend },
+        )?,
+    })
 }
 
 /// Handle the `dkg` subcommand.
@@ -120,32 +166,37 @@ pub(crate) fn run_dkg_command(args: &[String]) -> eyre::Result<()> {
     dkg_args.extend_from_slice(&args[2..]);
     let dkg_cli = DkgCli::parse_from(dkg_args);
 
-    let backend = parse_dkg_key_backend(&dkg_cli)?;
+    let roles = parse_role_key_backends(&dkg_cli)?;
+    let view = outbe_consensus::cli::RoleKeyBackends {
+        bls: &roles.bls,
+        evm: &roles.evm,
+        reth: &roles.reth,
+    };
 
     match dkg_cli.command {
         DkgCommand::Identities {
             output_dir,
             validators,
-        } => outbe_consensus::cli::execute_validator_identities(output_dir, validators, &backend),
+        } => outbe_consensus::cli::execute_validator_identities(output_dir, validators, &view),
         DkgCommand::VerifyIdentities {
             validators,
             material_dir,
         } => outbe_consensus::cli::execute_validator_identity_verification(
             &validators,
             &material_dir,
-            &backend,
+            &view,
         ),
         DkgCommand::Bootstrap {
             output_dir,
             validators,
-        } => outbe_consensus::cli::execute_dkg_bootstrap(output_dir, validators, &backend),
+        } => outbe_consensus::cli::execute_dkg_bootstrap(output_dir, validators, &view),
         DkgCommand::Status { storage_dir } => {
-            outbe_consensus::cli::execute_dkg_status(&storage_dir, &backend)
+            outbe_consensus::cli::execute_dkg_status(&storage_dir, &roles.bls)
         }
         DkgCommand::ExportShare {
             storage_dir,
             output,
-        } => outbe_consensus::cli::execute_dkg_export_share(&storage_dir, &output, &backend),
+        } => outbe_consensus::cli::execute_dkg_export_share(&storage_dir, &output, &roles.bls),
         DkgCommand::ImportShare {
             share,
             polynomial,
@@ -156,7 +207,7 @@ pub(crate) fn run_dkg_command(args: &[String]) -> eyre::Result<()> {
             &polynomial,
             output.as_deref(),
             &storage_dir,
-            &backend,
+            &roles.bls,
         ),
         DkgCommand::ForceRestart { storage_dir } => {
             outbe_consensus::cli::execute_dkg_force_restart(&storage_dir)

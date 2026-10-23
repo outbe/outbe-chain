@@ -76,6 +76,26 @@ pub enum ArgsError {
     /// Indicates an unrecognized BLS key backend name.
     #[error("unknown BLS key backend: {0} (expected: plaintext, encrypted, os-level)")]
     UnknownBlsKeyBackend(String),
+    /// Indicates that the encrypted EVM key backend lacks a passphrase argument.
+    #[error("--evm-key-backend encrypted requires --evm-passphrase or EVM_PASSPHRASE env var.")]
+    EncryptedEvmBackendRequiresPassphraseArg,
+    /// Indicates that the encrypted Reth key backend lacks a passphrase argument.
+    #[error(
+        "--reth-key-backend encrypted requires --reth-passphrase or RETH_P2P_PASSPHRASE env var."
+    )]
+    EncryptedRethBackendRequiresPassphraseArg,
+    /// Indicates that the encrypted EVM backend lacks a passphrase value.
+    #[error("encrypted EVM backend requires passphrase")]
+    EncryptedEvmBackendRequiresPassphrase,
+    /// Indicates that the encrypted Reth backend lacks a passphrase value.
+    #[error("encrypted Reth backend requires passphrase")]
+    EncryptedRethBackendRequiresPassphrase,
+    /// Indicates an unrecognized EVM key backend name.
+    #[error("unknown EVM key backend: {0} (expected: plaintext, encrypted, os-level)")]
+    UnknownEvmKeyBackend(String),
+    /// Indicates an unrecognized Reth key backend name.
+    #[error("unknown Reth key backend: {0} (expected: plaintext, encrypted, os-level)")]
+    UnknownRethKeyBackend(String),
 }
 
 /// Represents errors from upstream follow transport initialization and RPC queries.

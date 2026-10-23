@@ -241,6 +241,114 @@ fn test_dkg_force_restart_empty_dir() {
 }
 
 #[test]
+fn test_role_backends_default_and_reject_incomplete_selection() {
+    use crate::errors::CliError;
+
+    let cli = make_dkg_cli(&["status", "--storage-dir", "/tmp"]);
+    let roles = crate::cli::dkg::parse_role_key_backends(&cli).unwrap();
+    assert!(matches!(
+        roles.bls,
+        outbe_consensus::bls::KeyBackend::Plaintext
+    ));
+    assert!(matches!(
+        roles.evm,
+        outbe_consensus::bls::KeyBackend::Plaintext
+    ));
+    assert!(matches!(
+        roles.reth,
+        outbe_consensus::bls::KeyBackend::Plaintext
+    ));
+
+    let cli = make_dkg_cli(&[
+        "--bls-key-backend",
+        "plaintext",
+        "--evm-key-backend",
+        "encrypted",
+        "--evm-passphrase",
+        "hunter2",
+        "--reth-key-backend",
+        "os-level",
+        "status",
+        "--storage-dir",
+        "/tmp",
+    ]);
+    let roles = crate::cli::dkg::parse_role_key_backends(&cli).unwrap();
+    assert!(matches!(
+        roles.bls,
+        outbe_consensus::bls::KeyBackend::Plaintext
+    ));
+    assert!(matches!(
+        roles.evm,
+        outbe_consensus::bls::KeyBackend::Encrypted(ref passphrase) if passphrase == "hunter2"
+    ));
+    assert!(matches!(
+        roles.reth,
+        outbe_consensus::bls::KeyBackend::OsLevel
+    ));
+
+    let missing_evm = make_dkg_cli(&[
+        "--evm-key-backend",
+        "encrypted",
+        "status",
+        "--storage-dir",
+        "/tmp",
+    ]);
+    let error = crate::cli::dkg::parse_role_key_backends(&missing_evm).unwrap_err();
+    assert!(matches!(
+        error.downcast_ref::<CliError>(),
+        Some(CliError::MissingEvmPassphrase)
+    ));
+
+    let missing_reth = make_dkg_cli(&[
+        "--reth-key-backend",
+        "encrypted",
+        "status",
+        "--storage-dir",
+        "/tmp",
+    ]);
+    let error = crate::cli::dkg::parse_role_key_backends(&missing_reth).unwrap_err();
+    assert!(matches!(
+        error.downcast_ref::<CliError>(),
+        Some(CliError::MissingRethPassphrase)
+    ));
+
+    let unknown_evm = make_dkg_cli(&[
+        "--evm-key-backend",
+        "foo",
+        "status",
+        "--storage-dir",
+        "/tmp",
+    ]);
+    let error = crate::cli::dkg::parse_role_key_backends(&unknown_evm).unwrap_err();
+    assert!(matches!(
+        error.downcast_ref::<CliError>(),
+        Some(CliError::UnknownEvmKeyBackend { .. })
+    ));
+
+    let unknown_reth = make_dkg_cli(&[
+        "--reth-key-backend",
+        "foo",
+        "status",
+        "--storage-dir",
+        "/tmp",
+    ]);
+    let error = crate::cli::dkg::parse_role_key_backends(&unknown_reth).unwrap_err();
+    assert!(matches!(
+        error.downcast_ref::<CliError>(),
+        Some(CliError::UnknownRethKeyBackend { .. })
+    ));
+
+    let args = dkg_args(&[
+        "--evm-key-backend",
+        "encrypted",
+        "status",
+        "--storage-dir",
+        "/tmp",
+    ]);
+    assert!(super::run_dkg_command(&args).is_err());
+}
+
+#[test]
 fn test_dkg_export_missing_files() {
     let dir = tempfile::tempdir().unwrap();
     let export_dir = tempfile::tempdir().unwrap();

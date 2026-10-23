@@ -36,7 +36,8 @@ pub(super) async fn preflight(
         let evm_key = args
             .effective_validator_evm_key()?
             .ok_or(LaunchError::MissingValidatorEvmKeyForRadicle)?;
-        let validator = outbe_primitives::signer::load::from_file(&evm_key)
+        let backend = args.evm_key_backend()?;
+        let validator = outbe_consensus::bls::load_validator_evm_signer(&evm_key, &backend)
             .wrap_err("load validator EVM key for Radicle identity")?
             .address();
         let (publisher, status) =

@@ -643,11 +643,17 @@ pub(in crate::stack) fn tee_bootstrap_setup(
     let evm_key_path = args
         .effective_validator_evm_key()?
         .ok_or(crate::errors::StackDkgError::TeeBootstrapRequiresEvmKey)?;
-    let evm_signer = outbe_primitives::signer::load::from_file(&evm_key_path).map_err(|e| {
+    let backend = args.evm_key_backend().map_err(|error| {
         crate::errors::StackDkgError::LoadValidatorEvmSignerForTeeBootstrap {
-            reason: format!("{e}"),
+            reason: format!("{error}"),
         }
     })?;
+    let evm_signer = outbe_consensus::bls::load_validator_evm_signer(&evm_key_path, &backend)
+        .map_err(
+            |error| crate::errors::StackDkgError::LoadValidatorEvmSignerForTeeBootstrap {
+                reason: format!("{error}"),
+            },
+        )?;
     let committee: std::collections::BTreeSet<alloy_primitives::Address> =
         ordered_validator_addresses(participants, validator_set)?
             .into_iter()

@@ -67,6 +67,30 @@ impl std::fmt::Debug for KeyBackend {
     }
 }
 
+/// A role backend name could not be parsed.
+#[derive(Debug, PartialEq, Eq)]
+pub enum KeyBackendNameError {
+    /// `encrypted` was selected and no passphrase was supplied.
+    MissingPassphrase,
+    /// The backend name is not `plaintext`, `encrypted`, or `os-level`.
+    Unknown(String),
+}
+
+/// Parse one role backend name. The passphrase is moved only for `encrypted`.
+pub fn parse_key_backend_name(
+    name: &str,
+    passphrase: Option<String>,
+) -> std::result::Result<KeyBackend, KeyBackendNameError> {
+    match name {
+        "plaintext" => Ok(KeyBackend::Plaintext),
+        "encrypted" => passphrase
+            .map(KeyBackend::Encrypted)
+            .ok_or(KeyBackendNameError::MissingPassphrase),
+        "os-level" => Ok(KeyBackend::OsLevel),
+        other => Err(KeyBackendNameError::Unknown(other.to_owned())),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Encrypted file format
 // ---------------------------------------------------------------------------
@@ -147,7 +171,7 @@ fn save_to_keychain(path: &Path, data: &[u8]) -> Result<()> {
 }
 
 /// Save raw bytes using the specified backend.
-pub(crate) fn save_raw(path: &Path, data: &[u8], backend: &KeyBackend) -> Result<()> {
+pub fn save_raw(path: &Path, data: &[u8], backend: &KeyBackend) -> Result<()> {
     match backend {
         KeyBackend::Encrypted(passphrase) => save_encrypted(path, data, passphrase),
         KeyBackend::Plaintext => {
@@ -256,7 +280,7 @@ fn atomic_write_secret(path: &Path, data: &[u8], kind: &str) -> Result<()> {
 }
 
 /// Load raw bytes, auto-detecting format (encrypted / keychain / plaintext hex).
-pub(crate) fn load_raw(path: &Path, backend: &KeyBackend) -> Result<Vec<u8>> {
+pub fn load_raw(path: &Path, backend: &KeyBackend) -> Result<Vec<u8>> {
     let raw = std::fs::read(path)
         .wrap_err_with(|| format!("failed to read key file: {}", path.display()))?;
 
@@ -314,6 +338,56 @@ pub(crate) fn load_raw(path: &Path, backend: &KeyBackend) -> Result<Vec<u8>> {
             .to_string();
         hex::decode(&hex_str).wrap_err("invalid hex in key file")
     }
+}
+
+/// Report whether `bytes` is an encrypted envelope or a keychain marker.
+pub fn reads_as_protected_custody(bytes: &[u8]) -> bool {
+    bytes.starts_with(ENC_MAGIC) || bytes.starts_with(KEYCHAIN_MARKER.as_bytes())
+}
+
+/// Reject a secp256k1 custody file that is readable by group or other.
+#[cfg(unix)]
+fn reject_group_readable(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return Ok(());
+    };
+    let mode = metadata.permissions().mode() & 0o777;
+    if mode & 0o077 != 0 {
+        return Err(BlsKeyError::InsecureFileMode {
+            kind: "secp256k1 secret".to_owned(),
+            path: path.display().to_string(),
+            mode,
+        }
+        .into());
+    }
+    Ok(())
+}
+
+/// Load one 32-byte secp256k1 secret.
+pub fn load_secp256k1_secret(path: &Path, backend: &KeyBackend) -> Result<[u8; 32]> {
+    #[cfg(unix)]
+    reject_group_readable(path)?;
+    let bytes = load_raw(path, backend)?;
+    let len = bytes.len();
+    bytes
+        .try_into()
+        .map_err(|_| BlsKeyError::Secp256k1SecretLength { len }.into())
+}
+
+/// Save one 32-byte secp256k1 secret with the selected backend.
+pub fn save_secp256k1_secret(path: &Path, secret: &[u8; 32], backend: &KeyBackend) -> Result<()> {
+    save_raw(path, secret, backend)
+}
+
+/// Load a validator EVM signer from a role custody file.
+pub fn load_validator_evm_signer(
+    path: &Path,
+    backend: &KeyBackend,
+) -> Result<outbe_primitives::signer::OutbeEvmSigner> {
+    let secret = load_secp256k1_secret(path, backend)?;
+    outbe_primitives::signer::OutbeEvmSigner::from_secret_bytes(secret)
+        .map_err(|_| BlsKeyError::InvalidSecp256k1Secret.into())
 }
 
 /// Remove backend-owned raw secret material after its protocol lifecycle ends.

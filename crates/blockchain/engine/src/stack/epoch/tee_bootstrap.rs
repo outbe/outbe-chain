@@ -140,10 +140,18 @@ where
                 .to_str()
                 .ok_or(crate::errors::StackEpochError::TeeEnclaveEndpointInvalidUtf8)?
                 .to_owned();
+            let p2p_secret_path = node.data_dir.p2p_secret();
+            if node.config.network.p2p_secret_key_hex.is_none()
+                && reth_identity_file_is_protected(&p2p_secret_path)
+            {
+                return Err(
+                    crate::errors::StackEpochError::ProtectedRethIdentityNotInstalled.into(),
+                );
+            }
             let reth_p2p_secret = node
                 .config
                 .network
-                .secret_key(node.data_dir.p2p_secret())
+                .secret_key(p2p_secret_path)
                 .wrap_err("failed to load persistent Reth P2P identity for OST3")?;
             let node_host_signing =
                 k256::ecdsa::SigningKey::from_slice(reth_p2p_secret.secret_bytes().as_slice())
@@ -356,4 +364,39 @@ where
     }
 
     Ok(())
+}
+
+/// Read only the custody prefix. A missing file is not protected custody.
+fn reth_identity_file_is_protected(path: &std::path::Path) -> bool {
+    let mut prefix = [0_u8; 16];
+    let mut file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(_) => return false,
+    };
+    let read = std::io::Read::read(&mut file, &mut prefix).unwrap_or(0);
+    outbe_consensus::bls::reads_as_protected_custody(&prefix[..read])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reth_identity_file_is_protected;
+
+    #[test]
+    fn protected_prefix_is_detected_from_the_file_header_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let protected = dir.path().join("protected");
+        std::fs::write(&protected, b"OUTBE_ENC\x01header-only").unwrap();
+        assert!(reth_identity_file_is_protected(&protected));
+
+        let marker = dir.path().join("marker");
+        std::fs::write(&marker, b"OUTBE_KEYCHAIN\n").unwrap();
+        assert!(reth_identity_file_is_protected(&marker));
+
+        let plain = dir.path().join("plain");
+        std::fs::write(&plain, b"00112233445566778899aabbccddeeff").unwrap();
+        assert!(!reth_identity_file_is_protected(&plain));
+        assert!(!reth_identity_file_is_protected(
+            &dir.path().join("missing")
+        ));
+    }
 }
