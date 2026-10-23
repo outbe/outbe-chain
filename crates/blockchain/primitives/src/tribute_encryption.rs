@@ -19,6 +19,8 @@ pub struct TributeContextV2 {
     pub worldwide_day: WorldwideDay,
     pub issuance_currency: u16,
     pub reference_currency: u16,
+    /// Public effective reference price in six-decimal minor units.
+    /// One whole unit is 1_000_000. This field is not ciphertext.
     pub tribute_price_minor: U256,
     pub offer_input_hash: B256,
 }
@@ -59,6 +61,7 @@ impl TributeContextV2 {
 }
 
 /// Canonical public record. No private key or plaintext amount is serialized.
+/// `encrypted_amounts` is the ciphertext of [`TributeAmountsV2`], not the minor integers.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct EncryptedTributeV2 {
     pub context: TributeContextV2,
@@ -82,7 +85,13 @@ fn valid_immutable_blob(blob: &[u8], expected_len: usize) -> bool {
     blob.len() == expected_len && blob[..8] == 1u64.to_be_bytes()
 }
 
-/// Transient authorized calculation view, never a canonical storage body.
+/// Transient plaintext amounts, never a canonical storage body.
+///
+/// Both integers use six-decimal minor units: one whole unit is 1_000_000.
+/// The enclave same-currency example turns issuance 100.000000 at price
+/// 2.000000 into nominal 50.000000. A stored tribute keeps these integers as
+/// ciphertext. The six-decimal scale does not by itself decide whether a
+/// downstream GRATIS cap treats the nominal as COEN.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TributeAmountsV2 {
     pub issuance_amount_minor: U256,

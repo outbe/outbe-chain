@@ -5,6 +5,11 @@ use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 use serde::{Deserialize, Serialize};
 
+/// Legacy plaintext tribute. Current issuance stores ciphertext instead.
+///
+/// `issuance_amount_minor` and `nominal_amount_minor` use six-decimal minor
+/// units. `tribute_price_minor` is the public effective reference price on
+/// that same scale.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[storage_record(exists_field = owner)]
 pub struct TributeData {
@@ -33,6 +38,8 @@ pub struct TributeData {
     pub tribute_price_minor: U256,
 }
 
+/// Live day view. `tribute_nominal_total_minor` is the enclave-read nominal
+/// sum in six-decimal minor units. The stored day nominal remains ciphertext.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DayTotals {
     pub worldwide_day: WorldwideDay,
@@ -68,6 +75,7 @@ pub struct TributeContract {
     pub day_totals:
         outbe_primitives::storage::dsl::Map<WorldwideDay, crate::day_schema::StoredDayTotals>,
 
+    /// Ciphertext of the live day nominal. Not a plaintext minor integer.
     #[attribute(order = 7)]
     pub day_nominal_ct:
         outbe_primitives::storage::dsl::Map<WorldwideDay, outbe_primitives::storage::dsl::Bytes>,

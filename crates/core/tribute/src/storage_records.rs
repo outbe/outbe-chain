@@ -5,6 +5,8 @@ use outbe_primitives::storage::indexed_list::{
 };
 use outbe_primitives::{time::WorldwideDay, wwd_entity_id::WwdEntityId};
 
+/// Stored tribute. `tribute_price_minor` is the public six-decimal price.
+/// `encrypted_amounts` is ciphertext of the plaintext issuance and nominal.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[storage_record(exists_field = owner)]
 pub struct StoredTribute {
