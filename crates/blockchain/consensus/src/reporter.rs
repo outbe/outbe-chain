@@ -193,9 +193,11 @@ impl Reporter for OutbeReporter {
                 commonware_actor::Feedback::Ok
             }
             Activity::Certification(notarization) => {
-                // Marshal's mailbox drops `Activity::Certification`
-                // via its `_ => return;` arm, so Outbe is the only persistent
-                // consumer. Verify before write per the test contract
+                // Marshal returns `Feedback::Ok` for every activity other than
+                // Notarization and Finalization
+                // (`consensus/src/marshal/core/mailbox.rs:996-1008`). Outbe is
+                // the only persistent consumer of Certification. Verify before
+                // write per
                 // `proof_store_ingestion_verifies_certification_activity_before_write`.
                 self.handle_certification(notarization);
                 commonware_actor::Feedback::Ok
@@ -238,8 +240,8 @@ impl Reporter for OutbeReporter {
 impl OutbeReporter {
     fn handle_finalize_vote(&mut self, finalize: Finalize<HybridScheme<MinSig>, Digest>) {
         // Do NOT verify the vote inline on the Simplex voter task. The
-        // batcher reports `Activity::Finalize` BEFORE it batch-verifies the vote
-        // (monorepo batcher `round.rs::add_network`). Thus the vote here is
+        // batcher `accept_vote` reports `Activity::Finalize` before `verifier.add`
+        // and before `try_verify` (monorepo `batcher/round.rs`). Thus the vote here is
         // unverified and MUST be verified before it can feed the proposer's
         // late-credit aggregate. But verification of `O(committee)` BLS pairings
         // per view on the voter critical path inflated block time. Enqueue the
