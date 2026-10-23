@@ -146,7 +146,7 @@ impl OutbeReporter {
             view_state: ReporterViewState {
                 last_finalized_view: persisted.last_finalized_view,
                 last_certificate: persisted.last_certificate,
-                pending_byzantine: Vec::new(),
+                pending_byzantine: Default::default(),
             },
             witness_sink,
         }

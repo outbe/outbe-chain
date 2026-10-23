@@ -1,6 +1,9 @@
 //! Mutable per-view state owned by one reporter.
 
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::BTreeSet,
+    sync::{Arc, Mutex},
+};
 
 use alloy_primitives::Address;
 use commonware_cryptography::bls12381::primitives::variant::MinSig;
@@ -17,7 +20,7 @@ use crate::hybrid::HybridCertificate;
 pub(super) struct ReporterViewState {
     pub(super) last_finalized_view: u64,
     pub(super) last_certificate: Option<HybridCertificate<MinSig>>,
-    pub(super) pending_byzantine: Vec<Address>,
+    pub(super) pending_byzantine: BTreeSet<Address>,
 }
 
 impl ReporterViewState {
@@ -31,15 +34,16 @@ impl ReporterViewState {
 
     /// Buffer a byzantine validator address until the next finalization drains it.
     pub(super) fn buffer_byzantine(&mut self, addr: Address) {
-        self.pending_byzantine.push(addr);
+        self.pending_byzantine.insert(addr);
     }
 
-    /// Drain the buffered byzantine addresses, sorted and deduplicated.
+    /// Drain the buffered byzantine addresses in sorted order.
+    ///
+    /// Insert already rejects a repeated address, so the drain does not sort again.
     pub(super) fn drain_byzantine_sorted(&mut self) -> Vec<Address> {
-        let mut drained = std::mem::take(&mut self.pending_byzantine);
-        drained.sort_unstable();
-        drained.dedup();
-        drained
+        std::mem::take(&mut self.pending_byzantine)
+            .into_iter()
+            .collect()
     }
 
     /// Advance the finalization cursor used by skipped-view metrics.
@@ -113,6 +117,11 @@ mod tests {
         state.buffer_byzantine(b);
         state.buffer_byzantine(a);
         state.buffer_byzantine(a);
+        assert_eq!(
+            state.pending_byzantine.len(),
+            2,
+            "duplicate evidence is stored once"
+        );
 
         let drained = state.drain_byzantine_sorted();
         assert_eq!(
