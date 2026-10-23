@@ -362,7 +362,22 @@ fn readiness_checks_lifecycle_before_effects() -> Result<()> {
         ),
     );
     let mut storage = seeded(|vs| waiting_for_readiness(vs, FIRST))?;
-    storage.enter(|storage| ValidatorSet::new(storage).confirm_validator_ready(FIRST))?;
+    let effect = call_effect(&mut storage, |vs| vs.confirm_validator_ready(FIRST));
+    assert_eq!(effect.outcome, "Ok(())");
+    assert_eq!(
+        effect.events,
+        vec![IValidatorSet::ValidatorReadyConfirmed::SIGNATURE_HASH]
+    );
+    let confirmed = storage
+        .get_ordered_events()
+        .iter()
+        .rev()
+        .find_map(|log| IValidatorSet::ValidatorReadyConfirmed::decode_log(log).ok())
+        .expect("ready confirmation log");
+    assert_eq!(confirmed.data.validator, FIRST);
+    let repeat = call_effect(&mut storage, |vs| vs.confirm_validator_ready(FIRST));
+    assert_eq!(repeat.outcome, "Ok(())");
+    assert_eq!(repeat.events, Vec::<B256>::new());
     storage.enter(|storage| -> Result<()> {
         let vs = ValidatorSet::new(storage);
         assert!(vs.val_join_confirmed.read(&FIRST)?);
@@ -452,5 +467,128 @@ fn proposer_and_missed_block_counters_increment_once() -> Result<()> {
         ))
     })?;
     assert_eq!(counters, (1, 1));
+    Ok(())
+}
+
+fn pending_logs(storage: &HashMapStorageProvider) -> Vec<Address> {
+    storage
+        .get_ordered_events()
+        .iter()
+        .filter(|log| log.address == VALIDATOR_SET_ADDRESS)
+        .filter_map(|log| IValidatorSet::ValidatorPending::decode_log(log).ok())
+        .map(|event| event.data.validator)
+        .collect()
+}
+
+#[test]
+fn stake_increase_emits_pending_only_when_minimum_is_reached() -> Result<()> {
+    let minimum = U256::from(1_000u64);
+    let mut storage = seeded(|vs| register(vs, FIRST))?;
+    let below = call_effect(&mut storage, |vs| {
+        vs.record_stake_increase(FIRST, U256::from(1u64), minimum)
+    });
+    assert_eq!(below.outcome, "Ok(())");
+    assert_eq!(below.events, Vec::<B256>::new());
+
+    let seed = || seeded(|vs| register(vs, FIRST)).unwrap();
+    let view = |storage: &mut HashMapStorageProvider| {
+        let columns = storage.enter(|storage| -> Result<_> {
+            let vs = ValidatorSet::new(storage);
+            Ok((vs.val_status.read(&FIRST)?, vs.has_pending_set_change()?))
+        });
+        (outcome_text(columns), pending_logs(storage))
+    };
+    let initial = view(&mut seed());
+    let views = HashMapStorageProvider::mutation_prefix_views(
+        seed,
+        |storage| ValidatorSet::new(storage).record_stake_increase(FIRST, minimum, minimum),
+        view,
+    )?;
+    assert!(views.mutations > 0);
+    assert!(views
+        .before_mutation
+        .iter()
+        .all(|before| *before == initial));
+    assert_eq!(views.complete, ("Ok((1, true))".to_string(), vec![FIRST]));
+
+    let mut pending = seeded(|vs| register(vs, FIRST))?;
+    pending.enter(|storage| {
+        ValidatorSet::new(storage).record_stake_increase(FIRST, minimum, minimum)
+    })?;
+    let repeat = call_effect(&mut pending, |vs| {
+        vs.record_stake_increase(FIRST, minimum, minimum)
+    });
+    assert_eq!(repeat.outcome, "Ok(())");
+    assert_eq!(repeat.events, Vec::<B256>::new());
+    Ok(())
+}
+
+#[test]
+fn mark_pending_and_unjail_do_not_emit_validator_pending() -> Result<()> {
+    let mut storage = seeded(|vs| register(vs, FIRST))?;
+    let effect = call_effect(&mut storage, |vs| vs.mark_pending(FIRST));
+    assert_eq!(effect.outcome, "Ok(())");
+    assert_eq!(effect.events, Vec::<B256>::new());
+    assert_eq!(pending_logs(&storage), Vec::<Address>::new());
+
+    let mut unjailed = seeded(|vs| {
+        retained_jail(vs)?;
+        vs.activate_reshared_set(&[], B256::ZERO)
+    })?;
+    let effect = call_effect(&mut unjailed, |vs| vs.unjail_after_stake_check(FIRST));
+    assert_eq!(
+        effect.events,
+        vec![IValidatorSet::ValidatorUnjailed::SIGNATURE_HASH]
+    );
+    assert_eq!(pending_logs(&unjailed), Vec::<Address>::new());
+    Ok(())
+}
+
+#[test]
+fn demotion_and_slash_do_not_emit_pending_or_ready() -> Result<()> {
+    let minimum = U256::from(1_000u64);
+    let mut demoted = seeded(|vs| waiting_for_readiness(vs, FIRST))?;
+    let effect = call_effect(&mut demoted, |vs| {
+        vs.record_unstake(FIRST, U256::from(1u64), minimum, 0)
+    });
+    assert_eq!(effect.outcome, "Ok(())");
+    assert_eq!(effect.events, Vec::<B256>::new());
+
+    let mut slashed = seeded(|vs| participant(vs, FIRST))?;
+    let effect = call_effect(&mut slashed, |vs| {
+        vs.record_stake_slash(FIRST, U256::from(1u64), minimum, None)
+    });
+    assert_eq!(effect.outcome, "Ok(())");
+    assert_eq!(effect.events, Vec::<B256>::new());
+    Ok(())
+}
+
+#[test]
+fn ready_confirmation_is_atomic_with_its_event() -> Result<()> {
+    let seed = || seeded(|vs| waiting_for_readiness(vs, FIRST)).unwrap();
+    let view = |storage: &mut HashMapStorageProvider| {
+        let joined =
+            storage.enter(|storage| ValidatorSet::new(storage).val_join_confirmed.read(&FIRST));
+        let ready = storage
+            .get_ordered_events()
+            .iter()
+            .filter(|log| log.address == VALIDATOR_SET_ADDRESS)
+            .filter_map(|log| IValidatorSet::ValidatorReadyConfirmed::decode_log(log).ok())
+            .map(|event| event.data.validator)
+            .collect::<Vec<_>>();
+        (outcome_text(joined), ready)
+    };
+    let initial = view(&mut seed());
+    let views = HashMapStorageProvider::mutation_prefix_views(
+        seed,
+        |storage| ValidatorSet::new(storage).confirm_validator_ready(FIRST),
+        view,
+    )?;
+    assert!(views.mutations > 0);
+    assert!(views
+        .before_mutation
+        .iter()
+        .all(|before| *before == initial));
+    assert_eq!(views.complete, ("Ok(true)".to_string(), vec![FIRST]));
     Ok(())
 }

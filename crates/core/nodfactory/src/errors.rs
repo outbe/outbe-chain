@@ -69,6 +69,16 @@ pub enum NodFactoryError {
 
     #[error("Nod call price overflow")]
     CallPriceOverflow,
+
+    #[error("date step kind {kind} from date key {date_key}")]
+    DateStep { kind: u8, date_key: u32 },
+}
+
+pub(crate) fn date_step_error(err: outbe_primitives::time::TimeError) -> PrecompileError {
+    match err.date_step() {
+        Some((kind, date_key)) => NodFactoryError::DateStep { kind, date_key }.into(),
+        None => PrecompileError::Fatal(err.to_string()),
+    }
 }
 
 fn revert_with<E: SolError>(error: E) -> PrecompileError {
@@ -123,6 +133,10 @@ impl From<NodFactoryError> for PrecompileError {
             }
             NodFactoryError::GroupNotQueuedForTest => revert_with(I::GroupNotQueuedForTest {}),
             NodFactoryError::CallPriceOverflow => revert_with(I::CallPriceOverflow {}),
+            NodFactoryError::DateStep { kind, date_key } => revert_with(I::DateStep {
+                kind,
+                dateKey: date_key,
+            }),
         }
     }
 }

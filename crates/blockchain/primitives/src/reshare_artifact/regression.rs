@@ -44,7 +44,6 @@ fn boundary() -> DkgBoundaryArtifact {
             new_active_set: vec![Address::repeat_byte(0x44)],
             active_set_hash: B256::repeat_byte(0x55),
         },
-        tee_recipient_pubkeys: vec![(Address::repeat_byte(0x66), B256::repeat_byte(0x77))],
         tee_expired_target_exclusions_hash: tee_expired_target_exclusions_hash(&exclusions)
             .unwrap(),
         tee_expired_target_exclusions: exclusions,
@@ -75,9 +74,9 @@ fn mixed_record_wire_vectors_are_pinned() {
     // every remaining field, length, endian convention, version and record order.
     let expected = [
         (
-            575,
+            521,
             alloy_primitives::b256!(
-                "022c5ce39e5d608a661985d220381deea34ee461f870f6a78702f8e6a1784501"
+                "4bee5a9d6f662538180758a7a20cbfe482412bd92cf32ee0c1225fa1a810a1a9"
             ),
         ),
         (

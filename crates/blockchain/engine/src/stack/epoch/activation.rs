@@ -85,26 +85,23 @@ where
                         );
                         return Ok(Some(EventAction::Continue));
                     };
-                    let Some(pending) = self.rotation.pending_dkg_activation.take() else {
-                        return Err(
-                            crate::errors::StackEpochError::PendingActivationMissingAfterPrecheck {
-                                height: activation_height,
-                            }
-                            .into(),
-                        );
-                    };
+                    let pending = self.rotation.pending_dkg_activation.take().ok_or(
+                        crate::errors::StackEpochError::PendingActivationMissingAfterPrecheck {
+                            height: activation_height,
+                        },
+                    )?;
                     let target = pending.target;
                     let dkg_complete = pending.complete;
                     let boundary_artifact = pending.boundary_artifact;
-                    if let Err(error) = dkg_manager::assert_canonical_output(
+                    dkg_manager::assert_canonical_output(
                         &dkg_complete.output,
                         &canonical_output,
                         &format!("cycle {}", target.dkg_cycle),
-                    ) {
+                    )
+                    .inspect_err(|_| {
                         self.vrf_safety.mark_expired(activation_height);
                         publish_randomness_status(&self.bridge, &self.vrf_safety);
-                        return Err(error);
-                    }
+                    })?;
 
                     let activated_validator_set = validator_set_for_dkg_output_players(
                         &canonical_output,

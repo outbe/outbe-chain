@@ -64,6 +64,7 @@ interface IOracle {
     error ScurveWriteIndexOverflow();
     error SnapshotOutOfOrder();
     error NoRateForPair(address pairBase, address pairQuote);
+    error DateStep(uint8 kind, uint32 dateKey);
 
     // Events - precompile dispatch (appear in transaction receipts)
     event VoteSubmitted(address indexed validator, uint32 tupleCount);

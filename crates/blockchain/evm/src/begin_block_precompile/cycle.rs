@@ -37,15 +37,45 @@ pub(super) fn enforce_tee_lease_deadlines(ctx: &BlockRuntimeContext) -> Result<u
             overdue.push(validator.validator_address);
         }
     }
-
-    let mut validator_set = outbe_validatorset::contract::ValidatorSet::new(ctx.storage.clone());
-    let mut jailed = 0usize;
-    for validator in overdue {
-        if validator_set.jail_validator_for_tee_expiry(validator)? {
-            jailed += 1;
-        }
+    if overdue.is_empty() {
+        return Ok(0);
     }
-    Ok(jailed)
+
+    // Admit the percent and the clock before any jail. One checkpoint holds
+    // every jail, slash, and log. A later failure rolls the whole sweep back.
+    let transitioned = ctx.storage.with_checkpoint(|| {
+        let percent = outbe_slashindicator::contract::SlashIndicator::new(ctx.storage.clone())
+            .slash_amount_percent()?;
+        ctx.storage.now_secs()?;
+        let mut validator_set =
+            outbe_validatorset::contract::ValidatorSet::new(ctx.storage.clone());
+        let mut staking = outbe_staking::contract::Staking::new(ctx.storage.clone());
+        let mut transitioned = Vec::new();
+        for validator in overdue {
+            if validator_set.jail_validator_for_tee_expiry(validator)? {
+                staking.slash_stake(validator, percent)?;
+                transitioned.push(validator);
+            }
+        }
+        Ok(transitioned)
+    })?;
+
+    for validator in &transitioned {
+        outbe_validatorset::metrics::record_validator_status(
+            *validator,
+            outbe_validatorset::runtime::status::JAILED,
+        );
+        outbe_validatorset::metrics::record_validator_tee_expiry(*validator, "deadline_jailed");
+        outbe_validatorset::metrics::record_pending_set_change(true);
+        tracing::warn!(
+            target: "outbe::validatorset",
+            event = "validator_tee_lease_expired",
+            validator = %validator,
+            block_number = ctx.block.block_number,
+            "validator jailed and slashed after TEE lease deadline",
+        );
+    }
+    Ok(transitioned.len())
 }
 
 fn validate_and_record_cycle_proposer(ctx: &BlockRuntimeContext) -> Result<()> {

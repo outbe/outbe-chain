@@ -137,7 +137,7 @@ contract RouterE2E is BaseTest {
 
     function _doFullAuction(address solver, bytes32 orderId, uint256 outputAmount, bytes memory originData) internal {
         vm.prank(solver);
-        auction.commit(orderId, keccak256(abi.encode(orderId, outputAmount, SALT)));
+        auction.commit(orderId, keccak256(abi.encode(orderId, solver, outputAmount, SALT)));
         vm.warp(block.timestamp + auction.commitPeriod());
         vm.prank(solver);
         auction.reveal(orderId, outputAmount, SALT, originData);

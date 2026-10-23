@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolInterface;
-use outbe_primitives::dispatch::{dispatch_call, metadata, view};
+use outbe_primitives::dispatch::{dispatch_call, view};
 use outbe_primitives::error::Result;
 
 mod queries;
@@ -30,9 +30,6 @@ pub fn dispatch(
         let metadosis = MetadosisContract::new(storage);
         use IMetadosis::IMetadosisCalls::*;
         match call {
-            getBootstrapEndTime(_) => metadata::<IMetadosis::getBootstrapEndTimeCall>(|| {
-                metadosis.bootstrap_end_time.read()
-            }),
             getEmissionDay(c) => view(c, |c| queries::emission_day(&metadosis, c)),
         }
     })

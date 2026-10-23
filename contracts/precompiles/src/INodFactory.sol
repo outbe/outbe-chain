@@ -20,6 +20,7 @@ interface INodFactory {
     error MissingGroupForCall(bytes32 groupKey);
     error GroupNotQueuedForTest();
     error CallPriceOverflow();
+    error DateStep(uint8 kind, uint32 dateKey);
 
     event NodIssued(
         address indexed owner,

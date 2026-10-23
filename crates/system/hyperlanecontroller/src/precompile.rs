@@ -74,6 +74,7 @@ pub fn dispatch(
                     )
                 }),
                 icaRouter(c) => view(c, |_| controller.ica_router.read()),
+                remoteAccount(c) => view(c, |c| controller.remote_account(c.domain)),
                 validatorAnnounce(c) => view(c, |_| controller.validator_announce.read()),
                 ismByDomain(c) => view(c, |c| controller.ism_by_domain.read(&c.domain)),
                 hookByDomain(c) => view(c, |c| controller.hook_by_domain.read(&c.domain)),

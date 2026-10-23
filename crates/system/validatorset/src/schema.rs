@@ -3,6 +3,10 @@ use outbe_macros::contract;
 use outbe_primitives::addresses::VALIDATOR_SET_ADDRESS;
 use outbe_primitives::storage::types::{Mapping, Slot, StorageBytes};
 
+/// Base slot of `Staking.stake_amount` at `STAKING_ADDRESS`.
+/// Amounts are native COEN base units: one whole COEN is 10^18 base units.
+pub(crate) const AUTHORITATIVE_BONDED_BASE_SLOT: u64 = 3;
+
 /// EVM storage layout for the ValidatorSet precompile.
 ///
 /// Storage slots:
@@ -13,7 +17,7 @@ use outbe_primitives::storage::types::{Mapping, Slot, StorageBytes};
 ///   4:  config_is_initialized   - bool
 ///   5:  val_consensus_pubkey_lo - mapping(address => bytes32)  [BLS MinPk pubkey bytes 0..32]
 ///   6:  val_consensus_pubkey_hi - mapping(address => bytes32)  [BLS MinPk pubkey bytes 32..48, right-padded]
-///   7:  val_stake               - mapping(address => uint256)
+///   7:  _reserved_slot_7        - mapping(address => uint256)  [unused]
 ///   8:  val_status              - mapping(address => uint8)
 ///   9:  val_slash_count         - mapping(address => uint64)
 ///   10: val_missed_blocks       - mapping(address => uint64)
@@ -103,7 +107,9 @@ pub struct ValidatorSet {
     pub(crate) val_consensus_pubkey_lo: Mapping<Address, B256>,
     /// BLS MinPk consensus public key - high 16 bytes (bytes[32..48]), right-padded with zeros.
     pub(crate) val_consensus_pubkey_hi: Mapping<Address, B256>,
-    pub(crate) val_stake: Mapping<Address, U256>,
+    /// Unused. Current bonded stake is `Staking.stake_amount` (base slot 3).
+    /// Amounts are native COEN base units: one whole COEN is 10^18 base units.
+    pub _reserved_slot_7: Mapping<Address, U256>,
     pub(crate) val_status: Mapping<Address, u8>,
     pub(crate) val_slash_count: Mapping<Address, u64>,
     pub(crate) val_missed_blocks: Mapping<Address, u64>,
@@ -262,7 +268,7 @@ mod tests {
         assert_eq!(c.config_is_initialized.slot(), U256::from(4));
         assert_eq!(c.val_consensus_pubkey_lo.base_slot(), U256::from(5));
         assert_eq!(c.val_consensus_pubkey_hi.base_slot(), U256::from(6));
-        assert_eq!(c.val_stake.base_slot(), U256::from(7));
+        assert_eq!(c._reserved_slot_7.base_slot(), U256::from(7));
         assert_eq!(c.val_status.base_slot(), U256::from(8));
         assert_eq!(c.val_slash_count.base_slot(), U256::from(9));
         assert_eq!(c.val_missed_blocks.base_slot(), U256::from(10));

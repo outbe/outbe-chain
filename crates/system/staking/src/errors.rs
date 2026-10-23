@@ -78,9 +78,9 @@ impl From<StakingError> for PrecompileError {
             StakingError::SlashedWithdrawalDelayOverflow => PrecompileError::RevertBytes(
                 Bytes::from(IStaking::SlashedWithdrawalDelayOverflow {}.abi_encode()),
             ),
-            StakingError::StakeAccountingUnderflow { validator } => PrecompileError::RevertBytes(
-                Bytes::from(IStaking::StakeAccountingUnderflow { validator }.abi_encode()),
-            ),
+            error @ StakingError::StakeAccountingUnderflow { .. } => {
+                PrecompileError::FatalWithCause(Box::new(error))
+            }
             StakingError::StakeAccountingOverflow { validator } => PrecompileError::RevertBytes(
                 Bytes::from(IStaking::StakeAccountingOverflow { validator }.abi_encode()),
             ),
@@ -120,7 +120,7 @@ mod tests {
     }
 
     #[test]
-    fn caller_revert_keeps_integer_address_and_string_fields() {
+    fn caller_revert_keeps_integer_and_string_fields() {
         let have = U256::from(1u64);
         let need = U256::from(2u64);
         let bytes = encoded(StakingError::UnjailInsufficientStake { have, need });
@@ -128,14 +128,21 @@ mod tests {
         assert_eq!(decoded.have, have);
         assert_eq!(decoded.need, need);
 
-        let validator = Address::repeat_byte(0x11);
-        let bytes = encoded(StakingError::StakeAccountingUnderflow { validator });
-        let decoded =
-            IStaking::StakeAccountingUnderflow::abi_decode(&bytes).expect("validator payload");
-        assert_eq!(decoded.validator, validator);
-
         let bytes = encoded(StakingError::SweepCountOverflow("cursor"));
         let decoded = IStaking::SweepCountOverflow::abi_decode(&bytes).expect("string payload");
         assert_eq!(decoded.value, "cursor");
+    }
+
+    #[test]
+    fn corrupt_accounting_is_fatal_with_typed_validator_cause() {
+        let validator = Address::repeat_byte(0x11);
+        let error = PrecompileError::from(StakingError::StakeAccountingUnderflow { validator });
+        let cause = std::error::Error::source(&error)
+            .and_then(|cause| cause.downcast_ref::<StakingError>());
+        assert!(
+            matches!(cause, Some(StakingError::StakeAccountingUnderflow { validator: actual }) if *actual == validator)
+        );
+        assert!(!error.is_node_local());
+        assert!(error.into_precompile_result(0).is_err());
     }
 }

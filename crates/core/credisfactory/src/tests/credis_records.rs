@@ -171,7 +171,7 @@ fn call(
     id: U256,
     now: u64,
 ) -> outbe_primitives::error::Result<bool> {
-    let group = credis.get_credis(id)?.group_key();
+    let group = credis.get_credis(id)?.group_key().expect("date step");
     if credis.group_called_at.read(&group)? != 0 {
         return Ok(false);
     }
@@ -1110,7 +1110,7 @@ fn called_repayment_and_forfeit_have_complementary_deadline_boundaries() {
             let id = open_pos(&mut credis);
             call(&mut credis, id, at(10)).unwrap();
             let before = credis.get_credis(id).unwrap();
-            let group = before.group_key();
+            let group = before.group_key().expect("date step");
             let now = settlement_deadline(&before)
                 .checked_add_signed(offset)
                 .unwrap();
@@ -1305,7 +1305,11 @@ fn the_owner_forfeits_a_called_credis_only_before_its_deadline() {
         StorageHandle::enter(&mut provider, |storage| {
             let mut credis = CredisContract::new(storage);
             let id = credis.token_by_index(0).unwrap();
-            let group = credis.get_credis(id).unwrap().group_key();
+            let group = credis
+                .get_credis(id)
+                .unwrap()
+                .group_key()
+                .expect("date step");
             let forfeit = rules::forfeit_by_owner(&mut credis, id, alice());
             if past_deadline {
                 assert_eq!(
@@ -1371,7 +1375,7 @@ fn the_call_index_holds_exactly_the_uncalled_groups() {
         let mut credis = CredisContract::new(storage);
         let id = rules::issue(&mut credis, params(alice())).unwrap();
         let record = credis.get_credis(id).unwrap();
-        let group = record.group_key();
+        let group = record.group_key().expect("date step");
         assert_eq!(
             bin_groups(&credis, &record),
             vec![group],
@@ -1398,7 +1402,7 @@ fn settling_an_issued_credis_in_full_leaves_the_call_index() {
         rules::settle(&mut credis, id, U256::from(400_000_000u64), at(11)).unwrap();
         assert_eq!(
             bin_groups(&credis, &record),
-            vec![record.group_key()],
+            vec![record.group_key().expect("date step")],
             "a partial settlement stays"
         );
         rules::settle(&mut credis, id, U256::from(999_999_999_999u64), at(12)).unwrap();
@@ -1417,8 +1421,13 @@ fn removing_from_the_middle_keeps_the_call_index_consistent() {
     let third = open_at_block(&mut provider, 3, params_below_anchor(alice(), 2));
     StorageHandle::enter(&mut provider, |storage| {
         let mut credis = CredisContract::new(storage);
-        let [first_group, second_group, third_group] =
-            [first, second, third].map(|id| credis.get_credis(id).unwrap().group_key());
+        let [first_group, second_group, third_group] = [first, second, third].map(|id| {
+            credis
+                .get_credis(id)
+                .unwrap()
+                .group_key()
+                .expect("date step")
+        });
         let record = credis.get_credis(first).unwrap();
         assert_eq!(
             bin_groups(&credis, &record),
@@ -2477,7 +2486,11 @@ fn test_arming_backdates_and_requeues_only_a_called_credis() {
 
         assert!(call(&mut credis, id, at(10)).unwrap());
         arm(requeue).unwrap();
-        let group = credis.get_credis(id).unwrap().group_key();
+        let group = credis
+            .get_credis(id)
+            .unwrap()
+            .group_key()
+            .expect("date step");
         assert_eq!(credis.called_deadline.read(&group).unwrap(), at(5));
     });
 }

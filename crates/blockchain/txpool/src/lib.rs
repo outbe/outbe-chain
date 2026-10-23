@@ -54,6 +54,7 @@ fn zero_fee_priority_class(hook: ZeroFeeHookId) -> Option<u8> {
     match hook {
         ZeroFeeHookId::OracleSubmitVote => Some(1),
         ZeroFeeHookId::HyperlaneSubmitCheckpoint => Some(1),
+        ZeroFeeHookId::RenewEnclave => Some(1),
     }
 }
 

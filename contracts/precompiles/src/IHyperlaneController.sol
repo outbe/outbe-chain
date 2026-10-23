@@ -89,6 +89,10 @@ interface IHyperlaneController {
     /// InterchainAccountRouter on Outbe.
     function icaRouter() external view returns (address);
 
+    /// Interchain Account of the controller on `domain`. It executes every remote call of the
+    /// controller, so it is the governance owner of contracts on that chain.
+    function remoteAccount(uint32 domain) external view returns (address);
+
     /// ValidatorAnnounce on Outbe.
     function validatorAnnounce() external view returns (address);
 

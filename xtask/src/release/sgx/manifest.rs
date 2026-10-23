@@ -207,9 +207,7 @@ pub(super) fn build_release_manifest_from_evidence(
         "processor",
         &bundle,
         &oci,
-        &chain_binding,
-        &inputs.genesis,
-        network,
+        (&chain_binding, &inputs.genesis, network),
     )?;
     verify_processor_dcap_archive(
         &inputs.processor_dcap_archive,
@@ -394,12 +392,14 @@ fn validate_final_release_identity(
         .pointer("/build/source_date_epoch")
         .and_then(Value::as_i64)
         .ok_or_else(|| eyre!("ELF release manifest lacks SOURCE_DATE_EPOCH"))?;
-    if commit != bundle.source.commit
-        || tag != bundle.source.tag
-        || epoch != bundle.source.source_date_epoch
-        || bundle.source != oci.source
-        || bundle.measurements != oci.measurements
-        || oci.platform != "linux/amd64"
+    if (commit, tag, epoch)
+        != (
+            bundle.source.commit.as_str(),
+            bundle.source.tag.as_str(),
+            bundle.source.source_date_epoch,
+        )
+        || (&bundle.source, &bundle.measurements, "linux/amd64")
+            != (&oci.source, &oci.measurements, oci.platform.as_str())
     {
         bail!("ELF, SGX bundle and OCI evidence do not share one release identity");
     }

@@ -153,7 +153,7 @@ pub(crate) fn priced_window(storage: &StorageHandle, pair: u32, latest: u32, vwa
     let mut day = latest;
     for _ in 0..(outbe_gem::constants::CALL_WINDOW / SECONDS_PER_DAY_U32) {
         oracle.record_utc_day_vwap(day, pair, vwap).unwrap();
-        day = previous_date_key(day);
+        day = previous_date_key(day).expect("date step");
     }
     if oracle.utc_day_vwap_last_finalized.read().unwrap() < latest {
         oracle.utc_day_vwap_last_finalized.write(latest).unwrap();
@@ -173,7 +173,7 @@ pub(crate) fn breach_window(
     for i in 0..window_days {
         let v = if i < breach_days { breach } else { U256::ZERO };
         window.push((day, Some(v)));
-        day = previous_date_key(day);
+        day = previous_date_key(day).expect("date step");
     }
     outbe_oracle::call_window::CallWindow::from_vwaps(
         window,

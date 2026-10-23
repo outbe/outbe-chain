@@ -73,6 +73,17 @@ pub enum IntexFactoryError {
 
     #[error("exercised units exceed the series")]
     ExercisedUnitsExceedSeries,
+    #[error("date step kind {kind} from date key {date_key}")]
+    DateStep { kind: u8, date_key: u32 },
+}
+
+pub(crate) fn date_step_error(
+    err: outbe_primitives::time::TimeError,
+) -> outbe_primitives::error::PrecompileError {
+    match err.date_step() {
+        Some((kind, date_key)) => IntexFactoryError::DateStep { kind, date_key }.into(),
+        None => outbe_primitives::error::PrecompileError::Fatal(err.to_string()),
+    }
 }
 
 impl From<outbe_common::pow::PowError> for IntexFactoryError {
@@ -131,6 +142,10 @@ impl From<IntexFactoryError> for PrecompileError {
             IntexFactoryError::ExercisedUnitsExceedSeries => {
                 revert_with(I::ExercisedUnitsExceedSeries {})
             }
+            IntexFactoryError::DateStep { kind, date_key } => revert_with(I::DateStep {
+                kind,
+                dateKey: date_key,
+            }),
         }
     }
 }

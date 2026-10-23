@@ -9,7 +9,7 @@ use outbe_primitives::erc::{
 use outbe_primitives::error::Result;
 
 use crate::constants::{TOKEN_NAME, TOKEN_SYMBOL};
-use crate::errors::CredisError;
+use crate::errors::{date_step_error, CredisError};
 use crate::schema::CredisContract;
 
 /// Selectors on this precompile that accept native value. The route table binds
@@ -132,6 +132,6 @@ fn abi_credis(p: &crate::schema::Credis, now: u64) -> Result<ICredis::Credis> {
             gratisReturnedMinor: outcome.gratis_returned_minor,
             gratisBurnedMinor: outcome.gratis_burned_minor,
         },
-        groupKey: p.group_key(),
+        groupKey: p.group_key().map_err(date_step_error)?,
     })
 }

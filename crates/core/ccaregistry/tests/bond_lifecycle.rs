@@ -275,7 +275,8 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         seed_oracle(&storage);
         seed_vwap(
             &storage,
-            previous_date_key(previous_date_key(timestamp_to_date_key(NOW))),
+            previous_date_key(previous_date_key(timestamp_to_date_key(NOW)).expect("date step"))
+                .expect("date step"),
             U256::from(9_000_000),
         );
     });
@@ -511,7 +512,7 @@ fn reward_world() -> CacheDB<EmptyDB> {
         seed_oracle(&storage);
         seed_vwap(
             &storage,
-            previous_date_key(timestamp_to_date_key(NOW)),
+            previous_date_key(timestamp_to_date_key(NOW)).expect("date step"),
             PRICE,
         );
     });

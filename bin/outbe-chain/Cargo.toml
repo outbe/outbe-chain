@@ -29,6 +29,7 @@ outbe-node.workspace = true
 outbe-consensus.workspace = true
 outbe-engine.workspace = true
 outbe-primitives.workspace = true
+outbe-slashindicator.workspace = true
 outbe-radicle.workspace = true
 outbe-operator.workspace = true
 outbe-tee.workspace = true
@@ -76,8 +77,8 @@ commonware-utils.workspace = true
 reqwest.workspace = true
 
 [build-dependencies]
-vergen = { version = "9.1.0", features = ["build", "cargo", "emit_and_set"] }
-vergen-git2 = "9.1.0"
+vergen = { version = "10.0.1", features = ["build", "cargo", "emit_and_set"] }
+vergen-git2 = "10.0.1"
 
 [[test]]
 name = "snapshot_create"

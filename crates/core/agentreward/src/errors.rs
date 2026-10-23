@@ -9,6 +9,8 @@ use thiserror::Error;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum AgentRewardError {
+    #[error("agentreward tribute counter overflow")]
+    TributeCounterOverflow,
     #[error("agentreward distribute_daily overflow")]
     DistributeDailyOverflow,
     #[error("reward distribution arithmetic overflow")]
@@ -31,6 +33,15 @@ pub enum AgentRewardError {
     UnknownRewardPool(u8),
     #[error("agentreward accrual job {0} is missing")]
     AccrualJobMissing(u64),
+    #[error("date step kind {kind} from date key {date_key}")]
+    DateStep { kind: u8, date_key: u32 },
+}
+
+pub(crate) fn date_step_error(err: outbe_primitives::time::TimeError) -> PrecompileError {
+    match err.date_step() {
+        Some((kind, date_key)) => AgentRewardError::DateStep { kind, date_key }.into(),
+        None => PrecompileError::Fatal(err.to_string()),
+    }
 }
 
 fn revert_with<E: SolError>(error: E) -> PrecompileError {
@@ -41,6 +52,7 @@ impl From<AgentRewardError> for PrecompileError {
     fn from(err: AgentRewardError) -> Self {
         use IAgentReward as I;
         match err {
+            AgentRewardError::TributeCounterOverflow => revert_with(I::TributeCounterOverflow {}),
             AgentRewardError::DistributeDailyOverflow => revert_with(I::DistributeDailyOverflow {}),
             AgentRewardError::DistributionOverflow => revert_with(I::DistributionOverflow {}),
             AgentRewardError::ClaimableTotalOverflow => revert_with(I::ClaimableTotalOverflow {}),
@@ -62,6 +74,10 @@ impl From<AgentRewardError> for PrecompileError {
             AgentRewardError::AccrualJobMissing(value) => {
                 revert_with(I::AccrualJobMissing { value })
             }
+            AgentRewardError::DateStep { kind, date_key } => revert_with(I::DateStep {
+                kind,
+                dateKey: date_key,
+            }),
         }
     }
 }
@@ -75,18 +91,25 @@ mod tests {
 
     #[test]
     fn agent_reward_error_converts_to_canonical_abi_revert_bytes() {
-        let err = PrecompileError::from(AgentRewardError::EntryPriceOverflow);
-        assert!(matches!(err, PrecompileError::RevertBytes(bytes)
-            if bytes.as_ref() == IAgentReward::EntryPriceOverflow {}.abi_encode()));
-        let err = PrecompileError::from(AgentRewardError::MissingPreviousDayPrice(840));
-        let PrecompileError::RevertBytes(bytes) = err else {
-            panic!("expected RevertBytes, got {err:?}");
-        };
-        assert_eq!(
-            bytes.as_ref(),
-            IAgentReward::MissingPreviousDayPrice { value: 840 }
-                .abi_encode()
-                .as_slice()
-        );
+        for (error, expected) in [
+            (
+                AgentRewardError::MissingPreviousDayPrice(840),
+                IAgentReward::MissingPreviousDayPrice { value: 840 }.abi_encode(),
+            ),
+            (
+                AgentRewardError::EntryPriceOverflow,
+                IAgentReward::EntryPriceOverflow {}.abi_encode(),
+            ),
+            (
+                AgentRewardError::TributeCounterOverflow,
+                IAgentReward::TributeCounterOverflow {}.abi_encode(),
+            ),
+        ] {
+            let err = PrecompileError::from(error);
+            let PrecompileError::RevertBytes(bytes) = err else {
+                panic!("expected RevertBytes, got {err:?}");
+            };
+            assert_eq!(bytes.as_ref(), expected.as_slice());
+        }
     }
 }

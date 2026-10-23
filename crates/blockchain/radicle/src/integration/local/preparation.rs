@@ -1,6 +1,6 @@
 //! Receipt-bound manifest delivery and pinned preparation refs from the local node.
 
-use super::{material, ChainIdentity, EndpointNetworkResolver, Error, FinalizedPatchSigningState};
+use super::{material, ChainIdentity, Error, FinalizedPatchSigningState};
 use crate::{
     integration::{
         publication::{
@@ -9,14 +9,14 @@ use crate::{
         },
         signing::RepositorySigningMaterial,
     },
-    manager::{RepositoryAuthorityReader, RepositoryReceiptReader},
+    manager::RepositoryReceiptReader,
 };
 use alloy_primitives::{B256, U256};
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::sync::OwnedSemaphorePermit;
 
 pub(super) const CACHE: &[u8; 4] = b"OCW1";
 pub(super) const MAGIC: &[u8; 4] = b"OCP1";
@@ -65,37 +65,29 @@ pub(super) async fn cache(
     .map_err(|_| Error::Unavailable)?
 }
 
-pub(super) async fn read(
-    reader: Arc<dyn RepositoryReceiptReader>,
-    authority: Option<Arc<dyn RepositoryAuthorityReader>>,
-    resolver: Option<EndpointNetworkResolver>,
-    store: Option<Arc<Mutex<ReviewPackageStore>>>,
-    readers: Arc<Semaphore>,
-    permit: OwnedSemaphorePermit,
-    proposal_id: U256,
-) -> Result<Vec<u8>, Error> {
-    let context = current(
-        reader,
-        authority,
-        resolver,
-        store,
-        readers,
-        permit,
-        proposal_id,
-    )
-    .await?;
+pub(super) struct PreparationInput {
+    pub state: super::serve::ServerState,
+    pub permit: OwnedSemaphorePermit,
+}
+
+pub(super) async fn read(input: PreparationInput, proposal_id: U256) -> Result<Vec<u8>, Error> {
+    let context = current(input, proposal_id).await?;
     encode(&context.state, &context.material, &context.snapshot)
 }
 
 pub(super) async fn current(
-    reader: Arc<dyn RepositoryReceiptReader>,
-    authority: Option<Arc<dyn RepositoryAuthorityReader>>,
-    resolver: Option<EndpointNetworkResolver>,
-    store: Option<Arc<Mutex<ReviewPackageStore>>>,
-    readers: Arc<Semaphore>,
-    permit: OwnedSemaphorePermit,
+    input: PreparationInput,
     proposal_id: U256,
 ) -> Result<PatchPreparationContext, Error> {
+    let PreparationInput { state, permit } = input;
+    let super::serve::ServerState {
+        reader,
+        authority,
+        material: resolver,
+        publications: store,
+        readers,
+        ..
+    } = state;
     let store = store.ok_or(Error::Unavailable)?;
     let (state, material) = material::current(authority, resolver, permit, proposal_id).await?;
     let permit = readers

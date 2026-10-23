@@ -282,3 +282,22 @@ fn p2p_lifecycle_and_value_routes_keep_their_results() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn selector_outside_the_allow_list_writes_nothing() -> Result<()> {
+    let mut storage = routed_storage()?;
+    let events_before = storage.get_ordered_events().len();
+    let count_before = storage.enter(|storage| ValidatorSet::new(storage).validator_count())?;
+    storage.clear_mutation_failure();
+    let selector: [u8; 4] = keccak256("activateResharedSet(address[],bytes32)")[..4]
+        .try_into()
+        .unwrap();
+    let outcome =
+        outcome_text(storage.enter(|storage| dispatch(storage, &selector, OWNER, U256::ZERO)));
+    assert!(outcome.starts_with("Revert: decode error:"), "{outcome}");
+    assert_eq!(storage.clear_mutation_failure(), 0);
+    assert_eq!(storage.get_ordered_events().len(), events_before);
+    let count_after = storage.enter(|storage| ValidatorSet::new(storage).validator_count())?;
+    assert_eq!(count_before, count_after);
+    Ok(())
+}

@@ -61,6 +61,18 @@ pub enum GemError {
 
     #[error("Gem state changed after loading")]
     GemStateChangedAfterLoading,
+
+    #[error("date step kind {kind} from date key {date_key}")]
+    DateStep { kind: u8, date_key: u32 },
+}
+
+pub(crate) fn date_step_error(
+    err: outbe_primitives::time::TimeError,
+) -> outbe_primitives::error::PrecompileError {
+    match err.date_step() {
+        Some((kind, date_key)) => GemError::DateStep { kind, date_key }.into(),
+        None => outbe_primitives::error::PrecompileError::Fatal(err.to_string()),
+    }
 }
 
 /// Fatal errors that the Gem runtime returns.
@@ -125,6 +137,10 @@ impl From<GemError> for PrecompileError {
                 revert_with(I::EmptyGroupSlotOnRemoval { group, slot })
             }
             GemError::GemStateChangedAfterLoading => revert_with(I::GemStateChangedAfterLoading {}),
+            GemError::DateStep { kind, date_key } => revert_with(I::DateStep {
+                kind,
+                dateKey: date_key,
+            }),
         }
     }
 }

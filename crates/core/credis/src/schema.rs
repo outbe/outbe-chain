@@ -180,13 +180,12 @@ impl Credis {
 
     /// The call group: the Credis's first full day, its call price and the currency
     /// that price is quoted in.
-    #[must_use]
-    pub fn group_key(&self) -> B256 {
-        outbe_primitives::call_breach::group_key(
-            outbe_primitives::time::first_full_day(self.issued_at),
+    pub fn group_key(&self) -> Result<B256, outbe_primitives::time::TimeError> {
+        Ok(outbe_primitives::call_breach::group_key(
+            outbe_primitives::time::first_full_day(self.issued_at)?,
             self.call_price_minor,
             self.reference_currency,
-        )
+        ))
     }
 }
 

@@ -209,43 +209,29 @@ impl TeeRegistry<'_> {
     }
 
     fn read_policy_bytes_v1(&self) -> Result<Vec<u8>> {
-        let len = usize::try_from(self.active_v1_policy_len.read()?)
-            .map_err(|_| TeeRegistryError::StoredV1PolicyLengthOverflow)?;
-        if len == 0 {
-            return Err(TeeRegistryError::V1PolicyNotInstalled.into());
-        }
-        if len > MAX_TEE_POLICY_BYTES {
-            return Err(TeeRegistryError::StoredV1PolicyExceedsCap.into());
-        }
-        let words = len.div_ceil(32);
-        let mut canonical = Vec::with_capacity(words * 32);
-        for index in 0..words {
-            let index =
-                u32::try_from(index).map_err(|_| TeeRegistryError::StoredV1PolicyIndexOverflow)?;
-            canonical.extend_from_slice(self.active_v1_policy_chunk.read(&index)?.as_slice());
-        }
-        canonical.truncate(len);
-        Ok(canonical)
+        read_policy_chunks_v1(
+            self.active_v1_policy_len.read()?,
+            |index| self.active_v1_policy_chunk.read(&index),
+            [
+                TeeRegistryError::StoredV1PolicyLengthOverflow,
+                TeeRegistryError::V1PolicyNotInstalled,
+                TeeRegistryError::StoredV1PolicyExceedsCap,
+                TeeRegistryError::StoredV1PolicyIndexOverflow,
+            ],
+        )
     }
 
     fn read_staged_policy_bytes_v1(&self) -> Result<Vec<u8>> {
-        let len = usize::try_from(self.staged_v1_policy_len.read()?)
-            .map_err(|_| TeeRegistryError::StoredStagedV1PolicyLengthOverflow)?;
-        if len == 0 {
-            return Err(TeeRegistryError::StagedV1PolicyEmptyRead.into());
-        }
-        if len > MAX_TEE_POLICY_BYTES {
-            return Err(TeeRegistryError::StoredStagedV1PolicyExceedsCap.into());
-        }
-        let words = len.div_ceil(32);
-        let mut canonical = Vec::with_capacity(words * 32);
-        for index in 0..words {
-            let index = u32::try_from(index)
-                .map_err(|_| TeeRegistryError::StoredStagedV1PolicyIndexOverflow)?;
-            canonical.extend_from_slice(self.staged_v1_policy_chunk.read(&index)?.as_slice());
-        }
-        canonical.truncate(len);
-        Ok(canonical)
+        read_policy_chunks_v1(
+            self.staged_v1_policy_len.read()?,
+            |index| self.staged_v1_policy_chunk.read(&index),
+            [
+                TeeRegistryError::StoredStagedV1PolicyLengthOverflow,
+                TeeRegistryError::StagedV1PolicyEmptyRead,
+                TeeRegistryError::StoredStagedV1PolicyExceedsCap,
+                TeeRegistryError::StoredStagedV1PolicyIndexOverflow,
+            ],
+        )
     }
     fn validate_initial_policy_v1(&self, policy: &TeePolicyV1) -> Result<()> {
         let chain_id = self.storage.chain_id()?;
@@ -346,4 +332,27 @@ impl TeeRegistry<'_> {
         }
         Ok(())
     }
+}
+
+fn read_policy_chunks_v1(
+    len: u32,
+    read_chunk: impl Fn(u32) -> Result<B256>,
+    errors: [TeeRegistryError; 4],
+) -> Result<Vec<u8>> {
+    let [length_error, empty_error, cap_error, index_error] = errors;
+    let len = usize::try_from(len).map_err(|_| length_error)?;
+    if len == 0 {
+        return Err(empty_error.into());
+    }
+    if len > MAX_TEE_POLICY_BYTES {
+        return Err(cap_error.into());
+    }
+    let words = len.div_ceil(32);
+    let mut canonical = Vec::with_capacity(words * 32);
+    for index in 0..words {
+        let index = u32::try_from(index).map_err(|_| index_error.clone())?;
+        canonical.extend_from_slice(read_chunk(index)?.as_slice());
+    }
+    canonical.truncate(len);
+    Ok(canonical)
 }

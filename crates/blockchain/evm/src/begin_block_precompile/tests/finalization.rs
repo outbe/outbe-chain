@@ -16,10 +16,14 @@ fn read_progress(provider: &mut HashMapStorageProvider) -> u64 {
     })
 }
 
-fn record_progress(provider: &mut HashMapStorageProvider, block_number: u64) {
+fn seed_progress(provider: &mut HashMapStorageProvider, block_number: u64) {
     provider.enter(|storage| {
         let ctx = runtime_ctx(storage);
-        outbe_cycle::record_phase1_progress(&ctx, block_number).unwrap();
+        ctx.storage
+            .contract::<outbe_cycle::schema::Accounting<'_>>()
+            .last_accounted_block_number
+            .write(block_number)
+            .unwrap();
     });
 }
 
@@ -150,7 +154,7 @@ fn phase1_reorg_same_height_uses_parent_state_progress_not_abandoned_post_state(
     const REQUIRED_PREVIOUS: u64 = PARENT_BLOCK - 1;
 
     let mut base = configured_storage(CHILD_BLOCK, 1_700_000_000);
-    record_progress(&mut base, REQUIRED_PREVIOUS);
+    seed_progress(&mut base, REQUIRED_PREVIOUS);
     let parent_state = base.storage.clone();
 
     let mut branch_a = provider_from_storage(CHILD_BLOCK, 1_700_000_000, parent_state.clone());

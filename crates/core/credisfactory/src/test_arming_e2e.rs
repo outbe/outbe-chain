@@ -46,7 +46,7 @@ fn guarded(storage: &StorageHandle<'_>, hook: impl FnOnce() -> Result<()>) -> Re
 fn backdate(storage: &StorageHandle<'_>, credis_id: U256, issued_at: u64) -> Result<()> {
     let mut credis = CredisContract::new(storage.clone());
     let mut record = credis.get_credis(credis_id)?;
-    credis.leave_group(record.group_key(), credis_id)?;
+    credis.leave_group(record.group_key().expect("date step"), credis_id)?;
     credis.delete_credis_record(credis_id)?;
     record.issued_at = issued_at;
     record.last_settled_at = issued_at;
@@ -56,7 +56,10 @@ fn backdate(storage: &StorageHandle<'_>, credis_id: U256, issued_at: u64) -> Res
 /// Moves the deadline of the Credis's called group.
 fn requeue_called(storage: &StorageHandle<'_>, credis_id: U256, deadline: u64) -> Result<()> {
     let mut credis = CredisContract::new(storage.clone());
-    let group = credis.get_credis(credis_id)?.group_key();
+    let group = credis
+        .get_credis(credis_id)?
+        .group_key()
+        .expect("date step");
     if credis.called_deadline.read(&group)? == 0 {
         return Err(CredisFactoryError::NotCalled.into());
     }

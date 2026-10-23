@@ -23,6 +23,16 @@ impl ApplicationShared {
         if !self.validate_verify_parent_and_height(request, resolved) {
             return Ok(false);
         }
+        self.validate_verify_artifacts(clock, request, resolved)
+            .await
+    }
+
+    async fn validate_verify_artifacts(
+        &self,
+        clock: &(impl commonware_runtime::Clock + commonware_runtime::Supervisor),
+        request: &VerifyRequest,
+        resolved: &ResolvedVerifyBlocks,
+    ) -> eyre::Result<bool> {
         let round = request.context.round;
         let payload_digest = request.payload_digest;
         let block = &resolved.block;

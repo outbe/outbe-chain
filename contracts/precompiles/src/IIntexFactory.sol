@@ -33,6 +33,7 @@ interface IIntexFactory {
     error PromisOverflow();
     error MiningSequenceOverflow();
     error ExercisedUnitsExceedSeries();
+    error DateStep(uint8 kind, uint32 dateKey);
 
     /// @notice Settle `units` Issued Intexes of `seriesId` held by
     ///         `owner`, paying the cost in `asset`. Any caller may pay. The

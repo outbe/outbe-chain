@@ -1,6 +1,7 @@
 //! Narrow RPC capability required by finalized TEE lifecycle workflows.
 
 use std::future::Future;
+use std::time::Duration;
 
 use alloy_primitives::{Address, U256};
 use eyre::{Result, WrapErr as _};
@@ -69,6 +70,9 @@ pub trait FinalityRpc: FinalizedStateRpc + TransactionReceiptRpc {
 pub trait RenewalRpc: RegistryRpc + RelayPreparationRpc + RelayRpc {}
 impl<R: RegistryRpc + RelayPreparationRpc + RelayRpc + ?Sized> RenewalRpc for R {}
 
+const RPC_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const RPC_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Small reusable HTTP JSON-RPC transport for node-owned lifecycle workers.
 pub struct HttpRenewalRpc {
     url: String,
@@ -77,13 +81,16 @@ pub struct HttpRenewalRpc {
 }
 
 impl HttpRenewalRpc {
-    #[must_use]
-    pub fn new(url: impl Into<String>) -> Self {
-        Self {
+    pub fn new(url: impl Into<String>) -> Result<Self> {
+        Ok(Self {
             url: url.into(),
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .connect_timeout(RPC_CONNECT_TIMEOUT)
+                .timeout(RPC_REQUEST_TIMEOUT)
+                .build()
+                .map_err(RpcError::ClientBuild)?,
             id: std::sync::atomic::AtomicU64::new(1),
-        }
+        })
     }
 
     async fn call(&self, method: &str, params: Value) -> Result<Value> {

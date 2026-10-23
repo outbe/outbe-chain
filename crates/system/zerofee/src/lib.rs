@@ -12,8 +12,8 @@
 //!    transactions like `Oracle.submitVote`. The signer is authenticated by
 //!    cross-module state (e.g. validator status).
 //!
-//! 2. **EIP-7702 paymaster precompile** (`schema.rs`, `state.rs`,
-//!    `runtime.rs`, `precompile.rs`): a stateful precompile at
+//! 2. **EIP-7702 paymaster precompile** (`schema.rs`, `runtime.rs`,
+//!    `precompile.rs`): a stateful precompile at
 //!    [`outbe_primitives::addresses::ZEROFEE_ADDRESS`]. It grants up to
 //!    `FREE_TX_DAILY_LIMIT` free transactions per UTC day to every EOA that
 //!    has delegated to it (via an EIP-7702 set-code authorization). The executor's
@@ -21,6 +21,40 @@
 //!    transaction through the same `disable_balance_check`,
 //!    `disable_base_fee`, and `disable_fee_charge` machinery that already
 //!    serves oracle votes.
+//!
+//! Sponsorship authorization returns an opaque signer/day token without writing state.
+//! The executor consumes it only after inclusion, including an included revert.
+//! Authorization failures, execution errors, and declined commits do not spend quota.
+//! This protects the typed Rust API and storage schema, not raw storage writes.
+//!
+//! External crates cannot construct a sponsorship grant, pass a bare day to
+//! the recorder, or write the quota map. The three examples below are the
+//! compile-fail boundary for that interface.
+//!
+//! ```compile_fail
+//! fn forged() -> outbe_zerofee::SponsorshipAuthorization {
+//!     outbe_zerofee::SponsorshipAuthorization {
+//!         signer: alloy_primitives::Address::ZERO,
+//!         current_day: 1,
+//!         next_count: 1,
+//!     }
+//! }
+//! ```
+//!
+//! ```compile_fail
+//! fn bare_day(
+//!     storage: outbe_primitives::storage::StorageHandle<'_>,
+//!     signer: alloy_primitives::Address,
+//! ) {
+//!     let _ = outbe_zerofee::record_sponsorship_use(storage, signer, 1u32);
+//! }
+//! ```
+//!
+//! ```compile_fail
+//! fn write_counter(contract: &outbe_zerofee::ZeroFeeContract<'_>) {
+//!     let _ = contract.counter.write(&alloy_primitives::Address::ZERO, 0u64);
+//! }
+//! ```
 
 pub mod constants;
 mod envelope;
@@ -33,9 +67,9 @@ pub mod hooks;
 mod hyperlane;
 mod oracle;
 pub mod precompile;
+mod renewal;
 pub mod runtime;
 pub mod schema;
-pub mod state;
 #[cfg(test)]
 mod test_support;
 mod transaction;

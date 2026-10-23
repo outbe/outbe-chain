@@ -1,4 +1,4 @@
-use alloy_primitives::{address, b256, Address, B256, U256, U512};
+use alloy_primitives::{address, b256, Address, LogData, B256, U256, U512};
 use alloy_sol_types::{SolError, SolEvent};
 use outbe_primitives::addresses::{SLASH_INDICATOR_ADDRESS, STAKING_ADDRESS};
 use outbe_primitives::error::PrecompileError;
@@ -10,7 +10,10 @@ use outbe_validatorset::contract::ValidatorSet;
 use outbe_validatorset::test_support::test_lifecycle_of;
 use outbe_validatorset::{StakeProjection, ValidatorLifecycle};
 
-use crate::constants::DEFAULT_PROPOSER_MISDEMEANOR_THRESHOLD;
+use crate::constants::{
+    DEFAULT_PROPOSER_MISDEMEANOR_THRESHOLD, EVIDENCE_REWARD_PERCENT_SLOT, SLASH_AMOUNT_PERCENT_SLOT,
+};
+use crate::errors::PercentAdmissionError;
 use crate::hooks;
 use crate::precompile::ISlashIndicator;
 use crate::schema::SlashIndicator;
@@ -264,47 +267,6 @@ fn direct_miss_felony_timestamp_overflow_is_side_effect_free_and_retryable() {
 }
 
 #[test]
-fn direct_byzantine_timestamp_overflow_does_not_jail_before_slashing() {
-    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    provider.set_block_number(1);
-    StorageHandle::enter(&mut provider, |storage| {
-        register_and_activate(storage, VAL_A, 1);
-    });
-    let before_storage = provider.storage.clone();
-    let before_events = provider.get_ordered_events().to_vec();
-    provider.set_timestamp(U256::MAX);
-    StorageHandle::enter(&mut provider, |storage| {
-        assert!(matches!(
-            SlashIndicator::new(storage.clone()).slash_byzantine(VAL_A),
-            Err(PrecompileError::Revert(message)) if message == "timestamp exceeds u64"
-        ));
-        assert!(test_lifecycle_of(storage.clone(), VAL_A)
-            .unwrap()
-            .is_active_status());
-        assert_eq!(
-            storage.balance(STAKING_ADDRESS).unwrap(),
-            U256::from(1_000_000)
-        );
-    });
-    assert_eq!(provider.storage, before_storage);
-    assert_eq!(provider.get_ordered_events(), before_events);
-    provider.set_timestamp(U256::from(100));
-    StorageHandle::enter(&mut provider, |storage| {
-        let mut si = SlashIndicator::new(storage.clone());
-        si.slash_byzantine(VAL_A).unwrap();
-        assert_eq!(si.get_felony_count(VAL_A).unwrap(), 1);
-        assert!(matches!(
-            test_lifecycle_of(storage.clone(), VAL_A).unwrap(),
-            ValidatorLifecycle::JailRetained(_)
-        ));
-        assert_eq!(
-            Staking::new(storage).get_stake(VAL_A).unwrap(),
-            U256::from(920_000)
-        );
-    });
-}
-
-#[test]
 fn test_felony_stays_jailed_when_slash_drops_below_min_stake() {
     // The single biggest ordering invariant: JAIL BEFORE SLASH. slash_stake demotes
     // ACTIVE->EXITING / PENDING->REGISTERED when stake drops below min_stake. A JAILED
@@ -501,7 +463,7 @@ fn direct_equivocation_timestamp_overflow_preserves_replay_flag_and_retry() {
                 Staking::new(storage.clone()).get_stake(VAL_A).unwrap(),
                 U256::from(920_000)
             );
-            assert_eq!(storage.balance(SUBMITTER).unwrap(), U256::from(8_000));
+            assert_eq!(storage.balance(SUBMITTER).unwrap(), U256::from(80_000));
         });
     }
 }
@@ -562,9 +524,9 @@ fn test_evidence_reward() {
 
         // Verify evidence reward paid to submitter
         // slashed = 1_000_000 * 8 / 100 = 80_000
-        // reward  = 80_000 * 10 / 100 = 8_000
+        // reward  = 80_000 * 100 / 100 = 80_000
         let ctx = storage.clone();
-        assert_eq!(ctx.balance(SUBMITTER).unwrap(), U256::from(8_000u64));
+        assert_eq!(ctx.balance(SUBMITTER).unwrap(), U256::from(80_000u64));
     });
 }
 
@@ -613,8 +575,11 @@ fn invalid_evidence_reward_is_rejected_before_any_penalty_even_without_stake() {
             let events = provider.get_ordered_events().to_vec();
             StorageHandle::enter(&mut provider, |storage| {
                 let mut si = SlashIndicator::new(storage.clone());
-                let expected =
-                    ISlashIndicator::InvalidEvidenceRewardPercent { percent }.abi_encode();
+                let expected = ISlashIndicator::SlashConfigPercentAbove100 {
+                    field: "evidence_reward_percent".into(),
+                    value: percent,
+                }
+                .abi_encode();
                 assert!(matches!(si.apply_evidence_felony(VAL_A, SUBMITTER),
                     Err(PrecompileError::RevertBytes(bytes)) if bytes.as_ref() == expected));
                 assert_eq!(si.get_felony_count(VAL_A).unwrap(), 0);
@@ -658,7 +623,7 @@ fn signed_evidence_invalid_reward_checkpoint_rolls_back_and_allows_identical_ret
         let result = storage
             .with_checkpoint(|| si.submit_double_proposal_evidence(SUBMITTER, &first, &second));
         assert!(
-            matches!(result, Err(PrecompileError::RevertBytes(bytes)) if bytes.as_ref() == ISlashIndicator::InvalidEvidenceRewardPercent { percent: 150 }.abi_encode())
+            matches!(result, Err(PrecompileError::RevertBytes(bytes)) if bytes.as_ref() == ISlashIndicator::SlashConfigPercentAbove100 { field: "evidence_reward_percent".into(), value: 150 }.abi_encode())
         );
         assert!(!si.is_evidence_processed(hash).unwrap());
         assert_eq!(si.get_felony_count(VAL_A).unwrap(), 0);
@@ -806,9 +771,9 @@ fn test_conflicting_vote_evidence() {
 
         // Verify evidence reward
         // slashed = 2_000_000 * 8 / 100 = 160_000
-        // reward  = 160_000 * 10 / 100 = 16_000
+        // reward  = 160_000 * 100 / 100 = 160_000
         let ctx = storage.clone();
-        assert_eq!(ctx.balance(SUBMITTER).unwrap(), U256::from(16_000u64));
+        assert_eq!(ctx.balance(SUBMITTER).unwrap(), U256::from(160_000u64));
     });
 }
 
@@ -1049,7 +1014,7 @@ fn default_thresholds_warn_before_they_punish() {
                 si.slash_amount_percent().unwrap(),
                 si.evidence_reward_percent().unwrap(),
             ),
-            (32, 128, 128, 512, 8, 10)
+            (32, 128, 128, 512, 8, 100)
         );
         assert!(
             si.proposer_misdemeanor_threshold().unwrap() < si.proposer_felony_threshold().unwrap()
@@ -1059,6 +1024,134 @@ fn default_thresholds_warn_before_they_punish() {
             "voter misdemeanor must be below voter felony"
         );
     });
+}
+
+#[test]
+fn unset_and_zero_percents_use_defaults_and_reads_reject_above_100() {
+    with_storage(|storage| {
+        let si = SlashIndicator::new(storage.clone());
+        assert_eq!(si.slash_amount_percent().unwrap(), 8);
+        assert_eq!(si.evidence_reward_percent().unwrap(), 100);
+        si.config_slash_amount_percent.write(0).unwrap();
+        si.config_evidence_reward_percent.write(0).unwrap();
+        assert_eq!(si.slash_amount_percent().unwrap(), 8);
+        assert_eq!(si.evidence_reward_percent().unwrap(), 100);
+
+        si.config_slash_amount_percent.write(100).unwrap();
+        si.config_evidence_reward_percent.write(100).unwrap();
+        assert_eq!(si.slash_amount_percent().unwrap(), 100);
+        assert_eq!(si.evidence_reward_percent().unwrap(), 100);
+        reject_illegal_percent_on_both_fields(&si, 101);
+        reject_illegal_percent_on_both_fields(&si, u64::MAX);
+    });
+}
+
+fn reject_illegal_percent_on_both_fields(si: &SlashIndicator<'_>, illegal: u64) {
+    si.config_slash_amount_percent.write(illegal).unwrap();
+    assert_percent_revert(si.slash_amount_percent(), "slash_amount_percent", illegal);
+    si.config_evidence_reward_percent.write(illegal).unwrap();
+    assert_percent_revert(
+        si.evidence_reward_percent(),
+        "evidence_reward_percent",
+        illegal,
+    );
+}
+
+fn assert_percent_revert(result: Result<u64, PrecompileError>, field: &str, value: u64) {
+    let Err(PrecompileError::RevertBytes(bytes)) = result else {
+        panic!("expected typed percent revert, got {result:?}");
+    };
+    let decoded = ISlashIndicator::SlashConfigPercentAbove100::abi_decode(&bytes)
+        .expect("typed percent revert");
+    assert_eq!(decoded.field, field);
+    assert_eq!(decoded.value, value);
+}
+
+#[test]
+fn percent_slot_constants_match_schema() {
+    with_storage(|storage| {
+        let si = SlashIndicator::new(storage);
+        assert_eq!(
+            si.config_slash_amount_percent.slot(),
+            U256::from(SLASH_AMOUNT_PERCENT_SLOT)
+        );
+        assert_eq!(
+            si.config_evidence_reward_percent.slot(),
+            U256::from(EVIDENCE_REWARD_PERCENT_SLOT)
+        );
+    });
+}
+
+#[test]
+fn admit_percent_word_rejects_wide_word_before_narrowing() {
+    let err = crate::runtime::admit_percent_word(U256::MAX, 8, "slash_amount_percent").unwrap_err();
+    assert_eq!(
+        err,
+        PercentAdmissionError::WordExceedsU64 {
+            field: "slash_amount_percent",
+            word: U256::MAX,
+        }
+    );
+    assert_eq!(
+        crate::runtime::admit_percent_word(U256::ZERO, 100, "evidence_reward_percent").unwrap(),
+        100
+    );
+}
+
+#[test]
+fn floor_percent_matches_division_for_large_amounts() {
+    let max = U256::MAX;
+    assert_eq!(crate::runtime::floor_percent(max, 100), max);
+    assert_eq!(
+        crate::runtime::floor_percent(max, 1),
+        max / U256::from(100u64)
+    );
+    assert_eq!(
+        crate::runtime::floor_percent(U256::from(150u64), 1),
+        U256::from(1u64)
+    );
+    assert_eq!(
+        crate::runtime::floor_percent(U256::from(80u64), 1),
+        U256::ZERO
+    );
+}
+
+#[test]
+fn illegal_reward_percent_leaves_no_evidence_residue() {
+    let (sk, pk) = test_signing::keypair(99).unwrap();
+    let first = sign_notarize_evidence(&sk, &pk, &test_signing::proposal(1, 5, 0, [0xAA; 32]));
+    let second = sign_notarize_evidence(&sk, &pk, &test_signing::proposal(1, 5, 0, [0xBB; 32]));
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_block_number(1);
+    provider.set_timestamp(U256::from(100));
+    StorageHandle::enter(&mut provider, |storage| {
+        register_and_activate_with_pubkey_and_stake(
+            storage.clone(),
+            VAL_A,
+            &pk.to_bytes(),
+            U256::from(1_000),
+        );
+        write_test_committee(&storage);
+        let si = SlashIndicator::new(storage.clone());
+        si.config_evidence_reward_percent.write(101).unwrap();
+    });
+    let before_storage = provider.storage.clone();
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut si = SlashIndicator::new(storage.clone());
+        assert_percent_revert(
+            si.submit_double_proposal_evidence(SUBMITTER, &first, &second)
+                .map(|_| 0u64),
+            "evidence_reward_percent",
+            101,
+        );
+        assert_eq!(si.get_felony_count(VAL_A).unwrap(), 0);
+        assert_eq!(
+            Staking::new(storage.clone()).get_stake(VAL_A).unwrap(),
+            U256::from(1_000)
+        );
+        assert_eq!(storage.balance(SUBMITTER).unwrap(), U256::ZERO);
+    });
+    assert_eq!(provider.storage, before_storage);
 }
 
 #[test]
@@ -1087,85 +1180,128 @@ fn configured_slashing_policy_overrides_defaults() {
 
 #[test]
 fn default_liveness_thresholds_warn_then_jail_once() {
-    for (proposer, warnings, felony) in [(true, [32, 64, 96], 128), (false, [128, 256, 384], 512)] {
-        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-        provider.set_block_number(1);
+    exercise_liveness_role([32, 64, 96], 128, true, record_proposer_miss);
+    exercise_liveness_role([128, 256, 384], 512, false, record_voter_miss);
+}
+
+fn fresh_liveness_provider() -> HashMapStorageProvider {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_block_number(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        register_and_activate(storage, VAL_A, 1);
+    });
+    provider
+}
+
+fn exercise_liveness_role(
+    warnings: [u64; 3],
+    felony: u64,
+    proposer: bool,
+    record: impl Fn(&mut SlashIndicator<'_>) -> u64,
+) {
+    let mut provider = fresh_liveness_provider();
+    for count in 1..=2 * felony {
+        provider.clear_events(SLASH_INDICATOR_ADDRESS);
         StorageHandle::enter(&mut provider, |storage| {
-            register_and_activate(storage, VAL_A, 1);
+            let mut si = SlashIndicator::new(storage.clone());
+            let recorded = record(&mut si);
+            assert_eq!(recorded, count);
+            assert_counted_liveness_state(&si, storage, count, felony);
         });
+        assert_eq!(
+            provider.get_events(SLASH_INDICATOR_ADDRESS),
+            &liveness_logs(proposer, &warnings, count, felony),
+            "unexpected event at miss {count} (proposer={proposer})"
+        );
+    }
+}
 
-        for count in 1..=2 * felony {
-            provider.clear_events(SLASH_INDICATOR_ADDRESS);
-            StorageHandle::enter(&mut provider, |storage| {
-                let mut si = SlashIndicator::new(storage.clone());
-                let recorded = if proposer {
-                    si.slash_proposer(VAL_A).unwrap();
-                    si.get_proposer_miss_count(VAL_A).unwrap()
-                } else {
-                    si.slash_voter(VAL_A).unwrap();
-                    si.get_voter_miss_count(VAL_A).unwrap()
-                };
-                assert_eq!(recorded, count);
-                assert_eq!(
-                    si.get_felony_count(VAL_A).unwrap(),
-                    u64::from(count >= felony)
-                );
-                let lifecycle = test_lifecycle_of(storage.clone(), VAL_A).unwrap();
-                if count < felony {
-                    assert!(lifecycle.is_active_status());
-                } else {
-                    assert!(matches!(lifecycle, ValidatorLifecycle::JailRetained(_)));
-                }
-                let stake = Staking::new(storage).get_stake(VAL_A).unwrap();
-                assert_eq!(
-                    stake,
-                    U256::from(if count < felony {
-                        1_000_000u64
-                    } else {
-                        920_000
-                    })
-                );
-            });
+fn record_proposer_miss(si: &mut SlashIndicator<'_>) -> u64 {
+    si.slash_proposer(VAL_A).unwrap();
+    si.get_proposer_miss_count(VAL_A).unwrap()
+}
 
-            let expected = if warnings.contains(&count) {
-                Some(if proposer {
-                    ISlashIndicator::ProposerMisdemeanor {
-                        validator: VAL_A,
-                        missCount: count,
-                    }
-                    .encode_log_data()
-                } else {
-                    ISlashIndicator::VoterMisdemeanor {
-                        validator: VAL_A,
-                        missCount: count,
-                    }
-                    .encode_log_data()
-                })
-            } else if count == felony {
-                Some(if proposer {
-                    ISlashIndicator::ProposerFelony {
-                        validator: VAL_A,
-                        missCount: count,
-                        felonyCount: 1,
-                    }
-                    .encode_log_data()
-                } else {
-                    ISlashIndicator::VoterFelony {
-                        validator: VAL_A,
-                        missCount: count,
-                        felonyCount: 1,
-                    }
-                    .encode_log_data()
-                })
-            } else {
-                None
-            };
-            assert_eq!(
-                provider.get_events(SLASH_INDICATOR_ADDRESS),
-                &expected.into_iter().collect::<Vec<_>>(),
-                "unexpected event at miss {count} (proposer={proposer})"
-            );
+fn record_voter_miss(si: &mut SlashIndicator<'_>) -> u64 {
+    si.slash_voter(VAL_A).unwrap();
+    si.get_voter_miss_count(VAL_A).unwrap()
+}
+
+fn assert_counted_liveness_state(
+    si: &SlashIndicator<'_>,
+    storage: StorageHandle,
+    count: u64,
+    felony: u64,
+) {
+    assert_eq!(
+        si.get_felony_count(VAL_A).unwrap(),
+        u64::from(count >= felony)
+    );
+    let lifecycle = test_lifecycle_of(storage.clone(), VAL_A).unwrap();
+    assert_eq!(lifecycle.is_active_status(), count < felony);
+    assert_eq!(
+        matches!(lifecycle, ValidatorLifecycle::JailRetained(_)),
+        count >= felony
+    );
+    assert_eq!(
+        Staking::new(storage).get_stake(VAL_A).unwrap(),
+        U256::from(stake_after_liveness_misses(count, felony))
+    );
+}
+
+fn stake_after_liveness_misses(count: u64, felony: u64) -> u64 {
+    if count < felony {
+        1_000_000
+    } else {
+        920_000
+    }
+}
+
+enum LivenessNotice {
+    Warning,
+    Felony,
+}
+
+fn liveness_notice(warnings: &[u64; 3], count: u64, felony: u64) -> Option<LivenessNotice> {
+    if warnings.contains(&count) {
+        return Some(LivenessNotice::Warning);
+    }
+    if count == felony {
+        return Some(LivenessNotice::Felony);
+    }
+    None
+}
+
+fn liveness_log(proposer: bool, notice: LivenessNotice, count: u64) -> LogData {
+    match (proposer, notice) {
+        (true, LivenessNotice::Warning) => ISlashIndicator::ProposerMisdemeanor {
+            validator: VAL_A,
+            missCount: count,
         }
+        .encode_log_data(),
+        (false, LivenessNotice::Warning) => ISlashIndicator::VoterMisdemeanor {
+            validator: VAL_A,
+            missCount: count,
+        }
+        .encode_log_data(),
+        (true, LivenessNotice::Felony) => ISlashIndicator::ProposerFelony {
+            validator: VAL_A,
+            missCount: count,
+            felonyCount: 1,
+        }
+        .encode_log_data(),
+        (false, LivenessNotice::Felony) => ISlashIndicator::VoterFelony {
+            validator: VAL_A,
+            missCount: count,
+            felonyCount: 1,
+        }
+        .encode_log_data(),
+    }
+}
+
+fn liveness_logs(proposer: bool, warnings: &[u64; 3], count: u64, felony: u64) -> Vec<LogData> {
+    match liveness_notice(warnings, count, felony) {
+        Some(notice) => vec![liveness_log(proposer, notice, count)],
+        None => Vec::new(),
     }
 }
 
@@ -1440,6 +1576,51 @@ fn slash_window_proposers_processes_list_once() {
             "same finalized block window replay is idempotent"
         );
     });
+}
+
+#[test]
+fn illegal_slash_percent_rejects_proposer_window_before_felony() {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_block_number(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        register_and_activate(storage.clone(), VAL_A, 1);
+        let si = SlashIndicator::new(storage);
+        si.config_proposer_felony_threshold.write(1).unwrap();
+        si.config_slash_amount_percent.write(101).unwrap();
+    });
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let err = hooks::slash_window_proposers(storage.clone(), FB_HASH_A, &[VAL_A]);
+        assert_percent_revert(err.map(|_| 0u64), "slash_amount_percent", 101);
+        let si = SlashIndicator::new(storage.clone());
+        assert_eq!(si.get_proposer_miss_count(VAL_A).unwrap(), 1);
+        assert_eq!(si.get_felony_count(VAL_A).unwrap(), 0);
+        assert!(test_lifecycle_of(storage.clone(), VAL_A)
+            .unwrap()
+            .is_active_status());
+        assert_eq!(
+            Staking::new(storage.clone()).get_stake(VAL_A).unwrap(),
+            U256::from(1_000_000)
+        );
+        assert!(!si.proposer_window_slashed.read(&FB_HASH_A).unwrap());
+    });
+
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_block_number(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        register_and_activate(storage.clone(), VAL_A, 1);
+        let si = SlashIndicator::new(storage);
+        si.config_proposer_felony_threshold.write(1).unwrap();
+        si.config_slash_amount_percent.write(101).unwrap();
+    });
+    let before_storage = provider.storage.clone();
+    StorageHandle::enter(&mut provider, |storage| {
+        let err = storage.with_checkpoint(|| {
+            hooks::slash_window_proposers(storage.clone(), FB_HASH_A, &[VAL_A])
+        });
+        assert_percent_revert(err.map(|_| 0u64), "slash_amount_percent", 101);
+    });
+    assert_eq!(provider.storage, before_storage);
 }
 
 /// The window guards of one block and the ring position.

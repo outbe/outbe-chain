@@ -91,6 +91,7 @@ interface IVaultRouter {
     error ApprovedVaultActionNotFound(uint256 proposalId);
     error ApprovedVaultActionIndexInconsistent(uint256 proposalId);
     error InvalidApprovedVaultAction();
+    error DateStep(uint8 kind, uint32 dateKey);
 
     event VaultAdded(uint16 indexed isoCode, address indexed asset, address indexed vault);
     event VaultRemoved(uint16 indexed isoCode, address indexed asset, address indexed vault);

@@ -56,7 +56,14 @@ pub(super) async fn send_exact_transaction(
         Ok(returned) => returned
             .parse::<B256>()
             .wrap_err("parse eth_sendRawTransaction renewal hash")?,
-        Err(error) if transaction_is_already_known(&error) => raw.transaction_hash,
+        Err(error) if transaction_is_already_known(&error) => {
+            if exact_transaction_receipt_exists(rpc, raw).await? {
+                raw.transaction_hash
+            } else {
+                return Err(error)
+                    .wrap_err("renewal is already known without the exact transaction receipt");
+            }
+        }
         Err(error) if transaction_nonce_is_too_low(&error) => {
             if exact_transaction_receipt_exists(rpc, raw).await? {
                 raw.transaction_hash

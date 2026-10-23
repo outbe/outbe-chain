@@ -12,7 +12,7 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-use crate::errors::IntexError;
+use crate::errors::{date_step_error, IntexError};
 use crate::schema::{
     CallStamp, CreateSeriesParams, IntexContract, IntexState, SeriesId, SeriesRecord,
     SeriesRecordEntryExt,
@@ -68,11 +68,12 @@ pub fn release_if_spent(storage: &StorageHandle<'_>, series_id: SeriesId) -> Res
     };
     let unpaid = forfeitable_units(storage, &record)?.units;
     // Past the deadline the unpaid units still wait for the group's expiry to return them.
-    let returned = registry.group_forfeited(record.group_key())?;
+    let group = record.group_key().map_err(date_step_error)?;
+    let returned = registry.group_forfeited(group)?;
     if registry.settled_units.read(&series_id)? != 0 || (unpaid != 0 && !returned) {
         return Ok(false);
     }
-    registry.leave_call_group(record.group_key(), series_id)?;
+    registry.leave_call_group(group, series_id)?;
     registry.delete_series_record(series_id)?;
     Ok(true)
 }
@@ -322,7 +323,7 @@ pub fn set_issued_at(
     let mut registry = IntexContract::new(storage.clone());
     let mut record = registry.load_series(series_id)?;
     // The stamp picks the series' group, so the series moves to the backdated one.
-    registry.leave_call_group(record.group_key(), series_id)?;
+    registry.leave_call_group(record.group_key().map_err(date_step_error)?, series_id)?;
     record.issued_at = issued_at;
     registry.update_series_record(&record)?;
     registry.join_call_group(&record)
@@ -337,7 +338,10 @@ pub fn call_group_of(
     called_at: u32,
 ) -> Result<()> {
     let mut registry = IntexContract::new(storage.clone());
-    let group = registry.load_series(series_id)?.group_key();
+    let group = registry
+        .load_series(series_id)?
+        .group_key()
+        .map_err(date_step_error)?;
     let deadline = registry.group_stamp(group, called_at)?.deadline;
     registry.record_group_called(group, called_at, deadline)
 }

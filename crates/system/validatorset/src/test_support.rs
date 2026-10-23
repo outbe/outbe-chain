@@ -8,14 +8,16 @@
 //! semantic fixture seams without receiving raw storage-slot handles.
 
 use alloy_primitives::{keccak256, Address, B256, U256};
+use outbe_primitives::addresses::STAKING_ADDRESS;
 use outbe_primitives::error::Result;
+use outbe_primitives::storage::types::Mapping;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::{
     errors::ValidatorSetError,
     hooks::{activate_boundary_atomic, BoundaryActivationInputs},
     runtime::status,
-    schema::ValidatorSet,
+    schema::{ValidatorSet, AUTHORITATIVE_BONDED_BASE_SLOT},
     state::{
         write_committee_snapshot, CommitteeEntry, CommitteeSnapshot,
         COMMITTEE_SNAPSHOT_RETAIN_EPOCHS,
@@ -240,7 +242,8 @@ impl ValidatorSet<'_> {
         let after = before
             .clone()
             .with_lifecycle(ValidatorLifecycle::Active(active))?;
-        self.persist_validator_state_delta(&before, &after)
+        self.persist_validator_state_delta(&before, &after)?;
+        self.test_seed_authoritative_bonded(address, stake.bonded())
     }
 
     /// Calls the consensus-validated boundary seam from a test without
@@ -271,7 +274,8 @@ impl ValidatorSet<'_> {
         )
     }
 
-    /// Replaces the ValidatorSet stake mirror. Staking remains authoritative.
+    /// Stores the bonded projection in `Staking.stake_amount`.
+    /// ValidatorSet persistence does not write that balance.
     pub fn test_set_stake_projection(
         &mut self,
         address: Address,
@@ -280,7 +284,18 @@ impl ValidatorSet<'_> {
         let before = self.validator_state(address)?;
         let lifecycle = state_machine::with_stake(before.lifecycle().clone(), stake)?;
         let after = before.clone().with_lifecycle(lifecycle)?;
-        self.persist_validator_state_delta(&before, &after)
+        self.persist_validator_state_delta(&before, &after)?;
+        self.test_seed_authoritative_bonded(address, stake.bonded())
+    }
+
+    /// Writes `Staking.stake_amount` for a fixture. Production methods must not.
+    pub fn test_seed_authoritative_bonded(&self, address: Address, bonded: U256) -> Result<()> {
+        Mapping::<Address, U256>::new(
+            U256::from(AUTHORITATIVE_BONDED_BASE_SLOT),
+            STAKING_ADDRESS,
+            self.storage.clone(),
+        )
+        .write(&address, bonded)
     }
 
     /// Replaces retained historical counters/heights for a registered fixture.

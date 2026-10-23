@@ -35,7 +35,9 @@ fn requeue_called(storage: &StorageHandle<'_>, series_id: SeriesId, deadline: u6
     use outbe_intex::IntexContract;
 
     let mut intex = IntexContract::new(storage.clone());
-    let group = outbe_intex::api::read_series(storage, series_id)?.group_key();
+    let group = outbe_intex::api::read_series(storage, series_id)?
+        .group_key()
+        .expect("date step");
     if intex.called_deadline.read(&group)? == 0 {
         return Err(crate::errors::IntexFactoryError::NoCalledGroupForTest.into());
     }
@@ -82,13 +84,13 @@ fn seed_day_vwaps_for_test(
     let oracle = OracleContract::new(storage.clone());
     let pair = outbe_oracle::api::AddressPair::new_coen_to(call.isoCode);
     let pair_id = oracle.pair_index_of(pair)?;
-    let mut day = previous_date_key(timestamp_to_date_key(storage.now_secs()?));
+    let mut day = previous_date_key(timestamp_to_date_key(storage.now_secs()?)).expect("date step");
     for _ in 0..call.days {
         oracle.record_utc_day_vwap(day, pair_id, call.value)?;
         if oracle.utc_day_vwap_last_finalized.read()? < day {
             oracle.utc_day_vwap_last_finalized.write(day)?;
         }
-        day = previous_date_key(day);
+        day = previous_date_key(day).expect("date step");
     }
     Ok(())
 }
