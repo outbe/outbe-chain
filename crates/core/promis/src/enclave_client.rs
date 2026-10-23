@@ -99,6 +99,30 @@ pub mod test_enclave {
         STATE_KEY.with(|k| *k.borrow_mut() = None);
     }
 
+    /// The modify authorization a client would send for `op` on chain 1.
+    pub fn modify_auth(
+        op: outbe_tee::protocol::PromisOp,
+        account: alloy_primitives::Address,
+        amount: alloy_primitives::U256,
+        nonce: u64,
+    ) -> outbe_tee::protocol::ModifyAuth {
+        use outbe_tee_enclave::promis::{derive_modify_key, modify_mac, ModifyOperation};
+        let mk = derive_modify_key(&state_key(), account).unwrap();
+        outbe_tee::protocol::ModifyAuth {
+            mac: modify_mac(
+                &mk,
+                &ModifyOperation {
+                    account,
+                    op,
+                    amount,
+                    op_nonce: nonce,
+                    chain_id: B256::from(alloy_primitives::U256::from(1u64)),
+                },
+            ),
+            op_nonce: nonce,
+        }
+    }
+
     /// The dev state key, so tests can derive view/modify keys to build auth and
     /// decrypt balances exactly as a client would.
     pub fn state_key() -> [u8; 32] {

@@ -112,4 +112,16 @@ mod tests {
             assert_eq!(bytes.as_ref(), expected.as_slice());
         }
     }
+
+    #[test]
+    fn entry_price_overflow_converts_to_canonical_abi_revert_bytes() {
+        let err = PrecompileError::from(AgentRewardError::EntryPriceOverflow);
+        let PrecompileError::RevertBytes(bytes) = err else {
+            panic!("expected RevertBytes, got {err:?}");
+        };
+        assert_eq!(
+            bytes.as_ref(),
+            IAgentReward::EntryPriceOverflow {}.abi_encode()
+        );
+    }
 }

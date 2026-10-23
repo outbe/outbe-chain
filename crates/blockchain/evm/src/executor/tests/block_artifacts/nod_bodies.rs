@@ -365,7 +365,7 @@ fn seed_called_nod(storage: StorageHandle<'_>, fixture: &NodBodyFixture) -> eyre
     nod.group_called_at.write(&group_key, 1)?;
     let notice = nod.group_call_notice_period_seconds.read(&group_key)?;
     outbe_primitives::expiry_queue::push(
-        &outbe_nod::state::ExpiryHours(&nod),
+        &outbe_nod::state::ExpiryDays(&nod),
         group_key,
         outbe_nod::api::settlement_deadline_of(1, notice),
     )?;

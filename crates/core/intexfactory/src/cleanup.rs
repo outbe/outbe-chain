@@ -2,7 +2,7 @@
 //! the expiry already returned what the groups forfeited.
 
 use alloy_primitives::B256;
-use outbe_intex::{CleanupHours, IntexContract, SeriesId};
+use outbe_intex::{CleanupDays, IntexContract, SeriesId};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::Result,
@@ -14,12 +14,13 @@ use outbe_primitives::{
 /// series deleted.
 pub fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = IntexContract::new(ctx.storage.clone());
-    let mut cleanup = IntexCleanup {
-        storage: &ctx.storage,
-        intex: IntexContract::new(ctx.storage.clone()),
-        deleted: 0,
-    };
-    expiry_queue::sweep_block(&CleanupHours(&queue), ctx, &mut cleanup)?;
+    let mut cleanup = IntexCleanup::new(ctx);
+    expiry_queue::sweep_cleanup(
+        &CleanupDays(&queue),
+        ctx,
+        &queue.cleanup_budget,
+        &mut cleanup,
+    )?;
     Ok(cleanup.deleted)
 }
 
@@ -27,6 +28,16 @@ struct IntexCleanup<'a, 'storage> {
     storage: &'a StorageHandle<'storage>,
     intex: IntexContract<'storage>,
     deleted: u32,
+}
+
+impl<'a, 's> IntexCleanup<'a, 's> {
+    fn new(ctx: &'a BlockRuntimeContext<'s>) -> Self {
+        Self {
+            storage: &ctx.storage,
+            intex: IntexContract::new(ctx.storage.clone()),
+            deleted: 0,
+        }
+    }
 }
 
 /// A group's members are its live series. One with settled units left to exercise

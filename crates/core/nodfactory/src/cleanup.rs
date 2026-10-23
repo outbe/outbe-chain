@@ -2,7 +2,7 @@
 //! the forfeit already returned their load.
 
 use alloy_primitives::B256;
-use outbe_nod::state::CleanupHours;
+use outbe_nod::state::CleanupDays;
 use outbe_nod::{api, schema::NodContract};
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_primitives::{
@@ -17,12 +17,13 @@ use crate::errors::NodFactoryError;
 /// Deletes the unpaid Nods of the forfeited groups. Returns the Nods deleted.
 pub fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = NodContract::new(ctx.storage.clone());
-    let mut cleanup = NodCleanup {
-        storage: &ctx.storage,
-        nod: NodContract::new(ctx.storage.clone()),
-        deleted: 0,
-    };
-    expiry_queue::sweep_block(&CleanupHours(&queue), ctx, &mut cleanup)?;
+    let mut cleanup = NodCleanup::new(ctx);
+    expiry_queue::sweep_cleanup(
+        &CleanupDays(&queue),
+        ctx,
+        &queue.cleanup_budget,
+        &mut cleanup,
+    )?;
     Ok(cleanup.deleted)
 }
 
@@ -30,6 +31,16 @@ struct NodCleanup<'a, 's> {
     storage: &'a StorageHandle<'s>,
     nod: NodContract<'s>,
     deleted: u32,
+}
+
+impl<'a, 's> NodCleanup<'a, 's> {
+    fn new(ctx: &'a BlockRuntimeContext<'s>) -> Self {
+        Self {
+            storage: &ctx.storage,
+            nod: NodContract::new(ctx.storage.clone()),
+            deleted: 0,
+        }
+    }
 }
 
 /// A forfeited group's members are its unpaid Nods.

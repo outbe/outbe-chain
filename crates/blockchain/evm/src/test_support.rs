@@ -42,6 +42,25 @@ pub fn runtime_code(hex: &str) -> Bytecode {
     ))
 }
 
+pub fn install_call_scan_markers<DB: revm::Database>(db: &mut CacheDB<DB>, code: &Bytecode) {
+    for address in [
+        outbe_primitives::addresses::NOD_ADDRESS,
+        outbe_primitives::addresses::GEM_ADDRESS,
+        outbe_primitives::addresses::GEM_FACTORY_ADDRESS,
+        outbe_primitives::addresses::INTEX_ADDRESS,
+        outbe_primitives::addresses::CREDIS_ADDRESS,
+    ] {
+        db.insert_account_info(
+            address,
+            AccountInfo {
+                code_hash: code.hash_slow(),
+                code: Some(code.clone()),
+                ..Default::default()
+            },
+        );
+    }
+}
+
 pub fn install_code(db: &mut CacheDB<EmptyDB>, address: Address, code: &Bytecode) {
     db.insert_account_info(
         address,
