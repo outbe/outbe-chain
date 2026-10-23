@@ -346,8 +346,16 @@ fn seed_offer_world(storage: StorageHandle<'_>) {
     oracle
         .store_worldwide_day_vwap_snapshot(TARGET_WWD, start, start + 50 * 60 * 60)
         .unwrap();
-    TributeContract::new(storage)
-        .unseal_day(TARGET_WWD)
+    let binding = outbe_primitives::storage::metadosis_process_ready_binding(
+        storage.chain_id().unwrap(),
+        storage.block_number().unwrap(),
+        storage.now_secs().unwrap(),
+    );
+    storage
+        .with_metadosis_mutation::<outbe_primitives::storage::MetadosisCycleLifecycle, _>(
+            binding,
+            || TributeContract::new(storage.clone()).unseal_day(TARGET_WWD),
+        )
         .unwrap();
 }
 
@@ -356,6 +364,10 @@ fn seeded_world(fixture: &Fixture) -> HashMapStorageProvider {
     provider.set_timestamp(U256::from(
         date_key_to_utc_timestamp(REWARD_UTC_DAY) + 43_200,
     ));
+    provider.enable_metadosis_mutation_frames(
+        outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
+        1,
+    );
     StorageHandle::enter(&mut provider, |storage| {
         seed_offer_world(storage.clone());
         // Bind the operator's proof root to its registered network key.
