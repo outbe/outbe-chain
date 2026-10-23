@@ -712,6 +712,111 @@ fn assert_real_zk_offer_with_key_source(
 }
 
 #[test]
+fn empty_su_hash_list_rejects_before_issuance_and_rewards() {
+    use alloy_sol_types::SolError;
+    use commonware_codec::Encode;
+    use commonware_cryptography::bls12381::primitives::{
+        ops::{self, sign_message},
+        variant::MinSig,
+    };
+    use outbe_l2registry::L2RegistryContract;
+    use outbe_tee::protocol::{TributeOfferResult, TributeOfferStatus};
+    use outbe_zk::demo_tribute::COMBINED_LEN as DEMO_TRIBUTE_COMBINED_LEN;
+
+    const CALLER: Address = Address::repeat_byte(0x77);
+    const L2_CHAIN_ID: u64 = 0xdead;
+    let root = [0x04; 32];
+    let mut rng =
+        <rand_commonware::rngs::StdRng as rand_commonware::SeedableRng>::from_seed([0x5a; 32]);
+    let (private, public) = ops::keypair::<_, MinSig>(&mut rng);
+    let network_key = outbe_l2registry::public_key::encode(&public).unwrap();
+    let signature = sign_message::<MinSig>(
+        &private,
+        outbe_l2registry::api::ZK_MERKLE_ROOT_NAMESPACE,
+        &root,
+    )
+    .encode();
+    let mut proof = Vec::with_capacity(DEMO_TRIBUTE_COMBINED_LEN);
+    proof.extend_from_slice(&4u32.to_be_bytes());
+    proof.extend_from_slice(&[0x01; 32]);
+    proof.extend_from_slice(&[0x02; 32]);
+    proof.extend_from_slice(&[0x03; 32]);
+    proof.extend_from_slice(&root);
+    proof.resize(DEMO_TRIBUTE_COMBINED_LEN, 0);
+
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_timestamp(U256::from(date_key_to_utc_timestamp(20_260_803) + 43_200));
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_offer_world(storage.clone(), &[TARGET_WWD_A]);
+        L2RegistryContract::new(storage)
+            .register_network(L2_CHAIN_ID, CALLER, &network_key)
+            .unwrap();
+    });
+    let before = provider.storage.clone();
+    let events_before = provider.events.clone();
+    let ordered_before = provider.get_ordered_events().to_vec();
+
+    let input = OfferTributeInput {
+        caller: CALLER,
+        cipher_text: Bytes::from(vec![1, 2, 3]),
+        nonce: Bytes::from(vec![4; 12]),
+        ephemeral_pubkey: U256::from(1u64),
+        worldwide_day: TARGET_WWD_A,
+        tribute_currency: 840,
+        reference_currency: 840,
+        zk_proof: Bytes::from(proof),
+        l2_chain_id: u32::try_from(L2_CHAIN_ID).unwrap(),
+        circuit_version: "1.1.0".to_owned(),
+        zk_merkle_root: Bytes::copy_from_slice(&root),
+        signature: Bytes::from(signature),
+    };
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let error = storage
+            .with_checkpoint(|| {
+                TributeFactoryContract::new(storage.clone()).offer_tribute_with_processor(
+                    input,
+                    |_| {
+                        Ok(vec![TributeOfferResult {
+                            token_id: B256::repeat_byte(0x11),
+                            owner: CALLER,
+                            issuance_amount_minor: U256::from(1u64),
+                            nominal_amount_minor: U256::from(1u64),
+                            effective_reference_price_minor: U256::from(1u64),
+                            su_hashes: Vec::new(),
+                            wallet_addresses: vec![format!("{REWARD_WALLET:#x}")],
+                            sra_addresses: vec![format!("{REWARD_SRA:#x}")],
+                            zk_expected_hashes: None,
+                            status: TributeOfferStatus::Created,
+                        }])
+                    },
+                )
+            })
+            .unwrap_err();
+        let PrecompileError::RevertBytes(bytes) = error else {
+            panic!("expected empty-SU revert bytes, got {error:?}");
+        };
+        assert_eq!(
+            bytes.as_ref(),
+            crate::precompile::ITributeFactory::EmptySuHashList {}.abi_encode()
+        );
+        let tribute = TributeContract::new(storage.clone());
+        assert_eq!(tribute.total_supply().unwrap(), 0);
+        assert_eq!(tribute.balance_of(CALLER).unwrap(), 0);
+        assert!(!TributeFactoryContract::new(storage.clone())
+            .has_used_su_hash(B256::repeat_byte(0x22))
+            .unwrap());
+        let rewards = AgentRewardContract::new(storage);
+        let reward_day = WorldwideDay::new(20_260_803);
+        assert!(rewards.get_all_waa_counts(reward_day).unwrap().is_empty());
+        assert!(rewards.get_all_sra_counts(reward_day).unwrap().is_empty());
+    });
+    assert_eq!(provider.storage, before, "empty SU admission wrote state");
+    assert_eq!(provider.events, events_before);
+    assert_eq!(provider.get_ordered_events(), ordered_before);
+}
+
+#[test]
 fn su_hash_can_only_be_used_once() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
