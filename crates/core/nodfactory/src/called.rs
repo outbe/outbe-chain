@@ -26,7 +26,7 @@ use outbe_primitives::{
     block::BlockRuntimeContext,
     call_bins,
     call_breach::{BreachTerms, ScanTerms},
-    daily_sweep::PinnedDay,
+    daily_sweep::{PinnedDay, Progress},
     error::{PrecompileError, Result, SweepFailure},
     storage::dsl::Value,
     sweep_budget::SweepBudget,
@@ -48,16 +48,19 @@ pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
     call_sweep::schedule(ctx, &mut NodCallSweep::new(ctx))
 }
 
+/// This function initializes the first eligible daily pass from the chain initialization day.
+pub fn initialize_daily(ctx: &BlockRuntimeContext) -> Result<()> {
+    call_sweep::initialize(ctx, &mut NodCallSweep::new(ctx))
+}
+
 /// Schedules the closed day and walks a slice of the day in flight. Returns the
 /// groups called.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
-    let mut sweep = NodCallSweep::new(ctx);
-    call_sweep::schedule(ctx, &mut sweep)?;
-    call_sweep::continue_day(ctx, &mut sweep)
+    call_sweep::continue_day(ctx, &mut NodCallSweep::new(ctx))
 }
 
-/// Walks the next slice of the day in flight, pinned to the day it opened on so
-/// later blocks decide against the same prices. Returns how many groups were called.
+/// This function runs the next coupled call and forfeit slice against its pinned observation day.
+/// The return value counts called groups, not forfeited groups.
 pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_sweep::continue_day(ctx, &mut NodCallSweep::new(ctx))
 }
@@ -76,6 +79,30 @@ impl<'storage> NodCallSweep<'storage> {
 
 impl<'storage> CallSweep<'storage> for NodCallSweep<'storage> {
     const CONSUMER: &'static str = "nod";
+    const FORFEIT_PHASES: u8 = 1;
+
+    fn phase(&self) -> &Value<'storage, u8> {
+        &self.nod.daily_phase
+    }
+    fn block_budget(&self) -> &Value<'storage, U256> {
+        &self.nod.daily_budget
+    }
+    fn genesis_day(&self) -> &Value<'storage, u32> {
+        &self.nod.daily_genesis_day
+    }
+
+    fn forfeit(
+        &mut self,
+        ctx: &BlockRuntimeContext,
+        pinned_day: u32,
+        _phase: u8,
+        budget: &mut SweepBudget,
+    ) -> Result<Progress> {
+        let through_day = outbe_primitives::expiry_queue::deadline_day(
+            outbe_primitives::time::date_key_to_utc_timestamp(pinned_day),
+        )?;
+        crate::expired::sweep_through(ctx, through_day, budget)
+    }
 
     type Bins<'a>
         = CallBins<'a, 'storage>
@@ -101,8 +128,13 @@ impl<'storage> CallSweep<'storage> for NodCallSweep<'storage> {
         error.record_sweep_failure()
     }
 
-    fn slice(&mut self, ctx: &BlockRuntimeContext, pinned_day: u32) -> Result<(u32, bool)> {
-        let (called, finished) = call_slice(ctx, &self.nod, pinned_day)?;
+    fn slice(
+        &mut self,
+        ctx: &BlockRuntimeContext,
+        pinned_day: u32,
+        budget: &mut SweepBudget,
+    ) -> Result<(u32, bool)> {
+        let (called, finished) = call_slice(ctx, &self.nod, pinned_day, budget)?;
         // A group holds Nods of several Worldwide Days, so a call refreshes the whole range.
         if called != 0 {
             self.nod.emit(INod::BatchMetadataUpdate {
@@ -128,6 +160,7 @@ fn call_slice(
     ctx: &BlockRuntimeContext,
     nod: &NodContract<'_>,
     pinned_day: u32,
+    budget: &mut SweepBudget,
 ) -> Result<(u32, bool)> {
     let params = outbe_nod::config::read(&ctx.storage)?;
     let mut caller = NodContract::new(ctx.storage.clone());
@@ -135,6 +168,7 @@ fn call_slice(
     let finished = call_sweep::walk_day(
         ctx,
         pinned_day,
+        budget,
         call_sweep::CallIndex {
             currency_cursor: &nod.call_currency_cursor,
             bins: |iso_code| CallBins(nod, iso_code),

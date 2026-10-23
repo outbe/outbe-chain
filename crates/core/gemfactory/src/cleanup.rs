@@ -2,7 +2,7 @@
 //! the expiry already returned their load.
 
 use alloy_primitives::{B256, U256};
-use outbe_gem::{api as gem_api, CleanupHours, GemContract};
+use outbe_gem::{api as gem_api, CleanupDays, GemContract};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result, SweepFailure},
@@ -15,12 +15,13 @@ use crate::errors::GemFactoryError;
 /// Deletes the unpaid gems of the forfeited groups. Returns the gems deleted.
 pub fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = GemContract::new(ctx.storage.clone());
-    let mut cleanup = GemCleanup {
-        storage: &ctx.storage,
-        gem: GemContract::new(ctx.storage.clone()),
-        deleted: 0,
-    };
-    expiry_queue::sweep_block(&CleanupHours(&queue), ctx, &mut cleanup)?;
+    let mut cleanup = GemCleanup::new(ctx);
+    expiry_queue::sweep_cleanup(
+        &CleanupDays(&queue),
+        ctx,
+        &queue.cleanup_budget,
+        &mut cleanup,
+    )?;
     Ok(cleanup.deleted)
 }
 
@@ -28,6 +29,16 @@ struct GemCleanup<'a, 's> {
     storage: &'a StorageHandle<'s>,
     gem: GemContract<'s>,
     deleted: u32,
+}
+
+impl<'a, 's> GemCleanup<'a, 's> {
+    fn new(ctx: &'a BlockRuntimeContext<'s>) -> Self {
+        Self {
+            storage: &ctx.storage,
+            gem: GemContract::new(ctx.storage.clone()),
+            deleted: 0,
+        }
+    }
 }
 
 /// A forfeited group's members are its unpaid gems.

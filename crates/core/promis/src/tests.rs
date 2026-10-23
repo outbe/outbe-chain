@@ -9,9 +9,7 @@ use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_tee::protocol::{ModifyAuth, PromisOp};
-use outbe_tee_enclave::promis::{
-    decrypt_balance, derive_modify_key, derive_view_key, modify_mac, ModifyOperation,
-};
+use outbe_tee_enclave::promis::{decrypt_balance, derive_view_key};
 
 use crate::api;
 use crate::enclave_client::test_enclave;
@@ -20,9 +18,6 @@ use outbe_primitives::units::SCALE_1E6_U64;
 
 const CHAIN_ID: u64 = 1;
 
-fn chain_b256() -> B256 {
-    B256::from(U256::from(CHAIN_ID))
-}
 fn alice() -> Address {
     address!("0x1111111111111111111111111111111111111111")
 }
@@ -30,23 +25,8 @@ fn bob() -> Address {
     address!("0x2222222222222222222222222222222222222222")
 }
 
-/// Build the modify authorization a client would send for `op`.
 fn auth(op: PromisOp, account: Address, amount: U256, nonce: u64) -> ModifyAuth {
-    let sk = test_enclave::state_key();
-    let mk = derive_modify_key(&sk, account).unwrap();
-    ModifyAuth {
-        mac: modify_mac(
-            &mk,
-            &ModifyOperation {
-                account,
-                op,
-                amount,
-                op_nonce: nonce,
-                chain_id: chain_b256(),
-            },
-        ),
-        op_nonce: nonce,
-    }
+    test_enclave::modify_auth(op, account, amount, nonce)
 }
 
 fn view_balance(storage: StorageHandle<'_>, account: Address) -> U256 {

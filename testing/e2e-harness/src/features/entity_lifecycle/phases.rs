@@ -84,6 +84,17 @@ fn rate_above_call_price(world: &mut World, entity: Entity) {
         "the reference rate {rate} must clear the {entity:?} call price"
     );
     seed_closed_days(world, CALL_WINDOW_SEED_DAYS, rate);
+    let factory = match entity {
+        Entity::Gem => outbe_primitives::addresses::GEM_FACTORY_ADDRESS,
+        Entity::Intex => outbe_primitives::addresses::INTEX_FACTORY_ADDRESS,
+        Entity::Nod => outbe_primitives::addresses::NOD_FACTORY_ADDRESS,
+    };
+    test_issuance::rescan_closed_day(
+        &world.rpc.url(world.validators.primary_port()),
+        DEPLOYER_KEY,
+        factory,
+    )
+    .expect("arm the call pass after seeding closed-day prices");
 }
 
 #[then(expr = "every unpaid {entity} becomes Called while what was paid stays Settled")]

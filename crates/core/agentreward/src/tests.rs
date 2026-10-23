@@ -1062,11 +1062,11 @@ mod distribute_daily_tests {
         ] {
             run(|ctx| {
                 let mut contract = AgentRewardContract::new(ctx.storage.clone());
-                seed_tribute_weights(&mut contract, &kind, recipients);
+                seed_tributes(&mut contract, kind, recipients);
                 let excess = distribute_and_credit(ctx, DAY, &[(kind, U256::from(pool))]).unwrap();
                 assert_eq!(excess, U256::from(expected_excess));
-                let credited =
-                    assert_tribute_credits_and_cleanup(&contract, kind, reward_pool, recipients);
+                let credited = assert_credited(&contract, reward_pool, kind, recipients);
+                assert_tribute_index_cleared(&contract, kind, recipients);
                 assert_eq!(
                     ctx.storage
                         .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
@@ -1078,9 +1078,9 @@ mod distribute_daily_tests {
         }
     }
 
-    fn seed_tribute_weights(
-        contract: &mut AgentRewardContract<'_>,
-        kind: &PoolKind,
+    fn seed_tributes(
+        contract: &mut AgentRewardContract,
+        kind: PoolKind,
         recipients: &[(u8, u64, u64)],
     ) {
         for &(byte, weight, _) in recipients {
@@ -1093,35 +1093,24 @@ mod distribute_daily_tests {
 
     fn record_one_tribute(
         contract: &mut AgentRewardContract<'_>,
-        kind: &PoolKind,
+        kind: PoolKind,
         address: Address,
     ) {
-        if kind == &PoolKind::Waa {
-            contract.increment_waa_tribute(DAY, address).unwrap();
-        } else {
-            contract.increment_sra_tribute(DAY, address).unwrap();
+        match kind {
+            PoolKind::Waa => contract.increment_waa_tribute(DAY, address).unwrap(),
+            PoolKind::Sra => contract.increment_sra_tribute(DAY, address).unwrap(),
+            PoolKind::Cca | PoolKind::Validator => {
+                panic!("tribute distribution covers WAA and SRA")
+            }
         }
     }
 
-    fn assert_tribute_credits_and_cleanup(
+    fn assert_credited(
         contract: &AgentRewardContract<'_>,
-        kind: PoolKind,
         reward_pool: RewardPool,
+        kind: PoolKind,
         recipients: &[(u8, u64, u64)],
     ) -> U256 {
-        let (counts, address_count, addresses) = if kind == PoolKind::Waa {
-            (
-                &contract.waa_tribute_counts,
-                &contract.waa_address_count,
-                &contract.waa_addresses,
-            )
-        } else {
-            (
-                &contract.sra_tribute_counts,
-                &contract.sra_address_count,
-                &contract.sra_addresses,
-            )
-        };
         let mut credited = U256::ZERO;
         for &(byte, _, expected) in recipients {
             let address = Address::repeat_byte(byte);
@@ -1130,6 +1119,13 @@ mod distribute_daily_tests {
                 .unwrap();
             assert_eq!(reward, U256::from(expected));
             credited += reward;
+            let counts = match kind {
+                PoolKind::Waa => &contract.waa_tribute_counts,
+                PoolKind::Sra => &contract.sra_tribute_counts,
+                PoolKind::Cca | PoolKind::Validator => {
+                    panic!("tribute distribution covers WAA and SRA")
+                }
+            };
             assert_eq!(
                 counts
                     .read(&AgentRewardContract::tribute_count_key(DAY, address))
@@ -1137,13 +1133,31 @@ mod distribute_daily_tests {
                 0
             );
         }
-        let remaining = if kind == PoolKind::Waa {
-            contract.get_all_waa_counts(DAY).unwrap()
-        } else {
-            contract.get_all_sra_counts(DAY).unwrap()
+        credited
+    }
+
+    fn assert_tribute_index_cleared(
+        contract: &AgentRewardContract,
+        kind: PoolKind,
+        recipients: &[(u8, u64, u64)],
+    ) {
+        let (remaining, address_count, addresses) = match kind {
+            PoolKind::Waa => (
+                contract.get_all_waa_counts(DAY).unwrap(),
+                contract.waa_address_count.read(&DAY).unwrap(),
+                &contract.waa_addresses,
+            ),
+            PoolKind::Sra => (
+                contract.get_all_sra_counts(DAY).unwrap(),
+                contract.sra_address_count.read(&DAY).unwrap(),
+                &contract.sra_addresses,
+            ),
+            PoolKind::Cca | PoolKind::Validator => {
+                panic!("tribute distribution covers WAA and SRA")
+            }
         };
         assert!(remaining.is_empty());
-        assert_eq!(address_count.read(&DAY).unwrap(), 0);
+        assert_eq!(address_count, 0);
         for index in 0..u32::try_from(recipients.len()).unwrap() {
             assert_eq!(
                 addresses
@@ -1152,7 +1166,6 @@ mod distribute_daily_tests {
                 Address::ZERO
             );
         }
-        credited
     }
 
     #[test]
