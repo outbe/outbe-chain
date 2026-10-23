@@ -31,13 +31,12 @@ pub(crate) fn sweep_through(
     budget: &mut SweepBudget,
 ) -> Result<expiry_queue::Progress> {
     let queue = GemFactoryContract::new(ctx.storage.clone());
-    let mut expiry = PositionExpiry::new(ctx);
     expiry_queue::sweep_day(
         &PositionExpiryDays(&queue),
         ctx,
         through_day,
         budget,
-        &mut expiry,
+        &mut PositionExpiry::new(ctx),
     )
 }
 

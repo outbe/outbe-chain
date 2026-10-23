@@ -25,8 +25,13 @@ pub(crate) fn sweep_through(
     budget: &mut SweepBudget,
 ) -> Result<expiry_queue::Progress> {
     let queue = CredisContract::new(ctx.storage.clone());
-    let mut cleanup = CredisCleanup::new(ctx);
-    expiry_queue::sweep_day(&CleanupDays(&queue), ctx, through_day, budget, &mut cleanup)
+    expiry_queue::sweep_day(
+        &CleanupDays(&queue),
+        ctx,
+        through_day,
+        budget,
+        &mut CredisCleanup::new(ctx),
+    )
 }
 
 struct CredisCleanup<'a, 'storage> {
