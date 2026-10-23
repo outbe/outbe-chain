@@ -117,6 +117,8 @@ mod tests {
         assert_eq!(provider.events, events_before);
 
         provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
+        provider.set_block_number(7);
+        provider.set_timestamp(U256::from(timestamp(SINK_DAY)));
         provider.enter(|storage| {
             let ctx = BlockRuntimeContext::new(
                 BlockContext::new(7, timestamp(CTX_DAY), CHAIN_ID, Address::ZERO, Vec::new()),

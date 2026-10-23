@@ -11,6 +11,22 @@ use crate::{TributeContract, TributeData};
 mod create_nod;
 mod metadosis_boundary;
 
+fn in_process_ready<R>(
+    storage: &StorageHandle<'_>,
+    body: impl FnOnce() -> PrecompileResult<R>,
+) -> R {
+    let binding = outbe_primitives::storage::metadosis_process_ready_binding(
+        storage.chain_id().unwrap(),
+        storage.block_number().unwrap(),
+        storage.now_secs().unwrap(),
+    );
+    storage
+        .with_metadosis_mutation::<outbe_primitives::storage::MetadosisCycleLifecycle, _>(
+            binding, body,
+        )
+        .unwrap()
+}
+
 fn with_process_ready_tribute<R>(f: impl FnOnce(&mut TributeContract<'_>) -> R) -> R {
     let mut provider = HashMapStorageProvider::new(1);
     provider.enable_metadosis_mutation_frame(
@@ -34,14 +50,24 @@ fn with_process_ready_tribute<R>(f: impl FnOnce(&mut TributeContract<'_>) -> R) 
 
 fn with_tribute<R>(f: impl FnOnce(&mut TributeContract<'_>) -> R) -> R {
     let mut provider = HashMapStorageProvider::new(1);
+    provider.enable_metadosis_mutation_frame(
+        outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
+    );
     StorageHandle::enter(&mut provider, |storage| {
         let _enclave = crate::enclave_client::test_enclave::scope();
-        f(&mut TributeContract::new(storage))
+        in_process_ready(&storage, || {
+            Ok(f(&mut TributeContract::new(storage.clone())))
+        })
     })
 }
 
 fn with_provider<R>(f: impl FnOnce(&mut HashMapStorageProvider) -> R) -> R {
-    f(&mut HashMapStorageProvider::new(1))
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.enable_metadosis_mutation_frames(
+        outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
+        4,
+    );
+    f(&mut provider)
 }
 
 fn sample_tribute() -> TributeData {
@@ -580,8 +606,8 @@ fn test_events_emitted_for_issue_and_burn() {
         let tribute = sample_tribute();
         StorageHandle::enter(&mut *provider, |storage| {
             let _enclave = crate::enclave_client::test_enclave::scope();
-            let mut contract = TributeContract::new(storage);
-            contract.unseal_day(tribute.worldwide_day).unwrap();
+            let mut contract = TributeContract::new(storage.clone());
+            in_process_ready(&storage, || contract.unseal_day(tribute.worldwide_day));
             contract.issue(&tribute).unwrap();
         });
         let events = provider.get_events(TRIBUTE_ADDRESS);
@@ -613,9 +639,8 @@ fn failed_mutations_emit_no_events_and_sealing_emits_only_its_business_event() {
         let tribute = sample_tribute();
         StorageHandle::enter(&mut *provider, |storage| {
             let _enclave = crate::enclave_client::test_enclave::scope();
-            TributeContract::new(storage)
-                .unseal_day(tribute.worldwide_day)
-                .unwrap();
+            let mut contract = TributeContract::new(storage.clone());
+            in_process_ready(&storage, || contract.unseal_day(tribute.worldwide_day));
         });
         provider.clear_events(TRIBUTE_ADDRESS);
 
@@ -699,9 +724,8 @@ fn failed_mutations_emit_no_events_and_sealing_emits_only_its_business_event() {
 
         StorageHandle::enter(&mut *provider, |storage| {
             let _enclave = crate::enclave_client::test_enclave::scope();
-            TributeContract::new(storage)
-                .seal_day(tribute.worldwide_day)
-                .unwrap();
+            let mut contract = TributeContract::new(storage.clone());
+            in_process_ready(&storage, || contract.seal_day(tribute.worldwide_day));
         });
         let events = provider.get_events(TRIBUTE_ADDRESS);
         assert_eq!(events.len(), 1);
@@ -718,8 +742,8 @@ fn failed_burn_transaction_restores_tribute_state_and_events() {
         let tribute = sample_tribute();
         StorageHandle::enter(&mut *provider, |storage| {
             let _enclave = crate::enclave_client::test_enclave::scope();
-            let mut contract = TributeContract::new(storage);
-            contract.unseal_day(tribute.worldwide_day).unwrap();
+            let mut contract = TributeContract::new(storage.clone());
+            in_process_ready(&storage, || contract.unseal_day(tribute.worldwide_day));
             contract.issue(&tribute).unwrap();
         });
         provider.clear_events(TRIBUTE_ADDRESS);

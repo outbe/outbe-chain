@@ -7,7 +7,10 @@ use outbe_oracle::{
 use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::storage::{
+    metadosis_process_ready_binding, MetadosisCycleLifecycle, MetadosisMutationPurposeTag,
+    StorageHandle,
+};
 use outbe_primitives::time::date_key_to_utc_timestamp;
 use outbe_primitives::time::WorldwideDay;
 use outbe_tribute::{
@@ -371,10 +374,20 @@ fn seed_offer_world(storage: StorageHandle<'_>, target_days: &[WorldwideDay]) {
             .unwrap();
     }
 
-    let mut tribute = TributeContract::new(storage);
-    for worldwide_day in target_days {
-        tribute.unseal_day(*worldwide_day).unwrap();
-    }
+    let binding = metadosis_process_ready_binding(
+        storage.chain_id().unwrap(),
+        storage.block_number().unwrap(),
+        storage.now_secs().unwrap(),
+    );
+    storage
+        .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {
+            let mut tribute = TributeContract::new(storage.clone());
+            for worldwide_day in target_days {
+                tribute.unseal_day(*worldwide_day)?;
+            }
+            Ok(())
+        })
+        .unwrap();
 }
 
 #[test]
@@ -555,6 +568,7 @@ fn assert_real_zk_offer_with_key_source(
         );
     }
     provider.set_timestamp(U256::from(date_key_to_utc_timestamp(REWARD_DAY) + 43_200));
+    provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
 
     StorageHandle::enter(&mut provider, |storage| {
         seed_offer_world(storage.clone(), &[TARGET_WWD_A]);
@@ -746,6 +760,7 @@ fn empty_su_hash_list_rejects_before_issuance_and_rewards() {
 
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.set_timestamp(U256::from(date_key_to_utc_timestamp(20_260_803) + 43_200));
+    provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
     StorageHandle::enter(&mut provider, |storage| {
         seed_offer_world(storage.clone(), &[TARGET_WWD_A]);
         L2RegistryContract::new(storage)

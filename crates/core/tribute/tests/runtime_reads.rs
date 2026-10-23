@@ -20,6 +20,21 @@ fn tribute(owner: Address, day: u32) -> TributeData {
     }
 }
 
+fn in_process_ready<R>(
+    storage: &StorageHandle<'_>,
+    body: impl FnOnce() -> outbe_primitives::error::Result<R>,
+) -> R {
+    use outbe_primitives::storage::{metadosis_process_ready_binding, MetadosisCycleLifecycle};
+    let binding = metadosis_process_ready_binding(
+        storage.chain_id().unwrap(),
+        storage.block_number().unwrap(),
+        storage.now_secs().unwrap(),
+    );
+    storage
+        .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, body)
+        .unwrap()
+}
+
 fn encrypted_body() -> outbe_primitives::tribute_encryption::EncryptedTributeV2 {
     use outbe_primitives::tribute_encryption::{TributeAmountsV2, TributeContextV2};
     let plain = tribute(Address::repeat_byte(0x73), 20_260_723);
@@ -50,9 +65,13 @@ fn encrypted_issue_preserves_ciphertext_events_and_public_reads_without_enclave(
     use outbe_tribute::precompile::ITribute;
     let body = encrypted_body();
     let mut provider = HashMapStorageProvider::new(1);
+    provider.enable_metadosis_mutation_frames(
+        outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
+        2,
+    );
     StorageHandle::enter(&mut provider, |storage| {
         let mut contract = TributeContract::new(storage.clone());
-        contract.unseal_day(body.context.worldwide_day).unwrap();
+        in_process_ready(&storage, || contract.unseal_day(body.context.worldwide_day));
         {
             let _enclave = outbe_tribute::enclave_client::test_enclave::scope();
             contract.issue_encrypted(&body).unwrap();
@@ -100,7 +119,7 @@ fn encrypted_issue_preserves_ciphertext_events_and_public_reads_without_enclave(
         );
         assert!(record.calculation_view().is_err());
         assert!(contract.get_day_totals(record.worldwide_day).is_err());
-        contract.seal_day(record.worldwide_day).unwrap();
+        in_process_ready(&storage, || contract.seal_day(record.worldwide_day));
         assert!(contract.is_day_sealed(record.worldwide_day).unwrap());
         let call = ITribute::getDayTotalsCall {
             worldwideDay: record.worldwide_day.value(),
@@ -129,10 +148,13 @@ fn encrypted_issue_preserves_ciphertext_events_and_public_reads_without_enclave(
 fn encrypted_issue_rejects_tampering_without_mutating_supply_or_day_amount() {
     let body = encrypted_body();
     let mut provider = HashMapStorageProvider::new(1);
+    provider.enable_metadosis_mutation_frame(
+        outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
+    );
     StorageHandle::enter(&mut provider, |storage| {
         let _enclave = outbe_tribute::enclave_client::test_enclave::scope();
-        let mut contract = TributeContract::new(storage);
-        contract.unseal_day(body.context.worldwide_day).unwrap();
+        let mut contract = TributeContract::new(storage.clone());
+        in_process_ready(&storage, || contract.unseal_day(body.context.worldwide_day));
         let mut modified = body.clone();
         modified.encrypted_amounts[9] ^= 1;
         assert!(contract.issue_encrypted(&modified).is_err());

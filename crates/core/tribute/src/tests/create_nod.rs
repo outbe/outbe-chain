@@ -1,4 +1,4 @@
-use super::{sample_tribute, set_owner};
+use super::{in_process_ready, sample_tribute, set_owner};
 use crate::TributeContract;
 use alloy_primitives::{address, U256};
 use alloy_sol_types::SolEvent;
@@ -29,7 +29,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_create_nod_burns_tribute() {
     let mut provider = HashMapStorageProvider::new(1);
     let base_ts = 1_750_000_000u64;
     provider.set_timestamp(U256::from(base_ts));
-    provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
+    provider.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 3);
 
     let day: outbe_primitives::time::WorldwideDay = 20241220u32.into();
     let owner1 = address!("0x1111111111111111111111111111111111111111");
@@ -47,7 +47,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_create_nod_burns_tribute() {
     StorageHandle::enter(&mut provider, |storage| {
         let _enclave = crate::enclave_client::test_enclave::scope();
         let mut tc = TributeContract::new(storage.clone());
-        tc.unseal_day(day).unwrap();
+        in_process_ready(&storage, || tc.unseal_day(day));
 
         // Stage 4: Issue Tributes in leagues 100 and 4000
         tc.issue_with_league(&t1, Some(100)).unwrap();
@@ -65,7 +65,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_create_nod_burns_tribute() {
         assert!(tc.create_nod(owner1, t1.tribute_id).is_err());
 
         // Stage 3: Seal day and compute Metadosis fractions for WWD
-        tc.seal_day(day).unwrap();
+        in_process_ready(&storage, || tc.seal_day(day));
         let lysis_limit = U256::from(500_000_000_000u64); // large enough so nod_max = lysis_limit / 1024 >= loads
         let binding = metadosis_process_ready_binding(
             storage.chain_id().unwrap(),
@@ -201,16 +201,16 @@ fn create_nod_reverts_without_a_completion_day_price() {
     let mut provider = HashMapStorageProvider::new(1);
     let completed_at = 1_750_000_000u64;
     provider.set_timestamp(U256::from(completed_at));
-    provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
+    provider.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 3);
     let tribute = sample_tribute();
     let day = tribute.worldwide_day;
 
     StorageHandle::enter(&mut provider, |storage| {
         let _enclave = crate::enclave_client::test_enclave::scope();
         let mut tc = TributeContract::new(storage.clone());
-        tc.unseal_day(day).unwrap();
+        in_process_ready(&storage, || tc.unseal_day(day));
         tc.issue_with_league(&tribute, Some(100)).unwrap();
-        tc.seal_day(day).unwrap();
+        in_process_ready(&storage, || tc.seal_day(day));
         let binding = metadosis_process_ready_binding(
             storage.chain_id().unwrap(),
             storage.block_number().unwrap(),

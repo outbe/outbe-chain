@@ -69,19 +69,32 @@ fn worldwide_day_and_emission_day_abi_preserve_bidirectional_link() {
 pub(super) fn seed_offering_day(storage: StorageHandle<'_>) {
     let wwd = 20260920.into();
     let day = 20261014u32;
-    let mut tribute = TributeContract::new(storage.clone());
-    outbe_tribute::worldwideday::create_worldwide_day(
-        &mut tribute,
-        wwd,
-        outbe_tribute::worldwideday::NewWwdSchedule {
-            day,
-            forming_start: 10,
-            forming_end: 20,
-            offerings_start: 30,
-            offering_end: 40,
-        },
-    )
-    .unwrap();
+    let binding = outbe_primitives::storage::metadosis_process_ready_binding(
+        storage.chain_id().unwrap(),
+        storage.block_number().unwrap(),
+        storage.now_secs().unwrap(),
+    );
+    storage
+        .clone()
+        .with_metadosis_mutation::<outbe_primitives::storage::MetadosisCycleLifecycle, _>(
+            binding,
+            || {
+                let mut tribute = TributeContract::new(storage.clone());
+                outbe_tribute::worldwideday::create_worldwide_day(
+                    &mut tribute,
+                    wwd,
+                    outbe_tribute::worldwideday::NewWwdSchedule {
+                        day,
+                        forming_start: 10,
+                        forming_end: 20,
+                        offerings_start: 30,
+                        offering_end: 40,
+                    },
+                )?;
+                Ok(())
+            },
+        )
+        .unwrap();
     let metadosis = MetadosisContract::new(storage);
     metadosis
         .emission_days
