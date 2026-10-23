@@ -145,6 +145,8 @@ pub fn load(storage: &StorageHandle<'_>, id: WwdEntityId) -> Result<Option<Loade
         .transpose()
 }
 
+/// Test helper. Production deletion is only `create_nod` after Nod issuance.
+#[cfg(test)]
 pub fn burn_loaded(storage: &StorageHandle<'_>, loaded: LoadedTribute) -> Result<()> {
     let LoadedTribute { record } = loaded;
     let current = StoredTribute::from(
@@ -175,7 +177,7 @@ pub fn burn_loaded(storage: &StorageHandle<'_>, loaded: LoadedTribute) -> Result
             .checked_sub(1)
             .ok_or(TributeError::TotalSupplyUnderflowDuringBurn)?;
         contract.total_supply.write(supply)?;
-        contract.delete_loaded_state_record(&record)?;
+        contract.delete_state_record(record.tribute_id)?;
         contract.emit(ITribute::TributeBurned {
             tributeId: record.tribute_id.to_u256(),
             owner: record.owner,
@@ -185,6 +187,7 @@ pub fn burn_loaded(storage: &StorageHandle<'_>, loaded: LoadedTribute) -> Result
 }
 
 pub fn retire_completed_day(storage: &StorageHandle<'_>, day: WorldwideDay) -> Result<bool> {
+    storage.require_metadosis_process_ready()?;
     let mut contract = TributeContract::new(storage.clone());
     storage.with_checkpoint(|| {
         if contract.retired_days.read(&day)? {
@@ -319,6 +322,14 @@ mod tests {
             assert!(get_record(&storage, id).unwrap().is_none());
             assert_eq!(contract.total_supply().unwrap(), 0);
             assert!(contract.state_records_by_owner(owner).unwrap().is_empty());
+            assert!(contract.state_records_by_day(day).unwrap().is_empty());
+            assert_eq!(
+                contract
+                    .get_day_totals(day)
+                    .unwrap()
+                    .tribute_nominal_total_minor,
+                U256::ZERO
+            );
         });
     }
 

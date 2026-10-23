@@ -20,9 +20,19 @@ pub fn create_worldwide_day(
         BlockContext::empty_for_tests(block_number, timestamp, chain_id),
         storage.clone(),
     );
-    crate::lifecycle::create_worldwide_day_for_date(
-        &mut crate::schema::MetadosisContract::new(storage),
-        &context,
-        worldwide_day,
+    let binding = outbe_primitives::storage::metadosis_process_ready_binding(
+        storage.chain_id()?,
+        storage.block_number()?,
+        storage.now_secs()?,
+    );
+    storage.with_metadosis_mutation::<outbe_primitives::storage::MetadosisCycleLifecycle, _>(
+        binding,
+        || {
+            crate::lifecycle::create_worldwide_day_for_date(
+                &mut crate::schema::MetadosisContract::new(storage.clone()),
+                &context,
+                worldwide_day,
+            )
+        },
     )
 }

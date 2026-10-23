@@ -243,6 +243,10 @@ fn schedule_public_measurement_day(
     let mut provider = HashMapStorageProvider::new(chain_id);
     let account_keys = load_measurement_accounts(genesis, &mut provider)?;
     provider.set_block_number(1);
+    provider.enable_metadosis_mutation_frames(
+        outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
+        1,
+    );
     let changed = StorageHandle::enter(&mut provider, |storage| {
         seed_public_measurement_day(storage, &day)
     })?;
@@ -358,7 +362,15 @@ fn seed_public_measurement_day(
             offering_end: day.offering_end,
         })
         .apply(storage.clone())?;
-    outbe_tribute::TributeContract::new(storage).unseal_day(worldwide_day)?;
+    let binding = outbe_primitives::storage::metadosis_process_ready_binding(
+        storage.chain_id()?,
+        storage.block_number()?,
+        storage.now_secs()?,
+    );
+    storage.with_metadosis_mutation::<outbe_primitives::storage::MetadosisCycleLifecycle, _>(
+        binding,
+        || outbe_tribute::TributeContract::new(storage.clone()).unseal_day(worldwide_day),
+    )?;
     Ok(report.changed)
 }
 

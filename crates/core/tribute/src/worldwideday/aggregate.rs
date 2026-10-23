@@ -108,6 +108,7 @@ pub fn create_worldwide_day(
     worldwide_day: WorldwideDay,
     schedule: NewWwdSchedule,
 ) -> Result<bool> {
+    crate::runtime::require_worldwide_day_creation_lease(&tribute.storage_handle())?;
     if let Some(existing) = tribute.worldwide_days.get(worldwide_day)? {
         if existing.day != schedule.day {
             return Err(WwdStorageCorruptionError::WwdDayLinkMismatch {
@@ -157,6 +158,7 @@ pub fn remove_active_worldwide_day(
     tribute: &mut TributeContract<'_>,
     worldwide_day: WorldwideDay,
 ) -> Result<()> {
+    crate::runtime::require_worldwide_day_removal_lease(&tribute.storage_handle())?;
     tribute.active_wwd.remove(&worldwide_day)?;
     Ok(())
 }

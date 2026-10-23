@@ -10,6 +10,7 @@ use crate::{day_schema::StoredDayTotals, DayTotals, TributeContract};
 
 impl TributeContract<'_> {
     pub fn freeze_day_nominal(&self, totals: &DayTotals) -> Result<()> {
+        self.storage_handle().require_metadosis_process_ready()?;
         if self
             .day_amount_record(totals.worldwide_day, true)?
             .is_some()

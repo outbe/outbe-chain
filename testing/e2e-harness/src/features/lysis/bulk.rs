@@ -174,13 +174,20 @@ fn all_validators_observe_public_tributes(world: &mut World, count: usize) {
         let deadline = Instant::now() + Duration::from_secs(300);
         loop {
             let supply_matches = world.rpc.supply(port).as_deref() == Some(&expected_supply);
-            let day_matches = world
-                .rpc
-                .tributes_by_day(port, worldwide_day)
-                .is_some_and(|ids| {
-                    ids.len() == count
-                        && ids.iter().collect::<std::collections::BTreeSet<_>>().len() == count
-                });
+            let day = outbe_primitives::time::WorldwideDay::new(worldwide_day);
+            let day_matches = world.state.tribute_owner_keys[..count].iter().all(|key| {
+                let Some(owner) = crate::internal::eth::address_of(key) else {
+                    return false;
+                };
+                let Ok(id) = outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(owner, day)
+                else {
+                    return false;
+                };
+                world
+                    .rpc
+                    .tributes_by_owner(port, owner)
+                    .is_some_and(|ids| ids.len() == 1 && ids[0] == id.to_u256())
+            });
             if supply_matches && day_matches {
                 break;
             }

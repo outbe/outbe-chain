@@ -13,6 +13,7 @@ impl TributeFactoryContract<'_> {
         if self.has_used_su_hash(su_hash)? {
             return Err(TributeFactoryError::SuHashAlreadyUsed.into());
         }
+        // Silent marker. Replay rejection reads this flag. No per-hash log.
         self.used_su_hashes.write(&su_hash, true)
     }
 

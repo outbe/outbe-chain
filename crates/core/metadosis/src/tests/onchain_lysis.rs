@@ -164,48 +164,58 @@ fn fixture_with_amounts(limit: u64, amounts: &[u64]) -> HashMapStorageProvider {
             forming_end + outbe_chain_constants::get_metadosis_lookback_delay_seconds();
         let offering_end =
             offerings_start + outbe_chain_constants::get_metadosis_offering_period_seconds();
-        let mut tribute = TributeContract::new(storage.clone());
-        outbe_tribute::worldwideday::create_worldwide_day(
-            &mut tribute,
-            WWD,
-            outbe_tribute::worldwideday::NewWwdSchedule {
-                day: DAY,
-                forming_start,
-                forming_end,
-                offerings_start,
-                offering_end,
-            },
-        )
-        .unwrap();
-        tribute.unseal_day(WWD).unwrap();
-        let metadosis = MetadosisContract::new(storage.clone());
-        metadosis
-            .emission_days
-            .create(&crate::schema::EmissionDay {
-                day: DAY,
-                emission_limit_minor: U256::from(limit),
-                wwd: WWD,
-                metadosis_start: 50,
-                state: emission_day_state::NONE,
-            })
+        let binding = outbe_primitives::storage::metadosis_process_ready_binding(
+            storage.chain_id().unwrap(),
+            storage.block_number().unwrap(),
+            storage.now_secs().unwrap(),
+        );
+        storage
+            .clone()
+            .with_metadosis_mutation::<outbe_primitives::storage::MetadosisCycleLifecycle, _>(
+                binding,
+                || {
+                    let mut tribute = TributeContract::new(storage.clone());
+                    outbe_tribute::worldwideday::create_worldwide_day(
+                        &mut tribute,
+                        WWD,
+                        outbe_tribute::worldwideday::NewWwdSchedule {
+                            day: DAY,
+                            forming_start,
+                            forming_end,
+                            offerings_start,
+                            offering_end,
+                        },
+                    )?;
+                    tribute.unseal_day(WWD)?;
+                    let metadosis = MetadosisContract::new(storage.clone());
+                    metadosis
+                        .emission_days
+                        .create(&crate::schema::EmissionDay {
+                            day: DAY,
+                            emission_limit_minor: U256::from(limit),
+                            wwd: WWD,
+                            metadosis_start: 50,
+                            state: emission_day_state::NONE,
+                        })?;
+                    for (index, amount) in amounts.iter().enumerate() {
+                        let owner = Address::repeat_byte(u8::try_from(index + 1).unwrap());
+                        let amount = U256::from(*amount);
+                        tribute.issue(&outbe_tribute::TributeData {
+                            tribute_id: outbe_nod::identity::generate_nod_id(owner, WWD).unwrap(),
+                            owner,
+                            worldwide_day: WWD,
+                            issuance_amount_minor: amount,
+                            issuance_currency: 840,
+                            nominal_amount_minor: amount,
+                            reference_currency: 840,
+                            tribute_price_minor: U256::from(2),
+                        })?;
+                    }
+                    tribute.seal_day(WWD)?;
+                    Ok(())
+                },
+            )
             .unwrap();
-        for (index, amount) in amounts.iter().enumerate() {
-            let owner = Address::repeat_byte(u8::try_from(index + 1).unwrap());
-            let amount = U256::from(*amount);
-            tribute
-                .issue(&outbe_tribute::TributeData {
-                    tribute_id: outbe_nod::identity::generate_nod_id(owner, WWD).unwrap(),
-                    owner,
-                    worldwide_day: WWD,
-                    issuance_amount_minor: amount,
-                    issuance_currency: 840,
-                    nominal_amount_minor: amount,
-                    reference_currency: 840,
-                    tribute_price_minor: U256::from(2),
-                })
-                .unwrap();
-        }
-        tribute.seal_day(WWD).unwrap();
     });
     CORRUPTION.set(0);
     provider

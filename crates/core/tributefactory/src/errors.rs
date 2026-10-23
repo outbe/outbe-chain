@@ -53,6 +53,9 @@ pub enum TributeFactoryError {
     #[error("SU hash already used")]
     SuHashAlreadyUsed,
 
+    #[error("SU hash list is empty")]
+    EmptySuHashList,
+
     #[error("invalid SU hash hex: {hash}")]
     InvalidSuHashHex { hash: String },
 
@@ -245,6 +248,7 @@ impl From<TributeFactoryError> for PrecompileError {
                 revert_with(I::InvalidCanonicalIdentity {})
             }
             TributeFactoryError::SuHashAlreadyUsed => revert_with(I::SuHashAlreadyUsed {}),
+            TributeFactoryError::EmptySuHashList => revert_with(I::EmptySuHashList {}),
             TributeFactoryError::InvalidSuHashHex { hash } => {
                 revert_with(I::InvalidSuHashHex { hash })
             }

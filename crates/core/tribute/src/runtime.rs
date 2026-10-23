@@ -1,7 +1,8 @@
 mod forfeiture;
 
 use alloy_primitives::U256;
-use outbe_primitives::error::Result;
+use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 
@@ -95,6 +96,7 @@ impl TributeContract<'_> {
         verified_count: u32,
         verified_nominal: alloy_primitives::U256,
     ) -> Result<()> {
+        self.storage_handle().require_metadosis_process_ready()?;
         self.consume_lysis_partition_inner(day, verified_count, verified_nominal)
     }
 
@@ -127,6 +129,7 @@ impl TributeContract<'_> {
     /// Retires a sealed empty day in the same state checkpoint as completion.
     pub fn retire_completed_partition(&mut self, day: WorldwideDay) -> Result<RetirementOutcome> {
         let storage = self.storage_handle();
+        storage.require_metadosis_process_ready()?;
         storage.with_checkpoint(|| self.retire_completed_partition_inner(day))
     }
 
@@ -136,6 +139,7 @@ impl TributeContract<'_> {
         day: WorldwideDay,
     ) -> Result<RetirementOutcome> {
         let storage = self.storage_handle();
+        storage.require_metadosis_process_ready()?;
         storage.with_checkpoint(|| {
             let totals = self.get_day_totals(day)?;
             if !totals.initialized
@@ -156,6 +160,7 @@ impl TributeContract<'_> {
         day: WorldwideDay,
     ) -> Result<TributeForfeitureReceipt> {
         let storage = self.storage_handle();
+        storage.require_metadosis_process_ready()?;
         storage.with_checkpoint(|| forfeiture::apply(self, day))
     }
 
@@ -172,6 +177,8 @@ impl TributeContract<'_> {
         )
     }
 
+    /// Test helper. Production deletion is only `create_nod` after Nod issuance.
+    #[cfg(test)]
     pub fn burn(&mut self, tribute_id: WwdEntityId) -> Result<()> {
         let loaded = self
             .load_tribute(tribute_id)?
@@ -184,11 +191,14 @@ impl TributeContract<'_> {
         crate::state_api::load(&self.storage_handle(), tribute_id)
     }
 
-    /// Burns the exact state record retained by the loaded capability.
+    /// Test helper. Production deletion is only `create_nod` after Nod issuance.
+    #[cfg(test)]
     pub fn burn_loaded(&mut self, loaded: LoadedTribute) -> Result<()> {
         crate::state_api::burn_loaded(&self.storage_handle(), loaded)
     }
 
+    /// Test helper. Production deletion is only `create_nod` after Nod issuance.
+    #[cfg(test)]
     pub fn burn_all_by_wwd(&mut self, day: WorldwideDay) -> Result<()> {
         let storage = self.storage_handle();
         storage.with_checkpoint(|| {
@@ -200,6 +210,7 @@ impl TributeContract<'_> {
     }
 
     pub fn seal_day(&mut self, day: WorldwideDay) -> Result<()> {
+        require_day_seal_lease(&self.storage_handle())?;
         self.set_day_sealed(day, true)?;
         self.emit(ITribute::TributeWorldwideDaySealed {
             worldwideDay: day.into(),
@@ -209,6 +220,7 @@ impl TributeContract<'_> {
     }
 
     pub fn unseal_day(&mut self, day: WorldwideDay) -> Result<()> {
+        require_day_unseal_lease(&self.storage_handle())?;
         if self.retired_days.read(&day)? || self.day_amount_record(day, true)?.is_some() {
             return Err(TributeError::WorldwideDaySealed.into());
         }
@@ -228,6 +240,7 @@ impl TributeContract<'_> {
         fractions: &std::collections::BTreeMap<u16, u64>,
         completed_at: u64,
     ) -> Result<()> {
+        self.storage_handle().require_metadosis_process_ready()?;
         self.day_lysis_limit_minor.write(&day, lysis_limit_minor)?;
         self.day_metadosis_completed_at.write(&day, completed_at)?;
         for (&league, &fraction) in fractions {
@@ -276,6 +289,7 @@ impl TributeContract<'_> {
         lysis_limit_minor: U256,
         completed_at: u64,
     ) -> Result<(std::collections::BTreeMap<u16, u64>, U256)> {
+        self.storage_handle().require_metadosis_process_ready()?;
         let fi_groups = self.get_fi_groups(day)?;
         let mut tribute_count = 0u32;
         let mut total_interest = U256::ZERO;
@@ -308,8 +322,8 @@ impl TributeContract<'_> {
         Ok((fractions, allocated))
     }
 
-    /// Stage 5: Creates a `Nod` for `tribute_id` within 7 days after `Metadosis`
-    /// and atomically burns the `Tribute`.
+    /// Stage 5: Creates a `Nod` for `tribute_id` after Metadosis completion
+    /// and deletes that Tribute only when Nod issuance succeeds.
     pub fn create_nod(
         &mut self,
         caller: alloy_primitives::Address,
@@ -327,10 +341,8 @@ impl TributeContract<'_> {
                 return Err(TributeError::MetadosisNotCompleted.into());
             }
             let now = storage.now_secs()?;
-            if now < completed_at
-                || now > completed_at.saturating_add(7 * outbe_primitives::time::SECONDS_PER_DAY)
-            {
-                return Err(TributeError::NodCreationWindowExpired.into());
+            if now < completed_at {
+                return Err(TributeError::NodCreationBeforeCompletion.into());
             }
             let record = crate::state_api::get_retained_record(&storage, tribute_id)?
                 .ok_or(TributeError::TributeNotFound)?;
@@ -401,4 +413,78 @@ impl TributeContract<'_> {
             Ok(tribute_id)
         })
     }
+}
+
+#[derive(Clone, Copy)]
+enum DayLease {
+    InitGenesis,
+    CycleAllocation,
+    ProcessReady,
+    AdvanceDue,
+}
+
+fn require_day_lease(storage: &StorageHandle<'_>, lease: DayLease) -> Result<()> {
+    match lease {
+        DayLease::InitGenesis => storage.require_metadosis_init_genesis(),
+        DayLease::CycleAllocation => storage.require_metadosis_cycle_allocation(),
+        DayLease::ProcessReady => storage.require_metadosis_process_ready(),
+        DayLease::AdvanceDue => storage.require_metadosis_advance_due(),
+    }
+}
+
+/// Tries each caller binding. Only a lease identity mismatch selects the next
+/// binding. Storage, borrow, and time errors return immediately.
+fn accept_day_lease(storage: &StorageHandle<'_>, leases: &[DayLease]) -> Result<()> {
+    let mut mismatch = None;
+    for lease in leases {
+        match require_day_lease(storage, *lease) {
+            Ok(()) => return Ok(()),
+            Err(error) if lease_identity_mismatch(&error) => mismatch = Some(error),
+            Err(error) => return Err(error),
+        }
+    }
+    Err(mismatch.unwrap_or_else(|| PrecompileError::Fatal("day lease list is empty".into())))
+}
+
+fn lease_identity_mismatch(error: &PrecompileError) -> bool {
+    let PrecompileError::Revert(message) = error else {
+        return false;
+    };
+    message == "test provider Metadosis mutation lease identity mismatch"
+        || message == "Metadosis mutation frame identity mismatch"
+}
+
+/// Init-genesis, cycle allocation, and process-ready create worldwide days.
+pub(crate) fn require_worldwide_day_creation_lease(storage: &StorageHandle<'_>) -> Result<()> {
+    accept_day_lease(
+        storage,
+        &[
+            DayLease::InitGenesis,
+            DayLease::CycleAllocation,
+            DayLease::ProcessReady,
+        ],
+    )
+}
+
+/// Process-ready completion and advance-due failure remove the active day.
+pub(crate) fn require_worldwide_day_removal_lease(storage: &StorageHandle<'_>) -> Result<()> {
+    accept_day_lease(storage, &[DayLease::ProcessReady, DayLease::AdvanceDue])
+}
+
+/// Creation, offering sync, failure, and settlement each seal under their own binding.
+pub(crate) fn require_day_seal_lease(storage: &StorageHandle<'_>) -> Result<()> {
+    accept_day_lease(
+        storage,
+        &[
+            DayLease::InitGenesis,
+            DayLease::CycleAllocation,
+            DayLease::ProcessReady,
+            DayLease::AdvanceDue,
+        ],
+    )
+}
+
+/// Offering sync uses advance-due. Nested process-ready may unseal the same day.
+pub(crate) fn require_day_unseal_lease(storage: &StorageHandle<'_>) -> Result<()> {
+    accept_day_lease(storage, &[DayLease::AdvanceDue, DayLease::ProcessReady])
 }

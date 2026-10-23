@@ -11,6 +11,22 @@ use revm::{
 use crate::block::BlockContext;
 use crate::error::{PrimitivesStorageError, Result};
 use crate::storage::PrecompileStorageProvider;
+#[cfg(feature = "test-utils")]
+use crate::storage::{MetadosisMutationEntitlements, MetadosisMutationPurposeTag};
+
+#[cfg(feature = "test-utils")]
+std::thread_local! {
+    static NEXT_DIRECT_FRAME_BUDGET: std::cell::Cell<
+        Option<(MetadosisMutationPurposeTag, u8)>,
+    > = const { std::cell::Cell::new(None) };
+}
+
+/// Installs one lease budget for the next [`DirectStorageProvider::new`] on
+/// this thread. The constructor takes it. A later constructor stays denied.
+#[cfg(feature = "test-utils")]
+pub fn arm_next_direct_metadosis_frame_budget(purpose: MetadosisMutationPurposeTag, count: u8) {
+    NEXT_DIRECT_FRAME_BUDGET.with(|slot| slot.set(Some((purpose, count))));
+}
 
 /// Storage provider for block-level hooks, wrapping a mutable [`StateDB`].
 ///
@@ -42,6 +58,14 @@ pub struct DirectStorageProvider<'a, DB: StateDB> {
     events: Vec<Log>,
     snapshots: Vec<DirectSnapshot>,
     ctx: BlockContext,
+    /// Explicit fixture opt-in. Construction leaves this false, so begin,
+    /// require, and finish keep the default denial.
+    #[cfg(feature = "test-utils")]
+    metadosis_frames_enabled: bool,
+    #[cfg(feature = "test-utils")]
+    metadosis_mutation_entitlements: MetadosisMutationEntitlements,
+    #[cfg(feature = "test-utils")]
+    metadosis_mutation_active: Option<(MetadosisMutationPurposeTag, B256, u64, u64)>,
 }
 
 struct DirectSnapshot {
@@ -53,6 +77,15 @@ struct DirectSnapshot {
 impl<'a, DB: StateDB> DirectStorageProvider<'a, DB> {
     /// Creates a new provider wrapping the given state and block context.
     pub fn new(state: &'a mut DB, ctx: BlockContext) -> Self {
+        #[cfg(feature = "test-utils")]
+        let (metadosis_frames_enabled, metadosis_mutation_entitlements) = NEXT_DIRECT_FRAME_BUDGET
+            .with(|slot| match slot.take() {
+                Some((purpose, count)) => (
+                    true,
+                    MetadosisMutationEntitlements::repeated(purpose, count),
+                ),
+                None => (false, MetadosisMutationEntitlements::NONE),
+            });
         Self {
             state,
             pending: HashMap::new(),
@@ -61,7 +94,31 @@ impl<'a, DB: StateDB> DirectStorageProvider<'a, DB> {
             events: Vec::new(),
             snapshots: Vec::new(),
             ctx,
+            #[cfg(feature = "test-utils")]
+            metadosis_frames_enabled,
+            #[cfg(feature = "test-utils")]
+            metadosis_mutation_entitlements,
+            #[cfg(feature = "test-utils")]
+            metadosis_mutation_active: None,
         }
+    }
+
+    /// Replaces the fixture frame budget with one purpose and `count` leases.
+    /// This does not open a frame. A caller that never uses this method keeps
+    /// the default denial.
+    #[cfg(feature = "test-utils")]
+    pub fn enable_metadosis_mutation_frames(
+        &mut self,
+        purpose: MetadosisMutationPurposeTag,
+        count: u8,
+    ) {
+        assert!(
+            self.metadosis_mutation_active.is_none(),
+            "cannot replace an active Metadosis mutation lease"
+        );
+        self.metadosis_frames_enabled = true;
+        self.metadosis_mutation_entitlements =
+            MetadosisMutationEntitlements::repeated(purpose, count);
     }
 
     fn effective_account_info(&mut self, address: Address) -> Result<AccountInfo>
@@ -204,6 +261,69 @@ impl<DB: StateDB> PrecompileStorageProvider for DirectStorageProvider<'_, DB>
 where
     <DB as Database>::Error: std::fmt::Display,
 {
+    #[cfg(feature = "test-utils")]
+    fn begin_metadosis_mutation_frame(
+        &mut self,
+        purpose: MetadosisMutationPurposeTag,
+        binding: B256,
+        chain_id: u64,
+        block_number: u64,
+    ) -> Result<()> {
+        if !self.metadosis_frames_enabled {
+            return Err(PrimitivesStorageError::MetadosisMutationFrameUnavailable.into());
+        }
+        if self.metadosis_mutation_active.is_some()
+            || self.ctx.chain_id != chain_id
+            || self.ctx.block_number != block_number
+            || !self
+                .metadosis_mutation_entitlements
+                .consume(purpose, binding)
+        {
+            return Err(PrimitivesStorageError::TestProviderNoMatchingMetadosisLease.into());
+        }
+        self.metadosis_mutation_active = Some((purpose, binding, chain_id, block_number));
+        Ok(())
+    }
+
+    #[cfg(feature = "test-utils")]
+    fn require_metadosis_mutation_frame(
+        &mut self,
+        purpose: MetadosisMutationPurposeTag,
+        binding: B256,
+        chain_id: u64,
+        block_number: u64,
+    ) -> Result<()> {
+        if !self.metadosis_frames_enabled {
+            return Err(PrimitivesStorageError::MetadosisMutationFrameUnavailable.into());
+        }
+        if self.metadosis_mutation_active != Some((purpose, binding, chain_id, block_number)) {
+            return Err(PrimitivesStorageError::TestProviderMetadosisLeaseIdentityMismatch.into());
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "test-utils")]
+    fn finish_metadosis_mutation_frame(
+        &mut self,
+        purpose: MetadosisMutationPurposeTag,
+        binding: B256,
+        _completed: bool,
+    ) -> Result<()> {
+        if !self.metadosis_frames_enabled {
+            return Err(PrimitivesStorageError::MetadosisMutationFrameUnavailable.into());
+        }
+        let Some((active_purpose, active_binding, _, _)) =
+            self.metadosis_mutation_active.as_ref().copied()
+        else {
+            return Err(PrimitivesStorageError::TestProviderNoActiveMetadosisLease.into());
+        };
+        if active_purpose != purpose || active_binding != binding {
+            return Err(PrimitivesStorageError::TestProviderMetadosisLeaseIdentityMismatch.into());
+        }
+        self.metadosis_mutation_active = None;
+        Ok(())
+    }
+
     fn chain_id(&self) -> u64 {
         self.ctx.chain_id
     }
@@ -410,5 +530,140 @@ where
         info.balance -= amount;
         self.pending_accounts.insert(address, info);
         Ok(())
+    }
+}
+
+#[cfg(all(test, feature = "test-utils"))]
+mod metadosis_frame_tests {
+    use alloy_primitives::{address, Address, B256, U256};
+    use revm::database::{CacheDB, EmptyDB};
+
+    use super::*;
+    use crate::error::PrecompileError;
+    use crate::storage::{
+        metadosis_process_ready_binding, MetadosisCycleLifecycle, MetadosisMutationPurposeTag,
+        StorageHandle,
+    };
+
+    const SLOT: U256 = U256::from_limbs([7, 0, 0, 0]);
+    const ACCOUNT: Address = address!("0x00000000000000000000000000000000000000d1");
+
+    fn provider(db: &mut CacheDB<EmptyDB>) -> DirectStorageProvider<'_, CacheDB<EmptyDB>> {
+        DirectStorageProvider::new(db, BlockContext::empty_for_tests(9, 1_700_000_000, 42))
+    }
+
+    fn denial(result: Result<()>) -> String {
+        result.expect_err("frame call must fail").to_string()
+    }
+
+    #[test]
+    fn default_direct_denies_a_frame_without_an_opt_in() {
+        let mut db = CacheDB::new(EmptyDB::default());
+        let mut direct = provider(&mut db);
+        let binding = B256::repeat_byte(0x11);
+        let unavailable = "Metadosis mutation frame is not available";
+        assert!(denial(direct.begin_metadosis_mutation_frame(
+            MetadosisMutationPurposeTag::CycleLifecycle,
+            binding,
+            42,
+            9,
+        ))
+        .contains(unavailable));
+        assert!(denial(direct.require_metadosis_mutation_frame(
+            MetadosisMutationPurposeTag::CycleLifecycle,
+            binding,
+            42,
+            9,
+        ))
+        .contains(unavailable));
+        assert!(denial(direct.finish_metadosis_mutation_frame(
+            MetadosisMutationPurposeTag::CycleLifecycle,
+            binding,
+            true,
+        ))
+        .contains(unavailable));
+    }
+
+    #[test]
+    fn opted_in_frame_checks_scope_nesting_binding_and_rolls_back() {
+        let mut db = CacheDB::new(EmptyDB::default());
+        let mut direct = provider(&mut db);
+        direct.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 1);
+        let wrong_chain = denial(direct.begin_metadosis_mutation_frame(
+            MetadosisMutationPurposeTag::CycleLifecycle,
+            B256::repeat_byte(0x22),
+            7,
+            9,
+        ));
+        assert!(wrong_chain.contains("no matching Metadosis mutation lease"));
+
+        StorageHandle::enter(&mut direct, |storage| {
+            let binding = metadosis_process_ready_binding(
+                storage.chain_id()?,
+                storage.block_number()?,
+                storage.now_secs()?,
+            );
+            storage.with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {
+                storage.sstore(ACCOUNT, SLOT, U256::from(4))?;
+                let nested = storage
+                    .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || Ok(()));
+                assert!(denial(nested).contains("no matching Metadosis mutation lease"));
+                assert_eq!(storage.sload(ACCOUNT, SLOT)?, U256::from(4));
+                let mismatch = storage.require_metadosis_init_genesis();
+                assert!(denial(mismatch).contains("lease identity mismatch"));
+                Ok(())
+            })?;
+            assert_eq!(storage.sload(ACCOUNT, SLOT)?, U256::from(4));
+            let consumed =
+                storage.with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || Ok(()));
+            assert!(denial(consumed).contains("no matching Metadosis mutation lease"));
+            Ok::<_, PrecompileError>(())
+        })
+        .unwrap();
+
+        direct.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 1);
+        StorageHandle::enter(&mut direct, |storage| {
+            let binding = metadosis_process_ready_binding(
+                storage.chain_id()?,
+                storage.block_number()?,
+                storage.now_secs()?,
+            );
+            let failed =
+                storage.with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {
+                    storage.sstore(ACCOUNT, SLOT, U256::from(9))?;
+                    Err::<(), PrecompileError>(PrecompileError::Revert("stop".into()))
+                });
+            assert!(failed.is_err());
+            assert_eq!(storage.sload(ACCOUNT, SLOT)?, U256::from(4));
+            let closed =
+                storage.with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || Ok(()));
+            assert!(denial(closed).contains("no matching Metadosis mutation lease"));
+            Ok::<_, PrecompileError>(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn armed_constructor_budget_is_one_shot() {
+        arm_next_direct_metadosis_frame_budget(MetadosisMutationPurposeTag::CycleLifecycle, 1);
+        let mut first_db = CacheDB::new(EmptyDB::default());
+        let mut first = provider(&mut first_db);
+        first
+            .begin_metadosis_mutation_frame(
+                MetadosisMutationPurposeTag::CycleLifecycle,
+                B256::repeat_byte(0x31),
+                42,
+                9,
+            )
+            .unwrap();
+        let mut second_db = CacheDB::new(EmptyDB::default());
+        let mut second = provider(&mut second_db);
+        assert!(denial(second.begin_metadosis_mutation_frame(
+            MetadosisMutationPurposeTag::CycleLifecycle,
+            B256::repeat_byte(0x31),
+            42,
+            9,
+        ))
+        .contains("Metadosis mutation frame is not available"));
     }
 }

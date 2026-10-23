@@ -173,24 +173,13 @@ fn native_lysis_completes(world: &mut World) {
     world.state.nod_creation_blocks = nod_blocks;
 }
 
-fn create_nods_for_completed_day(
+fn tribute_owner_keys(
     world: &World,
-    day: u32,
-    ports: &[u16],
-    completed_height: u64,
-) -> (u64, std::collections::BTreeMap<alloy_primitives::U256, u64>) {
-    use crate::internal::{addresses, eth};
-    use alloy_primitives::{Address, U256};
+) -> std::collections::BTreeMap<alloy_primitives::Address, String> {
+    use crate::internal::eth;
     use std::collections::BTreeMap;
 
-    let primary = ports[0];
-    let url = world.rpc.url(primary);
-    let tribute_ids = world.rpc.tributes_by_day(primary, day).unwrap_or_default();
-    if tribute_ids.is_empty() {
-        return (completed_height, BTreeMap::new());
-    }
-
-    let mut owner_keys = BTreeMap::<Address, String>::new();
+    let mut owner_keys = BTreeMap::new();
     for idx in 0..world.validators.size() {
         if let Ok(key) = world.validators.get(idx).evm_key() {
             if let Some(addr) = eth::address_of(&key) {
@@ -205,6 +194,87 @@ fn create_nods_for_completed_day(
     }
     if let Some(addr) = eth::address_of(crate::world::forge::DEPLOYER_KEY) {
         owner_keys.insert(addr, crate::world::forge::DEPLOYER_KEY.to_owned());
+    }
+    owner_keys
+}
+
+fn live_owner_day_tribute_ids(
+    url: &str,
+    day: u32,
+    owner_keys: &std::collections::BTreeMap<alloy_primitives::Address, String>,
+) -> Vec<alloy_primitives::U256> {
+    use crate::internal::{addresses, eth};
+    use alloy_primitives::Address;
+
+    let worldwide_day = outbe_primitives::time::WorldwideDay::new(day);
+    let mut tribute_ids = Vec::new();
+    for owner in owner_keys.keys() {
+        let Ok(id) =
+            outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(*owner, worldwide_day)
+        else {
+            continue;
+        };
+        let id = id.to_u256();
+        let found: Option<Address> = eth::read_call(
+            url,
+            addresses::TRIBUTE_ADDR,
+            &eth::ITribute::ownerOfCall { tributeId: id },
+        );
+        if found == Some(*owner) {
+            tribute_ids.push(id);
+        }
+    }
+    tribute_ids
+}
+
+fn assert_claimed_tributes_left_owner_lists(
+    world: &World,
+    ports: &[u16],
+    calls: &[(alloy_primitives::U256, String)],
+) {
+    use crate::internal::{addresses, eth};
+    use alloy_primitives::Address;
+
+    for &port in ports {
+        let port_url = world.rpc.url(port);
+        for (tribute_id, key) in calls {
+            let owner = eth::address_of(key).expect("createNod owner");
+            let still_owner: Option<Address> = eth::read_call(
+                &port_url,
+                addresses::TRIBUTE_ADDR,
+                &eth::ITribute::ownerOfCall {
+                    tributeId: *tribute_id,
+                },
+            );
+            assert!(
+                still_owner.is_none(),
+                "tribute {tribute_id} remains after createNod on port {port}"
+            );
+            let owned = world.rpc.tributes_by_owner(port, owner).unwrap_or_default();
+            assert!(
+                !owned.contains(tribute_id),
+                "owner list on port {port} still contains tribute {tribute_id} after createNod"
+            );
+        }
+    }
+}
+
+fn create_nods_for_completed_day(
+    world: &World,
+    day: u32,
+    ports: &[u16],
+    completed_height: u64,
+) -> (u64, std::collections::BTreeMap<alloy_primitives::U256, u64>) {
+    use crate::internal::{addresses, eth};
+    use alloy_primitives::{Address, U256};
+    use std::collections::BTreeMap;
+
+    let primary = ports[0];
+    let url = world.rpc.url(primary);
+    let owner_keys = tribute_owner_keys(world);
+    let tribute_ids = live_owner_day_tribute_ids(&url, day, &owner_keys);
+    if tribute_ids.is_empty() {
+        return (completed_height, BTreeMap::new());
     }
 
     let mut calls = Vec::with_capacity(tribute_ids.len());
@@ -291,13 +361,7 @@ fn create_nods_for_completed_day(
         .rpc
         .wait_finalized_checkpoint(ports, last_height, 120)
         .expect("createNod finalized on all validators");
-    for &port in ports {
-        assert_eq!(
-            world.rpc.tributes_by_day(port, day),
-            Some(Vec::new()),
-            "all Tributes for day {day} must be burned after createNod on port {port}"
-        );
-    }
+    assert_claimed_tributes_left_owner_lists(world, ports, &calls);
     (last_height, blocks)
 }
 
