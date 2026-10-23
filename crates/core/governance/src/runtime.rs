@@ -216,10 +216,37 @@ impl GovernanceContract<'_> {
         }
     }
 
-    // --- meta-canon / canon writes (authorities-gated, full overwrite) ---
+    // --- meta-canon / canon writes ---
+    //
+    // The direct entries are a bootstrap route only. A chain must install its
+    // first text before there is a validator set to vote with. After version 1
+    // exists, the text changes only through an approved vote proposal
+    // ([`crate::vote_target::GovernanceVoteTarget`]).
 
+    /// Installs the first meta-canon text. Authorities-gated. Refuses with
+    /// `CanonRequiresVote` after the first version exists.
     pub fn update_meta_canon(&mut self, caller: Address, text: &str) -> Result<u64> {
         self.ensure_authority(caller)?;
+        if self.meta_canon_version.read()? != 0 {
+            return Err(GovernanceError::CanonRequiresVote.into());
+        }
+        self.apply_meta_canon_text(text)
+    }
+
+    /// Installs the first canon text. Authorities-gated. Refuses with
+    /// `CanonRequiresVote` after the first version exists.
+    pub fn update_canon(&mut self, caller: Address, text: &str) -> Result<u64> {
+        self.ensure_authority(caller)?;
+        if self.canon_version.read()? != 0 {
+            return Err(GovernanceError::CanonRequiresVote.into());
+        }
+        self.apply_canon_text(text)
+    }
+
+    /// Full overwrite of the meta-canon text: version bump, hash, revision
+    /// entry and event. It has no caller gate. Only the bootstrap entry and
+    /// the vote path call it.
+    pub(crate) fn apply_meta_canon_text(&mut self, text: &str) -> Result<u64> {
         validate_text(text, MAX_TEXT_BYTES)?;
         let version = self.meta_canon_version.read()? + 1;
         let hash = keccak256(text.as_bytes());
@@ -231,8 +258,10 @@ impl GovernanceContract<'_> {
         Ok(version)
     }
 
-    pub fn update_canon(&mut self, caller: Address, text: &str) -> Result<u64> {
-        self.ensure_authority(caller)?;
+    /// Full overwrite of the canon text: version bump, hash, revision entry
+    /// and event. It has no caller gate. Only the bootstrap entry and the
+    /// vote path call it.
+    pub(crate) fn apply_canon_text(&mut self, text: &str) -> Result<u64> {
         validate_text(text, MAX_TEXT_BYTES)?;
         let version = self.canon_version.read()? + 1;
         let hash = keccak256(text.as_bytes());
