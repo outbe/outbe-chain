@@ -63,7 +63,7 @@ builds:
     flags:
       - --release
       - --locked
-      - --package=outbe-radicle
+      - --package=outbe-radicle-sidecar
     targets:
       - x86_64-unknown-linux-gnu
   - builder: rust

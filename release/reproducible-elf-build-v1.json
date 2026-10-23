@@ -37,7 +37,7 @@
       "features": [],
       "install_profiles": ["validator"],
       "name": "outbe-radicle",
-      "package": "outbe-radicle",
+      "package": "outbe-radicle-sidecar",
       "role": "operator-sidecar"
     },
     {
