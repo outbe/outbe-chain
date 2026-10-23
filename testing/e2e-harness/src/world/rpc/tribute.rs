@@ -127,17 +127,6 @@ impl Rpc {
         )
     }
 
-    /// Canonical Tribute identities indexed by one Worldwide Day.
-    pub fn tributes_by_day(&self, port: u16, worldwide_day: u32) -> Option<Vec<U256>> {
-        eth::read_call(
-            &self.url(port),
-            addresses::TRIBUTE_ADDR,
-            &ITribute::getTributesByDayCall {
-                worldwideDay: worldwide_day,
-            },
-        )
-    }
-
     /// Create one Tribute for the currently OFFERING WorldwideDay.
     pub fn create_tribute(&self, key: &str) -> Option<String> {
         let now = eth::latest_block_timestamp(&self.cfg.rpc0)?;

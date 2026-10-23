@@ -305,21 +305,12 @@ fn duplicate_rejected_without_effects(world: &mut World) {
         .expect("derive duplicate owner")
         .parse()
         .expect("parse duplicate owner");
-    let wwd: u32 = world
-        .state
-        .wwd
-        .as_deref()
-        .expect("worldwide day")
-        .parse()
-        .expect("numeric worldwide day");
     let expected_ids = vec![after.tribute.raw_id.to_u256()];
     for port in world.validators.committee_ports() {
         let mut owner_ids = None;
-        let mut day_ids = None;
         for _ in 0..60 {
             owner_ids = world.rpc.tributes_by_owner(port, owner);
-            day_ids = world.rpc.tributes_by_day(port, wwd);
-            if owner_ids.is_some() && day_ids.is_some() {
+            if owner_ids.is_some() {
                 break;
             }
             sleep(Duration::from_millis(500));
@@ -329,12 +320,6 @@ fn duplicate_rejected_without_effects(world: &mut World) {
             owner_ids.as_slice(),
             expected_ids,
             "duplicate changed the owner's single-Tribute index on port {port}"
-        );
-        let day_ids = day_ids.expect("read Worldwide-Day Tribute index");
-        assert_eq!(
-            day_ids.as_slice(),
-            expected_ids,
-            "duplicate added or replaced a Tribute in the day index on port {port}"
         );
     }
 }

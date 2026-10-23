@@ -1,5 +1,5 @@
-use alloy_primitives::{address, B256, U256};
-use alloy_sol_types::SolEvent;
+use alloy_primitives::{address, Address, B256, U256};
+use alloy_sol_types::{SolCall, SolEvent};
 use outbe_primitives::addresses::TRIBUTE_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result as PrecompileResult};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
@@ -477,6 +477,50 @@ fn test_get_tribute_ids_by_owner() {
 
         let bob_ids = tc.get_tribute_ids_by_owner(bob).unwrap();
         assert_eq!(bob_ids, vec![t3.tribute_id]);
+    });
+}
+
+#[test]
+fn day_list_selector_rejects_and_owner_balance_stays() {
+    with_tribute(|tc| {
+        let alice = address!("0x1111111111111111111111111111111111111111");
+        let bob = address!("0x2222222222222222222222222222222222222222");
+        let mut first = sample_tribute();
+        set_owner(&mut first, alice);
+        let mut second = sample_tribute();
+        set_owner(&mut second, bob);
+        let day = first.worldwide_day;
+
+        open_sample_day(tc);
+        tc.issue(&first).unwrap();
+        tc.issue(&second).unwrap();
+
+        let storage = tc.storage_handle();
+        let owner_call = crate::precompile::ITribute::getTributesByOwnerCall { owner: alice };
+        let output = crate::precompile::dispatch(
+            storage.clone(),
+            &owner_call.abi_encode(),
+            Address::ZERO,
+            U256::ZERO,
+        )
+        .unwrap();
+        let owner_ids =
+            crate::precompile::ITribute::getTributesByOwnerCall::abi_decode_returns(&output)
+                .unwrap();
+        assert_eq!(owner_ids, vec![first.tribute_id.to_u256()]);
+        assert_eq!(tc.balance_of(alice).unwrap(), 1);
+        assert_eq!(tc.balance_of(bob).unwrap(), 1);
+        assert_eq!(tc.total_supply().unwrap(), 2);
+
+        let mut calldata = alloy_primitives::keccak256(b"getTributesByDay(uint32)")[..4].to_vec();
+        calldata.extend(U256::from(day.value()).to_be_bytes::<32>());
+        assert!(
+            crate::precompile::dispatch(storage, &calldata, Address::ZERO, U256::ZERO).is_err()
+        );
+        assert_eq!(tc.total_supply().unwrap(), 2);
+        assert_eq!(tc.get_tribute_ids_by_day(day).unwrap().len(), 2);
+        assert_eq!(tc.balance_of(alice).unwrap(), 1);
+        assert_eq!(tc.balance_of(bob).unwrap(), 1);
     });
 }
 

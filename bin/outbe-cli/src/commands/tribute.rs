@@ -56,11 +56,6 @@ pub enum TributeCmd {
         /// Owner address
         owner: Address,
     },
-    /// Show tribute token IDs recorded for a WorldwideDay
-    ByDay {
-        /// WorldwideDay value
-        worldwide_day: WorldwideDay,
-    },
     /// Show total Tribute supply
     Supply,
     /// Show current owner for a Tribute token ID
@@ -134,7 +129,6 @@ impl TributeCmd {
             Self::Show { token_id } => show(client, token_id).await,
             Self::DayTotals { worldwide_day } => day_totals(client, worldwide_day).await,
             Self::ByOwner { owner } => by_owner(client, owner).await,
-            Self::ByDay { worldwide_day } => by_day(client, worldwide_day).await,
             Self::Supply => supply(client).await,
             Self::Owner { token_id } => owner(client, token_id).await,
             Self::Offer(args) => offer(client, private_key, *args).await,
@@ -187,17 +181,6 @@ async fn fetch_tributes_by_owner(
     )?)
 }
 
-async fn fetch_tributes_by_day(
-    client: &(impl Rpc + Sync),
-    worldwide_day: WorldwideDay,
-) -> Result<TokenIdsReturn> {
-    let call = ITribute::getTributesByDayCall {
-        worldwideDay: worldwide_day.into(),
-    };
-    let result = client.eth_call(TRIBUTE_ADDR, &call.abi_encode()).await?;
-    Ok(ITribute::getTributesByDayCall::abi_decode_returns(&result)?)
-}
-
 async fn show(client: &(impl Rpc + Sync), token_id: U256) -> Result<()> {
     let token_uri = fetch_token_uri(client, token_id).await?;
 
@@ -228,17 +211,6 @@ async fn by_owner(client: &(impl Rpc + Sync), owner: Address) -> Result<()> {
     let token_ids = fetch_tributes_by_owner(client, owner).await?;
 
     println!("Owner: {owner:?}");
-    println!("Tributes: {}", token_ids.len());
-    for token_id in token_ids {
-        println!("- {token_id:?}");
-    }
-    Ok(())
-}
-
-async fn by_day(client: &(impl Rpc + Sync), worldwide_day: WorldwideDay) -> Result<()> {
-    let token_ids = fetch_tributes_by_day(client, worldwide_day).await?;
-
-    println!("WorldwideDay: {worldwide_day}");
     println!("Tributes: {}", token_ids.len());
     for token_id in token_ids {
         println!("- {token_id:?}");
@@ -508,10 +480,6 @@ mod tests {
         map.insert(
             (TRIBUTE_ADDR, ITribute::getTributesByOwnerCall::SELECTOR),
             ITribute::getTributesByOwnerCall::abi_encode_returns(&token_ids),
-        );
-        map.insert(
-            (TRIBUTE_ADDR, ITribute::getTributesByDayCall::SELECTOR),
-            ITribute::getTributesByDayCall::abi_encode_returns(&token_ids),
         );
 
         MockRpc {
