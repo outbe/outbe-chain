@@ -2,29 +2,52 @@
 //! default, and its Gratis burns from the source's pledge into the Promis reserve.
 
 use alloy_primitives::{B256, U256};
-use outbe_credis::{CleanupHours, CredisContract};
+use outbe_credis::{CleanupDays, CredisContract};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result, SweepFailure},
     expiry_queue::{self, Due, ExpiryHandler},
+    sweep_budget::SweepBudget,
 };
 
 /// Deletes the Credis of the forfeited groups. Returns the Credis deleted.
+#[cfg(test)]
 pub fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = CredisContract::new(ctx.storage.clone());
-    let mut cleanup = CredisCleanup {
-        ctx,
-        credis: CredisContract::new(ctx.storage.clone()),
-        deleted: 0,
-    };
-    expiry_queue::sweep_block(&CleanupHours(&queue), ctx, &mut cleanup)?;
+    let mut cleanup = CredisCleanup::new(ctx);
+    expiry_queue::sweep_block(&CleanupDays(&queue), ctx, &mut cleanup)?;
     Ok(cleanup.deleted)
+}
+
+pub(crate) fn sweep_through(
+    ctx: &BlockRuntimeContext,
+    through_day: u32,
+    budget: &mut SweepBudget,
+) -> Result<expiry_queue::Progress> {
+    let queue = CredisContract::new(ctx.storage.clone());
+    expiry_queue::sweep_day(
+        &CleanupDays(&queue),
+        ctx,
+        through_day,
+        budget,
+        &mut CredisCleanup::new(ctx),
+    )
 }
 
 struct CredisCleanup<'a, 'storage> {
     ctx: &'a BlockRuntimeContext<'storage>,
     credis: CredisContract<'storage>,
     deleted: u32,
+}
+
+impl<'a, 's> CredisCleanup<'a, 's> {
+    fn new(ctx: &'a BlockRuntimeContext<'s>) -> Self {
+        Self {
+            ctx,
+            credis: CredisContract::new(ctx.storage.clone()),
+            deleted: 0,
+        }
+    }
 }
 
 /// A forfeited group's members are its unsettled Credis.

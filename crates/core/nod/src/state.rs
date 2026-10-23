@@ -129,7 +129,7 @@ impl NodContract<'_> {
 
     /// Queues a called group on the deadline its notice period closes at.
     pub fn push_called(&mut self, group_key: B256, deadline: u64) -> Result<()> {
-        expiry_queue::push(&ExpiryHours(self), group_key, deadline)
+        expiry_queue::push(&ExpiryDays(self), group_key, deadline)
     }
 
     /// Records every unpaid member called at once: the group leaves the trie for the
@@ -154,7 +154,7 @@ impl NodContract<'_> {
 
     /// No-op for a group the queue does not hold.
     pub fn remove_called(&mut self, group_key: B256) -> Result<()> {
-        expiry_queue::remove(&ExpiryHours(self), group_key)
+        expiry_queue::remove(&ExpiryDays(self), group_key)
     }
 
     /// No-op for a group the call index never held, so the removal funnel can call it
@@ -170,7 +170,7 @@ impl NodContract<'_> {
         self.group_call_notice_period_seconds.clear(&group_key)?;
         self.group_called_at.clear(&group_key)?;
         self.group_unpaid_load.clear(&group_key)?;
-        expiry_queue::remove(&CleanupHours(self), group_key)
+        expiry_queue::remove(&CleanupDays(self), group_key)
     }
 
     // --- Unpaid load ----------------------------------------------------------
@@ -197,29 +197,29 @@ impl NodContract<'_> {
     /// unpaid Nods. Done with the group's credit, so a retry never credits it twice.
     pub fn hand_to_cleanup(&mut self, group_key: B256) -> Result<()> {
         let deadline = self.called_deadline.read(&group_key)?;
-        expiry_queue::remove(&ExpiryHours(self), group_key)?;
-        expiry_queue::push(&CleanupHours(self), group_key, deadline)
+        expiry_queue::remove(&ExpiryDays(self), group_key)?;
+        expiry_queue::push(&CleanupDays(self), group_key, deadline)
     }
 
     #[cfg(any(test, feature = "test-utils"))]
-    pub fn first_cleanup_hour(&self) -> Result<Option<u32>> {
-        expiry_queue::first_bucket(&CleanupHours(self))
+    pub fn first_cleanup_day(&self) -> Result<Option<u32>> {
+        expiry_queue::first_day(&CleanupDays(self))
     }
 }
 
 /// Forfeited groups whose unpaid Nods wait to be deleted.
-pub struct CleanupHours<'a, 'storage>(pub &'a NodContract<'storage>);
+pub struct CleanupDays<'a, 'storage>(pub &'a NodContract<'storage>);
 
-outbe_primitives::impl_expiry_queue!(CleanupHours<B256> {
+outbe_primitives::impl_expiry_queue!(CleanupDays<B256> {
     root: cleanup_tree_root,
     mid: cleanup_tree_mid,
     leaf: cleanup_tree_leaf,
-    len: cleanup_bucket_len,
-    live: cleanup_bucket_live,
-    at: cleanup_bucket_at,
+    len: cleanup_day_len,
+    live: cleanup_day_live,
+    at: cleanup_day_at,
     slot: cleanup_group_slot,
     deadline: cleanup_deadline,
-    sweep_bucket: cleanup_sweep_hour,
+    sweep_day: cleanup_sweep_day,
     cursor: cleanup_cursor,
 });
 
@@ -237,18 +237,18 @@ outbe_primitives::impl_call_bins!(CallBins<B256> {
     failed: call_scan_failed_day,
 });
 
-/// Called groups, queued by the hour their notice period closes in.
-pub struct ExpiryHours<'a, 'storage>(pub &'a NodContract<'storage>);
+/// This queue orders called groups by the UTC day when their notice period closes.
+pub struct ExpiryDays<'a, 'storage>(pub &'a NodContract<'storage>);
 
-outbe_primitives::impl_expiry_queue!(ExpiryHours<B256> {
+outbe_primitives::impl_expiry_queue!(ExpiryDays<B256> {
     root: expiry_tree_root,
     mid: expiry_tree_mid,
     leaf: expiry_tree_leaf,
-    len: expiry_bucket_len,
-    live: expiry_bucket_live,
-    at: expiry_bucket_at,
+    len: expiry_day_len,
+    live: expiry_day_live,
+    at: expiry_day_at,
     slot: called_group_slot,
     deadline: called_deadline,
-    sweep_bucket: expiry_sweep_hour,
+    sweep_day: expiry_sweep_day,
     cursor: expiry_cursor,
 });

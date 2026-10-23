@@ -28,15 +28,18 @@ pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
     call_sweep::schedule(ctx, &mut GemCallSweep::new(ctx))
 }
 
-/// Schedules the closed day and walks a slice of the day in flight. Returns the
-/// groups called.
-pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
-    let mut sweep = GemCallSweep::new(ctx);
-    call_sweep::schedule(ctx, &mut sweep)?;
-    call_sweep::continue_day(ctx, &mut sweep)
+pub fn initialize_daily(ctx: &BlockRuntimeContext) -> Result<()> {
+    call_sweep::initialize(ctx, &mut GemCallSweep::new(ctx))
 }
 
-/// Walks the next slice of the day in flight. Returns how many groups were called.
+/// This function runs the coupled daily pass, including forfeits and position expiry after calls.
+/// It returns the number of called groups, not the pass completion state.
+pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
+    call_sweep::continue_day(ctx, &mut GemCallSweep::new(ctx))
+}
+
+/// This function resumes the coupled daily pass under this block height's shared allowance.
+/// It returns the number of called groups.
 pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_sweep::continue_day(ctx, &mut GemCallSweep::new(ctx))
 }
@@ -55,6 +58,36 @@ impl<'storage> GemCallSweep<'storage> {
 
 impl<'storage> CallSweep<'storage> for GemCallSweep<'storage> {
     const CONSUMER: &'static str = "gem";
+    const FORFEIT_PHASES: u8 = 2;
+
+    fn phase(&self) -> &Value<'storage, u8> {
+        &self.gem.daily_phase
+    }
+
+    fn block_budget(&self) -> &Value<'storage, U256> {
+        &self.gem.daily_budget
+    }
+
+    fn genesis_day(&self) -> &Value<'storage, u32> {
+        &self.gem.daily_genesis_day
+    }
+
+    fn forfeit(
+        &mut self,
+        ctx: &BlockRuntimeContext,
+        pinned_day: u32,
+        phase: u8,
+        budget: &mut SweepBudget,
+    ) -> Result<outbe_primitives::daily_sweep::Progress> {
+        let through_day = outbe_primitives::expiry_queue::deadline_day(
+            outbe_primitives::time::date_key_to_utc_timestamp(pinned_day),
+        )?;
+        match phase {
+            1 => crate::expired::sweep_through(ctx, through_day, budget),
+            2 => crate::positions_expired::sweep_through(ctx, through_day, budget),
+            _ => Err(PrecompileError::revert("invalid Gem daily phase")),
+        }
+    }
 
     type Bins<'a>
         = CallBins<'a, 'storage>
@@ -80,13 +113,19 @@ impl<'storage> CallSweep<'storage> for GemCallSweep<'storage> {
         error.record_sweep_failure()
     }
 
-    fn slice(&mut self, ctx: &BlockRuntimeContext, pinned_day: u32) -> Result<(u32, bool)> {
+    fn slice(
+        &mut self,
+        ctx: &BlockRuntimeContext,
+        pinned_day: u32,
+        budget: &mut SweepBudget,
+    ) -> Result<(u32, bool)> {
         let params = outbe_gem::config::read(&ctx.storage)?;
         let mut called: u32 = 0;
         let gem = &self.gem;
         let finished = call_sweep::walk_day(
             ctx,
             pinned_day,
+            budget,
             call_sweep::CallIndex {
                 currency_cursor: &gem.call_currency_cursor,
                 bins: |iso_code| CallBins(gem, iso_code),

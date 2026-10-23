@@ -360,6 +360,29 @@ fn execution_revalidation_rejects_payload_or_account_mismatch_and_keeps_reservat
     });
 }
 
+fn reserve_create(
+    provider: &mut HashMapStorageProvider,
+    issuer: Address,
+    proposal_id: U256,
+    raw: &[u8],
+) -> crate::api::ValidatedStablecoinCreate {
+    StorageHandle::enter(provider, |storage| {
+        let validated =
+            StablecoinFactoryApi::validate_create(storage.clone(), issuer, raw).unwrap();
+        StablecoinFactoryApi::reserve(
+            storage,
+            &FactoryReservation {
+                proposal_id,
+                token_id: validated.token_id,
+                ticker: validated.payload.ticker.clone(),
+                token: validated.token,
+            },
+        )
+        .unwrap();
+        validated
+    })
+}
+
 #[test]
 fn pfs_010_08_every_initializer_failure_rolls_back_token_marker_registry_and_event() {
     let issuer = Address::repeat_byte(0x11);
@@ -370,21 +393,7 @@ fn pfs_010_08_every_initializer_failure_rolls_back_token_marker_registry_and_eve
 
     let mutation_count = {
         let mut provider = HashMapStorageProvider::new(1);
-        let validated = StorageHandle::enter(&mut provider, |storage| {
-            let validated =
-                StablecoinFactoryApi::validate_create(storage.clone(), issuer, &raw).unwrap();
-            StablecoinFactoryApi::reserve(
-                storage,
-                &FactoryReservation {
-                    proposal_id,
-                    token_id: validated.token_id,
-                    ticker: validated.payload.ticker.clone(),
-                    token: validated.token,
-                },
-            )
-            .unwrap();
-            validated
-        });
+        let validated = reserve_create(&mut provider, issuer, proposal_id, &raw);
         provider.clear_mutation_failure();
         StorageHandle::enter(&mut provider, |storage| {
             StablecoinFactoryApi::execute_approved(
@@ -404,21 +413,7 @@ fn pfs_010_08_every_initializer_failure_rolls_back_token_marker_registry_and_eve
 
     for operation in 0..mutation_count {
         let mut provider = HashMapStorageProvider::new(1);
-        let validated = StorageHandle::enter(&mut provider, |storage| {
-            let validated =
-                StablecoinFactoryApi::validate_create(storage.clone(), issuer, &raw).unwrap();
-            StablecoinFactoryApi::reserve(
-                storage,
-                &FactoryReservation {
-                    proposal_id,
-                    token_id: validated.token_id,
-                    ticker: validated.payload.ticker.clone(),
-                    token: validated.token,
-                },
-            )
-            .unwrap();
-            validated
-        });
+        let validated = reserve_create(&mut provider, issuer, proposal_id, &raw);
         provider.clear_mutation_failure();
         provider.fail_after_mutation_at(operation);
         StorageHandle::enter(&mut provider, |storage| {

@@ -166,7 +166,7 @@ fn rounded_returns_can_exhaust_collateral_before_repayment_or_forfeiture() {
             StorageHandle::enter(&mut provider, |storage| {
                 let called_at = now_of(&storage);
                 call_credis(&storage, id, called_at);
-                let expired_at = called_at + NOTICE + HOUR;
+                let expired_at = called_at + NOTICE + CLOSED_DAY_DELAY;
                 advance_to(&storage, expired_at);
                 finalize_through(&storage, expired_at);
                 // The rounding already returned every Gratis: nothing is burned.
@@ -508,7 +508,7 @@ fn repayment_deadline_is_enforced_before_cleanup_through_the_abi() {
         let balance = view_balance(&storage, alice());
         let pledged = view_pledged(&storage, alice());
         assert_eq!(pledged, pledge_cost() / U256::from(2));
-        advance_to(&storage, deadline + HOUR);
+        advance_to(&storage, deadline + CLOSED_DAY_DELAY);
         let data = ICredisFactory::settleCredisCall {
             credisId: id,
             amountMinor: U256::MAX,
@@ -527,7 +527,7 @@ fn repayment_deadline_is_enforced_before_cleanup_through_the_abi() {
         assert_eq!(view_balance(&storage, alice()), balance);
         assert_eq!(view_pledged(&storage, alice()), pledged);
 
-        assert_eq!(expire(&storage, deadline + HOUR), 1);
+        assert_eq!(expire(&storage, deadline + CLOSED_DAY_DELAY), 1);
         assert_eq!(view_balance(&storage, alice()), balance);
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
         assert_eq!(unallocated(&storage), pledged);
@@ -577,7 +577,7 @@ fn the_stake_stays_with_the_owner_through_settlement_and_forfeit() {
             StorageHandle::enter(&mut provider, |storage| {
                 let called_at = now_of(&storage);
                 call_credis(&storage, id, called_at);
-                let deadline = called_at + NOTICE + HOUR;
+                let deadline = called_at + NOTICE + CLOSED_DAY_DELAY;
                 advance_to(&storage, deadline);
                 finalize_through(&storage, deadline);
                 assert_eq!(expire(&storage, deadline), 1);
@@ -701,10 +701,10 @@ fn a_half_paid_call_forfeits_only_the_unpaid_backing_of_another_accounts_source(
             );
         }
         let supply = view_balance(&storage, alice()) + view_pledged(&storage, alice());
-        advance_to(&storage, deadline + HOUR);
-        finalize_through(&storage, deadline + HOUR);
-        assert_eq!(expire(&storage, deadline + HOUR), 1);
-        assert_eq!(expire(&storage, deadline + HOUR), 0);
+        advance_to(&storage, deadline + CLOSED_DAY_DELAY);
+        finalize_through(&storage, deadline + CLOSED_DAY_DELAY);
+        assert_eq!(expire(&storage, deadline + CLOSED_DAY_DELAY), 1);
+        assert_eq!(expire(&storage, deadline + CLOSED_DAY_DELAY), 0);
         assert!(!CredisContract::new(storage.clone())
             .credis_exists(credis_id)
             .unwrap());
@@ -812,7 +812,7 @@ fn the_owner_cannot_forfeit_a_lapsed_call_that_the_sweep_forfeits() {
         let id = open(&storage, 1);
         let called_at = now_of(&storage);
         assert!(call_credis(&storage, id, called_at));
-        let lapsed = outbe_credis::settlement_deadline(&record(&storage, id)) + HOUR;
+        let lapsed = outbe_credis::settlement_deadline(&record(&storage, id)) + CLOSED_DAY_DELAY;
         advance_to(&storage, lapsed);
         finalize_through(&storage, lapsed);
 
@@ -947,7 +947,7 @@ fn lifecycle_steps_keep_their_gas_storage_and_log_footprint() {
         bootstrap(&storage, pledge_cost());
         let id = open(&storage, 1);
         call_credis(&storage, id, CREATED_AT);
-        let deadline = CREATED_AT + NOTICE + HOUR;
+        let deadline = CREATED_AT + NOTICE + CLOSED_DAY_DELAY;
         advance_to(&storage, deadline);
         finalize_through(&storage, deadline);
         (id, deadline)
@@ -1001,14 +1001,15 @@ fn lifecycle_steps_keep_their_gas_storage_and_log_footprint() {
                 reads: 78,
                 writes: 0,
                 logs: b256!("0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"),
-                state: b256!("0x941889c4a3d65396ab4c17df297b1d07a82dea4ee01bb092c9d0bb642ecef5a8"),
+                // Daily scheduling keys and nonzero queue locations change stored state.
+                state: b256!("0xd6e9b1310b841c09f094362b0feb2c6e61d7c25500139c7e8715662ea8024dbf"),
             },
             Footprint {
-                gas: 370500,
-                reads: 155,
+                gas: 370100,
+                reads: 151,
                 writes: 71,
                 logs: b256!("0x42350e0ceadf5f8160c7fd05f29d7c6fe163d7aa3f377817fb7a04adbf541b5c"),
-                state: b256!("0xe611730c86fa786d2200274711db57bd5efba2f07ef5ec936dd2a59456d089ce"),
+                state: b256!("0x55cc30ee179b8fcb447ea0b608317ee350d891ee660a0c53d98f77204735939f"),
             },
         ]
     );
