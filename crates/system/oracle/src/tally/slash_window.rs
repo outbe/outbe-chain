@@ -62,7 +62,7 @@ fn close_validator_window(
         return oracle.reset_penalty_counter(&addr);
     }
 
-    // valid_rate = success * 1e18 / total
+    // valid_rate = success * 1e18 / total, rounded down: a rate just below the minimum fails.
     let valid_rate = U256::from(success) * SCALE_1E18 / U256::from(total);
 
     if valid_rate < policy.min_valid {
@@ -85,9 +85,9 @@ fn jail_and_slash(oracle: &mut OracleContract, addr: Address) -> Result<()> {
         // Oracle underperformance felony: JAIL (not force-exit) + slash.
         vs_mut.jail_validator(addr)?;
         let event = IOracle::ValidatorForcedExit { validator: addr };
-        let _ = oracle
+        oracle
             .storage
-            .emit_event(ORACLE_ADDRESS, event.encode_log_data());
+            .emit_event(ORACLE_ADDRESS, event.encode_log_data())?;
 
         slash_stake(oracle, addr)?;
 
@@ -115,9 +115,9 @@ fn slash_stake(oracle: &mut OracleContract, addr: Address) -> Result<()> {
             validator: addr,
             slashPercent: slash_pct,
         };
-        let _ = oracle
+        oracle
             .storage
-            .emit_event(ORACLE_ADDRESS, event.encode_log_data());
+            .emit_event(ORACLE_ADDRESS, event.encode_log_data())?;
     }
     Ok(())
 }

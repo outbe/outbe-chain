@@ -54,6 +54,7 @@ fn time_weighted_average(data: &[(u64, U256)], now: u64) -> Result<U256> {
         return Ok(data[0].1);
     }
 
+    // Rounded down.
     Ok(sums.price_time / sums.time)
 }
 
@@ -138,5 +139,33 @@ impl OracleContract<'_> {
         let twaps =
             self.vote_target_values(|pair| self.try_calculate_twap(pair, now, lookback_seconds))?;
         Ok(pair_series(twaps, lookback_seconds))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// A time-weighted average lies between the lowest and highest sample rate.
+        #[test]
+        fn twap_lies_within_the_sample_rates(
+            samples in prop::collection::vec((1u64..10_000, 1u128..), 2..32),
+            tail in 0u64..10_000,
+        ) {
+            let mut at = 0u64;
+            let data: Vec<(u64, U256)> = samples
+                .iter()
+                .map(|&(gap, rate)| {
+                    at += gap;
+                    (at, U256::from(rate))
+                })
+                .collect();
+            let twap = time_weighted_average(&data, at + tail).unwrap();
+            let low = data.iter().map(|s| s.1).min().unwrap();
+            let high = data.iter().map(|s| s.1).max().unwrap();
+            prop_assert!(low <= twap && twap <= high);
+        }
     }
 }

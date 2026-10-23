@@ -8762,6 +8762,7 @@ dependencies = [
  "outbe-staking",
  "outbe-update",
  "outbe-validatorset",
+ "proptest",
  "serde_json",
  "thiserror 2.0.18",
  "toml 0.8.23",

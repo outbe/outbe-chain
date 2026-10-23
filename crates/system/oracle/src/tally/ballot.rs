@@ -103,7 +103,7 @@ pub fn standard_deviation(ballot: &[VoteForTally], median: U256) -> Result<U256>
             ))?;
     }
 
-    // variance = sum_sq / count (at the square of the rate scale)
+    // variance = sum_sq / count (at the square of the rate scale), rounded down
     let variance = sum_sq / count;
 
     // sqrt(variance) -> result in the original rate scale
@@ -169,6 +169,7 @@ pub(super) fn evaluate_pair(
 
     // reward_spread = max(std_dev, median * reward_band / (2 * FP18)).
     // The reward band is dimensionless FP18; the result stays in median scale.
+    // The division rounds down, so the band spread is never wider than exact.
     let wide_base_spread =
         (U512::from(median) * U512::from(reward_band)) / U512::from(U256::from(2u64) * SCALE_1E18);
     if wide_base_spread > U512::from(U256::MAX) {

@@ -1,4 +1,4 @@
-//! Raw price snapshot ring: capacity checks, writes, VWAP aggregates and
+//! Raw price snapshot log: capacity checks, writes, VWAP aggregates and
 //! eviction.
 
 use alloy_primitives::U256;
@@ -9,7 +9,8 @@ use outbe_primitives::storage::types::Mapping;
 use outbe_primitives::time::SECONDS_PER_DAY;
 
 use crate::constants::{
-    zero_volume_weight, HOURLY_VWAP_CELLS, MAX_SNAPSHOT_RETENTION_SECONDS, VWAP_HOUR_SECONDS,
+    zero_volume_weight, HOURLY_VWAP_CELLS, MAX_SNAPSHOT_EVICTIONS_PER_WRITE,
+    MAX_SNAPSHOT_RETENTION_SECONDS, VWAP_HOUR_SECONDS,
 };
 use crate::errors::OracleError;
 use crate::schema::OracleContract;
@@ -258,19 +259,28 @@ impl OracleContract<'_> {
         hourly.add(pair, cell, pv, volume)
     }
 
-    /// Evicts snapshots older than the retention window.
+    /// Evicts snapshots older than the retention window and clears their slots.
+    /// Every reader stays within `[snapshot_oldest_idx, snapshot_write_idx)`, so a
+    /// cleared snapshot is never read.
     fn evict_old_snapshots(&mut self, current_timestamp: u64) -> Result<()> {
         let oldest = self.snapshot_oldest_idx.read()?;
         let write_idx = self.snapshot_write_idx.read()?;
 
         let cutoff = current_timestamp.saturating_sub(MAX_SNAPSHOT_RETENTION_SECONDS);
+        let limit = write_idx.min(oldest.saturating_add(MAX_SNAPSHOT_EVICTIONS_PER_WRITE));
         let mut new_oldest = oldest;
 
-        while new_oldest < write_idx {
+        while new_oldest < limit {
             let ts = self.snapshot_timestamp.read(&new_oldest)?;
             if ts >= cutoff {
                 break;
             }
+            let entries = self.snapshot_entries(new_oldest);
+            for entry in 0..self.snapshot_pair_count.read(&new_oldest)? {
+                entries.write(entry, AddressPair::ZERO, U256::ZERO, U256::ZERO)?;
+            }
+            self.snapshot_pair_count.write(&new_oldest, 0)?;
+            self.snapshot_timestamp.write(&new_oldest, 0)?;
             new_oldest += 1;
         }
 

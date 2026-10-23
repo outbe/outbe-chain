@@ -51,9 +51,9 @@ where
     let storage = oracle.storage.clone();
     mutate_void(&storage, call, caller, |sender, call| {
         let event = apply(oracle, sender, call)?;
-        let _ = oracle
+        oracle
             .storage
-            .emit_event(ORACLE_ADDRESS, event.encode_log_data());
+            .emit_event(ORACLE_ADDRESS, event.encode_log_data())?;
         Ok(())
     })
 }
