@@ -93,7 +93,10 @@ fn ledger(p: &mut HashMapStorageProvider, id: SeriesId, terminal: bool) {
             10
         );
         let factory = IntexContract::new(s.clone());
-        let key = api::read_series(&s, id).unwrap().group_key();
+        let key = api::read_series(&s, id)
+            .unwrap()
+            .group_key()
+            .expect("date step");
         let pending = u32::from(factory.called_group_slot.read(&key).unwrap() != 0);
         let returned = PromisLimitContract::new(s).promis_limit().unwrap();
         if terminal {

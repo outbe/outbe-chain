@@ -743,7 +743,11 @@ mod tests {
                     .counter
                     .write(
                         &SIGNER,
-                        pack_counter(outbe_primitives::time::previous_date_key(BLOCK_DAY), 8),
+                        pack_counter(
+                            outbe_primitives::time::previous_date_key(BLOCK_DAY)
+                                .expect("date step"),
+                            8,
+                        ),
                     )
                     .unwrap();
             }
@@ -786,7 +790,11 @@ mod tests {
                     .counter
                     .write(
                         &SIGNER,
-                        pack_counter(outbe_primitives::time::previous_date_key(BLOCK_DAY), 8),
+                        pack_counter(
+                            outbe_primitives::time::previous_date_key(BLOCK_DAY)
+                                .expect("date step"),
+                            8,
+                        ),
                     )
                     .unwrap();
             }
@@ -802,7 +810,7 @@ mod tests {
             let auth = authorize_sponsorship(storage, SIGNER, just_before).unwrap();
             assert_eq!(
                 auth.current_day,
-                outbe_primitives::time::previous_date_key(BLOCK_DAY)
+                outbe_primitives::time::previous_date_key(BLOCK_DAY).expect("date step")
             );
         });
     }

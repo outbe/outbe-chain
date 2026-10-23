@@ -15,6 +15,7 @@ interface IMetadosis {
     error WaitingWindowOverflow();
     error DurationOverflow(string label);
     error UtcPlus14TimestampOverflow();
+    error DateStep(uint8 kind, uint32 dateKey);
 
     event MetadosisAccumulation(
         uint32 indexed date, uint256 metadosisLimitMinor, uint256 totalAccumulatedMinor, uint64 blockNumber

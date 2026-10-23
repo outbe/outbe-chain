@@ -50,6 +50,12 @@ pub enum CycleError {
         offset: u64,
         timestamp: u64,
     },
+    #[error("date key {date_key} is before 20200101")]
+    DateBeforeMinimum { date_key: u32 },
+    #[error("date step from {date_key} does not fit u32")]
+    DateOverflow { date_key: u32 },
+    #[error("date step from {date_key} does not fit u64")]
+    TimestampStepOverflow { date_key: u32 },
 }
 
 impl From<CycleError> for PrecompileError {
@@ -132,6 +138,25 @@ impl From<CycleError> for PrecompileError {
                 }
                 .abi_encode(),
             )),
+            error @ CycleError::DateBeforeMinimum { date_key: _ } => {
+                PrecompileError::Fatal(error.to_string())
+            }
+            CycleError::DateOverflow { date_key } => PrecompileError::RevertBytes(Bytes::from(
+                ICycle::DateStep {
+                    kind: 2,
+                    dateKey: date_key,
+                }
+                .abi_encode(),
+            )),
+            CycleError::TimestampStepOverflow { date_key } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ICycle::DateStep {
+                        kind: 3,
+                        dateKey: date_key,
+                    }
+                    .abi_encode(),
+                ))
+            }
         }
     }
 }
@@ -150,6 +175,14 @@ mod tests {
         assert!(matches!(
             PrecompileError::from(fatal),
             PrecompileError::Fatal(msg) if msg == fatal_msg
+        ));
+        let before = CycleError::DateBeforeMinimum {
+            date_key: 20_191_231,
+        };
+        let before_msg = before.to_string();
+        assert!(matches!(
+            PrecompileError::from(before),
+            PrecompileError::Fatal(msg) if msg == before_msg
         ));
 
         let cases = [
@@ -232,6 +265,18 @@ mod tests {
                     timestamp: u64::MAX,
                 },
                 ICycle::ScheduleArithmeticOverflow::SELECTOR,
+            ),
+            (
+                CycleError::DateOverflow {
+                    date_key: 4_294_961_231,
+                },
+                ICycle::DateStep::SELECTOR,
+            ),
+            (
+                CycleError::TimestampStepOverflow {
+                    date_key: 20_260_101,
+                },
+                ICycle::DateStep::SELECTOR,
             ),
         ];
         for (err, selector) in cases {

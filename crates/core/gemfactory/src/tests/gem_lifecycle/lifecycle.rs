@@ -184,7 +184,7 @@ fn a_group_holds_the_gems_of_one_first_full_day_call_price_and_currency() {
         assert_eq!(
             group,
             outbe_primitives::call_breach::group_key(
-                outbe_primitives::time::first_full_day(T_NOW),
+                outbe_primitives::time::first_full_day(T_NOW).expect("date step"),
                 view(storage, gems[0]).terms.call_price_minor,
                 USD
             )
@@ -242,7 +242,7 @@ fn a_midnight_gem_and_a_later_one_that_day_are_in_different_groups() {
         );
         assert_eq!(
             group_day(later),
-            outbe_primitives::time::first_full_day(midnight + 2)
+            outbe_primitives::time::first_full_day(midnight + 2).expect("date step")
         );
     });
 }
@@ -486,8 +486,11 @@ fn a_gem_id_is_its_raw_keccak_and_the_group_id_carries_the_day() {
         let stored = item(storage, gem_id).unwrap();
         assert_eq!(WwdEntityId::from(gem_id), stored.gem_id);
         assert_eq!(
-            stored.group_id(),
-            WwdEntityId::from_day_and_digest(stored.full_day_after_issue(), stored.group_key)
+            stored.group_id().expect("date step"),
+            WwdEntityId::from_day_and_digest(
+                stored.full_day_after_issue().expect("date step"),
+                stored.group_key
+            )
         );
         assert_eq!(stored.worldwide_day().value(), timestamp_to_date_key(T_NOW));
     });
@@ -521,7 +524,7 @@ fn backdate_that_changes_the_day_moves_the_gem_and_opens_a_new_group() {
         assert_eq!(
             after.group_key,
             outbe_primitives::call_breach::group_key(
-                after.full_day_after_issue().value(),
+                after.full_day_after_issue().expect("date step").value(),
                 view(storage, gem_id).terms.call_price_minor,
                 USD
             )
@@ -531,7 +534,10 @@ fn backdate_that_changes_the_day_moves_the_gem_and_opens_a_new_group() {
             "the only member left, so the old group body is gone"
         );
         let group = api::get_group(storage, after.group_key).unwrap().unwrap();
-        assert_eq!(group.full_day_after_issue, after.full_day_after_issue());
+        assert_eq!(
+            group.full_day_after_issue,
+            after.full_day_after_issue().expect("date step")
+        );
         assert_eq!(GemContract::new(storage.clone()).total_supply().unwrap(), 1);
         assert_eq!(owned(storage, ALICE), vec![gem_id]);
     });

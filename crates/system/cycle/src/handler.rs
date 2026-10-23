@@ -16,8 +16,8 @@ use outbe_emissionlimit::{
 };
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    error::Result,
-    time::{date_key_to_utc_timestamp, next_date_key, timestamp_to_date_key},
+    error::{PrecompileError, Result},
+    time::{date_key_to_utc_timestamp, next_date_key, timestamp_to_date_key, TimeError},
     units::{checked_protocol_to_native, native_to_protocol_floor},
 };
 
@@ -66,7 +66,8 @@ pub fn protocol_day_action(active_utc_day: u32, block_utc_day: u32) -> Result<Pr
     if active_utc_day == block_utc_day {
         return Ok(ProtocolDayAction::SameDay);
     }
-    if next_date_key(active_utc_day) == block_utc_day {
+    let next = next_date_key(active_utc_day).map_err(calendar_step_error)?;
+    if next == block_utc_day {
         return Ok(ProtocolDayAction::SettlePrevious {
             day: active_utc_day,
         });
@@ -75,6 +76,23 @@ pub fn protocol_day_action(active_utc_day: u32, block_utc_day: u32) -> Result<Pr
         from: active_utc_day,
         to: block_utc_day,
     })
+}
+
+/// Maps a date step to the cycle error class.
+///
+/// `TimeError` is `non_exhaustive`. The trailing arm keeps `PreGenesis` and any
+/// later variant on the fatal path. It does not invent a `DateStep` for them.
+fn calendar_step_error(err: TimeError) -> PrecompileError {
+    match err {
+        TimeError::DateBeforeMinimum { date_key } => {
+            CycleError::DateBeforeMinimum { date_key }.into()
+        }
+        TimeError::DateOverflow { date_key } => CycleError::DateOverflow { date_key }.into(),
+        TimeError::TimestampStepOverflow { date_key } => {
+            CycleError::TimestampStepOverflow { date_key }.into()
+        }
+        err => PrecompileError::Fatal(err.to_string()),
+    }
 }
 
 /// Returns `true` when `date_key` is a `YYYYMMDD` UTC day from 1970 or later
@@ -423,7 +441,8 @@ pub fn run_protocol_cycle(ctx: &BlockRuntimeContext) -> Result<()> {
 pub(crate) fn run_emission_limit_daily(ctx: &BlockRuntimeContext) -> Result<()> {
     settle_emission_day(
         ctx,
-        outbe_primitives::time::previous_date_key(timestamp_to_date_key(ctx.block.timestamp)),
+        outbe_primitives::time::previous_date_key(timestamp_to_date_key(ctx.block.timestamp))
+            .expect("date step"),
     )?;
     outbe_metadosis::commands::start_metadosis(ctx)
 }

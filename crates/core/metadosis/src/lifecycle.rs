@@ -24,6 +24,15 @@ use crate::{
     schema::{emission_day_state, EmissionDay, MetadosisContract},
 };
 
+fn date_step_error(
+    err: outbe_primitives::time::TimeError,
+) -> outbe_primitives::error::PrecompileError {
+    match err.date_step() {
+        Some((kind, date_key)) => MetadosisCallerError::DateStep { kind, date_key }.into(),
+        None => outbe_primitives::error::PrecompileError::Fatal(err.to_string()),
+    }
+}
+
 pub(crate) fn validate_metadosis_timestamp(timestamp: u64) -> Result<()> {
     timestamp
         .checked_add(outbe_primitives::time::UTC_PLUS_14_OFFSET)
@@ -71,8 +80,9 @@ pub(crate) fn compute_wwd_schedule(wwd: WorldwideDay) -> Result<(NewWwdSchedule,
     let offering_end = offerings_start
         .checked_add(outbe_chain_constants::get_metadosis_offering_period_seconds())
         .ok_or(MetadosisCallerError::OfferingWindowOverflow)?;
-    let day = first_full_day(offering_end);
-    let metadosis_start = date_key_to_utc_timestamp(next_date_key(day))
+    let day = first_full_day(offering_end).map_err(date_step_error)?;
+    let next_day = next_date_key(day).map_err(date_step_error)?;
+    let metadosis_start = date_key_to_utc_timestamp(next_day)
         .checked_add(1)
         .ok_or(MetadosisCallerError::WaitingWindowOverflow)?;
     Ok((
@@ -140,7 +150,8 @@ pub(crate) fn ensure_emission_day_with_limit(
     }
     let wwd = WorldwideDay::new(day);
     let (schedule, _) = compute_wwd_schedule(wwd)?;
-    let metadosis_start = date_key_to_utc_timestamp(next_date_key(day))
+    let next_day = next_date_key(day).map_err(date_step_error)?;
+    let metadosis_start = date_key_to_utc_timestamp(next_day)
         .checked_add(1)
         .ok_or(MetadosisCallerError::WaitingWindowOverflow)?;
     metadosis.emission_days.create(&EmissionDay {
@@ -255,7 +266,7 @@ pub(crate) fn find_due_emission_day(
     ctx: &BlockRuntimeContext<'_>,
 ) -> Result<Option<EmissionDay>> {
     let now = ctx.block.timestamp;
-    let prev_utc_day = previous_date_key(timestamp_to_date_key(now));
+    let prev_utc_day = previous_date_key(timestamp_to_date_key(now)).map_err(date_step_error)?;
     if let Some(record) = metadosis.emission_days.get(prev_utc_day)? {
         if record.state == emission_day_state::NONE && now >= record.metadosis_start {
             return Ok(Some(record));

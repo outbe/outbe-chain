@@ -451,7 +451,7 @@ fn a_credis_settled_at_the_deadline_is_never_forfeited() {
         assert_eq!(outbe_primitives::call_bins::len(&bins, bin).unwrap(), 1);
         assert_eq!(
             outbe_primitives::call_bins::entry_at(&bins, bin, 0).unwrap(),
-            open.group_key()
+            open.group_key().expect("date step")
         );
         assert_eq!(
             record(&storage, bystander).lifecycle_state().unwrap(),

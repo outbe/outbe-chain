@@ -6,7 +6,8 @@ use outbe_primitives::{error::Result, storage::StorageHandle};
 use crate::schema::TributeContract;
 
 use super::{
-    aggregate::ValidatedWwdAggregate, errors::WwdStorageCorruptionError,
+    aggregate::ValidatedWwdAggregate,
+    errors::{date_step_error, WwdStorageCorruptionError},
     schema::WorldwideDay as WorldwideDayRecord,
 };
 
@@ -38,7 +39,7 @@ impl GenesisWorldwideDay {
             return Err(WwdStorageCorruptionError::GenesisWwdPhaseOrderInvalid.into());
         }
         if self.day == 0 {
-            self.day = first_full_day(self.offering_end);
+            self.day = first_full_day(self.offering_end).map_err(date_step_error)?;
         }
         Ok(self)
     }

@@ -11,7 +11,7 @@ use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
 use outbe_common::pow;
 
-use crate::errors::GemFactoryError;
+use crate::errors::{date_step_error, GemFactoryError};
 use crate::precompile::IGemFactory::{GemExercised, GemIssued, GemPositionIssued, GemSettled};
 use crate::schema::{GemFactoryContract, GemIssueParams, GemPosition};
 use crate::sol_ext::IIntexNFT1155;
@@ -500,7 +500,7 @@ pub fn mine_promis(
 
 /// COEN price of `iso_code` from the last closed UTC day.
 fn read_market_price(storage: &StorageHandle<'_>, iso_code: u16, now: u64) -> Result<U256> {
-    let day = previous_date_key(timestamp_to_date_key(now));
+    let day = previous_date_key(timestamp_to_date_key(now)).map_err(date_step_error)?;
     get_utc_day_vwap_for_iso(storage.clone(), day, iso_code)?
         .ok_or_else(|| GemFactoryError::OracleUnavailable.into())
 }

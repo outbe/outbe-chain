@@ -2,16 +2,23 @@
 use crate::errors::NodError;
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::wwd_entity_id::{derive_poseidon_entity_id, WwdEntityId};
-use outbe_primitives::{error::Result, time::WorldwideDay};
+use outbe_primitives::{
+    error::Result,
+    time::{TimeError, WorldwideDay},
+};
 
 /// The call group of a Nod issued at `issued_at`: its first full day, its call price and
 /// the currency that price is quoted in.
-pub fn group_key(issued_at: u64, call_price_minor: U256, reference_currency: u16) -> B256 {
-    outbe_primitives::call_breach::group_key(
-        outbe_primitives::time::first_full_day(issued_at),
+pub fn group_key(
+    issued_at: u64,
+    call_price_minor: U256,
+    reference_currency: u16,
+) -> std::result::Result<B256, TimeError> {
+    Ok(outbe_primitives::call_breach::group_key(
+        outbe_primitives::time::first_full_day(issued_at)?,
         call_price_minor,
         reference_currency,
-    )
+    ))
 }
 
 /// Deterministic full-width Poseidon2 NOD identity derived from

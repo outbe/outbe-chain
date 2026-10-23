@@ -355,7 +355,7 @@ fn cycle_tick_rewards_retention_slice_fits_budget_and_rolls_back_on_failure() {
     const VOTERS: u32 = 257;
     let timestamp = TEST_BLOCK_TIMESTAMP_BASE;
     let day = outbe_primitives::time::timestamp_to_date_key(timestamp - 8 * SECONDS_PER_DAY);
-    let other_day = outbe_primitives::time::previous_date_key(day);
+    let other_day = outbe_primitives::time::previous_date_key(day).expect("date step");
     // The successful case measures real storage work. The other cases fail after a
     // tail mutation, or after execution at the aggregate system-work admission guard.
     for failure in [None, Some("mid-slice"), Some("work-budget")] {

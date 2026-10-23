@@ -10,6 +10,7 @@ interface ICredis {
     error IndexOutOfBounds();
     error NonTransferable();
     error UnknownProfileSelector(uint8 value);
+    error DateStep(uint8 kind, uint32 dateKey);
 
     /// Emitted when a Credis opens, and to address(0) when a forfeited Credis is deleted.
     event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);

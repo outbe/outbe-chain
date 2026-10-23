@@ -1,7 +1,7 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::GEM_ADDRESS;
-use outbe_primitives::time::{first_full_day, timestamp_to_date_key, WorldwideDay};
+use outbe_primitives::time::{first_full_day, timestamp_to_date_key, TimeError, WorldwideDay};
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 use serde::{Deserialize, Serialize};
 
@@ -72,15 +72,16 @@ impl GemItemState {
 
     /// The first full day the gem counts call days from. The group key binds it, so a
     /// gem and its group always agree on it.
-    #[must_use]
-    pub fn full_day_after_issue(&self) -> WorldwideDay {
-        WorldwideDay::new(first_full_day(self.issued_at))
+    pub fn full_day_after_issue(&self) -> Result<WorldwideDay, TimeError> {
+        Ok(WorldwideDay::new(first_full_day(self.issued_at)?))
     }
 
     /// Identity of the group body this gem belongs to.
-    #[must_use]
-    pub fn group_id(&self) -> WwdEntityId {
-        WwdEntityId::from_day_and_digest(self.full_day_after_issue(), self.group_key)
+    pub fn group_id(&self) -> Result<WwdEntityId, TimeError> {
+        Ok(WwdEntityId::from_day_and_digest(
+            self.full_day_after_issue()?,
+            self.group_key,
+        ))
     }
 
     #[must_use]

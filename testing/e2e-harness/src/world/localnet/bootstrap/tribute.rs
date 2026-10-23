@@ -29,8 +29,10 @@ impl Localnet {
                 projection.is_offering_at(timestamp),
                 "native Lysis fixture WorldwideDay must be Offering"
             );
-            let price_day = outbe_nod::openings::entry_price_day(projection.offering_end);
-            let last_closed_day = outbe_nod::openings::entry_price_day(timestamp);
+            let price_day =
+                outbe_nod::openings::entry_price_day(projection.offering_end).expect("date step");
+            let last_closed_day =
+                outbe_nod::openings::entry_price_day(timestamp).expect("date step");
             eyre::ensure!(
                 price_day <= last_closed_day,
                 "native Lysis entry-price day must close before genesis"
@@ -255,6 +257,7 @@ fn measurement_worldwide_day(genesis_timestamp: u64) -> WorldwideDay {
         genesis_timestamp,
     ))
     .previous_date_key()
+    .expect("date step")
 }
 
 /// The public measurement WorldwideDay, offering from genesis until its end.
@@ -348,7 +351,7 @@ fn seed_public_measurement_day(
     let report = FreshDevnetGenesisBuilder::new()
         .seed_active_worldwide_day(GenesisWorldwideDay {
             worldwide_day,
-            day: outbe_primitives::time::first_full_day(day.offering_end),
+            day: outbe_primitives::time::first_full_day(day.offering_end).expect("date step"),
             forming_start: day.forming_start,
             forming_end: day.genesis_timestamp,
             offerings_start: day.genesis_timestamp,

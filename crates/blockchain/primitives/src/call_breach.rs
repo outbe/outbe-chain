@@ -138,8 +138,8 @@ mod tests {
 
     #[test]
     fn a_midnight_issue_and_a_later_one_that_day_are_in_different_groups() {
-        let midnight = crate::time::first_full_day(1_773_100_800);
-        let later = crate::time::first_full_day(1_773_100_802);
+        let midnight = crate::time::first_full_day(1_773_100_800).expect("date step");
+        let later = crate::time::first_full_day(1_773_100_802).expect("date step");
         assert_ne!(
             group_key(midnight, U256::from(4_560_000), 840),
             group_key(later, U256::from(4_560_000), 840)

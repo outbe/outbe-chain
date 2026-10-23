@@ -265,7 +265,7 @@ fn seed_day_vwap(storage: &StorageHandle<'_>, vwap: U256) {
     let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), 840)
         .unwrap()
         .expect("COEN/840 registered");
-    let day = previous_date_key(timestamp_to_date_key(T_NOW));
+    let day = previous_date_key(timestamp_to_date_key(T_NOW)).expect("date step");
     outbe_oracle::schema::OracleContract::new(storage.clone())
         .record_utc_day_vwap(day, index, vwap)
         .unwrap();
@@ -283,7 +283,11 @@ fn price_coen_in(storage: &StorageHandle<'_>, iso: u16, vwap: U256, reference: b
         .unwrap();
     let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
     oracle
-        .record_utc_day_vwap(previous_date_key(timestamp_to_date_key(T_NOW)), index, vwap)
+        .record_utc_day_vwap(
+            previous_date_key(timestamp_to_date_key(T_NOW)).expect("date step"),
+            index,
+            vwap,
+        )
         .unwrap();
     if reference {
         oracle.reference_currencies.push(iso).unwrap();

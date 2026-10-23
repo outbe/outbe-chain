@@ -33,6 +33,9 @@ pub enum MetadosisCallerError {
 
     #[error("Metadosis UTC+14 timestamp overflow")]
     UtcPlus14TimestampOverflow,
+
+    #[error("date step kind {kind} from date key {date_key}")]
+    DateStep { kind: u8, date_key: u32 },
 }
 
 fn revert_with<E: SolError>(error: E) -> PrecompileError {
@@ -66,6 +69,10 @@ impl From<MetadosisCallerError> for PrecompileError {
             MetadosisCallerError::UtcPlus14TimestampOverflow => {
                 revert_with(I::UtcPlus14TimestampOverflow {})
             }
+            MetadosisCallerError::DateStep { kind, date_key } => revert_with(I::DateStep {
+                kind,
+                dateKey: date_key,
+            }),
         }
     }
 }

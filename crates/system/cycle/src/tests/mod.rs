@@ -99,7 +99,8 @@ pub(super) fn seed_fresh_reward_oracle(ctx: &BlockRuntimeContext) {
     let (_, index) = outbe_oracle::api::require_coen_pair(ctx.storage.clone(), 840).unwrap();
     let day = outbe_primitives::time::previous_date_key(
         outbe_primitives::time::timestamp_to_date_key(ctx.block.timestamp),
-    );
+    )
+    .expect("date step");
     oracle
         .record_utc_day_vwap(day, index, U256::from(2_000_000u64))
         .unwrap();

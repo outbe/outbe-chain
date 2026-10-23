@@ -25,6 +25,7 @@ interface IDesis {
     error InvalidTotalBatches();
     error InvalidBatchIndexOrTotal();
     error ScheduleTimestampExceedsU32();
+    error DateStep(uint8 kind, uint32 dateKey);
 
     /// @notice Auction lifecycle stages. Values map 1:1 to the Rust `AuctionStage` enum.
     enum AuctionStage {

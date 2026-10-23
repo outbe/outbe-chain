@@ -18,6 +18,7 @@ interface IAgentReward {
     error EntryPriceOverflow();
     error UnknownRewardPool(uint8 value);
     error AccrualJobMissing(uint64 value);
+    error DateStep(uint8 kind, uint32 dateKey);
 
     event RewardAccrued(address indexed account, uint8 indexed pool, uint32 indexed utcDay, uint256 promisLoadMinor);
     event RewardsClaimed(address indexed account, uint8 indexed pool, uint256 promisLoadMinor, uint256 gemId);

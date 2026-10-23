@@ -119,7 +119,7 @@ proptest! {
     ) {
         let today_ts = 1_775_001_600u64 + today_offset_secs;
         let today = timestamp_to_date_key(today_ts);
-        let yesterday = previous_date_key(today);
+        let yesterday = previous_date_key(today).expect("date step");
 
         with_storage(|storage| {
             // Seed yesterday at `burned_yesterday`.

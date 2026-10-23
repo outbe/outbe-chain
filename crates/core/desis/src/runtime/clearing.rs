@@ -62,7 +62,11 @@ pub(crate) fn clearing_round_gas(
     let mut bids = CLEARING_MIN_BIDS;
     let mut day = worldwide_day.value();
     for _ in 0..CLEARING_HISTORY_DAYS {
-        day = outbe_primitives::time::previous_date_key(day);
+        day = match outbe_primitives::time::previous_date_key(day) {
+            Ok(previous) => previous,
+            Err(outbe_primitives::time::TimeError::DateBeforeMinimum { .. }) => break,
+            Err(err) => return Err(crate::errors::date_step_error(err)),
+        };
         let key = DesisContract::chain_key(WorldwideDay::new(day), chain_id);
         bids = bids.max(u64::from(contract.chain_bid_count.read(&key)?));
     }

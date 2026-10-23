@@ -22,6 +22,7 @@ interface ICycle {
     error AccountingProgressGap(uint64 current, uint64 attempted);
     error ZeroTriggerPeriod();
     error ScheduleArithmeticOverflow(uint64 period, uint64 offset, uint64 timestamp);
+    error DateStep(uint8 kind, uint32 dateKey);
 
     /// Emitted exactly once per slot when a trigger handler completes
     /// successfully. Indexed by the trigger's stable u32 id.
