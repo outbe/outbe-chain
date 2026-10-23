@@ -15,7 +15,7 @@ use outbe_vote::schema::Vote;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::errors::{GovernanceError, GovernanceFatalError};
+use crate::errors::{GovernanceError, GovernanceFatalError, ProposalWriteError};
 use crate::runtime::MAX_TEXT_BYTES;
 use crate::schema::GovernanceContract;
 
@@ -105,15 +105,22 @@ impl VoteTarget for GovernanceVoteTarget {
         let author = proposal.proposer;
 
         let mut gov = GovernanceContract::new(ctx.storage.clone());
-        match decoded.kind {
-            ProposalKind::Oip => {
-                gov.create_approved_oip(author, &decoded.text)?;
-            }
-            ProposalKind::Gip => {
-                gov.create_approved_gip(author, &decoded.text)?;
-            }
+        let result = match decoded.kind {
+            ProposalKind::Oip => gov.create_approved_oip_typed(author, &decoded.text),
+            ProposalKind::Gip => gov.create_approved_gip_typed(author, &decoded.text),
+        };
+        match result {
+            Ok(_) => Ok(TargetExecutionOutcome::Applied),
+            // Capacity may be exhausted after admission. Never infer recoverability
+            // from an ABI revert: stored-input and provider failures remain outer errors.
+            Err(
+                error @ (ProposalWriteError::AuthorIndexFull
+                | ProposalWriteError::ProposalIdExhausted),
+            ) => Ok(TargetExecutionOutcome::Error {
+                reason: error.to_string(),
+            }),
+            Err(ProposalWriteError::Execution(error)) => Err(error),
         }
-        Ok(TargetExecutionOutcome::Applied)
     }
 }
 

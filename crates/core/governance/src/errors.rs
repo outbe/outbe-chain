@@ -50,6 +50,27 @@ pub enum GovernanceError {
     ProposalIdExhausted,
 }
 
+/// Retains capacity refusals until the Vote target can classify them.
+#[derive(Debug, Error)]
+pub(crate) enum ProposalWriteError {
+    #[error("{}", GovernanceError::AuthorIndexFull)]
+    AuthorIndexFull,
+    #[error("{}", GovernanceError::ProposalIdExhausted)]
+    ProposalIdExhausted,
+    #[error(transparent)]
+    Execution(#[from] PrecompileError),
+}
+
+impl From<ProposalWriteError> for PrecompileError {
+    fn from(value: ProposalWriteError) -> Self {
+        match value {
+            ProposalWriteError::AuthorIndexFull => GovernanceError::AuthorIndexFull.into(),
+            ProposalWriteError::ProposalIdExhausted => GovernanceError::ProposalIdExhausted.into(),
+            ProposalWriteError::Execution(error) => error,
+        }
+    }
+}
+
 fn revert_with<E: SolError>(error: E) -> PrecompileError {
     PrecompileError::RevertBytes(Bytes::from(error.abi_encode()))
 }

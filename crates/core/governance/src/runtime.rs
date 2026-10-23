@@ -3,7 +3,7 @@ use outbe_primitives::error::Result;
 
 use crate::state::{author_index_key, page_bounds, ProposalMeta};
 
-use crate::errors::GovernanceError;
+use crate::errors::{GovernanceError, ProposalWriteError};
 use crate::precompile::IGovernance;
 // Per-kind event types. This file imports them by name so that the macro can name
 // them with a transparent `:ident` fragment. A `:path` fragment cannot sit in
@@ -39,7 +39,9 @@ fn validate_text(text: &str, max: usize) -> Result<()> {
 macro_rules! impl_proposal_ops {
     (
         submit = $submit:ident,
+        submit_typed = $submit_typed:ident,
         create_approved = $create_approved:ident,
+        create_approved_typed = $create_approved_typed:ident,
         update = $update:ident,
         set_status = $set_status:ident,
         apply_status = $apply_status:ident,
@@ -57,19 +59,27 @@ macro_rules! impl_proposal_ops {
     ) => {
         /// Submits a new proposal in `Draft`, open to any caller.
         pub fn $submit(&mut self, author: Address, text: &str) -> Result<U256> {
+            self.$submit_typed(author, text).map_err(Into::into)
+        }
+
+        fn $submit_typed(
+            &mut self,
+            author: Address,
+            text: &str,
+        ) -> std::result::Result<U256, ProposalWriteError> {
             validate_text(text, MAX_TEXT_BYTES)?;
             // Refuse the submit before any write when the author index is full.
             // A wrapped counter would overwrite index slot 0.
             let acount = self.$author_count.read(&author)?;
             let next_acount = acount
                 .checked_add(1)
-                .ok_or(GovernanceError::AuthorIndexFull)?;
+                .ok_or(ProposalWriteError::AuthorIndexFull)?;
             let block = self.storage.block_number()?;
             let next = self
                 .$counter
                 .read()?
                 .checked_add(1)
-                .ok_or(GovernanceError::ProposalIdExhausted)?;
+                .ok_or(ProposalWriteError::ProposalIdExhausted)?;
             let id = U256::from(next);
             let text_hash = keccak256(text.as_bytes());
             let record = $record {
@@ -124,7 +134,16 @@ macro_rules! impl_proposal_ops {
         /// This is the same status write as set-status, without the ABI
         /// authority gate.
         pub fn $create_approved(&mut self, author: Address, text: &str) -> Result<U256> {
-            let id = self.$submit(author, text)?;
+            self.$create_approved_typed(author, text)
+                .map_err(Into::into)
+        }
+
+        pub(crate) fn $create_approved_typed(
+            &mut self,
+            author: Address,
+            text: &str,
+        ) -> std::result::Result<U256, ProposalWriteError> {
+            let id = self.$submit_typed(author, text)?;
             self.$apply_status(id, status::APPROVED)?;
             Ok(id)
         }
@@ -248,7 +267,9 @@ impl GovernanceContract<'_> {
 
     impl_proposal_ops!(
         submit = submit_oip,
+        submit_typed = submit_oip_typed,
         create_approved = create_approved_oip,
+        create_approved_typed = create_approved_oip_typed,
         update = update_oip_text,
         set_status = set_oip_status,
         apply_status = apply_oip_status,
@@ -267,7 +288,9 @@ impl GovernanceContract<'_> {
 
     impl_proposal_ops!(
         submit = submit_gip,
+        submit_typed = submit_gip_typed,
         create_approved = create_approved_gip,
+        create_approved_typed = create_approved_gip_typed,
         update = update_gip_text,
         set_status = set_gip_status,
         apply_status = apply_gip_status,
