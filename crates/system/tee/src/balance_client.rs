@@ -243,7 +243,7 @@ mod tests {
         let attestation_pub = signer.verifying_key().to_bytes();
         let mut gratis_result = gratis_result(hash);
         gratis_result.attestation_tag = signer
-            .sign(&gratis_op_attestation_preimage(hash, &gratis_result))
+            .sign(&gratis_op_attestation_preimage(hash, &gratis_result).expect("gratis preimage"))
             .to_bytes()
             .to_vec();
         assert!(validate_response(
@@ -257,7 +257,7 @@ mod tests {
         .is_ok());
         let mut promis_result = promis_result(hash);
         promis_result.attestation_tag = signer
-            .sign(&promis_op_attestation_preimage(hash, &promis_result))
+            .sign(&promis_op_attestation_preimage(hash, &promis_result).expect("promis preimage"))
             .to_bytes()
             .to_vec();
         assert!(validate_response(

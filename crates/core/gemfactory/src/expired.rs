@@ -3,10 +3,11 @@ use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{Result, SweepFailure},
     expiry_queue::{self, Due, ExpiryHandler},
+    sweep_budget::SweepBudget,
 };
 
 use outbe_gem::precompile::IGem::GemGroupForfeited;
-use outbe_gem::{ExpiryHours, GemContract};
+use outbe_gem::{ExpiryDays, GemContract};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::StorageHandle;
 
@@ -15,11 +16,27 @@ use crate::runtime::emit_event;
 
 /// Forfeits the called groups whose notice period closed, one credit per group.
 /// Returns the groups forfeited.
+#[cfg(any(test, feature = "test-utils"))]
 pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = GemContract::new(ctx.storage.clone());
     let mut expiry = GemExpiry::new(ctx);
-    expiry_queue::sweep_block(&ExpiryHours(&queue), ctx, &mut expiry)?;
+    expiry_queue::sweep_block(&ExpiryDays(&queue), ctx, &mut expiry)?;
     Ok(expiry.forfeited)
+}
+
+pub(crate) fn sweep_through(
+    ctx: &BlockRuntimeContext,
+    through_day: u32,
+    budget: &mut SweepBudget,
+) -> Result<expiry_queue::Progress> {
+    let queue = GemContract::new(ctx.storage.clone());
+    expiry_queue::sweep_day(
+        &ExpiryDays(&queue),
+        ctx,
+        through_day,
+        budget,
+        &mut GemExpiry::new(ctx),
+    )
 }
 
 pub(crate) struct GemExpiry<'a, 's> {
@@ -71,7 +88,7 @@ impl ExpiryHandler<B256> for GemExpiry<'_, '_> {
         let load = self.gem.group_unpaid_load.read(&group)?;
         if !load.is_zero() {
             outbe_promislimit::PromisLimitContract::new(self.storage.clone())
-                .add_to_total_unallocated(load)?;
+                .checked_credit(load)?;
         }
         self.gem.hand_to_cleanup(group)?;
         self.gem.emit(GemGroupForfeited {

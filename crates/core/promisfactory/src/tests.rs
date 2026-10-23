@@ -3,7 +3,7 @@
 //! by decrypting the ciphertext with the account's view key.
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
-use alloy_sol_types::{SolCall, SolInterface};
+use alloy_sol_types::{SolCall, SolError, SolInterface};
 
 use outbe_fidelity::{MAX_LEAGUE, MIN_LEAGUE};
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
@@ -14,9 +14,7 @@ use outbe_primitives::units::{ONE_COEN, SCALE_1E6_U64};
 use outbe_promis::api::{self as promis_api, ModifyAuth};
 use outbe_promis::enclave_client::test_enclave;
 use outbe_tee::protocol::{GratisOp, PromisOp};
-use outbe_tee_enclave::promis::{
-    decrypt_balance, derive_modify_key, derive_view_key, modify_mac, ModifyOperation,
-};
+use outbe_tee_enclave::promis::{decrypt_balance, derive_view_key};
 
 use crate::precompile::{dispatch, IPromisFactory};
 use crate::runtime;
@@ -31,23 +29,8 @@ fn alice() -> Address {
     address!("0x1111111111111111111111111111111111111111")
 }
 
-/// Build the modify authorization a client would send for `op`.
 fn auth(op: PromisOp, account: Address, amount: U256, nonce: u64) -> ModifyAuth {
-    let sk = test_enclave::state_key();
-    let mk = derive_modify_key(&sk, account).unwrap();
-    ModifyAuth {
-        mac: modify_mac(
-            &mk,
-            &ModifyOperation {
-                account,
-                op,
-                amount,
-                op_nonce: nonce,
-                chain_id: chain_b256(),
-            },
-        ),
-        op_nonce: nonce,
-    }
+    test_enclave::modify_auth(op, account, amount, nonce)
 }
 
 fn view_balance(storage: StorageHandle<'_>, account: Address) -> U256 {
@@ -83,13 +66,17 @@ fn mine_coen_call(amount: U256, a: &ModifyAuth) -> Bytes {
 fn mine_rejects_zero_amount() {
     with_env(|storage| {
         let err = runtime::mint(
-            storage.clone(),
+            storage,
             alice(),
             U256::ZERO,
             auth(PromisOp::Mint, alice(), U256::ZERO, 0),
         )
         .unwrap_err();
-        assert!(err.to_string().contains("amount must be positive"));
+        let outbe_primitives::error::PrecompileError::RevertBytes(data) = err else {
+            panic!("expected a typed Promis rejection, got {err:?}");
+        };
+        let rejection = outbe_promis::precompile::IPromis::Rejected::abi_decode(&data).unwrap();
+        assert_eq!(rejection.value, "amount must be positive");
     });
 }
 
@@ -133,7 +120,13 @@ fn mine_coen_rejects_insufficient_balance() {
             &auth(PromisOp::Burn, alice(), U256::from(200u64), 1),
         );
         let err = dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap_err();
-        assert!(err.to_string().contains("insufficient balance"));
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_promis::errors::PromisError::Rejected("insufficient balance".into())
+            )
+            .to_string()
+        );
 
         // No native COEN minted, promis untouched (atomic revert).
         assert_eq!(storage.balance(alice()).unwrap(), U256::ZERO);
@@ -318,9 +311,12 @@ fn mine_gratis_rejects_insufficient_balance() {
         };
         let call = mine_gratis_call(U256::from(200u64), &pa, &placeholder);
         let err = dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap_err();
-        assert!(
-            err.to_string().contains("insufficient balance"),
-            "got: {err}"
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_promis::errors::PromisError::Rejected("insufficient balance".into())
+            )
+            .to_string()
         );
 
         // No gratis minted (no ciphertext ever written), promis untouched.

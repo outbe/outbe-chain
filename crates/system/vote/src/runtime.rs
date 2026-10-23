@@ -7,8 +7,8 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_validatorset::contract::ValidatorSet;
 
 use crate::constants::{
-    MAX_PENDING_PROPOSALS, MAX_PENDING_PROPOSALS_PER_VALIDATOR, QUORUM_DENOMINATOR,
-    QUORUM_NUMERATOR,
+    MAX_PAYLOAD_BYTES, MAX_PENDING_PROPOSALS, MAX_PENDING_PROPOSALS_PER_VALIDATOR,
+    QUORUM_DENOMINATOR, QUORUM_NUMERATOR,
 };
 use crate::errors::VoteError;
 use crate::handlers::{
@@ -112,10 +112,11 @@ impl Vote<'_> {
 
     /// Runs the admission guards of `submission` in this order:
     ///
-    /// 1. The target module is registered.
-    /// 2. The attached value and the proposer match the admission class.
-    /// 3. The pending caps permit one more proposal.
-    /// 4. The target module accepts the payload.
+    /// 1. The raw JSON payload fits the admission byte bound.
+    /// 2. The target module is registered.
+    /// 3. The attached value and the proposer match the admission class.
+    /// 4. The pending caps permit one more proposal.
+    /// 5. The target module accepts the payload.
     ///
     /// Then writes the proposal in one storage checkpoint.
     fn create_proposal_with_deadline(
@@ -124,6 +125,9 @@ impl Vote<'_> {
         voting_deadline: u64,
         registry: &VoteTargetRegistry,
     ) -> Result<U256> {
+        if submission.payload.len() > MAX_PAYLOAD_BYTES {
+            return Err(VoteError::InvalidPayload.into());
+        }
         let chain_id = self.storage.chain_id()?;
         let target = registry.lookup(submission.target_module)?;
         let admission = target.admission();
@@ -459,7 +463,11 @@ impl Vote<'_> {
             BondSettlement::NoBond => return Ok(()),
             BondSettlement::Unsettled => {}
             BondSettlement::Refunded | BondSettlement::Burned => {
-                return Err(VoteError::PendingProposalBondAlreadySettled { proposal_id }.into());
+                return Err(VoteError::PendingProposalBondAlreadySettled {
+                    proposal_id,
+                    settlement: bond.settlement,
+                }
+                .into());
             }
         }
 

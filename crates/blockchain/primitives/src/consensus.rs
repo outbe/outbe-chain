@@ -209,11 +209,6 @@ pub struct DkgBoundaryArtifact {
     pub is_full_dkg: bool,
     /// Execution-facing reshared-set activation payload.
     pub reshare: ReshareResult,
-    /// Per-validator TEE recipient X25519 public keys for the activated
-    /// committee. The artifact carries them so the tribute TEE DKG can address
-    /// share-relay to the right enclaves. Empty until the tribute DKG slice
-    /// populates it. OART wire `v0.07`.
-    pub tee_recipient_pubkeys: Vec<(Address, B256)>,
     /// List, in canonical storage order, of ValidatorSet target members
     /// excluded at the exact DKG freeze block because their DcapRequired lease
     /// was not ready. This is the only authority for the narrow replayable

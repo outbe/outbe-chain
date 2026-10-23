@@ -1,3 +1,4 @@
+use crate::constants::ACCRUAL_RECIPIENTS_PER_BLOCK;
 use crate::errors::AgentRewardError;
 use crate::precompile::IAgentReward;
 use crate::schema::{AccrualJob, AgentRewardContract, RewardPool};
@@ -98,9 +99,6 @@ fn distribute_pool(
     }
     Ok(excess)
 }
-
-/// Most WAA and SRA addresses that one block credits.
-pub const ACCRUAL_RECIPIENTS_PER_BLOCK: u32 = 256;
 
 /// Queues a WAA or SRA day pool for [`advance_accruals`]. A day without tributes
 /// returns the whole pool as excess.
@@ -304,6 +302,142 @@ pub(crate) fn calculate_proportional_distribution(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+    use proptest::test_runner::TestCaseResult;
+
+    fn pool_strategy() -> impl Strategy<Value = U256> {
+        prop_oneof![
+            Just(U256::ZERO),
+            Just(U256::MAX),
+            any::<[u64; 4]>().prop_map(U256::from_limbs),
+        ]
+    }
+
+    fn recipients_strategy(
+        weight: impl Strategy<Value = U256>,
+    ) -> impl Strategy<Value = Vec<(Address, U256, u64)>> {
+        // Nonzero byte keys give distinct nonzero addresses without filtering.
+        proptest::collection::btree_map(1u8..=u8::MAX, (weight, any::<u64>()), 0..17).prop_map(
+            |entries| {
+                entries
+                    .into_iter()
+                    .map(|(key, (weight, order))| (Address::repeat_byte(key), weight, order))
+                    .collect()
+            },
+        )
+    }
+
+    fn check_distribution(pool: U256, entries: Vec<(Address, U256, u64)>) -> TestCaseResult {
+        let counts: Vec<_> = entries
+            .iter()
+            .map(|&(address, weight, _)| (address, weight))
+            .collect();
+        let mut permuted = entries;
+        permuted.sort_by_key(|&(address, _, order)| (order, address));
+        let permuted: Vec<_> = permuted
+            .into_iter()
+            .map(|(address, weight, _)| (address, weight))
+            .collect();
+        let total_weight = counts
+            .iter()
+            .fold(U512::ZERO, |sum, (_, weight)| sum + U512::from(*weight));
+        let original_result = calculate_proportional_distribution(pool, &counts);
+        let permuted_result = calculate_proportional_distribution(pool, &permuted);
+
+        if !pool.is_zero() && total_weight > U512::from(U256::MAX) {
+            prop_assert!(matches!(
+                original_result,
+                Err(AgentRewardError::DistributionOverflow)
+            ));
+            prop_assert!(matches!(
+                permuted_result,
+                Err(AgentRewardError::DistributionOverflow)
+            ));
+            return Ok(());
+        }
+
+        let (rewards, excess) =
+            original_result.map_err(|error| TestCaseError::fail(error.to_string()))?;
+        let (permuted_rewards, permuted_excess) =
+            permuted_result.map_err(|error| TestCaseError::fail(error.to_string()))?;
+        let tuples = |rewards: &[AddressReward]| {
+            rewards
+                .iter()
+                .map(|r| (r.address, r.weight, r.reward_amount))
+                .collect::<Vec<_>>()
+        };
+        prop_assert_eq!(tuples(&rewards), tuples(&permuted_rewards));
+        prop_assert_eq!(excess, permuted_excess);
+        if pool.is_zero() || total_weight.is_zero() {
+            prop_assert!(rewards.is_empty());
+            prop_assert_eq!(excess, pool);
+            return Ok(());
+        }
+
+        prop_assert!(rewards
+            .windows(2)
+            .all(|pair| pair[0].address < pair[1].address));
+        let mut positive: Vec<_> = counts
+            .into_iter()
+            .filter(|(_, weight)| !weight.is_zero())
+            .collect();
+        positive.sort_by_key(|&(address, _)| address);
+        prop_assert_eq!(rewards.len(), positive.len());
+        let mut distributed = U512::ZERO;
+        for (reward, (address, weight)) in rewards.iter().zip(positive) {
+            prop_assert_eq!((reward.address, reward.weight), (address, weight));
+            let amount = U512::from(reward.reward_amount);
+            let product = U512::from(pool) * U512::from(weight);
+            prop_assert!(amount * total_weight <= product);
+            // Widen before adding one so a U256::MAX reward remains testable.
+            prop_assert!(product < (amount + U512::ONE) * total_weight);
+            distributed += amount;
+        }
+        prop_assert_eq!(distributed + U512::from(excess), U512::from(pool));
+        Ok(())
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        #[test]
+        fn bounded_weights_obey_proportional_contract(
+            pool in pool_strategy(),
+            entries in recipients_strategy(prop_oneof![Just(U256::ZERO), any::<u64>().prop_map(U256::from)]),
+        ) {
+            check_distribution(pool, entries)?;
+        }
+
+        #[test]
+        fn full_width_weights_obey_proportional_contract(
+            pool in pool_strategy(),
+            entries in recipients_strategy(prop_oneof![
+                Just(U256::ZERO),
+                Just(U256::MAX),
+                any::<[u64; 4]>().prop_map(U256::from_limbs),
+            ]),
+        ) {
+            check_distribution(pool, entries)?;
+        }
+
+        #[test]
+        fn degenerate_inputs_return_the_whole_pool(
+            pool in pool_strategy(),
+            entries in recipients_strategy(any::<[u64; 4]>().prop_map(U256::from_limbs)),
+        ) {
+            check_distribution(pool, Vec::new())?;
+            let zero_weights = entries.iter().map(|&(address, _, order)| (address, U256::ZERO, order)).collect();
+            check_distribution(pool, zero_weights)?;
+            check_distribution(U256::ZERO, entries)?;
+            // This total always overflows U256, but zero pools return before summing.
+            let overflowing = vec![
+                (Address::repeat_byte(1), U256::MAX, 1),
+                (Address::repeat_byte(2), U256::ONE, 0),
+            ];
+            check_distribution(U256::ZERO, overflowing.clone())?;
+            check_distribution(U256::ONE, overflowing)?;
+        }
+    }
 
     #[test]
     fn zero_pool_has_no_rewards_or_excess() {

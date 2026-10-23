@@ -142,7 +142,6 @@ fn genesis_boundary_artifacts(proposer: alloy_primitives::Address) -> (Bytes, B2
                 is_validator_set_change: true,
                 outcome: Bytes::new(),
                 is_full_dkg: false,
-                tee_recipient_pubkeys: Vec::new(),
                 tee_expired_target_exclusions: Vec::new(),
                 tee_expired_target_exclusions_hash: B256::ZERO,
                 reshare: ReshareResult {

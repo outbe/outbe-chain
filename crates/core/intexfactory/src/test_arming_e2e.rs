@@ -1,7 +1,7 @@
-//! Hooks only a throwaway e2e build answers. A scenario that runs no auction seeds the
-//! day VWAPs and issues its series straight. The forfeit sweep
-//! opens a bucket only once its hour has closed, so `closeCallNoticeForTest` moves a
-//! lapsed deadline into an hour the sweep opens on the next block.
+//! Only a temporary e2e build responds to these hooks.
+//! A scenario without an auction seeds the daily VWAPs and issues its series directly.
+//! The forfeit sweep opens a day only after that day closes.
+//! `closeCallNoticeForTest` moves a lapsed deadline into a closed day that the sweep opens in the next block.
 
 use alloy_primitives::Bytes;
 use alloy_sol_types::{sol, SolCall};
@@ -25,17 +25,19 @@ sol! {
             uint32[] snapshotChains
         ) external;
         function closeCallNoticeForTest(bytes14 seriesId, uint64 deadline) external;
+        function rescanClosedDayForTest() external;
     }
 }
 
-/// Move the called group of `series_id` onto `deadline`, and with it into that deadline's
-/// bucket. The sweep opens a bucket only once its hour has closed, so a notice that lapsed
-/// minutes ago would otherwise idle out the rest of the hour.
+/// This function moves the called group of `series_id` to `deadline` and into that deadline's day.
+/// A notice that lapsed minutes ago would otherwise wait for midnight.
 fn requeue_called(storage: &StorageHandle<'_>, series_id: SeriesId, deadline: u64) -> Result<()> {
     use outbe_intex::IntexContract;
 
     let mut intex = IntexContract::new(storage.clone());
-    let group = outbe_intex::api::read_series(storage, series_id)?.group_key();
+    let group = outbe_intex::api::read_series(storage, series_id)?
+        .group_key()
+        .expect("date step");
     if intex.called_deadline.read(&group)? == 0 {
         return Err(crate::errors::IntexFactoryError::NoCalledGroupForTest.into());
     }
@@ -44,12 +46,42 @@ fn requeue_called(storage: &StorageHandle<'_>, series_id: SeriesId, deadline: u6
     let called_at = u32::try_from(deadline.saturating_sub(notice).max(1))
         .map_err(|_| crate::errors::IntexFactoryError::BlockTimestampExceedsU32)?;
     intex.call_group_called_at.write(&group, called_at)?;
-    intex.requeue_called(group, deadline)
+    intex.requeue_called(group, deadline)?;
+    reopen_day(storage, deadline)
+}
+
+fn reopen_day(storage: &StorageHandle<'_>, deadline: u64) -> Result<()> {
+    let intex = outbe_intex::IntexContract::new(storage.clone());
+    let day = outbe_primitives::time::timestamp_to_date_key(deadline);
+    intex.call_sweep_day.write(day)?;
+    intex
+        .call_latest_day
+        .write(intex.call_latest_day.read()?.max(day))?;
+    intex.daily_genesis_day.write(day)?;
+    intex.daily_phase.write(0)?;
+    for currency in outbe_oracle::api::reference_currencies(storage.clone())? {
+        intex.call_bin_cursor.clear(&currency)?;
+        intex.call_scan_failed_day.clear(&currency)?;
+    }
+    intex.call_currency_cursor.write(0)
 }
 
 /// Runs a test-arming call, or returns `None` for any other calldata.
 pub(crate) fn dispatch(storage: &StorageHandle<'_>, data: &[u8]) -> Option<Result<Bytes>> {
     use IIntexFactoryTestArming::*;
+    if rescanClosedDayForTestCall::abi_decode(data).is_ok() {
+        return Some(guarded(storage, || {
+            let yesterday = storage
+                .now_secs()?
+                .checked_sub(outbe_primitives::time::SECONDS_PER_DAY)
+                .ok_or_else(|| {
+                    outbe_primitives::error::PrecompileError::revert(
+                        "no closed UTC day for test rescan",
+                    )
+                })?;
+            reopen_day(storage, yesterday)
+        }));
+    }
     if let Ok(call) = seedDayVwapsForTestCall::abi_decode(data) {
         return Some(guarded(storage, || seed_day_vwaps_for_test(storage, call)));
     }
@@ -82,13 +114,13 @@ fn seed_day_vwaps_for_test(
     let oracle = OracleContract::new(storage.clone());
     let pair = outbe_oracle::api::AddressPair::new_coen_to(call.isoCode);
     let pair_id = oracle.pair_index_of(pair)?;
-    let mut day = previous_date_key(timestamp_to_date_key(storage.now_secs()?));
+    let mut day = previous_date_key(timestamp_to_date_key(storage.now_secs()?)).expect("date step");
     for _ in 0..call.days {
         oracle.record_utc_day_vwap(day, pair_id, call.value)?;
         if oracle.utc_day_vwap_last_finalized.read()? < day {
             oracle.utc_day_vwap_last_finalized.write(day)?;
         }
-        day = previous_date_key(day);
+        day = previous_date_key(day).expect("date step");
     }
     Ok(())
 }

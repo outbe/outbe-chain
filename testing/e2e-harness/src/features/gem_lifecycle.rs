@@ -51,11 +51,13 @@ const ISSUANCE_TIMEOUT_SECS: u64 = 180;
 const CALL_TIMEOUT_SECS: u64 = 300;
 /// Once the group is closed the sweep reaches the gem in the next block or two.
 const FORFEIT_TIMEOUT: Duration = Duration::from_secs(120);
-/// The expiry queue groups deadlines by the hour they fall in.
-const EXPIRY_BUCKET_SECS: u64 = 3_600;
+/// The queue determines eligibility from the UTC day that contains the exact deadline.
+const EXPIRY_DAY_SECS: u64 = 86_400;
+/// A longer notice means the DEV parameter profile is not active.
+const MAX_DEV_NOTICE_SECS: u64 = 3_600;
 /// Slack past the deadline so the notice is spent before the group is closed.
 const EXPIRY_MARGIN_SECS: u64 = 30;
-/// Once the position's hour is closed the sweep reaches it in the next block or two.
+/// After the test prepares the pass for the position's deadline day, the sweep reaches the position in later blocks.
 const POSITION_SWEEP_TIMEOUT_SECS: u64 = 120;
 /// The DEV validity (15 minutes) runs from parking, and most of it is spent
 /// waiting out the call notice before this step is reached.
@@ -118,36 +120,36 @@ fn issue_source_series(world: &mut World) {
     let day = outbe_primitives::time::worldwide_day_from_timestamp(head);
     let now = u32::try_from(head).expect("timestamp fits a uint32");
 
-    test_issuance::open_day(
-        &url,
-        DEPLOYER_KEY,
+    test_issuance::open_day(test_issuance::OpenDay {
+        url: &url,
+        sender_key: DEPLOYER_KEY,
         origin_router,
-        day,
+        worldwide_day: day,
         now,
-        USD_ISO,
-        ENTRY_PRICE_MINOR,
-        PROMIS_LOAD_MINOR,
-    )
+        reference_currency: USD_ISO,
+        entry_price_minor: ENTRY_PRICE_MINOR,
+        promis_load_minor: PROMIS_LOAD_MINOR,
+    })
     .expect("open the day the source series is issued into");
 
     // One chain, one series: gems never leave the committee, so this scenario
     // needs neither a second venue nor a relay.
-    let series = test_issuance::issue_series(
-        &url,
-        DEPLOYER_KEY,
-        day,
-        now,
-        USD_ISO,
-        REFERENCE_BYTE,
-        U256::from(ENTRY_PRICE_MINOR),
-        PROMIS_LOAD_MINOR,
-        UNITS,
-        &[u32::try_from(chain_id).expect("committee chain id fits a uint32")],
-        &[SeriesSpec {
+    let series = test_issuance::issue_series(test_issuance::IssueSeries {
+        url: &url,
+        sender_key: DEPLOYER_KEY,
+        worldwide_day: day,
+        issued_at: now,
+        reference_currency: USD_ISO,
+        reference_byte: REFERENCE_BYTE,
+        entry_price_minor: U256::from(ENTRY_PRICE_MINOR),
+        promis_load_minor: PROMIS_LOAD_MINOR,
+        issued_units: UNITS,
+        chains: &[u32::try_from(chain_id).expect("committee chain id fits a uint32")],
+        specs: &[SeriesSpec {
             issuance: *b"MYR",
             issuance_currency,
         }],
-    )
+    })
     .expect("issue the source series");
 
     let series = *series.first().expect("one series was issued");
@@ -155,16 +157,16 @@ fn issue_source_series(world: &mut World) {
     // Issuance reaches the collection as its own message; parking before the
     // units land reverts with NonexistentToken.
     let nft = intex_nft(world);
-    test_issuance::issue_to_owner(
-        &url,
+    test_issuance::issue_to_owner(test_issuance::IssueToOwner {
+        url: &url,
         nft,
-        DEPLOYER_KEY,
-        merchant,
-        UNITS,
-        &[series],
-        || {},
-        Duration::from_secs(ISSUANCE_TIMEOUT_SECS),
-    )
+        admin_key: DEPLOYER_KEY,
+        owner: merchant,
+        units: UNITS,
+        series: &[series],
+        tick: || {},
+        timeout: Duration::from_secs(ISSUANCE_TIMEOUT_SECS),
+    })
     .expect("issue the source units to the merchant");
     let deadline = Instant::now() + Duration::from_secs(ISSUANCE_TIMEOUT_SECS);
     loop {
@@ -312,7 +314,7 @@ fn issue_five_gems(world: &mut World) {
     let pool = eth::read_call_at(
         &url,
         addresses::PROMIS_LIMIT_ADDR,
-        &eth::IPromisLimit::totalUnallocatedCall {},
+        &eth::IPromisLimit::promisLimitCall {},
         height,
     )
     .expect("unallocated pool at the baseline");
@@ -419,8 +421,8 @@ impl Lifecycle for GemLifecycle {
         }
     }
 
-    /// Wait out the notice on the chain's clock, then re-queue the gem behind a closed
-    /// expiry bucket, which saves only the rest of the bucket's hour.
+    /// Wait until the exact notice expires.
+    /// Prepare the pass for a closed deadline day in the test build.
     fn lapse_notice(&self, world: &mut World) {
         let url = world_url(world);
         let id = gem(world, FORFEITED);
@@ -432,7 +434,7 @@ impl Lifecycle for GemLifecycle {
         );
         let notice = u64::from(called.callNoticePeriod);
         assert!(
-            notice <= EXPIRY_BUCKET_SECS,
+            notice <= MAX_DEV_NOTICE_SECS,
             "call notice is {notice}s: the DEV parameter profile is not active, so this \
              scenario would wait out the production window"
         );
@@ -462,12 +464,12 @@ impl Lifecycle for GemLifecycle {
             DEPLOYER_KEY,
             &IGemFactoryTestArming::closeCallNoticeForTestCall {
                 gemId: id,
-                deadline: head_time(world).saturating_sub(EXPIRY_BUCKET_SECS),
+                deadline: head_time(world).saturating_sub(EXPIRY_DAY_SECS),
             },
             None,
         )
-        .expect("close the expiry bucket the gem sits in");
-        assert_mined_success(&closed, "close the expiry bucket the gem sits in");
+        .expect("arm the gem's closed deadline day");
+        assert_mined_success(&closed, "arm the gem's closed deadline day");
     }
 
     fn assert_forfeited(&self, world: &World) {
@@ -567,9 +569,8 @@ fn position_returns_capacity(world: &mut World) {
     let url = world_url(world);
     let position_id = world.state.gem_position.expect("a position was parked");
 
-    // An expired position's hour returns its capacity, and the cleanup deletes it. The
-    // sweep opens an hour only once it has closed, so move it into a closed one, unless
-    // its own hour has closed and the cleanup deleted it already.
+    // Hour groups retain their identity but return capacity after their deadline day closes.
+    // Prepare the test pass for a closed day unless cleanup already deleted the position.
     let read_position = || {
         eth::read_call(
             &url,
@@ -586,13 +587,13 @@ fn position_returns_capacity(world: &mut World) {
             DEPLOYER_KEY,
             &IGemFactoryTestArming::closePositionHourForTestCall {
                 positionId: position_id,
-                deadline: head_time(world).saturating_sub(EXPIRY_BUCKET_SECS),
+                deadline: head_time(world).saturating_sub(EXPIRY_DAY_SECS),
             },
             None,
         )
-        .expect("close the expiry hour the position sits in");
+        .expect("arm the position group's closed deadline day");
         if read_position().is_some() {
-            assert_mined_success(&closed, "close the expiry hour the position sits in");
+            assert_mined_success(&closed, "arm the position group's closed deadline day");
         }
     }
     poll_until(
@@ -675,7 +676,7 @@ fn assert_expiry_returns(world: &World, height: u64, require_position_expiry: bo
         eth::read_call_at(
             &url,
             addresses::PROMIS_LIMIT_ADDR,
-            &eth::IPromisLimit::totalUnallocatedCall {},
+            &eth::IPromisLimit::promisLimitCall {},
             height
         ),
         Some(before + returned),

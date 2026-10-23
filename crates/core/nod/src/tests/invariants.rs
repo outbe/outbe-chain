@@ -26,14 +26,18 @@ fn item(owner: Address) -> NodItemState {
             worldwide_day,
             league_id: 4,
             group_key: crate::test_support::group_key(
-                date_key_to_utc_timestamp(previous_date_key(timestamp_to_date_key(NOW))),
+                date_key_to_utc_timestamp(
+                    previous_date_key(timestamp_to_date_key(NOW)).expect("date step"),
+                ),
                 U256::from(5),
                 978,
             ),
             issuance_currency: 840,
             reference_currency: 978,
             // Midnight of the last UTC day closed at `NOW`.
-            issued_at: date_key_to_utc_timestamp(previous_date_key(timestamp_to_date_key(NOW))),
+            issued_at: date_key_to_utc_timestamp(
+                previous_date_key(timestamp_to_date_key(NOW)).expect("date step"),
+            ),
         },
         U256::from(5),
     )
@@ -147,8 +151,14 @@ fn group_record_survives_membership_changes_until_last_removal() {
 #[test]
 fn entry_price_day_is_the_last_closed_utc_day() {
     let new_year = date_key_to_utc_timestamp(20_260_101);
-    assert_eq!(crate::openings::entry_price_day(new_year), 20_251_231);
-    assert_eq!(crate::openings::entry_price_day(new_year - 1), 20_251_230);
+    assert_eq!(
+        crate::openings::entry_price_day(new_year).expect("date step"),
+        20_251_231
+    );
+    assert_eq!(
+        crate::openings::entry_price_day(new_year - 1).expect("date step"),
+        20_251_230
+    );
 }
 
 #[test]
@@ -166,8 +176,12 @@ fn member_count_overflow_and_underflow_roll_back_nod_mutations() {
             .write(&first.group_key, u32::MAX)
             .unwrap();
         let error = crate::test_support::add(&storage, &second).unwrap_err();
-        assert!(
-            matches!(error, PrecompileError::Revert(message) if message.contains("member index overflow"))
+        assert_eq!(
+            error.to_string(),
+            PrecompileError::from(crate::errors::NodError::GroupMemberIndexOverflow {
+                group_key: first.group_key,
+            })
+            .to_string()
         );
         assert_eq!(nod.total_supply().unwrap(), 1);
         assert_eq!(
@@ -180,8 +194,14 @@ fn member_count_overflow_and_underflow_roll_back_nod_mutations() {
         let loaded = api::load_item(&storage, first.nod_id).unwrap().unwrap();
         let group = api::load_group(&storage, group_id).unwrap().unwrap();
         let error = api::remove_nod(&storage, loaded, group).unwrap_err();
-        assert!(
-            matches!(error, PrecompileError::Revert(message) if message.contains("member count underflow"))
+        assert_eq!(
+            error.to_string(),
+            PrecompileError::from(
+                crate::errors::NodError::GroupMemberCountUnderflowDuringRemoval {
+                    group_key: first.group_key,
+                }
+            )
+            .to_string()
         );
         assert_eq!(nod.total_supply().unwrap(), 1);
         assert!(api::get_item(&storage, first.nod_id).unwrap().is_some());
@@ -192,7 +212,7 @@ fn member_count_overflow_and_underflow_roll_back_nod_mutations() {
 #[test]
 fn nod_error_and_calculation_amount_never_return_fatal() {
     let domain_error: PrecompileError = crate::errors::NodError::NodNotFound.into();
-    assert!(matches!(domain_error, PrecompileError::Revert(_)));
+    assert!(matches!(domain_error, PrecompileError::RevertBytes(_)));
 
     let mut corrupted = item(Address::repeat_byte(0x75));
     crate::test_support::uninstall();
@@ -205,7 +225,7 @@ fn nod_error_and_calculation_amount_never_return_fatal() {
     corrupted.encrypted.encrypted_gratis_amount.clear();
     assert!(matches!(
         api::calculation_amount(&corrupted),
-        Err(PrecompileError::Revert(_))
+        Err(PrecompileError::RevertBytes(_))
     ));
 }
 
@@ -245,7 +265,7 @@ fn nod_contract_slot_layout_is_pinned() {
         assert_eq!(nod.call_currency_cursor.slot(), U256::from(23));
         assert_eq!(nod.call_bin_cursor.base_slot(), U256::from(24));
         assert_eq!(nod.config_profile.slot(), U256::from(25));
-        assert_eq!(nod.expiry_bucket_len.base_slot(), U256::from(26));
+        assert_eq!(nod.expiry_day_len.base_slot(), U256::from(26));
         assert_eq!(nod.expiry_cursor.slot(), U256::from(32));
     });
 }

@@ -6,10 +6,13 @@
 //! variant. Happy-path tests run the full flow end-to-end against a real
 //! DKG-derived HybridCertificate.
 
+#[path = "support/parent_proof.rs"]
+mod parent_proof;
+
 use alloy_primitives::{Address, Bytes, B256};
 use commonware_codec::{Encode, FixedSize};
 use commonware_consensus::{
-    simplex::types::{Finalization, Notarization, Proposal},
+    simplex::types::{Finalization, Proposal},
     types::{Epoch, Round, View},
 };
 use commonware_cryptography::{
@@ -110,24 +113,7 @@ fn real_proof_fixture(
         View::new(parent_view),
         Sha256Digest(parent_hash.0),
     );
-    let proof_bytes = match proof_kind {
-        ParentParticipationProof::Finalization => {
-            Finalization::<HybridScheme<MinSig>, Sha256Digest> {
-                proposal,
-                certificate: cert.clone(),
-            }
-            .encode()
-            .to_vec()
-        }
-        ParentParticipationProof::CertifiedNotarization => {
-            Notarization::<HybridScheme<MinSig>, Sha256Digest> {
-                proposal,
-                certificate: cert.clone(),
-            }
-            .encode()
-            .to_vec()
-        }
-    };
+    let proof_bytes = parent_proof::encode_parent_proof(proposal, &cert, proof_kind);
     let parent = TestFinalizedParent {
         block_number: 41,
         block_hash: parent_hash,

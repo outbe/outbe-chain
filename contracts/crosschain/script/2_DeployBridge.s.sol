@@ -19,7 +19,8 @@ contract DeployBridge is Script {
         string memory salt = vm.envString("CONTRACT_SALT");
         address factory = vm.envAddress("CREATE3_FACTORY_ADDRESS");
         address owner = vm.envAddress("BRIDGE_OWNER");
-        string memory active = vm.envOr("ACTIVE_GATEWAY", string("lz"));
+        string memory active = vm.envOr("ACTIVE_GATEWAY", string(""));
+        if (bytes(active).length == 0) active = "lz";
 
         address gateway = adapterAddress(factory, salt, vm.addr(deployerPk), active);
 
@@ -46,9 +47,11 @@ contract DeployBridge is Script {
         view
         returns (address)
     {
-        string memory label = keccak256(bytes(active)) == keccak256("hyperlane")
-            ? "HyperlaneGatewayAdapter"
-            : "LayerZeroGatewayAdapter";
+        bytes32 gateway = keccak256(bytes(active));
+        require(
+            gateway == keccak256("lz") || gateway == keccak256("hyperlane"), "ACTIVE_GATEWAY must be lz or hyperlane"
+        );
+        string memory label = gateway == keccak256("hyperlane") ? "HyperlaneGatewayAdapter" : "LayerZeroGatewayAdapter";
         return Create3Factory(factory).predict(deployer, keccak256(abi.encodePacked(label, salt)));
     }
 }

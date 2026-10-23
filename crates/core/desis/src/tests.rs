@@ -166,7 +166,7 @@ fn with_targets<R>(chains: &[u32], f: impl FnOnce(StorageHandle) -> R) -> R {
 
 /// The UTC day an auction starting at `now` prices from: the one that closed before it.
 fn price_day(now: u64) -> u32 {
-    previous_date_key(timestamp_to_date_key(now))
+    previous_date_key(timestamp_to_date_key(now)).expect("date step")
 }
 
 /// Register COEN/`iso_code` under `pair_id`, once: the selector skips a currency
@@ -228,30 +228,41 @@ fn brief_at_rate(
     rate: u128,
     has_limit: bool,
 ) {
-    brief_at_rate_from(s, worldwide_day, desis_limit_minor, rate, has_limit, NOW)
+    brief_at_rate_from(
+        s,
+        RateBrief {
+            worldwide_day,
+            desis_limit_minor,
+            rate,
+            has_limit,
+            now: NOW,
+        },
+    )
 }
 
-/// The same, for a day briefed at `now`. The brief time fixes both its schedule
-/// anchor and the UTC day its start will price from.
-fn brief_at_rate_from(
-    s: &StorageHandle,
+/// The day, limit, rate, and brief time a start prices from.
+struct RateBrief {
     worldwide_day: WorldwideDay,
     desis_limit_minor: u128,
     rate: u128,
     has_limit: bool,
     now: u64,
-) {
-    seed_rate(s, now, rate);
+}
+
+/// The same, for a day briefed at `brief.now`. The brief time fixes both its schedule
+/// anchor and the UTC day its start will price from.
+fn brief_at_rate_from(s: &StorageHandle, brief: RateBrief) {
+    seed_rate(s, brief.now, brief.rate);
     assert_eq!(
         crate::api::dispatch_auction_brief(
             s.clone(),
             crate::api::AuctionBrief {
-                worldwide_day,
-                desis_limit_minor: U256::from(desis_limit_minor),
-                has_limit
+                worldwide_day: brief.worldwide_day,
+                desis_limit_minor: U256::from(brief.desis_limit_minor),
+                has_limit: brief.has_limit,
             },
-            now,
-            crate::api::BriefOverflowPolicy::CarryOver
+            brief.now,
+            crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
         )
         .unwrap(),
         AuctionBriefReceipt::Accepted
@@ -300,7 +311,7 @@ fn mark_done(s: &StorageHandle, chain: u32, total_batches: u16, total_bids: u32)
 /// Relay `n` bids the way the codec does: batches no wider than one message, then
 /// the done marker. The intake refuses a single oversized batch.
 fn relay_bids(s: &StorageHandle, chain: u32, n: u8, rate: u32) {
-    let cap = u8::try_from(crate::constants::MAX_BIDS_PER_BATCH).unwrap();
+    let cap = u8::try_from(crate::constants::MAX_PAYLOAD_ARRAY_LEN).unwrap();
     let total_batches = u16::from(n.div_ceil(cap));
     for batch_index in 0..total_batches {
         let start = u8::try_from(batch_index).unwrap() * cap;
@@ -350,6 +361,66 @@ fn bids(n: u8, rate: u32) -> Vec<BidData> {
         .collect()
 }
 
+/// One bid at `rate` from `who`. The other bid fields stay at the fixture defaults.
+fn one_bid(who: Address, rate: u32) -> Vec<BidData> {
+    vec![BidData {
+        bidder_address: who,
+        intex_bid_rate: rate,
+        timestamp: 0,
+        intex_quantity: 1,
+        issuance_currency: REFERENCE_ISO,
+        reference_currency: REFERENCE_ISO,
+    }]
+}
+
+/// Bids at distinct rates. Bidder `i` gets `rates[i]`.
+fn priced_bids(rates: &[u32]) -> Vec<BidData> {
+    rates
+        .iter()
+        .enumerate()
+        .map(|(i, rate)| BidData {
+            bidder_address: bidder(i as u8),
+            intex_bid_rate: *rate,
+            timestamp: i as u32,
+            intex_quantity: 1,
+            issuance_currency: REFERENCE_ISO,
+            reference_currency: REFERENCE_ISO,
+        })
+        .collect()
+}
+
+fn origin(chain: u32) -> runtime::Inbound {
+    runtime::Inbound {
+        caller: ORIGIN_ROUTER_ADDRESS,
+        worldwide_day: WORLDWIDE_DAY,
+        src_chain_id: chain,
+    }
+}
+
+fn submit_one_batch(s: &StorageHandle, chain: u32, rows: Vec<BidData>) {
+    runtime::process_bids_batch(s.clone(), origin(chain), 0, 1, rows).unwrap();
+}
+
+/// Started, not Revealing. The batch must be rejected.
+fn reject_batch_before_reveal(s: &StorageHandle, bid_count: u8) {
+    brief(s, true);
+    runtime::schedule_tick(s, NOW).unwrap();
+    assert!(
+        runtime::process_bids_batch(s.clone(), origin(SRC_CHAIN), 0, 1, bids(bid_count, 200))
+            .is_err()
+    );
+}
+
+fn chain_done_after_one_batch(s: &StorageHandle, arrived: u8, marked_total: u32) -> u8 {
+    open_revealing(s);
+    submit_one_batch(s, SRC_CHAIN, bids(arrived, 200));
+    mark_done(s, SRC_CHAIN, 1, marked_total);
+    s.contract::<DesisContract>()
+        .chain_done
+        .read(&DesisContract::chain_key(WORLDWIDE_DAY, SRC_CHAIN))
+        .unwrap()
+}
+
 // --- Auction brief ---
 
 #[test]
@@ -363,7 +434,7 @@ fn dispatch_auction_brief_records_the_brief() {
                 has_limit: true,
             },
             NOW,
-            crate::api::BriefOverflowPolicy::CarryOver,
+            crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
         )
         .unwrap();
         assert_eq!(receipt, AuctionBriefReceipt::Accepted);
@@ -409,7 +480,7 @@ fn dispatch_auction_brief_records_a_brief_with_no_limit() {
                 has_limit: false,
             },
             NOW,
-            crate::api::BriefOverflowPolicy::CarryOver,
+            crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
         )
         .unwrap();
         assert_eq!(receipt, AuctionBriefReceipt::Accepted);
@@ -664,7 +735,7 @@ fn strict_request_desis_limit_never_tops_up_a_live_auction() {
         assert_eq!(after.sched_active_count.read().unwrap(), 1);
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(storage)
-                .get_total_unallocated()
+                .promis_limit()
                 .unwrap(),
             U256::ZERO
         );
@@ -690,7 +761,7 @@ fn dispatch_auction_brief_duplicate_propagates_without_committed_failure_event()
                     has_limit: true
                 },
                 NOW,
-                crate::api::BriefOverflowPolicy::CarryOver
+                crate::api::BriefOverflowPolicy::ReturnToPromisLimit
             )
             .unwrap(),
             AuctionBriefReceipt::Accepted
@@ -703,7 +774,7 @@ fn dispatch_auction_brief_duplicate_propagates_without_committed_failure_event()
                 has_limit: true
             },
             NOW,
-            crate::api::BriefOverflowPolicy::CarryOver
+            crate::api::BriefOverflowPolicy::ReturnToPromisLimit
         )
         .is_err());
         let contract = s.contract::<DesisContract>();
@@ -724,7 +795,7 @@ fn dispatch_auction_brief_duplicate_propagates_without_committed_failure_event()
 }
 
 #[test]
-fn dispatch_auction_brief_oversized_limit_returns_typed_full_carry_over() {
+fn dispatch_auction_brief_oversized_limit_returns_typed_rejection() {
     use crate::precompile::IDesis;
     use alloy_sol_types::SolEvent;
 
@@ -739,10 +810,10 @@ fn dispatch_auction_brief_oversized_limit_returns_typed_full_carry_over() {
                     has_limit: true
                 },
                 NOW,
-                crate::api::BriefOverflowPolicy::CarryOver
+                crate::api::BriefOverflowPolicy::ReturnToPromisLimit
             )
             .unwrap(),
-            AuctionBriefReceipt::RejectedToCarryOver {
+            AuctionBriefReceipt::ReturnedToPromisLimit {
                 reason: AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain,
                 desis_limit_minor: U256::MAX,
                 max_accepted: U256::from(u128::MAX),
@@ -759,7 +830,7 @@ fn dispatch_auction_brief_oversized_limit_returns_typed_full_carry_over() {
 
     let logs = storage.get_events(outbe_primitives::addresses::DESIS_ADDRESS);
     assert_eq!(logs.len(), 1);
-    let event = IDesis::AuctionBriefRejectedToCarryOver::decode_log_data(&logs[0]).unwrap();
+    let event = IDesis::AuctionBriefRejected::decode_log_data(&logs[0]).unwrap();
     assert_eq!(event.worldwideDay, WORLDWIDE_DAY.value());
     assert_eq!(event.desisLimitMinor, U256::MAX);
     assert_eq!(event.maxAcceptedMinor, U256::from(u128::MAX));
@@ -781,7 +852,7 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
                     has_limit: true
                 },
                 NOW,
-                crate::api::BriefOverflowPolicy::CarryOver
+                crate::api::BriefOverflowPolicy::ReturnToPromisLimit
             )
             .unwrap(),
             AuctionBriefReceipt::Accepted
@@ -800,10 +871,10 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
                     has_limit: true
                 },
                 NOW,
-                crate::api::BriefOverflowPolicy::CarryOver
+                crate::api::BriefOverflowPolicy::ReturnToPromisLimit
             )
             .unwrap(),
-            AuctionBriefReceipt::RejectedToCarryOver {
+            AuctionBriefReceipt::ReturnedToPromisLimit {
                 reason: AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain,
                 desis_limit_minor: supply,
                 max_accepted: U256::from(u128::MAX),
@@ -814,9 +885,7 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
     use alloy_sol_types::SolEvent;
     let logs = provider.get_events(outbe_primitives::addresses::DESIS_ADDRESS);
     assert_eq!(logs.len(), 1);
-    let event =
-        crate::precompile::IDesis::AuctionBriefRejectedToCarryOver::decode_log_data(&logs[0])
-            .unwrap();
+    let event = crate::precompile::IDesis::AuctionBriefRejected::decode_log_data(&logs[0]).unwrap();
     assert_eq!(event.worldwideDay, WORLDWIDE_DAY.value());
     assert_eq!(event.desisLimitMinor, supply);
     assert_eq!(event.maxAcceptedMinor, U256::from(u128::MAX));
@@ -838,7 +907,7 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
                 has_limit: true
             },
             NOW,
-            crate::api::BriefOverflowPolicy::CarryOver
+            crate::api::BriefOverflowPolicy::ReturnToPromisLimit
         )
         .is_err());
 
@@ -851,7 +920,7 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
                 has_limit: true
             },
             NOW,
-            crate::api::BriefOverflowPolicy::CarryOver
+            crate::api::BriefOverflowPolicy::ReturnToPromisLimit
         )
         .is_err());
 
@@ -863,7 +932,7 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
                 has_limit: true
             },
             u64::MAX,
-            crate::api::BriefOverflowPolicy::CarryOver
+            crate::api::BriefOverflowPolicy::ReturnToPromisLimit
         )
         .is_err());
     });
@@ -885,7 +954,7 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
                     has_limit: true,
                 },
                 NOW,
-                crate::api::BriefOverflowPolicy::CarryOver,
+                crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
             )
         });
         assert_eq!(result.unwrap(), AuctionBriefReceipt::Accepted);
@@ -905,7 +974,7 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
                     has_limit: true,
                 },
                 NOW,
-                crate::api::BriefOverflowPolicy::CarryOver,
+                crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
             )
         });
         assert!(result.is_err(), "mutation {operation} must propagate");
@@ -927,7 +996,7 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
                 has_limit: true,
             },
             NOW,
-            crate::api::BriefOverflowPolicy::CarryOver,
+            crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
         )
     });
     assert!(result.is_err());
@@ -951,7 +1020,7 @@ fn brief_anchor_at(now: u64) -> u64 {
                     has_limit: true
                 },
                 now,
-                crate::api::BriefOverflowPolicy::CarryOver
+                crate::api::BriefOverflowPolicy::ReturnToPromisLimit
             )
             .unwrap(),
             AuctionBriefReceipt::Accepted
@@ -983,11 +1052,13 @@ fn a_start_with_the_minimum_commit_window_opens() {
     with_storage(|s| {
         brief_at_rate_from(
             &s,
-            WORLDWIDE_DAY,
-            10 * LOAD_MINOR,
-            ENTRY_PRICE,
-            true,
-            LAST_START,
+            RateBrief {
+                worldwide_day: WORLDWIDE_DAY,
+                desis_limit_minor: 10 * LOAD_MINOR,
+                rate: ENTRY_PRICE,
+                has_limit: true,
+                now: LAST_START,
+            },
         );
         runtime::schedule_tick(&s, LAST_START).unwrap();
         assert_eq!(
@@ -1025,7 +1096,7 @@ fn start_at(
                 .read_stage(WORLDWIDE_DAY)
                 .unwrap(),
             outbe_promislimit::PromisLimitContract::new(s.clone())
-                .get_total_unallocated()
+                .promis_limit()
                 .unwrap(),
         )
     });
@@ -1042,7 +1113,16 @@ fn start_at(
 fn a_start_past_the_minimum_commit_window_cancels_the_day_and_returns_its_limit() {
     let start = LAST_START + 1;
     let outcome = start_at(start, true, |s| {
-        brief_at_rate_from(s, WORLDWIDE_DAY, 10 * LOAD_MINOR, ENTRY_PRICE, true, start);
+        brief_at_rate_from(
+            s,
+            RateBrief {
+                worldwide_day: WORLDWIDE_DAY,
+                desis_limit_minor: 10 * LOAD_MINOR,
+                rate: ENTRY_PRICE,
+                has_limit: true,
+                now: start,
+            },
+        );
     });
     assert_eq!(
         outcome,
@@ -1057,7 +1137,16 @@ fn a_start_past_the_minimum_commit_window_cancels_the_day_and_returns_its_limit(
 fn a_late_day_is_cancelled_only_once_its_cancelled_start_is_sent() {
     let start = LAST_START + 1;
     let outcome = start_at(start, false, |s| {
-        brief_at_rate_from(s, WORLDWIDE_DAY, 10 * LOAD_MINOR, ENTRY_PRICE, true, start);
+        brief_at_rate_from(
+            s,
+            RateBrief {
+                worldwide_day: WORLDWIDE_DAY,
+                desis_limit_minor: 10 * LOAD_MINOR,
+                rate: ENTRY_PRICE,
+                has_limit: true,
+                now: start,
+            },
+        );
     });
     assert_eq!(outcome, (AuctionStage::Briefed, U256::ZERO, false));
 }
@@ -1134,7 +1223,7 @@ fn a_price_lost_between_brief_and_start_cancels_the_day_and_returns_its_limit() 
         );
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(s.clone())
-                .get_total_unallocated()
+                .promis_limit()
                 .unwrap(),
             U256::from(10 * LOAD_MINOR),
             "the briefed limit goes back"
@@ -1265,9 +1354,7 @@ fn schedule_cancels_a_missed_start() {
         assert_eq!(contract.sched_active_count.read().unwrap(), 0);
         assert_eq!(contract.gate_active_count.read().unwrap(), 0);
         assert_eq!(
-            PromisLimitContract::new(s.clone())
-                .get_total_unallocated()
-                .unwrap(),
+            PromisLimitContract::new(s.clone()).promis_limit().unwrap(),
             U256::from(10 * LOAD_MINOR)
         );
     });
@@ -1294,9 +1381,7 @@ fn schedule_retires_an_overdue_day() {
         assert_eq!(contract.sched_active_count.read().unwrap(), 0);
         assert_eq!(contract.gate_active_count.read().unwrap(), 0);
         assert_eq!(
-            PromisLimitContract::new(s.clone())
-                .get_total_unallocated()
-                .unwrap(),
+            PromisLimitContract::new(s.clone()).promis_limit().unwrap(),
             U256::from(10 * LOAD_MINOR)
         );
     });
@@ -1321,11 +1406,13 @@ fn a_decade_step_rescales_both_the_tirage_and_the_min_bid_floor() {
         // That is the only way the two days can be quoted differently at all.
         brief_at_rate_from(
             &s,
-            NEXT_WORLDWIDE_DAY,
-            100 * LOAD_MINOR,
-            10 * ENTRY_PRICE,
-            true,
-            NOW + SECONDS_PER_DAY,
+            RateBrief {
+                worldwide_day: NEXT_WORLDWIDE_DAY,
+                desis_limit_minor: 100 * LOAD_MINOR,
+                rate: 10 * ENTRY_PRICE,
+                has_limit: true,
+                now: NOW + SECONDS_PER_DAY,
+            },
         );
         runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
         runtime::schedule_tick(&s, ANCHOR + 2 * SECONDS_PER_DAY).unwrap();
@@ -1390,21 +1477,8 @@ fn schedule_derives_min_bid_qty_from_prior_clearing() {
 #[test]
 fn process_bids_in_non_revealing_stage_fails() {
     with_storage(|s| {
-        brief(&s, true);
-        runtime::schedule_tick(&s, NOW).unwrap();
         // Stage is Started, not Revealing. The call must be rejected.
-        assert!(runtime::process_bids_batch(
-            s.clone(),
-            runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: WORLDWIDE_DAY,
-                src_chain_id: SRC_CHAIN
-            },
-            0,
-            1,
-            bids(2, 200)
-        )
-        .is_err());
+        reject_batch_before_reveal(&s, 2);
     });
 }
 
@@ -1433,10 +1507,10 @@ fn process_bids_rejects_non_origin_caller() {
 
 #[test]
 fn process_bids_rejects_an_oversized_batch() {
-    use crate::constants::MAX_BIDS_PER_BATCH;
+    use crate::constants::MAX_PAYLOAD_ARRAY_LEN;
     with_storage(|s| {
         open_revealing(&s);
-        let over = u8::try_from(MAX_BIDS_PER_BATCH + 1).unwrap();
+        let over = u8::try_from(MAX_PAYLOAD_ARRAY_LEN + 1).unwrap();
         let error = runtime::process_bids_batch(
             s.clone(),
             runtime::Inbound {
@@ -1449,9 +1523,15 @@ fn process_bids_rejects_an_oversized_batch() {
             bids(over, 200),
         )
         .unwrap_err();
-        assert!(
-            format!("{error:?}").contains("over the"),
-            "unexpected error: {error:?}"
+        assert_eq!(
+            error.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::DesisError::BidBatchTooLarge(
+                    MAX_PAYLOAD_ARRAY_LEN + 1,
+                    MAX_PAYLOAD_ARRAY_LEN,
+                )
+            )
+            .to_string()
         );
         // Refused at the intake, so clearing never sees a day it cannot refund.
         let contract = s.contract::<DesisContract>();
@@ -1513,29 +1593,8 @@ fn process_bids_accumulate_across_batches() {
 #[test]
 fn marker_finalizes_chain_once_batches_and_totals_match() {
     with_storage(|s| {
-        open_revealing(&s);
-        runtime::process_bids_batch(
-            s.clone(),
-            runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: WORLDWIDE_DAY,
-                src_chain_id: SRC_CHAIN,
-            },
-            0,
-            1,
-            bids(4, 200),
-        )
-        .unwrap();
         // Marker with matching totals opens the gate for this chain.
-        mark_done(&s, SRC_CHAIN, 1, 4);
-        let contract = s.contract::<DesisContract>();
-        assert!(
-            contract
-                .chain_done
-                .read(&DesisContract::chain_key(WORLDWIDE_DAY, SRC_CHAIN))
-                .unwrap()
-                == 1
-        );
+        assert_eq!(chain_done_after_one_batch(&s, 4, 4), 1);
     });
 }
 
@@ -1568,29 +1627,8 @@ fn marker_arriving_before_batches_still_finalizes() {
 #[test]
 fn marker_total_mismatch_keeps_chain_not_done() {
     with_storage(|s| {
-        open_revealing(&s);
-        runtime::process_bids_batch(
-            s.clone(),
-            runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: WORLDWIDE_DAY,
-                src_chain_id: SRC_CHAIN,
-            },
-            0,
-            1,
-            bids(3, 200),
-        )
-        .unwrap();
         // Marker claims 5 bids but only 3 arrived: the integrity check keeps the chain not-done.
-        mark_done(&s, SRC_CHAIN, 1, 5);
-        let contract = s.contract::<DesisContract>();
-        assert!(
-            contract
-                .chain_done
-                .read(&DesisContract::chain_key(WORLDWIDE_DAY, SRC_CHAIN))
-                .unwrap()
-                == 0
-        );
+        assert_eq!(chain_done_after_one_batch(&s, 3, 5), 0);
     });
 }
 
@@ -1761,7 +1799,7 @@ fn start_day(
                 .read_stage(WORLDWIDE_DAY)
                 .unwrap(),
             outbe_promislimit::PromisLimitContract::new(s.clone())
-                .get_total_unallocated()
+                .promis_limit()
                 .unwrap(),
         )
     });
@@ -1894,44 +1932,7 @@ fn clearing_uniform_price_is_last_allocated_bid() {
     with_storage(|s| {
         open_clearing(&s, 2);
         // Three bids at descending prices: 300, 200, 150.
-        let three_bids = vec![
-            BidData {
-                bidder_address: bidder(0),
-                intex_bid_rate: 300,
-                timestamp: 0,
-                intex_quantity: 1,
-                issuance_currency: REFERENCE_ISO,
-                reference_currency: REFERENCE_ISO,
-            },
-            BidData {
-                bidder_address: bidder(1),
-                intex_bid_rate: 200,
-                timestamp: 1,
-                intex_quantity: 1,
-                issuance_currency: REFERENCE_ISO,
-                reference_currency: REFERENCE_ISO,
-            },
-            BidData {
-                bidder_address: bidder(2),
-                intex_bid_rate: 150,
-                timestamp: 2,
-                intex_quantity: 1,
-                issuance_currency: REFERENCE_ISO,
-                reference_currency: REFERENCE_ISO,
-            },
-        ];
-        runtime::process_bids_batch(
-            s.clone(),
-            runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: WORLDWIDE_DAY,
-                src_chain_id: SRC_CHAIN,
-            },
-            0,
-            1,
-            three_bids,
-        )
-        .unwrap();
+        submit_one_batch(&s, SRC_CHAIN, priced_bids(&[300, 200, 150]));
         mark_done(&s, SRC_CHAIN, 1, 3);
         let result = clear(&s);
         // Supply 2 -> top 2 bids win (300 and 200); clearing rate = 200.
@@ -2053,44 +2054,7 @@ fn clear_rate_escrow_scales_by_basis() {
     // escrow basis != 1_000_000, so this exercises the scaled division.
     with_storage(|s| {
         open_clearing(&s, 2);
-        let rate_bids = vec![
-            BidData {
-                bidder_address: bidder(0),
-                intex_bid_rate: 800_000,
-                timestamp: 0,
-                intex_quantity: 1,
-                issuance_currency: REFERENCE_ISO,
-                reference_currency: REFERENCE_ISO,
-            },
-            BidData {
-                bidder_address: bidder(1),
-                intex_bid_rate: 600_000,
-                timestamp: 1,
-                intex_quantity: 1,
-                issuance_currency: REFERENCE_ISO,
-                reference_currency: REFERENCE_ISO,
-            },
-            BidData {
-                bidder_address: bidder(2),
-                intex_bid_rate: 400_000,
-                timestamp: 2,
-                intex_quantity: 1,
-                issuance_currency: REFERENCE_ISO,
-                reference_currency: REFERENCE_ISO,
-            },
-        ];
-        runtime::process_bids_batch(
-            s.clone(),
-            runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: WORLDWIDE_DAY,
-                src_chain_id: SRC_CHAIN,
-            },
-            0,
-            1,
-            rate_bids,
-        )
-        .unwrap();
+        submit_one_batch(&s, SRC_CHAIN, priced_bids(&[800_000, 600_000, 400_000]));
         mark_done(&s, SRC_CHAIN, 1, 3);
         let result = clear(&s);
 
@@ -2152,9 +2116,7 @@ fn clearing_returns_the_unused_limit_and_dust_to_promis() {
             U256::ZERO
         );
         assert_eq!(
-            PromisLimitContract::new(s.clone())
-                .get_total_unallocated()
-                .unwrap(),
+            PromisLimitContract::new(s.clone()).promis_limit().unwrap(),
             U256::from(2 * LOAD_MINOR + 7),
             "unsold whole units and conversion dust return to PromisLimit"
         );
@@ -2173,45 +2135,9 @@ fn two_chain_bids_merge_and_carry_source_chain() {
         open_clearing(&s, 3);
 
         // Chain A: one bid at 300. Chain B: one bid at 200.
-        runtime::process_bids_batch(
-            s.clone(),
-            runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: WORLDWIDE_DAY,
-                src_chain_id: chain_a,
-            },
-            0,
-            1,
-            vec![BidData {
-                bidder_address: bidder(1),
-                intex_bid_rate: 300,
-                timestamp: 0,
-                intex_quantity: 1,
-                issuance_currency: REFERENCE_ISO,
-                reference_currency: REFERENCE_ISO,
-            }],
-        )
-        .unwrap();
+        submit_one_batch(&s, chain_a, one_bid(bidder(1), 300));
         mark_done(&s, chain_a, 1, 1);
-        runtime::process_bids_batch(
-            s.clone(),
-            runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: WORLDWIDE_DAY,
-                src_chain_id: chain_b,
-            },
-            0,
-            1,
-            vec![BidData {
-                bidder_address: bidder(2),
-                intex_bid_rate: 200,
-                timestamp: 0,
-                intex_quantity: 1,
-                issuance_currency: REFERENCE_ISO,
-                reference_currency: REFERENCE_ISO,
-            }],
-        )
-        .unwrap();
+        submit_one_batch(&s, chain_b, one_bid(bidder(2), 200));
         mark_done(&s, chain_b, 1, 1);
 
         let result = clear(&s);
@@ -2573,19 +2499,22 @@ fn escrow_basis_is_promis_load() {
 
 #[test]
 fn a_chains_winners_ship_in_chunks_the_encoder_can_carry() {
-    use crate::constants::{MAX_REFUND_CHUNKS, REFUND_CHUNK_LEN};
+    use crate::constants::{MAX_PAYLOAD_ARRAY_LEN, MAX_REFUND_CHUNKS};
 
     // A chain whose bids all lost still takes one chunk, which closes its day.
     assert_eq!(runtime::refund_chunk_count(0).unwrap(), 1);
     assert_eq!(runtime::refund_chunk_count(1).unwrap(), 1);
-    assert_eq!(runtime::refund_chunk_count(REFUND_CHUNK_LEN).unwrap(), 1);
     assert_eq!(
-        runtime::refund_chunk_count(REFUND_CHUNK_LEN + 1).unwrap(),
+        runtime::refund_chunk_count(MAX_PAYLOAD_ARRAY_LEN).unwrap(),
+        1
+    );
+    assert_eq!(
+        runtime::refund_chunk_count(MAX_PAYLOAD_ARRAY_LEN + 1).unwrap(),
         2
     );
 
     // The arrival set's ceiling. One winner more is refused rather than truncated.
-    let ceiling = REFUND_CHUNK_LEN * MAX_REFUND_CHUNKS;
+    let ceiling = MAX_PAYLOAD_ARRAY_LEN * MAX_REFUND_CHUNKS;
     assert_eq!(
         runtime::refund_chunk_count(ceiling).unwrap(),
         MAX_REFUND_CHUNKS
@@ -2605,10 +2534,10 @@ fn ranked_winners(chains: &[u32], partial: Option<usize>) -> crate::schema::Clea
 
 #[test]
 fn a_partial_fill_is_named_in_the_chunk_that_carries_it() {
-    use crate::constants::REFUND_CHUNK_LEN;
+    use crate::constants::MAX_PAYLOAD_ARRAY_LEN;
 
     // Chain 20's winners sit between chain 10's, and the last one ranked is the partial fill.
-    let mut chains = vec![10u32; REFUND_CHUNK_LEN + 1];
+    let mut chains = vec![10u32; MAX_PAYLOAD_ARRAY_LEN + 1];
     chains.insert(3, 20);
     chains.push(10);
     let partial = chains.len() - 1;
@@ -2616,7 +2545,7 @@ fn a_partial_fill_is_named_in_the_chunk_that_carries_it() {
 
     let chunks = runtime::refund_chunks(&result, 10).unwrap();
     assert_eq!(chunks.len(), 2);
-    assert_eq!(chunks[0].winners.len(), REFUND_CHUNK_LEN);
+    assert_eq!(chunks[0].winners.len(), MAX_PAYLOAD_ARRAY_LEN);
     assert!(
         !chunks[0].winners.contains(&bidder(3)),
         "another chain's winner"
@@ -2751,7 +2680,7 @@ fn a_day_nobody_could_price_is_cancelled_rather_than_failed() {
         // unlike it, is briefed with none. Cancelling it must give that limit back.
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(s.clone())
-                .get_total_unallocated()
+                .promis_limit()
                 .unwrap(),
             U256::from(4 * LOAD_MINOR),
             "an unpriced day returns its limit"
@@ -2783,7 +2712,13 @@ fn a_relayed_bid_naming_an_unspellable_currency_is_refused_at_intake() {
             relayed,
         )
         .unwrap_err();
-        assert!(err.to_string().contains("no series id can spell"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::DesisError::UnspellableBidCurrency(1949, 840)
+            )
+            .to_string()
+        );
     });
 }
 
@@ -2878,20 +2813,8 @@ fn a_batch_after_clearing_is_acknowledged_as_obsolete() {
 fn a_batch_before_reveal_still_reverts_so_the_transport_redelivers() {
     let mut storage = inbound_storage();
     StorageHandle::enter(&mut storage, |s| {
-        brief(&s, true);
-        runtime::schedule_tick(&s, NOW).unwrap(); // Started, commit stage running
-        assert!(runtime::process_bids_batch(
-            s.clone(),
-            runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: WORLDWIDE_DAY,
-                src_chain_id: SRC_CHAIN
-            },
-            0,
-            1,
-            bids(1, 200),
-        )
-        .is_err());
+        // Started, commit stage running. The transport must redeliver.
+        reject_batch_before_reveal(&s, 1);
     });
     assert!(ignored_reasons(&storage).is_empty());
 }
@@ -2990,9 +2913,12 @@ fn dispatch_auction_brief_oversized_limit_rejects_under_the_reject_policy() {
             crate::api::BriefOverflowPolicy::Reject,
         )
         .unwrap_err();
-        assert!(
-            format!("{error:?}").contains("exceeds Desis u128 domain"),
-            "unexpected error: {error:?}"
+        assert_eq!(
+            error.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::DesisError::AuctionBriefLimitExceedsDomain
+            )
+            .to_string()
         );
         let contract = s.contract::<DesisContract>();
         assert_eq!(
@@ -3018,7 +2944,7 @@ fn a_clearing_round_is_sized_from_the_chains_recent_days() {
         let quiet = crate::runtime::clearing_round_gas(&s, day, chain).unwrap();
 
         let contract = s.contract::<DesisContract>();
-        let busy = outbe_primitives::time::previous_date_key(day.value());
+        let busy = outbe_primitives::time::previous_date_key(day.value()).expect("date step");
         contract
             .chain_bid_count
             .write(

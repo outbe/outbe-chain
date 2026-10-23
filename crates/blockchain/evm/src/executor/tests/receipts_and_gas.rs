@@ -5,6 +5,7 @@ mod factory_approval;
 mod hook_events;
 mod native_sinks;
 mod patch_approval;
+mod rewards;
 mod support;
 
 use support::*;
@@ -359,7 +360,7 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
     use outbe_primitives::time::SECONDS_PER_DAY;
     // WAA and SRA recipients together fill one block's accrual slice.
     const DENSE_ADDRESS_COUNT: u64 =
-        outbe_agentreward::distribution::ACCRUAL_RECIPIENTS_PER_BLOCK as u64 / 2;
+        outbe_agentreward::constants::ACCRUAL_RECIPIENTS_PER_BLOCK as u64 / 2;
     const DENSE_VALIDATOR_COUNT: u32 = outbe_consensus::bls::MAX_VALIDATORS;
 
     let signer = test_evm_signer();
@@ -367,13 +368,14 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
     let block_ts = GENESIS_TS + SECONDS_PER_DAY + 60;
     let prev_day = outbe_primitives::time::previous_date_key(
         outbe_primitives::time::timestamp_to_date_key(block_ts),
-    );
+    )
+    .expect("date step");
     let emission_trigger = outbe_cycle::triggers::TriggerId::ProtocolCycle.as_u32();
     let mut state =
         state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
             assert_eq!(
                 outbe_promislimit::PromisLimitContract::new(storage.clone())
-                    .get_total_unallocated()
+                    .promis_limit()
                     .unwrap(),
                 U256::ZERO,
                 "GAS-05 fixture must start with zero carry-over"

@@ -4,6 +4,27 @@ pragma solidity ^0.8.30;
 /// @title IVote
 /// @notice Generic on-chain proposal/voting precompile at 0x000000000000000000000000000000000000EE0C
 interface IVote {
+    /// Caller-facing domain revert.
+    error NotValidator();
+    error ProposalNotFound();
+    error NotPending();
+    error VotingClosed();
+    error InvalidVotingWindow(uint64 actual, uint64 maximum);
+    error VotingDeadlineOverflow();
+    error AlreadyVoted();
+    error TooManyPending();
+    error TooManyPendingByValidator();
+    error TooManyPendingPublicBonded();
+    error TooManyPendingPublicBondedByProposer();
+    error InvalidProposalStatus();
+    error InvalidVoteKind();
+    error InvalidElectorate();
+    error ProposalCounterExhausted();
+    error InvalidPayload();
+    error UnknownTargetModule();
+    error DuplicateTargetModule();
+    error StoredPayloadInvalid(string module);
+
     enum ProposalStatus {
         Pending,
         Approved,
@@ -77,12 +98,12 @@ interface IVote {
     /// @notice An expired proposal burned its recorded proposal bond.
     event ProposalBondBurned(uint256 indexed proposalId, address indexed owner, uint256 amount);
 
-    error InvalidProposalBond(uint256 expected, uint256 actual);
-    error ProposalBondAlreadySettled(uint256 proposalId, BondSettlement settlement);
-    error ProposalBondSettlementFailed(uint256 proposalId);
-    error ProposalBondLiabilityInvariant(uint256 balance, uint256 liabilities);
+    /// @notice A proposal bond check failed; reason preserves the accounting context.
+    error InvalidProposalBond(string reason);
 
     /// @notice Creates a generic proposal.
+    /// @dev Vote enforces its raw UTF-8 payload byte limit before target decoding
+    /// or storage writes. This admission-only bound is separate from decoded field limits.
     /// @param targetModule Target system module precompile address.
     /// @param payload JSON payload decoded only by the target module handler.
     function createProposal(address targetModule, string calldata payload) external payable returns (uint256 proposalId);

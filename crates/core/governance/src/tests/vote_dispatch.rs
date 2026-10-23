@@ -6,11 +6,13 @@ use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_vote::constants::VOTING_WINDOW_BLOCKS;
+use outbe_vote::constants::{MAX_PAYLOAD_BYTES, VOTING_WINDOW_BLOCKS};
+use outbe_vote::errors::VoteError;
 use outbe_vote::handlers::{VoteTarget, VoteTargetRegistry};
 use outbe_vote::schema::ProposalStatus;
 use outbe_vote::schema::Vote;
 
+use crate::errors::GovernanceError;
 use crate::precompile::IGovernance;
 use crate::schema::GovernanceContract;
 use crate::status;
@@ -182,10 +184,11 @@ fn invalid_json_payload_is_rejected_at_creation() {
                 &VOTE_TARGET_REGISTRY,
             )
             .unwrap_err();
-        assert!(matches!(
-            err,
-            PrecompileError::Revert(msg) if msg.contains("invalid proposal payload")
-        ));
+        assert!(
+            matches!(err, PrecompileError::RevertBytes(_))
+                || err.to_string().contains("invalid proposal payload"),
+            "unexpected error: {err:?}"
+        );
     });
 }
 
@@ -202,10 +205,10 @@ fn unknown_kind_is_rejected_at_creation() {
                 &VOTE_TARGET_REGISTRY,
             )
             .unwrap_err();
-        assert!(matches!(
-            err,
-            PrecompileError::Revert(msg) if msg.contains("invalid vote payload")
-        ));
+        assert_eq!(
+            err.to_string(),
+            PrecompileError::from(GovernanceError::InvalidPayload).to_string()
+        );
     });
 }
 
@@ -222,11 +225,51 @@ fn empty_text_is_rejected_at_creation() {
                 &VOTE_TARGET_REGISTRY,
             )
             .unwrap_err();
-        assert!(matches!(
-            err,
-            PrecompileError::Revert(msg) if msg.contains("text must not be empty")
-        ));
+        assert_eq!(
+            err.to_string(),
+            PrecompileError::from(GovernanceError::EmptyText).to_string()
+        );
     });
+}
+
+#[test]
+fn oversize_raw_payload_is_rejected_at_creation() {
+    let expected = PrecompileError::from(VoteError::InvalidPayload).to_string();
+    for kind in KINDS {
+        with_vote(|storage| {
+            let mut vote = Vote::new(storage.clone());
+            let err = vote
+                .create_proposal(
+                    PROPOSER,
+                    GOVERNANCE_ADDRESS,
+                    &GovernanceVotePayload::encode(kind, &"a".repeat(MAX_PAYLOAD_BYTES)),
+                    200,
+                    &VOTE_TARGET_REGISTRY,
+                )
+                .unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                expected,
+                "expected InvalidPayload, got {err:?}"
+            );
+            assert_absent(&GovernanceContract::new(storage), kind);
+        });
+    }
+}
+
+#[test]
+fn approved_vote_creates_proposal_at_raw_payload_bound() {
+    for kind in KINDS {
+        let envelope_len = GovernanceVotePayload::encode(kind, "").len();
+        let text = "a".repeat(MAX_PAYLOAD_BYTES - envelope_len);
+        with_vote(|storage| {
+            let mut vote = Vote::new(storage.clone());
+            let current = 300u64;
+            create_and_pass(&mut vote, kind, &text, current);
+            process_begin_block_test(storage.clone(), current + VOTING_WINDOW_BLOCKS + 1);
+            assert_approved(&GovernanceContract::new(storage), kind, &text);
+        });
+    }
 }
 
 #[test]
@@ -375,8 +418,14 @@ fn unshaped_text_rejected_at_proposal_creation() {
     let too_big = "a".repeat(crate::runtime::MAX_TEXT_BYTES + 1);
     for kind in TEXT_KINDS {
         for (text, expected) in [
-            ("", "text must not be empty"),
-            (too_big.as_str(), "text exceeds the maximum size"),
+            (
+                "",
+                PrecompileError::from(crate::errors::GovernanceError::EmptyText),
+            ),
+            (
+                too_big.as_str(),
+                PrecompileError::from(outbe_vote::errors::VoteError::InvalidPayload),
+            ),
         ] {
             with_vote(|storage| {
                 let mut vote = Vote::new(storage.clone());
@@ -389,8 +438,9 @@ fn unshaped_text_rejected_at_proposal_creation() {
                         &VOTE_TARGET_REGISTRY,
                     )
                     .unwrap_err();
-                assert!(
-                    matches!(&err, PrecompileError::Revert(msg) if msg.contains(expected)),
+                assert_eq!(
+                    err.to_string(),
+                    expected.to_string(),
                     "kind={kind:?} err={err:?}"
                 );
                 assert_eq!(stored_text(&GovernanceContract::new(storage), kind).1, 0);

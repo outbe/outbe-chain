@@ -4,7 +4,7 @@ use alloy_primitives::{Address, Log};
 use alloy_sol_types::SolEvent;
 
 use crate::addresses::{
-    GOVERNANCE_ADDRESS, STABLECOIN_FACTORY_ADDRESS, UPDATE_ADDRESS, VOTE_ADDRESS,
+    GOVERNANCE_ADDRESS, STABLECOIN_FACTORY_ADDRESS, STAKING_ADDRESS, UPDATE_ADDRESS, VOTE_ADDRESS,
 };
 
 /// Contract addresses whose pre-exec hook events are copied into the mandatory
@@ -15,6 +15,8 @@ pub const HOOK_EVENT_RECEIPT_ADDRESSES: &[Address] = &[
     UPDATE_ADDRESS,
     GOVERNANCE_ADDRESS,
     STABLECOIN_FACTORY_ADDRESS,
+    // Pre-exec retirement emits UnbondingStarted here. Rewards and NOD stay tracing-only.
+    STAKING_ADDRESS,
 ];
 
 /// Returns `true` when `address` is whitelisted for hook-event receipt publication.
@@ -44,7 +46,7 @@ pub fn partition_hook_events(events: &[Log]) -> (Vec<Log>, Vec<Log>) {
 mod tests {
     use alloy_primitives::{Bytes, Log, LogData, B256};
 
-    use crate::addresses::{NOD_ADDRESS, REWARDS_ADDRESS};
+    use crate::addresses::{NOD_ADDRESS, REWARDS_ADDRESS, STAKING_ADDRESS};
 
     use super::*;
 
@@ -77,13 +79,22 @@ mod tests {
             log_at(STABLECOIN_FACTORY_ADDRESS),
             log_at(TEE_REGISTRY_ADDRESS),
             upgrade_missed_log.clone(),
+            log_at(STAKING_ADDRESS),
         ]);
-        assert_eq!(whitelisted.len(), 5);
+        assert!(
+            whitelisted.iter().any(|log| log.address == STAKING_ADDRESS),
+            "staking address must be receipt-visible; tracing_only={}",
+            tracing_only
+                .iter()
+                .any(|log| log.address == STAKING_ADDRESS)
+        );
+        assert_eq!(whitelisted.len(), 6);
         assert_eq!(whitelisted[0].address, VOTE_ADDRESS);
         assert_eq!(whitelisted[1].address, UPDATE_ADDRESS);
         assert_eq!(whitelisted[2].address, GOVERNANCE_ADDRESS);
         assert_eq!(whitelisted[3].address, STABLECOIN_FACTORY_ADDRESS);
         assert_eq!(whitelisted[4], upgrade_missed_log);
+        assert_eq!(whitelisted[5].address, STAKING_ADDRESS);
         // The rights' sweeps run in CycleTick, so a hook never emits for them;
         // non-EnclaveUpgradeMissedV1 TEE_REGISTRY_ADDRESS events stay tracing-only.
         assert_eq!(tracing_only.len(), 3);

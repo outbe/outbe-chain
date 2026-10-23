@@ -177,5 +177,156 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "ActivationConflict",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ActiveVersionDoesNotFitU32",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DowngradeNotAllowed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EnclaveRolloutRequiresExclusiveScheduledUpgrade",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "HeightInPast",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidActiveTeePolicy",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidPayload",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidScheduledUpdateStatus",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidTeePolicy",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidVersion",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ScheduledUpdateAlreadyExists",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ScheduledUpdateNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "StagedTeePolicyMissingProposal",
+    "inputs": [
+      {
+        "name": "proposal_id",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "StoredProposalPayloadInvalid",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TeePolicyActivationFailed",
+    "inputs": [
+      {
+        "name": "proposal_id",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "reason",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TeePolicyActivationMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TeePolicyChainIdentityMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TooManyWaitingForActivation",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnexpectedAppliedClassification",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UpgradeHandlerFailed",
+    "inputs": [
+      {
+        "name": "label",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "reason",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "VoteTargetInvariantFailure",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
   }
 ]

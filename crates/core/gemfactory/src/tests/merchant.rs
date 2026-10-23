@@ -78,9 +78,11 @@ fn sending_every_unit_deletes_the_spent_source_series() {
     });
 }
 
-/// When the hour of `at` has closed.
-fn hour_closed(at: u64) -> u64 {
-    (at / 3_600 + 1) * 3_600
+/// This function returns the closing timestamp of the deadline day that contains `at`.
+fn day_closed(at: u64) -> u64 {
+    outbe_primitives::expiry_queue::day_end(
+        outbe_primitives::expiry_queue::deadline_day(at).unwrap(),
+    )
 }
 
 /// An expired position reads empty at once, returns its remainder with its hour and is
@@ -103,7 +105,7 @@ fn an_expired_position_returns_its_remainder() {
             U256::ZERO
         );
 
-        let ctx = block_ctx(storage, hour_closed(expires));
+        let ctx = block_ctx(storage, day_closed(expires));
         assert_eq!(positions_expired::sweep_expired_positions(&ctx).unwrap(), 1);
         assert_eq!(unallocated(storage), capacity);
         assert_eq!(positions_expired::sweep_position_cleanup(&ctx).unwrap(), 1);
@@ -125,7 +127,7 @@ fn a_storage_fault_in_the_position_sweep_fails_the_block() {
 
     provider.fail_mutation_at_address(outbe_primitives::addresses::PROMIS_LIMIT_ADDRESS);
     StorageHandle::enter(&mut provider, |storage| {
-        let ctx = block_ctx(&storage, hour_closed(T_NOW + POSITION_VALIDITY_SECONDS));
+        let ctx = block_ctx(&storage, day_closed(T_NOW + POSITION_VALIDITY_SECONDS));
         assert!(matches!(
             positions_expired::sweep_expired_positions(&ctx).unwrap_err(),
             outbe_primitives::error::PrecompileError::Storage(_)
@@ -158,7 +160,7 @@ fn a_drained_position_returns_nothing_and_is_deleted() {
         )
         .unwrap();
 
-        let ctx = block_ctx(storage, hour_closed(T_NOW + POSITION_VALIDITY_SECONDS));
+        let ctx = block_ctx(storage, day_closed(T_NOW + POSITION_VALIDITY_SECONDS));
         assert_eq!(positions_expired::sweep_expired_positions(&ctx).unwrap(), 1);
         assert_eq!(unallocated(storage), U256::ZERO);
         assert_eq!(positions_expired::sweep_position_cleanup(&ctx).unwrap(), 1);
@@ -175,7 +177,13 @@ fn issue_gem_position_unknown_source_rejects() {
     with_storage(None, |storage| {
         let r =
             runtime::issue_gem_position(storage, ALICE, source_intex_id(), U256::from(SENT_UNITS));
-        assert!(err_msg(r).contains("source intex"));
+        assert_eq!(
+            r.unwrap_err().to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::GemFactoryError::SourceIntexNotFound
+            )
+            .to_string()
+        );
     });
 }
 
@@ -280,7 +288,13 @@ fn issue_merchant_gem_rejects_non_merchant() {
                 promis_load_minor: six_decimal_unit(),
             },
         );
-        assert!(err_msg(r).contains("position owner"));
+        assert_eq!(
+            r.unwrap_err().to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::GemFactoryError::NotPositionOwner
+            )
+            .to_string()
+        );
     });
 }
 
@@ -299,7 +313,13 @@ fn issue_merchant_gem_over_capacity_rejects() {
                 promis_load_minor: over,
             },
         );
-        assert!(err_msg(r).contains("capacity"));
+        assert_eq!(
+            r.unwrap_err().to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::GemFactoryError::InsufficientCapacity
+            )
+            .to_string()
+        );
     });
 }
 
@@ -333,7 +353,13 @@ fn issue_merchant_gem_after_expiry_rejects() {
                 promis_load_minor: six_decimal_unit(),
             },
         );
-        assert!(err_msg(r).contains("expired"));
+        assert_eq!(
+            r.unwrap_err().to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::GemFactoryError::PositionExpired
+            )
+            .to_string()
+        );
     });
 }
 
@@ -349,7 +375,7 @@ fn a_merchant_gem_issues_until_the_second_its_position_expires() {
             .unwrap();
         OracleContract::new(storage.clone())
             .record_utc_day_vwap(
-                previous_date_key(timestamp_to_date_key(expires_at - 1)),
+                previous_date_key(timestamp_to_date_key(expires_at - 1)).expect("date step"),
                 index,
                 rate,
             )
@@ -377,7 +403,13 @@ fn a_merchant_gem_issues_until_the_second_its_position_expires() {
     let capacity = sent_capacity(six_decimal_u128());
 
     let (zero, remaining) = issue(expires_at - 1, U256::ZERO);
-    assert!(err_msg(zero).contains("promis load must be positive"));
+    assert_eq!(
+        zero.unwrap_err().to_string(),
+        outbe_primitives::error::PrecompileError::from(
+            crate::errors::GemFactoryError::ZeroPromisLoad
+        )
+        .to_string()
+    );
     assert_eq!(remaining, capacity);
 
     let (issued, remaining) = issue(expires_at - 1, six_decimal_unit());
@@ -385,7 +417,13 @@ fn a_merchant_gem_issues_until_the_second_its_position_expires() {
     assert_eq!(remaining, capacity - six_decimal_unit());
 
     let (expired, after) = issue(expires_at, six_decimal_unit());
-    assert!(err_msg(expired).contains("position expired"));
+    assert_eq!(
+        expired.unwrap_err().to_string(),
+        outbe_primitives::error::PrecompileError::from(
+            crate::errors::GemFactoryError::PositionExpired
+        )
+        .to_string()
+    );
     assert_eq!(after, U256::ZERO, "an expired position reads empty");
 }
 
@@ -522,7 +560,13 @@ fn issue_merchant_gem_rejects_a_missing_previous_day_vwap() {
                 promis_load_minor: six_decimal_unit(),
             },
         );
-        assert!(err_msg(r).contains("oracle nominal unavailable"));
+        assert_eq!(
+            r.unwrap_err().to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::GemFactoryError::OracleUnavailable
+            )
+            .to_string()
+        );
     });
 }
 

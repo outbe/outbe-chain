@@ -1,6 +1,9 @@
 //! Typed error definitions for the HyperlaneController system precompile.
 
+use crate::precompile::IHyperlaneController;
+use alloy_primitives::Bytes;
 use alloy_primitives::{Address, U256};
+use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
@@ -97,7 +100,197 @@ pub enum HyperlaneControllerError {
 }
 
 impl From<HyperlaneControllerError> for PrecompileError {
-    fn from(err: HyperlaneControllerError) -> Self {
-        PrecompileError::Revert(err.to_string())
+    fn from(error: HyperlaneControllerError) -> Self {
+        match error {
+            HyperlaneControllerError::AlreadyInitialized => PrecompileError::RevertBytes(
+                Bytes::from(IHyperlaneController::AlreadyInitialized {}.abi_encode()),
+            ),
+            HyperlaneControllerError::NotInitialized => PrecompileError::RevertBytes(Bytes::from(
+                IHyperlaneController::NotInitialized {}.abi_encode(),
+            )),
+            HyperlaneControllerError::LocalDomainMissing { domain } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    IHyperlaneController::LocalDomainMissing { domain }.abi_encode(),
+                ))
+            }
+            HyperlaneControllerError::NotBootstrapAdmin { caller, admin } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    IHyperlaneController::NotBootstrapAdmin { caller, admin }.abi_encode(),
+                ))
+            }
+            HyperlaneControllerError::NotIsmOwner { caller, owner } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    IHyperlaneController::NotIsmOwner { caller, owner }.abi_encode(),
+                ))
+            }
+            HyperlaneControllerError::IsmNotPendingToController { pending } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    IHyperlaneController::IsmNotPendingToController { pending }.abi_encode(),
+                ))
+            }
+            HyperlaneControllerError::NotOwnedByController { contract, owner } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    IHyperlaneController::NotOwnedByController {
+                        target: contract,
+                        owner,
+                    }
+                    .abi_encode(),
+                ))
+            }
+            HyperlaneControllerError::InvalidAddress => PrecompileError::RevertBytes(Bytes::from(
+                IHyperlaneController::InvalidAddress {}.abi_encode(),
+            )),
+            HyperlaneControllerError::InvalidDomain => PrecompileError::RevertBytes(Bytes::from(
+                IHyperlaneController::InvalidDomain {}.abi_encode(),
+            )),
+            HyperlaneControllerError::IsmLengthMismatch => PrecompileError::RevertBytes(
+                Bytes::from(IHyperlaneController::IsmLengthMismatch {}.abi_encode()),
+            ),
+            HyperlaneControllerError::HookLengthMismatch => PrecompileError::RevertBytes(
+                Bytes::from(IHyperlaneController::HookLengthMismatch {}.abi_encode()),
+            ),
+            HyperlaneControllerError::UnknownHook { domain } => PrecompileError::RevertBytes(
+                Bytes::from(IHyperlaneController::UnknownHook { domain }.abi_encode()),
+            ),
+            HyperlaneControllerError::NotActiveValidator { caller } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    IHyperlaneController::NotActiveValidator { caller }.abi_encode(),
+                ))
+            }
+            HyperlaneControllerError::SignerMismatch {
+                validator,
+                expected,
+                recovered,
+            } => PrecompileError::RevertBytes(Bytes::from(
+                IHyperlaneController::SignerMismatch {
+                    validator,
+                    expected,
+                    recovered,
+                }
+                .abi_encode(),
+            )),
+            HyperlaneControllerError::SignerTaken { signer, validator } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    IHyperlaneController::SignerTaken { signer, validator }.abi_encode(),
+                ))
+            }
+            HyperlaneControllerError::StaleIndex { index, submitted } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    IHyperlaneController::StaleIndex { index, submitted }.abi_encode(),
+                ))
+            }
+            HyperlaneControllerError::InvalidSignatureLength { length } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    IHyperlaneController::InvalidSignatureLength {
+                        length: length as u64,
+                    }
+                    .abi_encode(),
+                ))
+            }
+            HyperlaneControllerError::UnknownDomain { domain } => PrecompileError::RevertBytes(
+                Bytes::from(IHyperlaneController::UnknownDomain { domain }.abi_encode()),
+            ),
+            HyperlaneControllerError::LocalDomainNotAllowed { domain } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    IHyperlaneController::LocalDomainNotAllowed { domain }.abi_encode(),
+                ))
+            }
+            HyperlaneControllerError::InvalidValidatorCount { count } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    IHyperlaneController::InvalidValidatorCount {
+                        count: count as u64,
+                    }
+                    .abi_encode(),
+                ))
+            }
+            HyperlaneControllerError::InvalidThreshold {
+                threshold,
+                validators,
+            } => PrecompileError::RevertBytes(Bytes::from(
+                IHyperlaneController::InvalidThreshold {
+                    threshold,
+                    validators: validators as u64,
+                }
+                .abi_encode(),
+            )),
+            HyperlaneControllerError::InvalidValidator { validator } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    IHyperlaneController::InvalidValidator { validator }.abi_encode(),
+                ))
+            }
+            HyperlaneControllerError::EmptyCalls => PrecompileError::RevertBytes(Bytes::from(
+                IHyperlaneController::EmptyCalls {}.abi_encode(),
+            )),
+            HyperlaneControllerError::ZeroFund => PrecompileError::RevertBytes(Bytes::from(
+                IHyperlaneController::ZeroFund {}.abi_encode(),
+            )),
+            HyperlaneControllerError::InsufficientBalance {
+                required,
+                available,
+            } => PrecompileError::RevertBytes(Bytes::from(
+                IHyperlaneController::InsufficientBalance {
+                    required,
+                    available,
+                }
+                .abi_encode(),
+            )),
+            HyperlaneControllerError::UndecodableReturn(value) => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    IHyperlaneController::UndecodableReturn {
+                        value: value.to_string(),
+                    }
+                    .abi_encode(),
+                ))
+            }
+            HyperlaneControllerError::InvalidProposalPayload(value) => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    IHyperlaneController::InvalidProposalPayload {
+                        value: value.to_string(),
+                    }
+                    .abi_encode(),
+                ))
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn encoded(err: HyperlaneControllerError) -> Bytes {
+        match PrecompileError::from(err) {
+            PrecompileError::RevertBytes(bytes) => bytes,
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn caller_revert_keeps_address_integer_and_string_fields() {
+        let caller = Address::repeat_byte(0x11);
+        let admin = Address::repeat_byte(0x22);
+        let bytes = encoded(HyperlaneControllerError::NotBootstrapAdmin { caller, admin });
+        let decoded =
+            IHyperlaneController::NotBootstrapAdmin::abi_decode(&bytes).expect("admin payload");
+        assert_eq!(decoded.caller, caller);
+        assert_eq!(decoded.admin, admin);
+
+        let contract = Address::repeat_byte(0x33);
+        let owner = Address::repeat_byte(0x44);
+        let bytes = encoded(HyperlaneControllerError::NotOwnedByController { contract, owner });
+        let decoded =
+            IHyperlaneController::NotOwnedByController::abi_decode(&bytes).expect("owner payload");
+        assert_eq!(decoded.target, contract);
+        assert_eq!(decoded.owner, owner);
+
+        let bytes = encoded(HyperlaneControllerError::InvalidSignatureLength { length: 65 });
+        let decoded = IHyperlaneController::InvalidSignatureLength::abi_decode(&bytes)
+            .expect("length payload");
+        assert_eq!(decoded.length, 65);
+
+        let bytes = encoded(HyperlaneControllerError::UndecodableReturn("short return"));
+        let decoded =
+            IHyperlaneController::UndecodableReturn::abi_decode(&bytes).expect("string payload");
+        assert_eq!(decoded.value, "short return");
     }
 }

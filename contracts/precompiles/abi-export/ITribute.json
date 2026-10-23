@@ -486,5 +486,199 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "CalculationView",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CallerNotTributeOwner",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CanonicalIdentityMismatch",
+    "inputs": [
+      {
+        "name": "expected",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "found",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DateStep",
+    "inputs": [
+      {
+        "name": "kind",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "dateKey",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DayResponseScopeMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DurationOverflow",
+    "inputs": [
+      {
+        "name": "label",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "EntityIdDerivation",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "EntryPriceUnavailable",
+    "inputs": [
+      {
+        "name": "priceDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "currency",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "FormingWindowOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidLeague",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidOwner",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LookbackWindowOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LysisArithmetic",
+    "inputs": [
+      {
+        "name": "reason",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "MetadosisNotCompleted",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NodCreationWindowExpired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OfferingWindowOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OwnerBalanceOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PrivateAmountReadFailed",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "QueryLimitExceeded",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SettlementAmountMustBePositive",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TributeAlreadyExists",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TributeNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TributeStateChangedAfterLoading",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WorldwideDayNotCompletedAndEmpty",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WorldwideDaySealed",
+    "inputs": []
   }
 ]

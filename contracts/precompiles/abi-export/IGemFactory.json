@@ -578,5 +578,197 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "CallPriceOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DateStep",
+    "inputs": [
+      {
+        "name": "kind",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "dateKey",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "EmptyMemberSlotDuringCleanup",
+    "inputs": [
+      {
+        "name": "groupKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "GemAlreadySettled",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "GemNotCalled",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "GemNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "GemNotSettled",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "IndexOutOfBounds",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "IneligibleGroupMember",
+    "inputs": [
+      {
+        "name": "groupKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "gemId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InsufficientCapacity",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InsufficientProofOfWork",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidCurrency",
+    "inputs": [
+      {
+        "name": "currency",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidOwner",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MissingGroupForCall",
+    "inputs": [
+      {
+        "name": "group",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "MissingMemberRecordDuringCleanup",
+    "inputs": [
+      {
+        "name": "groupKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "gemId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NotPositionOwner",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OracleUnavailable",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "Overflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PositionAlreadyExists",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PositionExpired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PositionNotExpired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PositionNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SettlementDeadlinePassed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SourceIntexNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SourceIntexNotIssued",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UndecodableReturn",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ZeroPromisLoad",
+    "inputs": []
   }
 ]

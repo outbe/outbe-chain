@@ -168,7 +168,7 @@ pub(super) fn assert_native_entry_price(
         .rpc
         .block_timestamp(ports[0], height)
         .expect("native evaluation time");
-    let day = entry_price_day(timestamp);
+    let day = entry_price_day(timestamp).expect("date step");
     let quotes = history(world, ports[0], height);
     let iso = terms.reference_currency;
     let expected = oracle_price_at(world, ports[0], day, iso, 0);

@@ -3,6 +3,10 @@ use outbe_macros::contract;
 use outbe_primitives::addresses::VALIDATOR_SET_ADDRESS;
 use outbe_primitives::storage::types::{Mapping, Slot, StorageBytes};
 
+/// Base slot of `Staking.stake_amount` at `STAKING_ADDRESS`.
+/// Amounts are native COEN base units: one whole COEN is 10^18 base units.
+pub(crate) const AUTHORITATIVE_BONDED_BASE_SLOT: u64 = 3;
+
 /// EVM storage layout for the ValidatorSet precompile.
 ///
 /// Storage slots:
@@ -13,7 +17,7 @@ use outbe_primitives::storage::types::{Mapping, Slot, StorageBytes};
 ///   4:  config_is_initialized   - bool
 ///   5:  val_consensus_pubkey_lo - mapping(address => bytes32)  [BLS MinPk pubkey bytes 0..32]
 ///   6:  val_consensus_pubkey_hi - mapping(address => bytes32)  [BLS MinPk pubkey bytes 32..48, right-padded]
-///   7:  val_stake               - mapping(address => uint256)
+///   7:  _reserved_slot_7        - mapping(address => uint256)  [unused]
 ///   8:  val_status              - mapping(address => uint8)
 ///   9:  val_slash_count         - mapping(address => uint64)
 ///   10: val_missed_blocks       - mapping(address => uint64)
@@ -75,7 +79,7 @@ use outbe_primitives::storage::types::{Mapping, Slot, StorageBytes};
 ///       block height the validator was JAILED. Drives the unjail cooldown.
 ///   44: committee_snapshot_key_ring - mapping(u64 => bytes32)
 ///       prune ring for the committee-snapshot record.
-///       That record spans slots 31..=40, 44, 47, and 52..=58.
+///       That record spans slots 31..=40, 44, and 47.
 ///   45: finalized_participation_ring - mapping(u64 => bytes32)
 ///       prune ring bounding the participation guard (slot 30).
 ///   46: finalized_participation_ring_seq - u64
@@ -103,7 +107,9 @@ pub struct ValidatorSet {
     pub(crate) val_consensus_pubkey_lo: Mapping<Address, B256>,
     /// BLS MinPk consensus public key - high 16 bytes (bytes[32..48]), right-padded with zeros.
     pub(crate) val_consensus_pubkey_hi: Mapping<Address, B256>,
-    pub(crate) val_stake: Mapping<Address, U256>,
+    /// Unused. Current bonded stake is `Staking.stake_amount` (base slot 3).
+    /// Amounts are native COEN base units: one whole COEN is 10^18 base units.
+    pub _reserved_slot_7: Mapping<Address, U256>,
     pub(crate) val_status: Mapping<Address, u8>,
     pub(crate) val_slash_count: Mapping<Address, u64>,
     pub(crate) val_missed_blocks: Mapping<Address, u64>,
@@ -148,7 +154,7 @@ pub struct ValidatorSet {
     pub finalized_participation_recorded: Mapping<B256, bool>,
 
     // V2 `CommitteeSnapshotStore` core columns (slots 31..=40).
-    // The same record also uses slots 44, 47, and 52..=58.
+    // The same record also uses slots 44 and 47.
     // Keyed by the canonical `snapshot_key =
     //   keccak256("OUTBE_COMMITTEE_SNAPSHOT_KEY_V2" || epoch_be_u64 || committee_set_hash)`.
     // Writes are field-by-field. `committee_snapshot_exists` is written LAST so
@@ -200,7 +206,7 @@ pub struct ValidatorSet {
     /// Slot 44 - committee-snapshot prune ring (`epoch % COMMITTEE_SNAPSHOT_RETAIN_EPOCHS
     /// -> snapshot_key`). `write_committee_snapshot` pushes each new key here and
     /// clears the snapshot it evicts. This bounds the V2 snapshot record
-    /// (slots 31..=40, 44, 47, and 52..=58) to the last
+    /// (slots 31..=40, 44, and 47) to the last
     /// `COMMITTEE_SNAPSHOT_RETAIN_EPOCHS` epochs. Without
     /// it, the store grows by one full committee per epoch forever. This is safe
     /// because every reader only touches the current finalized epoch (+/- the
@@ -243,4 +249,100 @@ pub struct ValidatorSet {
 
     /// Slot 51 - unique validator owner of a non-zero Radicle NodeId.
     pub radicle_node_id_to_validator: Mapping<B256, Address>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+
+    #[test]
+    fn storage_slot_layout_is_pinned() {
+        let mut provider = HashMapStorageProvider::new(1);
+        let c = ValidatorSet::new(StorageHandle::new(&mut provider));
+
+        assert_eq!(c.config_owner.slot(), U256::from(0));
+        assert_eq!(c.config_max_validators.slot(), U256::from(1));
+        assert_eq!(c.config_epoch_length_blocks.slot(), U256::from(2));
+        assert_eq!(c.config_min_stake.slot(), U256::from(3));
+        assert_eq!(c.config_is_initialized.slot(), U256::from(4));
+        assert_eq!(c.val_consensus_pubkey_lo.base_slot(), U256::from(5));
+        assert_eq!(c.val_consensus_pubkey_hi.base_slot(), U256::from(6));
+        assert_eq!(c._reserved_slot_7.base_slot(), U256::from(7));
+        assert_eq!(c.val_status.base_slot(), U256::from(8));
+        assert_eq!(c.val_slash_count.base_slot(), U256::from(9));
+        assert_eq!(c.val_missed_blocks.base_slot(), U256::from(10));
+        assert_eq!(c.val_missed_votes.base_slot(), U256::from(11));
+        assert_eq!(c.val_blocks_proposed.base_slot(), U256::from(12));
+        assert_eq!(c.val_joined_at_height.base_slot(), U256::from(13));
+        assert_eq!(c.val_deactivated_at_height.base_slot(), U256::from(14));
+        assert_eq!(c.val_unbonding_end.base_slot(), U256::from(15));
+        assert_eq!(c.address_to_index.base_slot(), U256::from(16));
+        assert_eq!(c.index_to_address.base_slot(), U256::from(17));
+        assert_eq!(
+            c.consensus_pubkey_hash_to_address.base_slot(),
+            U256::from(18)
+        );
+        assert_eq!(c._reserved_slot_19.base_slot(), U256::from(19));
+        assert_eq!(c.validator_count.slot(), U256::from(20));
+        assert_eq!(c.epoch_number.slot(), U256::from(21));
+        assert_eq!(c.epoch_start_timestamp.slot(), U256::from(22));
+        assert_eq!(c.epoch_start_block.slot(), U256::from(23));
+        assert_eq!(c.val_has_bls_share.base_slot(), U256::from(24));
+        assert_eq!(c.pending_set_change.slot(), U256::from(25));
+        assert_eq!(c.active_consensus_set_hash.slot(), U256::from(26));
+        assert_eq!(c.config_reregistration_cooldown.slot(), U256::from(27));
+        assert_eq!(c.val_p2p_address_version.base_slot(), U256::from(28));
+        assert_eq!(c.val_p2p_address_payload.base_slot(), U256::from(29));
+        assert_eq!(
+            c.finalized_participation_recorded.base_slot(),
+            U256::from(30)
+        );
+        assert_eq!(c.committee_snapshot_exists.base_slot(), U256::from(31));
+        assert_eq!(c.committee_snapshot_len.base_slot(), U256::from(32));
+        assert_eq!(c.committee_snapshot_address_at.base_slot(), U256::from(33));
+        assert_eq!(
+            c.committee_snapshot_pubkey_lo_at.base_slot(),
+            U256::from(34)
+        );
+        assert_eq!(
+            c.committee_snapshot_pubkey_hi_at.base_slot(),
+            U256::from(35)
+        );
+        assert_eq!(
+            c.committee_snapshot_vrf_material_version.base_slot(),
+            U256::from(36)
+        );
+        assert_eq!(
+            c.committee_snapshot_vrf_group_public_key_hash.base_slot(),
+            U256::from(37)
+        );
+        assert_eq!(
+            c.committee_snapshot_vrf_group_public_key_len.base_slot(),
+            U256::from(38)
+        );
+        assert_eq!(
+            c.committee_snapshot_vrf_group_public_key_chunk_at
+                .base_slot(),
+            U256::from(39)
+        );
+        assert_eq!(
+            c._reserved_committee_snapshot_slot_40.slot(),
+            U256::from(40)
+        );
+        assert_eq!(c.val_join_confirmed.base_slot(), U256::from(41));
+        assert_eq!(c.config_unjail_cooldown_blocks.slot(), U256::from(42));
+        assert_eq!(c.val_jailed_at_height.base_slot(), U256::from(43));
+        assert_eq!(c.committee_snapshot_key_ring.base_slot(), U256::from(44));
+        assert_eq!(c.finalized_participation_ring.base_slot(), U256::from(45));
+        assert_eq!(c.finalized_participation_ring_seq.slot(), U256::from(46));
+        assert_eq!(
+            c.committee_snapshot_vrf_public_polynomial_hash.base_slot(),
+            U256::from(47)
+        );
+        assert_eq!(c.delegate_by_validator_role.base_slot(), U256::from(48));
+        assert_eq!(c.validator_by_role_delegate.base_slot(), U256::from(49));
+        assert_eq!(c.val_radicle_node_id.base_slot(), U256::from(50));
+        assert_eq!(c.radicle_node_id_to_validator.base_slot(), U256::from(51));
+    }
 }

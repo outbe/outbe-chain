@@ -10,25 +10,26 @@
 //! Each `<period>_boundary_cycle_runs_after_parent_accounted` test
 //! covers a different period (hour, day, week, month). The test constructs
 //! a synthetic gated `TriggerSpec`. It asserts that `accounting_gate_blocks`
-//! returns `false` after `outbe_cycle::record_phase1_progress`
-//! accounts the parent block.
+//! returns `false` after the parent height is written to the accounting slot.
 //!
 //! `phase1_accounts_parent_before_cycle_tick` is a structural check on
 //! `crates/blockchain/evm/src/executor.rs`. It confirms the V2 reorder
 //! invariant that this gate depends on.
 
 use alloy_primitives::{address, Address, U256};
+use alloy_sol_types::SolError;
 use outbe_cycle::{
     read_last_accounted_block_number, record_phase1_progress,
     schema::Accounting,
     state::{accounting_gate_blocks, resolve_accounting_window, AccountingWindow},
     triggers::{TriggerHandler, TriggerSpec},
+    ICycle,
 };
 use outbe_primitives::{
     accounting_progress::AccountingProgressView,
     addresses::ACCOUNTING_PROGRESS_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
-    error::Result,
+    error::{PrecompileError, Result},
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
 use proptest::prelude::*;
@@ -40,27 +41,31 @@ const WEEK: u64 = 7 * DAY;
 const MONTH: u64 = 30 * DAY;
 
 fn gated_spec(period_seconds: u64) -> TriggerSpec {
-    TriggerSpec {
-        id: 4242,
-        label: "test_gated",
+    let mut spec = TriggerSpec::new(
+        4242,
+        "test_gated",
         period_seconds,
-        start_offset_seconds: 0,
-        requires_accounting_window: true,
-        coalesces_backlog: false,
-        handler: TriggerHandler::IntexCallDaily,
-    }
+        0,
+        TriggerHandler::IntexCallDaily,
+    )
+    .expect("test period is nonzero");
+    spec.requires_accounting_window = true;
+    spec.coalesces_backlog = false;
+    spec
 }
 
 fn ungated_spec(period_seconds: u64) -> TriggerSpec {
-    TriggerSpec {
-        id: 4243,
-        label: "test_ungated",
+    let mut spec = TriggerSpec::new(
+        4243,
+        "test_ungated",
         period_seconds,
-        start_offset_seconds: 0,
-        requires_accounting_window: false,
-        coalesces_backlog: false,
-        handler: TriggerHandler::IntexCallDaily,
-    }
+        0,
+        TriggerHandler::IntexCallDaily,
+    )
+    .expect("test period is nonzero");
+    spec.requires_accounting_window = false;
+    spec.coalesces_backlog = false;
+    spec
 }
 
 fn block_ctx(block_number: u64, timestamp: u64) -> BlockContext {
@@ -112,9 +117,12 @@ fn boundary_gate_check(period_seconds: u64, block_number: u64, block_ts: u64) {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.enter(|handle| {
         let ctx = BlockRuntimeContext::new(block.clone(), handle);
-        // Seed Phase 1 accounting for the parent block (mirrors what
-        // `apply_phase1_commit_in_preexec` does in production).
-        record_phase1_progress(&ctx, block_number - 1).unwrap();
+        // Fixture height is not an exact successor. Write the slot directly.
+        ctx.storage
+            .contract::<Accounting<'_>>()
+            .last_accounted_block_number
+            .write(block_number - 1)
+            .unwrap();
 
         struct Reader<'a, 'b>(&'a BlockRuntimeContext<'b>);
         impl AccountingProgressView for Reader<'_, '_> {
@@ -248,17 +256,23 @@ fn accounting_progress_slot0_roundtrips_last_accounted_block_number() {
         let block = BlockContext::empty_for_tests(0, 0, CHAIN_ID);
         let ctx = BlockRuntimeContext::new(block, handle);
 
-        record_phase1_progress(&ctx, 42).expect("write progress");
+        let accounting: Accounting<'_> = ctx.storage.contract::<Accounting<'_>>();
+        accounting
+            .last_accounted_block_number
+            .write(42)
+            .expect("seed progress");
         let read = read_last_accounted_block_number(&ctx).expect("read progress");
         assert_eq!(read, 42);
 
-        record_phase1_progress(&ctx, 1_000_000).expect("overwrite progress");
+        accounting
+            .last_accounted_block_number
+            .write(1_000_000)
+            .expect("overwrite progress");
         assert_eq!(
             read_last_accounted_block_number(&ctx).expect("read overwritten progress"),
             1_000_000,
         );
 
-        let accounting: Accounting<'_> = ctx.storage.contract::<Accounting<'_>>();
         let raw = accounting
             .last_accounted_block_number
             .read()
@@ -271,6 +285,129 @@ fn accounting_progress_slot0_roundtrips_last_accounted_block_number() {
             1_000_000
         );
     });
+}
+
+fn with_progress_ctx(
+    storage: &mut HashMapStorageProvider,
+    body: impl FnOnce(&BlockRuntimeContext),
+) {
+    storage.enter(|handle: StorageHandle| {
+        let block = BlockContext::empty_for_tests(2, 0, CHAIN_ID);
+        let ctx = BlockRuntimeContext::new(block, handle);
+        body(&ctx);
+    });
+}
+
+fn revert_bytes(error: &PrecompileError) -> &[u8] {
+    match error {
+        PrecompileError::RevertBytes(bytes) => bytes,
+        other => panic!("expected typed revert bytes, got {other:?}"),
+    }
+}
+
+#[test]
+fn phase1_recorder_rejects_zero_and_non_successors_and_replays_positive_progress() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+
+    storage.enable_production_storage_gas_metering();
+    with_progress_ctx(&mut storage, |ctx| {
+        let error = record_phase1_progress(ctx, 0).expect_err("zero on a fresh slot");
+        assert_eq!(
+            &revert_bytes(&error)[..4],
+            ICycle::ZeroAccountingProgress::SELECTOR
+        );
+        assert_eq!(read_last_accounted_block_number(ctx).unwrap(), 0);
+    });
+    assert_eq!(storage.metered_storage_operations().1, 0);
+    assert!(storage.get_ordered_events().is_empty());
+
+    storage.enable_production_storage_gas_metering();
+    with_progress_ctx(&mut storage, |ctx| {
+        let error = record_phase1_progress(ctx, 42).expect_err("gap 0 -> 42");
+        let decoded = ICycle::AccountingProgressGap::abi_decode(revert_bytes(&error)).unwrap();
+        assert_eq!(decoded.current, 0);
+        assert_eq!(decoded.attempted, 42);
+        assert_eq!(read_last_accounted_block_number(ctx).unwrap(), 0);
+    });
+    assert_eq!(storage.metered_storage_operations().1, 0);
+
+    storage.enable_production_storage_gas_metering();
+    with_progress_ctx(&mut storage, |ctx| {
+        record_phase1_progress(ctx, 1).expect("first commit 0 -> 1");
+        assert_eq!(read_last_accounted_block_number(ctx).unwrap(), 1);
+    });
+    assert_eq!(storage.metered_storage_operations().1, 1);
+
+    storage.enable_production_storage_gas_metering();
+    with_progress_ctx(&mut storage, |ctx| {
+        record_phase1_progress(ctx, 1).expect("replay 1");
+        assert_eq!(read_last_accounted_block_number(ctx).unwrap(), 1);
+    });
+    assert_eq!(storage.metered_storage_operations().1, 0);
+    assert!(storage.get_ordered_events().is_empty());
+
+    storage.enable_production_storage_gas_metering();
+    with_progress_ctx(&mut storage, |ctx| {
+        let error = record_phase1_progress(ctx, 3).expect_err("gap 1 -> 3");
+        let decoded = ICycle::AccountingProgressGap::abi_decode(revert_bytes(&error)).unwrap();
+        assert_eq!(decoded.current, 1);
+        assert_eq!(decoded.attempted, 3);
+        assert_eq!(read_last_accounted_block_number(ctx).unwrap(), 1);
+    });
+    assert_eq!(storage.metered_storage_operations().1, 0);
+
+    storage.enable_production_storage_gas_metering();
+    with_progress_ctx(&mut storage, |ctx| {
+        record_phase1_progress(ctx, 2).expect("successor 1 -> 2");
+        assert_eq!(read_last_accounted_block_number(ctx).unwrap(), 2);
+    });
+    assert_eq!(storage.metered_storage_operations().1, 1);
+
+    storage.enable_production_storage_gas_metering();
+    with_progress_ctx(&mut storage, |ctx| {
+        let error = record_phase1_progress(ctx, 1).expect_err("regression 2 -> 1");
+        let decoded = ICycle::BlockNumberRegression::abi_decode(revert_bytes(&error)).unwrap();
+        assert_eq!(decoded.current, 2);
+        assert_eq!(decoded.attempted, 1);
+        assert_eq!(read_last_accounted_block_number(ctx).unwrap(), 2);
+    });
+    assert_eq!(storage.metered_storage_operations().1, 0);
+
+    storage.enable_production_storage_gas_metering();
+    with_progress_ctx(&mut storage, |ctx| {
+        let error = record_phase1_progress(ctx, 0).expect_err("zero after progress");
+        assert_eq!(
+            &revert_bytes(&error)[..4],
+            ICycle::ZeroAccountingProgress::SELECTOR
+        );
+        assert_eq!(read_last_accounted_block_number(ctx).unwrap(), 2);
+    });
+    assert_eq!(storage.metered_storage_operations().1, 0);
+
+    with_progress_ctx(&mut storage, |ctx| {
+        ctx.storage
+            .contract::<Accounting<'_>>()
+            .last_accounted_block_number
+            .write(u64::MAX)
+            .expect("seed max");
+    });
+    storage.enable_production_storage_gas_metering();
+    with_progress_ctx(&mut storage, |ctx| {
+        record_phase1_progress(ctx, u64::MAX).expect("replay max");
+        assert_eq!(read_last_accounted_block_number(ctx).unwrap(), u64::MAX);
+    });
+    assert_eq!(storage.metered_storage_operations().1, 0);
+
+    storage.enable_production_storage_gas_metering();
+    with_progress_ctx(&mut storage, |ctx| {
+        let error = record_phase1_progress(ctx, 1).expect_err("lower height at max");
+        let decoded = ICycle::BlockNumberRegression::abi_decode(revert_bytes(&error)).unwrap();
+        assert_eq!(decoded.current, u64::MAX);
+        assert_eq!(decoded.attempted, 1);
+        assert_eq!(read_last_accounted_block_number(ctx).unwrap(), u64::MAX);
+    });
+    assert_eq!(storage.metered_storage_operations().1, 0);
+    assert!(storage.get_ordered_events().is_empty());
 }
 
 #[test]
@@ -329,6 +466,25 @@ fn phase1_reorg_requires_branch_parent_state_for_fresh_progress() {
             read_last_accounted_block_number(&ctx).expect("read progress")
         })
     };
+    let seed_progress = |p: &mut HashMapStorageProvider, block_number: u64| {
+        p.enter(|storage| {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::new(
+                    storage.block_number().expect("block number"),
+                    storage.now_secs().expect("timestamp"),
+                    storage.chain_id().expect("chain id"),
+                    VALIDATOR,
+                    vec![VALIDATOR],
+                ),
+                storage,
+            );
+            ctx.storage
+                .contract::<Accounting<'_>>()
+                .last_accounted_block_number
+                .write(block_number)
+                .expect("seed progress");
+        });
+    };
     let record_progress = |p: &mut HashMapStorageProvider, block_number: u64| {
         p.enter(|storage| {
             let ctx = BlockRuntimeContext::new(
@@ -346,7 +502,7 @@ fn phase1_reorg_requires_branch_parent_state_for_fresh_progress() {
     };
 
     let mut parent = provider(CHILD_BLOCK);
-    record_progress(&mut parent, REQUIRED_PREVIOUS);
+    seed_progress(&mut parent, REQUIRED_PREVIOUS);
     let parent_state = parent.storage.clone();
 
     let mut branch_a = provider(CHILD_BLOCK);
@@ -390,15 +546,16 @@ proptest! {
         block_ts in 86_400u64..2_000_000_000,
     ) {
         let offset = offset_raw % period;
-        let spec = TriggerSpec {
-            id: 99,
-            label: "proptest",
-            period_seconds: period,
-            start_offset_seconds: offset,
-            requires_accounting_window: true,
-            coalesces_backlog: false,
-            handler: TriggerHandler::IntexCallDaily,
-        };
+        let mut spec = TriggerSpec::new(
+            99,
+            "proptest",
+            period,
+            offset,
+            TriggerHandler::IntexCallDaily,
+        )
+        .expect("period is at least 60");
+        spec.requires_accounting_window = true;
+        spec.coalesces_backlog = false;
         let block = block_ctx(block_number, block_ts);
 
         let a = resolve_accounting_window(&spec, &block);

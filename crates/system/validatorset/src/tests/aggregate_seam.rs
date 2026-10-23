@@ -3,7 +3,9 @@
 //! through it.
 
 use super::*;
+use crate::precompile::IValidatorSet as I;
 use crate::state_machine::{HistoryCounters, ValidatorHistory};
+use alloy_sol_types::SolError;
 use outbe_primitives::storage::hashmap::MutationPrefixViews;
 
 const VALIDATOR: Address = address!("0x00000000000000000000000000000000000000E1");
@@ -14,6 +16,7 @@ fn error_text<T: std::fmt::Debug>(result: Result<T, PrecompileError>) -> String 
     match result.unwrap_err() {
         PrecompileError::Fatal(message) => format!("Fatal: {message}"),
         PrecompileError::Revert(message) => format!("Revert: {message}"),
+        PrecompileError::RevertBytes(bytes) => super::typed_revert(bytes),
         other => format!("{other:?}"),
     }
 }
@@ -31,7 +34,29 @@ fn two_registered() -> HashMapStorageProvider {
     storage
 }
 
-/// Configured storage with VALIDATOR ACTIVE and `bonded` mirrored.
+/// Current bonded stake is Staking slot 3. ValidatorSet slot 7 stays empty.
+#[test]
+fn projection_reads_staking_amount_and_leaves_slot7_empty() {
+    use outbe_primitives::addresses::{STAKING_ADDRESS, VALIDATOR_SET_ADDRESS};
+    use outbe_primitives::storage::types::Mapping;
+
+    let amount = U256::from(1_000u64);
+    let mut storage = two_registered();
+    storage.enter(|storage| {
+        Mapping::<Address, U256>::new(U256::from(3u64), STAKING_ADDRESS, storage.clone())
+            .write(&VALIDATOR, amount)
+            .unwrap();
+        let vs = ValidatorSet::new(storage.clone());
+        let state = vs.validator_state(VALIDATOR).unwrap();
+        assert_eq!(state.bonded_stake(), amount);
+        assert_eq!(vs.get_validator(VALIDATOR).unwrap().unwrap().stake, amount);
+        let mirror =
+            Mapping::<Address, U256>::new(U256::from(7u64), VALIDATOR_SET_ADDRESS, storage);
+        assert_eq!(mirror.read(&VALIDATOR).unwrap(), U256::ZERO);
+    });
+}
+
+/// Configured storage with VALIDATOR ACTIVE and `bonded` in Staking.
 fn active_with_bonded(bonded: u64) -> HashMapStorageProvider {
     let mut storage = configured_storage(10);
     storage.enter(|storage| {
@@ -49,12 +74,28 @@ fn active_with_bonded(bonded: u64) -> HashMapStorageProvider {
 #[test]
 fn hydrate_rejects_inconsistent_registry_bindings_in_order() {
     let pubkey_hash = ValidatorSet::consensus_pubkey_hash(&dummy_consensus_pubkey(0xE1));
-    let count = format!("Revert: validator {VALIDATOR} registry index 1 exceeds validator_count 0");
-    let forward = format!(
-        "Revert: validator registry forward index mismatch at 1: expected {VALIDATOR}, got {OTHER}"
+    let count = super::typed_revert(
+        I::ValidatorRegistryIndexExceedsCount {
+            addr: VALIDATOR,
+            index: 1,
+            count: 0,
+        }
+        .abi_encode(),
     );
-    let reverse = format!(
-        "Revert: validator consensus pubkey reverse mapping mismatch for {VALIDATOR}: got {OTHER}"
+    let forward = super::typed_revert(
+        I::ValidatorRegistryForwardIndexMismatch {
+            index: 1,
+            expected: VALIDATOR,
+            actual: OTHER,
+        }
+        .abi_encode(),
+    );
+    let reverse = super::typed_revert(
+        I::ValidatorConsensusPubkeyReverseMismatch {
+            addr: VALIDATOR,
+            owner: OTHER,
+        }
+        .abi_encode(),
     );
     // Each case corrupts its binding and every binding checked after it.
     let cases: [(&str, [bool; 3], String); 3] = [
@@ -95,12 +136,12 @@ fn persistence_rejects_a_registry_identity_change_before_any_write() {
     });
     assert_eq!(
         error,
-        "Revert: validator lifecycle transition attempted to change registry identity"
+        super::typed_revert(I::LifecycleTransitionChangedRegistryIdentity {}.abi_encode())
     );
     assert_eq!(storage.clear_mutation_failure(), 0);
 }
 
-/// The mirrored stake, status, deactivation height, unbonding hint and
+/// Staking bonded amount, status, deactivation height, unbonding hint and
 /// pending-set-change flag of VALIDATOR.
 #[derive(Debug, Clone, PartialEq)]
 struct ExitView {
@@ -115,7 +156,7 @@ fn exit_view(provider: &mut HashMapStorageProvider) -> ExitView {
     provider.enter(|storage| {
         let vs = ValidatorSet::new(storage);
         ExitView {
-            bonded: vs.val_stake.read(&VALIDATOR).unwrap(),
+            bonded: vs.read_authoritative_bonded(&VALIDATOR).unwrap(),
             status: vs.val_status.read(&VALIDATOR).unwrap(),
             deactivated_at: vs.val_deactivated_at_height.read(&VALIDATOR).unwrap(),
             unbonding_end: vs.val_unbonding_end.read(&VALIDATOR).unwrap(),
@@ -134,8 +175,9 @@ fn view(bonded: u64, status: u8, deactivated_at: u64, pending: bool) -> ExitView
     }
 }
 
-/// The stake slash commits its four writes in one checkpoint. A failure at
-/// any write leaves the stored validator unchanged.
+/// The stake slash commits status, deactivation, and the set-change flag in
+/// one checkpoint. A failure at any write leaves the stored validator
+/// unchanged. Bonded stake stays in Staking.
 #[test]
 fn stake_slash_below_minimum_commits_exit_fields_and_set_change_atomically() {
     let views = HashMapStorageProvider::mutation_prefix_views(
@@ -155,22 +197,17 @@ fn stake_slash_below_minimum_commits_exit_fields_and_set_change_atomically() {
     assert_eq!(
         views,
         MutationPrefixViews {
-            before_mutation: vec![
-                unchanged.clone(),
-                unchanged.clone(),
-                unchanged.clone(),
-                unchanged,
-            ],
-            complete: view(100, status::EXITING, 1, true),
-            mutations: 4,
+            before_mutation: vec![unchanged.clone(), unchanged.clone(), unchanged],
+            complete: view(1_000, status::EXITING, 1, true),
+            mutations: 3,
         }
     );
 }
 
-/// Persistence of an ACTIVE -> EXITING delta writes the stake, then the
-/// status, then the deactivation height. It does not touch the set-change flag.
+/// Persistence of an ACTIVE -> EXITING delta writes the status, then the
+/// deactivation height. It does not write bonded stake or the set-change flag.
 #[test]
-fn exit_persistence_writes_stake_then_status_then_deactivation_height() {
+fn exit_persistence_writes_status_then_deactivation_height() {
     let views = HashMapStorageProvider::mutation_prefix_views(
         || active_with_bonded(1_000),
         |storage| {
@@ -197,18 +234,17 @@ fn exit_persistence_writes_stake_then_status_then_deactivation_height() {
         MutationPrefixViews {
             before_mutation: vec![
                 view(1_000, status::ACTIVE, 0, false),
-                view(100, status::ACTIVE, 0, false),
-                view(100, status::EXITING, 0, false),
+                view(1_000, status::EXITING, 0, false),
             ],
-            complete: view(100, status::EXITING, 1, false),
-            mutations: 3,
+            complete: view(1_000, status::EXITING, 1, false),
+            mutations: 2,
         }
     );
 }
 
 /// An unstakeable lifecycle case: its name, its fixture setup and the exact
 /// rejection.
-type UnstakeableCase = (&'static str, fn(&mut ValidatorSet), &'static str);
+type UnstakeableCase = (&'static str, fn(&mut ValidatorSet), String);
 
 #[test]
 fn stake_increase_rejects_unstakeable_lifecycles_without_writes() {
@@ -222,12 +258,12 @@ fn stake_increase_rejects_unstakeable_lifecycles_without_writes() {
         (
             "absent",
             |_| {},
-            "Revert: cannot stake before validator registration",
+            super::typed_revert(I::CannotStakeBeforeRegistration {}.abi_encode()),
         ),
         (
             "exiting",
             exiting,
-            "Revert: cannot increase stake while validator is exiting or unbonding",
+            super::typed_revert(I::CannotIncreaseStakeWhileExitingOrUnbonding {}.abi_encode()),
         ),
         (
             "unbonding",
@@ -238,7 +274,7 @@ fn stake_increase_rejects_unstakeable_lifecycles_without_writes() {
                 vs.deactivate_validator(OWNER, VALIDATOR).unwrap();
                 vs.activate_reshared_set(&[], B256::ZERO).unwrap();
             },
-            "Revert: cannot increase stake while validator is exiting or unbonding",
+            super::typed_revert(I::CannotIncreaseStakeWhileExitingOrUnbonding {}.abi_encode()),
         ),
         (
             "inactive",
@@ -247,7 +283,7 @@ fn stake_increase_rejects_unstakeable_lifecycles_without_writes() {
                     .unwrap();
                 make_inactive_for_test(vs, VALIDATOR);
             },
-            "Revert: inactive validator must re-register before staking",
+            super::typed_revert(I::InactiveValidatorMustReregisterBeforeStaking {}.abi_encode()),
         ),
     ];
     for (name, prepare, expected) in cases {

@@ -2,6 +2,21 @@
 pragma solidity ^0.8.30;
 
 interface IGovernance {
+    error NotAuthorized();
+    error NotAuthor();
+    error ProposalNotFound();
+    error InvalidStatusTransition();
+    error InvalidStatus();
+    error TextNotEditableInStatus();
+    error EmptyText();
+    error TextTooLarge(uint64 len, uint64 max);
+    error InvalidDiffBase();
+    error InvalidPayload();
+    error InvalidProposalPayload();
+    error AuthorIndexFull();
+    error ProposalIdExhausted();
+    error CanonRequiresVote();
+
     // --- proposal types (OIP / GIP have their own events) ---
 
     struct Oip {
@@ -54,7 +69,7 @@ interface IGovernance {
 
     // --- canon / meta-canon: bootstrap write (gated on ACTIVE validator) ---
     // Installs version 1 only. After that the call reverts with
-    // "canon text is installed: ..." and the text changes only through an
+    // CanonRequiresVote() and the text changes only through an
     // approved vote proposal of kind "canontext" or "metacanontext".
     function updateMetaCanon(string calldata text) external returns (uint64 newVersion);
     function updateCanon(string calldata text) external returns (uint64 newVersion);

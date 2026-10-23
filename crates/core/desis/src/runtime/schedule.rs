@@ -145,7 +145,8 @@ fn start_auction(
         issuance_end,
     } = windows;
     // The day before this start, not before the brief.
-    let utc_day = previous_date_key(timestamp_to_date_key(now));
+    let utc_day =
+        previous_date_key(timestamp_to_date_key(now)).map_err(crate::errors::date_step_error)?;
     let rows: Vec<ReferenceCurrencyPrice> =
         outbe_oracle::api::priced_reference_currencies(storage.clone(), utc_day)?
             .into_iter()
@@ -237,7 +238,7 @@ fn refund_unused_desis_limit(
         worldwideDay: worldwide_day.into(),
         unusedDesisLimitMinor: unused,
     })?;
-    PromisLimitContract::new(storage.clone()).add_to_total_unallocated(unused)?;
+    PromisLimitContract::new(storage.clone()).checked_credit(unused)?;
     Ok(())
 }
 

@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, U256};
-use alloy_sol_types::SolEvent;
+use alloy_sol_types::{SolError, SolEvent};
 use outbe_primitives::{
     addresses::{UPDATE_ADDRESS, VOTE_ADDRESS},
     block::BlockRuntimeContext,
@@ -139,7 +139,10 @@ fn governance_deadline_replay_child() {
             let error = vote
                 .create_proposal_with_voting_window(empty_submission(100), invalid, &REGISTRY)
                 .unwrap_err();
-            assert!(error.to_string().contains("voting window"), "{error}");
+            assert!(
+                matches!(error, outbe_primitives::error::PrecompileError::RevertBytes(bytes)
+                if bytes.as_ref() == IVote::InvalidVotingWindow { actual: invalid, maximum: expected_window }.abi_encode())
+            );
             assert_eq!(vote.proposal_count.read().unwrap(), before);
         }
         // Close the legacy proposal so the same author can create another.

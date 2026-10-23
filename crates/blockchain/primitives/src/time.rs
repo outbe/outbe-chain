@@ -33,7 +33,10 @@ pub const SECONDS_PER_DAY_U32: u32 = SECONDS_PER_DAY as u32;
 /// use the same constant.
 pub const UTC_PLUS_14_OFFSET: u64 = 50_400;
 
-/// Errors returned by the time helpers. Currently there is only one variant.
+/// Lowest date key a step accepts as input. The output may be earlier.
+pub const MIN_PROTOCOL_DATE_KEY: u32 = 20_200_101;
+
+/// Errors returned by the time helpers.
 /// The enum is `non_exhaustive`, so you can add variants without breaking
 /// callers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +46,26 @@ pub enum TimeError {
     /// translate this into a fatal protocol error. The node must not process
     /// a finalized block that predates genesis.
     PreGenesis { utc_day: u32, genesis_utc_day: u32 },
+    /// The input date key is before [`MIN_PROTOCOL_DATE_KEY`].
+    DateBeforeMinimum { date_key: u32 },
+    /// The stepped YYYYMMDD value does not fit in `u32`.
+    DateOverflow { date_key: u32 },
+    /// Adding or subtracting one day does not fit in `u64`.
+    TimestampStepOverflow { date_key: u32 },
+}
+
+impl TimeError {
+    /// Kind and date key for a step failure.
+    /// Kind 1 is [`Self::DateBeforeMinimum`]. Kind 2 is [`Self::DateOverflow`].
+    /// Kind 3 is [`Self::TimestampStepOverflow`]. [`Self::PreGenesis`] is `None`.
+    pub const fn date_step(self) -> Option<(u8, u32)> {
+        match self {
+            Self::DateBeforeMinimum { date_key } => Some((1, date_key)),
+            Self::DateOverflow { date_key } => Some((2, date_key)),
+            Self::TimestampStepOverflow { date_key } => Some((3, date_key)),
+            Self::PreGenesis { .. } => None,
+        }
+    }
 }
 
 impl core::fmt::Display for TimeError {
@@ -55,6 +78,15 @@ impl core::fmt::Display for TimeError {
                 f,
                 "utc_day {utc_day} predates genesis_utc_day {genesis_utc_day}"
             ),
+            TimeError::DateBeforeMinimum { date_key } => {
+                write!(f, "date key {date_key} is before 20200101")
+            }
+            TimeError::DateOverflow { date_key } => {
+                write!(f, "date step from {date_key} does not fit u32")
+            }
+            TimeError::TimestampStepOverflow { date_key } => {
+                write!(f, "date step from {date_key} does not fit u64")
+            }
         }
     }
 }
@@ -113,9 +145,8 @@ pub fn date_key_to_utc_timestamp(date_key: u32) -> u64 {
 }
 
 /// Returns the previous calendar day key for a yyyymmdd date key.
-pub fn previous_date_key(date_key: u32) -> u32 {
-    let ts = date_key_to_utc_timestamp(date_key).saturating_sub(SECONDS_PER_DAY);
-    timestamp_to_date_key(ts)
+pub fn previous_date_key(date_key: u32) -> Result<u32, TimeError> {
+    step_date_key(date_key, false)
 }
 
 /// Returns the next calendar day key for a yyyymmdd date key.
@@ -123,19 +154,53 @@ pub fn previous_date_key(date_key: u32) -> u32 {
 /// Walks forward 24h with integer timestamp arithmetic. This is the only
 /// correct way to advance across month/year boundaries. Direct `u32`
 /// arithmetic on `yyyymmdd` is wrong (e.g., `20251231 + 1 != 20260101`).
-pub fn next_date_key(date_key: u32) -> u32 {
-    let ts = date_key_to_utc_timestamp(date_key).saturating_add(SECONDS_PER_DAY);
-    timestamp_to_date_key(ts)
+pub fn next_date_key(date_key: u32) -> Result<u32, TimeError> {
+    step_date_key(date_key, true)
 }
 
 /// First UTC day a right issued at `issued_at` gets in full.
-pub fn first_full_day(issued_at: u64) -> u32 {
+pub fn first_full_day(issued_at: u64) -> Result<u32, TimeError> {
     let day = timestamp_to_date_key(issued_at);
     if issued_at.is_multiple_of(SECONDS_PER_DAY) {
-        day
+        Ok(day)
     } else {
         next_date_key(day)
     }
+}
+
+fn step_date_key(date_key: u32, forward: bool) -> Result<u32, TimeError> {
+    if date_key < MIN_PROTOCOL_DATE_KEY {
+        return Err(TimeError::DateBeforeMinimum { date_key });
+    }
+    let ts = date_key_to_utc_timestamp(date_key);
+    let stepped = if forward {
+        ts.checked_add(SECONDS_PER_DAY)
+    } else {
+        ts.checked_sub(SECONDS_PER_DAY)
+    }
+    .ok_or(TimeError::TimestampStepOverflow { date_key })?;
+    checked_timestamp_to_date_key(stepped).ok_or(TimeError::DateOverflow { date_key })
+}
+
+fn checked_timestamp_to_date_key(timestamp: u64) -> Option<u32> {
+    let days = i64::try_from(utc_day_from_timestamp(timestamp)).ok()?;
+    checked_civil_date_from_days(days)
+}
+
+fn checked_civil_date_from_days(days_since_epoch: i64) -> Option<u32> {
+    let z = days_since_epoch + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = (yoe as i64) + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    let year = u32::try_from(y).ok()?;
+    let month_day = m.checked_mul(100)?.checked_add(d)?;
+    year.checked_mul(10_000)?.checked_add(month_day)
 }
 
 /// Computes the integer number of UTC days between two date keys.
@@ -234,8 +299,8 @@ impl WorldwideDay {
     }
 
     /// Returns the previous calendar day.
-    pub fn previous_date_key(self) -> Self {
-        Self(previous_date_key(self.0))
+    pub fn previous_date_key(self) -> Result<Self, TimeError> {
+        Ok(Self(previous_date_key(self.0)?))
     }
 
     /// Returns the WWD in UNIX timestamp seconds.
@@ -289,6 +354,8 @@ impl StorableType for WorldwideDay {
 }
 
 impl Storable for WorldwideDay {
+    const BYTES: usize = 4;
+
     fn from_word(word: U256) -> Self {
         Self(word.to::<u32>())
     }
@@ -344,13 +411,13 @@ mod tests {
     #[test]
     fn a_midnight_issuance_keeps_its_own_day_and_a_later_one_waits() {
         let midnight = date_key_to_utc_timestamp(20240101);
-        assert_eq!(first_full_day(midnight), 20240101);
-        assert_eq!(first_full_day(midnight + 1), 20240102);
-        assert_eq!(first_full_day(midnight + SECONDS_PER_DAY - 1), 20240102);
+        assert_eq!(first_full_day(midnight), Ok(20240101));
+        assert_eq!(first_full_day(midnight + 1), Ok(20240102));
+        assert_eq!(first_full_day(midnight + SECONDS_PER_DAY - 1), Ok(20240102));
         // Across a year boundary the next key is not the numeric successor.
         assert_eq!(
             first_full_day(date_key_to_utc_timestamp(20241231) + 1),
-            20250101
+            Ok(20250101)
         );
     }
 
@@ -383,17 +450,46 @@ mod tests {
 
     #[test]
     fn previous_date_key_crosses_month_and_year() {
-        assert_eq!(previous_date_key(20240101), 20231231);
-        assert_eq!(previous_date_key(20240301), 20240229); // leap year
-        assert_eq!(previous_date_key(20230301), 20230228);
+        assert_eq!(previous_date_key(20240101), Ok(20231231));
+        assert_eq!(previous_date_key(20240301), Ok(20240229)); // leap year
+        assert_eq!(previous_date_key(20230301), Ok(20230228));
     }
 
     #[test]
     fn next_date_key_crosses_month_and_year() {
-        assert_eq!(next_date_key(20231231), 20240101);
-        assert_eq!(next_date_key(20240229), 20240301); // leap year
-        assert_eq!(next_date_key(20230228), 20230301);
-        assert_eq!(next_date_key(20240630), 20240701);
+        assert_eq!(next_date_key(20231231), Ok(20240101));
+        assert_eq!(next_date_key(20240229), Ok(20240301)); // leap year
+        assert_eq!(next_date_key(20230228), Ok(20230301));
+        assert_eq!(next_date_key(20240630), Ok(20240701));
+    }
+
+    #[test]
+    fn a_date_before_2020_is_refused_and_the_boundary_output_is_kept() {
+        let early = TimeError::DateBeforeMinimum { date_key: 20191231 };
+        assert_eq!(previous_date_key(20191231), Err(early));
+        assert_eq!(next_date_key(20191231), Err(early));
+        assert_eq!(previous_date_key(20200101), Ok(20191231));
+    }
+
+    #[test]
+    fn a_packed_next_day_that_does_not_fit_is_refused_without_an_input_ceiling() {
+        assert_eq!(
+            next_date_key(4_294_961_231),
+            Err(TimeError::DateOverflow {
+                date_key: 4_294_961_231
+            })
+        );
+        assert_eq!(previous_date_key(4_294_961_232), Ok(4_294_961_231));
+    }
+
+    #[test]
+    fn midnight_before_2020_keeps_its_day_and_a_later_second_is_refused() {
+        let midnight = date_key_to_utc_timestamp(20191231);
+        assert_eq!(first_full_day(midnight), Ok(20191231));
+        assert_eq!(
+            first_full_day(midnight + 1),
+            Err(TimeError::DateBeforeMinimum { date_key: 20191231 })
+        );
     }
 
     #[test]

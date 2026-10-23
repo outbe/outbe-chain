@@ -149,7 +149,7 @@ impl PrecompileStorageProvider for EvmStorageProvider<'_> {
     }
     fn enclave_upgrade_id(&mut self) -> Result<U256> {
         self.internals
-            .sload(crate::addresses::TEE_REGISTRY_ADDRESS, U256::from(45))
+            .sload(crate::addresses::TEE_REGISTRY_ADDRESS, U256::from(44))
             .map(|value| value.data)
             .map_err(PrimitivesStorageError::evm_internals)
     }

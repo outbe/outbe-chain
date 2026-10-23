@@ -9,6 +9,32 @@ pragma solidity ^0.8.30;
 ///         live in Intex. This precompile runs settlement, mining and the call and
 ///         expiry sweeps over the Intex call-price index.
 interface IIntexFactory {
+    error ZeroAddress();
+    error ZeroAmount();
+    error ZeroUnits();
+    error SettlementDeadlinePassed();
+    error ZeroBalance();
+    error UnitsExceedBalance();
+    error InsufficientSettled();
+    error InsufficientProofOfWork();
+    error NotOriginRouter();
+    error ForfeitedPromisLoadOverflow();
+    error NoCalledGroupForTest();
+    error IssueForTestCurrencyCountMismatch();
+    error BlockTimestampExceedsU32();
+    error IssuanceChunkCountExceedsU16();
+    error PriceExceedsWireType();
+    error MarkedUpPriceOverflow();
+    error OwnerUnitsExceedU32();
+    error SettledUnitsExceedU32();
+    error NftBalanceExceedsU32();
+    error NftBalanceOfUndecodable();
+    error RouterAnsweredNoLegs();
+    error PromisOverflow();
+    error MiningSequenceOverflow();
+    error ExercisedUnitsExceedSeries();
+    error DateStep(uint8 kind, uint32 dateKey);
+
     /// @notice Settle `units` Issued Intexes of `seriesId` held by
     ///         `owner`, paying the cost in `asset`. Any caller may pay. The
     ///         settled units stay with the owner. Allowed while uncalled (voluntary)

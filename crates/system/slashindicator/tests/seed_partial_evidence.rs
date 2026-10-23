@@ -6,11 +6,13 @@
 //! committee polynomial is necessary, and nobody can frame an honest validator.
 
 use alloy_primitives::{address, Address, U256};
+use alloy_sol_types::SolError;
 use commonware_codec::Encode;
 use commonware_cryptography::{bls12381, Signer as _};
 use outbe_consensus::proof::{seed_attest_namespace, seed_partial_attest_message};
 use outbe_primitives::addresses::STAKING_ADDRESS;
-use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+use outbe_slashindicator::precompile::ISlashIndicator;
 use outbe_slashindicator::schema::SlashIndicator;
 use outbe_staking::contract::Staking;
 use outbe_validatorset::contract::ValidatorSet;
@@ -18,7 +20,9 @@ use outbe_validatorset::test_support::{test_lifecycle_of, StorageOverrides};
 use outbe_validatorset::{StakeProjection, ValidatorLifecycle};
 
 mod support;
-use support::{register_active_submitter, with_storage};
+use support::{
+    assert_selector, evidence_already_processed, register_active_submitter, with_storage,
+};
 
 const OWNER: Address = address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC");
 const SUBMITTER: Address = address!("0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD");
@@ -129,12 +133,74 @@ fn equivocation_jails_and_slashes_then_dedups() {
         let err = si
             .submit_seed_partial_equivocation_evidence(SUBMITTER, &evidence)
             .unwrap_err();
-        assert!(format!("{err:?}").contains("already processed"));
+        assert_selector(&err, evidence_already_processed());
         let swapped = build_evidence(&key, &pubkey, &p2, &p1);
         let err = si
             .submit_seed_partial_equivocation_evidence(SUBMITTER, &swapped)
             .unwrap_err();
-        assert!(format!("{err:?}").contains("already processed"));
+        assert_selector(&err, evidence_already_processed());
+    });
+}
+
+#[test]
+fn invalid_reward_checkpoint_preserves_seed_partial_evidence_for_retry() {
+    let key = accused_key();
+    let pubkey = pubkey_bytes(&key);
+    let evidence = build_evidence(&key, &pubkey, &[0x11; 48], &[0x22; 48]);
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_block_number(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        setup(storage.clone(), &pubkey);
+        SlashIndicator::new(storage)
+            .config_evidence_reward_percent
+            .write(150)
+            .unwrap();
+    });
+    let before = provider.storage.clone();
+    let events = provider.get_ordered_events().to_vec();
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut si = SlashIndicator::new(storage.clone());
+        let error = storage
+            .with_checkpoint(|| si.submit_seed_partial_equivocation_evidence(SUBMITTER, &evidence))
+            .unwrap_err();
+        assert!(matches!(error,
+            outbe_primitives::error::PrecompileError::RevertBytes(bytes)
+                if bytes.as_ref() == ISlashIndicator::SlashConfigPercentAbove100 { field: "evidence_reward_percent".into(), value: 150 }.abi_encode()));
+        assert_eq!(si.get_felony_count(ACCUSED).unwrap(), 0);
+        assert!(test_lifecycle_of(storage.clone(), ACCUSED)
+            .unwrap()
+            .is_active_status());
+        assert_eq!(
+            Staking::new(storage.clone()).get_stake(ACCUSED).unwrap(),
+            U256::from(STAKE_AMOUNT)
+        );
+        assert_eq!(
+            storage.balance(STAKING_ADDRESS).unwrap(),
+            U256::from(STAKE_AMOUNT)
+        );
+        assert_eq!(storage.balance(SUBMITTER).unwrap(), U256::ZERO);
+    });
+    // These assertions also check seed-partial deduplication and all module events in order.
+    assert_eq!(provider.storage, before);
+    assert_eq!(provider.get_ordered_events(), events);
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut si = SlashIndicator::new(storage.clone());
+        si.config_evidence_reward_percent.write(10).unwrap();
+        storage
+            .with_checkpoint(|| si.submit_seed_partial_equivocation_evidence(SUBMITTER, &evidence))
+            .unwrap();
+        assert_eq!(si.get_felony_count(ACCUSED).unwrap(), 1);
+        assert!(matches!(
+            test_lifecycle_of(storage.clone(), ACCUSED).unwrap(),
+            ValidatorLifecycle::JailRetained(_)
+        ));
+        assert_eq!(
+            storage.balance(SUBMITTER).unwrap(),
+            U256::from(STAKE_AMOUNT / 125)
+        );
+        assert!(si
+            .submit_seed_partial_equivocation_evidence(SUBMITTER, &evidence)
+            .is_err());
     });
 }
 
@@ -150,7 +216,7 @@ fn identical_partials_are_not_equivocation() {
         let err = si
             .submit_seed_partial_equivocation_evidence(SUBMITTER, &evidence)
             .unwrap_err();
-        assert!(format!("{err:?}").contains("identical"));
+        assert_selector(&err, ISlashIndicator::IdenticalSeedPartials::SELECTOR);
     });
 }
 
@@ -167,7 +233,10 @@ fn corrupt_identity_sig_is_rejected() {
         let err = si
             .submit_seed_partial_equivocation_evidence(SUBMITTER, &evidence)
             .unwrap_err();
-        assert!(format!("{err:?}").contains("identity signature"));
+        assert_selector(
+            &err,
+            ISlashIndicator::InvalidSeedPartialIdentitySignatures::SELECTOR,
+        );
     });
 }
 
@@ -189,7 +258,10 @@ fn unregistered_signer_is_rejected() {
         let err = si
             .submit_seed_partial_equivocation_evidence(SUBMITTER, &evidence)
             .unwrap_err();
-        assert!(format!("{err:?}").contains("not a registered validator"));
+        assert_selector(
+            &err,
+            ISlashIndicator::SignerNotRegisteredValidator::SELECTOR,
+        );
     });
 }
 
@@ -212,6 +284,6 @@ fn non_active_submitter_is_rejected() {
         let err = si
             .submit_seed_partial_equivocation_evidence(SUBMITTER, &evidence)
             .unwrap_err();
-        assert!(format!("{err:?}").contains("not an ACTIVE validator"));
+        assert_selector(&err, ISlashIndicator::SubmitterNotActiveValidator::SELECTOR);
     });
 }

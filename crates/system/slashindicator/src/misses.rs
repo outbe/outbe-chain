@@ -288,7 +288,9 @@ impl SlashIndicator<'_> {
         }
     }
 
-    /// Felony: increments the cumulative counter, then jails and slashes.
+    /// Felony: admits the slash percent, then increments, jails, and slashes.
+    /// Percent admission runs before the felony-count and jail writes.
+    /// `record_miss` has already stored the miss counter.
     fn apply_miss_felony(
         &mut self,
         kind: MissKind,
@@ -296,6 +298,7 @@ impl SlashIndicator<'_> {
         felony_threshold: u64,
     ) -> Result<()> {
         let validator = entry.validator;
+        let slash_percent = self.slash_amount_percent()?;
         let fc = self.felony_count.read(&validator)? + 1;
         self.felony_count.write(&validator, fc)?;
 
@@ -305,7 +308,6 @@ impl SlashIndicator<'_> {
         let mut vs = ValidatorSet::new(self.storage.clone());
         vs.jail_validator(validator)?;
 
-        let slash_percent = self.slash_amount_percent()?;
         let mut staking = Staking::new(self.storage.clone());
         staking.slash_stake(validator, slash_percent)?;
 

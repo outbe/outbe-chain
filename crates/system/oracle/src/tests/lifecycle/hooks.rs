@@ -22,15 +22,22 @@ fn begin_block_tallies_only_on_a_vote_period_boundary() {
             .submit_vote(v1, &[(COEN, USDT, fixed18(42), SCALE_1E18)])
             .unwrap();
 
+        // 2020-01-02 keeps the 12-second gap. A block on 2020-01-01 makes the
+        // zero watermark step 2019-12-31, and begin_block refuses that step.
+        let day = outbe_primitives::time::date_key_to_utc_timestamp(20_200_102);
         // Block 1: not a vote period boundary (period=2), no tally
-        let runtime_ctx =
-            BlockRuntimeContext::new(BlockContext::empty_for_tests(1, 12, 1), storage.clone());
+        let runtime_ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, day + 12, 1),
+            storage.clone(),
+        );
         <crate::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(&runtime_ctx).unwrap();
         assert!(oracle.vote_exists.read(&v1).unwrap()); // vote still exists
 
         // Block 2: vote period boundary, tally runs
-        let runtime_ctx =
-            BlockRuntimeContext::new(BlockContext::empty_for_tests(2, 24, 1), storage.clone());
+        let runtime_ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(2, day + 24, 1),
+            storage.clone(),
+        );
         <crate::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(&runtime_ctx).unwrap();
         assert!(!oracle.vote_exists.read(&v1).unwrap()); // votes cleared
 
@@ -142,10 +149,35 @@ fn slash_window_rejects_unbounded_validator_work() {
         }
 
         let err = crate::tally::slash_and_reset_counters(oracle, 10_000).unwrap_err();
-        assert!(
-            err.to_string().contains("exceeds cap"),
-            "unexpected error: {err}"
+        assert_typed_revert(
+            &err,
+            crate::errors::OracleError::SlashWindowValidatorSetExceedsCap {
+                actual: crate::tally::MAX_ORACLE_SLASH_WINDOW_VALIDATORS + 1,
+                cap: crate::tally::MAX_ORACLE_SLASH_WINDOW_VALIDATORS,
+            },
         );
+    });
+}
+
+/// The setter admits up to `CONSENSUS_VALIDATOR_BOUND` validators, so the slash
+/// window must process a registry above the old fixed cap of 128.
+#[test]
+fn slash_window_processes_every_admissible_registry() {
+    with_oracle(|storage, oracle| {
+        let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+        vs.config_is_initialized.write(true).unwrap();
+        vs.config_owner.write(Address::ZERO).unwrap();
+        vs.config_epoch_length_blocks.write(3600).unwrap();
+        vs.set_config_max_validators(outbe_validatorset::runtime::CONSENSUS_VALIDATOR_BOUND)
+            .unwrap();
+
+        for i in 1..=129u32 {
+            let mut bytes = [0u8; 20];
+            bytes[16..].copy_from_slice(&i.to_be_bytes());
+            register_validator(storage.clone(), Address::new(bytes), U256::from(1u64));
+        }
+
+        crate::tally::slash_and_reset_counters(oracle, 10_000).unwrap();
     });
 }
 
@@ -161,9 +193,11 @@ fn slash_window_errors_instead_of_panicking_on_an_oversized_slash_fraction() {
         oracle.config_slash_fraction.write(U256::MAX).unwrap();
 
         let err = crate::tally::slash_and_reset_counters(oracle, 10_000).unwrap_err();
-        assert!(
-            err.to_string().contains("exceeds u64"),
-            "unexpected error: {err}"
+        assert_typed_revert(
+            &err,
+            crate::errors::OracleError::SlashPercentOutOfRange {
+                slash_fraction: U256::MAX,
+            },
         );
     });
 }
@@ -193,7 +227,13 @@ fn slash_window_rolls_back_slash_state_when_force_exit_fails() {
         oracle.increment_miss(&validator).unwrap();
 
         let err = crate::tally::slash_and_reset_counters(oracle, 10_000).unwrap_err();
-        assert!(err.to_string().contains("cannot jail validator"));
+        assert_typed_revert(
+            &err,
+            outbe_validatorset::errors::ValidatorSetError::CannotPunishValidatorStatus {
+                action: "jail",
+                status: outbe_validatorset::runtime::status::PENDING,
+            },
+        );
 
         let staking = outbe_staking::contract::Staking::new(storage.clone());
         assert_eq!(staking.stake_amount.read(&validator).unwrap(), stake);
@@ -264,10 +304,12 @@ fn begin_block_scurve_hook_records_the_daily_peak() {
         oracle.reference_currencies.push(840).unwrap();
         oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
 
-        let day_1 = SECONDS_PER_DAY;
-        let day_2 = 2 * SECONDS_PER_DAY;
-        let day_3 = 3 * SECONDS_PER_DAY;
-        let day_4 = 4 * SECONDS_PER_DAY;
+        // Shift the epoch day grid onto 2020-01-01. Offsets inside each day stay.
+        let origin = outbe_primitives::time::date_key_to_utc_timestamp(20_200_101);
+        let day_1 = origin + SECONDS_PER_DAY;
+        let day_2 = origin + 2 * SECONDS_PER_DAY;
+        let day_3 = origin + 3 * SECONDS_PER_DAY;
+        let day_4 = origin + 4 * SECONDS_PER_DAY;
         // Three fully-closed days forming a peak at day_2: 100 < 150 > 120.
         oracle
             .write_snapshot(
@@ -345,10 +387,12 @@ fn begin_block_scurve_hook_processes_only_registered_reference_pairs() {
         oracle.register_pair(cad_pair).unwrap();
         oracle.register_pair(generic_pair).unwrap();
 
-        let day_1 = SECONDS_PER_DAY;
-        let day_2 = 2 * SECONDS_PER_DAY;
-        let day_3 = 3 * SECONDS_PER_DAY;
-        let day_4 = 4 * SECONDS_PER_DAY;
+        // Shift the epoch day grid onto 2020-01-01. Offsets inside each day stay.
+        let origin = outbe_primitives::time::date_key_to_utc_timestamp(20_200_101);
+        let day_1 = origin + SECONDS_PER_DAY;
+        let day_2 = origin + 2 * SECONDS_PER_DAY;
+        let day_3 = origin + 3 * SECONDS_PER_DAY;
+        let day_4 = origin + 4 * SECONDS_PER_DAY;
         for (timestamp, usd_price, eur_price, cad_price, generic_price) in [
             (
                 day_1 + 60,

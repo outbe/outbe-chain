@@ -190,6 +190,7 @@ fn issue_at_live_rate(
             issuance_currency,
             reference_currency,
             entry_price_minor: price,
+            call_anchor_price_minor: price,
         },
     )
 }
@@ -207,7 +208,13 @@ fn admitted_at_quote(storage: &StorageHandle<'_>, gem_id: U256, asset: Address) 
             snapshot_id: snapshot,
         },
     );
-    assert!(err_msg(res).contains("unexpected amount"));
+    assert_eq!(
+        res.unwrap_err().to_string(),
+        outbe_primitives::error::PrecompileError::from(
+            outbe_vaultrouter::settlement::SettlementError::AmountMismatch
+        )
+        .to_string()
+    );
     let now = storage.now_secs().unwrap();
     assert_eq!(
         gem_view(storage, gem_id).effective_state(now),
@@ -343,7 +350,13 @@ fn assert_called_source_cannot_be_sent(called_at: u64) {
     let before = provider.storage.clone();
     let events = provider.get_ordered_events().to_vec();
     StorageHandle::enter(&mut provider, |storage| {
-        assert!(err_msg(send_whole_holding(&storage)).contains("source intex is not issued"));
+        assert_eq!(
+            send_whole_holding(&storage).unwrap_err().to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::GemFactoryError::SourceIntexNotIssued
+            )
+            .to_string()
+        );
     });
     assert_eq!(provider.storage, before);
     assert_eq!(provider.get_ordered_events(), events.as_slice());
@@ -355,7 +368,7 @@ fn block_ctx<'a>(storage: &StorageHandle<'a>, now: u64) -> BlockRuntimeContext<'
 
 fn unallocated(storage: &StorageHandle) -> U256 {
     outbe_promislimit::PromisLimitContract::new(storage.clone())
-        .get_total_unallocated()
+        .promis_limit()
         .unwrap()
 }
 
@@ -365,7 +378,7 @@ fn seed_day_vwap(storage: &StorageHandle, iso: u16, vwap: U256) {
     let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso)
         .unwrap()
         .expect("COEN pair registered");
-    let day = previous_date_key(timestamp_to_date_key(T_NOW));
+    let day = previous_date_key(timestamp_to_date_key(T_NOW)).expect("date step");
     let mut oracle = OracleContract::new(storage.clone());
     oracle.record_utc_day_vwap(day, index, vwap).unwrap();
     let snapshot = outbe_oracle::api::current_vwap_snapshot(storage.clone()).unwrap();

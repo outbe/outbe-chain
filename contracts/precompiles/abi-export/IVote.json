@@ -555,61 +555,125 @@
   },
   {
     "type": "error",
+    "name": "AlreadyVoted",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DuplicateTargetModule",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidElectorate",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidPayload",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidProposalBond",
     "inputs": [
       {
-        "name": "expected",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
+        "name": "reason",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidProposalStatus",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidVoteKind",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidVotingWindow",
+    "inputs": [
       {
         "name": "actual",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ProposalBondAlreadySettled",
-    "inputs": [
-      {
-        "name": "proposalId",
-        "type": "uint256",
-        "internalType": "uint256"
+        "type": "uint64",
+        "internalType": "uint64"
       },
       {
-        "name": "settlement",
-        "type": "uint8",
-        "internalType": "enum IVote.BondSettlement"
+        "name": "maximum",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ]
   },
   {
     "type": "error",
-    "name": "ProposalBondLiabilityInvariant",
+    "name": "NotPending",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotValidator",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ProposalCounterExhausted",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ProposalNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "StoredPayloadInvalid",
     "inputs": [
       {
-        "name": "balance",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "liabilities",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "module",
+        "type": "string",
+        "internalType": "string"
       }
     ]
   },
   {
     "type": "error",
-    "name": "ProposalBondSettlementFailed",
-    "inputs": [
-      {
-        "name": "proposalId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
+    "name": "TooManyPending",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TooManyPendingByValidator",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TooManyPendingPublicBonded",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TooManyPendingPublicBondedByProposer",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnknownTargetModule",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VotingClosed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VotingDeadlineOverflow",
+    "inputs": []
   }
 ]

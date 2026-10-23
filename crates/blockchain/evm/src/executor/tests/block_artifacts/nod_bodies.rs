@@ -1,7 +1,12 @@
 //! Independent EVM states produce identical full-block results on both execution roles.
 
 use super::*;
-use outbe_primitives::time::SECONDS_PER_DAY;
+use outbe_primitives::time::{date_key_to_utc_timestamp, SECONDS_PER_DAY};
+
+/// A non-midnight second on 2020-01-01. `first_full_day` can step that day.
+fn issued_at_on_protocol_floor(second_of_day: u64) -> u64 {
+    date_key_to_utc_timestamp(20_200_101) + second_of_day
+}
 
 type NodBlockObservation = (
     B256,
@@ -153,9 +158,10 @@ fn independent_evm_states_produce_identical_full_block_state_receipts_and_balanc
     let proposer = test_evm_signer().address();
     let worldwide_day = WorldwideDay::new(20_241_220);
     let entry_price_minor = U256::from(450_000_000u64);
+    let issued_at = issued_at_on_protocol_floor(1);
     let group_key = outbe_nod::test_support::group_key_at(
         &outbe_nod::config::NodParams::DEV,
-        1,
+        issued_at,
         entry_price_minor,
         840,
     );
@@ -171,7 +177,7 @@ fn independent_evm_states_produce_identical_full_block_state_receipts_and_balanc
                 group_key,
                 issuance_currency: 840,
                 reference_currency: 840,
-                issued_at: 1,
+                issued_at,
             },
             entry_price_minor,
         )
@@ -233,9 +239,10 @@ fn proposer_validator_state_mints_and_rollbacks_match() {
     let nod_owner = Address::repeat_byte(0x32);
     let nod_id =
         outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(nod_owner, day).unwrap();
+    let issued_at = issued_at_on_protocol_floor(15);
     let group_key = outbe_nod::test_support::group_key_at(
         &outbe_nod::config::NodParams::DEV,
-        15,
+        issued_at,
         U256::from(16),
         978,
     );
@@ -263,7 +270,7 @@ fn proposer_validator_state_mints_and_rollbacks_match() {
                 group_key,
                 issuance_currency: 840,
                 reference_currency: 978,
-                issued_at: 15,
+                issued_at,
             },
             U256::from(16),
         )
@@ -358,7 +365,7 @@ fn seed_called_nod(storage: StorageHandle<'_>, fixture: &NodBodyFixture) -> eyre
     nod.group_called_at.write(&group_key, 1)?;
     let notice = nod.group_call_notice_period_seconds.read(&group_key)?;
     outbe_primitives::expiry_queue::push(
-        &outbe_nod::state::ExpiryHours(&nod),
+        &outbe_nod::state::ExpiryDays(&nod),
         group_key,
         outbe_nod::api::settlement_deadline_of(1, notice),
     )?;
@@ -374,7 +381,8 @@ fn seed_nod_daily_trigger(
     let (.., pair_index) = outbe_oracle::api::require_coen_pair(storage.clone(), 840)?;
     let previous_day = outbe_primitives::time::previous_date_key(
         outbe_primitives::time::timestamp_to_date_key(TEST_BLOCK_TIMESTAMP_BASE + 2),
-    );
+    )
+    .expect("date step");
     let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
     oracle.record_utc_day_vwap(previous_day, pair_index, U256::from(1_000_000u64))?;
     oracle.utc_day_vwap_last_finalized.write(previous_day)?;

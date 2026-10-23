@@ -14,17 +14,21 @@ use crate::precompile::IGovernance::{
 use crate::schema::{Gip, GipEntryExt, GovernanceContract, Oip, OipEntryExt};
 use crate::status;
 
-/// Maximum size of any single normative / proposal text. Every write path
-/// enforces it. This limit keeps a full-overwrite comfortably inside one block
-/// under the permissioned gas model (flat 5000/SSTORE).
+/// Maximum UTF-8 byte length of a governance text field, shared by canon,
+/// meta-canon and OIP/GIP submission and text updates. Vote separately bounds
+/// the raw JSON envelope before decoding it.
 pub const MAX_TEXT_BYTES: usize = 128 * 1024;
 
-fn validate_text(text: &str) -> Result<()> {
+fn validate_text(text: &str, max: usize) -> Result<()> {
     if text.is_empty() {
         return Err(GovernanceError::EmptyText.into());
     }
-    if text.len() > MAX_TEXT_BYTES {
-        return Err(GovernanceError::TextTooLarge.into());
+    if text.len() > max {
+        return Err(GovernanceError::TextTooLarge {
+            len: text.len(),
+            max,
+        }
+        .into());
     }
     Ok(())
 }
@@ -53,7 +57,7 @@ macro_rules! impl_proposal_ops {
     ) => {
         /// Submits a new proposal in `Draft`, open to any caller.
         pub fn $submit(&mut self, author: Address, text: &str) -> Result<U256> {
-            validate_text(text)?;
+            validate_text(text, MAX_TEXT_BYTES)?;
             // Refuse the submit before any write when the author index is full.
             // A wrapped counter would overwrite index slot 0.
             let acount = self.$author_count.read(&author)?;
@@ -128,7 +132,7 @@ macro_rules! impl_proposal_ops {
         /// Replaces a proposal's text. Author-only, and only while the proposal
         /// is `Draft` or `Rework`.
         pub fn $update(&mut self, caller: Address, id: U256, text: &str) -> Result<()> {
-            validate_text(text)?;
+            validate_text(text, MAX_TEXT_BYTES)?;
             let mut record = self
                 .$map
                 .get(id)?
@@ -243,7 +247,7 @@ impl GovernanceContract<'_> {
     /// entry and event. It has no caller gate. Only the bootstrap entry and
     /// the vote path call it.
     pub(crate) fn apply_meta_canon_text(&mut self, text: &str) -> Result<u64> {
-        validate_text(text)?;
+        validate_text(text, MAX_TEXT_BYTES)?;
         let version = self.meta_canon_version.read()? + 1;
         let hash = keccak256(text.as_bytes());
         self.meta_canon.write(text.as_bytes())?;
@@ -258,7 +262,7 @@ impl GovernanceContract<'_> {
     /// and event. It has no caller gate. Only the bootstrap entry and the
     /// vote path call it.
     pub(crate) fn apply_canon_text(&mut self, text: &str) -> Result<u64> {
-        validate_text(text)?;
+        validate_text(text, MAX_TEXT_BYTES)?;
         let version = self.canon_version.read()? + 1;
         let hash = keccak256(text.as_bytes());
         self.canon.write(text.as_bytes())?;

@@ -44,7 +44,6 @@ fn boundary() -> DkgBoundaryArtifact {
             new_active_set: vec![Address::repeat_byte(0x44)],
             active_set_hash: B256::repeat_byte(0x55),
         },
-        tee_recipient_pubkeys: vec![(Address::repeat_byte(0x66), B256::repeat_byte(0x77))],
         tee_expired_target_exclusions_hash: tee_expired_target_exclusions_hash(&exclusions)
             .unwrap(),
         tee_expired_target_exclusions: exclusions,
@@ -52,7 +51,7 @@ fn boundary() -> DkgBoundaryArtifact {
 }
 
 fn envelope(records: &[(u8, &[u8])]) -> Vec<u8> {
-    let mut bytes = b"OART\x0B".to_vec();
+    let mut bytes = b"OART\x01\x00".to_vec();
     bytes.push(records.len() as u8);
     for (tag, payload) in records {
         bytes.push(*tag);
@@ -75,21 +74,21 @@ fn mixed_record_wire_vectors_are_pinned() {
     // every remaining field, length, endian convention, version and record order.
     let expected = [
         (
-            574,
+            521,
             alloy_primitives::b256!(
-                "cb595ee6387dd0b75d38410db3db3b10b495cfd1d7206942dc6dc675066bfd2a"
+                "4bee5a9d6f662538180758a7a20cbfe482412bd92cf32ee0c1225fa1a810a1a9"
             ),
         ),
         (
-            262,
+            263,
             alloy_primitives::b256!(
-                "4a2b3f4b4f303d89fa0a83e083b3ea6604509f670674b0284247b051b537428b"
+                "e470bdcbd5ac9dc0f083aa806ac64f301d48a4be376cd5f9643d70b21dd07e4e"
             ),
         ),
         (
-            275,
+            276,
             alloy_primitives::b256!(
-                "f9f592c45221f43567e88325054b80ed62699cf501995c87fb368a0281be4824"
+                "d01a3287a7ba00a92a7168941534de8ed767910a11489d8ab007a231a754b6e2"
             ),
         ),
     ];
@@ -165,25 +164,25 @@ fn malformed_record_lengths_and_unknown_tags_keep_exact_errors() {
 #[test]
 fn malformed_envelope_preserves_framing_error_precedence() {
     for (bytes, message) in [
-        (&b"OART\x0B"[..], "block artifacts too short"),
+        (&b"OART\x01"[..], "block artifacts too short"),
         (
-            &b"NOPE\x01\x00"[..],
+            &b"NOPE\x01\x00\x00"[..],
             "unknown non-empty extra_data block artifact",
         ),
         (
-            &b"OART\x01\x00"[..],
-            "unsupported block artifact version: 1",
+            &b"OART\xff\x00\x00"[..],
+            "unsupported block artifact version: 255",
         ),
         (
-            &b"OART\x0B\x01"[..],
+            &b"OART\x01\x00\x01"[..],
             "truncated block artifact record header",
         ),
         (
-            &b"OART\x0B\x01\xFF\x00\x01"[..],
+            &b"OART\x01\x00\x01\xFF\x00\x01"[..],
             "truncated block artifact record payload",
         ),
         (
-            &b"OART\x0B\x00\x00"[..],
+            &b"OART\x01\x00\x00\x00"[..],
             "trailing bytes in block artifacts",
         ),
     ] {
@@ -212,7 +211,7 @@ fn late_credit_malformed_payloads_keep_caps_order_and_trailing_errors() {
     let artifacts = mixed_artifacts(ConsensusHeaderArtifact::DealerLog(Bytes::new()));
     let credits = artifacts.late_finalize_credits.unwrap();
     let encoded = encode_late_finalize_credits_artifact(&credits).unwrap();
-    let mut payload = encoded[9..].to_vec();
+    let mut payload = encoded[10..].to_vec();
     // Count + fixed binding prefix precede the bitmap length.
     payload[98..100].copy_from_slice(&33_u16.to_be_bytes());
     assert_fatal(
@@ -224,9 +223,9 @@ fn late_credit_malformed_payloads_keep_caps_order_and_trailing_errors() {
         &envelope(&[(6, &payload)]),
         "truncated late finalize credit body",
     );
-    payload = encoded[9..].to_vec();
+    payload = encoded[10..].to_vec();
     payload[0..2].copy_from_slice(&2_u16.to_be_bytes());
-    payload.extend_from_slice(&encoded[11..]);
+    payload.extend_from_slice(&encoded[12..]);
     assert_fatal(
         &envelope(&[(6, &payload)]),
         "late finalize batches not in strictly ascending canonical order",

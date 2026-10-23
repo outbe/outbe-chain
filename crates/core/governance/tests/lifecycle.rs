@@ -77,10 +77,9 @@ fn governance_full_lifecycle_via_dispatch() {
         // changes only through an approved vote proposal.
         let err =
             gov_dispatch(storage.clone(), &call.abi_encode(), AUTHORITY, U256::ZERO).unwrap_err();
-        assert!(
-            matches!(&err, PrecompileError::Revert(msg)
-                if *msg == GovernanceError::CanonRequiresVote.to_string()),
-            "err={err:?}"
+        assert_eq!(
+            err.to_string(),
+            PrecompileError::from(GovernanceError::CanonRequiresVote).to_string()
         );
         let out = gov_dispatch(
             storage.clone(),

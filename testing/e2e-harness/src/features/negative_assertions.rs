@@ -2,7 +2,7 @@
 //! failed transaction. Callers supply the exact expected ABI error independently.
 
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::{Revert, SolCall, SolError};
+use alloy_sol_types::SolCall;
 
 use crate::{internal::eth, world::World};
 
@@ -12,64 +12,29 @@ pub(super) struct NegativeTx<'a, C> {
     pub call: &'a C,
 }
 
-pub(super) fn assert_mined_revert_reason<C: SolCall>(
-    world: &World,
-    to: Address,
-    key: &str,
-    call: &C,
-    reason: &str,
-) -> crate::world::rpc::TxOutcome {
-    assert_mined_revert(
-        world,
-        NegativeTx { to, key, call },
-        U256::ZERO,
-        &Revert {
-            reason: reason.to_owned(),
-        }
-        .abi_encode(),
-    )
-    .into()
-}
-
-/// Use an explicitly proven observer cohort after an intentional node exit.
-pub(super) fn assert_mined_revert_reason_on<C: SolCall>(
-    world: &World,
-    ports: &[u16],
-    tx: NegativeTx<'_, C>,
-    reason: &str,
-) -> crate::world::rpc::TxOutcome {
-    assert_mined_revert_on(
-        world,
-        ports,
-        tx,
-        U256::ZERO,
-        &Revert {
-            reason: reason.to_owned(),
-        }
-        .abi_encode(),
-    )
-    .into()
-}
-
 pub(super) fn assert_registration_revert(
     world: &World,
     key: &str,
     identity: &crate::world::validators::RegistrationIdentity,
     signature: &[u8],
-    reason: &str,
+    expected: &[u8],
 ) -> crate::world::rpc::TxOutcome {
-    assert_mined_revert_reason(
+    assert_mined_revert(
         world,
-        crate::internal::addresses::VS_ADDR,
-        key,
-        &eth::IValidatorSet::registerValidatorCall {
-            validatorAddress: identity.address(),
-            consensusPubkey: Bytes::copy_from_slice(identity.bls_public_key()),
-            radicleNodeId: identity.radicle_node_id(),
-            blsRegistrationSignature: Bytes::copy_from_slice(signature),
+        NegativeTx {
+            to: crate::internal::addresses::VS_ADDR,
+            key,
+            call: &eth::IValidatorSet::registerValidatorCall {
+                validatorAddress: identity.address(),
+                consensusPubkey: Bytes::copy_from_slice(identity.bls_public_key()),
+                radicleNodeId: identity.radicle_node_id(),
+                blsRegistrationSignature: Bytes::copy_from_slice(signature),
+            },
         },
-        reason,
+        U256::ZERO,
+        expected,
     )
+    .into()
 }
 
 pub(super) fn assert_mined_revert<C: SolCall>(
@@ -82,7 +47,8 @@ pub(super) fn assert_mined_revert<C: SolCall>(
     assert_mined_revert_on(world, &ports, tx, value, expected)
 }
 
-fn assert_mined_revert_on<C: SolCall>(
+/// Use an explicitly proven observer cohort after an intentional node exit.
+pub(super) fn assert_mined_revert_on<C: SolCall>(
     world: &World,
     ports: &[u16],
     tx: NegativeTx<'_, C>,

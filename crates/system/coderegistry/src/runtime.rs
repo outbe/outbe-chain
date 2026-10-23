@@ -46,15 +46,11 @@ impl CodeRegistry<'_> {
             || raw_length > U256::from(MAX_GOVERNMENTS_DESCRIPTOR_BYTES * 2 + 1)
             || (raw_length & U256::from(1)).is_zero()
         {
-            return Err(outbe_primitives::error::PrecompileError::revert(
-                "noncanonical governments storage bytes",
-            ));
+            return Err(CodeRegistryError::NoncanonicalGovernmentsBytes.into());
         }
         let descriptor = GovernmentsDescriptor::from_bytes(&self.config_descriptor_bytes.read()?)?;
         if descriptor.chain_id != self.storage.chain_id()? || descriptor.hash()? != hash {
-            return Err(outbe_primitives::error::PrecompileError::revert(
-                "governments descriptor commitment mismatch",
-            ));
+            return Err(CodeRegistryError::GovernmentsDescriptorMismatch.into());
         }
         Ok(Some(descriptor))
     }

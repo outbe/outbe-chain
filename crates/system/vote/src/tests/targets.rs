@@ -1,6 +1,7 @@
 //! Synthetic vote targets and fixtures shared by the characterization tests.
 
 use alloy_primitives::{Address, B256, U256};
+use alloy_sol_types::SolError;
 use outbe_primitives::{
     addresses::{UPDATE_ADDRESS, VOTE_ADDRESS},
     block::{BlockContext, BlockRuntimeContext},
@@ -9,10 +10,12 @@ use outbe_primitives::{
 };
 
 use crate::{
-    constants::VOTING_WINDOW_BLOCKS,
+    constants::{MAX_PAYLOAD_BYTES, VOTING_WINDOW_BLOCKS},
+    errors::VoteError,
     handlers::{
         TargetAdmission, TargetExecutionOutcome, VoteTarget, VoteTargetContext, VoteTargetRegistry,
     },
+    precompile::IVote,
     schema::{BondSettlement, ProposalStatus, Vote},
     state::ProposalSubmission,
 };
@@ -448,4 +451,196 @@ fn assert_bond_still_pending(
         pending.vote_balance,
         "failure point {failure_point}"
     );
+}
+
+struct PayloadBoundTarget {
+    public_bonded: bool,
+}
+
+impl VoteTarget for PayloadBoundTarget {
+    fn target_module(&self) -> Address {
+        UPDATE_ADDRESS
+    }
+
+    fn admission(&self) -> TargetAdmission {
+        if self.public_bonded {
+            TargetAdmission::PublicBonded {
+                amount: U256::from(PUBLIC_BOND),
+            }
+        } else {
+            TargetAdmission::ActiveValidatorOnly
+        }
+    }
+
+    fn validate(&self, payload: &[u8], _context: VoteTargetContext) -> Result<()> {
+        assert!(
+            payload.len() <= MAX_PAYLOAD_BYTES,
+            "oversized raw payload reached target validation"
+        );
+        require_json_object(payload, || VoteError::InvalidPayload.into())
+    }
+
+    fn reserve(
+        &self,
+        storage: StorageHandle<'_>,
+        proposal_id: U256,
+        _payload: &[u8],
+        _context: VoteTargetContext,
+    ) -> Result<()> {
+        storage.sstore(UPDATE_ADDRESS, U256::from(993u64), proposal_id)
+    }
+
+    fn handle_approved(
+        &self,
+        ctx: &BlockRuntimeContext,
+        proposal_id: U256,
+        payload: &[u8],
+        _context: VoteTargetContext,
+    ) -> Result<TargetExecutionOutcome> {
+        require_json_object(payload, || VoteError::InvalidPayload.into())?;
+        ctx.storage
+            .sstore(UPDATE_ADDRESS, U256::from(992u64), proposal_id)?;
+        Ok(TargetExecutionOutcome::Applied)
+    }
+}
+
+static VALIDATOR_PAYLOAD_TARGET: PayloadBoundTarget = PayloadBoundTarget {
+    public_bonded: false,
+};
+static BONDED_PAYLOAD_TARGET: PayloadBoundTarget = PayloadBoundTarget {
+    public_bonded: true,
+};
+static VALIDATOR_PAYLOAD_REGISTRY: VoteTargetRegistry =
+    VoteTargetRegistry::new(&[&VALIDATOR_PAYLOAD_TARGET]);
+static BONDED_PAYLOAD_REGISTRY: VoteTargetRegistry =
+    VoteTargetRegistry::new(&[&BONDED_PAYLOAD_TARGET]);
+
+#[test]
+fn raw_payload_byte_bound_accepts_exact_limit_for_both_creation_paths_and_admissions() {
+    let mut payload =
+        serde_json::json!({"text": "é".repeat(MAX_PAYLOAD_BYTES / 2 - 16)}).to_string();
+    payload.push_str(&" ".repeat(MAX_PAYLOAD_BYTES - payload.len()));
+    for custom_window in [false, true] {
+        for (registry, attached_value) in [
+            (&VALIDATOR_PAYLOAD_REGISTRY, U256::ZERO),
+            (&BONDED_PAYLOAD_REGISTRY, U256::from(PUBLIC_BOND)),
+        ] {
+            let mut provider = super::test_provider();
+            provider.set_balance(VOTE_ADDRESS, attached_value);
+            let proposal_id;
+            {
+                let storage = StorageHandle::new(&mut provider);
+                setup_default_validators(storage.clone());
+                let mut vote = Vote::new(storage.clone());
+                let submission = ProposalSubmission {
+                    attached_value,
+                    ..ProposalSubmission::new(PROPOSER, UPDATE_ADDRESS, &payload, 10)
+                };
+                proposal_id = if custom_window {
+                    vote.create_proposal_with_voting_window(submission, 1, registry)
+                } else {
+                    vote.create_proposal_with_value(submission, registry)
+                }
+                .unwrap();
+                assert_eq!(
+                    vote.proposals.get(proposal_id).unwrap().unwrap().payload,
+                    payload
+                );
+                assert_eq!(vote.list_pending_proposal_ids().unwrap(), vec![proposal_id]);
+                assert_eq!(target_marker(&storage, 993), proposal_id);
+                assert_eq!(vote.bond_liabilities().unwrap(), attached_value);
+            }
+            assert!(!provider.get_events(VOTE_ADDRESS).is_empty());
+        }
+    }
+}
+
+#[test]
+fn oversized_raw_payloads_reject_before_validation_reservation_and_bond_effects() {
+    let mut utf8_payload =
+        serde_json::json!({"text": "é".repeat(MAX_PAYLOAD_BYTES / 2 - 16)}).to_string();
+    utf8_payload.push_str(&" ".repeat(MAX_PAYLOAD_BYTES + 1 - utf8_payload.len()));
+    for payload in [
+        format!("{{}}{}", " ".repeat(MAX_PAYLOAD_BYTES - 1)),
+        "x".repeat(MAX_PAYLOAD_BYTES + 1),
+        " ".repeat(MAX_PAYLOAD_BYTES + 1),
+        utf8_payload,
+    ] {
+        for custom_window in [false, true] {
+            for (registry, attached_value) in [
+                (&VALIDATOR_PAYLOAD_REGISTRY, U256::ZERO),
+                (&BONDED_PAYLOAD_REGISTRY, U256::from(PUBLIC_BOND)),
+            ] {
+                let mut provider = super::test_provider();
+                provider.set_balance(VOTE_ADDRESS, attached_value);
+                provider.set_balance(PROPOSER, U256::from(17u64));
+                {
+                    let storage = StorageHandle::new(&mut provider);
+                    setup_default_validators(storage);
+                }
+                provider.clear_mutation_failure();
+                {
+                    let storage = StorageHandle::new(&mut provider);
+                    let mut vote = Vote::new(storage.clone());
+                    let submission = ProposalSubmission {
+                        attached_value,
+                        ..ProposalSubmission::new(PROPOSER, UPDATE_ADDRESS, &payload, 10)
+                    };
+                    let error = if custom_window {
+                        vote.create_proposal_with_voting_window(submission, 1, registry)
+                    } else {
+                        vote.create_proposal_with_value(submission, registry)
+                    }
+                    .unwrap_err();
+                    assert!(matches!(
+                        error,
+                        PrecompileError::RevertBytes(bytes)
+                            if IVote::InvalidPayload::abi_decode(&bytes).is_ok()
+                    ));
+                    assert_eq!(vote.proposal_count.read().unwrap(), U256::ZERO);
+                    assert!(vote.proposals.get(U256::from(1u64)).unwrap().is_none());
+                    assert!(vote.list_pending_proposal_ids().unwrap().is_empty());
+                    assert_eq!(vote.bond_liabilities().unwrap(), U256::ZERO);
+                    assert_eq!(target_marker(&storage, 993), U256::ZERO);
+                    assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), attached_value);
+                    assert_eq!(storage.balance(PROPOSER).unwrap(), U256::from(17u64));
+                }
+                assert_eq!(provider.clear_mutation_failure(), 0);
+                assert!(provider.get_events(VOTE_ADDRESS).is_empty());
+            }
+        }
+    }
+}
+
+#[test]
+fn legacy_pending_payload_above_admission_bound_still_finalizes() {
+    let payload = serde_json::json!({"text": "a".repeat(MAX_PAYLOAD_BYTES)}).to_string();
+    super::with_vote(|storage| {
+        let mut vote = Vote::new(storage.clone());
+        // Persist the pending record as an earlier binary could have done,
+        // bypassing today's admission guard without changing the stored payload.
+        let proposal_id = vote
+            .write_proposal(
+                &ProposalSubmission::new(PROPOSER, UPDATE_ADDRESS, &payload, 10),
+                10 + VOTING_WINDOW_BLOCKS,
+                ProposalStatus::Pending,
+            )
+            .unwrap();
+        approve_by_quorum(&mut vote, proposal_id).unwrap();
+        vote.process_begin_block(
+            &block_context(storage.clone(), 10 + VOTING_WINDOW_BLOCKS + 1),
+            &VALIDATOR_PAYLOAD_REGISTRY,
+        )
+        .unwrap();
+        assert_eq!(
+            proposal_status(&vote, proposal_id),
+            ProposalStatus::Approved
+        );
+        assert!(vote.list_pending_proposal_ids().unwrap().is_empty());
+        assert_eq!(target_marker(&storage, 992), proposal_id);
+        assert_eq!(
+            vote.proposals.get(proposal_id).unwrap().unwrap().payload,
+            payload
+        );
+    });
 }

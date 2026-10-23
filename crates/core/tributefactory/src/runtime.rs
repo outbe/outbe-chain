@@ -361,7 +361,11 @@ mod tests {
             Some(&expected),
         )
         .unwrap_err();
-        assert!(error.to_string().contains("nft_hash"));
+        assert_eq!(
+            error.to_string(),
+            PrecompileError::from(TributeFactoryError::ZkPublicInputMismatch { field: "nft_hash" })
+                .to_string()
+        );
     }
 
     #[test]
@@ -379,7 +383,13 @@ mod tests {
             Some(&expected),
         )
         .unwrap_err();
-        assert!(error.to_string().contains("binding_hash"));
+        assert_eq!(
+            error.to_string(),
+            PrecompileError::from(TributeFactoryError::ZkPublicInputMismatch {
+                field: "binding_hash"
+            })
+            .to_string()
+        );
     }
 
     #[test]
@@ -408,10 +418,16 @@ mod tests {
             (DEVNET_CHAIN_ID, 0xdead, ""),
             (DEVNET_CHAIN_ID, 0xdead, "1.2.0"),
         ] {
-            assert!(matches!(
-                resolve_verification_key(host_chain_id, l2_chain_id, version),
-                Err(PrecompileError::Revert(_))
-            ));
+            assert_eq!(
+                resolve_verification_key(host_chain_id, l2_chain_id, version)
+                    .unwrap_err()
+                    .to_string(),
+                PrecompileError::from(TributeFactoryError::UnknownCircuitVersion {
+                    chain_id: l2_chain_id,
+                    version: version.to_owned(),
+                })
+                .to_string()
+            );
         }
     }
 
@@ -429,7 +445,7 @@ mod tests {
         for malformed in [wrong_count, noncanonical, truncated, trailing] {
             assert!(matches!(
                 decode_zk_public_inputs(&malformed, verification_key()),
-                Err(PrecompileError::Revert(_))
+                Err(PrecompileError::RevertBytes(_))
             ));
         }
     }
@@ -462,6 +478,8 @@ mod tests {
 #[cfg(test)]
 mod reward_activity_tests {
     use super::*;
+    use alloy_sol_types::SolError;
+    use outbe_agentreward::precompile::IAgentReward;
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
     use outbe_primitives::time::date_key_to_utc_timestamp;
 
@@ -470,6 +488,81 @@ mod reward_activity_tests {
 
     fn record(storage: StorageHandle<'_>) -> Result<()> {
         TributeFactoryContract::new(storage).record_agent_reward_activity(&[WALLET], &[SRA])
+    }
+
+    #[test]
+    fn tribute_counter_late_sra_overflow_rolls_back_waa_and_allows_retry() {
+        let day = WorldwideDay::new(20_260_803);
+        let count_key = AgentRewardContract::tribute_count_key(day, SRA);
+        let index_key = AgentRewardContract::address_index_key(day, 0);
+        let mut provider = HashMapStorageProvider::new(1);
+        provider.set_timestamp(U256::from(date_key_to_utc_timestamp(day.into()) + 43_200));
+        StorageHandle::enter(&mut provider, |storage| {
+            let rewards = AgentRewardContract::new(storage);
+            rewards.sra_addresses.write(&index_key, SRA).unwrap();
+            rewards.sra_address_count.write(&day, 1).unwrap();
+            rewards
+                .sra_tribute_counts
+                .write(&count_key, u64::MAX)
+                .unwrap();
+            rewards.sra_total_count.write(&day, u64::MAX).unwrap();
+        });
+        let before = provider.storage.clone();
+        let events_before = provider.events.clone();
+        let ordered_events_before = provider.get_ordered_events().to_vec();
+
+        StorageHandle::enter(&mut provider, |storage| {
+            let error = storage
+                .with_checkpoint(|| record(storage.clone()))
+                .unwrap_err();
+            let PrecompileError::RevertBytes(bytes) = error else {
+                panic!("expected counter-overflow revert bytes, got {error:?}");
+            };
+            assert_eq!(
+                bytes.as_ref(),
+                IAgentReward::TributeCounterOverflow {}.abi_encode()
+            );
+        });
+        assert_eq!(provider.storage, before);
+        assert_eq!(provider.events, events_before);
+        assert_eq!(provider.get_ordered_events(), ordered_events_before);
+
+        StorageHandle::enter(&mut provider, |storage| {
+            let rewards = AgentRewardContract::new(storage.clone());
+            assert!(rewards.get_all_waa_counts(day).unwrap().is_empty());
+            assert_eq!(rewards.waa_total_count.read(&day).unwrap(), 0);
+            assert_eq!(
+                rewards.get_all_sra_counts(day).unwrap(),
+                vec![(SRA, u64::MAX)]
+            );
+            assert_eq!(rewards.sra_total_count.read(&day).unwrap(), u64::MAX);
+
+            // Keep the existing recipient's index and count/total consistent on retry.
+            rewards
+                .sra_tribute_counts
+                .write(&count_key, u64::MAX - 1)
+                .unwrap();
+            rewards.sra_total_count.write(&day, u64::MAX - 1).unwrap();
+            storage.with_checkpoint(|| record(storage.clone())).unwrap();
+
+            assert_eq!(rewards.get_all_waa_counts(day).unwrap(), vec![(WALLET, 1)]);
+            assert_eq!(rewards.waa_total_count.read(&day).unwrap(), 1);
+            assert_eq!(rewards.waa_address_count.read(&day).unwrap(), 1);
+            assert_eq!(
+                rewards.get_all_sra_counts(day).unwrap(),
+                vec![(SRA, u64::MAX)]
+            );
+            assert_eq!(rewards.sra_total_count.read(&day).unwrap(), u64::MAX);
+            assert_eq!(rewards.sra_address_count.read(&day).unwrap(), 1);
+            assert_eq!(rewards.sra_addresses.read(&index_key).unwrap(), SRA);
+            assert_eq!(
+                rewards
+                    .sra_addresses
+                    .read(&AgentRewardContract::address_index_key(day, 1))
+                    .unwrap(),
+                Address::ZERO
+            );
+        });
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use core::fmt;
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use outbe_primitives::transaction_call::TransactionCallFields;
 use outbe_primitives::{error::PrecompileError, storage::StorageHandle};
 
@@ -9,6 +9,7 @@ use outbe_oracle::precompile::IOracle;
 use outbe_validatorset::delegation::ValidatorDelegateRole;
 
 use crate::envelope::{active_validator_for_role, ValidatorCallHook};
+use crate::renewal::RenewEnclaveHook;
 use crate::{hyperlane, oracle};
 
 /// A minimal, execution-layer independent transaction view for zero-fee hooks.
@@ -37,6 +38,8 @@ pub enum ZeroFeeHookId {
     OracleSubmitVote,
     /// `HyperlaneController.submitCheckpoint(uint32,bytes32,uint32,bytes32,bytes)`.
     HyperlaneSubmitCheckpoint,
+    /// Own-lease `TeeRegistry.renewEnclave`.
+    RenewEnclave,
 }
 
 /// A transaction that matched a hook's stateless zero-fee envelope.
@@ -46,12 +49,18 @@ pub struct ZeroFeeCandidate {
     pub hook: ZeroFeeHookId,
     /// Recovered transaction signer.
     pub signer: Address,
+    /// Canonical node hash carried by an own-lease renewal. Other hooks leave this zero.
+    pub node_id_hash: B256,
 }
 
 impl ZeroFeeCandidate {
     /// Creates a zero-fee candidate for a matching hook.
     pub const fn new(hook: ZeroFeeHookId, signer: Address) -> Self {
-        Self { hook, signer }
+        Self {
+            hook,
+            signer,
+            node_id_hash: B256::ZERO,
+        }
     }
 }
 
@@ -341,8 +350,13 @@ static HYPERLANE_SUBMIT_CHECKPOINT_HOOK: ValidatorCallHook<
     |storage, signer| active_validator_for_role(storage, signer, ValidatorDelegateRole::Oracle),
 );
 
-static ZERO_FEE_HOOKS: &[&dyn ZeroFeeHook] =
-    &[&ORACLE_SUBMIT_VOTE_HOOK, &HYPERLANE_SUBMIT_CHECKPOINT_HOOK];
+static RENEW_ENCLAVE_HOOK: RenewEnclaveHook = RenewEnclaveHook;
+
+static ZERO_FEE_HOOKS: &[&dyn ZeroFeeHook] = &[
+    &ORACLE_SUBMIT_VOTE_HOOK,
+    &HYPERLANE_SUBMIT_CHECKPOINT_HOOK,
+    &RENEW_ENCLAVE_HOOK,
+];
 
 /// Returns the Outbe system zero-fee hook registry.
 pub const fn registry() -> ZeroFeeRegistry {

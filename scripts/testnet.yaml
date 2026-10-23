@@ -112,7 +112,6 @@ feeder_seeds: testnet/seeds.yaml
 #     formingPeriodSeconds: 180000
 #     lookbackDelaySeconds: 1807200
 #     offeringPeriodSeconds: 180000
-#     waitingPeriodSeconds: 43200
 #     bootstrapDurationSeconds: 300
 #     advanceIntervalSeconds: 10
 
@@ -179,10 +178,6 @@ oracle:
 # Intex profile selector. `auto` seeds nothing.
 intex_profile:
   profile: dev
-
-# VaultRouter owner: may register vaults and liquidity routes.
-vault_router:
-  owner: 0x2Af7d3C5C3f82Fee4eA037A674f55fa2eD011c05
 
 # Native-token balances seeded on top of the validator prefund.
 balance:

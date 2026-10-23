@@ -8,6 +8,7 @@ use alloy_evm::{
     eth::{EthBlockExecutionCtx, NextEvmEnvAttributes},
     EvmEnv,
 };
+use alloy_primitives::Bytes;
 use outbe_primitives::{OutbeBlock, OutbeExecutionData, OutbeHeader, OutbePrimitives};
 use reth_ethereum::{
     chainspec::EthChainSpec,
@@ -139,6 +140,14 @@ impl ConfigureEvm for OutbeEvmConfig {
         parent: &SealedHeader<OutbeHeader>,
         attributes: Self::NextBlockEnvCtx,
     ) -> Result<OutbeBlockExecutionCtx<'_>, Self::Error> {
+        let (extra_data, system_layout_error) =
+            match Self::sanitize_next_block_extra_data(attributes.inner.extra_data) {
+                Ok(extra_data) => (extra_data, None),
+                Err(error) => (
+                    Bytes::new(),
+                    Some(crate::errors::SystemTxExpectationError::decode_block_artifacts(error)),
+                ),
+            };
         Ok(OutbeBlockExecutionCtx {
             inner: EthBlockExecutionCtx {
                 tx_count_hint: None,
@@ -149,14 +158,14 @@ impl ConfigureEvm for OutbeEvmConfig {
                     .inner
                     .withdrawals
                     .map(|w| std::borrow::Cow::Owned(w.into_inner())),
-                extra_data: Self::sanitize_next_block_extra_data(attributes.inner.extra_data),
+                extra_data,
                 slot_number: attributes.inner.slot_number,
             },
             timestamp_millis_part: attributes.timestamp_millis_part,
             block_hash: None,
             block_state_root: None,
             expected_begin_system_txs: Vec::new(),
-            system_layout_error: None,
+            system_layout_error,
             parent_consensus_metadata: attributes.parent_consensus_metadata,
             proposer_evm_address: attributes.proposer_evm_address,
             execute_outbe_block_hooks: attributes.execute_outbe_block_hooks,

@@ -12,9 +12,11 @@
 //! (`period = 3_600`, `offset = 0` in production). Its handler settles one
 //! contiguous completed day or advances `Cycle.active_utc_day` past a forfeited
 //! multi-day gap. Then the handler invokes the existing Metadosis WWD flow exactly once.
-//! A failed step rolls the trigger checkpoint back and returns the error.
-//! CycleTick rejects the block on that error.
-//! The same hourly slot does not retry on the next block.
+//! A handler revert rolls that checkpoint back, records the slot, emits
+//! `CycleTriggerFailed`, and the walk continues.
+//! Fatal and every other handler error leave the slot unchanged and return
+//! to the caller. CycleTick rejects the block on those errors.
+//! A recorded slot waits for its next scheduled window.
 //! At a contiguous day transition the slot remains pending until the prior
 //! day's last late-vote inclusion window closes. Canonical late participants
 //! receive the same daily reward participation weight as base-certificate voters,
@@ -31,7 +33,7 @@
 //! 4. WAA / SRA / CCA / validator top-up: call
 //!    `outbe_agentreward::distribute_daily`. Each pool credits claimable
 //!    balances; the undistributed residue becomes terminal excess. WAA and SRA
-//!    are credited in per-block slices; their residue goes to the carry-over.
+//!    are credited in per-block slices; their residue goes to the Promis Limit.
 //! 5. Metadosis terminal credit = metadosis_amount + fee-covered validator
 //!    share + pool excess, dispatched through
 //!    `outbe_emissionlimit::block::dispatch_terminal_remainder_at` at

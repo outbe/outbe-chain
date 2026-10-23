@@ -4,6 +4,14 @@ pragma solidity ^0.8.30;
 /// @notice Principal and interest amounts are in the Credis asset's atomic units. Gratis
 ///         amounts and prices are at scale 1e6.
 interface ICredis {
+    error CredisNotFound();
+    error InvalidStateValue(uint8 value);
+    error ArithmeticOverflow();
+    error IndexOutOfBounds();
+    error NonTransferable();
+    error UnknownProfileSelector(uint8 value);
+    error DateStep(uint8 kind, uint32 dateKey);
+
     /// Emitted when a Credis opens, and to address(0) when a forfeited Credis is deleted.
     event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);
     // Declared for ERC-721 shape only. A Credis is bound to its owner, so these two

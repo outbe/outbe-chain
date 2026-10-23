@@ -5,8 +5,8 @@
 
 use std::time::Duration;
 
-use alloy_primitives::{Address, B256, U256};
-use alloy_sol_types::{sol, SolEvent};
+use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_sol_types::{sol, SolError, SolEvent};
 use cucumber::{then, when};
 use outbe_primitives::addresses::{CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS};
 use outbe_primitives::time::SECONDS_PER_DAY_U32;
@@ -31,7 +31,8 @@ const BREACH_RATE: U256 = U256::from_limbs([2_000_000, 0, 0, 0]);
 const PART: U256 = U256::from_limbs([100_000_000, 0, 0, 0]);
 const CALL_TIMEOUT_SECS: u64 = 300;
 const FORFEIT_TIMEOUT: Duration = Duration::from_secs(120);
-const EXPIRY_BUCKET_SECS: u64 = 3_600;
+const MAX_DEV_NOTICE_SECS: u64 = 3_600;
+const EXPIRY_DAY_SECS: u64 = 86_400;
 /// Window, threshold and notice of the DEV profile in an e2e build, in seconds.
 const DEV_TERMS: (u32, u32, u32) = (3 * SECONDS_PER_DAY_U32, 2 * SECONDS_PER_DAY_U32, 600);
 
@@ -60,6 +61,8 @@ fn rate_above_call_price(world: &mut World) {
     );
     test_issuance::seed_day_vwaps(&url, DEPLOYER_KEY, USD, CALL_WINDOW_SEED_DAYS, BREACH_RATE)
         .expect("seed the breaching closed days");
+    test_issuance::rescan_closed_day(&url, DEPLOYER_KEY, CREDIS_FACTORY_ADDRESS)
+        .expect("arm the Credis call pass after seeding prices");
 }
 
 #[then("the Credis is called with a settlement notice")]
@@ -178,16 +181,16 @@ fn pay_part(world: &mut World) {
 fn deadline_passes(world: &mut World) {
     let deadline = latest(world).call.settlementDeadline;
     poll_until(
-        Duration::from_secs(EXPIRY_BUCKET_SECS + CALL_TIMEOUT_SECS),
+        Duration::from_secs(MAX_DEV_NOTICE_SECS + CALL_TIMEOUT_SECS),
         || format!("the chain never passed the settlement deadline {deadline}"),
         || head_time(world) > deadline,
     );
-    // The cleanup deletes it once the deadline's hour closes: read it before that.
+    // Cleanup follows the pass for the closed deadline day. Read the Credis before cleanup.
     let height = world
         .rpc
         .head(world.validators.primary_port())
         .expect("primary head");
-    // Unreadable only when the deadline fell in the last block of its hour.
+    // The Credis may already be absent if cleanup deletes the Credis when the deadline day closes at this boundary.
     if let Some(lapsed) = eth::read_call_at(
         &url(world),
         CREDIS_ADDRESS,
@@ -213,7 +216,10 @@ fn reads_forfeited(world: &mut World) {
     let f = fixture(world);
     let lapsed = f.lapsed.clone().expect("lapsed Credis");
     if lapsed.state != FORFEITED {
-        assert_eq!(settlement_revert(world, f).0, "Credis not found");
+        assert_eq!(
+            settlement_revert(world, f).0.as_ref(),
+            ICredis::CredisNotFound {}.abi_encode()
+        );
         return;
     }
     assert_eq!(
@@ -231,24 +237,23 @@ fn reads_forfeited(world: &mut World) {
         f.gratis_minor
     );
     assert!(outcome.gratisBurnedMinor > U256::ZERO);
-    // The cleanup may already have deleted it, if the deadline's hour closed at once.
+    // The Credis may already be absent if cleanup deletes the Credis as its deadline day closes.
     let (reason, height) = settlement_revert(world, f);
     let swept = forfeit_block(&url(world), f.credis_id).is_some_and(|block| block <= height);
     let expected = if swept {
-        "Credis not found"
+        ICredis::CredisNotFound {}.abi_encode()
     } else {
-        "settlement deadline has passed"
+        ICredisFactory::SettlementDeadlinePassed {}.abi_encode()
     };
-    assert_eq!(reason, expected);
+    assert_eq!(reason.as_ref(), expected.as_slice());
 }
 
-/// The sweep opens an hour only once it has closed: move the group's deadline into a
-/// closed one.
+/// Prepare the test pass for a closed deadline day after the exact settlement notice expires.
 #[when("the forfeit sweep reaches the lapsed Credis")]
 fn sweep_reaches(world: &mut World) {
     let url = url(world);
     let credis_id = fixture(world).credis_id;
-    // The deadline's hour may have closed already, and the cleanup deleted it.
+    // The Credis deadline day may already be closed, with cleanup complete.
     if forfeit_block(&url, credis_id).is_some() {
         return;
     }
@@ -258,7 +263,7 @@ fn sweep_reaches(world: &mut World) {
         DEPLOYER_KEY,
         &ICredisFactoryTestArming::closeCallNoticeForTestCall {
             credisId: credis_id,
-            deadline: head_time(world) - EXPIRY_BUCKET_SECS,
+            deadline: head_time(world).saturating_sub(EXPIRY_DAY_SECS),
         },
         None,
     );
@@ -315,7 +320,10 @@ fn burned(world: &mut World) {
         LIQUIDITY - PRINCIPAL + PART + f.interest_paid
     );
     assert_eq!(state.cca_stables, PRINCIPAL);
-    assert_eq!(settlement_revert(world, f).0, "Credis not found");
+    assert_eq!(
+        settlement_revert(world, f).0.as_ref(),
+        ICredis::CredisNotFound {}.abi_encode()
+    );
 }
 
 #[when("the owner forfeits the Credis")]
@@ -359,7 +367,10 @@ fn owner_forfeit_burned(world: &mut World) {
     assert_eq!(state.liquid, INITIAL_GRATIS - f.gratis_minor);
     assert_eq!(state.vault_stables, LIQUIDITY - PRINCIPAL);
     assert_eq!(state.cca_stables, PRINCIPAL);
-    assert_eq!(settlement_revert(world, f).0, "Credis not found");
+    assert_eq!(
+        settlement_revert(world, f).0.as_ref(),
+        ICredis::CredisNotFound {}.abi_encode()
+    );
 }
 
 /// Other modules credit the pool too: only the forfeit's own block is attributable.
@@ -368,7 +379,7 @@ fn assert_pool_credited(url: &str, forfeited_at: u64, burned: U256) {
         eth::read_call_at(
             url,
             addresses::PROMIS_LIMIT_ADDR,
-            &eth::IPromisLimit::totalUnallocatedCall {},
+            &eth::IPromisLimit::promisLimitCall {},
             height,
         )
         .expect("unallocated pool")
@@ -381,7 +392,7 @@ fn assert_pool_credited(url: &str, forfeited_at: u64, burned: U256) {
 }
 
 /// Why a settlement by the Credis owner reverts, and the block read.
-fn settlement_revert(world: &World, f: &CredisFixture) -> (String, u64) {
+fn settlement_revert(world: &World, f: &CredisFixture) -> (Bytes, u64) {
     let settle = ICredisFactory::settleCredisCall {
         credisId: f.credis_id,
         amountMinor: PART,
@@ -390,12 +401,15 @@ fn settlement_revert(world: &World, f: &CredisFixture) -> (String, u64) {
         .rpc
         .head(world.validators.primary_port())
         .expect("primary head");
-    let reason = eth::read_call_revert_reason_at(
+    let reason = eth::read_call_revert_data_at(
         &url(world),
         CREDIS_FACTORY_ADDRESS,
         f.owner,
         &settle,
-        height,
+        eth::RevertAt {
+            value: U256::ZERO,
+            height,
+        },
     )
     .expect("a settlement of a lapsed Credis reverts");
     (reason, height)

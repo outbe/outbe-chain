@@ -21,25 +21,20 @@
 #![allow(missing_docs)]
 
 use std::{env, error::Error};
-use vergen::{BuildBuilder, CargoBuilder, Emitter};
-use vergen_git2::Git2Builder;
+use vergen::{Build, Cargo, Emitter};
+use vergen_git2::Git2;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut emitter = Emitter::default();
 
-    emitter.add_instructions(&BuildBuilder::default().build_timestamp(true).build()?)?;
+    emitter.add_instructions(&Build::builder().build_timestamp(true).build())?;
+    emitter.add_instructions(&Cargo::builder().features(true).target_triple(true).build())?;
     emitter.add_instructions(
-        &CargoBuilder::default()
-            .features(true)
-            .target_triple(true)
-            .build()?,
-    )?;
-    emitter.add_instructions(
-        &Git2Builder::default()
+        &Git2::builder()
             .describe(false, true, None)
             .dirty(true)
             .sha(false)
-            .build()?,
+            .build(),
     )?;
 
     emitter.emit_and_set()?;

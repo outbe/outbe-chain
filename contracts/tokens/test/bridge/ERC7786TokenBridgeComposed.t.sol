@@ -80,18 +80,17 @@ contract ERC7786TokenBridgeComposedTest is Test {
         outbeGateway.setRemoteBridge(BNB, bnbGateway);
 
         usdt = new USDT();
-        usdt0 = new BridgeableERC20Stable("USDT0", "USDT0", 6, 840, address(this));
-
+        ERC7786TokenBridge.Peer[] memory peers = new ERC7786TokenBridge.Peer[](1);
+        peers[0] = ERC7786TokenBridge.Peer(OUTBE, _nextAddress(2));
         bnbUsdtBridge = new ERC7786TokenBridge(
-            address(usdt), address(bnbGateway), address(this), ERC7786TokenBridge.TokenBridgeMode.LockUnlock
-        );
-        outbeUsdt0Bridge = new ERC7786TokenBridge(
-            address(usdt0), address(outbeGateway), address(this), ERC7786TokenBridge.TokenBridgeMode.BurnMint
+            address(usdt), address(bnbGateway), ERC7786TokenBridge.TokenBridgeMode.LockUnlock, address(this), peers
         );
 
-        usdt0.setTokenBridge(address(outbeUsdt0Bridge));
-        bnbUsdtBridge.setRemoteBridge(OUTBE, _interop(OUTBE, address(outbeUsdt0Bridge)));
-        outbeUsdt0Bridge.setRemoteBridge(BNB, _interop(BNB, address(bnbUsdtBridge)));
+        usdt0 = new BridgeableERC20Stable("USDT0", "USDT0", 6, 840, _nextAddress(1));
+        peers[0] = ERC7786TokenBridge.Peer(BNB, address(bnbUsdtBridge));
+        outbeUsdt0Bridge = new ERC7786TokenBridge(
+            address(usdt0), address(outbeGateway), ERC7786TokenBridge.TokenBridgeMode.BurnMint, address(this), peers
+        );
 
         receiver = new MockTokenReceiver(IERC20(address(usdt0)));
     }
@@ -197,6 +196,10 @@ contract ERC7786TokenBridgeComposedTest is Test {
     function test_QuoteSend_WithExtraDataDelegatesToBridge() public {
         bnbGateway.setFeeQuote(456);
         assertEq(bnbUsdtBridge.quoteSend(OUTBE, address(receiver), 1, abi.encode(uint32(1)), 500_000), 456);
+    }
+
+    function _nextAddress(uint256 skip) internal view returns (address) {
+        return vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + skip);
     }
 
     function _interop(uint256 chainId, address addr) internal pure returns (bytes memory) {

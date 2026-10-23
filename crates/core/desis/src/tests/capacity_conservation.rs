@@ -53,7 +53,8 @@ fn world_selling(units: u16) -> HashMapStorageProvider {
         let oracle = OracleContract::new(s.clone());
         oracle.reference_currencies.push(840).unwrap();
         for offset in 0..5 {
-            let day = previous_date_key(timestamp_to_date_key(NOW + offset * SECONDS_PER_DAY));
+            let day = previous_date_key(timestamp_to_date_key(NOW + offset * SECONDS_PER_DAY))
+                .expect("date step");
             oracle
                 .record_utc_day_vwap(day, pair, U256::from(2_000_000))
                 .unwrap();
@@ -67,7 +68,7 @@ fn world_selling(units: u16) -> HashMapStorageProvider {
                 has_limit: true,
             },
             NOW,
-            crate::api::BriefOverflowPolicy::CarryOver,
+            crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
         )
         .unwrap();
     });
@@ -137,7 +138,7 @@ fn ledger(p: &mut HashMapStorageProvider, sold: bool, terminal: bool) {
 fn ledger_selling(p: &mut HashMapStorageProvider, sold: u32, terminal: bool) {
     StorageHandle::enter(p, |s| {
         let day = DesisContract::new(s.clone());
-        let returned = PromisLimitContract::new(s).get_total_unallocated().unwrap();
+        let returned = PromisLimitContract::new(s).promis_limit().unwrap();
         let pending = day.pending_desis_limit_minor.read(&DAY).unwrap();
         let issued = day.last_clearing_issued_count.read().unwrap();
         assert_eq!(

@@ -228,8 +228,12 @@ impl OutbeEvmConfig {
         self.evm_signer.as_ref()
     }
 
-    fn sanitize_next_block_extra_data(extra_data: Bytes) -> Bytes {
-        sanitize_prefinal_outbe_block_artifacts(extra_data.as_ref()).unwrap_or_default()
+    fn sanitize_next_block_extra_data(extra_data: Bytes) -> outbe_primitives::error::Result<Bytes> {
+        // Builder text is not a protocol artifact. OART decode failures must reach execution validation.
+        if !extra_data.starts_with(b"OART") {
+            return Ok(Bytes::new());
+        }
+        sanitize_prefinal_outbe_block_artifacts(extra_data.as_ref())
     }
 }
 

@@ -1,4 +1,6 @@
 use super::*;
+use crate::precompile::IValidatorSet as I;
+use alloy_sol_types::SolError;
 
 fn test_radicle_node_id(validator: Address) -> B256 {
     keccak256(validator.as_slice())
@@ -414,10 +416,14 @@ fn m27_self_registration_capped_owner_bypasses() {
         let err = vs
             .register_validator_with_sig(val, val, &pk, test_radicle_node_id(val), Some(&sig))
             .unwrap_err();
-        assert!(
-            err.to_string().contains("self-registration limit reached"),
-            "over-cap self-registration must be rejected, got: {err}"
-        );
+        match err {
+            PrecompileError::RevertBytes(bytes) => assert_eq!(
+                bytes.to_vec(),
+                I::SelfRegistrationLimitReached {}.abi_encode(),
+                "over-cap self-registration must return the declared error"
+            ),
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
 
         // The owner can still register validators directly, bypassing the cap.
         let owner_val = address!("0x000000000000000000000000000000000000beef");

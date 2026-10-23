@@ -60,6 +60,10 @@ pub enum PrecompileError {
     #[error("fatal: {0}")]
     Fatal(String),
 
+    /// Unrecoverable error that retains its typed domain cause.
+    #[error("fatal: {0}")]
+    FatalWithCause(#[source] Box<dyn std::error::Error + Send + Sync>),
+
     /// This node enclave could not serve the request.
     #[error("enclave unavailable: {0}")]
     EnclaveUnavailable(String),
@@ -247,8 +251,8 @@ impl From<ConsensusMetadataError> for PrecompileError {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ReshareArtifactError {
-    #[error("repository publication requires OART v0x0C")]
-    PublicationRequiresV0c,
+    #[error("repository publication requires the publication flag")]
+    PublicationFlagRequired,
     #[error("duplicate repository publication batch")]
     DuplicateRadiclePublication,
     #[error("too many block artifact records")]
@@ -287,6 +291,8 @@ pub enum ReshareArtifactError {
     UnknownExtraDataArtifact,
     #[error("unsupported block artifact version: {version}")]
     UnsupportedVersion { version: u8 },
+    #[error("unsupported block artifact flags: {flags}")]
+    UnsupportedFlags { flags: u8 },
     #[error("committee pre-announce payload too short for epoch")]
     CommitteePreAnnouncePayloadTooShort,
     #[error("boundary TEE expiry exclusions commitment mismatch")]
@@ -307,10 +313,6 @@ pub enum ReshareArtifactError {
     InvalidFieldBytes { name: &'static str },
     #[error("invalid vrf group pk length bytes")]
     InvalidVrfGroupPkLengthBytes,
-    #[error("invalid boundary header artifact: missing tee recipient count")]
-    MissingTeeRecipientCount,
-    #[error("tee recipient pubkeys length overflow")]
-    TeeRecipientPubkeysLengthOverflow,
     #[error("TEE expiry exclusions length overflow")]
     TeeExpiryExclusionsLengthOverflow,
     #[error("invalid boundary header artifact payload length: {actual} != {expected}")]
@@ -819,6 +821,7 @@ impl PrecompileError {
             | Self::BodyReadUnavailable(_)
             | Self::BodyReadRequestDeadline
             | Self::Fatal(_)
+            | Self::FatalWithCause(_)
             | Self::EnclaveUnavailable(_)) => {
                 Err(revm::precompile::PrecompileError::Fatal(error.to_string()))
             }
@@ -854,13 +857,15 @@ impl PrecompileError {
             | Self::Halt(_)
             | Self::SubCall(_)
             | Self::Unsupported
-            | Self::Fatal(_) => false,
+            | Self::Fatal(_)
+            | Self::FatalWithCause(_) => false,
         }
     }
 
     pub fn sweep_failure(&self) -> SweepFailure {
         match self {
             error if error.is_node_local() => SweepFailure::Propagate,
+            Self::FatalWithCause(_) => SweepFailure::Propagate,
             Self::OutOfGas => SweepFailure::Stop,
             _ => SweepFailure::Skip,
         }
@@ -956,6 +961,11 @@ mod tests {
                 PrecompileError::Fatal("x".into()),
                 false,
                 SweepFailure::Skip,
+            ),
+            (
+                PrecompileError::FatalWithCause(Box::new(super::TimestampOverflow)),
+                false,
+                SweepFailure::Propagate,
             ),
             (
                 PrecompileError::EnclaveUnavailable("x".into()),

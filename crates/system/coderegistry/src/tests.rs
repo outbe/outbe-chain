@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, FixedBytes, B256, U256};
-use alloy_sol_types::{SolCall, SolEvent};
+use alloy_sol_types::{SolCall, SolError, SolEvent};
 use outbe_primitives::{
     error::PrecompileError,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
@@ -30,10 +30,12 @@ fn with_registry<R>(maximum: u32, f: impl FnOnce(&mut CodeRegistry<'_>) -> R) ->
     })
 }
 
-fn revert(error: PrecompileError) -> String {
+fn revert_selector(error: PrecompileError) -> [u8; 4] {
     match error {
-        PrecompileError::Revert(message) => message,
-        other => panic!("expected revert, got {other:?}"),
+        PrecompileError::RevertBytes(bytes) if bytes.len() >= 4 => {
+            bytes[..4].try_into().expect("selector")
+        }
+        other => panic!("expected typed revert, got {other:?}"),
     }
 }
 
@@ -49,7 +51,9 @@ fn canonical_repo_id_word_has_zero_twelve_byte_tail() {
     malformed[31] = 1;
     assert!(matches!(
         repo_id_from_storage_key(B256::from(malformed)),
-        Err(PrecompileError::Revert(_))
+        Err(PrecompileError::RevertBytes(bytes))
+            if bytes.len() >= 4
+                && bytes[..4] == ICodeRegistry::NonZeroStorageKeyTail::SELECTOR
     ));
 }
 
@@ -82,28 +86,37 @@ fn registration_is_dense_unique_and_records_registrant_and_generation() {
 #[test]
 fn zero_duplicate_capacity_and_out_of_range_revert_without_advancing() {
     with_registry(1, |registry| {
-        assert!(revert(
-            registry
-                .register_repository(FixedBytes::ZERO, Address::ZERO)
-                .unwrap_err()
-        )
-        .contains("non-zero"));
+        assert_eq!(
+            revert_selector(
+                registry
+                    .register_repository(FixedBytes::ZERO, Address::ZERO)
+                    .unwrap_err()
+            ),
+            ICodeRegistry::ZeroRepositoryId::SELECTOR
+        );
         registry
             .register_repository(repo(1), Address::repeat_byte(1))
             .unwrap();
-        assert!(revert(
-            registry
-                .register_repository(repo(1), Address::repeat_byte(2))
-                .unwrap_err()
-        )
-        .contains("already"));
-        assert!(revert(
-            registry
-                .register_repository(repo(2), Address::repeat_byte(2))
-                .unwrap_err()
-        )
-        .contains("capacity"));
-        assert!(revert(registry.repository_at(1).unwrap_err()).contains("outside"));
+        assert_eq!(
+            revert_selector(
+                registry
+                    .register_repository(repo(1), Address::repeat_byte(2))
+                    .unwrap_err()
+            ),
+            ICodeRegistry::AlreadyRegistered::SELECTOR
+        );
+        assert_eq!(
+            revert_selector(
+                registry
+                    .register_repository(repo(2), Address::repeat_byte(2))
+                    .unwrap_err()
+            ),
+            ICodeRegistry::CapacityReached::SELECTOR
+        );
+        assert_eq!(
+            revert_selector(registry.repository_at(1).unwrap_err()),
+            ICodeRegistry::IndexOutOfBounds::SELECTOR
+        );
         assert_eq!(registry.repository_count.read().unwrap(), 1);
         assert_eq!(registry.registry_generation.read().unwrap(), 1);
     });

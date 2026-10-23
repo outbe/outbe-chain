@@ -261,38 +261,55 @@ fn handle_status(mut stream: TcpStream, availability: &dyn RepositoryAvailabilit
     {
         return;
     }
-    let deadline = Instant::now() + STATUS_DEADLINE;
     let mut request = [0_u8; MAX_REQUEST_BYTES];
-    let mut length = 0;
-    loop {
-        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
-            return;
-        };
-        if remaining.is_zero() || stream.set_read_timeout(Some(remaining)).is_err() {
+    let length = match read_status_request(&mut stream, &mut request) {
+        Ok(Some(length)) => length,
+        Ok(None) => {
+            let _ = respond(stream, 400, r#"{"version":1,"code":"invalid_request"}"#);
             return;
         }
-        let Ok(read) = stream.read(&mut request[length..]) else {
-            return;
-        };
+        Err(_) => return,
+    };
+    let Some(path) = std::str::from_utf8(&request[..length])
+        .ok()
+        .and_then(status_path)
+    else {
+        let _ = respond(stream, 400, r#"{"version":1,"code":"invalid_request"}"#);
+        return;
+    };
+    respond_status_path(stream, availability, path);
+}
+
+fn read_status_request(
+    stream: &mut TcpStream,
+    request: &mut [u8],
+) -> std::io::Result<Option<usize>> {
+    let deadline = Instant::now() + STATUS_DEADLINE;
+    let mut length = 0;
+    loop {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or(std::io::ErrorKind::TimedOut)?;
+        stream.set_read_timeout(Some(remaining))?;
+        let read = stream.read(&mut request[length..])?;
         if read == 0 {
-            return;
+            return Err(std::io::ErrorKind::UnexpectedEof.into());
         }
         length += read;
         if request[..length]
             .windows(4)
             .any(|window| window == b"\r\n\r\n")
         {
-            break;
+            return Ok(Some(length));
         }
         if length == request.len() {
-            let _ = respond(stream, 400, r#"{"version":1,"code":"invalid_request"}"#);
-            return;
+            return Ok(None);
         }
     }
-    let Some(request) = std::str::from_utf8(&request[..length]).ok() else {
-        let _ = respond(stream, 400, r#"{"version":1,"code":"invalid_request"}"#);
-        return;
-    };
+}
+
+fn status_path(request: &str) -> Option<&str> {
     if request.lines().skip(1).any(|line| {
         line.eq_ignore_ascii_case("transfer-encoding: chunked") || {
             line.split_once(':').is_some_and(|(name, value)| {
@@ -300,21 +317,16 @@ fn handle_status(mut stream: TcpStream, availability: &dyn RepositoryAvailabilit
             })
         }
     }) {
-        let _ = respond(stream, 400, r#"{"version":1,"code":"invalid_request"}"#);
-        return;
+        return None;
     }
-    let Some(line) = request.lines().next() else {
-        let _ = respond(stream, 400, r#"{"version":1,"code":"invalid_request"}"#);
-        return;
-    };
-    let Some(path) = line
+    request
+        .lines()
+        .next()?
         .strip_prefix("GET ")
         .and_then(|line| line.strip_suffix(" HTTP/1.1"))
-    else {
-        let _ = respond(stream, 400, r#"{"version":1,"code":"invalid_request"}"#);
-        return;
-    };
+}
 
+fn respond_status_path(stream: TcpStream, availability: &dyn RepositoryAvailability, path: &str) {
     if path == "/healthz" {
         let _ = respond(stream, 200, r#"{"status":"ok"}"#);
         return;

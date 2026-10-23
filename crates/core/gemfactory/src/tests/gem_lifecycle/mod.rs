@@ -68,7 +68,7 @@ pub(crate) fn gem_state(storage: &StorageHandle, gem_id: U256) -> u8 {
     view(storage, gem_id).effective_state(now)
 }
 
-pub(crate) fn bucket_of(storage: &StorageHandle, gem_id: U256) -> B256 {
+pub(crate) fn group_of(storage: &StorageHandle, gem_id: U256) -> B256 {
     item(storage, gem_id).unwrap().group_key
 }
 
@@ -93,7 +93,7 @@ pub(crate) fn alice_gems(storage: &StorageHandle, loads: &[u64]) -> Vec<U256> {
 
 /// Calls the gem's whole group at `at`.
 pub(crate) fn call_gem(storage: &StorageHandle, gem_id: U256, at: u64) {
-    let group = bucket_of(storage, gem_id);
+    let group = group_of(storage, gem_id);
     let mut gem = GemContract::new(storage.clone());
     let terms = gem.read_call_terms(group).unwrap();
     crate::called::mark_called(&mut gem, group, &terms, at).unwrap();
@@ -118,7 +118,7 @@ pub(crate) fn burn_settled(storage: &StorageHandle, gem_id: U256) {
 
 pub(crate) fn unallocated(storage: &StorageHandle) -> U256 {
     outbe_promislimit::PromisLimitContract::new(storage.clone())
-        .get_total_unallocated()
+        .promis_limit()
         .unwrap()
 }
 
@@ -153,7 +153,7 @@ pub(crate) fn priced_window(storage: &StorageHandle, pair: u32, latest: u32, vwa
     let mut day = latest;
     for _ in 0..(outbe_gem::constants::CALL_WINDOW / SECONDS_PER_DAY_U32) {
         oracle.record_utc_day_vwap(day, pair, vwap).unwrap();
-        day = previous_date_key(day);
+        day = previous_date_key(day).expect("date step");
     }
     if oracle.utc_day_vwap_last_finalized.read().unwrap() < latest {
         oracle.utc_day_vwap_last_finalized.write(latest).unwrap();
@@ -173,7 +173,7 @@ pub(crate) fn breach_window(
     for i in 0..window_days {
         let v = if i < breach_days { breach } else { U256::ZERO };
         window.push((day, Some(v)));
-        day = previous_date_key(day);
+        day = previous_date_key(day).expect("date step");
     }
     outbe_oracle::call_window::CallWindow::from_vwaps(
         window,
@@ -188,7 +188,7 @@ pub(crate) fn block_ctx_at<'s>(
     timestamp: u64,
 ) -> BlockRuntimeContext<'s> {
     BlockRuntimeContext::new(
-        BlockContext::empty_for_tests(1, timestamp, 1),
+        BlockContext::empty_for_tests(timestamp, timestamp, 1),
         storage.clone(),
     )
 }
@@ -197,12 +197,42 @@ pub(crate) fn block_ctx<'s>(storage: &StorageHandle<'s>) -> BlockRuntimeContext<
     block_ctx_at(storage, storage.now_secs().unwrap())
 }
 
-/// One block of the Gem sweeps as CycleTick runs them: what fell due, then a slice.
+/// This helper runs one block of the raw expiry and deletion workers, independent of Oracle scheduling.
 pub(crate) fn continue_sweeps(ctx: &BlockRuntimeContext) -> Result<()> {
     crate::hooks::sweep_forfeits(ctx)?;
-    crate::called::run_call_slice(ctx)?;
     crate::hooks::sweep_cleanup(ctx)?;
     Ok(())
+}
+
+/// These call-index fixtures bootstrap the day before their first scan.
+fn prepare_daily(ctx: &BlockRuntimeContext) {
+    if GemContract::new(ctx.storage.clone())
+        .daily_genesis_day
+        .read()
+        .unwrap()
+        == 0
+    {
+        crate::called::initialize_daily(&block_ctx_at(
+            &ctx.storage,
+            ctx.block.timestamp - SECONDS_PER_DAY,
+        ))
+        .unwrap();
+    }
+}
+
+fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
+    prepare_daily(ctx);
+    crate::called::scan_and_call(ctx)
+}
+
+fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
+    prepare_daily(ctx);
+    crate::called::run_daily(ctx)
+}
+
+fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
+    prepare_daily(ctx);
+    crate::called::run_call_slice(ctx)
 }
 
 pub(crate) fn begin_block_at(storage: &StorageHandle, ts: u64) {

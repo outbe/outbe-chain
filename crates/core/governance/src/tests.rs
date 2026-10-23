@@ -6,6 +6,7 @@ use outbe_primitives::error::PrecompileError;
 use outbe_validatorset::contract::ValidatorSet;
 
 use crate::errors::GovernanceError;
+use crate::runtime::MAX_TEXT_BYTES;
 use crate::state::author_index_key;
 use crate::status;
 use crate::GovernanceContract;
@@ -37,9 +38,9 @@ fn with_governance<R>(f: impl FnOnce(&mut GovernanceContract) -> R) -> R {
 }
 
 fn assert_not_authorized<T: std::fmt::Debug>(result: outbe_primitives::error::Result<T>) {
-    let expected = GovernanceError::NotAuthorized.to_string();
+    let expected = PrecompileError::from(GovernanceError::NotAuthorized).to_string();
     assert!(
-        matches!(&result, Err(PrecompileError::Revert(msg)) if *msg == expected),
+        matches!(&result, Err(err) if err.to_string() == expected),
         "expected NotAuthorized, got {result:?}"
     );
 }
@@ -121,19 +122,30 @@ fn canon_64k_roundtrip() {
     });
 }
 
+fn assert_text_too_large<T: std::fmt::Debug>(
+    result: outbe_primitives::error::Result<T>,
+    len: usize,
+    max: usize,
+) {
+    let expected = PrecompileError::from(GovernanceError::TextTooLarge { len, max }).to_string();
+    assert!(
+        matches!(&result, Err(err) if err.to_string() == expected),
+        "expected TextTooLarge, got {result:?}"
+    );
+}
+
 #[test]
-fn canon_rejects_empty_and_oversize() {
+fn canon_rejects_empty_text() {
     with_governance(|gov| {
         assert!(gov.update_canon(AUTH, "").is_err());
-        let too_big = "a".repeat(crate::runtime::MAX_TEXT_BYTES + 1);
-        assert!(gov.update_canon(AUTH, &too_big).is_err());
+        assert!(gov.update_meta_canon(AUTH, "").is_err());
     });
 }
 
 fn assert_canon_requires_vote<T: std::fmt::Debug>(result: outbe_primitives::error::Result<T>) {
-    let expected = GovernanceError::CanonRequiresVote.to_string();
+    let expected = PrecompileError::from(GovernanceError::CanonRequiresVote).to_string();
     assert!(
-        matches!(&result, Err(PrecompileError::Revert(msg)) if *msg == expected),
+        matches!(&result, Err(err) if err.to_string() == expected),
         "expected CanonRequiresVote, got {result:?}"
     );
 }
@@ -191,6 +203,29 @@ fn non_authority_still_refused_at_bootstrap() {
     });
 }
 
+#[test]
+fn canon_texts_bound_utf8_bytes_and_preserve_failed_updates() {
+    let max = MAX_TEXT_BYTES;
+    for at_bound in ["a".repeat(max), "é".repeat(max / 2)] {
+        let too_big = format!("{at_bound}a");
+        with_governance(|gov| {
+            assert_text_too_large(gov.update_canon(AUTH, &too_big), max + 1, max);
+            assert_eq!(gov.update_canon(AUTH, &at_bound).unwrap(), 1);
+            let canon = gov.get_canon().unwrap();
+            assert_eq!(canon.0, at_bound);
+            assert_text_too_large(gov.apply_canon_text(&too_big), max + 1, max);
+            assert_eq!(gov.get_canon().unwrap(), canon);
+
+            assert_text_too_large(gov.update_meta_canon(AUTH, &too_big), max + 1, max);
+            assert_eq!(gov.update_meta_canon(AUTH, &at_bound).unwrap(), 1);
+            let meta_canon = gov.get_meta_canon().unwrap();
+            assert_eq!(meta_canon.0, at_bound);
+            assert_text_too_large(gov.apply_meta_canon_text(&too_big), max + 1, max);
+            assert_eq!(gov.get_meta_canon().unwrap(), meta_canon);
+        });
+    }
+}
+
 // ------------------------------------------------------------ proposals ---
 
 #[test]
@@ -241,12 +276,9 @@ fn submission_counters_are_checked() {
                 }
             }
             .unwrap_err();
-            assert!(
-                matches!(
-                    &error,
-                    PrecompileError::Revert(reason)
-                        if *reason == GovernanceError::ProposalIdExhausted.to_string()
-                ),
+            assert_eq!(
+                error.to_string(),
+                PrecompileError::from(GovernanceError::ProposalIdExhausted).to_string(),
                 "expected ProposalIdExhausted, got {error:?}"
             );
         });
@@ -403,11 +435,65 @@ fn missing_proposal_errors() {
 
 #[test]
 fn proposal_rejects_empty_and_oversize_text() {
+    let max = MAX_TEXT_BYTES;
+    let too_big = "a".repeat(max + 1);
     with_governance(|gov| {
         assert!(gov.submit_oip(AUTHOR, "").is_err());
-        let too_big = "a".repeat(crate::runtime::MAX_TEXT_BYTES + 1);
-        assert!(gov.submit_oip(AUTHOR, &too_big).is_err());
+        assert!(gov.submit_gip(AUTHOR, "").is_err());
+        assert_text_too_large(gov.submit_oip(AUTHOR, &too_big), max + 1, max);
+        assert_text_too_large(gov.submit_gip(AUTHOR, &too_big), max + 1, max);
+        assert_eq!(gov.oip_count().unwrap(), 0);
+        assert_eq!(gov.gip_count().unwrap(), 0);
     });
+}
+
+#[test]
+fn proposal_submit_bounds_utf8_bytes() {
+    let max = MAX_TEXT_BYTES;
+    for at_bound in ["a".repeat(max), "é".repeat(max / 2)] {
+        let too_big = format!("{at_bound}a");
+        with_governance(|gov| {
+            let oip = gov.submit_oip(AUTHOR, &at_bound).unwrap();
+            assert_eq!(gov.get_oip(oip).unwrap().unwrap().text, at_bound);
+            let gip = gov.submit_gip(AUTHOR, &at_bound).unwrap();
+            assert_eq!(gov.get_gip(gip).unwrap().unwrap().text, at_bound);
+            assert_text_too_large(gov.submit_oip(AUTHOR, &too_big), max + 1, max);
+            assert_text_too_large(gov.submit_gip(AUTHOR, &too_big), max + 1, max);
+            assert_eq!(gov.oip_count().unwrap(), 1);
+            assert_eq!(gov.gip_count().unwrap(), 1);
+        });
+    }
+}
+
+#[test]
+fn proposal_text_updates_bound_utf8_bytes_and_preserve_failed_updates() {
+    let max = MAX_TEXT_BYTES;
+    for at_bound in ["a".repeat(max), "é".repeat(max / 2)] {
+        let too_big = format!("{at_bound}a");
+        with_governance(|gov| {
+            let oip = gov.submit_oip(AUTHOR, "oip draft").unwrap();
+            let old_oip = gov.get_oip(oip).unwrap().unwrap();
+            assert_text_too_large(gov.update_oip_text(AUTHOR, oip, &too_big), max + 1, max);
+            let unchanged = gov.get_oip(oip).unwrap().unwrap();
+            assert_eq!(
+                (unchanged.text, unchanged.text_hash, unchanged.updated_block),
+                (old_oip.text, old_oip.text_hash, old_oip.updated_block)
+            );
+            gov.update_oip_text(AUTHOR, oip, &at_bound).unwrap();
+            assert_eq!(gov.get_oip(oip).unwrap().unwrap().text, at_bound);
+
+            let gip = gov.submit_gip(AUTHOR, "gip draft").unwrap();
+            let old_gip = gov.get_gip(gip).unwrap().unwrap();
+            assert_text_too_large(gov.update_gip_text(AUTHOR, gip, &too_big), max + 1, max);
+            let unchanged = gov.get_gip(gip).unwrap().unwrap();
+            assert_eq!(
+                (unchanged.text, unchanged.text_hash, unchanged.updated_block),
+                (old_gip.text, old_gip.text_hash, old_gip.updated_block)
+            );
+            gov.update_gip_text(AUTHOR, gip, &at_bound).unwrap();
+            assert_eq!(gov.get_gip(gip).unwrap().unwrap().text, at_bound);
+        });
+    }
 }
 
 // ------------------------------------------------------- storage layout ---
@@ -570,9 +656,9 @@ fn author_index_is_per_kind() {
 }
 
 fn assert_author_index_full<T: std::fmt::Debug>(result: outbe_primitives::error::Result<T>) {
-    let expected = GovernanceError::AuthorIndexFull.to_string();
+    let expected = PrecompileError::from(GovernanceError::AuthorIndexFull).to_string();
     assert!(
-        matches!(&result, Err(PrecompileError::Revert(msg)) if *msg == expected),
+        matches!(&result, Err(err) if err.to_string() == expected),
         "expected AuthorIndexFull, got {result:?}"
     );
 }

@@ -972,14 +972,16 @@ pub(super) fn measurement_transition_intent(
     intent
 }
 
-/// Asserts that `result` is a deterministic revert whose message contains
-/// `expected`.
-pub(super) fn assert_reverts<T: std::fmt::Debug>(
+/// Asserts that `result` returns the declared Solidity error encoding.
+pub(super) fn assert_revert_bytes<T: std::fmt::Debug>(
     result: Result<T, PrecompileError>,
-    expected: &str,
+    expected: &[u8],
 ) {
-    let message = revert_message(result.unwrap_err());
-    assert!(message.contains(expected), "{message}");
+    let error = result.unwrap_err();
+    assert!(
+        matches!(&error, PrecompileError::RevertBytes(bytes) if bytes.as_ref() == expected),
+        "expected typed revert bytes {expected:02x?}, got {error:?}"
+    );
 }
 
 /// Asserts that the first `mutate` call on `registry` creates the binding.
@@ -1193,8 +1195,4 @@ pub(super) fn synthetic_dcap_evidence(
         components: outbe_tee::test_utils::canonical_dcap_collateral_fixture(),
         transition_key_ready_proof,
     })
-}
-
-pub(super) fn revert_message(error: PrecompileError) -> String {
-    crate::errors::extract_revert_message(error)
 }

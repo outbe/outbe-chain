@@ -4,6 +4,10 @@ import { Router__factory, Auction__factory } from '../typechain';
 import { getTokenDecimals, getProviderByDomain, getOrderData } from '../lib/common';
 import Table from 'cli-table3';
 
+function formatDeadline(deadline: bigint) {
+  return Number(deadline) > 0 ? new Date(Number(deadline) * 1000).toISOString() : 'N/A';
+}
+
 /**
  * List all revealed quotes for a specific order and show the current winner.
  *
@@ -55,8 +59,8 @@ async function main() {
     auction.isAuctionEnded(orderIdHex),
   ]);
 
-  console.log(`\n  Commit Deadline: ${Number(commitDeadline) > 0 ? new Date(Number(commitDeadline) * 1000).toISOString() : 'N/A'}`);
-  console.log(`  Reveal Deadline: ${Number(revealDeadline) > 0 ? new Date(Number(revealDeadline) * 1000).toISOString() : 'N/A'}`);
+  console.log(`\n  Commit Deadline: ${formatDeadline(commitDeadline)}`);
+  console.log(`  Reveal Deadline: ${formatDeadline(revealDeadline)}`);
   console.log(`  Auction Status:  ${isAuctionEnded ? 'Ended' : 'In progress'}\n`);
 
   const quotes = await auction.getQuotes(orderIdHex);
@@ -104,7 +108,10 @@ async function main() {
     }
   }
 
-  // Summary
+  printSummary(quotes, outputDecimals);
+}
+
+function printSummary(quotes: readonly { outputAmount: bigint }[], outputDecimals: number) {
   const avgAmount = quotes.reduce((sum, q) => sum + q.outputAmount, 0n) / BigInt(quotes.length);
   const maxAmount = quotes.reduce((max, q) => (q.outputAmount > max ? q.outputAmount : max), 0n);
   const minAmount = quotes.reduce((min, q) => (q.outputAmount < min ? q.outputAmount : min), quotes[0].outputAmount);

@@ -290,7 +290,7 @@ fn canonical_artifact_decoder_is_not_replaced_by_an_absence_check() {
     assert!(header_witness(&header).is_err());
     // A boundary record with invalid payload must fail decoding too. It
     // cannot turn into a successfully decoded absence of activation.
-    header.inner.extra_data = b"OART\x0b\x02\x00\x00".to_vec().into();
+    header.inner.extra_data = b"OART\x01\x00\x01\x02\x00\x00".to_vec().into();
     assert!(header_witness(&header).is_err());
 }
 
@@ -316,7 +316,6 @@ fn a_valid_boundary_outcome_cannot_pass_as_an_unactivated_terminal_header() {
             new_active_set: Vec::new(),
             active_set_hash: B256::ZERO,
         },
-        tee_recipient_pubkeys: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
         tee_expired_target_exclusions_hash: tee_expired_target_exclusions_hash(&[]).unwrap(),
     };

@@ -4,6 +4,7 @@
 //! slashable and a genuinely-invalid one is.
 
 use alloy_primitives::{address, keccak256, Address, U256};
+use alloy_sol_types::SolError;
 use commonware_codec::Encode;
 use commonware_consensus::types::{Epoch, Round, View};
 use commonware_cryptography::bls12381;
@@ -14,6 +15,7 @@ use outbe_consensus::dkg_manager::public_polynomial_hash;
 use outbe_consensus::proof::{hybrid_seed_namespace, seed_partial_attest_message};
 use outbe_primitives::addresses::STAKING_ADDRESS;
 use outbe_primitives::storage::StorageHandle;
+use outbe_slashindicator::precompile::ISlashIndicator;
 use outbe_slashindicator::schema::SlashIndicator;
 use outbe_staking::contract::Staking;
 use outbe_validatorset::contract::ValidatorSet;
@@ -22,7 +24,9 @@ use outbe_validatorset::test_support::{test_lifecycle_of, StorageOverrides};
 use outbe_validatorset::{CommitteeEntry, CommitteeSnapshot, StakeProjection, ValidatorLifecycle};
 
 mod support;
-use support::{register_active_submitter, with_storage};
+use support::{
+    assert_selector, evidence_already_processed, register_active_submitter, with_storage,
+};
 
 const OWNER: Address = address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC");
 const SUBMITTER: Address = address!("0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD");
@@ -216,7 +220,7 @@ fn wide_timestamp_does_not_consume_invalid_partial_evidence() {
                 .unwrap(),
             U256::from(920_000)
         );
-        assert_eq!(storage.balance(SUBMITTER).unwrap(), U256::from(8_000));
+        assert_eq!(storage.balance(SUBMITTER).unwrap(), U256::from(80_000));
     });
 }
 
@@ -248,11 +252,11 @@ fn invalid_partial_jails_and_slashes_then_dedups() {
 
         // Replay rejected.
         let mut si = SlashIndicator::new(storage.clone());
-        assert!(si
-            .submit_invalid_seed_partial_evidence(SUBMITTER, &evidence)
-            .unwrap_err()
-            .to_string()
-            .contains("already processed"));
+        assert_selector(
+            &si.submit_invalid_seed_partial_evidence(SUBMITTER, &evidence)
+                .unwrap_err(),
+            evidence_already_processed(),
+        );
     });
 }
 
@@ -270,9 +274,9 @@ fn valid_partial_is_not_slashable() {
         let err = si
             .submit_invalid_seed_partial_evidence(SUBMITTER, &evidence)
             .unwrap_err();
-        assert!(
-            err.to_string().contains("valid; nothing to slash"),
-            "got: {err:?}"
+        assert_selector(
+            &err,
+            ISlashIndicator::ValidSeedPartialNotSlashable::SELECTOR,
         );
     });
 }
@@ -292,12 +296,17 @@ fn forged_commitment_is_rejected() {
         let err = si
             .submit_invalid_seed_partial_evidence(SUBMITTER, &evidence)
             .unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("does not match committee snapshot polynomial hash")
-                || err.to_string().contains("malformed"),
-            "got: {err:?}"
-        );
+        match &err {
+            outbe_primitives::error::PrecompileError::RevertBytes(bytes) if bytes.len() >= 4 => {
+                let selector = &bytes[..4];
+                assert!(
+                    selector == ISlashIndicator::CommitmentPolynomialHashMismatch::SELECTOR
+                        || selector == ISlashIndicator::MalformedCommitmentOrPartial::SELECTOR,
+                    "got: {err:?}"
+                );
+            }
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
     });
 }
 
@@ -317,9 +326,6 @@ fn wrong_signer_index_pubkey_mismatch_rejected() {
         let err = si
             .submit_invalid_seed_partial_evidence(SUBMITTER, &evidence)
             .unwrap_err();
-        assert!(
-            err.to_string().contains("does not match committee entry"),
-            "got: {err:?}"
-        );
+        assert_selector(&err, ISlashIndicator::SignerPubkeyMismatchAtIndex::SELECTOR);
     });
 }

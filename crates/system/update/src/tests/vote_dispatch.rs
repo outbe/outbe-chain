@@ -1,9 +1,10 @@
 use super::tee_fixture::initial_tee_policy;
 use super::TEST_CHAIN_ID;
 use alloy_primitives::{address, B256};
-use alloy_sol_types::SolEvent;
+use alloy_sol_types::{SolError, SolEvent};
 use outbe_primitives::addresses::UPDATE_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
+use outbe_primitives::chain::{DEVNET_CHAIN_ID, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID};
 use outbe_primitives::error::PrecompileError;
 
 use outbe_teeregistry::TeeRegistry;
@@ -11,6 +12,7 @@ use outbe_vote::constants::VOTING_WINDOW_BLOCKS;
 use outbe_vote::handlers::{
     TargetExecutionOutcome, VoteTarget, VoteTargetContext, VoteTargetRegistry,
 };
+use outbe_vote::precompile::IVote;
 use outbe_vote::schema::ProposalStatus;
 use outbe_vote::schema::Vote;
 
@@ -125,6 +127,86 @@ fn approved_vote_proposal_schedules_update_and_activates() {
         assert_eq!(update.get_active_version().unwrap(), PV);
         assert_eq!(update.get_active_version_height().unwrap(), activation);
     });
+}
+
+#[test]
+fn every_network_requires_notice_at_update_admission_and_vote_approval() {
+    use outbe_primitives::block::BlockContext;
+    use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+
+    for chain_id in [DEVNET_CHAIN_ID, TESTNET_CHAIN_ID, MAINNET_CHAIN_ID] {
+        for short_by in [0, 1] {
+            let mut provider =
+                HashMapStorageProvider::new_with_chain_identity(chain_id, B256::repeat_byte(1));
+            let current = 100;
+            provider.set_block_number(current);
+            let storage = StorageHandle::new(&mut provider);
+            setup_validators(storage.clone());
+            let mut vote = Vote::new(storage.clone());
+            let too_soon = encode_schedule_update_json(PV, min_activation(current) - 1, "");
+            let error = vote
+                .create_proposal(
+                    PROPOSER,
+                    UPDATE_ADDRESS,
+                    &too_soon,
+                    current,
+                    &VOTE_TARGET_REGISTRY,
+                )
+                .unwrap_err();
+            assert!(
+                matches!(error, PrecompileError::RevertBytes(bytes) if bytes.len() == 4 && bytes[..4] == IUpdate::HeightInPast::SELECTOR),
+                "admission must reject insufficient notice on chain {chain_id}"
+            );
+
+            let approval_height = current + VOTING_WINDOW_BLOCKS + 1;
+            let activation = min_activation(approval_height) - short_by;
+            let payload = encode_schedule_update_json(PV, activation, "");
+            let proposal_id = create_approved_update(&mut vote, &payload, current);
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(approval_height, 0, chain_id),
+                storage.clone(),
+            );
+            vote.process_begin_block(&ctx, &VOTE_TARGET_REGISTRY)
+                .unwrap();
+            let expected_status = if short_by == 0 {
+                ProposalStatus::Approved
+            } else {
+                ProposalStatus::Error
+            };
+            assert_eq!(
+                vote.proposals
+                    .get(proposal_id)
+                    .unwrap()
+                    .unwrap()
+                    .proposal_status()
+                    .unwrap(),
+                expected_status,
+                "approval notice boundary on chain {chain_id}"
+            );
+            let mut update = Update::new(storage.clone());
+            let scheduled = update.read_scheduled_update(proposal_id).unwrap();
+            if short_by == 0 {
+                assert_eq!(scheduled.unwrap().activation_height, activation);
+                let activation_ctx = BlockRuntimeContext::new(
+                    BlockContext::empty_for_tests(activation, 0, chain_id),
+                    storage.clone(),
+                );
+                update
+                    .process_begin_block_with_handlers(
+                        &activation_ctx,
+                        &EMPTY_UPGRADE_HANDLER_REGISTRY,
+                    )
+                    .unwrap();
+                assert_eq!(update.get_active_version().unwrap(), PV);
+            } else {
+                assert!(scheduled.is_none());
+                assert!(update
+                    .list_waiting_for_activation_proposal_ids()
+                    .unwrap()
+                    .is_empty());
+            }
+        }
+    }
 }
 
 struct CustomWindowVote {
@@ -553,10 +635,12 @@ fn invalid_json_payload_is_rejected_at_creation() {
                 &VOTE_TARGET_REGISTRY,
             )
             .unwrap_err();
-        assert!(matches!(
-            err,
-            PrecompileError::Revert(msg) if msg.contains("invalid proposal payload")
-        ));
+        match err {
+            PrecompileError::RevertBytes(bytes) => {
+                assert_eq!(&bytes[..4], &IVote::InvalidPayload::SELECTOR);
+            }
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
     });
 }
 
@@ -573,7 +657,7 @@ fn invalid_update_payload_is_rejected_at_creation() {
                 &VOTE_TARGET_REGISTRY,
             )
             .unwrap_err();
-        assert!(matches!(err, PrecompileError::Revert(_)));
+        assert!(matches!(err, PrecompileError::RevertBytes(_)));
     });
 }
 
@@ -651,10 +735,12 @@ fn unknown_target_is_rejected_at_creation() {
                 &VOTE_TARGET_REGISTRY,
             )
             .unwrap_err();
-        assert!(matches!(
-            err,
-            PrecompileError::Revert(msg) if msg.contains("unknown vote target module")
-        ));
+        match err {
+            PrecompileError::RevertBytes(bytes) => {
+                assert_eq!(&bytes[..4], &IVote::UnknownTargetModule::SELECTOR);
+            }
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        }
     });
 }
 
@@ -721,14 +807,14 @@ fn validate_reverts_with_exact_reason_for_malformed_payload() {
     for payload in NOT_JSON_PAYLOADS {
         let outcome = UPDATE_VOTE_TARGET.validate(payload, payload_context());
         assert!(
-            matches!(&outcome, Err(PrecompileError::Revert(reason)) if reason == "invalid proposal payload"),
+            matches!(&outcome, Err(PrecompileError::RevertBytes(bytes)) if bytes.len() >= 4 && bytes[..4] == IVote::InvalidPayload::SELECTOR),
             "{payload:?}: {outcome:?}"
         );
     }
     for payload in WRONG_SHAPE_PAYLOADS {
         let outcome = UPDATE_VOTE_TARGET.validate(payload, payload_context());
         assert!(
-            matches!(&outcome, Err(PrecompileError::Revert(reason)) if reason == "invalid vote payload"),
+            matches!(&outcome, Err(PrecompileError::RevertBytes(bytes)) if bytes.len() >= 4 && bytes[..4] == IUpdate::InvalidPayload::SELECTOR),
             "{payload:?}: {outcome:?}"
         );
     }
@@ -738,14 +824,9 @@ fn validate_reverts_with_exact_reason_for_malformed_payload() {
 fn handle_approved_fails_fatally_without_mutation_for_malformed_payload() {
     let cases = NOT_JSON_PAYLOADS
         .iter()
-        .map(|payload| (*payload, "stored Update proposal payload is invalid"))
-        .chain(WRONG_SHAPE_PAYLOADS.iter().map(|payload| {
-            (
-                *payload,
-                "stored Update proposal payload is invalid: invalid vote payload",
-            )
-        }));
-    for (payload, expected) in cases {
+        .map(|payload| (*payload, true))
+        .chain(WRONG_SHAPE_PAYLOADS.iter().map(|payload| (*payload, false)));
+    for (payload, stored_vote_payload) in cases {
         let mut provider =
             outbe_primitives::storage::hashmap::HashMapStorageProvider::new_with_chain_identity(
                 TEST_CHAIN_ID,
@@ -761,10 +842,24 @@ fn handle_approved_fails_fatally_without_mutation_for_malformed_payload() {
                 payload_context(),
             )
         });
-        assert!(
-            matches!(&outcome, Err(PrecompileError::Revert(reason)) if reason == expected),
-            "{payload:?}: {outcome:?}"
-        );
+        match &outcome {
+            Err(PrecompileError::RevertBytes(bytes)) if stored_vote_payload => {
+                assert_eq!(&bytes[..4], &IVote::StoredPayloadInvalid::SELECTOR);
+                let decoded =
+                    IVote::StoredPayloadInvalid::abi_decode(bytes).expect("stored payload");
+                assert_eq!(decoded.module, "Update");
+            }
+            Err(PrecompileError::RevertBytes(bytes)) => {
+                assert_eq!(
+                    &bytes[..4],
+                    &IUpdate::StoredProposalPayloadInvalid::SELECTOR
+                );
+                let decoded = IUpdate::StoredProposalPayloadInvalid::abi_decode(bytes)
+                    .expect("stored update payload");
+                assert_eq!(decoded.value, "invalid vote payload");
+            }
+            other => panic!("{payload:?}: {other:?}"),
+        }
         assert_eq!(
             provider.clear_mutation_failure(),
             0,

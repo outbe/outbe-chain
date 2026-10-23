@@ -6,7 +6,7 @@
 //! with empty returndata.
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
-use alloy_sol_types::{SolCall, SolEvent, SolValue};
+use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
 use outbe_primitives::addresses::HYPERLANE_CONTROLLER_ADDRESS;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
@@ -162,10 +162,12 @@ fn topics(p: &HashMapStorageProvider) -> Vec<B256> {
         .collect()
 }
 
-fn revert_reason(err: outbe_primitives::error::PrecompileError) -> String {
+fn revert_selector(err: outbe_primitives::error::PrecompileError) -> [u8; 4] {
     match err {
-        outbe_primitives::error::PrecompileError::Revert(reason) => reason,
-        other => panic!("expected revert, got {other:?}"),
+        outbe_primitives::error::PrecompileError::RevertBytes(bytes) if bytes.len() >= 4 => {
+            bytes[..4].try_into().expect("selector")
+        }
+        other => panic!("expected typed revert, got {other:?}"),
     }
 }
 
@@ -218,7 +220,10 @@ fn initialize_is_gated_and_one_shot() {
     );
     StorageHandle::enter(&mut p, |storage| {
         let err = dispatch(storage, &initialize_call(), stranger(), U256::ZERO).unwrap_err();
-        assert!(revert_reason(err).contains("is not the bootstrap admin"));
+        assert_eq!(
+            revert_selector(err),
+            IHyperlaneController::NotBootstrapAdmin::SELECTOR
+        );
     });
 
     // No admin seeded: nobody can initialize.
@@ -230,7 +235,10 @@ fn initialize_is_gated_and_one_shot() {
             .write(Address::ZERO)
             .unwrap();
         let err = dispatch(storage, &initialize_call(), Address::ZERO, U256::ZERO).unwrap_err();
-        assert!(revert_reason(err).contains("is not the bootstrap admin"));
+        assert_eq!(
+            revert_selector(err),
+            IHyperlaneController::NotBootstrapAdmin::SELECTOR
+        );
     });
 
     // Admin, but not the local ISM owner.
@@ -243,7 +251,10 @@ fn initialize_is_gated_and_one_shot() {
     );
     StorageHandle::enter(&mut p, |storage| {
         let err = dispatch(storage, &initialize_call(), deployer(), U256::ZERO).unwrap_err();
-        assert!(revert_reason(err).contains("is not the current owner"));
+        assert_eq!(
+            revert_selector(err),
+            IHyperlaneController::NotIsmOwner::SELECTOR
+        );
     });
 
     // Pending owner is not the controller.
@@ -256,7 +267,10 @@ fn initialize_is_gated_and_one_shot() {
     );
     StorageHandle::enter(&mut p, |storage| {
         let err = dispatch(storage, &initialize_call(), deployer(), U256::ZERO).unwrap_err();
-        assert!(revert_reason(err).contains("pending owner"));
+        assert_eq!(
+            revert_selector(err),
+            IHyperlaneController::IsmNotPendingToController::SELECTOR
+        );
     });
 
     // Router not yet transferred.
@@ -269,7 +283,10 @@ fn initialize_is_gated_and_one_shot() {
     );
     StorageHandle::enter(&mut p, |storage| {
         let err = dispatch(storage, &initialize_call(), deployer(), U256::ZERO).unwrap_err();
-        assert!(revert_reason(err).contains("expected the controller"));
+        assert_eq!(
+            revert_selector(err),
+            IHyperlaneController::NotOwnedByController::SELECTOR
+        );
     });
 
     // Table without the local domain.
@@ -286,14 +303,20 @@ fn initialize_is_gated_and_one_shot() {
         .abi_encode()
         .into();
         let err = dispatch(storage, &call, deployer(), U256::ZERO).unwrap_err();
-        assert!(revert_reason(err).contains("must be included"));
+        assert_eq!(
+            revert_selector(err),
+            IHyperlaneController::LocalDomainMissing::SELECTOR
+        );
     });
 
     // Second call.
     let mut p = initialized_provider();
     StorageHandle::enter(&mut p, |storage| {
         let err = dispatch(storage, &initialize_call(), deployer(), U256::ZERO).unwrap_err();
-        assert!(revert_reason(err).contains("already initialized"));
+        assert_eq!(
+            revert_selector(err),
+            IHyperlaneController::AlreadyInitialized::SELECTOR
+        );
     });
 }
 
@@ -352,7 +375,10 @@ fn rotation_without_fee_balance_changes_nothing() {
         let err = c
             .set_validators_and_threshold(&[v(1), v(2)], 2)
             .unwrap_err();
-        assert!(revert_reason(err).contains("is below the required"));
+        assert_eq!(
+            revert_selector(err),
+            IHyperlaneController::InsufficientBalance::SELECTOR
+        );
     });
     assert!(topics(&p).is_empty());
 }
@@ -386,6 +412,22 @@ fn remote_and_local_generic_calls() {
 }
 
 #[test]
+fn remote_account_is_the_router_derived_account() {
+    let mut p = initialized_provider();
+    p.stub_sub_call_at_selector(
+        ica_router(),
+        IInterchainAccountRouter::getRemoteInterchainAccountCall::SELECTOR,
+        word_addr(v(0x1c)),
+    );
+    StorageHandle::enter(&mut p, |storage| {
+        let call = IHyperlaneController::remoteAccountCall { domain: SEPOLIA };
+        let ret = dispatch(storage, &call.abi_encode(), stranger(), U256::ZERO).unwrap();
+        let account = IHyperlaneController::remoteAccountCall::abi_decode_returns(&ret).unwrap();
+        assert_eq!(account, v(0x1c));
+    });
+}
+
+#[test]
 fn domains_can_be_added_and_removed_except_the_local_one() {
     let mut p = initialized_provider();
     StorageHandle::enter(&mut p, |storage| {
@@ -415,7 +457,7 @@ fn operations_require_initialization() {
         let mut c = HyperlaneControllerContract::new(storage);
         assert!(matches!(
             c.set_validators_and_threshold(&[v(1)], 1),
-            Err(outbe_primitives::error::PrecompileError::Revert(_))
+            Err(outbe_primitives::error::PrecompileError::RevertBytes(_))
         ));
         assert!(c
             .call_remote(
@@ -679,7 +721,10 @@ mod liveness {
                 U256::ZERO,
             )
             .unwrap_err();
-            assert!(revert_reason(not_validator).contains("not an active validator"));
+            assert_eq!(
+                revert_selector(not_validator),
+                IHyperlaneController::NotActiveValidator::SELECTOR
+            );
 
             let no_hook = dispatch(
                 storage.clone(),
@@ -688,7 +733,10 @@ mod liveness {
                 U256::ZERO,
             )
             .unwrap_err();
-            assert!(revert_reason(no_hook).contains("no MerkleTreeHook"));
+            assert_eq!(
+                revert_selector(no_hook),
+                IHyperlaneController::UnknownHook::SELECTOR
+            );
 
             let tampered = dispatch(
                 storage.clone(),
@@ -697,7 +745,10 @@ mod liveness {
                 U256::ZERO,
             )
             .unwrap_err();
-            assert!(revert_reason(tampered).contains("does not match"));
+            assert_eq!(
+                revert_selector(tampered),
+                IHyperlaneController::SignerMismatch::SELECTOR
+            );
 
             let older = dispatch(
                 storage.clone(),
@@ -706,7 +757,10 @@ mod liveness {
                 U256::ZERO,
             )
             .unwrap_err();
-            assert!(revert_reason(older).contains("is not newer"));
+            assert_eq!(
+                revert_selector(older),
+                IHyperlaneController::StaleIndex::SELECTOR
+            );
 
             let repeat = dispatch(
                 storage,
@@ -715,7 +769,10 @@ mod liveness {
                 U256::ZERO,
             )
             .unwrap_err();
-            assert!(revert_reason(repeat).contains("is not newer"));
+            assert_eq!(
+                revert_selector(repeat),
+                IHyperlaneController::StaleIndex::SELECTOR
+            );
         });
         let submitted = topics(&p)
             .iter()
@@ -732,9 +789,15 @@ mod liveness {
             let mut c = HyperlaneControllerContract::new(storage);
             c.set_hyperlane_signer(v(2), v(9)).unwrap();
             let err = c.set_hyperlane_signer(FIXTURE_VALIDATOR, v(9)).unwrap_err();
-            assert!(revert_reason(err).contains("already registered"));
+            assert_eq!(
+                revert_selector(err),
+                IHyperlaneController::SignerTaken::SELECTOR
+            );
             let err = c.set_hyperlane_signer(FIXTURE_VALIDATOR, v(2)).unwrap_err();
-            assert!(revert_reason(err).contains("already registered"));
+            assert_eq!(
+                revert_selector(err),
+                IHyperlaneController::SignerTaken::SELECTOR
+            );
             c.set_hyperlane_signer(v(2), Address::ZERO).unwrap();
             c.set_hyperlane_signer(FIXTURE_VALIDATOR, v(9)).unwrap();
         });
@@ -758,7 +821,10 @@ mod liveness {
                 U256::ZERO,
             )
             .unwrap_err();
-            assert!(revert_reason(err).contains("does not match"));
+            assert_eq!(
+                revert_selector(err),
+                IHyperlaneController::SignerMismatch::SELECTOR
+            );
             // Reset to the validator address.
             let reset: Bytes = IHyperlaneController::setHyperlaneSignerCall {
                 signer: Address::ZERO,

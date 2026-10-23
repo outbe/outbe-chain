@@ -107,13 +107,16 @@ impl LocalReceiptClient {
                     | outbe_primitives::radicle_publication::PublicationAction::BindMaterial
             )
             || bound.receipt().body.sequence > body.sequence
-            || bound.receipt().body.repo_id != body.repo_id
-            || bound.receipt().body.owner_bls_public != body.owner_bls_public
-            || bound.receipt().body.descriptor_hash != body.descriptor_hash
-            || anchor.number > block.number
-            || (anchor.number == block.number && anchor.hash != block.hash)
-            || (anchor.number == 0 && anchor.hash != self.chain.genesis_hash)
         {
+            return Err(Error::Protocol);
+        }
+        let invalid_binding = bound.receipt().body.repo_id != body.repo_id
+            || bound.receipt().body.owner_bls_public != body.owner_bls_public
+            || bound.receipt().body.descriptor_hash != body.descriptor_hash;
+        let invalid_anchor = anchor.number > block.number
+            || (anchor.number == block.number && anchor.hash != block.hash)
+            || (anchor.number == 0 && anchor.hash != self.chain.genesis_hash);
+        if invalid_binding || invalid_anchor {
             return Err(Error::Protocol);
         }
         let owner =
@@ -159,15 +162,24 @@ impl LocalReceiptClient {
     }
 }
 
+pub(super) struct PublishInput {
+    pub state: super::serve::ServerState,
+    pub permit: OwnedSemaphorePermit,
+}
+
 pub(super) async fn publish(
-    reader: Arc<dyn RepositoryReceiptReader>,
-    authority: Option<Arc<dyn RepositoryAuthorityReader>>,
-    resolver: Option<EndpointNetworkResolver>,
-    store: Option<Arc<Mutex<ReviewPackageStore>>>,
-    readers: Arc<Semaphore>,
-    permit: OwnedSemaphorePermit,
+    input: PublishInput,
     request: publication::Request,
 ) -> Result<Vec<u8>, Error> {
+    let PublishInput { state, permit } = input;
+    let super::serve::ServerState {
+        reader,
+        authority,
+        material: resolver,
+        publications: store,
+        readers,
+        ..
+    } = state;
     let signer = resolver.clone().ok_or(Error::Unavailable)?;
     let context = current(authority, resolver, permit).await?;
     let permit = readers
@@ -217,23 +229,5 @@ pub(super) async fn publish(
     })
     .await
     .map_err(|_| Error::Unavailable)??;
-    if let Some(batch) = batch {
-        signer
-            .queue_review_publication(selected, batch)
-            .await
-            .map_err(|_| Error::Unavailable)?;
-        Ok([publication::QUEUE.as_slice(), &[2]].concat())
-    } else {
-        let attestation = signer
-            .attest_review(selected.clone())
-            .await
-            .map_err(|_| Error::Unavailable)?;
-        let batch = outbe_primitives::radicle_publication::PublicationBatch {
-            body: selected.body().clone(),
-            attestations: vec![attestation],
-        }
-        .to_bytes()
-        .map_err(|_| Error::Protocol)?;
-        Ok([publication::ATTEST.as_slice(), &[2], &batch].concat())
-    }
+    review::publication_response(signer, selected, batch).await
 }

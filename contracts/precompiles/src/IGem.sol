@@ -2,6 +2,24 @@
 pragma solidity ^0.8.30;
 
 interface IGem {
+    error NonTransferable();
+    error GemNotFound();
+    error AlreadySettled();
+    error IndexOutOfBounds();
+    error AlreadyExists();
+    error ZeroOwner();
+    error UnknownProfileSelector(uint8 value);
+    error GroupExistenceMismatch(uint256 groupId, uint32 memberCount);
+    error TotalSupplyOverflow();
+    error SettledCountOverflow();
+    error TotalSupplyUnderflow();
+    error SettledCountUnderflow(uint256 groupId);
+    error EmptyGroup(bytes32 group);
+    error GemNotInGroup(uint256 gemId, bytes32 group);
+    error EmptyGroupSlotOnRemoval(bytes32 group, uint32 slot);
+    error GemStateChangedAfterLoading();
+    error DateStep(uint8 kind, uint32 dateKey);
+
     struct GemData {
         uint256 gemId;
         address owner;

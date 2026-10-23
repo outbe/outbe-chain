@@ -11,6 +11,8 @@ pub struct GemIssueParams {
     pub issuance_currency: u16,
     pub reference_currency: u16,
     pub entry_price_minor: U256,
+    /// The price the call rate marks up. The entry may sit below it.
+    pub call_anchor_price_minor: U256,
 }
 
 /// One merchant issuance, authorized by the position owner.
@@ -70,10 +72,13 @@ pub struct GemPosition {
 }
 
 impl GemPosition {
+    /// Hourly position membership is independent of daily queue scheduling.
+    pub const GROUP_HOUR_SECONDS: u64 = 3_600;
+
     /// The expiry group: the hour `expires_at` falls in.
     #[must_use]
     pub fn expiry_hour(&self) -> u64 {
-        self.expires_at / outbe_primitives::expiry_queue::BUCKET_SECONDS
+        self.expires_at / Self::GROUP_HOUR_SECONDS
     }
 }
 
@@ -105,7 +110,7 @@ pub struct GemFactoryContract {
     #[attribute(order = 7)]
     pub hour_capacity_minor: outbe_primitives::storage::dsl::Map<u64, U256>,
 
-    // Expiry hours, queued on their first position's `expires_at`.
+    // The queue stores hour groups as `hour + 1` and schedules them by UTC deadline day.
     #[attribute(order = 8)]
     pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 9)]
@@ -113,21 +118,21 @@ pub struct GemFactoryContract {
     #[attribute(order = 10)]
     pub expiry_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 11)]
-    pub expiry_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub expiry_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 12)]
-    pub expiry_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub expiry_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 13)]
-    pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, u64>,
+    pub expiry_day_at: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 14)]
-    pub expiry_hour_slot: outbe_primitives::storage::dsl::Map<u64, u64>,
+    pub expiry_entry_slot: outbe_primitives::storage::dsl::Map<u64, u64>,
     #[attribute(order = 15)]
     pub expiry_deadline: outbe_primitives::storage::dsl::Map<u64, u64>,
     #[attribute(order = 16)]
-    pub expiry_sweep_hour: outbe_primitives::storage::dsl::Value<u32>,
+    pub expiry_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 17)]
     pub expiry_cursor: outbe_primitives::storage::dsl::Value<u64>,
 
-    // Expired hours whose positions wait to be deleted.
+    // This queue stores encoded expired hour groups whose positions await deletion.
     #[attribute(order = 18)]
     pub cleanup_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 19)]
@@ -135,19 +140,21 @@ pub struct GemFactoryContract {
     #[attribute(order = 20)]
     pub cleanup_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 21)]
-    pub cleanup_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub cleanup_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 22)]
-    pub cleanup_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub cleanup_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 23)]
-    pub cleanup_bucket_at: outbe_primitives::storage::dsl::Map<B256, u64>,
+    pub cleanup_day_at: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 24)]
-    pub cleanup_hour_slot: outbe_primitives::storage::dsl::Map<u64, u64>,
+    pub cleanup_entry_slot: outbe_primitives::storage::dsl::Map<u64, u64>,
     #[attribute(order = 25)]
     pub cleanup_deadline: outbe_primitives::storage::dsl::Map<u64, u64>,
     #[attribute(order = 26)]
-    pub cleanup_sweep_hour: outbe_primitives::storage::dsl::Value<u32>,
+    pub cleanup_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 27)]
     pub cleanup_cursor: outbe_primitives::storage::dsl::Value<u64>,
+    #[attribute(order = 28)]
+    pub cleanup_budget: outbe_primitives::storage::dsl::Value<U256>,
 }
 
 impl GemFactoryContract<'_> {

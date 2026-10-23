@@ -9,7 +9,7 @@ import {OrderValidator} from "./libs/OrderValidator.sol";
 
 /// @title Auction
 /// @notice Commit-reveal Vickrey auction for competitive solver selection
-/// @dev Phases: commit (10s) -> reveal (10s) -> getWinner.
+/// @dev Phases: commit (10s) -> reveal (10s) -> getWinner. The window of an order is fixed when it starts.
 ///      Winner = highest outputAmount, pays second-highest price.
 contract Auction is IAuction, Ownable2Step {
     // ============ Phase Constants ============
@@ -19,14 +19,8 @@ contract Auction is IAuction, Ownable2Step {
     uint8 internal constant PHASE_REVEAL = 2;
     uint8 internal constant PHASE_ENDED = 3;
 
-    // ============ Errors ============
-
-    /// @notice Thrown when caller is not the router
-    error UnauthorizedRouter();
-    /// @notice Thrown when an invalid period is set
-    error InvalidPeriod();
-    /// @notice Thrown when an invalid max quotes value is set
-    error InvalidMaxQuotes();
+    /// @notice Upper bound of maxQuotesPerOrder. getWinner scans every quote on the settlement path.
+    uint256 public constant MAX_QUOTES_PER_ORDER = 50;
 
     // ============ Storage ============
 
@@ -45,8 +39,9 @@ contract Auction is IAuction, Ownable2Step {
     /// @notice Revealed quotes per order
     mapping(bytes32 => Quote[]) internal _quotes;
 
-    /// @notice Auction start time (set on first commit, 0 = no auction)
-    mapping(bytes32 => uint256) internal _auctionStartedAt;
+    /// @notice Auction window per order. commit and resetAuction set it, so a later period change
+    ///         applies only to auctions that start after it (startedAt 0 = no auction).
+    mapping(bytes32 => Window) internal _window;
 
     /// @notice Per-order auction epoch. Every resetAuction increments it, so prior-round commits
     ///         become unreachable without enumerating the (non-enumerable) _commits mapping.
@@ -75,9 +70,7 @@ contract Auction is IAuction, Ownable2Step {
     /// @inheritdoc IAuction
     function commit(bytes32 orderId, bytes32 commitHash) external {
         // First commit starts the auction
-        if (_auctionStartedAt[orderId] == 0) {
-            _auctionStartedAt[orderId] = block.timestamp;
-        }
+        if (_window[orderId].startedAt == 0) _startWindow(orderId);
 
         if (_phase(orderId) != PHASE_COMMIT) revert CommitPhaseEnded();
         uint256 epoch = _auctionEpoch[orderId];
@@ -91,7 +84,7 @@ contract Auction is IAuction, Ownable2Step {
     /// @inheritdoc IAuction
     function reveal(bytes32 orderId, uint256 outputAmount, bytes32 salt, bytes calldata originData) external {
         if (_phase(orderId) != PHASE_REVEAL) revert RevealPhaseNotActive();
-        if (_quotes[orderId].length >= maxQuotesPerOrder) revert MaxQuotesReached();
+        if (outputAmount == 0) revert ZeroOutputAmount();
 
         OrderValidator.decodeAndCheck(originData, orderId, outputAmount);
 
@@ -100,7 +93,10 @@ contract Auction is IAuction, Ownable2Step {
         if (commitHash == bytes32(0)) revert NotCommitted();
 
         // TODO fix note[asm-keccak256]: use of inefficient hashing mechanism; consider using inline assembly
-        bytes32 expected = keccak256(abi.encode(orderId, outputAmount, salt));
+        // The committer is part of the commitment. Without it, a commit hash is public calldata.
+        // Anyone can store it under their own address and open it with the values that the
+        // original solver reveals. The copy duplicates the top quote and can win the fill.
+        bytes32 expected = keccak256(abi.encode(orderId, msg.sender, outputAmount, salt));
         if (commitHash != expected) revert InvalidReveal();
 
         // Clear commit (prevent double reveal + gas refund)
@@ -109,7 +105,21 @@ contract Auction is IAuction, Ownable2Step {
         // Bound against the uint128 quote storage: an unchecked downcast would silently truncate
         // outputAmount > type(uint128).max, letting a sub-floor value enter Vickrey ranking.
         if (outputAmount > type(uint128).max) revert OutputAmountTooLarge();
-        _quotes[orderId].push(Quote({solver: msg.sender, outputAmount: uint128(outputAmount)}));
+        Quote memory quote = Quote({solver: msg.sender, outputAmount: uint128(outputAmount)});
+
+        // A full quote list keeps the highest bids: the new quote replaces the lowest one, so the
+        // reveal order cannot exclude a higher bid.
+        Quote[] storage quotes = _quotes[orderId];
+        if (quotes.length < maxQuotesPerOrder) {
+            quotes.push(quote);
+        } else {
+            uint256 lowest;
+            for (uint256 i = 1; i < quotes.length; i++) {
+                if (quotes[i].outputAmount < quotes[lowest].outputAmount) lowest = i;
+            }
+            if (quote.outputAmount <= quotes[lowest].outputAmount) revert MaxQuotesReached();
+            quotes[lowest] = quote;
+        }
 
         emit QuoteSubmitted(orderId, msg.sender, outputAmount);
     }
@@ -120,7 +130,7 @@ contract Auction is IAuction, Ownable2Step {
     function resetAuction(bytes32 orderId, address winner) external onlyRouter {
         delete _quotes[orderId];
         _auctionEpoch[orderId]++;
-        _auctionStartedAt[orderId] = block.timestamp;
+        _startWindow(orderId);
 
         emit AuctionRestarted(orderId, winner);
     }
@@ -129,7 +139,7 @@ contract Auction is IAuction, Ownable2Step {
 
     /// @inheritdoc IAuction
     function setCommitPeriod(uint256 newPeriod) external onlyOwner {
-        if (newPeriod == 0) revert InvalidPeriod();
+        if (newPeriod == 0 || newPeriod > type(uint64).max) revert InvalidPeriod();
         uint256 oldPeriod = commitPeriod;
         commitPeriod = newPeriod;
         emit CommitPeriodUpdated(oldPeriod, newPeriod);
@@ -137,7 +147,7 @@ contract Auction is IAuction, Ownable2Step {
 
     /// @inheritdoc IAuction
     function setRevealPeriod(uint256 newPeriod) external onlyOwner {
-        if (newPeriod == 0) revert InvalidPeriod();
+        if (newPeriod == 0 || newPeriod > type(uint64).max) revert InvalidPeriod();
         uint256 oldPeriod = revealPeriod;
         revealPeriod = newPeriod;
         emit RevealPeriodUpdated(oldPeriod, newPeriod);
@@ -145,7 +155,7 @@ contract Auction is IAuction, Ownable2Step {
 
     /// @inheritdoc IAuction
     function setMaxQuotesPerOrder(uint256 newMax) external onlyOwner {
-        if (newMax == 0) revert InvalidMaxQuotes();
+        if (newMax == 0 || newMax > MAX_QUOTES_PER_ORDER) revert InvalidMaxQuotes();
         uint256 oldMax = maxQuotesPerOrder;
         maxQuotesPerOrder = newMax;
         emit MaxQuotesUpdated(oldMax, newMax);
@@ -157,6 +167,11 @@ contract Auction is IAuction, Ownable2Step {
         address oldRouter = router;
         router = newRouter;
         emit RouterUpdated(oldRouter, newRouter);
+    }
+
+    /// @notice Disabled: without an owner the router and the periods can never change again
+    function renounceOwnership() public view override onlyOwner {
+        revert RenounceDisabled();
     }
 
     // ============ View Functions ============
@@ -201,16 +216,16 @@ contract Auction is IAuction, Ownable2Step {
 
     /// @inheritdoc IAuction
     function getCommitDeadline(bytes32 orderId) external view returns (uint256) {
-        uint256 start = _auctionStartedAt[orderId];
-        if (start == 0) return 0;
-        return start + commitPeriod;
+        Window memory w = _window[orderId];
+        if (w.startedAt == 0) return 0;
+        return uint256(w.startedAt) + w.commitPeriod;
     }
 
     /// @inheritdoc IAuction
     function getRevealDeadline(bytes32 orderId) external view returns (uint256) {
-        uint256 start = _auctionStartedAt[orderId];
-        if (start == 0) return 0;
-        return start + commitPeriod + revealPeriod;
+        Window memory w = _window[orderId];
+        if (w.startedAt == 0) return 0;
+        return uint256(w.startedAt) + w.commitPeriod + w.revealPeriod;
     }
 
     /// @inheritdoc IAuction
@@ -220,17 +235,25 @@ contract Auction is IAuction, Ownable2Step {
 
     /// @inheritdoc IAuction
     function auctionStartedAt(bytes32 orderId) external view returns (uint256) {
-        return _auctionStartedAt[orderId];
+        return _window[orderId].startedAt;
     }
 
     // ============ Internal ============
 
+    /// @notice Starts the auction window of an order with the current periods
+    function _startWindow(bytes32 orderId) internal {
+        _window[orderId] = Window({
+            startedAt: uint64(block.timestamp), commitPeriod: uint64(commitPeriod), revealPeriod: uint64(revealPeriod)
+        });
+    }
+
     /// @notice Returns the current auction phase for an order
     function _phase(bytes32 orderId) internal view returns (uint8) {
-        uint256 start = _auctionStartedAt[orderId];
-        if (start == 0) return PHASE_NONE;
-        if (block.timestamp < start + commitPeriod) return PHASE_COMMIT;
-        if (block.timestamp < start + commitPeriod + revealPeriod) return PHASE_REVEAL;
+        Window memory w = _window[orderId];
+        if (w.startedAt == 0) return PHASE_NONE;
+        uint256 commitEnd = uint256(w.startedAt) + w.commitPeriod;
+        if (block.timestamp < commitEnd) return PHASE_COMMIT;
+        if (block.timestamp < commitEnd + w.revealPeriod) return PHASE_REVEAL;
         return PHASE_ENDED;
     }
 }

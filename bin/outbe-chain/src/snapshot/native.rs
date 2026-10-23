@@ -152,19 +152,7 @@ impl RethReadOnlyView {
 
     #[cfg(all(test, feature = "snapshot-integration"))]
     pub fn open(layout: &NativeLayout) -> eyre::Result<Self> {
-        let mut protected = layout.protected.clone();
-        protected.0.extend([
-            layout.chain_root.clone(),
-            layout.consensus_root.clone(),
-            layout.static_files_root.clone(),
-            layout.execution_rocksdb_root.clone(),
-        ]);
-        Self::open_parts(
-            &layout.chain_root,
-            &layout.static_files_root,
-            layout.chain.clone(),
-            protected,
-        )
+        Self::open_requested(layout)
     }
 
     pub fn open_requested(layout: &super::config::RequestedLayout) -> eyre::Result<Self> {

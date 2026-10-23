@@ -1,8 +1,10 @@
-use crate::errors::AgentRewardError;
+use crate::constants::AGENT_DISCOUNT_PCT;
+use crate::errors::{date_step_error, AgentRewardError};
 use crate::precompile::IAgentReward;
 use crate::schema::{AgentRewardContract, RewardPool};
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::error::Result;
+use outbe_primitives::markup::marked_down;
 use outbe_primitives::storage::dsl::Map;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
@@ -13,19 +15,10 @@ impl AgentRewardContract<'_> {
     /// On the first tribute for this address+day pair, the function also
     /// appends the address to the per-day WAA address list. Distribution
     /// enumerates that list.
+    /// Overflow rejects activity before any write. Multi-recipient offer
+    /// atomicity requires the caller's checkpoint.
     pub fn increment_waa_tribute(&mut self, day: WorldwideDay, address: Address) -> Result<()> {
-        let key = AgentRewardContract::tribute_count_key(day, address);
-        let count = self.waa_tribute_counts.read(&key)?;
-        if count == 0 {
-            // First tribute for this address+day - add to address list
-            let addr_count = self.waa_address_count.read(&day)?;
-            let idx_key = AgentRewardContract::address_index_key(day, addr_count);
-            self.waa_addresses.write(&idx_key, address)?;
-            self.waa_address_count.write(&day, addr_count + 1)?;
-        }
-        let total = self.waa_total_count.read(&day)?;
-        self.waa_total_count.write(&day, total + 1)?;
-        self.waa_tribute_counts.write(&key, count + 1)
+        self.increment_tribute(RewardPool::Waa, day, address)
     }
 
     /// Increments SRA tribute count for an address on `day`.
@@ -33,19 +26,41 @@ impl AgentRewardContract<'_> {
     /// On the first tribute for this address+day pair, the function also
     /// appends the address to the per-day SRA address list. Distribution
     /// enumerates that list.
+    /// Overflow rejects activity before any write. Multi-recipient offer
+    /// atomicity requires the caller's checkpoint.
     pub fn increment_sra_tribute(&mut self, day: WorldwideDay, address: Address) -> Result<()> {
+        self.increment_tribute(RewardPool::Sra, day, address)
+    }
+
+    fn increment_tribute(
+        &mut self,
+        pool: RewardPool,
+        day: WorldwideDay,
+        address: Address,
+    ) -> Result<()> {
+        let index = self.day_index(pool)?;
         let key = AgentRewardContract::tribute_count_key(day, address);
-        let count = self.sra_tribute_counts.read(&key)?;
+        let count = index.counts.read(&key)?;
+        let next_count = count
+            .checked_add(1)
+            .ok_or(AgentRewardError::TributeCounterOverflow)?;
+        let next_total = index
+            .total
+            .read(&day)?
+            .checked_add(1)
+            .ok_or(AgentRewardError::TributeCounterOverflow)?;
         if count == 0 {
             // First tribute for this address+day - add to address list
-            let addr_count = self.sra_address_count.read(&day)?;
+            let addr_count = index.address_count.read(&day)?;
+            let next_addr_count = addr_count
+                .checked_add(1)
+                .ok_or(AgentRewardError::TributeCounterOverflow)?;
             let idx_key = AgentRewardContract::address_index_key(day, addr_count);
-            self.sra_addresses.write(&idx_key, address)?;
-            self.sra_address_count.write(&day, addr_count + 1)?;
+            index.addresses.write(&idx_key, address)?;
+            index.address_count.write(&day, next_addr_count)?;
         }
-        let total = self.sra_total_count.read(&day)?;
-        self.sra_total_count.write(&day, total + 1)?;
-        self.sra_tribute_counts.write(&key, count + 1)
+        index.total.write(&day, next_total)?;
+        index.counts.write(&key, next_count)
     }
 
     /// Gets the total claimable reward balance for an address across all pools.
@@ -128,8 +143,9 @@ impl AgentRewardContract<'_> {
     /// own risk control. The part that the agent does not claim keeps accruing.
     ///
     /// The Gem carries the caller's `(issuance, reference)` currencies. Its entry
-    /// price is the previous UTC day's COEN VWAP in the reference currency, which
-    /// must be an Oracle reference currency.
+    /// price is the previous UTC day's COEN VWAP in the reference currency less
+    /// [`AGENT_DISCOUNT_PCT`]; its call price marks up the full VWAP. The reference
+    /// currency must be an Oracle reference currency.
     ///
     /// Any failure reverts the call and leaves the balance intact. A missing VWAP
     /// waits for the next day, which brings a new VWAP with it.
@@ -254,9 +270,11 @@ pub(crate) fn issue_reward_gem(
 ) -> Result<U256> {
     let (owner, load) = recipient;
     outbe_oracle::api::check_reference_currency_with_storage(storage.clone(), reference_currency)?;
-    let entry_price = resolve_gem_entry_price(storage, reference_currency)?.ok_or(
+    let vwap = previous_day_vwap(storage, reference_currency)?.ok_or(
         AgentRewardError::MissingPreviousDayPrice(reference_currency),
     )?;
+    let entry_price =
+        marked_down(vwap, AGENT_DISCOUNT_PCT).ok_or(AgentRewardError::EntryPriceOverflow)?;
     outbe_gemfactory::api::issue_gem(
         storage,
         outbe_gemfactory::GemIssueParams {
@@ -265,15 +283,13 @@ pub(crate) fn issue_reward_gem(
             issuance_currency,
             reference_currency,
             entry_price_minor: entry_price,
+            call_anchor_price_minor: vwap,
         },
     )
 }
 
-fn resolve_gem_entry_price(
-    storage: &StorageHandle<'_>,
-    reference_currency: u16,
-) -> Result<Option<U256>> {
+fn previous_day_vwap(storage: &StorageHandle<'_>, reference_currency: u16) -> Result<Option<U256>> {
     let now = storage.now_secs()?;
-    let day = previous_date_key(timestamp_to_date_key(now));
+    let day = previous_date_key(timestamp_to_date_key(now)).map_err(date_step_error)?;
     outbe_oracle::api::get_utc_day_vwap_for_iso(storage.clone(), day, reference_currency)
 }

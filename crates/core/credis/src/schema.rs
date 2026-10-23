@@ -46,75 +46,78 @@ impl CredisState {
 /// Credis's life. A live Credis is called with its group: loading it reads the call and
 /// its terms from the group, and settling it copies them onto the record.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[storage_record(exists_field = owner)]
+#[storage_record(packed, exists_field = owner)]
 pub struct Credis {
     #[key]
     pub credis_id: U256,
 
-    /// The address the Credis was issued to.
-    #[attribute(order = 0)]
-    pub owner: Address,
-
-    /// The agent that originated the Credis. Carries the accountability for
-    /// how it resolves.
-    #[attribute(order = 1)]
-    pub cca: Address,
-
-    /// The stablecoin the Credis is denominated and disbursed in.
-    #[attribute(order = 2)]
-    pub asset: Address,
-
-    /// ISO 4217 numeric code of `asset` (e.g. 840 = USD), read at issuance.
-    /// Denominates the Credis and keys its policy rate. It is NOT the call
-    /// threshold anchor. See [`Self::reference_currency`].
-    #[attribute(order = 3)]
-    pub issuance_currency: u16,
-
-    /// Main account whose pledged Gratis backs the Credis. Repayments release
-    /// collateral to it and a default burns it from it.
-    #[attribute(order = 4)]
-    pub source: Address,
-
     /// `P` - stablecoin minor units disbursed. Fixed.
-    #[attribute(order = 5)]
+    #[attribute(order = 0)]
     pub principal_minor: U256,
 
     /// `P_out` - outstanding principal. Reaching zero settles the Credis. Past its
     /// deadline it is the principal written off; readers go through `outcome`.
-    #[attribute(order = 6)]
+    #[attribute(order = 1)]
     pub outstanding_principal_minor: U256,
 
     /// `G` - pledged Gratis: principal priced at the reservation's eight-hour
     /// COEN/`issuance_currency` VWAP. Fixed.
-    #[attribute(order = 7)]
+    #[attribute(order = 2)]
     pub gratis_minor: U256,
 
     /// The share of `G` still locked. Released principal-proportionally. Past its
     /// deadline it is the Gratis burned.
-    #[attribute(order = 8)]
+    #[attribute(order = 3)]
     pub outstanding_gratis_minor: U256,
 
     /// `r` - the currency's annual official policy rate (scale `1e6`), fixed by the
     /// reservation for the Credis's life.
-    #[attribute(order = 9)]
+    #[attribute(order = 4)]
     pub policy_rate: U256,
 
     /// Principal / Gratis, in the issuance currency (scale `1e6`). Sealed on the
     /// pledge and copied here. Not an oracle quote and not the call anchor.
-    #[attribute(order = 10)]
+    #[attribute(order = 5)]
     pub entry_price_minor: U256,
 
-    /// `call_anchor_price_minor * 164 / 100`, in the reference currency (scale `1e6`).
+    /// `call_anchor_price_minor` marked up by `call_rate`, in the reference currency (scale `1e6`).
     /// The daily scan calls the Credis when `call_threshold_seconds` of its last
     /// `call_window_seconds` of finalized COEN/`reference_currency` VWAPs are strictly
     /// above this price. Immutable.
-    #[attribute(order = 11)]
+    #[attribute(order = 6)]
     pub call_price_minor: U256,
+
+    /// COEN price in `reference_currency` (scale `1e6`) fixed by the reservation:
+    /// the previous closed UTC-day VWAP, independent of spot.
+    /// Immutable. `call_price_minor` is this value marked up by `call_rate`.
+    #[attribute(order = 7)]
+    pub call_anchor_price_minor: U256,
+
+    /// Lifetime interest collected, in the asset's minor units. The sum of
+    /// successful settlement interest deltas. Unpaid interest is left out,
+    /// including when the remainder is forfeited.
+    #[attribute(order = 8)]
+    pub interest_paid_minor: U256,
+
+    /// The address the Credis was issued to.
+    #[attribute(order = 9)]
+    pub owner: Address,
 
     /// Issuance timestamp. The interest anchor starts here, and its first full day
     /// keys the Credis's call group.
-    #[attribute(order = 12)]
+    #[attribute(order = 10)]
     pub issued_at: u64,
+
+    /// Call Notice Period in seconds: a called Credis whose remainder is
+    /// still outstanding at `called_at + call_notice_period_seconds` is forfeited.
+    /// Snapshotted from the profile at issuance; a live Credis reads its group's.
+    #[attribute(order = 11, default = 0)]
+    pub call_notice_period_seconds: u32,
+
+    /// The agent that originated the Credis. Carries the accountability for
+    /// how it resolves.
+    #[attribute(order = 12)]
+    pub cca: Address,
 
     /// Start of the current accrual period. Equals `issued_at` until the
     /// first settlement. Then it advances by the whole days that each settlement
@@ -123,54 +126,51 @@ pub struct Credis {
     #[attribute(order = 13)]
     pub last_settled_at: u64,
 
-    /// When the Credis's group was called, 0 while it is not.
+    /// Call-trigger evaluation window in seconds, snapshotted from the profile at
+    /// issuance; a live Credis reads its group's. This is the trailing span the daily
+    /// scan reads for Call Price breaches. Divided by 86400 to get the day count.
     #[attribute(order = 14, default = 0)]
+    pub call_window_seconds: u32,
+
+    /// The stablecoin the Credis is denominated and disbursed in.
+    #[attribute(order = 15)]
+    pub asset: Address,
+
+    /// When the Credis's group was called, 0 while it is not.
+    #[attribute(order = 16, default = 0)]
     pub called_at: u64,
 
-    /// Lifecycle state as `u8`. Decode it via [`CredisState::from_u8`].
-    #[attribute(order = 15)]
-    pub state: u8,
+    /// Breach threshold in seconds, snapshotted from the profile at issuance; a live
+    /// Credis reads its group's. Divided by 86400 to get the required breach-day count.
+    #[attribute(order = 17, default = 0)]
+    pub call_threshold_seconds: u32,
+
+    /// Main account whose pledged Gratis backs the Credis. Repayments release
+    /// collateral to it and a default burns it from it.
+    #[attribute(order = 18)]
+    pub source: Address,
+
+    /// ISO 4217 numeric code of `asset` (e.g. 840 = USD), read at issuance.
+    /// Denominates the Credis and keys its policy rate. It is NOT the call
+    /// threshold anchor. See [`Self::reference_currency`].
+    #[attribute(order = 19)]
+    pub issuance_currency: u16,
 
     /// ISO 4217 numeric code of the reference currency elected at the reservation
     /// and fixed for the Credis's life. `call_anchor_price_minor` and `call_price_minor`
     /// are quoted here, and the daily breach scan reads the
     /// COEN/`reference_currency` series. It does not denominate `entry_price_minor`.
-    #[attribute(order = 16)]
+    #[attribute(order = 20)]
     pub reference_currency: u16,
 
-    /// Call Notice Period in seconds: a called Credis whose remainder is
-    /// still outstanding at `called_at + call_notice_period_seconds` is forfeited.
-    /// Snapshotted from the profile at issuance; a live Credis reads its group's.
-    #[attribute(order = 17, default = 0)]
-    pub call_notice_period_seconds: u32,
-
-    /// Call-price markup percent (snapshot of `CALL_RATE_PCT` at issuance).
-    /// Applied to `call_anchor_price_minor`, not to `entry_price_minor` (64 => 1.64x).
-    #[attribute(order = 18, default = 0)]
+    /// Call-price markup percent (snapshot of the profile call rate at issuance).
+    /// Applied to `call_anchor_price_minor`, not to `entry_price_minor` (64 => 1.64x, 2 => 1.02x).
+    #[attribute(order = 21, default = 0)]
     pub call_rate: u16,
 
-    /// Call-trigger evaluation window in seconds, snapshotted from the profile at
-    /// issuance; a live Credis reads its group's. This is the trailing span the daily
-    /// scan reads for Call Price breaches. Divided by 86400 to get the day count.
-    #[attribute(order = 19, default = 0)]
-    pub call_window_seconds: u32,
-
-    /// Breach threshold in seconds, snapshotted from the profile at issuance; a live
-    /// Credis reads its group's. Divided by 86400 to get the required breach-day count.
-    #[attribute(order = 20, default = 0)]
-    pub call_threshold_seconds: u32,
-
-    /// COEN price in `reference_currency` (scale `1e6`) fixed by the reservation:
-    /// the previous closed UTC-day VWAP, independent of spot.
-    /// Immutable. `call_price_minor` is this value times 1.64.
-    #[attribute(order = 21)]
-    pub call_anchor_price_minor: U256,
-
-    /// Lifetime interest collected, in the asset's minor units. The sum of
-    /// successful settlement interest deltas. Unpaid interest is left out,
-    /// including when the remainder is forfeited.
+    /// Lifecycle state as `u8`. Decode it via [`CredisState::from_u8`].
     #[attribute(order = 22)]
-    pub interest_paid_minor: U256,
+    pub state: u8,
 }
 
 impl Credis {
@@ -180,13 +180,12 @@ impl Credis {
 
     /// The call group: the Credis's first full day, its call price and the currency
     /// that price is quoted in.
-    #[must_use]
-    pub fn group_key(&self) -> B256 {
-        outbe_primitives::call_breach::group_key(
-            outbe_primitives::time::first_full_day(self.issued_at),
+    pub fn group_key(&self) -> Result<B256, outbe_primitives::time::TimeError> {
+        Ok(outbe_primitives::call_breach::group_key(
+            outbe_primitives::time::first_full_day(self.issued_at)?,
             self.call_price_minor,
             self.reference_currency,
-        )
+        ))
     }
 }
 
@@ -226,7 +225,7 @@ pub struct CredisContract {
     #[attribute(order = 8)]
     pub max_call_window_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
 
-    // Called groups, queued by the hour their settlement deadline falls in.
+    // The queue orders called groups by the UTC day that contains their settlement deadline.
     #[attribute(order = 9)]
     pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 10)]
@@ -234,17 +233,17 @@ pub struct CredisContract {
     #[attribute(order = 11)]
     pub expiry_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 12)]
-    pub expiry_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub expiry_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 13)]
-    pub expiry_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub expiry_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 14)]
-    pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    pub expiry_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
     #[attribute(order = 15)]
     pub called_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 16)]
     pub called_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 17)]
-    pub expiry_sweep_hour: outbe_primitives::storage::dsl::Value<u32>,
+    pub expiry_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 18)]
     pub expiry_cursor: outbe_primitives::storage::dsl::Value<u64>,
 
@@ -310,7 +309,7 @@ pub struct CredisContract {
     pub group_call_notice_period_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
     #[attribute(order = 40)]
     pub group_called_at: outbe_primitives::storage::dsl::Map<B256, u64>,
-    // Forfeited groups whose Credis wait to be deleted, bucketed like the expiry queue.
+    // The queue orders forfeited groups by deadline day while their Credis await deletion.
     #[attribute(order = 42)]
     pub cleanup_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 43)]
@@ -318,17 +317,17 @@ pub struct CredisContract {
     #[attribute(order = 44)]
     pub cleanup_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 45)]
-    pub cleanup_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub cleanup_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 46)]
-    pub cleanup_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub cleanup_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 47)]
-    pub cleanup_bucket_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    pub cleanup_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
     #[attribute(order = 48)]
     pub cleanup_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 49)]
     pub cleanup_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 50)]
-    pub cleanup_sweep_hour: outbe_primitives::storage::dsl::Value<u32>,
+    pub cleanup_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 51)]
     pub cleanup_cursor: outbe_primitives::storage::dsl::Value<u64>,
 
@@ -337,6 +336,12 @@ pub struct CredisContract {
     pub owner_principal_minor: outbe_primitives::storage::dsl::Map<Address, U256>,
     #[attribute(order = 53)]
     pub owner_outstanding_minor: outbe_primitives::storage::dsl::Map<Address, U256>,
+    #[attribute(order = 54)]
+    pub daily_phase: outbe_primitives::storage::dsl::Value<u8>,
+    #[attribute(order = 55)]
+    pub daily_budget: outbe_primitives::storage::dsl::Value<U256>,
+    #[attribute(order = 56)]
+    pub daily_genesis_day: outbe_primitives::storage::dsl::Value<u32>,
 }
 
 impl CredisContract<'_> {

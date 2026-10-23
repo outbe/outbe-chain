@@ -1,3 +1,10 @@
+//! In-memory storage for deterministic tests.
+//!
+//! With `enable_production_storage_gas_metering`, persistent reads cost 100 gas and writes cost 5000 gas.
+//! These flat costs match the EVM context provider. Metering is disabled by default.
+//! Slot warmth and value changes do not affect these costs.
+//! Transient operations and `enclave_upgrade_id` do not charge the storage meter.
+
 use alloy_primitives::{Address, Bytes, Log, LogData, B256, U256};
 use revm::context::journaled_state::JournalCheckpoint;
 use revm::context_interface::cfg::gas::{SSTORE_RESET, WARM_STORAGE_READ_COST};
@@ -558,7 +565,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
     fn enclave_upgrade_id(&mut self) -> Result<U256> {
         Ok(self
             .storage
-            .get(&(crate::addresses::TEE_REGISTRY_ADDRESS, U256::from(45)))
+            .get(&(crate::addresses::TEE_REGISTRY_ADDRESS, U256::from(44)))
             .copied()
             .unwrap_or(U256::ZERO))
     }

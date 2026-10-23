@@ -272,5 +272,78 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "CalledGroupMemberOutOfRange",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DateStep",
+    "inputs": [
+      {
+        "name": "kind",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "dateKey",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "GroupAlreadyCalled",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidSeriesId",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidStateValue",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RealizedUnitsOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SeriesIndexOutOfRange",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SeriesNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnknownProfileSelector",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ZeroIssuedAt",
+    "inputs": []
   }
 ]

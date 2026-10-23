@@ -103,7 +103,8 @@ fn execution_receives_original_payload_and_exact_context() {
 fn registry_rejects_duplicate_target_modules() {
     assert!(matches!(
         DUPLICATE_REGISTRY.lookup(UPDATE_ADDRESS),
-        Err(PrecompileError::Revert(message)) if message.contains("duplicate")
+        Err(PrecompileError::RevertBytes(bytes))
+            if bytes.len() >= 4 && bytes[..4] == IVote::DuplicateTargetModule::SELECTOR
     ));
 }
 
@@ -173,7 +174,9 @@ fn public_bonded_wrong_value_fails_before_allocation() {
                 .unwrap_err()
             {
                 PrecompileError::RevertBytes(bytes) => {
-                    assert_eq!(&bytes[..4], IVote::InvalidProposalBond::SELECTOR)
+                    let decoded = IVote::InvalidProposalBond::abi_decode(&bytes).unwrap();
+                    assert!(decoded.reason.contains("123"));
+                    assert!(decoded.reason.contains(&actual.to_string()));
                 }
                 other => panic!("expected InvalidProposalBond, got {other:?}"),
             }
@@ -183,6 +186,82 @@ fn public_bonded_wrong_value_fails_before_allocation() {
     }
     assert!(invalid_provider.storage.is_empty());
     assert!(invalid_provider.get_events(VOTE_ADDRESS).is_empty());
+}
+
+#[test]
+fn bond_liability_rejection_preserves_amounts_and_rolls_back_admission() {
+    let mut provider = super::test_provider();
+    provider.set_balance(VOTE_ADDRESS, U256::from(7u64));
+    {
+        let storage = StorageHandle::new(&mut provider);
+        let mut vote = Vote::new(storage);
+        let error = vote
+            .create_proposal_with_value(
+                raw_bonded_submission(Address::repeat_byte(0x99), U256::from(123u64)),
+                &PUBLIC_BONDED_REGISTRY,
+            )
+            .unwrap_err();
+        let PrecompileError::RevertBytes(bytes) = error else {
+            panic!("expected an ABI bond error");
+        };
+        let decoded = IVote::InvalidProposalBond::abi_decode(&bytes).unwrap();
+        assert!(decoded.reason.contains("7"));
+        assert!(decoded.reason.contains("123"));
+        assert_eq!(vote.proposal_count.read().unwrap(), U256::ZERO);
+        assert!(vote.list_pending_proposal_ids().unwrap().is_empty());
+        assert_eq!(vote.bond_liabilities().unwrap(), U256::ZERO);
+    }
+    assert_eq!(provider.get_balance(VOTE_ADDRESS), U256::from(7u64));
+    assert!(provider.storage.is_empty());
+    assert!(provider.get_events(VOTE_ADDRESS).is_empty());
+}
+
+#[test]
+fn settled_pending_bond_rejection_preserves_proposal_and_settlement_context() {
+    let outsider = Address::repeat_byte(0x99);
+    let mut provider = super::test_provider();
+    provider.set_balance(VOTE_ADDRESS, U256::from(123u64));
+    let (proposal_id, deadline) = {
+        let storage = StorageHandle::new(&mut provider);
+        let mut vote = Vote::new(storage);
+        let proposal_id = vote
+            .create_proposal_with_value(
+                raw_bonded_submission(outsider, U256::from(123u64)),
+                &PUBLIC_BONDED_REGISTRY,
+            )
+            .unwrap();
+        let deadline = vote
+            .get_proposal(proposal_id)
+            .unwrap()
+            .unwrap()
+            .voting_deadline_height;
+        vote.settle_proposal_bond_accounting(proposal_id, BondSettlement::Refunded)
+            .unwrap();
+        (proposal_id, deadline)
+    };
+    let events_before = provider.get_events(VOTE_ADDRESS).len();
+    {
+        let storage = StorageHandle::new(&mut provider);
+        let mut vote = Vote::new(storage);
+        let error = vote
+            .begin_block_with(deadline + 1, &PUBLIC_BONDED_REGISTRY)
+            .unwrap_err();
+        let PrecompileError::RevertBytes(bytes) = error else {
+            panic!("expected an ABI bond error");
+        };
+        let decoded = IVote::InvalidProposalBond::abi_decode(&bytes).unwrap();
+        assert!(decoded.reason.contains(&proposal_id.to_string()));
+        assert!(decoded.reason.contains("Refunded"));
+        assert_eq!(proposal_status(&vote, proposal_id), ProposalStatus::Pending);
+        assert_eq!(
+            vote.proposal_bond(proposal_id).unwrap().settlement,
+            BondSettlement::Refunded
+        );
+        assert_eq!(vote.bond_liabilities().unwrap(), U256::ZERO);
+    }
+    assert_eq!(provider.get_balance(VOTE_ADDRESS), U256::from(123u64));
+    assert_eq!(provider.get_balance(outsider), U256::ZERO);
+    assert_eq!(provider.get_events(VOTE_ADDRESS).len(), events_before);
 }
 
 #[test]
@@ -197,8 +276,9 @@ fn public_bonded_second_pending_proposal_of_a_proposer_fails() {
         .unwrap();
     assert!(matches!(
         vote.create_proposal_with_value(submission, &PUBLIC_BONDED_REGISTRY),
-        Err(PrecompileError::Revert(message))
-            if message == "proposer already has a pending public bonded proposal"
+        Err(PrecompileError::RevertBytes(bytes))
+            if bytes.len() >= 4
+                && bytes[..4] == IVote::TooManyPendingPublicBondedByProposer::SELECTOR
     ));
     assert_eq!(vote.proposal_count.read().unwrap(), U256::from(1u64));
     assert_eq!(vote.bond_liabilities().unwrap(), U256::from(123u64));
@@ -224,8 +304,8 @@ fn public_bonded_global_cap_fails_before_allocation() {
             raw_bonded_submission(Address::repeat_byte(0xaa), U256::from(123u64)),
             &PUBLIC_BONDED_REGISTRY,
         ),
-        Err(PrecompileError::Revert(message))
-            if message == "too many pending public bonded proposals"
+        Err(PrecompileError::RevertBytes(bytes))
+            if bytes.len() >= 4 && bytes[..4] == IVote::TooManyPendingPublicBonded::SELECTOR
     ));
     assert_eq!(vote.proposal_count.read().unwrap(), U256::from(cap));
     assert_eq!(

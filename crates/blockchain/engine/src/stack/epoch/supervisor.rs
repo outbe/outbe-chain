@@ -61,52 +61,7 @@ where
             // completion (see DKG completion handler below). The top of the
             // next iteration consumes it. The fallback path covers the
             // genesis-bootstrap iteration where no prior DKG completion ran.
-            let current_subchannels = if self.channels.replacement_epoch_subchannels.is_some() {
-                outbe_consensus::epoch_subchannels::take_or_register_current(
-                    self.state.current_epoch,
-                    &mut self.channels.replacement_epoch_subchannels,
-                    &mut self.channels.vote_mux,
-                    &mut self.channels.cert_mux,
-                    &mut self.channels.res_mux,
-                )
-                .await?
-            } else {
-                outbe_consensus::epoch_subchannels::take_or_register_current(
-                    self.state.current_epoch,
-                    &mut self.channels.next_epoch_subchannels,
-                    &mut self.channels.vote_mux,
-                    &mut self.channels.cert_mux,
-                    &mut self.channels.res_mux,
-                )
-                .await?
-            };
-            if let Some(pending_epoch) = self.rotation.deferred_startup_pending_epoch.take() {
-                if self.channels.next_epoch_subchannels.is_some() {
-                    return Err(
-                        crate::errors::StackEpochError::RecoveredFutureDkgHandoffSubchannelCollision
-                            .into(),
-                    );
-                }
-                self.channels.next_epoch_subchannels = Some(
-                outbe_consensus::epoch_subchannels::register_epoch_subchannels(
-                    pending_epoch,
-                    &mut self.channels.vote_mux,
-                    &mut self.channels.cert_mux,
-                    &mut self.channels.res_mux,
-                )
-                .await
-                .wrap_err_with(|| {
-                    format!(
-                        "pre-register recovered future-epoch subchannels after acquiring current epoch {current_epoch}"
-                    ,current_epoch = self.state.current_epoch)
-                })?,
-            );
-                info!(
-                    active_epoch = %self.state.current_epoch,
-                    pending_epoch = %pending_epoch,
-                    "pre-registered recovered future DKG channels after current epoch"
-                );
-            }
+            let current_subchannels = self.acquire_epoch_subchannels().await?;
 
             let (mut engine_handle_task, radicle_signer) =
                 self.start_engine(&ctx, current_subchannels).await?;
@@ -336,6 +291,56 @@ where
         }
 
         Ok(())
+    }
+
+    async fn acquire_epoch_subchannels(&mut self) -> Result<super::transport::EpochSubchannels<E>> {
+        let current_subchannels = if self.channels.replacement_epoch_subchannels.is_some() {
+            outbe_consensus::epoch_subchannels::take_or_register_current(
+                self.state.current_epoch,
+                &mut self.channels.replacement_epoch_subchannels,
+                &mut self.channels.vote_mux,
+                &mut self.channels.cert_mux,
+                &mut self.channels.res_mux,
+            )
+            .await?
+        } else {
+            outbe_consensus::epoch_subchannels::take_or_register_current(
+                self.state.current_epoch,
+                &mut self.channels.next_epoch_subchannels,
+                &mut self.channels.vote_mux,
+                &mut self.channels.cert_mux,
+                &mut self.channels.res_mux,
+            )
+            .await?
+        };
+        if let Some(pending_epoch) = self.rotation.deferred_startup_pending_epoch.take() {
+            if self.channels.next_epoch_subchannels.is_some() {
+                return Err(
+                    crate::errors::StackEpochError::RecoveredFutureDkgHandoffSubchannelCollision
+                        .into(),
+                );
+            }
+            self.channels.next_epoch_subchannels = Some(
+                outbe_consensus::epoch_subchannels::register_epoch_subchannels(
+                    pending_epoch,
+                    &mut self.channels.vote_mux,
+                    &mut self.channels.cert_mux,
+                    &mut self.channels.res_mux,
+                )
+                .await
+                .wrap_err_with(|| {
+                    format!(
+                        "pre-register recovered future-epoch subchannels after acquiring current epoch {current_epoch}"
+                    ,current_epoch = self.state.current_epoch)
+                })?,
+            );
+            info!(
+                active_epoch = %self.state.current_epoch,
+                pending_epoch = %pending_epoch,
+                "pre-registered recovered future DKG channels after current epoch"
+            );
+        }
+        Ok(current_subchannels)
     }
 
     pub(super) async fn promote_boundary(

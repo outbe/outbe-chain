@@ -1144,6 +1144,11 @@
   },
   {
     "type": "error",
+    "name": "InvalidFillerData",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidLockTag",
     "inputs": []
   },

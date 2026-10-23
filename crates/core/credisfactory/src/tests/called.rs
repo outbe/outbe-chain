@@ -41,13 +41,14 @@ fn group_of(storage: &StorageHandle<'_>, credis_id: U256) -> B256 {
         .get_credis(credis_id)
         .unwrap()
         .group_key()
+        .expect("date step")
 }
 
 /// The `n`th closed day back from the one closed at `at` (0 = the newest).
 fn day_back(at: u64, n: u32) -> u32 {
     let mut day = last_closed_day(at);
     for _ in 0..n {
-        day = previous_date_key(day);
+        day = previous_date_key(day).expect("date step");
     }
     day
 }
@@ -58,6 +59,7 @@ fn open_with_series(storage: &StorageHandle<'_>, at: u64, days: u32, price: U256
     let credis_id = open(storage, 1);
     advance_to(storage, at);
     fill_days(storage, last_closed_day(at), days, price);
+    block_at(storage, at);
     credis_id
 }
 
@@ -120,7 +122,19 @@ fn the_scan_follows_the_terms_sealed_on_the_group_not_the_profile() {
         );
 
         reterm(&storage, credis_id, 3, 3, 1);
-        assert_eq!(scan(&storage, at), 1, "3 of 3 meets the sealed threshold");
+        assert_eq!(
+            scan(&storage, at),
+            0,
+            "a completed day cannot reopen after retuning"
+        );
+        let at = at + DAY;
+        advance_to(&storage, at);
+        set_vwap(&storage, last_closed_day(at), above_call());
+        assert_eq!(
+            scan(&storage, at),
+            1,
+            "3 of 3 meets the sealed threshold on the next day"
+        );
         assert_eq!(state_of(&storage, credis_id), CredisState::Called);
 
         // And the sealed notice period governs the forfeit: one day, not seven.
@@ -132,7 +146,7 @@ fn the_scan_follows_the_terms_sealed_on_the_group_not_the_profile() {
             at + DAY,
             "the deadline follows the sealed notice period"
         );
-        let lapsed = at + DAY + HOUR;
+        let lapsed = at + DAY + CLOSED_DAY_DELAY;
         advance_to(&storage, lapsed);
         assert_eq!(expire(&storage, lapsed), 1);
         assert!(is_deleted(&storage, credis_id));
@@ -262,11 +276,13 @@ fn a_full_window_exactly_at_the_call_price_does_not_call_the_credis() {
         // One minor unit higher on every day is a breach window.
         fill_days(
             &storage,
-            last_closed_day(at),
+            last_closed_day(at + DAY),
             CALL_LOOKBACK_DAYS,
             above_call(),
         );
-        assert_eq!(scan(&storage, at), 1);
+        assert_eq!(scan(&storage, at), 0, "finalized days cannot reopen");
+        advance_to(&storage, at + DAY);
+        assert_eq!(scan(&storage, at + DAY), 1);
         assert_eq!(state_of(&storage, credis_id), CredisState::Called);
     });
     teardown();
@@ -322,7 +338,14 @@ fn one_breach_day_short_of_the_threshold_does_not_call() {
 
         // Raising one of them back over the call price completes the threshold.
         set_vwap(&storage, day_back(at, 1), above_call());
-        assert_eq!(scan(&storage, at), 1);
+        assert_eq!(
+            scan(&storage, at),
+            0,
+            "completed observation day stays complete"
+        );
+        set_vwap(&storage, last_closed_day(at + DAY), above_call());
+        advance_to(&storage, at + DAY);
+        assert_eq!(scan(&storage, at + DAY), 1);
         assert_eq!(state_of(&storage, credis_id), CredisState::Called);
     });
     teardown();
@@ -349,14 +372,10 @@ fn missing_days_do_not_count_as_breaches() {
         assert_eq!(scan(&storage, at), 0);
         assert_eq!(state_of(&storage, credis_id), CredisState::Issued);
 
-        // Filling one more published day reaches the threshold, even though the
-        // rest of the window still has no price at all.
-        set_vwap(
-            &storage,
-            day_back(at, CALL_THRESHOLD_DAYS - 1),
-            above_call(),
-        );
-        assert_eq!(scan(&storage, at), 1);
+        // The scenario reaches the threshold when it publishes the next day, although the rest of the window still has no price.
+        set_vwap(&storage, last_closed_day(at + DAY), above_call());
+        advance_to(&storage, at + DAY);
+        assert_eq!(scan(&storage, at + DAY), 1);
         assert_eq!(state_of(&storage, credis_id), CredisState::Called);
     });
     teardown();
@@ -395,7 +414,7 @@ fn a_breach_run_that_predates_the_credis_does_not_call_it() {
         // The daily triggers in between walked their own days.
         sweep_state(&storage)
             .call_latest_day
-            .write(previous_date_key(last_closed_day(later)))
+            .write(previous_date_key(last_closed_day(later)).expect("date step"))
             .unwrap();
         assert_eq!(scan(&storage, later), 1);
         assert_eq!(state_of(&storage, credis_id), CredisState::Called);
@@ -453,7 +472,7 @@ fn an_unfinalized_day_skips_the_run_without_touching_state() {
         let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
         oracle
             .utc_day_vwap_last_finalized
-            .write(previous_date_key(last_closed_day(at)))
+            .write(previous_date_key(last_closed_day(at)).expect("date step"))
             .unwrap();
 
         assert_eq!(scan(&storage, at), 0);
@@ -486,14 +505,14 @@ fn the_call_and_the_forfeit_compose_across_runs() {
 
         // The window lapses with the whole principal outstanding: the forfeit burns
         // the entire collateral and credits it to the Promis Reserve.
-        let lapsed = at + NOTICE + HOUR;
+        let lapsed = at + NOTICE + CLOSED_DAY_DELAY;
         advance_to(&storage, lapsed);
         assert_eq!(expire(&storage, lapsed), 1);
         assert!(is_deleted(&storage, credis_id));
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(storage.clone())
-                .get_total_unallocated()
+                .promis_limit()
                 .unwrap(),
             pledge_cost()
         );
@@ -519,7 +538,7 @@ fn each_reference_currency_prices_off_its_own_daily_series() {
             use outbe_primitives::call_bins;
             let credis = CredisContract::new(storage.clone());
             let record = credis.get_credis(credis_id).unwrap();
-            let group = record.group_key();
+            let group = record.group_key().expect("date step");
             let bin = call_bins::price_to_bin(record.call_price_minor).unwrap();
             call_bins::remove(&CallBins(&credis, REFERENCE_ISO), group).unwrap();
             call_bins::insert(&CallBins(&credis, UNPRICED_ISO), group, bin).unwrap();
@@ -685,6 +704,8 @@ fn sweep_state<'storage>(storage: &StorageHandle<'storage>) -> CredisContract<'s
 fn pin_sweep(storage: &StorageHandle<'_>, day: u32, sample: U256, remaining: u32) {
     sweep_state(storage).call_sweep_day.write(day).unwrap();
     let credis = CredisContract::new(storage.clone());
+    credis.call_latest_day.write(day).unwrap();
+    credis.daily_genesis_day.write(day).unwrap();
     let price = credis.get_credis(sample).unwrap().call_price_minor;
     let bin = outbe_primitives::call_bins::price_to_bin(price).unwrap();
     credis
@@ -729,10 +750,17 @@ fn a_resumed_pass_starts_at_the_cursor_and_walks_down() {
             "the entry above the resume point waits for the next pass"
         );
         assert_eq!(cursor_of(&storage), 0);
-        assert_eq!(sweep_days(&storage), (0, 0), "the pass ended");
+        assert_eq!(
+            sweep_days(&storage),
+            (0, last_closed_day(at)),
+            "the pass ended"
+        );
 
         // The next pass starts fresh from the top and picks it up.
-        assert_eq!(scan(&storage, at), 1);
+        assert_eq!(scan(&storage, at), 0, "a finished day does not reopen");
+        set_vwap(&storage, last_closed_day(at + DAY), above_call());
+        advance_to(&storage, at + DAY);
+        assert_eq!(scan(&storage, at + DAY), 1);
         assert_eq!(state_of(&storage, ids[2]), CredisState::Called);
     });
     teardown();
@@ -880,7 +908,10 @@ fn a_pinned_day_the_oracle_has_not_finalized_holds_the_sweep() {
 
         assert_eq!(slice(&storage, at), 0);
         assert_eq!(state_of(&storage, ids[1]), CredisState::Issued);
-        assert_eq!(sweep_days(&storage), (last_closed_day(at), 0));
+        assert_eq!(
+            sweep_days(&storage),
+            (last_closed_day(at), last_closed_day(at))
+        );
         assert_eq!(cursor_of(&storage), 2);
     });
     teardown();
@@ -915,7 +946,7 @@ fn forfeiting_several_credis_in_one_block_skips_none() {
         let groups: Vec<B256> = ids.iter().map(|id| group_of(&storage, *id)).collect();
         call_by_hand(&storage, &ids, CREATED_AT);
 
-        let lapsed = CREATED_AT + NOTICE + HOUR;
+        let lapsed = CREATED_AT + NOTICE + CLOSED_DAY_DELAY;
         advance_to(&storage, lapsed);
         assert_eq!(
             expire(&storage, lapsed),
@@ -932,24 +963,26 @@ fn forfeiting_several_credis_in_one_block_skips_none() {
 }
 
 #[test]
-fn a_forfeit_waits_for_the_hour_its_deadline_falls_in_to_close() {
+fn a_forfeit_waits_for_the_day_its_deadline_falls_in_to_close() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         let ids = open_three(&storage);
         call_by_hand(&storage, &ids[..1], CREATED_AT);
         let deadline = CREATED_AT + NOTICE;
-        let hour_end = (deadline / HOUR + 1) * HOUR;
+        let day_end = outbe_primitives::expiry_queue::day_end(
+            outbe_primitives::expiry_queue::deadline_day(deadline).unwrap(),
+        );
         assert!(
-            hour_end > deadline + 1,
-            "the fixture deadline sits inside its hour"
+            day_end > deadline + 1,
+            "the fixture deadline sits inside its day"
         );
 
         advance_to(&storage, deadline + 1);
         assert_eq!(expire(&storage, deadline + 1), 0);
         assert_eq!(state_of(&storage, ids[0]), CredisState::Called);
 
-        advance_to(&storage, hour_end);
-        assert_eq!(expire(&storage, hour_end), 1);
+        advance_to(&storage, day_end);
+        assert_eq!(expire(&storage, day_end), 1);
         assert!(is_deleted(&storage, ids[0]));
     });
     teardown();
@@ -962,7 +995,7 @@ fn every_cycle_tick_forfeits_without_the_daily_trigger() {
         let ids = open_three(&storage);
         call_by_hand(&storage, &ids[..1], CREATED_AT);
 
-        let lapsed = CREATED_AT + NOTICE + HOUR;
+        let lapsed = CREATED_AT + NOTICE + CLOSED_DAY_DELAY;
         advance_to(&storage, lapsed);
         tick(&storage, lapsed);
         assert!(is_deleted(&storage, ids[0]));
@@ -995,7 +1028,7 @@ fn settling_a_called_credis_in_full_leaves_the_queue() {
         assert_eq!(state_of(&storage, credis_id), CredisState::Settled);
         assert_eq!(queued_at(&storage, group_of(&storage, credis_id)), 0);
 
-        let lapsed = CREATED_AT + NOTICE + HOUR;
+        let lapsed = CREATED_AT + NOTICE + CLOSED_DAY_DELAY;
         advance_to(&storage, lapsed);
         assert_eq!(expire(&storage, lapsed), 0);
         assert_eq!(
@@ -1004,7 +1037,7 @@ fn settling_a_called_credis_in_full_leaves_the_queue() {
                 .read()
                 .unwrap(),
             U256::ZERO,
-            "no hour is left waiting"
+            "no day is left waiting"
         );
     });
     teardown();
@@ -1033,13 +1066,13 @@ fn the_cleanup_budget_bounds_one_block_and_the_next_block_drains_the_rest() {
         let group = group_of(&storage, ids[0]);
         assert!(ids.iter().all(|id| group_of(&storage, *id) == group));
         call_by_hand(&storage, &ids[..1], CREATED_AT);
-        let lapsed = CREATED_AT + NOTICE + HOUR;
+        let lapsed = CREATED_AT + NOTICE + CLOSED_DAY_DELAY;
         advance_to(&storage, lapsed);
 
         // Each deleted Credis burns its Gratis into the reserve as it goes.
         let reserve = || {
             outbe_promislimit::PromisLimitContract::new(storage.clone())
-                .get_total_unallocated()
+                .promis_limit()
                 .unwrap()
         };
         assert_eq!(expire(&storage, lapsed), 1);
@@ -1066,7 +1099,7 @@ fn a_failed_cleanup_fails_the_block_and_keeps_the_credis_queued() {
         let ids = open_three(&storage);
         let group = group_of(&storage, ids[0]);
         call_by_hand(&storage, &ids[..1], CREATED_AT);
-        let lapsed = CREATED_AT + NOTICE + HOUR;
+        let lapsed = CREATED_AT + NOTICE + CLOSED_DAY_DELAY;
         advance_to(&storage, lapsed);
 
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
@@ -1093,7 +1126,7 @@ fn a_deterministic_cleanup_failure_defers_the_group() {
         let ids = open_three(&storage);
         let group = group_of(&storage, ids[0]);
         call_by_hand(&storage, &ids[..1], CREATED_AT);
-        let lapsed = CREATED_AT + NOTICE + HOUR;
+        let lapsed = CREATED_AT + NOTICE + CLOSED_DAY_DELAY;
         advance_to(&storage, lapsed);
 
         outbe_gratis::schema::Gratis::new(storage.clone())
@@ -1102,14 +1135,17 @@ fn a_deterministic_cleanup_failure_defers_the_group() {
             .unwrap();
         assert_eq!(expire(&storage, lapsed), 1);
         assert!(!is_deleted(&storage, ids[0]));
-        let (hour, _) =
+        let (day, _) =
             outbe_primitives::expiry_queue::unpack_slot(cleanup_queued_at(&storage, group));
-        assert_eq!(hour, outbe_primitives::expiry_queue::bucket_of(lapsed) + 1);
+        assert_eq!(
+            day,
+            outbe_primitives::expiry_queue::deadline_day(lapsed).unwrap()
+        );
     });
     teardown();
 }
 
-/// Three Credis of one group, called and past the hour their deadline falls in.
+/// This fixture creates three called Credis in one group and advances past the day that contains their deadline.
 fn lapsed_group_of_three() -> (
     outbe_primitives::storage::hashmap::HashMapStorageProvider,
     Vec<U256>,
@@ -1128,10 +1164,79 @@ fn lapsed_group_of_three() -> (
         .collect();
     StorageHandle::enter(&mut provider, |storage| {
         call_by_hand(&storage, &ids[..1], CREATED_AT);
-        advance_to(&storage, CREATED_AT + NOTICE + HOUR);
+        advance_to(&storage, CREATED_AT + NOTICE + CLOSED_DAY_DELAY);
     });
     provider.clear_mutation_failure();
     (provider, ids)
+}
+
+#[test]
+fn the_daily_pass_finishes_only_after_atomic_pledge_burns_and_credits() {
+    use outbe_primitives::sweep_budget::BlockAllowance;
+
+    let (mut provider, ids) = lapsed_group_of_three();
+    StorageHandle::enter(&mut provider, |storage| {
+        let at = CREATED_AT + NOTICE + CLOSED_DAY_DELAY;
+        finalize_through(&storage, at);
+        let ctx = block_at(&storage, at);
+        let credis = CredisContract::new(storage.clone());
+        let day = last_closed_day(at);
+        let mut allowance = BlockAllowance::new(ctx.block.block_number, day);
+        assert!(allowance.budget.admit_writes(62));
+        credis.daily_budget.write(allowance.pack()).unwrap();
+        let reserve = || {
+            outbe_promislimit::PromisLimitContract::new(storage.clone())
+                .promis_limit()
+                .unwrap()
+        };
+        let before = reserve();
+
+        assert_eq!(crate::called::run_call_slice(&ctx).unwrap(), 0);
+        assert_eq!(
+            credis.daily_phase.read().unwrap(),
+            2,
+            "the group marker is not economic completion"
+        );
+        assert_eq!(credis.call_sweep_day.read().unwrap(), day);
+        assert_eq!(
+            credis
+                .group_member_count(group_of(&storage, ids[0]))
+                .unwrap(),
+            2
+        );
+        assert_eq!(reserve() - before, pledge_cost());
+        assert_eq!(
+            view_pledged(&storage, alice()),
+            pledge_cost() * U256::from(2)
+        );
+        let saved = credis.daily_budget.read().unwrap();
+        assert_eq!(crate::called::run_call_slice(&ctx).unwrap(), 0);
+        let before_allowance = BlockAllowance::unpack(saved).unwrap().unwrap();
+        let after_allowance = BlockAllowance::unpack(credis.daily_budget.read().unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(after_allowance.height, before_allowance.height);
+        assert_eq!(after_allowance.day, before_allowance.day);
+        assert_eq!(after_allowance.budget.writes_left(), 0);
+        assert!(after_allowance.budget.visits_left() <= before_allowance.budget.visits_left());
+        assert_eq!(
+            reserve() - before,
+            pledge_cost(),
+            "same-height retry cannot burn or credit again"
+        );
+
+        let next = block_at(&storage, at);
+        assert_eq!(crate::called::run_call_slice(&next).unwrap(), 0);
+        assert_eq!(credis.call_sweep_day.read().unwrap(), 0);
+        assert_eq!(reserve() - before, pledge_cost() * U256::from(3));
+        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
+        for id in &ids {
+            assert!(is_deleted(&storage, *id));
+        }
+        assert_eq!(crate::called::run_call_slice(&next).unwrap(), 0);
+        assert_eq!(reserve() - before, pledge_cost() * U256::from(3));
+    });
+    teardown();
 }
 
 /// One block's forfeit and cleanup under one checkpoint, as the CycleTick transaction runs them.
@@ -1158,11 +1263,11 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
     use alloy_sol_types::SolEvent;
     use outbe_primitives::addresses::{CREDIS_ADDRESS, GRATIS_ADDRESS};
 
-    let lapsed = CREATED_AT + NOTICE + HOUR;
+    let lapsed = CREATED_AT + NOTICE + CLOSED_DAY_DELAY;
     let expected = pledge_cost() * U256::from(3u64);
     let reserve = |storage: &StorageHandle<'_>| {
         outbe_promislimit::PromisLimitContract::new(storage.clone())
-            .get_total_unallocated()
+            .promis_limit()
             .unwrap()
     };
 
@@ -1254,7 +1359,10 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
             assert_eq!(reserve(&storage), U256::ZERO);
             assert_eq!(forfeit_block(&storage, lapsed).unwrap(), 1);
             assert_eq!(reserve(&storage), expected);
-            assert_eq!(forfeit_block(&storage, lapsed + HOUR).unwrap(), 0);
+            assert_eq!(
+                forfeit_block(&storage, lapsed + CLOSED_DAY_DELAY).unwrap(),
+                0
+            );
             assert_eq!(reserve(&storage), expected);
         });
         assert_eq!(

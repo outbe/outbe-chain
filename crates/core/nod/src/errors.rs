@@ -1,6 +1,8 @@
 //! Domain error types for the Nod crate.
 
-use alloy_primitives::B256;
+use crate::precompile::INod;
+use alloy_primitives::{Bytes, B256};
+use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 use thiserror::Error;
@@ -101,6 +103,19 @@ pub enum NodError {
 
     #[error("NOD amount read failed: {0}")]
     AmountReadFailed(#[source] outbe_tee::TransportError),
+
+    #[error("Nod state changed after loading")]
+    NodStateChangedAfterLoading,
+
+    #[error("date step kind {kind} from date key {date_key}")]
+    DateStep { kind: u8, date_key: u32 },
+}
+
+pub(crate) fn date_step_error(err: outbe_primitives::time::TimeError) -> PrecompileError {
+    match err.date_step() {
+        Some((kind, date_key)) => NodError::DateStep { kind, date_key }.into(),
+        None => PrecompileError::Fatal(err.to_string()),
+    }
 }
 
 impl NodError {
@@ -110,14 +125,102 @@ impl NodError {
     }
 }
 
+fn revert_with<E: SolError>(error: E) -> PrecompileError {
+    PrecompileError::RevertBytes(Bytes::from(error.abi_encode()))
+}
+
 impl From<NodError> for PrecompileError {
     fn from(value: NodError) -> Self {
+        use INod as I;
         let message = value.to_string();
         match value {
             NodError::AmountReadFailed(error) if error.is_node_local() => {
                 PrecompileError::EnclaveUnavailable(message)
             }
-            _ => PrecompileError::Revert(message),
+            NodError::InvalidNodIdLength => revert_with(I::InvalidNodIdLength {}),
+            NodError::InvalidNodIdHex => revert_with(I::InvalidNodIdHex {}),
+            NodError::NodNotFound => revert_with(I::NodNotFound {}),
+            NodError::GroupNotFound => revert_with(I::GroupNotFound {}),
+            NodError::IndexOutOfBounds => revert_with(I::IndexOutOfBounds {}),
+            NodError::QueryLimitExceeded => revert_with(I::QueryLimitExceeded {}),
+            NodError::ZeroReferenceCurrency => revert_with(I::ZeroReferenceCurrency {}),
+            NodError::NonTransferable => revert_with(I::NonTransferable {}),
+            NodError::UnknownProfileSelector { selector } => {
+                revert_with(I::UnknownProfileSelector { selector })
+            }
+            NodError::EntityIdDerivation(value) => revert_with(I::EntityIdDerivation { value }),
+            NodError::CanonicalIdentityMismatch { expected, found } => {
+                revert_with(I::CanonicalIdentityMismatch {
+                    expected: expected.to_u256(),
+                    found: found.to_u256(),
+                })
+            }
+            NodError::EncryptedTermsMismatch => revert_with(I::EncryptedTermsMismatch {}),
+            NodError::CannotIssueSettledNod => revert_with(I::CannotIssueSettledNod {}),
+            NodError::GroupIdentityMismatch { expected, found } => {
+                revert_with(I::GroupIdentityMismatch { expected, found })
+            }
+            NodError::NodAlreadyExists => revert_with(I::NodAlreadyExists {}),
+            NodError::GroupExistenceDisagreesWithMemberCount {
+                group_id,
+                member_count,
+            } => revert_with(I::GroupExistenceDisagreesWithMemberCount {
+                groupId: group_id.to_u256(),
+                memberCount: member_count,
+            }),
+            NodError::TotalSupplyOverflowDuringIssuance => {
+                revert_with(I::TotalSupplyOverflowDuringIssuance {})
+            }
+            NodError::GroupUnpaidLoadOverflow { group_key } => {
+                revert_with(I::GroupUnpaidLoadOverflow {
+                    groupKey: group_key,
+                })
+            }
+            NodError::GroupUnpaidLoadUnderflow { group_key } => {
+                revert_with(I::GroupUnpaidLoadUnderflow {
+                    groupKey: group_key,
+                })
+            }
+            NodError::TotalSupplyUnderflowDuringRemoval => {
+                revert_with(I::TotalSupplyUnderflowDuringRemoval {})
+            }
+            NodError::GroupSettledCountUnderflow { group_id } => {
+                revert_with(I::GroupSettledCountUnderflow {
+                    groupId: group_id.to_u256(),
+                })
+            }
+            NodError::AlreadySettled => revert_with(I::AlreadySettled {}),
+            NodError::SettledCountOverflow => revert_with(I::SettledCountOverflow {}),
+            NodError::GroupMemberIndexOverflow { group_key } => {
+                revert_with(I::GroupMemberIndexOverflow {
+                    groupKey: group_key,
+                })
+            }
+            NodError::GroupMemberCountUnderflowDuringRemoval { group_key } => {
+                revert_with(I::GroupMemberCountUnderflowDuringRemoval {
+                    groupKey: group_key,
+                })
+            }
+            NodError::NodNotIndexedInGroup { nod_id, group_key } => {
+                revert_with(I::NodNotIndexedInGroup {
+                    nodId: nod_id.to_u256(),
+                    groupKey: group_key,
+                })
+            }
+            NodError::EmptyGroupMemberSlotDuringRemoval { group_key, slot } => {
+                revert_with(I::EmptyGroupMemberSlotDuringRemoval {
+                    groupKey: group_key,
+                    slot,
+                })
+            }
+            NodError::AmountReadFailed(error) => revert_with(I::AmountReadFailed {
+                reason: error.to_string(),
+            }),
+            NodError::NodStateChangedAfterLoading => revert_with(I::NodStateChangedAfterLoading {}),
+            NodError::DateStep { kind, date_key } => revert_with(I::DateStep {
+                kind,
+                dateKey: date_key,
+            }),
         }
     }
 }

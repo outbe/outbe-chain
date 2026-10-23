@@ -49,7 +49,7 @@ pub fn dispatch_terminal_remainder_at(
 ///
 /// This function is deliberately distinct from [`dispatch_terminal_remainder_at`].
 /// Only the daily Cycle allocation forms a base day limit. Late residues
-/// accumulate as carry-over for the next unformed limit.
+/// accumulate in the Promis Limit for the next unformed limit.
 pub fn dispatch_late_settlement_residue_at(
     ctx: &BlockRuntimeContext,
     amount: U256,

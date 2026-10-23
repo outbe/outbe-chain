@@ -14,6 +14,12 @@ use crate::api::IVaultRouter;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum VaultRouterError {
+    #[error("approved vault action not found: {0}")]
+    ApprovedVaultActionNotFound(U256),
+    #[error("approved vault action index inconsistent: {0}")]
+    ApprovedVaultActionIndexInconsistent(U256),
+    #[error("invalid approved vault action")]
+    InvalidApprovedVaultAction,
     #[error("ERC20 operation failed or returned malformed data")]
     TokenOperationFailed,
     #[error("zero address")]
@@ -30,6 +36,10 @@ pub enum VaultRouterError {
     ReserveVaultAlreadyAdded,
     #[error("reserve vault not found")]
     ReserveVaultNotFound,
+    #[error("reserve vault has router shares: vault={vault}, shares={shares}")]
+    ReserveVaultHasShares { vault: Address, shares: U256 },
+    #[error("reserve vault removal pending: vault={vault}, proposal_id={proposal_id}")]
+    ReserveVaultRemovalPending { vault: Address, proposal_id: U256 },
     #[error("reserve vault owner not renounced: {0}")]
     ReserveVaultOwnerNotRenounced(Address),
     #[error("liquidity source not found")]
@@ -84,6 +94,15 @@ pub enum VaultRouterError {
     PreviousDayVwapUnavailable,
     #[error("reference pair unavailable")]
     ReferencePairUnavailable,
+    #[error("date step kind {kind} from date key {date_key}")]
+    DateStep { kind: u8, date_key: u32 },
+}
+
+pub(crate) fn date_step_error(err: outbe_primitives::time::TimeError) -> PrecompileError {
+    match err.date_step() {
+        Some((kind, date_key)) => VaultRouterError::DateStep { kind, date_key }.into(),
+        None => PrecompileError::Fatal(err.to_string()),
+    }
 }
 
 /// Reverts with the ABI encoding of a declared `IVaultRouter` error.
@@ -95,6 +114,19 @@ impl From<VaultRouterError> for PrecompileError {
     fn from(err: VaultRouterError) -> Self {
         use IVaultRouter as I;
         match err {
+            VaultRouterError::ApprovedVaultActionNotFound(proposal_id) => {
+                revert_with(I::ApprovedVaultActionNotFound {
+                    proposalId: proposal_id,
+                })
+            }
+            VaultRouterError::ApprovedVaultActionIndexInconsistent(proposal_id) => {
+                revert_with(I::ApprovedVaultActionIndexInconsistent {
+                    proposalId: proposal_id,
+                })
+            }
+            VaultRouterError::InvalidApprovedVaultAction => {
+                revert_with(I::InvalidApprovedVaultAction {})
+            }
             VaultRouterError::TokenOperationFailed => revert_with(I::TokenOperationFailed {}),
             VaultRouterError::InvalidLiquiditySource => revert_with(I::InvalidLiquiditySource {}),
             VaultRouterError::InvalidLiquidityTarget => revert_with(I::InvalidLiquidityTarget {}),
@@ -105,6 +137,15 @@ impl From<VaultRouterError> for PrecompileError {
                 revert_with(I::ReserveVaultAlreadyAdded {})
             }
             VaultRouterError::ReserveVaultNotFound => revert_with(I::ReserveVaultNotFound {}),
+            VaultRouterError::ReserveVaultHasShares { vault, shares } => {
+                revert_with(I::ReserveVaultHasShares { vault, shares })
+            }
+            VaultRouterError::ReserveVaultRemovalPending { vault, proposal_id } => {
+                revert_with(I::ReserveVaultRemovalPending {
+                    vault,
+                    proposalId: proposal_id,
+                })
+            }
             VaultRouterError::ReserveVaultOwnerNotRenounced(current_owner) => {
                 revert_with(I::ReserveVaultOwnerNotRenounced {
                     currentOwner: current_owner,
@@ -148,22 +189,36 @@ impl From<VaultRouterError> for PrecompileError {
             VaultRouterError::InvalidReservationAmount => {
                 revert_with(I::InvalidReservationAmount {})
             }
-            undeclared @ (VaultRouterError::ZeroAddress
-            | VaultRouterError::Unauthorized
-            | VaultRouterError::ReceiverNotDeployed
-            | VaultRouterError::UndecodableReturn(_)
-            | VaultRouterError::TimestampOverflow
-            | VaultRouterError::RouterCallUndecodable(_)
-            | VaultRouterError::IndexOutOfBounds
-            | VaultRouterError::InvalidAsset
-            | VaultRouterError::InvalidAssetDecimals
-            | VaultRouterError::UnsupportedAssetDecimalsSimple
-            | VaultRouterError::InvalidAssetCurrency
-            | VaultRouterError::PledgePriceUnavailable
-            | VaultRouterError::PreviousDayVwapUnavailable
-            | VaultRouterError::ReferencePairUnavailable) => {
-                PrecompileError::Revert(undeclared.to_string())
+            VaultRouterError::ZeroAddress => revert_with(I::ZeroAddress {}),
+            VaultRouterError::Unauthorized => revert_with(I::Unauthorized {}),
+            VaultRouterError::ReceiverNotDeployed => revert_with(I::ReceiverNotDeployed {}),
+            VaultRouterError::UndecodableReturn(value) => revert_with(I::UndecodableReturn {
+                value: value.to_string(),
+            }),
+            VaultRouterError::TimestampOverflow => revert_with(I::TimestampOverflow {}),
+            VaultRouterError::RouterCallUndecodable(value) => {
+                revert_with(I::RouterCallUndecodable {
+                    value: value.to_string(),
+                })
             }
+            VaultRouterError::IndexOutOfBounds => revert_with(I::IndexOutOfBounds {}),
+            VaultRouterError::InvalidAsset => revert_with(I::InvalidAsset {}),
+            VaultRouterError::InvalidAssetDecimals => revert_with(I::InvalidAssetDecimals {}),
+            VaultRouterError::UnsupportedAssetDecimalsSimple => {
+                revert_with(I::UnsupportedAssetDecimalsSimple {})
+            }
+            VaultRouterError::InvalidAssetCurrency => revert_with(I::InvalidAssetCurrency {}),
+            VaultRouterError::PledgePriceUnavailable => revert_with(I::PledgePriceUnavailable {}),
+            VaultRouterError::PreviousDayVwapUnavailable => {
+                revert_with(I::PreviousDayVwapUnavailable {})
+            }
+            VaultRouterError::ReferencePairUnavailable => {
+                revert_with(I::ReferencePairUnavailable {})
+            }
+            VaultRouterError::DateStep { kind, date_key } => revert_with(I::DateStep {
+                kind,
+                dateKey: date_key,
+            }),
         }
     }
 }
@@ -197,11 +252,30 @@ pub enum SettlementError {
 
 impl From<SettlementError> for PrecompileError {
     fn from(error: SettlementError) -> Self {
+        use IVaultRouter as I;
         match error {
-            SettlementError::TokenOperationFailed => {
-                revert_with(IVaultRouter::TokenOperationFailed {})
+            SettlementError::AssetVaultsCount => revert_with(I::AssetVaultsCount {}),
+            SettlementError::AssetNotRegistered { asset } => {
+                revert_with(I::AssetNotRegistered { asset })
             }
-            undeclared => PrecompileError::Revert(undeclared.to_string()),
+            SettlementError::CurrencyMismatch { iso_code } => {
+                revert_with(I::CurrencyMismatch { isoCode: iso_code })
+            }
+            SettlementError::AssetDecimals => revert_with(I::AssetDecimals {}),
+            SettlementError::AssetIsoCode => revert_with(I::AssetIsoCode {}),
+            SettlementError::Rounding(reason) => revert_with(I::Rounding {
+                reason: reason.to_string(),
+            }),
+            SettlementError::OracleUnavailable => revert_with(I::OracleUnavailable {}),
+            SettlementError::SnapshotMismatch {
+                authorized,
+                required,
+            } => revert_with(I::SnapshotMismatch {
+                authorized,
+                required,
+            }),
+            SettlementError::TokenOperationFailed => revert_with(I::TokenOperationFailed {}),
+            SettlementError::AmountMismatch => revert_with(I::AmountMismatch {}),
         }
     }
 }

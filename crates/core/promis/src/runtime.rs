@@ -68,6 +68,21 @@ fn ensure_applied(result: &PromisOpResult) -> Result<()> {
     }
 }
 
+/// The enclave moved exactly the requested amount of the balance and advanced the nonce by one.
+pub(crate) fn ensure_owner_result(
+    amount: U256,
+    op_nonce: u64,
+    result: &PromisOpResult,
+) -> Result<()> {
+    if result.event_amount != amount || result.new_balance.is_empty() {
+        return Err(PromisFatalError::OwnerResultMismatch.into());
+    }
+    if op_nonce.checked_add(1) != Some(result.next_op_nonce) {
+        return Err(PromisFatalError::WrongOpNonce.into());
+    }
+    Ok(())
+}
+
 /// Store the balance ciphertext the enclave produced (an empty blob means the op
 /// did not touch the slot).
 fn write_balance(promis: &Promis<'_>, account: Address, result: &PromisOpResult) -> Result<()> {
@@ -85,13 +100,15 @@ pub(crate) fn mint(
     auth: ModifyAuth,
 ) -> Result<()> {
     let promis = Promis::new(storage.clone());
-    check_op_nonce(&promis, caller, auth.op_nonce)?;
+    let op_nonce = auth.op_nonce;
+    check_op_nonce(&promis, caller, op_nonce)?;
     let mut req = base_request(PromisOp::Mint, chain_id_b256(&storage)?, caller, amount);
     req.current_balance = promis.balance_ct_of(caller)?;
     req.modify_auth = auth;
     let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&storage)?;
     let result = apply_promis_op(req)?;
     ensure_applied(&result)?;
+    ensure_owner_result(amount, op_nonce, &result)?;
     write_balance(&promis, caller, &result)?;
     promis.set_op_nonce(caller, result.next_op_nonce)?;
     let new_supply = promis
@@ -118,13 +135,15 @@ pub(crate) fn burn(
     auth: ModifyAuth,
 ) -> Result<U256> {
     let promis = Promis::new(storage.clone());
-    check_op_nonce(&promis, caller, auth.op_nonce)?;
+    let op_nonce = auth.op_nonce;
+    check_op_nonce(&promis, caller, op_nonce)?;
     let mut req = base_request(PromisOp::Burn, chain_id_b256(&storage)?, caller, amount);
     req.current_balance = promis.balance_ct_of(caller)?;
     req.modify_auth = auth;
     let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&storage)?;
     let result = apply_promis_op(req)?;
     ensure_applied(&result)?;
+    ensure_owner_result(amount, op_nonce, &result)?;
     write_balance(&promis, caller, &result)?;
     promis.set_op_nonce(caller, result.next_op_nonce)?;
     let remaining = promis

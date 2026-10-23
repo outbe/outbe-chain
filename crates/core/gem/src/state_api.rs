@@ -1,13 +1,9 @@
-use crate::errors::GemError;
+use crate::errors::{date_step_error, GemError};
 use crate::precompile::IGem;
 use crate::schema::{CallTerms, GemContract, GemGroupState, GemItemState};
 use crate::GemState;
 use alloy_primitives::{Address, B256};
-use outbe_primitives::{
-    error::{PrecompileError, Result},
-    storage::StorageHandle,
-    wwd_entity_id::WwdEntityId,
-};
+use outbe_primitives::{error::Result, storage::StorageHandle, wwd_entity_id::WwdEntityId};
 
 /// A gem exactly as stored when it was loaded; mutation re-checks storage against it.
 pub struct LoadedGem {
@@ -85,7 +81,7 @@ fn check_loaded(
         || contract.records.get(item.gem_id)?.as_ref() != Some(item)
         || contract.groups.get(group.group_key)?.as_ref() != Some(group)
     {
-        return Err(PrecompileError::revert("Gem state changed after loading"));
+        return Err(GemError::GemStateChangedAfterLoading.into());
     }
     Ok(())
 }
@@ -102,7 +98,7 @@ impl GemContract<'_> {
             return Err(GemError::AlreadyExists.into());
         }
         let group_key = item.group_key;
-        let group_id = item.group_id();
+        let group_id = item.group_id().map_err(date_step_error)?;
         let current_group = self.groups.get(item.group_key)?;
         let member_count = self.group_gem_count.read(&group_key)?;
         let settled_count = current_group.as_ref().map_or(0, |group| group.settled_gems);
@@ -122,7 +118,7 @@ impl GemContract<'_> {
                 }
                 Some(GemGroupState {
                     group_key,
-                    full_day_after_issue: item.full_day_after_issue(),
+                    full_day_after_issue: item.full_day_after_issue().map_err(date_step_error)?,
                     reference_currency: item.reference_currency,
                     settled_gems: 0,
                 })
@@ -211,7 +207,10 @@ impl GemContract<'_> {
 mod tests {
     use super::*;
     use alloy_primitives::U256;
-    use outbe_primitives::{storage::hashmap::HashMapStorageProvider, time::WorldwideDay};
+    use alloy_sol_types::SolError;
+    use outbe_primitives::{
+        error::PrecompileError, storage::hashmap::HashMapStorageProvider, time::WorldwideDay,
+    };
 
     #[test]
     fn state_only_gem_settlement_rejects_stale_handles_and_burns_atomically() {
@@ -293,7 +292,8 @@ mod tests {
             };
             assert!(matches!(
                 add_item(&storage, &item, None),
-                Err(PrecompileError::Revert(reason)) if reason == GemError::ZeroOwner.to_string()
+                Err(PrecompileError::RevertBytes(bytes))
+                    if bytes.as_ref() == IGem::ZeroOwner {}.abi_encode().as_slice()
             ));
             let contract = GemContract::new(storage.clone());
             assert_eq!(contract.total_supply.read().unwrap(), 0);

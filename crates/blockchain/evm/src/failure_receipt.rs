@@ -38,17 +38,13 @@
 use alloy_primitives::{Address, Log, LogData};
 use alloy_sol_types::{sol, SolEvent};
 
-sol! {
-    /// Soft-failure marker emitted alongside a `status=0` synthetic receipt.
-    ///
-    /// `code` is a stable per-subsystem `u16` identifier (zero-fee 100-199,
-    /// phase failures 200-299). `reason` is the `Display` rendering of the
-    /// underlying Rust error and is intended for human consumption. Its
-    /// exact text is byte-stable per compiled binary but is not part of the
-    /// API contract. Downstream consumers should match on `code`.
-    #[derive(Debug, PartialEq)]
-    event OutbeFailure(uint16 indexed code, string reason);
-}
+sol!(
+    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
+    "../../../contracts/precompiles/src/IOutbeFailure.sol"
+);
+
+// Preserve the existing Rust event path while sharing the published ABI.
+pub use IOutbeFailure::OutbeFailure;
 
 /// Topic0 of the `OutbeFailure` event.
 pub const OUTBE_FAILURE_TOPIC0: alloy_primitives::B256 = OutbeFailure::SIGNATURE_HASH;
@@ -77,6 +73,10 @@ mod tests {
     fn topic0_matches_signature() {
         let expected = keccak256(b"OutbeFailure(uint16,string)");
         assert_eq!(OUTBE_FAILURE_TOPIC0, expected);
+        assert_eq!(
+            IOutbeFailure::OutbeFailure::SIGNATURE,
+            "OutbeFailure(uint16,string)"
+        );
     }
 
     #[test]
@@ -85,6 +85,13 @@ mod tests {
         assert_eq!(log.data.topics().len(), 2);
         // Empty string ABI-encodes to 64 bytes: offset(32) + length=0(32).
         assert_eq!(log.data.data.len(), 64);
+        assert_eq!(log.address, Address::ZERO);
+        assert_eq!(log.data.topics()[0], OUTBE_FAILURE_TOPIC0);
+        assert_eq!(log.data.topics()[1], alloy_primitives::B256::ZERO);
+        assert_eq!(
+            log.data.data.as_ref(),
+            abi_encoded_string_data("").as_slice()
+        );
     }
 
     // -- Conformance snapshots -----------------------------
@@ -221,6 +228,10 @@ mod tests {
         // 1 char, 4 UTF-8 bytes.
         let reason = "🦀";
         let log = build_outbe_failure_log(Address::ZERO, 107, reason.to_string());
+        assert_eq!(log.address, Address::ZERO);
+        assert_eq!(log.data.topics().len(), 2);
+        assert_eq!(log.data.topics()[0], OUTBE_FAILURE_TOPIC0);
+        assert_eq!(log.data.topics()[1].as_slice(), expected_topic1_for(107));
         assert_eq!(
             log.data.data.as_ref(),
             abi_encoded_string_data(reason).as_slice()

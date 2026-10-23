@@ -472,7 +472,6 @@ fn thirty_two_validator_near_cap_bootstrap_fits_five_transaction_block() {
                 .map(|participant| Address::from(participant.validator_binding.validator))
                 .collect(),
         },
-        tee_recipient_pubkeys: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
         tee_expired_target_exclusions_hash: B256::ZERO,
     };

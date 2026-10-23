@@ -2,9 +2,9 @@
 //!
 //! Drives a child CALL/STATICCALL frame from inside an outbe Rust precompile.
 //! The driver constructs a fresh borrow-mode
-//! `Evm<&mut EthEvmContext<DB>, (), EthInstructions<...>, EthPrecompiles,
+//! `Evm<&mut EthEvmContext<DB>, (), EthInstructions<...>, OutbeSubCallPrecompiles,
 //! EthFrame<...>>`. Then it mirrors revm's canonical
-//! [`Handler::run_exec_loop`](https://docs.rs/revm-handler/18.1.0/src/revm_handler/handler.rs.html)
+//! [`revm::handler::Handler::run_exec_loop`] from pinned revm-handler 43.0.2
 //! pattern until the child terminates.
 //!
 //! The child frame uses [`crate::precompiles::OutbeSubCallPrecompiles`]. Thus both
@@ -145,7 +145,7 @@ where
         return Err(SubCallError::DepthLimitExceeded);
     }
 
-    // Pre-load bytecode (mirror revm-handler-18.1.0/src/execution.rs:22-37).
+    // Pre-load bytecode (revm-handler 43.0.2, execution::create_init_frame).
     // Handles EIP-7702 delegation by re-loading from the delegate's address.
     let (bytecode_hash, bytecode) = match target_code {
         Some(code) => code,
@@ -194,8 +194,7 @@ where
         frame_input: FrameInput::Call(Box::new(call_inputs)),
     };
 
-    // Canonical handler frame loop
-    // (revm-handler-18.1.0/src/handler.rs:416-446).
+    // Canonical handler frame loop (revm-handler 43.0.2, Handler::run_exec_loop).
     let frame_result = run_exec_loop(
         &mut crate::native_delegation::NativeDelegationEvm(&mut evm),
         frame_input,
@@ -290,7 +289,8 @@ where
     Ok((hash, code))
 }
 
-/// Mirrors revm-handler-18.1.0's [`run_exec_loop`].
+/// Mirrors pinned revm-handler 43.0.2's [`revm::handler::Handler::run_exec_loop`].
+/// Ordinary-bytecode equivalence is checked by `tests/subcall_frame_parity.rs`.
 ///
 /// Runs the frame stack inside `evm` to completion for `first_frame_input`,
 /// returning the top-level [`FrameResult`].

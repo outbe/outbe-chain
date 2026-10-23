@@ -18,7 +18,7 @@ use outbe_nod::schema::{CallTerms, NodItemState};
 use outbe_primitives::nod_encryption::EncryptedNodV2;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 
-use crate::errors::NodFactoryError;
+use crate::errors::{date_step_error, NodFactoryError};
 use crate::precompile::INodFactory;
 use outbe_vaultrouter::settlement::{self, Currencies, SettlementCost, SettlementPayment};
 
@@ -107,7 +107,8 @@ fn issue_nod_with_cost(
             issued_at,
             call_price_minor,
             terms.reference_currency,
-        ),
+        )
+        .map_err(date_step_error)?,
         issuance_currency: terms.issuance_currency,
         reference_currency: terms.reference_currency,
         issued_at,

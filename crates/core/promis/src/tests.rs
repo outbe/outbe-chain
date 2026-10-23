@@ -9,9 +9,7 @@ use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_tee::protocol::{ModifyAuth, PromisOp};
-use outbe_tee_enclave::promis::{
-    decrypt_balance, derive_modify_key, derive_view_key, modify_mac, ModifyOperation,
-};
+use outbe_tee_enclave::promis::{decrypt_balance, derive_view_key};
 
 use crate::api;
 use crate::enclave_client::test_enclave;
@@ -20,9 +18,6 @@ use outbe_primitives::units::SCALE_1E6_U64;
 
 const CHAIN_ID: u64 = 1;
 
-fn chain_b256() -> B256 {
-    B256::from(U256::from(CHAIN_ID))
-}
 fn alice() -> Address {
     address!("0x1111111111111111111111111111111111111111")
 }
@@ -30,23 +25,8 @@ fn bob() -> Address {
     address!("0x2222222222222222222222222222222222222222")
 }
 
-/// Build the modify authorization a client would send for `op`.
 fn auth(op: PromisOp, account: Address, amount: U256, nonce: u64) -> ModifyAuth {
-    let sk = test_enclave::state_key();
-    let mk = derive_modify_key(&sk, account).unwrap();
-    ModifyAuth {
-        mac: modify_mac(
-            &mk,
-            &ModifyOperation {
-                account,
-                op,
-                amount,
-                op_nonce: nonce,
-                chain_id: chain_b256(),
-            },
-        ),
-        op_nonce: nonce,
-    }
+    test_enclave::modify_auth(op, account, amount, nonce)
 }
 
 fn view_balance(storage: StorageHandle<'_>, account: Address) -> U256 {
@@ -167,7 +147,13 @@ fn burn_insufficient_reverts_atomically() {
             auth(PromisOp::Burn, alice(), U256::from(200u64), 1),
         )
         .unwrap_err();
-        assert!(matches!(err, PrecompileError::Revert(m) if m == "insufficient balance"));
+        assert_eq!(
+            err.to_string(),
+            PrecompileError::from(crate::errors::PromisError::Rejected(
+                "insufficient balance".into(),
+            ))
+            .to_string()
+        );
         // No partial state change: balance + supply intact.
         assert_eq!(view_balance(storage.clone(), alice()), U256::from(100u64));
         assert_eq!(
@@ -346,5 +332,36 @@ fn iface_id_matches_selector_xor() {
         xor,
         crate::precompile::IPROMIS_INTERFACE_ID,
         "IPROMIS_INTERFACE_ID is stale; update it to match the new selector XOR"
+    );
+}
+
+#[test]
+fn an_owner_result_that_differs_from_the_request_is_refused() {
+    use crate::runtime::ensure_owner_result;
+    use outbe_tee::protocol::{PromisOpResult, PromisOpStatus};
+    let result = |event_amount: u64, next_op_nonce: u64| PromisOpResult {
+        status: PromisOpStatus::Applied,
+        new_balance: vec![1],
+        event_amount: U256::from(event_amount),
+        next_op_nonce,
+        inputs_canonical_hash: B256::ZERO,
+        attestation_tag: Vec::new(),
+    };
+    let amount = U256::from(5u64);
+    assert!(ensure_owner_result(amount, 3, &result(5, 4)).is_ok());
+    let err = ensure_owner_result(amount, 3, &result(4, 4)).unwrap_err();
+    assert!(
+        err.to_string().contains("owner movement result mismatch"),
+        "{err}"
+    );
+    let err = ensure_owner_result(amount, 3, &result(5, 5)).unwrap_err();
+    assert!(err.to_string().contains("wrong op nonce"), "{err}");
+    assert!(ensure_owner_result(amount, u64::MAX, &result(5, u64::MAX)).is_err());
+    let mut no_balance = result(5, 4);
+    no_balance.new_balance.clear();
+    let err = ensure_owner_result(amount, 3, &no_balance).unwrap_err();
+    assert!(
+        err.to_string().contains("owner movement result mismatch"),
+        "{err}"
     );
 }

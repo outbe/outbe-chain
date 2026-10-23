@@ -59,7 +59,10 @@ impl GovernanceVotePayload {
             return Err(GovernanceError::EmptyText);
         }
         if self.text.len() > MAX_TEXT_BYTES {
-            return Err(GovernanceError::TextTooLarge);
+            return Err(GovernanceError::TextTooLarge {
+                len: self.text.len(),
+                max: MAX_TEXT_BYTES,
+            });
         }
         Ok(())
     }
@@ -167,7 +170,10 @@ mod tests {
             let payload = GovernanceVotePayload::new(kind, too_big.as_str());
             assert_eq!(
                 payload.validate().unwrap_err(),
-                GovernanceError::TextTooLarge
+                GovernanceError::TextTooLarge {
+                    len: too_big.len(),
+                    max: MAX_TEXT_BYTES,
+                }
             );
             let empty = GovernanceVotePayload::new(kind, "");
             assert_eq!(empty.validate().unwrap_err(), GovernanceError::EmptyText);
@@ -178,5 +184,21 @@ mod tests {
     fn rejects_empty_text() {
         let payload = GovernanceVotePayload::new(ProposalKind::Gip, "");
         assert_eq!(payload.validate().unwrap_err(), GovernanceError::EmptyText);
+    }
+
+    #[test]
+    fn validate_bounds_utf8_text_bytes() {
+        let max = MAX_TEXT_BYTES;
+        for kind in [ProposalKind::Oip, ProposalKind::Gip] {
+            GovernanceVotePayload::new(kind, "é".repeat(max / 2))
+                .validate()
+                .unwrap();
+            assert_eq!(
+                GovernanceVotePayload::new(kind, format!("{}a", "é".repeat(max / 2)))
+                    .validate()
+                    .unwrap_err(),
+                GovernanceError::TextTooLarge { len: max + 1, max }
+            );
+        }
     }
 }

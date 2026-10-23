@@ -11,12 +11,11 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use alloy_primitives::{Address, Bytes, B256};
+use alloy_sol_types::SolError;
 use cucumber::{given, then, when};
 
 use crate::features::common::start_bootstrapped_localnet;
-use crate::features::negative_assertions::{
-    assert_mined_revert_reason, assert_registration_revert,
-};
+use crate::features::negative_assertions::{assert_mined_revert, assert_registration_revert};
 use crate::internal::{addresses::VS_ADDR, eth::IValidatorSet};
 use crate::world::localnet::{BootstrapProfile, StartOpts};
 use crate::world::rpc::{TxOutcome, ValidatorP2pAddress, ValidatorRecord};
@@ -324,7 +323,7 @@ fn submit_same_registration_material(world: &mut World) {
         identity.evm_key(),
         &identity,
         identity.registration_signature(),
-        "invalid BLS registration signature",
+        &IValidatorSet::InvalidBlsRegistrationSignature {}.abi_encode(),
     );
     let mut state = scenario_state();
     state.registry_before = Some(before);
@@ -442,7 +441,7 @@ fn owner_submits_empty_proof_registration(world: &mut World) {
         &owner_key,
         &identity,
         &[],
-        "BLS proof of possession must be exactly 96 bytes",
+        &IValidatorSet::BlsPopWrongLength {}.abi_encode(),
     );
     scenario_state().outcome = Some(outcome);
 }
@@ -656,17 +655,21 @@ fn invalid_p2p_updates_are_submitted(world: &mut World) {
     let mut attempts = Vec::new();
 
     let before = registry_identity_bundle(world, port);
-    let invalid_version = assert_mined_revert_reason(
+    let invalid_version = assert_mined_revert(
         world,
-        VS_ADDR,
-        &key,
-        &IValidatorSet::setP2pAddressCall {
-            validatorAddress: address,
-            version: 2,
-            encoded: Bytes::copy_from_slice(&original.encoded),
+        crate::features::negative_assertions::NegativeTx {
+            to: VS_ADDR,
+            key: &key,
+            call: &IValidatorSet::setP2pAddressCall {
+                validatorAddress: address,
+                version: 2,
+                encoded: Bytes::copy_from_slice(&original.encoded),
+            },
         },
-        "unsupported p2p address version 2",
-    );
+        alloy_primitives::U256::ZERO,
+        &IValidatorSet::UnsupportedP2pAddressVersion { version: 2 }.abi_encode(),
+    )
+    .into();
     let after = registry_identity_bundle(world, port);
     attempts.push(AtomicAttempt {
         label: "unsupported P2P version".to_owned(),
@@ -676,17 +679,24 @@ fn invalid_p2p_updates_are_submitted(world: &mut World) {
     });
 
     let before = registry_identity_bundle(world, port);
-    let malformed = assert_mined_revert_reason(
+    let malformed = assert_mined_revert(
         world,
-        VS_ADDR,
-        &key,
-        &IValidatorSet::setP2pAddressCall {
-            validatorAddress: address,
-            version: P2P_V1,
-            encoded: Bytes::copy_from_slice(&[0xff]),
+        crate::features::negative_assertions::NegativeTx {
+            to: VS_ADDR,
+            key: &key,
+            call: &IValidatorSet::setP2pAddressCall {
+                validatorAddress: address,
+                version: P2P_V1,
+                encoded: Bytes::copy_from_slice(&[0xff]),
+            },
         },
-        "invalid p2p address: invalid p2p address kind 255",
-    );
+        alloy_primitives::U256::ZERO,
+        &IValidatorSet::InvalidP2pAddress {
+            reason: "invalid p2p address kind 255".to_string(),
+        }
+        .abi_encode(),
+    )
+    .into();
     let after = registry_identity_bundle(world, port);
     attempts.push(AtomicAttempt {
         label: "malformed P2P payload".to_owned(),
@@ -697,17 +707,21 @@ fn invalid_p2p_updates_are_submitted(world: &mut World) {
 
     let unrelated_key = world.validators.get(1).evm_key().expect("unrelated key");
     let before = registry_identity_bundle(world, port);
-    let unauthorized = assert_mined_revert_reason(
+    let unauthorized = assert_mined_revert(
         world,
-        VS_ADDR,
-        &unrelated_key,
-        &IValidatorSet::setP2pAddressCall {
-            validatorAddress: address,
-            version: P2P_V1,
-            encoded: Bytes::copy_from_slice(&valid_symmetric_p2p(30_405)),
+        crate::features::negative_assertions::NegativeTx {
+            to: VS_ADDR,
+            key: &unrelated_key,
+            call: &IValidatorSet::setP2pAddressCall {
+                validatorAddress: address,
+                version: P2P_V1,
+                encoded: Bytes::copy_from_slice(&valid_symmetric_p2p(30_405)),
+            },
         },
-        "unauthorized: caller must be owner or validator itself",
-    );
+        alloy_primitives::U256::ZERO,
+        &IValidatorSet::UnauthorizedOwnerOrValidator {}.abi_encode(),
+    )
+    .into();
     let after = registry_identity_bundle(world, port);
     attempts.push(AtomicAttempt {
         label: "unauthorized P2P update".to_owned(),
@@ -1017,7 +1031,7 @@ fn rejected_registration_variants_are_attempted(world: &mut World) {
         first.evm_key(),
         &first,
         &[0; 96],
-        "invalid BLS signature",
+        &IValidatorSet::InvalidBlsSignature {}.abi_encode(),
     );
     let after = registry_identity_bundle(world, port);
     attempts.push(AtomicAttempt {
@@ -1040,7 +1054,7 @@ fn rejected_registration_variants_are_attempted(world: &mut World) {
         duplicate.evm_key(),
         &duplicate,
         duplicate.registration_signature(),
-        "BLS consensus pubkey already registered by another validator",
+        &IValidatorSet::ConsensusPubkeyAlreadyRegistered {}.abi_encode(),
     );
     let after = registry_identity_bundle(world, port);
     attempts.push(AtomicAttempt {
@@ -1056,7 +1070,7 @@ fn rejected_registration_variants_are_attempted(world: &mut World) {
         over_capacity.evm_key(),
         &over_capacity,
         over_capacity.registration_signature(),
-        "max validators reached",
+        &IValidatorSet::MaxValidatorsReached {}.abi_encode(),
     );
     let after = registry_identity_bundle(world, port);
     attempts.push(AtomicAttempt {

@@ -189,15 +189,13 @@ def seed_tribute_worldwide_days(storage: StorageBuilder, wwds: list):
     storage.set_slot(ACTIVE_WWD_BASE, len(wwds))
 
 
-def seed_metadosis(storage: StorageBuilder, config: dict):
+def seed_metadosis(_storage: StorageBuilder, _config: dict):
     """
-    Metadosis storage layout - MUST track `crates/core/metadosis/src/schema.rs`
-    (`#[storage_schema] MetadosisContract`):
-      slot 0:      bootstrap_end_time (Value<u64>)
+    Metadosis storage layout tracks crates/core/metadosis/src/schema.rs.
+    slot 0: emission_days (Map<u32, EmissionDay>)
+    This function writes no storage word.
+    Worldwide-day rows stay on Tribute and are seeded by the caller.
     """
-    bootstrap_end = config.get("bootstrap_end_time", 0)
-    if bootstrap_end:
-        storage.set_slot(0, bootstrap_end)
 
 
 def _seed_address_set_with_types(
@@ -226,26 +224,24 @@ def _seed_address_set_with_types(
     storage.set_slot(set_base, len(entries))
 
 
-def seed_vault_router(storage: StorageBuilder, owner_address: str):
+def seed_vault_router(storage: StorageBuilder):
     """
     VaultRouter storage layout (see crates/core/vaultrouter/src/schema.rs):
-      slot 0:      owner (admin)
-      slots 1-2:   assets (Set) - written at runtime by addVault
-      slot 3:      asset_vaults (Map) - written at runtime by addVault
+      slot 0:      retired owner slot - never written
+      slots 1-2:   assets (Set) - written by approved vault additions
+      slot 3:      asset_vaults (Map) - written by approved vault additions
       slots 4-5:   liquidity_sources (Set<Address>)
       slot 6:      liquidity_source_types (Map<Address, u8>)
       slots 7-8:   liquidity_targets (Set<Address>)
       slot 9:      liquidity_target_types (Map<Address, u8>)
 
-    Genesis sets the owner and pre-registers the default liquidity source/target
+    Genesis pre-registers the default liquidity source/target
     registry for the factory precompiles. This configures and restricts the
     Solidity deposit / withdraw ABI path. The reserve vault still requires
-    registration after deployment through `addVault`. The
+    governance approval and permissionless applyApproved after deployment. The
     in-process api callers bypass this registry and declare their discriminant
-    directly. Owner mirrors the ValidatorSet owner pattern (slot 0).
+    directly. No vaults or owner authority are seeded.
     """
-    storage.set_slot(0, address_as_u256(owner_address))
-
     _seed_address_set_with_types(
         storage,
         set_base=4,
@@ -312,7 +308,7 @@ def _seed_economic_state(seed, alloc):
             f"{len(tribute_storage.entries)} storage entries"
         )
 
-    # Seed Metadosis (bootstrap_end_time at METADOSIS_ADDRESS, worldwide_days at TRIBUTE_ADDRESS)
+    # Seed Metadosis. slot 0: emission_days (Map<u32, EmissionDay>). Worldwide days are stored at TRIBUTE_ADDRESS.
     if "metadosis" in seed:
         meta_storage = StorageBuilder()
         seed_metadosis(meta_storage, seed["metadosis"])

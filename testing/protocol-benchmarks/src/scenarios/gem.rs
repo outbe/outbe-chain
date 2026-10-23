@@ -95,7 +95,11 @@ fn seed_oracle(storage: StorageHandle<'_>) -> Result<(), String> {
     .map_err(|error| error.to_string())?;
     let oracle = OracleContract::new(storage);
     oracle
-        .record_utc_day_vwap(previous_date_key(timestamp_to_date_key(T_NOW)), index, rate)
+        .record_utc_day_vwap(
+            previous_date_key(timestamp_to_date_key(T_NOW)).expect("date step"),
+            index,
+            rate,
+        )
         .map_err(|error| error.to_string())?;
     oracle
         .reference_currencies
@@ -228,6 +232,7 @@ fn measure(prepared: &PreparedGem) -> Result<Observation, String> {
                 // The reward path resolves the price for the gem's own day. The
                 // benchmark measures the mint, so the seeded rate stands in for it.
                 entry_price_minor: U256::from(2) * six_decimal_unit(),
+                call_anchor_price_minor: U256::from(2) * six_decimal_unit(),
             },
         )
         .map_err(|error| error.to_string()),

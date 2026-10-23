@@ -50,8 +50,8 @@ pub const REFERENCE_ISO: u16 = 978;
 
 pub use outbe_primitives::time::SECONDS_PER_DAY as DAY;
 
-/// Past any deadline by enough that the hour it falls in has closed.
-pub const HOUR: u64 = 3_600;
+/// Adding this delay to any deadline advances time past the end of its UTC day.
+pub const CLOSED_DAY_DELAY: u64 = DAY;
 
 /// The settlement window a Credis seals at opening. Derived from the constant
 /// rather than written out as a literal: a hard-coded `14 * DAY` is what these
@@ -270,7 +270,7 @@ pub fn set_coen_rate_for(storage: &StorageHandle<'_>, iso: u16, coen_iso_rate: U
 /// The most recent fully-closed UTC day at `timestamp`, i.e. the day the scan
 /// treats as the newest data point.
 pub fn last_closed_day(timestamp: u64) -> u32 {
-    previous_date_key(timestamp_to_date_key(timestamp))
+    previous_date_key(timestamp_to_date_key(timestamp)).expect("date step")
 }
 
 /// Advances the finalization watermark to cover the day closed at `timestamp`
@@ -307,7 +307,7 @@ pub fn fill_days_for(storage: &StorageHandle<'_>, iso: u16, latest: u32, days: u
     let mut day = latest;
     for _ in 0..days {
         set_vwap_for(storage, iso, day, value);
-        day = previous_date_key(day);
+        day = previous_date_key(day).expect("date step");
     }
 }
 
@@ -332,8 +332,19 @@ fn block_at<'storage>(
     storage: &StorageHandle<'storage>,
     timestamp: u64,
 ) -> BlockRuntimeContext<'storage> {
+    let credis = CredisContract::new(storage.clone());
+    if credis.daily_genesis_day.read().unwrap() == 0 {
+        credis
+            .daily_genesis_day
+            .write(last_closed_day(timestamp))
+            .unwrap();
+    }
+    let height =
+        outbe_primitives::sweep_budget::BlockAllowance::unpack(credis.daily_budget.read().unwrap())
+            .unwrap()
+            .map_or(BLOCK_NUMBER, |previous| previous.height + 1);
     BlockRuntimeContext::new(
-        BlockContext::empty_for_tests(BLOCK_NUMBER, timestamp, CHAIN_ID),
+        BlockContext::empty_for_tests(height, timestamp, CHAIN_ID),
         storage.clone(),
     )
 }
@@ -355,7 +366,10 @@ pub fn slice(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
 /// One block's forfeit sweep over the lapsed called groups, then its cleanup. Returns
 /// the groups forfeited.
 pub fn expire(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
-    let ctx = block_at(storage, timestamp);
+    let ctx = BlockRuntimeContext::new(
+        BlockContext::empty_for_tests(BLOCK_NUMBER, timestamp, CHAIN_ID),
+        storage.clone(),
+    );
     let forfeited = crate::expired::sweep_expired(&ctx).unwrap();
     crate::cleanup::sweep_cleanup(&ctx).unwrap();
     forfeited
@@ -372,7 +386,11 @@ pub fn tick(storage: &StorageHandle<'_>, timestamp: u64) {
 /// Calls the Credis's group at `now`, as the call scan does. Returns whether it moved.
 pub fn call_credis(storage: &StorageHandle<'_>, id: U256, now: u64) -> bool {
     let mut credis = CredisContract::new(storage.clone());
-    let group = credis.get_credis(id).unwrap().group_key();
+    let group = credis
+        .get_credis(id)
+        .unwrap()
+        .group_key()
+        .expect("date step");
     if credis.group_called_at.read(&group).unwrap() != 0 {
         return false;
     }
@@ -380,11 +398,11 @@ pub fn call_credis(storage: &StorageHandle<'_>, id: U256, now: u64) -> bool {
     true
 }
 
-/// Moves the clock past the hour the called Credis's deadline falls in and runs that
-/// block's forfeit and cleanup. Returns the groups forfeited.
+/// This function moves the clock past the day that contains the called Credis's deadline.
+/// It runs that block's forfeit and cleanup. The return value counts forfeited groups.
 pub fn lapse(storage: &StorageHandle<'_>, id: U256) -> u32 {
     let record = CredisContract::new(storage.clone()).get_credis(id).unwrap();
-    let past = outbe_credis::settlement_deadline(&record) + HOUR;
+    let past = outbe_credis::settlement_deadline(&record) + CLOSED_DAY_DELAY;
     advance_to(storage, past);
     finalize_through(storage, past);
     expire(storage, past)

@@ -487,4 +487,20 @@ pub enum UpgradeError {
     /// The RPC server returned a different hash during replay.
     #[error("RPC returned a different replay transaction hash")]
     ReplayTransactionHashMismatch,
+
+    /// The receipt omits the `transactionHash` field.
+    #[error("exact transition transaction receipt has no transactionHash")]
+    MissingReceiptTransactionHash,
+
+    /// The receipt hash disagrees with the expected hash.
+    #[error("transition RPC returned a receipt for a different transaction hash")]
+    ReceiptTransactionHashMismatch,
+
+    /// The receipt omits the `status` field.
+    #[error("exact transition transaction receipt has no status")]
+    MissingReceiptStatus,
+
+    /// The receipt status is not `0x1`.
+    #[error("exact transition transaction receipt has non-success status {0}")]
+    NonSuccessReceiptStatus(String),
 }

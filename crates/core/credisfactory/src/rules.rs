@@ -3,7 +3,6 @@
 //! record and its reads.
 
 use alloy_primitives::{Address, U256};
-use outbe_credis::constants::CALL_RATE_PCT;
 use outbe_credis::errors::CredisError;
 use outbe_credis::runtime::{effective_state, settlement_deadline};
 use outbe_credis::{Credis, CredisContract, CredisState};
@@ -18,6 +17,15 @@ use crate::precompile::ICredisFactory;
 /// Current execution timestamp's UTC reward day key (YYYYMMDD).
 fn reward_day(storage: &StorageHandle<'_>) -> Result<u32> {
     Ok(timestamp_to_date_key(storage.now_secs()?))
+}
+
+fn date_step_error(
+    err: outbe_primitives::time::TimeError,
+) -> outbe_primitives::error::PrecompileError {
+    match err.date_step() {
+        Some((kind, date_key)) => CredisError::DateStep { kind, date_key }.into(),
+        None => outbe_primitives::error::PrecompileError::Fatal(err.to_string()),
+    }
 }
 
 /// Terms captured when a Credis is issued. Grouped rather than passed positionally
@@ -73,9 +81,9 @@ pub struct Forfeit {
     pub principal_written_off: U256,
 }
 
-/// The anchor marked up by the call rate.
-pub fn calc_call_price(price: U256) -> Result<U256> {
-    outbe_primitives::markup::marked_up(price, CALL_RATE_PCT)
+/// The anchor marked up by `rate_pct` percentage points.
+pub fn calc_call_price(price: U256, rate_pct: u16) -> Result<U256> {
+    outbe_primitives::markup::marked_up(price, rate_pct)
         .ok_or_else(|| CredisError::ArithmeticOverflow.into())
 }
 
@@ -136,13 +144,16 @@ pub fn issue(credis: &mut CredisContract<'_>, params: IssueCredisParams) -> Resu
             outstanding_gratis_minor: params.gratis_minor,
             policy_rate: params.policy_rate,
             entry_price_minor: params.entry_price_minor,
-            call_price_minor: calc_call_price(params.call_anchor_price_minor)?,
+            call_price_minor: calc_call_price(
+                params.call_anchor_price_minor,
+                call_terms.call_rate,
+            )?,
             issued_at: params.issued_at,
             last_settled_at: params.issued_at,
             called_at: 0,
             state: CredisState::Issued as u8,
             call_notice_period_seconds: call_terms.call_notice_period_seconds,
-            call_rate: CALL_RATE_PCT,
+            call_rate: call_terms.call_rate,
             call_window_seconds: call_terms.call_window_seconds,
             call_threshold_seconds: call_terms.call_threshold_seconds,
             call_anchor_price_minor: params.call_anchor_price_minor,
@@ -243,7 +254,7 @@ pub fn settle(
     if closed {
         record.state = CredisState::Settled as u8;
     }
-    let group = record.group_key();
+    let group = record.group_key().map_err(date_step_error)?;
     // A settled Credis keeps the call and terms it read from its group.
     credis.update_credis_record(&record)?;
     credis.take_owner_outstanding(record.owner, principal_paid)?;
@@ -328,7 +339,7 @@ pub fn delete_forfeited(credis: &mut CredisContract<'_>, record: Credis) -> Resu
         reward_day(&credis.storage)?,
         forfeit.gratis_burned_minor,
     )?;
-    credis.leave_group(record.group_key(), credis_id)?;
+    credis.leave_group(record.group_key().map_err(date_step_error)?, credis_id)?;
     credis.delete_credis_record(credis_id)?;
 
     credis.emit(outbe_credis::precompile::ICredis::CredisForfeited {

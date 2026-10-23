@@ -372,8 +372,22 @@ fn verify_tribute_offer_attestation_accepts_valid_rejects_tampering() {
 
     let sk = SigningKey::from_bytes(&[7u8; 32]);
     let pk = sk.verifying_key().to_bytes();
-    let preimage = crate::protocol::tribute_offer_attestation_preimage(hash, &results);
-    let tag = sk.sign(&preimage).to_bytes();
+    // Layout oracle: domain tag, the 32-byte inputs hash, a big-endian JSON
+    // length, then the JSON bytes. This buffer does not call the helper.
+    let json = serde_json::to_vec(&results).expect("tribute fixture json");
+    let mut expected = Vec::with_capacity(29 + 32 + 4 + json.len());
+    expected.extend_from_slice(b"outbe/tee/offer-attestation/v1");
+    expected.extend_from_slice(hash.as_slice());
+    expected.extend_from_slice(
+        &u32::try_from(json.len())
+            .expect("json length")
+            .to_be_bytes(),
+    );
+    expected.extend_from_slice(&json);
+    let preimage = crate::protocol::tribute_offer_attestation_preimage(hash, &results)
+        .expect("tribute preimage");
+    assert_eq!(preimage, expected);
+    let tag = sk.sign(&expected).to_bytes();
 
     // Happy path.
     verify_tribute_offer_attestation(&pk, hash, &results, &tag).expect("valid tag verifies");
@@ -435,19 +449,22 @@ fn gratis_promis_and_fidelity_tags_keep_domains_and_error_order() {
         attestation_tag: vec![],
     };
     let gratis_tag = sk
-        .sign(&crate::protocol::gratis_op_attestation_preimage(
-            hash, &gratis,
-        ))
+        .sign(
+            &crate::protocol::gratis_op_attestation_preimage(hash, &gratis)
+                .expect("gratis preimage"),
+        )
         .to_bytes();
     let promis_tag = sk
-        .sign(&crate::protocol::promis_op_attestation_preimage(
-            hash, &promis,
-        ))
+        .sign(
+            &crate::protocol::promis_op_attestation_preimage(hash, &promis)
+                .expect("promis preimage"),
+        )
         .to_bytes();
     let fidelity_tag = sk
-        .sign(&crate::protocol::fidelity_query_attestation_preimage(
-            hash, &fidelity,
-        ))
+        .sign(
+            &crate::protocol::fidelity_query_attestation_preimage(hash, &fidelity)
+                .expect("fidelity preimage"),
+        )
         .to_bytes();
 
     verify_gratis_op_attestation(&pk, hash, &gratis, &gratis_tag).expect("gratis tag");

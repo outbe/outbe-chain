@@ -5,7 +5,7 @@ use outbe_primitives::error::Result;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 
-use crate::errors::TributeError;
+use crate::errors::{date_step_error, TributeError};
 use crate::precompile::ITribute;
 use crate::schema::TributeContract;
 
@@ -296,7 +296,7 @@ impl TributeContract<'_> {
                 total_interest,
                 lysis_limit_minor,
             )
-            .map_err(|e| outbe_primitives::error::PrecompileError::revert(e.to_string()))?
+            .map_err(|e| TributeError::LysisArithmetic(e.to_string()))?
         };
         let fractions: std::collections::BTreeMap<u16, u64> = u256_fractions
             .iter()
@@ -351,9 +351,10 @@ impl TributeContract<'_> {
             let nod_max: U256 = lysis_limit >> 10usize;
             let gratis_load_minor =
                 outbe_lysis::program_v1::calculate_gratis_load(nominal, fraction, nod_max, 0)
-                    .map_err(|e| outbe_primitives::error::PrecompileError::revert(e.to_string()))?;
+                    .map_err(|e| TributeError::LysisArithmetic(e.to_string()))?;
 
-            let price_day = outbe_nod::openings::entry_price_day(completed_at);
+            let price_day =
+                outbe_nod::openings::entry_price_day(completed_at).map_err(date_step_error)?;
             let gratis_day_price = outbe_oracle::api::get_utc_day_vwap_for_iso(
                 storage.clone(),
                 price_day,

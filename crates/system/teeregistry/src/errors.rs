@@ -1,6 +1,9 @@
 //! Typed errors for the TEE registry precompile and runtime.
 
+use alloy_primitives::Bytes;
+use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
+use outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1;
 use thiserror::Error;
 
 /// Revert and fatal errors that the TEE registry produces.
@@ -920,11 +923,682 @@ impl TeeRegistryError {
 impl From<TeeRegistryError> for PrecompileError {
     fn from(error: TeeRegistryError) -> Self {
         match error {
-            TeeRegistryError::DcapVerifierUnavailable(_)
-            | TeeRegistryError::DcapOnboardingVerifierUnavailable(_) => {
-                Self::EnclaveUnavailable(error.to_string())
+            TeeRegistryError::InvalidCanonicalRegistrationAbi(reason) => match reason {
+                RegisterAbiError::MissingFunctionSelector => PrecompileError::RevertBytes(
+                    Bytes::from(ITeeRegistryV1::MissingFunctionSelector {}.abi_encode()),
+                ),
+                RegisterAbiError::TruncatedArgumentHead => PrecompileError::RevertBytes(
+                    Bytes::from(ITeeRegistryV1::TruncatedArgumentHead {}.abi_encode()),
+                ),
+                RegisterAbiError::NonCanonicalEvidenceOffset => PrecompileError::RevertBytes(
+                    Bytes::from(ITeeRegistryV1::NonCanonicalEvidenceOffset {}.abi_encode()),
+                ),
+                RegisterAbiError::NonCanonicalNodeSignatureOffset => PrecompileError::RevertBytes(
+                    Bytes::from(ITeeRegistryV1::NonCanonicalNodeSignatureOffset {}.abi_encode()),
+                ),
+                RegisterAbiError::NonCanonicalEnclaveSignatureOffset => {
+                    PrecompileError::RevertBytes(Bytes::from(
+                        ITeeRegistryV1::NonCanonicalEnclaveSignatureOffset {}.abi_encode(),
+                    ))
+                }
+                RegisterAbiError::NonCanonicalValidatorSignatureOffset => {
+                    PrecompileError::RevertBytes(Bytes::from(
+                        ITeeRegistryV1::NonCanonicalValidatorSignatureOffset {}.abi_encode(),
+                    ))
+                }
+                RegisterAbiError::NonCanonicalNodeHostBindingSignatureOffset => {
+                    PrecompileError::RevertBytes(Bytes::from(
+                        ITeeRegistryV1::NonCanonicalNodeHostBindingSignatureOffset {}.abi_encode(),
+                    ))
+                }
+                RegisterAbiError::NonCanonicalValidatorNodeHostBindingOffset => {
+                    PrecompileError::RevertBytes(Bytes::from(
+                        ITeeRegistryV1::NonCanonicalValidatorNodeHostBindingOffset {}.abi_encode(),
+                    ))
+                }
+                RegisterAbiError::TrailingAbiBytes => PrecompileError::RevertBytes(Bytes::from(
+                    ITeeRegistryV1::TrailingAbiBytes {}.abi_encode(),
+                )),
+                RegisterAbiError::EvidenceLengthExceedsCalldata => PrecompileError::RevertBytes(
+                    Bytes::from(ITeeRegistryV1::EvidenceLengthExceedsCalldata {}.abi_encode()),
+                ),
+                RegisterAbiError::DynamicOffsetOverflow => PrecompileError::RevertBytes(
+                    Bytes::from(ITeeRegistryV1::DynamicOffsetOverflow {}.abi_encode()),
+                ),
+                RegisterAbiError::TruncatedDynamicLength => PrecompileError::RevertBytes(
+                    Bytes::from(ITeeRegistryV1::TruncatedDynamicLength {}.abi_encode()),
+                ),
+                RegisterAbiError::DynamicLengthOverflow => PrecompileError::RevertBytes(
+                    Bytes::from(ITeeRegistryV1::DynamicLengthOverflow {}.abi_encode()),
+                ),
+                RegisterAbiError::TruncatedDynamicValue => PrecompileError::RevertBytes(
+                    Bytes::from(ITeeRegistryV1::TruncatedDynamicValue {}.abi_encode()),
+                ),
+                RegisterAbiError::DynamicPaddingOverflow => PrecompileError::RevertBytes(
+                    Bytes::from(ITeeRegistryV1::DynamicPaddingOverflow {}.abi_encode()),
+                ),
+                RegisterAbiError::TruncatedDynamicPadding => PrecompileError::RevertBytes(
+                    Bytes::from(ITeeRegistryV1::TruncatedDynamicPadding {}.abi_encode()),
+                ),
+                RegisterAbiError::NonZeroDynamicPadding => PrecompileError::RevertBytes(
+                    Bytes::from(ITeeRegistryV1::NonZeroDynamicPadding {}.abi_encode()),
+                ),
+                RegisterAbiError::AbiIntegerExceedsHostUsize => PrecompileError::RevertBytes(
+                    Bytes::from(ITeeRegistryV1::AbiIntegerExceedsHostUsize {}.abi_encode()),
+                ),
+            },
+            TeeRegistryError::GroupPublicKeyTooLarge => PrecompileError::RevertBytes(Bytes::from(
+                ITeeRegistryV1::GroupPublicKeyTooLarge {}.abi_encode(),
+            )),
+            TeeRegistryError::AlreadyBootstrapped => PrecompileError::RevertBytes(Bytes::from(
+                ITeeRegistryV1::AlreadyBootstrapped {}.abi_encode(),
+            )),
+            TeeRegistryError::NoSuccessorV1PolicyStaged => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::NoSuccessorV1PolicyStaged {}.abi_encode()),
+            ),
+            TeeRegistryError::AttestationEvidenceNotCanonical(value) => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ITeeRegistryV1::AttestationEvidenceNotCanonical {
+                        value: value.to_string(),
+                    }
+                    .abi_encode(),
+                ))
             }
-            _ => Self::Revert(error.to_string()),
+            TeeRegistryError::AttestationTargetsRetiredOrUnapprovedPolicy => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ITeeRegistryV1::AttestationTargetsRetiredOrUnapprovedPolicy {}.abi_encode(),
+                ))
+            }
+            TeeRegistryError::UpgradeRequiresSingleMeasurementPredecessor => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ITeeRegistryV1::UpgradeRequiresSingleMeasurementPredecessor {}.abi_encode(),
+                ))
+            }
+            TeeRegistryError::UpgradeMustChangeMrenclave => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::UpgradeMustChangeMrenclave {}.abi_encode()),
+            ),
+            TeeRegistryError::TeePolicyVersionOverflow => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::TeePolicyVersionOverflow {}.abi_encode()),
+            ),
+            TeeRegistryError::InvalidTeePolicy(value) => PrecompileError::RevertBytes(Bytes::from(
+                ITeeRegistryV1::InvalidTeePolicy {
+                    value: value.to_string(),
+                }
+                .abi_encode(),
+            )),
+            error @ TeeRegistryError::VerifiedDcapVerdictEncodingFailed { code: _ } => {
+                PrecompileError::Revert(error.to_string())
+            }
+            TeeRegistryError::RenewalTargetsDifferentIdentity => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::RenewalTargetsDifferentIdentity {}.abi_encode()),
+            ),
+            TeeRegistryError::RenewalCannotReplaceMeasurement => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::RenewalCannotReplaceMeasurement {}.abi_encode()),
+            ),
+            TeeRegistryError::DirectDevNoActiveMeasurement => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::DirectDevNoActiveMeasurement {}.abi_encode()),
+            ),
+            TeeRegistryError::DirectDevOverlappingMeasurements => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::DirectDevOverlappingMeasurements {}.abi_encode()),
+            ),
+            TeeRegistryError::CounterExhausted(value) => PrecompileError::RevertBytes(Bytes::from(
+                ITeeRegistryV1::CounterExhausted {
+                    value: value.to_string(),
+                }
+                .abi_encode(),
+            )),
+            TeeRegistryError::EnclaveLeaseExpired => PrecompileError::RevertBytes(Bytes::from(
+                ITeeRegistryV1::EnclaveLeaseExpired {}.abi_encode(),
+            )),
+            error @ TeeRegistryError::InvalidActiveV1LeasePeriod => {
+                PrecompileError::Revert(error.to_string())
+            }
+            TeeRegistryError::RenewalWindowNotOpen => PrecompileError::RevertBytes(Bytes::from(
+                ITeeRegistryV1::RenewalWindowNotOpen {}.abi_encode(),
+            )),
+            error @ TeeRegistryError::FieldExceedsCanonicalWidth(_) => {
+                PrecompileError::Revert(error.to_string())
+            }
+            TeeRegistryError::CodecRevert { context, reason } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ITeeRegistryV1::CodecRevert {
+                        context: context.to_string(),
+                        reason: reason.to_string(),
+                    }
+                    .abi_encode(),
+                ))
+            }
+            error @ TeeRegistryError::RegistrationPreflightBypassed => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::MeasurementTransitionPreflightBypassed => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::UpgradePreflightMissing => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::NodeSignaturePreflight => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::EnclaveSignaturePreflight => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::ActiveV1PolicyEncodingFailed(_) => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::StagedSuccessorV1PolicyEncodingFailed(_) => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::RegistrationBindingPreflightBypassed => {
+                PrecompileError::Revert(error.to_string())
+            }
+            TeeRegistryError::ValidatorNodeHostBindingNotCanonical(value) => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ITeeRegistryV1::ValidatorNodeHostBindingNotCanonical {
+                        value: value.to_string(),
+                    }
+                    .abi_encode(),
+                ))
+            }
+            error @ TeeRegistryError::ValidatorSignaturePreflightBypassed => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::PreflightValidatorSignatureMismatch => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::NodeHostBindingSignaturePreflightBypassed => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::PreflightNodeHostBindingSignatureMismatch => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::MutatorPreflightBypassed(_) => {
+                PrecompileError::Revert(error.to_string())
+            }
+            TeeRegistryError::RegistrationNodeIdentityInvalid(value) => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ITeeRegistryV1::RegistrationNodeIdentityInvalid {
+                        value: value.to_string(),
+                    }
+                    .abi_encode(),
+                ))
+            }
+            TeeRegistryError::InvalidV1RegistryGasDimensions(value) => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ITeeRegistryV1::InvalidV1RegistryGasDimensions {
+                        value: value.to_string(),
+                    }
+                    .abi_encode(),
+                ))
+            }
+            TeeRegistryError::InvalidV1CalldataGasDimensions(value) => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ITeeRegistryV1::InvalidV1CalldataGasDimensions {
+                        value: value.to_string(),
+                    }
+                    .abi_encode(),
+                ))
+            }
+            error @ TeeRegistryError::ProtocolGasUnderflow => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::MutatorStorageAllowanceExceedsFixedGas => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::ProtocolGasBelowBaseCharge => {
+                PrecompileError::Revert(error.to_string())
+            }
+            TeeRegistryError::AttestationEvidenceExceedsMaxBytes(value) => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ITeeRegistryV1::AttestationEvidenceExceedsMaxBytes {
+                        value: value as u64,
+                    }
+                    .abi_encode(),
+                ))
+            }
+            TeeRegistryError::NodePopSignatureLengthInvalid => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::NodePopSignatureLengthInvalid {}.abi_encode()),
+            ),
+            TeeRegistryError::EnclavePopSignatureLengthInvalid => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::EnclavePopSignatureLengthInvalid {}.abi_encode()),
+            ),
+            TeeRegistryError::ValidatorBindingSignatureLengthInvalid => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ITeeRegistryV1::ValidatorBindingSignatureLengthInvalid {}.abi_encode(),
+                ))
+            }
+            TeeRegistryError::NodeBindingSignatureLengthInvalid => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::NodeBindingSignatureLengthInvalid {}.abi_encode()),
+            ),
+            TeeRegistryError::ValidatorNodeBindingLengthInvalid(value) => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ITeeRegistryV1::ValidatorNodeBindingLengthInvalid {
+                        value: value as u64,
+                    }
+                    .abi_encode(),
+                ))
+            }
+            TeeRegistryError::EvidenceCallFramingExceedsMaxBytes(value) => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ITeeRegistryV1::EvidenceCallFramingExceedsMaxBytes {
+                        value: value as u64,
+                    }
+                    .abi_encode(),
+                ))
+            }
+            error @ TeeRegistryError::PreflightNodeSignatureMismatch => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::PreflightEnclaveSignatureMismatch => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::StoredV1BindingIdentityMismatch => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::MissingPurposeBoundOnboardingArtifact => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::OnboardingArtifactBindingMismatch => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::OnboardingArtifactNonCanonical { code: _ } => {
+                PrecompileError::Revert(error.to_string())
+            }
+            TeeRegistryError::CandidateRequiresApprovedUpgrade => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::CandidateRequiresApprovedUpgrade {}.abi_encode()),
+            ),
+            TeeRegistryError::PendingUpgradeChangedOrAbsent => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::PendingUpgradeChangedOrAbsent {}.abi_encode()),
+            ),
+            TeeRegistryError::MeasurementRolloutClosed => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::MeasurementRolloutClosed {}.abi_encode()),
+            ),
+            TeeRegistryError::AttestationEvidenceModeMismatch => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::AttestationEvidenceModeMismatch {}.abi_encode()),
+            ),
+            TeeRegistryError::DirectDevTransitionRequiresUpgrade => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::DirectDevTransitionRequiresUpgrade {}.abi_encode()),
+            ),
+            TeeRegistryError::MissingTransitionKeyReadyProof => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::MissingTransitionKeyReadyProof {}.abi_encode()),
+            ),
+            error @ TeeRegistryError::TransitionRequiresOfferKeyCommitment => {
+                PrecompileError::Revert(error.to_string())
+            }
+            TeeRegistryError::InvalidTransitionKeyReadyProof(value) => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ITeeRegistryV1::InvalidTransitionKeyReadyProof {
+                        value: value.to_string(),
+                    }
+                    .abi_encode(),
+                ))
+            }
+            error @ TeeRegistryError::DcapVerifierUnavailable(_) => {
+                PrecompileError::EnclaveUnavailable(error.to_string())
+            }
+            TeeRegistryError::DcapEvidenceRejected { code } => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::DcapEvidenceRejected { code }.abi_encode()),
+            ),
+            error @ TeeRegistryError::AcceptedDcapEvidenceHashingFailed { code: _ } => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::OnboardingArtifactNonRegistration => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::DcapRegistrationRequiresOfferKeyCommitment => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::DcapOnboardingVerifierUnavailable(_) => {
+                PrecompileError::EnclaveUnavailable(error.to_string())
+            }
+            TeeRegistryError::DirectDevSignatureMismatch => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::DirectDevSignatureMismatch {}.abi_encode()),
+            ),
+            error @ TeeRegistryError::DirectDevRegistrationRequiresOfferKeyCommitment => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::DirectDevOnboardingArtifactFailed(_) => {
+                PrecompileError::Revert(error.to_string())
+            }
+            TeeRegistryError::CandidateNotExactEvidenceReplay => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::CandidateNotExactEvidenceReplay {}.abi_encode()),
+            ),
+            TeeRegistryError::MutationNotExactEvidenceReplay => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::MutationNotExactEvidenceReplay {}.abi_encode()),
+            ),
+            error @ TeeRegistryError::StoredV1IdempotencyIdentityInconsistent => {
+                PrecompileError::Revert(error.to_string())
+            }
+            TeeRegistryError::InitialV1PolicyAlreadyInstalled => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::InitialV1PolicyAlreadyInstalled {}.abi_encode()),
+            ),
+            TeeRegistryError::InitialV1PolicyHashConflict => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::InitialV1PolicyHashConflict {}.abi_encode()),
+            ),
+            TeeRegistryError::V1PolicyTooManyChunks => PrecompileError::RevertBytes(Bytes::from(
+                ITeeRegistryV1::V1PolicyTooManyChunks {}.abi_encode(),
+            )),
+            TeeRegistryError::V1PolicyTooLarge => PrecompileError::RevertBytes(Bytes::from(
+                ITeeRegistryV1::V1PolicyTooLarge {}.abi_encode(),
+            )),
+            TeeRegistryError::SuccessorPolicyProposalIdZero => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::SuccessorPolicyProposalIdZero {}.abi_encode()),
+            ),
+            TeeRegistryError::AnotherSuccessorV1PolicyStaged => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::AnotherSuccessorV1PolicyStaged {}.abi_encode()),
+            ),
+            TeeRegistryError::SuccessorV1PolicyTooManyChunks => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::SuccessorV1PolicyTooManyChunks {}.abi_encode()),
+            ),
+            TeeRegistryError::SuccessorV1PolicyTooLarge => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::SuccessorV1PolicyTooLarge {}.abi_encode()),
+            ),
+            error @ TeeRegistryError::EmptyStagedV1PolicyNonEmptyAnchors => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::StoredStagedV1PolicyNonCanonical(_) => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::StoredStagedV1PolicyHashingFailed(_) => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::StoredStagedV1PolicyHashMismatch => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::StoredStagedV1PolicyActivationMismatch => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::StoredStagedV1PolicyZeroProposalId => {
+                PrecompileError::Revert(error.to_string())
+            }
+            TeeRegistryError::NoSuccessorV1PolicyStagedForUpdate => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::NoSuccessorV1PolicyStagedForUpdate {}.abi_encode()),
+            ),
+            error @ TeeRegistryError::StagedSuccessorV1PolicyInvalid(_) => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::StagedSuccessorV1PolicyHashingFailed(_) => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::SuccessorV1PolicyChunkIndexOverflow => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::SuccessorV1PolicyLengthOverflow => {
+                PrecompileError::Revert(error.to_string())
+            }
+            TeeRegistryError::CannotDiscardAnotherUpdateStagedPolicy => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ITeeRegistryV1::CannotDiscardAnotherUpdateStagedPolicy {}.abi_encode(),
+                ))
+            }
+            error @ TeeRegistryError::StoredV1PolicyNonCanonical(_) => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::StoredV1PolicyChainIdentityMismatch => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::StoredV1PolicyHashingFailed(_) => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::StoredV1PolicyHashMismatch => {
+                PrecompileError::Revert(error.to_string())
+            }
+            TeeRegistryError::NoV1PolicyActiveAtHeight => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::NoV1PolicyActiveAtHeight {}.abi_encode()),
+            ),
+            error @ TeeRegistryError::StoredV1PolicyLengthOverflow => {
+                PrecompileError::Revert(error.to_string())
+            }
+            TeeRegistryError::V1PolicyNotInstalled => PrecompileError::RevertBytes(Bytes::from(
+                ITeeRegistryV1::V1PolicyNotInstalled {}.abi_encode(),
+            )),
+            error @ TeeRegistryError::StoredV1PolicyExceedsCap => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::StoredV1PolicyIndexOverflow => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::StoredStagedV1PolicyLengthOverflow => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::StagedV1PolicyEmptyRead => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::StoredStagedV1PolicyExceedsCap => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::StoredStagedV1PolicyIndexOverflow => {
+                PrecompileError::Revert(error.to_string())
+            }
+            TeeRegistryError::InitialV1PolicyChainIdentityMismatch => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::InitialV1PolicyChainIdentityMismatch {}.abi_encode()),
+            ),
+            TeeRegistryError::InitialV1PolicyAttestationModeDisallowed => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ITeeRegistryV1::InitialV1PolicyAttestationModeDisallowed {}.abi_encode(),
+                ))
+            }
+            TeeRegistryError::InitialV1PolicyInvalidVersionOrHeight => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ITeeRegistryV1::InitialV1PolicyInvalidVersionOrHeight {}.abi_encode(),
+                ))
+            }
+            TeeRegistryError::V1PolicyVersionOverflow => PrecompileError::RevertBytes(Bytes::from(
+                ITeeRegistryV1::V1PolicyVersionOverflow {}.abi_encode(),
+            )),
+            TeeRegistryError::SuccessorV1PolicyActivationNotInFuture => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ITeeRegistryV1::SuccessorV1PolicyActivationNotInFuture {}.abi_encode(),
+                ))
+            }
+            TeeRegistryError::StagedSuccessorV1PolicyWrongProposal => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::StagedSuccessorV1PolicyWrongProposal {}.abi_encode()),
+            ),
+            TeeRegistryError::SuccessorV1PolicyActivationHeightNotReached => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ITeeRegistryV1::SuccessorV1PolicyActivationHeightNotReached {}.abi_encode(),
+                ))
+            }
+            error @ TeeRegistryError::StagedSuccessorV1PolicyChangesAttestationMode => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::StagedSuccessorV1PolicyBrokenLineage => {
+                PrecompileError::Revert(error.to_string())
+            }
+            error @ TeeRegistryError::FatalV1PolicyVersionOverflow => {
+                PrecompileError::Revert(error.to_string())
+            }
+            TeeRegistryError::SuccessorV1PolicyChainIdentityMismatch => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ITeeRegistryV1::SuccessorV1PolicyChainIdentityMismatch {}.abi_encode(),
+                ))
+            }
+            TeeRegistryError::SuccessorV1PolicyCannotChangeAttestationMode => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ITeeRegistryV1::SuccessorV1PolicyCannotChangeAttestationMode {}.abi_encode(),
+                ))
+            }
+            TeeRegistryError::SuccessorV1PolicyInvalidVersion => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::SuccessorV1PolicyInvalidVersion {}.abi_encode()),
+            ),
+            TeeRegistryError::SuccessorV1PolicyPredecessorHashMismatch => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ITeeRegistryV1::SuccessorV1PolicyPredecessorHashMismatch {}.abi_encode(),
+                ))
+            }
+            TeeRegistryError::RegistrationCallerAssociationMismatch => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ITeeRegistryV1::RegistrationCallerAssociationMismatch {}.abi_encode(),
+                ))
+            }
+            TeeRegistryError::RegistrationCallerAlreadyAssociated => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::RegistrationCallerAlreadyAssociated {}.abi_encode()),
+            ),
+            TeeRegistryError::RegistrationCallerNotAssociatedWithExistingNodeHost => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ITeeRegistryV1::RegistrationCallerNotAssociatedWithExistingNodeHost {}
+                        .abi_encode(),
+                ))
+            }
+            TeeRegistryError::JailedValidatorCannotRejoin => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::JailedValidatorCannotRejoin {}.abi_encode()),
+            ),
+            TeeRegistryError::MutatorCallerNotAssociated => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::MutatorCallerNotAssociated {}.abi_encode()),
+            ),
+            TeeRegistryError::InitialAssociationTargetMismatch => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::InitialAssociationTargetMismatch {}.abi_encode()),
+            ),
+            TeeRegistryError::ValidatorNodeBindingPopInvalid => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::ValidatorNodeBindingPopInvalid {}.abi_encode()),
+            ),
+            TeeRegistryError::ValidatorNodeBindingUnregisteredNodeHost => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ITeeRegistryV1::ValidatorNodeBindingUnregisteredNodeHost {}.abi_encode(),
+                ))
+            }
+            TeeRegistryError::ValidatorNodeBindingExpiredNodeHost => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::ValidatorNodeBindingExpiredNodeHost {}.abi_encode()),
+            ),
+            TeeRegistryError::ValidatorNodeBindingRetiredEnclave => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::ValidatorNodeBindingRetiredEnclave {}.abi_encode()),
+            ),
+            TeeRegistryError::ValidatorAlreadyBoundToAnotherNodeHost => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ITeeRegistryV1::ValidatorAlreadyBoundToAnotherNodeHost {}.abi_encode(),
+                ))
+            }
+            error @ TeeRegistryError::InconsistentRegistrationAndAssociationOutcomes => {
+                PrecompileError::Revert(error.to_string())
+            }
+            TeeRegistryError::IntentOperationOrModeMismatch => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::IntentOperationOrModeMismatch {}.abi_encode()),
+            ),
+            TeeRegistryError::IntentPolicyHashMismatch => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::IntentPolicyHashMismatch {}.abi_encode()),
+            ),
+            TeeRegistryError::EnclaveIdDerivationMismatch => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::EnclaveIdDerivationMismatch {}.abi_encode()),
+            ),
+            TeeRegistryError::NodePopInvalid => PrecompileError::RevertBytes(Bytes::from(
+                ITeeRegistryV1::NodePopInvalid {}.abi_encode(),
+            )),
+            TeeRegistryError::EnclavePopInvalid => PrecompileError::RevertBytes(Bytes::from(
+                ITeeRegistryV1::EnclavePopInvalid {}.abi_encode(),
+            )),
+            TeeRegistryError::ClaimsMeasurementRuleMatchInvalid => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::ClaimsMeasurementRuleMatchInvalid {}.abi_encode()),
+            ),
+            TeeRegistryError::PlatformTcbStatusDisallowed => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::PlatformTcbStatusDisallowed {}.abi_encode()),
+            ),
+            TeeRegistryError::LiveCandidateAlreadyExists => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::LiveCandidateAlreadyExists {}.abi_encode()),
+            ),
+            TeeRegistryError::PreparedUpgradeBindingCancelledOrConsumed => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ITeeRegistryV1::PreparedUpgradeBindingCancelledOrConsumed {}.abi_encode(),
+                ))
+            }
+            TeeRegistryError::TransitionDoesNotMatchLiveCandidate => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::TransitionDoesNotMatchLiveCandidate {}.abi_encode()),
+            ),
+            error @ TeeRegistryError::CandidateCrossedActiveBindingWriteBoundary => {
+                PrecompileError::Revert(error.to_string())
+            }
+            TeeRegistryError::PolicyChangeRequiresMeasurementTransition => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ITeeRegistryV1::PolicyChangeRequiresMeasurementTransition {}.abi_encode(),
+                ))
+            }
+            TeeRegistryError::LiveBindingMustRenew => PrecompileError::RevertBytes(Bytes::from(
+                ITeeRegistryV1::LiveBindingMustRenew {}.abi_encode(),
+            )),
+            TeeRegistryError::ExpiredRejoinChangesAuthorization => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::ExpiredRejoinChangesAuthorization {}.abi_encode()),
+            ),
+            TeeRegistryError::ExpiredRejoinVersionMismatch => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::ExpiredRejoinVersionMismatch {}.abi_encode()),
+            ),
+            TeeRegistryError::InitialRegistrationCountersNonCanonical => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ITeeRegistryV1::InitialRegistrationCountersNonCanonical {}.abi_encode(),
+                ))
+            }
+            TeeRegistryError::CannotRenewMissingBinding => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::CannotRenewMissingBinding {}.abi_encode()),
+            ),
+            TeeRegistryError::RenewalVersionOrNonceMismatch => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::RenewalVersionOrNonceMismatch {}.abi_encode()),
+            ),
+            TeeRegistryError::CannotReplaceMissingBinding => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::CannotReplaceMissingBinding {}.abi_encode()),
+            ),
+            TeeRegistryError::ReplacementChangesAuthorization => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::ReplacementChangesAuthorization {}.abi_encode()),
+            ),
+            TeeRegistryError::ReplacementRequiresFreshIds => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::ReplacementRequiresFreshIds {}.abi_encode()),
+            ),
+            TeeRegistryError::ReplacementVersionMismatch => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::ReplacementVersionMismatch {}.abi_encode()),
+            ),
+            TeeRegistryError::CannotTransitionMissingBinding => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::CannotTransitionMissingBinding {}.abi_encode()),
+            ),
+            TeeRegistryError::TransitionChangesAuthorization => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::TransitionChangesAuthorization {}.abi_encode()),
+            ),
+            TeeRegistryError::TransitionRequiresFreshIds => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::TransitionRequiresFreshIds {}.abi_encode()),
+            ),
+            TeeRegistryError::TransitionCountersMismatch => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::TransitionCountersMismatch {}.abi_encode()),
+            ),
+            error @ TeeRegistryError::RenewalBindingDisappeared => {
+                PrecompileError::Revert(error.to_string())
+            }
+            TeeRegistryError::RenewalDeadlineOverflow => PrecompileError::RevertBytes(Bytes::from(
+                ITeeRegistryV1::RenewalDeadlineOverflow {}.abi_encode(),
+            )),
+            TeeRegistryError::RenewalMustExtendOneLeasePeriod => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::RenewalMustExtendOneLeasePeriod {}.abi_encode()),
+            ),
+            TeeRegistryError::RequestedLeaseExpired => PrecompileError::RevertBytes(Bytes::from(
+                ITeeRegistryV1::RequestedLeaseExpired {}.abi_encode(),
+            )),
+            TeeRegistryError::RequestedLeaseOutsideBounds => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::RequestedLeaseOutsideBounds {}.abi_encode()),
+            ),
+            TeeRegistryError::CollateralMarginExhausted => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::CollateralMarginExhausted {}.abi_encode()),
+            ),
+            TeeRegistryError::RequestedLeaseExceedsCollateralValidity => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ITeeRegistryV1::RequestedLeaseExceedsCollateralValidity {}.abi_encode(),
+                ))
+            }
+            TeeRegistryError::EnclaveAlreadyBoundToAnotherNode => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::EnclaveAlreadyBoundToAnotherNode {}.abi_encode()),
+            ),
+            TeeRegistryError::BindingIdAlreadyUsedByAnotherNode => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::BindingIdAlreadyUsedByAnotherNode {}.abi_encode()),
+            ),
+            error @ TeeRegistryError::StoredRenewalReverseOwnershipInconsistent => {
+                PrecompileError::Revert(error.to_string())
+            }
+            TeeRegistryError::SuccessorIdsAlreadyUsed => PrecompileError::RevertBytes(Bytes::from(
+                ITeeRegistryV1::SuccessorIdsAlreadyUsed {}.abi_encode(),
+            )),
+            error @ TeeRegistryError::ExpiredRejoinReverseOwnershipInconsistent => {
+                PrecompileError::Revert(error.to_string())
+            }
+            TeeRegistryError::ExpiredRejoinEnclaveNotAvailable => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::ExpiredRejoinEnclaveNotAvailable {}.abi_encode()),
+            ),
+            TeeRegistryError::ExpiredRejoinBindingIdAlreadyUsed => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::ExpiredRejoinBindingIdAlreadyUsed {}.abi_encode()),
+            ),
         }
     }
 }
@@ -976,19 +1650,13 @@ impl From<RegisterAbiError> for PrecompileError {
     }
 }
 
-/// Extracts the deterministic revert message from `error` in unit tests.
-#[cfg(all(test, feature = "tee-attestation-v1"))]
-pub(crate) fn extract_revert_message(error: PrecompileError) -> String {
-    match error {
-        PrecompileError::Revert(message) => message,
-        other => panic!("expected deterministic revert, got {other:?}"),
-    }
-}
-
 /// Returns true when `error` is a fatal precompile error in unit tests.
 #[cfg(all(test, feature = "tee-attestation-v1"))]
 pub(crate) fn is_fatal_error(error: &PrecompileError) -> bool {
-    matches!(error, PrecompileError::Revert(_))
+    matches!(
+        error,
+        PrecompileError::Revert(_) | PrecompileError::RevertBytes(_)
+    )
 }
 
 /// Returns true when `error` is a fatal precompile error that contains `needle`.
@@ -1001,4 +1669,43 @@ pub(crate) fn is_fatal_containing(error: &PrecompileError, needle: &str) -> bool
 #[cfg(all(test, feature = "tee-attestation-v1"))]
 pub(crate) fn format_test_error(error: impl std::fmt::Display) -> String {
     error.to_string()
+}
+
+#[cfg(test)]
+mod abi_tests {
+    use super::*;
+
+    #[test]
+    fn caller_revert_decodes_length_and_nested_registration_abi() {
+        let bytes =
+            match PrecompileError::from(TeeRegistryError::AttestationEvidenceExceedsMaxBytes(65)) {
+                PrecompileError::RevertBytes(bytes) => bytes,
+                other => panic!("expected typed revert bytes, got {other:?}"),
+            };
+        let decoded = ITeeRegistryV1::AttestationEvidenceExceedsMaxBytes::abi_decode(&bytes)
+            .expect("length payload");
+        assert_eq!(decoded.value, 65);
+
+        let bytes = match PrecompileError::from(TeeRegistryError::InvalidCanonicalRegistrationAbi(
+            RegisterAbiError::MissingFunctionSelector,
+        )) {
+            PrecompileError::RevertBytes(bytes) => bytes,
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        };
+        assert_eq!(
+            &bytes[..4],
+            &ITeeRegistryV1::MissingFunctionSelector::SELECTOR
+        );
+
+        match PrecompileError::from(TeeRegistryError::FieldExceedsCanonicalWidth("quote")) {
+            PrecompileError::Revert(message) => assert!(message.contains("quote")),
+            other => panic!("expected string revert, got {other:?}"),
+        }
+        match PrecompileError::from(TeeRegistryError::DcapVerifierUnavailable(
+            "down".to_string(),
+        )) {
+            PrecompileError::EnclaveUnavailable(message) => assert!(message.contains("down")),
+            other => panic!("expected enclave unavailability, got {other:?}"),
+        }
+    }
 }

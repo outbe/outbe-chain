@@ -214,7 +214,10 @@ fn read_length_prefixed(input: &[u8], cur: &mut usize, field: &'static str) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::precompile::ISlashIndicator as I;
     use alloy_primitives::b256;
+    use alloy_sol_types::SolError;
+    use outbe_primitives::error::PrecompileError;
 
     fn sample() -> InvalidVrfProofEvidence {
         InvalidVrfProofEvidence {
@@ -260,7 +263,9 @@ mod tests {
     fn decode_rejects_short_input() {
         let buf = vec![0u8; FIXED_PREFIX_LEN - 1];
         let err = InvalidVrfProofEvidence::decode(&buf).unwrap_err();
-        assert!(format!("{err}").contains("too short"));
+        assert!(
+            matches!(err, PrecompileError::RevertBytes(bytes) if bytes.as_ref() == I::InvalidVrfEvidenceInputTooShort { actual: 98, min_len: 99 }.abi_encode())
+        );
     }
 
     #[test]
@@ -268,7 +273,9 @@ mod tests {
         let mut encoded = sample().encode();
         encoded[0] ^= 0xFF;
         let err = InvalidVrfProofEvidence::decode(&encoded).unwrap_err();
-        assert!(format!("{err}").contains("bad magic"));
+        assert!(
+            matches!(err, PrecompileError::RevertBytes(bytes) if bytes.as_ref() == I::InvalidVrfEvidenceBadMagic {}.abi_encode())
+        );
     }
 
     #[test]
@@ -276,7 +283,9 @@ mod tests {
         let mut encoded = sample().encode();
         encoded[4] = VERSION.wrapping_add(1);
         let err = InvalidVrfProofEvidence::decode(&encoded).unwrap_err();
-        assert!(format!("{err}").contains("unsupported version"));
+        assert!(
+            matches!(err, PrecompileError::RevertBytes(bytes) if bytes.as_ref() == I::InvalidVrfEvidenceUnsupportedVersion { version: 3, expected: 2 }.abi_encode())
+        );
     }
 
     #[test]
@@ -287,7 +296,9 @@ mod tests {
         let len_off = FIXED_PREFIX_LEN - 4;
         encoded[len_off..len_off + 4].copy_from_slice(&u32::MAX.to_be_bytes());
         let err = InvalidVrfProofEvidence::decode(&encoded).unwrap_err();
-        assert!(format!("{err}").contains("exceeds remaining input"));
+        assert!(
+            matches!(err, PrecompileError::RevertBytes(bytes) if bytes.as_ref() == I::InvalidVrfEvidenceFieldExceedsInput { field: "phase1_tx".into(), len: u64::from(u32::MAX), remaining: 33 }.abi_encode())
+        );
     }
 
     #[test]
@@ -295,7 +306,9 @@ mod tests {
         let mut encoded = sample().encode();
         encoded.push(0xFF);
         let err = InvalidVrfProofEvidence::decode(&encoded).unwrap_err();
-        assert!(format!("{err}").contains("trailing bytes"));
+        assert!(
+            matches!(err, PrecompileError::RevertBytes(bytes) if bytes.as_ref() == I::InvalidVrfEvidenceTrailingBytes { trailing: 1 }.abi_encode())
+        );
     }
 
     #[test]

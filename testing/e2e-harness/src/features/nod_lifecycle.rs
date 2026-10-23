@@ -56,8 +56,8 @@ const FORFEIT_TIMEOUT: Duration = Duration::from_secs(300);
 const MAX_DEV_NOTICE_SECS: u32 = 3_600;
 /// Slack past the deadline so the sweep has a block to run in.
 const NOTICE_MARGIN_SECS: u64 = 5;
-/// Width of a forfeit-queue bucket. The sweep opens one only once its hour has closed.
-const EXPIRY_BUCKET_SECS: u64 = 3_600;
+/// Forfeits become eligible after the UTC day containing the deadline closes.
+const EXPIRY_DAY_SECS: u64 = 86_400;
 
 pub(crate) struct NodLifecycle;
 
@@ -222,7 +222,7 @@ impl Lifecycle for NodLifecycle {
         let pool = eth::read_call_at(
             &url,
             addresses::PROMIS_LIMIT_ADDR,
-            &eth::IPromisLimit::totalUnallocatedCall {},
+            &eth::IPromisLimit::promisLimitCall {},
             height,
         )
         .expect("unallocated pool before the forfeit");
@@ -242,11 +242,11 @@ impl Lifecycle for NodLifecycle {
             DEPLOYER_KEY,
             &INodFactoryTestArming::closeCallNoticeForTestCall {
                 groupKey: called.groupKey,
-                deadline: head_time(world).saturating_sub(EXPIRY_BUCKET_SECS),
+                deadline: head_time(world).saturating_sub(EXPIRY_DAY_SECS),
             },
             None,
         )
-        .expect("close the expiry bucket the Nod group sits in");
+        .expect("arm the Nod group's closed deadline day");
     }
 
     fn assert_forfeited(&self, world: &World) {
@@ -282,7 +282,7 @@ impl Lifecycle for NodLifecycle {
             eth::read_call_at(
                 &url,
                 addresses::PROMIS_LIMIT_ADDR,
-                &eth::IPromisLimit::totalUnallocatedCall {},
+                &eth::IPromisLimit::promisLimitCall {},
                 height,
             ),
             Some(before + load),

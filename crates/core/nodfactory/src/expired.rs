@@ -7,29 +7,52 @@ use outbe_primitives::{
     error::{PrecompileError, Result, SweepFailure},
     expiry_queue::{self, Due, ExpiryHandler},
     storage::StorageHandle,
+    sweep_budget::SweepBudget,
 };
 
 use crate::precompile::INodFactory;
 use crate::runtime::emit_event;
-use outbe_nod::state::ExpiryHours;
+use outbe_nod::state::ExpiryDays;
 use outbe_nod::{precompile::INod, schema::NodContract};
 
 /// Forfeits the called groups whose notice period lapsed. Returns the groups forfeited.
+#[cfg(any(test, feature = "test-utils"))]
 pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = NodContract::new(ctx.storage.clone());
-    let mut expiry = NodExpiry {
-        storage: &ctx.storage,
-        nod: NodContract::new(ctx.storage.clone()),
-        forfeited: 0,
-    };
-    expiry_queue::sweep_block(&ExpiryHours(&queue), ctx, &mut expiry)?;
+    let mut expiry = NodExpiry::new(ctx);
+    expiry_queue::sweep_block(&ExpiryDays(&queue), ctx, &mut expiry)?;
     Ok(expiry.forfeited)
+}
+
+pub(crate) fn sweep_through(
+    ctx: &BlockRuntimeContext,
+    through_day: u32,
+    budget: &mut SweepBudget,
+) -> Result<expiry_queue::Progress> {
+    let queue = NodContract::new(ctx.storage.clone());
+    expiry_queue::sweep_day(
+        &ExpiryDays(&queue),
+        ctx,
+        through_day,
+        budget,
+        &mut NodExpiry::new(ctx),
+    )
 }
 
 struct NodExpiry<'a, 's> {
     storage: &'a StorageHandle<'s>,
     nod: NodContract<'s>,
     forfeited: u32,
+}
+
+impl<'a, 's> NodExpiry<'a, 's> {
+    fn new(ctx: &'a BlockRuntimeContext<'s>) -> Self {
+        Self {
+            storage: &ctx.storage,
+            nod: NodContract::new(ctx.storage.clone()),
+            forfeited: 0,
+        }
+    }
 }
 
 /// A called group forfeits as one: it is its own and only member.
@@ -65,7 +88,7 @@ impl ExpiryHandler<B256> for NodExpiry<'_, '_> {
         let load = self.nod.group_unpaid_load.read(&group)?;
         if !load.is_zero() {
             outbe_promislimit::PromisLimitContract::new(self.storage.clone())
-                .add_to_total_unallocated(load)?;
+                .checked_credit(load)?;
         }
         self.nod.group_unpaid_load.clear(&group)?;
         self.nod.hand_to_cleanup(group)?;

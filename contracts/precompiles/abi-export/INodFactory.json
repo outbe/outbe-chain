@@ -263,5 +263,157 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "CallPriceOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CreateNodForTest",
+    "inputs": [
+      {
+        "name": "reason",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DateStep",
+    "inputs": [
+      {
+        "name": "kind",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "dateKey",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "EmptyGroupMemberSlotDuringCleanup",
+    "inputs": [
+      {
+        "name": "groupKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "EntryPriceOutOfBounds",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "GroupNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "GroupNotQueuedForTest",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "IneligibleGroupMember",
+    "inputs": [
+      {
+        "name": "groupKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "nodId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InsufficientProofOfWork",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidEncryptedNod",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidOwner",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MissingGroupForCall",
+    "inputs": [
+      {
+        "name": "groupKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "MissingGroupMemberRecordDuringCleanup",
+    "inputs": [
+      {
+        "name": "groupKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "nodId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "MissingGroupRecordDuringCleanup",
+    "inputs": [
+      {
+        "name": "groupKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NodAlreadyExists",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NodAlreadySettled",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NodNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NodNotSettled",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SettlementDeadlinePassed",
+    "inputs": []
   }
 ]

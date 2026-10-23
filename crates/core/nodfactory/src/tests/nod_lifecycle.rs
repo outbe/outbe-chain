@@ -35,8 +35,8 @@ use outbe_primitives::time::SECONDS_PER_DAY as DAY;
 /// The notice period a group seals at issuance, in the width these tests
 /// do timestamp arithmetic in.
 const NOTICE: u64 = CALL_NOTICE_PERIOD as u64;
-/// Past a deadline by enough that the hour it falls in has closed.
-const HOUR: u64 = 3_600;
+/// Adding this delay to a deadline advances time past the end of its UTC day.
+const CLOSED_DAY_DELAY: u64 = DAY;
 const ISO: u16 = 840;
 const OTHER_ISO: u16 = 978;
 /// Issuance instant, 2027-01-15 08:00 UTC.
@@ -108,7 +108,8 @@ fn nod_item_issued(
                 issued_at,
                 outbe_primitives::markup::marked_up(entry_price_minor, CALL_RATE_PCT).unwrap(),
                 iso,
-            ),
+            )
+            .expect("date step"),
             issuance_currency: iso,
             reference_currency: iso,
             issued_at,
@@ -132,7 +133,7 @@ fn register(storage: &StorageHandle<'_>, iso: u16) {
 }
 
 fn last_closed_day(timestamp: u64) -> u32 {
-    previous_date_key(timestamp_to_date_key(timestamp))
+    previous_date_key(timestamp_to_date_key(timestamp)).expect("date step")
 }
 
 fn bump_watermark(storage: &StorageHandle<'_>, utc_day: u32) {
@@ -157,7 +158,7 @@ fn fill_days_for(storage: &StorageHandle<'_>, iso: u16, latest: u32, days: u32, 
     let mut day = latest;
     for _ in 0..days {
         set_vwap_for(storage, iso, day, value);
-        day = previous_date_key(day);
+        day = previous_date_key(day).expect("date step");
     }
 }
 
@@ -195,10 +196,22 @@ fn add(storage: &StorageHandle<'_>, item: &NodItemState) {
 /// One block's call scan and forfeits, then its cleanup. Returns the groups called and
 /// forfeited.
 fn scan(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
-    let ctx = block_at(storage, timestamp);
-    let decided =
-        crate::called::scan_and_call(&ctx).unwrap() + crate::expired::sweep_expired(&ctx).unwrap();
-    crate::cleanup::sweep_cleanup(&ctx).unwrap();
+    let nod = NodContract::new(storage.clone());
+    let mut decided = 0;
+    // This loop simulates catch-up blocks. It never refills a pending day's allowance within one block.
+    loop {
+        decided += slice(storage, timestamp);
+        let selected = outbe_primitives::sweep_budget::BlockAllowance::unpack(
+            nod.daily_budget.read().unwrap(),
+        )
+        .unwrap()
+        .unwrap()
+        .day;
+        let next = nod.call_sweep_day.read().unwrap();
+        if next == 0 || next == selected {
+            break;
+        }
+    }
     decided
 }
 
@@ -216,8 +229,24 @@ fn forfeit_block(
 }
 
 fn block_at<'s>(storage: &StorageHandle<'s>, timestamp: u64) -> BlockRuntimeContext<'s> {
+    let nod = NodContract::new(storage.clone());
+    if nod.daily_genesis_day.read().unwrap() == 0 {
+        // This fixture starts its pass on the first observation day under test.
+        nod.daily_genesis_day
+            .write(last_closed_day(timestamp))
+            .unwrap();
+    }
+    let height = [
+        nod.daily_budget.read().unwrap(),
+        nod.cleanup_budget.read().unwrap(),
+    ]
+    .into_iter()
+    .filter_map(|packed| outbe_primitives::sweep_budget::BlockAllowance::unpack(packed).unwrap())
+    .map(|previous| previous.height + 1)
+    .max()
+    .unwrap_or(BLOCK_NUMBER);
     BlockRuntimeContext::new(
-        BlockContext::empty_for_tests(BLOCK_NUMBER, timestamp, CHAIN_ID),
+        BlockContext::empty_for_tests(height, timestamp, CHAIN_ID),
         storage.clone(),
     )
 }
@@ -233,7 +262,7 @@ fn is_queued(storage: &StorageHandle<'_>, group_key: B256) -> bool {
 /// Promis Reserve balance - what a forfeited `gratis_load_minor` returns to.
 fn reserve(storage: &StorageHandle<'_>) -> U256 {
     outbe_promislimit::PromisLimitContract::new(storage.clone())
-        .get_total_unallocated()
+        .promis_limit()
         .unwrap()
 }
 
@@ -289,7 +318,7 @@ fn arm_lapsed(storage: &StorageHandle<'_>, specs: &[(u8, u64, bool)]) -> (B256, 
         above_call(),
     );
     assert_eq!(scan(storage, at), 1);
-    finalize_through(storage, at + NOTICE + HOUR);
+    finalize_through(storage, at + NOTICE + CLOSED_DAY_DELAY);
     (group_key, items)
 }
 
@@ -369,7 +398,7 @@ fn issuance_seals_the_call_terms_on_the_group() {
                 .unwrap()
                 .full_day_after_issue
                 .value(),
-            first_full_day(START)
+            first_full_day(START).expect("date step")
         );
         assert_ne!(
             nod.call_group_slot.read(&item.group_key).unwrap(),
@@ -393,7 +422,8 @@ fn an_unset_profile_seals_the_dev_terms_off_mainnet() {
             item.issued_at,
             outbe_primitives::markup::marked_up(entry_price(), dev.call_rate).unwrap(),
             ISO,
-        );
+        )
+        .expect("date step");
         add(storage, &item);
         assert_eq!(
             (
@@ -430,14 +460,14 @@ fn a_late_nod_opens_a_new_group_instead_of_joining_a_called_one() {
                 ISO,
                 entry_price(),
                 WWD,
-                at + HOUR,
+                at + CLOSED_DAY_DELAY,
             ),
         );
         assert_ne!(first.group_key, late.group_key);
         assert_eq!(called_at(storage, first.group_key), at);
         assert_eq!(called_at(storage, late.group_key), 0);
 
-        let past = at + NOTICE + HOUR;
+        let past = at + NOTICE + CLOSED_DAY_DELAY;
         finalize_through(storage, past);
         assert_eq!(scan(storage, past), 1);
         assert!(api::get_item(storage, first.nod_id).unwrap().is_none());
@@ -477,6 +507,13 @@ fn the_scan_follows_the_terms_sealed_on_the_group_not_the_constants() {
                 notice_days: 1,
             },
         );
+        assert_eq!(
+            scan(storage, at),
+            0,
+            "completed days cannot reopen after retuning"
+        );
+        let at = at + DAY;
+        set_vwap_for(storage, ISO, last_closed_day(at), above_call());
         assert_eq!(scan(storage, at), 1);
         assert_eq!(called_at(storage, item.group_key), at);
 
@@ -486,9 +523,9 @@ fn the_scan_follows_the_terms_sealed_on_the_group_not_the_constants() {
             at + DAY,
             "the deadline follows the sealed notice period"
         );
-        finalize_through(storage, at + DAY + HOUR);
+        finalize_through(storage, at + DAY + CLOSED_DAY_DELAY);
         assert_eq!(scan(storage, at + DAY), 0, "not past it yet");
-        assert_eq!(scan(storage, at + DAY + HOUR), 1);
+        assert_eq!(scan(storage, at + DAY + CLOSED_DAY_DELAY), 1);
         assert!(api::get_item(storage, item.nod_id).unwrap().is_none());
     });
 }
@@ -592,7 +629,7 @@ fn the_window_absorbs_below_call_days_up_to_the_slack() {
                 set_vwap_for(storage, ISO, day, below_call());
                 dropped += 1;
             }
-            day = previous_date_key(day);
+            day = previous_date_key(day).expect("date step");
             offset += 1;
         }
 
@@ -656,7 +693,7 @@ fn the_issue_day_counts_only_for_a_nod_issued_at_midnight() {
     let latest = last_closed_day(scan_at);
     let mut oldest_breach = latest;
     for _ in 1..CALL_THRESHOLD_DAYS {
-        oldest_breach = previous_date_key(oldest_breach);
+        oldest_breach = previous_date_key(oldest_breach).expect("date step");
     }
     let midnight = date_key_to_utc_timestamp(oldest_breach);
 
@@ -707,7 +744,7 @@ fn a_delayed_issuance_does_not_count_pre_issuance_wwd_days() {
         );
         let issuance_utc_day = timestamp_to_date_key(START);
         fill_days(storage, issuance_utc_day, CALL_THRESHOLD_DAYS, above_call());
-        let scan_at = date_key_to_utc_timestamp(first_full_day(START));
+        let scan_at = date_key_to_utc_timestamp(first_full_day(START).expect("date step"));
         finalize_through(storage, scan_at);
         assert_eq!(scan(storage, scan_at), 0);
         assert_eq!(called_at(storage, item.group_key), 0);
@@ -768,22 +805,25 @@ fn call_group(storage: &StorageHandle<'_>, owner: Address, at: u64) -> NodItemSt
 }
 
 #[test]
-fn the_notice_period_burns_once_the_hour_of_its_deadline_closes() {
+fn the_notice_period_burns_once_the_day_of_its_deadline_closes() {
     harness(|storage| {
         let at = START + 30 * DAY;
         let item = call_group(storage, Address::repeat_byte(0x11), at);
         let deadline = at + NOTICE;
 
-        // At the deadline and through the rest of its hour the Nod survives.
-        for now in [deadline, deadline + HOUR - 1] {
+        let day_end = outbe_primitives::expiry_queue::day_end(
+            outbe_primitives::expiry_queue::deadline_day(deadline).unwrap(),
+        );
+        // Exact settlement state is independent of delayed physical deletion.
+        for now in [deadline, deadline + 1, day_end - 1] {
             finalize_through(storage, now);
             assert_eq!(scan(storage, now), 0);
             assert!(api::get_item(storage, item.nod_id).unwrap().is_some());
         }
 
-        // Once the hour closes, the Nod is forfeit-burned.
-        finalize_through(storage, deadline + HOUR);
-        assert_eq!(scan(storage, deadline + HOUR), 1);
+        // The first midnight after the deadline makes the queue entry eligible.
+        finalize_through(storage, day_end);
+        assert_eq!(scan(storage, day_end), 1);
         assert!(api::get_item(storage, item.nod_id).unwrap().is_none());
     });
 }
@@ -801,7 +841,7 @@ fn forfeiting_the_last_member_drops_the_group_from_the_call_index() {
             "the call moved the group out of its bin"
         );
 
-        let past = at + NOTICE + HOUR;
+        let past = at + NOTICE + CLOSED_DAY_DELAY;
         finalize_through(storage, past);
         assert_eq!(scan(storage, past), 1);
 
@@ -906,7 +946,7 @@ fn every_member_of_a_lapsed_group_burns_in_one_pass() {
         );
         assert_eq!(scan(storage, at), 1);
 
-        let past = at + NOTICE + HOUR;
+        let past = at + NOTICE + CLOSED_DAY_DELAY;
         finalize_through(storage, past);
         assert_eq!(scan(storage, past), 1, "the group forfeits as one");
 
@@ -946,7 +986,7 @@ fn a_lapsed_group_returns_every_forfeited_load_to_the_promis_reserve() {
         // The call alone forfeits nothing, so nothing is returned yet.
         assert_eq!(reserve(storage), U256::ZERO);
 
-        let past = at + NOTICE + HOUR;
+        let past = at + NOTICE + CLOSED_DAY_DELAY;
         finalize_through(storage, past);
         assert_eq!(scan(storage, past), 1);
 
@@ -984,7 +1024,7 @@ fn a_group_inside_its_notice_waits_while_its_neighbours_burn() {
         // Keep the middle group inside its notice. The sweep burns the two around it.
         let mut nod = NodContract::new(storage.clone());
         let kept = items[1].group_key;
-        let past = at + NOTICE + HOUR;
+        let past = at + NOTICE + CLOSED_DAY_DELAY;
         nod.remove_called(kept).unwrap();
         nod.push_called(kept, past + NOTICE).unwrap();
         finalize_through(storage, past);
@@ -1028,7 +1068,7 @@ fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
             (0..CALL_LOOKBACK_DAYS)
                 .map(|_| {
                     let entry = (day, Some(above_call()));
-                    day = previous_date_key(day);
+                    day = previous_date_key(day).expect("date step");
                     entry
                 })
                 .collect(),
@@ -1103,11 +1143,24 @@ fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
 }
 
 fn slice(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
+    let nod = NodContract::new(storage.clone());
+    let groups: std::collections::HashSet<_> = nod
+        .all_ids
+        .read_all()
+        .unwrap()
+        .into_iter()
+        .filter_map(|id| api::get_item(storage, id).unwrap())
+        .filter(|item| is_queued(storage, item.group_key))
+        .map(|item| item.group_key)
+        .collect();
     let ctx = block_at(storage, timestamp);
-    let decided =
-        crate::called::run_call_slice(&ctx).unwrap() + crate::expired::sweep_expired(&ctx).unwrap();
+    let called = crate::called::run_call_slice(&ctx).unwrap();
     crate::cleanup::sweep_cleanup(&ctx).unwrap();
-    decided
+    called
+        + groups
+            .into_iter()
+            .filter(|group| !is_queued(storage, *group))
+            .count() as u32
 }
 
 /// A forfeited group's Nods read Forfeited until the cleanup deletes them, and the
@@ -1115,7 +1168,7 @@ fn slice(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
 #[test]
 fn a_forfeited_group_reads_forfeited_until_the_cleanup_deletes_it() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    let past = START + 30 * DAY + NOTICE + HOUR;
+    let past = START + 30 * DAY + NOTICE + CLOSED_DAY_DELAY;
     let items = StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
         register(&storage, ISO);
@@ -1166,11 +1219,29 @@ fn a_group_over_the_cleanup_budget_is_deleted_across_blocks_and_credited_once() 
             .map(|n| (0x40 + n, 1, false))
             .collect();
         let (group_key, _) = arm_lapsed(storage, &specs);
-        let past = START + 30 * DAY + NOTICE + HOUR;
+        let past = START + 30 * DAY + NOTICE + CLOSED_DAY_DELAY;
         assert_eq!(scan(storage, past), 1);
         let nod = NodContract::new(storage.clone());
         assert_eq!(nod.group_nod_count.read(&group_key).unwrap(), 1);
         assert_eq!(reserve(storage), U256::from(specs.len()));
+        let allowance = outbe_primitives::sweep_budget::BlockAllowance::unpack(
+            nod.cleanup_budget.read().unwrap(),
+        )
+        .unwrap()
+        .unwrap();
+        let same_height = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(allowance.height, past, CHAIN_ID),
+            storage.clone(),
+        );
+        assert_eq!(crate::cleanup::sweep_cleanup(&same_height).unwrap(), 0);
+        assert_eq!(nod.group_nod_count.read(&group_key).unwrap(), 1);
+        let after = outbe_primitives::sweep_budget::BlockAllowance::unpack(
+            nod.cleanup_budget.read().unwrap(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(after.budget.writes_left(), 0);
+        assert!(after.budget.visits_left() <= allowance.budget.visits_left());
 
         assert_eq!(slice(storage, past + 1), 0);
         assert_eq!(nod.group_nod_count.read(&group_key).unwrap(), 0);
@@ -1179,8 +1250,8 @@ fn a_group_over_the_cleanup_budget_is_deleted_across_blocks_and_credited_once() 
     });
 }
 
-/// Failing members of a forfeited group do not hold the cleanup. The others are
-/// deleted, and the group waits for the next hour.
+/// Failing members of a forfeited group do not prevent cleanup of the other members.
+/// The cleanup deletes the other members. The group waits for the current UTC day to close.
 #[test]
 fn failing_members_do_not_hold_the_cleanup() {
     harness(|storage| {
@@ -1201,15 +1272,18 @@ fn failing_members_do_not_hold_the_cleanup() {
                 .unwrap();
         }
 
-        let past = START + 30 * DAY + NOTICE + HOUR;
+        let past = START + 30 * DAY + NOTICE + CLOSED_DAY_DELAY;
         let ctx = block_at(storage, past);
         assert_eq!(crate::expired::sweep_expired(&ctx).unwrap(), 1);
         assert_eq!(crate::cleanup::sweep_cleanup(&ctx).unwrap(), 3);
         assert_eq!(reserve(storage), U256::from(25u64));
-        let (hour, _) = outbe_primitives::expiry_queue::unpack_slot(
+        let (day, _) = outbe_primitives::expiry_queue::unpack_slot(
             nod.cleanup_group_slot.read(&group_key).unwrap(),
         );
-        assert_eq!(hour, outbe_primitives::expiry_queue::bucket_of(past) + 1);
+        assert_eq!(
+            day,
+            outbe_primitives::expiry_queue::deadline_day(past).unwrap()
+        );
     });
 }
 
@@ -1218,7 +1292,7 @@ fn failing_members_do_not_hold_the_cleanup() {
 fn a_forfeit_does_not_need_the_enclave() {
     harness(|storage| {
         let (group_key, _) = arm_lapsed(storage, &[(0x61, 5, false)]);
-        let ctx = block_at(storage, START + 30 * DAY + NOTICE + HOUR);
+        let ctx = block_at(storage, START + 30 * DAY + NOTICE + CLOSED_DAY_DELAY);
 
         outbe_nod::test_support::uninstall();
         let forfeited = crate::expired::sweep_expired(&ctx);
@@ -1232,7 +1306,7 @@ fn a_forfeit_does_not_need_the_enclave() {
 }
 
 #[test]
-fn a_call_slice_out_of_visits_resumes_on_its_currency_without_holding_back_forfeits() {
+fn pending_calls_hold_forfeits_and_same_height_reentry_keeps_the_allowance() {
     harness(|storage| {
         register(storage, OTHER_ISO);
         let at = START + 30 * DAY;
@@ -1256,25 +1330,43 @@ fn a_call_slice_out_of_visits_resumes_on_its_currency_without_holding_back_forfe
         }
         let fresh = nod_item(Address::repeat_byte(0x22), OTHER_ISO);
         add(storage, &fresh);
-        let past = at + NOTICE + HOUR;
+        let past = at + NOTICE + CLOSED_DAY_DELAY;
         let latest = last_closed_day(past);
         fill_days(storage, latest, CALL_LOOKBACK_DAYS, above_call());
         fill_days_for(storage, OTHER_ISO, latest, CALL_LOOKBACK_DAYS, above_call());
         // The daily triggers in between walked their own days.
         nod.call_latest_day
-            .write(previous_date_key(latest))
+            .write(previous_date_key(latest).expect("date step"))
             .unwrap();
 
-        assert_eq!(scan(storage, past), 1, "the forfeit does not wait");
+        let ctx = block_at(storage, past);
+        assert_eq!(crate::called::run_call_slice(&ctx).unwrap(), 0);
         assert_eq!(
             nod.call_currency_cursor.read().unwrap(),
             u32::from(OTHER_ISO)
         );
         assert_eq!(called_at(storage, fresh.group_key), 0);
-        assert_eq!(nod.group_nod_count.read(&lapsed.group_key).unwrap(), 0);
+        assert_eq!(
+            nod.group_nod_count.read(&lapsed.group_key).unwrap(),
+            1,
+            "forfeits wait for all calls in the pinned day"
+        );
+        let allowance = nod.daily_budget.read().unwrap();
+        assert_eq!(crate::called::run_call_slice(&ctx).unwrap(), 0);
+        assert_eq!(
+            nod.daily_budget.read().unwrap(),
+            allowance,
+            "same-height entry cannot refill visits"
+        );
+        assert_eq!(nod.daily_phase.read().unwrap(), 0);
 
-        assert_eq!(slice(storage, past), 1);
+        assert_eq!(
+            slice(storage, past),
+            2,
+            "the next block finishes calls and then forfeits"
+        );
         assert_eq!(called_at(storage, fresh.group_key), past);
+        assert_eq!(nod.group_nod_count.read(&lapsed.group_key).unwrap(), 0);
         assert_eq!(nod.call_sweep_day.read().unwrap(), 0);
     });
 }
@@ -1323,21 +1415,24 @@ fn mixed_group_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_exercis
             above_call(),
         );
         assert_eq!(scan(storage, at), 1);
-        let past = at + NOTICE + HOUR;
+        let past = at + NOTICE + CLOSED_DAY_DELAY;
         finalize_through(storage, past);
         // A failed Promis credit leaves the group whole for the retry.
         let mut limit = outbe_promislimit::PromisLimitContract::new(storage.clone());
-        limit.checked_take_carry_over_up_to(U256::MAX).unwrap();
-        limit.checked_add_carry_over(U256::MAX).unwrap();
+        limit.checked_take_up_to(U256::MAX).unwrap();
+        limit.checked_credit(U256::MAX).unwrap();
         assert_eq!(scan(storage, past), 0);
         assert_eq!(nod.total_supply().unwrap(), 3);
         assert_eq!(nod.group_nod_count.read(&key).unwrap(), 2);
         assert!(api::get_item(storage, items[0].nod_id).unwrap().is_some());
         assert!(api::get_item(storage, items[2].nod_id).unwrap().is_some());
         assert_eq!(reserve(storage), U256::MAX);
-        limit.checked_take_carry_over_up_to(U256::MAX).unwrap();
-        // The failed group retries once the next hour closes.
-        let retry = past + 2 * HOUR;
+        limit.checked_take_up_to(U256::MAX).unwrap();
+        // The failed group retries at the next UTC midnight.
+        let retry = outbe_primitives::expiry_queue::day_end(
+            outbe_primitives::expiry_queue::deadline_day(past).unwrap(),
+        );
+        finalize_through(storage, retry);
         assert_eq!(scan(storage, retry), 1);
         let expected = outbe_nod::api::calculation_amount(&items[0]).unwrap()
             + outbe_nod::api::calculation_amount(&items[2]).unwrap();
@@ -1414,7 +1509,7 @@ fn a_fully_paid_group_is_not_called_and_corrupt_paid_membership_is_not_forfeited
                 item.nod_id,
             )
             .unwrap();
-        let past = at + NOTICE + HOUR;
+        let past = at + NOTICE + CLOSED_DAY_DELAY;
         finalize_through(storage, past);
         assert_eq!(scan(storage, past), 0);
         assert!(
@@ -1474,6 +1569,8 @@ fn a_running_call_sweep_keeps_its_day() {
 
         let nod = NodContract::new(storage.clone());
         nod.call_sweep_day.write(day).unwrap();
+        nod.call_latest_day.write(day).unwrap();
+        nod.daily_genesis_day.write(day).unwrap();
 
         let ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(BLOCK_NUMBER, later, CHAIN_ID),
@@ -1481,7 +1578,11 @@ fn a_running_call_sweep_keeps_its_day() {
         );
         crate::called::run_call_slice(&ctx).unwrap();
         assert_eq!(called_at(storage, item.group_key), later);
-        assert_eq!(nod.call_sweep_day.read().unwrap(), 0);
+        assert_eq!(
+            nod.call_sweep_day.read().unwrap(),
+            outbe_primitives::time::next_date_key(day).expect("date step"),
+            "only the pinned day ran at this height"
+        );
     });
 }
 
@@ -1496,7 +1597,7 @@ fn every_cycle_tick_forfeits_without_the_daily_trigger() {
             "no call sweep in flight"
         );
 
-        let past = START + 30 * DAY + NOTICE + HOUR;
+        let past = START + 30 * DAY + NOTICE + CLOSED_DAY_DELAY;
         let ctx = block_at(storage, past);
         crate::hooks::sweep_forfeits(&ctx).unwrap();
         crate::called::run_call_slice(&ctx).unwrap();
@@ -1527,6 +1628,9 @@ fn a_node_local_failure_while_calling_a_group_fails_the_slice() {
             .call_sweep_day
             .write(last_closed_day(at))
             .unwrap();
+        let nod = NodContract::new(storage.clone());
+        nod.daily_genesis_day.write(last_closed_day(at)).unwrap();
+        nod.call_latest_day.write(last_closed_day(at)).unwrap();
         item.group_key
     });
     provider.fail_after_mutation_at(0);
@@ -1564,6 +1668,7 @@ fn days_closed_behind_a_stalled_call_sweep_are_walked_in_order() {
 
         let nod = NodContract::new(storage.clone());
         nod.call_sweep_day.write(closed[0]).unwrap();
+        nod.daily_genesis_day.write(closed[0]).unwrap();
         nod.call_latest_day.write(closed[0]).unwrap();
         nod.call_bin_cursor.write(&ISO, 1).unwrap();
 
@@ -1587,7 +1692,7 @@ fn days_closed_behind_a_stalled_call_sweep_are_walked_in_order() {
 
 /// Promis Limit moves by the unpaid loads, not by reaching
 /// Forfeited or emitting `NodGroupForfeited`. A paid-but-unexercised member is
-/// not credited. If `add_to_total_unallocated` were removed, this delta
+/// not credited. If `checked_credit` were removed, this delta
 /// would fail while the events and burns could still look complete.
 #[test]
 fn forfeit_credits_distinct_unpaid_loads_and_ignores_paid_members() {
@@ -1614,10 +1719,10 @@ fn forfeit_credits_distinct_unpaid_loads_and_ignores_paid_members() {
             })
             .fold(U256::ZERO, |sum, load| sum + load);
         assert_eq!(unpaid, U256::from(34u64));
-        let past = START + 30 * DAY + NOTICE + HOUR;
+        let past = START + 30 * DAY + NOTICE + CLOSED_DAY_DELAY;
         assert_eq!(forfeit_block(&storage, past).unwrap(), 1);
         assert_eq!(reserve(&storage), unpaid);
-        assert_eq!(forfeit_block(&storage, past + HOUR).unwrap(), 0);
+        assert_eq!(forfeit_block(&storage, past + CLOSED_DAY_DELAY).unwrap(), 0);
         assert_eq!(reserve(&storage), unpaid);
         assert_eq!(
             NodContract::new(storage.clone())
@@ -1641,7 +1746,7 @@ fn native_storage_out_of_gas_reverts_the_forfeit_transaction_then_retries_once()
     use outbe_primitives::{error::PrecompileError, system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT};
 
     let specs = [(0x71u8, 3u64, false), (0x72, 5, false), (0x73, 8, false)];
-    let past = START + 30 * DAY + NOTICE + HOUR;
+    let past = START + 30 * DAY + NOTICE + CLOSED_DAY_DELAY;
     let arm = |provider: &mut HashMapStorageProvider| {
         StorageHandle::enter(provider, |storage| {
             seed_production_nod_genesis(&storage);
@@ -1699,7 +1804,7 @@ fn configured_forfeit_slice_fits_the_native_storage_gas_limit() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
 
     let at = START + 30 * DAY;
-    let past = at + NOTICE + HOUR;
+    let past = at + NOTICE + CLOSED_DAY_DELAY;
     let issued = StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
 
@@ -1751,7 +1856,7 @@ fn configured_forfeit_slice_fits_the_native_storage_gas_limit() {
 fn a_node_local_failure_while_forfeiting_fails_the_slice() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
 
-    let past = START + 30 * DAY + NOTICE + HOUR;
+    let past = START + 30 * DAY + NOTICE + CLOSED_DAY_DELAY;
     let group_key = StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
 
@@ -1795,7 +1900,7 @@ fn every_nod_forfeit_mutation_rolls_back_then_retries_the_same_credit() {
         register(&storage, ISO);
         arm_lapsed(&storage, &specs);
     });
-    let past = START + 30 * DAY + NOTICE + HOUR;
+    let past = START + 30 * DAY + NOTICE + CLOSED_DAY_DELAY;
     probe.fail_after_mutation_at(usize::MAX);
     StorageHandle::enter(&mut probe, |storage| {
         forfeit_block(&storage, past).unwrap();
@@ -1839,7 +1944,7 @@ fn every_nod_forfeit_mutation_rolls_back_then_retries_the_same_credit() {
             assert_eq!(reserve(&storage), U256::ZERO);
             assert_eq!(forfeit_block(&storage, past).unwrap(), 1);
             assert_eq!(reserve(&storage), expected);
-            assert_eq!(forfeit_block(&storage, past + HOUR).unwrap(), 0);
+            assert_eq!(forfeit_block(&storage, past + CLOSED_DAY_DELAY).unwrap(), 0);
             assert_eq!(reserve(&storage), expected);
             assert_eq!(
                 NodContract::new(storage.clone())

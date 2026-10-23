@@ -56,9 +56,9 @@ fn complete_exported_abis_match_golden_hashes() {
     );
     assert_eq!(
         canonical_abi_hash(vote),
-        // The exported ABI includes createProposalWithVotingWindow, added in
-        // e1b954dd. Its selector is independently pinned below.
-        b256!("b8055a8710bcd34616ad1f9436adf90951117435f55e7264d831e25fd311407f")
+        // Pin the published interface including the unified bond error; its
+        // selector and dynamic error payload are independently pinned below.
+        b256!("4e909c8fcc77584593044a24d6b256f77114d2bef37417120bfe9b05c9aee9c8")
     );
 }
 
@@ -136,10 +136,23 @@ fn alloy_encodes_canonical_dynamic_arguments() {
         memo.as_slice(),
         &hex!("95777d59000000000000000000000000000000000000000000000000000000000000003300000000000000000000000000000000000000000000000000000000000000074444444444444444444444444444444444444444444444444444444444444444")
     );
+
+    let bond_error = IVote::InvalidProposalBond {
+        reason: "bond rejected".to_owned(),
+    }
+    .abi_encode();
+    assert_eq!(
+        bond_error.as_slice(),
+        &hex!("1fa7abd90000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000d626f6e642072656a656374656400000000000000000000000000000000000000")
+    );
 }
 
 #[test]
 fn alloy_event_and_error_selectors_match_solidity_vectors() {
+    assert_eq!(
+        IVote::InvalidProposalBond::SELECTOR,
+        [0x1f, 0xa7, 0xab, 0xd9]
+    );
     assert_eq!(
         IStablecoinFactory::StablecoinCreated::SIGNATURE_HASH,
         b256!("3bc7cf7e0d900433f10a105db3704bd383cbe686a86099bff51166e3c9e5fe02")

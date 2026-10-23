@@ -178,7 +178,7 @@ fn seed_issuance_oracle(storage: StorageHandle<'_>) -> eyre::Result<()> {
     OracleContract::new(storage.clone())
         .policy_rate
         .write(&840, U256::from(43_000))?;
-    let day = previous_date_key(timestamp_to_date_key(NOW));
+    let day = previous_date_key(timestamp_to_date_key(NOW)).expect("date step");
     record_finalized_day_vwap(&storage, 840, day, price)?;
 
     Ok(())
@@ -426,7 +426,10 @@ fn retry_issuance_and_cancel_expired(
         retry.status
     );
     if failure == 8 {
-        assert!(String::from_utf8_lossy(&retry.returndata).contains("expired"));
+        assert_eq!(
+            &retry.returndata[..4],
+            &<ICredisFactory::ReservationExpired as alloy_sol_types::SolError>::SELECTOR
+        );
         assert_eq!(source_gratis(evm)?, (U256::ZERO, U256::from(GRATIS)));
         let cancel = IGratisFactory::cancelPledgeCall {
             reservationId: U256::ONE,

@@ -871,7 +871,7 @@ fn v1_mechanics_fi_groups_fractions_and_create_nod_within_7_days_burns_tribute()
         seed_entry_price(
             &storage,
             840,
-            outbe_nod::openings::entry_price_day(base_ts),
+            outbe_nod::openings::entry_price_day(base_ts).expect("date step"),
             U256::from(1_234_567u64),
         );
 
@@ -984,10 +984,12 @@ fn create_nod_reverts_without_a_completion_day_price() {
         .abi_encode();
         let unpriced =
             crate::precompile::dispatch(storage.clone(), &call, tribute.owner, U256::ZERO);
-        assert!(
-            matches!(&unpriced, Err(PrecompileError::Revert(msg)) if msg.contains("no finalized entry price")),
-            "{unpriced:?}"
-        );
+        let expected_err: PrecompileError = crate::errors::TributeError::EntryPriceUnavailable {
+            price_day: outbe_nod::openings::entry_price_day(completed_at).expect("date step"),
+            currency: 840,
+        }
+        .into();
+        assert_eq!(unpriced.unwrap_err().to_string(), expected_err.to_string());
         assert!(tc.get_record(tribute.tribute_id).unwrap().is_some());
         assert_eq!(tc.total_supply().unwrap(), 1);
         assert!(outbe_nod::api::get_item(&storage, tribute.tribute_id)
@@ -997,7 +999,7 @@ fn create_nod_reverts_without_a_completion_day_price() {
         seed_entry_price(
             &storage,
             840,
-            outbe_nod::openings::entry_price_day(completed_at),
+            outbe_nod::openings::entry_price_day(completed_at).expect("date step"),
             U256::from(1_234_567u64),
         );
         crate::precompile::dispatch(storage.clone(), &call, tribute.owner, U256::ZERO).unwrap();

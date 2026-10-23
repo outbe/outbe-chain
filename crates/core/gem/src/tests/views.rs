@@ -85,8 +85,12 @@ fn precompile_transfer_paths_revert() {
 
         for data in calls {
             let err = dispatch(storage.clone(), &data, ALICE, U256::ZERO).unwrap_err();
-            assert!(
-                format!("{err:?}").contains("non-transferable"),
+            assert_eq!(
+                err.to_string(),
+                outbe_primitives::error::PrecompileError::from(
+                    crate::errors::GemError::NonTransferable
+                )
+                .to_string(),
                 "expected NonTransferable revert, got {err:?}",
             );
         }
@@ -154,9 +158,12 @@ fn precompile_balance_and_owner_views() {
             .abi_encode(),
         )
         .unwrap_err();
-        assert!(
-            format!("{err:?}").contains("index out of bounds"),
-            "{err:?}"
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::GemError::IndexOutOfBounds
+            )
+            .to_string()
         );
 
         let out = call(storage, IGem::totalSupplyCall {}.abi_encode()).unwrap();
@@ -452,6 +459,14 @@ fn config_auto_profile_follows_the_network() {
             GemParams::DEV
         );
     }
+}
+
+/// PROD keeps 2.28 times the entry price. DEV uses 1.04 times the entry price.
+#[test]
+fn config_call_rate_is_pinned_per_profile() {
+    assert_eq!(GemParams::PROD.call_rate, crate::constants::CALL_RATE_PCT);
+    assert_eq!(GemParams::PROD.call_rate, 128);
+    assert_eq!(GemParams::DEV.call_rate, 4);
 }
 
 #[test]

@@ -14,14 +14,14 @@ fn group_key_binds_the_reference_currency() {
     let issued_at = 1_752_534_000;
     let call_price = U256::from(13);
     assert_ne!(
-        crate::identity::group_key(issued_at, call_price, USD),
-        crate::identity::group_key(issued_at, call_price, EUR),
+        crate::identity::group_key(issued_at, call_price, USD).expect("date step"),
+        crate::identity::group_key(issued_at, call_price, EUR).expect("date step"),
         "same day and call price in two currencies must not share a group"
     );
     assert_eq!(
-        crate::identity::group_key(issued_at, call_price, USD),
+        crate::identity::group_key(issued_at, call_price, USD).expect("date step"),
         outbe_primitives::call_breach::group_key(
-            outbe_primitives::time::first_full_day(issued_at),
+            outbe_primitives::time::first_full_day(issued_at).expect("date step"),
             call_price,
             USD
         )
@@ -124,9 +124,12 @@ fn zero_reference_currency_is_rejected_at_issuance() {
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
         let error = crate::test_support::add(&storage, &body).unwrap_err();
-        assert!(
-            error.to_string().contains("reference currency"),
-            "unexpected error: {error}"
+        assert_eq!(
+            error.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::NodError::ZeroReferenceCurrency
+            )
+            .to_string()
         );
 
         let nod = NodContract::new(storage.clone());
@@ -141,14 +144,21 @@ fn zero_reference_currency_is_rejected_at_issuance() {
 #[test]
 fn a_group_key_that_does_not_match_its_inputs_is_rejected() {
     let mut body = item(Address::repeat_byte(0x66), U256::from(5), EUR);
+    let expected = body.group_key;
     body.group_key = crate::test_support::group_key(body.issued_at, U256::from(5), USD);
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
         let error = crate::test_support::add(&storage, &body).unwrap_err();
-        assert!(
-            error.to_string().contains("group identity mismatch"),
-            "unexpected error: {error}"
+        assert_eq!(
+            error.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::NodError::GroupIdentityMismatch {
+                    expected,
+                    found: body.group_key,
+                }
+            )
+            .to_string()
         );
         assert_eq!(NodContract::new(storage).total_supply().unwrap(), 0);
     });
