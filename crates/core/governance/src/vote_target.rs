@@ -1,9 +1,13 @@
-//! Vote target-module handler for materializing Approved OIP / GIP records.
+//! Vote target-module handler for Governance writes after quorum: it
+//! materializes Approved OIP / GIP records and replaces the canon or
+//! meta-canon text.
 //!
 //! Vote JSON payload schema:
 //! ```json
 //! {"kind":"oip","text":"..."}
 //! {"kind":"gip","text":"..."}
+//! {"kind":"canontext","text":"..."}
+//! {"kind":"metacanontext","text":"..."}
 //! ```
 
 use alloy_primitives::{Address, U256};
@@ -25,9 +29,13 @@ use crate::schema::GovernanceContract;
 pub enum ProposalKind {
     Oip,
     Gip,
+    /// Replace the canon text. The payload text is the new document.
+    CanonText,
+    /// Replace the meta-canon text. The payload text is the new document.
+    MetaCanonText,
 }
 
-/// JSON payload for materializing an Approved OIP/GIP via vote.
+/// JSON payload for a Governance write via vote.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GovernanceVotePayload {
     pub kind: ProposalKind,
@@ -106,8 +114,20 @@ impl VoteTarget for GovernanceVoteTarget {
 
         let mut gov = GovernanceContract::new(ctx.storage.clone());
         let result = match decoded.kind {
-            ProposalKind::Oip => gov.create_approved_oip_typed(author, &decoded.text),
-            ProposalKind::Gip => gov.create_approved_gip_typed(author, &decoded.text),
+            ProposalKind::Oip => gov
+                .create_approved_oip_typed(author, &decoded.text)
+                .map(|_| ()),
+            ProposalKind::Gip => gov
+                .create_approved_gip_typed(author, &decoded.text)
+                .map(|_| ()),
+            ProposalKind::CanonText => {
+                gov.apply_canon_text(&decoded.text)?;
+                Ok(())
+            }
+            ProposalKind::MetaCanonText => {
+                gov.apply_meta_canon_text(&decoded.text)?;
+                Ok(())
+            }
         };
         match result {
             Ok(_) => Ok(TargetExecutionOutcome::Applied),
@@ -146,6 +166,31 @@ mod tests {
             GovernanceVotePayload::from_value(&value).unwrap_err(),
             GovernanceError::InvalidPayload
         );
+    }
+
+    #[test]
+    fn text_kinds_use_lowercase_names() {
+        let json = GovernanceVotePayload::encode(ProposalKind::CanonText, "c");
+        assert!(json.contains(r#""kind":"canontext""#), "json={json}");
+        let json = GovernanceVotePayload::encode(ProposalKind::MetaCanonText, "m");
+        assert!(json.contains(r#""kind":"metacanontext""#), "json={json}");
+    }
+
+    #[test]
+    fn rejects_oversize_text_kinds() {
+        let too_big = "a".repeat(MAX_TEXT_BYTES + 1);
+        for kind in [ProposalKind::CanonText, ProposalKind::MetaCanonText] {
+            let payload = GovernanceVotePayload::new(kind, too_big.as_str());
+            assert_eq!(
+                payload.validate().unwrap_err(),
+                GovernanceError::TextTooLarge {
+                    len: too_big.len(),
+                    max: MAX_TEXT_BYTES,
+                }
+            );
+            let empty = GovernanceVotePayload::new(kind, "");
+            assert_eq!(empty.validate().unwrap_err(), GovernanceError::EmptyText);
+        }
     }
 
     #[test]

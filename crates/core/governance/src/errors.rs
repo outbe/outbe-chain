@@ -48,6 +48,9 @@ pub enum GovernanceError {
 
     #[error("proposal id sequence is exhausted")]
     ProposalIdExhausted,
+
+    #[error("canon text is installed: change it through an approved vote proposal")]
+    CanonRequiresVote,
 }
 
 /// Retains capacity refusals until the Vote target can classify them.
@@ -95,6 +98,7 @@ impl From<GovernanceError> for PrecompileError {
             GovernanceError::InvalidProposalPayload => revert_with(I::InvalidProposalPayload {}),
             GovernanceError::AuthorIndexFull => revert_with(I::AuthorIndexFull {}),
             GovernanceError::ProposalIdExhausted => revert_with(I::ProposalIdExhausted {}),
+            GovernanceError::CanonRequiresVote => revert_with(I::CanonRequiresVote {}),
         }
     }
 }

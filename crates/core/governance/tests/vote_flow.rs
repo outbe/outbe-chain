@@ -122,6 +122,9 @@ fn get_proposal(storage: StorageHandle, kind: ProposalKind) -> (u8, Address, Str
             let p = IGovernance::getGipCall::abi_decode_returns(&out).unwrap();
             (p.status, p.author, p.text)
         }
+        ProposalKind::CanonText | ProposalKind::MetaCanonText => {
+            unreachable!("text kinds create no proposal record")
+        }
     }
 }
 
@@ -147,6 +150,9 @@ fn proposal_count(storage: StorageHandle, kind: ProposalKind) -> u64 {
             .unwrap();
             IGovernance::gipCountCall::abi_decode_returns(&out).unwrap()
         }
+        ProposalKind::CanonText | ProposalKind::MetaCanonText => {
+            unreachable!("text kinds create no proposal record")
+        }
     }
 }
 
@@ -156,6 +162,7 @@ fn full_vote_governance_flow_creates_approved_proposal() {
         let text = match kind {
             ProposalKind::Oip => "committee oip",
             ProposalKind::Gip => "committee gip",
+            ProposalKind::CanonText | ProposalKind::MetaCanonText => unreachable!(),
         };
         with_vote_runtime_at(100, |storage, current| {
             let mut vote = Vote::new(storage.clone());
@@ -231,6 +238,9 @@ fn production_registry_capacity_failure_does_not_block_another_proposal() {
                     match kind {
                         ProposalKind::Oip => ProposalKind::Gip,
                         ProposalKind::Gip => ProposalKind::Oip,
+                        ProposalKind::CanonText | ProposalKind::MetaCanonText => {
+                            unreachable!("text kinds have no record capacity")
+                        }
                     }
                 };
                 applied = vote
@@ -253,6 +263,9 @@ fn production_registry_capacity_failure_does_not_block_another_proposal() {
                     }
                     (ProposalKind::Oip, false) => gov.next_oip_id.write(u64::MAX).unwrap(),
                     (ProposalKind::Gip, false) => gov.next_gip_id.write(u64::MAX).unwrap(),
+                    (ProposalKind::CanonText | ProposalKind::MetaCanonText, _) => {
+                        unreachable!("text kinds have no record capacity")
+                    }
                 }
             }
             {
@@ -290,6 +303,9 @@ fn production_registry_capacity_failure_does_not_block_another_proposal() {
                         }
                         ProposalKind::Gip => {
                             assert!(gov.get_gip(U256::from(u64::MAX)).unwrap().is_none())
+                        }
+                        ProposalKind::CanonText | ProposalKind::MetaCanonText => {
+                            unreachable!("text kinds create no proposal record")
                         }
                     }
                 }
