@@ -59,6 +59,9 @@ where
         let outbe_consensus::epoch_subchannels::EpochSubchannels {
             vote, cert, res, ..
         } = channels;
+        outbe_consensus::hybrid::election::require_nonempty_committee(
+            self.state.participants.len(),
+        )?;
         // -- b. Build HybridScheme for this epoch ------------------------
         let radicle_signer = radicle_signer_enabled(
             self.radicle_status.snapshot().voting_gate,

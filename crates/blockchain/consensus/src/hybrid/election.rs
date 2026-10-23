@@ -75,6 +75,19 @@ impl<V: Variant> HybridRandom<V> {
     }
 }
 
+/// Reject an empty committee before Commonware's infallible elector build.
+///
+/// [`elector::Config::build`] still asserts a nonempty participant set.
+pub fn require_nonempty_committee(
+    participant_count: usize,
+) -> Result<(), crate::errors::EmptyCommittee> {
+    if participant_count == 0 {
+        Err(crate::errors::EmptyCommittee)
+    } else {
+        Ok(())
+    }
+}
+
 impl<V: Variant> elector::Config<HybridScheme<V>> for HybridRandom<V> {
     type Elector = HybridRandomElector<V>;
 
@@ -178,8 +191,9 @@ impl<V: Variant> elector::Elector<HybridScheme<V>> for HybridRandomElector<V> {
             .or_else(|| self.degraded_seed(round, certificate));
 
         let Some(seed_bytes) = seed_bytes else {
+            let index = round.epoch().get().wrapping_add(round.view().get()) % u64::from(self.n);
             let leader = Participant::new(
-                (round.epoch().get().wrapping_add(round.view().get())) as u32 % self.n,
+                u32::try_from(index).expect("leader index is below the committee size"),
             );
             tracing::debug!(
                 epoch = round.epoch().get(),
@@ -409,7 +423,9 @@ mod tests {
     }
 
     fn round_robin_leader(round: Round, n: usize) -> Participant {
-        Participant::new((round.epoch().get().wrapping_add(round.view().get())) as u32 % n as u32)
+        let width = u64::try_from(n).expect("test committee length fits u64");
+        let index = round.epoch().get().wrapping_add(round.view().get()) % width;
+        Participant::new(u32::try_from(index).expect("leader index fits u32"))
     }
 
     #[test]
@@ -555,5 +571,23 @@ mod tests {
             elector.elect(elected, Some(&cert)),
             round_robin_leader(elected, n),
         );
+    }
+
+    #[test]
+    fn empty_committee_is_rejected_before_build() {
+        assert_eq!(
+            require_nonempty_committee(0),
+            Err(crate::errors::EmptyCommittee)
+        );
+        assert_eq!(require_nonempty_committee(3), Ok(()));
+    }
+
+    #[test]
+    fn fallback_leader_uses_full_width_epoch_view_sum() {
+        let (_keys, participants) = test_participants(3);
+        let elector: HybridRandomElector<MinSig> = HybridRandom::default().build(&participants);
+        let round = Round::new(Epoch::new(0), View::new(1_u64 << 32));
+        let leader = elector.elect(round, None);
+        assert_eq!(leader.get(), 1);
     }
 }

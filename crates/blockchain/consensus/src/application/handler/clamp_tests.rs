@@ -2,6 +2,10 @@ use super::{
     apply_unix_time_offset_millis, clamp_proposed_timestamp_millis, proposal_timestamp_millis,
 };
 use alloy_primitives::Bytes;
+use outbe_primitives::consensus::{
+    classify_timestamp_advance, TimestampAdvance, MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
+    MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
+};
 use outbe_primitives::OutbeHeader;
 use reth_ethereum::{primitives::SealedBlock, Block};
 
@@ -83,5 +87,86 @@ fn proposal_timestamp_is_derived_from_the_exact_parent_block() {
     assert_eq!(
         proposal_timestamp_millis(Some(&parent), parent_timestamp + 10 * BAND, BAND, MIN,),
         parent_timestamp + BAND,
+    );
+}
+
+#[test]
+fn real_parent_clamp_stays_inside_the_shared_band() {
+    let parent = 1_781_255_987_000u64;
+    let clamped = clamp_proposed_timestamp_millis(
+        parent,
+        parent + 10 * MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
+        MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
+        MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
+    );
+    assert_eq!(
+        classify_timestamp_advance(
+            parent,
+            clamped,
+            MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
+            MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
+        ),
+        TimestampAdvance::Inside {
+            drift: MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
+        }
+    );
+}
+
+#[test]
+fn absent_parent_timestamp_zero_is_not_a_full_band_successor() {
+    let now = MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS + 5_000;
+    let clamped = clamp_proposed_timestamp_millis(
+        0,
+        now,
+        MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
+        MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
+    );
+    assert_eq!(clamped, now);
+    assert!(matches!(
+        classify_timestamp_advance(
+            0,
+            clamped,
+            MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
+            MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
+        ),
+        TimestampAdvance::ExceedsMaxDrift { drift } if drift == now
+    ));
+}
+
+#[test]
+fn saturated_parent_has_no_in_range_successor() {
+    let parent = u64::MAX - 10;
+    let clamped = clamp_proposed_timestamp_millis(
+        parent,
+        u64::MAX,
+        MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
+        MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
+    );
+    assert_eq!(clamped, u64::MAX);
+    assert_eq!(
+        classify_timestamp_advance(
+            parent,
+            clamped,
+            MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
+            MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
+        ),
+        TimestampAdvance::BelowMinAdvance { drift: 10 }
+    );
+
+    let capped = clamp_proposed_timestamp_millis(
+        u64::MAX,
+        u64::MAX,
+        MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
+        MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
+    );
+    assert_eq!(capped, u64::MAX);
+    assert_eq!(
+        classify_timestamp_advance(
+            u64::MAX,
+            capped,
+            MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
+            MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
+        ),
+        TimestampAdvance::NotAfterParent
     );
 }

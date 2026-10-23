@@ -73,6 +73,11 @@ pub enum BlsKeyError {
     DkgOutputPolynomialMismatch,
 }
 
+/// Empty consensus committee. Callers reject this before Commonware builds an elector.
+#[derive(Debug, Error, PartialEq, Eq)]
+#[error("consensus committee has no participants")]
+pub struct EmptyCommittee;
+
 /// Errors from consensus CLI subcommands.
 #[derive(Debug, Error)]
 pub enum ConsensusCliError {
