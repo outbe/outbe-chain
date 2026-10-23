@@ -69,13 +69,13 @@ fn world() -> (HashMapStorageProvider, Vec<(U256, U256)>) {
             outbe_oracle::api::register_pair(s.clone(), AddressPair::new_coen_to(840)).unwrap();
         let oracle = OracleContract::new(s.clone());
         oracle.reference_currencies.push(840).unwrap();
-        let latest = previous_date_key(timestamp_to_date_key(CALLED));
+        let latest = previous_date_key(timestamp_to_date_key(CALLED)).expect("date step");
         let mut day = latest;
         for _ in 0..28 {
             oracle
                 .record_utc_day_vwap(day, pair, U256::from(3_000_000))
                 .unwrap();
-            day = previous_date_key(day);
+            day = previous_date_key(day).expect("date step");
         }
         oracle.utc_day_vwap_last_finalized.write(latest).unwrap();
         called::initialize_daily(&BlockRuntimeContext::new(
@@ -111,7 +111,7 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
         s.with_checkpoint(|| {
             OracleContract::new(s.clone())
                 .utc_day_vwap_last_finalized
-                .write(previous_date_key(timestamp_to_date_key(at)))?;
+                .write(previous_date_key(timestamp_to_date_key(at)).expect("date step"))?;
             // Process the calendar backlog with distinct block allowances.
             // Prices no longer affect called groups, but day readiness still matters.
             for block in 0..16 {

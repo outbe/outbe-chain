@@ -5,7 +5,7 @@ use outbe_primitives::{
     call_breach::{breached_enough, BreachTerms, ScanTerms},
     error::Result,
     storage::StorageHandle,
-    time::previous_date_key,
+    time::{previous_date_key, TimeError},
 };
 
 use crate::schema::OracleContract;
@@ -36,7 +36,11 @@ impl CallWindow {
         let mut day = last_day;
         for _ in 0..terms.window_days {
             vwaps.push((day, oracle.get_utc_day_vwap_for_pair(day, pair_index)?));
-            day = previous_date_key(day);
+            match previous_date_key(day) {
+                Ok(prev) => day = prev,
+                Err(TimeError::DateBeforeMinimum { .. }) => break,
+                Err(err) => return Err(crate::errors::date_step_error(err)),
+            }
         }
         Ok(Self::from_vwaps(vwaps, terms.threshold_days))
     }

@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::NOD_ADDRESS;
-use outbe_primitives::time::{first_full_day, WorldwideDay};
+use outbe_primitives::time::{first_full_day, TimeError, WorldwideDay};
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 use serde::{Deserialize, Serialize};
 
@@ -64,15 +64,16 @@ impl NodItemState {
     }
 
     /// The first full day the Nod counts call days from. The group key binds it.
-    #[must_use]
-    pub fn full_day_after_issue(&self) -> WorldwideDay {
-        WorldwideDay::new(first_full_day(self.issued_at))
+    pub fn full_day_after_issue(&self) -> Result<WorldwideDay, TimeError> {
+        Ok(WorldwideDay::new(first_full_day(self.issued_at)?))
     }
 
     /// Identity of the group the Nod belongs to.
-    #[must_use]
-    pub fn group_id(&self) -> WwdEntityId {
-        WwdEntityId::from_day_and_digest(self.full_day_after_issue(), self.group_key.0)
+    pub fn group_id(&self) -> Result<WwdEntityId, TimeError> {
+        Ok(WwdEntityId::from_day_and_digest(
+            self.full_day_after_issue()?,
+            self.group_key.0,
+        ))
     }
 }
 

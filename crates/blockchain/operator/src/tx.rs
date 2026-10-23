@@ -135,6 +135,72 @@ impl RelaySignerV1 {
         })
     }
 
+    /// Signs one new own-lease renewal. The priority fee is zero and the fee cap is `gas_price`.
+    pub fn sign_zero_fee_renewal(
+        &self,
+        transaction: UnsignedRelayTransactionV1<'_>,
+    ) -> Result<RawRelayTransactionV1> {
+        let UnsignedRelayTransactionV1 {
+            chain_id,
+            account_nonce,
+            gas_price,
+            gas_limit,
+            to,
+            calldata,
+        } = transaction;
+        let unsigned = rlp_list(&[
+            rlp_u64(chain_id),
+            rlp_u64(account_nonce),
+            rlp_u64(0),
+            rlp_u256(gas_price),
+            rlp_u64(gas_limit),
+            rlp_bytes(to.as_slice()),
+            rlp_u256(U256::ZERO),
+            rlp_bytes(calldata),
+            vec![0xc0],
+        ]);
+        let mut preimage = Vec::with_capacity(1 + unsigned.len());
+        preimage.push(0x02);
+        preimage.extend_from_slice(&unsigned);
+        let digest = keccak256(&preimage);
+        let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = self
+            .key
+            .sign_prehash(digest.as_slice())
+            .map_err(TxError::SigningFailed)?;
+        let y_parity = recovery.to_byte();
+        if y_parity > 1 {
+            return Err(TxError::RecoveryIdOverflow.into());
+        }
+        let bytes = signature.to_bytes();
+        let body = rlp_list(&[
+            rlp_u64(chain_id),
+            rlp_u64(account_nonce),
+            rlp_u64(0),
+            rlp_u256(gas_price),
+            rlp_u64(gas_limit),
+            rlp_bytes(to.as_slice()),
+            rlp_u256(U256::ZERO),
+            rlp_bytes(calldata),
+            vec![0xc0],
+            rlp_u64(u64::from(y_parity)),
+            rlp_u256(U256::from_be_slice(&bytes[..32])),
+            rlp_u256(U256::from_be_slice(&bytes[32..])),
+        ]);
+        let mut raw_transaction = Vec::with_capacity(1 + body.len());
+        raw_transaction.push(0x02);
+        raw_transaction.extend_from_slice(&body);
+        Ok(RawRelayTransactionV1 {
+            relay: self.address,
+            chain_id,
+            account_nonce,
+            gas_price,
+            gas_limit,
+            calldata_hash: keccak256(calldata),
+            transaction_hash: keccak256(&raw_transaction),
+            raw_transaction,
+        })
+    }
+
     fn sign_legacy_transaction(
         &self,
         transaction: UnsignedRelayTransactionV1<'_>,

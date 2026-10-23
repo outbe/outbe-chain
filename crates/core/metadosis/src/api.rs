@@ -26,13 +26,6 @@ impl From<EmissionDay> for EmissionDayProjection {
     }
 }
 
-/// When the bootstrap ends: the moment the first Worldwide Day opens its
-/// offering. `None` before that day exists, so callers name what zero means.
-pub fn bootstrap_end_time(storage: StorageHandle<'_>) -> Result<Option<u64>> {
-    let end = MetadosisContract::new(storage).bootstrap_end_time.read()?;
-    Ok((end != 0).then_some(end))
-}
-
 /// Reads one typed EmissionDay projection by its `YYYYMMDD` UTC day key.
 pub fn emission_day(storage: StorageHandle<'_>, day: u32) -> Result<Option<EmissionDayProjection>> {
     Ok(MetadosisContract::new(storage)

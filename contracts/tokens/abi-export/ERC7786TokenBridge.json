@@ -13,16 +13,51 @@
         "internalType": "address"
       },
       {
+        "name": "mode_",
+        "type": "uint8",
+        "internalType": "enum ERC7786TokenBridge.TokenBridgeMode"
+      },
+      {
         "name": "owner_",
         "type": "address",
         "internalType": "address"
       },
       {
-        "name": "mode_",
-        "type": "uint8",
-        "internalType": "enum ERC7786TokenBridge.TokenBridgeMode"
+        "name": "peers_",
+        "type": "tuple[]",
+        "internalType": "struct ERC7786TokenBridge.Peer[]",
+        "components": [
+          {
+            "name": "domain",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "bridge",
+            "type": "address",
+            "internalType": "address"
+          }
+        ]
       }
     ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "addPeer",
+    "inputs": [
+      {
+        "name": "domain",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "peerBridge",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
     "stateMutability": "nonpayable"
   },
   {
@@ -144,9 +179,9 @@
     ],
     "outputs": [
       {
-        "name": "recipient",
-        "type": "bytes",
-        "internalType": "bytes"
+        "name": "bridge",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "stateMutability": "view"
@@ -225,24 +260,6 @@
       }
     ],
     "stateMutability": "payable"
-  },
-  {
-    "type": "function",
-    "name": "setRemoteBridge",
-    "inputs": [
-      {
-        "name": "domain",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "recipient",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -378,7 +395,7 @@
   },
   {
     "type": "event",
-    "name": "RemoteBridgeRegistered",
+    "name": "PeerAdded",
     "inputs": [
       {
         "name": "domain",
@@ -387,10 +404,10 @@
         "internalType": "uint32"
       },
       {
-        "name": "recipient",
-        "type": "bytes",
+        "name": "bridge",
+        "type": "address",
         "indexed": false,
-        "internalType": "bytes"
+        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -447,6 +464,17 @@
     "type": "error",
     "name": "InvalidBridge",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidPeer",
+    "inputs": [
+      {
+        "name": "domain",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
   },
   {
     "type": "error",

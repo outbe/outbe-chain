@@ -14,12 +14,12 @@ fn a_coalesced_slot_cannot_fire_twice_at_one_timestamp() {
     let stale = 1_700_000_000_u64;
     let block_ts = stale + 37 * PERIOD + 41;
 
-    let recorded = last_fire_at(PERIOD, OFFSET, block_ts);
+    let recorded = last_fire_at(PERIOD, OFFSET, block_ts).expect("period 600");
     assert!(recorded <= block_ts);
     assert!(block_ts - recorded < PERIOD);
 
     // The whole point: a second block at the same timestamp finds nothing due.
-    assert!(next_fire_at(PERIOD, OFFSET, recorded) > block_ts);
+    assert!(next_fire_at(PERIOD, OFFSET, recorded).expect("period 600") > block_ts);
 }
 
 #[test]
@@ -29,28 +29,42 @@ fn replaying_slots_one_per_block_is_what_coalescing_replaces() {
 
     // Without coalescing each block advances a single slot, so the same
     // timestamp keeps firing until the backlog drains.
-    let first = next_fire_at(PERIOD, OFFSET, stale);
+    let first = next_fire_at(PERIOD, OFFSET, stale).expect("period 600");
     assert!(first <= block_ts);
-    assert!(next_fire_at(PERIOD, OFFSET, first) <= block_ts);
+    assert!(next_fire_at(PERIOD, OFFSET, first).expect("period 600") <= block_ts);
 
     // With it, one firing settles the gap.
-    assert!(next_fire_at(PERIOD, OFFSET, last_fire_at(PERIOD, OFFSET, block_ts)) > block_ts);
+    assert!(
+        next_fire_at(
+            PERIOD,
+            OFFSET,
+            last_fire_at(PERIOD, OFFSET, block_ts).expect("period 600")
+        )
+        .expect("period 600")
+            > block_ts
+    );
 }
 
 #[test]
 fn a_slot_boundary_records_itself() {
     let boundary = 1_700_000_400_u64;
     assert_eq!(boundary % PERIOD, 0);
-    assert_eq!(last_fire_at(PERIOD, OFFSET, boundary), boundary);
     assert_eq!(
-        last_fire_at(PERIOD, OFFSET, boundary + PERIOD - 1),
+        last_fire_at(PERIOD, OFFSET, boundary).expect("period 600"),
+        boundary
+    );
+    assert_eq!(
+        last_fire_at(PERIOD, OFFSET, boundary + PERIOD - 1).expect("period 600"),
         boundary
     );
 }
 
 #[test]
 fn a_timestamp_before_the_first_slot_yields_the_offset() {
-    assert_eq!(last_fire_at(PERIOD, 5_000, 4_999), 5_000);
+    assert_eq!(
+        last_fire_at(PERIOD, 5_000, 4_999).expect("period 600"),
+        5_000
+    );
 }
 
 #[test]
@@ -103,12 +117,12 @@ fn the_clearing_poll_runs_after_the_stage_schedule() {
 #[test]
 fn the_genesis_interval_leaves_the_clearing_poll_alone() {
     for interval in [10_u64, 600, SECONDS_PER_DAY] {
-        let configured = active_triggers(interval);
+        let configured = active_triggers(interval).expect("nonzero interval");
         let clearing = configured
             .iter()
             .find(|spec| spec.id == TriggerId::AuctionClearing.as_u32())
             .expect("clearing trigger registered");
-        assert_eq!(clearing.period_seconds, PERIOD);
+        assert_eq!(clearing.period_seconds(), PERIOD);
         assert_eq!(clearing.start_offset_seconds, OFFSET);
         assert!(!clearing.requires_accounting_window);
     }
@@ -138,11 +152,12 @@ fn registry_schedule_matches_a_reference_scheduler() {
         candidate
     }
 
-    for spec in active_triggers(3_600) {
+    for spec in active_triggers(3_600).expect("interval 3600") {
         for last in [0, 1, 599, 600, 3_599, 3_600, 43_200, 86_400, 172_801] {
             assert_eq!(
-                next_fire_at(spec.period_seconds, spec.start_offset_seconds, last),
-                reference_next(spec.period_seconds, spec.start_offset_seconds, last),
+                next_fire_at(spec.period_seconds(), spec.start_offset_seconds, last)
+                    .expect("nonzero period"),
+                reference_next(spec.period_seconds(), spec.start_offset_seconds, last),
                 "reference schedule mismatch for {} at {last}",
                 spec.label
             );

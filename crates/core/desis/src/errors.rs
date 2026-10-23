@@ -66,6 +66,18 @@ pub enum DesisError {
 
     #[error("schedule timestamp exceeds u32")]
     ScheduleTimestampExceedsU32,
+
+    #[error("date step kind {kind} from date key {date_key}")]
+    DateStep { kind: u8, date_key: u32 },
+}
+
+pub(crate) fn date_step_error(
+    err: outbe_primitives::time::TimeError,
+) -> outbe_primitives::error::PrecompileError {
+    match err.date_step() {
+        Some((kind, date_key)) => DesisError::DateStep { kind, date_key }.into(),
+        None => outbe_primitives::error::PrecompileError::Fatal(err.to_string()),
+    }
 }
 
 impl DesisError {}
@@ -128,6 +140,10 @@ impl From<DesisError> for PrecompileError {
             DesisError::ScheduleTimestampExceedsU32 => {
                 revert_with(I::ScheduleTimestampExceedsU32 {})
             }
+            DesisError::DateStep { kind, date_key } => revert_with(I::DateStep {
+                kind,
+                dateKey: date_key,
+            }),
         }
     }
 }

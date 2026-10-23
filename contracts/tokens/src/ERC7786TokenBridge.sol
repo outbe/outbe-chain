@@ -19,6 +19,9 @@ import {IERC7786TokenReceiver} from "./interfaces/IERC7786TokenReceiver.sol";
 /// @notice ERC-7786 fungible token bridge supporting lock/unlock, ERC-7802 burn/mint, and
 ///         issuer-gated mint/burn sides. Composed transfers (`sendAndCall`) additionally invoke an
 ///         ERC-1363-style receiver hook on the destination after the tokens are credited.
+/// @dev The constructor sets the peer bridge on each remote domain. Nothing can change or remove a
+///      peer later. The owner is governance: the HyperlaneController precompile on Outbe, and its
+///      Interchain Account on other chains. The owner can only add a peer for a new domain.
 contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipient {
     using SafeERC20 for IERC20;
     using InteroperableAddress for bytes;
@@ -29,15 +32,22 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
         IssuerBurnMint
     }
 
+    /// @notice The bridge on a remote domain that this bridge sends to and accepts messages from.
+    struct Peer {
+        uint32 domain;
+        address bridge;
+    }
+
     IERC20 public immutable token;
     IERC7786GatewaySource public immutable bridge;
     TokenBridgeMode public immutable mode;
     /// @notice Decimals of `token`. A transfer moves raw amounts, so both sides must agree on them.
     uint8 public immutable tokenDecimals;
 
-    mapping(uint32 domain => bytes recipient) public remoteBridges;
+    /// @notice The peer bridge on each remote domain. Zero means the domain is not connected.
+    mapping(uint32 domain => address bridge) public remoteBridges;
 
-    event RemoteBridgeRegistered(uint32 indexed domain, bytes recipient);
+    event PeerAdded(uint32 indexed domain, address bridge);
     event CrosschainTransferSent(
         bytes32 indexed sendId, uint32 indexed destinationDomain, address indexed from, address to, uint256 amount
     );
@@ -51,6 +61,7 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
     error InvalidRecipient(address to);
     error EmptyExtraData();
     error InvalidTokenReceiver(address to);
+    error InvalidPeer(uint32 domain);
     error RemoteBridgeNotSet(uint32 domain);
     error DomainTooLarge(uint256 chainId);
     error UnauthorizedBridge(address caller);
@@ -60,9 +71,14 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
     /// @dev `executionGasLimit(uint256)` ERC-7786 attribute understood by the bridge hub's gateways.
     bytes4 private constant GAS_LIMIT_ATTR = bytes4(keccak256("executionGasLimit(uint256)"));
 
-    constructor(address token_, address bridge_, address owner_, TokenBridgeMode mode_) Ownable(owner_) {
+    constructor(address token_, address bridge_, TokenBridgeMode mode_, address owner_, Peer[] memory peers_)
+        Ownable(owner_)
+    {
         if (token_ == address(0)) revert InvalidToken();
         if (bridge_ == address(0)) revert InvalidBridge();
+        for (uint256 i = 0; i < peers_.length; i++) {
+            _addPeer(peers_[i].domain, peers_[i].bridge);
+        }
 
         token = IERC20(token_);
         bridge = IERC7786GatewaySource(bridge_);
@@ -70,9 +86,9 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
         tokenDecimals = IERC20Metadata(token_).decimals();
     }
 
-    function setRemoteBridge(uint32 domain, bytes calldata recipient) external onlyOwner {
-        remoteBridges[domain] = recipient;
-        emit RemoteBridgeRegistered(domain, recipient);
+    /// @notice Connects a new domain. A peer that is already set cannot change.
+    function addPeer(uint32 domain, address peerBridge) external onlyOwner {
+        _addPeer(domain, peerBridge);
     }
 
     function quoteSend(uint32 destinationDomain, address to, uint256 amount, bytes calldata extraData, uint256 gasLimit)
@@ -93,7 +109,7 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
         if (amount == 0) revert InvalidAmount();
         _requireRecipient(to);
 
-        _onSend(msg.sender, amount);
+        amount = _onSend(msg.sender, amount);
 
         bytes memory payload = _encodePayload(msg.sender, to, amount, "");
         sendId = bridge.sendMessage{value: msg.value}(_remoteBridge(destinationDomain), payload, new bytes[](0));
@@ -102,6 +118,9 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
     }
 
     /// @notice Composed transfer: deliver `amount` to `to` and invoke its receiver hook with `extraData`.
+    /// @dev A hook revert rolls back the whole delivery, and the hub keeps the message for a retry.
+    ///      The bridge has no refund to the source chain. A `to` whose hook always reverts holds the
+    ///      tokens in transit forever, so `to` must not revert permanently.
     /// @param gasLimit Destination execution gas (0 = gateway default), carried as the
     ///        `executionGasLimit` ERC-7786 attribute to cover the hook.
     function sendAndCall(
@@ -115,7 +134,7 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
         _requireRecipient(to);
         if (extraData.length == 0) revert EmptyExtraData();
 
-        _onSend(msg.sender, amount);
+        amount = _onSend(msg.sender, amount);
 
         bytes memory payload = _encodePayload(msg.sender, to, amount, extraData);
         sendId =
@@ -132,12 +151,12 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
     {
         if (msg.sender != address(bridge)) revert UnauthorizedBridge(msg.sender);
 
-        (uint256 srcChainId,) = sender.parseEvmV1Calldata();
+        (uint256 srcChainId, address srcBridge) = sender.parseEvmV1Calldata();
         if (srcChainId > type(uint32).max) revert DomainTooLarge(srcChainId);
-
         uint32 sourceDomain = uint32(srcChainId);
-        bytes memory expectedSender = _remoteBridge(sourceDomain);
-        if (keccak256(sender) != keccak256(expectedSender)) revert UnauthorizedRemoteBridge(sender);
+        if (srcBridge == address(0) || srcBridge != remoteBridges[sourceDomain]) {
+            revert UnauthorizedRemoteBridge(sender);
+        }
 
         (bytes memory from, address to, uint256 amount, uint8 sourceDecimals, bytes memory extraData) =
             abi.decode(payload, (bytes, address, uint256, uint8, bytes));
@@ -156,9 +175,18 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
         return IERC7786Recipient.receiveMessage.selector;
     }
 
-    function _remoteBridge(uint32 domain) internal view returns (bytes memory recipient) {
-        recipient = remoteBridges[domain];
-        if (recipient.length == 0) revert RemoteBridgeNotSet(domain);
+    function _addPeer(uint32 domain, address peerBridge) internal {
+        if (peerBridge == address(0) || domain == block.chainid || remoteBridges[domain] != address(0)) {
+            revert InvalidPeer(domain);
+        }
+        remoteBridges[domain] = peerBridge;
+        emit PeerAdded(domain, peerBridge);
+    }
+
+    function _remoteBridge(uint32 domain) internal view returns (bytes memory) {
+        address peer = remoteBridges[domain];
+        if (peer == address(0)) revert RemoteBridgeNotSet(domain);
+        return InteroperableAddress.formatEvmV1(domain, peer);
     }
 
     function _requireRecipient(address to) internal pure {
@@ -179,14 +207,19 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
         attrs[0] = abi.encodeWithSelector(GAS_LIMIT_ATTR, gasLimit);
     }
 
-    function _onSend(address from, uint256 amount) internal {
+    /// @return The amount to credit on the destination. For a lock, this is the amount that arrived,
+    ///         so a fee-on-transfer token cannot credit more than the bridge holds.
+    function _onSend(address from, uint256 amount) internal returns (uint256) {
         if (mode == TokenBridgeMode.LockUnlock) {
+            uint256 before = token.balanceOf(address(this));
             token.safeTransferFrom(from, address(this), amount);
+            return token.balanceOf(address(this)) - before;
         } else if (mode == TokenBridgeMode.IssuerBurnMint) {
             IStablecoin(address(token)).burnFrom(from, amount);
         } else {
             IERC7802(address(token)).crosschainBurn(from, amount);
         }
+        return amount;
     }
 
     function _onReceive(address to, uint256 amount) internal {

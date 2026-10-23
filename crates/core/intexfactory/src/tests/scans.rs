@@ -13,7 +13,7 @@ fn scan_and_call_force_calls_breached_series() {
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
-        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
+        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
         fill_days(&oracle, last_closed_day, pair, 30, breach);
 
@@ -37,7 +37,7 @@ fn a_called_series_reports_its_settlement_deadline() {
         runtime::issue_intex(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
-        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
+        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
         fill_days(&oracle, last_closed_day, pair, 30, breach);
 
@@ -78,7 +78,7 @@ fn scan_and_call_reads_daily_vwap_at_midnight() {
         setup_pair(&oracle);
         // Exact midnight UTC, well past issuance.
         let scan_ts = (ISSUED_AT as u64 / DAY + 60) * DAY;
-        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
+        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
 
         // Oldest-first: snapshot + finalize 21 closed days ending yesterday.
@@ -86,7 +86,7 @@ fn scan_and_call_reads_daily_vwap_at_midnight() {
         let mut d = last_closed_day;
         for slot in days.iter_mut().rev() {
             *slot = d;
-            d = previous_date_key(d);
+            d = previous_date_key(d).expect("date step");
         }
         for day in days {
             let noon = date_key_to_utc_timestamp(day) + DAY / 2;
@@ -128,7 +128,7 @@ fn call_scan_does_not_halt_on_overflow_vwap() {
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
-        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
+        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         // Out-of-range VWAP for the completed day: price_to_bin overflows.
         fill_days(&oracle, last_closed_day, pair, 1, U256::MAX);
 
@@ -146,7 +146,7 @@ fn call_scan_does_not_halt_on_overflow_vwap() {
 fn a_node_local_failure_while_calling_fails_the_scan() {
     let mut provider = factory_provider();
     let scan_ts = ISSUED_AT as u64 + 60 * DAY;
-    let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
+    let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
     StorageHandle::enter(&mut provider, |s| {
         select_prod_profile(&s);
         runtime::issue_intex(&s, sample(7)).unwrap();
@@ -217,11 +217,11 @@ fn seed_issued_at(s: &StorageHandle<'_>, id: u32, issued_at: u32) {
 #[test]
 fn the_issue_day_counts_only_for_a_series_issued_at_midnight() {
     let scan_ts = ISSUED_AT as u64 + 60 * DAY;
-    let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
+    let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
     // Oldest day of a breach run exactly as long as the series' threshold.
     let mut oldest_breach = last_closed_day;
     for _ in 1..21 {
-        oldest_breach = previous_date_key(oldest_breach);
+        oldest_breach = previous_date_key(oldest_breach).expect("date step");
     }
     let midnight = date_key_to_utc_timestamp(oldest_breach) as u32;
 
@@ -279,7 +279,7 @@ fn call_survives_router_failure() {
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
-        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
+        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         fill_days(
             &oracle,
             last_closed_day,
@@ -743,7 +743,7 @@ fn an_unindexable_window_price_is_reported_once() {
         seed_issued(&s, 7);
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
-        let day = previous_date_key(timestamp_to_date_key(MATURE_TS));
+        let day = previous_date_key(timestamp_to_date_key(MATURE_TS)).expect("date step");
         fill_days(&oracle, day, pair, 30, U256::MAX);
 
         assert_eq!(

@@ -6,7 +6,7 @@ use outbe_primitives::error::PrecompileError;
 use outbe_validatorset::contract::ValidatorSet;
 
 use crate::errors::GovernanceError;
-use crate::runtime::{MAX_CANON_TEXT_BYTES, MAX_PROPOSAL_TEXT_BYTES};
+use crate::runtime::MAX_TEXT_BYTES;
 use crate::state::author_index_key;
 use crate::status;
 use crate::GovernanceContract;
@@ -135,7 +135,7 @@ fn assert_text_too_large<T: std::fmt::Debug>(
 }
 
 #[test]
-fn canon_rejects_empty_and_oversize() {
+fn canon_rejects_empty_text() {
     with_governance(|gov| {
         assert!(gov.update_canon(AUTH, "").is_err());
         assert!(gov.update_meta_canon(AUTH, "").is_err());
@@ -143,22 +143,24 @@ fn canon_rejects_empty_and_oversize() {
 }
 
 #[test]
-fn canon_texts_keep_canon_bound() {
-    let max = MAX_CANON_TEXT_BYTES;
-    assert_eq!(max, 128 * 1024);
-    let at_bound = "a".repeat(max);
-    let too_big = "a".repeat(max + 1);
-    with_governance(|gov| {
-        assert_eq!(gov.update_canon(AUTH, &at_bound).unwrap(), 1);
-        assert_eq!(gov.get_canon().unwrap().0.len(), max);
-        assert_text_too_large(gov.update_canon(AUTH, &too_big), max + 1, max);
-        assert_eq!(gov.get_canon().unwrap().1, 1);
+fn canon_texts_bound_utf8_bytes_and_preserve_failed_updates() {
+    let max = MAX_TEXT_BYTES;
+    for at_bound in ["a".repeat(max), "é".repeat(max / 2)] {
+        let too_big = format!("{at_bound}a");
+        with_governance(|gov| {
+            assert_eq!(gov.update_canon(AUTH, &at_bound).unwrap(), 1);
+            let canon = gov.get_canon().unwrap();
+            assert_eq!(canon.0, at_bound);
+            assert_text_too_large(gov.update_canon(AUTH, &too_big), max + 1, max);
+            assert_eq!(gov.get_canon().unwrap(), canon);
 
-        assert_eq!(gov.update_meta_canon(AUTH, &at_bound).unwrap(), 1);
-        assert_eq!(gov.get_meta_canon().unwrap().0.len(), max);
-        assert_text_too_large(gov.update_meta_canon(AUTH, &too_big), max + 1, max);
-        assert_eq!(gov.get_meta_canon().unwrap().1, 1);
-    });
+            assert_eq!(gov.update_meta_canon(AUTH, &at_bound).unwrap(), 1);
+            let meta_canon = gov.get_meta_canon().unwrap();
+            assert_eq!(meta_canon.0, at_bound);
+            assert_text_too_large(gov.update_meta_canon(AUTH, &too_big), max + 1, max);
+            assert_eq!(gov.get_meta_canon().unwrap(), meta_canon);
+        });
+    }
 }
 
 // ------------------------------------------------------------ proposals ---
@@ -363,7 +365,7 @@ fn missing_proposal_errors() {
 
 #[test]
 fn proposal_rejects_empty_and_oversize_text() {
-    let max = MAX_PROPOSAL_TEXT_BYTES;
+    let max = MAX_TEXT_BYTES;
     let too_big = "a".repeat(max + 1);
     with_governance(|gov| {
         assert!(gov.submit_oip(AUTHOR, "").is_err());
@@ -376,36 +378,52 @@ fn proposal_rejects_empty_and_oversize_text() {
 }
 
 #[test]
-fn proposal_submit_accepts_text_at_proposal_bound() {
-    let max = MAX_PROPOSAL_TEXT_BYTES;
-    assert_eq!(max, 16 * 1024);
-    let at_bound = "a".repeat(max);
-    with_governance(|gov| {
-        let oip = gov.submit_oip(AUTHOR, &at_bound).unwrap();
-        assert_eq!(gov.get_oip(oip).unwrap().unwrap().text.len(), max);
-        let gip = gov.submit_gip(AUTHOR, &at_bound).unwrap();
-        assert_eq!(gov.get_gip(gip).unwrap().unwrap().text.len(), max);
-    });
+fn proposal_submit_bounds_utf8_bytes() {
+    let max = MAX_TEXT_BYTES;
+    for at_bound in ["a".repeat(max), "é".repeat(max / 2)] {
+        let too_big = format!("{at_bound}a");
+        with_governance(|gov| {
+            let oip = gov.submit_oip(AUTHOR, &at_bound).unwrap();
+            assert_eq!(gov.get_oip(oip).unwrap().unwrap().text, at_bound);
+            let gip = gov.submit_gip(AUTHOR, &at_bound).unwrap();
+            assert_eq!(gov.get_gip(gip).unwrap().unwrap().text, at_bound);
+            assert_text_too_large(gov.submit_oip(AUTHOR, &too_big), max + 1, max);
+            assert_text_too_large(gov.submit_gip(AUTHOR, &too_big), max + 1, max);
+            assert_eq!(gov.oip_count().unwrap(), 1);
+            assert_eq!(gov.gip_count().unwrap(), 1);
+        });
+    }
 }
 
 #[test]
-fn proposal_text_update_keeps_proposal_bound() {
-    let max = MAX_PROPOSAL_TEXT_BYTES;
-    let at_bound = "a".repeat(max);
-    let too_big = "a".repeat(max + 1);
-    with_governance(|gov| {
-        let oip = gov.submit_oip(AUTHOR, "oip draft").unwrap();
-        assert_text_too_large(gov.update_oip_text(AUTHOR, oip, &too_big), max + 1, max);
-        assert_eq!(gov.get_oip(oip).unwrap().unwrap().text, "oip draft");
-        gov.update_oip_text(AUTHOR, oip, &at_bound).unwrap();
-        assert_eq!(gov.get_oip(oip).unwrap().unwrap().text.len(), max);
+fn proposal_text_updates_bound_utf8_bytes_and_preserve_failed_updates() {
+    let max = MAX_TEXT_BYTES;
+    for at_bound in ["a".repeat(max), "é".repeat(max / 2)] {
+        let too_big = format!("{at_bound}a");
+        with_governance(|gov| {
+            let oip = gov.submit_oip(AUTHOR, "oip draft").unwrap();
+            let old_oip = gov.get_oip(oip).unwrap().unwrap();
+            assert_text_too_large(gov.update_oip_text(AUTHOR, oip, &too_big), max + 1, max);
+            let unchanged = gov.get_oip(oip).unwrap().unwrap();
+            assert_eq!(
+                (unchanged.text, unchanged.text_hash, unchanged.updated_block),
+                (old_oip.text, old_oip.text_hash, old_oip.updated_block)
+            );
+            gov.update_oip_text(AUTHOR, oip, &at_bound).unwrap();
+            assert_eq!(gov.get_oip(oip).unwrap().unwrap().text, at_bound);
 
-        let gip = gov.submit_gip(AUTHOR, "gip draft").unwrap();
-        assert_text_too_large(gov.update_gip_text(AUTHOR, gip, &too_big), max + 1, max);
-        assert_eq!(gov.get_gip(gip).unwrap().unwrap().text, "gip draft");
-        gov.update_gip_text(AUTHOR, gip, &at_bound).unwrap();
-        assert_eq!(gov.get_gip(gip).unwrap().unwrap().text.len(), max);
-    });
+            let gip = gov.submit_gip(AUTHOR, "gip draft").unwrap();
+            let old_gip = gov.get_gip(gip).unwrap().unwrap();
+            assert_text_too_large(gov.update_gip_text(AUTHOR, gip, &too_big), max + 1, max);
+            let unchanged = gov.get_gip(gip).unwrap().unwrap();
+            assert_eq!(
+                (unchanged.text, unchanged.text_hash, unchanged.updated_block),
+                (old_gip.text, old_gip.text_hash, old_gip.updated_block)
+            );
+            gov.update_gip_text(AUTHOR, gip, &at_bound).unwrap();
+            assert_eq!(gov.get_gip(gip).unwrap().unwrap().text, at_bound);
+        });
+    }
 }
 
 // ------------------------------------------------------- storage layout ---

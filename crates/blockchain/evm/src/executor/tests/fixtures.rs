@@ -747,7 +747,6 @@ pub(super) fn boundary_with_epoch(
         is_validator_set_change,
         outcome: Bytes::new(),
         is_full_dkg: false,
-        tee_recipient_pubkeys: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
         tee_expired_target_exclusions_hash: B256::ZERO,
         reshare: outbe_primitives::consensus::ReshareResult {
@@ -777,7 +776,8 @@ pub(super) fn seed_previous_day_vwap(
     let (_, index) = outbe_oracle::api::require_coen_pair(storage.clone(), 840).unwrap();
     let day = outbe_primitives::time::previous_date_key(
         outbe_primitives::time::timestamp_to_date_key(block_ts),
-    );
+    )
+    .expect("date step");
     outbe_oracle::schema::OracleContract::new(storage.clone())
         .record_utc_day_vwap(day, index, rate)
         .unwrap();

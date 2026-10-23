@@ -26,14 +26,18 @@ fn item(owner: Address) -> NodItemState {
             worldwide_day,
             league_id: 4,
             group_key: crate::test_support::group_key(
-                date_key_to_utc_timestamp(previous_date_key(timestamp_to_date_key(NOW))),
+                date_key_to_utc_timestamp(
+                    previous_date_key(timestamp_to_date_key(NOW)).expect("date step"),
+                ),
                 U256::from(5),
                 978,
             ),
             issuance_currency: 840,
             reference_currency: 978,
             // Midnight of the last UTC day closed at `NOW`.
-            issued_at: date_key_to_utc_timestamp(previous_date_key(timestamp_to_date_key(NOW))),
+            issued_at: date_key_to_utc_timestamp(
+                previous_date_key(timestamp_to_date_key(NOW)).expect("date step"),
+            ),
         },
         U256::from(5),
     )
@@ -147,8 +151,14 @@ fn group_record_survives_membership_changes_until_last_removal() {
 #[test]
 fn entry_price_day_is_the_last_closed_utc_day() {
     let new_year = date_key_to_utc_timestamp(20_260_101);
-    assert_eq!(crate::openings::entry_price_day(new_year), 20_251_231);
-    assert_eq!(crate::openings::entry_price_day(new_year - 1), 20_251_230);
+    assert_eq!(
+        crate::openings::entry_price_day(new_year).expect("date step"),
+        20_251_231
+    );
+    assert_eq!(
+        crate::openings::entry_price_day(new_year - 1).expect("date step"),
+        20_251_230
+    );
 }
 
 #[test]

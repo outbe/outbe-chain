@@ -108,7 +108,8 @@ fn nod_item_issued(
                 issued_at,
                 outbe_primitives::markup::marked_up(entry_price_minor, CALL_RATE_PCT).unwrap(),
                 iso,
-            ),
+            )
+            .expect("date step"),
             issuance_currency: iso,
             reference_currency: iso,
             issued_at,
@@ -132,7 +133,7 @@ fn register(storage: &StorageHandle<'_>, iso: u16) {
 }
 
 fn last_closed_day(timestamp: u64) -> u32 {
-    previous_date_key(timestamp_to_date_key(timestamp))
+    previous_date_key(timestamp_to_date_key(timestamp)).expect("date step")
 }
 
 fn bump_watermark(storage: &StorageHandle<'_>, utc_day: u32) {
@@ -157,7 +158,7 @@ fn fill_days_for(storage: &StorageHandle<'_>, iso: u16, latest: u32, days: u32, 
     let mut day = latest;
     for _ in 0..days {
         set_vwap_for(storage, iso, day, value);
-        day = previous_date_key(day);
+        day = previous_date_key(day).expect("date step");
     }
 }
 
@@ -397,7 +398,7 @@ fn issuance_seals_the_call_terms_on_the_group() {
                 .unwrap()
                 .full_day_after_issue
                 .value(),
-            first_full_day(START)
+            first_full_day(START).expect("date step")
         );
         assert_ne!(
             nod.call_group_slot.read(&item.group_key).unwrap(),
@@ -421,7 +422,8 @@ fn an_unset_profile_seals_the_dev_terms_off_mainnet() {
             item.issued_at,
             outbe_primitives::markup::marked_up(entry_price(), dev.call_rate).unwrap(),
             ISO,
-        );
+        )
+        .expect("date step");
         add(storage, &item);
         assert_eq!(
             (
@@ -627,7 +629,7 @@ fn the_window_absorbs_below_call_days_up_to_the_slack() {
                 set_vwap_for(storage, ISO, day, below_call());
                 dropped += 1;
             }
-            day = previous_date_key(day);
+            day = previous_date_key(day).expect("date step");
             offset += 1;
         }
 
@@ -691,7 +693,7 @@ fn the_issue_day_counts_only_for_a_nod_issued_at_midnight() {
     let latest = last_closed_day(scan_at);
     let mut oldest_breach = latest;
     for _ in 1..CALL_THRESHOLD_DAYS {
-        oldest_breach = previous_date_key(oldest_breach);
+        oldest_breach = previous_date_key(oldest_breach).expect("date step");
     }
     let midnight = date_key_to_utc_timestamp(oldest_breach);
 
@@ -742,7 +744,7 @@ fn a_delayed_issuance_does_not_count_pre_issuance_wwd_days() {
         );
         let issuance_utc_day = timestamp_to_date_key(START);
         fill_days(storage, issuance_utc_day, CALL_THRESHOLD_DAYS, above_call());
-        let scan_at = date_key_to_utc_timestamp(first_full_day(START));
+        let scan_at = date_key_to_utc_timestamp(first_full_day(START).expect("date step"));
         finalize_through(storage, scan_at);
         assert_eq!(scan(storage, scan_at), 0);
         assert_eq!(called_at(storage, item.group_key), 0);
@@ -1066,7 +1068,7 @@ fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
             (0..CALL_LOOKBACK_DAYS)
                 .map(|_| {
                     let entry = (day, Some(above_call()));
-                    day = previous_date_key(day);
+                    day = previous_date_key(day).expect("date step");
                     entry
                 })
                 .collect(),
@@ -1334,7 +1336,7 @@ fn pending_calls_hold_forfeits_and_same_height_reentry_keeps_the_allowance() {
         fill_days_for(storage, OTHER_ISO, latest, CALL_LOOKBACK_DAYS, above_call());
         // The daily triggers in between walked their own days.
         nod.call_latest_day
-            .write(previous_date_key(latest))
+            .write(previous_date_key(latest).expect("date step"))
             .unwrap();
 
         let ctx = block_at(storage, past);
@@ -1578,7 +1580,7 @@ fn a_running_call_sweep_keeps_its_day() {
         assert_eq!(called_at(storage, item.group_key), later);
         assert_eq!(
             nod.call_sweep_day.read().unwrap(),
-            outbe_primitives::time::next_date_key(day),
+            outbe_primitives::time::next_date_key(day).expect("date step"),
             "only the pinned day ran at this height"
         );
     });

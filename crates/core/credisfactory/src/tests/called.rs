@@ -41,13 +41,14 @@ fn group_of(storage: &StorageHandle<'_>, credis_id: U256) -> B256 {
         .get_credis(credis_id)
         .unwrap()
         .group_key()
+        .expect("date step")
 }
 
 /// The `n`th closed day back from the one closed at `at` (0 = the newest).
 fn day_back(at: u64, n: u32) -> u32 {
     let mut day = last_closed_day(at);
     for _ in 0..n {
-        day = previous_date_key(day);
+        day = previous_date_key(day).expect("date step");
     }
     day
 }
@@ -413,7 +414,7 @@ fn a_breach_run_that_predates_the_credis_does_not_call_it() {
         // The daily triggers in between walked their own days.
         sweep_state(&storage)
             .call_latest_day
-            .write(previous_date_key(last_closed_day(later)))
+            .write(previous_date_key(last_closed_day(later)).expect("date step"))
             .unwrap();
         assert_eq!(scan(&storage, later), 1);
         assert_eq!(state_of(&storage, credis_id), CredisState::Called);
@@ -471,7 +472,7 @@ fn an_unfinalized_day_skips_the_run_without_touching_state() {
         let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
         oracle
             .utc_day_vwap_last_finalized
-            .write(previous_date_key(last_closed_day(at)))
+            .write(previous_date_key(last_closed_day(at)).expect("date step"))
             .unwrap();
 
         assert_eq!(scan(&storage, at), 0);
@@ -537,7 +538,7 @@ fn each_reference_currency_prices_off_its_own_daily_series() {
             use outbe_primitives::call_bins;
             let credis = CredisContract::new(storage.clone());
             let record = credis.get_credis(credis_id).unwrap();
-            let group = record.group_key();
+            let group = record.group_key().expect("date step");
             let bin = call_bins::price_to_bin(record.call_price_minor).unwrap();
             call_bins::remove(&CallBins(&credis, REFERENCE_ISO), group).unwrap();
             call_bins::insert(&CallBins(&credis, UNPRICED_ISO), group, bin).unwrap();

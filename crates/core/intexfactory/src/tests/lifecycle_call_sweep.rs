@@ -19,38 +19,17 @@ use outbe_primitives::sweep_budget::{SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BL
 
 pub(super) const CHAIN_ID: u64 = 1;
 pub(super) const REFERENCE_ISO: u16 = 840;
-const PAIR_ID: u32 = 1;
 pub(super) const ISSUED_AT: u32 = 1_700_000_000;
 pub(super) use outbe_primitives::time::{SECONDS_PER_DAY as DAY, SECONDS_PER_DAY_U32};
 pub(super) const TRIGGER: u64 = 1_000_000;
 pub(super) const WINDOW_DAYS: u32 = 28;
 
+use super::set_vwap;
+pub(super) use super::setup_pair;
 use super::with_factory;
 
-pub(super) fn setup_pair(oracle: &OracleContract) -> AddressPair {
-    let pair = AddressPair::new_coen_to(REFERENCE_ISO);
-    oracle.pair_to_index.write(&pair, PAIR_ID).unwrap();
-    oracle.pair_count.write(PAIR_ID).unwrap();
-    oracle.pair_by_index.write_pair(&PAIR_ID, pair).unwrap();
-    oracle.vote_target.write(&pair, true).unwrap();
-    oracle.reference_currencies.push(REFERENCE_ISO).unwrap();
-    pair
-}
-
-fn set_vwap(oracle: &OracleContract, utc_day: u32, pair: AddressPair, value: U256) {
-    let pair_id = oracle.pair_index_of(pair).unwrap();
-    oracle.record_utc_day_vwap(utc_day, pair_id, value).unwrap();
-    if oracle.utc_day_vwap_last_finalized.read().unwrap() < utc_day {
-        oracle.utc_day_vwap_last_finalized.write(utc_day).unwrap();
-    }
-}
-
 pub(super) fn fill_window(oracle: &OracleContract, latest: u32, pair: AddressPair, value: U256) {
-    let mut day = latest;
-    for _ in 0..WINDOW_DAYS {
-        set_vwap(oracle, day, pair, value);
-        day = previous_date_key(day);
-    }
+    super::fill_days(oracle, latest, pair, WINDOW_DAYS, value);
 }
 
 /// Each day's candidate is issued on its own day, so it opens its own call group.
@@ -96,7 +75,7 @@ fn a_called_group_is_parked_with_its_members_and_call_time() {
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
-        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
+        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         fill_window(&oracle, last_closed_day, pair, U256::from(TRIGGER + 1));
         seed_called_candidate(&s, 20260101);
 
@@ -169,7 +148,7 @@ fn unallocated(s: &StorageHandle<'_>) -> U256 {
 fn priced_window(s: &StorageHandle<'_>, scan_ts: u64) {
     let oracle = OracleContract::new(s.clone());
     let pair = setup_pair(&oracle);
-    let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
+    let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
     fill_window(&oracle, last_closed_day, pair, U256::from(TRIGGER + 1));
 }
 
@@ -437,7 +416,7 @@ fn a_sweep_wider_than_one_run_finishes_over_the_next_blocks() {
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
-        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
+        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         // Every window day above the trigger: all of them are due a call.
         fill_window(&oracle, last_closed_day, pair, U256::from(TRIGGER + 1));
 
@@ -484,15 +463,8 @@ fn a_sweep_wider_than_one_run_finishes_over_the_next_blocks() {
 fn fill_expiring_window(oracle: &OracleContract, latest: u32, pair: AddressPair) {
     let breach = U256::from(TRIGGER + 1);
     let quiet = U256::from(TRIGGER);
-    let mut day = latest;
-    for _ in 0..WINDOW_DAYS - 21 {
-        set_vwap(oracle, day, pair, quiet);
-        day = previous_date_key(day);
-    }
-    for _ in 0..21 {
-        set_vwap(oracle, day, pair, breach);
-        day = previous_date_key(day);
-    }
+    let older = super::fill_days(oracle, latest, pair, WINDOW_DAYS - 21, quiet);
+    super::fill_days(oracle, older, pair, 21, breach);
 }
 
 #[test]
@@ -501,7 +473,7 @@ fn a_sweep_that_runs_past_midnight_keeps_deciding_against_its_own_day() {
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
-        let opened_on = previous_date_key(timestamp_to_date_key(scan_ts));
+        let opened_on = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         fill_expiring_window(&oracle, opened_on, pair);
         // The day the sweep spills into is quiet, so the window it would see has
         // one breach fewer than the threshold.
@@ -543,7 +515,7 @@ fn a_sweep_opened_a_day_later_sees_the_window_expire() {
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
-        let opened_on = previous_date_key(timestamp_to_date_key(scan_ts));
+        let opened_on = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         fill_expiring_window(&oracle, opened_on, pair);
         set_vwap(
             &oracle,
@@ -568,7 +540,7 @@ fn a_slice_schedules_a_ready_day_without_waiting_for_a_trigger() {
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
-        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
+        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         fill_window(&oracle, last_closed_day, pair, U256::from(TRIGGER + 1));
         seed_called_candidate(&s, 20260101);
 
@@ -589,7 +561,7 @@ fn a_sweep_that_fits_in_one_run_closes_at_once() {
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
-        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
+        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         fill_window(&oracle, last_closed_day, pair, U256::from(TRIGGER + 1));
         for day in 20260101..20260105 {
             seed_called_candidate(&s, day);
@@ -621,7 +593,7 @@ fn a_bin_of_undecided_groups_does_not_stall_the_sweep() {
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
-        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
+        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         fill_window(&oracle, last_closed_day, pair, U256::from(TRIGGER + 1));
 
         // All issued five days ago: every one is visited, decided, and left alone.
@@ -661,7 +633,7 @@ fn a_window_price_out_of_range_skips_the_currency() {
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
-        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
+        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         // Priced days enough to reach the threshold, at a price no bin covers.
         fill_window(&oracle, last_closed_day, pair, U256::MAX);
         seed_called_candidate(&s, 20260101);
@@ -688,7 +660,7 @@ fn a_new_sweep_walks_the_bins_the_last_one_stopped_above() {
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
-        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
+        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         fill_window(&oracle, last_closed_day, pair, U256::from(TRIGGER * 4));
 
         // Below the budget-stop: issued inside the window, so it decides against a
@@ -722,7 +694,7 @@ fn a_new_sweep_walks_the_bins_the_last_one_stopped_above() {
         // Twenty days on, the young group's own window reaches the threshold. The
         // day's trigger has to find it, which it only does from a reset cursor.
         let later_ts = scan_ts + 20 * DAY;
-        let later_day = previous_date_key(timestamp_to_date_key(later_ts));
+        let later_day = previous_date_key(timestamp_to_date_key(later_ts)).expect("date step");
         fill_window(&oracle, later_day, pair, U256::from(TRIGGER * 4));
         let later = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(2, later_ts, CHAIN_ID),

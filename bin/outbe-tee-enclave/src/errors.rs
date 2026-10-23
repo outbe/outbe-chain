@@ -158,6 +158,10 @@ pub enum TeeError {
     /// A Fidelity operation failed.
     #[error("fidelity: {0}")]
     Fidelity(String),
+
+    /// Attestation preimage JSON did not serialize. The source stays structured.
+    #[error("attestation preimage serialization failed: {0}")]
+    AttestationPreimageSerialization(#[from] serde_json::Error),
 }
 
 impl TeeError {

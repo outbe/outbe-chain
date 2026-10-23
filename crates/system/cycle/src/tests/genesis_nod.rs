@@ -95,14 +95,14 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
             // A multi-day halt walks every day it missed, one per block, and then stops
             // rather than replaying the latest price on subsequent blocks.
             let late = midnight + 3 * SECONDS_PER_DAY;
-            let previous = previous_date_key(timestamp_to_date_key(late));
+            let previous = previous_date_key(timestamp_to_date_key(late)).expect("date step");
             // The sealed test terms call on 2 breach days out of a 3-day window.
             // An unpriced day counts as zero. So every day closed during
             // the halt must carry its finalized price for the call to be due.
             let mut day = previous;
             while day >= timestamp_to_date_key(midnight) {
                 oracle.record_utc_day_vwap(day, index, U256::from(100))?;
-                day = previous_date_key(day);
+                day = previous_date_key(day).expect("date step");
             }
             oracle.utc_day_vwap_last_finalized.write(previous)?;
             let ctx = BlockRuntimeContext::new(block_ctx(5, late), storage.clone());
@@ -145,7 +145,7 @@ fn call_across_a_halt(price_on_d: bool) -> (u64, u32, u64) {
             isolate_nod_call_schedule(&cycle, midnight)?;
             let (oracle, index) = seed_closed_day_prices(&storage, midnight)?;
             // The sealed DEV terms call on 2 breach days of a 3-day window; 1 never breaches.
-            let back = |n: u32| (0..n).fold(d, |day, _| previous_date_key(day));
+            let back = |n: u32| (0..n).fold(d, |day, _| previous_date_key(day).expect("date step"));
             for day in [back(4), back(3), back(1)] {
                 oracle.record_utc_day_vwap(day, index, U256::from(1))?;
             }
@@ -164,7 +164,9 @@ fn call_across_a_halt(price_on_d: bool) -> (u64, u32, u64) {
             if price_on_d {
                 oracle.record_utc_day_vwap(d, index, U256::from(100))?;
             }
-            oracle.utc_day_vwap_last_finalized.write(next_date_key(d))?;
+            oracle
+                .utc_day_vwap_last_finalized
+                .write(next_date_key(d).expect("date step"))?;
             let ctx = BlockRuntimeContext::new(block_ctx(4, restart), storage.clone());
             dispatch_and_call(&ctx)?;
             for height in 5..13 {
@@ -196,11 +198,11 @@ fn a_halt_does_not_skip_the_day_that_calls_a_nod_group() {
     let d = timestamp_to_date_key(GENESIS_TS + 40 * SECONDS_PER_DAY);
     let (called_at, latest, restart) = call_across_a_halt(true);
     assert_eq!(called_at, restart);
-    assert_eq!(latest, next_date_key(d));
+    assert_eq!(latest, next_date_key(d).expect("date step"));
 
     let (called_at, latest, _) = call_across_a_halt(false);
     assert_eq!(called_at, 0, "without D's price no window breaches twice");
-    assert_eq!(latest, next_date_key(d));
+    assert_eq!(latest, next_date_key(d).expect("date step"));
 }
 
 #[test]
@@ -315,11 +317,11 @@ fn seed_closed_day_prices<'s>(
         outbe_oracle::api::AddressPair::new_coen_to(840),
     )?;
     oracle.reference_currencies.push(840)?;
-    let mut day = previous_date_key(timestamp_to_date_key(midnight));
+    let mut day = previous_date_key(timestamp_to_date_key(midnight)).expect("date step");
     oracle.utc_day_vwap_last_finalized.write(day)?;
     for _ in 0..28 {
         oracle.record_utc_day_vwap(day, index, U256::from(100))?;
-        day = previous_date_key(day);
+        day = previous_date_key(day).expect("date step");
     }
     Ok((oracle, index))
 }
@@ -352,7 +354,8 @@ fn issue_nod(
         GENESIS_TS,
         terms.map_or(U256::ZERO, |terms| terms.call_price_minor),
         840,
-    );
+    )
+    .expect("date step");
     outbe_nod::api::add_nod(
         storage,
         &body,

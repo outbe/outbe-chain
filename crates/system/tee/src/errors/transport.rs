@@ -60,6 +60,10 @@ pub enum TransportError {
     #[error("fidelity attestation signature invalid: {0}")]
     FidelityAttestation(String),
 
+    /// Attestation preimage JSON did not serialize. The source stays structured.
+    #[error("attestation preimage serialization failed: {0}")]
+    AttestationPreimageSerialization(#[from] serde_json::Error),
+
     /// Enclave returned a response variant that does not match the request.
     #[error("unexpected response from enclave")]
     UnexpectedResponse,
@@ -203,6 +207,7 @@ impl TransportError {
             Self::PromisOpAttestation(_) => "promis_op_attestation",
             Self::DcapVerification(_) => "dcap_verification",
             Self::FidelityAttestation(_) => "fidelity_attestation",
+            Self::AttestationPreimageSerialization(_) => "attestation_preimage_serialization",
             Self::UnexpectedResponse => "unexpected_response",
             Self::EnclaveError(_) => "enclave_error",
             Self::TributeSourceRejected(_) => "tribute_source_rejected",

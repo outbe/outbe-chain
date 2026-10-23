@@ -1,5 +1,5 @@
 use crate::constants::AGENT_DISCOUNT_PCT;
-use crate::errors::AgentRewardError;
+use crate::errors::{date_step_error, AgentRewardError};
 use crate::precompile::IAgentReward;
 use crate::schema::{AgentRewardContract, RewardPool};
 use alloy_primitives::{Address, B256, U256};
@@ -290,6 +290,6 @@ pub(crate) fn issue_reward_gem(
 
 fn previous_day_vwap(storage: &StorageHandle<'_>, reference_currency: u16) -> Result<Option<U256>> {
     let now = storage.now_secs()?;
-    let day = previous_date_key(timestamp_to_date_key(now));
+    let day = previous_date_key(timestamp_to_date_key(now)).map_err(date_step_error)?;
     outbe_oracle::api::get_utc_day_vwap_for_iso(storage.clone(), day, reference_currency)
 }

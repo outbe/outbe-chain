@@ -151,6 +151,15 @@ pub enum OracleError {
     SnapshotOutOfOrder,
     #[error("No rate for pair {pair}")]
     NoRateForPair { pair: AddressPair },
+    #[error("date step kind {kind} from date key {date_key}")]
+    DateStep { kind: u8, date_key: u32 },
+}
+
+pub(crate) fn date_step_error(err: outbe_primitives::time::TimeError) -> PrecompileError {
+    match err.date_step() {
+        Some((kind, date_key)) => OracleError::DateStep { kind, date_key }.into(),
+        None => PrecompileError::Fatal(err.to_string()),
+    }
 }
 
 impl From<OracleError> for PrecompileError {
@@ -373,6 +382,13 @@ impl From<OracleError> for PrecompileError {
                 IOracle::NoRateForPair {
                     pairBase: pair.address1(),
                     pairQuote: pair.address2(),
+                }
+                .abi_encode(),
+            )),
+            OracleError::DateStep { kind, date_key } => PrecompileError::RevertBytes(Bytes::from(
+                IOracle::DateStep {
+                    kind,
+                    dateKey: date_key,
                 }
                 .abi_encode(),
             )),

@@ -368,7 +368,8 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
     let block_ts = GENESIS_TS + SECONDS_PER_DAY + 60;
     let prev_day = outbe_primitives::time::previous_date_key(
         outbe_primitives::time::timestamp_to_date_key(block_ts),
-    );
+    )
+    .expect("date step");
     let emission_trigger = outbe_cycle::triggers::TriggerId::ProtocolCycle.as_u32();
     let mut state =
         state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {

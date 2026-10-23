@@ -17,7 +17,7 @@ use outbe_gem::schema::{GemContract, GemState};
 
 /// Every day of the window closed at `vwap` on `pair`, finalized through yesterday.
 fn window_at(storage: &StorageHandle, pair: u32, vwap: U256) -> u32 {
-    let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW));
+    let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW)).expect("date step");
     priced_window(storage, pair, last_closed_day, vwap);
     last_closed_day
 }
@@ -67,11 +67,11 @@ fn call_scan_reads_each_gem_own_pair_window() {
         // Only the EUR pair breaches: the USD pair has no published VWAPs.
         let breach = view(storage, eur_id).terms.call_price_minor + U256::from(1u64);
         let oracle = OracleContract::new(storage.clone());
-        let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW));
+        let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW)).expect("date step");
         let mut day = last_closed_day;
         for _ in 0..(outbe_gem::constants::CALL_THRESHOLD / SECONDS_PER_DAY_U32) {
             oracle.record_utc_day_vwap(day, eur_pair, breach).unwrap();
-            day = previous_date_key(day);
+            day = previous_date_key(day).expect("date step");
         }
         oracle
             .utc_day_vwap_last_finalized
@@ -143,7 +143,7 @@ fn a_bin_wider_than_the_budget_resumes_inside_it() {
                 .unwrap()
         };
         assert_eq!(bin(ids[0]), bin(ids[1]), "one bin, two groups");
-        let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW));
+        let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW)).expect("date step");
         let window = full_window(last_closed_day, U256::from(300_000u64));
 
         assert_eq!(walk(storage, &window, 1), (1, false));
@@ -205,7 +205,7 @@ fn the_issue_day_counts_only_for_a_gem_issued_at_midnight() {
     // Oldest day of a breach run that is exactly threshold-long.
     let mut oldest_breach = timestamp_to_date_key(T_NOW);
     for _ in 1..threshold_days {
-        oldest_breach = previous_date_key(oldest_breach);
+        oldest_breach = previous_date_key(oldest_breach).expect("date step");
     }
     let midnight = date_key_to_utc_timestamp(oldest_breach);
 
@@ -242,7 +242,7 @@ fn a_later_gem_of_a_midnight_gems_day_does_not_count_the_partial_day() {
     let threshold_days = (outbe_gem::constants::CALL_THRESHOLD / SECONDS_PER_DAY_U32) as usize;
     let mut oldest_breach = timestamp_to_date_key(T_NOW);
     for _ in 1..threshold_days {
-        oldest_breach = previous_date_key(oldest_breach);
+        oldest_breach = previous_date_key(oldest_breach).expect("date step");
     }
     let midnight = date_key_to_utc_timestamp(oldest_breach);
     with_storage(|storage| {
@@ -360,11 +360,11 @@ fn an_unindexable_price_skips_its_currency_for_the_day_and_says_so() {
         // begin-block error would fail the whole block.
         let pair = seed_currency(&storage, USD, Some(U256::from(600_000u64)));
         let oracle = OracleContract::new(storage.clone());
-        let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW));
+        let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW)).expect("date step");
         let mut day = last_closed_day;
         for _ in 0..outbe_gem::constants::CALL_THRESHOLD / SECONDS_PER_DAY_U32 {
             oracle.record_utc_day_vwap(day, pair, U256::MAX).unwrap();
-            day = previous_date_key(day);
+            day = previous_date_key(day).expect("date step");
         }
         oracle
             .utc_day_vwap_last_finalized
@@ -459,7 +459,7 @@ fn a_trigger_during_a_running_call_sweep_queues_its_day() {
         assert_ne!(cursor, 0, "the first slice gave out inside the range");
 
         let next_ts = T_NOW + SECONDS_PER_DAY;
-        let next_day = previous_date_key(timestamp_to_date_key(next_ts));
+        let next_day = previous_date_key(timestamp_to_date_key(next_ts)).expect("date step");
         priced_window(storage, pair, next_day, U256::from(300_000u64));
         let next = block_ctx_at(storage, next_ts);
         run_daily(&next).unwrap();
@@ -498,7 +498,7 @@ fn days_closed_behind_a_running_call_sweep_are_walked_in_order() {
         let mut closed = Vec::new();
         for offset in 0..3u64 {
             let ts = T_NOW + offset * SECONDS_PER_DAY;
-            let day = previous_date_key(timestamp_to_date_key(ts));
+            let day = previous_date_key(timestamp_to_date_key(ts)).expect("date step");
             priced_window(storage, pair, day, U256::from(300_000u64));
             // Only the first trigger's block walks: the later days arrive meanwhile.
             let ctx = block_ctx_at(storage, ts);
@@ -537,7 +537,7 @@ fn a_call_sweep_over_several_currencies_always_ends() {
     with_storage(|storage| {
         let gem = GemContract::new(storage.clone());
         set_profile(storage, outbe_gem::config::PROFILE_PROD);
-        let day = previous_date_key(timestamp_to_date_key(T_NOW));
+        let day = previous_date_key(timestamp_to_date_key(T_NOW)).expect("date step");
         for iso in [USD, EUR] {
             let pair = seed_currency(storage, iso, Some(U256::from(600_000u64)));
             priced_window(storage, pair, day, U256::from(300_000u64));

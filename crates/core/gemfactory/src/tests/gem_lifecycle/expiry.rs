@@ -164,7 +164,7 @@ fn a_gem_above_the_window_is_not_visited_but_still_expires() {
 
         // Every published day sits below the gem's call price.
         let pair = seed_currency(storage, USD, Some(U256::from(600_000u64)));
-        let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW));
+        let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW)).expect("date step");
         priced_window(
             storage,
             pair,

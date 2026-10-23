@@ -19,18 +19,11 @@ interface IVote {
     error InvalidProposalStatus();
     error InvalidVoteKind();
     error InvalidElectorate();
-    error InvalidBondSettlement();
     error ProposalCounterExhausted();
-    error InvalidBondAmount();
-    error ProposalBondAlreadyRecorded();
-    error ProposalBondNotUnsettled();
-    error BondLiabilityOverflow();
-    error BondLiabilityUnderflow();
     error InvalidPayload();
     error UnknownTargetModule();
     error DuplicateTargetModule();
     error StoredPayloadInvalid(string module);
-    error InconsistentBondState(uint256 proposal_id);
 
     enum ProposalStatus {
         Pending,
@@ -105,12 +98,12 @@ interface IVote {
     /// @notice An expired proposal burned its recorded proposal bond.
     event ProposalBondBurned(uint256 indexed proposalId, address indexed owner, uint256 amount);
 
-    error InvalidProposalBond(uint256 expected, uint256 actual);
-    error ProposalBondAlreadySettled(uint256 proposalId, BondSettlement settlement);
-    error ProposalBondSettlementFailed(uint256 proposalId);
-    error ProposalBondLiabilityInvariant(uint256 balance, uint256 liabilities);
+    /// @notice A proposal bond check failed; reason preserves the accounting context.
+    error InvalidProposalBond(string reason);
 
     /// @notice Creates a generic proposal.
+    /// @dev Vote enforces its raw UTF-8 payload byte limit before target decoding
+    /// or storage writes. This admission-only bound is separate from decoded field limits.
     /// @param targetModule Target system module precompile address.
     /// @param payload JSON payload decoded only by the target module handler.
     function createProposal(address targetModule, string calldata payload) external payable returns (uint256 proposalId);

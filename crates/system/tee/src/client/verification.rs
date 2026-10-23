@@ -274,12 +274,13 @@ pub(super) fn verify_quote(quote: &EnclaveResponse) -> Result<[u8; 32], Transpor
     Ok(verify_peer_quote(quote)?.noise_static_pub)
 }
 
-/// Shared Ed25519 check over an already domain-separated attestation preimage.
-/// The caller selects the public error variant so the API keeps its exact
-/// domain-specific error text and classification.
-fn verify_attestation_tag<P: AsRef<[u8]>>(
+/// Shared Ed25519 check over a domain-separated attestation preimage.
+/// The key check and the tag-length check run before the preimage closure.
+/// A serialization failure stays [`TransportError::AttestationPreimageSerialization`].
+/// The caller selects the public error variant for key, tag, and signature failures.
+fn verify_attestation_tag(
     attestation_pub: &[u8; 32],
-    preimage: impl FnOnce() -> P,
+    preimage: impl FnOnce() -> Result<Vec<u8>, serde_json::Error>,
     tag: &[u8],
     error: fn(String) -> TransportError,
 ) -> Result<(), TransportError> {
@@ -292,7 +293,8 @@ fn verify_attestation_tag<P: AsRef<[u8]>>(
         error(crate::errors::TeeClientVerificationError::BadTagLength(tag.len()).to_string())
     })?;
     let sig = Signature::from_bytes(&sig_bytes);
-    vk.verify_strict(preimage().as_ref(), &sig).map_err(|e| {
+    let message = preimage()?;
+    vk.verify_strict(message.as_ref(), &sig).map_err(|e| {
         error(crate::errors::TeeClientVerificationError::SignatureInvalid(e).to_string())
     })
 }
@@ -354,19 +356,6 @@ pub fn verify_promis_op_attestation(
     )
 }
 
-fn verify_fidelity_tag(
-    attestation_pub: &[u8; 32],
-    preimage: &[u8],
-    tag: &[u8],
-) -> Result<(), TransportError> {
-    verify_attestation_tag(
-        attestation_pub,
-        || preimage,
-        tag,
-        TransportError::FidelityAttestation,
-    )
-}
-
 /// Verify a standalone Fidelity cohort-op attestation tag. Same
 /// verify-then-discard semantics as [`verify_gratis_op_attestation`].
 pub fn verify_fidelity_cohort_attestation(
@@ -375,9 +364,12 @@ pub fn verify_fidelity_cohort_attestation(
     result: &crate::protocol::FidelityCohortResult,
     tag: &[u8],
 ) -> Result<(), TransportError> {
-    let preimage =
-        crate::protocol::fidelity_cohort_attestation_preimage(inputs_canonical_hash, result);
-    verify_fidelity_tag(attestation_pub, &preimage, tag)
+    verify_attestation_tag(
+        attestation_pub,
+        || crate::protocol::fidelity_cohort_attestation_preimage(inputs_canonical_hash, result),
+        tag,
+        TransportError::FidelityAttestation,
+    )
 }
 
 /// Verify a Fidelity league-snapshot attestation tag.
@@ -387,9 +379,12 @@ pub fn verify_fidelity_snapshot_attestation(
     leagues: &[crate::protocol::FidelityLeagueEntry],
     tag: &[u8],
 ) -> Result<(), TransportError> {
-    let preimage =
-        crate::protocol::fidelity_snapshot_attestation_preimage(inputs_canonical_hash, leagues);
-    verify_fidelity_tag(attestation_pub, &preimage, tag)
+    verify_attestation_tag(
+        attestation_pub,
+        || crate::protocol::fidelity_snapshot_attestation_preimage(inputs_canonical_hash, leagues),
+        tag,
+        TransportError::FidelityAttestation,
+    )
 }
 
 /// Verify a Fidelity index-query attestation tag.
@@ -399,7 +394,10 @@ pub fn verify_fidelity_query_attestation(
     result: &crate::protocol::FidelityQueryResult,
     tag: &[u8],
 ) -> Result<(), TransportError> {
-    let preimage =
-        crate::protocol::fidelity_query_attestation_preimage(inputs_canonical_hash, result);
-    verify_fidelity_tag(attestation_pub, &preimage, tag)
+    verify_attestation_tag(
+        attestation_pub,
+        || crate::protocol::fidelity_query_attestation_preimage(inputs_canonical_hash, result),
+        tag,
+        TransportError::FidelityAttestation,
+    )
 }

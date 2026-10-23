@@ -318,7 +318,8 @@ impl Lifecycle for IntexLifecycle {
     /// closed yesterday on its own feed.
     fn recorded_close(&self, world: &World) -> Option<U256> {
         use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
-        let yesterday = previous_date_key(timestamp_to_date_key(head_time(world)));
+        let yesterday =
+            previous_date_key(timestamp_to_date_key(head_time(world))).expect("date step");
         let close = eth::read_call(
             &world.rpc.url(world.validators.primary_port()),
             outbe_primitives::addresses::ORACLE_ADDRESS,

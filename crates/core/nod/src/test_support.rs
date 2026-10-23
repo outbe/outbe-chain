@@ -166,6 +166,7 @@ pub fn group_key_at(
         outbe_primitives::markup::marked_up(entry_price_minor, params.call_rate).unwrap(),
         reference_currency,
     )
+    .expect("date step")
 }
 
 /// Records `item` as NodFactory issues it: the terms its entry seals and its load.

@@ -375,7 +375,7 @@ fn a_merchant_gem_issues_until_the_second_its_position_expires() {
             .unwrap();
         OracleContract::new(storage.clone())
             .record_utc_day_vwap(
-                previous_date_key(timestamp_to_date_key(expires_at - 1)),
+                previous_date_key(timestamp_to_date_key(expires_at - 1)).expect("date step"),
                 index,
                 rate,
             )

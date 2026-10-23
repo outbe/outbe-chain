@@ -48,7 +48,7 @@ fn a_slice_resumes_at_the_currency_it_gave_out_on() {
         let first = setup_pair(&oracle);
         let second = setup_second_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
-        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
+        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         fill_window(&oracle, last_closed_day, first, U256::from(TRIGGER + 1));
         fill_window(&oracle, last_closed_day, second, U256::from(TRIGGER + 1));
 
@@ -85,7 +85,7 @@ fn a_trigger_during_a_running_sweep_queues_its_day() {
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
-        let day = previous_date_key(timestamp_to_date_key(scan_ts));
+        let day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         fill_window(&oracle, day, pair, U256::from(TRIGGER + 1));
         let groups = SWEEP_WRITES_PER_BLOCK + SWEEP_WRITES_PER_BLOCK / 2;
         let days = 20260101..20260101 + groups;
@@ -103,7 +103,7 @@ fn a_trigger_during_a_running_sweep_queues_its_day() {
         assert_ne!(cursor, 0, "the first slice gave out inside the range");
 
         let next_ts = scan_ts + DAY;
-        let next_day = previous_date_key(timestamp_to_date_key(next_ts));
+        let next_day = previous_date_key(timestamp_to_date_key(next_ts)).expect("date step");
         fill_window(&oracle, next_day, pair, U256::from(TRIGGER + 1));
         let next = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(2, next_ts, CHAIN_ID),
@@ -139,7 +139,7 @@ fn days_closed_behind_a_running_call_sweep_are_walked_in_order() {
         let mut closed = Vec::new();
         for offset in 0..3 {
             let ts = ISSUED_AT as u64 + (60 + offset) * DAY;
-            let day = previous_date_key(timestamp_to_date_key(ts));
+            let day = previous_date_key(timestamp_to_date_key(ts)).expect("date step");
             fill_window(&oracle, day, pair, U256::from(TRIGGER + 1));
             let ctx = BlockRuntimeContext::new(
                 BlockContext::empty_for_tests(1 + offset, ts, CHAIN_ID),
@@ -186,7 +186,7 @@ fn a_sweep_over_several_currencies_always_ends() {
         let first = setup_pair(&oracle);
         let second = setup_second_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
-        let day = previous_date_key(timestamp_to_date_key(scan_ts));
+        let day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         fill_window(&oracle, day, first, U256::from(TRIGGER + 1));
         fill_window(&oracle, day, second, U256::from(TRIGGER + 1));
 

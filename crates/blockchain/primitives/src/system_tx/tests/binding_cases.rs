@@ -108,7 +108,6 @@ fn boundary() -> DkgBoundaryArtifact {
         is_validator_set_change: true,
         outcome: Bytes::from_static(b"boundary"),
         is_full_dkg: false,
-        tee_recipient_pubkeys: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
         tee_expired_target_exclusions_hash: B256::ZERO,
         reshare: ReshareResult {

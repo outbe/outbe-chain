@@ -8,11 +8,11 @@ use outbe_primitives::{
     block::BlockRuntimeContext,
     call_bins::{self, CallBinStore, Visit},
     call_breach::ScanTerms,
-    daily_sweep::{PinnedDay, Progress, Scheduled, SweepDays},
+    daily_sweep::{DailySweepError, PinnedDay, Progress, Scheduled, SweepDays},
     error::{decide, Decided, PrecompileError, Result, SweepFailure},
     storage::{dsl::Value, StorageHandle},
     sweep_budget::{BlockAllowance, SweepBudget},
-    time::{timestamp_to_date_key, SECONDS_PER_DAY},
+    time::{timestamp_to_date_key, TimeError, SECONDS_PER_DAY},
 };
 
 use crate::api::get_all_reference_currencies;
@@ -113,13 +113,23 @@ pub fn schedule<'s, S: CallSweep<'s>>(ctx: &BlockRuntimeContext, sweep: &mut S) 
         sweep.phase().write(0)?;
         return sweep.reset_cursors(ctx);
     }
-    match sweep.days().schedule(day)? {
+    match sweep.days().schedule(day).map_err(sweep_error)? {
         (next, Scheduled::Opened) => {
             sweep.days().open(next)?;
             sweep.phase().write(0)?;
             sweep.reset_cursors(ctx)
         }
         (_, Scheduled::Queued | Scheduled::Ignored) => Ok(()),
+    }
+}
+
+fn sweep_error(err: DailySweepError) -> PrecompileError {
+    match err {
+        DailySweepError::Storage(err) => err,
+        DailySweepError::Time(time @ TimeError::PreGenesis { .. }) => {
+            PrecompileError::Fatal(time.to_string())
+        }
+        DailySweepError::Time(err) => crate::errors::date_step_error(err),
     }
 }
 
@@ -148,7 +158,7 @@ fn continue_pass<'s, S: CallSweep<'s>>(ctx: &BlockRuntimeContext, sweep: &mut S)
     if day_ready(ctx, sweep, pinned_day)? {
         let (called, progress) = run_phases(ctx, sweep, pinned_day, &mut allowance.budget)?;
         if progress == Progress::Complete {
-            if let Some(next) = sweep.days().finish(pinned_day)? {
+            if let Some(next) = sweep.days().finish(pinned_day).map_err(sweep_error)? {
                 sweep.days().open(next)?;
                 sweep.phase().write(0)?;
                 sweep.reset_cursors(ctx)?;

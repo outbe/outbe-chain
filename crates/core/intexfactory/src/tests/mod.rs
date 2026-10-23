@@ -130,7 +130,10 @@ fn series_state(s: &StorageHandle<'_>, id: SeriesId) -> IntexState {
 
 /// The call group the series belongs to.
 fn group_of(s: &StorageHandle<'_>, id: SeriesId) -> B256 {
-    outbe_intex::api::read_series(s, id).unwrap().group_key()
+    outbe_intex::api::read_series(s, id)
+        .unwrap()
+        .group_key()
+        .expect("date step")
 }
 
 /// Force-call one group against the protocol call window. Returns how many series moved.
@@ -206,7 +209,11 @@ impl SeedCalledGroup for IntexContract<'_> {
     ) -> outbe_primitives::error::Result<()> {
         let record = outbe_intex::api::read_series(&self.storage, member)?;
         let called_at = deadline.saturating_sub(u64::from(record.call_notice_period_seconds));
-        self.record_group_called(record.group_key(), called_at as u32, deadline)
+        self.record_group_called(
+            record.group_key().expect("date step"),
+            called_at as u32,
+            deadline,
+        )
     }
 }
 
@@ -239,7 +246,7 @@ fn word(value: u64) -> alloy_primitives::Bytes {
 fn write_day_rate(oracle: &OracleContract, iso_code: u16, pair_id: u32, rate: U256) {
     let pair = outbe_oracle::api::AddressPair::new_coen_to(iso_code);
     oracle.pair_to_index.write(&pair, pair_id).unwrap();
-    let day = previous_date_key(timestamp_to_date_key(ISSUED_AT as u64));
+    let day = previous_date_key(timestamp_to_date_key(ISSUED_AT as u64)).expect("date step");
     oracle.record_utc_day_vwap(day, pair_id, rate).unwrap();
     let snapshot = outbe_oracle::api::current_vwap_snapshot(oracle.storage.clone()).unwrap();
     OracleContract::new(oracle.storage.clone())

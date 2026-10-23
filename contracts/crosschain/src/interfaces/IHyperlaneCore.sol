@@ -20,6 +20,10 @@ interface IInterchainAccountRouter {
 
     /// @dev Native fee required by {callRemote} for `_destination`.
     function quoteGasPayment(uint32 _destination) external view returns (uint256);
+
+    /// @dev Interchain Account of `_owner` on `_destination`: the account that executes the
+    /// calls of {callRemote}.
+    function getRemoteInterchainAccount(uint32 _destination, address _owner) external view returns (address);
 }
 
 /// @dev StorageMessageIdMultisigIsm: validators and threshold live in storage. It is Ownable2Step,

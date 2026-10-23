@@ -15,31 +15,13 @@ use outbe_oracle::call_window::CallWindow;
 use outbe_primitives::call_breach::ScanTerms;
 
 const REFERENCE_ISO: u16 = 840;
-const PAIR_ID: u32 = 1;
 const LAST_DAY: u32 = 20260212;
 const WINDOW: u32 = 28;
 const THRESHOLD: u32 = 21;
 use outbe_primitives::time::SECONDS_PER_DAY as DAY_SECS;
 
 use super::with_factory as with_oracle;
-
-fn setup_pair(oracle: &OracleContract) -> AddressPair {
-    let pair = AddressPair::new_coen_to(REFERENCE_ISO);
-    oracle.pair_to_index.write(&pair, PAIR_ID).unwrap();
-    oracle.pair_count.write(PAIR_ID).unwrap();
-    oracle.pair_by_index.write_pair(&PAIR_ID, pair).unwrap();
-    oracle.vote_target.write(&pair, true).unwrap();
-    oracle.reference_currencies.push(REFERENCE_ISO).unwrap();
-    pair
-}
-
-fn set_vwap(oracle: &OracleContract, utc_day: u32, pair: AddressPair, value: U256) {
-    let pair_id = oracle.pair_index_of(pair).unwrap();
-    oracle.record_utc_day_vwap(utc_day, pair_id, value).unwrap();
-    if oracle.utc_day_vwap_last_finalized.read().unwrap() < utc_day {
-        oracle.utc_day_vwap_last_finalized.write(utc_day).unwrap();
-    }
-}
+use super::{set_vwap, setup_pair};
 
 /// Write one window's days, latest first. `None` leaves the day unpriced.
 fn seed_window(oracle: &OracleContract, pair: AddressPair, days: &[Option<u64>]) {
@@ -48,7 +30,7 @@ fn seed_window(oracle: &OracleContract, pair: AddressPair, days: &[Option<u64>])
         if let Some(v) = value {
             set_vwap(oracle, day, pair, U256::from(*v));
         }
-        day = previous_date_key(day);
+        day = previous_date_key(day).expect("date step");
     }
 }
 
