@@ -5,6 +5,7 @@ use outbe_primitives::addresses::TRIBUTE_FACTORY_ADDRESS;
 /// EVM storage layout for the Tribute Factory contract.
 ///
 /// Tracks used SU (Spending Unit) hashes to prevent replay.
+/// A marker write is silent. The factory does not emit a per-hash event.
 /// TEE configuration is managed off-chain / via system calls.
 #[storage_schema]
 #[contract(addr = TRIBUTE_FACTORY_ADDRESS)]

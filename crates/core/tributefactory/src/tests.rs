@@ -819,6 +819,8 @@ fn empty_su_hash_list_rejects_before_issuance_and_rewards() {
 #[test]
 fn su_hash_can_only_be_used_once() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    let events_before = storage.events.clone();
+    let ordered_before = storage.get_ordered_events().to_vec();
     StorageHandle::enter(&mut storage, |storage| {
         let expect_reused = |err: PrecompileError, _expected_hash: B256| {
             assert_eq!(
@@ -851,6 +853,8 @@ fn su_hash_can_only_be_used_once() {
             dup,
         );
     });
+    assert_eq!(storage.events, events_before);
+    assert_eq!(storage.get_ordered_events(), ordered_before);
 }
 
 #[test]
