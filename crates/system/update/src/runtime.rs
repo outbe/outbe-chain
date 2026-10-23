@@ -5,7 +5,7 @@ use outbe_teeregistry::TeeRegistry;
 use serde_json::Value;
 
 use crate::constants::{
-    max_activatable_version, min_activation_buffer, MAX_WAITING_FOR_ACTIVATION_UPDATES,
+    max_activatable_version, MAX_WAITING_FOR_ACTIVATION_UPDATES, MIN_ACTIVATION_BUFFER,
 };
 use crate::errors::UpdateError;
 use crate::handlers::UpgradeHandlerRegistry;
@@ -109,8 +109,7 @@ impl Update<'_> {
         activation_height: u64,
         current_height: u64,
     ) -> Result<std::result::Result<(), UpdateError>> {
-        let chain_id = self.storage.chain_id()?;
-        let min_activation = current_height.saturating_add(min_activation_buffer(chain_id));
+        let min_activation = current_height.saturating_add(MIN_ACTIVATION_BUFFER);
         if activation_height < min_activation {
             return Ok(Err(UpdateError::HeightInPast));
         }
@@ -128,6 +127,7 @@ impl Update<'_> {
     }
 
     /// Activates scheduled updates at the current block height using `registry`.
+    /// Existing schedules activate at their recorded height; admission notice is not reapplied.
     pub fn process_begin_block_with_handlers(
         &mut self,
         ctx: &BlockRuntimeContext,

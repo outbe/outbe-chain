@@ -89,7 +89,6 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             formingPeriodSeconds = outbe_chain_constants::get_metadosis_forming_period_seconds(),
             lookbackDelaySeconds = outbe_chain_constants::get_metadosis_lookback_delay_seconds(),
             offeringPeriodSeconds = outbe_chain_constants::get_metadosis_offering_period_seconds(),
-            waitingPeriodSeconds = outbe_chain_constants::get_metadosis_waiting_period_seconds(),
             advanceIntervalSeconds =
                 outbe_chain_constants::get_metadosis_advance_interval_seconds(),
             "effective genesis protocol parameters"
@@ -203,9 +202,11 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             &node,
             &args,
             (radicle_preflight, radicle_status.clone()),
-            radicle_shutdown_token.clone(),
-            shutdown.clone(),
-            bridge.repository_publication_mailbox(),
+            (
+                radicle_shutdown_token.clone(),
+                shutdown.clone(),
+                bridge.repository_publication_mailbox(),
+            ),
         )?;
 
         // Pending staleness eviction. This is node-local pool policy, so it runs in

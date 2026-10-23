@@ -112,7 +112,6 @@ feeder_seeds: testnet/seeds.yaml
 #     formingPeriodSeconds: 180000
 #     lookbackDelaySeconds: 1807200
 #     offeringPeriodSeconds: 180000
-#     waitingPeriodSeconds: 43200
 #     bootstrapDurationSeconds: 300
 #     advanceIntervalSeconds: 10
 

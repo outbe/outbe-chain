@@ -231,12 +231,10 @@ async fn dispatch_action(
         .map(|()| [magic.as_slice(), &[2]].concat()),
         _ => {
             preparation::read(
-                state.reader.clone(),
-                state.authority.clone(),
-                state.material.clone(),
-                state.publications.clone(),
-                state.readers.clone(),
-                permit,
+                preparation::PreparationInput {
+                    state: state.clone(),
+                    permit,
+                },
                 U256::from_be_slice(&request[4..]),
             )
             .await
@@ -287,16 +285,7 @@ async fn sign_review(
     request: &[u8],
 ) -> Result<Vec<u8>, Error> {
     let parsed = review::Request::parse(request, state.native_node)?;
-    review::sign(
-        state.reader,
-        state.authority,
-        state.material,
-        state.publications,
-        state.readers,
-        permit,
-        parsed,
-    )
-    .await
+    review::sign(review::ReviewInput { state, permit }, parsed).await
 }
 
 async fn publish_package(
@@ -307,40 +296,14 @@ async fn publish_package(
     let parsed = publication::Request::parse(request, state.native_node)?;
     match parsed.body.action {
         outbe_primitives::radicle_publication::PublicationAction::Bootstrap => {
-            publication::publish(
-                state.authority,
-                state.material,
-                state.publications,
-                state.readers,
-                permit,
-                parsed,
-            )
-            .await
+            publication::publish(publication::PublishInput { state, permit }, parsed).await
         }
         outbe_primitives::radicle_publication::PublicationAction::Review
         | outbe_primitives::radicle_publication::PublicationAction::Merge => {
-            review::publish(
-                state.reader,
-                state.authority,
-                state.material,
-                state.publications,
-                state.readers,
-                permit,
-                parsed,
-            )
-            .await
+            review::publish(review::ReviewInput { state, permit }, parsed).await
         }
         outbe_primitives::radicle_publication::PublicationAction::BindMaterial => {
-            binding::publish(
-                state.reader,
-                state.authority,
-                state.material,
-                state.publications,
-                state.readers,
-                permit,
-                parsed,
-            )
-            .await
+            binding::publish(binding::PublishInput { state, permit }, parsed).await
         }
     }
 }

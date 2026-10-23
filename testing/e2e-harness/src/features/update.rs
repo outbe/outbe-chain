@@ -8,6 +8,7 @@ use std::time::Duration;
 use alloy_primitives::U256;
 use alloy_sol_types::{Revert, SolError};
 use cucumber::{then, when};
+use outbe_update::constants::MIN_ACTIVATION_BUFFER;
 
 use crate::internal::{
     addresses::{UPDATE_ADDR, VOTE_ADDR},
@@ -15,12 +16,8 @@ use crate::internal::{
 };
 use crate::world::World;
 
-/// Blocks past the vote window before an update may activate
-/// (`MIN_ACTIVATION_BUFFER`, update_operator_flow.sh:30).
-const MIN_ACTIVATION_BUFFER: u64 = 0;
-
-/// Encoded `v3.0` (`u8 major << 24 | u24 minor`). Localnet/testnet activation
-/// ceiling is `v2.3`. This version is strictly greater and must Fatal at activation.
+/// Encoded `v3.0` (`u8 major << 24 | u24 minor`), above the harness binary's
+/// supported protocol version. Scheduling is allowed; activation must Fatal.
 const UNSUPPORTED_PROTOCOL_VERSION: u64 = 3u64 << 24;
 
 /// Valid secp256k1 key for a funded EOA that is deliberately outside the
@@ -36,8 +33,8 @@ fn propose_update(world: &mut World, name: String) {
     propose_update_version(world, &name, active + 1, "e2e update operator smoke");
 }
 
-/// Propose a protocol version above the testnet/devnet activation ceiling
-/// (`version > 2.3`). Scheduling is allowed; activation is Fatal.
+/// Propose a protocol version above the binary's activation ceiling.
+/// Scheduling is allowed; activation is Fatal on every network.
 #[when(expr = "operator {string} proposes an update to an unsupported protocol version")]
 fn propose_unsupported_update(world: &mut World, name: String) {
     world.state.allow_unsupported_update_fatal = true;
@@ -68,7 +65,7 @@ fn unauthorized_proposal(world: &mut World) {
     );
 
     let head = world.rpc.head(primary).expect("read head");
-    let activation = head + world.state.voting_window + 30;
+    let activation = head + world.state.voting_window + MIN_ACTIVATION_BUFFER + 30;
     let payload = serde_json::json!({
         "version": "0.1",
         "activationHeight": activation,
@@ -151,6 +148,8 @@ fn propose_update_version(world: &mut World, name: &str, version: u64, info: &st
     let operator = world.validators.operator(name).expect("resolve operator");
     let port = world.validators.primary_port();
     let head = world.rpc.head(port).expect("read head");
+    // Both hardware testnet and mock devnet need the standard approval notice.
+    // Leave additional room for proposal inclusion and the post-deadline tally.
     let activation = head + world.state.voting_window + MIN_ACTIVATION_BUFFER + 30;
     // VoteTarget JSON expects `"major.minor"`. The on-chain ABI still uses packed u32.
     let version_str = format!("{}.{}", version >> 24, version & 0x00FF_FFFF);

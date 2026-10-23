@@ -16,9 +16,12 @@
 //! only consumer is the README rule "All precompiles ... slot 0 =
 //! version" plus future migration logic.
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, U256};
 use outbe_macros::{contract, storage_schema};
 use outbe_primitives::addresses::ZEROFEE_ADDRESS;
+use outbe_primitives::error::Result;
+
+use crate::runtime::SponsorshipAuthorization;
 
 /// EVM storage layout for the zero-fee paymaster contract.
 ///
@@ -38,7 +41,51 @@ pub struct ZeroFeeContract {
     /// to create each signer address limits the growth: a funding transfer,
     /// or an EIP-7702 authorization in a paid transaction.
     #[attribute(order = 0)]
-    pub counter: outbe_primitives::storage::dsl::Map<Address, u64>,
+    counter: outbe_primitives::storage::dsl::Map<Address, u64>,
+}
+
+impl ZeroFeeContract<'_> {
+    /// Returns the raw packed `(date_key, count)` for `signer`.
+    ///
+    /// An unset slot reads as `(0, 0)`, which the lazy-reset rule maps to
+    /// "no usage today".
+    pub fn read_packed(&self, signer: Address) -> Result<u64> {
+        self.counter.read(&signer)
+    }
+
+    /// Effective count for `signer` on `current_day`, applying the lazy
+    /// day reset. A stored day that differs from `current_day` returns 0.
+    pub fn effective_count(&self, signer: Address, current_day: u32) -> Result<u32> {
+        let packed = self.read_packed(signer)?;
+        let (stored_day, stored_count) = unpack_counter(packed);
+        if stored_day == current_day {
+            Ok(stored_count)
+        } else {
+            Ok(0)
+        }
+    }
+
+    /// Storage slot id for `signer`'s packed counter. This is not a writable slot.
+    pub fn counter_slot(&self, signer: Address) -> U256 {
+        self.counter.slot(&signer).slot()
+    }
+
+    /// Increments the sponsored-tx counter for the grant's signer and day.
+    /// The add saturates at `u32::MAX`. Callers gate on
+    /// `effective_count < FREE_TX_DAILY_LIMIT` before they call this.
+    ///
+    /// Crate-private. The only production caller is
+    /// [`crate::runtime::record_sponsorship_use`], which also emits
+    /// [`crate::precompile::IZeroFee::SponsorshipAuthorized`].
+    pub(crate) fn record_use(&mut self, auth: &SponsorshipAuthorization) -> Result<u32> {
+        let signer = auth.signer();
+        let current_day = auth.current_day();
+        let effective = self.effective_count(signer, current_day)?;
+        let next = effective.saturating_add(1);
+        self.counter
+            .write(&signer, pack_counter(current_day, next))?;
+        Ok(next)
+    }
 }
 
 /// Packs `(date_key, count)` into a single `u64` for storage.

@@ -9,27 +9,23 @@ import {WCOEN} from "../../src/canonical/WCOEN.sol";
 import {BridgeableERC20} from "../../src/synthetic/BridgeableERC20.sol";
 import {BridgeableERC20Stable} from "../../src/synthetic/BridgeableERC20Stable.sol";
 
-/// @dev One route, ready to deploy on the connected chain.
+/// @dev One route, ready to deploy on the connected chain. `_tokenInitCode` supplies its token.
 struct Route {
     RouteSpec spec;
-    /// @dev For the side this chain holds. Empty when this script never places that side.
-    ///      Governance issues the USDC synthetic, and `_deployRoute` rejects an unset env var
-    ///      rather than deploying nothing.
-    bytes initCode;
     /// @dev The canonical side is a mintable stand-in for a token this repo does not issue, and gets bootstrapped.
     bool mintsCanonicalMock;
 }
 
-/// @dev Every route, as data. Adding a token is one entry in `routes()` plus its init code.
+/// @dev Every route, as data. Adding a token is one entry in `routes()` plus one branch in `_tokenInitCode`.
 ///      `BaseRoute` stays route-agnostic, and no caller names a route to deploy it.
 ///
-///      `routes()` cannot be `view`: with `dynamic_test_linking` on, `type(T).creationCode` compiles to a
+///      `_tokenInitCode` cannot be `view`: with `dynamic_test_linking` on, `type(T).creationCode` compiles to a
 ///      state-modifying `vm.getCode()` cheatcode call.
 abstract contract Routes is BaseRoute {
     error UnknownRoute(string label);
 
     /// @dev Labels are part of the CREATE3 address. Changing one relocates every deployment of that route.
-    function routes() public returns (Route[] memory list) {
+    function routes() public view returns (Route[] memory list) {
         list = new Route[](4);
 
         // Canonical USDT on the external chain, ERC-7802 synthetic on Outbe. Point
@@ -42,7 +38,7 @@ abstract contract Routes is BaseRoute {
             syntheticTokenEnv: "",
             syntheticSource: SyntheticSource.Erc7802
         });
-        list[0] = Route(usdt, _usdtInitCode(_isCanonicalHere(usdt)), true);
+        list[0] = Route(usdt, true);
 
         // The same shape as USDT: canonical USDC on the external chain, ERC-7802 synthetic on Outbe.
         RouteSpec memory usdc = RouteSpec({
@@ -52,7 +48,7 @@ abstract contract Routes is BaseRoute {
             syntheticTokenEnv: "",
             syntheticSource: SyntheticSource.Erc7802
         });
-        list[1] = Route(usdc, _usdcInitCode(_isCanonicalHere(usdc)), true);
+        list[1] = Route(usdc, true);
 
         // The mirror image of USDT: canonical WCOEN on Outbe, ERC-7802 synthetic on the external chain. Its canonical
         // side is the real wrapper over COEN, not a mock, so nothing is minted.
@@ -63,7 +59,7 @@ abstract contract Routes is BaseRoute {
             syntheticTokenEnv: "",
             syntheticSource: SyntheticSource.Erc7802
         });
-        list[2] = Route(wcoen, _wcoenInitCode(_isCanonicalHere(wcoen)), false);
+        list[2] = Route(wcoen, false);
 
         // The same shape as USDC, in euros: canonical EURC on the external chain, ERC-7802 synthetic on Outbe.
         RouteSpec memory eurc = RouteSpec({
@@ -73,10 +69,10 @@ abstract contract Routes is BaseRoute {
             syntheticTokenEnv: "",
             syntheticSource: SyntheticSource.Erc7802
         });
-        list[3] = Route(eurc, _eurcInitCode(_isCanonicalHere(eurc)), true);
+        list[3] = Route(eurc, true);
     }
 
-    function routeByLabel(string memory label) public returns (Route memory) {
+    function routeByLabel(string memory label) public view returns (Route memory) {
         Route[] memory list = routes();
         for (uint256 i = 0; i < list.length; i++) {
             if (keccak256(bytes(list[i].spec.tokenLabel)) == keccak256(bytes(label))) return list[i];
@@ -96,7 +92,7 @@ abstract contract Routes is BaseRoute {
         public
         returns (address token, address tokenBridge)
     {
-        (token, tokenBridge) = _deployRoute(factory, salt, route.spec, route.initCode);
+        (token, tokenBridge) = _deployRoute(factory, salt, route.spec);
 
         // Bootstrap the mock on first deploy. Keyed on `totalSupply` rather than on "was just deployed", so a re-run
         // does not mint twice. USDT, USDC and EURC share the mock surface, so one cast covers all three.
@@ -107,35 +103,37 @@ abstract contract Routes is BaseRoute {
 
     // ================================================== Init code ==================================================
 
-    function _usdtInitCode(bool canonical) internal returns (bytes memory) {
-        return canonical
-            ? type(USDT).creationCode
-            : abi.encodePacked(
-                type(BridgeableERC20Stable).creationCode, abi.encode("USDT", "USDT", uint8(6), uint16(840), _owner())
-            );
+    function _tokenInitCode(RouteSpec memory spec, bool canonical, address tokenBridge)
+        internal
+        override
+        returns (bytes memory)
+    {
+        bytes32 label = keccak256(bytes(spec.tokenLabel));
+        if (label == keccak256("USDT")) {
+            return canonical ? type(USDT).creationCode : _stableInitCode("USDT", 840, tokenBridge);
+        }
+        if (label == keccak256("USDC")) {
+            return canonical ? type(USDC).creationCode : _stableInitCode("USDC", 840, tokenBridge);
+        }
+        if (label == keccak256("EURC")) {
+            return canonical ? type(EURC).creationCode : _stableInitCode("EURC", 978, tokenBridge);
+        }
+        if (label == keccak256("WCOEN")) {
+            return canonical
+                ? type(WCOEN).creationCode
+                : abi.encodePacked(
+                    type(BridgeableERC20).creationCode, abi.encode("Wrapped COEN", "WCOEN", uint8(18), tokenBridge)
+                );
+        }
+        revert UnknownRoute(spec.tokenLabel);
     }
 
-    function _usdcInitCode(bool canonical) internal returns (bytes memory) {
-        return canonical
-            ? type(USDC).creationCode
-            : abi.encodePacked(
-                type(BridgeableERC20Stable).creationCode, abi.encode("USDC", "USDC", uint8(6), uint16(840), _owner())
-            );
-    }
-
-    function _eurcInitCode(bool canonical) internal returns (bytes memory) {
-        return canonical
-            ? type(EURC).creationCode
-            : abi.encodePacked(
-                type(BridgeableERC20Stable).creationCode, abi.encode("EURC", "EURC", uint8(6), uint16(978), _owner())
-            );
-    }
-
-    function _wcoenInitCode(bool canonical) internal returns (bytes memory) {
-        return canonical
-            ? type(WCOEN).creationCode
-            : abi.encodePacked(
-                type(BridgeableERC20).creationCode, abi.encode("Wrapped COEN", "WCOEN", uint8(18), _owner())
-            );
+    function _stableInitCode(string memory symbol, uint16 isoCode, address tokenBridge)
+        internal
+        returns (bytes memory)
+    {
+        return abi.encodePacked(
+            type(BridgeableERC20Stable).creationCode, abi.encode(symbol, symbol, uint8(6), isoCode, tokenBridge)
+        );
     }
 }

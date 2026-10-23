@@ -59,34 +59,10 @@ impl TributeStateSource {
         expected_binding: B256,
         limits: StateProofLimits,
     ) -> Result<(), TransportError> {
-        let context = &self.tribute.context;
-        if subject.chain_id == 0
-            || subject.checkpoint.block_number == 0
-            || subject.checkpoint.block_hash.is_zero()
-            || subject.checkpoint.state_root.is_zero()
-            || self.day_index >= subject.tribute_count
-            || !self.tribute.has_valid_encoding()
-            || context.chain_id != subject.chain_id
-            || context.worldwide_day != subject.worldwide_day
-            || context.owner.is_zero()
-            || derive_poseidon_entity_id(context.owner, context.worldwide_day).map_err(rejected)?
-                != context.tribute_id
-        {
+        if !self.context_matches(subject)? {
             return Err(rejected("Tribute source context mismatch"));
         }
-        if self.expected_words.is_empty()
-            || self.expected_words.len() > limits.max_slots
-            || self.expected_words.len() != self.proof.slots.len()
-            || self
-                .expected_words
-                .windows(2)
-                .any(|words| words[0].0 >= words[1].0)
-            || self
-                .expected_words
-                .iter()
-                .zip(&self.proof.slots)
-                .any(|((slot, _), opening)| *slot != opening.slot)
-        {
+        if !self.slots_match(limits.max_slots) {
             return Err(rejected("Tribute source slot set mismatch"));
         }
         if self.binding()? != expected_binding {
@@ -106,6 +82,42 @@ impl TributeStateSource {
             }
         }
         Ok(())
+    }
+
+    fn context_matches(&self, subject: &TributeSourceSubject) -> Result<bool, TransportError> {
+        let checkpoint_valid = subject.chain_id != 0
+            && subject.checkpoint.block_number != 0
+            && !subject.checkpoint.block_hash.is_zero()
+            && !subject.checkpoint.state_root.is_zero();
+        let context = &self.tribute.context;
+        if !checkpoint_valid
+            || self.day_index >= subject.tribute_count
+            || !self.tribute.has_valid_encoding()
+        {
+            return Ok(false);
+        }
+        let identity_matches = context.chain_id == subject.chain_id
+            && context.worldwide_day == subject.worldwide_day
+            && !context.owner.is_zero();
+        Ok(identity_matches
+            && derive_poseidon_entity_id(context.owner, context.worldwide_day).map_err(rejected)?
+                == context.tribute_id)
+    }
+
+    fn slots_match(&self, max_slots: usize) -> bool {
+        let count_matches = !self.expected_words.is_empty()
+            && self.expected_words.len() <= max_slots
+            && self.expected_words.len() == self.proof.slots.len();
+        count_matches
+            && !self
+                .expected_words
+                .windows(2)
+                .any(|words| words[0].0 >= words[1].0)
+            && !self
+                .expected_words
+                .iter()
+                .zip(&self.proof.slots)
+                .any(|((slot, _), opening)| *slot != opening.slot)
     }
 }
 

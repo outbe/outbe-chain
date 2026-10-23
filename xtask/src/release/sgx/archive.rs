@@ -116,19 +116,7 @@ pub(super) fn verify_bundle_archive(
     let mut paths = BTreeSet::new();
     for item in archive.entries().wrap_err("read signed SGX archive")? {
         let mut item = item.wrap_err("read signed SGX archive entry")?;
-        let path = item.path().wrap_err("read signed SGX archive path")?;
-        if path.as_os_str().is_empty()
-            || path.is_absolute()
-            || path
-                .components()
-                .any(|component| !matches!(component, Component::Normal(_)))
-        {
-            bail!(
-                "signed SGX archive contains unsafe path: {}",
-                path.display()
-            );
-        }
-        let path = path.to_string_lossy().replace('\\', "/");
+        let path = bundle_archive_path(&item)?;
         if !paths.insert(path.clone()) {
             bail!("signed SGX archive contains duplicate path: {path}");
         }
@@ -146,31 +134,7 @@ pub(super) fn verify_bundle_archive(
                 kind: "directory".to_owned(),
             });
         } else if header.entry_type().is_file() {
-            let size = header.size()?;
-            let mut hasher = Sha256::new();
-            let mut buffer = [0u8; 64 * 1024];
-            let mut read = 0u64;
-            loop {
-                let count = item.read(&mut buffer)?;
-                if count == 0 {
-                    break;
-                }
-                hasher.update(&buffer[..count]);
-                read += count as u64;
-            }
-            if read != size {
-                bail!("signed SGX archive entry size mismatch: {path}");
-            }
-            observed.push(TreeEntry {
-                digest: Some(Sha256Digest {
-                    algorithm: "sha256".to_owned(),
-                    value: hex::encode(hasher.finalize()),
-                }),
-                mode,
-                path,
-                size: Some(size),
-                kind: "file".to_owned(),
-            });
+            observed.push(bundle_archive_file(&mut item, mode, path)?);
         } else {
             bail!("signed SGX archive contains non-file entry: {path}");
         }
@@ -180,4 +144,52 @@ pub(super) fn verify_bundle_archive(
         bail!("signed SGX archive does not exactly reproduce the verified bundle tree");
     }
     Ok(())
+}
+
+fn bundle_archive_path<R: Read>(item: &tar::Entry<'_, R>) -> Result<String> {
+    let path = item.path().wrap_err("read signed SGX archive path")?;
+    if path.as_os_str().is_empty()
+        || path.is_absolute()
+        || path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        bail!(
+            "signed SGX archive contains unsafe path: {}",
+            path.display()
+        );
+    }
+    Ok(path.to_string_lossy().replace('\\', "/"))
+}
+
+fn bundle_archive_file<R: Read>(
+    item: &mut tar::Entry<'_, R>,
+    mode: String,
+    path: String,
+) -> Result<TreeEntry> {
+    let size = item.header().size()?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    let mut read = 0u64;
+    loop {
+        let count = item.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+        read += count as u64;
+    }
+    if read != size {
+        bail!("signed SGX archive entry size mismatch: {path}");
+    }
+    Ok(TreeEntry {
+        digest: Some(Sha256Digest {
+            algorithm: "sha256".to_owned(),
+            value: hex::encode(hasher.finalize()),
+        }),
+        mode,
+        path,
+        size: Some(size),
+        kind: "file".to_owned(),
+    })
 }

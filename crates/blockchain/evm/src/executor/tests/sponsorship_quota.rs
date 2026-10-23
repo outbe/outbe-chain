@@ -85,10 +85,7 @@ fn delegated_state(
 fn counter_slot(signer: Address) -> U256 {
     let mut slot_storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut slot_storage, |storage| {
-        outbe_zerofee::ZeroFeeContract::new(storage.clone())
-            .counter
-            .slot(&signer)
-            .slot()
+        outbe_zerofee::ZeroFeeContract::new(storage.clone()).counter_slot(signer)
     })
 }
 
