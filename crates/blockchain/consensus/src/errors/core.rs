@@ -65,6 +65,8 @@ pub enum BlsKeyError {
     BlsDkgFailed(String),
     #[error("failed to compute partial public key: {0}")]
     ComputePartialPublicKey(String),
+    #[error("validator count {count} exceeds maximum {max}")]
+    ValidatorCountExceedsMax { count: u32, max: u32 },
     #[error("signing share does not match public polynomial")]
     SigningSharePolynomialMismatch,
     #[error("DKG output public polynomial does not match saved public polynomial")]

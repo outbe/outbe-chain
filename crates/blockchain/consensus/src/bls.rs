@@ -486,6 +486,13 @@ pub struct ParticipantDkgBootstrapResult {
 /// a secure offline channel. Production use should use a distributed DKG
 /// protocol instead.
 pub fn bootstrap_dkg(n: u32) -> Result<DkgBootstrapResult> {
+    if n > MAX_VALIDATORS {
+        return Err(BlsKeyError::ValidatorCountExceedsMax {
+            count: n,
+            max: MAX_VALIDATORS,
+        }
+        .into());
+    }
     let n = NonZeroU32::new(n).ok_or(BlsKeyError::ZeroValidatorCount)?;
     let mut rng = rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng);
 
@@ -512,6 +519,14 @@ pub fn bootstrap_dkg_for_participants(
 ) -> Result<ParticipantDkgBootstrapResult> {
     if participants.is_empty() {
         return Err(BlsKeyError::ZeroValidatorCount.into());
+    }
+    let count = u32::try_from(participants.len()).unwrap_or(u32::MAX);
+    if count > MAX_VALIDATORS {
+        return Err(BlsKeyError::ValidatorCountExceedsMax {
+            count,
+            max: MAX_VALIDATORS,
+        }
+        .into());
     }
     let mut rng = rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng);
     let validators = participants.len();
@@ -754,6 +769,81 @@ mod tests {
 
         // Cannot load with plaintext backend (encrypted file).
         assert!(load_signing_share(&share_path, &KeyBackend::Plaintext).is_err());
+    }
+
+    fn assert_bls_key_error(error: eyre::Report, expected: BlsKeyError) {
+        let actual = error
+            .downcast_ref::<BlsKeyError>()
+            .unwrap_or_else(|| panic!("expected BlsKeyError, got {error}"));
+        assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+    }
+
+    #[test]
+    fn bootstrap_dkg_rejects_count_above_load_ceiling() {
+        let Err(error) = bootstrap_dkg(MAX_VALIDATORS + 1) else {
+            panic!("count above the ceiling must fail before generation");
+        };
+        assert_bls_key_error(
+            error,
+            BlsKeyError::ValidatorCountExceedsMax {
+                count: MAX_VALIDATORS + 1,
+                max: MAX_VALIDATORS,
+            },
+        );
+    }
+
+    #[test]
+    fn bootstrap_dkg_for_participants_rejects_count_above_load_ceiling() {
+        use commonware_cryptography::Signer as _;
+        use commonware_math::algebra::Random;
+        use commonware_utils::ordered::Set;
+
+        let keys = (0..=MAX_VALIDATORS)
+            .map(|_| {
+                bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+                    rand_commonware::rngs::SysRng,
+                ))
+                .public_key()
+            })
+            .collect::<Vec<_>>();
+        let participants = Set::from_iter_dedup(keys);
+        let count = u32::try_from(participants.len()).unwrap();
+        let Err(error) = bootstrap_dkg_for_participants(participants) else {
+            panic!("count above the ceiling must fail before generation");
+        };
+        assert_bls_key_error(
+            error,
+            BlsKeyError::ValidatorCountExceedsMax {
+                count,
+                max: MAX_VALIDATORS,
+            },
+        );
+    }
+
+    #[test]
+    fn foreign_share_and_foreign_output_keep_distinct_rejections() {
+        use commonware_cryptography::Signer as _;
+        use commonware_math::algebra::Random;
+        use commonware_utils::ordered::Set;
+
+        let random_key = || {
+            bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+                rand_commonware::rngs::SysRng,
+            ))
+            .public_key()
+        };
+        let left_keys = (0..2).map(|_| random_key()).collect::<Vec<_>>();
+        let right_keys = (0..2).map(|_| random_key()).collect::<Vec<_>>();
+        let left = bootstrap_dkg_for_participants(Set::from_iter_dedup(left_keys)).unwrap();
+        let right = bootstrap_dkg_for_participants(Set::from_iter_dedup(right_keys)).unwrap();
+
+        let share_error =
+            validate_dkg_triplet(&right.shares[0], &left.polynomial, &left.output).unwrap_err();
+        assert_bls_key_error(share_error, BlsKeyError::SigningSharePolynomialMismatch);
+
+        let output_error =
+            validate_dkg_triplet(&left.shares[0], &left.polynomial, &right.output).unwrap_err();
+        assert_bls_key_error(output_error, BlsKeyError::DkgOutputPolynomialMismatch);
     }
 
     #[test]
