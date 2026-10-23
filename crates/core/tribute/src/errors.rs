@@ -101,8 +101,8 @@ pub enum TributeError {
     #[error("Metadosis has not completed for WWD")]
     MetadosisNotCompleted,
 
-    #[error("Nod creation 7-day window has expired")]
-    NodCreationWindowExpired,
+    #[error("Nod creation is before Metadosis completion")]
+    NodCreationBeforeCompletion,
 
     #[error("caller is not Tribute owner")]
     CallerNotTributeOwner,
@@ -201,7 +201,9 @@ impl From<TributeError> for PrecompileError {
             }
             TributeError::InvalidLeague(value) => revert_with(I::InvalidLeague { value }),
             TributeError::MetadosisNotCompleted => revert_with(I::MetadosisNotCompleted {}),
-            TributeError::NodCreationWindowExpired => revert_with(I::NodCreationWindowExpired {}),
+            TributeError::NodCreationBeforeCompletion => {
+                revert_with(I::NodCreationBeforeCompletion {})
+            }
             TributeError::CallerNotTributeOwner => revert_with(I::CallerNotTributeOwner {}),
             TributeError::EntryPriceUnavailable {
                 price_day,

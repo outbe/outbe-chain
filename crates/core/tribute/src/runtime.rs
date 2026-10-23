@@ -308,8 +308,8 @@ impl TributeContract<'_> {
         Ok((fractions, allocated))
     }
 
-    /// Stage 5: Creates a `Nod` for `tribute_id` within 7 days after `Metadosis`
-    /// and atomically burns the `Tribute`.
+    /// Stage 5: Creates a `Nod` for `tribute_id` after Metadosis completion
+    /// and deletes that Tribute only when Nod issuance succeeds.
     pub fn create_nod(
         &mut self,
         caller: alloy_primitives::Address,
@@ -327,10 +327,8 @@ impl TributeContract<'_> {
                 return Err(TributeError::MetadosisNotCompleted.into());
             }
             let now = storage.now_secs()?;
-            if now < completed_at
-                || now > completed_at.saturating_add(7 * outbe_primitives::time::SECONDS_PER_DAY)
-            {
-                return Err(TributeError::NodCreationWindowExpired.into());
+            if now < completed_at {
+                return Err(TributeError::NodCreationBeforeCompletion.into());
             }
             let record = crate::state_api::get_retained_record(&storage, tribute_id)?
                 .ok_or(TributeError::TributeNotFound)?;

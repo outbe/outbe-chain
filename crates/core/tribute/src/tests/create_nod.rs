@@ -20,7 +20,7 @@ fn seed_entry_price(storage: &StorageHandle<'_>, iso: u16, utc_day: u32, vwap: U
 }
 
 #[test]
-fn v1_mechanics_fi_groups_fractions_and_create_nod_within_7_days_burns_tribute() {
+fn v1_mechanics_fi_groups_fractions_and_late_create_nod_burns_tribute() {
     use alloy_sol_types::SolCall;
 
     let mut provider = HashMapStorageProvider::new(1);
@@ -76,10 +76,31 @@ fn v1_mechanics_fi_groups_fractions_and_create_nod_within_7_days_burns_tribute()
             U256::from(1_234_567u64),
         );
 
-        // Stage 5: Stranger cannot createNod for owner1's Tribute
-        assert!(tc.create_nod(stranger, t1.tribute_id).is_err());
+        storage
+            .set_block_timestamp(U256::from(base_ts - 1))
+            .unwrap();
+        let early = tc.create_nod(owner1, t1.tribute_id).unwrap_err();
+        let expected_early: PrecompileError =
+            crate::errors::TributeError::NodCreationBeforeCompletion.into();
+        assert_eq!(early.to_string(), expected_early.to_string());
+        assert!(tc.get_record(t1.tribute_id).unwrap().is_some());
+        assert!(outbe_nod::api::get_item(&storage, t1.tribute_id)
+            .unwrap()
+            .is_none());
+        assert_eq!(tc.total_supply().unwrap(), 2);
+        storage.set_block_timestamp(U256::from(base_ts)).unwrap();
 
-        // Owner1 creates Nod via precompile ABI dispatch within 7 days (day + 3 days)
+        // A non-owner claim preserves the Tribute and issues no Nod.
+        let stranger_err = tc.create_nod(stranger, t1.tribute_id).unwrap_err();
+        let expected_owner: PrecompileError =
+            crate::errors::TributeError::CallerNotTributeOwner.into();
+        assert_eq!(stranger_err.to_string(), expected_owner.to_string());
+        assert!(tc.get_record(t1.tribute_id).unwrap().is_some());
+        assert!(outbe_nod::api::get_item(&storage, t1.tribute_id)
+            .unwrap()
+            .is_none());
+
+        // Owner1 creates a Nod three days after completion.
         storage
             .set_block_timestamp(U256::from(
                 base_ts + 3 * outbe_primitives::time::SECONDS_PER_DAY,
@@ -129,26 +150,37 @@ fn v1_mechanics_fi_groups_fractions_and_create_nod_within_7_days_burns_tribute()
             crate::precompile::dispatch(storage.clone(), &call_bytes, owner1, U256::ZERO).is_err()
         );
 
-        // Advance past 7 days (7 days + 1 second) -> owner2's createNod expires!
-        storage
-            .set_block_timestamp(U256::from(
-                base_ts + 7 * outbe_primitives::time::SECONDS_PER_DAY + 1,
-            ))
-            .unwrap();
-        assert!(tc.create_nod(owner2, t2.tribute_id).is_err());
-        // Tribute 2 remains unburned when window expired
-        assert!(tc.get_record(t2.tribute_id).unwrap().is_some());
+        // A claim after seven days still creates the Nod and deletes only that Tribute.
+        let late = base_ts + 7 * outbe_primitives::time::SECONDS_PER_DAY + 1;
+        storage.set_block_timestamp(U256::from(late)).unwrap();
+        assert_eq!(tc.create_nod(owner2, t2.tribute_id).unwrap(), t2.tribute_id);
+        assert!(tc.get_record(t2.tribute_id).unwrap().is_none());
+        assert_eq!(tc.total_supply().unwrap(), 0);
+        let late_nod = outbe_nod::api::get_item(&storage, t2.tribute_id)
+            .unwrap()
+            .expect("late Nod");
+        assert_eq!(late_nod.owner, owner2);
+        assert_eq!(late_nod.league_id, 4000);
+        assert_eq!(late_nod.issued_at, late);
+        let totals_after_t2 = tc.get_day_totals(day).unwrap();
+        assert_eq!(totals_after_t2.tribute_count, 0);
+        assert!(totals_after_t2.tribute_nominal_total_minor.is_zero());
+        assert!(tc.get_fi_groups(day).unwrap().is_empty());
+        assert!(outbe_nod::api::get_item(&storage, t1.tribute_id)
+            .unwrap()
+            .is_some());
     });
 
-    // Verify TributeBurned event was emitted when t1's Nod was created
     let events = provider.get_events(TRIBUTE_ADDRESS);
     let burned_events: Vec<_> = events
         .iter()
         .filter_map(|log| crate::precompile::ITribute::TributeBurned::decode_log_data(log).ok())
         .collect();
-    assert_eq!(burned_events.len(), 1);
+    assert_eq!(burned_events.len(), 2);
     assert_eq!(burned_events[0].tributeId, t1.tribute_id.to_u256());
     assert_eq!(burned_events[0].owner, owner1);
+    assert_eq!(burned_events[1].tributeId, t2.tribute_id.to_u256());
+    assert_eq!(burned_events[1].owner, owner2);
 }
 
 #[test]

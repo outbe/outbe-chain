@@ -17,7 +17,7 @@ interface ITribute {
     error CanonicalIdentityMismatch(uint256 expected, uint256 found);
     error InvalidLeague(uint16 value);
     error MetadosisNotCompleted();
-    error NodCreationWindowExpired();
+    error NodCreationBeforeCompletion();
     error CallerNotTributeOwner();
     error EntryPriceUnavailable(uint32 priceDay, uint16 currency);
     error FormingWindowOverflow();
