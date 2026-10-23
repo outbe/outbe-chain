@@ -65,17 +65,28 @@ pub enum BlsKeyError {
     BlsDkgFailed(String),
     #[error("failed to compute partial public key: {0}")]
     ComputePartialPublicKey(String),
+    #[error("validator count {count} exceeds maximum {max}")]
+    ValidatorCountExceedsMax { count: u32, max: u32 },
     #[error("signing share does not match public polynomial")]
     SigningSharePolynomialMismatch,
     #[error("DKG output public polynomial does not match saved public polynomial")]
     DkgOutputPolynomialMismatch,
+    #[error("secp256k1 secret must be 32 bytes, got {len}")]
+    Secp256k1SecretLength { len: usize },
+    #[error("secp256k1 secret is not a valid signing key")]
+    InvalidSecp256k1Secret,
+    #[error("protected custody file is missing: {path}")]
+    MissingCustodyFile { path: String },
 }
+
+/// Empty consensus committee. Callers reject this before Commonware builds an elector.
+#[derive(Debug, Error, PartialEq, Eq)]
+#[error("consensus committee has no participants")]
+pub struct EmptyCommittee;
 
 /// Errors from consensus CLI subcommands.
 #[derive(Debug, Error)]
 pub enum ConsensusCliError {
-    #[error("secret key path has no file name: {0}")]
-    SecretKeyPathNoFileName(String),
     #[error("unexpected secp256k1 public key encoding for Reth enode")]
     UnexpectedSecp256k1Encoding,
     #[error("validator count must be > 0")]

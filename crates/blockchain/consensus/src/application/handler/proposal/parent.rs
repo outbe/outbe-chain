@@ -1,4 +1,13 @@
 use super::*;
+
+fn epoch_boundary_anchor_missing(
+    epoch: u64,
+    parent_view_is_zero: bool,
+    anchor_present: bool,
+) -> bool {
+    epoch > 0 && parent_view_is_zero && !anchor_present
+}
+
 impl ApplicationShared {
     pub(super) async fn resolve_proposal_parent(
         &self,
@@ -37,13 +46,18 @@ impl ApplicationShared {
                 return Ok(None);
             }
         };
-        debug_assert!(
-            !(round.epoch().get() > 0
-                && parent_view == View::new(0)
-                && maybe_epoch_anchor.is_none()),
-            "resolve_epoch_boundary_parent invariant: epoch>0 && parent_view=0 must \
-             resolve to Some(EpochBoundaryParent) or return an explicit error"
-        );
+        if epoch_boundary_anchor_missing(
+            round.epoch().get(),
+            parent_view == View::new(0),
+            maybe_epoch_anchor.is_some(),
+        ) {
+            warn!(
+                %round,
+                parent = %parent_digest.0,
+                "propose: epoch boundary parent missing; forfeiting slot"
+            );
+            return Ok(None);
+        }
 
         if let Some(anchor) = maybe_epoch_anchor {
             return Ok(Some(ProposalParent {
@@ -178,5 +192,18 @@ impl ApplicationShared {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::epoch_boundary_anchor_missing;
+
+    #[test]
+    fn missing_anchor_forfeits_only_for_a_later_epoch_at_view_zero() {
+        assert!(epoch_boundary_anchor_missing(1, true, false));
+        assert!(!epoch_boundary_anchor_missing(0, true, false));
+        assert!(!epoch_boundary_anchor_missing(1, false, false));
+        assert!(!epoch_boundary_anchor_missing(1, true, true));
     }
 }

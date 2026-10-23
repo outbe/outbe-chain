@@ -67,6 +67,7 @@ mod follower;
 mod genesis_formation;
 mod harness;
 mod local_anchor;
+mod marshal_reporter;
 #[cfg(test)]
 mod muxer_contract;
 mod recovery;
@@ -80,7 +81,8 @@ mod signer_replacement;
 mod startup_material;
 
 use fixtures::{
-    recovery_block, recovery_finalization_fixture, run_test_dkg, run_test_dkg_complete,
+    bootstrap_fixture_signers, certify_fixture_proposal, recovery_block,
+    recovery_finalization_fixture, run_test_dkg, run_test_dkg_complete,
     test_boundary_with_vrf_hash, MockFinalizedHeaderProvider,
 };
 

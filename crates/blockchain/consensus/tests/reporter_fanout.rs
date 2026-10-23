@@ -3,14 +3,16 @@
 //! Verifies that `OutbeReporter` (the Outbe-side branch of the
 //! `Reporters::from((outbe, marshal))` fanout) admits `Activity::Certification(notarization)`
 //! and persists it to the certified-parent proof store.
-//! Marshal's mailbox drops `Activity::Certification` via its `_ => return;` arm
-//! (monorepo `consensus/src/marshal/core/mailbox.rs:396-410`). Thus marshal would *not* do
-//! the persistence that this test observes.
+//! Marshal forwards only `Activity::Notarization` and `Activity::Finalization`.
+//! Every other activity, including `Activity::Certification`, returns
+//! `Feedback::Ok` without delivery
+//! (monorepo `consensus/src/marshal/core/mailbox.rs:996-1008`). Thus marshal
+//! would not do the persistence that this test observes.
 //!
 
 use alloy_primitives::{address, Address};
 use commonware_consensus::{
-    simplex::types::{Activity, Notarization, Proposal, Subject},
+    simplex::types::{Activity, Finalize, Notarization, Proposal, Subject},
     types::{Epoch, Round, View},
     Reporter as _,
 };
@@ -352,4 +354,83 @@ async fn reporter_marks_witness_through_narrow_sink() {
         keys[0] == CertifiedParentProofKey::new(0, 2, parent_hash),
         "marked key must match the observed (epoch=0, view=2, parent)"
     );
+}
+
+#[test]
+fn raw_finalize_vote_does_not_become_durable_authority() {
+    let (keys, participants) = test_participants(3);
+    let dkg = bootstrap_dkg(3).unwrap();
+    let schemes = outbe_consensus::test_harness::fixture_signer_schemes(
+        b"reporter-test",
+        &keys,
+        &participants,
+        outbe_consensus::test_harness::FixtureSignerSharing {
+            polynomial: &dkg.polynomial,
+            shares: &dkg.shares,
+        },
+    );
+    let verifier =
+        HybridScheme::<MinSig>::verifier(b"reporter-test", participants.clone(), dkg.polynomial)
+            .unwrap();
+    let continuity = ReporterContinuity::default();
+    continuity.update(4, None, None);
+    let store = FinalizedParentCertStore::new();
+    let (mut reporter, mut rx) = build_reporter_with_continuity(
+        Arc::new(store.clone()),
+        verifier,
+        &participants,
+        continuity.clone(),
+    );
+    let proposal = Proposal::new(
+        Round::new(Epoch::new(0), View::new(9)),
+        View::new(8),
+        OutbeDigest::from(alloy_primitives::B256::from_slice(
+            Sha256::hash(&[b"raw-finalize"]).as_ref(),
+        )),
+    );
+    let finalize = Finalize::sign(&schemes[0], proposal).expect("finalize vote");
+
+    let feedback = reporter.report(Activity::Finalize(finalize));
+
+    assert!(matches!(feedback, commonware_actor::Feedback::Ok));
+    assert!(rx.try_recv().is_err());
+    assert_eq!(continuity.snapshot().last_finalized_view, 4);
+    assert_eq!(store.len(), 0);
+}
+
+#[test]
+fn raw_finalize_vote_is_reported_before_its_certificate() {
+    use commonware_runtime::Runner as _;
+
+    let runner =
+        commonware_runtime::deterministic::Runner::timed(std::time::Duration::from_secs(30));
+    runner.start(|ctx| async move {
+        let mut harness = outbe_consensus::test_harness::Harness::new(&ctx, 4).await;
+        let outcome = harness
+            .run_cycle(
+                Epoch::new(2),
+                outbe_consensus::test_harness::CycleOptions {
+                    leader_timeout: std::time::Duration::from_millis(500),
+                    run_for: std::time::Duration::from_millis(2_000),
+                    ..Default::default()
+                },
+            )
+            .await;
+
+        for (node, finalized) in outcome.view_finalized_per_node.iter().enumerate() {
+            assert!(
+                *finalized,
+                "node {node} must finalize view 1 before the vote-order check"
+            );
+            assert!(
+                outcome.raw_finalize_reports_per_node[node] > 0,
+                "node {node} must observe a raw finalize vote: {:?}",
+                outcome.raw_finalize_reports_per_node
+            );
+            assert!(
+                outcome.view_one_finalize_before_certificate_per_node[node],
+                "node {node} must report the raw view-1 vote before its certificate"
+            );
+        }
+    });
 }

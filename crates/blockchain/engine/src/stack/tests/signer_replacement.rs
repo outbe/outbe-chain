@@ -180,6 +180,10 @@ fn test_recovered_boundary_evm_signer_authorization_survives_latest_state_remova
         worker_threads: 1,
         bls_key_backend: "plaintext".to_string(),
         bls_passphrase: None,
+        evm_key_backend: "plaintext".to_string(),
+        evm_passphrase: None,
+        reth_key_backend: "plaintext".to_string(),
+        reth_passphrase: None,
         tee_enclave_socket: None,
         tee_session_mode: crate::args::TeeSessionMode::PolicyDefault,
         tee_bootstrap_timeout_secs: 60,
@@ -234,19 +238,35 @@ fn test_recovered_boundary_evm_signer_authorization_survives_latest_state_remova
 
 #[test]
 fn test_register_epoch_validation_providers_is_available_and_first_wins() {
-    let (keys, participants, _output, polynomial) = run_test_dkg();
+    let (_keys, participants, _output, polynomial) = run_test_dkg();
     let vrf_materials = VrfMaterialProvider::new(0, polynomial, None);
     let epoch = Epoch::new(9);
+    let mut public_keys: Vec<_> = participants.iter().cloned().collect();
+    let mut addresses: Vec<_> = (1..=public_keys.len())
+        .map(|byte| Address::with_last_byte(byte as u8))
+        .collect();
+    public_keys.reverse();
+    addresses.reverse();
     let validator_set = validators::ValidatorSet {
-        public_keys: keys.iter().map(|key| key.public_key()).collect(),
-        addresses: vec![
-            Address::with_last_byte(0x01),
-            Address::with_last_byte(0x02),
-            Address::with_last_byte(0x03),
-        ],
-        p2p_addresses: vec![validators::ValidatorP2pAddress::Missing; 3],
+        public_keys,
+        addresses,
+        p2p_addresses: vec![validators::ValidatorP2pAddress::Missing; participants.len()],
     };
-    let expected_committee = ordered_validator_addresses(&participants, &validator_set).unwrap();
+    let expected_committee: Vec<Address> = participants
+        .iter()
+        .map(|participant| {
+            let index = validator_set
+                .public_keys
+                .iter()
+                .position(|public_key| public_key == participant)
+                .expect("participant public key is in the validator set");
+            validator_set.addresses[index]
+        })
+        .collect();
+    assert_ne!(
+        expected_committee, validator_set.addresses,
+        "participant order must differ from validator-set insertion order"
+    );
     let scheme_provider = HybridSchemeProvider::new();
     let committee_provider = CommitteeProvider::new();
 

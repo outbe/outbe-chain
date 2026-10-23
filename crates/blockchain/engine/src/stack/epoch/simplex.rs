@@ -59,6 +59,9 @@ where
         let outbe_consensus::epoch_subchannels::EpochSubchannels {
             vote, cert, res, ..
         } = channels;
+        outbe_consensus::hybrid::election::require_nonempty_committee(
+            self.state.participants.len(),
+        )?;
         // -- b. Build HybridScheme for this epoch ------------------------
         let radicle_signer = radicle_signer_enabled(
             self.radicle_status.snapshot().voting_gate,
@@ -152,9 +155,9 @@ where
         // - OutbeReporter: bridge/VRF processing AND
         // `Activity::Certification` -> CertifiedParentProofStore.
         // - Marshal: finalized block delivery -> executor -> ack -> recovery truth.
-        //   Marshal's mailbox drops Certification via its `_ => return;` arm
-        //   (monorepo `consensus/src/marshal/core/mailbox.rs:396-410`). So
-        //   ordering between Outbe and marshal does not need to be sequential.
+        //   Marshal forwards only Notarization and Finalization. Every other
+        //   activity, including Certification, returns `Feedback::Ok`
+        //   (monorepo `consensus/src/marshal/core/mailbox.rs:996-1008`).
         //   `Reporters::from((outbe, marshal))` runs both via `futures::join!`,
         //   and Outbe is the sole persistent consumer of Certification.
         let combined_reporter = Reporters::from((outbe_reporter, self.marshal_mailbox.clone()));
