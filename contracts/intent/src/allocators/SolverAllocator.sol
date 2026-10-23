@@ -15,7 +15,7 @@ import {Scope} from "the-compact/src/types/Scope.sol";
 ///
 /// Deploy order:
 ///   1. Deploy SolverAllocator(_compact)
-///   2. lockTag = allocator.buildLockTag(Scope.ChainSpecific, ResetPeriod.TenMinutes)
+///   2. lockTag = allocator.buildLockTag(Scope.ChainSpecific, ResetPeriod.ThirtyDays)
 ///   3. Deploy SolverEscrow(_compact, lockTag)
 ///   4. allocator.setArbiter(address(escrow))
 contract SolverAllocator is IAllocator {

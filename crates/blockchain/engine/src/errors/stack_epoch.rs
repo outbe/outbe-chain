@@ -489,6 +489,10 @@ pub enum StackEpochError {
     #[error("Reth P2P public key is not compressed SEC1-33")]
     RethP2pPublicKeyNotCompressedSec1,
 
+    /// Indicates that a protected Reth custody file was not installed as network hex.
+    #[error("protected Reth P2P identity is not installed on the node network config")]
+    ProtectedRethIdentityNotInstalled,
+
     /// Indicates that reconnecting to the production NodeHost enclave failed.
     #[error("production NodeHost reconnect failed: {reason}")]
     ProductionNodeHostReconnectFailed {

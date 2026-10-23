@@ -17,6 +17,11 @@ use crate::schema::SCALE_1E18;
 /// - The cross-rate of the row is unrepresentable.
 /// - The positive input of the row floors to zero.
 ///
+/// Each division rounds down. The tally divides twice: here, and again when
+/// [`from_cross_rate`] inverts the median. Each division loses less than one unit
+/// of its own result, but the second division scales the first loss. So a small
+/// cross-rate loses more precision.
+///
 /// One bad validator row must not abort the mandatory round tally.
 pub fn to_cross_rate(
     ballot: &[VoteForTally],

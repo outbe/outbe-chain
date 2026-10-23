@@ -29,6 +29,10 @@ pub use super::committee::{
 ///
 /// The length prefix makes this hash injective across different bitmap sizes
 /// (otherwise `[0u8; 1]` and `[]` would collide after trailing-zero stripping).
+///
+/// Decoded committees are bounded by [`crate::bls::MAX_VALIDATORS`] (256). A
+/// signer bitmap for that committee fits in the `u32` length prefix. This
+/// function does not allocate a multi-gigabyte bitmap.
 pub fn canonical_signer_set_hash(signer_bitmap: &[u8]) -> B256 {
     let mut buf = Vec::with_capacity(4 + signer_bitmap.len());
     debug_assert!(

@@ -203,7 +203,7 @@ fn write_aggregate_vote(
     oracle.voter_list.push(validator)
 }
 
-/// Import price snapshots into the circular buffer. Entries name pairs by
+/// Import price snapshots into the snapshot log. Entries name pairs by
 /// ordinal, so every one has to resolve against a pair registered above.
 fn import_snapshots(oracle: &mut OracleContract, snapshots: &[GenesisSnapshot]) -> Result<()> {
     for snapshot in snapshots {

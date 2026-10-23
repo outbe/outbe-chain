@@ -2,7 +2,8 @@
 use super::{consensus_other, system_transactions};
 use alloy_consensus::BlockHeader as _;
 use outbe_primitives::consensus::{
-    MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS, MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS, OUTBE_MAX_BLOCK_SIZE,
+    classify_timestamp_advance, TimestampAdvance, MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
+    MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS, OUTBE_MAX_BLOCK_SIZE,
 };
 use outbe_primitives::{
     payload::validate_outbe_withdrawals, OutbeBlock, OutbeBlockBody, OutbeHeader,
@@ -203,28 +204,21 @@ fn validate_against_parent_timestamp_millis(
 ) -> Result<(), ConsensusError> {
     let timestamp = header.timestamp_millis();
     let parent_timestamp = parent.timestamp_millis();
-
-    if timestamp <= parent_timestamp {
-        return Err(ConsensusError::TimestampIsInPast {
+    // Upper drift stops one proposer from jumping chain time. The minimum
+    // advance stops a colluding majority from freezing time at parent + 1 ms.
+    // Parent block number 0 skips only the minimum. A parent timestamp of 0
+    // does not skip the upper bound.
+    match classify_timestamp_advance(
+        parent_timestamp,
+        timestamp,
+        MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
+        MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
+    ) {
+        TimestampAdvance::NotAfterParent => Err(ConsensusError::TimestampIsInPast {
             parent_timestamp,
             timestamp,
-        });
-    }
-
-    // Upper bound on forward drift. Stock Ethereum only checks monotonicity.
-    // That lets a single byzantine proposer ratchet chain time arbitrarily far
-    // forward in one block. Such a block:
-    // - matures every unbonding entry and the slashed withdrawal delay
-    //   (unbonding-lock + slashing-window bypass).
-    // - skips the day-indexed emission schedule.
-    // The bound is deterministic and chain-state-only (header + parent, no wall
-    // clock), so proposer and every validator agree. Honest proposers cap their
-    // assigned timestamp at `parent + MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS` (see the
-    // consensus handler build path), so this never rejects an honest block. A
-    // long outage self-heals as chain time ratchets forward in bounded steps.
-    let drift = timestamp - parent_timestamp;
-    if drift > MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS {
-        return Err(
+        }),
+        TimestampAdvance::ExceedsMaxDrift { drift } => Err(
             crate::errors::ConsensusPolicyError::TimestampExceedsMaxDrift {
                 timestamp,
                 parent: parent_timestamp,
@@ -232,20 +226,8 @@ fn validate_against_parent_timestamp_millis(
                 max_drift: MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
             }
             .into(),
-        );
-    }
-
-    // Lower bound on forward advance. Monotonicity alone lets a colluding
-    // leader majority hold `timestamp = parent + 1 ms` while real time advances.
-    // That freezes day-indexed emission and unbonding maturity. Each non-genesis
-    // block must advance chain time by at least `MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS`.
-    // The bound is deterministic and chain-state-only. The proposer clamps its
-    // assigned timestamp up to `parent + this` (see the consensus handler build
-    // path), so this check never rejects an honest block. The genesis child
-    // (parent number 0) is exempt. Its `finalization_view` is unseeded, so block 1
-    // is monotonic-only, matching the proposer's genesis exception.
-    if parent.number() > 0 && drift < MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS {
-        return Err(
+        ),
+        TimestampAdvance::BelowMinAdvance { drift } if parent.number() > 0 => Err(
             crate::errors::ConsensusPolicyError::TimestampBelowMinAdvance {
                 timestamp,
                 parent: parent_timestamp,
@@ -253,10 +235,9 @@ fn validate_against_parent_timestamp_millis(
                 min_advance: MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
             }
             .into(),
-        );
+        ),
+        TimestampAdvance::BelowMinAdvance { .. } | TimestampAdvance::Inside { .. } => Ok(()),
     }
-
-    Ok(())
 }
 
 fn validate_header_timestamp_millis_part(header: &OutbeHeader) -> Result<(), ConsensusError> {
@@ -272,4 +253,92 @@ fn validate_header_timestamp_millis_part(header: &OutbeHeader) -> Result<(), Con
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod timestamp_domain_tests {
+    use super::validate_against_parent_timestamp_millis;
+    use alloy_consensus::Header;
+    use outbe_primitives::consensus::{
+        classify_timestamp_advance, TimestampAdvance, MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
+        MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
+    };
+    use outbe_primitives::reshare_artifact::{encode_outbe_block_artifacts, OutbeBlockArtifacts};
+    use outbe_primitives::OutbeHeader;
+    use reth_ethereum::consensus::ConsensusError;
+
+    fn header_millis(number: u64, timestamp_millis: u64) -> OutbeHeader {
+        let (seconds, part) = OutbeHeader::split_timestamp_millis(timestamp_millis);
+        OutbeHeader::new(Header {
+            number,
+            timestamp: seconds,
+            extra_data: encode_outbe_block_artifacts(&OutbeBlockArtifacts {
+                timestamp_millis_part: part,
+                ..Default::default()
+            })
+            .expect("timestamp artifact encodes"),
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn parent_number_zero_skips_only_the_minimum_advance() {
+        let parent_timestamp = 1_700_000_000_000;
+        let short = parent_timestamp + 1;
+        assert_eq!(
+            classify_timestamp_advance(
+                parent_timestamp,
+                short,
+                MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
+                MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
+            ),
+            TimestampAdvance::BelowMinAdvance { drift: 1 }
+        );
+        assert!(validate_against_parent_timestamp_millis(
+            &header_millis(1, short),
+            &header_millis(0, parent_timestamp),
+        )
+        .is_ok());
+        let rejected = validate_against_parent_timestamp_millis(
+            &header_millis(2, short),
+            &header_millis(1, parent_timestamp),
+        )
+        .expect_err("a later parent keeps the minimum advance");
+        assert!(!matches!(
+            rejected,
+            ConsensusError::TimestampIsInPast { .. }
+        ));
+        assert!(rejected
+            .to_string()
+            .contains(&MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS.to_string()));
+
+        let over = parent_timestamp + MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS + 1;
+        let over_number_zero = validate_against_parent_timestamp_millis(
+            &header_millis(1, over),
+            &header_millis(0, parent_timestamp),
+        )
+        .expect_err("parent number 0 still enforces the upper drift");
+        assert!(over_number_zero
+            .to_string()
+            .contains(&MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS.to_string()));
+        assert_ne!(rejected.to_string(), over_number_zero.to_string());
+
+        let zero_parent_timestamp = validate_against_parent_timestamp_millis(
+            &header_millis(1, MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS + 1),
+            &header_millis(0, 0),
+        )
+        .expect_err("a parent timestamp of 0 is not an upper-bound exemption");
+        assert!(matches!(
+            classify_timestamp_advance(
+                0,
+                MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS + 1,
+                MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
+                MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
+            ),
+            TimestampAdvance::ExceedsMaxDrift { .. }
+        ));
+        assert!(zero_parent_timestamp
+            .to_string()
+            .contains(&MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS.to_string()));
+    }
 }

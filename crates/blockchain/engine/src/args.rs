@@ -155,6 +155,36 @@ pub struct ConsensusArgs {
     #[arg(long = "bls-passphrase", env = "BLS_PASSPHRASE", value_name = "SECRET")]
     pub bls_passphrase: Option<String>,
 
+    /// Validator EVM key storage backend: plaintext, encrypted, or os-level.
+    #[arg(
+        long = "evm-key-backend",
+        default_value = "plaintext",
+        value_name = "BACKEND"
+    )]
+    pub evm_key_backend: String,
+
+    /// Passphrase for the `encrypted` validator EVM key backend.
+    /// You can also provide it through the EVM_PASSPHRASE environment variable.
+    #[arg(long = "evm-passphrase", env = "EVM_PASSPHRASE", value_name = "SECRET")]
+    pub evm_passphrase: Option<String>,
+
+    /// Reth P2P / NodeHost key storage backend: plaintext, encrypted, or os-level.
+    #[arg(
+        long = "reth-key-backend",
+        default_value = "plaintext",
+        value_name = "BACKEND"
+    )]
+    pub reth_key_backend: String,
+
+    /// Passphrase for the `encrypted` Reth P2P key backend.
+    /// You can also provide it through the RETH_P2P_PASSPHRASE environment variable.
+    #[arg(
+        long = "reth-passphrase",
+        env = "RETH_P2P_PASSPHRASE",
+        value_name = "SECRET"
+    )]
+    pub reth_passphrase: Option<String>,
+
     /// Path or `host:port` endpoint for the `outbe-tee-enclave` sidecar.
     /// Every `teeAttestationV1` ChainSpec requires it. The local session selection
     /// is independent from the genesis-fixed attestation policy.
@@ -254,6 +284,13 @@ impl fmt::Debug for ConsensusArgs {
             .field("worker_threads", &self.worker_threads)
             .field("bls_key_backend", &self.bls_key_backend)
             .field("bls_passphrase_configured", &self.bls_passphrase.is_some())
+            .field("evm_key_backend", &self.evm_key_backend)
+            .field("evm_passphrase_configured", &self.evm_passphrase.is_some())
+            .field("reth_key_backend", &self.reth_key_backend)
+            .field(
+                "reth_passphrase_configured",
+                &self.reth_passphrase.is_some(),
+            )
             .field("tee_enclave_configured", &self.tee_enclave_socket.is_some())
             .field("tee_session_mode", &self.tee_session_mode)
             .field(
@@ -355,6 +392,12 @@ impl ConsensusArgs {
         if self.bls_key_backend == "encrypted" && self.bls_passphrase.is_none() {
             return Err(crate::errors::ArgsError::EncryptedBackendRequiresPassphraseArg.into());
         }
+        if self.evm_key_backend == "encrypted" && self.evm_passphrase.is_none() {
+            return Err(crate::errors::ArgsError::EncryptedEvmBackendRequiresPassphraseArg.into());
+        }
+        if self.reth_key_backend == "encrypted" && self.reth_passphrase.is_none() {
+            return Err(crate::errors::ArgsError::EncryptedRethBackendRequiresPassphraseArg.into());
+        }
         Ok(())
     }
 
@@ -383,19 +426,46 @@ impl ConsensusArgs {
 
     /// Parse the `--bls-key-backend` argument into a [`KeyBackend`].
     pub fn key_backend(&self) -> eyre::Result<outbe_consensus::bls::KeyBackend> {
-        match self.bls_key_backend.as_str() {
-            "plaintext" => Ok(outbe_consensus::bls::KeyBackend::Plaintext),
-            "encrypted" => {
-                let passphrase = self
-                    .bls_passphrase
-                    .clone()
-                    .ok_or(crate::errors::ArgsError::EncryptedBackendRequiresPassphrase)?;
-                Ok(outbe_consensus::bls::KeyBackend::Encrypted(passphrase))
-            }
-            "os-level" => Ok(outbe_consensus::bls::KeyBackend::OsLevel),
-            other => Err(crate::errors::ArgsError::UnknownBlsKeyBackend(other.to_string()).into()),
-        }
+        parse_key_backend(
+            &self.bls_key_backend,
+            self.bls_passphrase.clone(),
+            crate::errors::ArgsError::EncryptedBackendRequiresPassphrase,
+            crate::errors::ArgsError::UnknownBlsKeyBackend,
+        )
     }
+
+    /// Parse the `--evm-key-backend` argument into a [`KeyBackend`].
+    pub fn evm_key_backend(&self) -> eyre::Result<outbe_consensus::bls::KeyBackend> {
+        parse_key_backend(
+            &self.evm_key_backend,
+            self.evm_passphrase.clone(),
+            crate::errors::ArgsError::EncryptedEvmBackendRequiresPassphrase,
+            crate::errors::ArgsError::UnknownEvmKeyBackend,
+        )
+    }
+
+    /// Parse the `--reth-key-backend` argument into a [`KeyBackend`].
+    pub fn reth_key_backend(&self) -> eyre::Result<outbe_consensus::bls::KeyBackend> {
+        parse_key_backend(
+            &self.reth_key_backend,
+            self.reth_passphrase.clone(),
+            crate::errors::ArgsError::EncryptedRethBackendRequiresPassphrase,
+            crate::errors::ArgsError::UnknownRethKeyBackend,
+        )
+    }
+}
+
+fn parse_key_backend(
+    backend: &str,
+    passphrase: Option<String>,
+    missing: crate::errors::ArgsError,
+    unknown: impl FnOnce(String) -> crate::errors::ArgsError,
+) -> eyre::Result<outbe_consensus::bls::KeyBackend> {
+    use outbe_consensus::bls::{parse_key_backend_name, KeyBackendNameError};
+    parse_key_backend_name(backend, passphrase).map_err(|error| match error {
+        KeyBackendNameError::MissingPassphrase => missing.into(),
+        KeyBackendNameError::Unknown(name) => unknown(name).into(),
+    })
 }
 
 #[cfg(test)]
@@ -465,12 +535,19 @@ mod tests {
     fn debug_output_redacts_operator_secrets() {
         let mut args = default_args();
         args.bls_passphrase = Some("bls-secret-value".to_owned());
+        args.evm_passphrase = Some("evm-secret-value".to_owned());
+        args.reth_passphrase = Some("reth-secret-value".to_owned());
         args.upstream = Some("https://user:upstream-secret@example.test".to_owned());
 
         let args_debug = format!("{args:?}");
 
-        for secret in ["bls-secret-value", "upstream-secret"] {
-            assert!(!args_debug.contains(secret));
+        for secret in [
+            "bls-secret-value",
+            "evm-secret-value",
+            "reth-secret-value",
+            "upstream-secret",
+        ] {
+            assert!(!args_debug.contains(secret), "secret leaked");
         }
     }
 
@@ -681,6 +758,74 @@ mod tests {
 
         args.bls_key_backend = "invalid".to_string();
         assert!(args.key_backend().is_err());
+    }
+
+    #[test]
+    fn role_backends_parse_independently_and_name_the_missing_passphrase() {
+        let mut args = default_args();
+        assert_eq!(args.evm_key_backend, "plaintext");
+        assert_eq!(args.reth_key_backend, "plaintext");
+        assert!(matches!(
+            args.evm_key_backend().unwrap(),
+            outbe_consensus::bls::KeyBackend::Plaintext
+        ));
+        assert!(matches!(
+            args.reth_key_backend().unwrap(),
+            outbe_consensus::bls::KeyBackend::Plaintext
+        ));
+
+        args.evm_key_backend = "encrypted".to_string();
+        let evm_missing = args.evm_key_backend().unwrap_err().to_string();
+        assert!(evm_missing.contains("EVM"), "{evm_missing}");
+        args.evm_passphrase = Some("evm-secret-value".to_string());
+        assert!(matches!(
+            args.evm_key_backend().unwrap(),
+            outbe_consensus::bls::KeyBackend::Encrypted(_)
+        ));
+
+        args.reth_key_backend = "encrypted".to_string();
+        let reth_missing = args.validate().unwrap_err().to_string();
+        assert!(
+            reth_missing.contains("--reth-key-backend"),
+            "{reth_missing}"
+        );
+        args.reth_passphrase = Some("reth-secret-value".to_string());
+        assert!(args.validate().is_ok());
+        assert!(matches!(
+            args.reth_key_backend().unwrap(),
+            outbe_consensus::bls::KeyBackend::Encrypted(_)
+        ));
+
+        args.reth_key_backend = "os-level".to_string();
+        assert!(matches!(
+            args.reth_key_backend().unwrap(),
+            outbe_consensus::bls::KeyBackend::OsLevel
+        ));
+        args.evm_key_backend = "nope".to_string();
+        let unknown = args.evm_key_backend().unwrap_err().to_string();
+        assert!(unknown.contains("EVM"), "{unknown}");
+        assert!(!unknown.contains("evm-secret-value"), "secret leaked");
+    }
+
+    #[test]
+    fn cli_parses_independent_role_backends() {
+        let cli = TestConsensusCli::try_parse_from([
+            "test",
+            "--evm-key-backend",
+            "encrypted",
+            "--evm-passphrase",
+            "evm-secret-value",
+            "--reth-key-backend",
+            "os-level",
+        ])
+        .unwrap();
+        assert_eq!(cli.consensus.bls_key_backend, "plaintext");
+        assert_eq!(cli.consensus.evm_key_backend, "encrypted");
+        assert_eq!(cli.consensus.reth_key_backend, "os-level");
+        let rendered = format!("{:?}", cli.consensus);
+        assert!(!rendered.contains("evm-secret-value"), "secret leaked");
+        assert!(rendered.contains("evm_passphrase_configured"));
+        assert!(rendered.contains("reth_passphrase_configured"));
     }
 
     #[test]

@@ -31,9 +31,11 @@
 //! - `MockRelay` (Relay) - shared digest -> bytes broadcast store. The
 //!   digest remains self-describing for the mock automaton.
 //! - `MockReporter` (Reporter) - records `Finalization` activities by
-//!   view and exposes `view_finalized(View) -> bool`. With it, tests can
-//!   ask the precise question "did view N finalize on this node?". The
-//!   answer is insulated from later-view recovery.
+//!   view and exposes `view_finalized(View) -> bool`. It also records
+//!   whether a raw `Activity::Finalize` for view 1 arrived before that
+//!   view's certificate. With it, tests can ask "did view N finalize on
+//!   this node?" and "was the raw vote reported first?". The answer is
+//!   insulated from later-view recovery.
 
 #![allow(dead_code)]
 
@@ -226,6 +228,8 @@ pub struct MockReporter {
     finalized_views: Arc<CommonwareMutex<std::collections::HashSet<View>>>,
     latest_view: Arc<CommonwareMutex<View>>,
     finalized_signers: Arc<CommonwareMutex<HashMap<View, Vec<u32>>>>,
+    raw_finalize_reports: Arc<CommonwareMutex<u64>>,
+    view_one_finalize_before_certificate: Arc<CommonwareMutex<bool>>,
 }
 
 impl MockReporter {
@@ -248,29 +252,48 @@ impl MockReporter {
             .cloned()
             .unwrap_or_default()
     }
+
+    pub fn raw_finalize_reports(&self) -> u64 {
+        *self.raw_finalize_reports.lock()
+    }
+
+    pub fn view_one_finalize_before_certificate(&self) -> bool {
+        *self.view_one_finalize_before_certificate.lock()
+    }
 }
 
 impl ConsensusReporter for MockReporter {
     type Activity = Activity<HybridScheme<MinSig>, Sha256Digest>;
 
     fn report(&mut self, activity: Self::Activity) -> commonware_actor::Feedback {
-        if let Activity::Finalization(finalization) = activity {
-            let view = finalization.view();
-            self.finalized_signers.lock().insert(
-                view,
-                finalization
-                    .certificate
-                    .signers
-                    .iter()
-                    .map(|signer| signer.get())
-                    .collect(),
-            );
-            let mut finalized = self.finalized_views.lock();
-            finalized.insert(view);
-            let mut latest = self.latest_view.lock();
-            if view > *latest {
-                *latest = view;
+        match activity {
+            Activity::Finalize(finalize) => {
+                *self.raw_finalize_reports.lock() += 1;
+                if finalize.view() == View::new(1)
+                    && !self.finalized_views.lock().contains(&View::new(1))
+                {
+                    *self.view_one_finalize_before_certificate.lock() = true;
+                }
             }
+            Activity::Finalization(finalization) => {
+                let view = finalization.view();
+                self.finalized_signers.lock().insert(
+                    view,
+                    finalization
+                        .certificate
+                        .signers
+                        .iter()
+                        .map(|signer| signer.get())
+                        .collect(),
+                );
+                let mut finalized = self.finalized_views.lock();
+                finalized.insert(view);
+                let mut latest = self.latest_view.lock();
+                if view > *latest {
+                    *latest = view;
+                }
+            }
+            _ => {}
         }
         // In-memory sink, never closes.
         commonware_actor::Feedback::Ok
@@ -334,6 +357,8 @@ pub struct CycleOutcome {
     pub view_finalized_per_node: Vec<bool>,
     pub view_one_signers_per_node: Vec<Vec<u32>>,
     pub leader_index: usize,
+    pub raw_finalize_reports_per_node: Vec<u64>,
+    pub view_one_finalize_before_certificate_per_node: Vec<bool>,
 }
 
 impl CycleOutcome {
@@ -718,6 +743,8 @@ fn cycle_outcome(
     let mut finalized_view_per_node = Vec::with_capacity(n);
     let mut view_finalized_per_node = Vec::with_capacity(n);
     let mut view_one_signers_per_node = Vec::with_capacity(n);
+    let mut raw_finalize_reports_per_node = Vec::with_capacity(n);
+    let mut view_one_finalize_before_certificate_per_node = Vec::with_capacity(n);
     #[allow(clippy::needless_range_loop)]
     for i in 0..n {
         let reporter = snapshots[i]
@@ -726,12 +753,17 @@ fn cycle_outcome(
         finalized_view_per_node.push(reporter.latest_finalized_view());
         view_finalized_per_node.push(reporter.view_finalized(View::new(1)));
         view_one_signers_per_node.push(reporter.finalized_signers(View::new(1)));
+        raw_finalize_reports_per_node.push(reporter.raw_finalize_reports());
+        view_one_finalize_before_certificate_per_node
+            .push(reporter.view_one_finalize_before_certificate());
     }
     CycleOutcome {
         finalized_view_per_node,
         view_finalized_per_node,
         view_one_signers_per_node,
         leader_index,
+        raw_finalize_reports_per_node,
+        view_one_finalize_before_certificate_per_node,
     }
 }
 

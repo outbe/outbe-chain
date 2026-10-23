@@ -90,7 +90,7 @@ contract SolverEscrowTest is Test {
 
     function test_deposit_ERC20_zeroAmount_reverts() public {
         vm.prank(solver);
-        vm.expectRevert(SolverEscrow.InvalidAmount.selector);
+        vm.expectRevert(ISolverEscrow.InvalidAmount.selector);
         escrow.deposit(address(token), 0);
     }
 
@@ -99,7 +99,7 @@ contract SolverEscrowTest is Test {
         deal(address(token), noOperatorSolver, 1000);
 
         vm.prank(noOperatorSolver);
-        vm.expectRevert(SolverEscrow.OperatorNotApproved.selector);
+        vm.expectRevert(ISolverEscrow.OperatorNotApproved.selector);
         escrow.deposit(address(token), 100);
     }
 
@@ -122,7 +122,7 @@ contract SolverEscrowTest is Test {
 
     function test_deposit_native_zeroValue_reverts() public {
         vm.prank(solver);
-        vm.expectRevert(SolverEscrow.InvalidAmount.selector);
+        vm.expectRevert(ISolverEscrow.InvalidAmount.selector);
         escrow.deposit{value: 0}(address(0), 0);
     }
 
@@ -156,14 +156,14 @@ contract SolverEscrowTest is Test {
 
         vm.startPrank(payer);
         token.approve(address(escrow), 100);
-        vm.expectRevert(SolverEscrow.OperatorNotApproved.selector);
+        vm.expectRevert(ISolverEscrow.OperatorNotApproved.selector);
         escrow.depositFor(newSolver, address(token), 100);
         vm.stopPrank();
     }
 
     function test_depositFor_zeroSolver_reverts() public {
         vm.prank(solver);
-        vm.expectRevert(SolverEscrow.ZeroAddress.selector);
+        vm.expectRevert(ISolverEscrow.ZeroAddress.selector);
         escrow.depositFor(address(0), address(token), 100);
     }
 
@@ -261,7 +261,7 @@ contract SolverEscrowTest is Test {
 
     function test_lockCollateral_onlyAuthorizedCaller_reverts() public {
         vm.prank(solver);
-        vm.expectRevert(SolverEscrow.UnauthorizedCaller.selector);
+        vm.expectRevert(ISolverEscrow.UnauthorizedCaller.selector);
         escrow.lockCollateral(keccak256("order1"), solver, address(token), 100);
     }
 
@@ -461,7 +461,7 @@ contract SolverEscrowTest is Test {
     }
 
     function test_setCollateralBps_invalidBps_reverts() public {
-        vm.expectRevert(SolverEscrow.InvalidBps.selector);
+        vm.expectRevert(ISolverEscrow.InvalidBps.selector);
         escrow.setCollateralBps(10_001);
     }
 
@@ -651,6 +651,8 @@ contract SolverEscrowTest is Test {
 
         deal(address(token), address(compact), 10_000);
 
+        vm.expectEmit(true, false, false, true);
+        emit ISolverEscrow.RewardSkipped(address(token), 150, 100);
         vm.prank(authorizedCaller);
         uint256 reward = escrow.distributeReward(address(token), 10_000, makeAddr("receiver"));
 
@@ -692,14 +694,60 @@ contract SolverEscrowTest is Test {
 
     function test_lockCollateral_zeroAmount_reverts() public {
         vm.prank(authorizedCaller);
-        vm.expectRevert(SolverEscrow.InvalidAmount.selector);
+        vm.expectRevert(ISolverEscrow.InvalidAmount.selector);
         escrow.lockCollateral(keccak256("order1"), solver, address(token), 0);
     }
 
     function test_lockCollateral_zeroSolver_reverts() public {
         vm.prank(authorizedCaller);
-        vm.expectRevert(SolverEscrow.ZeroAddress.selector);
+        vm.expectRevert(ISolverEscrow.ZeroAddress.selector);
         escrow.lockCollateral(keccak256("order1"), address(0), address(token), 100);
+    }
+
+    function test_constructor_zeroCompact_reverts() public {
+        vm.expectRevert(ISolverEscrow.ZeroAddress.selector);
+        new SolverEscrow(address(0), lockTag, COLLATERAL_BPS);
+    }
+
+    function test_setAuthorizedCaller_emits() public {
+        SolverEscrow fresh = new SolverEscrow(address(compact), lockTag, COLLATERAL_BPS);
+        vm.expectEmit(true, false, false, false);
+        emit ISolverEscrow.AuthorizedCallerSet(authorizedCaller);
+        fresh.setAuthorizedCaller(authorizedCaller);
+    }
+
+    function test_lockAndUnlockCollateral_emit() public {
+        bytes32 orderId = keccak256("order1");
+        vm.startPrank(solver);
+        token.approve(address(escrow), 500);
+        escrow.deposit(address(token), 500);
+        vm.stopPrank();
+
+        vm.startPrank(authorizedCaller);
+        vm.expectEmit(true, true, false, true);
+        emit ISolverEscrow.CollateralLocked(orderId, solver, address(token), 100);
+        escrow.lockCollateral(orderId, solver, address(token), 100);
+
+        vm.expectEmit(true, false, false, false);
+        emit ISolverEscrow.CollateralUnlocked(orderId);
+        escrow.unlockCollateral(orderId);
+        vm.stopPrank();
+    }
+
+    /// The native release calls the solver. A re-entry into withdraw from that call reverts.
+    function test_withdraw_native_reentryReverts() public {
+        ReentrantSolver attacker = new ReentrantSolver(escrow);
+        vm.prank(address(attacker));
+        compact.setOperator(address(escrow), true);
+        deal(address(attacker), 1000);
+
+        vm.startPrank(address(attacker));
+        escrow.deposit{value: 1000}(address(0), 0);
+        escrow.withdraw(address(0), 400);
+        vm.stopPrank();
+
+        assertEq(bytes4(attacker.reentryError()), bytes4(keccak256("ReentrancyGuardReentrantCall()")));
+        assertEq(address(attacker).balance, 400);
     }
 
     // ============ lockId ============
@@ -707,5 +755,21 @@ contract SolverEscrowTest is Test {
     function test_lockId_encoding() public view {
         uint256 expected = (uint256(uint96(lockTag)) << 160) | uint160(address(token));
         assertEq(escrow.lockId(address(token)), expected, "lockId encoding");
+    }
+}
+
+contract ReentrantSolver {
+    SolverEscrow internal immutable ESCROW;
+    bytes public reentryError;
+
+    constructor(SolverEscrow escrow) {
+        ESCROW = escrow;
+    }
+
+    receive() external payable {
+        try ESCROW.withdraw(address(0), 1) {}
+        catch (bytes memory err) {
+            reentryError = err;
+        }
     }
 }

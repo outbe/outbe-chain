@@ -61,6 +61,7 @@ impl VwapAccumulator {
         Ok(())
     }
 
+    /// The VWAP, rounded down.
     pub(super) fn finish(self) -> Option<U256> {
         (!self.volume.is_zero()).then(|| self.price_volume / self.volume)
     }

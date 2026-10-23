@@ -6,6 +6,7 @@
 
 use metrics::{counter, gauge, histogram};
 use std::time::Duration;
+use tracing::debug;
 
 /// Record a block proposed by this node.
 pub fn record_block_proposed(block_number: u64) {
@@ -436,12 +437,8 @@ pub fn record_parent_proof_recovered_from_marshal() {
 /// Proposer used a locally observed certified-notarization witness after the
 /// bounded finalization wait expired.
 pub fn record_phase1_used_cn_fallback(epoch: u64, view: u64) {
-    counter!(
-        "outbe_phase1_used_cn_fallback_total",
-        "epoch" => epoch.to_string(),
-        "view" => view.to_string()
-    )
-    .increment(1);
+    debug!(epoch, view, "phase 1 used certified-notarization fallback");
+    counter!("outbe_phase1_used_cn_fallback_total").increment(1);
 }
 
 /// Time spent waiting for the finalization slot before either finalization won

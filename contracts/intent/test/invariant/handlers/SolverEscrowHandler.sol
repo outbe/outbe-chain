@@ -7,7 +7,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {SolverEscrow} from "../../../src/SolverEscrow.sol";
 import {MockTheCompact} from "../../mocks/MockTheCompact.sol";
 
-/// @dev Drives lock/unlock/slash/withdraw/forced-withdrawal against the escrow so the invariant
+/// @dev Drives lock/unlock/slash/reward/withdraw/forced-withdrawal against the escrow so the invariant
 ///      test can assert escrow custody accounting holds across arbitrary interleavings.
 contract SolverEscrowHandler is Test {
     SolverEscrow internal immutable escrow;
@@ -70,6 +70,14 @@ contract SolverEscrowHandler is Test {
         if (orderId == bytes32(0)) return;
         vm.prank(address(this));
         escrow.slashCollateral(orderId);
+    }
+
+    /// @dev The reward is paid from the slashed pool, or skipped when the pool is too small.
+    function reward(uint256 orderAmountIn) external {
+        orderAmountIn = bound(orderAmountIn, 0, 1e26);
+        deal(address(token), address(compact), orderAmountIn); // fund underlying release
+        vm.prank(address(this));
+        escrow.distributeReward(address(token), orderAmountIn, makeAddr("rewardReceiver"));
     }
 
     function withdraw(uint256 actorSeed, uint256 amount) external {

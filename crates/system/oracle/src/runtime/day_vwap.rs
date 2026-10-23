@@ -99,6 +99,15 @@ impl OracleContract<'_> {
             value_map.write(&self.pair_index_of(*pair)?, *vwap)?;
         }
 
+        let event = IOracle::WorldwideDayVwapStored {
+            worldwideDay: worldwide_day.value(),
+            startTime: start_time,
+            endTime: end_time,
+            pairCount: u32::try_from(day_vwaps.len()).unwrap_or(u32::MAX),
+        };
+        self.storage
+            .emit_event(ORACLE_ADDRESS, event.encode_log_data())?;
+
         Ok(true)
     }
 

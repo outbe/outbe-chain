@@ -237,12 +237,82 @@ fn test_pending_dkg_boundary_snapshot_round_trips_and_rejects_corruption() {
         .to_string();
     assert!(error.contains("invalid pending DKG boundary snapshot magic"));
 
-    let mut legacy = encoded;
+    let mut legacy = encoded.clone();
     legacy[..8].copy_from_slice(b"ODKGPB01");
     let error = decode_pending_dkg_boundary_snapshot(&legacy)
         .unwrap_err()
         .to_string();
     assert!(error.contains("unsupported pending DKG boundary snapshot version"));
+
+    let header_len = 8 + 8 + 4;
+    let short = decode_pending_dkg_boundary_snapshot(&encoded[..header_len - 1]).unwrap_err();
+    match short.downcast_ref::<crate::errors::StackDkgError>() {
+        Some(crate::errors::StackDkgError::PendingBoundarySnapshotTooShort {
+            actual,
+            expected,
+        }) => {
+            assert_eq!(*actual, header_len - 1);
+            assert_eq!(*expected, header_len);
+        }
+        other => panic!("short header must be too short, got {other:?}"),
+    }
+
+    let mut truncated = encoded.clone();
+    truncated.pop();
+    let truncated = decode_pending_dkg_boundary_snapshot(&truncated).unwrap_err();
+    match truncated.downcast_ref::<crate::errors::StackDkgError>() {
+        Some(crate::errors::StackDkgError::PendingBoundarySnapshotLengthMismatch {
+            expected,
+            actual,
+        }) => {
+            assert_eq!(*expected, encoded.len());
+            assert_eq!(*actual, encoded.len() - 1);
+        }
+        other => panic!("truncated tail must mismatch length, got {other:?}"),
+    }
+
+    let mut extended = encoded;
+    extended.push(0xAB);
+    let extended = decode_pending_dkg_boundary_snapshot(&extended).unwrap_err();
+    match extended.downcast_ref::<crate::errors::StackDkgError>() {
+        Some(crate::errors::StackDkgError::PendingBoundarySnapshotLengthMismatch {
+            expected,
+            actual,
+        }) => {
+            assert_eq!(*actual, *expected + 1);
+        }
+        other => panic!("extended tail must mismatch length, got {other:?}"),
+    }
+}
+
+#[test]
+fn active_set_hash_changes_when_distinct_addresses_change_order() {
+    let first = Address::with_last_byte(0x11);
+    let second = Address::with_last_byte(0x22);
+    assert_ne!(first, second);
+    let forward = [first, second];
+    let reverse = [second, first];
+    assert_eq!(
+        active_set_hash_from_addresses(&forward),
+        independent_active_set_hash(&forward)
+    );
+    assert_eq!(
+        active_set_hash_from_addresses(&reverse),
+        independent_active_set_hash(&reverse)
+    );
+    assert_ne!(
+        active_set_hash_from_addresses(&forward),
+        active_set_hash_from_addresses(&reverse)
+    );
+}
+
+fn independent_active_set_hash(addresses: &[Address]) -> B256 {
+    let mut bytes = Vec::with_capacity(8 + addresses.len() * 20);
+    bytes.extend_from_slice(&u64::try_from(addresses.len()).unwrap().to_be_bytes());
+    for address in addresses {
+        bytes.extend_from_slice(address.as_slice());
+    }
+    alloy_primitives::keccak256(bytes)
 }
 
 #[test]

@@ -1,4 +1,4 @@
-//! State-level tests: snapshot ring buffer, hourly cells and rolling VWAP.
+//! State-level tests: snapshot log, hourly cells and rolling VWAP.
 
 use alloy_primitives::U256;
 
@@ -7,7 +7,7 @@ use crate::schema::{OracleContract, SCALE_1E18};
 use super::common::*;
 
 #[test]
-fn write_snapshot_advances_the_ring_buffer_and_feeds_vwap() {
+fn write_snapshot_advances_the_snapshot_log_and_feeds_vwap() {
     with_bare_coen_usdt_oracle(|_storage, oracle| {
         // Write 3 snapshots
         let entries = vec![(pair_key(COEN, USDT), fixed18(100), fixed18(1000))];
@@ -397,6 +397,33 @@ fn a_snapshot_cannot_precede_the_previous_one() {
             .to_string()
         );
         assert_eq!(oracle.snapshot_write_idx.read().unwrap(), 2);
+    });
+}
+
+/// A write past the retention window clears the slots of every expired snapshot.
+#[test]
+fn write_snapshot_clears_expired_snapshots() {
+    with_bare_coen_usdt_oracle(|_storage, oracle| {
+        let entries = vec![(pair_key(COEN, USDT), fixed18(100), fixed18(1000))];
+        oracle.write_snapshot(1000, &entries).unwrap();
+        oracle
+            .write_snapshot(
+                1000 + crate::constants::MAX_SNAPSHOT_RETENTION_SECONDS + 1,
+                &entries,
+            )
+            .unwrap();
+
+        assert_eq!(oracle.snapshot_oldest_idx.read().unwrap(), 1);
+        assert_eq!(oracle.snapshot_timestamp.read(&0).unwrap(), 0);
+        assert_eq!(oracle.snapshot_pair_count.read(&0).unwrap(), 0);
+        assert_eq!(
+            oracle.snapshot_rate.get_nested(&0).read(&0).unwrap(),
+            U256::ZERO
+        );
+        assert_eq!(
+            oracle.snapshot_volume.get_nested(&0).read(&0).unwrap(),
+            U256::ZERO
+        );
     });
 }
 

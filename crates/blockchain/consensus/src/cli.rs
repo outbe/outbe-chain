@@ -9,10 +9,7 @@ use commonware_cryptography::Signer as _;
 use commonware_math::algebra::Random as _;
 use eyre::{Result, WrapErr};
 use k256::ecdsa::{SigningKey, VerifyingKey};
-use std::{
-    io::Write as _,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use crate::{
     bls::{self, KeyBackend},
@@ -25,53 +22,12 @@ const LOCALNET_RETH_P2P_SECRET_FILE: &str = "reth-p2p-secret.hex";
 const LOCALNET_RETH_BOOTNODE_HOST: &str = "127.0.0.1";
 const LOCALNET_RETH_P2P_BASE_PORT: u16 = 30303;
 
-fn write_secret_hex_file(path: &Path, contents: &str) -> Result<()> {
-    let file_name = path
-        .file_name()
-        .ok_or_else(|| ConsensusCliError::SecretKeyPathNoFileName(path.display().to_string()))?
-        .to_string_lossy();
-    let tmp_path = path.with_file_name(format!(".{file_name}.tmp.{}", std::process::id()));
-
-    let write_result = (|| -> Result<()> {
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt as _;
-            options.mode(0o600);
-        }
-        let mut file = options
-            .open(&tmp_path)
-            .wrap_err_with(|| format!("failed to create secret file: {}", tmp_path.display()))?;
-        file.write_all(contents.as_bytes())
-            .wrap_err_with(|| format!("failed to write secret file: {}", tmp_path.display()))?;
-        file.flush()
-            .wrap_err_with(|| format!("failed to flush secret file: {}", tmp_path.display()))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))
-                .wrap_err_with(|| {
-                    format!(
-                        "failed to set secret file permissions: {}",
-                        tmp_path.display()
-                    )
-                })?;
-        }
-        std::fs::rename(&tmp_path, path).wrap_err_with(|| {
-            format!(
-                "failed to atomically install secret file {} -> {}",
-                tmp_path.display(),
-                path.display()
-            )
-        })?;
-        Ok(())
-    })();
-
-    if write_result.is_err() {
-        let _ = std::fs::remove_file(&tmp_path);
-    }
-    write_result
+/// Independent custody selection for BLS, validator EVM, and Reth P2P.
+#[derive(Clone, Copy)]
+pub struct RoleKeyBackends<'a> {
+    pub bls: &'a KeyBackend,
+    pub evm: &'a KeyBackend,
+    pub reth: &'a KeyBackend,
 }
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
@@ -99,15 +55,15 @@ fn reth_node_id_hex(verifying_key: &VerifyingKey) -> Result<String> {
 pub fn execute_dkg_bootstrap(
     output_dir: PathBuf,
     num_validators: u32,
-    backend: &KeyBackend,
+    roles: &RoleKeyBackends<'_>,
 ) -> Result<()> {
     println!("bootstrapping DKG for {num_validators} validators...");
 
-    let result = dkg::bootstrap_and_save(&output_dir, num_validators, backend)
+    let result = dkg::bootstrap_and_save(&output_dir, num_validators, roles.bls)
         .wrap_err("DKG bootstrap failed")?;
 
     // Generate validators.json and secp256k1 EVM/Reth keys.
-    let entries = write_validator_identity_bundle(&output_dir, &result.validator_dirs, backend)?;
+    let entries = write_validator_identity_bundle(&output_dir, &result.validator_dirs, roles)?;
 
     println!("DKG bootstrap complete:");
     println!("  output dir:     {}", output_dir.display());
@@ -130,7 +86,7 @@ pub fn execute_dkg_bootstrap(
 pub fn execute_validator_identities(
     output_dir: PathBuf,
     num_validators: u32,
-    backend: &KeyBackend,
+    roles: &RoleKeyBackends<'_>,
 ) -> Result<()> {
     if num_validators == 0 {
         return Err(ConsensusCliError::ZeroValidatorCount.into());
@@ -156,12 +112,12 @@ pub fn execute_validator_identities(
                 directory.display()
             )
         })?;
-        bls::save_individual_key(&directory.join("signing-key.hex"), key, backend)
+        bls::save_individual_key(&directory.join("signing-key.hex"), key, roles.bls)
             .wrap_err_with(|| format!("failed to save validator-{index} signing key"))?;
         validator_dirs.push(directory);
     }
 
-    let entries = write_validator_identity_bundle(&output_dir, &validator_dirs, backend)?;
+    let entries = write_validator_identity_bundle(&output_dir, &validator_dirs, roles)?;
     println!("validator identities generated for fresh interactive genesis DKG:");
     println!("  output dir:     {}", output_dir.display());
     print_validator_identity_outputs(&output_dir, &validator_dirs, &entries);
@@ -173,7 +129,7 @@ pub fn execute_validator_identities(
 pub fn execute_validator_identity_verification(
     validators_path: &Path,
     material_dir: &Path,
-    backend: &KeyBackend,
+    roles: &RoleKeyBackends<'_>,
 ) -> Result<()> {
     let validators: Vec<ValidatorEntry> = serde_json::from_slice(
         &std::fs::read(validators_path)
@@ -199,7 +155,7 @@ pub fn execute_validator_identity_verification(
         let signing_key_path = material_dir
             .join(format!("validator-{index}"))
             .join("signing-key.hex");
-        let signing_key = bls::load_individual_key(&signing_key_path, backend)
+        let signing_key = bls::load_individual_key(&signing_key_path, roles.bls)
             .wrap_err_with(|| format!("failed to load validator-{index} BLS signing key"))?;
         if signing_key.public_key().encode() != expected_public_key {
             return Err(ConsensusCliError::BlsSigningKeyMismatch(index).into());
@@ -212,21 +168,9 @@ pub fn execute_validator_identity_verification(
         let evm_key_path = material_dir
             .join(format!("validator-{index}"))
             .join("evm-key.hex");
-        let evm_key_text = std::fs::read_to_string(&evm_key_path)
-            .wrap_err_with(|| format!("failed to read: {}", evm_key_path.display()))?;
-        let evm_key_bytes = hex::decode(
-            evm_key_text
-                .trim()
-                .strip_prefix("0x")
-                .unwrap_or(evm_key_text.trim()),
-        )
-        .wrap_err_with(|| format!("validator-{index} EVM signing key is not valid hex"))?;
-        let evm_key = SigningKey::from_slice(&evm_key_bytes)
-            .wrap_err_with(|| format!("validator-{index} EVM signing key is invalid"))?;
-        let evm_public_key = evm_key.verifying_key().to_encoded_point(false);
-        let evm_address_hash = keccak256(&evm_public_key.as_bytes()[1..]);
-        let actual_address = Address::from_slice(&evm_address_hash[12..]);
-        if actual_address != expected_address {
+        let evm_signer = bls::load_validator_evm_signer(&evm_key_path, roles.evm)
+            .wrap_err_with(|| format!("failed to load validator-{index} EVM signing key"))?;
+        if evm_signer.address() != expected_address {
             return Err(ConsensusCliError::EvmSigningKeyMismatch(index).into());
         }
     }
@@ -242,12 +186,12 @@ pub fn execute_validator_identity_verification(
 fn write_validator_identity_bundle(
     output_dir: &Path,
     validator_dirs: &[PathBuf],
-    backend: &KeyBackend,
+    roles: &RoleKeyBackends<'_>,
 ) -> Result<Vec<ValidatorEntry>> {
     let mut entries = Vec::with_capacity(validator_dirs.len());
     let mut reth_bootnodes = Vec::with_capacity(validator_dirs.len());
     for (i, dir) in validator_dirs.iter().enumerate() {
-        let key = bls::load_individual_key(&dir.join("signing-key.hex"), backend)
+        let key = bls::load_individual_key(&dir.join("signing-key.hex"), roles.bls)
             .wrap_err_with(|| format!("failed to load key for validator {i}"))?;
         let pk = key.public_key();
         let pk_hex = hex::encode(pk.encode());
@@ -258,24 +202,28 @@ fn write_validator_identity_bundle(
         let addr_hash = keccak256(&evm_pubkey.as_bytes()[1..]);
         let address = Address::from_slice(&addr_hash[12..]);
 
-        // Save EVM private key as hex.
-        let evm_key_hex = hex::encode(evm_key.to_bytes());
+        // Save the EVM private key with the selected EVM backend.
+        let mut evm_secret = [0_u8; 32];
+        evm_secret.copy_from_slice(evm_key.to_bytes().as_slice());
         let evm_key_path = dir.join("evm-key.hex");
-        write_secret_hex_file(&evm_key_path, &evm_key_hex)
+        bls::save_secp256k1_secret(&evm_key_path, &evm_secret, roles.evm)
             .wrap_err_with(|| format!("failed to write EVM key: {}", evm_key_path.display()))?;
 
         // Generate a stable Reth RLPx identity for localnet bootnode wiring.
         // This key is not consensus-critical. It only lets scripts know each
         // node's enode before the first Reth startup.
         let reth_p2p_key = SigningKey::random(&mut rand_core::OsRng);
-        let reth_p2p_key_hex = hex::encode(reth_p2p_key.to_bytes());
+        let mut reth_secret = [0_u8; 32];
+        reth_secret.copy_from_slice(reth_p2p_key.to_bytes().as_slice());
         let reth_p2p_key_path = dir.join(LOCALNET_RETH_P2P_SECRET_FILE);
-        write_secret_hex_file(&reth_p2p_key_path, &reth_p2p_key_hex).wrap_err_with(|| {
-            format!(
-                "failed to write Reth p2p secret: {}",
-                reth_p2p_key_path.display()
-            )
-        })?;
+        bls::save_secp256k1_secret(&reth_p2p_key_path, &reth_secret, roles.reth).wrap_err_with(
+            || {
+                format!(
+                    "failed to write Reth p2p secret: {}",
+                    reth_p2p_key_path.display()
+                )
+            },
+        )?;
         let reth_node_id = reth_node_id_hex(reth_p2p_key.verifying_key())?;
         let reth_p2p_port = LOCALNET_RETH_P2P_BASE_PORT
             .checked_add(i as u16)
@@ -580,7 +528,17 @@ mod tests {
     fn dkg_bootstrap_writes_reth_p2p_secrets_and_bootnodes() {
         let tmp = tempfile::tempdir().unwrap();
 
-        execute_dkg_bootstrap(tmp.path().to_path_buf(), 3, &KeyBackend::Plaintext).unwrap();
+        let plain = KeyBackend::Plaintext;
+        execute_dkg_bootstrap(
+            tmp.path().to_path_buf(),
+            3,
+            &RoleKeyBackends {
+                bls: &plain,
+                evm: &plain,
+                reth: &plain,
+            },
+        )
+        .unwrap();
 
         let bootnodes_path = tmp.path().join(LOCALNET_RETH_BOOTNODES_FILE);
         let bootnodes = std::fs::read_to_string(bootnodes_path).unwrap();
@@ -614,5 +572,77 @@ mod tests {
                 "bootnode node_id must match validator-{i} secret key"
             );
         }
+    }
+
+    #[test]
+    fn encrypted_evm_custody_round_trips_without_a_plaintext_copy() {
+        use crate::errors::BlsKeyError;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let plain = KeyBackend::Plaintext;
+        let evm = KeyBackend::Encrypted("evm-passphrase-value".to_owned());
+        let roles = RoleKeyBackends {
+            bls: &plain,
+            evm: &evm,
+            reth: &plain,
+        };
+        execute_validator_identities(tmp.path().to_path_buf(), 1, &roles).unwrap();
+        execute_validator_identity_verification(
+            &tmp.path().join("validators.json"),
+            tmp.path(),
+            &roles,
+        )
+        .unwrap();
+
+        let validator = tmp.path().join("validator-0");
+        let evm_path = validator.join("evm-key.hex");
+        let evm_bytes = std::fs::read(&evm_path).unwrap();
+        assert!(evm_bytes.starts_with(b"OUTBE_ENC"));
+        let loaded = bls::load_secp256k1_secret(&evm_path, &evm).unwrap();
+        let loaded_hex = hex::encode(loaded);
+        assert!(!evm_bytes
+            .windows(loaded_hex.len())
+            .any(|window| window == loaded_hex.as_bytes()));
+        assert!(!validator.join("evm-key.hex.plaintext").exists());
+
+        let wrong = KeyBackend::Encrypted("other-passphrase-value".to_owned());
+        let error = bls::load_secp256k1_secret(&evm_path, &wrong).unwrap_err();
+        assert!(error.chain().any(|cause| {
+            matches!(
+                cause.downcast_ref::<BlsKeyError>(),
+                Some(BlsKeyError::DecryptionFailed)
+            )
+        }));
+        let rendered = format!("{error:?}");
+        assert!(!rendered.contains("evm-passphrase-value"), "secret leaked");
+        assert!(
+            !rendered.contains("other-passphrase-value"),
+            "secret leaked"
+        );
+
+        let mut corrupt = evm_bytes;
+        let last = corrupt.len() - 1;
+        corrupt[last] ^= 0xff;
+        std::fs::write(&evm_path, &corrupt).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&evm_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        let corrupt_error = bls::load_secp256k1_secret(&evm_path, &evm).unwrap_err();
+        assert!(corrupt_error.chain().any(|cause| {
+            matches!(
+                cause.downcast_ref::<BlsKeyError>(),
+                Some(BlsKeyError::DecryptionFailed)
+            )
+        }));
+
+        let reth_path = validator.join(LOCALNET_RETH_P2P_SECRET_FILE);
+        let reth_text = std::fs::read_to_string(&reth_path).unwrap();
+        assert_eq!(reth_text.len(), 64);
+        let reth_loaded = bls::load_secp256k1_secret(&reth_path, &plain).unwrap();
+        assert_eq!(hex::encode(reth_loaded), reth_text);
+        let bls_bytes = std::fs::read(validator.join("signing-key.hex")).unwrap();
+        assert!(!bls_bytes.starts_with(b"OUTBE_ENC"));
     }
 }

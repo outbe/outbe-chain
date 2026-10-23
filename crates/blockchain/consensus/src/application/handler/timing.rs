@@ -80,14 +80,15 @@ pub(super) fn apply_unix_time_offset_millis(now: u64, offset_secs: i64) -> eyre:
 /// `[parent + min_advance, parent + band]`, with the genesis-child exception.
 ///
 /// When `parent_timestamp_millis == 0`, the proposer did not resolve a parent
-/// block. This is the genesis-child case: [`proposal_timestamp_millis`] passes
-/// zero, not the genesis header timestamp. The band is therefore meaningless. Capping at `0 + band`
+/// block. [`proposal_timestamp_millis`] passes zero for that absent parent. It
+/// does not pass the genesis header timestamp, and it is not the validator
+/// exemption for parent block number 0. A zero parent timestamp, a parent
+/// number of 0, and an absent parent are different inputs. Capping at `0 + band`
 /// would clamp the real wall-clock time far below the genesis timestamp. Reth
 /// would then reject the payload as a past timestamp, stalling at block 0. For
-/// a zero parent timestamp the function enforces only monotonicity (`max(now, parent + 1)`),
-/// mirroring the validator-side genesis exemption (`parent.number() == 0`). For
-/// every real parent the full two-sided band applies, mirroring the
-/// validator-side `validate_against_parent_timestamp_millis`:
+/// a zero parent timestamp the function enforces only monotonicity (`max(now, parent + 1)`).
+/// For every later parent timestamp the full two-sided band applies, using the
+/// same bound arithmetic as the validator:
 /// - lower bound `parent + min_advance`: if the proposer's clock has not
 ///   advanced `min_advance` past the parent, the function clamps the timestamp
 ///   *up*. The block then still satisfies the validator minimum-advance rule and
@@ -105,9 +106,12 @@ pub(super) fn clamp_proposed_timestamp_millis(
     if parent_timestamp_millis == 0 {
         return std::cmp::max(now_millis, parent_timestamp_millis.saturating_add(1));
     }
-    let min_timestamp_millis = parent_timestamp_millis.saturating_add(min_advance_millis);
-    let max_timestamp_millis = parent_timestamp_millis.saturating_add(band_millis);
-    std::cmp::max(now_millis, min_timestamp_millis).min(max_timestamp_millis)
+    outbe_primitives::consensus::clamp_timestamp_into_band(
+        parent_timestamp_millis,
+        now_millis,
+        band_millis,
+        min_advance_millis,
+    )
 }
 
 /// Derive the proposal timestamp from the exact resolved parent block.

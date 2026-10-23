@@ -140,21 +140,7 @@ where
                 .to_str()
                 .ok_or(crate::errors::StackEpochError::TeeEnclaveEndpointInvalidUtf8)?
                 .to_owned();
-            let reth_p2p_secret = node
-                .config
-                .network
-                .secret_key(node.data_dir.p2p_secret())
-                .wrap_err("failed to load persistent Reth P2P identity for OST3")?;
-            let node_host_signing =
-                k256::ecdsa::SigningKey::from_slice(reth_p2p_secret.secret_bytes().as_slice())
-                    .map_err(crate::errors::StackEpochError::invalid_reth_p2p_signing_key)?;
-            let reth_p2p_public = node_host_signing
-                .verifying_key()
-                .to_encoded_point(true)
-                .as_bytes()
-                .try_into()
-                .map_err(|_| crate::errors::StackEpochError::RethP2pPublicKeyNotCompressedSec1)?;
-            let node_id = outbe_primitives::tee_attestation_v1::NodeIdV1 { reth_p2p_public };
+            let (node_host_signing, node_id) = load_ost3_reth_node_host_identity(node)?;
 
             // Step 1 (TEE DKG -> shared offer key) + Step 2 (bootstrap coordination ->
             // block-1 payload), under one deadline. Any error or timeout halts.
@@ -287,73 +273,159 @@ where
             );
             bridge.set_pending_tee_bootstrap(payload);
         } else if shareless_verifier {
-            // The permissionless V1 onboarding transaction must have installed
-            // the permanent key before this process was launched. A shareless
-            // validator certifies and replays the existing chain without threshold
-            // authority and never reproduces genesis OST3. Its canonical EVM/BLS
-            // identity may already be retained for the later DKG activation.
-            let resident_offer = outbe_tee::resident_offer_public_key_v1().wrap_err(
-                "verifier-join requires the permanent resident offer key before certified sync (no recovery or fallback)",
-            )?;
-            if resident_offer.is_zero() {
-                return Err(
-                    crate::errors::StackEpochError::VerifierJoinEnclaveMissingResidentOfferKey
-                        .into(),
-                );
-            }
-            info!(
-                offer_public_key = %resident_offer,
-                "verifier-join resident offer key present before certified sync"
-            );
+            require_shareless_resident_offer_key()?;
         } else {
-            // A restarted active validator must already hold the exact resident
-            // offer key committed on-chain. Startup never recovers or replaces a
-            // lost key and never falls back to a pre-V1 delivery protocol.
-            let _my_validator = proposer_evm_address
-                .ok_or(crate::errors::StackEpochError::ActiveValidatorStartupRequiresEvmIdentity)?;
-            let on_chain_offer = validators::read_tee_offer_public_at_latest(&node.provider)
-                .wrap_err("failed to read the mandatory on-chain TEE offer key")?;
-            if on_chain_offer.is_zero() {
-                return Err(
-                    crate::errors::StackEpochError::MandatoryOst3MissingOnChainOfferKeyAfterBlock1
-                        .into(),
-                );
-            }
-            let node_data_dir = node
-                .config
-                .datadir
-                .clone()
-                .resolve_datadir(node.chain_spec().chain())
-                .data_dir()
-                .to_path_buf();
-            let endpoint = socket
-                .to_str()
-                .ok_or(crate::errors::StackEpochError::TeeEnclaveEndpointInvalidUtf8)?;
-            let mut enclave = match tee_session {
-                crate::args::ResolvedTeeSession::ProductionNodeHost => {
-                    outbe_tee::RuntimeEnclaveClient::Production(
-                        outbe_tee::connect_committed_node_host_enclave(endpoint, &node_data_dir)
-                            .map_err(
-                            crate::errors::StackEpochError::production_node_host_reconnect_failed,
-                        )?,
-                    )
-                }
-                crate::args::ResolvedTeeSession::Development => {
-                    outbe_tee::RuntimeEnclaveClient::Development(Box::new(
-                        outbe_tee::EnclaveClient::connect_endpoint(endpoint).map_err(
-                            crate::errors::StackEpochError::gramine_direct_dev_reconnect_failed,
-                        )?,
-                    ))
-                }
-            };
-            let enclave_offer = crate::tee_bootstrap::query_enclave_offer_public(&mut enclave)?;
-            if enclave_offer != on_chain_offer {
-                return Err(
-                    crate::errors::StackEpochError::LocalEnclaveDoesNotHoldChainOfferKey.into(),
-                );
-            }
+            verify_restarted_validator_holds_chain_offer_key(
+                proposer_evm_address,
+                node,
+                &socket,
+                tee_session,
+            )?;
         }
     }
 
     Ok(())
+}
+
+/// Load the selected Reth P2P key for the genesis OST3 ceremony.
+///
+/// A protected datadir file is accepted only when the launcher already
+/// installed `p2p_secret_key_hex`. This function does not generate a key.
+fn load_ost3_reth_node_host_identity(
+    node: &OutbeFullNode,
+) -> Result<(
+    k256::ecdsa::SigningKey,
+    outbe_primitives::tee_attestation_v1::NodeIdV1,
+)> {
+    let p2p_secret_path = node.data_dir.p2p_secret();
+    if node.config.network.p2p_secret_key_hex.is_none()
+        && reth_identity_file_is_protected(&p2p_secret_path)
+    {
+        return Err(crate::errors::StackEpochError::ProtectedRethIdentityNotInstalled.into());
+    }
+    let reth_p2p_secret = node
+        .config
+        .network
+        .secret_key(p2p_secret_path)
+        .wrap_err("failed to load persistent Reth P2P identity for OST3")?;
+    let node_host_signing =
+        k256::ecdsa::SigningKey::from_slice(reth_p2p_secret.secret_bytes().as_slice())
+            .map_err(crate::errors::StackEpochError::invalid_reth_p2p_signing_key)?;
+    let reth_p2p_public = node_host_signing
+        .verifying_key()
+        .to_encoded_point(true)
+        .as_bytes()
+        .try_into()
+        .map_err(|_| crate::errors::StackEpochError::RethP2pPublicKeyNotCompressedSec1)?;
+    Ok((
+        node_host_signing,
+        outbe_primitives::tee_attestation_v1::NodeIdV1 { reth_p2p_public },
+    ))
+}
+
+/// A shareless verifier must already have the permanent resident offer key.
+fn require_shareless_resident_offer_key() -> Result<()> {
+    // The permissionless V1 onboarding transaction must have installed
+    // the permanent key before this process was launched. A shareless
+    // validator certifies and replays the existing chain without threshold
+    // authority and never reproduces genesis OST3. Its canonical EVM/BLS
+    // identity may already be retained for the later DKG activation.
+    let resident_offer = outbe_tee::resident_offer_public_key_v1().wrap_err(
+        "verifier-join requires the permanent resident offer key before certified sync (no recovery or fallback)",
+    )?;
+    if resident_offer.is_zero() {
+        return Err(
+            crate::errors::StackEpochError::VerifierJoinEnclaveMissingResidentOfferKey.into(),
+        );
+    }
+    info!(
+        offer_public_key = %resident_offer,
+        "verifier-join resident offer key present before certified sync"
+    );
+    Ok(())
+}
+
+/// A restarted active validator must hold the on-chain offer key in its enclave.
+fn verify_restarted_validator_holds_chain_offer_key(
+    proposer_evm_address: Option<EthAddress>,
+    node: &OutbeFullNode,
+    socket: &std::path::Path,
+    tee_session: crate::args::ResolvedTeeSession,
+) -> Result<()> {
+    // Startup never recovers or replaces a lost key and never falls back to a
+    // pre-V1 delivery protocol.
+    let _my_validator = proposer_evm_address
+        .ok_or(crate::errors::StackEpochError::ActiveValidatorStartupRequiresEvmIdentity)?;
+    let on_chain_offer = validators::read_tee_offer_public_at_latest(&node.provider)
+        .wrap_err("failed to read the mandatory on-chain TEE offer key")?;
+    if on_chain_offer.is_zero() {
+        return Err(
+            crate::errors::StackEpochError::MandatoryOst3MissingOnChainOfferKeyAfterBlock1.into(),
+        );
+    }
+    let node_data_dir = node
+        .config
+        .datadir
+        .clone()
+        .resolve_datadir(node.chain_spec().chain())
+        .data_dir()
+        .to_path_buf();
+    let endpoint = socket
+        .to_str()
+        .ok_or(crate::errors::StackEpochError::TeeEnclaveEndpointInvalidUtf8)?;
+    let mut enclave = match tee_session {
+        crate::args::ResolvedTeeSession::ProductionNodeHost => {
+            outbe_tee::RuntimeEnclaveClient::Production(
+                outbe_tee::connect_committed_node_host_enclave(endpoint, &node_data_dir).map_err(
+                    crate::errors::StackEpochError::production_node_host_reconnect_failed,
+                )?,
+            )
+        }
+        crate::args::ResolvedTeeSession::Development => {
+            outbe_tee::RuntimeEnclaveClient::Development(Box::new(
+                outbe_tee::EnclaveClient::connect_endpoint(endpoint)
+                    .map_err(crate::errors::StackEpochError::gramine_direct_dev_reconnect_failed)?,
+            ))
+        }
+    };
+    let enclave_offer = crate::tee_bootstrap::query_enclave_offer_public(&mut enclave)?;
+    if enclave_offer != on_chain_offer {
+        return Err(crate::errors::StackEpochError::LocalEnclaveDoesNotHoldChainOfferKey.into());
+    }
+    Ok(())
+}
+
+/// Read only the custody prefix. A missing file is not protected custody.
+fn reth_identity_file_is_protected(path: &std::path::Path) -> bool {
+    let mut prefix = [0_u8; 16];
+    let mut file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(_) => return false,
+    };
+    let read = std::io::Read::read(&mut file, &mut prefix).unwrap_or(0);
+    outbe_consensus::bls::reads_as_protected_custody(&prefix[..read])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reth_identity_file_is_protected;
+
+    #[test]
+    fn protected_prefix_is_detected_from_the_file_header_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let protected = dir.path().join("protected");
+        std::fs::write(&protected, b"OUTBE_ENC\x01header-only").unwrap();
+        assert!(reth_identity_file_is_protected(&protected));
+
+        let marker = dir.path().join("marker");
+        std::fs::write(&marker, b"OUTBE_KEYCHAIN\n").unwrap();
+        assert!(reth_identity_file_is_protected(&marker));
+
+        let plain = dir.path().join("plain");
+        std::fs::write(&plain, b"00112233445566778899aabbccddeeff").unwrap();
+        assert!(!reth_identity_file_is_protected(&plain));
+        assert!(!reth_identity_file_is_protected(
+            &dir.path().join("missing")
+        ));
+    }
 }
