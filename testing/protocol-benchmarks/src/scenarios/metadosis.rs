@@ -47,6 +47,10 @@ impl BenchmarkScenario for MetadosisScenario {
         provider.enable_storage_trace();
         let event_offset = provider.get_ordered_events().len();
         let started = Instant::now();
+        provider.enable_metadosis_mutation_frames(
+            outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
+            1,
+        );
         StorageHandle::enter(&mut provider, |storage| {
             outbe_metadosis::bench_support::create_worldwide_day(
                 storage,
