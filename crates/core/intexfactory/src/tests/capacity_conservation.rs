@@ -71,7 +71,6 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
     StorageHandle::enter(p, |s| {
         let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, at, 1), s);
         crate::hooks::sweep_forfeits(&ctx)?;
-        crate::called::run_call_slice(&ctx)?;
         crate::notify::send_notices(&ctx)
     })
 }
@@ -103,7 +102,7 @@ fn ledger(p: &mut HashMapStorageProvider, id: SeriesId, terminal: bool) {
             assert_eq!((units.active, units.forfeited, pending), (0, 5, 0));
             assert_eq!(returned, U256::from(5 * LOAD));
             assert_eq!(factory.expiry_tree_root.read().unwrap(), U256::ZERO);
-            assert!(factory.first_cleanup_hour().unwrap().is_some());
+            assert!(factory.first_cleanup_day().unwrap().is_some());
         } else {
             assert!(pending <= 1);
             assert_eq!(
@@ -127,7 +126,7 @@ fn partial_intex_expiry_returns_only_five_unpaid_units_and_never_paid_or_convert
         let units = api::unit_counts(&s, id).unwrap();
         assert_eq!((units.active, units.forfeited), (5, 0));
     });
-    let due = IntexContract::bucket_end(IntexContract::deadline_bucket(DEADLINE));
+    let due = IntexContract::day_end(IntexContract::deadline_day(DEADLINE));
     sweep(&mut p, due).unwrap();
     ledger(&mut p, id, true);
     sweep(&mut p, due + DAY).unwrap();
@@ -144,7 +143,7 @@ fn partial_intex_expiry_returns_only_five_unpaid_units_and_never_paid_or_convert
 
 #[test]
 fn every_intex_expiry_write_failure_preserves_credit_debt_and_retries_exactly_once() {
-    let due = IntexContract::bucket_end(IntexContract::deadline_bucket(DEADLINE));
+    let due = IntexContract::day_end(IntexContract::deadline_day(DEADLINE));
     let (mut baseline, _) = world();
     sweep(&mut baseline, due).unwrap();
     let mutations = baseline.clear_mutation_failure();

@@ -1,7 +1,7 @@
-//! Hooks only a throwaway e2e build answers. Lysis issues a Nod over a certified
-//! generation, so a scenario that needs one asks for it straight. The forfeit sweep opens a
-//! group only once its hour has closed, so `closeCallNoticeForTest` moves a lapsed deadline
-//! into an hour the sweep opens on the next block.
+//! Only a temporary E2E build responds to these hooks. Lysis issues a Nod over a certified generation.
+//! A scenario that needs a Nod requests it directly.
+//! The forfeit sweep opens a group only after its day closes.
+//! Thus, `closeCallNoticeForTest` moves a lapsed deadline into a day that the sweep opens on the next block.
 
 use alloy_primitives::{Bytes, B256};
 use alloy_sol_types::SolCall;
@@ -25,6 +25,7 @@ alloy_sol_types::sol! {
             uint64 issuedAt
         ) external;
         function closeCallNoticeForTest(bytes32 groupKey, uint64 deadline) external;
+        function rescanClosedDayForTest() external;
     }
 }
 
@@ -37,6 +38,14 @@ pub(crate) fn dispatch(storage: &StorageHandle<'_>, data: &[u8]) -> Option<Resul
     if let Ok(call) = closeCallNoticeForTestCall::abi_decode(data) {
         return Some(guarded(storage, || {
             requeue_called(storage, call.groupKey, call.deadline)
+        }));
+    }
+    if rescanClosedDayForTestCall::abi_decode(data).is_ok() {
+        return Some(guarded(storage, || {
+            let day = outbe_primitives::time::previous_date_key(
+                outbe_primitives::time::timestamp_to_date_key(storage.now_secs()?),
+            );
+            reopen_day(storage, day)
         }));
     }
     None
@@ -85,5 +94,12 @@ fn requeue_called(storage: &StorageHandle<'_>, group_key: B256, deadline: u64) -
     nod.group_called_at
         .write(&group_key, deadline.saturating_sub(notice).max(1))?;
     nod.remove_called(group_key)?;
-    nod.push_called(group_key, deadline)
+    nod.push_called(group_key, deadline)?;
+    let day = outbe_primitives::time::timestamp_to_date_key(deadline);
+    reopen_day(storage, day)
+}
+
+fn reopen_day(storage: &StorageHandle<'_>, day: u32) -> Result<()> {
+    // The fixture may target a closed day before this temporary chain's genesis.
+    outbe_oracle::reopen_daily_call_sweep!(NodContract::new(storage.clone()), storage, day)
 }

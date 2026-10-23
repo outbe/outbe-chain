@@ -68,13 +68,13 @@ pub(crate) fn view(storage: &StorageHandle, gem_id: U256) -> GemView {
     api::get_view(storage, gem_id).unwrap().unwrap()
 }
 
-pub(crate) fn bucket_of(storage: &StorageHandle, gem_id: U256) -> B256 {
+pub(crate) fn group_of(storage: &StorageHandle, gem_id: U256) -> B256 {
     item(storage, gem_id).unwrap().group_key
 }
 
 /// Calls the gem's whole group at `at`.
 pub(crate) fn call_gem(storage: &StorageHandle, gem_id: U256, at: u64) {
-    let group = bucket_of(storage, gem_id);
+    let group = group_of(storage, gem_id);
     let mut gem = GemContract::new(storage.clone());
     let notice = gem
         .read_call_terms(group)

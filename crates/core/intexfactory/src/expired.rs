@@ -8,31 +8,54 @@ use outbe_primitives::{
     error::Result,
     expiry_queue::{self, Due, ExpiryHandler},
     storage::StorageHandle,
+    sweep_budget::SweepBudget,
 };
 
 use outbe_intex::precompile::IIntex;
-use outbe_intex::{ExpiryHours, IntexContract};
+use outbe_intex::{ExpiryDays, IntexContract};
 
 use crate::errors::IntexFactoryError;
 use crate::runtime::emit_event;
 
-/// Expire every group whose settlement window has closed, earliest bucket first.
-/// Returns the groups expired.
+/// This function expires every group after its settlement window closes, earliest day first.
+/// It returns the number of expired groups.
+#[cfg(test)]
 pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = IntexContract::new(ctx.storage.clone());
-    let mut expiry = IntexExpiry {
-        storage: &ctx.storage,
-        intex: IntexContract::new(ctx.storage.clone()),
-        expired: 0,
-    };
-    expiry_queue::sweep_block(&ExpiryHours(&queue), ctx, &mut expiry)?;
+    let mut expiry = IntexExpiry::new(ctx);
+    expiry_queue::sweep_block(&ExpiryDays(&queue), ctx, &mut expiry)?;
     Ok(expiry.expired)
+}
+
+pub(crate) fn sweep_through(
+    ctx: &BlockRuntimeContext,
+    through_day: u32,
+    budget: &mut SweepBudget,
+) -> Result<expiry_queue::Progress> {
+    let queue = IntexContract::new(ctx.storage.clone());
+    expiry_queue::sweep_day(
+        &ExpiryDays(&queue),
+        ctx,
+        through_day,
+        budget,
+        &mut IntexExpiry::new(ctx),
+    )
 }
 
 struct IntexExpiry<'a, 'storage> {
     storage: &'a StorageHandle<'storage>,
     intex: IntexContract<'storage>,
     expired: u32,
+}
+
+impl<'a, 's> IntexExpiry<'a, 's> {
+    fn new(ctx: &'a BlockRuntimeContext<'s>) -> Self {
+        Self {
+            storage: &ctx.storage,
+            intex: IntexContract::new(ctx.storage.clone()),
+            expired: 0,
+        }
+    }
 }
 
 /// A called group expires as one: it is its own and only member.
