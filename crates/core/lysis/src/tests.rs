@@ -30,6 +30,13 @@ fn test_empty_population() {
 }
 
 #[test]
+fn test_share_and_population_length_mismatch_reverts() {
+    let y_fp = vec![SCALE];
+    let p = vec![1, 2, 3];
+    assert!(calc_fraction_distribution_fp(&y_fp, &p, 6, F_FP_DEFAULT, F_MAX_FP).is_err());
+}
+
+#[test]
 fn test_single_fi_returns_target_fraction() {
     let y_fp = vec![SCALE]; // 100%
     let p = vec![5];

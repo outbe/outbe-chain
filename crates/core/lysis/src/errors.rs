@@ -17,6 +17,9 @@ pub enum LysisError {
 
     #[error("lysis: U256 -> I256 conversion overflow ({0})")]
     U256ToI256Overflow(U256),
+
+    #[error("lysis: {shares} interest shares for {groups} population groups")]
+    GroupLengthMismatch { shares: usize, groups: usize },
 }
 
 impl From<LysisError> for PrecompileError {

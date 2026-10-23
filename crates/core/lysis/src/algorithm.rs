@@ -177,7 +177,7 @@ fn compute_moments_fp(y_fp: &[U256], tau: &[U256]) -> MomentsFp {
         y_cum[i + 1] = cum;
     }
     // Ensure last = SCALE
-    *y_cum.last_mut().unwrap() = SCALE;
+    y_cum[y_fp.len()] = SCALE;
 
     // E[Y] and E[Y^2]. Each factor is at most SCALE = 10^6.
     // Thus `m * y * y` is at most 10^18, below 2^60 and U256::MAX.
@@ -228,6 +228,7 @@ fn compute_moments_fp(y_fp: &[U256], tau: &[U256]) -> MomentsFp {
 /// relative ratios between groups.
 ///
 /// # Errors
+/// Returns `PrecompileError::Revert` if `y_fp` and `p` have different lengths.
 /// Returns `PrecompileError::Revert` if a signed-int conversion fails at a
 /// boundary. This is impossible under current bounds (see the overflow analysis
 /// in tests).
@@ -238,6 +239,13 @@ pub fn calc_fraction_distribution_fp(
     f_fp: U256,
     fmax_fp: U256,
 ) -> Result<Vec<U256>> {
+    if y_fp.len() != p.len() {
+        return Err(LysisError::GroupLengthMismatch {
+            shares: y_fp.len(),
+            groups: p.len(),
+        }
+        .into());
+    }
     if p.is_empty() {
         return Ok(vec![U256::ZERO]);
     }
