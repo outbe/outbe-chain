@@ -185,6 +185,7 @@ pub fn burn_loaded(storage: &StorageHandle<'_>, loaded: LoadedTribute) -> Result
 }
 
 pub fn retire_completed_day(storage: &StorageHandle<'_>, day: WorldwideDay) -> Result<bool> {
+    storage.require_metadosis_process_ready()?;
     let mut contract = TributeContract::new(storage.clone());
     storage.with_checkpoint(|| {
         if contract.retired_days.read(&day)? {

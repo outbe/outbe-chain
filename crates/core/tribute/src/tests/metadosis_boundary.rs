@@ -96,6 +96,25 @@ fn day_mutators_reject_a_missing_lease_without_writes() {
                 .to_string(),
             MISMATCH
         );
+        assert_eq!(
+            tc.record_metadosis_fractions(
+                day,
+                U256::from(1u64),
+                &std::collections::BTreeMap::new(),
+                1
+            )
+            .unwrap_err()
+            .to_string(),
+            MISMATCH
+        );
+        assert_eq!(
+            crate::state_api::retire_completed_day(&storage, day)
+                .unwrap_err()
+                .to_string(),
+            MISMATCH
+        );
+        assert_eq!(tc.day_metadosis_completed_at.read(&day).unwrap(), 0);
+        assert!(!tc.retired_days.read(&day).unwrap());
 
         assert_eq!(tc.total_supply().unwrap(), 1);
         assert_eq!(tc.get_day_totals(day).unwrap().tribute_count, 1);

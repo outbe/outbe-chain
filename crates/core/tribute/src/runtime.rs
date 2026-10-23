@@ -235,6 +235,7 @@ impl TributeContract<'_> {
         fractions: &std::collections::BTreeMap<u16, u64>,
         completed_at: u64,
     ) -> Result<()> {
+        self.storage_handle().require_metadosis_process_ready()?;
         self.day_lysis_limit_minor.write(&day, lysis_limit_minor)?;
         self.day_metadosis_completed_at.write(&day, completed_at)?;
         for (&league, &fraction) in fractions {
