@@ -61,7 +61,8 @@ interface IAuction {
 
     /// @notice Submit a commitment hash for an order (called directly by solver)
     /// @param orderId The unique identifier of the order
-    /// @param commitHash keccak256(abi.encode(orderId, outputAmount, salt))
+    /// @param commitHash keccak256(abi.encode(orderId, solver, outputAmount, salt)), where solver is the
+    ///        committing address. reveal rejects the hash when a different address opens it
     function commit(bytes32 orderId, bytes32 commitHash) external;
 
     /// @notice Reveal a previously committed quote (called directly by solver)

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import NamedTuple
 
 
 def expected_timestamp(source_date_epoch: int) -> str:
@@ -13,19 +14,24 @@ def expected_timestamp(source_date_epoch: int) -> str:
     return timestamp.strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
 
 
+class _BuildIdentity(NamedTuple):
+    target: str
+    profile: str
+
+
 def verify_version_text(
     text: str,
     *,
     source_commit: str,
     source_date_epoch: int,
-    target: str,
-    profile: str,
+    **build: str,
 ) -> list[str]:
+    identity = _BuildIdentity(**build)
     differences: list[str] = []
     lines = text.splitlines()
     expected_commit = f"Commit SHA: {source_commit}"
     expected_time = f"Build Timestamp: {expected_timestamp(source_date_epoch)}"
-    expected_profile = f"Build Profile: {profile} ({target})"
+    expected_profile = f"Build Profile: {identity.profile} ({identity.target})"
 
     if text.count(expected_commit) != 2:
         differences.append(f"expected two exact commit lines: {expected_commit}")

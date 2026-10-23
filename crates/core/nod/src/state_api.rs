@@ -1,4 +1,4 @@
-use crate::errors::NodError;
+use crate::errors::{date_step_error, NodError};
 use crate::precompile::INod;
 use crate::schema::{CallTerms, NodContract, NodGroupState, NodItemState};
 use crate::storage_records::{StoredNod, StoredNodEntryExt};
@@ -123,7 +123,7 @@ impl NodContract<'_> {
             return Err(NodError::NodAlreadyExists.into());
         }
 
-        let group_id = item.group_id();
+        let group_id = item.group_id().map_err(date_step_error)?;
         let current_group = self.groups.get(item.group_key)?;
         let member_count = self.group_nod_count.read(&item.group_key)?;
         let settled_count = current_group.as_ref().map_or(0, |group| group.settled_nods);
@@ -140,7 +140,7 @@ impl NodContract<'_> {
                 let group = NodGroupState {
                     settled_nods: 0,
                     group_key: item.group_key,
-                    full_day_after_issue: item.full_day_after_issue(),
+                    full_day_after_issue: item.full_day_after_issue().map_err(date_step_error)?,
                     reference_currency: item.reference_currency,
                 };
                 if let Some(terms) = call_terms {
@@ -203,7 +203,7 @@ impl NodContract<'_> {
         let item = item.into_body();
         let mut group = group.into_body();
         check_loaded(self, &item, &group)?;
-        let group_id = item.group_id();
+        let group_id = item.group_id().map_err(date_step_error)?;
         let supply = self
             .total_supply
             .read()?
@@ -241,7 +241,10 @@ impl NodContract<'_> {
 mod tests {
     use super::*;
     use crate::{test_support, NodIssueParams};
-    use outbe_primitives::{storage::hashmap::HashMapStorageProvider, time::WorldwideDay};
+    use outbe_primitives::{
+        storage::hashmap::HashMapStorageProvider,
+        time::{date_key_to_utc_timestamp, WorldwideDay},
+    };
 
     fn stored_fixture() -> StoredNod {
         let day = WorldwideDay::new(20261015);
@@ -359,10 +362,15 @@ mod tests {
                 owner: params.owner,
                 worldwide_day: params.worldwide_day,
                 league_id: params.league_id,
-                group_key: crate::identity::group_key(1, U256::ZERO, params.reference_currency),
+                group_key: crate::identity::group_key(
+                    date_key_to_utc_timestamp(20_200_101),
+                    U256::ZERO,
+                    params.reference_currency,
+                )
+                .expect("date step"),
                 issuance_currency: params.issuance_currency,
                 reference_currency: params.reference_currency,
-                issued_at: 1,
+                issued_at: date_key_to_utc_timestamp(20_200_101),
                 is_settled: false,
                 encrypted,
             };

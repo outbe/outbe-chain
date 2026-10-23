@@ -10,6 +10,10 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 use walkdir::{DirEntry, WalkDir};
 
+#[path = "stablecoin_addresses.rs"]
+mod addresses;
+use addresses::{address_literals, canonical_address, load_planned_classes, marker_byte};
+
 const ETHEREUM_BUILTIN_MAX: u8 = 10;
 const STABLECOIN_INTERFACES: [&str; 4] = [
     "IStablecoin",
@@ -135,66 +139,6 @@ fn load_address_manifest(repo_root: &Path) -> Result<StablecoinAddressManifest> 
         .join("crates/blockchain/primitives/testdata/stablecoin/v1/network-address-vectors.json");
     let bytes = fs::read(&path).wrap_err_with(|| format!("read {}", path.display()))?;
     serde_json::from_slice(&bytes).wrap_err_with(|| format!("parse {}", path.display()))
-}
-
-fn load_planned_classes(
-    repo_root: &Path,
-    manifest: &StablecoinAddressManifest,
-) -> Result<Vec<CheckedAddressClass>> {
-    let path = repo_root
-        .join("crates/blockchain/primitives/testdata/stablecoin/v1/planned-address-classes.json");
-    let bytes = fs::read(&path).wrap_err_with(|| format!("read {}", path.display()))?;
-    let registry: PlannedAddressClasses =
-        serde_json::from_slice(&bytes).wrap_err_with(|| format!("parse {}", path.display()))?;
-    if registry.schema_version != 1 {
-        bail!("unsupported planned address-class schema version");
-    }
-    if registry.classes.is_empty() {
-        bail!("planned address-class registry must not be empty");
-    }
-
-    let mut checked = Vec::with_capacity(registry.classes.len());
-    let mut names = BTreeSet::new();
-    for class in registry.classes {
-        if !names.insert(class.name.clone()) {
-            bail!("duplicate planned address class {}", class.name);
-        }
-        if class.owner.is_empty() {
-            bail!("planned address class {} has no owner", class.name);
-        }
-        if class.prefix_bits == 0 || class.prefix_bits % 8 != 0 {
-            bail!(
-                "planned address class {} prefixBits must be nonzero and byte-aligned",
-                class.name
-            );
-        }
-        let prefix = canonical_variable_prefix(&class.prefix, class.prefix_bits)?;
-        checked.push(CheckedAddressClass {
-            name: class.name,
-            prefix,
-        });
-    }
-
-    for (index, left) in checked.iter().enumerate() {
-        for right in checked.iter().skip(index + 1) {
-            if left.prefix.starts_with(&right.prefix) || right.prefix.starts_with(&left.prefix) {
-                bail!(
-                    "planned address classes {} and {} overlap",
-                    left.name,
-                    right.name
-                );
-            }
-        }
-    }
-
-    let stablecoin_prefix = canonical_prefix(&manifest.prefix)?;
-    if !checked
-        .iter()
-        .any(|class| class.name == "stablecoin-v1" && class.prefix == stablecoin_prefix)
-    {
-        bail!("stablecoin network prefix is absent from the planned class registry");
-    }
-    Ok(checked)
 }
 
 fn scan_declared_addresses(
@@ -426,64 +370,5 @@ fn is_zero_quantity(value: &Value) -> bool {
                 && digits.bytes().all(|byte| byte == b'0')
         }
         _ => false,
-    }
-}
-
-fn address_literals(source: &str) -> Result<Vec<String>> {
-    let marker = "address!(\"0x";
-    let mut remaining = source;
-    let mut addresses = Vec::new();
-    while let Some(offset) = remaining.find(marker) {
-        let start = offset + marker.len();
-        let end = start + 40;
-        let value = remaining
-            .get(start..end)
-            .ok_or_else(|| eyre!("truncated address! literal"))?;
-        addresses.push(canonical_address(value)?);
-        remaining = remaining
-            .get(end..)
-            .ok_or_else(|| eyre!("truncated addresses source"))?;
-    }
-    Ok(addresses)
-}
-
-fn canonical_address(value: &str) -> Result<String> {
-    let value = value
-        .strip_prefix("0x")
-        .or_else(|| value.strip_prefix("0X"))
-        .unwrap_or(value);
-    if value.len() != 40 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        bail!("invalid EVM address: {value}");
-    }
-    Ok(value.to_ascii_lowercase())
-}
-
-fn canonical_prefix(value: &str) -> Result<String> {
-    canonical_variable_prefix(value, 16)
-}
-
-fn canonical_variable_prefix(value: &str, prefix_bits: u16) -> Result<String> {
-    let value = value
-        .strip_prefix("0x")
-        .or_else(|| value.strip_prefix("0X"))
-        .unwrap_or(value);
-    let expected_hex = usize::from(prefix_bits / 4);
-    if value.len() != expected_hex || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        bail!("invalid {prefix_bits}-bit address prefix: {value}");
-    }
-    Ok(value.to_ascii_lowercase())
-}
-
-fn marker_byte(value: &str) -> Result<u8> {
-    let value = value
-        .strip_prefix("0x")
-        .or_else(|| value.strip_prefix("0X"))
-        .unwrap_or(value);
-    let bytes = hex::decode(value).wrap_err("decode stablecoin marker")?;
-    match bytes.as_slice() {
-        [byte] => Ok(*byte),
-        _ => {
-            bail!("stablecoin marker must contain exactly one byte");
-        }
     }
 }

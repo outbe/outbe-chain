@@ -18,6 +18,7 @@ interface IGem {
     error GemNotInGroup(uint256 gemId, bytes32 group);
     error EmptyGroupSlotOnRemoval(bytes32 group, uint32 slot);
     error GemStateChangedAfterLoading();
+    error DateStep(uint8 kind, uint32 dateKey);
 
     struct GemData {
         uint256 gemId;

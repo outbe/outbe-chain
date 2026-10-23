@@ -1,9 +1,16 @@
 //! Scheduling of a sweep that walks one closed UTC day at a time, every closed day in
 //! order.
 
-use crate::error::Result;
+use crate::error::{PrecompileError, Result};
 use crate::storage::dsl::Value;
-use crate::time::next_date_key;
+use crate::time::{next_date_key, TimeError};
+
+/// A sweep step failed in storage or in the date helper.
+#[derive(Debug)]
+pub enum DailySweepError {
+    Storage(PrecompileError),
+    Time(TimeError),
+}
 
 /// The day a sweep is walking, 0 for none, and the newest closed day scheduled.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -27,14 +34,14 @@ impl SweepDays {
     /// Schedules `day` without disturbing a sweep in flight. Every closed day after the
     /// newest one scheduled is walked, in order, so a sweep that fell behind catches up
     /// rather than skipping days. An idle sweep walks the newest day again.
-    pub fn schedule(mut self, day: u32) -> (Self, Scheduled) {
+    pub fn schedule(mut self, day: u32) -> std::result::Result<(Self, Scheduled), TimeError> {
         let idle = self.current == 0;
         let scheduled = if day < self.latest || (!idle && day <= self.current.max(self.latest)) {
             Scheduled::Ignored
         } else if idle {
             let first = match self.latest {
                 latest if latest == 0 || latest == day => day,
-                latest => next_date_key(latest),
+                latest => next_date_key(latest)?,
             };
             self = Self {
                 current: first,
@@ -45,19 +52,20 @@ impl SweepDays {
             self.latest = day;
             Scheduled::Queued
         };
-        (self, scheduled)
+        Ok((self, scheduled))
     }
 
     /// The current day was walked to its end, so the next one starts, or the sweep idles.
-    pub fn finish(self) -> Self {
-        let current = match self.current < self.latest {
-            true => next_date_key(self.current),
-            false => 0,
+    pub fn finish(self) -> std::result::Result<Self, TimeError> {
+        let current = if self.current < self.latest {
+            next_date_key(self.current)?
+        } else {
+            0
         };
-        Self {
+        Ok(Self {
             current,
             latest: self.latest,
-        }
+        })
     }
 }
 
@@ -68,19 +76,24 @@ pub struct PinnedDay<'a, 'storage> {
 }
 
 impl PinnedDay<'_, '_> {
-    fn days(&self) -> Result<SweepDays> {
+    fn days(&self) -> std::result::Result<SweepDays, DailySweepError> {
         Ok(SweepDays {
-            current: self.current.read()?,
-            latest: self.latest.read()?,
+            current: self.current.read().map_err(DailySweepError::Storage)?,
+            latest: self.latest.read().map_err(DailySweepError::Storage)?,
         })
     }
 
     /// Schedules `day` and stores the newest day scheduled. An opened day is stored by
     /// [`Self::open`].
-    pub fn schedule(&self, day: u32) -> Result<(SweepDays, Scheduled)> {
-        let (next, scheduled) = self.days()?.schedule(day);
+    pub fn schedule(
+        &self,
+        day: u32,
+    ) -> std::result::Result<(SweepDays, Scheduled), DailySweepError> {
+        let (next, scheduled) = self.days()?.schedule(day).map_err(DailySweepError::Time)?;
         if scheduled == Scheduled::Queued {
-            self.latest.write(next.latest)?;
+            self.latest
+                .write(next.latest)
+                .map_err(DailySweepError::Storage)?;
         }
         Ok((next, scheduled))
     }
@@ -99,14 +112,15 @@ impl PinnedDay<'_, '_> {
     }
 
     /// Ends the walk of `pinned`. Returns the days to open next, or `None` once idle.
-    pub fn finish(&self, pinned: u32) -> Result<Option<SweepDays>> {
+    pub fn finish(&self, pinned: u32) -> std::result::Result<Option<SweepDays>, DailySweepError> {
         let next = SweepDays {
             current: pinned,
-            latest: self.latest.read()?,
+            latest: self.latest.read().map_err(DailySweepError::Storage)?,
         }
-        .finish();
+        .finish()
+        .map_err(DailySweepError::Time)?;
         if next.current == 0 {
-            self.current.write(0)?;
+            self.current.write(0).map_err(DailySweepError::Storage)?;
             return Ok(None);
         }
         Ok(Some(next))
@@ -136,11 +150,11 @@ mod tests {
     #[test]
     fn a_closed_day_opens_an_idle_sweep_and_waits_behind_a_running_one() {
         assert_eq!(
-            SweepDays::default().schedule(TODAY),
+            SweepDays::default().schedule(TODAY).unwrap(),
             (days(TODAY, TODAY), Scheduled::Opened)
         );
         assert_eq!(
-            days(YESTERDAY, YESTERDAY).schedule(TODAY),
+            days(YESTERDAY, YESTERDAY).schedule(TODAY).unwrap(),
             (days(YESTERDAY, TODAY), Scheduled::Queued)
         );
     }
@@ -148,11 +162,14 @@ mod tests {
     #[test]
     fn a_day_already_scheduled_is_left_alone() {
         for scheduled in [days(TODAY, TODAY), days(YESTERDAY, TODAY)] {
-            assert_eq!(scheduled.schedule(TODAY), (scheduled, Scheduled::Ignored));
+            assert_eq!(
+                scheduled.schedule(TODAY).unwrap(),
+                (scheduled, Scheduled::Ignored)
+            );
         }
         for scheduled in [days(TODAY, TODAY), days(0, TODAY)] {
             assert_eq!(
-                scheduled.schedule(YESTERDAY),
+                scheduled.schedule(YESTERDAY).unwrap(),
                 (scheduled, Scheduled::Ignored)
             );
         }
@@ -160,32 +177,44 @@ mod tests {
 
     #[test]
     fn a_finished_day_can_be_walked_again() {
-        let finished = days(TODAY, TODAY).finish();
+        let finished = days(TODAY, TODAY).finish().unwrap();
         assert_eq!(
-            finished.schedule(TODAY),
+            finished.schedule(TODAY).unwrap(),
             (days(TODAY, TODAY), Scheduled::Opened)
         );
     }
 
     #[test]
     fn every_day_a_stalled_sweep_missed_is_walked_in_order() {
-        let (running, _) = days(TWO_AGO, YESTERDAY).schedule(TODAY);
+        let (running, _) = days(TWO_AGO, YESTERDAY).schedule(TODAY).unwrap();
         assert_eq!(running, days(TWO_AGO, TODAY));
-        assert_eq!(running.finish(), days(YESTERDAY, TODAY));
-        assert_eq!(running.finish().finish(), days(TODAY, TODAY));
-        assert_eq!(running.finish().finish().finish(), days(0, TODAY));
+        assert_eq!(running.finish().unwrap(), days(YESTERDAY, TODAY));
+        assert_eq!(
+            running.finish().unwrap().finish().unwrap(),
+            days(TODAY, TODAY)
+        );
+        assert_eq!(
+            running
+                .finish()
+                .unwrap()
+                .finish()
+                .unwrap()
+                .finish()
+                .unwrap(),
+            days(0, TODAY)
+        );
 
         // An idle sweep picks up after the newest day it scheduled.
         assert_eq!(
-            days(0, TWO_AGO).schedule(TODAY),
+            days(0, TWO_AGO).schedule(TODAY).unwrap(),
             (days(YESTERDAY, TODAY), Scheduled::Opened)
         );
     }
 
     #[test]
     fn finishing_starts_the_next_day_or_goes_idle() {
-        assert_eq!(days(YESTERDAY, TODAY).finish(), days(TODAY, TODAY));
-        assert_eq!(days(TODAY, TODAY).finish(), days(0, TODAY));
+        assert_eq!(days(YESTERDAY, TODAY).finish().unwrap(), days(TODAY, TODAY));
+        assert_eq!(days(TODAY, TODAY).finish().unwrap(), days(0, TODAY));
     }
 
     fn with_pinned(test: impl FnOnce(&PinnedDay<'_, '_>)) {

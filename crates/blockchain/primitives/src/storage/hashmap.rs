@@ -565,7 +565,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
     fn enclave_upgrade_id(&mut self) -> Result<U256> {
         Ok(self
             .storage
-            .get(&(crate::addresses::TEE_REGISTRY_ADDRESS, U256::from(45)))
+            .get(&(crate::addresses::TEE_REGISTRY_ADDRESS, U256::from(44)))
             .copied()
             .unwrap_or(U256::ZERO))
     }

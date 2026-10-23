@@ -102,7 +102,10 @@ fn an_expired_series_is_spent_once_its_group_returned_its_units() {
             "the group's expiry has not returned its units yet"
         );
 
-        let group = api::read_series(&s, sid(11)).unwrap().group_key();
+        let group = api::read_series(&s, sid(11))
+            .unwrap()
+            .group_key()
+            .expect("date step");
         IntexContract::new(s.clone())
             .hand_to_cleanup(group)
             .unwrap();

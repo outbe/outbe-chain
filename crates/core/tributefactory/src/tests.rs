@@ -482,7 +482,7 @@ fn assert_real_zk_offer_with_key_source(
     circuit_version: &str,
     from_inbox: bool,
 ) {
-    use alloy_sol_types::{sol, SolCall, SolValue};
+    use alloy_sol_types::{sol, SolCall, SolError, SolValue};
     use commonware_codec::Encode;
     use commonware_cryptography::bls12381::primitives::{
         ops::{self, sign_message},
@@ -569,7 +569,7 @@ fn assert_real_zk_offer_with_key_source(
     });
     let before_offer = provider.storage.clone();
     provider.fail_after_mutation_at(usize::MAX);
-    StorageHandle::enter(&mut provider, |storage| {
+    let tribute_id = StorageHandle::enter(&mut provider, |storage| {
         let mut factory = TributeFactoryContract::new(storage.clone());
         let id = factory
             .offer_tribute_with_processor(make_offer(), |offers| {
@@ -582,6 +582,7 @@ fn assert_real_zk_offer_with_key_source(
             .unwrap();
         assert_eq!(stored.owner, CALLER);
         assert_eq!(stored.worldwide_day, TARGET_WWD_A);
+        id
     });
     let mutations = provider.clear_mutation_failure();
     StorageHandle::enter(&mut provider, |storage| {
@@ -622,6 +623,91 @@ fn assert_real_zk_offer_with_key_source(
     assert_eq!(
         provider.storage, before_offer,
         "failed offer leaked issued or reward state"
+    );
+
+    // Overflow SRA only after the real proof, SU marking, issuance and fresh WAA writes.
+    // Reward activity belongs to the execution day, not TARGET_WWD_A.
+    let reward_day = WorldwideDay::new(REWARD_DAY);
+    let count_key = AgentRewardContract::tribute_count_key(reward_day, REWARD_SRA);
+    let index_key = AgentRewardContract::address_index_key(reward_day, 0);
+    StorageHandle::enter(&mut provider, |storage| {
+        let rewards = AgentRewardContract::new(storage);
+        rewards.sra_addresses.write(&index_key, REWARD_SRA).unwrap();
+        rewards.sra_address_count.write(&reward_day, 1).unwrap();
+        rewards
+            .sra_tribute_counts
+            .write(&count_key, u64::MAX)
+            .unwrap();
+        rewards
+            .sra_total_count
+            .write(&reward_day, u64::MAX)
+            .unwrap();
+    });
+    let before_overflow = provider.storage.clone();
+    let events_before_overflow = provider.events.clone();
+    let ordered_events_before_overflow = provider.get_ordered_events().to_vec();
+    StorageHandle::enter(&mut provider, |storage| {
+        let error = storage
+            .with_checkpoint(|| {
+                TributeFactoryContract::new(storage.clone())
+                    .offer_tribute_with_processor(make_offer(), |offers| {
+                        Ok(process_tribute_offer_batch(&key, offers).0)
+                    })
+            })
+            .unwrap_err();
+        let PrecompileError::RevertBytes(bytes) = error else {
+            panic!("expected counter-overflow revert bytes, got {error:?}");
+        };
+        assert_eq!(
+            bytes.as_ref(),
+            outbe_agentreward::precompile::IAgentReward::TributeCounterOverflow {}.abi_encode()
+        );
+        assert!(TributeContract::new(storage.clone())
+            .get_record(tribute_id)
+            .unwrap()
+            .is_none());
+        assert!(!TributeFactoryContract::new(storage.clone())
+            .has_used_su_hash(B256::with_last_byte(0x22))
+            .unwrap());
+        let rewards = AgentRewardContract::new(storage);
+        assert!(rewards.get_all_waa_counts(reward_day).unwrap().is_empty());
+        assert_eq!(rewards.waa_address_count.read(&reward_day).unwrap(), 0);
+        assert_eq!(rewards.waa_total_count.read(&reward_day).unwrap(), 0);
+        assert_eq!(
+            rewards
+                .waa_tribute_counts
+                .read(&AgentRewardContract::tribute_count_key(
+                    reward_day,
+                    REWARD_WALLET
+                ))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            rewards
+                .waa_addresses
+                .read(&AgentRewardContract::address_index_key(reward_day, 0))
+                .unwrap(),
+            Address::ZERO
+        );
+        assert_eq!(
+            rewards.get_all_sra_counts(reward_day).unwrap(),
+            vec![(REWARD_SRA, u64::MAX)]
+        );
+        assert_eq!(rewards.sra_address_count.read(&reward_day).unwrap(), 1);
+        assert_eq!(rewards.sra_total_count.read(&reward_day).unwrap(), u64::MAX);
+        assert_eq!(rewards.sra_addresses.read(&index_key).unwrap(), REWARD_SRA);
+        assert!(rewards.get_all_waa_counts(TARGET_WWD_A).unwrap().is_empty());
+        assert!(rewards.get_all_sra_counts(TARGET_WWD_A).unwrap().is_empty());
+    });
+    assert_eq!(
+        provider.storage, before_overflow,
+        "SRA overflow leaked offer state"
+    );
+    assert_eq!(provider.events, events_before_overflow);
+    assert_eq!(
+        provider.get_ordered_events(),
+        ordered_events_before_overflow
     );
 }
 

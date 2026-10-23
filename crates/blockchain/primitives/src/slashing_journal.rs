@@ -141,16 +141,6 @@ pub enum JournalRecord {
         failure_class: u16,
     },
 
-    /// Felony triggered by consensus-layer byzantine detection.
-    ByzantineFelony {
-        wall_clock: String,
-        block_number: u64,
-        validator: String,
-        felony_count: u64,
-        slash_percent: u64,
-        slashed_amount: String,
-    },
-
     /// Validator self-deactivated (or owner deactivated): ACTIVE->EXITING.
     ValidatorDeactivated {
         wall_clock: String,
@@ -341,21 +331,14 @@ mod tests {
         let nested = dir.path().join("nested");
         let path = journal_path(&nested);
         assert_eq!(path, nested.join("slashing-journal.jsonl"));
-        let exe = std::env::current_exe().expect("current test binary");
 
         for block_number in ["19200", "19201"] {
-            let output = std::process::Command::new(&exe)
-                .arg("--exact")
-                .arg("slashing_journal::tests::init_then_record_writes_lines_and_survives_reopen")
-                .arg("--nocapture")
-                .env(CHILD_DIR_ENV, &nested)
-                .env(CHILD_BLOCK_ENV, block_number)
-                .output()
-                .expect("spawn child process");
-            assert!(
-                output.status.success(),
-                "child failed: {}",
-                String::from_utf8_lossy(&output.stderr)
+            crate::journal_writer::append_record_in_reopened_child(
+                "slashing_journal::tests::init_then_record_writes_lines_and_survives_reopen",
+                CHILD_DIR_ENV,
+                CHILD_BLOCK_ENV,
+                &nested,
+                block_number,
             );
         }
 

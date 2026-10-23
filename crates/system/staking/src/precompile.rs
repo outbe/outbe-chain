@@ -60,6 +60,20 @@ pub fn dispatch(
             getTotalStaked(_) => {
                 metadata::<IStaking::getTotalStakedCall>(|| staking.get_total_staked())
             }
+            getMinStake(_) => {
+                metadata::<IStaking::getMinStakeCall>(|| staking.config_min_stake.read())
+            }
+            getUnbondingPeriod(_) => metadata::<IStaking::getUnbondingPeriodCall>(|| {
+                staking.config_unbonding_period.read()
+            }),
+            getMaxStakePercent(_) => metadata::<IStaking::getMaxStakePercentCall>(|| {
+                staking.config_max_stake_percent.read()
+            }),
+            getSlashedWithdrawalDelay(_) => {
+                metadata::<IStaking::getSlashedWithdrawalDelayCall>(|| {
+                    staking.slashed_withdrawal_delay()
+                })
+            }
         }
     })
 }

@@ -165,7 +165,7 @@ fn invalid_reward_checkpoint_preserves_seed_partial_evidence_for_retry() {
             .unwrap_err();
         assert!(matches!(error,
             outbe_primitives::error::PrecompileError::RevertBytes(bytes)
-                if bytes.as_ref() == ISlashIndicator::InvalidEvidenceRewardPercent { percent: 150 }.abi_encode()));
+                if bytes.as_ref() == ISlashIndicator::SlashConfigPercentAbove100 { field: "evidence_reward_percent".into(), value: 150 }.abi_encode()));
         assert_eq!(si.get_felony_count(ACCUSED).unwrap(), 0);
         assert!(test_lifecycle_of(storage.clone(), ACCUSED)
             .unwrap()

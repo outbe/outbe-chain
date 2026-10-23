@@ -128,9 +128,18 @@ contract DestinationSettlerTest is BaseTest {
         });
     }
 
+    /// @dev Commit pre-image that Auction.reveal expects: the committer is part of the hash
+    function _commitHash(address solver, bytes32 orderId, uint256 outputAmount, bytes32 salt)
+        internal
+        pure
+        returns (bytes32)
+    {
+        return keccak256(abi.encode(orderId, solver, outputAmount, salt));
+    }
+
     function _commit(address solver, bytes32 orderId, uint256 outputAmount) internal {
         vm.prank(solver);
-        auction.commit(orderId, keccak256(abi.encode(orderId, outputAmount, SALT)));
+        auction.commit(orderId, _commitHash(solver, orderId, outputAmount, SALT));
     }
 
     function _reveal(address solver, bytes32 orderId, uint256 outputAmount, bytes memory originData) internal {
@@ -157,9 +166,9 @@ contract DestinationSettlerTest is BaseTest {
     ) internal {
         // Use different salts per solver via separate commit hashes
         vm.prank(solver1);
-        auction.commit(orderId, keccak256(abi.encode(orderId, amount1, bytes32(uint256(1)))));
+        auction.commit(orderId, _commitHash(solver1, orderId, amount1, bytes32(uint256(1))));
         vm.prank(solver2);
-        auction.commit(orderId, keccak256(abi.encode(orderId, amount2, bytes32(uint256(2)))));
+        auction.commit(orderId, _commitHash(solver2, orderId, amount2, bytes32(uint256(2))));
 
         vm.warp(block.timestamp + auction.commitPeriod());
 
@@ -445,7 +454,7 @@ contract DestinationSettlerTest is BaseTest {
 
         vm.prank(vegeta);
         vm.expectRevert(IAuction.AlreadyCommitted.selector);
-        auction.commit(orderId, keccak256(abi.encode(orderId, amount + 1, SALT)));
+        auction.commit(orderId, _commitHash(vegeta, orderId, amount + 1, SALT));
     }
 
     function test_commit_commitPhaseEnded() public {
@@ -459,7 +468,7 @@ contract DestinationSettlerTest is BaseTest {
 
         vm.prank(kakaroto);
         vm.expectRevert(IAuction.CommitPhaseEnded.selector);
-        auction.commit(orderId, keccak256(abi.encode(orderId, amount, SALT)));
+        auction.commit(orderId, _commitHash(kakaroto, orderId, amount, SALT));
     }
 
     // ========== Auction: reveal ==========
@@ -517,6 +526,106 @@ contract DestinationSettlerTest is BaseTest {
         vm.prank(vegeta);
         vm.expectRevert(IAuction.RevealPhaseNotActive.selector);
         auction.reveal(orderId, amount, SALT, originData);
+    }
+
+    // ========== Auction: commit binds the committer ==========
+
+    /// @dev Copier stores the exact commit hash of the original solver and replays the revealed values
+    function test_copied_commit_cannot_be_revealed() public {
+        OrderData memory orderData = _prepareOrderData();
+        bytes32 orderId = OrderEncoder.id(orderData);
+        bytes memory originData = OrderEncoder.encode(orderData);
+        bytes32 hashA = _commitHash(vegeta, orderId, amount + 10, SALT);
+
+        vm.prank(vegeta);
+        auction.commit(orderId, hashA);
+        vm.prank(kakaroto);
+        auction.commit(orderId, hashA);
+        vm.warp(block.timestamp + auction.commitPeriod());
+
+        _reveal(vegeta, orderId, amount + 10, originData);
+
+        vm.prank(kakaroto);
+        vm.expectRevert(IAuction.InvalidReveal.selector);
+        auction.reveal(orderId, amount + 10, SALT, originData);
+
+        assertEq(auction.getQuoteCount(orderId), 1);
+    }
+
+    function test_vickrey_price_survives_a_copy_attempt() public {
+        OrderData memory orderData = _prepareOrderData();
+        bytes32 orderId = OrderEncoder.id(orderData);
+        bytes memory originData = OrderEncoder.encode(orderData);
+        bytes32 hashA = _commitHash(vegeta, orderId, amount + 10, SALT);
+
+        vm.prank(vegeta);
+        auction.commit(orderId, hashA);
+        vm.prank(kakaroto);
+        auction.commit(orderId, hashA);
+        _commit(karpincho, orderId, amount);
+        vm.warp(block.timestamp + auction.commitPeriod());
+
+        _reveal(vegeta, orderId, amount + 10, originData);
+        vm.prank(kakaroto);
+        vm.expectRevert(IAuction.InvalidReveal.selector);
+        auction.reveal(orderId, amount + 10, SALT, originData);
+        _reveal(karpincho, orderId, amount, originData);
+        vm.warp(block.timestamp + auction.revealPeriod());
+
+        (address winner, uint256 winningAmount) = auction.getWinner(orderId);
+        assertEq(winner, vegeta);
+        assertEq(winningAmount, amount); // the genuine third bid sets the price, not the copied top bid
+    }
+
+    function test_copier_cannot_take_the_fill() public {
+        OrderData memory orderData = _prepareOrderData();
+        bytes32 orderId = OrderEncoder.id(orderData);
+        bytes memory originData = OrderEncoder.encode(orderData);
+        bytes32 hashA = _commitHash(vegeta, orderId, amount + 10, SALT);
+
+        vm.prank(vegeta);
+        auction.commit(orderId, hashA);
+        vm.prank(kakaroto);
+        auction.commit(orderId, hashA);
+        vm.warp(block.timestamp + auction.commitPeriod());
+
+        // The copier front-runs the reveal of the original solver with the same values
+        vm.prank(kakaroto);
+        vm.expectRevert(IAuction.InvalidReveal.selector);
+        auction.reveal(orderId, amount + 10, SALT, originData);
+        _reveal(vegeta, orderId, amount + 10, originData);
+        vm.warp(block.timestamp + auction.revealPeriod());
+
+        (address winner,) = auction.getWinner(orderId);
+        assertEq(winner, vegeta);
+    }
+
+    function test_own_commit_reveals_normally() public {
+        OrderData memory orderData = _prepareOrderData();
+        bytes32 orderId = OrderEncoder.id(orderData);
+        bytes memory originData = OrderEncoder.encode(orderData);
+
+        _commit(vegeta, orderId, amount);
+        vm.warp(block.timestamp + auction.commitPeriod());
+        _reveal(vegeta, orderId, amount, originData);
+
+        assertEq(auction.getQuoteCount(orderId), 1);
+        IAuction.Quote[] memory quotes = auction.getQuotes(orderId);
+        assertEq(quotes[0].solver, vegeta);
+        assertEq(quotes[0].outputAmount, amount);
+    }
+
+    /// @dev Two independent commitments for the same amount are a real tie and settle at that amount
+    function test_genuine_tie_still_prices_second() public {
+        OrderData memory orderData = _prepareOrderData();
+        bytes32 orderId = OrderEncoder.id(orderData);
+        bytes memory originData = OrderEncoder.encode(orderData);
+
+        _doFullAuctionTwo(kakaroto, amount + 10, vegeta, amount + 10, orderId, originData);
+
+        (address winner, uint256 winningAmount) = auction.getWinner(orderId);
+        assertEq(winner, kakaroto); // first revealer wins the tie
+        assertEq(winningAmount, amount + 10);
     }
 
     // ========== Auction: getWinner (Vickrey) ==========

@@ -109,20 +109,74 @@ fn same_block_issuances_with_different_currencies_have_distinct_ids() {
 }
 
 #[test]
+fn same_block_identical_issuances_have_distinct_ids() {
+    with_storage(|storage| {
+        let first = add(storage, sample_params(ALICE));
+        let second = add(storage, sample_params(ALICE));
+        assert_ne!(first, second);
+        let owned = owned(storage, ALICE);
+        assert_eq!(owned.len(), 2);
+        assert!(owned.contains(&first));
+        assert!(owned.contains(&second));
+        assert_eq!(GemContract::new(storage.clone()).total_supply().unwrap(), 2);
+    });
+}
+
+#[test]
 fn a_duplicate_id_is_rejected_and_rolls_back() {
     with_storage(|storage| {
         let gem_id = add(storage, sample_params(ALICE));
-        let error = crate::runtime::add_gem(storage, sample_params(ALICE)).unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            outbe_primitives::error::PrecompileError::from(
-                outbe_gem::errors::GemError::AlreadyExists
-            )
-            .to_string()
-        );
+        let before = view(storage, gem_id);
+        let error = api::record_issued(storage, &before.item, Some(before.terms)).unwrap_err();
+        assert!(matches!(
+            error,
+            outbe_primitives::error::PrecompileError::RevertBytes(bytes)
+                if bytes.as_ref() == alloy_sol_types::SolError::abi_encode(
+                    &IGem::AlreadyExists {}
+                ).as_slice()
+        ));
         assert_eq!(GemContract::new(storage.clone()).total_supply().unwrap(), 1);
         assert_eq!(owned(storage, ALICE), [gem_id]);
+        assert_eq!(view(storage, gem_id), before);
     });
+}
+
+#[test]
+fn removal_can_collide_with_a_surviving_same_block_issuance() {
+    with_storage(|storage| {
+        let first = add(storage, sample_params(ALICE));
+        let second = add(storage, sample_params(ALICE));
+        settle(storage, first);
+        burn_settled(storage, first);
+        let before = view(storage, second);
+        let error = crate::runtime::add_gem(storage, sample_params(ALICE)).unwrap_err();
+        assert!(matches!(
+            error,
+            outbe_primitives::error::PrecompileError::RevertBytes(bytes)
+                if bytes.as_ref() == alloy_sol_types::SolError::abi_encode(
+                    &IGem::AlreadyExists {}
+                ).as_slice()
+        ));
+        assert_eq!(GemContract::new(storage.clone()).total_supply().unwrap(), 1);
+        assert_eq!(owned(storage, ALICE), [second]);
+        assert!(item(storage, first).is_none());
+        assert_eq!(view(storage, second), before);
+    });
+}
+
+#[test]
+fn gem_id_derivation_binds_each_currency_and_live_supply() {
+    let derive = |issuance, reference, supply| {
+        let mut params = sample_params(ALICE);
+        params.issuance_currency = issuance;
+        params.reference_currency = reference;
+        GemContract::generate_gem_id(&params, 1, supply)
+    };
+    let baseline = derive(USD, USD, 0);
+    assert_eq!(baseline, derive(USD, USD, 0));
+    assert_ne!(baseline, derive(EUR, USD, 0));
+    assert_ne!(baseline, derive(USD, EUR, 0));
+    assert_ne!(baseline, derive(USD, USD, 1));
 }
 
 #[test]
@@ -184,7 +238,7 @@ fn a_group_holds_the_gems_of_one_first_full_day_call_price_and_currency() {
         assert_eq!(
             group,
             outbe_primitives::call_breach::group_key(
-                outbe_primitives::time::first_full_day(T_NOW),
+                outbe_primitives::time::first_full_day(T_NOW).expect("date step"),
                 view(storage, gems[0]).terms.call_price_minor,
                 USD
             )
@@ -242,7 +296,7 @@ fn a_midnight_gem_and_a_later_one_that_day_are_in_different_groups() {
         );
         assert_eq!(
             group_day(later),
-            outbe_primitives::time::first_full_day(midnight + 2)
+            outbe_primitives::time::first_full_day(midnight + 2).expect("date step")
         );
     });
 }
@@ -472,22 +526,24 @@ fn member_count_overflow_and_underflow_roll_back_gem_mutations() {
 #[test]
 fn a_gem_id_is_its_raw_keccak_and_the_group_id_carries_the_day() {
     with_storage(|storage| {
+        let supply = GemContract::new(storage.clone()).total_supply().unwrap();
         let gem_id = add(storage, sample_params(ALICE));
         assert_eq!(
             gem_id,
             GemContract::generate_gem_id(
-                ALICE,
-                U256::from(1_000_000u64),
+                &sample_params(ALICE),
                 storage.block_number().unwrap(),
-                USD,
-                USD,
+                supply,
             )
         );
         let stored = item(storage, gem_id).unwrap();
         assert_eq!(WwdEntityId::from(gem_id), stored.gem_id);
         assert_eq!(
-            stored.group_id(),
-            WwdEntityId::from_day_and_digest(stored.full_day_after_issue(), stored.group_key)
+            stored.group_id().expect("date step"),
+            WwdEntityId::from_day_and_digest(
+                stored.full_day_after_issue().expect("date step"),
+                stored.group_key
+            )
         );
         assert_eq!(stored.worldwide_day().value(), timestamp_to_date_key(T_NOW));
     });
@@ -521,7 +577,7 @@ fn backdate_that_changes_the_day_moves_the_gem_and_opens_a_new_group() {
         assert_eq!(
             after.group_key,
             outbe_primitives::call_breach::group_key(
-                after.full_day_after_issue().value(),
+                after.full_day_after_issue().expect("date step").value(),
                 view(storage, gem_id).terms.call_price_minor,
                 USD
             )
@@ -531,7 +587,10 @@ fn backdate_that_changes_the_day_moves_the_gem_and_opens_a_new_group() {
             "the only member left, so the old group body is gone"
         );
         let group = api::get_group(storage, after.group_key).unwrap().unwrap();
-        assert_eq!(group.full_day_after_issue, after.full_day_after_issue());
+        assert_eq!(
+            group.full_day_after_issue,
+            after.full_day_after_issue().expect("date step")
+        );
         assert_eq!(GemContract::new(storage.clone()).total_supply().unwrap(), 1);
         assert_eq!(owned(storage, ALICE), vec![gem_id]);
     });

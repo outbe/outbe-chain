@@ -31,6 +31,7 @@ interface INod {
     error EmptyGroupMemberSlotDuringRemoval(bytes32 groupKey, uint32 slot);
     error AmountReadFailed(string reason);
     error NodStateChangedAfterLoading();
+    error DateStep(uint8 kind, uint32 dateKey);
 
     /// Emitted when a Nod is issued and when it is burned by forfeit or mining.
     event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);

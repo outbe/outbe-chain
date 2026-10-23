@@ -1,3 +1,46 @@
+//! The in-process lifecycle and accounting hooks listed below trust their Rust caller.
+//!
+//! `config_owner` does not gate these hooks. Staking, evidence, the oracle,
+//! the executor, and the begin-block path call them after their own checks.
+//! An external account reaches ValidatorSet only through `IValidatorSet` and
+//! [`crate::precompile::dispatch`]. That route exposes the views plus
+//! `setDelegate`, `revokeDelegate`, `registerValidator`, `setP2pAddress`,
+//! `deactivateValidator`, and `confirmValidatorReady`.
+//! `confirmValidatorReady` uses the transaction sender. `activateResharedSet`
+//! is not an external selector.
+//!
+//! Production callers of the in-process methods:
+//!
+//! - `record_stake_increase`, `record_unstake`, and `record_stake_slash` are
+//!   called from `crates/system/staking/src/logic.rs`.
+//! - `complete_unbonding` and `record_unstake` are called from
+//!   `crates/system/staking/src/unbonding.rs`.
+//! - `unjail_after_stake_check` is called from `Staking::unjail_validator` in
+//!   `crates/system/staking/src/logic.rs`. The Staking precompile enters that
+//!   function.
+//! - `jail_validator` is called from SlashIndicator `runtime.rs` and
+//!   `misses.rs`, from `crates/system/oracle/src/tally/slash_window.rs`, and
+//!   from `crates/system/hyperlanecontroller/src/liveness.rs`.
+//! - `jail_validator_deferred` is called from
+//!   `crates/blockchain/evm/src/executor/hooks.rs`.
+//! - `jail_validator_for_tee_expiry` is called from
+//!   `enforce_tee_lease_deadlines` in
+//!   `crates/blockchain/evm/src/begin_block_precompile/cycle.rs`. The call in
+//!   `crates/blockchain/engine/src/validators.rs` is inside `#[cfg(test)]`
+//!   tests.
+//! - `cleanup_inactive_validators` is called from
+//!   `crates/blockchain/evm/src/executor/boundary.rs` with a cap of 16.
+//! - `activate_boundary_atomic`, `advance_epoch`, and `reset_epoch_counters`
+//!   are called from `crates/blockchain/evm/src/executor/boundary.rs`.
+//! - `record_proposer` is called from
+//!   `crates/blockchain/evm/src/begin_block_precompile/cycle.rs` and
+//!   `crates/blockchain/evm/src/begin_block_precompile/boundary.rs`.
+//! - `record_finalized_participation` is called from
+//!   `crates/blockchain/evm/src/begin_block_precompile/late_credits.rs`.
+//!
+//! `force_exit_validator`, `record_missed_block`, and `hooks::record_participation`
+//! have no production caller.
+
 use alloy_primitives::{Address, U256};
 use outbe_primitives::error::{PrecompileError, Result};
 

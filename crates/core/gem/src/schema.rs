@@ -1,7 +1,7 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::GEM_ADDRESS;
-use outbe_primitives::time::{first_full_day, timestamp_to_date_key, WorldwideDay};
+use outbe_primitives::time::{first_full_day, timestamp_to_date_key, TimeError, WorldwideDay};
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 use serde::{Deserialize, Serialize};
 
@@ -72,15 +72,16 @@ impl GemItemState {
 
     /// The first full day the gem counts call days from. The group key binds it, so a
     /// gem and its group always agree on it.
-    #[must_use]
-    pub fn full_day_after_issue(&self) -> WorldwideDay {
-        WorldwideDay::new(first_full_day(self.issued_at))
+    pub fn full_day_after_issue(&self) -> Result<WorldwideDay, TimeError> {
+        Ok(WorldwideDay::new(first_full_day(self.issued_at)?))
     }
 
     /// Identity of the group body this gem belongs to.
-    #[must_use]
-    pub fn group_id(&self) -> WwdEntityId {
-        WwdEntityId::from_day_and_digest(self.full_day_after_issue(), self.group_key)
+    pub fn group_id(&self) -> Result<WwdEntityId, TimeError> {
+        Ok(WwdEntityId::from_day_and_digest(
+            self.full_day_after_issue()?,
+            self.group_key,
+        ))
     }
 
     #[must_use]
@@ -324,22 +325,19 @@ pub struct GemContract {
 }
 
 impl GemContract<'_> {
-    /// `gem_id = keccak256("gem" || owner || amount_be || block_number_be || issuance_currency_be || reference_currency_be)`.
+    /// `gem_id = keccak256("gem" || owner || amount_be || block_number_be || issuance_currency_be || reference_currency_be || total_supply_be)`.
     /// `amount` is the gem's `promis_load_minor` (reward principal).
-    pub fn generate_gem_id(
-        owner: Address,
-        amount: U256,
-        block_number: u64,
-        issuance_currency: u16,
-        reference_currency: u16,
-    ) -> U256 {
-        let mut buf = [0u8; 3 + 20 + 32 + 8 + 2 + 2];
+    /// `total_supply` is the existing checked `u64` live count before insertion, not
+    /// lifetime issuance. Removal can permit collisions or reuse of deleted IDs.
+    pub fn generate_gem_id(params: &GemAddParams, block_number: u64, total_supply: u64) -> U256 {
+        let mut buf = [0u8; 3 + 20 + 32 + 8 + 2 + 2 + 8];
         buf[0..3].copy_from_slice(b"gem");
-        buf[3..23].copy_from_slice(owner.as_slice());
-        buf[23..55].copy_from_slice(&amount.to_be_bytes::<32>());
+        buf[3..23].copy_from_slice(params.owner.as_slice());
+        buf[23..55].copy_from_slice(&params.promis_load_minor.to_be_bytes::<32>());
         buf[55..63].copy_from_slice(&block_number.to_be_bytes());
-        buf[63..65].copy_from_slice(&issuance_currency.to_be_bytes());
-        buf[65..67].copy_from_slice(&reference_currency.to_be_bytes());
+        buf[63..65].copy_from_slice(&params.issuance_currency.to_be_bytes());
+        buf[65..67].copy_from_slice(&params.reference_currency.to_be_bytes());
+        buf[67..75].copy_from_slice(&total_supply.to_be_bytes());
         U256::from_be_bytes(keccak256(buf).0)
     }
 }

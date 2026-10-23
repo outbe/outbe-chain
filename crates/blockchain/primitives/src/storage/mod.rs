@@ -282,7 +282,7 @@ pub trait PrecompileStorageProvider {
     /// Fixed protocol feature probe, unmetered in production providers. Reading
     /// the previously unused opt-in slot must not change historical transaction gas.
     fn enclave_upgrade_id(&mut self) -> Result<U256> {
-        self.sload(crate::addresses::TEE_REGISTRY_ADDRESS, U256::from(45))
+        self.sload(crate::addresses::TEE_REGISTRY_ADDRESS, U256::from(44))
     }
 
     /// Performs a TLOAD operation (transient storage read).

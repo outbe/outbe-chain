@@ -106,6 +106,16 @@ pub enum NodError {
 
     #[error("Nod state changed after loading")]
     NodStateChangedAfterLoading,
+
+    #[error("date step kind {kind} from date key {date_key}")]
+    DateStep { kind: u8, date_key: u32 },
+}
+
+pub(crate) fn date_step_error(err: outbe_primitives::time::TimeError) -> PrecompileError {
+    match err.date_step() {
+        Some((kind, date_key)) => NodError::DateStep { kind, date_key }.into(),
+        None => PrecompileError::Fatal(err.to_string()),
+    }
 }
 
 impl NodError {
@@ -207,6 +217,10 @@ impl From<NodError> for PrecompileError {
                 reason: error.to_string(),
             }),
             NodError::NodStateChangedAfterLoading => revert_with(I::NodStateChangedAfterLoading {}),
+            NodError::DateStep { kind, date_key } => revert_with(I::DateStep {
+                kind,
+                dateKey: date_key,
+            }),
         }
     }
 }

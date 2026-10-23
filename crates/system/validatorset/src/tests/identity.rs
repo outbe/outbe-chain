@@ -158,7 +158,8 @@ fn typed_storage_adapter_rejects_pre_registration_stake_and_fails_closed() {
     let addr = address!("0x2222222222222222222222222222222222222227");
 
     with_vs_configured(10, |vs| {
-        vs.val_stake.write(&addr, U256::from(900)).unwrap();
+        vs.test_seed_authoritative_bonded(addr, U256::from(900))
+            .unwrap();
         vs.val_unbonding_end.write(&addr, 55).unwrap();
 
         assert!(matches!(
@@ -166,7 +167,7 @@ fn typed_storage_adapter_rejects_pre_registration_stake_and_fails_closed() {
             Err(PrecompileError::RevertBytes(_))
         ));
 
-        vs.val_stake.write(&addr, U256::ZERO).unwrap();
+        vs.test_seed_authoritative_bonded(addr, U256::ZERO).unwrap();
         vs.val_unbonding_end.write(&addr, 0).unwrap();
         assert_eq!(
             vs.validator_state(addr).unwrap().lifecycle(),

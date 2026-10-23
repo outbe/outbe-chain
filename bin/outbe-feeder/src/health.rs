@@ -12,6 +12,9 @@ use serde_json::json;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 
+/// Time a health connection has to send its request.
+const HEALTH_READ_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Shared feeder health state, updated by the main loop.
 pub struct FeederHealth {
     /// Block number of the last successful vote submission.
@@ -309,9 +312,11 @@ pub async fn start_health_server(bind_addr: &str, health: Arc<FeederHealth>) -> 
             let health = health.clone();
             tokio::spawn(async move {
                 let mut buf = vec![0u8; 1024];
-                let n = match tokio::io::AsyncReadExt::read(&mut stream, &mut buf).await {
-                    Ok(n) => n,
-                    Err(_) => return,
+                // An idle connection must not hold its task forever.
+                let read = tokio::io::AsyncReadExt::read(&mut stream, &mut buf);
+                let n = match tokio::time::timeout(HEALTH_READ_TIMEOUT, read).await {
+                    Ok(Ok(n)) => n,
+                    _ => return,
                 };
 
                 let request = String::from_utf8_lossy(&buf[..n]);

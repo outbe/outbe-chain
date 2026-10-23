@@ -29,7 +29,7 @@ contract AuctionTest is Test {
 
     function _commit(address solver, uint256 outputAmount) internal {
         vm.prank(solver);
-        auction.commit(orderId, keccak256(abi.encode(orderId, outputAmount, SALT)));
+        auction.commit(orderId, keccak256(abi.encode(orderId, solver, outputAmount, SALT)));
     }
 
     function _reveal(address solver, uint256 outputAmount) internal {

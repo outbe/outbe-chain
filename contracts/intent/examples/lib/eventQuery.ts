@@ -14,14 +14,30 @@ import type { Provider, ContractEventName, BaseContract } from 'ethers';
  * @param chunkSize - Maximum blocks per query (default: 50000)
  * @returns Array of events
  */
+export type EventQueryOptions<T extends BaseContract> = {
+  contract: T;
+  filter: any;
+  fromBlock: number;
+  toBlock: number | 'latest';
+  provider: Provider;
+  chunkSize?: number;
+};
+
 export async function queryEventsWithChunking<T extends BaseContract>(
-  contract: T,
-  filter: any,
-  fromBlock: number,
-  toBlock: number | 'latest',
-  provider: Provider,
-  chunkSize: number = 50000
+  ...args: [options: EventQueryOptions<T>] | [
+    contract: T,
+    filter: any,
+    fromBlock: number,
+    toBlock: number | 'latest',
+    provider: Provider,
+    chunkSize?: number,
+  ]
 ): Promise<any[]> {
+  const options = args.length === 1 ? args[0] : {
+    contract: args[0], filter: args[1], fromBlock: args[2],
+    toBlock: args[3], provider: args[4], chunkSize: args[5],
+  };
+  const { contract, filter, fromBlock, toBlock, provider, chunkSize = 50000 } = options;
   const currentBlock = toBlock === 'latest' ? await provider.getBlockNumber() : toBlock;
 
   let events: any[] = [];

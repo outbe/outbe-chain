@@ -22,6 +22,34 @@ impl Journal {
     }
 }
 
+/// Runs one fresh test process that reopens a journal and appends one record.
+///
+/// `test_name` is the exact test filter. Sets that journal's directory and
+/// block variables in the child's inherited environment.
+#[cfg(test)]
+pub(super) fn append_record_in_reopened_child(
+    test_name: &str,
+    dir_env: &str,
+    block_env: &str,
+    directory: &Path,
+    block_number: &str,
+) {
+    let exe = std::env::current_exe().expect("current test binary");
+    let output = std::process::Command::new(exe)
+        .arg("--exact")
+        .arg(test_name)
+        .arg("--nocapture")
+        .env(dir_env, directory)
+        .env(block_env, block_number)
+        .output()
+        .expect("spawn child process");
+    assert!(
+        output.status.success(),
+        "child failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

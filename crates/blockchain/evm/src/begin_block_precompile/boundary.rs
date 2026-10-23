@@ -22,15 +22,6 @@ pub(crate) fn run_boundary_outcome(
             vs.record_proposer(ctx.block.proposer)?;
         }
     }
-    // Record the TEE recipient X25519 pubkeys announced through this boundary
-    // (the `BoundaryOutcome` key-delivery channel - README "Consensus Artifact
-    // Transport"). These ride in `header.extra_data` and are part of the
-    // hash-committed `OutbeBlockArtifacts`, so every validator records the same
-    // ordered set deterministically. Empty for boundaries that announce none.
-    if !artifact.tee_recipient_pubkeys.is_empty() {
-        outbe_teeregistry::TeeRegistry::new(ctx.storage.clone())
-            .record_boundary_recipient_keys(&artifact.tee_recipient_pubkeys)?;
-    }
     outbe_hyperlanecontroller::lifecycle::sync_validators(ctx);
     Ok(())
 }

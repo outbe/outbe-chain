@@ -1,21 +1,9 @@
 //! Protocol constants for upgrade scheduling and activation.
 //!
-//! All values are `const` and change only via hardfork.
+//! Scheduling notice is network-independent; stored activation heights are preserved.
 
-/// Minimum blocks between vote approval and activation height.
+/// Standard operator notice period between vote approval and activation on every network.
 pub const MIN_ACTIVATION_BUFFER: u64 = 100;
-
-/// Activation buffer for `chain_id`. Zero on the localnet chain so e2e updates
-/// activate promptly. The standard [`MIN_ACTIVATION_BUFFER`] applies everywhere else.
-/// This mirrors how `outbe_vote` shortens the voting window for localnet. But this
-/// function keys only on the chain id, with no env/config override.
-pub fn min_activation_buffer(chain_id: u64) -> u64 {
-    if chain_id == outbe_primitives::chain::TESTNET_CHAIN_ID {
-        0
-    } else {
-        MIN_ACTIVATION_BUFFER
-    }
-}
 
 /// Maximum scheduled updates waiting for activation height.
 pub const MAX_WAITING_FOR_ACTIVATION_UPDATES: u32 = 64;
@@ -53,14 +41,6 @@ mod tests {
     fn every_network_is_strictly_capped_to_the_binary_version() {
         for chain_id in [DEVNET_CHAIN_ID, TESTNET_CHAIN_ID, MAINNET_CHAIN_ID] {
             assert_eq!(max_activatable_version(chain_id), PROTOCOL_VERSION);
-        }
-    }
-
-    #[test]
-    fn only_testnet_skips_the_activation_buffer() {
-        assert_eq!(min_activation_buffer(TESTNET_CHAIN_ID), 0);
-        for chain_id in [DEVNET_CHAIN_ID, MAINNET_CHAIN_ID, 1_000_000_001] {
-            assert_eq!(min_activation_buffer(chain_id), MIN_ACTIVATION_BUFFER);
         }
     }
 }

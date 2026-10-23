@@ -38,7 +38,7 @@ pub(super) fn ensure_transition_source_or_target_v1(
     current: &crate::tee::registry::RenewalBindingV1,
     intent: &RegistrationIntentV1,
 ) -> Result<()> {
-    if transition_target_matches_v1(current, intent) {
+    if transition_target_matches_v1(current, intent)? {
         return Ok(());
     }
     let source_matches = current.node_id_hash
@@ -57,10 +57,10 @@ pub(super) fn ensure_transition_source_or_target_v1(
 pub(super) fn transition_target_matches_v1(
     current: &crate::tee::registry::RenewalBindingV1,
     intent: &RegistrationIntentV1,
-) -> bool {
-    target_identity_matches(current, intent)
+) -> Result<bool> {
+    Ok(target_identity_matches(current, intent)?
         && target_counters_match(current, intent)
-        && target_keys_match(current, intent)
+        && target_keys_match(current, intent))
 }
 fn source_counters_match(
     current: &crate::tee::registry::RenewalBindingV1,
@@ -74,11 +74,18 @@ fn source_counters_match(
 fn target_identity_matches(
     current: &crate::tee::registry::RenewalBindingV1,
     intent: &RegistrationIntentV1,
-) -> bool {
-    current.node_id_hash == intent.node_id.node_id_hash().unwrap_or(B256::ZERO)
+) -> Result<bool> {
+    let node_id_hash = intent
+        .node_id
+        .node_id_hash()
+        .map_err(UpgradeError::HashTransitionNodeIdentity)?;
+    let intent_hash = intent
+        .intent_hash()
+        .map_err(UpgradeError::HashTransitionIntent)?;
+    Ok(current.node_id_hash == node_id_hash
         && current.enclave_id == intent.enclave_id
         && current.binding_id == intent.binding_id
-        && current.intent_hash == intent.intent_hash().unwrap_or(B256::ZERO)
+        && current.intent_hash == intent_hash)
 }
 fn target_counters_match(
     current: &crate::tee::registry::RenewalBindingV1,

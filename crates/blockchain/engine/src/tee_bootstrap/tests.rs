@@ -1,5 +1,6 @@
 use super::{
-    bootstrap_evidence_kind, new_delivery_tracker, BootstrapEvidenceKind, DeliveryTracker,
+    ack_envelope, bootstrap_evidence_kind, new_delivery_tracker, BootstrapEvidenceKind,
+    DeliveryTracker, DELIVERY_ACK, DELIVERY_DATA, DELIVERY_ID_LEN,
 };
 use alloy_primitives::B256;
 use commonware_cryptography::{bls12381, Signer as _};
@@ -315,6 +316,53 @@ fn delivery_tracker_merges_recipients_for_identical_payloads() {
     assert!(!tracker.pending.is_empty());
     tracker.acknowledge(&peer_b, id);
     assert!(tracker.pending.is_empty());
+}
+
+fn valid_delivery_fixture() -> (DeliveryTracker, Vec<u8>, B256) {
+    let (_, _, mut tracker) = known_peer_delivery(0x44, 106, 107);
+    let payload = b"delivery-parser";
+    let envelope = tracker.envelope(Recipients::All, payload.to_vec()).unwrap();
+    let (tag, id, decoded) = tracker.decode(&envelope).unwrap();
+    assert_eq!(tag, DELIVERY_DATA);
+    assert_eq!(decoded, payload);
+    (tracker, envelope, id)
+}
+
+#[test]
+fn delivery_decode_rejects_a_short_input() {
+    let (tracker, envelope, _) = valid_delivery_fixture();
+    assert!(envelope.len() > DELIVERY_ID_LEN);
+    assert!(tracker.decode(&envelope[..DELIVERY_ID_LEN]).is_none());
+}
+
+#[test]
+fn delivery_decode_rejects_a_bad_tag() {
+    let (tracker, mut envelope, _) = valid_delivery_fixture();
+    envelope[0] = 0x00;
+    assert!(tracker.decode(&envelope).is_none());
+}
+
+#[test]
+fn delivery_decode_rejects_a_changed_message_id() {
+    let (tracker, envelope, _) = valid_delivery_fixture();
+    let mut changed = envelope.clone();
+    changed[1] ^= 0x01;
+    let id_end = 1 + DELIVERY_ID_LEN;
+    assert_eq!(&changed[id_end..], &envelope[id_end..]);
+    assert!(tracker.decode(&changed).is_none());
+}
+
+#[test]
+fn delivery_decode_rejects_a_nonempty_ack() {
+    let (tracker, _, id) = valid_delivery_fixture();
+    let ack = ack_envelope(id);
+    let (tag, ack_id, payload) = tracker.decode(&ack).unwrap();
+    assert_eq!(tag, DELIVERY_ACK);
+    assert_eq!(ack_id, id);
+    assert!(payload.is_empty());
+    let mut nonempty = ack;
+    nonempty.push(0x01);
+    assert!(tracker.decode(&nonempty).is_none());
 }
 
 fn known_peer_delivery(

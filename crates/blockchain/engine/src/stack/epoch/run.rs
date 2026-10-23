@@ -321,14 +321,7 @@ where
     let dkg_manager = DkgManagerMailbox::new();
     let ancestry_readiness_target = last_consensus_finalized.get();
     let ancestry_readiness =
-        AncestryReadiness::new(last_execution_height, ancestry_readiness_target);
-    if !ancestry_readiness.is_ready() {
-        info!(
-            last_execution_height,
-            last_consensus_finalized = ancestry_readiness_target,
-            "marshal ancestry gate closed until executor backfills durable consensus blocks"
-        );
-    }
+        startup_ancestry_readiness(last_execution_height, ancestry_readiness_target);
     // -- 9. Get beacon engine handle and payload builder handle ----------
     let engine_handle: EngineHandle = node.add_ons_handle.beacon_engine_handle.clone();
     let payload_builder = node.payload_builder_handle.clone();
@@ -358,25 +351,12 @@ where
     // the node can import it and forkchoice can select it after restart.
     let recovery_anchor_height =
         durable_recovery_anchor_height(last_execution_height, last_consensus_finalized.get());
-    let recovery_anchor_hash = if recovery_anchor_height == 0 {
-        genesis_hash
-    } else if recovery_anchor_height == last_execution_height {
-        last_execution_hash
-    } else {
-        node.provider
-            .block_hash(recovery_anchor_height)
-            .map_err(
-                |error| crate::errors::StackEpochError::ReadRecoveryAnchorBlockHash {
-                    height: recovery_anchor_height,
-                    reason: format!("{error}"),
-                },
-            )?
-            .ok_or(
-                crate::errors::StackEpochError::MissingRecoveryAnchorBlockHash {
-                    height: recovery_anchor_height,
-                },
-            )?
-    };
+    let recovery_anchor_hash = recovery_anchor_hash(
+        &node.provider,
+        recovery_anchor_height,
+        (last_execution_height, last_execution_hash),
+        genesis_hash,
+    )?;
 
     // -- 10. Create executor actor (state-aware init) --------------------
     let (mut executor_actor, executor_mailbox) = ExecutorActor::new(
@@ -415,44 +395,13 @@ where
     }
 
     if is_fresh_bootstrap {
-        use outbe_primitives::consensus::{GenesisValidator, GenesisValidators};
-
-        let genesis_vals: Vec<GenesisValidator> = validator_set
-            .addresses
-            .iter()
-            .zip(validator_set.public_keys.iter())
-            .map(|(addr, pk)| {
-                let pk_bytes = commonware_codec::Encode::encode(pk);
-                let mut pubkey = [0u8; 48];
-                let len = pk_bytes.len().min(48);
-                pubkey[..len].copy_from_slice(&pk_bytes[..len]);
-                GenesisValidator {
-                    address: *addr,
-                    consensus_pubkey: pubkey,
-                }
-            })
-            .collect();
-
-        bridge.set_genesis_validators(GenesisValidators {
-            validators: genesis_vals,
+        let bootstrap_artifact = seed_genesis_validation(
+            &bridge,
+            &validator_set,
             epoch_length_blocks,
-        });
-
-        let bootstrap_artifact = genesis_dkg_boundary_artifact
-            .take()
-            .ok_or(crate::errors::StackEpochError::FreshBootstrapLostGenesisBoundary)?;
-        if bootstrap_artifact.vrf_material_version != vrf_material_version {
-            return Err(
-                crate::errors::StackEpochError::GenesisBoundaryVrfVersionDiffersFromActive.into(),
-            );
-        }
-        info!(
+            &mut genesis_dkg_boundary_artifact,
             vrf_material_version,
-            vrf_group_public_key = %bootstrap_artifact.vrf_group_public_key,
-            target_set_hash = %bootstrap_artifact.target_set_hash,
-            active_set_hash = %bootstrap_artifact.reshare.active_set_hash,
-            "genesis DKG boundary artifact queued; VRF active from view 2"
-        );
+        )?;
         dkg_manager.note_bootstrap_outcome(bootstrap_artifact);
         info!("fresh bootstrap - genesis validators validation data queued");
     } else {
@@ -889,6 +838,99 @@ where
     }
     .run(ctx, recovered_pending_boundary, recovery_anchor_height)
     .await
+}
+
+fn startup_ancestry_readiness(
+    last_execution_height: u64,
+    ancestry_readiness_target: u64,
+) -> AncestryReadiness {
+    let ancestry_readiness =
+        AncestryReadiness::new(last_execution_height, ancestry_readiness_target);
+    if !ancestry_readiness.is_ready() {
+        info!(
+            last_execution_height,
+            last_consensus_finalized = ancestry_readiness_target,
+            "marshal ancestry gate closed until executor backfills durable consensus blocks"
+        );
+    }
+    ancestry_readiness
+}
+
+fn recovery_anchor_hash(
+    provider: &impl BlockHashReader,
+    recovery_anchor_height: u64,
+    execution_head: (u64, B256),
+    genesis_hash: B256,
+) -> Result<B256> {
+    if recovery_anchor_height == 0 {
+        Ok(genesis_hash)
+    } else if recovery_anchor_height == execution_head.0 {
+        Ok(execution_head.1)
+    } else {
+        super::super::dkg::startup::required_block_hash(
+            provider,
+            recovery_anchor_height,
+            |reason| {
+                crate::errors::StackEpochError::ReadRecoveryAnchorBlockHash {
+                    height: recovery_anchor_height,
+                    reason,
+                }
+                .into()
+            },
+            crate::errors::StackEpochError::MissingRecoveryAnchorBlockHash {
+                height: recovery_anchor_height,
+            }
+            .into(),
+        )
+    }
+}
+
+fn seed_genesis_validation(
+    bridge: &ConsensusExecutionBridge,
+    validator_set: &validators::ValidatorSet,
+    epoch_length_blocks: u32,
+    genesis_dkg_boundary_artifact: &mut Option<DkgBoundaryArtifact>,
+    vrf_material_version: u64,
+) -> Result<DkgBoundaryArtifact> {
+    use outbe_primitives::consensus::{GenesisValidator, GenesisValidators};
+
+    let genesis_vals: Vec<GenesisValidator> = validator_set
+        .addresses
+        .iter()
+        .zip(validator_set.public_keys.iter())
+        .map(|(addr, pk)| {
+            let pk_bytes = commonware_codec::Encode::encode(pk);
+            let mut pubkey = [0u8; 48];
+            let len = pk_bytes.len().min(48);
+            pubkey[..len].copy_from_slice(&pk_bytes[..len]);
+            GenesisValidator {
+                address: *addr,
+                consensus_pubkey: pubkey,
+            }
+        })
+        .collect();
+
+    bridge.set_genesis_validators(GenesisValidators {
+        validators: genesis_vals,
+        epoch_length_blocks,
+    });
+
+    let bootstrap_artifact = genesis_dkg_boundary_artifact
+        .take()
+        .ok_or(crate::errors::StackEpochError::FreshBootstrapLostGenesisBoundary)?;
+    if bootstrap_artifact.vrf_material_version != vrf_material_version {
+        return Err(
+            crate::errors::StackEpochError::GenesisBoundaryVrfVersionDiffersFromActive.into(),
+        );
+    }
+    info!(
+        vrf_material_version,
+        vrf_group_public_key = %bootstrap_artifact.vrf_group_public_key,
+        target_set_hash = %bootstrap_artifact.target_set_hash,
+        active_set_hash = %bootstrap_artifact.reshare.active_set_hash,
+        "genesis DKG boundary artifact queued; VRF active from view 2"
+    );
+    Ok(bootstrap_artifact)
 }
 
 fn reconcile_recovered_vrf_material(
