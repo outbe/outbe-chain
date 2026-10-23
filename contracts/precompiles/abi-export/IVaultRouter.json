@@ -1100,6 +1100,22 @@
   },
   {
     "type": "error",
+    "name": "DateStep",
+    "inputs": [
+      {
+        "name": "kind",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "dateKey",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "IndexOutOfBounds",
     "inputs": []
   },
@@ -1417,21 +1433,5 @@
     "type": "error",
     "name": "ZeroAddress",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "DateStep",
-    "inputs": [
-      {
-        "name": "kind",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "dateKey",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ]
   }
 ]

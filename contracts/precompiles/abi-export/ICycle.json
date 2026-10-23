@@ -131,6 +131,22 @@
   },
   {
     "type": "error",
+    "name": "DateStep",
+    "inputs": [
+      {
+        "name": "kind",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "dateKey",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InvalidBlockUtcDay",
     "inputs": [
       {
@@ -200,21 +216,5 @@
     "type": "error",
     "name": "ZeroTriggerPeriod",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "DateStep",
-    "inputs": [
-      {
-        "name": "kind",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "dateKey",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ]
   }
 ]
