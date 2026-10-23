@@ -62,18 +62,8 @@ pub(super) async fn prepare_attempt<
         .map_err(RenewalError::CalculateNormativeGas)?;
     let chain_id = rpc.chain_id().await?;
     let account_nonce = rpc.transaction_count(evm_signer.address()).await?;
-    let gas_price = buffered_gas_price(rpc.gas_price().await?);
-    let required_balance = gas_price.saturating_mul(U256::from(gas_limit));
-    let balance = rpc.balance(evm_signer.address()).await?;
-    if balance < required_balance {
-        return Err(RenewalError::InsufficientSignerBalance {
-            address: evm_signer.address(),
-            balance,
-            required_balance,
-        }
-        .into());
-    }
-    let raw = evm_signer.sign_renewal(UnsignedRelayTransactionV1 {
+    let gas_price: U256 = buffered_gas_price(rpc.gas_price().await?);
+    let raw = evm_signer.sign_zero_fee_renewal(UnsignedRelayTransactionV1 {
         chain_id,
         account_nonce,
         gas_price,

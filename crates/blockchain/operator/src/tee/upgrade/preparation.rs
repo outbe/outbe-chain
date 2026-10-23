@@ -111,7 +111,7 @@ fn recover_saved_candidate(node_data_dir: &Path, views: &PreparationViews) -> Re
             .map_err(UpgradeError::InvalidDurableTransition)?;
         if active.schedule.finalized_timestamp >= evidence.intent().requested_valid_until {
             ensure_transition_source_or_target_v1(&active.binding, evidence.intent())?;
-            if transition_target_matches_v1(&active.binding, evidence.intent()) {
+            if transition_target_matches_v1(&active.binding, evidence.intent())? {
                 return Err(UpgradeError::ExpiredTransitionAlreadyExecuted.into());
             }
             outbe_tee::node_host::clear_expired_transition_submission_v1(

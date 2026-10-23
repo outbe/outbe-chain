@@ -38,7 +38,6 @@ fn boundary() -> DkgBoundaryArtifact {
             new_active_set: vec![Address::repeat_byte(0x33)],
             active_set_hash: B256::repeat_byte(0x55),
         },
-        tee_recipient_pubkeys: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
         tee_expired_target_exclusions_hash: B256::ZERO,
     }

@@ -10,7 +10,7 @@ async fn serve_response(
     response: Value,
 ) -> Result<(HttpRenewalRpc, JoinHandle<Result<()>>)> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
-    let rpc = HttpRenewalRpc::new(format!("http://{}", listener.local_addr()?));
+    let rpc = HttpRenewalRpc::new(format!("http://{}", listener.local_addr()?))?;
     let expected = json!({"jsonrpc":"2.0", "id":1, "method":method, "params":params});
     let server = tokio::spawn(async move {
         tokio::time::timeout(std::time::Duration::from_secs(5), async move {
@@ -171,4 +171,85 @@ async fn adapter_rejects_bad_response_identity_errors_and_invalid_results() -> R
     );
     server.await??;
     Ok(())
+}
+
+/// Loopback peer that accepts one TCP connection and writes nothing.
+/// `https` stalls inside the connect timeout (TLS handshake). `http` stalls
+/// on the response-header wait.
+async fn silent_loopback(scheme: &str) -> Result<String> {
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    tokio::spawn(async move {
+        if let Ok((socket, _)) = listener.accept().await {
+            let _hold = socket;
+            std::future::pending::<()>().await;
+        }
+    });
+    Ok(format!("{scheme}://{addr}"))
+}
+
+async fn assert_chain_id_fails_between(
+    url: &str,
+    ceiling_secs: u64,
+    floor_secs: u64,
+    label: &str,
+) -> Result<()> {
+    let rpc = HttpRenewalRpc::new(url.to_string())?;
+    let started = std::time::Instant::now();
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(ceiling_secs),
+        ChainRpc::chain_id(&rpc),
+    )
+    .await;
+    assert!(result.is_ok(), "{label} exceeded {ceiling_secs}s");
+    assert!(result.unwrap().is_err());
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed >= std::time::Duration::from_secs(floor_secs),
+        "{elapsed:?}"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(ceiling_secs),
+        "{elapsed:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn stalled_response_returns_inside_the_request_timeout() -> Result<()> {
+    let url = silent_loopback("http").await?;
+    assert_chain_id_fails_between(&url, 45, 25, "stalled response headers").await
+}
+
+#[tokio::test]
+async fn stalled_connect_returns_inside_the_connect_timeout() -> Result<()> {
+    let url = silent_loopback("https").await?;
+    assert_chain_id_fails_between(&url, 15, 8, "stalled TLS handshake").await
+}
+
+#[tokio::test]
+async fn stalled_partial_body_returns_inside_the_request_timeout() -> Result<()> {
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    tokio::spawn(async move {
+        let Ok((mut socket, _)) = listener.accept().await else {
+            return;
+        };
+        let mut request = [0u8; 2048];
+        let _ = socket.read(&mut request).await;
+        let _ = socket
+            .write_all(
+                b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 200\r\n\r\n{\"incomplete\":",
+            )
+            .await;
+        let _ = socket.flush().await;
+        std::future::pending::<()>().await;
+    });
+    assert_chain_id_fails_between(
+        &format!("http://{addr}"),
+        45,
+        25,
+        "stalled partial response body",
+    )
+    .await
 }

@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, B256};
+use alloy_primitives::B256;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
@@ -68,64 +68,5 @@ fn empty_registry_reads_zero() {
     with_registry(|reg| {
         assert!(!reg.is_bootstrapped().unwrap());
         assert_eq!(reg.offer_public_key().unwrap(), B256::ZERO);
-    });
-}
-
-#[test]
-fn boundary_recipient_keys_recorded_and_overwritten() {
-    with_registry(|reg| {
-        let val_a = Address::repeat_byte(0x11);
-        let val_b = Address::repeat_byte(0x12);
-
-        // Unannounced validators read zero.
-        assert_eq!(reg.announced_recipient_key(val_a).unwrap(), B256::ZERO);
-
-        reg.record_boundary_recipient_keys(&[
-            (val_a, B256::repeat_byte(0xA1)),
-            (val_b, B256::repeat_byte(0xB1)),
-        ])
-        .unwrap();
-        assert_eq!(
-            reg.announced_recipient_key(val_a).unwrap(),
-            B256::repeat_byte(0xA1)
-        );
-        assert_eq!(
-            reg.announced_recipient_key(val_b).unwrap(),
-            B256::repeat_byte(0xB1)
-        );
-
-        // Latest announcement wins (key rotation).
-        reg.record_boundary_recipient_keys(&[(val_a, B256::repeat_byte(0xA2))])
-            .unwrap();
-        assert_eq!(
-            reg.announced_recipient_key(val_a).unwrap(),
-            B256::repeat_byte(0xA2)
-        );
-        // Untouched validator keeps its prior announcement.
-        assert_eq!(
-            reg.announced_recipient_key(val_b).unwrap(),
-            B256::repeat_byte(0xB1)
-        );
-    });
-}
-
-#[test]
-fn boundary_recipient_keys_are_independent_of_node_host_binding() {
-    with_registry(|reg| {
-        let validator = Address::repeat_byte(0x11);
-
-        // A boundary announcement does not bootstrap the registry or create a
-        // validator-to-NodeHost association.
-        reg.record_boundary_recipient_keys(&[(validator, B256::repeat_byte(0xA1))])
-            .unwrap();
-        assert!(!reg.is_bootstrapped().unwrap());
-        assert_eq!(
-            reg.validator_v1_node_hash.read(&validator).unwrap(),
-            B256::ZERO
-        );
-        assert_eq!(
-            reg.announced_recipient_key(validator).unwrap(),
-            B256::repeat_byte(0xA1)
-        );
     });
 }
