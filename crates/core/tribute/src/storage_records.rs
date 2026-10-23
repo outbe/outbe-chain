@@ -1,10 +1,12 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_macros::storage_record;
-use outbe_primitives::storage::indexed_list::{
-    create_indexed, delete_indexed, delete_loaded_indexed, IndexedList,
-};
+#[cfg(test)]
+use outbe_primitives::storage::indexed_list::delete_indexed;
+use outbe_primitives::storage::indexed_list::{create_indexed, delete_loaded_indexed, IndexedList};
 use outbe_primitives::{time::WorldwideDay, wwd_entity_id::WwdEntityId};
 
+/// Stored tribute. `tribute_price_minor` is the public six-decimal price.
+/// `encrypted_amounts` is ciphertext of the plaintext issuance and nominal.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[storage_record(exists_field = owner)]
 pub struct StoredTribute {
@@ -179,11 +181,16 @@ impl<'storage> crate::TributeContract<'storage> {
         create_indexed(&self.records, record, self.record_indexes(record))
     }
 
-    pub fn delete_state_record(&self, id: WwdEntityId) -> outbe_primitives::error::Result<()> {
+    /// Test helper. `create_nod` deletes through [`Self::delete_loaded_state_record`].
+    #[cfg(test)]
+    pub(crate) fn delete_state_record(
+        &self,
+        id: WwdEntityId,
+    ) -> outbe_primitives::error::Result<()> {
         delete_indexed(&self.records, id, |record| self.record_indexes(record))
     }
 
-    pub fn delete_loaded_state_record(
+    pub(crate) fn delete_loaded_state_record(
         &self,
         record: &crate::TributeRecord,
     ) -> outbe_primitives::error::Result<()> {
@@ -200,20 +207,44 @@ mod tests {
     use super::*;
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 
+    fn sample_stored() -> StoredTribute {
+        let id =
+            WwdEntityId::from_day_and_digest(WorldwideDay::new(20261015), B256::repeat_byte(7));
+        let mut record = StoredTribute::with_key(id);
+        record.owner = Address::repeat_byte(1);
+        record.chain_id = 54322345;
+        record.worldwide_day = id.worldwide_day();
+        record.issuance_currency = 840;
+        record.reference_currency = 978;
+        record.tribute_price_minor = U256::from(1_250_000u64);
+        record.offer_input_hash = B256::repeat_byte(0x44);
+        record.encrypted_creator_public_key = vec![0xa5; 56];
+        record.encrypted_amounts = vec![0x5a; 88];
+        record
+    }
+
+    fn both_indexes_empty(contract: &crate::TributeContract<'_>, record: &StoredTribute) -> bool {
+        contract.owner_ids.list(&record.owner).is_empty().unwrap()
+            && contract
+                .day_ids
+                .list(&record.worldwide_day)
+                .is_empty()
+                .unwrap()
+    }
+
     #[test]
-    fn indexed_record_creation_reverts_if_an_index_rejects_it() {
+    fn occupied_owner_slot_rejects_insert_and_leaves_both_indexes_empty() {
         let mut provider = HashMapStorageProvider::new(54322345);
         StorageHandle::enter(&mut provider, |storage| {
             let contract = crate::TributeContract::new(storage);
-            let id =
-                WwdEntityId::from_day_and_digest(WorldwideDay::new(20261015), B256::repeat_byte(7));
-            let mut record = StoredTribute::with_key(id);
-            record.owner = Address::repeat_byte(1);
+            let record = sample_stored();
+            let id = record.tribute_id;
             contract.owner_id_position.write(&id, 9).unwrap();
             assert!(contract.insert_state_record(&record).is_err());
             assert!(contract.records.get(id).unwrap().is_none());
-            assert!(contract.owner_ids.list(&record.owner).is_empty().unwrap());
+            assert!(both_indexes_empty(&contract, &record));
             assert_eq!(contract.owner_id_position.read(&id).unwrap(), 9);
+            assert_eq!(contract.day_id_position.read(&id).unwrap(), 0);
         });
     }
 
@@ -222,27 +253,24 @@ mod tests {
         let mut provider = HashMapStorageProvider::new(54322345);
         StorageHandle::enter(&mut provider, |storage| {
             let contract = crate::TributeContract::new(storage);
-            let id =
-                WwdEntityId::from_day_and_digest(WorldwideDay::new(20261015), B256::repeat_byte(7));
-            let mut record = StoredTribute::with_key(id);
-            record.owner = Address::repeat_byte(1);
-            record.chain_id = 54322345;
-            record.worldwide_day = id.worldwide_day();
-            record.encrypted_creator_public_key = vec![0xa5; 56];
-            record.encrypted_amounts = vec![0x5a; 88];
+            let mut record = sample_stored();
+            let id = record.tribute_id;
             assert!(contract.records.get(id).unwrap().is_none());
+            assert!(both_indexes_empty(&contract, &record));
             contract.records.create(&record).unwrap();
             assert_eq!(contract.records.get(id).unwrap(), Some(record.clone()));
+            assert!(both_indexes_empty(&contract, &record));
             assert!(contract.records.create(&record).is_err());
             record.encrypted_amounts = vec![0x33; 1];
             contract.records.update(&record).unwrap();
             assert_eq!(contract.records.get(id).unwrap(), Some(record.clone()));
             contract.records.delete(id).unwrap();
             assert!(contract.records.get(id).unwrap().is_none());
-            assert!(contract
-                .records
-                .entry(id)
-                .encrypted_amounts()
+            assert!(both_indexes_empty(&contract, &record));
+            let entry = contract.records.entry(id);
+            assert!(entry.encrypted_amounts().read().unwrap().is_empty());
+            assert!(entry
+                .encrypted_creator_public_key()
                 .read()
                 .unwrap()
                 .is_empty());

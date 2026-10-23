@@ -63,13 +63,6 @@ pub fn dispatch(
                     .map(|id| id.to_u256())
                     .collect::<Vec<_>>())
             }),
-            getTributesByDay(c) => view(c, |c| {
-                Ok(tribute
-                    .get_tribute_ids_by_day(c.worldwideDay.into())?
-                    .into_iter()
-                    .map(|id| id.to_u256())
-                    .collect::<Vec<_>>())
-            }),
             getLeague(c) => view(c, |c| tribute.get_league(WwdEntityId::from(c.tributeId))),
             getDayLeagueFraction(c) => view(c, |c| {
                 tribute.get_day_league_fraction(c.worldwideDay.into(), c.league)

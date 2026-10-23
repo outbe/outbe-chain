@@ -94,6 +94,11 @@ impl TributeFactoryContract<'_> {
         if let TributeOfferStatus::Rejected { reason } = &result.status {
             return Err(TributeFactoryError::EnclaveRejected(reason.clone()).into());
         }
+        // One host admission guard. An empty SU list must not reach proof use,
+        // marker writes, issuance, or reward activity.
+        if result.su_hashes.is_empty() {
+            return Err(TributeFactoryError::EmptySuHashList.into());
+        }
         validate_zk_result(
             &zk_proof,
             verification_key,

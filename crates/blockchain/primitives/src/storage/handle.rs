@@ -61,10 +61,26 @@ impl<'storage> StorageHandle<'storage> {
     }
 
     pub fn require_metadosis_process_ready(&self) -> Result<()> {
+        self.require_cycle_lifecycle(super::metadosis_process_ready_binding)
+    }
+
+    pub fn require_metadosis_init_genesis(&self) -> Result<()> {
+        self.require_cycle_lifecycle(super::metadosis_init_genesis_binding)
+    }
+
+    pub fn require_metadosis_cycle_allocation(&self) -> Result<()> {
+        self.require_cycle_lifecycle(super::metadosis_cycle_allocation_binding)
+    }
+
+    pub fn require_metadosis_advance_due(&self) -> Result<()> {
+        self.require_cycle_lifecycle(super::metadosis_advance_due_binding)
+    }
+
+    fn require_cycle_lifecycle(&self, binding_for: fn(u64, u64, u64) -> B256) -> Result<()> {
         let chain_id = self.chain_id()?;
         let block_number = self.block_number()?;
         let timestamp = self.now_secs()?;
-        let binding = super::metadosis_process_ready_binding(chain_id, block_number, timestamp);
+        let binding = binding_for(chain_id, block_number, timestamp);
         self.with_provider(|provider| {
             provider.require_metadosis_mutation_frame(
                 super::MetadosisMutationPurposeTag::CycleLifecycle,

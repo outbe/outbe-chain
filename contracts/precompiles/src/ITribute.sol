@@ -17,7 +17,7 @@ interface ITribute {
     error CanonicalIdentityMismatch(uint256 expected, uint256 found);
     error InvalidLeague(uint16 value);
     error MetadosisNotCompleted();
-    error NodCreationWindowExpired();
+    error NodCreationBeforeCompletion();
     error CallerNotTributeOwner();
     error EntryPriceUnavailable(uint32 priceDay, uint16 currency);
     error FormingWindowOverflow();
@@ -80,7 +80,6 @@ interface ITribute {
         returns (uint32 day, uint64 formingStart, uint64 formingEnd, uint64 offeringsStart, uint64 offeringEnd);
     function getActiveWorldwideDays() external view returns (uint32[] memory wwds);
     function getTributesByOwner(address owner) external view returns (uint256[] memory tributeIds);
-    function getTributesByDay(uint32 worldwideDay) external view returns (uint256[] memory tributeIds);
     function getLeague(uint256 tributeId) external view returns (uint16 league);
     function getDayLeagueFraction(uint32 worldwideDay, uint16 league) external view returns (uint64 fraction);
     function createNod(uint256 tributeId) external returns (uint256 nodId);

@@ -11,8 +11,9 @@ fn init_genesis_day_creates_7_day_lookahead_with_bidirectional_links_and_closed_
         let wwd_0 = WorldwideDay::new(20260920);
         let genesis_ts = wwd_0.start_timestamp() + 3_600;
         let anchor_utc_day = timestamp_to_date_key(genesis_ts);
+        storage.set_block_timestamp(U256::from(genesis_ts)).unwrap();
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, genesis_ts, CHAIN_ID),
+            BlockContext::empty_for_tests(storage.block_number().unwrap(), genesis_ts, CHAIN_ID),
             storage.clone(),
         );
         crate::commands::init_genesis_day(&ctx).unwrap();
@@ -91,8 +92,9 @@ fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_
         let wwd_sep_01 = WorldwideDay::new(20260901);
         let genesis_ts = wwd_sep_01.start_timestamp() + 3_600;
         let anchor_utc_day = timestamp_to_date_key(genesis_ts);
+        storage.set_block_timestamp(U256::from(genesis_ts)).unwrap();
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, genesis_ts, CHAIN_ID),
+            BlockContext::empty_for_tests(storage.block_number().unwrap(), genesis_ts, CHAIN_ID),
             storage.clone(),
         );
         crate::commands::init_genesis_day(&ctx).unwrap();
@@ -164,7 +166,14 @@ fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_
         assert_eq!(due_after_halt.day, 20260925);
         assert_eq!(due_after_halt.wwd, wwd_sep_01);
 
-        crate::commands::start_metadosis(&restart_ctx).unwrap();
+        // Nested process-ready checks recompute the lease from the provider clock
+        // and block. This restart must report the same values the command binds.
+        storage.set_block_timestamp(U256::from(restart_ts)).unwrap();
+        let aligned = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(storage.block_number().unwrap(), restart_ts, CHAIN_ID),
+            storage.clone(),
+        );
+        crate::commands::start_metadosis(&aligned).unwrap();
         let completed = api::emission_day(storage, 20260925).unwrap().unwrap();
         assert_eq!(completed.day, 20260925);
         assert_eq!(completed.wwd, wwd_sep_01);
