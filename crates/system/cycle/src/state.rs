@@ -15,7 +15,7 @@
 //! ## Resolution contract
 //!
 //! [`resolve_accounting_window`] is a pure function over
-//! `(spec.period_seconds, spec.start_offset_seconds, block.timestamp,
+//! `(spec.period_seconds(), spec.start_offset_seconds, block.timestamp,
 //! block.block_number)`. It returns:
 //!
 //! * `None` when the trigger opted out of accounting gating
@@ -70,17 +70,32 @@ pub(crate) fn set_last_accounted_block_number(
     accounting.last_accounted_block_number.write(block_number)
 }
 
-/// Records that V2 Phase 1 for `block_number` committed successfully.
+/// Records exact V2 Phase 1 progress for `block_number`.
 ///
-/// Intended writer for `ACCOUNTING_PROGRESS_ADDRESS` slot 0 (INV4).
-/// The V2 executor Phase 1 path calls this function. The caller is
-/// responsible for ordering. Phase 1 commits an exact-parent successor
-/// block, so `block_number` should equal the parent height being
-/// accounted for.
+/// Input `0` returns [`CycleError::ZeroAccountingProgress`] and does not
+/// read or write the progress slot. A lower height returns
+/// [`CycleError::BlockNumberRegression`]. A positive height equal to the
+/// stored height returns `Ok` and does not write or log. The only write is
+/// the exact successor `current + 1`, including the first commit `0 -> 1`.
+/// Any other forward height returns [`CycleError::AccountingProgressGap`]
+/// and does not write or log.
 pub fn record_phase1_progress(ctx: &BlockRuntimeContext, block_number: u64) -> Result<()> {
+    if block_number == 0 {
+        return Err(CycleError::ZeroAccountingProgress.into());
+    }
     let current = last_accounted_block_number(ctx)?;
     if block_number < current {
         return Err(CycleError::BlockNumberRegression {
+            current,
+            attempted: block_number,
+        }
+        .into());
+    }
+    if block_number == current {
+        return Ok(());
+    }
+    if current.checked_add(1) != Some(block_number) {
+        return Err(CycleError::AccountingProgressGap {
             current,
             attempted: block_number,
         }
@@ -135,9 +150,7 @@ pub fn resolve_accounting_window(
     if block.block_number <= 1 {
         return None;
     }
-    if spec.period_seconds == 0 {
-        return None;
-    }
+    let period_seconds = spec.period_seconds();
 
     // end_inclusive = parent block. The Phase 1 -> Phase 2 ordering
     // invariant means that a correctly-built block has Phase 1
@@ -151,13 +164,9 @@ pub fn resolve_accounting_window(
     // timestamp itself as an opaque deterministic marker. The proptest
     // pins it only on the property of determinism, not on a specific
     // numeric meaning.
-    let offset_in_period = spec.start_offset_seconds % spec.period_seconds;
-    let period_start_ts = block
-        .timestamp
-        .saturating_sub(offset_in_period)
-        .checked_div(spec.period_seconds)
-        .unwrap_or(0)
-        .saturating_mul(spec.period_seconds)
+    let offset_in_period = spec.start_offset_seconds % period_seconds;
+    let period_start_ts = (block.timestamp.saturating_sub(offset_in_period) / period_seconds)
+        .saturating_mul(period_seconds)
         .saturating_add(offset_in_period);
     Some(AccountingWindow {
         start_block: period_start_ts,

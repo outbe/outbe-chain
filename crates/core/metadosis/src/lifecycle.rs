@@ -24,6 +24,15 @@ use crate::{
     schema::{emission_day_state, EmissionDay, MetadosisContract},
 };
 
+fn date_step_error(
+    err: outbe_primitives::time::TimeError,
+) -> outbe_primitives::error::PrecompileError {
+    match err.date_step() {
+        Some((kind, date_key)) => MetadosisCallerError::DateStep { kind, date_key }.into(),
+        None => outbe_primitives::error::PrecompileError::Fatal(err.to_string()),
+    }
+}
+
 pub(crate) fn validate_metadosis_timestamp(timestamp: u64) -> Result<()> {
     timestamp
         .checked_add(outbe_primitives::time::UTC_PLUS_14_OFFSET)
@@ -40,24 +49,7 @@ pub(crate) fn init_genesis_day_inner(
     metadosis: &mut MetadosisContract,
     ctx: &BlockRuntimeContext,
 ) -> Result<()> {
-    create_lookahead_days(metadosis, ctx, ctx.block.timestamp)?;
-    initialize_bootstrap_if_needed(metadosis)
-}
-
-fn initialize_bootstrap_if_needed(metadosis: &mut MetadosisContract) -> Result<()> {
-    if metadosis.bootstrap_end_time.read()? != 0 {
-        return Ok(());
-    }
-    let tribute = TributeContract::new(metadosis.storage.clone());
-    let active = tribute.active_wwd.read_all()?;
-    let first = *active
-        .first()
-        .ok_or(MetadosisStorageCorruptionError::BootstrapNeedsGenesisWorldwideDay)?;
-    let record = tribute
-        .worldwide_days
-        .get(first)?
-        .ok_or(MetadosisStorageCorruptionError::GenesisWorldwideDayRecordDisappeared)?;
-    metadosis.bootstrap_end_time.write(record.offerings_start)
+    create_lookahead_days(metadosis, ctx, ctx.block.timestamp)
 }
 
 pub(crate) fn create_lookahead_days(
@@ -89,7 +81,8 @@ pub(crate) fn compute_wwd_schedule(wwd: WorldwideDay) -> Result<(NewWwdSchedule,
         .checked_add(outbe_chain_constants::get_metadosis_offering_period_seconds())
         .ok_or(MetadosisCallerError::OfferingWindowOverflow)?;
     let day = timestamp_to_date_key(offering_end);
-    let metadosis_start = date_key_to_utc_timestamp(next_date_key(day))
+    let next_day = next_date_key(day).map_err(date_step_error)?;
+    let metadosis_start = date_key_to_utc_timestamp(next_day)
         .checked_add(1)
         .ok_or(MetadosisCallerError::WaitingWindowOverflow)?;
     Ok((
@@ -157,7 +150,8 @@ pub(crate) fn ensure_emission_day_with_limit(
     }
     let wwd = WorldwideDay::new(day);
     let (schedule, _) = compute_wwd_schedule(wwd)?;
-    let metadosis_start = date_key_to_utc_timestamp(next_date_key(day))
+    let next_day = next_date_key(day).map_err(date_step_error)?;
+    let metadosis_start = date_key_to_utc_timestamp(next_day)
         .checked_add(1)
         .ok_or(MetadosisCallerError::WaitingWindowOverflow)?;
     metadosis.emission_days.create(&EmissionDay {
@@ -291,7 +285,7 @@ pub(crate) fn find_due_emission_day(
         }
     }
 
-    let prev_utc_day = previous_date_key(timestamp_to_date_key(now));
+    let prev_utc_day = previous_date_key(timestamp_to_date_key(now)).map_err(date_step_error)?;
     if let Some(record) = metadosis.emission_days.get(prev_utc_day)? {
         if record.state == emission_day_state::NONE && now >= record.metadosis_start {
             return Ok(Some(record));

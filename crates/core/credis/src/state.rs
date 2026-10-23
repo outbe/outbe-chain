@@ -12,7 +12,7 @@ use outbe_primitives::expiry_queue;
 use outbe_primitives::storage::dsl::Map;
 use outbe_primitives::storage::indexed_list::{create_indexed, delete_indexed, IndexedList};
 
-use crate::errors::CredisError;
+use crate::errors::{date_step_error, CredisError};
 use crate::schema::{Credis, CredisContract, CredisState};
 
 impl<'storage> CredisContract<'storage> {
@@ -32,7 +32,7 @@ impl<'storage> CredisContract<'storage> {
             .get(credis_id)?
             .ok_or(CredisError::CredisNotFound)?;
         if record.lifecycle_state()? != CredisState::Settled {
-            let group = record.group_key();
+            let group = record.group_key().map_err(date_step_error)?;
             record.call_window_seconds = self.group_call_window_seconds.read(&group)?;
             record.call_threshold_seconds = self.group_call_threshold_seconds.read(&group)?;
             record.call_notice_period_seconds =
@@ -155,13 +155,14 @@ impl<'storage> CredisContract<'storage> {
     /// Puts a Credis in its group. The first member opens the group with its terms and
     /// puts it in the call bin of its call price.
     fn join_group(&mut self, record: &Credis) -> Result<()> {
-        let group = record.group_key();
+        let group = record.group_key().map_err(date_step_error)?;
         if self.group_member_count(group)? == 0 {
             self.group_currency
                 .write(&group, record.reference_currency)?;
             self.group_full_day.write(
                 &group,
-                outbe_primitives::time::first_full_day(record.issued_at),
+                outbe_primitives::time::first_full_day(record.issued_at)
+                    .map_err(date_step_error)?,
             )?;
             self.group_call_price_minor
                 .write(&group, record.call_price_minor)?;

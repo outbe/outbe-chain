@@ -11,7 +11,7 @@ use outbe_primitives::error::Result;
 use outbe_primitives::expiry_queue;
 use outbe_primitives::storage::indexed_list::IndexedList;
 
-use crate::errors::IntexError;
+use crate::errors::{date_step_error, IntexError};
 use crate::schema::{CallStamp, IntexContract, SeriesId, SeriesRecord};
 
 impl IntexContract<'_> {
@@ -87,7 +87,7 @@ impl IntexContract<'_> {
     /// Enrolls a series in its call group. The first member opens the group in its
     /// call-price bin and seals its call terms.
     pub fn join_call_group(&mut self, record: &SeriesRecord) -> Result<()> {
-        let group = record.group_key();
+        let group = record.group_key().map_err(date_step_error)?;
         if self.call_group_members.list(&group).len()? == 0 {
             let iso = record.reference_currency;
             self.call_group_currency.write(&group, iso)?;
@@ -146,7 +146,7 @@ impl IntexContract<'_> {
 
     /// The series' call, read from its group.
     pub fn call_stamp(&self, record: &SeriesRecord) -> Result<CallStamp> {
-        let group = record.group_key();
+        let group = record.group_key().map_err(date_step_error)?;
         self.group_stamp(group, self.call_group_called_at.read(&group)?)
     }
 

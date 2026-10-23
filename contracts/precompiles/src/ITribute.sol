@@ -26,6 +26,7 @@ interface ITribute {
     error DurationOverflow(string label);
     error TributeStateChangedAfterLoading();
     error LysisArithmetic(string reason);
+    error DateStep(uint8 kind, uint32 dateKey);
 
     event TributeIssued(
         address indexed owner,

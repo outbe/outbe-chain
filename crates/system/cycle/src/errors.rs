@@ -7,7 +7,7 @@ use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
 /// Represents errors returned by the ProtocolCycle runtime.
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CycleError {
     #[error("ProtocolCycle received invalid UTC day: active={active}, block={block}")]
@@ -36,6 +36,26 @@ pub enum CycleError {
     ActiveUtcDayNotInitialized,
     #[error("last_accounted_block_number regression: current={current}, attempted={attempted}")]
     BlockNumberRegression { current: u64, attempted: u64 },
+    #[error("accounting progress input is zero")]
+    ZeroAccountingProgress,
+    #[error("accounting progress is not the next block: current={current}, attempted={attempted}")]
+    AccountingProgressGap { current: u64, attempted: u64 },
+    #[error("trigger period is zero")]
+    ZeroTriggerPeriod,
+    #[error(
+        "schedule slot does not fit in u64: period={period}, offset={offset}, timestamp={timestamp}"
+    )]
+    ScheduleArithmeticOverflow {
+        period: u64,
+        offset: u64,
+        timestamp: u64,
+    },
+    #[error("date key {date_key} is before 20200101")]
+    DateBeforeMinimum { date_key: u32 },
+    #[error("date step from {date_key} does not fit u32")]
+    DateOverflow { date_key: u32 },
+    #[error("date step from {date_key} does not fit u64")]
+    TimestampStepOverflow { date_key: u32 },
 }
 
 impl From<CycleError> for PrecompileError {
@@ -95,6 +115,48 @@ impl From<CycleError> for PrecompileError {
                     ICycle::BlockNumberRegression { current, attempted }.abi_encode(),
                 ))
             }
+            CycleError::ZeroAccountingProgress => PrecompileError::RevertBytes(Bytes::from(
+                ICycle::ZeroAccountingProgress {}.abi_encode(),
+            )),
+            CycleError::AccountingProgressGap { current, attempted } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ICycle::AccountingProgressGap { current, attempted }.abi_encode(),
+                ))
+            }
+            CycleError::ZeroTriggerPeriod => {
+                PrecompileError::RevertBytes(Bytes::from(ICycle::ZeroTriggerPeriod {}.abi_encode()))
+            }
+            CycleError::ScheduleArithmeticOverflow {
+                period,
+                offset,
+                timestamp,
+            } => PrecompileError::RevertBytes(Bytes::from(
+                ICycle::ScheduleArithmeticOverflow {
+                    period,
+                    offset,
+                    timestamp,
+                }
+                .abi_encode(),
+            )),
+            error @ CycleError::DateBeforeMinimum { date_key: _ } => {
+                PrecompileError::Fatal(error.to_string())
+            }
+            CycleError::DateOverflow { date_key } => PrecompileError::RevertBytes(Bytes::from(
+                ICycle::DateStep {
+                    kind: 2,
+                    dateKey: date_key,
+                }
+                .abi_encode(),
+            )),
+            CycleError::TimestampStepOverflow { date_key } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    ICycle::DateStep {
+                        kind: 3,
+                        dateKey: date_key,
+                    }
+                    .abi_encode(),
+                ))
+            }
         }
     }
 }
@@ -113,6 +175,14 @@ mod tests {
         assert!(matches!(
             PrecompileError::from(fatal),
             PrecompileError::Fatal(msg) if msg == fatal_msg
+        ));
+        let before = CycleError::DateBeforeMinimum {
+            date_key: 20_191_231,
+        };
+        let before_msg = before.to_string();
+        assert!(matches!(
+            PrecompileError::from(before),
+            PrecompileError::Fatal(msg) if msg == before_msg
         ));
 
         let cases = [
@@ -173,6 +243,41 @@ mod tests {
                 },
                 ICycle::BlockNumberRegression::SELECTOR,
             ),
+            (
+                CycleError::ZeroAccountingProgress,
+                ICycle::ZeroAccountingProgress::SELECTOR,
+            ),
+            (
+                CycleError::AccountingProgressGap {
+                    current: 4,
+                    attempted: 9,
+                },
+                ICycle::AccountingProgressGap::SELECTOR,
+            ),
+            (
+                CycleError::ZeroTriggerPeriod,
+                ICycle::ZeroTriggerPeriod::SELECTOR,
+            ),
+            (
+                CycleError::ScheduleArithmeticOverflow {
+                    period: 2,
+                    offset: 0,
+                    timestamp: u64::MAX,
+                },
+                ICycle::ScheduleArithmeticOverflow::SELECTOR,
+            ),
+            (
+                CycleError::DateOverflow {
+                    date_key: 4_294_961_231,
+                },
+                ICycle::DateStep::SELECTOR,
+            ),
+            (
+                CycleError::TimestampStepOverflow {
+                    date_key: 20_260_101,
+                },
+                ICycle::DateStep::SELECTOR,
+            ),
         ];
         for (err, selector) in cases {
             match PrecompileError::from(err) {
@@ -190,5 +295,30 @@ mod tests {
         let decoded = ICycle::InvalidBlockUtcDay::abi_decode(&encoded).expect("day payload");
         assert_eq!(decoded.active, 20_260_228);
         assert_eq!(decoded.blockDay, 20_260_231);
+
+        let overflow = match PrecompileError::from(CycleError::ScheduleArithmeticOverflow {
+            period: 100,
+            offset: u64::MAX - 50,
+            timestamp: u64::MAX - 50,
+        }) {
+            PrecompileError::RevertBytes(bytes) => bytes,
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        };
+        let decoded =
+            ICycle::ScheduleArithmeticOverflow::abi_decode(&overflow).expect("overflow payload");
+        assert_eq!(decoded.period, 100);
+        assert_eq!(decoded.offset, u64::MAX - 50);
+        assert_eq!(decoded.timestamp, u64::MAX - 50);
+
+        let gap = match PrecompileError::from(CycleError::AccountingProgressGap {
+            current: 4,
+            attempted: 9,
+        }) {
+            PrecompileError::RevertBytes(bytes) => bytes,
+            other => panic!("expected typed revert bytes, got {other:?}"),
+        };
+        let decoded = ICycle::AccountingProgressGap::abi_decode(&gap).expect("gap payload");
+        assert_eq!(decoded.current, 4);
+        assert_eq!(decoded.attempted, 9);
     }
 }

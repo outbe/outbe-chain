@@ -270,7 +270,7 @@ pub fn set_coen_rate_for(storage: &StorageHandle<'_>, iso: u16, coen_iso_rate: U
 /// The most recent fully-closed UTC day at `timestamp`, i.e. the day the scan
 /// treats as the newest data point.
 pub fn last_closed_day(timestamp: u64) -> u32 {
-    previous_date_key(timestamp_to_date_key(timestamp))
+    previous_date_key(timestamp_to_date_key(timestamp)).expect("date step")
 }
 
 /// Advances the finalization watermark to cover the day closed at `timestamp`
@@ -307,7 +307,7 @@ pub fn fill_days_for(storage: &StorageHandle<'_>, iso: u16, latest: u32, days: u
     let mut day = latest;
     for _ in 0..days {
         set_vwap_for(storage, iso, day, value);
-        day = previous_date_key(day);
+        day = previous_date_key(day).expect("date step");
     }
 }
 
@@ -372,7 +372,11 @@ pub fn tick(storage: &StorageHandle<'_>, timestamp: u64) {
 /// Calls the Credis's group at `now`, as the call scan does. Returns whether it moved.
 pub fn call_credis(storage: &StorageHandle<'_>, id: U256, now: u64) -> bool {
     let mut credis = CredisContract::new(storage.clone());
-    let group = credis.get_credis(id).unwrap().group_key();
+    let group = credis
+        .get_credis(id)
+        .unwrap()
+        .group_key()
+        .expect("date step");
     if credis.group_called_at.read(&group).unwrap() != 0 {
         return false;
     }

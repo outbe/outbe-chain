@@ -331,7 +331,7 @@ fn deregistered_cca_claims_from_agentreward_after_withdrawing_bond() {
             .unwrap();
         outbe_oracle::schema::OracleContract::new(storage.clone())
             .record_utc_day_vwap(
-                previous_date_key(timestamp_to_date_key(now)),
+                previous_date_key(timestamp_to_date_key(now)).expect("date step"),
                 index,
                 ONE_COEN,
             )

@@ -7,11 +7,12 @@ use outbe_primitives::{
     block::BlockRuntimeContext,
     call_bins::{self, CallBinStore, Visit},
     call_breach::ScanTerms,
-    daily_sweep::{PinnedDay, Scheduled},
+    daily_sweep::{DailySweepError, PinnedDay, Scheduled},
     error::{decide, Decided, PrecompileError, Result, SweepFailure},
     math::tree_math,
     storage::{dsl::Value, StorageHandle},
     sweep_budget::SweepBudget,
+    time::TimeError,
 };
 
 use crate::api::get_all_reference_currencies;
@@ -77,12 +78,22 @@ pub fn schedule<'s, S: CallSweep<'s>>(ctx: &BlockRuntimeContext, sweep: &mut S) 
     if sweep.days().current.read()? == 0 && !sweep.has_work(ctx)? {
         return sweep.days().pass(day);
     }
-    match sweep.days().schedule(day)? {
+    match sweep.days().schedule(day).map_err(sweep_error)? {
         (next, Scheduled::Opened) => {
             sweep.days().open(next)?;
             sweep.reset_cursors(ctx)
         }
         (_, Scheduled::Queued | Scheduled::Ignored) => Ok(()),
+    }
+}
+
+fn sweep_error(err: DailySweepError) -> PrecompileError {
+    match err {
+        DailySweepError::Storage(err) => err,
+        DailySweepError::Time(time @ TimeError::PreGenesis { .. }) => {
+            PrecompileError::Fatal(time.to_string())
+        }
+        DailySweepError::Time(err) => crate::errors::date_step_error(err),
     }
 }
 
@@ -108,7 +119,7 @@ pub fn continue_day<'s, S: CallSweep<'s>>(ctx: &BlockRuntimeContext, sweep: &mut
     }
     let (called, finished) = sweep.slice(ctx, pinned_day)?;
     if finished {
-        if let Some(next) = sweep.days().finish(pinned_day)? {
+        if let Some(next) = sweep.days().finish(pinned_day).map_err(sweep_error)? {
             sweep.days().open(next)?;
             sweep.reset_cursors(ctx)?;
         }

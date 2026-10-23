@@ -353,7 +353,11 @@ fn seed_factory_boundary(
         vote.proposals.update(&corrupted)?;
     }
     let progress_context = BlockRuntimeContext::new(seed_context, storage.clone());
-    outbe_cycle::record_phase1_progress(&progress_context, finalization_block - 2)?;
+    progress_context
+        .storage
+        .contract::<outbe_cycle::schema::Accounting<'_>>()
+        .last_accounted_block_number
+        .write(finalization_block - 2)?;
     provider.flush()?;
     Ok(predicted)
 }

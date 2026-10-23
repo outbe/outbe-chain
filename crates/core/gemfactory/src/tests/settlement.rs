@@ -680,7 +680,7 @@ fn the_issuance_rail_converts_at_the_trailing_window_not_the_closed_day() {
             .unwrap();
         OracleContract::new(storage.clone())
             .record_utc_day_vwap(
-                previous_date_key(timestamp_to_date_key(T_NOW)),
+                previous_date_key(timestamp_to_date_key(T_NOW)).expect("date step"),
                 index,
                 U256::from(4u64) * six_decimal_unit(),
             )

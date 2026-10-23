@@ -36,7 +36,7 @@ fn init_genesis_day_creates_7_day_lookahead_with_bidirectional_links_and_closed_
         assert_eq!(ed_14.wwd, WorldwideDay::new(20260920));
         assert_eq!(
             ed_14.metadosis_start,
-            date_key_to_utc_timestamp(next_date_key(20261014)) + 1
+            date_key_to_utc_timestamp(next_date_key(20261014).expect("date step")) + 1
         );
         assert_eq!(ed_14.state, emission_day_state::NONE);
         assert_eq!(
@@ -78,9 +78,9 @@ fn init_genesis_day_creates_7_day_lookahead_with_bidirectional_links_and_closed_
             );
             assert_eq!(
                 ed_proj.metadosis_start,
-                date_key_to_utc_timestamp(next_date_key(ed_proj.day)) + 1
+                date_key_to_utc_timestamp(next_date_key(ed_proj.day).expect("date step")) + 1
             );
-            wwd_key = next_date_key(wwd_key);
+            wwd_key = next_date_key(wwd_key).expect("date step");
         }
     });
 }

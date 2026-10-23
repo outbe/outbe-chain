@@ -49,6 +49,7 @@ fn system_entitlements(input: SystemTxInputV2) -> MetadosisMutationEntitlements 
         outbe_primitives::time::previous_date_key(outbe_primitives::time::timestamp_to_date_key(
             TEST_TIMESTAMP,
         ))
+        .expect("date step")
     });
     let data = encoded(input);
     metadosis_mutation_entitlements(MetadosisMutationCall {
@@ -66,7 +67,7 @@ fn system_entitlements(input: SystemTxInputV2) -> MetadosisMutationEntitlements 
 
 fn expected_cycle_entitlements() -> MetadosisMutationEntitlements {
     let current_day = outbe_primitives::time::timestamp_to_date_key(TEST_TIMESTAMP);
-    let previous_day = outbe_primitives::time::previous_date_key(current_day);
+    let previous_day = outbe_primitives::time::previous_date_key(current_day).expect("date step");
     let allocation_timestamp = outbe_primitives::time::date_key_to_utc_timestamp(previous_day);
     MetadosisMutationEntitlements::exact(
         Purpose::CycleLifecycle,
@@ -133,7 +134,7 @@ fn protocol_cycle_grants_no_daily_allocation_after_a_multi_day_halt() {
     let block_day = outbe_primitives::time::timestamp_to_date_key(TEST_TIMESTAMP);
     let mut active_day = block_day;
     for _ in 0..6 {
-        active_day = outbe_primitives::time::previous_date_key(active_day);
+        active_day = outbe_primitives::time::previous_date_key(active_day).expect("date step");
     }
     let data = encoded(SystemTxInputV2::CycleTick);
     let entitlements = metadosis_mutation_entitlements(MetadosisMutationCall {
@@ -158,7 +159,7 @@ fn protocol_cycle_grants_no_daily_allocation_after_a_multi_day_halt() {
                 outbe_primitives::time::date_key_to_utc_timestamp(day),
             ),
         ));
-        day = outbe_primitives::time::next_date_key(day);
+        day = outbe_primitives::time::next_date_key(day).expect("date step");
     }
     assert!(entitlements.expects(
         Purpose::CycleLifecycle,
