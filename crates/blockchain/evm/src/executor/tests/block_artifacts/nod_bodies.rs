@@ -277,16 +277,19 @@ fn proposer_validator_state_mints_and_rollbacks_match() {
     };
 
     let run = || {
+        arm_direct_process_ready_budget();
         let mut state =
             state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |_| {});
         let (changes, events) =
             super::run_atomic_storage_hooks(&mut state, ctx.clone(), |hook_ctx| {
                 let tribute = tribute_fixture();
                 let mut tribute_contract = TributeContract::new(hook_ctx.storage.clone());
-                tribute_contract.unseal_day(day)?;
-                tribute_contract.issue(&tribute)?;
-                outbe_nod::test_support::add(&hook_ctx.storage, &nod_fixture())?;
-                Ok(())
+                with_process_ready_frame(&hook_ctx.storage, || {
+                    tribute_contract.unseal_day(day)?;
+                    tribute_contract.issue(&tribute)?;
+                    outbe_nod::test_support::add(&hook_ctx.storage, &nod_fixture())?;
+                    Ok(())
+                })
             })
             .expect("body mint execution must succeed");
         let root = post_state_root(&state.bundle_state);
@@ -314,17 +317,20 @@ fn proposer_validator_state_mints_and_rollbacks_match() {
         event.address == NOD_ADDRESS && event.data.topics()[0] == INod::Transfer::SIGNATURE_HASH
     }));
 
+    arm_direct_process_ready_budget();
     let mut failed_state =
         state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |_| {});
     let error = super::run_atomic_storage_hooks(&mut failed_state, ctx.clone(), |hook_ctx| {
         let tribute = tribute_fixture();
         let mut tribute_contract = TributeContract::new(hook_ctx.storage.clone());
-        tribute_contract.unseal_day(day)?;
-        tribute_contract.issue(&tribute)?;
-        outbe_nod::test_support::add(&hook_ctx.storage, &nod_fixture())?;
-        Err(outbe_primitives::error::PrecompileError::Fatal(
-            "later transaction stage failed".into(),
-        ))
+        with_process_ready_frame(&hook_ctx.storage, || {
+            tribute_contract.unseal_day(day)?;
+            tribute_contract.issue(&tribute)?;
+            outbe_nod::test_support::add(&hook_ctx.storage, &nod_fixture())?;
+            Err(outbe_primitives::error::PrecompileError::Fatal(
+                "later transaction stage failed".into(),
+            ))
+        })
     })
     .expect_err("failed transaction must roll back every body namespace");
     assert!(error.to_string().contains("later transaction stage failed"));
@@ -344,6 +350,27 @@ struct NodBodyFixture {
     item: NodItemState,
 }
 type SeededNodParent = (State<CacheDB<EmptyDBTyped<ProviderError>>>, B256);
+fn arm_direct_process_ready_budget() {
+    outbe_primitives::storage::direct::arm_next_direct_metadosis_frame_budget(
+        outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
+        1,
+    );
+}
+
+fn with_process_ready_frame(
+    storage: &outbe_primitives::storage::StorageHandle<'_>,
+    body: impl FnOnce() -> outbe_primitives::error::Result<()>,
+) -> outbe_primitives::error::Result<()> {
+    let binding = outbe_primitives::storage::metadosis_process_ready_binding(
+        storage.chain_id()?,
+        storage.block_number()?,
+        storage.now_secs()?,
+    );
+    storage.with_metadosis_mutation::<outbe_primitives::storage::MetadosisCycleLifecycle, _>(
+        binding, body,
+    )
+}
+
 fn seed_nod_body_state(fixture: &NodBodyFixture) -> eyre::Result<SeededNodParent> {
     let mut seeded = Ok(());
     let state = state_with_active_validators_seeded_at_block(

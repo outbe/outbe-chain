@@ -14,6 +14,20 @@ use crate::storage::PrecompileStorageProvider;
 #[cfg(feature = "test-utils")]
 use crate::storage::{MetadosisMutationEntitlements, MetadosisMutationPurposeTag};
 
+#[cfg(feature = "test-utils")]
+std::thread_local! {
+    static NEXT_DIRECT_FRAME_BUDGET: std::cell::Cell<
+        Option<(MetadosisMutationPurposeTag, u8)>,
+    > = const { std::cell::Cell::new(None) };
+}
+
+/// Installs one lease budget for the next [`DirectStorageProvider::new`] on
+/// this thread. The constructor takes it. A later constructor stays denied.
+#[cfg(feature = "test-utils")]
+pub fn arm_next_direct_metadosis_frame_budget(purpose: MetadosisMutationPurposeTag, count: u8) {
+    NEXT_DIRECT_FRAME_BUDGET.with(|slot| slot.set(Some((purpose, count))));
+}
+
 /// Storage provider for block-level hooks, wrapping a mutable [`StateDB`].
 ///
 /// Reads go directly to the provided database.
@@ -63,6 +77,15 @@ struct DirectSnapshot {
 impl<'a, DB: StateDB> DirectStorageProvider<'a, DB> {
     /// Creates a new provider wrapping the given state and block context.
     pub fn new(state: &'a mut DB, ctx: BlockContext) -> Self {
+        #[cfg(feature = "test-utils")]
+        let (metadosis_frames_enabled, metadosis_mutation_entitlements) = NEXT_DIRECT_FRAME_BUDGET
+            .with(|slot| match slot.take() {
+                Some((purpose, count)) => (
+                    true,
+                    MetadosisMutationEntitlements::repeated(purpose, count),
+                ),
+                None => (false, MetadosisMutationEntitlements::NONE),
+            });
         Self {
             state,
             pending: HashMap::new(),
@@ -72,9 +95,9 @@ impl<'a, DB: StateDB> DirectStorageProvider<'a, DB> {
             snapshots: Vec::new(),
             ctx,
             #[cfg(feature = "test-utils")]
-            metadosis_frames_enabled: false,
+            metadosis_frames_enabled,
             #[cfg(feature = "test-utils")]
-            metadosis_mutation_entitlements: MetadosisMutationEntitlements::NONE,
+            metadosis_mutation_entitlements,
             #[cfg(feature = "test-utils")]
             metadosis_mutation_active: None,
         }
@@ -618,5 +641,29 @@ mod metadosis_frame_tests {
             Ok::<_, PrecompileError>(())
         })
         .unwrap();
+    }
+
+    #[test]
+    fn armed_constructor_budget_is_one_shot() {
+        arm_next_direct_metadosis_frame_budget(MetadosisMutationPurposeTag::CycleLifecycle, 1);
+        let mut first_db = CacheDB::new(EmptyDB::default());
+        let mut first = provider(&mut first_db);
+        first
+            .begin_metadosis_mutation_frame(
+                MetadosisMutationPurposeTag::CycleLifecycle,
+                B256::repeat_byte(0x31),
+                42,
+                9,
+            )
+            .unwrap();
+        let mut second_db = CacheDB::new(EmptyDB::default());
+        let mut second = provider(&mut second_db);
+        assert!(denial(second.begin_metadosis_mutation_frame(
+            MetadosisMutationPurposeTag::CycleLifecycle,
+            B256::repeat_byte(0x31),
+            42,
+            9,
+        ))
+        .contains("Metadosis mutation frame is not available"));
     }
 }
