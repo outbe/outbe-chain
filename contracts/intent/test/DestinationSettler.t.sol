@@ -380,6 +380,20 @@ contract DestinationSettlerTest is BaseTest {
         destinationSettler.fillOrder(orderId, originData, new bytes(0));
     }
 
+    /// An order for another chain cannot be claimed: the claim would lock collateral for a fill
+    /// that cannot happen.
+    function test_claimOrder_InvalidOrderDomain() public {
+        OrderData memory orderData = _prepareOrderData();
+        orderData.destinationDomain = origin; // Wrong domain
+        bytes32 orderId = OrderEncoder.id(orderData);
+        bytes memory originData = OrderEncoder.encode(orderData);
+
+        _doFullAuction(vegeta, orderId, amount, originData);
+
+        vm.expectRevert(IDestinationSettler.InvalidOrderDomain.selector);
+        destinationSettler.claimOrder(orderId, originData);
+    }
+
     function test_claimOrder_RevealNotEnded() public {
         OrderData memory orderData = _prepareOrderData();
         bytes32 orderId = OrderEncoder.id(orderData);

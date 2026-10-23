@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -23,8 +23,9 @@ abstract contract OriginSettlerBase is OrderStatusStorage, RouterAccessors, IOri
     // ============ Constants ============
 
     /// @notice Minimum lead time an order's deadline must have over its creation block.
-    ///         It covers the auction (commit + reveal) plus the winning solver's claim + fill.
-    ///         A deadline shorter than this leaves no time to settle, and open() rejects it.
+    ///         It must cover the auction (commit + reveal) plus the winning solver's claim + fill.
+    ///         The auction runs on the destination chain, so this floor is a constant and does not
+    ///         read the auction periods. A deadline shorter than this is rejected by open().
     uint256 public constant MIN_ORDER_DURATION = 30 seconds;
 
     // ============ Public Storage ============

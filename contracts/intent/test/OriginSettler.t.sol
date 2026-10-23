@@ -187,6 +187,8 @@ contract OriginSettlerTest is BaseTest {
 
         uint256[] memory balancesBefore = _balances(inputToken);
 
+        vm.expectEmit(true, false, false, false);
+        emit IOriginSettler.SettleSkipped(orderId);
         originSettler.handleSettleOrder(
             destination, counterpart.addressToBytes32(), orderId, TypeCasts.addressToBytes32(karpincho)
         );
@@ -303,6 +305,8 @@ contract OriginSettlerTest is BaseTest {
 
         uint256[] memory balancesBefore = _balances(inputToken);
 
+        vm.expectEmit(true, false, false, false);
+        emit IOriginSettler.RefundSkipped(orderId);
         originSettler.handleRefundOrder(destination, counterpart.addressToBytes32(), orderId);
 
         uint256[] memory balancesAfter = _balances(inputToken);
@@ -392,6 +396,26 @@ contract OriginSettlerTest is BaseTest {
             _prepareOnchainOrder(OrderEncoder.encode(orderData), orderData.fillDeadline, OrderEncoder.orderDataType());
 
         vm.expectRevert(abi.encodeWithSelector(IOriginSettler.InvalidOriginDomain.selector, orderData.originDomain));
+        originSettler.resolveOrder(order);
+    }
+
+    function test_resolveOrder_ZeroAmountIn() public {
+        OrderData memory orderData = _prepareOrderData();
+        orderData.amountIn = 0;
+        OnchainCrossChainOrder memory order =
+            _prepareOnchainOrder(OrderEncoder.encode(orderData), orderData.fillDeadline, OrderEncoder.orderDataType());
+
+        vm.expectRevert(IOriginSettler.ZeroAmountIn.selector);
+        originSettler.resolveOrder(order);
+    }
+
+    function test_resolveOrder_ZeroRecipient() public {
+        OrderData memory orderData = _prepareOrderData();
+        orderData.recipient = bytes32(0);
+        OnchainCrossChainOrder memory order =
+            _prepareOnchainOrder(OrderEncoder.encode(orderData), orderData.fillDeadline, OrderEncoder.orderDataType());
+
+        vm.expectRevert(IOriginSettler.ZeroRecipient.selector);
         originSettler.resolveOrder(order);
     }
 }

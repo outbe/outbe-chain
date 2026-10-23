@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
 import {OnchainCrossChainOrder, ResolvedCrossChainOrder} from "./OrderTypes.sol";
@@ -21,6 +21,13 @@ interface IOriginSettler {
     /// @param receiver The address of the order's input token receiver
     event Refunded(bytes32 orderId, address receiver);
 
+    /// @notice Emitted when a settle message does not apply: the order is not OPENED, or the message
+    ///         did not come from the order's destination settler. orderStatus tells which case.
+    event SettleSkipped(bytes32 indexed orderId);
+
+    /// @notice Emitted when a refund message does not apply, for the same reasons as SettleSkipped
+    event RefundSkipped(bytes32 indexed orderId);
+
     // ============ Errors ============
 
     /// @notice Thrown when a nonce has already been used
@@ -32,9 +39,14 @@ interface IOriginSettler {
     /// @notice Thrown when the origin domain doesn't match the local domain
     error InvalidOriginDomain(uint32 originDomain);
 
-    /// @notice Thrown when fillDeadline leaves too little time to run the auction and fill the order
-    /// @dev The deadline must be at least commit + reveal + claim/fill periods ahead of the creation block
+    /// @notice Thrown when fillDeadline is less than MIN_ORDER_DURATION after the creation block
     error InvalidFillDeadline();
+
+    /// @notice Thrown when the order has a zero amountIn
+    error ZeroAmountIn();
+
+    /// @notice Thrown when the order has a zero recipient
+    error ZeroRecipient();
 
     // ============ Functions ============
 
