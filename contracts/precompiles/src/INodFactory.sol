@@ -33,7 +33,7 @@ interface INodFactory {
         uint256 settlementCostMinor
     );
 
-    event NodExercised(address indexed owner, uint256 nodId, bytes encryptedGratisAmount);
+    event NodMined(address indexed owner, uint256 nodId, bytes encryptedGratisAmount);
 
     event NodBurned(address indexed owner, uint256 nodId, bytes encryptedGratisAmount);
 
@@ -72,7 +72,7 @@ interface INodFactory {
         view
         returns (uint16 settlementCurrency, uint256 paymentMinor, uint256 snapshotId);
 
-    /// @notice Exercise a paid Nod and mint its Gratis load to the Nod owner.
+    /// @notice Mine a paid Nod and mint its Gratis load to the Nod owner.
     /// @param nonce PoW over
     /// `sha256("OUTBE_NOD_MINING_V1" || nodId_be32 || owner_20 || miningSequence_be8 || nonce_be8)`
     /// with `miningSequence = 0` and the required leading zero bytes. The owner is the Nod owner.

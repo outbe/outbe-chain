@@ -40,8 +40,8 @@ impl<'a, 's> IntexCleanup<'a, 's> {
     }
 }
 
-/// A group's members are its live series. One with settled units left to exercise
-/// stays, and its last exercise deletes it.
+/// A group's members are its live series. One with settled units left to mine
+/// stays, and its last mining deletes it.
 impl ExpiryHandler<B256> for IntexCleanup<'_, '_> {
     type Member = SeriesId;
 

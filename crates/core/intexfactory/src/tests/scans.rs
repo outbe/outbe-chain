@@ -718,7 +718,7 @@ fn the_cleanup_deletes_a_spent_series_and_keeps_one_with_settled_units() {
             outbe_intex::api::call_stamp(&s, &record)
                 .unwrap()
                 .state(due),
-            outbe_intex::IntexState::Expired
+            outbe_intex::IntexState::Forfeited
         );
     });
 }

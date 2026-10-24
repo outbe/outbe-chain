@@ -49,10 +49,10 @@ fn world() -> (HashMapStorageProvider, SeriesId) {
             },
         )
         .unwrap();
-        // Settled, exercised and converted footprints. The settlement and mining
+        // Settled, mined and converted footprints. The settlement and mining
         // tests cover their authorization.
         api::record_settled_units(&s, id, 3).unwrap();
-        api::record_exercised_units(&s, id, Address::repeat_byte(1), 1).unwrap();
+        api::record_mined_units(&s, id, Address::repeat_byte(1), 1).unwrap();
         api::record_gem_factory_units(&s, id, Address::repeat_byte(1), 2).unwrap();
         IntexContract::new(s.clone())
             .seed_called_group(id, DEADLINE)
@@ -79,16 +79,11 @@ fn ledger(p: &mut HashMapStorageProvider, id: SeriesId, terminal: bool) {
     StorageHandle::enter(p, |s| {
         let units = api::unit_counts(&s, id).unwrap();
         assert_eq!(
-            (
-                units.issued,
-                units.settled,
-                units.exercised,
-                units.gem_factory
-            ),
+            (units.issued, units.settled, units.mined, units.gem_factory),
             (10, 2, 1, 2)
         );
         assert_eq!(
-            units.active + units.settled + units.exercised + units.gem_factory + units.forfeited,
+            units.active + units.settled + units.mined + units.gem_factory + units.forfeited,
             10
         );
         let factory = IntexContract::new(s.clone());

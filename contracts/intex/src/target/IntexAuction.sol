@@ -430,7 +430,7 @@ contract IntexAuction is
         delete $.revealedBidIndex[worldwideDay][bidder];
 
         uint16 units = $.escrowContract.closeWin(worldwideDay, bidder);
-        if (intex.readData(seriesId).state == IIntexNFT1155.IntexState.Expired) {
+        if (intex.readData(seriesId).state == IIntexNFT1155.IntexState.Forfeited) {
             emit WinExpired(worldwideDay, bidder, seriesId, units);
             return;
         }

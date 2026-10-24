@@ -12,14 +12,14 @@ use std::fmt;
 
 use crate::errors::IntexError;
 
-/// Series lifecycle state: `Issued -> Called -> Expired`, derived from the series' group.
-/// A Called series becomes Expired after its notice-period deadline.
+/// Series lifecycle state: `Issued -> Called -> Forfeited`, derived from the series' group.
+/// A Called series becomes Forfeited after its notice-period deadline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum IntexState {
     Issued = 0,
     Called = 1,
-    Expired = 2,
+    Forfeited = 2,
 }
 
 impl IntexState {
@@ -27,7 +27,7 @@ impl IntexState {
         match value {
             0 => Ok(Self::Issued),
             1 => Ok(Self::Called),
-            2 => Ok(Self::Expired),
+            2 => Ok(Self::Forfeited),
             other => Err(IntexError::InvalidStateValue(other)),
         }
     }
@@ -57,7 +57,7 @@ impl CallStamp {
         match (self.called_at, now > self.deadline) {
             (0, _) => IntexState::Issued,
             (_, false) => IntexState::Called,
-            (_, true) => IntexState::Expired,
+            (_, true) => IntexState::Forfeited,
         }
     }
 }
@@ -297,10 +297,10 @@ pub struct IntexContract {
     #[attribute(order = 2)]
     pub series_position: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
 
-    // Disjoint classes: a series forfeits `issued_units - settled - exercised -
+    // Disjoint classes: a series forfeits `issued_units - settled - mined -
     // gem_factory` at its deadline. Not on `SeriesRecord` because a record write
     // rewrites every field.
-    /// series_id -> units paid for and not yet exercised.
+    /// series_id -> units paid for and not yet mined.
     #[attribute(order = 27)]
     pub settled_units: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
 
@@ -310,13 +310,13 @@ pub struct IntexContract {
 
     /// series_id -> settled units burned into Promis so far.
     #[attribute(order = 29)]
-    pub exercised_units: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
+    pub mined_units: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
 
     // Per-owner history. The two current classes are the owner's Issued- and
     // Settled-class token balances, so the ledger keeps only what the token no longer holds.
-    /// `owner_units_key` -> units this owner exercised in the series.
+    /// `owner_units_key` -> units this owner mined in the series.
     #[attribute(order = 30)]
-    pub owner_exercised_units: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub owner_mined_units: outbe_primitives::storage::dsl::Map<B256, u32>,
 
     /// `owner_units_key` -> units this owner sent to the Gem Factory.
     #[attribute(order = 31)]

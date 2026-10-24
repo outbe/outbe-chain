@@ -91,7 +91,7 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
             .to_string(),
             "{closed}"
         );
-        assert_eq!(outbe_intex::api::exercised_units(&s, sid(7)).unwrap(), 0);
+        assert_eq!(outbe_intex::api::mined_units(&s, sid(7)).unwrap(), 0);
 
         // The paid unit still mines, relayed by a stranger.
         let call = IIntexFactory::minePromisCall {
@@ -140,7 +140,7 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
     let mined: Vec<_> = storage
         .get_events(INTEX_FACTORY_ADDRESS)
         .iter()
-        .filter_map(|log| IIntexFactory::IntexExercised::decode_log_data(log).ok())
+        .filter_map(|log| IIntexFactory::IntexMined::decode_log_data(log).ok())
         .collect();
     assert_eq!(mined.len(), 1);
     assert_eq!(mined[0].owner, owner());

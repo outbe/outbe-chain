@@ -5,7 +5,7 @@ pub const TOKEN_NAME: &str = "Nod";
 pub const TOKEN_SYMBOL: &str = "NOD";
 pub const TOKEN_DESCRIPTION: &str = concat!(
     "Nod is a mining right on the Outbe network. Its owner pays the settlement cost at the fixed ",
-    "entry price, and the settled right is exercised to mine its Gratis load. ",
+    "entry price, and the settled right is mined for its Gratis load. ",
     "A called Nod must be settled by its settlement deadline, otherwise it is forfeited. ",
     "A Nod is never transferable."
 );

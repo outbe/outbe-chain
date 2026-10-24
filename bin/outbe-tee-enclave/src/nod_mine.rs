@@ -1,4 +1,4 @@
-//! Amount-private NOD exercise; both ledger outcomes commit together on the host.
+//! Amount-private NOD mining; both ledger outcomes commit together on the host.
 use crate::errors::{NodMineRejectReason, Result, TeeError};
 use alloy_primitives::{B256, U256};
 use outbe_tee::{

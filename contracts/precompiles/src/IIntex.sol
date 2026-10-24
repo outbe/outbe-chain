@@ -27,7 +27,7 @@ interface IIntex {
         uint32 callWindow;
         uint32 callThreshold;
         uint256 callPriceMinor;
-        /// @notice Read-time state: 0 Issued, 1 Called, 2 Expired (a Called series past its
+        /// @notice Read-time state: 0 Issued, 1 Called, 2 Forfeited (a Called series past its
         ///         notice period).
         uint8 state;
         uint32 issuedAt;
@@ -36,10 +36,10 @@ interface IIntex {
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
         uint32 worldwideDay;
-        /// @notice Units paid for and not yet exercised. Their load belongs to the settler.
+        /// @notice Units paid for and not yet mined. Their load belongs to the settler.
         uint32 settledUnits;
         /// @notice Units already burned into Promis. They leave `settledUnits` for good.
-        uint32 exercisedUnits;
+        uint32 minedUnits;
         /// @notice Units sent to the Gem Factory. Their load moved with them.
         uint32 gemFactoryUnits;
         /// @notice Inclusive deadline: 0 when uncalled.
@@ -50,19 +50,19 @@ interface IIntex {
 
     /// @notice Full identity + lifecycle record for a series. Reverts if the
     ///         series does not exist, or was deleted once nothing in it was left to settle
-    ///         or exercise.
+    ///         or mine.
     function getIntexSeries(bytes14 seriesId) external view returns (SeriesData memory);
 
     /// @notice The classes an issued unit can be in. Disjoint: they sum to
     ///         `issuedUnits`. `activeUnits` is what is still unpaid while the series
-    ///         lives, and `forfeitedUnits` is the same remainder once it is Expired.
-    ///         `settledUnits` is what is paid and not yet exercised, the same
+    ///         lives, and `forfeitedUnits` is the same remainder once it is Forfeited.
+    ///         `settledUnits` is what is paid and not yet mined, the same
     ///         measure `getIntexSeries` reports.
     struct UnitCounts {
         uint32 issuedUnits;
         uint32 activeUnits;
         uint32 settledUnits;
-        uint32 exercisedUnits;
+        uint32 minedUnits;
         uint32 gemFactoryUnits;
         uint32 forfeitedUnits;
     }

@@ -1,4 +1,4 @@
-//! Confidential NOD exercise and authenticated internal calculation reads.
+//! Confidential NOD mining and authenticated internal calculation reads.
 use crate::{
     protocol::{EnclaveRequest, EnclaveResponse, FidelityOpOutcome, FidelityOpSection, ModifyAuth},
     response_auth::{codec, NodOperation},

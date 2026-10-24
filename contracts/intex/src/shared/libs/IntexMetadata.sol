@@ -11,10 +11,10 @@ import {DateKey} from "./DateKey.sol";
 /// @notice JSON + SVG metadata rendering for IntexNFT1155 tokens.
 /// @dev External linked library: deployed once and delegatecalled, keeping the renderer's
 ///      bytecode outside IntexNFT1155's EIP-170 budget. All functions are pure. The caller
-///      passes a SeriesData snapshot whose state already carries the derived Expired.
+///      passes a SeriesData snapshot whose state already carries the derived Forfeited.
 library IntexMetadata {
     string internal constant COLLECTION_DESCRIPTION =
-        "Intex is the mining right of the Outbe network, issued in series through a Worldwide Day auction across all connected chains. Unsettled units stay transferable until the series is called; settled units move to a separate Settled token class that stays exercisable.";
+        "Intex is the mining right of the Outbe network, issued in series through a Worldwide Day auction across all connected chains. Unsettled units stay transferable until the series is called; settled units move to a separate Settled token class that can be mined with no deadline.";
 
     /// @dev First row baseline of the card and the step between rows.
     uint256 private constant ROW_TOP = 265;
@@ -28,14 +28,14 @@ library IntexMetadata {
 
     /// @notice Build the `data:application/json;base64,...` URI for a token.
     /// @param data Series record for the token id, with its effective state. The
-    ///        caller derives `Expired`, so this library never re-derives it.
+    ///        caller derives `Forfeited`, so this library never re-derives it.
     /// @param settled Whether the token id is the series' Settled class.
     /// @return Token URI, or the collection document when the record does not exist
     ///         (`issuedAt == 0`).
     function tokenURI(IIntexNFT1155.SeriesData memory data, bool settled) external pure returns (string memory) {
         if (data.issuedAt == 0) return _collectionURI();
 
-        bool expired = !settled && data.state == IIntexNFT1155.IntexState.Expired;
+        bool forfeited = !settled && data.state == IIntexNFT1155.IntexState.Forfeited;
         string memory displayId = _displayId(data);
 
         string memory json = string.concat(
@@ -47,7 +47,7 @@ library IntexMetadata {
             "\",\"image\":\"data:image/svg+xml;base64,",
             Base64.encode(bytes(_generateSVG(data, displayId, settled))),
             "\",\"attributes\":",
-            _buildAttributes(data, settled, expired),
+            _buildAttributes(data, settled, forfeited),
             "}"
         );
 
@@ -76,8 +76,8 @@ library IntexMetadata {
             return string.concat(
                 "Settled units of Intex series ",
                 displayId,
-                ". Settled units are never transferable and stay exercisable with no deadline;",
-                " exercising one mines its Promis load."
+                ". Settled units are never transferable and can be mined with no deadline;",
+                " mining one mints its Promis load."
             );
         }
         return string.concat(
@@ -95,7 +95,7 @@ library IntexMetadata {
         return string(abi.encodePacked(data.seriesId));
     }
 
-    function _buildAttributes(IIntexNFT1155.SeriesData memory data, bool settled, bool expired)
+    function _buildAttributes(IIntexNFT1155.SeriesData memory data, bool settled, bool forfeited)
         private
         pure
         returns (string memory)
@@ -164,7 +164,7 @@ library IntexMetadata {
 
     function _stateInfo(IIntexNFT1155.IntexState state_) private pure returns (string memory, string memory) {
         if (state_ == IIntexNFT1155.IntexState.Issued) return ("ISSUED", "#2563eb");
-        if (state_ == IIntexNFT1155.IntexState.Expired) return ("EXPIRED", "#6b7280");
+        if (state_ == IIntexNFT1155.IntexState.Forfeited) return ("FORFEITED", "#6b7280");
         return ("CALLED", "#f97316");
     }
 
@@ -235,7 +235,7 @@ library IntexMetadata {
 
     function _stateString(IIntexNFT1155.IntexState state_) private pure returns (string memory) {
         if (state_ == IIntexNFT1155.IntexState.Issued) return "Issued";
-        if (state_ == IIntexNFT1155.IntexState.Expired) return "Expired";
+        if (state_ == IIntexNFT1155.IntexState.Forfeited) return "Forfeited";
         return "Called";
     }
 
