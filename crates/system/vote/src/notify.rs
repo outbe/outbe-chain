@@ -54,7 +54,7 @@ impl Vote<'_> {
         })
     }
 
-    /// Emits canonical evidence that a proposal bond became an unsettled liability.
+    /// Emits canonical evidence that a proposal bond is escrowed.
     pub(crate) fn notify_proposal_bond_escrowed(
         &mut self,
         proposal_id: U256,

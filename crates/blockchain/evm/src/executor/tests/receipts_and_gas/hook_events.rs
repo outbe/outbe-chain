@@ -300,8 +300,8 @@ fn real_factory_execution_error_has_no_factory_receipt_log() {
         ProposalStatus::Error
     );
     assert_eq!(
-        vote.proposal_bond(U256::from(1u64)).unwrap().settlement,
-        BondSettlement::Refunded
+        vote.proposal_bond(U256::from(1u64)).unwrap().state,
+        BondState::Refunded
     );
     assert_eq!(vote.bond_liabilities().unwrap(), U256::ZERO);
     assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), U256::ZERO);
