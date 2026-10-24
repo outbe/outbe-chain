@@ -282,6 +282,34 @@ fn a_notice_refused_at_the_cap_is_dropped_with_an_event() {
 }
 
 #[test]
+fn a_called_notice_gets_at_most_eight_sends() {
+    assert_eq!(MAX_CALLED_NOTICE_ATTEMPTS, 8);
+}
+
+#[test]
+fn a_notice_accepted_at_the_last_send_is_not_dropped() {
+    let last = MAX_CALLED_NOTICE_ATTEMPTS - 1;
+    // No OriginRouter: the router refuses each send below the cap.
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |handle| {
+        seed(&handle, 1);
+        for attempt in 0..last {
+            drain_at(&handle, NOW + u64::from(attempt) * NOTICE_RETRY_SECONDS);
+        }
+        let (head, tail) = queue_bounds(&handle);
+        assert_eq!(tail - head, 1, "still queued below the cap");
+        assert_eq!(called_notice_attempts(queued(&handle, head)), last);
+    });
+
+    accept_sends(&mut storage);
+    StorageHandle::enter(&mut storage, |handle| {
+        drain_at(&handle, NOW + u64::from(last) * NOTICE_RETRY_SECONDS);
+        assert_eq!(queue_bounds(&handle), (0, 0), "the last send lands");
+    });
+    assert!(dropped_notices(&storage).is_empty());
+}
+
+#[test]
 fn a_refused_notice_does_not_hold_back_the_rest() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |handle| {
