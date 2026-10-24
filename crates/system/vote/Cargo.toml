@@ -9,6 +9,7 @@ publish.workspace = true
 outbe-chain-constants.workspace = true
 outbe-macros.workspace = true
 outbe-primitives.workspace = true
+outbe-promislimit.workspace = true
 outbe-validatorset.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true

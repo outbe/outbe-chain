@@ -84,6 +84,7 @@ mod accounting;
 mod begin_layout;
 mod block_artifacts;
 mod boundary;
+mod enclave_upgrade;
 mod fixtures;
 pub(super) mod harness;
 mod receipts_and_gas;

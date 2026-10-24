@@ -4,6 +4,8 @@ use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;
 use outbe_primitives::stablecoin_fork::MAX_PENDING_PUBLIC_BONDED_PROPOSALS;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::units::{native_to_protocol_floor, NATIVE_UNITS_PER_PROTOCOL_UNIT};
+use outbe_promislimit::PromisLimitContract;
 use outbe_validatorset::contract::ValidatorSet;
 
 use crate::constants::{
@@ -473,7 +475,8 @@ impl Vote<'_> {
 
         match status {
             // Approved and target-execution Error both return the escrow to the
-            // proposer once. Only an expired vote burns it.
+            // proposer once. Only an expired vote burns it and sends its whole
+            // protocol units to the Promis Limit.
             ProposalStatus::Approved | ProposalStatus::Error => {
                 self.storage
                     .transfer_balance(VOTE_ADDRESS, owner, bond.amount)?;
@@ -481,13 +484,37 @@ impl Vote<'_> {
                 self.notify_proposal_bond_refunded(proposal_id, owner, bond.amount)
             }
             ProposalStatus::Expired => {
-                self.storage.decrease_balance(VOTE_ADDRESS, bond.amount)?;
+                let (burned_native, credited_units) =
+                    self.credit_burned_bond_to_promis_limit(bond.amount)?;
                 self.settle_proposal_bond_accounting(proposal_id, BondSettlement::Burned)?;
-                self.notify_proposal_bond_burned(proposal_id, owner, bond.amount)
+                self.notify_proposal_bond_burned(proposal_id, owner, bond.amount)?;
+                if credited_units.is_zero() {
+                    return Ok(());
+                }
+                self.notify_proposal_bond_credited(proposal_id, burned_native, credited_units)
             }
             ProposalStatus::Pending | ProposalStatus::Rejected => {
                 Err(VoteError::InvalidProposalStatus.into())
             }
         }
+    }
+
+    /// Adds the carried `burned_bond_dust_native` to `amount`. Burns the whole
+    /// protocol units from VOTE_ADDRESS and credits them to the Promis Limit.
+    /// The rest below one unit stays on VOTE_ADDRESS in `burned_bond_dust_native`.
+    /// Returns `(burned_native, credited_units)`.
+    fn credit_burned_bond_to_promis_limit(&mut self, amount: U256) -> Result<(U256, U256)> {
+        let native = amount
+            .checked_add(self.burned_bond_dust_native.read()?)
+            .ok_or(VoteError::BurnedBondDustOverflow)?;
+        let dust = native % NATIVE_UNITS_PER_PROTOCOL_UNIT;
+        let burned = native - dust;
+        let units = native_to_protocol_floor(native);
+        self.burned_bond_dust_native.write(dust)?;
+        if !units.is_zero() {
+            self.storage.decrease_balance(VOTE_ADDRESS, burned)?;
+            PromisLimitContract::new(self.storage.clone()).checked_credit(units)?;
+        }
+        Ok((burned, units))
     }
 }

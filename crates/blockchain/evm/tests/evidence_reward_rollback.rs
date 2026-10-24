@@ -63,6 +63,10 @@ fn assert_penalty_state(storage: StorageHandle<'_>, hash: B256, applied: bool) {
     let staking = Staking::new(storage.clone());
     assert_eq!(staking.get_stake(ACCUSED).unwrap(), expected_stake);
     assert_eq!(staking.get_total_staked().unwrap(), expected_stake);
+    assert_eq!(
+        staking.slash_dust_native.read().unwrap(),
+        U256::from(if applied { 80_000 } else { 0 })
+    );
     let vs = ValidatorSet::new(storage);
     assert_eq!(
         vs.get_validator(ACCUSED).unwrap().unwrap().stake,
@@ -252,7 +256,9 @@ fn invalid_evidence_reward_reverts_transaction_and_identical_signed_evidence_can
         });
         assert_eq!(
             db.basic(STAKING_ADDRESS).unwrap().unwrap().balance,
-            U256::from(if nonce == 0 { INITIAL_STAKE } else { 920_000 })
+            // The 80_000 wei slash is below one protocol unit. It stays in the
+            // escrow as slash dust, so the escrow balance does not change.
+            U256::from(INITIAL_STAKE)
         );
         // Zero gas price isolates the native reward from transaction fees.
         assert_eq!(

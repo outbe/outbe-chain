@@ -40,6 +40,7 @@ fn bond_layout_appends_after_the_v0_vote_schema() {
         assert_eq!(vote.proposal_bond_settlement.base_slot(), U256::from(11u64));
         assert_eq!(vote.unsettled_bond_liabilities.slot(), U256::from(12u64));
         assert_eq!(vote.proposal_electorate.base_slot(), U256::from(13u64));
+        assert_eq!(vote.burned_bond_dust_native.slot(), U256::from(14u64));
         assert_eq!(<ProposalRecord as StorageRecord>::SLOTS, 6);
     });
 }

@@ -94,6 +94,20 @@ impl Vote<'_> {
         })
     }
 
+    /// Emits evidence that an expired proposal bond credited the Promis Limit.
+    pub(crate) fn notify_proposal_bond_credited(
+        &mut self,
+        proposal_id: U256,
+        burned_native: U256,
+        credited_units: U256,
+    ) -> Result<()> {
+        self.emit(IVote::ProposalBondCreditedToPromisLimit {
+            proposalId: proposal_id,
+            burnedNative: burned_native,
+            creditedUnits: credited_units,
+        })
+    }
+
     /// Emits canonical terminal proposal receipt evidence.
     pub(crate) fn notify_proposal_finalized(
         &mut self,

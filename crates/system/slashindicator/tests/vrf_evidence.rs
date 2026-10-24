@@ -57,6 +57,8 @@ use outbe_primitives::error::PrecompileError;
 use outbe_primitives::protocol_schedule::OutbeProtocolSchedule;
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_primitives::system_tx::{build_unsigned_system_tx, SystemTxInputV2, SystemTxKind};
+use outbe_primitives::units::native_to_protocol_floor;
+use outbe_promislimit::PromisLimitContract;
 use outbe_slashindicator::precompile::ISlashIndicator as Isi;
 use outbe_slashindicator::runtime::classify_vrf_failure;
 use outbe_slashindicator::schema::SlashIndicator;
@@ -110,7 +112,8 @@ const CHILD_BLOCK_HASH: B256 =
 
 const OWNER: Address = address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC");
 const SUBMITTER: Address = address!("0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD");
-const STAKE_AMOUNT: u64 = 1_000_000_000_000u64;
+/// One whole COEN. Each 8 % slash is a whole number of protocol units.
+const STAKE_AMOUNT: u64 = 1_000_000_000_000_000_000u64;
 
 // Schedule with relaxed evidence limits so a single test can stress a single
 // axis (size / age / epoch-lag) without bumping into the others.
@@ -812,14 +815,11 @@ fn invalid_vrf_proof_evidence_slashes_child_proposer() {
             "stake must be 92% of original after 8% slash"
         );
 
-        // (c) Submitter received 100% of the slashed amount.
-        let slashed = initial_stake - remaining_stake;
-        let expected_reward = slashed * U256::from(100u64) / U256::from(100u64);
+        // (c) The submitter receives nothing: the evidence reward is 0 %.
         let final_submitter_balance = storage.balance(SUBMITTER).unwrap();
         assert_eq!(
-            final_submitter_balance - initial_submitter_balance,
-            expected_reward,
-            "submitter must receive 100% of slashed stake"
+            final_submitter_balance, initial_submitter_balance,
+            "submitter must receive 0% of slashed stake"
         );
 
         // (d) Dedup slot marked at the canonical (child, phase1) key.
@@ -1082,13 +1082,13 @@ fn multiple_evidence_with_different_failure_codes_for_same_child_apply_at_most_o
 // ===========================================================================
 // body test #10 - confirms the new entry-point reuses the
 // existing `apply_evidence_felony` helper rather than reimplementing
-// 8%/100% economics inline. Asserts the same conservation that the
+// 8%/0% economics inline. Asserts the same conservation that the
 // double-proposal and conflicting-vote paths already enforce:
 //
 //   * slashed = 8% of initial stake
-//   * submitter reward = 100% of slashed
-//   * destroyed supply = slashed - reward (slash burns from STAKING_ADDRESS,
-//     reward is minted back to submitter, so net burn is the remainder)
+//   * submitter reward = 0% of slashed (no COEN is minted)
+//   * the slash burns from STAKING_ADDRESS and credits its whole protocol
+//     units to the Promis Limit (OIP-00351)
 // ===========================================================================
 #[test]
 fn invalid_vrf_evidence_uses_existing_evidence_felony_economics() {
@@ -1121,20 +1121,26 @@ fn invalid_vrf_evidence_uses_existing_evidence_felony_economics() {
             "slash must equal 8% of stake (apply_evidence_felony default)",
         );
 
-        // 100% of slashed goes to the submitter. STAKING_ADDRESS still
-        // loses the slashed amount (same conservation as
+        // The submitter gets 0% of the slash. STAKING_ADDRESS loses the
+        // slashed amount (same conservation as
         // submitDoubleProposalEvidence / submitConflictingVoteEvidence).
-        let expected_reward = expected_slashed * U256::from(100u64) / U256::from(100u64);
-        let submitter_delta = storage.balance(SUBMITTER).unwrap() - initial_submitter_balance;
         assert_eq!(
-            submitter_delta, expected_reward,
-            "submitter reward must equal 100% of slashed (apply_evidence_felony default)",
+            storage.balance(SUBMITTER).unwrap(),
+            initial_submitter_balance,
+            "submitter reward must equal 0% of slashed (apply_evidence_felony default)",
         );
 
         let staking_delta = initial_staking_balance - storage.balance(STAKING_ADDRESS).unwrap();
         assert_eq!(
             staking_delta, expected_slashed,
             "STAKING_ADDRESS must lose exactly the slashed amount",
+        );
+        assert_eq!(
+            PromisLimitContract::new(storage.clone())
+                .promis_limit()
+                .unwrap(),
+            native_to_protocol_floor(expected_slashed),
+            "the Promis Limit grows by the whole units of the slash",
         );
     });
 }

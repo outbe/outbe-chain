@@ -39,6 +39,11 @@ interface IStaking {
     event UnbondedClaimed(address indexed validator, uint32 index, uint256 paid);
     /// Amounts actually deducted from bonded stake and from the unbonding queue.
     event Slashed(address indexed validator, uint256 bondedSlashed, uint256 unbondingSlashed);
+    /// A slash of `validator` burned `burnedNative` wei from the staking escrow and
+    /// credited `creditedUnits` six-decimal protocol units to the Promis Limit.
+    /// `burnedNative` includes the carried rest of earlier slashes. The new rest
+    /// below one unit stays in the escrow. A slash that credits zero units does not emit this event.
+    event SlashCreditedToPromisLimit(address indexed validator, uint256 burnedNative, uint256 creditedUnits);
 
     /// Bond `amount` to `validatorAddress`. The caller must be the validator.
     /// The implementation rejects third-party delegation. The call must carry

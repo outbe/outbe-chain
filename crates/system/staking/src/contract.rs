@@ -33,6 +33,9 @@ pub struct Staking {
     pub unbonding_next: Mapping<u32, u32>,
     // slot 11: withdrawability delay for slashed validators. 0 = default to 2x unbonding_period.
     pub config_slashed_withdrawal_delay: Slot<u64>,
+    // slot 12: slashed native wei below one protocol unit. It stays on STAKING_ADDRESS
+    // and is added to the next slash before the Promis Limit credit.
+    pub slash_dust_native: Slot<U256>,
 }
 
 #[cfg(test)]
@@ -57,5 +60,6 @@ mod tests {
         assert_eq!(c.per_val_unbonding_head.base_slot(), U256::from(9));
         assert_eq!(c.unbonding_next.base_slot(), U256::from(10));
         assert_eq!(c.config_slashed_withdrawal_delay.slot(), U256::from(11));
+        assert_eq!(c.slash_dust_native.slot(), U256::from(12));
     }
 }

@@ -456,7 +456,10 @@ fn oracle_slash_window_runs_after_boundary_activation() {
         );
         let staking = outbe_staking::contract::Staking::new(storage.clone());
         assert_eq!(staking.stake_amount.read(&old_active)?, U256::from(990u64));
-        assert_eq!(storage.balance(STAKING_ADDRESS)?, U256::from(990u64));
+        // The 10 wei slash is below one protocol unit. It stays in the escrow
+        // as slash dust for the next slash.
+        assert_eq!(staking.slash_dust_native.read()?, U256::from(10u64));
+        assert_eq!(storage.balance(STAKING_ADDRESS)?, U256::from(1_000u64));
         Ok::<_, outbe_primitives::error::PrecompileError>(())
     })
     .expect("validator state should be readable");

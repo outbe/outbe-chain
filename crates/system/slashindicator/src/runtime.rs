@@ -192,13 +192,14 @@ impl SlashIndicator<'_> {
             slash_percent,
             slashed_amount = %slashed_amount,
             block_number,
-            "evidence-based felony applied - validator force-exited, stake slashed, submitter rewarded",
+            "evidence-based felony applied - validator jailed, stake slashed",
         );
 
         // Reward evidence submitter: mint floor(slashed * percent / 100).
-        // slash_stake burns slashed tokens from STAKING_ADDRESS.
-        // This method mints the reward directly to the submitter.
-        // The token supply decreases by (slashed - reward).
+        // slash_stake burns the slashed tokens from STAKING_ADDRESS and credits
+        // their whole protocol units to the Promis Limit. This method mints the
+        // reward directly to the submitter. The default percent is 0, so no
+        // reward is minted unless a later configuration sets a value above 0.
         let reward = floor_percent(slashed_amount, reward_pct);
         if !reward.is_zero() {
             self.storage.increase_balance(evidence_submitter, reward)?;

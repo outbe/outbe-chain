@@ -98,6 +98,12 @@ interface IVote {
     /// @notice An expired proposal burned its recorded proposal bond.
     event ProposalBondBurned(uint256 indexed proposalId, address indexed owner, uint256 amount);
 
+    /// @notice An expired proposal bond burned `burnedNative` wei from the Vote escrow and
+    /// credited `creditedUnits` six-decimal protocol units to the Promis Limit.
+    /// `burnedNative` includes the carried rest of earlier expired bonds. The new rest
+    /// below one unit stays in the escrow. A bond that credits zero units does not emit this event.
+    event ProposalBondCreditedToPromisLimit(uint256 indexed proposalId, uint256 burnedNative, uint256 creditedUnits);
+
     /// @notice A proposal bond check failed; reason preserves the accounting context.
     error InvalidProposalBond(string reason);
 

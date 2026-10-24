@@ -85,6 +85,7 @@ interface ISlashIndicator {
     event VoterFelony(address indexed validator, uint64 missCount, uint64 felonyCount);
 
     /// Emitted when evidence-based felony is applied (forced exit + slash + reward).
+    /// The default evidence reward percent is 0, so `submitterReward` is 0 by default.
     event EvidenceFelonyApplied(
         address indexed validator, address indexed submitter, uint256 slashedAmount, uint256 submitterReward
     );

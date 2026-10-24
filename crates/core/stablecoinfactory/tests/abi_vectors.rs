@@ -56,9 +56,10 @@ fn complete_exported_abis_match_golden_hashes() {
     );
     assert_eq!(
         canonical_abi_hash(vote),
-        // Pin the published interface including the unified bond error; its
-        // selector and dynamic error payload are independently pinned below.
-        b256!("4e909c8fcc77584593044a24d6b256f77114d2bef37417120bfe9b05c9aee9c8")
+        // Pin the published interface including the unified bond error and the
+        // expired-bond Promis Limit credit event (OIP-00351). The error selector
+        // and dynamic error payload are independently pinned below.
+        b256!("df5806788b364ea362af0bd0dde509ef058a18d7f54dee15e5e6b96c90082c0c")
     );
 }
 

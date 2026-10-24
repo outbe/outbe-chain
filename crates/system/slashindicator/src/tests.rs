@@ -5,6 +5,8 @@ use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::finalized_guard_ring::{test_ring_hash, RingPosition};
 use outbe_primitives::storage::hashmap::{HashMapStorageProvider, MutationPrefixViews};
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT;
+use outbe_promislimit::PromisLimitContract;
 use outbe_staking::contract::Staking;
 use outbe_validatorset::contract::ValidatorSet;
 use outbe_validatorset::test_support::test_lifecycle_of;
@@ -238,9 +240,15 @@ fn direct_miss_felony_timestamp_overflow_is_side_effect_free_and_retryable() {
                 let staking = Staking::new(storage.clone());
                 assert_eq!(staking.get_stake(VAL_A).unwrap(), U256::from(920_000));
                 assert_eq!(staking.get_total_staked().unwrap(), U256::from(920_000));
+                // The 80_000 wei slash is below one protocol unit. It stays in
+                // the escrow as slash dust for the next slash.
+                assert_eq!(
+                    staking.slash_dust_native.read().unwrap(),
+                    U256::from(80_000)
+                );
                 assert_eq!(
                     storage.balance(STAKING_ADDRESS).unwrap(),
-                    U256::from(920_000)
+                    U256::from(1_000_000)
                 );
             });
             let felony_event = if proposer {
@@ -463,17 +471,22 @@ fn direct_equivocation_timestamp_overflow_preserves_replay_flag_and_retry() {
                 Staking::new(storage.clone()).get_stake(VAL_A).unwrap(),
                 U256::from(920_000)
             );
-            assert_eq!(storage.balance(SUBMITTER).unwrap(), U256::from(80_000));
+            // The default evidence reward is 0 %.
+            assert_eq!(storage.balance(SUBMITTER).unwrap(), U256::ZERO);
         });
     }
 }
 
+/// A double-proposal report slashes the cheater by 8 %, mints nothing to the
+/// reporter and credits the whole units of the slash to the Promis Limit (OIP-00351).
 #[test]
 fn test_evidence_reward() {
+    let stake = U256::from(1_000_000u64) * NATIVE_UNITS_PER_PROTOCOL_UNIT;
+    let slashed = U256::from(80_000u64) * NATIVE_UNITS_PER_PROTOCOL_UNIT;
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_block_number(1);
-    // Seed STAKING_ADDRESS with funds for the reward transfer
-    storage.set_balance(STAKING_ADDRESS, U256::from(10_000_000u64));
+    // The staking escrow holds exactly the bonded stake.
+    storage.set_balance(STAKING_ADDRESS, stake);
 
     StorageHandle::enter(&mut storage, |storage| {
         // Generate a BLS keypair for the validator
@@ -492,7 +505,6 @@ fn test_evidence_reward() {
         }
 
         // Set stake
-        let stake = U256::from(1_000_000u64);
         let staking = Staking::new(storage.clone());
         staking.stake_amount.write(&validator, stake).unwrap();
         staking.total_staked.write(stake).unwrap();
@@ -522,12 +534,32 @@ fn test_evidence_reward() {
             ValidatorLifecycle::JailRetained(_)
         ));
 
-        // Verify evidence reward paid to submitter
-        // slashed = 1_000_000 * 8 / 100 = 80_000
-        // reward  = 80_000 * 100 / 100 = 80_000
-        let ctx = storage.clone();
-        assert_eq!(ctx.balance(SUBMITTER).unwrap(), U256::from(80_000u64));
+        // The cheater loses 8 %. The reporter gets 0 % and no COEN is minted.
+        assert_eq!(staking.get_stake(validator).unwrap(), stake - slashed);
+        assert_eq!(storage.balance(SUBMITTER).unwrap(), U256::ZERO);
+        // The whole slash leaves native supply and reaches the Promis Limit.
+        assert_eq!(storage.balance(STAKING_ADDRESS).unwrap(), stake - slashed);
+        assert_eq!(
+            PromisLimitContract::new(storage.clone())
+                .promis_limit()
+                .unwrap(),
+            U256::from(80_000u64)
+        );
+        assert_eq!(staking.slash_dust_native.read().unwrap(), U256::ZERO);
     });
+
+    assert_eq!(
+        storage.get_events(SLASH_INDICATOR_ADDRESS).last(),
+        Some(
+            &ISlashIndicator::EvidenceFelonyApplied {
+                validator: VAL_A,
+                submitter: SUBMITTER,
+                slashedAmount: slashed,
+                submitterReward: U256::ZERO,
+            }
+            .encode_log_data()
+        )
+    );
 }
 
 #[test]
@@ -551,7 +583,13 @@ fn evidence_reward_matches_wide_oracle_at_full_range() {
                     (U512::from(stake) * U512::from(effective) / U512::from(100)).to::<U256>();
                 assert_eq!(storage.balance(SUBMITTER).unwrap(), expected);
                 assert!(expected <= stake);
-                assert_eq!(storage.balance(STAKING_ADDRESS).unwrap(), U256::ZERO);
+                // Only the rest below one protocol unit stays in the escrow.
+                let dust = Staking::new(storage.clone())
+                    .slash_dust_native
+                    .read()
+                    .unwrap();
+                assert_eq!(dust, stake % NATIVE_UNITS_PER_PROTOCOL_UNIT);
+                assert_eq!(storage.balance(STAKING_ADDRESS).unwrap(), dust);
                 assert_eq!(Staking::new(storage).get_stake(VAL_A).unwrap(), U256::ZERO);
             });
         }
@@ -658,9 +696,10 @@ fn signed_evidence_invalid_reward_checkpoint_rolls_back_and_allows_identical_ret
             Staking::new(storage.clone()).get_stake(VAL_A).unwrap(),
             U256::from(920_000)
         );
+        // The 80_000 wei slash is below one protocol unit and stays in the escrow.
         assert_eq!(
             storage.balance(STAKING_ADDRESS).unwrap(),
-            U256::from(920_000)
+            U256::from(1_000_000)
         );
         assert_eq!(storage.balance(SUBMITTER).unwrap(), U256::from(8_000));
     });
@@ -769,11 +808,10 @@ fn test_conflicting_vote_evidence() {
             ValidatorLifecycle::JailRetained(_)
         ));
 
-        // Verify evidence reward
+        // The default evidence reward is 0 %, so the submitter gets nothing.
         // slashed = 2_000_000 * 8 / 100 = 160_000
-        // reward  = 160_000 * 100 / 100 = 160_000
         let ctx = storage.clone();
-        assert_eq!(ctx.balance(SUBMITTER).unwrap(), U256::from(160_000u64));
+        assert_eq!(ctx.balance(SUBMITTER).unwrap(), U256::ZERO);
     });
 }
 
@@ -1014,7 +1052,7 @@ fn default_thresholds_warn_before_they_punish() {
                 si.slash_amount_percent().unwrap(),
                 si.evidence_reward_percent().unwrap(),
             ),
-            (32, 128, 128, 512, 8, 100)
+            (32, 128, 128, 512, 8, 0)
         );
         assert!(
             si.proposer_misdemeanor_threshold().unwrap() < si.proposer_felony_threshold().unwrap()
@@ -1031,11 +1069,11 @@ fn unset_and_zero_percents_use_defaults_and_reads_reject_above_100() {
     with_storage(|storage| {
         let si = SlashIndicator::new(storage.clone());
         assert_eq!(si.slash_amount_percent().unwrap(), 8);
-        assert_eq!(si.evidence_reward_percent().unwrap(), 100);
+        assert_eq!(si.evidence_reward_percent().unwrap(), 0);
         si.config_slash_amount_percent.write(0).unwrap();
         si.config_evidence_reward_percent.write(0).unwrap();
         assert_eq!(si.slash_amount_percent().unwrap(), 8);
-        assert_eq!(si.evidence_reward_percent().unwrap(), 100);
+        assert_eq!(si.evidence_reward_percent().unwrap(), 0);
 
         si.config_slash_amount_percent.write(100).unwrap();
         si.config_evidence_reward_percent.write(100).unwrap();

@@ -5,7 +5,9 @@ use outbe_primitives::{
     error::{PrecompileError, Result},
     stablecoin_fork::MAX_PENDING_PUBLIC_BONDED_PROPOSALS,
     storage::StorageHandle,
+    units::NATIVE_UNITS_PER_PROTOCOL_UNIT,
 };
+use outbe_promislimit::PromisLimitContract;
 
 use crate::{
     constants::VOTING_WINDOW_BLOCKS,
@@ -419,38 +421,36 @@ fn approved_public_bond_refunds_once_and_preserves_forced_surplus() {
 }
 
 #[test]
-fn expired_public_bond_burns_once_and_preserves_forced_surplus() {
+fn expired_public_bond_below_one_unit_settles_once_as_dust_and_preserves_forced_surplus() {
     let owner = Address::repeat_byte(0x99);
     let forced_surplus = U256::from(7u64);
+    let bond = U256::from(123u64);
     let mut provider = super::test_provider();
-    provider.set_balance(VOTE_ADDRESS, U256::from(123u64) + forced_surplus);
+    provider.set_balance(VOTE_ADDRESS, bond + forced_surplus);
     let proposal_id;
     {
         let (storage, mut vote) = validator_vote(&mut provider);
-        proposal_id = vote
-            .create_proposal_with_value(
-                ProposalSubmission {
-                    proposer: owner,
-                    target_module: UPDATE_ADDRESS,
-                    payload: RAW_PAYLOAD,
-                    created_height: 10,
-                    attached_value: U256::from(123u64),
-                },
-                &PUBLIC_BONDED_REGISTRY,
-            )
-            .unwrap();
-
-        let deadline = 10 + VOTING_WINDOW_BLOCKS;
-        vote.begin_block_with(deadline + 1, &PUBLIC_BONDED_REGISTRY)
-            .unwrap();
+        proposal_id = expire_public_bonded_proposal(&mut vote, owner);
         assert_eq!(proposal_status(&vote, proposal_id), ProposalStatus::Expired);
         assert_bond_closed(&vote, proposal_id, BondSettlement::Burned);
-        assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), forced_surplus);
+        // 123 wei is below one protocol unit. It stays on VOTE_ADDRESS as dust
+        // for the next expired bond, and the Promis Limit gets no credit.
+        assert_eq!(vote.burned_bond_dust_native.read().unwrap(), bond);
+        assert_eq!(
+            storage.balance(VOTE_ADDRESS).unwrap(),
+            bond + forced_surplus
+        );
+        assert_eq!(promis_limit(&storage), U256::ZERO);
         assert_eq!(storage.balance(owner).unwrap(), U256::ZERO);
 
+        let deadline = 10 + VOTING_WINDOW_BLOCKS;
         vote.begin_block_with(deadline + 2, &PUBLIC_BONDED_REGISTRY)
             .unwrap();
-        assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), forced_surplus);
+        assert_eq!(vote.burned_bond_dust_native.read().unwrap(), bond);
+        assert_eq!(
+            storage.balance(VOTE_ADDRESS).unwrap(),
+            bond + forced_surplus
+        );
     }
 
     let burns = provider
@@ -462,7 +462,107 @@ fn expired_public_bond_burns_once_and_preserves_forced_surplus() {
     let burn = IVote::ProposalBondBurned::decode_log_data(burns[0]).unwrap();
     assert_eq!(burn.proposalId, proposal_id);
     assert_eq!(burn.owner, owner);
-    assert_eq!(burn.amount, U256::from(123u64));
+    assert_eq!(burn.amount, bond);
+    assert_eq!(
+        count_events(
+            &provider,
+            IVote::ProposalBondCreditedToPromisLimit::SIGNATURE_HASH
+        ),
+        0
+    );
+}
+
+#[test]
+fn expired_public_bond_credits_whole_units_with_carried_dust_to_the_promis_limit() {
+    let owner = Address::repeat_byte(0x99);
+    let bond = U256::from(123u64);
+    // The carried dust plus the 123 wei bond is one unit and 100 wei.
+    let carried = NATIVE_UNITS_PER_PROTOCOL_UNIT - U256::from(23u64);
+    let mut provider = super::test_provider();
+    provider.set_balance(VOTE_ADDRESS, bond + carried);
+    let proposal_id;
+    {
+        let (storage, mut vote) = validator_vote(&mut provider);
+        vote.burned_bond_dust_native.write(carried).unwrap();
+        proposal_id = expire_public_bonded_proposal(&mut vote, owner);
+        assert_eq!(proposal_status(&vote, proposal_id), ProposalStatus::Expired);
+        assert_bond_closed(&vote, proposal_id, BondSettlement::Burned);
+        assert_eq!(
+            vote.burned_bond_dust_native.read().unwrap(),
+            U256::from(100u64)
+        );
+        assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), U256::from(100u64));
+        assert_eq!(promis_limit(&storage), U256::ONE);
+        assert_eq!(storage.balance(owner).unwrap(), U256::ZERO);
+    }
+
+    let credits = provider
+        .get_events(VOTE_ADDRESS)
+        .iter()
+        .filter(|log| {
+            log.topics().first() == Some(&IVote::ProposalBondCreditedToPromisLimit::SIGNATURE_HASH)
+        })
+        .map(|log| IVote::ProposalBondCreditedToPromisLimit::decode_log_data(log).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(credits.len(), 1);
+    assert_eq!(credits[0].proposalId, proposal_id);
+    assert_eq!(credits[0].burnedNative, NATIVE_UNITS_PER_PROTOCOL_UNIT);
+    assert_eq!(credits[0].creditedUnits, U256::ONE);
+}
+
+#[test]
+fn expired_bond_promis_limit_overflow_fails_the_settlement() {
+    let owner = Address::repeat_byte(0x99);
+    let bond = U256::from(123u64);
+    let carried = NATIVE_UNITS_PER_PROTOCOL_UNIT;
+    let mut provider = super::test_provider();
+    provider.set_balance(VOTE_ADDRESS, bond + carried);
+    let (storage, mut vote) = validator_vote(&mut provider);
+    vote.burned_bond_dust_native.write(carried).unwrap();
+    PromisLimitContract::new(storage.clone())
+        .checked_credit(U256::MAX)
+        .unwrap();
+    vote.create_proposal_with_value(
+        ProposalSubmission {
+            proposer: owner,
+            target_module: UPDATE_ADDRESS,
+            payload: RAW_PAYLOAD,
+            created_height: 10,
+            attached_value: bond,
+        },
+        &PUBLIC_BONDED_REGISTRY,
+    )
+    .unwrap();
+    let deadline = 10 + VOTING_WINDOW_BLOCKS;
+    assert!(vote
+        .begin_block_with(deadline + 1, &PUBLIC_BONDED_REGISTRY)
+        .is_err());
+}
+
+fn promis_limit(storage: &StorageHandle<'_>) -> U256 {
+    PromisLimitContract::new(storage.clone())
+        .promis_limit()
+        .unwrap()
+}
+
+/// Creates a public bonded proposal at height 10 and lets it expire.
+fn expire_public_bonded_proposal(vote: &mut Vote<'_>, owner: Address) -> U256 {
+    let proposal_id = vote
+        .create_proposal_with_value(
+            ProposalSubmission {
+                proposer: owner,
+                target_module: UPDATE_ADDRESS,
+                payload: RAW_PAYLOAD,
+                created_height: 10,
+                attached_value: U256::from(123u64),
+            },
+            &PUBLIC_BONDED_REGISTRY,
+        )
+        .unwrap();
+    let deadline = 10 + VOTING_WINDOW_BLOCKS;
+    vote.begin_block_with(deadline + 1, &PUBLIC_BONDED_REGISTRY)
+        .unwrap();
+    proposal_id
 }
 
 #[test]

@@ -178,6 +178,7 @@ impl Storable for VoteRecord {
 ///   11: proposal_bond_settlement: mapping(proposalId => BondSettlement)
 ///   12: unsettled_bond_liabilities
 ///   13: proposal_electorate: mapping(proposalId => TargetElectorate)
+///   14: burned_bond_dust_native
 #[storage_schema]
 #[contract(addr = VOTE_ADDRESS)]
 pub struct Vote {
@@ -219,4 +220,10 @@ pub struct Vote {
     /// Immutable target policy; absent legacy values select ACTIVE-only voting.
     #[attribute(order = 8)]
     pub proposal_electorate: outbe_primitives::storage::dsl::Map<U256, u8>,
+
+    /// Native wei of expired proposal bonds below one protocol unit. It stays
+    /// on VOTE_ADDRESS and is added to the next expired bond before the
+    /// Promis Limit credit.
+    #[attribute(order = 9)]
+    pub burned_bond_dust_native: outbe_primitives::storage::dsl::Value<U256>,
 }

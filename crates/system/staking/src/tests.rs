@@ -4,7 +4,10 @@ use outbe_primitives::addresses::STAKING_ADDRESS;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::units::checked_whole_coen_to_native;
+use outbe_primitives::units::{
+    checked_whole_coen_to_native, native_to_protocol_floor, NATIVE_UNITS_PER_PROTOCOL_UNIT,
+};
+use outbe_promislimit::PromisLimitContract;
 use outbe_validatorset::contract::ValidatorSet;
 use outbe_validatorset::test_support::test_lifecycle_of;
 use outbe_validatorset::ValidatorLifecycle;
@@ -178,7 +181,20 @@ fn slash_large_and_remainder_amounts_match_wide_oracle_and_native_burn() {
                     unbonding - oracle(unbonding)
                 );
             }
-            assert_eq!(storage.balance(STAKING_ADDRESS).unwrap(), amount - expected);
+            // The whole protocol units leave the escrow for the Promis Limit.
+            // The rest below one unit stays in the escrow as slash dust.
+            let dust = s.slash_dust_native.read().unwrap();
+            assert_eq!(dust, expected % NATIVE_UNITS_PER_PROTOCOL_UNIT);
+            assert_eq!(
+                storage.balance(STAKING_ADDRESS).unwrap(),
+                amount - expected + dust
+            );
+            assert_eq!(
+                PromisLimitContract::new(storage.clone())
+                    .promis_limit()
+                    .unwrap(),
+                native_to_protocol_floor(expected)
+            );
             assert_eq!(
                 ValidatorSet::new(storage)
                     .validator_state(validator)
@@ -1332,11 +1348,13 @@ fn test_slash_balance_invariant() {
         let remaining_unbonding = s.unbonding_amount.read(&0u32).unwrap();
         let staking_balance = storage.balance(STAKING_ADDRESS).unwrap();
 
-        // balance == stake + unbonding (no orphaned tokens)
+        let slash_dust = s.slash_dust_native.read().unwrap();
+
+        // balance == stake + unbonding + carried slash dust (no orphaned tokens)
         assert_eq!(
             staking_balance,
-            remaining_stake + remaining_unbonding,
-            "STAKING_ADDRESS balance must equal stake + unbonding after slash"
+            remaining_stake + remaining_unbonding + slash_dust,
+            "STAKING_ADDRESS balance must equal stake + unbonding + slash dust after slash"
         );
     });
 }

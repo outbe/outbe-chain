@@ -9,6 +9,9 @@ pub(crate) fn enforce_enclave_upgrade_deadline(
     };
     let mut reports = Vec::new();
     ctx.with_checkpoint(|| {
+        // A missed upgrade uses the same admitted slash percent as every other felony.
+        let percent = outbe_slashindicator::contract::SlashIndicator::new(ctx.storage.clone())
+            .slash_amount_percent()?;
         let mut validators = outbe_validatorset::contract::ValidatorSet::new(ctx.storage.clone());
         let active = validators.get_active_validators()?;
         for validator in active {
@@ -26,7 +29,7 @@ pub(crate) fn enforce_enclave_upgrade_deadline(
                 reports.push(report);
             }
             let slashed = outbe_staking::contract::Staking::new(ctx.storage.clone())
-                .slash_stake(address, 10)?;
+                .slash_stake(address, percent)?;
             registry.mark_upgrade_penalty_v1(upgrade.proposal_id, address)?;
             registry.emit(
                 outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1::EnclaveUpgradeMissedV1 {
@@ -58,7 +61,7 @@ pub(crate) fn enforce_enclave_upgrade_deadline(
 /// 3. `UpdateLifecycle::begin_block_with_handlers` - activate scheduled updates at activation height.
 /// 4. `enforce_enclave_upgrade_deadline` - when an enclave upgrade sweep is due,
 ///    jail each active validator without the successor enclave binding and
-///    slash 10% of its stake. It runs after Update.
+///    slash `slash_amount_percent()` (8% by default) of its stake. It runs after Update.
 /// 5. `RewardsLifecycle::begin_block` - locks `genesis_utc_day` on
 ///    block 0. The per-block emission and per-day settle paths
 ///    moved to the Cycle module.

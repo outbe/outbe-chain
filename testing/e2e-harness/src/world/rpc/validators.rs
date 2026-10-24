@@ -368,6 +368,56 @@ impl Rpc {
             .ok_or_else(|| eyre!("eth_getLogs returned a non-array response on RPC port {port}"))
     }
 
+    /// Finalized Staking `SlashCreditedToPromisLimit` events for `validator`
+    /// at or after `from_block`, as `(burned_native, credited_units)` pairs.
+    pub fn slash_credit_events(
+        &self,
+        port: u16,
+        validator: &str,
+        from_block: u64,
+    ) -> Result<Vec<(U256, U256)>> {
+        let validator: Address = validator
+            .parse()
+            .wrap_err_with(|| format!("parse validator address {validator}"))?;
+        let signature = keccak256("SlashCreditedToPromisLimit(address,uint256,uint256)");
+        let indexed_validator = format!("0x{:0>64}", hex::encode(validator));
+        let value = eth::raw_json_result(
+            &self.url(port),
+            "eth_getLogs",
+            serde_json::json!([{
+                "address": format!("{:#x}", addresses::STK_ADDR),
+                "fromBlock": format!("0x{from_block:x}"),
+                "toBlock": "finalized",
+                "topics": [format!("{signature:#x}"), indexed_validator],
+            }]),
+        )
+        .wrap_err_with(|| {
+            format!("read finalized SlashCreditedToPromisLimit logs from RPC port {port}")
+        })?;
+        let logs = value
+            .as_array()
+            .ok_or_else(|| eyre!("eth_getLogs returned a non-array response on RPC port {port}"))?;
+        logs.iter()
+            .map(|log| {
+                let data = log
+                    .get("data")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| eyre!("SlashCreditedToPromisLimit log has no data"))?;
+                let bytes = hex::decode(data.trim_start_matches("0x"))
+                    .wrap_err("decode SlashCreditedToPromisLimit data")?;
+                ensure!(
+                    bytes.len() == 64,
+                    "SlashCreditedToPromisLimit data has {} bytes",
+                    bytes.len()
+                );
+                Ok((
+                    U256::from_be_slice(&bytes[..32]),
+                    U256::from_be_slice(&bytes[32..]),
+                ))
+            })
+            .collect()
+    }
+
     /// Whether the validator holds a live DKG share.
     pub fn has_share(&self, port: u16, addr: &str) -> Option<bool> {
         self.validator_record(port, addr).map(|r| r.has_bls_share)

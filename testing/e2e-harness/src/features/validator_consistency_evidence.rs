@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use alloy_primitives::{keccak256, Address, Bytes, U256};
 use alloy_sol_types::SolError;
 use cucumber::{given, then, when};
+use outbe_primitives::units::{native_to_protocol_floor, NATIVE_UNITS_PER_PROTOCOL_UNIT};
 
 use crate::features::common::boot_localnet;
 use crate::features::negative_assertions::{
@@ -419,8 +420,8 @@ fn reporter_submits_evidence_and_replays(world: &mut World) {
         "the first evidence must slash a positive amount"
     );
     assert!(
-        !event.submitter_reward.is_zero(),
-        "the first evidence must reward its reporter"
+        event.submitter_reward.is_zero(),
+        "the default 0 % evidence reward must mint nothing to the reporter"
     );
     world
         .rpc
@@ -570,9 +571,30 @@ fn exactly_one_punishment_changes_all_surfaces(world: &mut World) {
         Some(before_total - slashed_amount),
         "total_staked must burn the slash exactly once"
     );
+    // The slash burns whole protocol units from the Staking escrow and credits
+    // them to the Promis Limit. The rest below one unit stays in the escrow.
+    let credits = world
+        .rpc
+        .slash_credit_events(port, &victim, from_block)
+        .expect("observe finalized slash credit range");
+    assert_eq!(
+        credits.len(),
+        1,
+        "exactly one slash credit to the Promis Limit must be finalized"
+    );
+    let (burned_native, credited_units) = credits[0];
+    assert_eq!(
+        credited_units,
+        native_to_protocol_floor(burned_native),
+        "the Promis Limit credit must equal the whole units of the burn"
+    );
+    assert!(
+        burned_native + NATIVE_UNITS_PER_PROTOCOL_UNIT > slashed_amount,
+        "the burn must hold every whole unit of the slash"
+    );
     assert_eq!(
         world.rpc.staking_balance_on(port),
-        Some(before_staking_balance - slashed_amount),
+        Some(before_staking_balance - burned_native),
         "Staking native balance must burn the slash exactly once"
     );
     assert_eq!(
@@ -589,8 +611,8 @@ fn exactly_one_punishment_changes_all_surfaces(world: &mut World) {
         "exactly one EvidenceFelonyApplied event must be finalized"
     );
     assert!(
-        !reward.is_zero(),
-        "the one accepted punishment must carry one positive reporter reward"
+        reward.is_zero(),
+        "the one accepted punishment must carry a zero reporter reward (0 % default)"
     );
 }
 

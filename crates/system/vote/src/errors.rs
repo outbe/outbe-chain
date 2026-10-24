@@ -68,6 +68,8 @@ pub enum VoteError {
     },
     #[error("proposal {proposal_id} has inconsistent bond amount and settlement")]
     InconsistentBondState { proposal_id: U256 },
+    #[error("burned proposal bond dust overflow")]
+    BurnedBondDustOverflow,
 }
 
 impl From<VoteError> for PrecompileError {
@@ -82,7 +84,8 @@ impl From<VoteError> for PrecompileError {
             | VoteError::BondLiabilityUnderflow
             | VoteError::BondLiabilityInvariant { .. }
             | VoteError::PendingProposalBondAlreadySettled { .. }
-            | VoteError::InconsistentBondState { .. } => PrecompileError::RevertBytes(Bytes::from(
+            | VoteError::InconsistentBondState { .. }
+            | VoteError::BurnedBondDustOverflow => PrecompileError::RevertBytes(Bytes::from(
                 IVote::InvalidProposalBond {
                     reason: error.to_string(),
                 }

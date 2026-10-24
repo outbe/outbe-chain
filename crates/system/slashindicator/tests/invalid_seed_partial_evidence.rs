@@ -220,7 +220,8 @@ fn wide_timestamp_does_not_consume_invalid_partial_evidence() {
                 .unwrap(),
             U256::from(920_000)
         );
-        assert_eq!(storage.balance(SUBMITTER).unwrap(), U256::from(80_000));
+        // The default evidence reward is 0 %.
+        assert_eq!(storage.balance(SUBMITTER).unwrap(), U256::ZERO);
     });
 }
 

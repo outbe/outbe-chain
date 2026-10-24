@@ -1,6 +1,7 @@
 //! Release real-SGX/no-DCAP evidence for the recurring manual TEE lease.
 
 use outbe_primitives::time::SECONDS_PER_DAY;
+use outbe_primitives::units::{native_to_protocol_floor, NATIVE_UNITS_PER_PROTOCOL_UNIT};
 use std::os::unix::fs::MetadataExt as _;
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::Path;
@@ -571,27 +572,60 @@ fn reach_original_deadline(world: &mut World) {
     );
 }
 
-#[then("validator 3 is jailed without slash while three validators keep finalizing")]
-fn missed_validator_is_jailed_without_slash(world: &mut World) {
-    let scenario = state();
+#[then(
+    "validator 3 is jailed with an 8 % slash credited to the Promis Limit while three validators keep finalizing"
+)]
+fn missed_validator_is_jailed_with_slash(world: &mut World) {
+    let mut scenario = state();
     let address = scenario
         .missed_validator_address
-        .as_deref()
+        .clone()
         .expect("missed validator address");
-    let record = finalized_validator(world, "jailed_without_slash", address)
+    let record = finalized_validator(world, "jailed_with_slash", &address)
         .expect("TEE-expired validator record");
     assert_eq!(record.status, STATUS_JAILED, "TEE-expiry jail status");
+    let percent = world.rpc.slash_percent().expect("slash percent");
+    assert_eq!(percent, 8, "TEE expiry uses the default 8 % felony slash");
+    let baseline = scenario.missed_validator_stake.expect("baseline stake");
+    let hundred = U256::from(100u64);
+    let slashed = baseline / hundred * U256::from(percent)
+        + baseline % hundred * U256::from(percent) / hundred;
     assert_eq!(
         record.stake,
-        scenario.missed_validator_stake.expect("baseline stake")
+        baseline - slashed,
+        "TEE expiry must slash 8 % of the stake"
     );
     assert_eq!(
         record.slash_count,
         scenario
             .missed_validator_slash_count
-            .expect("baseline slash count"),
-        "TEE expiry must not record a felony slash"
+            .expect("baseline slash count")
+            + 1,
+        "TEE expiry must record one slash"
     );
+    let credits = world
+        .rpc
+        .slash_credit_events(world.validators.primary_port(), &address, 0)
+        .expect("finalized slash credit events");
+    assert_eq!(
+        credits.len(),
+        1,
+        "TEE expiry must credit the Promis Limit once"
+    );
+    let (burned_native, credited_units) = credits[0];
+    assert!(!credited_units.is_zero(), "TEE expiry credit is positive");
+    assert_eq!(
+        credited_units,
+        native_to_protocol_floor(burned_native),
+        "the Promis Limit credit must equal the whole units of the burn"
+    );
+    assert!(
+        burned_native + NATIVE_UNITS_PER_PROTOCOL_UNIT > slashed,
+        "the burn must hold every whole unit of the slash"
+    );
+    // Recovery keeps the slashed stake. Later checks compare with this state.
+    scenario.missed_validator_stake = Some(record.stake);
+    scenario.missed_validator_slash_count = Some(record.slash_count);
     drop(scenario);
     wait_until(
         || world.localnet.validator_exited(MISSED_VALIDATOR),

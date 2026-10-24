@@ -2,6 +2,8 @@ use alloy_primitives::{Address, U256, U512};
 use alloy_sol_types::SolEvent;
 use outbe_primitives::addresses::STAKING_ADDRESS;
 use outbe_primitives::error::Result;
+use outbe_primitives::units::{native_to_protocol_floor, NATIVE_UNITS_PER_PROTOCOL_UNIT};
+use outbe_promislimit::PromisLimitContract;
 use outbe_validatorset::contract::ValidatorSet;
 
 use crate::contract::Staking;
@@ -238,7 +240,9 @@ impl Staking<'_> {
     ///
     /// - Reduces stake_amount[validator] and total_staked by the slash amount.
     /// - Also proportionally reduces pending unbonding entries.
-    /// - Burns slashed tokens from STAKING_ADDRESS native balance.
+    /// - Adds the carried `slash_dust_native` to the slashed amount. Burns the
+    ///   whole protocol units from STAKING_ADDRESS and credits them to the
+    ///   Promis Limit. The rest below one unit stays on STAKING_ADDRESS.
     /// - Passes the post-write amount to ValidatorSet for the lifecycle transition.
     /// - Returns the total slashed amount (for evidence reward calculation).
     /// - Can change lifecycle when the remaining stake falls below the minimum.
@@ -297,12 +301,14 @@ impl Staking<'_> {
             current_stored = self.unbonding_next.read(&idx)?;
         }
 
-        // Burn slashed tokens from STAKING_ADDRESS so native balance stays
-        // in sync with accounting. Without this, slashed amounts become orphaned.
-        if !total_slashed.is_zero() {
-            self.storage
-                .decrease_balance(STAKING_ADDRESS, total_slashed)?;
-        }
+        // The slashed amount leaves the stake accounting. Its whole protocol
+        // units go to the Promis Limit. Without the burn, slashed amounts
+        // become orphaned on STAKING_ADDRESS.
+        let (burned_native, credited_units) = if total_slashed.is_zero() {
+            (U256::ZERO, U256::ZERO)
+        } else {
+            self.credit_slash_to_promis_limit(total_slashed)?
+        };
 
         // Cross-call: pass the post-write amount after stake, claim, and burn
         // accounting succeeds. Preserve the existing unbonding-end hint.
@@ -322,8 +328,34 @@ impl Staking<'_> {
                 unbondingSlashed: unbonding_slashed,
             })?;
         }
+        if !credited_units.is_zero() {
+            self.emit_staking_event(IStaking::SlashCreditedToPromisLimit {
+                validator,
+                burnedNative: burned_native,
+                creditedUnits: credited_units,
+            })?;
+        }
 
         Ok(total_slashed)
+    }
+
+    /// Adds the carried `slash_dust_native` to `slashed`. Burns the whole
+    /// protocol units from STAKING_ADDRESS and credits them to the Promis Limit.
+    /// The rest below one unit stays on STAKING_ADDRESS in `slash_dust_native`.
+    /// Returns `(burned_native, credited_units)`.
+    fn credit_slash_to_promis_limit(&mut self, slashed: U256) -> Result<(U256, U256)> {
+        let native = slashed
+            .checked_add(self.slash_dust_native.read()?)
+            .ok_or(StakingError::SlashAmountOverflow)?;
+        let dust = native % NATIVE_UNITS_PER_PROTOCOL_UNIT;
+        let burned = native - dust;
+        let units = native_to_protocol_floor(native);
+        self.slash_dust_native.write(dust)?;
+        if !units.is_zero() {
+            self.storage.decrease_balance(STAKING_ADDRESS, burned)?;
+            PromisLimitContract::new(self.storage.clone()).checked_credit(units)?;
+        }
+        Ok((burned, units))
     }
 
     /// Returns the staked amount for a validator.
