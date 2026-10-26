@@ -7,7 +7,7 @@ use tracing::warn;
 use crate::constants::MAX_PAGE_SIZE;
 use crate::errors::VoteError;
 use crate::handlers::TargetElectorate;
-use crate::schema::{decode_stored_u8, BondSettlement, ProposalRecord, Vote, VoteRecord};
+use crate::schema::{decode_stored_u8, BondState, ProposalRecord, Vote, VoteRecord};
 
 pub use crate::schema::ProposalStatus;
 
@@ -110,7 +110,7 @@ impl<'a> ProposalSubmission<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProposalBond {
     pub amount: U256,
-    pub settlement: BondSettlement,
+    pub state: BondState,
 }
 
 /// Materialized vote read from storage.
@@ -239,23 +239,20 @@ impl<'storage> Vote<'storage> {
         self.proposals
             .get(proposal_id)?
             .ok_or(VoteError::ProposalNotFound)?;
-        let settlement =
-            BondSettlement::from_u8(self.proposal_bond_settlement.read(&proposal_id)?)?;
+        let state = BondState::from_u8(self.proposal_bond_state.read(&proposal_id)?)?;
         let amount = self.proposal_bond_amount.read(&proposal_id)?;
-        let valid_pair = match settlement {
-            BondSettlement::NoBond => amount.is_zero(),
-            BondSettlement::Unsettled | BondSettlement::Refunded | BondSettlement::Burned => {
-                !amount.is_zero()
-            }
+        let valid_pair = match state {
+            BondState::NoBond => amount.is_zero(),
+            BondState::Escrowed | BondState::Refunded | BondState::Burned => !amount.is_zero(),
         };
         if !valid_pair {
             return Err(VoteError::InconsistentBondState { proposal_id }.into());
         }
-        Ok(ProposalBond { amount, settlement })
+        Ok(ProposalBond { amount, state })
     }
 
     pub fn bond_liabilities(&self) -> Result<U256> {
-        self.unsettled_bond_liabilities.read()
+        self.escrowed_bond_total.read()
     }
 
     /// Records one new proposal liability. The caller may wrap this in a wider
@@ -269,36 +266,30 @@ impl<'storage> Vote<'storage> {
             self.proposals
                 .get(proposal_id)?
                 .ok_or(VoteError::ProposalNotFound)?;
-            if BondSettlement::from_u8(self.proposal_bond_settlement.read(&proposal_id)?)?
-                != BondSettlement::NoBond
+            if BondState::from_u8(self.proposal_bond_state.read(&proposal_id)?)?
+                != BondState::NoBond
                 || !self.proposal_bond_amount.read(&proposal_id)?.is_zero()
             {
                 return Err(VoteError::ProposalBondAlreadyRecorded.into());
             }
-            let liabilities = self
-                .unsettled_bond_liabilities
+            let escrowed_total = self
+                .escrowed_bond_total
                 .read()?
                 .checked_add(amount)
                 .ok_or(VoteError::BondLiabilityOverflow)?;
             self.proposal_bond_amount.write(&proposal_id, amount)?;
-            self.proposal_bond_settlement
-                .write(&proposal_id, BondSettlement::Unsettled.to_u8())?;
-            self.unsettled_bond_liabilities.write(liabilities)
+            self.proposal_bond_state
+                .write(&proposal_id, BondState::Escrowed.to_u8())?;
+            self.escrowed_bond_total.write(escrowed_total)
         })
     }
 
-    /// Applies the accounting half of an exact refund or burn. SCF-063 couples
-    /// this with the native-balance mutation inside its terminal checkpoint.
-    pub fn settle_proposal_bond_accounting(
-        &mut self,
-        proposal_id: U256,
-        settlement: BondSettlement,
-    ) -> Result<U256> {
-        if !matches!(
-            settlement,
-            BondSettlement::Refunded | BondSettlement::Burned
-        ) {
-            return Err(VoteError::InvalidBondSettlement.into());
+    /// Writes the `Refunded` or `Burned` state of an escrowed bond and lowers
+    /// the escrowed total by the bond amount. SCF-063 couples this with the
+    /// native-balance mutation inside its terminal checkpoint.
+    pub fn set_bond_state(&mut self, proposal_id: U256, state: BondState) -> Result<U256> {
+        if !matches!(state, BondState::Refunded | BondState::Burned) {
+            return Err(VoteError::CorruptBondState.into());
         }
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
@@ -306,20 +297,20 @@ impl<'storage> Vote<'storage> {
                 .get(proposal_id)?
                 .ok_or(VoteError::ProposalNotFound)?;
             let amount = self.proposal_bond_amount.read(&proposal_id)?;
-            if BondSettlement::from_u8(self.proposal_bond_settlement.read(&proposal_id)?)?
-                != BondSettlement::Unsettled
+            if BondState::from_u8(self.proposal_bond_state.read(&proposal_id)?)?
+                != BondState::Escrowed
                 || amount.is_zero()
             {
-                return Err(VoteError::ProposalBondNotUnsettled.into());
+                return Err(VoteError::ProposalBondNotEscrowed.into());
             }
-            let liabilities = self
-                .unsettled_bond_liabilities
+            let escrowed_total = self
+                .escrowed_bond_total
                 .read()?
                 .checked_sub(amount)
                 .ok_or(VoteError::BondLiabilityUnderflow)?;
-            self.proposal_bond_settlement
-                .write(&proposal_id, settlement.to_u8())?;
-            self.unsettled_bond_liabilities.write(liabilities)?;
+            self.proposal_bond_state
+                .write(&proposal_id, state.to_u8())?;
+            self.escrowed_bond_total.write(escrowed_total)?;
             Ok(amount)
         })
     }

@@ -15,8 +15,8 @@ pub fn get_proposal_bond(storage: StorageHandle<'_>, proposal_id: U256) -> Resul
     Vote::new(storage).proposal_bond(proposal_id)
 }
 
-/// `IVote.unsettledBondLiabilities`.
-pub fn unsettled_bond_liabilities(storage: StorageHandle<'_>) -> Result<U256> {
+/// `IVote.escrowedBondTotal`.
+pub fn escrowed_bond_total(storage: StorageHandle<'_>) -> Result<U256> {
     Vote::new(storage).bond_liabilities()
 }
 

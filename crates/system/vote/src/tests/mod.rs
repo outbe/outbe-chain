@@ -16,7 +16,7 @@ use crate::errors::VoteError;
 use crate::handlers::{TargetExecutionOutcome, VoteTarget, VoteTargetContext, VoteTargetRegistry};
 use crate::runtime::quorum_reached;
 use crate::schema::Vote;
-use crate::schema::{BondSettlement, ProposalStatus};
+use crate::schema::{BondState, ProposalStatus};
 use crate::state::{calculate_vote_tally, vote_key, VoteKind, VoteTally};
 use outbe_update::constants::MIN_ACTIVATION_BUFFER;
 use outbe_update::encode_protocol_version;
@@ -226,13 +226,10 @@ pub(super) fn assert_finalized_error(vote: &Vote<'_>, proposal_id: U256) {
     );
 }
 
-/// Asserts that the bond of `proposal_id` has `settlement` and that no bond
-/// liability remains.
-pub(super) fn assert_bond_closed(vote: &Vote<'_>, proposal_id: U256, settlement: BondSettlement) {
-    assert_eq!(
-        vote.proposal_bond(proposal_id).unwrap().settlement,
-        settlement
-    );
+/// Asserts that the bond of `proposal_id` has `state` and that the escrowed
+/// bond total is zero.
+pub(super) fn assert_bond_closed(vote: &Vote<'_>, proposal_id: U256, state: BondState) {
+    assert_eq!(vote.proposal_bond(proposal_id).unwrap().state, state);
     assert_eq!(vote.bond_liabilities().unwrap(), U256::ZERO);
 }
 
