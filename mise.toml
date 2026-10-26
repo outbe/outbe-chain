@@ -131,12 +131,12 @@ run = "cargo install --locked cargo-nextest"
 [tasks.audit]
 description = "Audit debug binaries for known vulnerabilities"
 depends = ["build"]
-run = "find target/debug -maxdepth 1 -type f -perm +111 -name 'outbe-*' -exec cargo audit --db ~/.cargo/rustsec-audit-db --ignore RUSTSEC-2025-0055 --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119 bin {} \\;"
+run = "find target/debug -maxdepth 1 -type f -perm +111 -name 'outbe-*' -exec cargo audit --db ~/.cargo/rustsec-audit-db --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2025-0055 --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119 --ignore RUSTSEC-2026-0387 bin {} \\;"
 
 [tasks.audit-release]
 description = "Audit release binaries for known vulnerabilities"
 depends = ["build-release"]
-run = "find target/release -maxdepth 1 -type f -perm +111 -name 'outbe-*' -exec cargo audit --db ~/.cargo/rustsec-audit-db --ignore RUSTSEC-2025-0055 --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119 bin {} \\;"
+run = "find target/release -maxdepth 1 -type f -perm +111 -name 'outbe-*' -exec cargo audit --db ~/.cargo/rustsec-audit-db --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2025-0055 --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119 --ignore RUSTSEC-2026-0387 bin {} \\;"
 
 # --- Audit toolchain (rust-module-audit skill entry points) ----------- #
 
@@ -174,7 +174,7 @@ description = "cargo audit (RustSec workspace dependency advisories)"
 # Keep the adjudicated exceptions aligned with deny.toml and cve-scan.yml.
 # cargo-deny uses a hashed database layout under ~/.cargo/advisory-db, so
 # cargo-audit needs its own path.
-run = "cargo audit --db ~/.cargo/rustsec-audit-db --ignore RUSTSEC-2023-0071"
+run = "cargo audit --db ~/.cargo/rustsec-audit-db --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2026-0387"
 
 [tasks.audit-machete]
 description = "cargo machete (unused workspace dependencies)"

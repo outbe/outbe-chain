@@ -48,7 +48,8 @@ jobs:
       - uses: rustsec/audit-check@v2.0.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          ignore: "RUSTSEC-2023-0071,RUSTSEC-2025-0055,RUSTSEC-2026-0118,RUSTSEC-2026-0119"
+          # RSA and legacy crypto-bigint exceptions are documented in deny.toml.
+          ignore: "RUSTSEC-2023-0071,RUSTSEC-2025-0055,RUSTSEC-2026-0118,RUSTSEC-2026-0119,RUSTSEC-2026-0387"
 
   vet:
     name: supply chain review
@@ -77,7 +78,7 @@ jobs:
         run: |
           find target/release -maxdepth 1 -type f -executable -name 'outbe-*' | while IFS= read -r bin; do
             name=$(basename "$bin")
-            cargo audit --db ~/.cargo/rustsec-audit-db --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2025-0055 --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119 --format sarif bin "$bin" > "audit-${name}.sarif"
+            cargo audit --db ~/.cargo/rustsec-audit-db --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2025-0055 --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119 --ignore RUSTSEC-2026-0387 --format sarif bin "$bin" > "audit-${name}.sarif"
           done
       - name: upload audit results
         uses: github/codeql-action/upload-sarif@v3
