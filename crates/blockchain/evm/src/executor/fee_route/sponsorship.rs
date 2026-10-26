@@ -22,6 +22,12 @@ where
         R: RecoveredTx<TransactionSigned>,
         F: FnOnce(&EthTxResult<E::HaltReason, reth_ethereum::TxType>) -> CommitChanges,
     {
+        let gas_limit = recovered.tx().gas_limit();
+        if !self.sponsored_gas_fits(gas_limit) {
+            return Err(crate::sponsored_block_budget_deferral(
+                *recovered.tx().tx_hash(),
+            ));
+        }
         let signer = *recovered.signer();
         // Authorization is a read. Persist the counter only after inclusion.
         let authorized = {
@@ -40,6 +46,7 @@ where
         if !matches!(result, Ok(Some(_))) {
             return result;
         }
+        self.charge_sponsored_gas(gas_limit);
 
         let sponsorship_events = {
             let db = self.inner.evm.db_mut();

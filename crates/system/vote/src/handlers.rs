@@ -18,7 +18,9 @@ pub enum TargetAdmission {
     PublicBonded { amount: U256 },
 }
 
-/// Electorate selected by the target and persisted with proposal admission.
+/// Electorate policy selected by the target and persisted at proposal admission.
+/// The policy is fixed, but membership is read live for casting and finalization;
+/// this value is not a creation-time membership snapshot.
 /// Zero preserves the ACTIVE-only policy of existing proposals and targets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]

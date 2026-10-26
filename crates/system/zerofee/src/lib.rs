@@ -77,6 +77,7 @@ mod transaction;
 pub use constants::{
     FREE_TX_BOOTSTRAP_GAS_LIMIT, FREE_TX_DAILY_CALLDATA_BYTES, FREE_TX_DAILY_GAS_LIMIT,
     FREE_TX_DAILY_LIMIT, FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT, MIN_FREE_TX_MAX_FEE_PER_GAS,
+    SPONSORED_GAS_PER_BLOCK,
 };
 pub use hooks::{
     registry, ZeroFeeAuthorization, ZeroFeeCandidate, ZeroFeeHook, ZeroFeeHookId,
@@ -89,3 +90,56 @@ pub use runtime::{
     BootstrapTransactionView, SponsorshipAuthorization,
 };
 pub use schema::{pack_counter, unpack_counter, ZeroFeeContract};
+
+/// Whether including `gas_limit` would exceed the sponsored block budget.
+///
+/// `used` is the sum of gas limits of included sponsored and bootstrap
+/// transactions, not their actual gas consumption. Overflow is over budget.
+pub fn sponsored_gas_exceeds_block_budget(used: u64, gas_limit: u64) -> bool {
+    match used.checked_add(gas_limit) {
+        Some(total) => total > SPONSORED_GAS_PER_BLOCK,
+        None => true,
+    }
+}
+
+#[cfg(test)]
+mod sponsored_budget_tests {
+    use super::*;
+
+    #[test]
+    fn sponsored_budget_boundaries() {
+        for (used, gas_limit, exceeds) in [
+            (0, 0, false),
+            (0, FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT, false),
+            (0, SPONSORED_GAS_PER_BLOCK, false),
+            (SPONSORED_GAS_PER_BLOCK - 1, 1, false),
+            (SPONSORED_GAS_PER_BLOCK, 0, false),
+            (SPONSORED_GAS_PER_BLOCK, 1, true),
+            (0, SPONSORED_GAS_PER_BLOCK + 1, true),
+            (13_000_000, FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT, true),
+            (13_000_000, FREE_TX_DAILY_GAS_LIMIT, false),
+            (SPONSORED_GAS_PER_BLOCK + 1, 0, true),
+        ] {
+            assert_eq!(
+                sponsored_gas_exceeds_block_budget(used, gas_limit),
+                exceeds,
+                "used={used}, gas_limit={gas_limit}"
+            );
+        }
+    }
+
+    #[test]
+    fn sponsored_budget_rejects_overflow() {
+        for (used, gas_limit) in [(u64::MAX, 1), (1, u64::MAX), (u64::MAX, u64::MAX)] {
+            assert!(sponsored_gas_exceeds_block_budget(used, gas_limit));
+        }
+    }
+
+    #[test]
+    fn sponsored_budget_is_absolute_and_within_bounds() {
+        assert_eq!(SPONSORED_GAS_PER_BLOCK, 15_000_000);
+        assert!((FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT
+            ..outbe_primitives::system_tx::STEADY_BLOCK_GAS_LIMIT)
+            .contains(&SPONSORED_GAS_PER_BLOCK));
+    }
+}
