@@ -95,12 +95,16 @@ fn protocol_cycle_keeps_midnight_slot_pending_until_late_reward_window_closes() 
     let late = Address::repeat_byte(0xB1);
     storage.enter(|handle| {
         anchor_with(handle.clone(), GENESIS_TS + 60, seed_fresh_reward_oracle);
-        let ctx = BlockRuntimeContext::new(block_ctx(11, GENESIS_TS + SECONDS_PER_DAY), handle);
+    });
+    storage.set_block_number(11);
+    storage.enter(|handle| {
+        let ctx = runtime_context(block_ctx(11, GENESIS_TS + SECONDS_PER_DAY), handle);
         record_parent_with_late_voter(&ctx, hash, early, late);
     });
     for height in 11..=13 {
+        storage.set_block_number(height);
         storage.enter(|handle| {
-            let ctx = BlockRuntimeContext::new(
+            let ctx = runtime_context(
                 block_ctx(height, GENESIS_TS + SECONDS_PER_DAY + height - 11),
                 handle,
             );
@@ -120,6 +124,7 @@ fn protocol_cycle_keeps_midnight_slot_pending_until_late_reward_window_closes() 
             }
         });
     }
+    storage.set_block_number(14);
     storage.enter(|handle| {
         let ctx = dispatch_at(handle, 14, GENESIS_TS + SECONDS_PER_DAY + 3);
         assert!(outbe_rewards::api::is_day_settled(&ctx, 20240101).unwrap());
@@ -152,28 +157,36 @@ fn retention_reclaims_settled_details_without_changing_agentreward_or_forfeited_
     let hash = B256::repeat_byte(0x78);
     let early = Address::repeat_byte(0xB0);
     let late = Address::repeat_byte(0xB1);
+    let claimable = |ctx: &BlockRuntimeContext<'_>, voter| {
+        outbe_agentreward::AgentRewardContract::new(ctx.storage.clone())
+            .get_pool_claimable_reward(outbe_agentreward::schema::RewardPool::Validator, voter)
+            .unwrap()
+    };
     storage.enter(|handle| {
         anchor_with(handle.clone(), GENESIS_TS + 60, seed_fresh_reward_oracle);
-        let ctx =
-            BlockRuntimeContext::new(block_ctx(11, GENESIS_TS + SECONDS_PER_DAY), handle.clone());
+    });
+    storage.set_block_number(11);
+    storage.enter(|handle| {
+        let ctx = runtime_context(block_ctx(11, GENESIS_TS + SECONDS_PER_DAY), handle.clone());
         record_parent_with_late_voter(&ctx, hash, early, late);
-        let close = BlockRuntimeContext::new(
+    });
+    storage.set_block_number(13);
+    storage.enter(|handle| {
+        let close = runtime_context(
             block_ctx(13, GENESIS_TS + SECONDS_PER_DAY + 2),
             handle.clone(),
         );
         outbe_rewards::late_settlement::record_late_credit(&close, hash, late, 3).unwrap();
         outbe_rewards::late_settlement::settle_matured(&close, 13, 3).unwrap();
+    });
+    storage.set_block_number(14);
+    let balances = storage.enter(|handle| {
         let settled = dispatch_at(handle.clone(), 14, GENESIS_TS + SECONDS_PER_DAY + 3);
         assert!(outbe_rewards::api::is_day_settled(&settled, 20240101).unwrap());
         assert_eq!(
             outbe_rewards::api::read_voters_for_day(&settled, 20240101).unwrap(),
             vec![(early, 1), (late, 1)]
         );
-        let claimable = |ctx: &BlockRuntimeContext<'_>, voter| {
-            outbe_agentreward::AgentRewardContract::new(ctx.storage.clone())
-                .get_pool_claimable_reward(outbe_agentreward::schema::RewardPool::Validator, voter)
-                .unwrap()
-        };
         let balances = [claimable(&settled, early), claimable(&settled, late)];
         assert!(balances[0] > U256::ZERO);
 
@@ -186,8 +199,11 @@ fn retention_reclaims_settled_details_without_changing_agentreward_or_forfeited_
             .daily_fee_sum_raw
             .write(&20240102, U256::from(77))
             .unwrap();
-        let expired =
-            BlockRuntimeContext::new(block_ctx(20, GENESIS_TS + 9 * SECONDS_PER_DAY), handle);
+        balances
+    });
+    storage.set_block_number(20);
+    storage.enter(|handle| {
+        let expired = runtime_context(block_ctx(20, GENESIS_TS + 9 * SECONDS_PER_DAY), handle);
         account_parent(&expired, 20);
         run_cycle_lifecycle(&expired).unwrap();
         assert_eq!(
@@ -302,7 +318,7 @@ fn every_block_credits_a_queued_reward_slice_between_hourly_cycles() {
                 .unwrap()
         };
 
-        let ctx = BlockRuntimeContext::new(block_ctx(2, ANCHOR_TS + 10), handle.clone());
+        let ctx = runtime_context(block_ctx(2, ANCHOR_TS + 10), handle.clone());
         distribute_daily(
             &ctx,
             day,
@@ -313,7 +329,7 @@ fn every_block_credits_a_queued_reward_slice_between_hourly_cycles() {
         assert_eq!(claimable(slice - 1), U256::from(1_000u64));
         assert_eq!(claimable(slice), U256::ZERO);
 
-        let ctx = BlockRuntimeContext::new(block_ctx(3, ANCHOR_TS + 20), handle.clone());
+        let ctx = runtime_context(block_ctx(3, ANCHOR_TS + 20), handle.clone());
         run_cycle_lifecycle(&ctx).unwrap();
         assert_eq!(claimable(recipients - 1), U256::from(1_000u64));
         assert_eq!(
@@ -379,7 +395,10 @@ fn prepared_validator_topup_and_terminal_residue_conserve_the_allocation() {
     let mut storage = cycle_storage();
     storage.enter(|handle| {
         genesis_block(handle.clone(), GENESIS_TS + 60);
-        let ctx = BlockRuntimeContext::new(block_ctx(2, GENESIS_TS + SECONDS_PER_DAY + 60), handle);
+    });
+    storage.set_block_number(2);
+    storage.enter(|handle| {
+        let ctx = runtime_context(block_ctx(2, GENESIS_TS + SECONDS_PER_DAY + 60), handle);
 
         seed_fresh_reward_oracle(&ctx);
 
@@ -423,7 +442,10 @@ fn zero_total_validator_participation_routes_the_pool_without_halting() {
     let mut storage = cycle_storage();
     storage.enter(|handle| {
         genesis_block(handle.clone(), GENESIS_TS + 60);
-        let ctx = BlockRuntimeContext::new(block_ctx(2, GENESIS_TS + SECONDS_PER_DAY + 60), handle);
+    });
+    storage.set_block_number(2);
+    storage.enter(|handle| {
+        let ctx = runtime_context(block_ctx(2, GENESIS_TS + SECONDS_PER_DAY + 60), handle);
 
         let voters = [Address::repeat_byte(0x51), Address::repeat_byte(0x52)];
         seed_daily_voters(&ctx, 20_240_101, &voters.map(|voter| (voter, 0)));
@@ -476,8 +498,9 @@ fn failed_terminal_dispatch_after(
     });
 
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 0);
+    storage.set_block_number(2);
     storage.enter(|handle| {
-        let fire = BlockRuntimeContext::new(block_ctx(2, TOPUP_FIRE_TS), handle);
+        let fire = runtime_context(block_ctx(2, TOPUP_FIRE_TS), handle);
         account_parent(&fire, 2);
         seed_fresh_reward_oracle(&fire);
         seed_daily_voters(&fire, 20_240_101, &TOPUP_VOTERS.map(|voter| (voter, 1)));
@@ -539,7 +562,7 @@ fn failed_terminal_dispatch_rolls_back_validator_topup() {
         .expect("an independent trigger still runs");
     assert_eq!(independent.scheduledAt, recorded_at);
     storage.enter(|handle| {
-        let fire = BlockRuntimeContext::new(block_ctx(2, TOPUP_FIRE_TS), handle);
+        let fire = runtime_context(block_ctx(2, TOPUP_FIRE_TS), handle);
         let rewards = fire
             .storage
             .contract::<outbe_rewards::schema::Rewards<'_>>();
@@ -581,8 +604,9 @@ fn failed_terminal_dispatch_rolls_back_validator_topup() {
 #[test]
 fn retry_after_failed_terminal_dispatch_settles_once() {
     let mut storage = failed_terminal_dispatch();
+    storage.set_block_number(3);
     storage.enter(|handle| {
-        let same_window = BlockRuntimeContext::new(block_ctx(3, TOPUP_FIRE_TS), handle);
+        let same_window = runtime_context(block_ctx(3, TOPUP_FIRE_TS), handle);
         account_parent(&same_window, 3);
         dispatch_triggers(&same_window).unwrap();
         let rewards = same_window
@@ -595,8 +619,9 @@ fn retry_after_failed_terminal_dispatch_settles_once() {
     let next_window = GENESIS_TS
         + SECONDS_PER_DAY
         + outbe_chain_constants::get_metadosis_advance_interval_seconds();
+    storage.set_block_number(4);
     storage.enter(|handle| {
-        let retry = BlockRuntimeContext::new(block_ctx(4, next_window), handle);
+        let retry = runtime_context(block_ctx(4, next_window), handle);
         account_parent(&retry, 4);
         dispatch_triggers(&retry).unwrap();
 
@@ -661,7 +686,7 @@ fn a_dependency_that_is_not_due_keeps_its_watermark() {
     // The provider is only read above. Re-enter to read the untouched slot.
     let mut storage = storage;
     storage.enter(|handle| {
-        let fire = BlockRuntimeContext::new(block_ctx(2, TOPUP_FIRE_TS), handle);
+        let fire = runtime_context(block_ctx(2, TOPUP_FIRE_TS), handle);
         let cycle: Cycle<'_> = fire.storage.contract::<Cycle<'_>>();
         assert_eq!(
             cycle
@@ -685,7 +710,7 @@ fn invalid_active_utc_day_does_not_consume_the_slot_or_emit_failure() {
     let mut storage = cycle_storage();
     storage.enter(|handle| {
         anchor_at(handle.clone(), GENESIS_TS + 60);
-        let fire = BlockRuntimeContext::new(block_ctx(2, TOPUP_FIRE_TS), handle);
+        let fire = runtime_context(block_ctx(2, TOPUP_FIRE_TS), handle);
         account_parent(&fire, 2);
         fire.storage
             .contract::<Cycle<'_>>()
@@ -704,7 +729,7 @@ fn storage_error_from_the_handler_does_not_consume_the_slot() {
     let mut storage = prepared_settlement_storage();
     storage.fail_mutation_at(0);
     storage.enter(|handle| {
-        let fire = BlockRuntimeContext::new(block_ctx(2, TOPUP_FIRE_TS), handle);
+        let fire = runtime_context(block_ctx(2, TOPUP_FIRE_TS), handle);
         let err = dispatch_triggers(&fire).expect_err("storage failure must fail the block");
         assert!(matches!(err, PrecompileError::Storage(_)));
         assert_eq!(last_executed_at(&fire), GENESIS_TS + 60);
@@ -725,7 +750,7 @@ fn out_of_gas_from_the_handler_does_not_consume_the_slot() {
     // Due-slot reads cost 100. The handler's first write costs 5000 and does not fit.
     storage.set_gas_limit(4_999);
     storage.enter(|handle| {
-        let fire = BlockRuntimeContext::new(block_ctx(2, TOPUP_FIRE_TS), handle);
+        let fire = runtime_context(block_ctx(2, TOPUP_FIRE_TS), handle);
         let err = dispatch_triggers(&fire).expect_err("out of gas must fail the block");
         assert!(matches!(err, PrecompileError::OutOfGas));
         assert_eq!(last_executed_at(&fire), GENESIS_TS + 60);
@@ -739,7 +764,10 @@ fn prepared_settlement_storage() -> HashMapStorageProvider {
         anchor_with(handle.clone(), GENESIS_TS + 60, |anchor| {
             seed_reward_cca(&anchor.storage)
         });
-        let fire = BlockRuntimeContext::new(block_ctx(2, TOPUP_FIRE_TS), handle);
+    });
+    storage.set_block_number(2);
+    storage.enter(|handle| {
+        let fire = runtime_context(block_ctx(2, TOPUP_FIRE_TS), handle);
         account_parent(&fire, 2);
         seed_fresh_reward_oracle(&fire);
         seed_daily_voters(&fire, 20_240_101, &TOPUP_VOTERS.map(|voter| (voter, 1)));
@@ -758,8 +786,10 @@ fn emission_dispatch_is_idempotent_per_prev_day() {
         anchor_with(handle.clone(), GENESIS_TS + 60, |anchor| {
             seed_reward_cca(&anchor.storage)
         });
-
-        let ctx = BlockRuntimeContext::new(block_ctx(2, GENESIS_TS + SECONDS_PER_DAY + 60), handle);
+    });
+    storage.set_block_number(2);
+    storage.enter(|handle| {
+        let ctx = runtime_context(block_ctx(2, GENESIS_TS + SECONDS_PER_DAY + 60), handle);
         account_parent(&ctx, 2);
 
         // First settlement of prev_day = 20240101: credits the pools + seals.
@@ -807,16 +837,16 @@ fn repeated_settled_cycle_slot_replays_without_any_storage_or_event_write() {
     let mut storage = cycle_storage();
     storage.enter(|handle| {
         anchor_at(handle.clone(), GENESIS_TS + 60);
-
-        let fire =
-            BlockRuntimeContext::new(block_ctx(2, GENESIS_TS + SECONDS_PER_DAY + 60), handle);
+    });
+    storage.set_block_number(2);
+    storage.enter(|handle| {
+        let fire = runtime_context(block_ctx(2, GENESIS_TS + SECONDS_PER_DAY + 60), handle);
         account_parent(&fire, 2);
         run_emission_limit_daily(&fire).unwrap();
     });
 
     assert_storage_unchanged(&mut storage, |handle| {
-        let replay =
-            BlockRuntimeContext::new(block_ctx(2, GENESIS_TS + SECONDS_PER_DAY + 60), handle);
+        let replay = runtime_context(block_ctx(2, GENESIS_TS + SECONDS_PER_DAY + 60), handle);
         run_emission_limit_daily(&replay).unwrap();
     });
 }

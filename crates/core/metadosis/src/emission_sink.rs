@@ -6,7 +6,7 @@ use outbe_primitives::{
         metadosis_cycle_allocation_binding, metadosis_late_settlement_binding,
         MetadosisCertifiedFinality, MetadosisCycleLifecycle,
     },
-    time::timestamp_to_date_key,
+    time::{date_key_to_utc_timestamp, timestamp_to_date_key},
 };
 use outbe_promislimit::PromisLimitContract;
 
@@ -18,7 +18,7 @@ pub(crate) fn apply(ctx: &BlockRuntimeContext, amount: U256) -> Result<()> {
     let binding = metadosis_cycle_allocation_binding(
         ctx.block.chain_id,
         ctx.block.block_number,
-        ctx.block.timestamp,
+        date_key_to_utc_timestamp(timestamp_to_date_key(ctx.block.timestamp)),
     );
     crate::commit::commit_transition::<MetadosisCycleLifecycle, _>(
         ctx.storage.clone(),

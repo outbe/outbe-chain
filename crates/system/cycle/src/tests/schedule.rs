@@ -249,9 +249,11 @@ fn frozen_final_profile_initializes_metadosis_at_its_existing_activation_height(
                 .is_empty(),
             "the frozen Final/32 evidence profile must not initialize Metadosis at block 1"
         );
-
+    });
+    storage.set_block_number(32);
+    storage.enter(|handle| {
         let activation =
-            BlockRuntimeContext::new(block_ctx(32, GENESIS_TS + 31 * 60), handle.clone());
+            runtime_context(block_ctx(32, GENESIS_TS + 31 * 60), handle.clone());
         run_cycle_lifecycle_at_activation(&activation, 32).unwrap();
 
         assert!(
@@ -268,8 +270,7 @@ fn does_not_fire_before_next_slot_after_anchor() {
     // Anchor at 00:01 UTC. The first aligned hourly slot is 01:00 UTC.
     with_anchored_cycle(|handle| {
         // Block at 00:59:59 UTC - still before the next slot.
-        let ctx_before =
-            BlockRuntimeContext::new(block_ctx(2, GENESIS_TS + 3_600 - 1), handle.clone());
+        let ctx_before = runtime_context(block_ctx(2, GENESIS_TS + 3_600 - 1), handle.clone());
         dispatch_triggers(&ctx_before).unwrap();
 
         assert_eq!(
@@ -335,7 +336,9 @@ fn multi_slot_gap_fires_only_for_latest_slot_after_anchor() {
     storage.enter(|handle| {
         let anchor_ts = GENESIS_TS + 60;
         anchor_at(handle.clone(), anchor_ts);
-
+    });
+    storage.set_block_number(2);
+    storage.enter(|handle| {
         // Missed hourly scheduler slots collapse to one execution at the latest
         // due boundary. Calendar policy then forfeits this multi-day gap.
         let ctx_fire = dispatch_at(handle, 2, GENESIS_TS + 4 * SECONDS_PER_DAY);
