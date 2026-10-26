@@ -72,10 +72,10 @@ fn a_spent_series_is_deleted_and_leaves_the_enumeration() {
         api::record_settled_units(&s, sid(11), 100).unwrap();
         assert!(
             !api::release_if_spent(&s, sid(11)).unwrap(),
-            "settled units still to exercise"
+            "settled units still to mine"
         );
 
-        api::record_exercised_units(&s, sid(11), owner(), 100).unwrap();
+        api::record_mined_units(&s, sid(11), owner(), 100).unwrap();
         assert!(api::release_if_spent(&s, sid(11)).unwrap());
 
         assert!(!api::series_exists(&s, sid(11)).unwrap());
@@ -88,7 +88,7 @@ fn a_spent_series_is_deleted_and_leaves_the_enumeration() {
 /// Past its deadline a series' unpaid units wait for the group's expiry to return them,
 /// so the series is spent only once the group handed it to the cleanup.
 #[test]
-fn an_expired_series_is_spent_once_its_group_returned_its_units() {
+fn a_forfeited_series_is_spent_once_its_group_returned_its_units() {
     with_registry(|s| {
         api::create_series(&s, sample_params(11)).unwrap();
         assert!(
@@ -132,9 +132,9 @@ fn dense_enumeration_tracks_created_series() {
 fn intex_state_encoding_matches_solidity() {
     assert_eq!(IntexState::Issued as u8, 0);
     assert_eq!(IntexState::Called as u8, 1);
-    assert_eq!(IntexState::Expired as u8, 2);
+    assert_eq!(IntexState::Forfeited as u8, 2);
     assert_eq!(IntexState::from_u8(0).unwrap(), IntexState::Issued);
     assert_eq!(IntexState::from_u8(1).unwrap(), IntexState::Called);
-    assert_eq!(IntexState::from_u8(2).unwrap(), IntexState::Expired);
+    assert_eq!(IntexState::from_u8(2).unwrap(), IntexState::Forfeited);
     assert!(IntexState::from_u8(3).is_err());
 }

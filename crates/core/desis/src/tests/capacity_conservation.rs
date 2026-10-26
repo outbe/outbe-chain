@@ -221,7 +221,9 @@ fn full_sale_returns_only_the_dust_once() {
     assert!(p
         .get_events(outbe_primitives::addresses::INTEX_ADDRESS)
         .iter()
-        .all(|e| outbe_intex::precompile::IIntex::IntexGroupExpired::decode_log_data(e).is_err()));
+        .all(
+            |e| outbe_intex::precompile::IIntex::IntexGroupForfeited::decode_log_data(e).is_err()
+        ));
 }
 
 #[test]

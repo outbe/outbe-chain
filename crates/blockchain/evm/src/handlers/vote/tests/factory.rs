@@ -53,8 +53,8 @@ fn real_factory_vote_approval_creates_token_refunds_once_and_preserves_surplus()
             ProposalStatus::Approved
         );
         assert_eq!(
-            vote.proposal_bond(proposal_id).unwrap().settlement,
-            BondSettlement::Refunded
+            vote.proposal_bond(proposal_id).unwrap().state,
+            BondState::Refunded
         );
         assert_eq!(vote.bond_liabilities().unwrap(), U256::ZERO);
         assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), forced_surplus);
@@ -159,8 +159,8 @@ fn pfs_010_05_expiry_releases_identity_and_pending_cap_and_burns_once() {
             promis_limit_before
         );
         assert_eq!(
-            vote.proposal_bond(proposal_id).unwrap().settlement,
-            BondSettlement::Burned
+            vote.proposal_bond(proposal_id).unwrap().state,
+            BondState::Burned
         );
         assert_eq!(vote.bond_liabilities().unwrap(), U256::ZERO);
         assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), forced_surplus);
@@ -265,8 +265,8 @@ fn pfs_010_06_execution_error_refunds_bond_once_and_retains_reservation() {
         // Vote refunds the bond once and closes the liability. The
         // target-owned reservation is admission state and stays.
         assert_eq!(
-            vote.proposal_bond(proposal_id).unwrap().settlement,
-            BondSettlement::Refunded
+            vote.proposal_bond(proposal_id).unwrap().state,
+            BondState::Refunded
         );
         assert_eq!(vote.bond_liabilities().unwrap(), U256::ZERO);
         assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), U256::ZERO);
@@ -562,8 +562,8 @@ fn pfs_010_08_fatal_creation_rolls_back_the_containing_block() {
         );
         assert_eq!(vote.pending_proposal_count_by_proposer(issuer).unwrap(), 0);
         assert_eq!(
-            vote.proposal_bond(proposal_id).unwrap().settlement,
-            BondSettlement::Refunded
+            vote.proposal_bond(proposal_id).unwrap().state,
+            BondState::Refunded
         );
         assert_eq!(vote.bond_liabilities().unwrap(), U256::ZERO);
         assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), U256::ZERO);

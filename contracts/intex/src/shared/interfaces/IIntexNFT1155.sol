@@ -29,12 +29,12 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     // --- Types ---
 
     /// @notice Series lifecycle state.
-    /// @dev Issued -> Called -> Expired. `Expired` is read-only: storage keeps `Called`, so the
+    /// @dev Issued -> Called -> Forfeited. `Forfeited` is read-only: storage keeps `Called`, so the
     ///      freezes that compare the stored field keep applying.
     enum IntexState {
         Issued,
         Called,
-        Expired
+        Forfeited
     }
 
     /// @notice Per-token classification within a series.
@@ -126,11 +126,11 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param tokenId Token id whose metadata changed.
     event MetadataUpdate(uint256 tokenId);
 
-    /// @notice Emitted when a settled Intex right is exercised: its units burn to mine Promis.
+    /// @notice Emitted when settled Intex units are mined: they burn to mine Promis.
     /// @param seriesId Series identifier.
     /// @param owner Owner whose Settled tokens were burned.
     /// @param units Settled units burned.
-    event IntexExercised(bytes14 indexed seriesId, address indexed owner, uint256 units);
+    event IntexMined(bytes14 indexed seriesId, address indexed owner, uint256 units);
 
     /// @notice Emitted when Issued Intex are burned on being sent to the Gem Factory.
     /// @param seriesId Series identifier.
@@ -293,7 +293,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @return The token classification.
     function statusOf(uint256 tokenId) external pure returns (IntexStatus);
 
-    /// @notice Read series data by series id. `state` derives Expired, as the card renders it.
+    /// @notice Read series data by series id. `state` derives Forfeited, as the card renders it.
     /// @param seriesId Series identifier.
     /// @return The full series data for the Issued token id.
     function readData(bytes14 seriesId) external view returns (SeriesData memory);

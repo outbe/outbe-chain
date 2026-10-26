@@ -15,7 +15,7 @@ use crate::handlers::{
     TargetAdmission, TargetExecutionOutcome, VoteTarget, VoteTargetContext, VoteTargetRegistry,
 };
 use crate::notify::ProposalFinalization;
-use crate::schema::{BondSettlement, Vote};
+use crate::schema::{BondState, Vote};
 use crate::state::{
     calculate_vote_tally, ProposalBond, ProposalStatus, ProposalSubmission, VoteKind,
 };
@@ -348,7 +348,7 @@ impl Vote<'_> {
     ///
     /// Transitions `Pending` -> `Approved` | `Expired` | `Error`, all terminal.
     /// Dispatches the tally outcome to the registered target-module handler in
-    /// the same pass and settles the proposal bond with the status.
+    /// the same pass and refunds or burns the proposal bond with the status.
     pub fn process_begin_block(
         &mut self,
         ctx: &BlockRuntimeContext,
@@ -365,9 +365,9 @@ impl Vote<'_> {
                     self.finalize_voting(ctx, proposal_id, registry)?;
                 }
                 // An earlier binary persisted this Error proposal in the pending
-                // vector and left its bond unsettled. Release it once.
+                // vector and left its bond escrowed. Refund it once.
                 ProposalStatus::Error => {
-                    self.settle_legacy_error(proposal_id, proposal.proposer)?;
+                    self.close_legacy_error(proposal_id, proposal.proposer)?;
                 }
                 ProposalStatus::Pending
                 | ProposalStatus::Approved
@@ -383,13 +383,13 @@ impl Vote<'_> {
     /// refunds its still-escrowed bond exactly once. This function does not
     /// execute the target again and does not announce a finalization. The
     /// admission caps already bound the pending-vector walk.
-    fn settle_legacy_error(&mut self, proposal_id: U256, proposer: Address) -> Result<()> {
+    fn close_legacy_error(&mut self, proposal_id: U256, proposer: Address) -> Result<()> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
             self.remove_pending_proposal_id(proposal_id)?;
             let bond = self.proposal_bond(proposal_id)?;
-            if bond.settlement == BondSettlement::Unsettled {
-                self.settle_terminal_bond(proposal_id, proposer, bond, ProposalStatus::Error)?;
+            if bond.state == BondState::Escrowed {
+                self.refund_or_burn_bond(proposal_id, proposer, bond, ProposalStatus::Error)?;
             }
             Ok(())
         })
@@ -445,29 +445,28 @@ impl Vote<'_> {
             }
         };
         self.set_proposal_status(proposal_id, status)?;
-        self.settle_terminal_bond(proposal_id, proposal.proposer, bond, status)?;
+        self.refund_or_burn_bond(proposal_id, proposal.proposer, bond, status)?;
 
         self.notify_proposal_finalized(&proposal, &tally, outcome)?;
         finalization_checkpoint.commit();
         Ok(())
     }
 
-    fn settle_terminal_bond(
+    fn refund_or_burn_bond(
         &mut self,
         proposal_id: U256,
         owner: Address,
         bond: ProposalBond,
         status: ProposalStatus,
     ) -> Result<()> {
-        match bond.settlement {
-            BondSettlement::NoBond => return Ok(()),
-            BondSettlement::Unsettled => {}
-            BondSettlement::Refunded | BondSettlement::Burned => {
-                return Err(VoteError::PendingProposalBondAlreadySettled {
-                    proposal_id,
-                    settlement: bond.settlement,
-                }
-                .into());
+        match bond.state {
+            BondState::NoBond => return Ok(()),
+            BondState::Escrowed => {}
+            BondState::Refunded => {
+                return Err(VoteError::PendingProposalBondAlreadyRefunded { proposal_id }.into());
+            }
+            BondState::Burned => {
+                return Err(VoteError::PendingProposalBondAlreadyBurned { proposal_id }.into());
             }
         }
 
@@ -477,12 +476,12 @@ impl Vote<'_> {
             ProposalStatus::Approved | ProposalStatus::Error => {
                 self.storage
                     .transfer_balance(VOTE_ADDRESS, owner, bond.amount)?;
-                self.settle_proposal_bond_accounting(proposal_id, BondSettlement::Refunded)?;
+                self.set_bond_state(proposal_id, BondState::Refunded)?;
                 self.notify_proposal_bond_refunded(proposal_id, owner, bond.amount)
             }
             ProposalStatus::Expired => {
                 self.storage.decrease_balance(VOTE_ADDRESS, bond.amount)?;
-                self.settle_proposal_bond_accounting(proposal_id, BondSettlement::Burned)?;
+                self.set_bond_state(proposal_id, BondState::Burned)?;
                 self.notify_proposal_bond_burned(proposal_id, owner, bond.amount)
             }
             ProposalStatus::Pending | ProposalStatus::Rejected => {

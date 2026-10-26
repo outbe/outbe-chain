@@ -1,7 +1,7 @@
 //! Sponsorship quota is part of the block state only when the transaction is.
 
 use alloy_evm::block::CommitChanges;
-use outbe_primitives::addresses::{AGENT_REWARD_ADDRESS, ZEROFEE_ADDRESS};
+use outbe_primitives::addresses::{AGENT_REWARD_ADDRESS, TRIBUTE_FACTORY_ADDRESS, ZEROFEE_ADDRESS};
 use outbe_zerofee::precompile::IZeroFee::SponsorshipAuthorized;
 
 use super::*;
@@ -13,13 +13,22 @@ fn reverting_calldata() -> Vec<u8> {
 }
 
 fn sponsored_tx(nonce: u64, gas_limit: u64, input: Vec<u8>) -> reth_ethereum::TransactionSigned {
+    sponsored_tx_to(nonce, gas_limit, input, AGENT_REWARD_ADDRESS)
+}
+
+fn sponsored_tx_to(
+    nonce: u64,
+    gas_limit: u64,
+    input: Vec<u8>,
+    target: Address,
+) -> reth_ethereum::TransactionSigned {
     TxEip1559 {
         chain_id: CHAIN_ID,
         nonce,
         gas_limit,
         max_fee_per_gas: alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE as u128,
         max_priority_fee_per_gas: 0,
-        to: TxKind::Call(AGENT_REWARD_ADDRESS),
+        to: TxKind::Call(target),
         value: U256::ZERO,
         input: input.into(),
         access_list: Default::default(),
@@ -55,7 +64,11 @@ fn delegated_state(
 ) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
     let mut db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
     let marker = Bytecode::new_legacy([0xef].into());
-    for address in [ZEROFEE_ADDRESS, AGENT_REWARD_ADDRESS] {
+    for address in [
+        ZEROFEE_ADDRESS,
+        AGENT_REWARD_ADDRESS,
+        TRIBUTE_FACTORY_ADDRESS,
+    ] {
         db.insert_account_info(
             address,
             AccountInfo {
@@ -156,8 +169,10 @@ fn sponsored_included_revert_keeps_quota() {
             .execute_transaction(recovered)
             .expect("an included revert is still a committed transaction");
         let receipts = executor.receipts();
+        assert_eq!(executor.sponsored_gas_used, 200_000);
         assert_eq!(receipts.len(), 1);
         assert!(!receipts[0].success);
+        assert!(receipts[0].cumulative_gas_used < executor.sponsored_gas_used);
         let sig_hash = SponsorshipAuthorized::SIGNATURE_HASH;
         assert!(
             receipts[0].logs.iter().any(
@@ -188,6 +203,7 @@ fn sponsored_nonce_too_low_does_not_burn_quota() {
             .execute_transaction(recovered)
             .expect_err("nonce already consumed");
         assert_invalid_tx(error, true);
+        assert_eq!(executor.sponsored_gas_used, 0);
         assert!(executor.receipts().is_empty());
     }
 
@@ -216,6 +232,7 @@ fn sponsored_gas_below_intrinsic_does_not_burn_quota() {
             .execute_transaction(recovered)
             .expect_err("gas limit below intrinsic");
         assert_invalid_tx(error, false);
+        assert_eq!(executor.sponsored_gas_used, 0);
         assert!(executor.receipts().is_empty());
     }
 
@@ -244,6 +261,7 @@ fn sponsored_declined_commit_does_not_burn_quota() {
             .execute_transaction_with_commit_condition(recovered, |_| CommitChanges::No)
             .expect("declining the commit is not an execution error");
         assert!(outcome.is_none());
+        assert_eq!(executor.sponsored_gas_used, 0);
         assert!(executor.receipts().is_empty());
     }
 
@@ -251,6 +269,221 @@ fn sponsored_declined_commit_does_not_burn_quota() {
     assert_eq!(signer_balance(&mut state, signer), initial_balance);
     let account = state.basic(signer).expect("account read").expect("account");
     assert_eq!(account.nonce, 0);
+}
+
+#[test]
+fn tribute_wrong_selector_above_default_gas_uses_paid_fallback() {
+    let config = OutbeEvmConfig::new(test_chain_spec());
+    let signer = OWNER;
+    let gas_limit = 600_000;
+    let funded_balance =
+        U256::from(gas_limit) * U256::from(alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE);
+    for initial_balance in [U256::ZERO, funded_balance] {
+        let recovered = Recovered::new_unchecked(
+            sponsored_tx_to(0, gas_limit, reverting_calldata(), TRIBUTE_FACTORY_ADDRESS),
+            signer,
+        );
+        let mut state = delegated_state(signer, initial_balance, 0);
+        let paid_gas_used;
+        {
+            let evm = config.evm_with_env(&mut state, pectra_evm_env());
+            let mut executor = config.create_executor(evm, execution_ctx(Some(1), Bytes::new()));
+            let result = executor.execute_transaction(recovered);
+            if initial_balance.is_zero() {
+                let error = result.expect_err("unfunded fallback must fail ordinary validation");
+                match error {
+                    BlockExecutionError::Validation(BlockValidationError::InvalidTx {
+                        error,
+                        ..
+                    }) => {
+                        assert!(matches!(
+                            error.as_invalid_tx_err(),
+                            Some(InvalidTransaction::LackOfFundForMaxFee { .. })
+                        ));
+                    }
+                    other => panic!("expected insufficient funds, got {other}"),
+                }
+                assert!(executor.receipts().is_empty());
+                paid_gas_used = 0;
+            } else {
+                result.expect("funded fallback must execute normally");
+                let receipts = executor.receipts();
+                assert_eq!(receipts.len(), 1);
+                assert!(!receipts[0].success, "unknown selector must revert");
+                assert!(
+                    receipts[0].logs.is_empty(),
+                    "no sponsorship or policy failure logs"
+                );
+                paid_gas_used = receipts[0].cumulative_gas_used;
+                assert!(paid_gas_used > 0);
+            }
+            assert_eq!(executor.sponsored_gas_used, 0);
+            assert_eq!(executor.zero_fee_soft_failures, 0);
+        }
+        assert_eq!(live_counter(&mut state, signer), (0, 0));
+        assert_eq!(
+            signer_balance(&mut state, signer),
+            initial_balance
+                - U256::from(paid_gas_used)
+                    * U256::from(alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE),
+            "only the included paid revert debits ordinary gas fees"
+        );
+        assert_eq!(
+            state.basic(signer).unwrap().unwrap().nonce,
+            u64::from(!initial_balance.is_zero())
+        );
+    }
+}
+
+#[test]
+fn sponsored_block_budget_defers_large_transaction_but_includes_smaller_and_resets() {
+    let config = OutbeEvmConfig::new(test_chain_spec());
+    let signer = OWNER;
+    let mut state = delegated_state(signer, U256::ZERO, 0);
+    let large_tx = |nonce, gas_limit| {
+        Recovered::new_unchecked(
+            sponsored_tx_to(
+                nonce,
+                gas_limit,
+                // Selector-only calldata is sponsored but deliberately fails ABI decoding.
+                outbe_tributefactory::precompile::ITributeFactory::offerTributeCall::SELECTOR
+                    .to_vec(),
+                TRIBUTE_FACTORY_ADDRESS,
+            ),
+            signer,
+        )
+    };
+    {
+        let evm = config.evm_with_env(&mut state, pectra_evm_env());
+        let mut executor = config.create_executor(evm, execution_ctx(Some(4), Bytes::new()));
+        for (nonce, gas_limit) in [(0, 8_000_000), (1, 5_000_000)] {
+            executor
+                .execute_transaction(large_tx(nonce, gas_limit))
+                .unwrap();
+            assert_eq!(
+                executor.sponsored_gas_used,
+                if nonce == 0 { 8_000_000 } else { 13_000_000 }
+            );
+            let receipt = executor.receipts().last().unwrap();
+            assert!(
+                !receipt.success,
+                "selector-only input must revert during ABI decoding"
+            );
+            assert!(receipt.logs.iter().any(|log| {
+                log.address == ZEROFEE_ADDRESS
+                    && log.topics().first() == Some(&SponsorshipAuthorized::SIGNATURE_HASH)
+            }));
+            let db = executor.inner.evm.db_mut();
+            assert_eq!(live_counter(db, signer), (TODAY, nonce as u32 + 1));
+            assert_eq!(signer_balance(db, signer), U256::ZERO);
+        }
+        assert_eq!(executor.sponsored_gas_used, 13_000_000);
+        let error = executor
+            .execute_transaction(large_tx(2, 8_000_000))
+            .unwrap_err();
+        match error {
+            BlockExecutionError::Validation(BlockValidationError::InvalidTx { error, .. }) => {
+                assert!(crate::is_sponsored_block_budget_deferral(error.as_ref()));
+            }
+            other => panic!("expected budget deferral, got {other}"),
+        }
+        assert_eq!(executor.receipts().len(), 2);
+        assert_eq!(executor.sponsored_gas_used, 13_000_000);
+        assert_eq!(executor.zero_fee_soft_failures, 0);
+        let db = executor.inner.evm.db_mut();
+        assert_eq!(live_counter(db, signer), (TODAY, 2));
+        assert_eq!(db.basic(signer).unwrap().unwrap().nonce, 2);
+
+        let smaller =
+            Recovered::new_unchecked(sponsored_tx(2, 500_000, reverting_calldata()), signer);
+        executor.execute_transaction(smaller).unwrap();
+        assert_eq!(executor.receipts().len(), 3);
+        assert_eq!(executor.sponsored_gas_used, 13_500_000);
+    }
+    assert_eq!(live_counter(&mut state, signer), (TODAY, 3));
+    assert_eq!(signer_balance(&mut state, signer), U256::ZERO);
+    {
+        let evm = config.evm_with_env(&mut state, pectra_evm_env());
+        let mut executor = config.create_executor(evm, execution_ctx(Some(1), Bytes::new()));
+        assert_eq!(executor.sponsored_gas_used, 0);
+        executor
+            .execute_transaction(large_tx(3, 8_000_000))
+            .unwrap();
+        assert_eq!(executor.sponsored_gas_used, 8_000_000);
+        assert!(!executor.receipts()[0].success);
+        assert_eq!(executor.zero_fee_soft_failures, 0);
+    }
+    assert_eq!(live_counter(&mut state, signer), (TODAY, 4));
+    assert_eq!(signer_balance(&mut state, signer), U256::ZERO);
+}
+
+#[test]
+fn sponsored_budget_deferral_precedes_quota_exhaustion() {
+    let config = OutbeEvmConfig::new(test_chain_spec());
+    let recovered = sponsored_tx(0, 200_000, reverting_calldata())
+        .try_into_recovered()
+        .unwrap();
+    let signer = Address::from(*recovered.signer());
+    let mut state = delegated_state(signer, U256::ZERO, 0);
+    let packed = outbe_zerofee::pack_counter(TODAY, outbe_zerofee::FREE_TX_DAILY_LIMIT);
+    state
+        .database
+        .insert_account_storage(ZEROFEE_ADDRESS, counter_slot(signer), U256::from(packed))
+        .unwrap();
+    {
+        let evm = config.evm_with_env(&mut state, pectra_evm_env());
+        let mut executor = config.create_executor(evm, execution_ctx(Some(1), Bytes::new()));
+        executor.sponsored_gas_used = outbe_zerofee::SPONSORED_GAS_PER_BLOCK;
+        let error = executor.execute_transaction(recovered.clone()).unwrap_err();
+        match error {
+            BlockExecutionError::Validation(BlockValidationError::InvalidTx { error, .. }) => {
+                assert!(crate::is_sponsored_block_budget_deferral(error.as_ref()));
+            }
+            other => panic!("expected budget deferral, got {other}"),
+        }
+        assert!(executor.receipts().is_empty());
+        assert_eq!(executor.zero_fee_soft_failures, 0);
+        assert_eq!(
+            executor
+                .inner
+                .evm
+                .db_mut()
+                .basic(signer)
+                .unwrap()
+                .unwrap()
+                .nonce,
+            0
+        );
+        // Once it fits, the same exhausted signer receives the existing soft failure.
+        executor.sponsored_gas_used = 0;
+        executor.execute_transaction(recovered).unwrap();
+        assert_eq!(executor.receipts().len(), 1);
+        assert!(!executor.receipts()[0].success);
+        assert_eq!(executor.sponsored_gas_used, 0);
+        assert_eq!(executor.zero_fee_soft_failures, 1);
+    }
+    assert_eq!(
+        live_counter(&mut state, signer),
+        (TODAY, outbe_zerofee::FREE_TX_DAILY_LIMIT)
+    );
+}
+
+#[test]
+fn sponsored_budget_matcher_requires_exact_reason() {
+    assert!(crate::is_sponsored_block_budget_deferral(
+        &InvalidTransaction::Str(crate::SPONSORED_BLOCK_BUDGET_EXCEEDED.into(),)
+    ));
+    for reason in [
+        "sponsored block budget exceeded suffix",
+        "zero-fee soft-failure cap exceeded",
+    ] {
+        assert!(!crate::is_sponsored_block_budget_deferral(
+            &InvalidTransaction::Str(reason.into())
+        ));
+    }
+    assert!(!crate::is_sponsored_block_budget_deferral(
+        &InvalidTransaction::NonceTooLow { tx: 0, state: 1 }
+    ));
 }
 
 #[test]

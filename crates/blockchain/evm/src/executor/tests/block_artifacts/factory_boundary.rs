@@ -26,7 +26,7 @@ pub(super) struct Output {
     pub refunded_logs: usize,
     pub burned_logs: usize,
     pub status: ProposalStatus,
-    pub settlement: BondSettlement,
+    pub bond_state: BondState,
     pub factory_count: U256,
     pub registered_token_id: Option<B256>,
     pub token_by_id: Address,
@@ -288,7 +288,7 @@ fn assemble_output(
         refunded_logs: receipts.refunded_logs,
         burned_logs: receipts.burned_logs,
         status: contracts.status,
-        settlement: contracts.settlement,
+        bond_state: contracts.bond_state,
         factory_count: contracts.factory_count,
         registered_token_id: contracts.registered_token_id,
         token_by_id: contracts.token_by_id,
@@ -436,7 +436,7 @@ struct FactoryRead<'a> {
 }
 struct FactoryContractState {
     status: ProposalStatus,
-    settlement: BondSettlement,
+    bond_state: BondState,
     factory_count: U256,
     registered_token_id: Option<B256>,
     token_by_id: Address,
@@ -484,7 +484,7 @@ fn observe_contracts(
             .get(U256::from(1u64))?
             .ok_or_else(|| eyre::eyre!("missing fixture value"))?
             .proposal_status()?,
-        settlement: vote.proposal_bond(U256::from(1u64))?.settlement,
+        bond_state: vote.proposal_bond(U256::from(1u64))?.state,
         factory_count,
         registered_token_id: factory.registered_token_id(expected_token)?,
         token_by_id: factory.token_by_id(expected_token_id)?,
@@ -515,7 +515,7 @@ fn factory_boundaries_are_byte_equal_across_proposer_and_validator_execution() {
                 assert_eq!(proposer.refunded_logs, 1);
                 assert_eq!(proposer.burned_logs, 0);
                 assert_eq!(proposer.status, ProposalStatus::Approved);
-                assert_eq!(proposer.settlement, BondSettlement::Refunded);
+                assert_eq!(proposer.bond_state, BondState::Refunded);
                 assert_eq!(proposer.factory_count, U256::ONE);
                 assert_ne!(proposer.token_by_id, Address::ZERO);
                 assert_eq!(proposer.token_by_id, proposer.token_by_ticker);
@@ -537,7 +537,7 @@ fn factory_boundaries_are_byte_equal_across_proposer_and_validator_execution() {
                 assert_eq!(proposer.refunded_logs, 0);
                 assert_eq!(proposer.burned_logs, 1);
                 assert_eq!(proposer.status, ProposalStatus::Expired);
-                assert_eq!(proposer.settlement, BondSettlement::Burned);
+                assert_eq!(proposer.bond_state, BondState::Burned);
                 assert_eq!(proposer.factory_count, U256::ZERO);
                 assert_eq!(proposer.issuer_balance, U256::ZERO);
                 assert_eq!(proposer.vote_balance, U256::ZERO);
@@ -556,7 +556,7 @@ fn factory_boundaries_are_byte_equal_across_proposer_and_validator_execution() {
                 assert_eq!(proposer.refunded_logs, 1);
                 assert_eq!(proposer.burned_logs, 0);
                 assert_eq!(proposer.status, ProposalStatus::Error);
-                assert_eq!(proposer.settlement, BondSettlement::Refunded);
+                assert_eq!(proposer.bond_state, BondState::Refunded);
                 assert_eq!(proposer.factory_count, U256::ZERO);
                 assert_eq!(proposer.issuer_balance, STABLECOIN_CREATE_BOND);
                 assert_eq!(proposer.vote_balance, U256::ZERO);

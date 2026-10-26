@@ -35,16 +35,16 @@ pub enum VoteError {
     InvalidVoteKind,
     #[error("invalid stored proposal electorate")]
     InvalidElectorate,
-    #[error("invalid proposal bond settlement")]
-    InvalidBondSettlement,
+    #[error("corrupt proposal bond state")]
+    CorruptBondState,
     #[error("proposal counter is exhausted")]
     ProposalCounterExhausted,
     #[error("proposal bond amount must be nonzero")]
     InvalidBondAmount,
     #[error("proposal bond is already recorded")]
     ProposalBondAlreadyRecorded,
-    #[error("proposal bond is not unsettled")]
-    ProposalBondNotUnsettled,
+    #[error("proposal bond is not escrowed")]
+    ProposalBondNotEscrowed,
     #[error("proposal bond liability overflow")]
     BondLiabilityOverflow,
     #[error("proposal bond liability underflow")]
@@ -61,12 +61,11 @@ pub enum VoteError {
     DuplicateTargetModule,
     #[error("stored {module} proposal payload is invalid")]
     StoredPayloadInvalid { module: String },
-    #[error("pending proposal {proposal_id} has an already settled bond ({settlement:?})")]
-    PendingProposalBondAlreadySettled {
-        proposal_id: U256,
-        settlement: crate::schema::BondSettlement,
-    },
-    #[error("proposal {proposal_id} has inconsistent bond amount and settlement")]
+    #[error("pending proposal {proposal_id} has an already refunded bond")]
+    PendingProposalBondAlreadyRefunded { proposal_id: U256 },
+    #[error("pending proposal {proposal_id} has an already burned bond")]
+    PendingProposalBondAlreadyBurned { proposal_id: U256 },
+    #[error("proposal {proposal_id} has inconsistent bond amount and state")]
     InconsistentBondState { proposal_id: U256 },
 }
 
@@ -74,14 +73,15 @@ impl From<VoteError> for PrecompileError {
     fn from(error: VoteError) -> Self {
         match error {
             VoteError::InvalidProposalBond { .. }
-            | VoteError::InvalidBondSettlement
+            | VoteError::CorruptBondState
             | VoteError::InvalidBondAmount
             | VoteError::ProposalBondAlreadyRecorded
-            | VoteError::ProposalBondNotUnsettled
+            | VoteError::ProposalBondNotEscrowed
             | VoteError::BondLiabilityOverflow
             | VoteError::BondLiabilityUnderflow
             | VoteError::BondLiabilityInvariant { .. }
-            | VoteError::PendingProposalBondAlreadySettled { .. }
+            | VoteError::PendingProposalBondAlreadyRefunded { .. }
+            | VoteError::PendingProposalBondAlreadyBurned { .. }
             | VoteError::InconsistentBondState { .. } => PrecompileError::RevertBytes(Bytes::from(
                 IVote::InvalidProposalBond {
                     reason: error.to_string(),

@@ -15,7 +15,7 @@ use outbe_primitives::{
 
 use crate::{
     precompile::IVote,
-    schema::{BondSettlement, ProposalStatus, Vote},
+    schema::{BondState, ProposalStatus, Vote},
 };
 
 use super::targets::{
@@ -67,7 +67,7 @@ fn a_bonded_target_error_refunds_the_bond_once_and_closes_the_liability() {
         // The bond is refunded in full, once, and the liability is closed.
         let bond = vote.proposal_bond(proposal_id).unwrap();
         assert_eq!(bond.amount, U256::from(BOND));
-        assert_eq!(bond.settlement, BondSettlement::Refunded);
+        assert_eq!(bond.state, BondState::Refunded);
         assert_eq!(vote.bond_liabilities().unwrap(), U256::ZERO);
         assert_eq!(storage.balance(OWNER).unwrap(), U256::from(BOND));
         assert_eq!(
@@ -97,8 +97,8 @@ fn a_bonded_target_error_refunds_the_bond_once_and_closes_the_liability() {
         vote.begin_block_with(deadline + 2, &PUBLIC_BONDED_REGISTRY)
             .unwrap();
         assert_eq!(
-            vote.proposal_bond(proposal_id).unwrap().settlement,
-            BondSettlement::Refunded
+            vote.proposal_bond(proposal_id).unwrap().state,
+            BondState::Refunded
         );
         assert_eq!(storage.balance(OWNER).unwrap(), U256::from(BOND));
         assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), U256::from(SURPLUS));
@@ -113,7 +113,7 @@ fn a_bonded_target_error_refunds_the_bond_once_and_closes_the_liability() {
 }
 
 #[test]
-fn an_unbonded_target_error_settles_no_bond_and_leaves_the_pending_index() {
+fn an_unbonded_target_error_moves_no_bond_and_leaves_the_pending_index() {
     let mut provider = super::test_provider();
     provider.set_balance(VOTE_ADDRESS, U256::from(SURPLUS));
     let proposal_id;
@@ -124,7 +124,7 @@ fn an_unbonded_target_error_settles_no_bond_and_leaves_the_pending_index() {
 
         assert_eq!(proposal_status(&vote, proposal_id), ProposalStatus::Error);
         let bond = vote.proposal_bond(proposal_id).unwrap();
-        assert_eq!(bond.settlement, BondSettlement::NoBond);
+        assert_eq!(bond.state, BondState::NoBond);
         assert_eq!(bond.amount, U256::ZERO);
         assert_eq!(vote.bond_liabilities().unwrap(), U256::ZERO);
         assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), U256::from(SURPLUS));
@@ -176,7 +176,7 @@ fn a_failure_after_every_error_finalization_mutation_rolls_back_everything() {
 ///
 /// - status `Error`
 /// - the id still in the pending vector
-/// - the bond still `Unsettled`
+/// - the bond still `Escrowed`
 ///
 /// This is the upgrade boundary, not a corrupted record.
 fn persist_legacy_error(vote: &mut Vote<'_>, proposal_id: U256) {
@@ -194,8 +194,8 @@ fn a_persisted_legacy_bonded_error_is_released_and_refunded_once_on_the_next_pas
         let mut vote = Vote::new(storage.clone());
         persist_legacy_error(&mut vote, proposal_id);
         assert_eq!(
-            vote.proposal_bond(proposal_id).unwrap().settlement,
-            BondSettlement::Unsettled
+            vote.proposal_bond(proposal_id).unwrap().state,
+            BondState::Escrowed
         );
         assert_eq!(vote.bond_liabilities().unwrap(), U256::from(BOND));
 
@@ -204,14 +204,14 @@ fn a_persisted_legacy_bonded_error_is_released_and_refunded_once_on_the_next_pas
 
         assert_finalized_error(&vote, proposal_id);
         assert_eq!(vote.pending_proposal_count_by_proposer(OWNER).unwrap(), 0);
-        assert_bond_closed(&vote, proposal_id, BondSettlement::Refunded);
+        assert_bond_closed(&vote, proposal_id, BondState::Refunded);
         assert_eq!(storage.balance(OWNER).unwrap(), U256::from(BOND));
         assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), U256::from(SURPLUS));
         // The target is not re-executed during cleanup.
         assert_eq!(target_marker(&storage, 996), U256::ZERO);
         assert_eq!(target_marker(&storage, 995), U256::ZERO);
 
-        // A later pass finds nothing to settle.
+        // A later pass finds no bond to refund.
         vote.begin_block_with(deadline + 6, &PUBLIC_BONDED_REGISTRY)
             .unwrap();
         assert_eq!(storage.balance(OWNER).unwrap(), U256::from(BOND));
@@ -232,7 +232,7 @@ fn a_persisted_legacy_bonded_error_is_released_and_refunded_once_on_the_next_pas
 }
 
 #[test]
-fn a_persisted_legacy_unbonded_error_leaves_the_pending_index_without_settlement() {
+fn a_persisted_legacy_unbonded_error_leaves_the_pending_index_without_a_bond_change() {
     let mut provider = super::test_provider();
     provider.set_balance(VOTE_ADDRESS, U256::from(SURPLUS));
     let proposal_id;
@@ -255,7 +255,7 @@ fn a_persisted_legacy_unbonded_error_leaves_the_pending_index_without_settlement
             vote.pending_proposal_count_by_proposer(PROPOSER).unwrap(),
             0
         );
-        assert_bond_closed(&vote, proposal_id, BondSettlement::NoBond);
+        assert_bond_closed(&vote, proposal_id, BondState::NoBond);
         assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), U256::from(SURPLUS));
         assert_eq!(
             target_marker(&storage, 999),
