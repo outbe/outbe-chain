@@ -189,18 +189,6 @@ contract IntexNFT1155MetadataTest is Test {
         assertEq(IntexMetadata.tokenURI(missing, true), token.contractURI());
     }
 
-    /// @dev A currency the oracle has no letters for keeps its digits in the id.
-    function test_tokenURI_RendersTheNumericFallbackId() public view {
-        IIntexNFT1155.SeriesData memory data;
-        data.worldwideDay = SERIES_ID_DAY;
-        data.seriesId = "20260622-949-U";
-        data.issuanceCurrency = 949;
-        data.referenceCurrency = 840;
-        data.issuedAt = 1;
-        bytes memory json = MetadataTestLib.decodeJsonDataUri(IntexMetadata.tokenURI(data, false));
-        _assertContains(json, "\"name\":\"Intex 20260622-949-U\",");
-    }
-
     function test_tokenURI_KeepsTheNumberOfANonIsoCurrency() public view {
         IIntexNFT1155.SeriesData memory data;
         data.worldwideDay = SERIES_ID_DAY;
