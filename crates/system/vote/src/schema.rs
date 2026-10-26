@@ -8,14 +8,17 @@ use outbe_primitives::storage::{Storable, StorableType};
 ///
 /// Storage values match the Solidity `ProposalStatus` enum (0-based).
 ///
-/// Flow:
-/// 1. `Pending` - created, voting open until `voting_deadline_height`.
-/// 2. On deadline (`begin_block`): `Pending` -> `Approved` | `Expired` | `Error`.
-/// 3. For `Approved`, vote dispatches to the target-module handler. Further
-///    state (e.g. scheduled update, activation) lives in that module, not here.
-/// 4. `Error` means deterministic target execution failure.
-///    The proposal is terminal and leaves the pending index.
-///    The same pass refunds its bond. The module does not retry it.
+/// Voting has two outcomes after the inclusive `voting_deadline_height`:
+/// - Quorum reached: dispatch to the target; successful application is `Approved`.
+/// - Quorum not reached: the proposal is `Expired`.
+///
+/// `Pending` is intermediate. A target-declared execution failure is `Error`,
+/// not a rejection by the voters. It is terminal, leaves the pending index and
+/// refunds its bond in the same pass; the module does not retry it.
+///
+/// `Rejected` is reserved and is not produced by the current voting lifecycle.
+/// There is no manual cancellation or separate conflict-rejection transition.
+/// Further state, such as a scheduled upgrade, belongs to the target module.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ProposalStatus {

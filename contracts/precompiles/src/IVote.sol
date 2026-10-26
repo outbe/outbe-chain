@@ -25,6 +25,9 @@ interface IVote {
     error DuplicateTargetModule();
     error StoredPayloadInvalid(string module);
 
+    /// Voting either reaches quorum or does not. Applied approval is Approved;
+    /// no quorum is Expired. Error is an execution failure, not a negative vote.
+    /// Rejected is reserved and is not produced by the current voting lifecycle.
     enum ProposalStatus {
         Pending,
         Approved,
@@ -75,19 +78,19 @@ interface IVote {
     /// @notice Validator voted on a proposal.
     event VoteCast(uint256 indexed proposalId, address indexed validator, bool approve);
 
-    /// @notice A conflict with another approved proposal rejected the proposal.
+    /// @notice Reserved conflict-rejection declaration; not emitted by the current lifecycle.
     event ProposalRejected(uint256 indexed proposalId, VoteTally state, uint256 indexed conflictingproposalId);
 
-    /// @notice Proposal expired at the voting deadline.
+    /// @notice Voting closed without reaching quorum.
     event ProposalExpired(uint256 indexed proposalId, VoteTally state);
 
-    /// @notice The proposer cancelled the proposal.
+    /// @notice Reserved cancellation declaration; the current lifecycle has no cancellation entry.
     event ProposalCancelled(uint256 indexed proposalId, address indexed proposer);
 
-    /// @notice A majority (2/3) approved the proposal.
+    /// @notice Voting reached quorum and the target was applied successfully.
     event ProposalApproved(uint256 indexed proposalId, VoteTally state);
 
-    /// @notice Approved target execution returned an error. Its target effects were rolled back.
+    /// @notice Target execution failed and its effects were rolled back; this is not a negative vote.
     event ProposalErrored(uint256 indexed proposalId, VoteTally state);
 
     /// @notice A target-specific proposal bond was recorded as escrowed.
