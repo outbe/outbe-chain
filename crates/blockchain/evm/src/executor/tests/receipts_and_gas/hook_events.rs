@@ -6,7 +6,7 @@ use super::*;
 fn governance_capacity_error_is_atomic_with_the_outer_hook_batch() {
     use outbe_governance::{schema::GovernanceContract, GovernanceVotePayload, ProposalKind};
     use outbe_primitives::{addresses::GOVERNANCE_ADDRESS, error::PrecompileError};
-    use outbe_vote::schema::{BondSettlement, ProposalStatus};
+    use outbe_vote::schema::{BondState, ProposalStatus};
 
     const CREATED: u64 = 7;
     let validators = [
@@ -74,7 +74,7 @@ fn governance_capacity_error_is_atomic_with_the_outer_hook_batch() {
             vote.proposals.get(id)?.unwrap().proposal_status()?,
             ProposalStatus::Error
         );
-        assert_eq!(vote.proposal_bond(id)?.settlement, BondSettlement::NoBond);
+        assert_eq!(vote.proposal_bond(id)?.state, BondState::NoBond);
         assert!(vote.list_pending_proposal_ids()?.is_empty());
         assert_eq!(GovernanceContract::new(ctx.storage.clone()).oip_count()?, 0);
         Ok(())
