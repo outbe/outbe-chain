@@ -50,7 +50,16 @@ where
         // Preserve the signer read before both bootstrap and paid routing.
         let account = self.read_fee_route_account(signer, ctx.clone())?;
         if waiver::bootstrap_fee_waiver_authorized(tx, signer, ctx.chain_id, &account) {
-            return self.execute_without_user_fee(tx_env, recovered, f);
+            let gas_limit = tx.gas_limit();
+            return if self.sponsored_gas_fits(gas_limit) {
+                let result = self.execute_without_user_fee(tx_env, recovered, f);
+                if matches!(result, Ok(Some(_))) {
+                    self.charge_sponsored_gas(gas_limit);
+                }
+                result
+            } else {
+                Err(crate::sponsored_block_budget_deferral(*tx.tx_hash()))
+            };
         }
 
         let delegated_to = self.fee_route_delegation(account)?;
