@@ -369,10 +369,7 @@ impl Vote<'_> {
                 ProposalStatus::Error => {
                     self.close_legacy_error(proposal_id, proposal.proposer)?;
                 }
-                ProposalStatus::Pending
-                | ProposalStatus::Approved
-                | ProposalStatus::Rejected
-                | ProposalStatus::Expired => {}
+                ProposalStatus::Pending | ProposalStatus::Approved | ProposalStatus::Expired => {}
             }
         }
         Ok(())
@@ -429,7 +426,7 @@ impl Vote<'_> {
                 let outcome = match status {
                     ProposalStatus::Approved => ProposalFinalization::Approved,
                     ProposalStatus::Expired => ProposalFinalization::Expired,
-                    ProposalStatus::Pending | ProposalStatus::Rejected | ProposalStatus::Error => {
+                    ProposalStatus::Pending | ProposalStatus::Error => {
                         return Err(VoteError::InvalidProposalStatus.into());
                     }
                 };
@@ -484,9 +481,7 @@ impl Vote<'_> {
                 self.set_bond_state(proposal_id, BondState::Burned)?;
                 self.notify_proposal_bond_burned(proposal_id, owner, bond.amount)
             }
-            ProposalStatus::Pending | ProposalStatus::Rejected => {
-                Err(VoteError::InvalidProposalStatus.into())
-            }
+            ProposalStatus::Pending => Err(VoteError::InvalidProposalStatus.into()),
         }
     }
 }

@@ -6,7 +6,10 @@ use outbe_primitives::storage::{Storable, StorableType};
 
 /// Lifecycle status of a generic proposal.
 ///
-/// Storage values match the Solidity `ProposalStatus` enum (0-based).
+/// Stored discriminants stay stable and intentionally differ from the compact ABI
+/// enum. Convert at the precompile boundary instead of casting between them.
+/// The removed reserved status is invalid rather than reused: old records must
+/// never acquire a different meaning when the public enum is compacted.
 ///
 /// Voting has two outcomes after the inclusive `voting_deadline_height`:
 /// - Quorum reached: dispatch to the target; successful application is `Approved`.
@@ -16,7 +19,6 @@ use outbe_primitives::storage::{Storable, StorableType};
 /// not a rejection by the voters. It is terminal, leaves the pending index and
 /// refunds its bond in the same pass; the module does not retry it.
 ///
-/// `Rejected` is reserved and is not produced by the current voting lifecycle.
 /// There is no manual cancellation or separate conflict-rejection transition.
 /// Further state, such as a scheduled upgrade, belongs to the target module.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,7 +26,6 @@ use outbe_primitives::storage::{Storable, StorableType};
 pub enum ProposalStatus {
     Pending = 0,
     Approved = 1,
-    Rejected = 2,
     Expired = 3,
     Error = 4,
 }
@@ -55,13 +56,7 @@ impl BondState {
 }
 
 impl ProposalStatus {
-    const VARIANTS: [Self; 5] = [
-        Self::Pending,
-        Self::Approved,
-        Self::Rejected,
-        Self::Expired,
-        Self::Error,
-    ];
+    const VARIANTS: [Self; 4] = [Self::Pending, Self::Approved, Self::Expired, Self::Error];
 
     pub fn from_u8(value: u8) -> std::result::Result<Self, VoteError> {
         decode_stored_u8(value, &Self::VARIANTS, Self::to_u8)
@@ -76,10 +71,7 @@ impl ProposalStatus {
     /// `Error` is terminal. The module never retries a target-execution failure.
     /// It refunds the bond when it records the `Error` status.
     pub const fn is_terminal(self) -> bool {
-        matches!(
-            self,
-            Self::Approved | Self::Rejected | Self::Expired | Self::Error
-        )
+        matches!(self, Self::Approved | Self::Expired | Self::Error)
     }
 }
 
