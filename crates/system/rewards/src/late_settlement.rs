@@ -813,6 +813,7 @@ mod tests {
         seed_native_runtime(&mut storage);
         let wwd = WorldwideDay::new(20_260_728);
         let timestamp = wwd.start_timestamp();
+        storage.set_timestamp(U256::from(timestamp));
         let expected_residue = U256::from(1_000);
         let unit = outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT;
         storage.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CertifiedFinality);

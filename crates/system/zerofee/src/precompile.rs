@@ -92,6 +92,11 @@ impl ZeroFeeContract<'_> {
     /// Current UTC day key derived from the block timestamp. Shared by
     /// the two view methods so both apply the lazy reset against the
     /// same day the executor would use.
+    ///
+    /// The block proposer supplies the timestamp. See
+    /// [`crate::authorize_sponsorship`] for the drift bound
+    /// ([`MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS`](outbe_primitives::consensus::MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS))
+    /// that limits how early a proposer can move the day rollover.
     fn current_day(&self) -> Result<u32> {
         let now_secs = self.storage.now_secs()?;
         Ok(timestamp_to_date_key(now_secs))
