@@ -11,9 +11,7 @@
 use alloy_primitives::U256;
 use alloy_sol_types::SolEvent;
 use outbe_intex::SeriesId;
-use outbe_intexfactory::constants::{
-    MAX_CALLED_NOTICE_ATTEMPTS, MAX_REFUSED_RUNS_PER_BLOCK, NOTICE_RETRY_SECONDS,
-};
+use outbe_intexfactory::constants::{MAX_REFUSED_RUNS_PER_BLOCK, NOTICE_RETRY_SECONDS};
 use outbe_intexfactory::notify::{
     called_notice_attempts, notice_retry_at, pack_called_notice, send_notices, with_retry_at,
 };
@@ -258,22 +256,18 @@ fn a_notice_refused_at_the_cap_is_dropped_with_an_event() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |handle| {
         seed(&handle, 1);
-        for attempt in 1..MAX_CALLED_NOTICE_ATTEMPTS {
-            drain_at(&handle, NOW + u64::from(attempt - 1) * NOTICE_RETRY_SECONDS);
+        for attempt in 0..7 {
+            drain_at(&handle, NOW + attempt * NOTICE_RETRY_SECONDS);
         }
         let (head, tail) = queue_bounds(&handle);
         assert_eq!(tail - head, 1, "still queued below the cap");
-        assert_eq!(
-            called_notice_attempts(queued(&handle, head)),
-            MAX_CALLED_NOTICE_ATTEMPTS - 1
-        );
+        assert_eq!(called_notice_attempts(queued(&handle, head)), 7);
     });
     assert!(dropped_notices(&storage).is_empty());
 
     StorageHandle::enter(&mut storage, |handle| {
-        let last = u64::from(MAX_CALLED_NOTICE_ATTEMPTS - 1) * NOTICE_RETRY_SECONDS;
-        drain_at(&handle, NOW + last);
-        assert_eq!(queue_bounds(&handle), (0, 0), "the last refusal drops it");
+        drain_at(&handle, NOW + 7 * NOTICE_RETRY_SECONDS);
+        assert_eq!(queue_bounds(&handle), (0, 0), "the eighth refusal drops it");
     });
     let dropped = dropped_notices(&storage);
     assert_eq!(dropped.len(), 1);
@@ -282,28 +276,22 @@ fn a_notice_refused_at_the_cap_is_dropped_with_an_event() {
 }
 
 #[test]
-fn a_called_notice_gets_at_most_eight_sends() {
-    assert_eq!(MAX_CALLED_NOTICE_ATTEMPTS, 8);
-}
-
-#[test]
 fn a_notice_accepted_at_the_last_send_is_not_dropped() {
-    let last = MAX_CALLED_NOTICE_ATTEMPTS - 1;
-    // No OriginRouter: the router refuses each send below the cap.
+    // No OriginRouter: the router refuses the first 7 sends.
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |handle| {
         seed(&handle, 1);
-        for attempt in 0..last {
-            drain_at(&handle, NOW + u64::from(attempt) * NOTICE_RETRY_SECONDS);
+        for attempt in 0..7 {
+            drain_at(&handle, NOW + attempt * NOTICE_RETRY_SECONDS);
         }
         let (head, tail) = queue_bounds(&handle);
         assert_eq!(tail - head, 1, "still queued below the cap");
-        assert_eq!(called_notice_attempts(queued(&handle, head)), last);
+        assert_eq!(called_notice_attempts(queued(&handle, head)), 7);
     });
 
     accept_sends(&mut storage);
     StorageHandle::enter(&mut storage, |handle| {
-        drain_at(&handle, NOW + u64::from(last) * NOTICE_RETRY_SECONDS);
+        drain_at(&handle, NOW + 7 * NOTICE_RETRY_SECONDS);
         assert_eq!(queue_bounds(&handle), (0, 0), "the last send lands");
     });
     assert!(dropped_notices(&storage).is_empty());
