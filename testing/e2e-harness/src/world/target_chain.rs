@@ -187,7 +187,11 @@ impl TargetChain {
                     // addressed back to the committee.
                     ("REMOTE_CHAIN_IDS", origin_chain_id.to_string()),
                     ("CONTRACT_SALT", SALT_VERSION.to_owned()),
-                    ("BRIDGE_OWNER", DEPLOYER_ADDRESS.to_owned()),
+                    // The run never governs the hub, so it names this chain as
+                    // Outbe. The hand-over then needs no Interchain Account
+                    // lookup on the localnet and parks the owner at the
+                    // controller address.
+                    ("OUTBE_CHAIN_ID", chain_id.clone()),
                     ("CREATE3_FACTORY_ADDRESS", format!("{create3_factory:?}")),
                     ("HYPERLANE_MAILBOX", format!("{mailbox:?}")),
                     ("ACTIVE_GATEWAY", "hyperlane".to_owned()),
