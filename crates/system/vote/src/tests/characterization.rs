@@ -11,7 +11,7 @@ use crate::{
     constants::VOTING_WINDOW_BLOCKS,
     handlers::TargetAdmission,
     precompile::IVote,
-    schema::{BondSettlement, ProposalStatus, Vote},
+    schema::{BondState, ProposalStatus, Vote},
     state::ProposalSubmission,
 };
 
@@ -139,8 +139,8 @@ fn public_bonded_admission_records_only_its_exact_liability() {
     };
     let vote = Vote::new(StorageHandle::new(&mut provider));
     assert_eq!(
-        vote.proposal_bond(proposal_id).unwrap().settlement,
-        BondSettlement::Unsettled
+        vote.proposal_bond(proposal_id).unwrap().state,
+        BondState::Escrowed
     );
     assert_eq!(vote.bond_liabilities().unwrap(), U256::from(123u64));
     drop(vote);
@@ -217,7 +217,19 @@ fn bond_liability_rejection_preserves_amounts_and_rolls_back_admission() {
 }
 
 #[test]
-fn settled_pending_bond_rejection_preserves_proposal_and_settlement_context() {
+fn refunded_pending_bond_rejection_preserves_proposal_and_bond_state() {
+    assert_closed_pending_bond_rejection(BondState::Refunded, "already refunded");
+}
+
+#[test]
+fn burned_pending_bond_rejection_preserves_proposal_and_bond_state() {
+    assert_closed_pending_bond_rejection(BondState::Burned, "already burned");
+}
+
+/// Writes `closed` as the bond state of a pending proposal. Then checks that
+/// the tally fails with a reason that names the proposal and contains
+/// `expected_reason`, and that the tally changes no state.
+fn assert_closed_pending_bond_rejection(closed: BondState, expected_reason: &str) {
     let outsider = Address::repeat_byte(0x99);
     let mut provider = super::test_provider();
     provider.set_balance(VOTE_ADDRESS, U256::from(123u64));
@@ -235,8 +247,7 @@ fn settled_pending_bond_rejection_preserves_proposal_and_settlement_context() {
             .unwrap()
             .unwrap()
             .voting_deadline_height;
-        vote.settle_proposal_bond_accounting(proposal_id, BondSettlement::Refunded)
-            .unwrap();
+        vote.set_bond_state(proposal_id, closed).unwrap();
         (proposal_id, deadline)
     };
     let events_before = provider.get_events(VOTE_ADDRESS).len();
@@ -251,12 +262,10 @@ fn settled_pending_bond_rejection_preserves_proposal_and_settlement_context() {
         };
         let decoded = IVote::InvalidProposalBond::abi_decode(&bytes).unwrap();
         assert!(decoded.reason.contains(&proposal_id.to_string()));
-        assert!(decoded.reason.contains("Refunded"));
+        assert!(decoded.reason.contains(expected_reason));
+        assert!(!decoded.reason.contains("settle"));
         assert_eq!(proposal_status(&vote, proposal_id), ProposalStatus::Pending);
-        assert_eq!(
-            vote.proposal_bond(proposal_id).unwrap().settlement,
-            BondSettlement::Refunded
-        );
+        assert_eq!(vote.proposal_bond(proposal_id).unwrap().state, closed);
         assert_eq!(vote.bond_liabilities().unwrap(), U256::ZERO);
     }
     assert_eq!(provider.get_balance(VOTE_ADDRESS), U256::from(123u64));
@@ -352,7 +361,7 @@ fn public_bonded_execution_error_rolls_back_target_refunds_bond_and_keeps_reserv
     tally_after_window_with(&mut vote, 10, &PUBLIC_BONDED_REGISTRY).unwrap();
 
     assert_finalized_error(&vote, proposal_id);
-    assert_bond_closed(&vote, proposal_id, BondSettlement::Refunded);
+    assert_bond_closed(&vote, proposal_id, BondState::Refunded);
     assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), U256::ZERO);
     assert_eq!(
         storage.balance(Address::repeat_byte(0x99)).unwrap(),
@@ -390,7 +399,7 @@ fn approved_public_bond_refunds_once_and_preserves_forced_surplus() {
             proposal_status(&vote, proposal_id),
             ProposalStatus::Approved
         );
-        assert_bond_closed(&vote, proposal_id, BondSettlement::Refunded);
+        assert_bond_closed(&vote, proposal_id, BondState::Refunded);
         assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), forced_surplus);
         assert_eq!(
             storage.balance(owner).unwrap(),
@@ -444,7 +453,7 @@ fn expired_public_bond_burns_once_and_preserves_forced_surplus() {
         vote.begin_block_with(deadline + 1, &PUBLIC_BONDED_REGISTRY)
             .unwrap();
         assert_eq!(proposal_status(&vote, proposal_id), ProposalStatus::Expired);
-        assert_bond_closed(&vote, proposal_id, BondSettlement::Burned);
+        assert_bond_closed(&vote, proposal_id, BondState::Burned);
         assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), forced_surplus);
         assert_eq!(storage.balance(owner).unwrap(), U256::ZERO);
 
@@ -485,19 +494,19 @@ fn insufficient_escrow_rolls_back_target_status_index_accounting_and_events() {
         assert_eq!(proposal_status(&vote, proposal_id), ProposalStatus::Pending);
         assert_eq!(vote.list_pending_proposal_ids().unwrap(), vec![proposal_id]);
         assert_eq!(
-            vote.proposal_bond(proposal_id).unwrap().settlement,
-            BondSettlement::Unsettled
+            vote.proposal_bond(proposal_id).unwrap().state,
+            BondState::Escrowed
         );
         assert_eq!(vote.bond_liabilities().unwrap(), U256::from(123u64));
         assert_eq!(
             target_marker(&storage, 994),
             proposal_id,
-            "admission reservation must survive failed settlement"
+            "admission reservation must survive failed finalization"
         );
         assert_eq!(
             target_marker(&storage, 995),
             U256::ZERO,
-            "target execution must roll back with failed settlement"
+            "target execution must roll back with failed finalization"
         );
         assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), U256::from(122u64));
         assert_eq!(storage.balance(owner).unwrap(), U256::ZERO);

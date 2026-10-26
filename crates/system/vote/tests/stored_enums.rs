@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use outbe_primitives::error::PrecompileError;
 use outbe_vote::{
     errors::VoteError,
-    schema::{BondSettlement, ProposalStatus},
+    schema::{BondState, ProposalStatus},
     VoteKind,
 };
 
@@ -54,17 +54,17 @@ fn proposal_status_preserves_all_storage_bytes_and_errors() {
 }
 
 #[test]
-fn bond_settlement_preserves_all_storage_bytes_and_errors() {
+fn bond_state_preserves_all_storage_bytes_and_errors() {
     assert_stored_enum(
         &[
-            (0, BondSettlement::NoBond),
-            (1, BondSettlement::Unsettled),
-            (2, BondSettlement::Refunded),
-            (3, BondSettlement::Burned),
+            (0, BondState::NoBond),
+            (1, BondState::Escrowed),
+            (2, BondState::Refunded),
+            (3, BondState::Burned),
         ],
-        BondSettlement::from_u8,
-        BondSettlement::to_u8,
-        VoteError::InvalidBondSettlement,
+        BondState::from_u8,
+        BondState::to_u8,
+        VoteError::CorruptBondState,
     );
 }
 

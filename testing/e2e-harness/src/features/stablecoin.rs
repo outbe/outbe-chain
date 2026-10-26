@@ -283,13 +283,9 @@ fn create_and_approve_stablecoin(world: &mut World) {
     )
     .expect("proposal bond");
     assert_eq!(bond.amount, STABLECOIN_CREATE_BOND);
-    assert_eq!(bond.settlement, IVote::BondSettlement::Refunded);
+    assert_eq!(bond.state, IVote::BondState::Refunded);
     assert_eq!(
-        eth::read_call(
-            &url,
-            addresses::VOTE_ADDR,
-            &IVote::unsettledBondLiabilitiesCall {},
-        ),
+        eth::read_call(&url, addresses::VOTE_ADDR, &IVote::escrowedBondTotalCall {},),
         Some(U256::ZERO)
     );
 
@@ -894,7 +890,7 @@ fn duplicate_ticker_preserves_state(world: &mut World) {
             eth::read_call_at_result(
                 &url,
                 addresses::VOTE_ADDR,
-                &IVote::unsettledBondLiabilitiesCall {},
+                &IVote::escrowedBondTotalCall {},
                 checkpoint.height
             )
             .expect("bond liabilities after duplicate"),

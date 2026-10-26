@@ -11,7 +11,7 @@ use outbe_vote::errors::VoteError;
 use outbe_vote::handlers::{VoteTarget, VoteTargetRegistry};
 use outbe_vote::precompile::IVote;
 use outbe_vote::schema::Vote;
-use outbe_vote::schema::{BondSettlement, ProposalStatus};
+use outbe_vote::schema::{BondState, ProposalStatus};
 
 use crate::errors::GovernanceError;
 use crate::precompile::IGovernance;
@@ -353,10 +353,7 @@ fn assert_pending(storage: StorageHandle, id: U256) {
         ProposalStatus::Pending
     );
     assert_eq!(vote.list_pending_proposal_ids().unwrap(), vec![id]);
-    assert_eq!(
-        vote.proposal_bond(id).unwrap().settlement,
-        BondSettlement::NoBond
-    );
+    assert_eq!(vote.proposal_bond(id).unwrap().state, BondState::NoBond);
 }
 
 #[test]
@@ -388,10 +385,7 @@ fn capacity_after_quorum_is_terminal_and_never_replayed() {
                     ProposalStatus::Error
                 );
                 assert!(vote.list_pending_proposal_ids().unwrap().is_empty());
-                assert_eq!(
-                    vote.proposal_bond(id).unwrap().settlement,
-                    BondSettlement::NoBond
-                );
+                assert_eq!(vote.proposal_bond(id).unwrap().state, BondState::NoBond);
                 let gov = GovernanceContract::new(storage.clone());
                 assert!(gov.get_oip(U256::ONE).unwrap().is_none());
                 assert!(gov.get_gip(U256::ONE).unwrap().is_none());
