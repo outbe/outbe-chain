@@ -230,7 +230,7 @@ impl From<TributeDayRejectReason> for crate::errors::TeeError {
     }
 }
 
-/// Rejection reasons for encrypted NOD exercise (`nod_mine`).
+/// Rejection reasons for encrypted NOD mining (`nod_mine`).
 #[derive(Debug, thiserror::Error)]
 pub enum NodMineRejectReason {
     #[error("fidelity section failed: {0}")]

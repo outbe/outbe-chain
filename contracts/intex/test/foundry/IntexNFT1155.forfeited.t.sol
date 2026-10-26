@@ -7,9 +7,9 @@ import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "./helpers/CreateSeriesLib.sol";
 
-/// @notice A called series past its notice period reads as `Expired`, while storage
+/// @notice A called series past its notice period reads as `Forfeited`, while storage
 ///         keeps `Called` so every freeze written against the stored field still bites.
-contract IntexNFT1155ExpiredTest is Test {
+contract IntexNFT1155ForfeitedTest is Test {
     uint32 internal constant SERIES_ID_DAY = 20260622;
     bytes14 internal constant SERIES_ID = "20260622-USD-U";
     uint32 internal constant CAP = 10_000;
@@ -45,16 +45,16 @@ contract IntexNFT1155ExpiredTest is Test {
         return uint8(uint256(vm.load(address(token), bytes32(uint256(base) + 3))) >> 96);
     }
 
-    function test_ReadsCalledUpToTheDeadlineAndExpiredAfterIt() public {
+    function test_ReadsCalledUpToTheDeadlineAndForfeitedAfterIt() public {
         vm.warp(deadline);
         assertEq(uint8(token.readData(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Called));
 
         vm.warp(deadline + 1);
-        assertEq(uint8(token.readData(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Expired));
+        assertEq(uint8(token.readData(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Forfeited));
     }
 
     /// The whole point of deriving: storage still says `Called`, so `_update`,
-    /// `crosschainBurn` and `crosschainMint` keep refusing an expired series.
+    /// `crosschainBurn` and `crosschainMint` keep refusing a Forfeited series.
     function test_StorageStillHoldsCalled() public {
         assertEq(_storedState(), uint8(IIntexNFT1155.IntexState.Called), "before");
         vm.warp(deadline + 1);

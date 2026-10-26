@@ -139,12 +139,12 @@ fn a_mining_that_fails_after_any_write_keeps_the_settled_gem_and_mines_once_on_r
                 1
             );
         });
-        let exercised = provider
+        let mined = provider
             .get_events(GEM_FACTORY_ADDRESS)
             .iter()
-            .filter(|log| IGemFactory::GemExercised::decode_log_data(log).is_ok())
+            .filter(|log| IGemFactory::GemMined::decode_log_data(log).is_ok())
             .count();
-        assert_eq!(exercised, 1, "failure {failure_at}");
+        assert_eq!(mined, 1, "failure {failure_at}");
     }
     outbe_promis::enclave_client::test_enclave::uninstall();
 }

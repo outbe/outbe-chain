@@ -259,10 +259,7 @@ fn mining_deletes_item_and_last_group_then_emits_burn() {
             (NOD_ADDRESS, INod::MetadataUpdate::SIGNATURE_HASH),
             (NOD_FACTORY_ADDRESS, INodFactory::NodSettled::SIGNATURE_HASH),
             (NOD_ADDRESS, INod::Transfer::SIGNATURE_HASH),
-            (
-                NOD_FACTORY_ADDRESS,
-                INodFactory::NodExercised::SIGNATURE_HASH
-            ),
+            (NOD_FACTORY_ADDRESS, INodFactory::NodMined::SIGNATURE_HASH),
             (NOD_FACTORY_ADDRESS, INodFactory::NodBurned::SIGNATURE_HASH),
         ]
     );
@@ -338,13 +335,13 @@ fn a_stranger_can_mine_with_the_owners_auth() {
         );
         assert!(nod_api::get_item(&storage, nod_id).unwrap().is_none());
     });
-    let exercised = world
+    let mined = world
         .provider
         .get_ordered_events()
         .iter()
-        .filter_map(|event| INodFactory::NodExercised::decode_log_data(&event.data).ok())
+        .filter_map(|event| INodFactory::NodMined::decode_log_data(&event.data).ok())
         .last()
-        .expect("NodExercised event");
-    assert_eq!(exercised.owner, input.owner);
-    assert_eq!(exercised.nodId, nod_id.to_u256());
+        .expect("NodMined event");
+    assert_eq!(mined.owner, input.owner);
+    assert_eq!(mined.nodId, nod_id.to_u256());
 }

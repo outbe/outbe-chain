@@ -6,7 +6,7 @@ mod sponsored_gem;
 #[path = "settlement_nod.rs"]
 mod erc20_nod;
 
-pub(crate) fn exercise_encrypted_nod(world: &mut crate::world::World, day: u32) {
+pub(crate) fn mine_encrypted_nod(world: &mut crate::world::World, day: u32) {
     erc20_nod::run_relayed_mining(world, 0, day, true);
 }
 
@@ -269,8 +269,8 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         },
         None,
     )
-    .expect("exercise the paid Nod");
-    assert_mined_success(&mine_gratis, "exercise the paid Nod");
+    .expect("mine the paid Nod");
+    assert_mined_success(&mine_gratis, "mine the paid Nod");
     assert_eq!(
         gratis_balance(&url, owner, &keys.view),
         gratis_before + gratis_load,
@@ -574,7 +574,7 @@ pub(crate) fn find_mining_pow_nonce(
                 domain,
                 id,
                 owner,
-                outbe_common::pow::SINGLE_EXERCISE_SEQUENCE,
+                outbe_common::pow::SINGLE_MINING_SEQUENCE,
                 *nonce,
             )
             .is_ok()

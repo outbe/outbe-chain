@@ -8,6 +8,7 @@ use outbe_intex::SeriesId;
 use outbe_oracle::api::AddressPair;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
+use outbe_primitives::stablecoin::ISO_4217_NUMERIC_CODES;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
@@ -262,7 +263,7 @@ fn called_wide_group(s: &StorageHandle<'_>, scan_ts: u64, width: u16) -> (Vec<Se
     let day = WorldwideDay::new(20260101);
     let trigger = U256::from(TRIGGER);
     let mut members = Vec::new();
-    for issuance in 1..=width {
+    for &issuance in ISO_4217_NUMERIC_CODES.iter().take(width.into()) {
         let series_id = SeriesId::for_pair(day, issuance, REFERENCE_ISO).unwrap();
         let params = outbe_intex::CreateSeriesParams {
             series_id,

@@ -31,7 +31,7 @@ contract MarkCalledClockTest is CrossChainTest {
         router.wire(makeAddr("auction"), address(intex), makeAddr("escrow"));
         intex.grantRole(intex.RELAYER_ROLE(), address(router));
         // A real notice period: with zero the window closes the instant the series
-        // is called, and the reads below would report the series expired.
+        // is called, and the reads below would report the series forfeited.
         intex.createSeries(CreateSeriesLib.params(WORLDWIDE_DAY, 10_000, 21 days));
     }
 

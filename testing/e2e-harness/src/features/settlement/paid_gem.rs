@@ -314,7 +314,7 @@ impl PaidGem {
         assert_receipt_event(
             &mint.receipt,
             addresses::GEM_FACTORY_ADDR,
-            &eth::IGemFactory::GemExercised {
+            &eth::IGemFactory::GemMined {
                 gemId: gem_id,
                 owner,
                 promisLoadMinor: gem.promisLoadMinor,

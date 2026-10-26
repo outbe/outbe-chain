@@ -32,7 +32,7 @@ interface IIntexFactory {
     error RouterAnsweredNoLegs();
     error PromisOverflow();
     error MiningSequenceOverflow();
-    error ExercisedUnitsExceedSeries();
+    error MinedUnitsExceedSeries();
     error DateStep(uint8 kind, uint32 dateKey);
 
     /// @notice Settle `units` Issued Intexes of `seriesId` held by
@@ -84,14 +84,14 @@ interface IIntexFactory {
 
     /// @notice One owner's units of a series. `issuedUnits` and `settledUnits` are the
     ///         owner's current balances on this, the origin chain, with Issued units counted
-    ///         only while the series has not expired. Units held on a target chain are not
-    ///         counted. `exercisedUnits` and `gemFactoryUnits` are the owner's history across
+    ///         only while the series is not Forfeited. Units held on a target chain are not
+    ///         counted. `minedUnits` and `gemFactoryUnits` are the owner's history across
     ///         chains, since both happen only here, and do not move with a transfer.
     ///         `ownerUnits` is `issuedUnits + settledUnits`, derived on every call, never stored.
     struct OwnerBalances {
         uint32 issuedUnits;
         uint32 settledUnits;
-        uint32 exercisedUnits;
+        uint32 minedUnits;
         uint32 gemFactoryUnits;
         uint32 ownerUnits;
     }
@@ -108,7 +108,7 @@ interface IIntexFactory {
     event IntexSettled(bytes14 indexed seriesId, address indexed owner, uint256 units);
 
     /// @notice Settled Intexes were burned and `promisMinor` Promis minted.
-    event IntexExercised(bytes14 indexed seriesId, address indexed owner, uint256 units, uint256 promisMinor);
+    event IntexMined(bytes14 indexed seriesId, address indexed owner, uint256 units, uint256 promisMinor);
 
     /// @notice The router kept refusing the series' Called notice, so it was dropped
     ///         and the targets were not told of the call.

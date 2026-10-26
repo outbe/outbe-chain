@@ -1,4 +1,4 @@
-//! NodFactory runtime: issuance, settlement, PoW-gated exercise, event emission.
+//! NodFactory runtime: issuance, settlement, PoW-gated mining, event emission.
 //!
 //! All persistent Nod state lives in the entity store at
 //! [`outbe_primitives::addresses::NOD_ADDRESS`]. NodFactory mutates that
@@ -139,7 +139,7 @@ fn issue_nod_with_cost(
     Ok(nod_id)
 }
 
-/// Exercise of one paid Nod. Any caller may submit. The owner's Gratis
+/// Mining of one paid Nod. Any caller may submit. The owner's Gratis
 /// modify-key MAC/`opNonce` authorizes the mint to that owner.
 pub struct MineGratisRequest {
     pub caller: Address,
@@ -262,7 +262,7 @@ pub fn call_terms(
     }))
 }
 
-/// Exercises a paid entitlement without payment or a deadline. Mint failure
+/// Mines a paid entitlement without payment or a deadline. Mint failure
 /// rolls back the removal, preserving the paid Nod for retry.
 pub fn mine_gratis(storage: &StorageHandle<'_>, request: MineGratisRequest) -> Result<Bytes> {
     let MineGratisRequest {
@@ -284,7 +284,7 @@ pub fn mine_gratis(storage: &StorageHandle<'_>, request: MineGratisRequest) -> R
         outbe_gratisfactory::api::mint_encrypted_nod(storage.clone(), &encrypted, auth)?;
         emit_event(
             storage,
-            INodFactory::NodExercised {
+            INodFactory::NodMined {
                 owner,
                 nodId: nod_id.to_u256(),
                 encryptedGratisAmount: encrypted.encrypted_gratis_amount.clone().into(),
@@ -341,7 +341,7 @@ pub fn validate_pow(nod_id: WwdEntityId, owner: Address, nonce: u64) -> Result<(
         pow::MiningDomain::Nod,
         nod_id.to_u256(),
         owner,
-        pow::SINGLE_EXERCISE_SEQUENCE,
+        pow::SINGLE_MINING_SEQUENCE,
         nonce,
     )
     .map_err(|e| NodFactoryError::from(e).into())
@@ -354,7 +354,7 @@ pub fn compute_pow_hash(nod_id: WwdEntityId, owner: Address, nonce: u64) -> [u8;
         pow::MiningDomain::Nod,
         nod_id.to_u256(),
         owner,
-        pow::SINGLE_EXERCISE_SEQUENCE,
+        pow::SINGLE_MINING_SEQUENCE,
         nonce,
     )
 }
