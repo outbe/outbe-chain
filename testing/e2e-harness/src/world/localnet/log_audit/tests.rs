@@ -16,6 +16,8 @@ const PROCESS_B: &str = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 fn expected_sidecar_payload_warning_requires_exact_outage_and_process() {
     let tx = format!("0x{}", "11".repeat(32));
     let other_tx = format!("0x{}", "22".repeat(32));
+    let height = 11;
+    let block_hash = alloy_primitives::B256::repeat_byte(0x33);
     let warning = |tx: &str| {
         format!(
             "WARN payload_builder: failed to resolve pending payload err=evm execution error: \
@@ -31,7 +33,7 @@ fn expected_sidecar_payload_warning_requires_exact_outage_and_process() {
         warning(&tx).replace("Connection refused", "Connection reset"),
         "ERROR outbe_chain::launch::node::consensus: consensus stack failed e=executor actor returned fatal error".to_owned(),
         "0: executor actor returned fatal error".to_owned(),
-        format!("2: internal EVM error occurred when executing transaction {tx}: tee_sidecar_unavailable: io error: Connection refused"),
+        format!("2: failed to send finalized block to execution layer at height {height} digest {block_hash:#x}: execution stopped on a node-local dependency failure: tee_sidecar_unavailable: io error: Connection refused (os error 111)"),
         "INFO reth::cli: Starting Reth version=example".to_owned(),
         warning(&tx),
     ];
@@ -43,7 +45,8 @@ fn expected_sidecar_payload_warning_requires_exact_outage_and_process() {
         (reth.clone(), lines.join("\n")),
         (other.clone(), lines.join("\n")),
     ];
-    let accepted = super::expected_tee_sidecar_outage_records(&logs, 4, 3, &tx).unwrap();
+    let accepted =
+        super::expected_tee_sidecar_outage_records(&logs, 4, 3, &tx, height, block_hash).unwrap();
     for path in [&node, &reth] {
         assert!(accepted.contains(&(path.clone(), 2)));
         for rejected in [0, 3, 4, 9] {
@@ -51,9 +54,27 @@ fn expected_sidecar_payload_warning_requires_exact_outage_and_process() {
         }
     }
     assert!(!accepted.iter().any(|(path, _)| path == &other));
-    assert!(super::expected_tee_sidecar_outage_records(&logs, 4, 3, &other_tx).is_err());
+    for invalid in [
+        logs.iter().map(|(path, text)| (path.clone(), text.replace("height 11", "height 12"))).collect::<Vec<_>>(),
+        logs.iter().map(|(path, text)| (path.clone(), text.replace(&format!("{block_hash:#x}"), &other_tx))).collect(),
+        logs.iter().map(|(path, text)| (path.clone(), text.replace("Connection refused", "Connection reset"))).collect(),
+        logs.iter().map(|(path, text)| (path.clone(), text.replace("0: executor actor returned fatal error", "INFO reth::cli: Starting Reth version=example\n0: executor actor returned fatal error"))).collect(),
+    ] {
+        assert!(super::expected_tee_sidecar_outage_records(&invalid, 4, 3, &tx, height, block_hash).is_err());
+    }
+    assert!(
+        super::expected_tee_sidecar_outage_records(&logs, 4, 2, &tx, height, block_hash).is_err()
+    );
     let without_fail_stop = vec![(node, warning(&tx)), (reth, warning(&tx))];
-    assert!(super::expected_tee_sidecar_outage_records(&without_fail_stop, 4, 3, &tx).is_err());
+    assert!(super::expected_tee_sidecar_outage_records(
+        &without_fail_stop,
+        4,
+        3,
+        &tx,
+        height,
+        block_hash
+    )
+    .is_err());
 }
 
 fn event(fields: &str, human_message: &str) -> String {
@@ -448,7 +469,7 @@ fn legacy_update_and_dkg_expectations_remain_exact_adapters() {
 
 fn tee_lease_guard_shutdown_bundle(validator: usize) -> Vec<(PathBuf, String)> {
     let guard =
-        "ERROR outbe_chain::launch::node: finalized TEE lease guard requested node shutdown \
+        "ERROR outbe_chain::launch::shutdown: finalized TEE lease guard requested node shutdown \
         reason=validator is jailed; complete ordinary unjail and then run tee join";
     let shutdown = "INFO outbe_chain::launch::node::consensus: consensus stack shutting down";
     vec![
@@ -466,7 +487,7 @@ fn tee_lease_guard_shutdown_bundle(validator: usize) -> Vec<(PathBuf, String)> {
 }
 
 fn tee_lease_full_node_shutdown_bundle(full_node: usize) -> Vec<(PathBuf, String)> {
-    let guard = "ERROR outbe_chain::launch::node: finalized TEE lease guard requested node shutdown reason=finalized TEE lease expired at 1789793371; stop node and run tee join";
+    let guard = "ERROR outbe_chain::launch::shutdown: finalized TEE lease guard requested node shutdown reason=finalized TEE lease expired at 1789793371; stop node and run tee join";
     let shutdown = "INFO outbe_chain::launch::node::consensus: consensus stack shutting down";
     vec![
         (
@@ -537,6 +558,28 @@ fn tee_lease_guard_accepts_only_the_explicit_exact_two_sink_shutdown_bundle() {
 
     let unarmed = audit_loaded_logs_with_expectations(&expected, 4, None, None);
     assert!(!unarmed.is_clean());
+    assert_eq!(unarmed.findings.len(), 2);
+
+    for replacement in [
+        "WARN outbe_chain::launch::shutdown:",
+        "ERROR outbe_chain::launch::node:",
+        "ERROR other:",
+        "ERROR outbe_chain::launch::shutdown: unrelated reason ",
+    ] {
+        let mut changed = expected.clone();
+        changed[0].1 = changed[0]
+            .1
+            .replace("ERROR outbe_chain::launch::shutdown:", replacement);
+        assert_ne!(changed[0].1, expected[0].1);
+        assert!(!audit_validator_shutdown(&changed, 3).is_clean());
+    }
+
+    let mut duplicate_guard = expected.clone();
+    duplicate_guard[0].1.push('\n');
+    duplicate_guard[0]
+        .1
+        .push_str(expected[0].1.lines().next().unwrap());
+    assert!(!audit_validator_shutdown(&duplicate_guard, 3).is_clean());
 
     let wrong_validator = audit_validator_shutdown(&expected, 2);
     assert!(!wrong_validator.is_clean());
@@ -675,14 +718,16 @@ fn tee_lease_full_node_rejects_every_incomplete_or_cross_process_bundle() {
         "DEBUG engine::tree: received terminate request\nDEBUG reth::cli: shutdown signal received, terminating engine");
     assert!(!check(&reordered));
     for replacement in [
-        "WARN outbe_chain::launch::node:",
+        "WARN outbe_chain::launch::shutdown:",
+        "ERROR outbe_chain::launch::node:",
         "ERROR other:",
-        "ERROR outbe_chain::launch::node: unrelated reason ",
+        "ERROR outbe_chain::launch::shutdown: unrelated reason ",
     ] {
         let mut bad = baseline.clone();
         bad[0].1 = bad[0]
             .1
-            .replace("ERROR outbe_chain::launch::node:", replacement);
+            .replace("ERROR outbe_chain::launch::shutdown:", replacement);
+        assert_ne!(bad[0].1, baseline[0].1);
         assert!(!check(&bad));
     }
     let mut too_far = baseline.clone();

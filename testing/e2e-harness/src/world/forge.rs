@@ -43,6 +43,9 @@ pub(crate) fn run_with_ctor(
     cmd.current_dir(dir)
         .args(args)
         .args(["--broadcast", "--rpc-url", url]);
+    if args.first() == Some(&"script") {
+        cmd.arg("--slow");
+    }
     // `forge create` takes the key directly. Scripts read it from the env.
     if args.first() == Some(&"create") {
         cmd.args(["--private-key", DEPLOYER_KEY]);

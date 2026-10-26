@@ -253,9 +253,7 @@ fn create_and_approve_stablecoin(world: &mut World) {
         );
     }
     let deadline = wait_for_proposal_votes(world, STABLECOIN_PROPOSAL_ID, 3);
-    world
-        .rpc
-        .wait_block_gt(world.validators.primary_port(), deadline, 80)
+    super::common::wait_past_consensus_height(world, world.validators.primary_port(), deadline)
         .unwrap_or_else(|error| {
             panic!("did not pass stablecoin proposal deadline {deadline}: {error:#}")
         });

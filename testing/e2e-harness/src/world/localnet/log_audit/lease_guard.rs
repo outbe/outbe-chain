@@ -95,13 +95,13 @@ fn stack_shutdown_after(path: &Path, lines: &[&str], guard: usize) -> Result<usi
 pub(super) fn exact_tee_lease_jailed_guard_shutdown(line: &str) -> bool {
     let line = line.to_ascii_lowercase();
     line.trim_end().ends_with(
-        "outbe_chain::launch::node: finalized tee lease guard requested node shutdown reason=validator is jailed; complete ordinary unjail and then run tee join",
+        "outbe_chain::launch::shutdown: finalized tee lease guard requested node shutdown reason=validator is jailed; complete ordinary unjail and then run tee join",
     ) && line.contains("error")
         && !contains_nonfatal_alarm(&line)
 }
 
 pub(super) fn exact_tee_lease_expired_full_node_guard_shutdown(line: &str) -> bool {
-    const PREFIX: &str = "outbe_chain::launch::node: finalized tee lease guard requested node shutdown reason=finalized tee lease expired at ";
+    const PREFIX: &str = "outbe_chain::launch::shutdown: finalized tee lease guard requested node shutdown reason=finalized tee lease expired at ";
     const SUFFIX: &str = "; stop node and run tee join";
 
     let line = line.to_ascii_lowercase();

@@ -87,7 +87,7 @@ impl ProjectionFixture {
             let height = rpc
                 .receipt_block_number(&tx_hash, port)
                 .ok_or_else(|| eyre!("Tribute receipt is missing on port {port}"))?;
-            let checkpoint = rpc.wait_finalized_checkpoint(&[port], height, 1)?;
+            let checkpoint = rpc.wait_finalized_checkpoint(&[port], height, 60)?;
             tribute::snapshot(&rpc, port, checkpoint, &tx_hash)
         })
     }

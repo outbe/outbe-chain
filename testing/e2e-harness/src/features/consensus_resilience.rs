@@ -17,6 +17,17 @@ mod follower;
 mod nonce_order;
 mod upstream;
 
+fn epoch_checkpoint_attempts(world: &World) -> eyre::Result<u32> {
+    let genesis_path = world.localnet.scenario_dir().join("genesis.json");
+    let genesis = serde_json::from_slice(&std::fs::read(genesis_path)?)?;
+    let budget = super::follower::reshare_wait_budget(&genesis)?;
+    Ok(u32::try_from(
+        budget
+            .as_millis()
+            .div_ceil(Duration::from_secs(3).as_millis()),
+    )?)
+}
+
 #[when("two validators are stopped outside an epoch transition")]
 fn stop_two_validators_outside_epoch(world: &mut World) {
     assert_eq!(
@@ -106,9 +117,10 @@ fn fresh_localnet_short_epoch(world: &mut World, window: u64) {
 #[given("the committee reaches a finalized height past the epoch transition")]
 fn committee_past_epoch_transition(world: &mut World) {
     let ports = world.validators.committee_ports();
+    let attempts = epoch_checkpoint_attempts(world).expect("epoch checkpoint budget from genesis");
     let checkpoint = world
         .rpc
-        .wait_finalized_checkpoint(&ports, 32, 90)
+        .wait_finalized_checkpoint(&ports, 32, attempts)
         .expect("committee reaches past-epoch checkpoint");
     world.state.resilience_observed_height = Some(checkpoint.height);
 }
@@ -178,10 +190,11 @@ fn committee_continues_producing_and_finalizing_blocks(world: &mut World) {
 #[given("the committee advances towards an epoch transition")]
 fn committee_advances_towards_epoch(world: &mut World) {
     let ports = world.validators.committee_ports();
+    let attempts = epoch_checkpoint_attempts(world).expect("epoch checkpoint budget from genesis");
     // Wait until approaching epoch boundary (height 28 for a 30-block epoch)
     let checkpoint = world
         .rpc
-        .wait_finalized_checkpoint(&ports, 28, 60)
+        .wait_finalized_checkpoint(&ports, 28, attempts)
         .expect("committee reaches approach to epoch boundary");
     world.state.resilience_observed_height = Some(checkpoint.height);
 }
@@ -200,10 +213,11 @@ fn process_ingress_finalize_votes(world: &mut World) {
 #[then("the committee advances across the epoch boundary without progress stall")]
 fn committee_advances_across_epoch_boundary(world: &mut World) {
     let ports = world.validators.committee_ports();
+    let attempts = epoch_checkpoint_attempts(world).expect("epoch checkpoint budget from genesis");
     // In a 30-block epoch, height 32 is in epoch 1
     let checkpoint = world
         .rpc
-        .wait_finalized_checkpoint(&ports, 32, 60)
+        .wait_finalized_checkpoint(&ports, 32, attempts)
         .expect("committee crosses epoch boundary to height 32");
     world.state.resilience_observed_height = Some(checkpoint.height);
 }
