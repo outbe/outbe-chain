@@ -8111,6 +8111,7 @@ dependencies = [
  "outbe-genesis-cli",
  "outbe-intexfactory",
  "outbe-l2registry",
+ "outbe-metadosis",
  "outbe-nod",
  "outbe-oracle",
  "outbe-primitives",
