@@ -390,7 +390,7 @@ fn live_executor_retries_execution_while_candidate_storage_remains_independent()
             );
             let execution = async {
                 for status in [PayloadStatusEnum::Syncing, PayloadStatusEnum::Valid] {
-                    let BeaconEngineMessage::NewPayload { payload, tx } =
+                    let BeaconEngineMessage::NewPayload { payload, tx, .. } =
                         engine_rx.recv().await.unwrap()
                     else {
                         panic!("candidate verification must not send forkchoice updates");

@@ -36,6 +36,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 
+mod collateral;
 mod host;
 
 pub(crate) use host::add_sgx_runtime_mounts;
@@ -296,16 +297,13 @@ fn run(cli: Cli) -> Result<()> {
 
     let collateral_started_at = unix_seconds()?;
     let collateral_dir = work.path().join("collateral");
-    command_ok(
-        Command::new("python3")
-            .arg(repo.join("scripts/release/capture_dcap_collateral.py"))
-            .args(["--quote"])
-            .arg(&quote_path)
-            .args(["--output-dir"])
-            .arg(&collateral_dir)
-            .args(["--expected-pck-ca", cli.expected_pck_ca.label()]),
-        "acquire exact host-only Intel collateral",
-    )?;
+    collateral::write_capture(
+        &repo,
+        &quote_path,
+        &collateral_dir,
+        cli.expected_pck_ca.label(),
+    )
+    .wrap_err("acquire exact host-only Intel collateral")?;
     let collateral_completed_at = unix_seconds()?;
 
     let components = DCAP_COLLATERAL_COMPONENT_FILES

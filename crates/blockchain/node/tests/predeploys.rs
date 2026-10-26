@@ -72,7 +72,7 @@ fn load_test_genesis_alloc() -> serde_json::Map<String, Value> {
 
 fn load_bytecode(name: &str) -> String {
     let path = workspace_root()
-        .join("scripts/contracts")
+        .join("contracts/predeploys")
         .join(format!("{name}.code.hex"));
     std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("bytecode file {path:?} should be readable: {e}"))
@@ -82,7 +82,7 @@ fn load_bytecode(name: &str) -> String {
 
 fn load_meta(name: &str) -> Value {
     let path = workspace_root()
-        .join("scripts/contracts")
+        .join("contracts/predeploys")
         .join(format!("{name}.meta.json"));
     serde_json::from_slice(&std::fs::read(&path).expect("meta file should be readable"))
         .expect("meta file should parse")
@@ -117,7 +117,7 @@ fn predeployed_bytecode_matches_vendored_artifacts() {
         let vendored_code = load_bytecode(p.name);
         assert_eq!(
             asset_code, vendored_code,
-            "{}: test genesis bytecode drifted from canonical artifact at scripts/contracts/{}.code.hex",
+            "{}: test genesis bytecode drifted from canonical artifact at contracts/predeploys/{}.code.hex",
             p.label, p.name
         );
 

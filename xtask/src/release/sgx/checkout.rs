@@ -30,7 +30,7 @@ pub fn repository_root() -> Result<PathBuf> {
 pub(super) fn require_release_checkout(repo_root: &Path, network: SgxReleaseNetwork) -> Result<()> {
     for relative in [
         network.bundle_spec_path(),
-        "scripts/release/build-sgx-bundle-in-container.sh",
+        "release/scripts/build-sgx-bundle-in-container.sh",
         "xtask/Cargo.toml",
     ] {
         if !repo_root.join(relative).is_file() {

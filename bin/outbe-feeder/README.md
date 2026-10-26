@@ -392,7 +392,7 @@ ABI and price formula references:
 For the migrated price-oracle testnet config and launcher, bootstrap a local
 testnet with oracle genesis params, start the node, then run one feeder. Do not
 set `PRICE_REST_URL` for the normal remote price endpoint; `run.sh` uses
-`https://prc.testnet.outbe.net` from `scripts/price-oracle/config.toml` by
+`https://prc.testnet.outbe.net` from `bin/outbe-feeder/config/config.toml` by
 default:
 
 ```bash

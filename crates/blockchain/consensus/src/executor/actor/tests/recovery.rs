@@ -30,6 +30,7 @@ fn recovered_forkchoice_attempt_sends_exact_finalized_identity_without_attribute
                     state,
                     payload_attrs,
                     tx,
+                    ..
                 } => {
                     assert_eq!(state.head_block_hash, recovered.block_hash);
                     assert_eq!(state.safe_block_hash, recovered.block_hash);
@@ -113,6 +114,7 @@ fn recovered_forkchoice_attempt_repeats_identical_state_after_syncing() {
                     state,
                     payload_attrs,
                     tx,
+                    ..
                 }) = engine_rx.recv().await
                 else {
                     panic!("expected recovered FCU attempt");

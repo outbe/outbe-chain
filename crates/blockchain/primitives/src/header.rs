@@ -216,7 +216,7 @@ reth_codecs::impl_compression_for_compact!(OutbeHeader);
 impl reth_rpc_traits::FromConsensusHeader<OutbeHeader> for alloy_rpc_types_eth::Header {
     fn from_consensus_header(
         header: reth_primitives_traits::SealedHeader<OutbeHeader>,
-        block_size: usize,
+        block_size: Option<usize>,
     ) -> Self {
         let hash = header.hash();
         let inner = header.into_header().into_inner();

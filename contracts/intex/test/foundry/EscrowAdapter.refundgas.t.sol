@@ -111,7 +111,7 @@ abstract contract RefundGasBase is CrossChainTest {
     address internal admin = address(this);
 
     function _setUpEscrow() internal {
-        vm.etch(COMPACT, vm.parseBytes(vm.trim(vm.readFile("../../scripts/contracts/the_compact.code.hex"))));
+        vm.etch(COMPACT, vm.parseBytes(vm.trim(vm.readFile("../predeploys/the_compact.code.hex"))));
         token = IERC20(address(new MockWCOEN()));
         escrow = DeployProxy.escrowAdapter(admin, admin);
         escrow.wire(admin, COMPACT, address(token));
