@@ -69,7 +69,7 @@ struct LocalnetCli {
     #[arg(long, global = true, default_value_t = 4)]
     validators: usize,
 
-    /// Optional genesis seed; defaults to scripts/seed-testnet-lowstake.json.
+    /// Optional genesis seed; defaults to testing/fixtures/seed-testnet-lowstake.json.
     #[arg(long, global = true)]
     seed: Option<PathBuf>,
 
@@ -195,11 +195,10 @@ impl LocalnetCli {
             keygen_bin: Some(self.repo.join("target/release/outbe-keygen")),
             enclave_bin: Some(self.repo.join("target/release/outbe-tee-enclave")),
             mock_bin: Some(self.repo.join("target/release/outbe-tee-enclave-mock")),
-            seed: Some(
-                self.seed
-                    .clone()
-                    .unwrap_or_else(|| self.repo.join("scripts/seed-testnet-lowstake.json")),
-            ),
+            seed: Some(self.seed.clone().unwrap_or_else(|| {
+                self.repo
+                    .join("testing/fixtures/seed-testnet-lowstake.json")
+            })),
         };
         let mut env = Environment::from_cli(&cli);
         if let Some(starts) = persisted_blocks {

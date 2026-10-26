@@ -644,7 +644,7 @@
       ],
       "properties": {
         "entrypoint": {
-          "const": "scripts/release/reproducible-build.sh"
+          "const": "release/scripts/reproducible-build.sh"
         },
         "certificate_identity": {
           "enum": [

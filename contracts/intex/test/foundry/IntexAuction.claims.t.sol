@@ -226,14 +226,14 @@ contract IntexAuctionClaimsTest is Test {
         assertEq(_units(alice), 3);
     }
 
-    function test_AnExpiredSeriesClosesTheWinWithoutUnits() public {
+    function test_AForfeitedSeriesClosesTheWinWithoutUnits() public {
         _bid(3, 1);
         _createSeries(0);
         _finalize(_winner(alice), 0, 0);
         vm.prank(relayer);
         intex.markCalled(CreateSeriesLib.seriesId(DAY), uint32(block.timestamp));
         vm.warp(block.timestamp + 1);
-        assertEq(uint8(intex.readData(CreateSeriesLib.seriesId(DAY)).state), uint8(IIntexNFT1155.IntexState.Expired));
+        assertEq(uint8(intex.readData(CreateSeriesLib.seriesId(DAY)).state), uint8(IIntexNFT1155.IntexState.Forfeited));
 
         vm.expectEmit(true, true, true, true, address(auction));
         emit IIntexAuction.WinExpired(DAY, alice, CreateSeriesLib.seriesId(DAY), 3);

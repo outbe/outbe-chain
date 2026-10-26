@@ -21,9 +21,6 @@
 //! - block 2+ requires `CertifiedParentAccounting` before any user transaction
 //!   reads `last_accounted_block_number`.
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
-
 use alloy_primitives::Address;
 use outbe_evm::system_tx::{expected_begin_block_kinds, SystemTxKind};
 use outbe_gem::GemContract;
@@ -70,22 +67,7 @@ const FIXTURE_VALIDATORS_4_PUBLIC_ONLY: &str = r#"[
     "radicle_node_id": "4444444444444444444444444444444444444444444444444444444444444444" }
 ]"#;
 
-fn repo_root() -> PathBuf {
-    // `CARGO_MANIFEST_DIR` is `crates/blockchain/evm`. Walk up three levels to
-    // reach the workspace root that owns `scripts/seed_genesis.py`.
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .and_then(Path::parent)
-        .expect("workspace root")
-        .to_path_buf()
-}
-
-fn seed_genesis_script() -> PathBuf {
-    repo_root().join("scripts").join("seed_genesis.py")
-}
-
-/// Run `scripts/seed_genesis.py` against the supplied fixtures inside a fresh
+/// Run `outbe-genesis-cli` seeder against the supplied fixtures inside a fresh
 /// temp directory and return the parsed JSON plus the raw text. The function
 /// keeps the text verbatim so DKG-share scans operate on the on-disk
 /// representation, not the serde-roundtripped one.
@@ -103,22 +85,19 @@ fn run_seed_genesis(
     std::fs::write(&seed_path, seed_json).expect("write seed fixture");
     std::fs::write(&validators_path, validators_json).expect("write validators fixture");
 
-    let status = Command::new("python3")
-        .arg(seed_genesis_script())
-        .arg("--genesis")
-        .arg(&genesis_path)
-        .arg("--seed")
-        .arg(&seed_path)
-        .arg("--validators")
-        .arg(&validators_path)
-        .arg("--output")
-        .arg(&out_path)
-        .status()
-        .expect("invoke python3 scripts/seed_genesis.py");
-    assert!(
-        status.success(),
-        "seed_genesis.py exited non-zero: {status:?}"
-    );
+    outbe_genesis_cli::create_genesis::run_seed_cli(
+        &outbe_genesis_cli::create_genesis::SeedCliArgs {
+            genesis: genesis_path,
+            seed: seed_path,
+            validators: Some(validators_path),
+            output: out_path.clone(),
+            worldwide_day: None,
+            fresh_metadosis: false,
+            contracts_dir: None,
+            canon_dir: None,
+        },
+    )
+    .expect("run_seed_cli");
 
     let raw = std::fs::read_to_string(&out_path).expect("read seeded genesis");
     let parsed: Value = serde_json::from_str(&raw).expect("seeded genesis is valid JSON");

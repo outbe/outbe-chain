@@ -199,7 +199,7 @@ impl Buffer<crate::marshal_types::Variant> for EmptyMarshalBuffer {
 /// commonware 2026.9.0 routes `marshal.forward(round, commitment, recipients)`
 /// to `buffer.send(round, block, recipients)`, whereas `marshal.verified(..)`
 /// only caches locally. Recording `send` lets a test prove the broadcast
-/// actually fired (BUG-A: the proposer kept the block only in its local cache).
+/// actually fired (DEFECT-A: the proposer kept the block only in its local cache).
 #[derive(Clone, Default)]
 struct RecordingMarshalBuffer {
     /// (round, block commitment, was Recipients::All) for each `send`.
@@ -505,7 +505,7 @@ fn locally_built_candidate_requires_valid_execution_before_advertising() {
                 .recv()
                 .await
                 .expect("candidate import reaches the execution engine");
-            let BeaconEngineMessage::NewPayload { payload, tx } = message else {
+            let BeaconEngineMessage::NewPayload { payload, tx, .. } = message else {
                 panic!("candidate preparation must use new_payload");
             };
             assert_eq!(
@@ -555,7 +555,7 @@ fn locally_built_candidate_is_withheld_when_execution_is_not_ready() {
     });
 }
 
-/// bp-1 / BUG-A regression: opt3 dissemination. The proposer caches its block
+/// bp-1 / DEFECT-A regression: opt3 dissemination. The proposer caches its block
 /// into marshal at propose time (`handle_propose` -> `marshal.proposed`, making
 /// it servable on demand). `Relay::broadcast` then wire-pushes it by calling
 /// `marshal.forward(round, commitment, Recipients::All)` DIRECTLY. It never goes
@@ -613,7 +613,7 @@ fn relay_broadcast_forwards_proposed_block_directly_to_all_peers() {
             assert!(
                 forwarded_to_all,
                 "Relay::broadcast must call marshal.forward(.., Recipients::All) so the proposed \
-             block is broadcast to all peers (bp-1/BUG-A); no wire-push was observed"
+             block is broadcast to all peers (bp-1/DEFECT-A); no wire-push was observed"
             );
         },
     );

@@ -23,6 +23,25 @@ pub(crate) const USD_ISO: u16 = 840;
 const REGISTRATION_TIMEOUT_SECS: u64 = 60;
 const APPROVAL_TIMEOUT_SECS: u64 = 180;
 
+fn approval_wait_budget(
+    genesis: &serde_json::Value,
+    voting_deadline: u64,
+    head: u64,
+) -> Result<Duration> {
+    let first_tally_height = voting_deadline
+        .checked_add(1)
+        .ok_or_else(|| eyre!("vault approval voting deadline overflow"))?;
+    let remaining = first_tally_height.saturating_sub(head);
+    let voting_allowance = if remaining == 0 {
+        Duration::ZERO
+    } else {
+        crate::features::common::consensus_block_wait_budget(genesis, remaining)?
+    };
+    voting_allowance
+        .checked_add(Duration::from_secs(APPROVAL_TIMEOUT_SECS))
+        .ok_or_else(|| eyre!("vault approval wait budget overflow"))
+}
+
 sol! {
     interface ISettlementAsset {
         function decimals() external view returns (uint8);
@@ -145,6 +164,14 @@ pub(crate) fn register_vault(
         "vault registration proposal transaction failed: {tx}"
     );
     let proposal_id = world.rpc.proposal_id_from_receipt(port, &tx)?;
+    let voting_deadline = world
+        .rpc
+        .vote_status_on(port, proposal_id)?
+        .deadline
+        .ok_or_else(|| eyre!("vault proposal #{proposal_id} has no voting deadline"))?;
+    let genesis = serde_json::from_slice(&std::fs::read(
+        world.localnet.scenario_dir().join("genesis.json"),
+    )?)?;
     let mut ballots = Vec::new();
     for voter in &voters {
         ballots.push(world.rpc.cast_vote(voter, proposal_id, true)?);
@@ -157,7 +184,14 @@ pub(crate) fn register_vault(
     }
     // Poll the staged action directly: block/CLI polling can consume much of its
     // short apply window. Keep the slower status query for timeout diagnostics.
-    let deadline = Instant::now() + Duration::from_secs(APPROVAL_TIMEOUT_SECS);
+    let approval_start_head = world
+        .rpc
+        .head(port)
+        .ok_or_else(|| eyre!("read committee head before vault approval wait"))?;
+    let approval_timeout = approval_wait_budget(&genesis, voting_deadline, approval_start_head)?;
+    let deadline = Instant::now()
+        .checked_add(approval_timeout)
+        .ok_or_else(|| eyre!("vault approval monotonic deadline overflow"))?;
     loop {
         if eth::read_call(
             &url,
@@ -175,8 +209,11 @@ pub(crate) fn register_vault(
         if Instant::now() >= deadline {
             let proposal = world.rpc.vote_status_on(port, proposal_id)?;
             return Err(eyre!(
-                "vault proposal #{proposal_id} approval timed out (status: {})",
-                proposal.status
+                "vault proposal #{proposal_id} approval timed out (status: {}, voting deadline: {voting_deadline}, start head: {approval_start_head}, observed head: {:?}, votes: {}/{}, budget: {approval_timeout:?})",
+                proposal.status,
+                world.rpc.head(port),
+                proposal.yes,
+                proposal.no
             ));
         }
         sleep(Duration::from_millis(250));
@@ -255,5 +292,30 @@ pub(crate) fn vault_balance_at(
 sol! {
     interface ISettlementAssetBalance {
         function balanceOf(address account) external view returns (uint256);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn approval_wait_includes_remaining_vote_blocks_and_existing_grace() {
+        let genesis = serde_json::json!({
+            "config": {
+                "minBlockTimeMs": 2_000,
+                "leaderTimeoutMs": 15_000,
+                "certificationTimeoutMs": 30_000
+            }
+        });
+        for (head, expected_seconds) in [(7, 780), (26, 210), (27, 180), (28, 180)] {
+            assert_eq!(
+                approval_wait_budget(&genesis, 26, head).unwrap(),
+                Duration::from_secs(expected_seconds),
+                "head {head}"
+            );
+        }
+        assert!(approval_wait_budget(&genesis, u64::MAX, 0).is_err());
+        assert!(approval_wait_budget(&genesis, u64::MAX - 1, 0).is_err());
     }
 }

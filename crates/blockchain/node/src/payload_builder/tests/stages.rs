@@ -10,7 +10,8 @@ use reth_evm::{
     block::CommitChanges,
     execute::{BlockBuilderOutcome, BlockExecutor, ExecutorTx, GasOutput},
 };
-use reth_revm::cancelled::CancelOnDrop;
+use reth_storage_api::StateProvider as _;
+use reth_tasks::CancelOnDrop;
 use revm::{
     database_interface::DBErrorMarker,
     state::{AccountInfo, Bytecode},
@@ -186,7 +187,7 @@ fn run_user_stage_with_options(
     }
     let mut db = State::builder()
         .with_database(StageDatabase {
-            inner: StateProviderDatabase::new(&provider),
+            inner: StateProviderDatabase::new((&provider).into_evm_state_provider()),
             fail_storage: options.fail_storage,
         })
         .with_bundle_update()

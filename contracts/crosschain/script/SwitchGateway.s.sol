@@ -16,6 +16,10 @@ import {ERC7786Bridge} from "src/ERC7786Bridge.sol";
 /// dropped on arrival (the bridge rejects them). They must be sent again from the source through
 /// the new gateway.
 ///
+/// After `4_HandOver`, governance owns the bridge, and a gateway switch is a governance proposal.
+/// This script works only while the deployer still owns the bridge (a local network, or a deploy
+/// that stopped before the hand-over).
+///
 /// Required env (DEPLOYER_PK must be the bridge owner):
 ///   DEPLOYER_PK, CONTRACT_SALT, CREATE3_FACTORY_ADDRESS, ACTIVE_GATEWAY ("lz" | "hyperlane").
 contract SwitchGateway is Script {

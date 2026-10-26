@@ -967,8 +967,18 @@ impl HeaderProvider for FinalizedMockProvider {
 }
 
 impl StateProviderFactory for FinalizedMockProvider {
+    type Primitives = <TestProvider as StateProviderFactory>::Primitives;
+
     fn latest(&self) -> ProviderResult<StateProviderBox> {
         self.inner.latest()
+    }
+
+    fn state_with_block_appended(
+        &self,
+        parent_hash: BlockHash,
+        block: reth_chain_state::ExecutedBlock<Self::Primitives>,
+    ) -> ProviderResult<StateProviderBox> {
+        self.inner.state_with_block_appended(parent_hash, block)
     }
 
     fn state_by_block_number_or_tag(

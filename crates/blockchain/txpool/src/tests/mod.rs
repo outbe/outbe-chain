@@ -118,6 +118,7 @@ fn pool_admits_true_type4_bootstrap_with_one_atomic_unit() {
     provider.add_account(signer, ExtendedAccount::new(0, U256::from(1)));
     let inner =
         EthTransactionValidatorBuilder::new(provider, reth_ethereum::evm::EthEvmConfig::mainnet())
+            .set_block_gas_limit(30_000_000)
             .set_eip7702(true)
             .disable_balance_check()
             .build(InMemoryBlobStore::default());
@@ -149,6 +150,7 @@ fn pool_rejects_true_type4_bootstrap_with_zero_balance() {
     provider.add_account(signer, ExtendedAccount::new(0, U256::ZERO));
     let inner =
         EthTransactionValidatorBuilder::new(provider, reth_ethereum::evm::EthEvmConfig::mainnet())
+            .set_block_gas_limit(30_000_000)
             .set_eip7702(true)
             .disable_balance_check()
             .build(InMemoryBlobStore::default());
@@ -504,6 +506,7 @@ fn pool_tribute_selector_controls_sponsored_balance_waiver_and_paid_fallback() {
             provider,
             reth_ethereum::evm::EthEvmConfig::mainnet(),
         )
+        .set_block_gas_limit(30_000_000)
         .set_eip7702(true)
         .disable_balance_check()
         .build(InMemoryBlobStore::default());
@@ -669,6 +672,7 @@ fn pool_admits_delegated_sponsored_tx_even_when_daily_quota_is_exhausted() {
 
     let inner =
         EthTransactionValidatorBuilder::new(provider, reth_ethereum::evm::EthEvmConfig::mainnet())
+            .set_block_gas_limit(30_000_000)
             .set_eip7702(true)
             .disable_balance_check()
             .build(InMemoryBlobStore::default());

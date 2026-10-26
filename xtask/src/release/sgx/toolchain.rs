@@ -52,7 +52,7 @@ fn current_id(flag: &str) -> Result<String> {
 }
 
 pub(super) fn container_adapter() -> &'static str {
-    "/source/scripts/release/build-sgx-bundle-in-container.sh"
+    "/source/release/scripts/build-sgx-bundle-in-container.sh"
 }
 
 pub(super) fn run_status(command: &mut Command, description: &str) -> Result<()> {

@@ -266,7 +266,7 @@ fn settle_nod(world: &mut World, scenario: &RelayedNod) -> PaidNod {
     );
     let duplicate_before = nod_snapshot(world, scenario.owner, scenario.id, settled_height);
     assert_same_snapshot(&paid_indexes, &duplicate_before);
-    let duplicate = assert_live_nod_revert(world, &pay, "nod is already settled");
+    let duplicate = assert_live_nod_revert(world, &pay, &eth::INodFactory::NodAlreadySettled {});
     let duplicate_height = duplicate.block_number().expect("duplicate receipt block");
     assert_eq!(nod_bodies(world, scenario.id, duplicate_height), paid);
     let duplicate_after = nod_snapshot(world, scenario.owner, scenario.id, duplicate_height);
@@ -649,7 +649,7 @@ fn assert_mining_receipt(
     assert_receipt_event(
         &minted.receipt,
         addresses::NOD_FACTORY_ADDR,
-        &eth::INodFactory::NodExercised {
+        &eth::INodFactory::NodMined {
             owner: scenario.owner,
             nodId: scenario.id.to_u256(),
             encryptedGratisAmount: scenario.body.encryptedGratisAmount.clone(),

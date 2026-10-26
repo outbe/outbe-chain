@@ -260,10 +260,9 @@ fn await_l2_voting_deadline(world: &World, proposal_id: u64) {
         .vote_status(proposal_id)
         .expect("observe L2 registry proposal deadline");
     let deadline = proposal.deadline.expect("proposal deadline");
-    let height = world
-        .rpc
-        .wait_block_gt(world.validators.primary_port(), deadline, 80)
-        .expect("chain progress past the L2 registry proposal deadline");
+    let height =
+        super::common::wait_past_consensus_height(world, world.validators.primary_port(), deadline)
+            .expect("chain progress past the L2 registry proposal deadline");
     assert!(
         height > deadline,
         "did not pass L2 registry proposal deadline {deadline}"

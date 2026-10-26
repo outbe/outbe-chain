@@ -378,9 +378,35 @@ fn jailed_and_resynced(world: &mut World) {
         )
     };
     let primary = world.validators.primary_port();
-    let deadline = Instant::now() + Duration::from_secs(1_800);
-    for miss in 1..=3u32 {
-        let target = first_window + u64::from(miss - 1) * WINDOW;
+    let genesis: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(world.localnet.scenario_dir().join("genesis.json"))
+            .expect("read executed Hyperlane genesis"),
+    )
+    .expect("parse executed Hyperlane genesis");
+    let targets = [
+        first_window,
+        first_window
+            .checked_add(WINDOW)
+            .expect("second Hyperlane liveness height overflow"),
+        first_window
+            .checked_add(2 * WINDOW)
+            .expect("third Hyperlane liveness height overflow"),
+    ];
+    let started = world
+        .rpc
+        .finalized(primary)
+        .expect("starting finalized head");
+    let remaining = targets[2].saturating_sub(started);
+    let budget = if remaining == 0 {
+        Duration::ZERO
+    } else {
+        super::common::consensus_block_wait_budget(&genesis, remaining)
+            .expect("Hyperlane liveness wait budget")
+    };
+    let deadline = Instant::now()
+        .checked_add(budget)
+        .expect("Hyperlane liveness deadline overflow");
+    for (miss, target) in (1..=3u32).zip(targets) {
         loop {
             let finalized = world.rpc.finalized(primary).expect("finalized head");
             if finalized >= target {
@@ -388,7 +414,7 @@ fn jailed_and_resynced(world: &mut World) {
             }
             assert!(
                 Instant::now() < deadline,
-                "Hyperlane liveness window {miss} stalled at {finalized}"
+                "Hyperlane liveness window {miss} did not reach finalized target {target} within {budget:?}: last finalized {finalized}"
             );
             if finalized.is_multiple_of(30) {
                 eprintln!("Hyperlane liveness: finalized={finalized} target={target}");
@@ -438,9 +464,18 @@ fn jailed_and_resynced(world: &mut World) {
     }
     assert_ism(world, ism, &expected, 2, 3);
     let stalled = world.rpc.finalized(primary).expect("finalized after jail");
+    let progress_target = stalled
+        .checked_add(5)
+        .expect("post-jail finality height overflow");
+    let finality_budget = super::common::consensus_block_wait_budget(&genesis, 5)
+        .expect("post-jail finality wait budget");
+    let finality_retries = u32::try_from(finality_budget.as_millis().div_ceil(2_000))
+        .expect("post-jail finality retry count overflow");
     assert!(
-        world.rpc.wait_finalized_at_least(primary, stalled + 5, 60),
-        "committee did not finalize after liveness jail"
+        world
+            .rpc
+            .wait_finalized_at_least(primary, progress_target, finality_retries),
+        "committee did not finalize five blocks after liveness jail within {finality_budget:?}"
     );
     let exit_deadline = Instant::now() + Duration::from_secs(60);
     loop {
@@ -466,7 +501,7 @@ fn jailed_and_resynced(world: &mut World) {
         .localnet
         .node_launch_log(3, silent_validator_pid)
         .expect("read exact jailed validator process log");
-    let guard = "ERROR outbe_chain::launch::node: finalized TEE lease guard requested node shutdown reason=validator is jailed; complete ordinary unjail and then run tee join";
+    let guard = "ERROR outbe_chain::launch::shutdown: finalized TEE lease guard requested node shutdown reason=validator is jailed; complete ordinary unjail and then run tee join";
     assert_eq!(
         log.lines()
             .filter(|line| line.trim_end().ends_with(guard))

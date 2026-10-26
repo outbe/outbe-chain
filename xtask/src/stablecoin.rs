@@ -184,9 +184,9 @@ fn scan_seed_predeploys(
     manifest: &StablecoinAddressManifest,
     classes: &[CheckedAddressClass],
 ) -> Result<usize> {
-    let scripts = repo_root.join("scripts");
+    let fixtures = repo_root.join("testing/fixtures");
     let mut predeploys = BTreeSet::new();
-    for entry in fs::read_dir(&scripts).wrap_err_with(|| format!("read {}", scripts.display()))? {
+    for entry in fs::read_dir(&fixtures).wrap_err_with(|| format!("read {}", fixtures.display()))? {
         let path = entry?.path();
         let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
             continue;

@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
-/// HyperlaneController precompile at 0x000000000000000000000000000000000000EE14.
+/// @dev The HyperlaneController precompile. Matches `HYPERLANE_CONTROLLER_ADDRESS` in
+///      crates/blockchain/primitives/src/addresses.rs.
+address constant HYPERLANE_CONTROLLER = 0x000000000000000000000000000000000000EE14;
+
+/// HyperlaneController precompile at `HYPERLANE_CONTROLLER`.
 ///
 /// Governance-owned controller of the Hyperlane bridge. Holds only the local
 /// InterchainAccountRouter address and a `domain -> StorageMessageIdMultisigIsm`

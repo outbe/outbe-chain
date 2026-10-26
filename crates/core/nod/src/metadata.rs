@@ -42,8 +42,8 @@ pub(crate) fn token_uri(nod: &NodContract<'_>, item: &NodItemState, now: U256) -
     ];
     traits.extend(encrypted_traits(item));
     traits.extend([
-        Trait::integer("Issuance Currency", item.issuance_currency),
-        Trait::integer("Reference Currency", item.reference_currency),
+        Trait::currency("Issuance Currency", item.issuance_currency),
+        Trait::currency("Reference Currency", item.reference_currency),
     ]);
     if called {
         traits.push(Trait::date("Called At", called_at));

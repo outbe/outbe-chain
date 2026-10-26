@@ -53,6 +53,13 @@ set -a; f="${ENV_FILE:-.env}"; [ -f "$f" ] && . "$f"; set +a
 forge script script/3_ConfigureBridge.s.sol:ConfigureBridge --rpc-url "$NETWORK" --broadcast --slow --legacy -vvv --skip-simulation
 '''
 
+[tasks.hand-over]
+description = "Give the bridge and the adapters to governance (run last; deploy-all runs it)"
+run = '''
+set -a; f="${ENV_FILE:-.env}"; [ -f "$f" ] && . "$f"; set +a
+forge script script/4_HandOver.s.sol:HandOver --rpc-url "$NETWORK" --broadcast --slow --legacy -vvv --skip-simulation
+'''
+
 [tasks.deploy-all]
 description = "Deploy the whole hub (adapters + bridge) on one chain"
 run = '''
@@ -71,7 +78,7 @@ forge script script/SwitchGateway.s.sol:SwitchGateway --rpc-url "$NETWORK" --bro
 # ADAPTER and its endpoint are read from the bridge (getGateway -> adapter -> endpoint); only SRC_EID is required.
 # Sender defaults to the same-address peer adapter; NONCE defaults to inboundNonce+1.
 # DESTRUCTIVE: skip drops the targeted nonce - if the pathway is not actually stuck it skips the next real message.
-# Run by the adapter's LZ delegate (= BRIDGE_OWNER).
+# Run by the adapter's LZ delegate. After hand-over the delegate is governance, so this needs a proposal.
 [tasks.clear-lz-nonce]
 description = "Skip a stuck inbound LZ nonce (BRIDGE_ADDRESS + SRC_EID; opt SRC_SENDER, NONCE). DESTRUCTIVE."
 run = '''

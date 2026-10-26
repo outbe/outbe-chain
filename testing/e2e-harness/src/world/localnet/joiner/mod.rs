@@ -504,27 +504,27 @@ impl Localnet {
             blsRegistrationSignature: registration_signature,
         };
         let unrelated = read_evm_key(&self.cfg.validator_dir(1))?;
-        let unauthorized = eth::send_call(
+        let unrelated_address =
+            eth::address_of(&unrelated).ok_or_else(|| eyre!("bad unrelated EOA key"))?;
+        let height = eth::finalized_number(&self.cfg.rpc0)
+            .ok_or_else(|| eyre!("missing finalized registration checkpoint"))?;
+        let unauthorized = eth::read_call_revert_data_at(
             &self.cfg.rpc0,
             addresses::VS_ADDR,
-            &unrelated,
+            unrelated_address,
             &registration,
-            None,
+            eth::RevertAt {
+                value: alloy_primitives::U256::ZERO,
+                height,
+            },
+        )?;
+        eyre::ensure!(
+            unauthorized.as_ref()
+                == alloy_sol_types::SolError::abi_encode(
+                    &IValidatorSet::UnauthorizedOwnerOrValidator {}
+                ),
+            "unexpected unrelated-EOA registration revert for {addr:#x}: {unauthorized:#x}"
         );
-        match unauthorized {
-            Err(error) if error.to_string().contains("unauthorized") => {}
-            Ok(tx) if eth::receipt_success(&self.cfg.rpc0, &tx) == Some(false) => {}
-            Err(error) => {
-                return Err(eyre!(
-                    "unexpected unrelated-EOA registration error for {addr:#x}: {error}"
-                ));
-            }
-            Ok(tx) => {
-                return Err(eyre!(
-                    "unrelated EOA unexpectedly registered joiner {addr:#x}: {tx}"
-                ));
-            }
-        }
         let register_tx =
             eth::send_call(&self.cfg.rpc0, addresses::VS_ADDR, key, &registration, None)?;
         let register = registration_outcome(&self.cfg.rpc0, &register_tx)?;

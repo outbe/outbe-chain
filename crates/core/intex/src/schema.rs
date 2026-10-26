@@ -12,14 +12,14 @@ use std::fmt;
 
 use crate::errors::IntexError;
 
-/// Series lifecycle state: `Issued -> Called -> Expired`, derived from the series' group.
-/// A Called series becomes Expired after its notice-period deadline.
+/// Series lifecycle state: `Issued -> Called -> Forfeited`, derived from the series' group.
+/// A Called series becomes Forfeited after its notice-period deadline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum IntexState {
     Issued = 0,
     Called = 1,
-    Expired = 2,
+    Forfeited = 2,
 }
 
 impl IntexState {
@@ -27,7 +27,7 @@ impl IntexState {
         match value {
             0 => Ok(Self::Issued),
             1 => Ok(Self::Called),
-            2 => Ok(Self::Expired),
+            2 => Ok(Self::Forfeited),
             other => Err(IntexError::InvalidStateValue(other)),
         }
     }
@@ -57,13 +57,12 @@ impl CallStamp {
         match (self.called_at, now > self.deadline) {
             (0, _) => IntexState::Issued,
             (_, false) => IntexState::Called,
-            (_, true) => IntexState::Expired,
+            (_, true) => IntexState::Forfeited,
         }
     }
 }
 
-/// Series identifier: the 14 ASCII bytes of `20260212-TRY-U`. A currency with no
-/// alpha code in ISO 4217 falls back to its zero-padded numeric code (`949`).
+/// Series identifier: the 14 ASCII bytes of `20260212-TRY-U`.
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SeriesId([u8; SERIES_ID_LEN]);
@@ -112,27 +111,9 @@ impl SeriesId {
         }))
     }
 
-    /// `949 -> b"949"`, `32 -> b"032"`. ISO 4217 numbers are three digits, and a
-    /// wider one has no spelling here: folding it would give two currencies one id.
-    pub fn numeric_code(iso: u16) -> Result<[u8; 3], IntexError> {
-        if iso > 999 {
-            return Err(IntexError::InvalidSeriesId);
-        }
-        Ok([
-            b'0' + (iso / 100) as u8,
-            b'0' + ((iso / 10) % 10) as u8,
-            b'0' + (iso % 10) as u8,
-        ])
-    }
-
-    /// How a currency is spelled inside an id: its alpha-3 code, or its numeric
-    /// code when ISO assigns none.
+    /// How a currency is spelled inside an id: its ISO 4217 alpha-3 code.
     pub fn currency_code(iso: u16) -> Result<[u8; 3], IntexError> {
-        // todo validate iso and refactor this code
-        match iso_4217_alpha(iso) {
-            Some(alpha) => Ok(alpha),
-            None => Self::numeric_code(iso),
-        }
+        iso_4217_alpha(iso).ok_or(IntexError::InvalidSeriesId)
     }
 
     /// The id of the series a day issues for one `(issuance, reference)` pair.
@@ -297,10 +278,10 @@ pub struct IntexContract {
     #[attribute(order = 2)]
     pub series_position: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
 
-    // Disjoint classes: a series forfeits `issued_units - settled - exercised -
+    // Disjoint classes: a series forfeits `issued_units - settled - mined -
     // gem_factory` at its deadline. Not on `SeriesRecord` because a record write
     // rewrites every field.
-    /// series_id -> units paid for and not yet exercised.
+    /// series_id -> units paid for and not yet mined.
     #[attribute(order = 27)]
     pub settled_units: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
 
@@ -310,13 +291,13 @@ pub struct IntexContract {
 
     /// series_id -> settled units burned into Promis so far.
     #[attribute(order = 29)]
-    pub exercised_units: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
+    pub mined_units: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
 
     // Per-owner history. The two current classes are the owner's Issued- and
     // Settled-class token balances, so the ledger keeps only what the token no longer holds.
-    /// `owner_units_key` -> units this owner exercised in the series.
+    /// `owner_units_key` -> units this owner mined in the series.
     #[attribute(order = 30)]
-    pub owner_exercised_units: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub owner_mined_units: outbe_primitives::storage::dsl::Map<B256, u32>,
 
     /// `owner_units_key` -> units this owner sent to the Gem Factory.
     #[attribute(order = 31)]

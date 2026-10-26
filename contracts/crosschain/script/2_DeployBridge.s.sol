@@ -9,23 +9,24 @@ import {ERC7786Bridge} from "src/ERC7786Bridge.sol";
 
 /// @dev Deploys the {ERC7786Bridge} facade via CREATE3, with one adapter as the active gateway.
 ///      The script derives the adapter address deterministically (CREATE3), so the bridge does not
-///      depend on the adapter script's output.
+///      depend on the adapter script's output. The deployer owns the bridge until `4_HandOver` gives
+///      it to governance.
 ///
-/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `CREATE3_FACTORY_ADDRESS`, `BRIDGE_OWNER`.
+/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `CREATE3_FACTORY_ADDRESS`.
 /// Optional: `ACTIVE_GATEWAY` ("lz" | "hyperlane", default "lz").
 contract DeployBridge is Script {
     function run() public virtual {
         uint256 deployerPk = vm.envUint("DEPLOYER_PK");
         string memory salt = vm.envString("CONTRACT_SALT");
         address factory = vm.envAddress("CREATE3_FACTORY_ADDRESS");
-        address owner = vm.envAddress("BRIDGE_OWNER");
         string memory active = vm.envOr("ACTIVE_GATEWAY", string(""));
         if (bytes(active).length == 0) active = "lz";
 
-        address gateway = adapterAddress(factory, salt, vm.addr(deployerPk), active);
+        address deployer = vm.addr(deployerPk);
+        address gateway = adapterAddress(factory, salt, deployer, active);
 
         vm.startBroadcast(deployerPk);
-        address bridge = deployBridge(factory, salt, owner, gateway);
+        address bridge = deployBridge(factory, salt, deployer, gateway);
         vm.stopBroadcast();
 
         console2.log("active gateway:", gateway);
