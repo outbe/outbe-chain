@@ -1,6 +1,6 @@
 //! Strict JSON governance actions for the crosschain contracts that the
 //! controller owns: the ERC-7786 bridge, its gateway adapters, the token
-//! bridges and the Hyperlane validator domains (OIP-00354).
+//! bridges and the Hyperlane validator domains.
 //!
 //! The vote tally runs where sub-calls are not available. So an approved
 //! proposal only stores the hash of its payload. Permissionless
