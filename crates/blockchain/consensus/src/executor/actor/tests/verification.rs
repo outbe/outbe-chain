@@ -70,7 +70,7 @@ async fn probe(
     work.schedule(&engine.handle);
     let event = work.next_event();
     let reply = async {
-        let BeaconEngineMessage::NewPayload { payload, tx } = engine.rx.recv().await.unwrap()
+        let BeaconEngineMessage::NewPayload { payload, tx, .. } = engine.rx.recv().await.unwrap()
         else {
             panic!("verification may only deliver a payload, never select HEAD");
         };
@@ -441,6 +441,7 @@ fn consensus_parent_head_commits_only_after_valid_forkchoice() {
                     state,
                     payload_attrs,
                     tx,
+                    ..
                 } = engine.rx.recv().await.unwrap()
                 else {
                     panic!("expected forkchoice");

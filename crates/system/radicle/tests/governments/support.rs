@@ -159,6 +159,8 @@ impl BlockIdReader for FinalizedProvider {
     }
 }
 impl StateProviderFactory for FinalizedProvider {
+    type Primitives = <MockEthProvider as StateProviderFactory>::Primitives;
+
     fn state_by_block_hash(&self, hash: B256) -> ProviderResult<StateProviderBox> {
         self.0
             .read()
@@ -167,6 +169,13 @@ impl StateProviderFactory for FinalizedProvider {
             .get(&hash)
             .ok_or(ProviderError::BestBlockNotFound)?
             .latest()
+    }
+    fn state_with_block_appended(
+        &self,
+        _: B256,
+        _: reth_chain_state::ExecutedBlock<Self::Primitives>,
+    ) -> ProviderResult<StateProviderBox> {
+        panic!("must resolve exact finalized hash")
     }
     fn latest(&self) -> ProviderResult<StateProviderBox> {
         panic!("must resolve exact finalized hash")

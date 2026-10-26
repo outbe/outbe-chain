@@ -4,13 +4,13 @@
 //! calls. Public Ethereum RPC gas accounting must expose only the committed
 //! header gas actually used by the visible transaction envelopes.
 
-use std::{path::PathBuf, process::Command, sync::Arc};
+use std::sync::Arc;
 
 use alloy_consensus::Transaction as _;
 use alloy_genesis::Genesis;
 use alloy_primitives::{keccak256, Address, Bytes, B256};
 use alloy_provider::{Provider, ProviderBuilder};
-use eyre::{bail, Context};
+use eyre::Context;
 use outbe_chain_constants::GenesisProtocolParametersV1;
 use outbe_evm::OutbeEvmSigner;
 use outbe_node::OutbeNode;
@@ -48,12 +48,6 @@ const GENESIS_VALIDATOR_RADICLE_NODE_ID: &str =
 /// genesis timestamp (`0x65f1b057`) and increments by one per block, so the
 /// first post-genesis block is `genesis + 1`. The OST3 lease is anchored to it.
 const BLOCK_ONE_TIMESTAMP_SECS: u64 = 0x65f1_b057 + 1;
-
-fn workspace_root() -> PathBuf {
-    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path.push("../../..");
-    path.canonicalize().expect("workspace root should exist")
-}
 
 fn seed_single_validator_genesis(signer: &OutbeEvmSigner) -> eyre::Result<Genesis> {
     let tmp = tempfile::TempDir::new().wrap_err("create temp genesis dir")?;
@@ -100,22 +94,19 @@ fn seed_single_validator_genesis(signer: &OutbeEvmSigner) -> eyre::Result<Genesi
         ),
     )?;
 
-    let status = Command::new("python3")
-        .arg(workspace_root().join("scripts").join("seed_genesis.py"))
-        .arg("--genesis")
-        .arg(&genesis_path)
-        .arg("--seed")
-        .arg(&seed_path)
-        .arg("--validators")
-        .arg(&validators_path)
-        .arg("--output")
-        .arg(&output_path)
-        .status()
-        .wrap_err("run scripts/seed_genesis.py")?;
-
-    if !status.success() {
-        bail!("scripts/seed_genesis.py exited with {status}");
-    }
+    outbe_genesis_cli::create_genesis::run_seed_cli(
+        &outbe_genesis_cli::create_genesis::SeedCliArgs {
+            genesis: genesis_path,
+            seed: seed_path,
+            validators: Some(validators_path),
+            output: output_path.clone(),
+            worldwide_day: None,
+            fresh_metadosis: false,
+            contracts_dir: None,
+            canon_dir: None,
+        },
+    )
+    .wrap_err("run outbe-genesis-cli seed")?;
 
     let raw = std::fs::read_to_string(&output_path).wrap_err("read seeded genesis")?;
     let genesis: serde_json::Value =

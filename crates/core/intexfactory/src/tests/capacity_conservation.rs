@@ -49,10 +49,10 @@ fn world() -> (HashMapStorageProvider, SeriesId) {
             },
         )
         .unwrap();
-        // Settled, exercised and converted footprints. The settlement and mining
+        // Settled, mined and converted footprints. The settlement and mining
         // tests cover their authorization.
         api::record_settled_units(&s, id, 3).unwrap();
-        api::record_exercised_units(&s, id, Address::repeat_byte(1), 1).unwrap();
+        api::record_mined_units(&s, id, Address::repeat_byte(1), 1).unwrap();
         api::record_gem_factory_units(&s, id, Address::repeat_byte(1), 2).unwrap();
         IntexContract::new(s.clone())
             .seed_called_group(id, DEADLINE)
@@ -79,16 +79,11 @@ fn ledger(p: &mut HashMapStorageProvider, id: SeriesId, terminal: bool) {
     StorageHandle::enter(p, |s| {
         let units = api::unit_counts(&s, id).unwrap();
         assert_eq!(
-            (
-                units.issued,
-                units.settled,
-                units.exercised,
-                units.gem_factory
-            ),
+            (units.issued, units.settled, units.mined, units.gem_factory),
             (10, 2, 1, 2)
         );
         assert_eq!(
-            units.active + units.settled + units.exercised + units.gem_factory + units.forfeited,
+            units.active + units.settled + units.mined + units.gem_factory + units.forfeited,
             10
         );
         let factory = IntexContract::new(s.clone());
@@ -134,7 +129,9 @@ fn partial_intex_expiry_returns_only_five_unpaid_units_and_never_paid_or_convert
     let events = p
         .get_events(INTEX_ADDRESS)
         .iter()
-        .filter_map(|e| outbe_intex::precompile::IIntex::IntexGroupExpired::decode_log_data(e).ok())
+        .filter_map(|e| {
+            outbe_intex::precompile::IIntex::IntexGroupForfeited::decode_log_data(e).ok()
+        })
         .collect::<Vec<_>>();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].forfeitedUnits, 5);
@@ -166,7 +163,7 @@ fn every_intex_expiry_write_failure_preserves_credit_debt_and_retries_exactly_on
                 .get_events(INTEX_ADDRESS)
                 .iter()
                 .filter_map(|e| {
-                    outbe_intex::precompile::IIntex::IntexGroupExpired::decode_log_data(e).ok()
+                    outbe_intex::precompile::IIntex::IntexGroupForfeited::decode_log_data(e).ok()
                 })
                 .count();
             assert_eq!(closed, 1);

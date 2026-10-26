@@ -2698,7 +2698,7 @@ fn a_relayed_bid_naming_an_unspellable_currency_is_refused_at_intake() {
     with_targets(&[chain], |s| {
         open_clearing(&s, 2);
         let mut relayed = bids(1, 200);
-        relayed[0].issuance_currency = 1949;
+        relayed[0].issuance_currency = 975;
 
         let err = runtime::process_bids_batch(
             s.clone(),
@@ -2715,7 +2715,7 @@ fn a_relayed_bid_naming_an_unspellable_currency_is_refused_at_intake() {
         assert_eq!(
             err.to_string(),
             outbe_primitives::error::PrecompileError::from(
-                crate::errors::DesisError::UnspellableBidCurrency(1949, 840)
+                crate::errors::DesisError::UnspellableBidCurrency(975, 840)
             )
             .to_string()
         );

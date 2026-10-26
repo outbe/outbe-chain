@@ -93,7 +93,7 @@
             "internalType": "uint32"
           },
           {
-            "name": "exercisedUnits",
+            "name": "minedUnits",
             "type": "uint32",
             "internalType": "uint32"
           },
@@ -256,7 +256,7 @@
   },
   {
     "type": "event",
-    "name": "IntexExercised",
+    "name": "IntexMined",
     "inputs": [
       {
         "name": "seriesId",
@@ -395,11 +395,6 @@
   },
   {
     "type": "error",
-    "name": "ExercisedUnitsExceedSeries",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "ForfeitedPromisLoadOverflow",
     "inputs": []
   },
@@ -426,6 +421,11 @@
   {
     "type": "error",
     "name": "MarkedUpPriceOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MinedUnitsExceedSeries",
     "inputs": []
   },
   {

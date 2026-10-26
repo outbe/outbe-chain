@@ -137,8 +137,8 @@ interface IGemFactory {
     event GemSettled(
         uint256 indexed gemId, address owner, address asset, uint256 paymentMinor, uint16 settlementCurrency
     );
-    /// @notice A settled gem right was exercised: it burned to mine confidential Promis.
-    event GemExercised(uint256 indexed gemId, address owner, uint256 promisLoadMinor);
+    /// @notice A settled gem right was mined: it burned to mine confidential Promis.
+    event GemMined(uint256 indexed gemId, address owner, uint256 promisLoadMinor);
     /// @notice A lapsed group could not be forfeited. The expiry sweep comes back to it
     ///         at `retryAt`.
     event ExpiryDeferred(bytes32 indexed groupKey, uint64 retryAt);

@@ -210,7 +210,7 @@ markets = [{ provider = "binance" }]
     #[test]
     fn the_testnet_pairs_file_builds_a_valid_config() {
         let path = format!(
-            "{}/../../scripts/testnet/pairs.toml",
+            "{}/../outbe-genesis-cli/profiles/testnet/pairs.toml",
             env!("CARGO_MANIFEST_DIR")
         );
         let text = std::fs::read_to_string(&path).unwrap();

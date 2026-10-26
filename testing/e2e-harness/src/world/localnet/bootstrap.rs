@@ -328,30 +328,29 @@ impl Localnet {
     }
 
     /// Seed precompile storage into genesis (`bootstrap-testnet.sh:209-226`) via
-    /// the kept `scripts/seed_genesis.py`.
+    /// `outbe-genesis-cli`.
     fn seed_genesis(&self, worldwide_day: &str, profile: &BootstrapProfile) -> Result<()> {
         let genesis = self.cfg.dir.join("genesis.json");
         let seed = self.prepare_scenario_seed(profile)?;
-        let mut cmd = Command::new("python3");
-        cmd.arg(self.cfg.repo.join("scripts/seed_genesis.py"))
-            .arg("--genesis")
-            .arg(&genesis)
-            .arg("--seed")
-            .arg(&seed)
-            // The typed profile is written to a scenario-local seed copy. Keep
-            // external contract artifacts anchored to the repository seed
-            // directory instead of letting seed_genesis.py infer a nonexistent
-            // `<scenario>/contracts` sibling.
-            .arg("--contracts-dir")
-            .arg(self.cfg.repo.join("scripts/contracts"))
-            .arg("--validators")
-            .arg(self.cfg.dir.join("validators.json"))
-            .arg("--worldwide-day")
-            .arg(worldwide_day)
-            .arg("--fresh-metadosis")
-            .arg("--output")
-            .arg(&genesis);
-        self.run_setup(&mut cmd, "seed_genesis.py")?;
+        let worldwide_day_num: u32 = worldwide_day
+            .parse()
+            .wrap_err_with(|| format!("invalid worldwide_day {worldwide_day}"))?;
+        // The typed profile is written to a scenario-local seed copy. Keep
+        // external contract artifacts anchored to the repository seed
+        // directory instead of letting the seeder infer a nonexistent
+        // `<scenario>/contracts` sibling.
+        outbe_genesis_cli::create_genesis::run_seed_cli(
+            &outbe_genesis_cli::create_genesis::SeedCliArgs {
+                genesis: genesis.clone(),
+                seed: seed.clone(),
+                validators: Some(self.cfg.dir.join("validators.json")),
+                output: genesis.clone(),
+                worldwide_day: Some(worldwide_day_num),
+                fresh_metadosis: true,
+                contracts_dir: Some(self.cfg.repo.join("contracts/predeploys")),
+                canon_dir: Some(self.cfg.repo.join("bin/outbe-genesis-cli/canon")),
+            },
+        )?;
 
         let seed: serde_json::Value = serde_json::from_str(&fs::read_to_string(seed)?)?;
         let genesis: serde_json::Value = serde_json::from_str(&fs::read_to_string(genesis)?)?;
@@ -1026,23 +1025,19 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        let output = Command::new("python3")
-            .arg(localnet.cfg.repo.join("scripts/seed_genesis.py"))
-            .arg("--genesis")
-            .arg(&genesis)
-            .arg("--seed")
-            .arg(&seed)
-            .arg("--contracts-dir")
-            .arg(localnet.cfg.repo.join("scripts/contracts"))
-            .arg("--output")
-            .arg(&genesis)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "production genesis seeder failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        outbe_genesis_cli::create_genesis::run_seed_cli(
+            &outbe_genesis_cli::create_genesis::SeedCliArgs {
+                genesis: genesis.clone(),
+                seed,
+                validators: None,
+                output: genesis.clone(),
+                worldwide_day: None,
+                fresh_metadosis: false,
+                contracts_dir: Some(localnet.cfg.repo.join("contracts/predeploys")),
+                canon_dir: Some(localnet.cfg.repo.join("bin/outbe-genesis-cli/canon")),
+            },
+        )
+        .expect("production genesis seeder failed");
         let genesis: serde_json::Value =
             serde_json::from_slice(&fs::read(genesis).unwrap()).unwrap();
         let descriptor = GovernmentsDescriptor::from_bytes(

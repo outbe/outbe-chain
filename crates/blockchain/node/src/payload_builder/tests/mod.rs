@@ -471,7 +471,9 @@ fn bootstrap_payload_builder_ignores_nonempty_pool_and_replays_exactly() {
 
     let replay = case
         .evm_config
-        .executor(StateProviderDatabase::new(&case.provider))
+        .executor(StateProviderDatabase::new(
+            reth_storage_api::StateProvider::into_evm_state_provider(&case.provider),
+        ))
         .execute(executed.recovered_block.as_ref())
         .expect("validator replay succeeds");
     assert_eq!(
@@ -499,7 +501,9 @@ fn bootstrap_payload_builder_does_not_even_evaluate_oversized_pool_candidate() {
         .expect("builder exposes the exact executed payload");
     let replay = case
         .evm_config
-        .executor(StateProviderDatabase::new(&case.provider))
+        .executor(StateProviderDatabase::new(
+            reth_storage_api::StateProvider::into_evm_state_provider(&case.provider),
+        ))
         .execute(executed.recovered_block.as_ref())
         .expect("validator replay succeeds");
     assert_eq!(

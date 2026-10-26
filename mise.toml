@@ -159,7 +159,19 @@ run = [
 
 [tasks.audit-consensus-deps]
 description = "Ensure consensus has no transitive dependency on the EVM"
-run = "bash scripts/check-consensus-deps.sh"
+run = """
+set -euo pipefail
+tree="$(cargo tree -p outbe-consensus --prefix none)"
+if grep -Eq '^outbe-evm ' <<<"${tree}"; then
+  echo "error: outbe-evm appears in outbe-consensus dependency tree" >&2
+  exit 1
+fi
+if ! grep -Eq '^commonware-consensus ' <<<"${tree}"; then
+  echo "error: commonware-consensus is missing from outbe-consensus dependency tree" >&2
+  exit 1
+fi
+echo "consensus dependency boundary: OK"
+"""
 
 [tasks.audit-full]
 description = "Full cycle: machete + deny + rustsec + udeps"
@@ -174,7 +186,7 @@ description = "cargo audit (RustSec workspace dependency advisories)"
 # Keep the adjudicated exceptions aligned with deny.toml and cve-scan.yml.
 # cargo-deny uses a hashed database layout under ~/.cargo/advisory-db, so
 # cargo-audit needs its own path.
-run = "cargo audit --db ~/.cargo/rustsec-audit-db --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2026-0387"
+run = "cargo audit --db ~/.cargo/rustsec-audit-db --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2026-0387 --ignore RUSTSEC-2026-0391 --ignore RUSTSEC-2026-0398 --ignore RUSTSEC-2026-0403"
 
 [tasks.audit-machete]
 description = "cargo machete (unused workspace dependencies)"

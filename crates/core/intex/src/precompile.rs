@@ -42,11 +42,11 @@ pub fn dispatch(
                 let series_id = SeriesId::from(c.seriesId);
                 let record = registry.load_series(series_id)?;
                 let settled = registry.settled_units.read(&series_id)?;
-                let exercised = registry.exercised_units.read(&series_id)?;
+                let mined = registry.mined_units.read(&series_id)?;
                 let gem_factory = registry.gem_factory_units.read(&series_id)?;
                 let stamp = registry.call_stamp(&record)?;
                 let now = storage.now_secs()?;
-                to_abi_data(&record, [settled, exercised, gem_factory], stamp, now)
+                to_abi_data(&record, [settled, mined, gem_factory], stamp, now)
             }),
             seriesUnitCounts(c) => view(c, |c| {
                 let counts = crate::api::unit_counts(&storage, SeriesId::from(c.seriesId))?;
@@ -54,7 +54,7 @@ pub fn dispatch(
                     issuedUnits: counts.issued,
                     activeUnits: counts.active,
                     settledUnits: counts.settled,
-                    exercisedUnits: counts.exercised,
+                    minedUnits: counts.mined,
                     gemFactoryUnits: counts.gem_factory,
                     forfeitedUnits: counts.forfeited,
                 })
@@ -74,7 +74,7 @@ pub fn dispatch(
 
 fn to_abi_data(
     r: &SeriesRecord,
-    [settled, exercised, gem_factory]: [u32; 3],
+    [settled, mined, gem_factory]: [u32; 3],
     stamp: CallStamp,
     now: u64,
 ) -> Result<IIntex::SeriesData> {
@@ -94,7 +94,7 @@ fn to_abi_data(
         referenceCurrency: r.reference_currency,
         worldwideDay: r.worldwide_day.into(),
         settledUnits: settled,
-        exercisedUnits: exercised,
+        minedUnits: mined,
         gemFactoryUnits: gem_factory,
         settlementDeadline: stamp.deadline,
         groupKey: r.group_key().map_err(date_step_error)?,

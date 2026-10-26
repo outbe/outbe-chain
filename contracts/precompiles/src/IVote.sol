@@ -33,9 +33,9 @@ interface IVote {
         Error
     }
 
-    enum BondSettlement {
+    enum BondState {
         NoBond,
-        Unsettled,
+        Escrowed,
         Refunded,
         Burned
     }
@@ -90,7 +90,7 @@ interface IVote {
     /// @notice Approved target execution returned an error. Its target effects were rolled back.
     event ProposalErrored(uint256 indexed proposalId, VoteTally state);
 
-    /// @notice A target-specific proposal bond was recorded as an unsettled liability.
+    /// @notice A target-specific proposal bond was recorded as escrowed.
     event ProposalBondEscrowed(uint256 indexed proposalId, address indexed owner, uint256 amount);
 
     /// @notice A successful target execution refunded its recorded proposal bond.
@@ -129,11 +129,11 @@ interface IVote {
     /// @notice Returns proposal details.
     function getProposal(uint256 proposalId) external view returns (ProposalInfo memory);
 
-    /// @notice Returns the recorded bond amount and settlement state for a proposal.
-    function getProposalBond(uint256 proposalId) external view returns (uint256 amount, BondSettlement settlement);
+    /// @notice Returns the recorded bond amount and bond state for a proposal.
+    function getProposalBond(uint256 proposalId) external view returns (uint256 amount, BondState state);
 
-    /// @notice Returns the aggregate amount of all recorded unsettled bond liabilities.
-    function unsettledBondLiabilities() external view returns (uint256);
+    /// @notice Returns the total amount of all escrowed proposal bonds.
+    function escrowedBondTotal() external view returns (uint256);
 
     /// @notice Returns a slice of voters for a proposal, with pagination, to prevent bloating the response.
     function getProposalVoters(uint256 proposalId, uint256 index, uint256 count)

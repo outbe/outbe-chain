@@ -13,7 +13,7 @@ use outbe_stablecoinfactory::StablecoinFactoryContract;
 use outbe_validatorset::contract::ValidatorSet;
 use outbe_vote::constants::VOTING_WINDOW_BLOCKS;
 use outbe_vote::precompile::IVote;
-use outbe_vote::schema::{BondSettlement, Vote};
+use outbe_vote::schema::{BondState, Vote};
 
 mod factory;
 mod vaultrouter;
@@ -338,8 +338,8 @@ fn factory_public_admission_atomically_records_reservation_and_bond() {
             )
             .unwrap();
         assert_eq!(
-            vote.proposal_bond(proposal_id).unwrap().settlement,
-            BondSettlement::Unsettled
+            vote.proposal_bond(proposal_id).unwrap().state,
+            BondState::Escrowed
         );
         assert_eq!(vote.bond_liabilities().unwrap(), STABLECOIN_CREATE_BOND);
         assert!(StablecoinFactoryContract::new(storage)

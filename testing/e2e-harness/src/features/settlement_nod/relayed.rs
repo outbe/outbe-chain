@@ -649,7 +649,7 @@ fn assert_mining_receipt(
     assert_receipt_event(
         &minted.receipt,
         addresses::NOD_FACTORY_ADDR,
-        &eth::INodFactory::NodExercised {
+        &eth::INodFactory::NodMined {
             owner: scenario.owner,
             nodId: scenario.id.to_u256(),
             encryptedGratisAmount: scenario.body.encryptedGratisAmount.clone(),

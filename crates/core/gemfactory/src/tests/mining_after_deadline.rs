@@ -85,24 +85,21 @@ fn a_settled_gem_mines_after_the_settlement_deadline_while_its_unpaid_twin_is_re
         )
         .unwrap();
         assert_eq!(minted, load);
-        assert!(
-            gem_api::get_item(handle, paid).unwrap().is_none(),
-            "exercised"
-        );
+        assert!(gem_api::get_item(handle, paid).unwrap().is_none(), "mined");
 
         let sk = outbe_promis::enclave_client::test_enclave::state_key();
         let vk = derive_view_key(&sk, ALICE).unwrap();
         let blob = outbe_promis::api::balance_ct(handle.clone(), ALICE).unwrap();
         assert_eq!(decrypt_balance(&vk, ALICE, &blob).unwrap(), load);
     });
-    let exercised: Vec<_> = provider
+    let mined: Vec<_> = provider
         .get_events(GEM_FACTORY_ADDRESS)
         .iter()
-        .filter_map(|log| IGemFactory::GemExercised::decode_log_data(log).ok())
+        .filter_map(|log| IGemFactory::GemMined::decode_log_data(log).ok())
         .collect();
-    assert_eq!(exercised.len(), 1);
-    assert_eq!(exercised[0].gemId, paid);
-    assert_eq!(exercised[0].owner, ALICE);
-    assert_eq!(exercised[0].promisLoadMinor, load);
+    assert_eq!(mined.len(), 1);
+    assert_eq!(mined[0].gemId, paid);
+    assert_eq!(mined[0].owner, ALICE);
+    assert_eq!(mined[0].promisLoadMinor, load);
     outbe_promis::enclave_client::test_enclave::uninstall();
 }

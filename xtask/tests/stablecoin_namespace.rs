@@ -1,4 +1,4 @@
-use std::{fs, path::Path, process::Command};
+use std::{fs, path::Path};
 
 use serde_json::json;
 use tempfile::TempDir;
@@ -77,10 +77,10 @@ fn seed_predeploy_rejects_both_stablecoin_fixed_addresses() {
             ),
         )
         .unwrap();
-        let scripts = root.join("scripts");
-        fs::create_dir_all(&scripts).unwrap();
+        let fixtures = root.join("testing/fixtures");
+        fs::create_dir_all(&fixtures).unwrap();
         write_json(
-            &scripts.join("seed-conflict.json"),
+            &fixtures.join("seed-conflict.json"),
             &json!({"contracts": [{"address": reserved}]}),
         );
 
@@ -92,7 +92,7 @@ fn seed_predeploy_rejects_both_stablecoin_fixed_addresses() {
 }
 
 #[test]
-fn complete_python_seeder_output_passes_xtask_validation() {
+fn complete_genesis_seeder_output_passes_xtask_validation() {
     let directory = TempDir::new().unwrap();
     let genesis = directory.path().join("genesis.json");
     let seed = directory.path().join("seed.json");
@@ -103,22 +103,19 @@ fn complete_python_seeder_output_passes_xtask_validation() {
     );
     write_json(&seed, &json!({}));
 
-    let result = Command::new("python3")
-        .arg(repository_root().join("scripts/seed_genesis.py"))
-        .arg("--genesis")
-        .arg(&genesis)
-        .arg("--seed")
-        .arg(&seed)
-        .arg("--output")
-        .arg(&output)
-        .current_dir(repository_root())
-        .output()
-        .unwrap();
-    assert!(
-        result.status.success(),
-        "seed_genesis.py failed: {}",
-        String::from_utf8_lossy(&result.stderr)
-    );
+    outbe_genesis_cli::create_genesis::run_seed_cli(
+        &outbe_genesis_cli::create_genesis::SeedCliArgs {
+            genesis,
+            seed,
+            validators: None,
+            output: output.clone(),
+            worldwide_day: None,
+            fresh_metadosis: false,
+            contracts_dir: None,
+            canon_dir: None,
+        },
+    )
+    .expect("outbe-genesis-cli seed failed");
 
     let report = check_namespace(repository_root(), std::slice::from_ref(&output), false).unwrap();
     assert!(report.genesis_files >= 2);
