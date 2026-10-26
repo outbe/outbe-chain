@@ -150,6 +150,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        not(target_os = "linux"),
+        ignore = "snapshot creation requires Linux openat2"
+    )]
     fn report_publication_protects_native_roots_in_provenance_only_mode() {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path();
@@ -209,6 +213,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        not(target_os = "linux"),
+        ignore = "snapshot creation requires Linux openat2"
+    )]
     fn report_publication_without_projection_configuration_is_supported() {
         let directory = tempfile::tempdir().unwrap();
         let target = directory.path().join("audit.json");
@@ -225,6 +233,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        not(target_os = "linux"),
+        ignore = "snapshot creation requires Linux openat2"
+    )]
     fn report_publication_for_artifacts_needs_no_native_arguments() {
         let directory = tempfile::tempdir().unwrap();
         let target = directory.path().join("audit.json");
@@ -276,6 +288,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        not(target_os = "linux"),
+        ignore = "snapshot creation requires Linux openat2"
+    )]
     fn incomplete_report_is_written_but_is_not_a_success_or_startup_receipt() {
         let directory = tempfile::tempdir().unwrap();
         let target = directory.path().join("report.json");
