@@ -4,20 +4,22 @@
 //! `handlers::vote::registry()` (Update + Governance targets).
 
 use alloy_primitives::{address, Address, U256};
-use alloy_sol_types::SolCall;
+use alloy_sol_types::{SolCall, SolEvent};
 
 use outbe_evm::handlers;
 use outbe_governance::precompile::{dispatch as gov_dispatch, IGovernance};
+use outbe_governance::schema::GovernanceContract;
 use outbe_governance::{GovernanceVotePayload, ProposalKind};
-use outbe_primitives::addresses::GOVERNANCE_ADDRESS;
+use outbe_primitives::addresses::{GOVERNANCE_ADDRESS, VOTE_ADDRESS};
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::chain::DEVNET_CHAIN_ID;
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_validatorset::contract::ValidatorSet;
 use outbe_vote::constants::VOTING_WINDOW_BLOCKS;
 use outbe_vote::lifecycle::VoteLifecycle;
-use outbe_vote::schema::ProposalStatus;
+use outbe_vote::precompile::IVote;
 use outbe_vote::schema::Vote;
+use outbe_vote::schema::{BondSettlement, ProposalStatus};
 
 const CHAIN_ID: u64 = DEVNET_CHAIN_ID;
 const PROPOSER: Address = address!("0x1111111111111111111111111111111111111111");
@@ -214,5 +216,142 @@ fn vote_without_quorum_expires_without_record() {
             );
             assert_eq!(proposal_count(storage, kind), 0);
         });
+    }
+}
+
+#[test]
+fn production_registry_capacity_failure_does_not_block_another_proposal() {
+    for kind in KINDS {
+        for author_full in [true, false] {
+            let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+            let (failed, applied, other_kind);
+            {
+                let storage = StorageHandle::new(&mut provider);
+                setup_four_validators(storage.clone());
+                let mut vote = Vote::new(storage.clone());
+                failed = create_gov_proposal(&mut vote, kind, "capacity failure", 100);
+                cast_quorum_yes(&mut vote, failed, 100);
+                // Author limits are per author; id limits are per kind.
+                other_kind = if author_full {
+                    kind
+                } else {
+                    match kind {
+                        ProposalKind::Oip => ProposalKind::Gip,
+                        ProposalKind::Gip => ProposalKind::Oip,
+                        ProposalKind::CanonText | ProposalKind::MetaCanonText => {
+                            unreachable!("text kinds have no record capacity")
+                        }
+                    }
+                };
+                applied = vote
+                    .create_proposal(
+                        VOTER_A,
+                        GOVERNANCE_ADDRESS,
+                        &GovernanceVotePayload::encode(other_kind, "unaffected proposal"),
+                        100,
+                        handlers::vote::registry(),
+                    )
+                    .unwrap();
+                cast_quorum_yes(&mut vote, applied, 100);
+                let gov = GovernanceContract::new(storage);
+                match (kind, author_full) {
+                    (ProposalKind::Oip, true) => {
+                        gov.oip_author_count.write(&PROPOSER, u32::MAX).unwrap()
+                    }
+                    (ProposalKind::Gip, true) => {
+                        gov.gip_author_count.write(&PROPOSER, u32::MAX).unwrap()
+                    }
+                    (ProposalKind::Oip, false) => gov.next_oip_id.write(u64::MAX).unwrap(),
+                    (ProposalKind::Gip, false) => gov.next_gip_id.write(u64::MAX).unwrap(),
+                    (ProposalKind::CanonText | ProposalKind::MetaCanonText, _) => {
+                        unreachable!("text kinds have no record capacity")
+                    }
+                }
+            }
+            {
+                let storage = StorageHandle::new(&mut provider);
+                run_vote_begin_block(storage.clone(), tally_block(100));
+                let vote = Vote::new(storage.clone());
+                for (id, expected) in [
+                    (failed, ProposalStatus::Error),
+                    (applied, ProposalStatus::Approved),
+                ] {
+                    assert_eq!(
+                        vote.proposals
+                            .get(id)
+                            .unwrap()
+                            .unwrap()
+                            .proposal_status()
+                            .unwrap(),
+                        expected
+                    );
+                    assert_eq!(
+                        vote.proposal_bond(id).unwrap().settlement,
+                        BondSettlement::NoBond
+                    );
+                }
+                assert!(vote.list_pending_proposal_ids().unwrap().is_empty());
+                assert_eq!(
+                    get_proposal(storage.clone(), other_kind),
+                    (APPROVED, VOTER_A, "unaffected proposal".into())
+                );
+                if !author_full {
+                    let gov = GovernanceContract::new(storage.clone());
+                    match kind {
+                        ProposalKind::Oip => {
+                            assert!(gov.get_oip(U256::from(u64::MAX)).unwrap().is_none())
+                        }
+                        ProposalKind::Gip => {
+                            assert!(gov.get_gip(U256::from(u64::MAX)).unwrap().is_none())
+                        }
+                        ProposalKind::CanonText | ProposalKind::MetaCanonText => {
+                            unreachable!("text kinds create no proposal record")
+                        }
+                    }
+                }
+            }
+            let logs = provider.get_events(VOTE_ADDRESS);
+            let errors: Vec<_> = logs
+                .iter()
+                .filter(|log| log.topics().first() == Some(&IVote::ProposalErrored::SIGNATURE_HASH))
+                .collect();
+            let approvals: Vec<_> = logs
+                .iter()
+                .filter(|log| {
+                    log.topics().first() == Some(&IVote::ProposalApproved::SIGNATURE_HASH)
+                })
+                .collect();
+            assert_eq!(errors.len(), 1);
+            assert_eq!(approvals.len(), 1);
+            assert_eq!(
+                IVote::ProposalErrored::decode_log_data(errors[0])
+                    .unwrap()
+                    .proposalId,
+                failed
+            );
+            assert_eq!(
+                IVote::ProposalApproved::decode_log_data(approvals[0])
+                    .unwrap()
+                    .proposalId,
+                applied
+            );
+            for signature in [
+                IVote::ProposalBondRefunded::SIGNATURE_HASH,
+                IVote::ProposalBondBurned::SIGNATURE_HASH,
+            ] {
+                assert!(!logs
+                    .iter()
+                    .any(|log| log.topics().first() == Some(&signature)));
+            }
+            // Only the unaffected proposal emits Governance submit/status logs.
+            assert_eq!(provider.get_events(GOVERNANCE_ADDRESS).len(), 2);
+            let before = provider.storage.clone();
+            let vote_logs = provider.get_events(VOTE_ADDRESS).clone();
+            let gov_logs = provider.get_events(GOVERNANCE_ADDRESS).clone();
+            run_vote_begin_block(StorageHandle::new(&mut provider), tally_block(100) + 1);
+            assert_eq!(provider.storage, before);
+            assert_eq!(provider.get_events(VOTE_ADDRESS), &vote_logs);
+            assert_eq!(provider.get_events(GOVERNANCE_ADDRESS), &gov_logs);
+        }
     }
 }
