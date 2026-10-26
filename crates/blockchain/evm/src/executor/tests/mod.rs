@@ -63,7 +63,7 @@ use outbe_validatorset::{HistoryCounters, ValidatorHistory};
 use outbe_vote::{
     constants::VOTING_WINDOW_BLOCKS,
     precompile::IVote,
-    schema::{BondSettlement, ProposalStatus, Vote},
+    schema::{BondState, ProposalStatus, Vote},
 };
 use reth_ethereum::chainspec::{ChainSpec, ChainSpecBuilder, MAINNET};
 use reth_ethereum::evm::revm::db::State;

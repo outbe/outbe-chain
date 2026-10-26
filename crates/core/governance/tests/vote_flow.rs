@@ -19,7 +19,7 @@ use outbe_vote::constants::VOTING_WINDOW_BLOCKS;
 use outbe_vote::lifecycle::VoteLifecycle;
 use outbe_vote::precompile::IVote;
 use outbe_vote::schema::Vote;
-use outbe_vote::schema::{BondSettlement, ProposalStatus};
+use outbe_vote::schema::{BondState, ProposalStatus};
 
 const CHAIN_ID: u64 = DEVNET_CHAIN_ID;
 const PROPOSER: Address = address!("0x1111111111111111111111111111111111111111");
@@ -285,10 +285,7 @@ fn production_registry_capacity_failure_does_not_block_another_proposal() {
                             .unwrap(),
                         expected
                     );
-                    assert_eq!(
-                        vote.proposal_bond(id).unwrap().settlement,
-                        BondSettlement::NoBond
-                    );
+                    assert_eq!(vote.proposal_bond(id).unwrap().state, BondState::NoBond);
                 }
                 assert!(vote.list_pending_proposal_ids().unwrap().is_empty());
                 assert_eq!(
