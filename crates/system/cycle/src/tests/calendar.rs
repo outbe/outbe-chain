@@ -12,7 +12,9 @@ fn protocol_cycle_forfeits_every_completed_day_after_a_multi_day_halt() {
         let anchor_ts = GENESIS_TS + 60;
         let anchor = genesis_block(handle.clone(), anchor_ts);
         run_cycle_lifecycle(&anchor).unwrap();
-
+    });
+    storage.set_block_number(2);
+    storage.enter(|handle| {
         let fire_ts = GENESIS_TS + 3 * SECONDS_PER_DAY + 3_600;
         let fire = dispatch_at(handle, 2, fire_ts);
 
@@ -39,10 +41,9 @@ fn protocol_cycle_forfeits_every_completed_day_after_a_multi_day_halt() {
 fn a_multi_day_halt_issues_no_emission_and_credits_no_capacity_or_native_balance() {
     let mut storage = cycle_storage();
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 16);
-    storage.enter(|handle| {
+    let before = storage.enter(|handle| {
         let anchor = genesis_block(handle.clone(), GENESIS_TS + 60);
         run_cycle_lifecycle(&anchor).unwrap();
-
         let promis_limit_before = outbe_promislimit::PromisLimitContract::new(handle.clone())
             .promis_limit()
             .unwrap();
@@ -55,10 +56,20 @@ fn a_multi_day_halt_issues_no_emission_and_credits_no_capacity_or_native_balance
         let promis_limit_native_before = handle
             .balance(outbe_primitives::addresses::PROMIS_LIMIT_ADDRESS)
             .unwrap();
-
+        (
+            promis_limit_before,
+            rewards_before,
+            metadosis_before,
+            promis_limit_native_before,
+        )
+    });
+    storage.set_block_number(2);
+    storage.enter(|handle| {
+        let (promis_limit_before, rewards_before, metadosis_before, promis_limit_native_before) =
+            before;
         // Three completed UTC days pass with no block. The first block after the
         // halt forfeits them instead of synthesizing their emission.
-        let fire = BlockRuntimeContext::new(
+        let fire = runtime_context(
             block_ctx(2, GENESIS_TS + 3 * SECONDS_PER_DAY + 3_600),
             handle.clone(),
         );
