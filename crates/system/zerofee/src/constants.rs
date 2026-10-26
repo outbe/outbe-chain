@@ -17,14 +17,15 @@
 //! See `hooks.rs::ZeroFeePolicyError::code` for the authoritative mapping.
 
 use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
+use outbe_primitives::system_tx::STEADY_BLOCK_GAS_LIMIT;
 
 /// Maximum number of sponsored free transactions per signer per UTC day.
 pub const FREE_TX_DAILY_LIMIT: u32 = 8;
 
 /// Maximum `gas_limit` accepted for a sponsored free transaction.
 ///
-/// Caps the per-tx compute budget so 8 x N sybil-funded addresses cannot
-/// exhaust a block on the sponsored path. 500_000 covers ERC-20 transfer
+/// Caps per-transaction compute, while [`SPONSORED_GAS_PER_BLOCK`] bounds
+/// aggregate sponsored execution in a block. 500_000 covers ERC-20 transfer
 /// plus a small log, matching the typical onboarding interaction. The
 /// TributeFactory has a separate, narrowly scoped limit because every accepted
 /// `offerTribute` performs an UltraHonk verification.
@@ -43,6 +44,18 @@ pub const FREE_TX_BOOTSTRAP_GAS_LIMIT: u64 = 100_000;
 /// offer` uses. It leaves headroom above the verifier's 300,000 base gas. It
 /// does not broaden the limit for every sponsored target.
 pub const FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT: u64 = 8_000_000;
+
+/// Maximum sum of included sponsored and one-time bootstrap transaction gas
+/// limits in one block. Protocol fee waivers are outside this budget.
+///
+/// The target whitelist limits reachable code paths, not their block share.
+/// This absolute policy limit must not scale with the block gas limit.
+pub const SPONSORED_GAS_PER_BLOCK: u64 = 15_000_000;
+
+const _: () = {
+    assert!(SPONSORED_GAS_PER_BLOCK < STEADY_BLOCK_GAS_LIMIT);
+    assert!(SPONSORED_GAS_PER_BLOCK >= FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT);
+};
 
 /// Maximum calldata size accepted for a sponsored free transaction.
 ///

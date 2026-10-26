@@ -35,6 +35,10 @@ pub use config::{
     OutbeBlockAssembler, OutbeBlockExecutionCtx, OutbeEvmConfig, OutbeExecutorBuilder,
     OutbeNextBlockEnvAttributes, RethAccountedParentArtifactProvider,
 };
+pub use executor::{
+    is_sponsored_block_budget_deferral, sponsored_block_budget_deferral,
+    SPONSORED_BLOCK_BUDGET_EXCEEDED,
+};
 pub use executor::{AccountedParentArtifact, AccountedParentArtifactProvider};
 pub use factory::OutbeEvmFactory;
 pub use signer::{

@@ -4,8 +4,12 @@ use crate::payload_builder::{
     preparation::{self, PayloadContext},
     selection::UserTransactions,
 };
+use alloy_consensus::transaction::TxHashRef as _;
 use alloy_primitives::Address;
-use reth_evm::execute::BlockExecutor as _;
+use reth_evm::{
+    block::CommitChanges,
+    execute::{BlockBuilderOutcome, BlockExecutor, ExecutorTx, GasOutput},
+};
 use reth_revm::cancelled::CancelOnDrop;
 use revm::{
     database_interface::DBErrorMarker,
@@ -36,6 +40,55 @@ struct StageOptions {
     code: Bytes,
     fail_storage: bool,
     account_nonce: Option<u64>,
+    defer_first: bool,
+}
+
+/// Inject one executor deferral while keeping selection and subsequent EVM execution real.
+struct DeferringBuilder<B> {
+    inner: B,
+    defer_next: bool,
+}
+
+impl<B: BlockBuilder> BlockBuilder for DeferringBuilder<B> {
+    type Primitives = B::Primitives;
+    type Executor = B::Executor;
+
+    fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
+        self.inner.apply_pre_execution_changes()
+    }
+
+    fn execute_transaction_with_commit_condition(
+        &mut self,
+        tx: impl ExecutorTx<Self::Executor>,
+        f: impl FnOnce(&<Self::Executor as BlockExecutor>::Result) -> CommitChanges,
+    ) -> Result<Option<GasOutput>, BlockExecutionError> {
+        let (env, tx) = tx.into_parts();
+        if std::mem::take(&mut self.defer_next) {
+            return Err(outbe_evm::sponsored_block_budget_deferral(*tx.tx_hash()));
+        }
+        self.inner
+            .execute_transaction_with_commit_condition((env, tx), f)
+    }
+
+    fn finish(
+        self,
+        state_provider: impl reth_provider::StateProvider,
+        state_root_precomputed: Option<(B256, reth_trie::updates::TrieUpdates)>,
+    ) -> Result<BlockBuilderOutcome<Self::Primitives>, BlockExecutionError> {
+        self.inner.finish(state_provider, state_root_precomputed)
+    }
+
+    fn executor_mut(&mut self) -> &mut Self::Executor {
+        self.inner.executor_mut()
+    }
+
+    fn executor(&self) -> &Self::Executor {
+        self.inner.executor()
+    }
+
+    fn into_executor(self) -> Self::Executor {
+        self.inner.into_executor()
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -142,6 +195,10 @@ fn run_user_stage_with_options(
         .builder_for_next_block(&mut db, &parent, env)
         .expect("user-stage builder initializes");
     preparation::apply_pre_execution_changes(&mut builder).expect("pre-execution succeeds");
+    let mut builder = DeferringBuilder {
+        inner: builder,
+        defer_next: options.defer_first,
+    };
     let invalid = Arc::new(Mutex::new(Vec::new()));
     let mut candidates = Vec::new();
     let transactions = transactions
@@ -251,6 +308,39 @@ fn run_user_stage_with_options(
         rejected: invalid.len(),
         invalid,
     }
+}
+
+#[test]
+fn sponsored_budget_deferral_retains_candidate_and_continues_selection() {
+    let result = run_user_stage_with_options(
+        &[(0, 50_000), (4, 30_000), (0, 30_000)],
+        Default::default(),
+        StageOptions {
+            account_nonce: Some(0),
+            defer_first: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(result.outcome.unwrap(), StageOutcome::Completed);
+    assert_eq!(result.receipts, vec![true]);
+    assert_eq!(result.included_nonces, vec![0]);
+    assert_eq!(result.gas_used, 21_000);
+    assert_eq!(result.fees, U256::from(21_000u64 * 7));
+    assert_eq!(
+        result.rejected, 1,
+        "only the unrelated invalid tx is evicted"
+    );
+    let InvalidPoolTransactionError::Other(error) = &result.invalid[0] else {
+        panic!("expected preserved invalid transaction reason");
+    };
+    let preserved = error
+        .as_any()
+        .downcast_ref::<crate::payload_builder::transaction_error::PreservedInvalidUserTx>()
+        .unwrap();
+    assert!(matches!(
+        preserved.reason.as_invalid_tx_err(),
+        Some(revm::context_interface::result::InvalidTransaction::NonceTooHigh { tx: 4, state: 0 })
+    ));
 }
 
 #[test]

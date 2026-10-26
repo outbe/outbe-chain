@@ -1,5 +1,26 @@
 use super::*;
 
+/// Exact transaction-validation reason used to defer sponsorship to a later block.
+pub const SPONSORED_BLOCK_BUDGET_EXCEEDED: &str = "sponsored block budget exceeded";
+
+/// Rejects inclusion without consuming nonce, daily quota, or a soft-failure slot.
+pub fn sponsored_block_budget_deferral(tx_hash: B256) -> BlockExecutionError {
+    BlockExecutionError::Validation(BlockValidationError::InvalidTx {
+        hash: tx_hash,
+        error: Box::new(InvalidTransaction::Str(
+            SPONSORED_BLOCK_BUDGET_EXCEEDED.into(),
+        )),
+    })
+}
+
+/// Identifies only the block-local sponsorship deferral, not other invalid transactions.
+pub fn is_sponsored_block_budget_deferral(error: &dyn alloy_evm::InvalidTxError) -> bool {
+    matches!(
+        error.as_invalid_tx_err(),
+        Some(InvalidTransaction::Str(reason)) if reason == SPONSORED_BLOCK_BUDGET_EXCEEDED
+    )
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ZeroFeeCfgSnapshot {
     disable_balance_check: bool,
@@ -48,6 +69,15 @@ where
 }
 
 impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
+    pub(in crate::executor) fn sponsored_gas_fits(&self, gas_limit: u64) -> bool {
+        !outbe_zerofee::sponsored_gas_exceeds_block_budget(self.sponsored_gas_used, gas_limit)
+    }
+
+    /// Called only after inclusion of a transaction whose gas limit passed the fit check.
+    pub(in crate::executor) fn charge_sponsored_gas(&mut self, gas_limit: u64) {
+        self.sponsored_gas_used += gas_limit;
+    }
+
     /// Intrinsic gas accounted on the synthetic receipt that replaces a
     /// hard `BlockExecutionError` when the executor rejects a user transaction
     /// outside the EVM (zero-fee policy). The value mirrors the
