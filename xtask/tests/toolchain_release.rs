@@ -115,7 +115,8 @@ fn consumer_version_drift_and_incomplete_package_pin_fail_closed() {
     }
 
     let sgx_path = dir.path().join("release/testnet-sgx-bundle-v1.json");
-    let mut sgx_spec: Value = serde_json::from_str(&fs::read_to_string(&sgx_path).unwrap()).unwrap();
+    let mut sgx_spec: Value =
+        serde_json::from_str(&fs::read_to_string(&sgx_path).unwrap()).unwrap();
     sgx_spec["gramine"]["version"] = json!("1.8");
     fs::write(&sgx_path, serde_json::to_string(&sgx_spec).unwrap()).unwrap();
 
@@ -188,8 +189,7 @@ fn toolchain_dockerfile_and_apt_inputs_contract() {
         serde_json::to_string(&custom_pin).unwrap(),
     )
     .unwrap();
-    toolchain::verify_apt_inputs(&custom_pin_path, dir.path(), &deb_dir)
-        .expect("valid apt inputs");
+    toolchain::verify_apt_inputs(&custom_pin_path, dir.path(), &deb_dir).expect("valid apt inputs");
 
     fs::write(deb_dir.join("b_1_amd64.deb"), b"substituted").unwrap();
     let err = toolchain::verify_apt_inputs(&custom_pin_path, dir.path(), &deb_dir).unwrap_err();
@@ -217,7 +217,10 @@ fn synthetic_qvl_fixture(root: &Path, pin: &Value) -> (Value, Vec<Value>, Vec<Va
     fs::create_dir_all(header_target.parent().unwrap()).unwrap();
     fs::write(&header_target, header_payload).unwrap();
 
-    let mut input = toolchain::expected_build_inputs(pin).into_iter().next().unwrap();
+    let mut input = toolchain::expected_build_inputs(pin)
+        .into_iter()
+        .next()
+        .unwrap();
     input["path"] = json!(format!("/{header_rel}"));
     input["size"] = json!(header_payload.len());
     input["sha256"] = json!(sha256_bytes(header_payload));
@@ -298,7 +301,9 @@ fn native_qvl_manifest_verification_and_install_contract() {
         &expectations,
     )
     .unwrap_err();
-    assert!(nonempty_err.to_string().contains("destination must be empty"));
+    assert!(nonempty_err
+        .to_string()
+        .contains("destination must be empty"));
 }
 
 #[test]

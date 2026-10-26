@@ -8,12 +8,12 @@ use std::process::Command;
 
 use flate2::read::GzDecoder;
 use outbe_genesis_cli::launch_bundle::{
-    DEFAULT_MAX_VALIDATORS, SIGNED_ENCLAVE_FILES, feeder_config, feeder_pairs, radicle_script,
-    render,
+    feeder_config, feeder_pairs, radicle_script, render, DEFAULT_MAX_VALIDATORS,
+    SIGNED_ENCLAVE_FILES,
 };
 use outbe_genesis_cli::network::profiles_dir;
 use outbe_genesis_cli::stages::build_seed;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 fn minimal_config(keys_dir: &str) -> Value {
@@ -169,7 +169,8 @@ fn feeder_pairs_and_config_templates() {
     let dir0 = output_dir.join("validator-0");
     assert_eq!(
         fs::read_to_string(dir0.join("pairs.toml")).expect("read pairs.toml"),
-        fs::read_to_string(profiles_dir().join("testnet/pairs.toml")).expect("read committed pairs")
+        fs::read_to_string(profiles_dir().join("testnet/pairs.toml"))
+            .expect("read committed pairs")
     );
     let feeder_toml = fs::read_to_string(dir0.join("feeder.toml")).expect("read feeder.toml");
     assert!(feeder_toml.contains("[rpc_endpoints]\n1 = \"REPLACE_WITH_RPC_URL\""));
@@ -191,11 +192,9 @@ fn feeder_pairs_and_config_templates() {
     .expect("feeder_config");
     assert!(binance_toml.contains("name = \"binance\""));
     assert!(binance_toml.contains("websocket = \"wss://stream.binance.com:9443/ws\""));
-    assert!(
-        feeder_pairs(&binance_cfg)
-            .expect("feeder_pairs")
-            .contains("markets = [{ provider = \"binance\", quote = \"USDT\" }]")
-    );
+    assert!(feeder_pairs(&binance_cfg)
+        .expect("feeder_pairs")
+        .contains("markets = [{ provider = \"binance\", quote = \"USDT\" }]"));
     assert!(!binance_toml.contains("chain_denom"));
     assert!(!binance_toml.contains("rest ="));
 }
@@ -219,10 +218,8 @@ fn distribution_archives_and_signed_enclave_staging() {
         .expect("read enclave dir")
         .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
         .collect();
-    let expected_staged: BTreeSet<String> = SIGNED_ENCLAVE_FILES
-        .iter()
-        .map(|&s| s.to_owned())
-        .collect();
+    let expected_staged: BTreeSet<String> =
+        SIGNED_ENCLAVE_FILES.iter().map(|&s| s.to_owned()).collect();
     assert_eq!(staged, expected_staged);
     assert!(!staged.contains("enclave-key.pem"));
 
@@ -301,8 +298,8 @@ fn caddy_systemd_units_tee_renewal_and_enclave_modes() {
         ("node", Some("outbe-radicle@%i.service")),
         ("feeder", Some("outbe-node@%i.service")),
     ] {
-        let unit = fs::read_to_string(unit_dir.join(format!("outbe-{role}@.service")))
-            .expect("read unit");
+        let unit =
+            fs::read_to_string(unit_dir.join(format!("outbe-{role}@.service"))).expect("read unit");
         assert!(unit.contains("Restart=always"));
         assert!(unit.contains("StartLimitIntervalSec=0"));
         assert!(unit.contains(&format!("run-{role}.sh")));

@@ -6,19 +6,19 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use alloy_primitives::U256;
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 use time::OffsetDateTime;
 
 use crate::error::GenesisError;
 use crate::inputs::{SeedInputs, SeedOptions};
 use crate::launch_bundle;
 use crate::network::{
+    base_profile_path, deep_merge, default_canon_dir, default_contracts_dir, profiles_dir,
     DEFAULT_CHAIN_ID, DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS, DEFAULT_DKG_PREPARE_WINDOW_BLOCKS,
     DEFAULT_EPOCH_LENGTH_BLOCKS, DEFAULT_GAS_LIMIT, DEFAULT_PREFUND_COEN_UNITS,
-    MAX_GENESIS_AGE_SECONDS, SEED_SECTIONS, base_profile_path, deep_merge, default_canon_dir,
-    default_contracts_dir, profiles_dir,
+    MAX_GENESIS_AGE_SECONDS, SEED_SECTIONS,
 };
-use crate::seed_codec::{parse_u64, parse_u256, timestamp_to_utc_date_key};
+use crate::seed_codec::{parse_u256, parse_u64, timestamp_to_utc_date_key};
 use crate::seed_genesis::apply_seed;
 use crate::yaml::load_yaml;
 

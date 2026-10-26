@@ -111,9 +111,14 @@ fn validate_reserved_balance(
 }
 
 /// Seed immutable CodeRegistry V1 capacity at slot 5.
-pub fn seed_code_registry(storage: &mut StorageBuilder, config: &Value) -> Result<(), GenesisError> {
+pub fn seed_code_registry(
+    storage: &mut StorageBuilder,
+    config: &Value,
+) -> Result<(), GenesisError> {
     let Some(obj) = config.as_object() else {
-        return Err(GenesisError::validation("code_registry must be a JSON object"));
+        return Err(GenesisError::validation(
+            "code_registry must be a JSON object",
+        ));
     };
     let configured = obj
         .get("max_repositories")

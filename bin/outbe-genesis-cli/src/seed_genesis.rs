@@ -12,10 +12,10 @@ use crate::seed_alloc::{
     seed_external_contracts, seed_protocol_constants, validate_stablecoin_namespace_alloc,
 };
 use crate::seed_codec::{
+    parse_header_timestamp, seed_profile_selector, timestamp_to_utc_date_key, StorageBuilder,
     ALL_PRECOMPILE_ADDRESSES, CREDIS_ADDRESS, CREDIS_PROFILE_SLOT, CYCLE_ADDRESS, GEM_ADDRESS,
     GEM_PROFILE_SLOT, INTEX_ADDRESS, INTEX_PROFILE_SLOT, MARKER_CODE, NOD_ADDRESS,
-    NOD_PROFILE_SLOT, StorageBuilder, parse_header_timestamp, seed_profile_selector,
-    timestamp_to_utc_date_key,
+    NOD_PROFILE_SLOT,
 };
 use crate::seed_economy::{
     clear_seeded_metadosis_days, merge_storage_into_alloc, override_worldwide_day, seed_coen,

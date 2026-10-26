@@ -6,28 +6,28 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use alloy_primitives::U256;
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use outbe_genesis_cli::attestation::run_tee_stage;
 use outbe_genesis_cli::inputs::SeedInputs;
 use outbe_genesis_cli::keys::{
     discover_validators, evm_address_from_key_file, radicle_node_id_from_public_key,
 };
 use outbe_genesis_cli::network::{
+    base_profile_path, network_identity, profiles_dir, top_level_keys, validate_config,
     DEFAULT_CONSENSUS_P2P_PORT, DEFAULT_EPOCH_LENGTH_BLOCKS, DEFAULT_GAS_LIMIT,
-    DEFAULT_PREFUND_COEN_UNITS, SEED_SECTIONS, base_profile_path, network_identity, profiles_dir,
-    top_level_keys, validate_config,
+    DEFAULT_PREFUND_COEN_UNITS, SEED_SECTIONS,
 };
 use outbe_genesis_cli::seed_codec::{
-    CREDIS_ADDRESS, CREDIS_PROFILE_SLOT, NOD_ADDRESS, NOD_PROFILE_SLOT, ORACLE_ADDRESS,
-    REWARDS_ADDRESS, VALIDATOR_SET_ADDRESS, VAULT_ROUTER_ADDRESS, address_as_u256, address_bytes,
-    asset_address, data_slot, hex32, mapping_key, parse_u256, u32_bytes,
+    address_as_u256, address_bytes, asset_address, data_slot, hex32, mapping_key, parse_u256,
+    u32_bytes, CREDIS_ADDRESS, CREDIS_PROFILE_SLOT, NOD_ADDRESS, NOD_PROFILE_SLOT, ORACLE_ADDRESS,
+    REWARDS_ADDRESS, VALIDATOR_SET_ADDRESS, VAULT_ROUTER_ADDRESS,
 };
 use outbe_genesis_cli::seed_genesis::apply_seed;
 use outbe_genesis_cli::stages::{
     build_base_genesis, build_seed, prefund_validators, run_seed_stage,
 };
 use outbe_genesis_cli::yaml::{load_yaml, parse_yaml_str};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 fn parse(text: &str) -> Value {
     parse_yaml_str(Path::new("test.yaml"), text).expect("valid yaml")
@@ -67,7 +67,11 @@ fn write_ssh_ed25519_pub(path: &Path, node_id: &[u8]) {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).expect("create_dir_all");
     }
-    fs::write(path, format!("ssh-ed25519 {} outbe\n", BASE64.encode(payload))).expect("write pub");
+    fs::write(
+        path,
+        format!("ssh-ed25519 {} outbe\n", BASE64.encode(payload)),
+    )
+    .expect("write pub");
 }
 
 fn fake_validators() -> Vec<Value> {
@@ -175,10 +179,7 @@ fn config_validation_matrix_and_rejections() {
     assert!(err.to_string().contains("exactly 4"));
 
     let mut no_keys_dir = minimal_config("./keys");
-    no_keys_dir
-        .as_object_mut()
-        .expect("obj")
-        .remove("keys_dir");
+    no_keys_dir.as_object_mut().expect("obj").remove("keys_dir");
     let err = validate_config(&no_keys_dir).expect_err("missing keys_dir");
     assert!(err.to_string().contains("keys_dir"));
 
@@ -203,7 +204,8 @@ fn config_validation_matrix_and_rejections() {
                 }),
             );
             if tee_mode == "dcap-required" {
-                cfg["enclave_image"] = json!(format!("outbe-tee-enclave@sha256:{}", "ab".repeat(32)));
+                cfg["enclave_image"] =
+                    json!(format!("outbe-tee-enclave@sha256:{}", "ab".repeat(32)));
             }
             validate_config(&cfg).expect("canonical attestation matrix");
         }
@@ -371,7 +373,11 @@ fn example_file_parses_validates_and_matches_baseline() {
             let candidate = stripped[1..].strip_prefix(' ').unwrap_or(&stripped[1..]);
             let token = candidate.trim_start().split(' ').next().unwrap_or("");
             if token.ends_with(':') || candidate.trim_start().starts_with("- ") {
-                let without_comment = candidate.split("  #").next().unwrap_or(candidate).trim_end();
+                let without_comment = candidate
+                    .split("  #")
+                    .next()
+                    .unwrap_or(candidate)
+                    .trim_end();
                 uncommented_lines.push(format!("{indent}{without_comment}"));
                 continue;
             }
@@ -535,12 +541,10 @@ fn seed_stage_end_to_end_and_reproducibility() {
     );
     let mainnet_seeded = seed_once(tmp.path(), &mainnet_cfg);
     assert_eq!(mainnet_seeded["config"]["chainId"], json!(676));
-    assert!(
-        !mainnet_seeded["alloc"][REWARDS_ADDRESS]["storage"]
-            .as_object()
-            .expect("rewards")
-            .is_empty()
-    );
+    assert!(!mainnet_seeded["alloc"][REWARDS_ADDRESS]["storage"]
+        .as_object()
+        .expect("rewards")
+        .is_empty());
 
     // Reproducibility and stale timestamp check
     let first_dir = tempfile::tempdir().expect("first");

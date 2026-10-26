@@ -21,8 +21,8 @@ pub use self::scripts::{
     stop_all_script,
 };
 pub use self::systemd::{
-    UNIT_ROLES, caddy_install_script, caddyfile, preflight_script, systemd_unit, tee_renew_script,
-    write_systemd_units,
+    caddy_install_script, caddyfile, preflight_script, systemd_unit, tee_renew_script,
+    write_systemd_units, UNIT_ROLES,
 };
 
 /// Default port numbers shared across validator hosts.
@@ -95,7 +95,10 @@ pub fn write_script(path: &Path, body: &str) -> Result<(), GenesisError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|err| GenesisError::io(parent, err))?;
     }
-    let content = format!("#!/usr/bin/env bash\nset -euo pipefail\n\n{}\n", body.trim());
+    let content = format!(
+        "#!/usr/bin/env bash\nset -euo pipefail\n\n{}\n",
+        body.trim()
+    );
     fs::write(path, content).map_err(|err| GenesisError::io(path, err))?;
     let mut perms = fs::metadata(path)
         .map_err(|err| GenesisError::io(path, err))?

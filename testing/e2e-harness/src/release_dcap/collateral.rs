@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::ffi::CString;
 use std::fs;
 use std::os::unix::ffi::OsStrExt as _;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 use eyre::{bail, ensure, eyre, Result, WrapErr as _};
@@ -194,7 +194,7 @@ pub(crate) fn canonical_crl_component(
         "{label} contains an invalid NUL"
     );
     ensure!(
-        encoded.len() % 2 == 0,
+        encoded.len().is_multiple_of(2),
         "{label} contains odd-length hexadecimal DER"
     );
     ensure!(
@@ -317,7 +317,8 @@ fn package_version(name: &str) -> Result<String> {
 }
 
 fn library_provenance(path: &Path, package: &str, expected_version: Option<&str>) -> Result<Value> {
-    let resolved = fs::canonicalize(path).wrap_err_with(|| format!("resolve {}", path.display()))?;
+    let resolved =
+        fs::canonicalize(path).wrap_err_with(|| format!("resolve {}", path.display()))?;
     let pkg_version = package_version(package)?;
     if let Some(expected) = expected_version {
         ensure!(
@@ -335,7 +336,10 @@ fn library_provenance(path: &Path, package: &str, expected_version: Option<&str>
 }
 
 unsafe fn bytes_at(pointer: *const u8, size: u32, label: &str) -> Result<Vec<u8>> {
-    ensure!(!pointer.is_null() && size != 0, "QPL returned empty {label}");
+    ensure!(
+        !pointer.is_null() && size != 0,
+        "QPL returned empty {label}"
+    );
     // SAFETY: `pointer` and `size` are returned by Intel QVL `tee_qv_get_collateral`.
     Ok(unsafe { std::slice::from_raw_parts(pointer, size as usize) }.to_vec())
 }
@@ -583,6 +587,8 @@ pub(crate) fn write_capture(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
 
     fn repo_root() -> PathBuf {
@@ -594,10 +600,11 @@ mod tests {
 
     #[test]
     fn extracts_the_exact_type_five_pck_chain_and_rejects_trailing_bytes() {
-        let quote = fs::read(
-            repo_root().join("crates/system/tee/tests/fixtures/intel-dcap-1.26/sgx-processor-quote-v3.bin"),
-        )
-        .expect("read quote fixture");
+        let quote =
+            fs::read(repo_root().join(
+                "crates/system/tee/tests/fixtures/intel-dcap-1.26/sgx-processor-quote-v3.bin",
+            ))
+            .expect("read quote fixture");
         let pck_chain = extract_type5_pck_chain(&quote).expect("extract type-5 PCK chain");
         assert!(pck_chain.starts_with(b"-----BEGIN CERTIFICATE-----\n"));
         assert!(pck_chain.ends_with(b"\0"));

@@ -12,9 +12,9 @@ use crate::seed_codec::{
     address_as_u256, address_bytes, alloc_balance_hex, parse_genesis_timestamp, parse_i128,
     parse_u256, parse_u64, pubkey_bytes, radicle_node_id_bytes, timestamp_to_utc_date_key,
     u64_bytes, write_mapping_bytes, StorageBuilder, DEFAULT_EPOCH_LENGTH_BLOCKS,
-    DEFAULT_REREGISTRATION_COOLDOWN_BLOCKS, DEFAULT_UNBONDING_PERIOD,
-    HYPERLANE_CONTROLLER_ADDRESS, HYPERLANE_CONTROLLER_BOOTSTRAP_ADMIN_SLOT, MIN_STAKE,
-    REWARDS_ADDRESS, STAKING_ADDRESS, VALIDATOR_SET_ADDRESS, VAULT_ROUTER_ADDRESS,
+    DEFAULT_REREGISTRATION_COOLDOWN_BLOCKS, DEFAULT_UNBONDING_PERIOD, HYPERLANE_CONTROLLER_ADDRESS,
+    HYPERLANE_CONTROLLER_BOOTSTRAP_ADMIN_SLOT, MIN_STAKE, REWARDS_ADDRESS, STAKING_ADDRESS,
+    VALIDATOR_SET_ADDRESS, VAULT_ROUTER_ADDRESS,
 };
 use crate::seed_economy::{merge_storage_into_alloc, seed_vault_router};
 use crate::seed_p2p::encode_p2p_address_payload;
@@ -313,7 +313,10 @@ pub fn seed_founders(
         },
     )?;
     merge_storage_into_alloc(alloc, STAKING_ADDRESS, &staking_storage)?;
-    if let Some(staking_entry) = alloc.get_mut(STAKING_ADDRESS).and_then(Value::as_object_mut) {
+    if let Some(staking_entry) = alloc
+        .get_mut(STAKING_ADDRESS)
+        .and_then(Value::as_object_mut)
+    {
         staking_entry.insert(
             "balance".to_owned(),
             Value::String(alloc_balance_hex(total_staked)),

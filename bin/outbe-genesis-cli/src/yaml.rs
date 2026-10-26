@@ -73,14 +73,18 @@ impl<'de> Visitor<'de> for StrictJsonVisitor {
     where
         E: de::Error,
     {
-        Err(E::custom("null or empty values are not supported; omit the key"))
+        Err(E::custom(
+            "null or empty values are not supported; omit the key",
+        ))
     }
 
     fn visit_unit<E>(self) -> Result<Self::Value, E>
     where
         E: de::Error,
     {
-        Err(E::custom("null or empty values are not supported; omit the key"))
+        Err(E::custom(
+            "null or empty values are not supported; omit the key",
+        ))
     }
 
     fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>

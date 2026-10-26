@@ -8,10 +8,9 @@ use serde_json::{Map, Value};
 use crate::error::GenesisError;
 use crate::keccak::keccak256;
 use crate::seed_codec::{
-    METADOSIS_ADDRESS, ORACLE_ADDRESS, StorageBuilder, TRIBUTE_ADDRESS,
-    VAULT_ROUTER_LIQUIDITY_SOURCES, VAULT_ROUTER_LIQUIDITY_TARGETS, address_as_u256, address_bytes,
-    alloc_balance_hex, data_slot, parse_u32, parse_u64, parse_u256, timestamp_to_utc_date_key,
-    u32_bytes,
+    address_as_u256, address_bytes, alloc_balance_hex, data_slot, parse_u256, parse_u32, parse_u64,
+    timestamp_to_utc_date_key, u32_bytes, StorageBuilder, METADOSIS_ADDRESS, ORACLE_ADDRESS,
+    TRIBUTE_ADDRESS, VAULT_ROUTER_LIQUIDITY_SOURCES, VAULT_ROUTER_LIQUIDITY_TARGETS,
 };
 use crate::seed_oracle::seed_oracle;
 
@@ -33,7 +32,10 @@ pub fn seed_coen(
             .or_insert_with(|| Value::Object(Map::new()))
             .as_object_mut()
             .ok_or_else(|| GenesisError::validation("alloc entry must be an object"))?;
-        entry.insert("balance".to_owned(), Value::String(alloc_balance_hex(amount)));
+        entry.insert(
+            "balance".to_owned(),
+            Value::String(alloc_balance_hex(amount)),
+        );
     }
     Ok(())
 }
@@ -63,10 +65,7 @@ pub fn owner_index_key(owner: &str, index: u32) -> Result<[u8; 32], GenesisError
 }
 
 /// Seed pre-existing Tribute records into Tribute storage.
-pub fn seed_tributes(
-    storage: &mut StorageBuilder,
-    tributes: &[Value],
-) -> Result<(), GenesisError> {
+pub fn seed_tributes(storage: &mut StorageBuilder, tributes: &[Value]) -> Result<(), GenesisError> {
     let mut day_counts: BTreeMap<u32, u32> = BTreeMap::new();
     let mut day_nominals: BTreeMap<u32, U256> = BTreeMap::new();
     let mut owner_counts: BTreeMap<String, u32> = BTreeMap::new();
@@ -149,11 +148,7 @@ pub fn seed_tribute_worldwide_days(
             .ok_or_else(|| GenesisError::validation("worldwide_days entry missing wwd"))
             .and_then(parse_u32)?;
         let wwd_key = u32_bytes(wwd);
-        let day = entry
-            .get("day")
-            .map(parse_u32)
-            .transpose()?
-            .unwrap_or(wwd);
+        let day = entry.get("day").map(parse_u32).transpose()?.unwrap_or(wwd);
         let forming_start = entry
             .get("forming_start")
             .map(parse_u64)

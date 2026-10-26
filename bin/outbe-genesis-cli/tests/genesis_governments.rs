@@ -6,9 +6,9 @@ use std::path::PathBuf;
 use alloy_primitives::U256;
 use outbe_genesis_cli::network::repo_root;
 use outbe_genesis_cli::seed_alloc::{seed_code_registry, seed_governments_descriptor};
-use outbe_genesis_cli::seed_codec::{CODE_REGISTRY_ADDRESS, StorageBuilder, data_slot, hex32};
+use outbe_genesis_cli::seed_codec::{data_slot, hex32, StorageBuilder, CODE_REGISTRY_ADDRESS};
 use outbe_genesis_cli::seed_genesis::apply_seed;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 fn base_genesis() -> Value {

@@ -40,8 +40,7 @@ fn opt_sha256(data: &[u8]) -> Option<String> {
 }
 
 fn is_regular_file(path: &Path) -> bool {
-    fs::symlink_metadata(path)
-        .is_ok_and(|meta| meta.is_file() && !meta.file_type().is_symlink())
+    fs::symlink_metadata(path).is_ok_and(|meta| meta.is_file() && !meta.file_type().is_symlink())
 }
 
 fn safe_material_path(root: &Path, relative: &str) -> Option<PathBuf> {
@@ -55,7 +54,9 @@ fn safe_material_path(root: &Path, relative: &str) -> Option<PathBuf> {
 fn verify_material(root: &Path, record: &Value, label: &str, differences: &mut Vec<String>) {
     let relative = record.get("path").and_then(Value::as_str).unwrap_or("");
     let Some(path) = safe_material_path(root, relative) else {
-        differences.push(format!("{label}: missing or unsafe material path: {relative}"));
+        differences.push(format!(
+            "{label}: missing or unsafe material path: {relative}"
+        ));
         return;
     };
     let raw = fs::read(&path).unwrap_or_default();
@@ -143,7 +144,9 @@ fn verify_checksum_file(output: &Path, label: &str, differences: &mut Vec<String
         match safe_material_path(output, relative) {
             Some(p) if sha256_bytes(&fs::read(&p).unwrap_or_default()) == *expected => {}
             Some(_) => differences.push(format!("{label}: checksum mismatch: {relative}")),
-            None => differences.push(format!("{label}: checksum path missing or unsafe: {relative}")),
+            None => differences.push(format!(
+                "{label}: checksum path missing or unsafe: {relative}"
+            )),
         }
     }
     raw
@@ -186,7 +189,9 @@ fn verify_version_evidence(
 ) -> Vec<u8> {
     let path = output.join("metadata/outbe-chain.version.txt");
     if !is_regular_file(&path) {
-        differences.push(format!("{label}: missing regular outbe-chain version evidence"));
+        differences.push(format!(
+            "{label}: missing regular outbe-chain version evidence"
+        ));
         return Vec::new();
     }
     let raw = fs::read(&path).unwrap_or_default();
@@ -427,7 +432,10 @@ pub fn verify_outputs(
         differences.push("outbe-chain version evidence differs between builders".to_owned());
     }
 
-    let builders = [(&first as &Path, &first_records), (&second, &second_records)];
+    let builders = [
+        (&first as &Path, &first_records),
+        (&second, &second_records),
+    ];
     let artifact_evidence: Vec<Value> = EXPECTED_ARTIFACTS
         .iter()
         .map(|name| compare_artifact(builders, name, &mut differences))

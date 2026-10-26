@@ -10,7 +10,7 @@ use crate::error::GenesisError;
 use crate::network::profiles_dir;
 use crate::seed_codec::parse_u64;
 
-use super::{DEFAULT_MAX_VALIDATORS, port_of, quote, uses_production_tee_session};
+use super::{port_of, quote, uses_production_tee_session, DEFAULT_MAX_VALIDATORS};
 
 /// Render `run-enclave.sh` for a validator.
 pub fn enclave_script(
@@ -314,9 +314,9 @@ pub fn feeder_pairs(config: &Value) -> Result<String, GenesisError> {
     };
     let source_quote = config
         .get("price_source_quote")
-        .and_then(|v| match v {
-            Value::String(s) => Some(s.clone()),
-            other => Some(other.to_string()),
+        .map(|v| match v {
+            Value::String(s) => s.clone(),
+            other => other.to_string(),
         })
         .unwrap_or_else(|| default_quote.to_owned());
     Ok(format!(

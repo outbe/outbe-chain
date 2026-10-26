@@ -16,7 +16,10 @@ use crate::network::DEFAULT_CONSENSUS_P2P_PORT;
 use crate::seed_codec::parse_u64;
 
 /// Derive the uncompressed 64-byte secp256k1 public key coordinates `(x || y)` from a 32-byte hex scalar.
-pub fn secp256k1_uncompressed_pubkey(hex_scalar: &str, path: &Path) -> Result<[u8; 64], GenesisError> {
+pub fn secp256k1_uncompressed_pubkey(
+    hex_scalar: &str,
+    path: &Path,
+) -> Result<[u8; 64], GenesisError> {
     let raw = hex_scalar
         .trim()
         .strip_prefix("0x")
@@ -39,7 +42,9 @@ pub fn secp256k1_uncompressed_pubkey(hex_scalar: &str, path: &Path) -> Result<[u
     let point = signing_key.verifying_key().to_encoded_point(false);
     let bytes = point.as_bytes();
     if bytes.len() != 65 || bytes[0] != 0x04 {
-        return Err(GenesisError::validation("invalid secp256k1 public key point"));
+        return Err(GenesisError::validation(
+            "invalid secp256k1 public key point",
+        ));
     }
     let mut out = [0u8; 64];
     out.copy_from_slice(&bytes[1..]);
@@ -94,8 +99,9 @@ fn mint_secp256k1_hex(path: &Path) -> Result<String, GenesisError> {
 
 /// Parse an OpenSSH `ssh-ed25519` public key file and return its 32-byte NodeId as 64 hex chars.
 pub fn radicle_node_id_from_public_key(path: &Path) -> Result<String, GenesisError> {
-    let content = fs::read_to_string(path)
-        .map_err(|_| GenesisError::validation(format!("invalid Radicle public key {}", path.display())))?;
+    let content = fs::read_to_string(path).map_err(|_| {
+        GenesisError::validation(format!("invalid Radicle public key {}", path.display()))
+    })?;
     let mut parts = content.split_whitespace();
     let Some(algorithm) = parts.next() else {
         return Err(GenesisError::validation(format!(
@@ -179,7 +185,10 @@ pub fn bls_public_key(keygen_binary: &str, signing_key: &Path) -> Result<String,
     let stdout = String::from_utf8_lossy(&output.stdout);
     for line in stdout.lines() {
         if let Some(rest) = line.strip_prefix("public key:") {
-            let value = rest.trim().strip_prefix("0x").unwrap_or_else(|| rest.trim());
+            let value = rest
+                .trim()
+                .strip_prefix("0x")
+                .unwrap_or_else(|| rest.trim());
             if value.len() != 96 {
                 return Err(GenesisError::validation(format!(
                     "{}: BLS public key is not 48 bytes",
@@ -214,11 +223,15 @@ pub fn discover_validators(
     for (index, entry) in entries.iter().enumerate() {
         let entry_str = entry
             .as_str()
-            .ok_or_else(|| GenesisError::validation(format!("validators[{index}] must be a string")))?
+            .ok_or_else(|| {
+                GenesisError::validation(format!("validators[{index}] must be a string"))
+            })?
             .trim();
         let (host, port) = if let Some((h, p)) = entry_str.split_once(':') {
             let parsed_port: u64 = p.parse().map_err(|_| {
-                GenesisError::validation(format!("invalid port in validators[{index}]: {entry_str}"))
+                GenesisError::validation(format!(
+                    "invalid port in validators[{index}]: {entry_str}"
+                ))
             })?;
             (h, parsed_port)
         } else {

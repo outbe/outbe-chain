@@ -87,7 +87,9 @@ pub fn verify_version_text(
     let expected_profile = format!("Build Profile: {profile} ({target})");
 
     if text.matches(&expected_commit).count() != 2 {
-        differences.push(format!("expected two exact commit lines: {expected_commit}"));
+        differences.push(format!(
+            "expected two exact commit lines: {expected_commit}"
+        ));
     }
     if text.matches(&expected_time).count() != 2 {
         differences.push(format!(
@@ -223,9 +225,8 @@ fn validate_artifacts(artifacts: &[Value]) -> Result<()> {
         "production enclave package and binary must be outbe-tee-enclave"
     );
     let enclave_features = enclave.get("features").and_then(Value::as_array);
-    let is_exact_dcap = enclave_features.is_some_and(|f| {
-        f.len() == 1 && f[0].as_str() == Some("production-dcap-release")
-    });
+    let is_exact_dcap = enclave_features
+        .is_some_and(|f| f.len() == 1 && f[0].as_str() == Some("production-dcap-release"));
     if !is_exact_dcap {
         let feature_list = match enclave_features {
             Some(arr) if !arr.is_empty() => arr
@@ -285,8 +286,8 @@ fn artifact_record(spec: &Value, artifact_dir: &Path, target: &str) -> Result<Va
         .as_str()
         .ok_or_else(|| eyre!("artifact missing name"))?;
     let path = artifact_dir.join(name);
-    let meta = fs::symlink_metadata(&path)
-        .map_err(|_| eyre!("missing release artifact: {name}"))?;
+    let meta =
+        fs::symlink_metadata(&path).map_err(|_| eyre!("missing release artifact: {name}"))?;
     ensure!(
         meta.is_file() && !meta.file_type().is_symlink(),
         "missing release artifact: {name}"

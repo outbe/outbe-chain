@@ -8,13 +8,13 @@ use outbe_genesis_cli::inputs::{StakeSeedTerms, ValidatorSeedTerms};
 use outbe_genesis_cli::network::{profiles_dir, repo_root};
 use outbe_genesis_cli::seed_alloc::seed_protocol_constants;
 use outbe_genesis_cli::seed_codec::{
-    StorageBuilder, address_as_u256, address_bytes, asset_address, data_slot, hex32, mapping_key,
-    parse_header_timestamp, u32_bytes,
+    address_as_u256, address_bytes, asset_address, data_slot, hex32, mapping_key,
+    parse_header_timestamp, u32_bytes, StorageBuilder,
 };
 use outbe_genesis_cli::seed_economy::{clear_seeded_metadosis_days, seed_cycle};
 use outbe_genesis_cli::seed_oracle::seed_oracle;
 use outbe_genesis_cli::seed_validators::{seed_staking, seed_validator_set};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 #[test]
 fn oracle_seed_preserves_configured_generic_pair_orientation() {
@@ -150,7 +150,9 @@ fn default_reference_and_policy_registries_use_the_frozen_slots() {
         assert_eq!(storage.entries[&key], hex32(iso_code));
     }
 
-    assert!(!storage.entries.contains_key(&mapping_key(&u32_bytes(840), 60)));
+    assert!(!storage
+        .entries
+        .contains_key(&mapping_key(&u32_bytes(840), 60)));
     assert_eq!(storage.entries[&hex32(74u64)], hex32(6u64));
     for (index, &iso_code) in iso_codes.iter().enumerate() {
         let key = hex32(data_slot(74u64) + U256::from(index));
@@ -245,8 +247,7 @@ fn founder_radicle_bindings_are_complete_unique_and_bidirectional() {
         validator_stake: U256::from(1),
     };
     let mut storage = StorageBuilder::new();
-    seed_validator_set(&mut storage, &validators, &json!({}), terms)
-        .expect("seed_validator_set");
+    seed_validator_set(&mut storage, &validators, &json!({}), terms).expect("seed_validator_set");
 
     for validator in &validators {
         let addr_str = validator["address"].as_str().expect("addr");

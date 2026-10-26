@@ -419,7 +419,9 @@ pub fn parse_genesis_timestamp(genesis: &Value) -> Result<u64, GenesisError> {
         .filter(|s| !s.is_empty())
     {
         let dt = OffsetDateTime::parse(genesis_time_str, &Rfc3339).map_err(|err| {
-            GenesisError::validation(format!("invalid config.genesisTime {genesis_time_str}: {err}"))
+            GenesisError::validation(format!(
+                "invalid config.genesisTime {genesis_time_str}: {err}"
+            ))
         })?;
         return u64::try_from(dt.unix_timestamp()).map_err(|_| {
             GenesisError::validation(format!(
@@ -540,7 +542,8 @@ impl StorageBuilder {
     /// Set a `mapping(K => B256)` entry at `base_slot`.
     pub fn set_mapping_b256(&mut self, base_slot: u64, key_bytes: &[u8], value_bytes: &[u8; 32]) {
         let k = mapping_key(key_bytes, base_slot);
-        self.entries.insert(k, format!("0x{}", hex::encode(value_bytes)));
+        self.entries
+            .insert(k, format!("0x{}", hex::encode(value_bytes)));
     }
 
     /// Set a two-word `Mapping<K, AddressPair>` entry at `base_slot`.
@@ -580,10 +583,7 @@ pub fn write_storage_bytes(
     for (i, chunk) in data.chunks(32).enumerate() {
         let mut word = [0u8; 32];
         word[..chunk.len()].copy_from_slice(chunk);
-        storage.set_raw_slot_hex(
-            start + U256::from(i),
-            &format!("0x{}", hex::encode(word)),
-        )?;
+        storage.set_raw_slot_hex(start + U256::from(i), &format!("0x{}", hex::encode(word)))?;
     }
     Ok(())
 }

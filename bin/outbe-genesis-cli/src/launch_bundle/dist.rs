@@ -3,8 +3,8 @@
 use std::fs::{self, File};
 use std::path::Path;
 
-use flate2::Compression;
 use flate2::write::GzEncoder;
+use flate2::Compression;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
@@ -128,8 +128,7 @@ pub fn build_distribution(
     let mut sum_lines = Vec::with_capacity(names.len());
     for name in &names {
         let archive_file = dist.join(name);
-        let bytes =
-            fs::read(&archive_file).map_err(|err| GenesisError::io(&archive_file, err))?;
+        let bytes = fs::read(&archive_file).map_err(|err| GenesisError::io(&archive_file, err))?;
         let digest = hex::encode(Sha256::digest(&bytes));
         sum_lines.push(format!("{digest}  {name}"));
     }
@@ -174,11 +173,7 @@ pub fn deploy_markdown(
     keys_dir: &Path,
     enodes: &[String],
 ) -> Result<String, GenesisError> {
-    let default_base = keys_dir
-        .parent()
-        .unwrap_or(keys_dir)
-        .display()
-        .to_string();
+    let default_base = keys_dir.parent().unwrap_or(keys_dir).display().to_string();
     let base_dir = config
         .get("remote_base_dir")
         .and_then(Value::as_str)

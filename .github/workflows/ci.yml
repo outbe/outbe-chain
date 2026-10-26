@@ -211,6 +211,7 @@ jobs:
       - name: Ensure no arbitrary dep in production build
         run: cargo tree --package outbe-chain -e=features,no-dev | grep -Eq "arbitrary" && exit 1 || exit 0
       - name: Ensure consensus does not depend on EVM
+        shell: bash
         run: |
           tree="$(cargo tree -p outbe-consensus --prefix none)"
           if grep -Eq '^outbe-evm ' <<<"${tree}"; then

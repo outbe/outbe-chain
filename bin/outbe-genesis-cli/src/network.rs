@@ -151,7 +151,9 @@ pub fn deep_merge(base: Option<&Value>, override_val: &Value) -> Value {
 /// Validate a network YAML configuration object.
 pub fn validate_config(config: &Value) -> Result<(), GenesisError> {
     let Some(obj) = config.as_object() else {
-        return Err(GenesisError::validation("network configuration must be a mapping"));
+        return Err(GenesisError::validation(
+            "network configuration must be a mapping",
+        ));
     };
     if obj.contains_key("intex_factory") {
         return Err(GenesisError::validation(
@@ -190,7 +192,7 @@ fn validate_founders(obj: &Map<String, Value>) -> Result<(), GenesisError> {
     if let Some((index, _)) = hosts
         .iter()
         .enumerate()
-        .find(|(_, h)| h.as_str().map_or(true, |s| s.trim().is_empty()))
+        .find(|(_, h)| h.as_str().is_none_or(|s| s.trim().is_empty()))
     {
         return Err(GenesisError::validation(format!(
             "validators[{index}] must be a host or IP string"
@@ -206,7 +208,9 @@ fn validate_founders(obj: &Map<String, Value>) -> Result<(), GenesisError> {
 
 fn validate_tee(config: &Value, obj: &Map<String, Value>) -> Result<(), GenesisError> {
     let Some(Value::Object(tee)) = obj.get("tee") else {
-        return Err(GenesisError::validation("`tee` section with `mode` is required"));
+        return Err(GenesisError::validation(
+            "`tee` section with `mode` is required",
+        ));
     };
     let allowed_tee: BTreeSet<&str> = TEE_KEYS.into_iter().collect();
     let unknown_tee: Vec<&str> = tee
@@ -250,7 +254,10 @@ fn validate_tee_mode(
 }
 
 fn validate_dcap_mode(obj: &Map<String, Value>, chain_id: u64) -> Result<(), GenesisError> {
-    if !matches!(chain_id, DEVNET_CHAIN_ID | TESTNET_CHAIN_ID | MAINNET_CHAIN_ID) {
+    if !matches!(
+        chain_id,
+        DEVNET_CHAIN_ID | TESTNET_CHAIN_ID | MAINNET_CHAIN_ID
+    ) {
         return Err(GenesisError::validation(format!(
             "tee.mode dcap-required requires a canonical Outbe chain id, not {chain_id}"
         )));
@@ -281,7 +288,9 @@ fn is_pinned_sha256_image(image: &str) -> bool {
 
 fn validate_mainnet(obj: &Map<String, Value>, mode: &str) -> Result<(), GenesisError> {
     if mode != "dcap-required" {
-        return Err(GenesisError::validation("Mainnet requires tee.mode dcap-required"));
+        return Err(GenesisError::validation(
+            "Mainnet requires tee.mode dcap-required",
+        ));
     }
     if obj.contains_key("protocol_constants") {
         return Err(GenesisError::validation(

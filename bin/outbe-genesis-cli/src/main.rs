@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use outbe_genesis_cli::create_genesis::{SeedCliArgs, run_create_genesis, run_seed_cli};
+use outbe_genesis_cli::create_genesis::{run_create_genesis, run_seed_cli, SeedCliArgs};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -88,13 +88,15 @@ fn main() -> ExitCode {
             worldwide_day,
             fresh_metadosis,
         }),
-        None => match cli.config {
-            Some(config) => run_create_genesis(&config, cli.output.as_deref()).map(|_| ()),
-            None => {
-                eprintln!("error: provide a subcommand (`create` or `seed`) or a path to `network.yaml`");
-                return ExitCode::from(2);
+        None => {
+            match cli.config {
+                Some(config) => run_create_genesis(&config, cli.output.as_deref()).map(|_| ()),
+                None => {
+                    eprintln!("error: provide a subcommand (`create` or `seed`) or a path to `network.yaml`");
+                    return ExitCode::from(2);
+                }
             }
-        },
+        }
     };
 
     if let Err(err) = result {

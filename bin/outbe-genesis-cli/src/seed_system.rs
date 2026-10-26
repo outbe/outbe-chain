@@ -4,16 +4,16 @@ use std::fs;
 use std::path::Path;
 
 use alloy_primitives::U256;
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 
 use crate::error::GenesisError;
 use crate::keccak::keccak256;
 use crate::network::default_canon_dir;
 use crate::seed_alloc::{seed_code_registry, seed_governments_descriptor};
 use crate::seed_codec::{
+    compute_tee_policy_hash, parse_u64, u64_bytes, write_storage_bytes, StorageBuilder,
     ACCOUNTING_PROGRESS_ADDRESS, CODE_REGISTRY_ADDRESS, GOVERNANCE_ADDRESS, MARKER_CODE,
-    StorageBuilder, TEE_REGISTRY_ADDRESS, ZEROFEE_ADDRESS, compute_tee_policy_hash, parse_u64,
-    u64_bytes, write_storage_bytes,
+    TEE_REGISTRY_ADDRESS, ZEROFEE_ADDRESS,
 };
 use crate::seed_economy::merge_storage_into_alloc;
 

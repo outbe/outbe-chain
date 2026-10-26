@@ -8,11 +8,11 @@ use sha2::{Digest as _, Sha256};
 
 use crate::error::GenesisError;
 use crate::network::{DEFAULT_DKG_PREPARE_WINDOW_BLOCKS, DEFAULT_EPOCH_LENGTH_BLOCKS};
-use crate::seed_codec::{
-    parse_header_timestamp, parse_i128, write_storage_bytes, StorageBuilder,
-};
+use crate::seed_codec::{parse_header_timestamp, parse_i128, write_storage_bytes, StorageBuilder};
 
-fn parse_governments_description(governments: &Map<String, Value>) -> Result<Vec<u8>, GenesisError> {
+fn parse_governments_description(
+    governments: &Map<String, Value>,
+) -> Result<Vec<u8>, GenesisError> {
     let expected: BTreeSet<&str> = [
         "description",
         "initial_content_manifest_sha256",
@@ -51,9 +51,7 @@ fn parse_governments_commitment(
         .and_then(|v| v.strip_prefix("0x"))
         .filter(|h| h.len() == size * 2)
         .ok_or_else(|| {
-            GenesisError::validation(format!(
-                "governments {field} must contain {size} hex bytes"
-            ))
+            GenesisError::validation(format!("governments {field} must contain {size} hex bytes"))
         })?;
     let raw = hex::decode(hex_body)
         .map_err(|_| GenesisError::validation(format!("invalid governments {field}")))?;
@@ -70,9 +68,8 @@ fn validate_governments_chain_timing(chain_obj: &Map<String, Value>) -> Result<u
         .get("chainId")
         .ok_or_else(|| GenesisError::validation("missing config.chainId"))?;
     let chain_id_raw = parse_i128(chain_id_val)?;
-    let chain_id = u64::try_from(chain_id_raw).map_err(|_| {
-        GenesisError::validation("governments chain ID/timestamp must fit u64")
-    })?;
+    let chain_id = u64::try_from(chain_id_raw)
+        .map_err(|_| GenesisError::validation("governments chain ID/timestamp must fit u64"))?;
     let epoch = chain_obj
         .get("epochLengthBlocks")
         .map(parse_i128)

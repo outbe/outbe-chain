@@ -7,9 +7,9 @@ use serde_json::Value;
 
 use crate::error::GenesisError;
 use crate::seed_codec::{
-    SECONDS_PER_DAY, StorageBuilder, address_as_u256, address_bytes, address_pair, asset_address,
-    data_slot, is_iso_asset_address, parse_u32, parse_u64, parse_u256, u32_bytes,
-    wwd_to_day_timestamp,
+    address_as_u256, address_bytes, address_pair, asset_address, data_slot, is_iso_asset_address,
+    parse_u256, parse_u32, parse_u64, u32_bytes, wwd_to_day_timestamp, StorageBuilder,
+    SECONDS_PER_DAY,
 };
 
 /// Default overnight policy rates at scale `1e6` (`(iso_code, annual_rate_1e6)`).
@@ -308,13 +308,11 @@ fn seed_reference_currencies(
     storage: &mut StorageBuilder,
     config: &Value,
 ) -> Result<Vec<u32>, GenesisError> {
-    let reference_currencies: Vec<u32> = match config
-        .get("reference_currencies")
-        .and_then(Value::as_array)
-    {
-        Some(arr) => arr.iter().map(parse_u32).collect::<Result<Vec<_>, _>>()?,
-        None => vec![156, 344, 392, 826, 840, 978],
-    };
+    let reference_currencies: Vec<u32> =
+        match config.get("reference_currencies").and_then(Value::as_array) {
+            Some(arr) => arr.iter().map(parse_u32).collect::<Result<Vec<_>, _>>()?,
+            None => vec![156, 344, 392, 826, 840, 978],
+        };
     if reference_currencies.contains(&0) {
         return Err(GenesisError::validation(
             "oracle reference iso_code must be non-zero",
@@ -342,26 +340,26 @@ fn seed_policy_rates(
     config: &Value,
     reference_currencies: &[u32],
 ) -> Result<(), GenesisError> {
-    let parsed_policy_rates: Vec<(u32, u64)> =
-        match config.get("policy_rates").and_then(Value::as_array) {
-            Some(arr) => arr
-                .iter()
-                .map(|entry| {
-                    let iso = entry
-                        .get("iso_code")
-                        .ok_or_else(|| GenesisError::validation("missing policy_rates.iso_code"))
-                        .and_then(parse_u32)?;
-                    let rate = entry
-                        .get("annual_rate_1e6")
-                        .ok_or_else(|| {
-                            GenesisError::validation("missing policy_rates.annual_rate_1e6")
-                        })
-                        .and_then(parse_u64)?;
-                    Ok((iso, rate))
-                })
-                .collect::<Result<Vec<_>, GenesisError>>()?,
-            None => DEFAULT_POLICY_RATES.to_vec(),
-        };
+    let parsed_policy_rates: Vec<(u32, u64)> = match config
+        .get("policy_rates")
+        .and_then(Value::as_array)
+    {
+        Some(arr) => arr
+            .iter()
+            .map(|entry| {
+                let iso = entry
+                    .get("iso_code")
+                    .ok_or_else(|| GenesisError::validation("missing policy_rates.iso_code"))
+                    .and_then(parse_u32)?;
+                let rate = entry
+                    .get("annual_rate_1e6")
+                    .ok_or_else(|| GenesisError::validation("missing policy_rates.annual_rate_1e6"))
+                    .and_then(parse_u64)?;
+                Ok((iso, rate))
+            })
+            .collect::<Result<Vec<_>, GenesisError>>()?,
+        None => DEFAULT_POLICY_RATES.to_vec(),
+    };
     validate_policy_rates(&parsed_policy_rates, reference_currencies)?;
     storage.set_slot(74u64, parsed_policy_rates.len());
     for (i, &(iso_code, rate)) in parsed_policy_rates.iter().enumerate() {

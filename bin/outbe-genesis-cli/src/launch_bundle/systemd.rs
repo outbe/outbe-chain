@@ -12,9 +12,17 @@ use super::{port_of, quote, write_script};
 /// Systemd service roles in dependency order: `(role, description, after_unit)`.
 pub const UNIT_ROLES: &[(&str, &str, Option<&str>)] = &[
     ("enclave", "TEE enclave", None),
-    ("radicle", "Radicle sidecar", Some("outbe-enclave@%i.service")),
+    (
+        "radicle",
+        "Radicle sidecar",
+        Some("outbe-enclave@%i.service"),
+    ),
     ("node", "validator node", Some("outbe-radicle@%i.service")),
-    ("feeder", "price oracle feeder", Some("outbe-node@%i.service")),
+    (
+        "feeder",
+        "price oracle feeder",
+        Some("outbe-node@%i.service"),
+    ),
 ];
 
 /// Render `Caddyfile` for one validator host.
@@ -128,12 +136,7 @@ exec {q_cli} tee renew \\\n\
 }
 
 /// Render one templated systemd unit file (`%i` is the validator index).
-pub fn systemd_unit(
-    role: &str,
-    description: &str,
-    after: Option<&str>,
-    base_dir: &str,
-) -> String {
+pub fn systemd_unit(role: &str, description: &str, after: Option<&str>, base_dir: &str) -> String {
     let dependency_suffix = after.map(|a| format!(" {a}")).unwrap_or_default();
     let user = if role == "enclave" { "root" } else { "ubuntu" };
     format!(

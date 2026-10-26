@@ -23,9 +23,7 @@ fn parse_rust_toolchain_toml(text: &str) -> (String, Vec<String>) {
                 .trim_matches('"')
                 .to_owned();
         } else if let Some(rest) = trimmed.strip_prefix("components") {
-            let inner = rest
-                .trim_start_matches([' ', '='])
-                .trim_matches(['[', ']']);
+            let inner = rest.trim_start_matches([' ', '=']).trim_matches(['[', ']']);
             components = inner
                 .split(',')
                 .map(|s| s.trim().trim_matches('"').to_owned())
@@ -207,8 +205,7 @@ fn check_apt_sources_and_tee(root: &Path, pin: &Value, diffs: &mut Vec<String>) 
         }
     }
 
-    let tee_build =
-        fs::read_to_string(root.join("crates/system/tee/build.rs")).unwrap_or_default();
+    let tee_build = fs::read_to_string(root.join("crates/system/tee/build.rs")).unwrap_or_default();
     for pin_inc in [
         "include_str!(\"../../../release/project-toolchain-v1.json\")",
         "include_str!(\"../../../release/dcap-native-qvl-v1.json\")",
