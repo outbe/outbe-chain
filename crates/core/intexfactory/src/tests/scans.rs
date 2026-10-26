@@ -603,14 +603,14 @@ fn a_group_requeued_at_retirement_is_expired_and_credited_once() {
     assert_eq!(deferred.len(), 1);
     assert_eq!(deferred[0].groupKey, group);
     assert_eq!(deferred[0].retryAt, IntexContract::day_end(later));
-    let expired = provider
+    let forfeited = provider
         .get_events(outbe_primitives::addresses::INTEX_ADDRESS)
         .iter()
         .filter_map(|log| {
-            outbe_intex::precompile::IIntex::IntexGroupExpired::decode_log_data(log).ok()
+            outbe_intex::precompile::IIntex::IntexGroupForfeited::decode_log_data(log).ok()
         })
         .count();
-    assert_eq!(expired, 1);
+    assert_eq!(forfeited, 1);
 }
 
 #[test]

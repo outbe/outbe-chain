@@ -44,7 +44,7 @@ interface IIntex {
         uint32 gemFactoryUnits;
         /// @notice Inclusive deadline: 0 when uncalled.
         uint64 settlementDeadline;
-        /// @notice The call group the series is called and expired with.
+        /// @notice The call group the series is called and forfeited with.
         bytes32 groupKey;
     }
 
@@ -83,7 +83,7 @@ interface IIntex {
     ///         `settlementDeadline`, inclusive.
     event IntexGroupCalled(bytes32 indexed groupKey, bytes14[] seriesIds, uint32 calledAt, uint64 settlementDeadline);
 
-    /// @notice The group's settlement window closed. Both are zero when every unit
-    ///         was realized in time.
-    event IntexGroupExpired(bytes32 indexed groupKey, uint64 forfeitedUnits, uint256 returnedPromisMinor);
+    /// @notice The group is forfeited: its settlement window closed. Both are zero when
+    ///         every unit was realized in time.
+    event IntexGroupForfeited(bytes32 indexed groupKey, uint64 forfeitedUnits, uint256 returnedPromisMinor);
 }

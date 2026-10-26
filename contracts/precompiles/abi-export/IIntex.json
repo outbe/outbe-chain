@@ -250,7 +250,7 @@
   },
   {
     "type": "event",
-    "name": "IntexGroupExpired",
+    "name": "IntexGroupForfeited",
     "inputs": [
       {
         "name": "groupKey",

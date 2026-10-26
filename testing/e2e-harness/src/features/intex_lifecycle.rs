@@ -490,7 +490,7 @@ impl Lifecycle for IntexLifecycle {
             .pool_before_forfeit
             .expect("the pool was read before the notice lapsed");
 
-        let mut expired = Vec::new();
+        let mut forfeited = Vec::new();
         for (series, settled_units) in expiring_series(world)
             .into_iter()
             .zip([EXPIRING_SETTLED_UNITS, 0])
@@ -526,14 +526,14 @@ impl Lifecycle for IntexLifecycle {
                 unrealized > 0,
                 "series {series} held nothing at the deadline, so the forfeit proves nothing"
             );
-            expired.push((
+            forfeited.push((
                 series,
                 unrealized,
                 U256::from(load) * U256::from(unrealized),
             ));
         }
         let want = before
-            + expired
+            + forfeited
                 .iter()
                 .map(|(_, _, returned)| *returned)
                 .sum::<U256>();
@@ -544,7 +544,7 @@ impl Lifecycle for IntexLifecycle {
             || world.rpc.promis_limit_on(port) == Some(want),
         );
         let height = finalized_checkpoint(world).height;
-        // Both series were issued into one call group, which expires as one.
+        // Both series were issued into one call group, which is forfeited as one.
         let [series, _] = expiring_series(world);
         let group = eth::read_call_at(
             &url,
@@ -559,9 +559,12 @@ impl Lifecycle for IntexLifecycle {
             addresses::INTEX_ADDR,
             from,
             height,
-            eth::IIntex::IntexGroupExpired {
+            eth::IIntex::IntexGroupForfeited {
                 groupKey: group,
-                forfeitedUnits: expired.iter().map(|(_, units, _)| u64::from(*units)).sum(),
+                forfeitedUnits: forfeited
+                    .iter()
+                    .map(|(_, units, _)| u64::from(*units))
+                    .sum(),
                 returnedPromisMinor: want - before,
             },
         );

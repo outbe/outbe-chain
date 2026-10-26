@@ -96,7 +96,7 @@ impl ExpiryHandler<B256> for IntexExpiry<'_, '_> {
                 .checked_credit(returned)?;
         }
         self.intex.hand_to_cleanup(group)?;
-        self.intex.emit(IIntex::IntexGroupExpired {
+        self.intex.emit(IIntex::IntexGroupForfeited {
             groupKey: group,
             forfeitedUnits: forfeited_units,
             returnedPromisMinor: returned,
