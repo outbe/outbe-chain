@@ -22,6 +22,9 @@ Address: `0x000000000000000000000000000000000000EE14` (`HYPERLANE_CONTROLLER_ADD
 | 6    | `submitted_block` | `(validator, domain) -> block of that submission`; zero = never     |
 | 7    | `miss_count`    | `validator -> consecutive liveness-window misses`                     |
 | 8    | `validator_announce` | ValidatorAnnounce on Outbe; `outbe-feeder` reads the validator's bucket location from it |
+| 9    | `bootstrap_admin` | the only caller allowed to `initialize`; genesis seeds it          |
+| 10   | `approved_payload` | `proposal id -> keccak256(payload)` of an approved crosschain action; zero = none or applied |
+| 11   | `approved_at`   | `proposal id -> block of the approval`                                |
 
 Validator sets and thresholds are **not** stored here: the ISMs are the source
 of truth, the controller only forwards owner calls to them.
@@ -48,6 +51,8 @@ of truth, the controller only forwards owner calls to them.
   see below. Caller: an active validator or its oracle delegate (the feeder key).
 - `setHyperlaneSigner(signer)` — registers the key the validator's Hyperlane agent
   signs with when it differs from the validator address; zero resets.
+- `applyApproved(proposalId, payload)` — permissionless. Runs a crosschain action
+  that a vote approved (see below).
 - views: `icaRouter()`, `validatorAnnounce()`, `ismByDomain(domain)`, `hookByDomain(domain)`, `domains()`,
   `hyperlaneSigner(validator)`, `submittedIndex(validator, domain)`, `missCount(validator)`.
 
@@ -78,7 +83,7 @@ Every `LIVENESS_WINDOW_BLOCKS` (150) the `OracleSlashWindow` system tx runs
 This catches outages, not malice: a validator can sign checkpoints only for
 itself, so a fake self-signed checkpoint is indistinguishable from a real one.
 
-## Owner operations (Rust methods, trigger not wired yet)
+## Owner operations (Rust methods)
 
 | method                                   | effect                                                                 |
 |------------------------------------------|------------------------------------------------------------------------|
@@ -86,6 +91,51 @@ itself, so a fake self-signed checkpoint is indistinguishable from a real one.
 | `call_remote(domain, calls[])`           | generic ICA call on a remote chain (e.g. `acceptOwnership()` on a remote ISM) |
 | `call_local(to, value, data)`            | generic owner call on Outbe (IGP, ProtocolFee, ProxyAdmin, router …)   |
 | `add_domain(domain, ism, hook)` / `remove_domain(domain)` | connect / disconnect a remote chain (adding dispatches `acceptOwnership()` to the new ISM); the local domain is fixed at `initialize` |
+
+`sync` and liveness call `set_validators_and_threshold`. The crosschain vote
+target below calls the other four. No proposal can carry a free `to` and `data`.
+
+## Crosschain vote target (OIP-00354)
+
+`CrosschainVoteTarget` serves this address. Validators vote on one strict JSON
+action. The tally runs where sub-calls are not available, so an approved
+proposal only stores `keccak256(payload)` and the approval block. Anyone then
+calls `applyApproved(proposalId, payload)` with the same bytes. The controller
+runs the action once, as `msg.sender` on Outbe and through its Interchain
+Account on a remote chain. An action older than the governance voting window
+is dropped with `ApprovedActionExpired`, so a stale approval cannot undo a
+newer one.
+
+A chain id is also the Hyperlane domain of that chain. An action on the Outbe
+chain id runs through `call_local` (all calls in one checkpoint). An action on
+another chain id runs through one `call_remote`. A `link…` action does both:
+the Outbe side first, then one message with the mirror calls for the remote
+side.
+
+The bridge is `ERC7786Bridge` in `contracts/crosschain`: one per chain, between
+the token bridges and the transport adapters.
+
+| `operation` | fields | calls |
+|---|---|---|
+| `setBridgePaused` | `chainId`, `bridge`, `paused` | `bridge.pause()` or `bridge.unpause()` |
+| `setBridgeGateway` | `chainId`, `bridge`, `destinationChainId`, `adapter` | `bridge.setGateway(destinationChainId, adapter)`: the adapter the bridge sends through; a zero `adapter` clears the override |
+| `linkBridges` | `remoteChainId`, `bridge`, `adapter`, `remoteBridge`, `remoteAdapter` (the Hyperlane adapters) | on each side: `adapter.setRouterWithChain` (the other adapter), `bridge.registerRemoteBridge` (ERC-7930 of the other bridge), `bridge.setGateway(other chain, adapter)` |
+| `linkTokenBridges` | `remoteChainId`, `tokenBridge`, `remoteTokenBridge` | on each side: `tokenBridge.addPeer(other chain, other token bridge)` |
+| `addHyperlaneChain` | `chainId`, `ism`, `hook` | `add_domain` |
+| `removeHyperlaneChain` | `chainId` | `remove_domain` |
+
+```json
+{"operation":"setBridgePaused","chainId":42161,"bridge":"0x…","paused":true}
+```
+
+The controller does not check what the addresses are. Voters check them:
+`token()` of both token bridges for `linkTokenBridges`, and the bridge and
+adapter addresses on both chains for `linkBridges`. A peer link cannot be
+removed.
+
+A remote action is asynchronous: `applyApproved` succeeds when the message is
+dispatched, not when the remote chain runs it. The controller pays the
+Hyperlane fee from its balance.
 
 Remote dispatch quotes `quoteGasPayment(domain)` on the router and pays it from
 the controller's balance; an insufficient balance reverts before anything is sent.

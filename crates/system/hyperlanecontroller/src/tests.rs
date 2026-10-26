@@ -985,3 +985,240 @@ mod liveness {
         });
     }
 }
+
+mod vote_target {
+    use super::*;
+    use crate::sol_ext::{IERC7786Bridge, IHyperlaneGatewayAdapter};
+    use crate::CrosschainVoteTarget;
+    use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
+    use outbe_vote::handlers::{TargetExecutionOutcome, VoteTarget, VoteTargetContext};
+
+    const APPROVED_AT: u64 = 30;
+    const ARBITRUM: u32 = 42_161;
+
+    fn bridge() -> Address {
+        v(0xb1)
+    }
+
+    fn context() -> VoteTargetContext {
+        VoteTargetContext {
+            proposer: v(1),
+            attached_value: U256::ZERO,
+            block_number: APPROVED_AT,
+            chain_id: CHAIN_ID,
+        }
+    }
+
+    fn pause_on(chain_id: u32) -> String {
+        format!(
+            r#"{{"operation":"setBridgePaused","chainId":{chain_id},"bridge":"{:#x}","paused":true}}"#,
+            bridge()
+        )
+    }
+
+    fn link_arbitrum() -> String {
+        format!(
+            r#"{{"operation":"linkBridges","remoteChainId":{ARBITRUM},"bridge":"{:#x}","adapter":"{:#x}","remoteBridge":"{:#x}","remoteAdapter":"{:#x}"}}"#,
+            bridge(),
+            v(0xa1),
+            v(0xb2),
+            v(0xa2)
+        )
+    }
+
+    fn approve(p: &mut HashMapStorageProvider, payload: &str) {
+        StorageHandle::enter(p, |storage| {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(APPROVED_AT, 1_700_000_000, CHAIN_ID),
+                storage,
+            );
+            assert_eq!(
+                CrosschainVoteTarget
+                    .handle_approved(&ctx, U256::ONE, payload.as_bytes(), context())
+                    .unwrap(),
+                TargetExecutionOutcome::Applied
+            );
+        });
+        p.set_block_number(APPROVED_AT);
+    }
+
+    fn apply(p: &mut HashMapStorageProvider, payload: &str) -> Result<Bytes, PrecompileError> {
+        let call = IHyperlaneController::applyApprovedCall {
+            proposalId: U256::ONE,
+            payload: payload.as_bytes().to_vec().into(),
+        };
+        StorageHandle::enter(p, |storage| {
+            dispatch(storage, &call.abi_encode(), stranger(), U256::ZERO)
+        })
+    }
+
+    fn sub_calls_from(p: &HashMapStorageProvider, start: usize) -> Vec<(Address, Bytes)> {
+        p.sub_call_inputs()[start..]
+            .iter()
+            .filter(|input| !input.is_static)
+            .map(|input| (input.target, input.calldata.clone()))
+            .collect()
+    }
+
+    fn remote_calls(calldata: &Bytes) -> (u32, Vec<(Address, Bytes)>) {
+        let call = IInterchainAccountRouter::callRemoteCall::abi_decode(calldata).unwrap();
+        let calls = call
+            ._calls
+            .into_iter()
+            .map(|c| (Address::from_word(c.to), c.data))
+            .collect();
+        (call._destination, calls)
+    }
+
+    #[test]
+    fn validate_accepts_every_action_and_rejects_bad_fields() {
+        let valid = [
+            pause_on(LOCAL),
+            pause_on(SEPOLIA).replace("true", "false"),
+            format!(
+                r#"{{"operation":"setBridgeGateway","chainId":{LOCAL},"bridge":"{:#x}","destinationChainId":{ARBITRUM},"adapter":"{:#x}"}}"#,
+                bridge(),
+                Address::ZERO
+            ),
+            link_arbitrum(),
+            format!(
+                r#"{{"operation":"linkTokenBridges","remoteChainId":{ARBITRUM},"tokenBridge":"{:#x}","remoteTokenBridge":"{:#x}"}}"#,
+                v(0xc1),
+                v(0xc2)
+            ),
+            format!(
+                r#"{{"operation":"addHyperlaneChain","chainId":{ARBITRUM},"ism":"{:#x}","hook":"{:#x}"}}"#,
+                v(0xd1),
+                hook(9)
+            ),
+            format!(r#"{{"operation":"removeHyperlaneChain","chainId":{ARBITRUM}}}"#),
+        ];
+        for payload in &valid {
+            CrosschainVoteTarget
+                .validate(payload.as_bytes(), context())
+                .unwrap_or_else(|e| panic!("{payload}: {e:?}"));
+        }
+        let invalid = [
+            "{}".to_string(),
+            pause_on(LOCAL).replace("setBridgePaused", "callLocal"),
+            pause_on(LOCAL).replace(
+                &format!("{:#x}", bridge()),
+                &format!("{:#x}", Address::ZERO),
+            ),
+            pause_on(LOCAL).replace(r#""paused":true"#, r#""paused":true,"paused":false"#),
+            pause_on(LOCAL).replace('}', r#","value":1}"#),
+            link_arbitrum().replace(&ARBITRUM.to_string(), &LOCAL.to_string()),
+            link_arbitrum().replace('}', r#","transport":"layerZero"}"#),
+            format!(r#"{{"operation":"removeHyperlaneChain","chainId":{LOCAL}}}"#),
+        ];
+        for payload in &invalid {
+            assert!(
+                CrosschainVoteTarget
+                    .validate(payload.as_bytes(), context())
+                    .is_err(),
+                "{payload}"
+            );
+        }
+    }
+
+    #[test]
+    fn link_bridges_wires_outbe_then_sends_the_mirror_wiring_once() {
+        let mut p = initialized_provider();
+        let payload = link_arbitrum();
+        approve(&mut p, &payload);
+        let start = p.sub_call_inputs().len();
+        apply(&mut p, &payload).unwrap();
+
+        // ERC-7930: version 1, chain type 0, chain id 42161 (0xa4b1) in two bytes, the address.
+        let mut arbitrum_bridge = alloy_primitives::hex!("0001000002a4b114").to_vec();
+        arbitrum_bridge.extend_from_slice(v(0xb2).as_slice());
+        let gateway = |chain_id: u32, adapter: Address| {
+            Bytes::from(
+                IERC7786Bridge::setGatewayCall {
+                    chainId: U256::from(chain_id),
+                    gateway: adapter,
+                }
+                .abi_encode(),
+            )
+        };
+        let sent = sub_calls_from(&p, start);
+        assert_eq!(sent.len(), 4);
+        assert_eq!(
+            sent[..3],
+            [
+                (
+                    v(0xa1),
+                    Bytes::from(
+                        IHyperlaneGatewayAdapter::setRouterWithChainCall {
+                            domain: ARBITRUM,
+                            router: v(0xa2).into_word(),
+                            chainId: U256::from(ARBITRUM),
+                        }
+                        .abi_encode(),
+                    ),
+                ),
+                (
+                    bridge(),
+                    Bytes::from(
+                        IERC7786Bridge::registerRemoteBridgeCall {
+                            bridge: arbitrum_bridge.into(),
+                        }
+                        .abi_encode(),
+                    ),
+                ),
+                (bridge(), gateway(ARBITRUM, v(0xa1))),
+            ]
+        );
+        assert_eq!(sent[3].0, ica_router());
+        let (destination, mirror) = remote_calls(&sent[3].1);
+        assert_eq!(destination, ARBITRUM);
+        let targets: Vec<Address> = mirror.iter().map(|(to, _)| *to).collect();
+        assert_eq!(targets, [v(0xa2), v(0xb2), v(0xb2)]);
+        assert_eq!(mirror[2].1, gateway(LOCAL, v(0xa2)));
+
+        let err = apply(&mut p, &payload).unwrap_err();
+        assert_eq!(
+            revert_selector(err),
+            IHyperlaneController::UnknownApprovedAction::SELECTOR
+        );
+    }
+
+    #[test]
+    fn single_chain_action_runs_locally_or_as_one_remote_message() {
+        let mut p = initialized_provider();
+        approve(&mut p, &pause_on(LOCAL));
+        let start = p.sub_call_inputs().len();
+        apply(&mut p, &pause_on(LOCAL)).unwrap();
+        let pause = Bytes::from(IERC7786Bridge::pauseCall {}.abi_encode());
+        assert_eq!(sub_calls_from(&p, start), [(bridge(), pause.clone())]);
+
+        let mut p = initialized_provider();
+        approve(&mut p, &pause_on(SEPOLIA));
+        let start = p.sub_call_inputs().len();
+        apply(&mut p, &pause_on(SEPOLIA)).unwrap();
+        let sent = sub_calls_from(&p, start);
+        assert_eq!(sent.len(), 1);
+        assert_eq!(remote_calls(&sent[0].1), (SEPOLIA, vec![(bridge(), pause)]));
+    }
+
+    #[test]
+    fn apply_rejects_another_payload_and_drops_an_expired_action() {
+        let mut p = initialized_provider();
+        let payload = pause_on(LOCAL);
+        approve(&mut p, &payload);
+
+        let err = apply(&mut p, &pause_on(SEPOLIA)).unwrap_err();
+        assert_eq!(
+            revert_selector(err),
+            IHyperlaneController::ApprovedPayloadMismatch::SELECTOR
+        );
+
+        p.set_block_number(
+            APPROVED_AT + outbe_chain_constants::get_governance_voting_window_blocks() + 1,
+        );
+        let start = p.sub_call_inputs().len();
+        apply(&mut p, &payload).unwrap();
+        assert!(sub_calls_from(&p, start).is_empty());
+        assert!(apply(&mut p, &payload).is_err());
+    }
+}

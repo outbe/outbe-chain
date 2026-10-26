@@ -97,6 +97,12 @@ pub enum HyperlaneControllerError {
 
     #[error("invalid hyperlane controller proposal payload: {0}")]
     InvalidProposalPayload(String),
+
+    #[error("no approved action for proposal {proposal_id}")]
+    UnknownApprovedAction { proposal_id: U256 },
+
+    #[error("payload does not match the approved action of proposal {proposal_id}")]
+    ApprovedPayloadMismatch { proposal_id: U256 },
 }
 
 impl From<HyperlaneControllerError> for PrecompileError {
@@ -246,6 +252,22 @@ impl From<HyperlaneControllerError> for PrecompileError {
                 PrecompileError::RevertBytes(Bytes::from(
                     IHyperlaneController::InvalidProposalPayload {
                         value: value.to_string(),
+                    }
+                    .abi_encode(),
+                ))
+            }
+            HyperlaneControllerError::UnknownApprovedAction { proposal_id } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    IHyperlaneController::UnknownApprovedAction {
+                        proposalId: proposal_id,
+                    }
+                    .abi_encode(),
+                ))
+            }
+            HyperlaneControllerError::ApprovedPayloadMismatch { proposal_id } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    IHyperlaneController::ApprovedPayloadMismatch {
+                        proposalId: proposal_id,
                     }
                     .abi_encode(),
                 ))
