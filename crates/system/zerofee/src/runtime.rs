@@ -33,15 +33,13 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_primitives::transaction_call::TransactionCallFields;
 use outbe_primitives::{
-    addresses::{TRIBUTE_FACTORY_ADDRESS, ZEROFEE_ADDRESS},
-    storage::StorageHandle,
-    time::timestamp_to_date_key,
+    addresses::ZEROFEE_ADDRESS, storage::StorageHandle, time::timestamp_to_date_key,
 };
 
 use crate::{
     constants::{
-        FREE_TX_BOOTSTRAP_GAS_LIMIT, FREE_TX_DAILY_CALLDATA_BYTES, FREE_TX_DAILY_GAS_LIMIT,
-        FREE_TX_DAILY_LIMIT, FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT, MIN_FREE_TX_MAX_FEE_PER_GAS,
+        ELEVATED_SPONSORED_GAS, FREE_TX_BOOTSTRAP_GAS_LIMIT, FREE_TX_DAILY_CALLDATA_BYTES,
+        FREE_TX_DAILY_GAS_LIMIT, FREE_TX_DAILY_LIMIT, MIN_FREE_TX_MAX_FEE_PER_GAS,
     },
     hooks::{ZeroFeePolicyError, ZeroFeeTransaction},
     precompile::IZeroFee,
@@ -181,8 +179,9 @@ pub fn authorize_bootstrap(candidate: BootstrapCandidate, account: BootstrapAcco
 /// directly, so a future caller cannot drift the policy by passing a
 /// broader list.
 ///
-/// On `Ok(())`, the policy accepts the transaction shape. On `Err(_)`, the
-/// caller must reject with the matching error code.
+/// On `Ok(())`, the policy accepts the transaction shape for sponsorship.
+/// `Err(_)` means sponsorship ineligibility, not unconditional transaction
+/// rejection. Current txpool and executor callers retain normal paid fallback.
 pub fn classify_sponsorship(tx: &ZeroFeeTransaction<'_>) -> Result<(), ZeroFeePolicyError> {
     if tx.call.value != U256::ZERO {
         return Err(ZeroFeePolicyError::FreeTxDailyValueNotZero);
@@ -206,13 +205,20 @@ pub fn classify_sponsorship(tx: &ZeroFeeTransaction<'_>) -> Result<(), ZeroFeePo
 
 /// Checks the gas limit and the calldata size of a sponsored transaction.
 ///
-/// The TributeFactory has a larger gas limit than every other target.
+/// The `(target, selector)` selects an elevated ceiling, or the default when
+/// no grant matches. Argument decoding remains the target's responsibility.
 fn check_sponsored_budget(tx: &ZeroFeeTransaction<'_>) -> Result<(), ZeroFeePolicyError> {
-    let gas_limit = if tx.call.to == Some(TRIBUTE_FACTORY_ADDRESS) {
-        FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT
-    } else {
-        FREE_TX_DAILY_GAS_LIMIT
-    };
+    let selector = tx
+        .call
+        .input
+        .get(..4)
+        .and_then(|bytes| <[u8; 4]>::try_from(bytes).ok());
+    let gas_limit = ELEVATED_SPONSORED_GAS
+        .iter()
+        .find(|(target, granted_selector, _)| {
+            tx.call.to == Some(*target) && selector == Some(*granted_selector)
+        })
+        .map_or(FREE_TX_DAILY_GAS_LIMIT, |(_, _, limit)| *limit);
     if tx.call.gas_limit > gas_limit {
         return Err(ZeroFeePolicyError::FreeTxDailyGasLimitExceeded {
             gas_limit: tx.call.gas_limit,
@@ -308,16 +314,21 @@ pub fn precheck_sponsorship(signer: Address) -> Result<(), ZeroFeePolicyError> {
 ///   [`MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS`](outbe_primitives::consensus::MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS)
 ///   (1 h).
 ///
-/// Every validator enforces this band with the check
-/// `validate_against_parent_timestamp_millis` in the `outbe-node` consensus
-/// policy. The proposer clamps its own timestamp to the same band.
+/// Validators enforce this inclusive band with
+/// `validate_against_parent_timestamp_millis` in
+/// `crates/blockchain/node/src/consensus/policy.rs` (`outbe-node`). A parent at
+/// height zero skips only the minimum advance. Strict monotonicity and the
+/// maximum still apply. This function does not validate the timestamp. It
+/// relies on the surrounding block-validation flow.
 ///
-/// The drift band bounds the resulting exposure. A single proposer can move
-/// the UTC-day quota rollover earlier by at most
-/// `MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS`. Chain time is monotonic, so each day
-/// boundary resets a signer's quota at most once. The epoch intentionally
-/// stays on the UTC timestamp day key. Thus it matches the `getCounter`
-/// view, the `day` field of the
+/// The maximum is parent-relative, not a wall-clock or cumulative bound. A
+/// proposer can cross an upcoming UTC midnight within one permitted advance.
+/// Consecutive blocks can accumulate larger advances. Along a valid monotonic
+/// chain, each day boundary resets a signer's quota at most once. This policy
+/// accepts that early rollover rather than preventing it.
+///
+/// The epoch intentionally stays on the UTC timestamp day key. Thus it matches
+/// the `getCounter` view, the `day` field of the
 /// [`SponsorshipAuthorized`](IZeroFee::SponsorshipAuthorized) event, and the
 /// day-indexed emission schedule. A unit test guards that the drift bound
 /// stays below one day.
@@ -396,8 +407,8 @@ mod tests {
     use alloy_primitives::{address, Address, Signature, U256};
     use alloy_sol_types::SolCall;
     use outbe_primitives::{
-        addresses::{AGENT_REWARD_ADDRESS, ZEROFEE_ADDRESS},
-        consensus::MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
+        addresses::{AGENT_REWARD_ADDRESS, TRIBUTE_FACTORY_ADDRESS, ZEROFEE_ADDRESS},
+        consensus::{MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS, MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS},
         storage::{hashmap::HashMapStorageProvider, StorageHandle},
         time::SECONDS_PER_DAY,
     };
@@ -703,7 +714,7 @@ mod tests {
 
     #[test]
     fn classify_accepts_tribute_factory_zk_gas_limit() {
-        let mut tx = ok_envelope(&[]);
+        let mut tx = ok_envelope(&ELEVATED_SPONSORED_GAS[0].1);
         tx.call.to = Some(TRIBUTE_FACTORY_ADDRESS);
         tx.call.gas_limit = crate::FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT;
 
@@ -712,7 +723,7 @@ mod tests {
 
     #[test]
     fn classify_rejects_tribute_factory_above_zk_gas_limit() {
-        let mut tx = ok_envelope(&[]);
+        let mut tx = ok_envelope(&ELEVATED_SPONSORED_GAS[0].1);
         tx.call.to = Some(TRIBUTE_FACTORY_ADDRESS);
         tx.call.gas_limit = crate::FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT + 1;
 
@@ -723,6 +734,113 @@ mod tests {
                 limit: crate::FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT,
             })
         );
+    }
+
+    #[test]
+    fn classify_scopes_elevated_gas_to_target_and_selector() {
+        let selector = ELEVATED_SPONSORED_GAS[0].1;
+        let unknown = [0xff; 4];
+        assert_ne!(selector, unknown);
+        for (to, input, limit) in [
+            (
+                Some(TRIBUTE_FACTORY_ADDRESS),
+                &unknown[..],
+                FREE_TX_DAILY_GAS_LIMIT,
+            ),
+            (
+                Some(TRIBUTE_FACTORY_ADDRESS),
+                &selector[..0],
+                FREE_TX_DAILY_GAS_LIMIT,
+            ),
+            (
+                Some(TRIBUTE_FACTORY_ADDRESS),
+                &selector[..1],
+                FREE_TX_DAILY_GAS_LIMIT,
+            ),
+            (
+                Some(TRIBUTE_FACTORY_ADDRESS),
+                &selector[..2],
+                FREE_TX_DAILY_GAS_LIMIT,
+            ),
+            (
+                Some(TRIBUTE_FACTORY_ADDRESS),
+                &selector[..3],
+                FREE_TX_DAILY_GAS_LIMIT,
+            ),
+            (
+                Some(AGENT_REWARD_ADDRESS),
+                &selector[..],
+                FREE_TX_DAILY_GAS_LIMIT,
+            ),
+            (
+                Some(TRIBUTE_FACTORY_ADDRESS),
+                &selector[..],
+                crate::FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT,
+            ),
+        ] {
+            let mut tx = ok_envelope(input);
+            tx.call.to = to;
+            tx.call.gas_limit = limit;
+            assert_eq!(classify_sponsorship(&tx), Ok(()));
+            tx.call.gas_limit += 1;
+            let err = classify_sponsorship(&tx).unwrap_err();
+            assert_eq!(
+                err,
+                ZeroFeePolicyError::FreeTxDailyGasLimitExceeded {
+                    gas_limit: limit + 1,
+                    limit,
+                }
+            );
+            assert_eq!(err.code(), 114);
+        }
+
+        let mut tx = ok_envelope(&selector);
+        tx.call.to = Some(TRIBUTE_FACTORY_ADDRESS);
+        tx.call.gas_limit = FREE_TX_DAILY_GAS_LIMIT + 1;
+        assert_eq!(classify_sponsorship(&tx), Ok(()));
+
+        // Without a target grant, gas validation still precedes target checks.
+        for to in [None, Some(ZEROFEE_ADDRESS)] {
+            tx.call.to = to;
+            assert_eq!(classify_sponsorship(&tx).unwrap_err().code(), 114);
+            tx.call.gas_limit = FREE_TX_DAILY_GAS_LIMIT;
+            assert_eq!(
+                classify_sponsorship(&tx).unwrap_err().code(),
+                if to.is_none() { 112 } else { 116 }
+            );
+            tx.call.gas_limit += 1;
+        }
+    }
+
+    #[test]
+    fn elevated_grant_preserves_other_envelope_constraints() {
+        let mut input = vec![0; FREE_TX_DAILY_CALLDATA_BYTES + 1];
+        input[..4].copy_from_slice(&ELEVATED_SPONSORED_GAS[0].1);
+        let mut tx = ok_envelope(&input);
+        tx.call.to = Some(TRIBUTE_FACTORY_ADDRESS);
+        tx.call.gas_limit = crate::FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT;
+        assert_eq!(
+            classify_sponsorship(&tx),
+            Err(ZeroFeePolicyError::FreeTxDailyCalldataTooLarge {
+                size: input.len(),
+                limit: FREE_TX_DAILY_CALLDATA_BYTES,
+            })
+        );
+        tx.call.value = U256::from(1);
+        assert_eq!(
+            classify_sponsorship(&tx),
+            Err(ZeroFeePolicyError::FreeTxDailyValueNotZero)
+        );
+        tx.call.value = U256::ZERO;
+        for (fee, priority) in [
+            (0, Some(0)),
+            (MIN_FREE_TX_MAX_FEE_PER_GAS, Some(1)),
+            (MIN_FREE_TX_MAX_FEE_PER_GAS, None),
+        ] {
+            tx.call.max_fee_per_gas = fee;
+            tx.call.max_priority_fee_per_gas = priority;
+            assert_eq!(classify_sponsorship(&tx).unwrap_err().code(), 105);
+        }
     }
 
     #[test]
@@ -864,31 +982,37 @@ mod tests {
 
     #[test]
     fn quota_epoch_drift_bound_is_below_one_day() {
-        // The `authorize_sponsorship` doc says that one proposer can move the
-        // day rollover earlier by at most the drift bound. That reasoning is
-        // valid only while the bound is below one day. The const block makes a
-        // wider bound fail at compile time.
+        // Guard the cross-module assumption that one permitted timestamp
+        // advance cannot span a full UTC day.
         const { assert!(MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS < SECONDS_PER_DAY * 1_000) };
     }
 
     #[test]
     fn quota_resets_once_at_proposer_advanced_boundary() {
         let max_drift_secs = MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS / 1_000;
-        let previous_day = outbe_primitives::time::previous_date_key(BLOCK_DAY).expect("date step");
         let parent_ts = BLOCK_TS - 1;
+        let previous_day = timestamp_to_date_key(parent_ts);
         let advanced_ts = parent_ts + max_drift_secs;
-        let further_ts = advanced_ts + max_drift_secs;
+        let further_ts = advanced_ts + MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS / 1_000;
         assert!(advanced_ts >= BLOCK_TS, "the advance must cross midnight");
+        assert_eq!(timestamp_to_date_key(advanced_ts), BLOCK_DAY);
+        assert!(
+            (MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS..=MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS)
+                .contains(&((advanced_ts - parent_ts) * 1_000))
+        );
         assert_eq!(timestamp_to_date_key(further_ts), BLOCK_DAY);
 
         with_storage(|storage| {
             // The signer used the full quota one second before midnight.
             seed_packed(&storage, SIGNER, previous_day, FREE_TX_DAILY_LIMIT);
             let err = authorize_sponsorship(storage.clone(), SIGNER, parent_ts).unwrap_err();
-            assert!(matches!(
+            assert_eq!(
                 err,
-                ZeroFeePolicyError::FreeTxDailyExhausted { used: 8, limit: 8 }
-            ));
+                ZeroFeePolicyError::FreeTxDailyExhausted {
+                    used: FREE_TX_DAILY_LIMIT,
+                    limit: FREE_TX_DAILY_LIMIT,
+                }
+            );
 
             // A proposer advances the timestamp past midnight by the maximum
             // drift. The quota resets one time for the new day.
@@ -896,15 +1020,40 @@ mod tests {
                 let auth = authorize_sponsorship(storage.clone(), SIGNER, advanced_ts).unwrap();
                 assert_eq!(auth.current_day(), BLOCK_DAY);
                 assert_eq!(auth.next_count(), expected);
-                record_sponsorship_use(storage.clone(), auth).unwrap();
+                if expected == 1 {
+                    assert_eq!(
+                        ZeroFeeContract::new(storage.clone())
+                            .read_packed(SIGNER)
+                            .unwrap(),
+                        pack_counter(previous_day, FREE_TX_DAILY_LIMIT)
+                    );
+                }
+                assert_eq!(
+                    record_sponsorship_use(storage.clone(), auth).unwrap(),
+                    expected
+                );
             }
+            let exhausted_counter = pack_counter(BLOCK_DAY, FREE_TX_DAILY_LIMIT);
+            assert_eq!(
+                ZeroFeeContract::new(storage.clone())
+                    .read_packed(SIGNER)
+                    .unwrap(),
+                exhausted_counter
+            );
 
             // A further advance inside the same day does not reset the quota.
-            let err = authorize_sponsorship(storage, SIGNER, further_ts).unwrap_err();
-            assert!(matches!(
+            let err = authorize_sponsorship(storage.clone(), SIGNER, further_ts).unwrap_err();
+            assert_eq!(
                 err,
-                ZeroFeePolicyError::FreeTxDailyExhausted { used: 8, limit: 8 }
-            ));
+                ZeroFeePolicyError::FreeTxDailyExhausted {
+                    used: FREE_TX_DAILY_LIMIT,
+                    limit: FREE_TX_DAILY_LIMIT,
+                }
+            );
+            assert_eq!(
+                ZeroFeeContract::new(storage).read_packed(SIGNER).unwrap(),
+                exhausted_counter
+            );
         });
     }
 
@@ -919,11 +1068,8 @@ mod tests {
 
     // ----- rejection-precedence pins -----
     //
-    // The order in which `classify_sponsorship` and `authorize_sponsorship`
-    // surface failures is consensus-visible. It lands in
-    // `OutbeFailure(code, reason)` logs at `ZERO_FEE_POLICY_LOG_ADDRESS`.
-    // Off-chain UX builds on that code. A future refactor that reorders
-    // checks would silently change the receipt, so pin the order.
+    // Pin classifier error precedence independently of paid fallback.
+    // Stateful authorization failures can produce policy-failure receipts.
 
     #[test]
     fn classify_precedence_non_zero_value_beats_contract_creation() {

@@ -138,7 +138,7 @@ fn zero_fee_soft_failure_cap_admits_then_rejects_with_invalid_tx() {
 }
 
 #[test]
-fn zero_fee_oracle_vote_from_delegated_feeder_keeps_zero_balance() {
+fn sponsored_budget_excludes_protocol_oracle_waiver_from_delegated_feeder() {
     let config = OutbeEvmConfig::new(test_chain_spec());
     let validator = address!("0x1111111111111111111111111111111111111111");
     let pk = dummy_pubkey(0xA1);
@@ -234,9 +234,18 @@ fn zero_fee_oracle_vote_from_delegated_feeder_keeps_zero_balance() {
         let ctx = execution_ctx(Some(1), Bytes::new());
         let mut executor = config.create_executor(evm, ctx);
 
+        // Protocol waivers remain executable even when no sponsored gas remains.
+        executor.sponsored_gas_used = outbe_zerofee::SPONSORED_GAS_PER_BLOCK;
+
         executor
             .execute_transaction(zero_fee_tx)
             .expect("delegated zero-fee oracle vote should execute");
+
+        assert_eq!(
+            executor.sponsored_gas_used,
+            outbe_zerofee::SPONSORED_GAS_PER_BLOCK,
+            "protocol fee waivers must not charge the sponsored budget"
+        );
 
         let cfg = &executor.inner.evm.ctx_mut().cfg;
         assert_eq!(

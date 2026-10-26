@@ -3,6 +3,98 @@
 use super::*;
 
 #[test]
+fn governance_capacity_error_is_atomic_with_the_outer_hook_batch() {
+    use outbe_governance::{schema::GovernanceContract, GovernanceVotePayload, ProposalKind};
+    use outbe_primitives::{addresses::GOVERNANCE_ADDRESS, error::PrecompileError};
+    use outbe_vote::schema::{BondState, ProposalStatus};
+
+    const CREATED: u64 = 7;
+    let validators = [
+        (Address::repeat_byte(0xb1), dummy_pubkey(0xb1)),
+        (Address::repeat_byte(0xb2), dummy_pubkey(0xb2)),
+        (Address::repeat_byte(0xb3), dummy_pubkey(0xb3)),
+    ];
+    let proposer = validators[0].0;
+    let id = U256::ONE;
+    let mut state = state_with_active_validators_seeded_at_block(&validators, CREATED, |storage| {
+        let mut vote = Vote::new(storage.clone());
+        assert_eq!(
+            vote.create_proposal(
+                proposer,
+                GOVERNANCE_ADDRESS,
+                &GovernanceVotePayload::encode(ProposalKind::Oip, "capacity test"),
+                CREATED,
+                crate::handlers::vote::registry(),
+            )
+            .unwrap(),
+            id
+        );
+        for (voter, _) in &validators[..2] {
+            vote.cast_vote_approve(id, *voter, true, CREATED + 1)
+                .unwrap();
+        }
+        GovernanceContract::new(storage)
+            .oip_author_count
+            .write(&proposer, u32::MAX)
+            .unwrap();
+    });
+    let number = CREATED + VOTING_WINDOW_BLOCKS + 1;
+    let context = BlockContext::new(
+        number,
+        1_700_000_000,
+        CHAIN_ID,
+        proposer,
+        validators.iter().map(|(address, _)| *address).collect(),
+    );
+
+    let error = super::run_atomic_storage_hooks(&mut state, context.clone(), |ctx| {
+        super::run_outbe_pre_execution_hooks(ctx, None)?;
+        let vote = Vote::new(ctx.storage.clone());
+        assert_eq!(
+            vote.proposals.get(id)?.unwrap().proposal_status()?,
+            ProposalStatus::Error
+        );
+        assert!(vote.list_pending_proposal_ids()?.is_empty());
+        Err(PrecompileError::Fatal(
+            "failure after Governance tally".into(),
+        ))
+    })
+    .expect_err("a later hook failure must roll back the terminal capacity error");
+    assert!(error.to_string().contains("failure after Governance tally"));
+
+    let (_, events) = super::run_atomic_storage_hooks(&mut state, context, |ctx| {
+        let vote = Vote::new(ctx.storage.clone());
+        assert_eq!(
+            vote.proposals.get(id)?.unwrap().proposal_status()?,
+            ProposalStatus::Pending
+        );
+        assert_eq!(vote.list_pending_proposal_ids()?, vec![id]);
+        super::run_outbe_pre_execution_hooks(ctx, None)?;
+        assert_eq!(
+            vote.proposals.get(id)?.unwrap().proposal_status()?,
+            ProposalStatus::Error
+        );
+        assert_eq!(vote.proposal_bond(id)?.state, BondState::NoBond);
+        assert!(vote.list_pending_proposal_ids()?.is_empty());
+        assert_eq!(GovernanceContract::new(ctx.storage.clone()).oip_count()?, 0);
+        Ok(())
+    })
+    .expect("capacity refusal must allow the hook batch to commit on retry");
+    let (receipt_logs, _) = partition_hook_events(&events);
+    assert_eq!(
+        receipt_logs
+            .iter()
+            .filter(|log| log.address == VOTE_ADDRESS
+                && log.data.topics().first() == Some(&IVote::ProposalErrored::SIGNATURE_HASH))
+            .count(),
+        1
+    );
+    assert!(receipt_logs
+        .iter()
+        .all(|log| log.address != GOVERNANCE_ADDRESS));
+}
+
+#[test]
 fn apply_pre_execution_changes_emits_phase1_slashing_logs_in_system_receipt() {
     let signer = test_evm_signer();
     let proposer = signer.address();
@@ -300,8 +392,8 @@ fn real_factory_execution_error_has_no_factory_receipt_log() {
         ProposalStatus::Error
     );
     assert_eq!(
-        vote.proposal_bond(U256::from(1u64)).unwrap().settlement,
-        BondSettlement::Refunded
+        vote.proposal_bond(U256::from(1u64)).unwrap().state,
+        BondState::Refunded
     );
     assert_eq!(vote.bond_liabilities().unwrap(), U256::ZERO);
     assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), U256::ZERO);

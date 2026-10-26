@@ -26,25 +26,24 @@ pub enum ProposalStatus {
     Error = 4,
 }
 
-/// Settlement state of a proposal's native bond liability.
+/// State of the native bond of a proposal.
 ///
 /// Zero is deliberately `NoBond` so proposal records written before bond
 /// accounting remain valid when the appended fields read as zero.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum BondSettlement {
+pub enum BondState {
     NoBond = 0,
-    Unsettled = 1,
+    Escrowed = 1,
     Refunded = 2,
     Burned = 3,
 }
 
-impl BondSettlement {
-    const VARIANTS: [Self; 4] = [Self::NoBond, Self::Unsettled, Self::Refunded, Self::Burned];
+impl BondState {
+    const VARIANTS: [Self; 4] = [Self::NoBond, Self::Escrowed, Self::Refunded, Self::Burned];
 
     pub fn from_u8(value: u8) -> std::result::Result<Self, VoteError> {
-        decode_stored_u8(value, &Self::VARIANTS, Self::to_u8)
-            .ok_or(VoteError::InvalidBondSettlement)
+        decode_stored_u8(value, &Self::VARIANTS, Self::to_u8).ok_or(VoteError::CorruptBondState)
     }
 
     pub const fn to_u8(self) -> u8 {
@@ -71,8 +70,8 @@ impl ProposalStatus {
     }
 
     /// Returns `true` when the proposal leaves the bounded pending index.
-    /// `Error` is terminal. The module never retries a target-execution failure
-    /// and settles its bond with the status.
+    /// `Error` is terminal. The module never retries a target-execution failure.
+    /// It refunds the bond when it records the `Error` status.
     pub const fn is_terminal(self) -> bool {
         matches!(
             self,
@@ -175,8 +174,8 @@ impl Storable for VoteRecord {
 ///   8:  votes_map: mapping(voteKey => 1-based proposal_voters index)
 ///   9:  proposal_voters: mapping(proposalId => VoteRecord[])
 ///   10: proposal_bond_amount: mapping(proposalId => amount)
-///   11: proposal_bond_settlement: mapping(proposalId => BondSettlement)
-///   12: unsettled_bond_liabilities
+///   11: proposal_bond_state: mapping(proposalId => BondState)
+///   12: escrowed_bond_total
 ///   13: proposal_electorate: mapping(proposalId => TargetElectorate)
 #[storage_schema]
 #[contract(addr = VOTE_ADDRESS)]
@@ -208,13 +207,13 @@ pub struct Vote {
     #[attribute(order = 5)]
     pub proposal_bond_amount: outbe_primitives::storage::dsl::Map<U256, U256>,
 
-    /// Appended `BondSettlement` byte keyed by proposal id.
+    /// Appended `BondState` byte keyed by proposal id.
     #[attribute(order = 6)]
-    pub proposal_bond_settlement: outbe_primitives::storage::dsl::Map<U256, u8>,
+    pub proposal_bond_state: outbe_primitives::storage::dsl::Map<U256, u8>,
 
-    /// Aggregate amount of all proposal bonds whose settlement is `Unsettled`.
+    /// Total amount of all proposal bonds whose state is `Escrowed`.
     #[attribute(order = 7)]
-    pub unsettled_bond_liabilities: outbe_primitives::storage::dsl::Value<U256>,
+    pub escrowed_bond_total: outbe_primitives::storage::dsl::Value<U256>,
 
     /// Immutable target policy; absent legacy values select ACTIVE-only voting.
     #[attribute(order = 8)]

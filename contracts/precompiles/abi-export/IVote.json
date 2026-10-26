@@ -72,6 +72,19 @@
   },
   {
     "type": "function",
+    "name": "escrowedBondTotal",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getProposal",
     "inputs": [
       {
@@ -165,9 +178,9 @@
         "internalType": "uint256"
       },
       {
-        "name": "settlement",
+        "name": "state",
         "type": "uint8",
-        "internalType": "enum IVote.BondSettlement"
+        "internalType": "enum IVote.BondState"
       }
     ],
     "stateMutability": "view"
@@ -250,19 +263,6 @@
         "name": "",
         "type": "uint256[]",
         "internalType": "uint256[]"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "unsettledBondLiabilities",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"

@@ -10,7 +10,7 @@ contract StablecoinInterfacesTest {
     function testCriticalSelectorsAreFrozen() public pure {
         _assertEq(IVote.createProposal.selector, 0x1f4f7d29);
         _assertEq(IVote.getProposalBond.selector, 0xb6e19328);
-        _assertEq(IVote.unsettledBondLiabilities.selector, 0x112faae4);
+        _assertEq(IVote.escrowedBondTotal.selector, 0x2563f24d);
 
         _assertEq(IStablecoinFactory.tokenCount.selector, 0x9f181b5e);
         _assertEq(IStablecoinFactory.listTokens.selector, 0xe30e5ae9);

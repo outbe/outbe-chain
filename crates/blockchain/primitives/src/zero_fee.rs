@@ -19,10 +19,9 @@ use crate::addresses::{
 ///
 /// Sponsored transactions can call only protocol-defined system
 /// precompiles. They cannot enter arbitrary EVM execution. The
-/// whitelist structurally limits the reachable code paths. This limit
-/// replaces a global per-block sponsored-tx cap. An attacker with N
-/// pre-funded addresses can still burn 8 free txs each, but each tx
-/// can only invoke one of these audited entrypoints. The set is a
+/// whitelist structurally limits the reachable code paths, while
+/// `outbe_zerofee::SPONSORED_GAS_PER_BLOCK` limits the block share of
+/// included sponsored and bootstrap transaction gas limits. The set is a
 /// strict subset of the registered outbe precompile table because
 /// validator-only entrypoints (rewards/staking/oracle) are not
 /// reachable through the sponsored path. Those entrypoints have dedicated

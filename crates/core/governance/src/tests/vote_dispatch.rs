@@ -1,7 +1,7 @@
 use alloy_primitives::keccak256;
 use alloy_primitives::{address, Address, B256, U256};
-use alloy_sol_types::SolEvent;
-use outbe_primitives::addresses::GOVERNANCE_ADDRESS;
+use alloy_sol_types::{SolCall, SolError, SolEvent};
+use outbe_primitives::addresses::{GOVERNANCE_ADDRESS, VOTE_ADDRESS};
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
@@ -9,8 +9,9 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_vote::constants::{MAX_PAYLOAD_BYTES, VOTING_WINDOW_BLOCKS};
 use outbe_vote::errors::VoteError;
 use outbe_vote::handlers::{VoteTarget, VoteTargetRegistry};
-use outbe_vote::schema::ProposalStatus;
+use outbe_vote::precompile::IVote;
 use outbe_vote::schema::Vote;
+use outbe_vote::schema::{BondState, ProposalStatus};
 
 use crate::errors::GovernanceError;
 use crate::precompile::IGovernance;
@@ -305,6 +306,245 @@ fn expired_governance_proposal_does_not_create_record() {
     }
 }
 
+// Seed only after admission and quorum, modelling capacity consumed while voting.
+fn seed_capacity(storage: StorageHandle, kind: ProposalKind, author: u32, next_id: u64) {
+    let gov = GovernanceContract::new(storage);
+    match kind {
+        ProposalKind::Oip => {
+            gov.oip_author_count.write(&PROPOSER, author).unwrap();
+            gov.next_oip_id.write(next_id).unwrap();
+        }
+        ProposalKind::Gip => {
+            gov.gip_author_count.write(&PROPOSER, author).unwrap();
+            gov.next_gip_id.write(next_id).unwrap();
+        }
+        ProposalKind::CanonText | ProposalKind::MetaCanonText => {
+            unreachable!("text kinds have no record capacity")
+        }
+    }
+}
+
+fn admitted_fixture(kind: ProposalKind) -> (HashMapStorageProvider, U256) {
+    let mut id = U256::ZERO;
+    let mut provider = with_vote_provider(|storage| {
+        id = create_and_pass(&mut Vote::new(storage), kind, "approved body", 100);
+    });
+    provider.clear_mutation_failure();
+    (provider, id)
+}
+
+fn finalize(provider: &mut HashMapStorageProvider) -> outbe_primitives::error::Result<()> {
+    let storage = StorageHandle::new(provider);
+    Vote::new(storage.clone()).process_begin_block(
+        &block_ctx(storage, 101 + VOTING_WINDOW_BLOCKS),
+        &VOTE_TARGET_REGISTRY,
+    )
+}
+
+fn assert_pending(storage: StorageHandle, id: U256) {
+    let vote = Vote::new(storage);
+    assert_eq!(
+        vote.proposals
+            .get(id)
+            .unwrap()
+            .unwrap()
+            .proposal_status()
+            .unwrap(),
+        ProposalStatus::Pending
+    );
+    assert_eq!(vote.list_pending_proposal_ids().unwrap(), vec![id]);
+    assert_eq!(vote.proposal_bond(id).unwrap().state, BondState::NoBond);
+}
+
+#[test]
+fn capacity_after_quorum_is_terminal_and_never_replayed() {
+    for kind in KINDS {
+        for (author, next_id) in [(u32::MAX, 0), (0, u64::MAX)] {
+            let (mut provider, id) = admitted_fixture(kind);
+            {
+                let storage = StorageHandle::new(&mut provider);
+                seed_capacity(storage.clone(), kind, author, next_id);
+            }
+            let before: std::collections::HashMap<_, _> = provider
+                .storage
+                .iter()
+                .filter(|(key, _)| key.0 == GOVERNANCE_ADDRESS)
+                .map(|(key, value)| (*key, *value))
+                .collect();
+            finalize(&mut provider).unwrap();
+            {
+                let storage = StorageHandle::new(&mut provider);
+                let vote = Vote::new(storage.clone());
+                assert_eq!(
+                    vote.proposals
+                        .get(id)
+                        .unwrap()
+                        .unwrap()
+                        .proposal_status()
+                        .unwrap(),
+                    ProposalStatus::Error
+                );
+                assert!(vote.list_pending_proposal_ids().unwrap().is_empty());
+                assert_eq!(vote.proposal_bond(id).unwrap().state, BondState::NoBond);
+                let gov = GovernanceContract::new(storage.clone());
+                assert!(gov.get_oip(U256::ONE).unwrap().is_none());
+                assert!(gov.get_gip(U256::ONE).unwrap().is_none());
+            }
+            let after: std::collections::HashMap<_, _> = provider
+                .storage
+                .iter()
+                .filter(|(key, _)| key.0 == GOVERNANCE_ADDRESS)
+                .map(|(key, value)| (*key, *value))
+                .collect();
+            assert_eq!(after, before);
+            assert!(provider.get_events(GOVERNANCE_ADDRESS).is_empty());
+            let logs = provider.get_events(VOTE_ADDRESS);
+            assert_eq!(
+                logs.iter()
+                    .filter(
+                        |log| log.topics().first() == Some(&IVote::ProposalErrored::SIGNATURE_HASH)
+                    )
+                    .count(),
+                1
+            );
+            for signature in [
+                IVote::ProposalApproved::SIGNATURE_HASH,
+                IVote::ProposalBondRefunded::SIGNATURE_HASH,
+                IVote::ProposalBondBurned::SIGNATURE_HASH,
+            ] {
+                assert!(!logs
+                    .iter()
+                    .any(|log| log.topics().first() == Some(&signature)));
+            }
+            let terminal = provider.storage.clone();
+            let log_count = provider.get_events(VOTE_ADDRESS).len();
+            finalize(&mut provider).unwrap();
+            assert_eq!(provider.storage, terminal);
+            assert_eq!(provider.get_events(VOTE_ADDRESS).len(), log_count);
+            assert!(provider.get_events(GOVERNANCE_ADDRESS).is_empty());
+        }
+    }
+}
+
+#[test]
+fn last_author_index_and_proposal_id_remain_usable() {
+    for kind in KINDS {
+        let (mut provider, id) = admitted_fixture(kind);
+        seed_capacity(
+            StorageHandle::new(&mut provider),
+            kind,
+            u32::MAX - 1,
+            u64::MAX - 1,
+        );
+        finalize(&mut provider).unwrap();
+        let storage = StorageHandle::new(&mut provider);
+        let vote = Vote::new(storage.clone());
+        assert_eq!(
+            vote.proposals
+                .get(id)
+                .unwrap()
+                .unwrap()
+                .proposal_status()
+                .unwrap(),
+            ProposalStatus::Approved
+        );
+        assert!(vote.list_pending_proposal_ids().unwrap().is_empty());
+        let gov = GovernanceContract::new(storage);
+        let last = U256::from(u64::MAX);
+        let (record_status, count, next, listed) = match kind {
+            ProposalKind::Oip => (
+                gov.get_oip(last).unwrap().unwrap().status,
+                gov.oip_author_count.read(&PROPOSER).unwrap(),
+                gov.next_oip_id.read().unwrap(),
+                gov.oips_by_author(PROPOSER, U256::from(u32::MAX - 1), U256::ONE)
+                    .unwrap(),
+            ),
+            ProposalKind::Gip => (
+                gov.get_gip(last).unwrap().unwrap().status,
+                gov.gip_author_count.read(&PROPOSER).unwrap(),
+                gov.next_gip_id.read().unwrap(),
+                gov.gips_by_author(PROPOSER, U256::from(u32::MAX - 1), U256::ONE)
+                    .unwrap(),
+            ),
+            ProposalKind::CanonText | ProposalKind::MetaCanonText => {
+                unreachable!("text kinds create no proposal record")
+            }
+        };
+        assert_eq!(record_status, status::APPROVED);
+        assert_eq!(count, u32::MAX);
+        assert_eq!(next, u64::MAX);
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, last);
+    }
+}
+
+#[test]
+fn public_submit_preserves_capacity_error_selectors() {
+    for kind in KINDS {
+        for (author, next_id, expected) in [
+            (u32::MAX, 0, IGovernance::AuthorIndexFull {}.abi_encode()),
+            (
+                0,
+                u64::MAX,
+                IGovernance::ProposalIdExhausted {}.abi_encode(),
+            ),
+        ] {
+            with_vote(|storage| {
+                seed_capacity(storage.clone(), kind, author, next_id);
+                let input = match kind {
+                    ProposalKind::Oip => IGovernance::submitOipCall {
+                        text: "body".into(),
+                    }
+                    .abi_encode(),
+                    ProposalKind::Gip => IGovernance::submitGipCall {
+                        text: "body".into(),
+                    }
+                    .abi_encode(),
+                    ProposalKind::CanonText | ProposalKind::MetaCanonText => {
+                        unreachable!("text kinds have no record capacity")
+                    }
+                };
+                let error =
+                    crate::precompile::dispatch(storage, &input, PROPOSER, U256::ZERO).unwrap_err();
+                match error {
+                    PrecompileError::RevertBytes(bytes) => {
+                        assert_eq!(bytes.as_ref(), expected.as_slice())
+                    }
+                    other => panic!("expected ABI capacity error, got {other:?}"),
+                }
+            });
+        }
+    }
+}
+
+#[test]
+fn corrupted_admitted_payloads_remain_pending_without_terminal_logs() {
+    for kind in KINDS.into_iter().chain(TEXT_KINDS) {
+        for payload in [
+            "{".to_string(),
+            r#"{"kind":"unknown","text":"body"}"#.to_string(),
+            GovernanceVotePayload::encode(kind, ""),
+            GovernanceVotePayload::encode(kind, &"x".repeat(crate::runtime::MAX_TEXT_BYTES + 1)),
+        ] {
+            let (mut provider, id) = admitted_fixture(kind);
+            {
+                let storage = StorageHandle::new(&mut provider);
+                let vote = Vote::new(storage);
+                let mut record = vote.proposals.get(id).unwrap().unwrap();
+                record.payload = payload;
+                vote.proposals.update(&record).unwrap();
+            }
+            let before = provider.storage.clone();
+            let logs = provider.get_events(VOTE_ADDRESS).len();
+            assert!(finalize(&mut provider).is_err());
+            assert_eq!(provider.storage, before);
+            assert_eq!(provider.get_events(VOTE_ADDRESS).len(), logs);
+            assert!(provider.get_events(GOVERNANCE_ADDRESS).is_empty());
+            assert_pending(StorageHandle::new(&mut provider), id);
+        }
+    }
+}
+
 // ------------------------------------------------- canon / meta-canon text ---
 
 const TEXT_KINDS: [ProposalKind; 2] = [ProposalKind::CanonText, ProposalKind::MetaCanonText];
@@ -353,7 +593,8 @@ fn assert_approved_text_proposal_changes_text(kind: ProposalKind) {
         let mut gov = GovernanceContract::new(storage.clone());
         match kind {
             ProposalKind::CanonText => gov.update_canon(PROPOSER, "text v1").unwrap(),
-            _ => gov.update_meta_canon(PROPOSER, "text v1").unwrap(),
+            ProposalKind::MetaCanonText => gov.update_meta_canon(PROPOSER, "text v1").unwrap(),
+            ProposalKind::Oip | ProposalKind::Gip => unreachable!("record kinds have no text slot"),
         };
 
         let mut vote = Vote::new(storage.clone());
@@ -445,6 +686,59 @@ fn unshaped_text_rejected_at_proposal_creation() {
                 );
                 assert_eq!(stored_text(&GovernanceContract::new(storage), kind).1, 0);
             });
+        }
+    }
+}
+
+#[test]
+fn every_governance_and_vote_finalization_mutation_rolls_back_and_retries() {
+    for kind in KINDS.into_iter().chain(TEXT_KINDS) {
+        // Sweep both successful target writes and terminal-capacity finalization.
+        for exhausted in [false, true] {
+            if exhausted && matches!(kind, ProposalKind::CanonText | ProposalKind::MetaCanonText) {
+                continue;
+            }
+            let fixture = || {
+                let (mut provider, id) = admitted_fixture(kind);
+                if exhausted {
+                    seed_capacity(StorageHandle::new(&mut provider), kind, u32::MAX, 0);
+                }
+                provider.clear_mutation_failure();
+                (provider, id)
+            };
+            let (mut baseline, _) = fixture();
+            finalize(&mut baseline).unwrap();
+            let mutations = baseline.clear_mutation_failure();
+            assert!(mutations > 0);
+            for operation in 0..mutations {
+                let (mut provider, id) = fixture();
+                let before = provider.storage.clone();
+                let logs = provider.get_events(VOTE_ADDRESS).len();
+                provider.fail_after_mutation_at(operation);
+                let error = finalize(&mut provider).unwrap_err();
+                assert!(
+                    matches!(error, PrecompileError::Storage(_)),
+                    "{kind:?}, exhausted={exhausted}, operation={operation}: {error:?}"
+                );
+                provider.clear_mutation_failure();
+                assert_eq!(provider.storage, before, "operation {operation}");
+                assert_eq!(provider.get_events(VOTE_ADDRESS).len(), logs);
+                assert!(provider.get_events(GOVERNANCE_ADDRESS).is_empty());
+                assert_pending(StorageHandle::new(&mut provider), id);
+                finalize(&mut provider).unwrap();
+                assert_eq!(
+                    provider.storage, baseline.storage,
+                    "retry operation {operation}"
+                );
+                assert_eq!(
+                    provider.get_events(VOTE_ADDRESS),
+                    baseline.get_events(VOTE_ADDRESS)
+                );
+                assert_eq!(
+                    provider.get_events(GOVERNANCE_ADDRESS),
+                    baseline.get_events(GOVERNANCE_ADDRESS)
+                );
+            }
         }
     }
 }

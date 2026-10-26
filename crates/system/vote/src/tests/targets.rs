@@ -16,7 +16,7 @@ use crate::{
         TargetAdmission, TargetExecutionOutcome, VoteTarget, VoteTargetContext, VoteTargetRegistry,
     },
     precompile::IVote,
-    schema::{BondSettlement, ProposalStatus, Vote},
+    schema::{BondState, ProposalStatus, Vote},
     state::ProposalSubmission,
 };
 
@@ -367,7 +367,7 @@ pub(super) struct PendingBond {
 
 /// Fails the finalization of a `fixture` proposal after each storage mutation
 /// of a successful run in turn. Each failure must return a storage error and
-/// leave the proposal pending with its bond unsettled, the bond `pending`
+/// leave the proposal pending with its bond escrowed, the bond `pending`
 /// state, and no log whose first topic is in `absent_events`. `check` asserts
 /// the scenario state for one failure point. Returns the baseline proposal id.
 pub(super) fn assert_every_finalization_mutation_rolls_back(
@@ -417,8 +417,8 @@ fn finalize_after_deadline(provider: &mut HashMapStorageProvider, deadline: u64)
     )
 }
 
-/// Asserts that `proposal_id` is still pending with its bond unsettled and
-/// that the bond liabilities and the Vote balance equal `pending`.
+/// Asserts that `proposal_id` is still pending with its bond escrowed and
+/// that the escrowed bond total and the Vote balance equal `pending`.
 fn assert_bond_still_pending(
     storage: &StorageHandle<'_>,
     proposal_id: U256,
@@ -437,8 +437,8 @@ fn assert_bond_still_pending(
         "failure point {failure_point}"
     );
     assert_eq!(
-        vote.proposal_bond(proposal_id).unwrap().settlement,
-        BondSettlement::Unsettled,
+        vote.proposal_bond(proposal_id).unwrap().state,
+        BondState::Escrowed,
         "failure point {failure_point}"
     );
     assert_eq!(
