@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
 
 import {Create3Factory} from "@shared/Create3Factory.sol";
 import {LayerZeroGatewayAdapter} from "src/adapters/LayerZeroGatewayAdapter.sol";
 import {HyperlaneGatewayAdapter} from "src/adapters/HyperlaneGatewayAdapter.sol";
 import {LoopbackGatewayAdapter} from "src/adapters/LoopbackGatewayAdapter.sol";
+import {DeployBase} from "./DeployBase.sol";
 
 /// @dev Deploys the gateway adapters via CREATE3 (same address on every chain).
 ///      `run()` deploys each adapter only if its endpoint env is set:
@@ -15,29 +15,29 @@ import {LoopbackGatewayAdapter} from "src/adapters/LoopbackGatewayAdapter.sol";
 ///      - Hyperlane when `HYPERLANE_MAILBOX` is present.
 ///      - The loopback (same-chain) adapter when `WIRE_LOOPBACK` is true.
 ///
-/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `CREATE3_FACTORY_ADDRESS`, `BRIDGE_OWNER`, and at
-/// least one of `LZ_ENDPOINT` / `HYPERLANE_MAILBOX`.
-contract DeployAdapters is Script {
+///      The deployer owns each adapter until 4_HandOver gives it to governance.
+///
+/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `CREATE3_FACTORY_ADDRESS`, and at least one of
+/// `LZ_ENDPOINT` / `HYPERLANE_MAILBOX`.
+contract DeployAdapters is DeployBase {
     function run() public virtual {
-        uint256 deployerPk = vm.envUint("DEPLOYER_PK");
         string memory salt = vm.envString("CONTRACT_SALT");
         address factory = vm.envAddress("CREATE3_FACTORY_ADDRESS");
-        address owner = vm.envAddress("BRIDGE_OWNER");
-        address deployer = vm.addr(deployerPk);
+        address deployer = _deployer();
 
         address lzEndpoint = vm.envOr("LZ_ENDPOINT", address(0));
         address mailbox = vm.envOr("HYPERLANE_MAILBOX", address(0));
         require(lzEndpoint != address(0) || mailbox != address(0), "set LZ_ENDPOINT and/or HYPERLANE_MAILBOX");
 
-        vm.startBroadcast(deployerPk);
+        vm.startBroadcast(_pk());
         if (lzEndpoint != address(0)) {
-            console2.log("LayerZeroGatewayAdapter:", deployLayerZeroAdapter(factory, salt, owner, lzEndpoint));
+            console2.log("LayerZeroGatewayAdapter:", deployLayerZeroAdapter(factory, salt, deployer, lzEndpoint));
         }
         if (mailbox != address(0)) {
-            console2.log("HyperlaneGatewayAdapter:", deployHyperlaneAdapter(factory, salt, owner, mailbox));
+            console2.log("HyperlaneGatewayAdapter:", deployHyperlaneAdapter(factory, salt, deployer, mailbox));
         }
         if (vm.envOr("WIRE_LOOPBACK", false)) {
-            console2.log("LoopbackGatewayAdapter:", deployLoopbackAdapter(factory, salt, deployer, owner));
+            console2.log("LoopbackGatewayAdapter:", deployLoopbackAdapter(factory, salt, deployer, deployer));
         }
         vm.stopBroadcast();
     }

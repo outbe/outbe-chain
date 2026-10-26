@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 
-import {Create3Factory} from "@shared/Create3Factory.sol";
 import {ERC7786Bridge} from "src/ERC7786Bridge.sol";
 import {LayerZeroGatewayAdapter} from "src/adapters/LayerZeroGatewayAdapter.sol";
 import {HyperlaneGatewayAdapter} from "src/adapters/HyperlaneGatewayAdapter.sol";
+import {DeployBase} from "./DeployBase.sol";
 
 /// @dev Wires the local hub to its counterparts on other chains. Bridge and adapters share one
 ///      CREATE3 address across chains, so remote addresses equal the local ones (computed here).
@@ -17,15 +16,15 @@ import {HyperlaneGatewayAdapter} from "src/adapters/HyperlaneGatewayAdapter.sol"
 ///      remote domain is equal to the chain id. When `WIRE_LOOPBACK` is true, the script wires the
 ///      local chain itself as a destination through the loopback adapter.
 ///
-/// Required env (DEPLOYER_PK must be BRIDGE_OWNER): `DEPLOYER_PK`, `CONTRACT_SALT`,
-/// `CREATE3_FACTORY_ADDRESS`, `REMOTE_CHAIN_IDS` (csv). When the script wires LayerZero, it also
-/// requires `REMOTE_EIDS` (csv, parallel).
-contract ConfigureBridge is Script {
+/// Run it before 4_HandOver: the deployer must still own the bridge and the adapters.
+///
+/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `CREATE3_FACTORY_ADDRESS`, `REMOTE_CHAIN_IDS`
+/// (csv). When the script wires LayerZero, it also requires `REMOTE_EIDS` (csv, parallel).
+contract ConfigureBridge is DeployBase {
     function run() public virtual {
-        uint256 deployerPk = vm.envUint("DEPLOYER_PK");
         string memory salt = vm.envString("CONTRACT_SALT");
         address factory = vm.envAddress("CREATE3_FACTORY_ADDRESS");
-        address deployer = vm.addr(deployerPk);
+        address deployer = _deployer();
 
         bool hasLz = vm.envOr("LZ_ENDPOINT", address(0)) != address(0);
         bool hasHl = vm.envOr("HYPERLANE_MAILBOX", address(0)) != address(0);
@@ -35,7 +34,7 @@ contract ConfigureBridge is Script {
         address lzAdapter = hasLz ? _compute(factory, salt, deployer, "LayerZeroGatewayAdapter") : address(0);
         address hlAdapter = hasHl ? _compute(factory, salt, deployer, "HyperlaneGatewayAdapter") : address(0);
 
-        vm.startBroadcast(deployerPk);
+        vm.startBroadcast(_pk());
         configureBridge(bridgeAddr, lzAdapter, hlAdapter);
         if (wireLoopback) configureLoopback(bridgeAddr, _compute(factory, salt, deployer, "LoopbackGatewayAdapter"));
         vm.stopBroadcast();
@@ -81,13 +80,5 @@ contract ConfigureBridge is Script {
 
             console2.log("wired remote chainId:", chainId);
         }
-    }
-
-    function _compute(address factory, string memory salt, address deployer, string memory label)
-        internal
-        view
-        returns (address)
-    {
-        return Create3Factory(factory).predict(deployer, keccak256(abi.encodePacked(label, salt)));
     }
 }

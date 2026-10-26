@@ -1,31 +1,31 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
 
 import {Create3Factory} from "@shared/Create3Factory.sol";
 import {ERC7786Bridge} from "src/ERC7786Bridge.sol";
+import {DeployBase} from "./DeployBase.sol";
 
 /// @dev Deploys the {ERC7786Bridge} facade via CREATE3, with one adapter as the active gateway.
 ///      The script derives the adapter address deterministically (CREATE3), so the bridge does not
-///      depend on the adapter script's output.
+///      depend on the adapter script's output. The deployer owns the bridge until 4_HandOver gives
+///      it to governance.
 ///
-/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `CREATE3_FACTORY_ADDRESS`, `BRIDGE_OWNER`.
+/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `CREATE3_FACTORY_ADDRESS`.
 /// Optional: `ACTIVE_GATEWAY` ("lz" | "hyperlane", default "lz").
-contract DeployBridge is Script {
+contract DeployBridge is DeployBase {
     function run() public virtual {
-        uint256 deployerPk = vm.envUint("DEPLOYER_PK");
         string memory salt = vm.envString("CONTRACT_SALT");
         address factory = vm.envAddress("CREATE3_FACTORY_ADDRESS");
-        address owner = vm.envAddress("BRIDGE_OWNER");
+        address deployer = _deployer();
         string memory active = vm.envOr("ACTIVE_GATEWAY", string(""));
         if (bytes(active).length == 0) active = "lz";
 
-        address gateway = adapterAddress(factory, salt, vm.addr(deployerPk), active);
+        address gateway = adapterAddress(factory, salt, deployer, active);
 
-        vm.startBroadcast(deployerPk);
-        address bridge = deployBridge(factory, salt, owner, gateway);
+        vm.startBroadcast(_pk());
+        address bridge = deployBridge(factory, salt, deployer, gateway);
         vm.stopBroadcast();
 
         console2.log("active gateway:", gateway);

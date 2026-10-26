@@ -47,7 +47,8 @@ contract EndpointV2Mock {
     mapping(uint32 => bytes32) public peers;
 
     address public oapp;
-    address public delegate;
+    /// @dev Same getter as EndpointV2: the delegate of each OApp.
+    mapping(address oapp => address delegate) public delegates;
 
     /// @dev Records the `options` bytes of the most recent send, so tests can inspect per-message
     /// gas.
@@ -71,7 +72,7 @@ contract EndpointV2Mock {
     }
 
     function setDelegate(address _delegate) external {
-        delegate = _delegate;
+        delegates[msg.sender] = _delegate;
     }
 
     function setRemoteEndpoint(uint32 _remoteEid, EndpointV2Mock _remoteEndpoint) external {
