@@ -8,8 +8,8 @@ pub use outbe_primitives::addresses::{INTEX_NFT1155_ADDRESS, ORIGIN_ROUTER_ADDRE
 /// Router calls a Called notice gets before it is dropped.
 pub const MAX_CALLED_NOTICE_ATTEMPTS: u8 = 8;
 
-/// Pause before a refused notice is sent again. The 8 sends span about 35 minutes
-/// of a router outage, not a few blocks.
+/// Pause before a refused notice is sent again, so the 8 sends span about 35 minutes
+/// of a router outage.
 #[cfg(not(feature = "e2e-test"))]
 pub const NOTICE_RETRY_SECONDS: u64 = 300;
 #[cfg(feature = "e2e-test")]
