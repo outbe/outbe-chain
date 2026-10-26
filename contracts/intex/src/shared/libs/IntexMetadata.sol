@@ -6,6 +6,7 @@ import {Base64} from "@openzeppelin/contracts/utils/Base64.sol";
 import {IIntexNFT1155} from "../interfaces/IIntexNFT1155.sol";
 import {BridgeMsgCodec} from "./BridgeMsgCodec.sol";
 import {DateKey} from "./DateKey.sol";
+import {Iso4217} from "./Iso4217.sol";
 
 /// @title IntexMetadata
 /// @notice JSON + SVG metadata rendering for IntexNFT1155 tokens.
@@ -110,12 +111,9 @@ library IntexMetadata {
             "{\"trait_type\":\"Worldwide Day\",\"value\":",
             Strings.toString(data.worldwideDay),
             ",\"display_type\":\"number\"},",
-            "{\"trait_type\":\"Issuance Currency\",\"value\":",
-            Strings.toString(data.issuanceCurrency),
-            ",\"display_type\":\"number\"},",
-            "{\"trait_type\":\"Reference Currency\",\"value\":",
-            Strings.toString(data.referenceCurrency),
-            ",\"display_type\":\"number\"}"
+            _currencyTrait("Issuance Currency", data.issuanceCurrency),
+            ",",
+            _currencyTrait("Reference Currency", data.referenceCurrency)
         );
 
         // Raw minor units stay in readData. These are display values.
@@ -144,6 +142,15 @@ library IntexMetadata {
         }
 
         return string.concat(head, economics, callRows, "]");
+    }
+
+    /// @dev Alpha-3 for an ISO 4217 code, the bare number otherwise.
+    function _currencyTrait(string memory name, uint16 code) private pure returns (string memory) {
+        (bool found, bytes3 alpha) = Iso4217.alphaOf(code);
+        string memory value = found
+            ? string.concat("\"", string(abi.encodePacked(alpha)), "\"")
+            : string.concat(Strings.toString(code), ",\"display_type\":\"number\"");
+        return string.concat("{\"trait_type\":\"", name, "\",\"value\":", value, "}");
     }
 
     function _generateSVG(IIntexNFT1155.SeriesData memory data, string memory displayId, bool settled)
