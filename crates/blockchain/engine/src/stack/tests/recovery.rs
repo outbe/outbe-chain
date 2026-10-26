@@ -1356,6 +1356,7 @@ mod copied_native_dkg_prerequisites {
                             beacon_engine_handle: ConsensusEngineHandle::new(engine_tx),
                             engine_events: Default::default(),
                             jwt_secret: *AuthServerHandle::noop().jwt_secret(),
+                            sender_recovery_cache: None,
                         },
                         |_| Ok(()),
                         true,
