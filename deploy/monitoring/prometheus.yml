@@ -2,7 +2,7 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
-# Alert rules: copy scripts/monitoring/alerts.example.yaml (the maintained
+# Alert rules: copy deploy/monitoring/alerts.example.yaml (the maintained
 # template, incl. the outbe-chain.tee group) to this path and keep in sync.
 rule_files:
   - /etc/prometheus/rules/outbe-chain.yaml

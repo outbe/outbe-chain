@@ -69,7 +69,7 @@ struct LocalnetCli {
     #[arg(long, global = true, default_value_t = 4)]
     validators: usize,
 
-    /// Optional genesis seed; defaults to scripts/seed-testnet-lowstake.json.
+    /// Optional genesis seed; defaults to testing/fixtures/seed-testnet-lowstake.json.
     #[arg(long, global = true)]
     seed: Option<PathBuf>,
 
@@ -198,7 +198,7 @@ impl LocalnetCli {
             seed: Some(
                 self.seed
                     .clone()
-                    .unwrap_or_else(|| self.repo.join("scripts/seed-testnet-lowstake.json")),
+                    .unwrap_or_else(|| self.repo.join("testing/fixtures/seed-testnet-lowstake.json")),
             ),
         };
         let mut env = Environment::from_cli(&cli);

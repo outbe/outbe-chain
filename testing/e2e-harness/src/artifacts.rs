@@ -322,7 +322,7 @@ fn lane_artifacts(repo: &Path, lane: BuildLane) -> Vec<ArtifactSpec> {
         artifact("outbe_radicle", release.join("outbe-radicle"), true),
         artifact(
             "genesis_seed",
-            repo.join("scripts/seed-testnet-lowstake.json"),
+            repo.join("testing/fixtures/seed-testnet-lowstake.json"),
             false,
         ),
     ];
@@ -856,9 +856,12 @@ mod tests {
         let repo = &env.repo;
         for (path, contents) in [
             ("crates/source.rs", "original runtime"),
-            ("scripts/genesis_seed_validators.py", "original seeder"),
             (
-                "scripts/test_seed_genesis_protocol_constants.py",
+                "bin/outbe-genesis-cli/src/seed_validators.rs",
+                "original seeder",
+            ),
+            (
+                "bin/outbe-genesis-cli/tests/protocol_constants.rs",
                 "original seeder test",
             ),
             ("scripts/other.py", "unrelated script"),
@@ -916,7 +919,10 @@ mod tests {
 
         for (path, original) in [
             ("crates/source.rs", "dirty source used by the prior build"),
-            ("scripts/genesis_seed_validators.py", "original seeder"),
+            (
+                "bin/outbe-genesis-cli/src/seed_validators.rs",
+                "original seeder",
+            ),
             ("scripts/other.py", "unrelated script"),
             ("vendor/source.rs", "original dependency"),
             ("Cargo.lock", "lock"),

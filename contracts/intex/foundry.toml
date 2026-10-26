@@ -19,7 +19,7 @@ libs = ['node_modules']
 # @shared files import their own vendored deps by relative path, which land outside this project.
 allow_paths = ['../shared/src']
 # Genesis predeploy runtime code, etched by the refund gas measurement.
-fs_permissions = [{ access = 'read', path = '../../scripts/contracts' }]
+fs_permissions = [{ access = 'read', path = '../predeploys' }]
 
 remappings = [
     # Contract imports from tests

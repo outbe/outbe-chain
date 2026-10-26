@@ -30,7 +30,7 @@ contract EscrowAdapterAssetVersionTest is Test {
     address internal bob = makeAddr("bob");
 
     function setUp() public {
-        bytes memory code = vm.parseBytes(vm.trim(vm.readFile("../../scripts/contracts/the_compact.code.hex")));
+        bytes memory code = vm.parseBytes(vm.trim(vm.readFile("../predeploys/the_compact.code.hex")));
         vm.etch(COMPACT, code);
         vm.etch(COMPACT_2, code);
 

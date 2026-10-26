@@ -8085,6 +8085,7 @@ dependencies = [
  "outbe-desis",
  "outbe-evm",
  "outbe-gem",
+ "outbe-genesis-cli",
  "outbe-intexfactory",
  "outbe-l2registry",
  "outbe-nod",
@@ -8218,6 +8219,7 @@ dependencies = [
  "outbe-fidelity",
  "outbe-gem",
  "outbe-gemfactory",
+ "outbe-genesis-cli",
  "outbe-governance",
  "outbe-gratis",
  "outbe-gratisfactory",
@@ -8364,6 +8366,29 @@ dependencies = [
  "revm",
  "thiserror 2.0.18",
  "tracing",
+]
+
+[[package]]
+name = "outbe-genesis-cli"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "base64 0.22.1",
+ "clap",
+ "flate2",
+ "hex",
+ "k256 0.13.4",
+ "rand_core 0.6.4",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "tempfile",
+ "thiserror 2.0.18",
+ "time",
+ "toml 0.8.23",
+ "walkdir",
+ "yaml_serde",
 ]
 
 [[package]]
@@ -8647,6 +8672,7 @@ dependencies = [
  "outbe-cycle",
  "outbe-desis",
  "outbe-evm",
+ "outbe-genesis-cli",
  "outbe-intex",
  "outbe-oracle",
  "outbe-primitives",
@@ -17452,6 +17478,7 @@ dependencies = [
  "hex",
  "outbe-consensus",
  "outbe-evm",
+ "outbe-genesis-cli",
  "outbe-primitives",
  "outbe-tee",
  "reth-ethereum",

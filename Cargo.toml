@@ -62,6 +62,7 @@ members = [
     "crates/core/common",
     # binaries
     "bin/outbe-chain",
+    "bin/outbe-genesis-cli",
     "bin/outbe-keygen",
     "bin/outbe-cli",
     "bin/outbe-feeder",
@@ -169,6 +170,7 @@ outbe-stablecoinpolicy = { path = "crates/core/stablecoinpolicy" }
 outbe-stablecoin = { path = "crates/core/stablecoin" }
 outbe-stablecoinfactory = { path = "crates/core/stablecoinfactory" }
 outbe-common = { path = "crates/core/common" }
+outbe-genesis-cli = { path = "bin/outbe-genesis-cli" }
 
 # Alloy - core (alloy-rs/core): stays on 1.x
 alloy-primitives = { version = "=1.6.1", default-features = false }
@@ -325,6 +327,7 @@ tracing = "0.1"
 futures = "0.3"
 time = "0.3"
 filetime = "0.2"
+flate2 = "1"
 sha2 = "0.10"
 walkdir = "2"
 tar = "0.4"
