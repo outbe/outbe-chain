@@ -161,11 +161,27 @@ fn day_mutators_follow_the_caller_binding() {
             assert!(tc.is_day_sealed(day_a)?);
             Ok(())
         });
-        open_cycle(&storage, metadosis_cycle_allocation_binding, || {
-            assert!(create_worldwide_day(&mut tc, day_b, schedule(20261015))?);
-            assert!(tc.is_day_sealed(day_b)?);
-            Ok(())
-        });
+        // Allocation targets a UTC day independently of the current execution time.
+        let binding = metadosis_cycle_allocation_binding(
+            storage.chain_id().unwrap(),
+            storage.block_number().unwrap(),
+            day_b.to_timestamp_utc(),
+        );
+        storage
+            .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {
+                assert!(create_worldwide_day(&mut tc, day_b, schedule(20261015))?);
+                assert!(tc.is_day_sealed(day_b)?);
+                assert_eq!(tc.seal_day(day_c).unwrap_err().to_string(), MISMATCH);
+                assert_eq!(
+                    create_worldwide_day(&mut tc, day_c, schedule(20261016))
+                        .unwrap_err()
+                        .to_string(),
+                    MISMATCH
+                );
+                assert!(tc.worldwide_days.get(day_c)?.is_none());
+                Ok(())
+            })
+            .unwrap();
         open_cycle(&storage, metadosis_advance_due_binding, || {
             assert_eq!(
                 create_worldwide_day(&mut tc, day_c, schedule(20261016))
