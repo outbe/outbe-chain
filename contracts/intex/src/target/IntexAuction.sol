@@ -10,6 +10,7 @@ import {IIntexAuction} from "./interfaces/IIntexAuction.sol";
 import {IEscrowAdapter} from "./interfaces/IEscrowAdapter.sol";
 import {IIntexNFT1155} from "../shared/interfaces/IIntexNFT1155.sol";
 import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
+import {Iso4217} from "../shared/libs/Iso4217.sol";
 
 /// @title IntexAuction
 /// @author Outbe
@@ -362,9 +363,7 @@ contract IntexAuction is
         if (quantity < a.params.minIntexBidQuantity) revert BidBelowMinIntexBidQuantity();
         if (bidRate < a.params.minIntexBidRate) revert BidBelowMinIntexBidRate();
         if (bidRate > BridgeMsgCodec.SCALE_1E6) revert BidRateAboveMax(bidRate);
-        // Issuance is the bidder's own label: only its range is checked, since the network keeps
-        // no list of issuance currencies. Reference must be one the day actually prices.
-        if (issuanceCurrency == 0 || issuanceCurrency > 999) revert InvalidIssuanceCurrency(issuanceCurrency);
+        if (!Iso4217.isIso4217(issuanceCurrency)) revert InvalidIssuanceCurrency(issuanceCurrency);
         _requirePriced(a.params.prices, worldwideDay, referenceCurrency);
 
         // Verify the signature against the stored commit hash.

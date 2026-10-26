@@ -961,8 +961,8 @@ fn lifecycle_steps_keep_their_gas_storage_and_log_footprint() {
     assert_eq!(
         [views, called_views],
         [
-            b256!("0x525c39084866f7aef96001a574851e1d3949719fcc9a3bde33f9bc6374e0cf88"),
-            b256!("0x9f7a59222ece8b49d974f5dd9f1cda3ccc0bfceb61788bbe180afdac442865ae"),
+            b256!("0x72bcab7503ff2e351206c869ce918115e26750a206cae214596b7fa03928dde9"),
+            b256!("0x5b6092c1ff70df9258866b73972aad235121ba0b98193e92639c210c02596a42"),
         ]
     );
     assert_eq!(
