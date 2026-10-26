@@ -373,7 +373,7 @@ fn seed_day_vwap(storage: &StorageHandle, iso: u16, vwap: U256) {
     let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso)
         .unwrap()
         .expect("COEN pair registered");
-    let day = previous_date_key(timestamp_to_date_key(T_NOW));
+    let day = previous_date_key(timestamp_to_date_key(T_NOW)).expect("date step");
     let mut oracle = OracleContract::new(storage.clone());
     oracle.record_utc_day_vwap(day, index, vwap).unwrap();
     let snapshot = outbe_oracle::api::current_vwap_snapshot(storage.clone()).unwrap();

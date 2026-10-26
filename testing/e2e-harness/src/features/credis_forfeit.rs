@@ -31,7 +31,8 @@ const BREACH_RATE: U256 = U256::from_limbs([2_000_000, 0, 0, 0]);
 const PART: U256 = U256::from_limbs([100_000_000, 0, 0, 0]);
 const CALL_TIMEOUT_SECS: u64 = 300;
 const FORFEIT_TIMEOUT: Duration = Duration::from_secs(120);
-const EXPIRY_BUCKET_SECS: u64 = 3_600;
+const MAX_DEV_NOTICE_SECS: u64 = 3_600;
+const EXPIRY_DAY_SECS: u64 = 86_400;
 /// Window, threshold and notice of the DEV profile in an e2e build, in seconds.
 const DEV_TERMS: (u32, u32, u32) = (3 * SECONDS_PER_DAY_U32, 2 * SECONDS_PER_DAY_U32, 600);
 
@@ -60,6 +61,8 @@ fn rate_above_call_price(world: &mut World) {
     );
     test_issuance::seed_day_vwaps(&url, DEPLOYER_KEY, USD, CALL_WINDOW_SEED_DAYS, BREACH_RATE)
         .expect("seed the breaching closed days");
+    test_issuance::rescan_closed_day(&url, DEPLOYER_KEY, CREDIS_FACTORY_ADDRESS)
+        .expect("arm the Credis call pass after seeding prices");
 }
 
 #[then("the Credis is called with a settlement notice")]
@@ -178,16 +181,16 @@ fn pay_part(world: &mut World) {
 fn deadline_passes(world: &mut World) {
     let deadline = latest(world).call.settlementDeadline;
     poll_until(
-        Duration::from_secs(EXPIRY_BUCKET_SECS + CALL_TIMEOUT_SECS),
+        Duration::from_secs(MAX_DEV_NOTICE_SECS + CALL_TIMEOUT_SECS),
         || format!("the chain never passed the settlement deadline {deadline}"),
         || head_time(world) > deadline,
     );
-    // The cleanup deletes it once the deadline's hour closes: read it before that.
+    // Cleanup follows the pass for the closed deadline day. Read the Credis before cleanup.
     let height = world
         .rpc
         .head(world.validators.primary_port())
         .expect("primary head");
-    // Unreadable only when the deadline fell in the last block of its hour.
+    // The Credis may already be absent if cleanup deletes the Credis when the deadline day closes at this boundary.
     if let Some(lapsed) = eth::read_call_at(
         &url(world),
         CREDIS_ADDRESS,
@@ -234,7 +237,7 @@ fn reads_forfeited(world: &mut World) {
         f.gratis_minor
     );
     assert!(outcome.gratisBurnedMinor > U256::ZERO);
-    // The cleanup may already have deleted it, if the deadline's hour closed at once.
+    // The Credis may already be absent if cleanup deletes the Credis as its deadline day closes.
     let (reason, height) = settlement_revert(world, f);
     let swept = forfeit_block(&url(world), f.credis_id).is_some_and(|block| block <= height);
     let expected = if swept {
@@ -245,13 +248,12 @@ fn reads_forfeited(world: &mut World) {
     assert_eq!(reason.as_ref(), expected.as_slice());
 }
 
-/// The sweep opens an hour only once it has closed: move the group's deadline into a
-/// closed one.
+/// Prepare the test pass for a closed deadline day after the exact settlement notice expires.
 #[when("the forfeit sweep reaches the lapsed Credis")]
 fn sweep_reaches(world: &mut World) {
     let url = url(world);
     let credis_id = fixture(world).credis_id;
-    // The deadline's hour may have closed already, and the cleanup deleted it.
+    // The Credis deadline day may already be closed, with cleanup complete.
     if forfeit_block(&url, credis_id).is_some() {
         return;
     }
@@ -261,7 +263,7 @@ fn sweep_reaches(world: &mut World) {
         DEPLOYER_KEY,
         &ICredisFactoryTestArming::closeCallNoticeForTestCall {
             credisId: credis_id,
-            deadline: head_time(world) - EXPIRY_BUCKET_SECS,
+            deadline: head_time(world).saturating_sub(EXPIRY_DAY_SECS),
         },
         None,
     );

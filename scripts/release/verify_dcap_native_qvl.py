@@ -11,7 +11,6 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-
 EXPECTED_ROLES = ("qvl", "cxx-runtime", "gcc-runtime")
 EXPECTED_STATUS = "active"
 
@@ -33,9 +32,7 @@ def _project_pin_path() -> Path:
     return Path(__file__).resolve().parents[2] / "release/project-toolchain-v1.json"
 
 
-PROJECT_VERSION_PIN = _load_project_pin_verifier().load_and_validate_pin(
-    _project_pin_path()
-)
+PROJECT_VERSION_PIN = _load_project_pin_verifier().load_and_validate_pin(_project_pin_path())
 
 
 def expected_dcap(pin: dict[str, Any]) -> dict[str, Any]:
@@ -230,10 +227,7 @@ def verify_installed_packages(dcap: dict[str, Any]) -> None:
         dcap["headers_package"]: dcap["headers_package_version"],
     }
     packages.update(
-        {
-            artifact["package"]: artifact["package_version"]
-            for artifact in EXPECTED_ARTIFACTS
-        }
+        {artifact["package"]: artifact["package_version"] for artifact in EXPECTED_ARTIFACTS}
     )
     packages.update(
         {
@@ -244,14 +238,11 @@ def verify_installed_packages(dcap: dict[str, Any]) -> None:
     for package, expected_version in packages.items():
         if installed_package_version(package) != expected_version:
             raise ValueError(
-                f"native-QVL package version mismatch: {package} "
-                f"(expected {expected_version})"
+                f"native-QVL package version mismatch: {package} " f"(expected {expected_version})"
             )
 
 
-def verify_manifest(
-    manifest: dict[str, Any], root: Path, *, check_packages: bool = False
-) -> None:
+def verify_manifest(manifest: dict[str, Any], root: Path, *, check_packages: bool = False) -> None:
     if manifest.get("schema_version") != 1:
         raise ValueError("unsupported native-QVL manifest schema")
     if manifest.get("status") != EXPECTED_STATUS:
@@ -260,9 +251,7 @@ def verify_manifest(
         raise ValueError("native-QVL V1 target must be x86_64-unknown-linux-gnu")
     gramine_version = PROJECT_VERSION_PIN["gramine"]["version"]
     if manifest.get("gramine_version") != gramine_version:
-        raise ValueError(
-            f"native-QVL V1 requires exact Gramine {gramine_version}"
-        )
+        raise ValueError(f"native-QVL V1 requires exact Gramine {gramine_version}")
 
     dcap = manifest.get("intel_dcap")
     if not isinstance(dcap, dict):
@@ -272,86 +261,74 @@ def verify_manifest(
     if check_packages:
         verify_installed_packages(dcap)
 
-    build_inputs = manifest.get("build_inputs")
-    if not isinstance(build_inputs, list):
-        raise ValueError("native-QVL manifest build_inputs must be an array")
-    if build_inputs != list(EXPECTED_BUILD_INPUTS):
-        raise ValueError("native-QVL build input metadata does not match the exact V1 contract")
-    build_input_roles = tuple(build_input.get("role") for build_input in build_inputs)
-    expected_build_input_roles = tuple(
-        build_input["role"] for build_input in EXPECTED_BUILD_INPUTS
+    _verify_entries(manifest, root, "build_inputs", EXPECTED_BUILD_INPUTS)
+    _verify_entries(manifest, root, "artifacts", EXPECTED_ARTIFACTS)
+
+
+def _verify_entries(
+    manifest: dict[str, Any], root: Path, field: str, expected: tuple[dict[str, Any], ...]
+) -> None:
+    kind = "build input" if field == "build_inputs" else "artifact"
+    entries = manifest.get(field)
+    if not isinstance(entries, list):
+        raise ValueError(f"native-QVL manifest {field} must be an array")
+    if entries != list(expected):
+        raise ValueError(f"native-QVL {kind} metadata does not match the exact V1 contract")
+    roles = tuple(entry.get("role") for entry in entries)
+    expected_roles = (
+        tuple(entry["role"] for entry in expected) if field == "build_inputs" else EXPECTED_ROLES
     )
-    if build_input_roles != expected_build_input_roles:
-        raise ValueError(
-            f"native-QVL build input roles must be {expected_build_input_roles}"
-        )
-    seen_build_input_paths: set[str] = set()
-    for build_input in build_inputs:
-        configured = build_input.get("path")
-        expected_size = build_input.get("size")
-        expected_sha256 = build_input.get("sha256")
-        if not isinstance(configured, str) or configured in seen_build_input_paths:
-            raise ValueError("native-QVL build input path is missing or duplicated")
-        if not isinstance(expected_size, int) or expected_size <= 0:
-            raise ValueError(f"invalid native-QVL build input size for {configured}")
-        if (
-            not isinstance(expected_sha256, str)
-            or len(expected_sha256) != 64
-            or any(character not in "0123456789abcdef" for character in expected_sha256)
-        ):
-            raise ValueError(f"invalid native-QVL build input SHA-256 for {configured}")
-        seen_build_input_paths.add(configured)
-
-        path = artifact_path(root, configured)
-        try:
-            payload = path.read_bytes()
-        except OSError as error:
-            raise ValueError(f"missing native-QVL build input: {configured}") from error
-        if len(payload) != expected_size:
-            raise ValueError(f"native-QVL build input size mismatch: {configured}")
-        if hashlib.sha256(payload).hexdigest() != expected_sha256:
-            raise ValueError(f"native-QVL build input SHA-256 mismatch: {configured}")
-
-    artifacts = manifest.get("artifacts")
-    if not isinstance(artifacts, list):
-        raise ValueError("native-QVL manifest artifacts must be an array")
-    if artifacts != list(EXPECTED_ARTIFACTS):
-        raise ValueError("native-QVL artifact metadata does not match the exact V1 contract")
-    roles = tuple(artifact.get("role") for artifact in artifacts)
-    if roles != EXPECTED_ROLES:
-        raise ValueError(f"native-QVL artifact roles must be {EXPECTED_ROLES}")
-
+    if roles != expected_roles:
+        raise ValueError(f"native-QVL {kind} roles must be {expected_roles}")
     seen_paths: set[str] = set()
     seen_install_names: set[str] = set()
-    for artifact in artifacts:
-        configured = artifact.get("path")
-        install_name = artifact.get("install_name")
-        expected_size = artifact.get("size")
-        expected_sha256 = artifact.get("sha256")
-        if not isinstance(configured, str) or configured in seen_paths:
-            raise ValueError("native-QVL artifact path is missing or duplicated")
+    for entry in entries:
+        _validate_entry(entry, kind, seen_paths, seen_install_names)
+        _verify_payload(root, entry, kind)
+
+
+def _validate_entry(
+    entry: dict[str, Any], kind: str, seen_paths: set[str], seen_install_names: set[str]
+) -> None:
+    configured = entry.get("path")
+    if not isinstance(configured, str) or configured in seen_paths:
+        raise ValueError(f"native-QVL {kind} path is missing or duplicated")
+    if kind == "artifact":
+        install_name = entry.get("install_name")
         if not isinstance(install_name, str) or install_name in seen_install_names:
             raise ValueError("native-QVL install name is missing or duplicated")
-        if not isinstance(expected_size, int) or expected_size <= 0:
-            raise ValueError(f"invalid native-QVL artifact size for {configured}")
-        if (
-            not isinstance(expected_sha256, str)
-            or len(expected_sha256) != 64
-            or any(character not in "0123456789abcdef" for character in expected_sha256)
-        ):
-            raise ValueError(f"invalid native-QVL SHA-256 for {configured}")
-        seen_paths.add(configured)
+    expected_size = entry.get("size")
+    if not isinstance(expected_size, int) or expected_size <= 0:
+        raise ValueError(f"invalid native-QVL {kind} size for {configured}")
+    expected_sha256 = entry.get("sha256")
+    if (
+        not isinstance(expected_sha256, str)
+        or len(expected_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in expected_sha256)
+    ):
+        prefix = "build input " if kind == "build input" else ""
+        raise ValueError(f"invalid native-QVL {prefix}SHA-256 for {configured}")
+    seen_paths.add(configured)
+    if kind == "artifact":
         seen_install_names.add(install_name)
 
-        path = artifact_path(root, configured)
-        try:
-            payload = path.read_bytes()
-        except OSError as error:
-            raise ValueError(f"missing native-QVL artifact: {configured}") from error
-        if len(payload) != expected_size:
-            raise ValueError(f"native-QVL artifact size mismatch: {configured}")
-        if hashlib.sha256(payload).hexdigest() != expected_sha256:
-            raise ValueError(f"native-QVL artifact SHA-256 mismatch: {configured}")
+
+def _verify_payload(root: Path, entry: dict[str, Any], kind: str) -> None:
+    configured = entry["path"]
+    path = artifact_path(root, configured)
+    try:
+        payload = path.read_bytes()
+    except OSError as error:
+        raise ValueError(f"missing native-QVL {kind}: {configured}") from error
+    _check_payload(payload, entry, kind)
+
+
+def _check_payload(payload: bytes, entry: dict[str, Any], kind: str) -> None:
+    configured = entry["path"]
+    if len(payload) != entry["size"]:
+        raise ValueError(f"native-QVL {kind} size mismatch: {configured}")
+    if hashlib.sha256(payload).hexdigest() != entry["sha256"]:
+        raise ValueError(f"native-QVL {kind} SHA-256 mismatch: {configured}")
 
 
 def install_verified_artifacts(
@@ -372,10 +349,7 @@ def install_verified_artifacts(
     for artifact in manifest["artifacts"]:
         configured = artifact["path"]
         payload = artifact_path(root, configured).read_bytes()
-        if len(payload) != artifact["size"]:
-            raise ValueError(f"native-QVL artifact size mismatch: {configured}")
-        if hashlib.sha256(payload).hexdigest() != artifact["sha256"]:
-            raise ValueError(f"native-QVL artifact SHA-256 mismatch: {configured}")
+        _check_payload(payload, artifact, "artifact")
         target = destination / artifact["install_name"]
         target.write_bytes(payload)
         target.chmod(0o644)

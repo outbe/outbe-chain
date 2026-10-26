@@ -15,13 +15,15 @@ pub(super) async fn prepare(
         let evm_key_path = args
             .effective_validator_evm_key()?
             .ok_or(LaunchError::MissingValidatorEvmSignerKey)?;
+        let backend = args.evm_key_backend()?;
         let signer = Arc::new(
-            outbe_primitives::signer::load::from_file(&evm_key_path).wrap_err_with(|| {
-                format!(
-                    "failed to load validator EVM key from {}",
-                    evm_key_path.display()
-                )
-            })?,
+            outbe_consensus::bls::load_validator_evm_signer(&evm_key_path, &backend)
+                .wrap_err_with(|| {
+                    format!(
+                        "failed to load validator EVM key from {}",
+                        evm_key_path.display()
+                    )
+                })?,
         );
         info!(
             address = %signer.address(),

@@ -91,12 +91,12 @@ pub fn onboarding_artifact_ingest_request_hash_v1(
 pub const TEE_REGISTRY_OFFER_PUBLIC_SLOT_V1: u64 = 1;
 pub const TEE_REGISTRY_KEY_EPOCH_SLOT_V1: u64 = 3;
 pub const TEE_REGISTRY_OFFER_EPOCH_SLOT_V1: u64 = 4;
-pub const TEE_REGISTRY_NODE_ENCLAVE_ID_SLOT_V1: u64 = 14;
-pub const TEE_REGISTRY_NODE_BINDING_ID_SLOT_V1: u64 = 16;
-pub const TEE_REGISTRY_NODE_INTENT_HASH_SLOT_V1: u64 = 18;
-pub const TEE_REGISTRY_NODE_POLICY_HASH_SLOT_V1: u64 = 19;
-pub const TEE_REGISTRY_NODE_VALID_UNTIL_SLOT_V1: u64 = 24;
-pub const TEE_REGISTRY_NODE_RECIPIENT_X25519_SLOT_V1: u64 = 26;
+pub const TEE_REGISTRY_NODE_ENCLAVE_ID_SLOT_V1: u64 = 13;
+pub const TEE_REGISTRY_NODE_BINDING_ID_SLOT_V1: u64 = 15;
+pub const TEE_REGISTRY_NODE_INTENT_HASH_SLOT_V1: u64 = 17;
+pub const TEE_REGISTRY_NODE_POLICY_HASH_SLOT_V1: u64 = 18;
+pub const TEE_REGISTRY_NODE_VALID_UNTIL_SLOT_V1: u64 = 23;
+pub const TEE_REGISTRY_NODE_RECIPIENT_X25519_SLOT_V1: u64 = 25;
 
 #[must_use]
 pub fn onboarding_registry_slots_v1(context: &DcapOnboardingContextV1) -> [B256; 9] {
@@ -133,12 +133,12 @@ pub fn upgrade_registry_slots_v1(context: &DcapOnboardingContextV1) -> [B256; 9]
         direct(1),
         direct(3),
         direct(4),
+        mapped(52),
         mapped(53),
         mapped(54),
-        mapped(55),
-        mapped(16),
-        direct(48),
-        mapped(57),
+        mapped(15),
+        direct(47),
+        mapped(56),
     ]
 }
 

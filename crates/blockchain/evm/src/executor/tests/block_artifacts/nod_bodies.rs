@@ -1,7 +1,12 @@
 //! Independent EVM states produce identical full-block results on both execution roles.
 
 use super::*;
-use outbe_primitives::time::SECONDS_PER_DAY;
+use outbe_primitives::time::{date_key_to_utc_timestamp, SECONDS_PER_DAY};
+
+/// A non-midnight second on 2020-01-01. `first_full_day` can step that day.
+fn issued_at_on_protocol_floor(second_of_day: u64) -> u64 {
+    date_key_to_utc_timestamp(20_200_101) + second_of_day
+}
 
 type NodBlockObservation = (
     B256,
@@ -153,9 +158,10 @@ fn independent_evm_states_produce_identical_full_block_state_receipts_and_balanc
     let proposer = test_evm_signer().address();
     let worldwide_day = WorldwideDay::new(20_241_220);
     let entry_price_minor = U256::from(450_000_000u64);
+    let issued_at = issued_at_on_protocol_floor(1);
     let group_key = outbe_nod::test_support::group_key_at(
         &outbe_nod::config::NodParams::DEV,
-        1,
+        issued_at,
         entry_price_minor,
         840,
     );
@@ -171,7 +177,7 @@ fn independent_evm_states_produce_identical_full_block_state_receipts_and_balanc
                 group_key,
                 issuance_currency: 840,
                 reference_currency: 840,
-                issued_at: 1,
+                issued_at,
             },
             entry_price_minor,
         )
@@ -233,9 +239,10 @@ fn proposer_validator_state_mints_and_rollbacks_match() {
     let nod_owner = Address::repeat_byte(0x32);
     let nod_id =
         outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(nod_owner, day).unwrap();
+    let issued_at = issued_at_on_protocol_floor(15);
     let group_key = outbe_nod::test_support::group_key_at(
         &outbe_nod::config::NodParams::DEV,
-        15,
+        issued_at,
         U256::from(16),
         978,
     );
@@ -263,23 +270,26 @@ fn proposer_validator_state_mints_and_rollbacks_match() {
                 group_key,
                 issuance_currency: 840,
                 reference_currency: 978,
-                issued_at: 15,
+                issued_at,
             },
             U256::from(16),
         )
     };
 
     let run = || {
+        arm_direct_process_ready_budget();
         let mut state =
             state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |_| {});
         let (changes, events) =
             super::run_atomic_storage_hooks(&mut state, ctx.clone(), |hook_ctx| {
                 let tribute = tribute_fixture();
                 let mut tribute_contract = TributeContract::new(hook_ctx.storage.clone());
-                tribute_contract.unseal_day(day)?;
-                tribute_contract.issue(&tribute)?;
-                outbe_nod::test_support::add(&hook_ctx.storage, &nod_fixture())?;
-                Ok(())
+                with_process_ready_frame(&hook_ctx.storage, || {
+                    tribute_contract.unseal_day(day)?;
+                    tribute_contract.issue(&tribute)?;
+                    outbe_nod::test_support::add(&hook_ctx.storage, &nod_fixture())?;
+                    Ok(())
+                })
             })
             .expect("body mint execution must succeed");
         let root = post_state_root(&state.bundle_state);
@@ -307,17 +317,20 @@ fn proposer_validator_state_mints_and_rollbacks_match() {
         event.address == NOD_ADDRESS && event.data.topics()[0] == INod::Transfer::SIGNATURE_HASH
     }));
 
+    arm_direct_process_ready_budget();
     let mut failed_state =
         state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |_| {});
     let error = super::run_atomic_storage_hooks(&mut failed_state, ctx.clone(), |hook_ctx| {
         let tribute = tribute_fixture();
         let mut tribute_contract = TributeContract::new(hook_ctx.storage.clone());
-        tribute_contract.unseal_day(day)?;
-        tribute_contract.issue(&tribute)?;
-        outbe_nod::test_support::add(&hook_ctx.storage, &nod_fixture())?;
-        Err(outbe_primitives::error::PrecompileError::Fatal(
-            "later transaction stage failed".into(),
-        ))
+        with_process_ready_frame(&hook_ctx.storage, || {
+            tribute_contract.unseal_day(day)?;
+            tribute_contract.issue(&tribute)?;
+            outbe_nod::test_support::add(&hook_ctx.storage, &nod_fixture())?;
+            Err(outbe_primitives::error::PrecompileError::Fatal(
+                "later transaction stage failed".into(),
+            ))
+        })
     })
     .expect_err("failed transaction must roll back every body namespace");
     assert!(error.to_string().contains("later transaction stage failed"));
@@ -337,6 +350,27 @@ struct NodBodyFixture {
     item: NodItemState,
 }
 type SeededNodParent = (State<CacheDB<EmptyDBTyped<ProviderError>>>, B256);
+fn arm_direct_process_ready_budget() {
+    outbe_primitives::storage::direct::arm_next_direct_metadosis_frame_budget(
+        outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
+        1,
+    );
+}
+
+fn with_process_ready_frame(
+    storage: &outbe_primitives::storage::StorageHandle<'_>,
+    body: impl FnOnce() -> outbe_primitives::error::Result<()>,
+) -> outbe_primitives::error::Result<()> {
+    let binding = outbe_primitives::storage::metadosis_process_ready_binding(
+        storage.chain_id()?,
+        storage.block_number()?,
+        storage.now_secs()?,
+    );
+    storage.with_metadosis_mutation::<outbe_primitives::storage::MetadosisCycleLifecycle, _>(
+        binding, body,
+    )
+}
+
 fn seed_nod_body_state(fixture: &NodBodyFixture) -> eyre::Result<SeededNodParent> {
     let mut seeded = Ok(());
     let state = state_with_active_validators_seeded_at_block(
@@ -358,7 +392,7 @@ fn seed_called_nod(storage: StorageHandle<'_>, fixture: &NodBodyFixture) -> eyre
     nod.group_called_at.write(&group_key, 1)?;
     let notice = nod.group_call_notice_period_seconds.read(&group_key)?;
     outbe_primitives::expiry_queue::push(
-        &outbe_nod::state::ExpiryHours(&nod),
+        &outbe_nod::state::ExpiryDays(&nod),
         group_key,
         outbe_nod::api::settlement_deadline_of(1, notice),
     )?;
@@ -374,7 +408,8 @@ fn seed_nod_daily_trigger(
     let (.., pair_index) = outbe_oracle::api::require_coen_pair(storage.clone(), 840)?;
     let previous_day = outbe_primitives::time::previous_date_key(
         outbe_primitives::time::timestamp_to_date_key(TEST_BLOCK_TIMESTAMP_BASE + 2),
-    );
+    )
+    .expect("date step");
     let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
     oracle.record_utc_day_vwap(previous_day, pair_index, U256::from(1_000_000u64))?;
     oracle.utc_day_vwap_last_finalized.write(previous_day)?;

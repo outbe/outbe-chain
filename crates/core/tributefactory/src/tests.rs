@@ -7,7 +7,10 @@ use outbe_oracle::{
 use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::storage::{
+    metadosis_process_ready_binding, MetadosisCycleLifecycle, MetadosisMutationPurposeTag,
+    StorageHandle,
+};
 use outbe_primitives::time::date_key_to_utc_timestamp;
 use outbe_primitives::time::WorldwideDay;
 use outbe_tribute::{
@@ -371,10 +374,20 @@ fn seed_offer_world(storage: StorageHandle<'_>, target_days: &[WorldwideDay]) {
             .unwrap();
     }
 
-    let mut tribute = TributeContract::new(storage);
-    for worldwide_day in target_days {
-        tribute.unseal_day(*worldwide_day).unwrap();
-    }
+    let binding = metadosis_process_ready_binding(
+        storage.chain_id().unwrap(),
+        storage.block_number().unwrap(),
+        storage.now_secs().unwrap(),
+    );
+    storage
+        .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {
+            let mut tribute = TributeContract::new(storage.clone());
+            for worldwide_day in target_days {
+                tribute.unseal_day(*worldwide_day)?;
+            }
+            Ok(())
+        })
+        .unwrap();
 }
 
 #[test]
@@ -482,7 +495,7 @@ fn assert_real_zk_offer_with_key_source(
     circuit_version: &str,
     from_inbox: bool,
 ) {
-    use alloy_sol_types::{sol, SolCall, SolValue};
+    use alloy_sol_types::{sol, SolCall, SolError, SolValue};
     use commonware_codec::Encode;
     use commonware_cryptography::bls12381::primitives::{
         ops::{self, sign_message},
@@ -555,6 +568,7 @@ fn assert_real_zk_offer_with_key_source(
         );
     }
     provider.set_timestamp(U256::from(date_key_to_utc_timestamp(REWARD_DAY) + 43_200));
+    provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
 
     StorageHandle::enter(&mut provider, |storage| {
         seed_offer_world(storage.clone(), &[TARGET_WWD_A]);
@@ -569,7 +583,7 @@ fn assert_real_zk_offer_with_key_source(
     });
     let before_offer = provider.storage.clone();
     provider.fail_after_mutation_at(usize::MAX);
-    StorageHandle::enter(&mut provider, |storage| {
+    let tribute_id = StorageHandle::enter(&mut provider, |storage| {
         let mut factory = TributeFactoryContract::new(storage.clone());
         let id = factory
             .offer_tribute_with_processor(make_offer(), |offers| {
@@ -582,6 +596,7 @@ fn assert_real_zk_offer_with_key_source(
             .unwrap();
         assert_eq!(stored.owner, CALLER);
         assert_eq!(stored.worldwide_day, TARGET_WWD_A);
+        id
     });
     let mutations = provider.clear_mutation_failure();
     StorageHandle::enter(&mut provider, |storage| {
@@ -623,11 +638,204 @@ fn assert_real_zk_offer_with_key_source(
         provider.storage, before_offer,
         "failed offer leaked issued or reward state"
     );
+
+    // Overflow SRA only after the real proof, SU marking, issuance and fresh WAA writes.
+    // Reward activity belongs to the execution day, not TARGET_WWD_A.
+    let reward_day = WorldwideDay::new(REWARD_DAY);
+    let count_key = AgentRewardContract::tribute_count_key(reward_day, REWARD_SRA);
+    let index_key = AgentRewardContract::address_index_key(reward_day, 0);
+    StorageHandle::enter(&mut provider, |storage| {
+        let rewards = AgentRewardContract::new(storage);
+        rewards.sra_addresses.write(&index_key, REWARD_SRA).unwrap();
+        rewards.sra_address_count.write(&reward_day, 1).unwrap();
+        rewards
+            .sra_tribute_counts
+            .write(&count_key, u64::MAX)
+            .unwrap();
+        rewards
+            .sra_total_count
+            .write(&reward_day, u64::MAX)
+            .unwrap();
+    });
+    let before_overflow = provider.storage.clone();
+    let events_before_overflow = provider.events.clone();
+    let ordered_events_before_overflow = provider.get_ordered_events().to_vec();
+    StorageHandle::enter(&mut provider, |storage| {
+        let error = storage
+            .with_checkpoint(|| {
+                TributeFactoryContract::new(storage.clone())
+                    .offer_tribute_with_processor(make_offer(), |offers| {
+                        Ok(process_tribute_offer_batch(&key, offers).0)
+                    })
+            })
+            .unwrap_err();
+        let PrecompileError::RevertBytes(bytes) = error else {
+            panic!("expected counter-overflow revert bytes, got {error:?}");
+        };
+        assert_eq!(
+            bytes.as_ref(),
+            outbe_agentreward::precompile::IAgentReward::TributeCounterOverflow {}.abi_encode()
+        );
+        assert!(TributeContract::new(storage.clone())
+            .get_record(tribute_id)
+            .unwrap()
+            .is_none());
+        assert!(!TributeFactoryContract::new(storage.clone())
+            .has_used_su_hash(B256::with_last_byte(0x22))
+            .unwrap());
+        let rewards = AgentRewardContract::new(storage);
+        assert!(rewards.get_all_waa_counts(reward_day).unwrap().is_empty());
+        assert_eq!(rewards.waa_address_count.read(&reward_day).unwrap(), 0);
+        assert_eq!(rewards.waa_total_count.read(&reward_day).unwrap(), 0);
+        assert_eq!(
+            rewards
+                .waa_tribute_counts
+                .read(&AgentRewardContract::tribute_count_key(
+                    reward_day,
+                    REWARD_WALLET
+                ))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            rewards
+                .waa_addresses
+                .read(&AgentRewardContract::address_index_key(reward_day, 0))
+                .unwrap(),
+            Address::ZERO
+        );
+        assert_eq!(
+            rewards.get_all_sra_counts(reward_day).unwrap(),
+            vec![(REWARD_SRA, u64::MAX)]
+        );
+        assert_eq!(rewards.sra_address_count.read(&reward_day).unwrap(), 1);
+        assert_eq!(rewards.sra_total_count.read(&reward_day).unwrap(), u64::MAX);
+        assert_eq!(rewards.sra_addresses.read(&index_key).unwrap(), REWARD_SRA);
+        assert!(rewards.get_all_waa_counts(TARGET_WWD_A).unwrap().is_empty());
+        assert!(rewards.get_all_sra_counts(TARGET_WWD_A).unwrap().is_empty());
+    });
+    assert_eq!(
+        provider.storage, before_overflow,
+        "SRA overflow leaked offer state"
+    );
+    assert_eq!(provider.events, events_before_overflow);
+    assert_eq!(
+        provider.get_ordered_events(),
+        ordered_events_before_overflow
+    );
+}
+
+#[test]
+fn empty_su_hash_list_rejects_before_issuance_and_rewards() {
+    use alloy_sol_types::SolError;
+    use commonware_codec::Encode;
+    use commonware_cryptography::bls12381::primitives::{
+        ops::{self, sign_message},
+        variant::MinSig,
+    };
+    use outbe_l2registry::L2RegistryContract;
+    use outbe_tee::protocol::{TributeOfferResult, TributeOfferStatus};
+    use outbe_zk::demo_tribute::COMBINED_LEN as DEMO_TRIBUTE_COMBINED_LEN;
+
+    const CALLER: Address = Address::repeat_byte(0x77);
+    const L2_CHAIN_ID: u64 = 0xdead;
+    let root = [0x04; 32];
+    let mut rng =
+        <rand_commonware::rngs::StdRng as rand_commonware::SeedableRng>::from_seed([0x5a; 32]);
+    let (private, public) = ops::keypair::<_, MinSig>(&mut rng);
+    let network_key = outbe_l2registry::public_key::encode(&public).unwrap();
+    let signature = sign_message::<MinSig>(
+        &private,
+        outbe_l2registry::api::ZK_MERKLE_ROOT_NAMESPACE,
+        &root,
+    )
+    .encode();
+    let mut proof = Vec::with_capacity(DEMO_TRIBUTE_COMBINED_LEN);
+    proof.extend_from_slice(&4u32.to_be_bytes());
+    proof.extend_from_slice(&[0x01; 32]);
+    proof.extend_from_slice(&[0x02; 32]);
+    proof.extend_from_slice(&[0x03; 32]);
+    proof.extend_from_slice(&root);
+    proof.resize(DEMO_TRIBUTE_COMBINED_LEN, 0);
+
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_timestamp(U256::from(date_key_to_utc_timestamp(20_260_803) + 43_200));
+    provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_offer_world(storage.clone(), &[TARGET_WWD_A]);
+        L2RegistryContract::new(storage)
+            .register_network(L2_CHAIN_ID, CALLER, &network_key)
+            .unwrap();
+    });
+    let before = provider.storage.clone();
+    let events_before = provider.events.clone();
+    let ordered_before = provider.get_ordered_events().to_vec();
+
+    let input = OfferTributeInput {
+        caller: CALLER,
+        cipher_text: Bytes::from(vec![1, 2, 3]),
+        nonce: Bytes::from(vec![4; 12]),
+        ephemeral_pubkey: U256::from(1u64),
+        worldwide_day: TARGET_WWD_A,
+        tribute_currency: 840,
+        reference_currency: 840,
+        zk_proof: Bytes::from(proof),
+        l2_chain_id: u32::try_from(L2_CHAIN_ID).unwrap(),
+        circuit_version: "1.1.0".to_owned(),
+        zk_merkle_root: Bytes::copy_from_slice(&root),
+        signature: Bytes::from(signature),
+    };
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let error = storage
+            .with_checkpoint(|| {
+                TributeFactoryContract::new(storage.clone()).offer_tribute_with_processor(
+                    input,
+                    |_| {
+                        Ok(vec![TributeOfferResult {
+                            token_id: B256::repeat_byte(0x11),
+                            owner: CALLER,
+                            issuance_amount_minor: U256::from(1u64),
+                            nominal_amount_minor: U256::from(1u64),
+                            effective_reference_price_minor: U256::from(1u64),
+                            su_hashes: Vec::new(),
+                            wallet_addresses: vec![format!("{REWARD_WALLET:#x}")],
+                            sra_addresses: vec![format!("{REWARD_SRA:#x}")],
+                            zk_expected_hashes: None,
+                            status: TributeOfferStatus::Created,
+                        }])
+                    },
+                )
+            })
+            .unwrap_err();
+        let PrecompileError::RevertBytes(bytes) = error else {
+            panic!("expected empty-SU revert bytes, got {error:?}");
+        };
+        assert_eq!(
+            bytes.as_ref(),
+            crate::precompile::ITributeFactory::EmptySuHashList {}.abi_encode()
+        );
+        let tribute = TributeContract::new(storage.clone());
+        assert_eq!(tribute.total_supply().unwrap(), 0);
+        assert_eq!(tribute.balance_of(CALLER).unwrap(), 0);
+        assert!(!TributeFactoryContract::new(storage.clone())
+            .has_used_su_hash(B256::repeat_byte(0x22))
+            .unwrap());
+        let rewards = AgentRewardContract::new(storage);
+        let reward_day = WorldwideDay::new(20_260_803);
+        assert!(rewards.get_all_waa_counts(reward_day).unwrap().is_empty());
+        assert!(rewards.get_all_sra_counts(reward_day).unwrap().is_empty());
+    });
+    assert_eq!(provider.storage, before, "empty SU admission wrote state");
+    assert_eq!(provider.events, events_before);
+    assert_eq!(provider.get_ordered_events(), ordered_before);
 }
 
 #[test]
 fn su_hash_can_only_be_used_once() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    let events_before = storage.events.clone();
+    let ordered_before = storage.get_ordered_events().to_vec();
     StorageHandle::enter(&mut storage, |storage| {
         let expect_reused = |err: PrecompileError, _expected_hash: B256| {
             assert_eq!(
@@ -660,6 +868,8 @@ fn su_hash_can_only_be_used_once() {
             dup,
         );
     });
+    assert_eq!(storage.events, events_before);
+    assert_eq!(storage.get_ordered_events(), ordered_before);
 }
 
 #[test]

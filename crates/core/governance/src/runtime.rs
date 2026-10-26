@@ -14,18 +14,10 @@ use crate::precompile::IGovernance::{
 use crate::schema::{Gip, GipEntryExt, GovernanceContract, Oip, OipEntryExt};
 use crate::status;
 
-/// Maximum size of the canon and meta-canon texts. Only `update_canon` and
-/// `update_meta_canon` use this bound. Both paths are authority-gated, so this
-/// bound depends on the permissioned premise. At `SSTORE_RESET` (5000 gas) a
-/// full overwrite writes 4096 words = 20.48M gas, about 68% of a 30M block.
-pub const MAX_CANON_TEXT_BYTES: usize = 128 * 1024;
-
-/// Maximum size of an OIP / GIP proposal text. The submit and text-update
-/// paths use this bound. These paths are open to any caller, so this bound
-/// does not depend on the permissioned premise. At `SSTORE_RESET` (5000 gas)
-/// one write is 512 words = 2.56M gas, under 9% of a 30M block. The value
-/// matches the zero-fee calldata cap `FREE_TX_DAILY_CALLDATA_BYTES` (16 KiB).
-pub const MAX_PROPOSAL_TEXT_BYTES: usize = 16 * 1024;
+/// Maximum UTF-8 byte length of a governance text field, shared by canon,
+/// meta-canon and OIP/GIP submission and text updates. Vote separately bounds
+/// the raw JSON envelope before decoding it.
+pub const MAX_TEXT_BYTES: usize = 128 * 1024;
 
 fn validate_text(text: &str, max: usize) -> Result<()> {
     if text.is_empty() {
@@ -65,7 +57,7 @@ macro_rules! impl_proposal_ops {
     ) => {
         /// Submits a new proposal in `Draft`, open to any caller.
         pub fn $submit(&mut self, author: Address, text: &str) -> Result<U256> {
-            validate_text(text, MAX_PROPOSAL_TEXT_BYTES)?;
+            validate_text(text, MAX_TEXT_BYTES)?;
             // Refuse the submit before any write when the author index is full.
             // A wrapped counter would overwrite index slot 0.
             let acount = self.$author_count.read(&author)?;
@@ -140,7 +132,7 @@ macro_rules! impl_proposal_ops {
         /// Replaces a proposal's text. Author-only, and only while the proposal
         /// is `Draft` or `Rework`.
         pub fn $update(&mut self, caller: Address, id: U256, text: &str) -> Result<()> {
-            validate_text(text, MAX_PROPOSAL_TEXT_BYTES)?;
+            validate_text(text, MAX_TEXT_BYTES)?;
             let mut record = self
                 .$map
                 .get(id)?
@@ -224,11 +216,38 @@ impl GovernanceContract<'_> {
         }
     }
 
-    // --- meta-canon / canon writes (authorities-gated, full overwrite) ---
+    // --- meta-canon / canon writes ---
+    //
+    // The direct entries are a bootstrap route only. A chain must install its
+    // first text before there is a validator set to vote with. After version 1
+    // exists, the text changes only through an approved vote proposal
+    // ([`crate::vote_target::GovernanceVoteTarget`]).
 
+    /// Installs the first meta-canon text. Authorities-gated. Refuses with
+    /// `CanonRequiresVote` after the first version exists.
     pub fn update_meta_canon(&mut self, caller: Address, text: &str) -> Result<u64> {
         self.ensure_authority(caller)?;
-        validate_text(text, MAX_CANON_TEXT_BYTES)?;
+        if self.meta_canon_version.read()? != 0 {
+            return Err(GovernanceError::CanonRequiresVote.into());
+        }
+        self.apply_meta_canon_text(text)
+    }
+
+    /// Installs the first canon text. Authorities-gated. Refuses with
+    /// `CanonRequiresVote` after the first version exists.
+    pub fn update_canon(&mut self, caller: Address, text: &str) -> Result<u64> {
+        self.ensure_authority(caller)?;
+        if self.canon_version.read()? != 0 {
+            return Err(GovernanceError::CanonRequiresVote.into());
+        }
+        self.apply_canon_text(text)
+    }
+
+    /// Full overwrite of the meta-canon text: version bump, hash, revision
+    /// entry and event. It has no caller gate. Only the bootstrap entry and
+    /// the vote path call it.
+    pub(crate) fn apply_meta_canon_text(&mut self, text: &str) -> Result<u64> {
+        validate_text(text, MAX_TEXT_BYTES)?;
         let version = self.meta_canon_version.read()? + 1;
         let hash = keccak256(text.as_bytes());
         self.meta_canon.write(text.as_bytes())?;
@@ -239,9 +258,11 @@ impl GovernanceContract<'_> {
         Ok(version)
     }
 
-    pub fn update_canon(&mut self, caller: Address, text: &str) -> Result<u64> {
-        self.ensure_authority(caller)?;
-        validate_text(text, MAX_CANON_TEXT_BYTES)?;
+    /// Full overwrite of the canon text: version bump, hash, revision entry
+    /// and event. It has no caller gate. Only the bootstrap entry and the
+    /// vote path call it.
+    pub(crate) fn apply_canon_text(&mut self, text: &str) -> Result<u64> {
+        validate_text(text, MAX_TEXT_BYTES)?;
         let version = self.canon_version.read()? + 1;
         let hash = keccak256(text.as_bytes());
         self.canon.write(text.as_bytes())?;

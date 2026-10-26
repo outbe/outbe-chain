@@ -1,7 +1,7 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::GEM_ADDRESS;
-use outbe_primitives::time::{first_full_day, timestamp_to_date_key, WorldwideDay};
+use outbe_primitives::time::{first_full_day, timestamp_to_date_key, TimeError, WorldwideDay};
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 use serde::{Deserialize, Serialize};
 
@@ -72,15 +72,16 @@ impl GemItemState {
 
     /// The first full day the gem counts call days from. The group key binds it, so a
     /// gem and its group always agree on it.
-    #[must_use]
-    pub fn full_day_after_issue(&self) -> WorldwideDay {
-        WorldwideDay::new(first_full_day(self.issued_at))
+    pub fn full_day_after_issue(&self) -> Result<WorldwideDay, TimeError> {
+        Ok(WorldwideDay::new(first_full_day(self.issued_at)?))
     }
 
     /// Identity of the group body this gem belongs to.
-    #[must_use]
-    pub fn group_id(&self) -> WwdEntityId {
-        WwdEntityId::from_day_and_digest(self.full_day_after_issue(), self.group_key)
+    pub fn group_id(&self) -> Result<WwdEntityId, TimeError> {
+        Ok(WwdEntityId::from_day_and_digest(
+            self.full_day_after_issue()?,
+            self.group_key,
+        ))
     }
 
     #[must_use]
@@ -241,14 +242,15 @@ pub struct GemContract {
     pub expiry_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 22)]
     pub expiry_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
-    /// Slots ever used in a bucket. Retired ones are zeroed in place, not compacted.
+    /// This value counts all slots ever used in a day.
+    /// Retirement sets slots to zero without compacting them.
     #[attribute(order = 23)]
-    pub expiry_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub expiry_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 24)]
-    pub expiry_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub expiry_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     /// `keccak256(hour_be32 ++ slot_be32)` -> a called group's key.
     #[attribute(order = 25)]
-    pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    pub expiry_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
     /// Group key -> `(hour << 32) | slot`. 0 = not queued.
     #[attribute(order = 26)]
     pub called_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
@@ -256,7 +258,7 @@ pub struct GemContract {
     #[attribute(order = 27)]
     pub called_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 28)]
-    pub expiry_sweep_hour: outbe_primitives::storage::dsl::Value<u32>,
+    pub expiry_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 29)]
     pub expiry_cursor: outbe_primitives::storage::dsl::Value<u64>,
 
@@ -299,8 +301,8 @@ pub struct GemContract {
     #[attribute(order = 42)]
     pub group_unpaid_load: outbe_primitives::storage::dsl::Map<B256, U256>,
 
-    // --- Forfeited groups whose unpaid gems wait to be deleted, bucketed like the
-    // expiry queue.
+    // --- This queue stores forfeited groups whose unpaid gems await deletion.
+    // It schedules groups by day, like the expiry queue.
     #[attribute(order = 43)]
     pub cleanup_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 44)]
@@ -308,38 +310,44 @@ pub struct GemContract {
     #[attribute(order = 45)]
     pub cleanup_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 46)]
-    pub cleanup_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub cleanup_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 47)]
-    pub cleanup_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub cleanup_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 48)]
-    pub cleanup_bucket_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    pub cleanup_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
     #[attribute(order = 49)]
     pub cleanup_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 50)]
     pub cleanup_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 51)]
-    pub cleanup_sweep_hour: outbe_primitives::storage::dsl::Value<u32>,
+    pub cleanup_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 52)]
     pub cleanup_cursor: outbe_primitives::storage::dsl::Value<u64>,
+
+    #[attribute(order = 53)]
+    pub daily_phase: outbe_primitives::storage::dsl::Value<u8>,
+    #[attribute(order = 54)]
+    pub daily_budget: outbe_primitives::storage::dsl::Value<U256>,
+    #[attribute(order = 55)]
+    pub daily_genesis_day: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 56)]
+    pub cleanup_budget: outbe_primitives::storage::dsl::Value<U256>,
 }
 
 impl GemContract<'_> {
-    /// `gem_id = keccak256("gem" || owner || amount_be || block_number_be || issuance_currency_be || reference_currency_be)`.
+    /// `gem_id = keccak256("gem" || owner || amount_be || block_number_be || issuance_currency_be || reference_currency_be || total_supply_be)`.
     /// `amount` is the gem's `promis_load_minor` (reward principal).
-    pub fn generate_gem_id(
-        owner: Address,
-        amount: U256,
-        block_number: u64,
-        issuance_currency: u16,
-        reference_currency: u16,
-    ) -> U256 {
-        let mut buf = [0u8; 3 + 20 + 32 + 8 + 2 + 2];
+    /// `total_supply` is the existing checked `u64` live count before insertion, not
+    /// lifetime issuance. Removal can permit collisions or reuse of deleted IDs.
+    pub fn generate_gem_id(params: &GemAddParams, block_number: u64, total_supply: u64) -> U256 {
+        let mut buf = [0u8; 3 + 20 + 32 + 8 + 2 + 2 + 8];
         buf[0..3].copy_from_slice(b"gem");
-        buf[3..23].copy_from_slice(owner.as_slice());
-        buf[23..55].copy_from_slice(&amount.to_be_bytes::<32>());
+        buf[3..23].copy_from_slice(params.owner.as_slice());
+        buf[23..55].copy_from_slice(&params.promis_load_minor.to_be_bytes::<32>());
         buf[55..63].copy_from_slice(&block_number.to_be_bytes());
-        buf[63..65].copy_from_slice(&issuance_currency.to_be_bytes());
-        buf[65..67].copy_from_slice(&reference_currency.to_be_bytes());
+        buf[63..65].copy_from_slice(&params.issuance_currency.to_be_bytes());
+        buf[65..67].copy_from_slice(&params.reference_currency.to_be_bytes());
+        buf[67..75].copy_from_slice(&total_supply.to_be_bytes());
         U256::from_be_bytes(keccak256(buf).0)
     }
 }

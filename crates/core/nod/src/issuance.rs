@@ -1,5 +1,8 @@
 //! Static issuance invariants checked before Nod storage is changed.
-use crate::{errors::NodError, NodItemState};
+use crate::{
+    errors::{date_step_error, NodError},
+    NodItemState,
+};
 use alloy_primitives::U256;
 use outbe_primitives::error::Result;
 use outbe_primitives::wwd_entity_id::derive_poseidon_entity_id;
@@ -45,7 +48,8 @@ pub(crate) fn validate_item(item: &NodItemState, call_price_minor: U256) -> Resu
     }
 
     let canonical_group_key =
-        crate::identity::group_key(item.issued_at, call_price_minor, item.reference_currency);
+        crate::identity::group_key(item.issued_at, call_price_minor, item.reference_currency)
+            .map_err(date_step_error)?;
     if item.group_key != canonical_group_key {
         return Err(NodError::GroupIdentityMismatch {
             expected: canonical_group_key,

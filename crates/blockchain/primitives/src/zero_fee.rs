@@ -77,3 +77,6 @@ const _: () = {
         i += 1;
     }
 };
+
+/// Base slot of `TeeRegistry.validator_v1_node_hash`.
+pub const VALIDATOR_V1_NODE_HASH_SLOT: u64 = 12;

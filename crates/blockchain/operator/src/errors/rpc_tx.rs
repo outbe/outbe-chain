@@ -29,6 +29,10 @@ pub enum RpcError {
         method: &'static str,
         error: RuintParseError,
     },
+
+    /// The HTTP client builder failed.
+    #[error("build RPC client: {0}")]
+    ClientBuild(#[source] reqwest::Error),
 }
 
 /// Errors from relay keys and legacy transactions.

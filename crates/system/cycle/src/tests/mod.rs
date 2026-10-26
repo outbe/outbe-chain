@@ -21,7 +21,7 @@ use outbe_validatorset::contract::ValidatorSet;
 
 use crate::lifecycle::{CycleLifecycle, CycleLifecycleContext};
 use crate::schema::Cycle;
-use crate::triggers::{next_fire_at, TriggerId, ACTIVE_TRIGGERS};
+use crate::triggers::{last_fire_at, next_fire_at, TriggerId, ACTIVE_TRIGGERS};
 
 pub(super) const CHAIN_ID: u64 = 1;
 /// Genesis at midnight UTC of 2024-01-01.
@@ -42,6 +42,7 @@ pub(super) fn cycle_storage_for(chain_id: u64) -> HashMapStorageProvider {
             BlockContext::empty_for_tests(1, GENESIS_TS, chain_id),
             handle,
         );
+        initialize_daily_passes(&ctx);
         ctx.storage
             .contract::<Cycle<'_>>()
             .active_utc_day
@@ -98,7 +99,8 @@ pub(super) fn seed_fresh_reward_oracle(ctx: &BlockRuntimeContext) {
     let (_, index) = outbe_oracle::api::require_coen_pair(ctx.storage.clone(), 840).unwrap();
     let day = outbe_primitives::time::previous_date_key(
         outbe_primitives::time::timestamp_to_date_key(ctx.block.timestamp),
-    );
+    )
+    .expect("date step");
     oracle
         .record_utc_day_vwap(day, index, U256::from(2_000_000u64))
         .unwrap();
@@ -118,13 +120,16 @@ pub(super) fn seed_daily_voters(ctx: &BlockRuntimeContext, day: u32, voters: &[(
         .unwrap();
 }
 
-/// Seeds V2 Phase 1 accounting progress so the parent block satisfies the
-/// dispatcher gate (`last_accounted_block_number >= block_number - 1`) for
-/// tests that fire the trigger at `block_number >= 2`. Mirrors what
-/// `apply_phase1_commit_in_preexec` records in production.
+/// Writes the parent height into the accounting slot for tests that fire a
+/// trigger at `block_number >= 2`. This is fixture setup. It does not call
+/// the progress recorder.
 pub(super) fn account_parent(ctx: &BlockRuntimeContext, block_number: u64) {
     if block_number >= 2 {
-        crate::record_phase1_progress(ctx, block_number - 1).unwrap();
+        ctx.storage
+            .contract::<crate::schema::Accounting<'_>>()
+            .last_accounted_block_number
+            .write(block_number - 1)
+            .unwrap();
     }
 }
 
@@ -247,7 +252,15 @@ pub(super) fn last_executed_at(ctx: &BlockRuntimeContext<'_>) -> u64 {
 pub(super) fn genesis_block(handle: StorageHandle<'_>, timestamp: u64) -> BlockRuntimeContext<'_> {
     let ctx = BlockRuntimeContext::new(block_ctx(1, timestamp), handle);
     anchor_genesis(&ctx);
+    initialize_daily_passes(&ctx);
     ctx
+}
+
+pub(super) fn initialize_daily_passes(ctx: &BlockRuntimeContext<'_>) {
+    outbe_nodfactory::called::initialize_daily(ctx).unwrap();
+    outbe_gemfactory::called::initialize_daily(ctx).unwrap();
+    outbe_intexfactory::called::initialize_daily(ctx).unwrap();
+    outbe_credisfactory::called::initialize_daily(ctx).unwrap();
 }
 
 /// Runs `run` on `storage` and asserts that it writes no storage slot and

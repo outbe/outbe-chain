@@ -77,3 +77,26 @@ pub fn seed_trailing_vwap_window(
         &[(usd, usd_vwap, volume), (other, iso_vwap, volume)],
     )
 }
+
+/// Reopens a completed daily call sweep on `day` so a test can arm a closed day.
+#[macro_export]
+macro_rules! reopen_daily_call_sweep {
+    ($contract:expr, $storage:expr, $day:expr) => {{
+        let contract = $contract;
+        let day = $day;
+        if contract.daily_genesis_day.read()? == 0 || day < contract.daily_genesis_day.read()? {
+            contract.daily_genesis_day.write(day)?;
+        }
+        if day > contract.call_latest_day.read()? {
+            contract.call_latest_day.write(day)?;
+        }
+        contract.call_sweep_day.write(day)?;
+        contract.daily_phase.write(0)?;
+        contract.call_currency_cursor.write(0)?;
+        for currency in outbe_oracle::api::REFERENCE_CURRENCIES {
+            contract.call_bin_cursor.write(&currency, 0)?;
+            contract.call_scan_failed_day.clear(&currency)?;
+        }
+        Ok(())
+    }};
+}

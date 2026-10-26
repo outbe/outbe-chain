@@ -29,6 +29,8 @@ enum Body {
 
 /// Public metadata is readable without an enclave. Amounts require an explicit
 /// private calculation read; canonical serialization always retains ciphertext.
+/// The calculation view uses six-decimal minor units. The stored body does not
+/// contain those plaintext integers.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TributeRecord {
     metadata: TributeMetadata,

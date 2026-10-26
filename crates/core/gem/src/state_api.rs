@@ -1,4 +1,4 @@
-use crate::errors::GemError;
+use crate::errors::{date_step_error, GemError};
 use crate::precompile::IGem;
 use crate::schema::{CallTerms, GemContract, GemGroupState, GemItemState};
 use crate::GemState;
@@ -98,7 +98,7 @@ impl GemContract<'_> {
             return Err(GemError::AlreadyExists.into());
         }
         let group_key = item.group_key;
-        let group_id = item.group_id();
+        let group_id = item.group_id().map_err(date_step_error)?;
         let current_group = self.groups.get(item.group_key)?;
         let member_count = self.group_gem_count.read(&group_key)?;
         let settled_count = current_group.as_ref().map_or(0, |group| group.settled_gems);
@@ -118,7 +118,7 @@ impl GemContract<'_> {
                 }
                 Some(GemGroupState {
                     group_key,
-                    full_day_after_issue: item.full_day_after_issue(),
+                    full_day_after_issue: item.full_day_after_issue().map_err(date_step_error)?,
                     reference_currency: item.reference_currency,
                     settled_gems: 0,
                 })

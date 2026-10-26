@@ -1,6 +1,6 @@
 //! Quote once, before withdrawing the reserved principal. Issuance never refreshes these terms.
 use crate::{
-    errors::VaultRouterError,
+    errors::{date_step_error, VaultRouterError},
     schema::LiquidityReservation,
     sol_ext::{IReferenceCurrency, IERC20},
 };
@@ -47,7 +47,7 @@ pub(crate) fn quote(
     let (gratis_minor, entry_price_minor) = checked_quote(amount, decimals, valuation)?;
     let policy_rate = api::get_policy_rate(storage.clone(), currency)?;
     let now = storage.now_secs()?;
-    let day = previous_date_key(timestamp_to_date_key(now));
+    let day = previous_date_key(timestamp_to_date_key(now)).map_err(date_step_error)?;
     if OracleContract::new(storage.clone())
         .utc_day_vwap_last_finalized
         .read()?

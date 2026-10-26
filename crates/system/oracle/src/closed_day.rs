@@ -13,7 +13,8 @@ pub fn finalized_closed_day(
     timestamp: u64,
     consumer: &'static str,
 ) -> Result<Option<u32>> {
-    let last_closed_day = previous_date_key(timestamp_to_date_key(timestamp));
+    let last_closed_day = previous_date_key(timestamp_to_date_key(timestamp))
+        .map_err(crate::errors::date_step_error)?;
     let finalized = OracleContract::new(storage)
         .utc_day_vwap_last_finalized
         .read()?;

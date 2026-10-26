@@ -205,8 +205,8 @@ impl TeeRegistry<'_> {
 
     /// Physical scalar slots authenticated by external finalized-state readers.
     pub fn enclave_upgrade_storage_slots_v1(&self) -> Vec<B256> {
-        (45_u64..=49)
-            .chain([52])
+        (44_u64..=48)
+            .chain([51])
             .map(|slot| B256::from(U256::from(slot).to_be_bytes::<32>()))
             .collect()
     }

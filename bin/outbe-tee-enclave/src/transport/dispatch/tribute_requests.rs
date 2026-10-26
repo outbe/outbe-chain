@@ -34,10 +34,15 @@ pub(super) fn dispatch(req: EnclaveRequest, context: RequestContext<'_>) -> Encl
             // Ed25519 attestation key. The host verifies this signature against the
             // attestation key it pinned from the quote. This proves that this attested
             // enclave produced the results and that the host did not substitute them.
-            let preimage = outbe_tee::protocol::tribute_offer_attestation_preimage(
+            let preimage = match outbe_tee::protocol::tribute_offer_attestation_preimage(
                 inputs_canonical_hash,
                 &results,
-            );
+            ) {
+                Ok(preimage) => preimage,
+                Err(error) => {
+                    return into_response(Err(crate::errors::TeeError::from(error)));
+                }
+            };
             let attestation_tag = keys.sign_attestation(&preimage).to_vec();
             EnclaveResponse::TributeOfferBatch {
                 results,

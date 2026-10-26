@@ -6,7 +6,7 @@ pub(super) const TEST_BLOCK_TIMESTAMP_BASE: u64 = 1_700_000_000;
 
 pub(super) const OWNER: Address = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
 
-fn seed_cycle_genesis(storage: StorageHandle<'_>) {
+pub(super) fn seed_cycle_genesis(storage: StorageHandle<'_>) {
     let cycle = storage.contract::<outbe_cycle::schema::Cycle<'_>>();
     cycle
         .active_utc_day
@@ -14,6 +14,20 @@ fn seed_cycle_genesis(storage: StorageHandle<'_>) {
             TEST_BLOCK_TIMESTAMP_BASE,
         ))
         .unwrap();
+    // These fixtures use an established parent state. This state includes the factory watermark.
+    // The lifecycle needs this watermark to resume processing for the first closed day of that parent state.
+    let ctx = BlockRuntimeContext::new(
+        BlockContext::empty_for_tests(
+            1,
+            TEST_BLOCK_TIMESTAMP_BASE - outbe_primitives::time::SECONDS_PER_DAY,
+            CHAIN_ID,
+        ),
+        storage,
+    );
+    outbe_nodfactory::called::initialize_daily(&ctx).unwrap();
+    outbe_gemfactory::called::initialize_daily(&ctx).unwrap();
+    outbe_intexfactory::called::initialize_daily(&ctx).unwrap();
+    outbe_credisfactory::called::initialize_daily(&ctx).unwrap();
 }
 
 pub(super) fn numbered_test_address(prefix: u8, n: u64) -> Address {
@@ -262,6 +276,10 @@ pub(super) fn state_with_active_validators_seeded_at_block_with_cycle_frames(
         outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
         outbe_primitives::addresses::TRIBUTE_ADDRESS,
         NOD_ADDRESS,
+        outbe_primitives::addresses::GEM_ADDRESS,
+        outbe_primitives::addresses::GEM_FACTORY_ADDRESS,
+        outbe_primitives::addresses::INTEX_ADDRESS,
+        outbe_primitives::addresses::CREDIS_ADDRESS,
         // marker allowlist: in production, `0xef` bytecode preserves the
         // accounting-progress marker account across EIP-161. So its seeded
         // slot survives as live state here too. Otherwise an empty account's
@@ -721,7 +739,6 @@ pub(super) fn boundary_with_epoch(
         is_validator_set_change,
         outcome: Bytes::new(),
         is_full_dkg: false,
-        tee_recipient_pubkeys: Vec::new(),
         tee_expired_target_exclusions: Vec::new(),
         tee_expired_target_exclusions_hash: B256::ZERO,
         reshare: outbe_primitives::consensus::ReshareResult {
@@ -751,7 +768,8 @@ pub(super) fn seed_previous_day_vwap(
     let (_, index) = outbe_oracle::api::require_coen_pair(storage.clone(), 840).unwrap();
     let day = outbe_primitives::time::previous_date_key(
         outbe_primitives::time::timestamp_to_date_key(block_ts),
-    );
+    )
+    .expect("date step");
     outbe_oracle::schema::OracleContract::new(storage.clone())
         .record_utc_day_vwap(day, index, rate)
         .unwrap();

@@ -17,7 +17,7 @@ fn missing_emission_day_and_worldwide_day_revert_cleanly() {
     with_storage(|storage| {
         let ed_err = metadosis_dispatch(
             storage.clone(),
-            &IMetadosis::getEmissionDayCall { day: 20261015 }.abi_encode(),
+            &IMetadosis::getEmissionDayCall { day: 20261014 }.abi_encode(),
             Address::ZERO,
             U256::ZERO,
         )
@@ -43,7 +43,7 @@ fn worldwide_day_and_emission_day_abi_preserve_bidirectional_link() {
             storage.clone(),
             ITribute::getWorldwideDayCall { wwd: 20260920 },
         );
-        assert_eq!(day.day, 20261015);
+        assert_eq!(day.day, 20261014);
         assert_eq!(
             (
                 day.formingStart,
@@ -57,41 +57,44 @@ fn worldwide_day_and_emission_day_abi_preserve_bidirectional_link() {
             query_tribute(storage.clone(), ITribute::getActiveWorldwideDaysCall {});
         assert_eq!(active, vec![20260920]);
 
-        let ed = query(
-            storage.clone(),
-            IMetadosis::getEmissionDayCall { day: 20261015 },
-        );
-        assert_eq!(ed.emissionDay, 20261015);
+        let ed = query(storage, IMetadosis::getEmissionDayCall { day: 20261014 });
+        assert_eq!(ed.emissionDay, 20261014);
         assert_eq!(ed.emissionLimitMinor, U256::from(100));
         assert_eq!(ed.wwd, 20260920);
         assert_eq!(ed.metadosisStart, 50);
         assert_eq!(ed.state, emission_day_state::NONE);
-
-        MetadosisContract::new(storage.clone())
-            .bootstrap_end_time
-            .write(123)
-            .unwrap();
-        let bootstrap: u64 = query(storage, IMetadosis::getBootstrapEndTimeCall {});
-        assert_eq!(bootstrap, 123);
     });
 }
 
 pub(super) fn seed_offering_day(storage: StorageHandle<'_>) {
     let wwd = 20260920.into();
-    let day = 20261015u32;
-    let mut tribute = TributeContract::new(storage.clone());
-    outbe_tribute::worldwideday::create_worldwide_day(
-        &mut tribute,
-        wwd,
-        outbe_tribute::worldwideday::NewWwdSchedule {
-            day,
-            forming_start: 10,
-            forming_end: 20,
-            offerings_start: 30,
-            offering_end: 40,
-        },
-    )
-    .unwrap();
+    let day = 20261014u32;
+    let binding = outbe_primitives::storage::metadosis_process_ready_binding(
+        storage.chain_id().unwrap(),
+        storage.block_number().unwrap(),
+        storage.now_secs().unwrap(),
+    );
+    storage
+        .clone()
+        .with_metadosis_mutation::<outbe_primitives::storage::MetadosisCycleLifecycle, _>(
+            binding,
+            || {
+                let mut tribute = TributeContract::new(storage.clone());
+                outbe_tribute::worldwideday::create_worldwide_day(
+                    &mut tribute,
+                    wwd,
+                    outbe_tribute::worldwideday::NewWwdSchedule {
+                        day,
+                        forming_start: 10,
+                        forming_end: 20,
+                        offerings_start: 30,
+                        offering_end: 40,
+                    },
+                )?;
+                Ok(())
+            },
+        )
+        .unwrap();
     let metadosis = MetadosisContract::new(storage);
     metadosis
         .emission_days

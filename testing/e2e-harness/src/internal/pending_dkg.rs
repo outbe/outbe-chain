@@ -501,10 +501,6 @@ mod tests {
                 a.reshare.new_active_set.pop();
             },
             |a| {
-                a.tee_recipient_pubkeys
-                    .push((Address::repeat_byte(1), B256::ZERO))
-            },
-            |a| {
                 let mut bytes = a.outcome.to_vec();
                 bytes[12] += 1;
                 a.outcome = bytes.into();

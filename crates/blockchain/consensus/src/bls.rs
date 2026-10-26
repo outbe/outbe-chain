@@ -43,17 +43,52 @@ static SECRET_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 // ---------------------------------------------------------------------------
 
 /// Backend for BLS key storage at rest.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub enum KeyBackend {
-    /// Plaintext hex files (default for development/testing).
+    /// Plaintext hex files. This is the default for every role, including production.
     #[default]
     Plaintext,
     /// AES-256-GCM encryption with passphrase-derived key (Argon2id KDF).
+    /// The passphrase is absent from [`Debug`] output.
     Encrypted(String),
     /// OS keychain (macOS Keychain / Linux Secret Service via `keyring` crate).
     /// This backend stores key material in the OS secret store. A marker file
     /// on disk points to the keychain entry.
     OsLevel,
+}
+
+impl std::fmt::Debug for KeyBackend {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Plaintext => formatter.write_str("Plaintext"),
+            Self::Encrypted(_) => formatter.write_str("Encrypted(..)"),
+            Self::OsLevel => formatter.write_str("OsLevel"),
+        }
+    }
+}
+
+/// A role backend name could not be parsed.
+#[derive(Debug, PartialEq, Eq)]
+pub enum KeyBackendNameError {
+    /// `encrypted` was selected and no passphrase was supplied.
+    MissingPassphrase,
+    /// The backend name is not `plaintext`, `encrypted`, or `os-level`.
+    Unknown(String),
+}
+
+/// Parse one role backend name. The passphrase is moved only for `encrypted`.
+pub fn parse_key_backend_name(
+    name: &str,
+    passphrase: Option<String>,
+) -> std::result::Result<KeyBackend, KeyBackendNameError> {
+    match name {
+        "plaintext" => Ok(KeyBackend::Plaintext),
+        "encrypted" => passphrase
+            .map(KeyBackend::Encrypted)
+            .ok_or(KeyBackendNameError::MissingPassphrase),
+        "os-level" => Ok(KeyBackend::OsLevel),
+        other => Err(KeyBackendNameError::Unknown(other.to_owned())),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -136,7 +171,7 @@ fn save_to_keychain(path: &Path, data: &[u8]) -> Result<()> {
 }
 
 /// Save raw bytes using the specified backend.
-pub(crate) fn save_raw(path: &Path, data: &[u8], backend: &KeyBackend) -> Result<()> {
+pub fn save_raw(path: &Path, data: &[u8], backend: &KeyBackend) -> Result<()> {
     match backend {
         KeyBackend::Encrypted(passphrase) => save_encrypted(path, data, passphrase),
         KeyBackend::Plaintext => {
@@ -245,7 +280,7 @@ fn atomic_write_secret(path: &Path, data: &[u8], kind: &str) -> Result<()> {
 }
 
 /// Load raw bytes, auto-detecting format (encrypted / keychain / plaintext hex).
-pub(crate) fn load_raw(path: &Path, backend: &KeyBackend) -> Result<Vec<u8>> {
+pub fn load_raw(path: &Path, backend: &KeyBackend) -> Result<Vec<u8>> {
     let raw = std::fs::read(path)
         .wrap_err_with(|| format!("failed to read key file: {}", path.display()))?;
 
@@ -303,6 +338,56 @@ pub(crate) fn load_raw(path: &Path, backend: &KeyBackend) -> Result<Vec<u8>> {
             .to_string();
         hex::decode(&hex_str).wrap_err("invalid hex in key file")
     }
+}
+
+/// Report whether `bytes` is an encrypted envelope or a keychain marker.
+pub fn reads_as_protected_custody(bytes: &[u8]) -> bool {
+    bytes.starts_with(ENC_MAGIC) || bytes.starts_with(KEYCHAIN_MARKER.as_bytes())
+}
+
+/// Reject a secp256k1 custody file that is readable by group or other.
+#[cfg(unix)]
+fn reject_group_readable(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return Ok(());
+    };
+    let mode = metadata.permissions().mode() & 0o777;
+    if mode & 0o077 != 0 {
+        return Err(BlsKeyError::InsecureFileMode {
+            kind: "secp256k1 secret".to_owned(),
+            path: path.display().to_string(),
+            mode,
+        }
+        .into());
+    }
+    Ok(())
+}
+
+/// Load one 32-byte secp256k1 secret.
+pub fn load_secp256k1_secret(path: &Path, backend: &KeyBackend) -> Result<[u8; 32]> {
+    #[cfg(unix)]
+    reject_group_readable(path)?;
+    let bytes = load_raw(path, backend)?;
+    let len = bytes.len();
+    bytes
+        .try_into()
+        .map_err(|_| BlsKeyError::Secp256k1SecretLength { len }.into())
+}
+
+/// Save one 32-byte secp256k1 secret with the selected backend.
+pub fn save_secp256k1_secret(path: &Path, secret: &[u8; 32], backend: &KeyBackend) -> Result<()> {
+    save_raw(path, secret, backend)
+}
+
+/// Load a validator EVM signer from a role custody file.
+pub fn load_validator_evm_signer(
+    path: &Path,
+    backend: &KeyBackend,
+) -> Result<outbe_primitives::signer::OutbeEvmSigner> {
+    let secret = load_secp256k1_secret(path, backend)?;
+    outbe_primitives::signer::OutbeEvmSigner::from_secret_bytes(secret)
+        .map_err(|_| BlsKeyError::InvalidSecp256k1Secret.into())
 }
 
 /// Remove backend-owned raw secret material after its protocol lifecycle ends.
@@ -475,6 +560,13 @@ pub struct ParticipantDkgBootstrapResult {
 /// a secure offline channel. Production use should use a distributed DKG
 /// protocol instead.
 pub fn bootstrap_dkg(n: u32) -> Result<DkgBootstrapResult> {
+    if n > MAX_VALIDATORS {
+        return Err(BlsKeyError::ValidatorCountExceedsMax {
+            count: n,
+            max: MAX_VALIDATORS,
+        }
+        .into());
+    }
     let n = NonZeroU32::new(n).ok_or(BlsKeyError::ZeroValidatorCount)?;
     let mut rng = rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng);
 
@@ -501,6 +593,14 @@ pub fn bootstrap_dkg_for_participants(
 ) -> Result<ParticipantDkgBootstrapResult> {
     if participants.is_empty() {
         return Err(BlsKeyError::ZeroValidatorCount.into());
+    }
+    let count = u32::try_from(participants.len()).unwrap_or(u32::MAX);
+    if count > MAX_VALIDATORS {
+        return Err(BlsKeyError::ValidatorCountExceedsMax {
+            count,
+            max: MAX_VALIDATORS,
+        }
+        .into());
     }
     let mut rng = rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng);
     let validators = participants.len();
@@ -743,5 +843,95 @@ mod tests {
 
         // Cannot load with plaintext backend (encrypted file).
         assert!(load_signing_share(&share_path, &KeyBackend::Plaintext).is_err());
+    }
+
+    fn assert_bls_key_error(error: eyre::Report, expected: BlsKeyError) {
+        let actual = error
+            .downcast_ref::<BlsKeyError>()
+            .unwrap_or_else(|| panic!("expected BlsKeyError, got {error}"));
+        assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+    }
+
+    #[test]
+    fn bootstrap_dkg_rejects_count_above_load_ceiling() {
+        let Err(error) = bootstrap_dkg(MAX_VALIDATORS + 1) else {
+            panic!("count above the ceiling must fail before generation");
+        };
+        assert_bls_key_error(
+            error,
+            BlsKeyError::ValidatorCountExceedsMax {
+                count: MAX_VALIDATORS + 1,
+                max: MAX_VALIDATORS,
+            },
+        );
+    }
+
+    #[test]
+    fn bootstrap_dkg_for_participants_rejects_count_above_load_ceiling() {
+        use commonware_cryptography::Signer as _;
+        use commonware_math::algebra::Random;
+        use commonware_utils::ordered::Set;
+
+        let keys = (0..=MAX_VALIDATORS)
+            .map(|_| {
+                bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+                    rand_commonware::rngs::SysRng,
+                ))
+                .public_key()
+            })
+            .collect::<Vec<_>>();
+        let participants = Set::from_iter_dedup(keys);
+        let count = u32::try_from(participants.len()).unwrap();
+        let Err(error) = bootstrap_dkg_for_participants(participants) else {
+            panic!("count above the ceiling must fail before generation");
+        };
+        assert_bls_key_error(
+            error,
+            BlsKeyError::ValidatorCountExceedsMax {
+                count,
+                max: MAX_VALIDATORS,
+            },
+        );
+    }
+
+    #[test]
+    fn foreign_share_and_foreign_output_keep_distinct_rejections() {
+        use commonware_cryptography::Signer as _;
+        use commonware_math::algebra::Random;
+        use commonware_utils::ordered::Set;
+
+        let random_key = || {
+            bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+                rand_commonware::rngs::SysRng,
+            ))
+            .public_key()
+        };
+        let left_keys = (0..2).map(|_| random_key()).collect::<Vec<_>>();
+        let right_keys = (0..2).map(|_| random_key()).collect::<Vec<_>>();
+        let left = bootstrap_dkg_for_participants(Set::from_iter_dedup(left_keys)).unwrap();
+        let right = bootstrap_dkg_for_participants(Set::from_iter_dedup(right_keys)).unwrap();
+
+        let share_error =
+            validate_dkg_triplet(&right.shares[0], &left.polynomial, &left.output).unwrap_err();
+        assert_bls_key_error(share_error, BlsKeyError::SigningSharePolynomialMismatch);
+
+        let output_error =
+            validate_dkg_triplet(&left.shares[0], &left.polynomial, &right.output).unwrap_err();
+        assert_bls_key_error(output_error, BlsKeyError::DkgOutputPolynomialMismatch);
+    }
+
+    #[test]
+    fn encrypted_backend_debug_redacts_passphrase() {
+        let secret = "passphrase-should-not-appear";
+        let backend = KeyBackend::Encrypted(secret.to_string());
+        let rendered = format!("{backend:?}");
+        assert!(
+            !rendered.contains(secret),
+            "Debug rendered the passphrase: {rendered}"
+        );
+        assert!(
+            rendered.contains("Encrypted"),
+            "Debug dropped the backend name: {rendered}"
+        );
     }
 }

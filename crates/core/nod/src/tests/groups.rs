@@ -14,14 +14,14 @@ fn group_key_binds_the_reference_currency() {
     let issued_at = 1_752_534_000;
     let call_price = U256::from(13);
     assert_ne!(
-        crate::identity::group_key(issued_at, call_price, USD),
-        crate::identity::group_key(issued_at, call_price, EUR),
+        crate::identity::group_key(issued_at, call_price, USD).expect("date step"),
+        crate::identity::group_key(issued_at, call_price, EUR).expect("date step"),
         "same day and call price in two currencies must not share a group"
     );
     assert_eq!(
-        crate::identity::group_key(issued_at, call_price, USD),
+        crate::identity::group_key(issued_at, call_price, USD).expect("date step"),
         outbe_primitives::call_breach::group_key(
-            outbe_primitives::time::first_full_day(issued_at),
+            outbe_primitives::time::first_full_day(issued_at).expect("date step"),
             call_price,
             USD
         )

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
 /// @title OrderData
@@ -8,8 +8,8 @@ struct OrderData {
     bytes32 recipient;
     bytes32 inputToken;
     bytes32 outputToken;
-    uint256 amountIn;
-    uint256 amountOut;
+    uint256 amountIn; // in units of inputToken, released to the filler at settle
+    uint256 amountOut; // in units of outputToken, the minimum output that the user accepts
     uint256 senderNonce;
     uint32 originDomain;
     uint32 destinationDomain;
@@ -23,7 +23,7 @@ struct OrderData {
 struct OnchainCrossChainOrder {
     /// @dev The timestamp by which the order must be filled on the destination chain
     uint32 fillDeadline;
-    /// @dev Type identifier for the order data. This is an EIP-712 typehash.
+    /// @dev Opaque tag of the order data type. It is not used for EIP-712 signing.
     bytes32 orderDataType;
     /// @dev Arbitrary implementation-specific data
     bytes orderData;
@@ -52,7 +52,7 @@ struct ResolvedCrossChainOrder {
 struct Output {
     /// @dev The address of the ERC20 token on the destination chain (address(0) for native token)
     bytes32 token;
-    /// @dev The amount of the token to be sent
+    /// @dev The amount of the token to be sent, in units of `token`
     uint256 amount;
     /// @dev The address to receive the output tokens
     bytes32 recipient;

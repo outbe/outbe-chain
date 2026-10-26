@@ -313,10 +313,6 @@ pub enum ReshareArtifactError {
     InvalidFieldBytes { name: &'static str },
     #[error("invalid vrf group pk length bytes")]
     InvalidVrfGroupPkLengthBytes,
-    #[error("invalid boundary header artifact: missing tee recipient count")]
-    MissingTeeRecipientCount,
-    #[error("tee recipient pubkeys length overflow")]
-    TeeRecipientPubkeysLengthOverflow,
     #[error("TEE expiry exclusions length overflow")]
     TeeExpiryExclusionsLengthOverflow,
     #[error("invalid boundary header artifact payload length: {actual} != {expected}")]

@@ -12,7 +12,43 @@ use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::time::SECONDS_PER_DAY_U32;
 use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key};
 
-use crate::called;
+mod called {
+    use super::*;
+    pub(crate) use crate::called::{call_if_breached, GroupCall};
+
+    fn prepare(ctx: &BlockRuntimeContext) {
+        if IntexContract::new(ctx.storage.clone())
+            .daily_genesis_day
+            .read()
+            .unwrap()
+            == 0
+        {
+            // These call-index fixtures begin with yesterday, not with history before the fixture.
+            let genesis = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(0, ctx.block.timestamp - DAY, CHAIN_ID),
+                ctx.storage.clone(),
+            );
+            crate::called::initialize_daily(&genesis).unwrap();
+        }
+    }
+
+    pub(super) fn scan_and_call(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<u32> {
+        prepare(ctx);
+        crate::called::scan_and_call(ctx)
+    }
+
+    pub(super) fn run_call_slice(
+        ctx: &BlockRuntimeContext,
+    ) -> outbe_primitives::error::Result<u32> {
+        prepare(ctx);
+        crate::called::run_call_slice(ctx)
+    }
+
+    pub(super) fn run_daily(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<()> {
+        prepare(ctx);
+        crate::called::run_daily(ctx)
+    }
+}
 use crate::constants::MAX_SERIES_PER_MESSAGE;
 use crate::precompile::{self, IIntexFactory};
 use crate::runtime;
@@ -36,6 +72,13 @@ const CHAIN_ID: u64 = 1;
 const ISSUED_AT: u32 = 1_700_000_000;
 const PROMIS_LOAD_MINOR: u128 = 1_000_000; // 1 PROMIS in PROMIS-unit
 const CALL_NOTICE_PERIOD: u32 = 7 * SECONDS_PER_DAY_U32;
+
+fn at_height<'s>(ctx: &BlockRuntimeContext<'s>, height: u64) -> BlockRuntimeContext<'s> {
+    BlockRuntimeContext::new(
+        BlockContext::empty_for_tests(height, ctx.block.timestamp, CHAIN_ID),
+        ctx.storage.clone(),
+    )
+}
 
 // COEN clearing price and the trigger derived from it at issuance.
 const ENTRY_PRICE: u64 = 1_000_000;
@@ -87,7 +130,10 @@ fn series_state(s: &StorageHandle<'_>, id: SeriesId) -> IntexState {
 
 /// The call group the series belongs to.
 fn group_of(s: &StorageHandle<'_>, id: SeriesId) -> B256 {
-    outbe_intex::api::read_series(s, id).unwrap().group_key()
+    outbe_intex::api::read_series(s, id)
+        .unwrap()
+        .group_key()
+        .expect("date step")
 }
 
 /// Force-call one group against the protocol call window. Returns how many series moved.
@@ -163,7 +209,11 @@ impl SeedCalledGroup for IntexContract<'_> {
     ) -> outbe_primitives::error::Result<()> {
         let record = outbe_intex::api::read_series(&self.storage, member)?;
         let called_at = deadline.saturating_sub(u64::from(record.call_notice_period_seconds));
-        self.record_group_called(record.group_key(), called_at as u32, deadline)
+        self.record_group_called(
+            record.group_key().expect("date step"),
+            called_at as u32,
+            deadline,
+        )
     }
 }
 
@@ -196,7 +246,7 @@ fn word(value: u64) -> alloy_primitives::Bytes {
 fn write_day_rate(oracle: &OracleContract, iso_code: u16, pair_id: u32, rate: U256) {
     let pair = outbe_oracle::api::AddressPair::new_coen_to(iso_code);
     oracle.pair_to_index.write(&pair, pair_id).unwrap();
-    let day = previous_date_key(timestamp_to_date_key(ISSUED_AT as u64));
+    let day = previous_date_key(timestamp_to_date_key(ISSUED_AT as u64)).expect("date step");
     oracle.record_utc_day_vwap(day, pair_id, rate).unwrap();
     let snapshot = outbe_oracle::api::current_vwap_snapshot(oracle.storage.clone()).unwrap();
     OracleContract::new(oracle.storage.clone())

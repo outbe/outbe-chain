@@ -48,6 +48,26 @@ pub(crate) enum CliError {
         /// Unrecognized backend name.
         backend: String,
     },
+    /// Indicates that the encrypted EVM key backend lacks a passphrase.
+    #[error("--evm-key-backend encrypted requires --evm-passphrase or EVM_PASSPHRASE env var")]
+    MissingEvmPassphrase,
+    /// Indicates that the encrypted Reth key backend lacks a passphrase.
+    #[error(
+        "--reth-key-backend encrypted requires --reth-passphrase or RETH_P2P_PASSPHRASE env var"
+    )]
+    MissingRethPassphrase,
+    /// Indicates an unknown EVM key backend name.
+    #[error("unknown EVM key backend: {backend}")]
+    UnknownEvmKeyBackend {
+        /// Unrecognized backend name.
+        backend: String,
+    },
+    /// Indicates an unknown Reth key backend name.
+    #[error("unknown Reth key backend: {backend}")]
+    UnknownRethKeyBackend {
+        /// Unrecognized backend name.
+        backend: String,
+    },
     /// Indicates that a compressed public key failed hex decoding.
     #[error("expected 33-byte compressed public key: {0}")]
     InvalidCompressedPublicKey(#[from] hex::FromHexError),

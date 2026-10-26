@@ -1,30 +1,11 @@
-use alloy_primitives::{Address, U256};
+use alloy_primitives::Address;
 use alloy_sol_types::SolEvent;
-use outbe_nod::{api, precompile::INod, NodItemState};
+use outbe_nod::{api, precompile::INod};
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::NOD_ADDRESS,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
-
-fn item(owner: Address, day: WorldwideDay) -> NodItemState {
-    let nod_id = outbe_nod::identity::generate_nod_id(owner, day).unwrap();
-    outbe_nod::test_support::item(
-        outbe_nod::test_support::NodItemFixture {
-            is_settled: false,
-            nod_id,
-            owner,
-            gratis_load_minor: U256::from(11),
-            worldwide_day: day,
-            league_id: 4,
-            group_key: outbe_nod::test_support::group_key(1_752_534_000, U256::from(5), 978),
-            issuance_currency: 840,
-            reference_currency: 978,
-            issued_at: 1_752_534_000,
-        },
-        U256::from(5),
-    )
-}
 
 /// The fixtures key their groups by the production call rate.
 fn seed_production_profile(storage: &StorageHandle<'_>) {
@@ -41,7 +22,10 @@ fn provider() -> HashMapStorageProvider {
 #[test]
 fn same_block_issue_is_visible_to_point_and_list_reads() {
     let mut provider = provider();
-    let body = item(Address::repeat_byte(0x21), WorldwideDay::new(20_260_716));
+    let body = outbe_nod::test_support::sample_item(
+        Address::repeat_byte(0x21),
+        WorldwideDay::new(20_260_716),
+    );
 
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_profile(&storage);
@@ -72,7 +56,10 @@ fn same_block_issue_is_visible_to_point_and_list_reads() {
 #[test]
 fn removal_checks_loaded_state() {
     let mut provider = provider();
-    let body = item(Address::repeat_byte(0x41), WorldwideDay::new(20_260_716));
+    let body = outbe_nod::test_support::sample_item(
+        Address::repeat_byte(0x41),
+        WorldwideDay::new(20_260_716),
+    );
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_profile(&storage);
         outbe_nod::test_support::add(&storage, &body).unwrap();

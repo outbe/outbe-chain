@@ -68,15 +68,20 @@ fn world() -> (HashMapStorageProvider, Vec<(U256, U256)>) {
         let pair =
             outbe_oracle::api::register_pair(s.clone(), AddressPair::new_coen_to(840)).unwrap();
         let oracle = OracleContract::new(s.clone());
-        let latest = previous_date_key(timestamp_to_date_key(CALLED));
+        let latest = previous_date_key(timestamp_to_date_key(CALLED)).expect("date step");
         let mut day = latest;
         for _ in 0..28 {
             oracle
                 .record_utc_day_vwap(day, pair, U256::from(3_000_000))
                 .unwrap();
-            day = previous_date_key(day);
+            day = previous_date_key(day).expect("date step");
         }
         oracle.utc_day_vwap_last_finalized.write(latest).unwrap();
+        called::initialize_daily(&BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(0, CALLED - DAY, 1),
+            s.clone(),
+        ))
+        .unwrap();
         let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(1, CALLED, 1), s.clone());
         called::scan_and_call(&ctx).unwrap();
         for (id, _) in &rights {
@@ -102,11 +107,29 @@ fn world() -> (HashMapStorageProvider, Vec<(U256, U256)>) {
 fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
     p.set_timestamp(U256::from(at));
     StorageHandle::enter(p, |s| {
-        let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, at, 1), s);
-        hooks::sweep_forfeits(&ctx)?;
-        called::run_call_slice(&ctx)?;
-        hooks::sweep_cleanup(&ctx)?;
-        Ok(())
+        s.with_checkpoint(|| {
+            OracleContract::new(s.clone())
+                .utc_day_vwap_last_finalized
+                .write(previous_date_key(timestamp_to_date_key(at)).expect("date step"))?;
+            // Process the calendar backlog with distinct block allowances.
+            // Prices no longer affect called groups, but day readiness still matters.
+            for block in 0..16 {
+                let ctx = BlockRuntimeContext::new(
+                    BlockContext::empty_for_tests(at * 32 + block, at, 1),
+                    s.clone(),
+                );
+                called::run_call_slice(&ctx)?;
+                if GemContract::new(s.clone()).call_sweep_day.read()? == 0 {
+                    break;
+                }
+            }
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(at * 32 + 16, at, 1),
+                s.clone(),
+            );
+            hooks::sweep_cleanup(&ctx)?;
+            Ok(())
+        })
     })
 }
 
@@ -168,7 +191,7 @@ fn every_included_gem_subtype_returns_its_full_load_once_after_forfeiture() {
             U256::ZERO
         );
     });
-    let due = ((DEADLINE / 3600) + 1) * 3600;
+    let due = ((DEADLINE / DAY) + 1) * DAY;
     sweep(&mut p, due).unwrap();
     conserved(&mut p, &rights);
     sweep(&mut p, due + DAY).unwrap();
@@ -198,7 +221,7 @@ fn a_paid_then_mined_gem_returns_no_capacity_while_unpaid_siblings_forfeit() {
             U256::ZERO
         );
     });
-    let due = ((DEADLINE / 3600) + 1) * 3600;
+    let due = ((DEADLINE / DAY) + 1) * DAY;
     sweep(&mut p, due).unwrap();
     sweep(&mut p, due + DAY).unwrap();
     StorageHandle::enter(&mut p, |s| {
@@ -225,7 +248,7 @@ fn a_paid_gem_stays_live_beside_its_forfeited_siblings() {
         let (item, group) = api::load_pair(&s, paid).unwrap().unwrap();
         api::record_settled(&s, item, group).unwrap();
     });
-    let due = ((DEADLINE / 3600) + 1) * 3600;
+    let due = ((DEADLINE / DAY) + 1) * DAY;
     sweep(&mut p, due).unwrap();
     sweep(&mut p, due + DAY).unwrap();
     let total = rights.iter().map(|(_, load)| *load).sum::<U256>();
@@ -290,7 +313,7 @@ fn a_paid_gem_stays_live_beside_its_forfeited_siblings() {
 
 #[test]
 fn failures_before_and_after_every_expiry_mutation_conserve_load_and_retry_once() {
-    let due = ((DEADLINE / 3600) + 1) * 3600;
+    let due = ((DEADLINE / DAY) + 1) * DAY;
     let (mut baseline, _) = world();
     sweep(&mut baseline, due).unwrap();
     let mutations = baseline.clear_mutation_failure();

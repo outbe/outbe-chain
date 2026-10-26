@@ -124,25 +124,6 @@
   },
   {
     "type": "function",
-    "name": "getTributesByDay",
-    "inputs": [
-      {
-        "name": "worldwideDay",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "tributeIds",
-        "type": "uint256[]",
-        "internalType": "uint256[]"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "getTributesByOwner",
     "inputs": [
       {
@@ -521,6 +502,22 @@
   },
   {
     "type": "error",
+    "name": "DateStep",
+    "inputs": [
+      {
+        "name": "kind",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "dateKey",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "DayResponseScopeMismatch",
     "inputs": []
   },
@@ -606,7 +603,7 @@
   },
   {
     "type": "error",
-    "name": "NodCreationWindowExpired",
+    "name": "NodCreationBeforeCompletion",
     "inputs": []
   },
   {

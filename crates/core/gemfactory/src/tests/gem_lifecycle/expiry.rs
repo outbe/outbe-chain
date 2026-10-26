@@ -17,22 +17,21 @@ use outbe_gem::schema::{GemContract, GemState};
 /// Unix time of the first block past the deadline of a group called at `T_NOW`.
 fn first_due_block(storage: &StorageHandle, gem_id: U256) -> u64 {
     let notice = view(storage, gem_id).terms.call_notice_period_seconds;
-    GemContract::hour_end(GemContract::deadline_hour(T_NOW + u64::from(notice)))
+    GemContract::day_end(GemContract::deadline_day(T_NOW + u64::from(notice)))
 }
 
 #[test]
-fn expiry_waits_until_the_deadline_hour_has_closed() {
+fn expiry_waits_until_the_deadline_day_has_closed() {
     with_storage(|storage| {
         let gem_id = mature_gem(storage);
         call_gem(storage, gem_id, T_NOW);
-        let hour_end =
-            GemContract::hour_end(GemContract::deadline_hour(T_NOW + 7 * SECONDS_PER_DAY));
+        let day_end = GemContract::day_end(GemContract::deadline_day(T_NOW + 7 * SECONDS_PER_DAY));
 
-        begin_block_at(storage, hour_end - 1);
+        begin_block_at(storage, day_end - 1);
         assert_eq!(gem_state(storage, gem_id), GemState::Called as u8);
         assert_eq!(unallocated(storage), U256::ZERO);
 
-        begin_block_at(storage, hour_end);
+        begin_block_at(storage, day_end);
         assert!(item(storage, gem_id).is_none());
         assert_eq!(unallocated(storage), U256::from(1_000_000));
     });
@@ -94,7 +93,7 @@ fn forfeiting_a_gem_returns_its_load_to_the_pool() {
 fn a_settled_gem_is_never_forfeited() {
     with_storage(|storage| {
         let gem_id = mature_gem(storage);
-        let group = bucket_of(storage, gem_id);
+        let group = group_of(storage, gem_id);
         call_gem(storage, gem_id, T_NOW);
         settle(storage, gem_id);
 
@@ -124,10 +123,10 @@ fn an_entry_the_sweep_cannot_retire_does_not_hold_up_its_group() {
         let deadline = T_NOW + 7 * SECONDS_PER_DAY;
         gem.push_called(ghost, deadline).unwrap();
         call_gem(storage, live, T_NOW);
-        let day = GemContract::deadline_hour(deadline);
+        let day = GemContract::deadline_day(deadline);
         let load = item(storage, live).unwrap().promis_load_minor;
 
-        begin_block_at(storage, GemContract::hour_end(day));
+        begin_block_at(storage, GemContract::day_end(day));
 
         assert_eq!(gem.expiry_slot(day, 0).unwrap(), None, "the ghost is out");
         assert_eq!(
@@ -144,11 +143,11 @@ fn a_due_entry_that_cannot_burn_credits_nothing() {
     with_storage(|storage| {
         let gem_id = mature_gem(storage);
         let mut gem = GemContract::new(storage.clone());
-        gem.push_called(bucket_of(storage, gem_id), T_NOW).unwrap();
+        gem.push_called(group_of(storage, gem_id), T_NOW).unwrap();
 
         begin_block_at(
             storage,
-            GemContract::hour_end(GemContract::deadline_hour(T_NOW)),
+            GemContract::day_end(GemContract::deadline_day(T_NOW)),
         );
 
         assert_eq!(unallocated(storage), U256::ZERO);
@@ -165,7 +164,7 @@ fn a_gem_above_the_window_is_not_visited_but_still_expires() {
 
         // Every published day sits below the gem's call price.
         let pair = seed_currency(storage, USD, Some(U256::from(600_000u64)));
-        let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW));
+        let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW)).expect("date step");
         priced_window(
             storage,
             pair,
@@ -173,10 +172,7 @@ fn a_gem_above_the_window_is_not_visited_but_still_expires() {
             call_price - U256::from(1u64),
         );
 
-        assert_eq!(
-            crate::called::scan_and_call(&block_ctx(storage)).unwrap(),
-            0
-        );
+        assert_eq!(scan_and_call(&block_ctx(storage)).unwrap(), 0);
         assert_eq!(gem_state(storage, gem_id), GemState::Issued as u8);
 
         call_gem(storage, gem_id, T_NOW);
@@ -186,35 +182,36 @@ fn a_gem_above_the_window_is_not_visited_but_still_expires() {
 }
 
 #[test]
-fn a_group_that_outlives_its_hour_is_retired_rather_than_left_in_front() {
+fn a_group_that_outlives_its_day_is_retired_rather_than_left_in_front() {
     with_storage(|storage| {
         let gem_id = mature_gem(storage);
         let gem = GemContract::new(storage.clone());
         call_gem(storage, gem_id, T_NOW);
         let deadline = T_NOW + 7 * SECONDS_PER_DAY;
-        let hour = GemContract::deadline_hour(deadline);
+        let day = GemContract::deadline_day(deadline);
 
-        let entry = bucket_of(storage, gem_id);
+        let entry = group_of(storage, gem_id);
         gem.called_deadline
             .write(&entry, deadline + 400 * SECONDS_PER_DAY)
             .unwrap();
 
-        begin_block_at(storage, GemContract::hour_end(hour));
+        begin_block_at(storage, GemContract::day_end(day));
 
-        let retry = GemContract::deadline_hour(deadline + 400 * SECONDS_PER_DAY);
+        let retry = GemContract::deadline_day(deadline + 400 * SECONDS_PER_DAY);
         assert_eq!(
             gem.first_expiry_day().unwrap(),
             Some(retry),
-            "the group moves to its deadline's hour instead of blocking every later one"
+            "the group moves to its deadline's day instead of blocking every later one"
         );
 
-        begin_block_at(storage, GemContract::hour_end(retry));
+        begin_block_at(storage, GemContract::day_end(retry));
         assert!(item(storage, gem_id).is_none());
     });
 }
 
-/// Calls a mature gem, fails its first forfeit, and checks its group moved to the
-/// next hour and burned there with its credit. Returns the provider for its events.
+/// This helper calls a mature gem and causes its first forfeit to fail.
+/// It checks that the group moves to the next day and that the gem burns there with its credit.
+/// It returns the provider for access to its events.
 fn forfeit_fails_once() -> (
     outbe_primitives::storage::hashmap::HashMapStorageProvider,
     U256,
@@ -224,16 +221,16 @@ fn forfeit_fails_once() -> (
         let gem_id = mature_gem(&storage);
         let load = item(&storage, gem_id).unwrap().promis_load_minor;
         call_gem(&storage, gem_id, T_NOW);
-        let hour = GemContract::deadline_hour(T_NOW + 7 * SECONDS_PER_DAY);
+        let day = GemContract::deadline_day(T_NOW + 7 * SECONDS_PER_DAY);
         // The credit overflows, so the forfeit reverts as a whole.
         let mut limit = outbe_promislimit::PromisLimitContract::new(storage.clone());
         limit.checked_take_up_to(U256::MAX).unwrap();
         limit.checked_credit(U256::MAX).unwrap();
 
-        let now = GemContract::hour_end(hour);
+        let now = GemContract::day_end(day);
         begin_block_at(&storage, now);
 
-        let retry = GemContract::deadline_hour(now) + 1;
+        let retry = GemContract::deadline_day(now);
         assert_eq!(gem_state(&storage, gem_id), GemState::Called as u8);
         assert_eq!(
             GemContract::new(storage.clone())
@@ -248,7 +245,7 @@ fn forfeit_fails_once() -> (
         outbe_promislimit::PromisLimitContract::new(storage.clone())
             .checked_take_up_to(U256::MAX)
             .unwrap();
-        begin_block_at(&storage, GemContract::hour_end(retry));
+        begin_block_at(&storage, GemContract::day_end(retry));
 
         assert!(item(&storage, gem_id).is_none());
         assert_eq!(unallocated(&storage), load);
@@ -256,8 +253,8 @@ fn forfeit_fails_once() -> (
     (provider, gem_id)
 }
 
-/// A gem whose forfeit fails is not lost: its group moves to the next hour with it,
-/// and it burns there.
+/// A gem whose forfeit fails remains in its group.
+/// The group moves to the next day, when the gem burns.
 #[test]
 fn a_group_whose_member_fails_to_burn_is_deferred_and_burned_later() {
     let (provider, _) = forfeit_fails_once();
@@ -292,7 +289,7 @@ fn a_group_whose_credit_fails_is_deferred_whole() {
         limit.checked_take_up_to(U256::MAX).unwrap();
         begin_block_at(
             storage,
-            GemContract::hour_end(GemContract::deadline_hour(now) + 1),
+            GemContract::day_end(GemContract::deadline_day(now)),
         );
         assert!(gems.iter().all(|gem_id| item(storage, *gem_id).is_none()));
         assert_eq!(unallocated(storage), U256::from(1_001u64));
@@ -315,7 +312,7 @@ fn a_broken_group_index_holds_back_only_the_cleanup() {
         assert_eq!(unallocated(&storage), U256::from(3u64));
         assert!(item(&storage, gems[1]).is_some());
         assert!(GemContract::new(storage.clone())
-            .first_cleanup_hour()
+            .first_cleanup_day()
             .unwrap()
             .is_some());
     });
@@ -349,11 +346,17 @@ fn a_called_group_wider_than_the_budget_is_cleaned_up_over_several_blocks() {
             gems.len() - SWEEP_WRITES_PER_BLOCK as usize,
             "one block deletes its write budget"
         );
+        begin_block_at(storage, now);
+        assert_eq!(
+            live(),
+            gems.len() - SWEEP_WRITES_PER_BLOCK as usize,
+            "same-height cleanup cannot replenish its independent allowance"
+        );
         begin_block_at(storage, now + 1);
         assert_eq!(live(), 0);
         let gem = GemContract::new(storage.clone());
         assert_eq!(gem.first_expiry_day().unwrap(), None);
-        assert_eq!(gem.first_cleanup_hour().unwrap(), None);
+        assert_eq!(gem.first_cleanup_day().unwrap(), None);
         assert_eq!(unallocated(storage), U256::from(loads.iter().sum::<u64>()));
     });
 }
@@ -365,7 +368,7 @@ fn a_storage_fault_in_a_forfeit_fails_the_block() {
     let (gem_id, now) = StorageHandle::enter(&mut provider, |storage| {
         let gem_id = mature_gem(&storage);
         call_gem(&storage, gem_id, T_NOW);
-        let now = GemContract::hour_end(GemContract::deadline_hour(T_NOW + 7 * SECONDS_PER_DAY));
+        let now = GemContract::day_end(GemContract::deadline_day(T_NOW + 7 * SECONDS_PER_DAY));
         (gem_id, now)
     });
 

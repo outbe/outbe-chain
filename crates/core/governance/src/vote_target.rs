@@ -1,9 +1,13 @@
-//! Vote target-module handler for materializing Approved OIP / GIP records.
+//! Vote target-module handler for Governance writes after quorum: it
+//! materializes Approved OIP / GIP records and replaces the canon or
+//! meta-canon text.
 //!
 //! Vote JSON payload schema:
 //! ```json
 //! {"kind":"oip","text":"..."}
 //! {"kind":"gip","text":"..."}
+//! {"kind":"canontext","text":"..."}
+//! {"kind":"metacanontext","text":"..."}
 //! ```
 
 use alloy_primitives::{Address, U256};
@@ -16,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::errors::{GovernanceError, GovernanceFatalError};
-use crate::runtime::MAX_PROPOSAL_TEXT_BYTES;
+use crate::runtime::MAX_TEXT_BYTES;
 use crate::schema::GovernanceContract;
 
 /// Which governance proposal kind a vote payload creates.
@@ -25,9 +29,13 @@ use crate::schema::GovernanceContract;
 pub enum ProposalKind {
     Oip,
     Gip,
+    /// Replace the canon text. The payload text is the new document.
+    CanonText,
+    /// Replace the meta-canon text. The payload text is the new document.
+    MetaCanonText,
 }
 
-/// JSON payload for materializing an Approved OIP/GIP via vote.
+/// JSON payload for a Governance write via vote.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GovernanceVotePayload {
     pub kind: ProposalKind,
@@ -50,10 +58,10 @@ impl GovernanceVotePayload {
         if self.text.is_empty() {
             return Err(GovernanceError::EmptyText);
         }
-        if self.text.len() > MAX_PROPOSAL_TEXT_BYTES {
+        if self.text.len() > MAX_TEXT_BYTES {
             return Err(GovernanceError::TextTooLarge {
                 len: self.text.len(),
-                max: MAX_PROPOSAL_TEXT_BYTES,
+                max: MAX_TEXT_BYTES,
             });
         }
         Ok(())
@@ -112,6 +120,12 @@ impl VoteTarget for GovernanceVoteTarget {
             ProposalKind::Gip => {
                 gov.create_approved_gip(author, &decoded.text)?;
             }
+            ProposalKind::CanonText => {
+                gov.apply_canon_text(&decoded.text)?;
+            }
+            ProposalKind::MetaCanonText => {
+                gov.apply_meta_canon_text(&decoded.text)?;
+            }
         }
         Ok(TargetExecutionOutcome::Applied)
     }
@@ -142,20 +156,45 @@ mod tests {
     }
 
     #[test]
+    fn text_kinds_use_lowercase_names() {
+        let json = GovernanceVotePayload::encode(ProposalKind::CanonText, "c");
+        assert!(json.contains(r#""kind":"canontext""#), "json={json}");
+        let json = GovernanceVotePayload::encode(ProposalKind::MetaCanonText, "m");
+        assert!(json.contains(r#""kind":"metacanontext""#), "json={json}");
+    }
+
+    #[test]
+    fn rejects_oversize_text_kinds() {
+        let too_big = "a".repeat(MAX_TEXT_BYTES + 1);
+        for kind in [ProposalKind::CanonText, ProposalKind::MetaCanonText] {
+            let payload = GovernanceVotePayload::new(kind, too_big.as_str());
+            assert_eq!(
+                payload.validate().unwrap_err(),
+                GovernanceError::TextTooLarge {
+                    len: too_big.len(),
+                    max: MAX_TEXT_BYTES,
+                }
+            );
+            let empty = GovernanceVotePayload::new(kind, "");
+            assert_eq!(empty.validate().unwrap_err(), GovernanceError::EmptyText);
+        }
+    }
+
+    #[test]
     fn rejects_empty_text() {
         let payload = GovernanceVotePayload::new(ProposalKind::Gip, "");
         assert_eq!(payload.validate().unwrap_err(), GovernanceError::EmptyText);
     }
 
     #[test]
-    fn validate_keeps_proposal_bound() {
-        let max = MAX_PROPOSAL_TEXT_BYTES;
+    fn validate_bounds_utf8_text_bytes() {
+        let max = MAX_TEXT_BYTES;
         for kind in [ProposalKind::Oip, ProposalKind::Gip] {
-            GovernanceVotePayload::new(kind, "a".repeat(max))
+            GovernanceVotePayload::new(kind, "é".repeat(max / 2))
                 .validate()
                 .unwrap();
             assert_eq!(
-                GovernanceVotePayload::new(kind, "a".repeat(max + 1))
+                GovernanceVotePayload::new(kind, format!("{}a", "é".repeat(max / 2)))
                     .validate()
                     .unwrap_err(),
                 GovernanceError::TextTooLarge { len: max + 1, max }

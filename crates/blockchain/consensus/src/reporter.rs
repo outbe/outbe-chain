@@ -29,7 +29,7 @@ use commonware_cryptography::{
 };
 use commonware_parallel::Sequential;
 use commonware_utils::ordered::Quorum as _;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
 use crate::{
@@ -48,6 +48,11 @@ use crate::{
 use outbe_primitives::consensus::{
     ConsensusData, ConsensusExecutionBridge, FinalizedParentCertificateData,
 };
+
+#[path = "reporter_view_state.rs"]
+mod reporter_view_state;
+use reporter_view_state::{skipped_views, ReporterViewState};
+pub use reporter_view_state::{ReporterContinuity, ReporterContinuityState};
 
 /// Reporter that forwards Simplex activities.
 ///
@@ -91,84 +96,6 @@ pub struct OutbeReporter {
     /// mailbox (see `handle_certification`). The FinalizationActor stays the
     /// single durable writer.
     witness_sink: Arc<dyn CertificationWitnessSink>,
-}
-
-/// Mutable per-view state owned by a single `OutbeReporter` instance, separated
-/// from the immutable epoch wiring. Holds the finalization cursor (the lower
-/// bound for skipped-view metrics) and the byzantine-evidence
-/// buffer that each finalization drains. Its operations are unit-tested in
-/// isolation. Thus byzantine buffering and the finalization cursor are no
-/// longer loose fields threaded through the handlers.
-#[derive(Clone, Default)]
-struct ReporterViewState {
-    last_finalized_view: u64,
-    last_certificate: Option<HybridCertificate<MinSig>>,
-    pending_byzantine: Vec<Address>,
-}
-
-impl ReporterViewState {
-    fn last_finalized_view(&self) -> u64 {
-        self.last_finalized_view
-    }
-
-    fn last_certificate(&self) -> Option<&HybridCertificate<MinSig>> {
-        self.last_certificate.as_ref()
-    }
-
-    /// Buffer a byzantine validator address until the next finalization drains it.
-    fn buffer_byzantine(&mut self, addr: Address) {
-        self.pending_byzantine.push(addr);
-    }
-
-    /// Drain the buffered byzantine addresses, sorted and deduplicated.
-    fn drain_byzantine_sorted(&mut self) -> Vec<Address> {
-        let mut drained = std::mem::take(&mut self.pending_byzantine);
-        drained.sort_unstable();
-        drained.dedup();
-        drained
-    }
-
-    /// Advance the finalization cursor used by skipped-view metrics.
-    fn record_finalization(&mut self, view: u64, certificate: HybridCertificate<MinSig>) {
-        self.last_finalized_view = view;
-        self.last_certificate = Some(certificate);
-    }
-}
-
-#[derive(Clone, Default)]
-pub struct ReporterContinuity {
-    inner: Arc<Mutex<ReporterContinuityState>>,
-}
-
-#[derive(Clone, Default)]
-pub struct ReporterContinuityState {
-    pub last_finalized_view: u64,
-    pub last_certificate: Option<HybridCertificate<MinSig>>,
-    pub last_vrf_seed: Option<Vec<u8>>,
-}
-
-impl ReporterContinuity {
-    pub fn snapshot(&self) -> ReporterContinuityState {
-        match self.inner.lock() {
-            Ok(state) => state.clone(),
-            Err(poisoned) => poisoned.into_inner().clone(),
-        }
-    }
-
-    pub fn update(
-        &self,
-        last_finalized_view: u64,
-        last_certificate: Option<HybridCertificate<MinSig>>,
-        last_vrf_seed: Option<Vec<u8>>,
-    ) {
-        let mut state = match self.inner.lock() {
-            Ok(state) => state,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        state.last_finalized_view = last_finalized_view;
-        state.last_certificate = last_certificate;
-        state.last_vrf_seed = last_vrf_seed;
-    }
 }
 
 /// Immutable authority for one reporter epoch. Address order matches participant indices.
@@ -219,7 +146,7 @@ impl OutbeReporter {
             view_state: ReporterViewState {
                 last_finalized_view: persisted.last_finalized_view,
                 last_certificate: persisted.last_certificate,
-                pending_byzantine: Vec::new(),
+                pending_byzantine: Default::default(),
             },
             witness_sink,
         }
@@ -266,9 +193,11 @@ impl Reporter for OutbeReporter {
                 commonware_actor::Feedback::Ok
             }
             Activity::Certification(notarization) => {
-                // Marshal's mailbox drops `Activity::Certification`
-                // via its `_ => return;` arm, so Outbe is the only persistent
-                // consumer. Verify before write per the test contract
+                // Marshal returns `Feedback::Ok` for every activity other than
+                // Notarization and Finalization
+                // (`consensus/src/marshal/core/mailbox.rs:996-1008`). Outbe is
+                // the only persistent consumer of Certification. Verify before
+                // write per
                 // `proof_store_ingestion_verifies_certification_activity_before_write`.
                 self.handle_certification(notarization);
                 commonware_actor::Feedback::Ok
@@ -311,8 +240,8 @@ impl Reporter for OutbeReporter {
 impl OutbeReporter {
     fn handle_finalize_vote(&mut self, finalize: Finalize<HybridScheme<MinSig>, Digest>) {
         // Do NOT verify the vote inline on the Simplex voter task. The
-        // batcher reports `Activity::Finalize` BEFORE it batch-verifies the vote
-        // (monorepo batcher `round.rs::add_network`). Thus the vote here is
+        // batcher `accept_vote` reports `Activity::Finalize` before `verifier.add`
+        // and before `try_verify` (monorepo `batcher/round.rs`). Thus the vote here is
         // unverified and MUST be verified before it can feed the proposer's
         // late-credit aggregate. But verification of `O(committee)` BLS pairings
         // per view on the voter critical path inflated block time. Enqueue the
@@ -728,13 +657,6 @@ impl OutbeReporter {
     }
 }
 
-/// Views skipped between two finalizations of one engine run. `None` when the
-/// previous finalized view is unknown (0: first finalization after start or an
-/// epoch restart) or the counter did not advance, so no false gap is recorded.
-fn skipped_views(last_finalized_view: u64, view: u64) -> Option<u64> {
-    (last_finalized_view != 0 && view > last_finalized_view).then(|| view - last_finalized_view - 1)
-}
-
 #[cfg(test)]
 mod tests {
     use alloy_primitives::address;
@@ -780,7 +702,7 @@ mod tests {
         (keys, participants)
     }
 
-    fn sample_certificate() -> crate::hybrid::HybridCertificate<MinSig> {
+    pub(super) fn sample_certificate() -> crate::hybrid::HybridCertificate<MinSig> {
         let (keys, participants) = test_participants(3);
         let dkg = bootstrap_dkg(3).unwrap();
         let schemes: Vec<HybridScheme<MinSig>> = crate::test_harness::fixture_signer_schemes(
@@ -960,44 +882,5 @@ mod tests {
 
         assert_eq!(reporter.view_state.last_finalized_view, 17);
         assert_eq!(reporter.view_state.last_certificate, Some(certificate));
-    }
-
-    #[test]
-    fn view_state_buffers_drains_dedup_and_records_cursor() {
-        let mut state = super::ReporterViewState::default();
-        assert_eq!(state.last_finalized_view(), 0);
-        assert!(state.last_certificate().is_none());
-
-        let a = address!("0x0000000000000000000000000000000000000011");
-        let b = address!("0x0000000000000000000000000000000000000022");
-        state.buffer_byzantine(b);
-        state.buffer_byzantine(a);
-        state.buffer_byzantine(a); // duplicate
-
-        let drained = state.drain_byzantine_sorted();
-        assert_eq!(
-            drained,
-            vec![a, b],
-            "drained evidence is sorted and deduplicated"
-        );
-        assert!(
-            state.drain_byzantine_sorted().is_empty(),
-            "the buffer is emptied by drain"
-        );
-
-        let cert = sample_certificate();
-        state.record_finalization(17, cert.clone());
-        assert_eq!(state.last_finalized_view(), 17);
-        assert_eq!(state.last_certificate(), Some(&cert));
-    }
-
-    #[test]
-    fn skipped_views_ignore_an_unknown_previous_view() {
-        use super::skipped_views;
-        assert_eq!(skipped_views(0, 1_200), None);
-        assert_eq!(skipped_views(40, 40), None);
-        assert_eq!(skipped_views(40, 3), None);
-        assert_eq!(skipped_views(40, 41), Some(0));
-        assert_eq!(skipped_views(40, 300), Some(259));
     }
 }

@@ -1,9 +1,12 @@
-//! Hooks only a throwaway e2e build answers. Genesis cannot seed a Gem body, so a scenario
-//! that needs a paid Gem asks for one. A gem is stamped live, so only such a build can move
-//! its issuance back behind the closed days a scenario seeds for the call sweep. The forfeit
-//! sweep opens a group only once its hour has closed, so `closeCallNoticeForTest` moves a
-//! deadline that already lapsed into one the sweep opens on the next block, and
-//! `closePositionHourForTest` does the same for an expired position's hour.
+//! Only a temporary e2e build responds to these hooks.
+//! Genesis cannot seed a Gem body, so a scenario requests a paid Gem when necessary.
+//!
+//! A Gem receives its issuance timestamp at creation.
+//! Only this build can move that timestamp before the closed days with scenario-seeded prices for the call sweep.
+//!
+//! The forfeit sweep opens a group only after its deadline day closes.
+//! `closeCallNoticeForTest` moves a lapsed deadline into a day that the sweep opens in the next block.
+//! `closePositionHourForTest` does the same for an expired position's hour group.
 
 use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::SolCall;
@@ -20,12 +23,22 @@ alloy_sol_types::sol! {
         function backdateGemForTest(uint256 gemId, uint64 issuedAt) external;
         function closeCallNoticeForTest(uint256 gemId, uint64 deadline) external;
         function closePositionHourForTest(uint256 positionId, uint64 deadline) external;
+        function rescanClosedDayForTest() external;
     }
 }
 
 /// Answers a test hook, or `None` when `data` is no test hook.
 pub(crate) fn dispatch(storage: &StorageHandle<'_>, data: &[u8]) -> Option<Result<Bytes>> {
     use IGemFactoryTestArming::*;
+    if rescanClosedDayForTestCall::abi_decode(data).is_ok() {
+        return Some(guarded(storage, || {
+            let yesterday = storage
+                .now_secs()?
+                .checked_sub(outbe_primitives::time::SECONDS_PER_DAY)
+                .ok_or(GemFactoryError::Overflow)?;
+            reopen_day(storage, yesterday).map(|()| Bytes::new())
+        }));
+    }
     if let Ok(call) = issueSettledGemForTestCall::abi_decode(data) {
         return Some(guarded(storage, || {
             let gem_id = issue_settled(storage, call)?;
@@ -66,9 +79,11 @@ fn requeue_position_hour(
     if now < position.expires_at {
         return Err(GemFactoryError::PositionNotExpired.into());
     }
-    let hours = crate::state::PositionExpiryHours(&factory);
-    expiry_queue::remove(&hours, position.expiry_hour())?;
-    expiry_queue::push(&hours, position.expiry_hour(), deadline)
+    let days = crate::state::PositionExpiryDays(&factory);
+    let entry = crate::state::position_queue_entry(position.expiry_hour())?;
+    expiry_queue::remove(&days, entry)?;
+    expiry_queue::push(&days, entry, deadline)?;
+    reopen_day(storage, deadline)
 }
 
 fn guarded(storage: &StorageHandle<'_>, hook: impl FnOnce() -> Result<Bytes>) -> Result<Bytes> {
@@ -115,7 +130,7 @@ fn backdate(storage: &StorageHandle<'_>, gem_id: U256, issued_at: u64) -> Result
     )?;
     reissued.issued_at = issued_at;
     reissued.group_key = outbe_primitives::call_breach::group_key(
-        outbe_primitives::time::first_full_day(issued_at),
+        outbe_primitives::time::first_full_day(issued_at).expect("date step"),
         terms.map_or(U256::ZERO, |terms| terms.call_price_minor),
         reissued.reference_currency,
     );
@@ -138,5 +153,21 @@ fn requeue_called(storage: &StorageHandle<'_>, gem_id: U256, deadline: u64) -> R
     gem.group_called_at
         .write(&group, deadline.saturating_sub(notice).max(1))?;
     gem.remove_called(group)?;
-    gem.push_called(group, deadline)
+    gem.push_called(group, deadline)?;
+    reopen_day(storage, deadline)
+}
+
+fn reopen_day(storage: &StorageHandle<'_>, deadline: u64) -> Result<()> {
+    let gem = GemContract::new(storage.clone());
+    let day = outbe_primitives::time::timestamp_to_date_key(deadline);
+    gem.call_sweep_day.write(day)?;
+    gem.call_latest_day
+        .write(gem.call_latest_day.read()?.max(day))?;
+    gem.daily_genesis_day.write(day)?;
+    gem.daily_phase.write(0)?;
+    for currency in outbe_oracle::api::reference_currencies(storage.clone())? {
+        gem.call_bin_cursor.clear(&currency)?;
+        gem.call_scan_failed_day.clear(&currency)?;
+    }
+    gem.call_currency_cursor.write(0)
 }

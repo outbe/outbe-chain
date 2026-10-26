@@ -53,6 +53,29 @@ impl HyperlaneControllerContract<'_> {
         Ok(message_id)
     }
 
+    /// Interchain Account of the controller on `domain`, as the ICA router derives it.
+    pub fn remote_account(&self, domain: u32) -> Result<Address> {
+        self.require_initialized()?;
+        self.require_remote_domain(domain)?;
+        let ret = self.storage.staticcall(
+            self.ica_router.read()?,
+            IInterchainAccountRouter::getRemoteInterchainAccountCall {
+                _destination: domain,
+                _owner: self.address,
+            }
+            .abi_encode()
+            .into(),
+        )?;
+        IInterchainAccountRouter::getRemoteInterchainAccountCall::abi_decode_returns(&ret).map_err(
+            |_| {
+                HyperlaneControllerError::UndecodableReturn(
+                    "InterchainAccountRouter getRemoteInterchainAccount",
+                )
+                .into()
+            },
+        )
+    }
+
     /// Current set as stored by the local ISM (the source of truth).
     pub(crate) fn current_validators(&self) -> Result<(Vec<Address>, u8)> {
         let local_ism = self.local_ism()?;

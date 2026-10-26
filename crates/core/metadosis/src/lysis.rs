@@ -169,7 +169,7 @@ fn build_enclave_lysis_request(
         first_qualified_start: 0,
         entries: Vec::with_capacity(tributes.len()),
     };
-    // Entry price uses the 24h UTC VWAP of `emission_day.day` (e.g. 15/10/2026),
+    // Entry price uses the 24h UTC VWAP of `emission_day.day` (e.g. 14/10/2026),
     // while tribute nominals and S-curve belong to `emission_day.wwd` (e.g. 20/09/2026).
     for encrypted in &tributes {
         let source = &encrypted.context;

@@ -81,6 +81,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
     cli.with_runner_and_components::<OutbeNode>(runner, components, async move |builder, args| {
         let shutdown = launcher_shutdown.clone();
         let result: eyre::Result<()> = async move {
+        let mut builder = builder;
         let _cancel_on_launcher_drop = shutdown_token.clone().drop_guard();
         args.validate()?;
         let (radicle_preflight, radicle_status) = radicle::preflight(&args).await?;
@@ -89,7 +90,6 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             formingPeriodSeconds = outbe_chain_constants::get_metadosis_forming_period_seconds(),
             lookbackDelaySeconds = outbe_chain_constants::get_metadosis_lookback_delay_seconds(),
             offeringPeriodSeconds = outbe_chain_constants::get_metadosis_offering_period_seconds(),
-            waitingPeriodSeconds = outbe_chain_constants::get_metadosis_waiting_period_seconds(),
             advanceIntervalSeconds =
                 outbe_chain_constants::get_metadosis_advance_interval_seconds(),
             "effective genesis protocol parameters"
@@ -109,6 +109,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             ))
             .data_dir()
             .to_path_buf();
+        install_selected_reth_identity(builder.config_mut(), &args)?;
         let (evm_signer, local_tee_identity, tee_admission_anchor) =
             tee::prepare(builder.config(), &args, node_data_dir.clone(), &initial_tee_policy).await?;
 
@@ -203,9 +204,11 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             &node,
             &args,
             (radicle_preflight, radicle_status.clone()),
-            radicle_shutdown_token.clone(),
-            shutdown.clone(),
-            bridge.repository_publication_mailbox(),
+            (
+                radicle_shutdown_token.clone(),
+                shutdown.clone(),
+                bridge.repository_publication_mailbox(),
+            ),
         )?;
 
         // Pending staleness eviction. This is node-local pool policy, so it runs in
@@ -332,6 +335,26 @@ fn create_outbe_rpc_handler<P>(
     } else {
         outbe_rpc::OutbeApiHandler::new(provider)
     }
+}
+
+fn install_selected_reth_identity(
+    config: &mut LaunchConfig,
+    args: &ConsensusArgs,
+) -> eyre::Result<()> {
+    let backend = args.reth_key_backend()?;
+    if matches!(backend, outbe_consensus::bls::KeyBackend::Plaintext) {
+        return Ok(());
+    }
+    let path = config.datadir().p2p_secret();
+    if !path.is_file() {
+        return Err(outbe_consensus::errors::BlsKeyError::MissingCustodyFile {
+            path: path.display().to_string(),
+        }
+        .into());
+    }
+    let secret = outbe_consensus::bls::load_secp256k1_secret(&path, &backend)?;
+    config.network.p2p_secret_key_hex = Some(alloy_primitives::B256::from(secret));
+    Ok(())
 }
 
 fn log_consensus_launch_mode(is_validator: bool, has_upstream: bool) -> bool {

@@ -16,6 +16,7 @@ pub(super) fn state_with_active_and_registered_candidate_seeded(
         HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, chain_spec.genesis_hash());
     let active_key = dummy_pubkey(0xA2);
     StorageHandle::enter(&mut seed_storage, |storage| {
+        super::super::fixtures::seed_cycle_genesis(storage.clone());
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(128).unwrap();
@@ -72,6 +73,7 @@ pub(super) fn state_with_active_and_registered_candidate_seeded(
             ..Default::default()
         },
     );
+    crate::test_support::install_call_scan_markers(&mut db, &marker_code);
     State::builder()
         .with_database(db)
         .with_bundle_update()

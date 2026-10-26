@@ -69,8 +69,13 @@ fn begin_block_skips_only_the_unrepresentable_legacy_cross_row() {
                 .unwrap();
         }
 
-        let runtime_ctx =
-            BlockRuntimeContext::new(BlockContext::empty_for_tests(2, 24, 1), storage.clone());
+        // 24 seconds into 2020-01-02. Block 2 stays the vote-period boundary.
+        // A timestamp on 2020-01-01 makes the zero watermark step 2019-12-31.
+        let timestamp = outbe_primitives::time::date_key_to_utc_timestamp(20_200_102) + 24;
+        let runtime_ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(2, timestamp, 1),
+            storage.clone(),
+        );
         <crate::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(&runtime_ctx).unwrap();
 
         assert_eq!(pair_rate(oracle, higher), fixed18(100));

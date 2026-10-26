@@ -189,15 +189,13 @@ def seed_tribute_worldwide_days(storage: StorageBuilder, wwds: list):
     storage.set_slot(ACTIVE_WWD_BASE, len(wwds))
 
 
-def seed_metadosis(storage: StorageBuilder, config: dict):
+def seed_metadosis(_storage: StorageBuilder, _config: dict):
     """
-    Metadosis storage layout - MUST track `crates/core/metadosis/src/schema.rs`
-    (`#[storage_schema] MetadosisContract`):
-      slot 0:      bootstrap_end_time (Value<u64>)
+    Metadosis storage layout tracks crates/core/metadosis/src/schema.rs.
+    slot 0: emission_days (Map<u32, EmissionDay>)
+    This function writes no storage word.
+    Worldwide-day rows stay on Tribute and are seeded by the caller.
     """
-    bootstrap_end = config.get("bootstrap_end_time", 0)
-    if bootstrap_end:
-        storage.set_slot(0, bootstrap_end)
 
 
 def _seed_address_set_with_types(
@@ -310,7 +308,7 @@ def _seed_economic_state(seed, alloc):
             f"{len(tribute_storage.entries)} storage entries"
         )
 
-    # Seed Metadosis (bootstrap_end_time at METADOSIS_ADDRESS, worldwide_days at TRIBUTE_ADDRESS)
+    # Seed Metadosis. slot 0: emission_days (Map<u32, EmissionDay>). Worldwide days are stored at TRIBUTE_ADDRESS.
     if "metadosis" in seed:
         meta_storage = StorageBuilder()
         seed_metadosis(meta_storage, seed["metadosis"])

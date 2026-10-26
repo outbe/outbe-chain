@@ -109,7 +109,7 @@ enum Commands {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let client = rpc::RpcClient::new(&cli.rpc_url);
+    let client = rpc::RpcClient::new(&cli.rpc_url)?;
 
     match cli.command {
         Commands::Validator { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,

@@ -5,6 +5,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 
 import {ITheCompact} from "the-compact/src/interfaces/ITheCompact.sol";
 import {IERC6909} from "the-compact/lib/forge-std/src/interfaces/IERC6909.sol";
@@ -37,7 +38,7 @@ import {ISolverEscrow} from "./interfaces/ISolverEscrow.sol";
 ///   5. Deploy Router
 ///   6. escrow.setAuthorizedCaller(address(router))
 ///   7. Each solver: COMPACT.setOperator(address(escrow), true)
-contract SolverEscrow is ISolverEscrow, Ownable2Step {
+contract SolverEscrow is ISolverEscrow, Ownable2Step, ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
 
     // ============ Constants ============
@@ -50,10 +51,10 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
     ITheCompact public immutable COMPACT;
     bytes12 public immutable LOCK_TAG;
 
+    // ============ State ============
+
     /// @notice Authorized caller for lock/unlock/slash (Router). Set once via setAuthorizedCaller().
     address public AUTHORIZED_CALLER;
-
-    // ============ State ============
 
     uint256 private _nextNonce;
     uint256 public collateralBps;
@@ -61,41 +62,16 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
     struct Lock {
         address solver;
         address token;
-        uint256 amount;
+        uint256 amount; // in units of `token`
     }
 
     mapping(bytes32 orderId => Lock) public locks;
 
-    /// @notice ERC6909 held by the escrow on a solver's behalf while locked.
+    /// @notice ERC6909 held by the escrow on a solver's behalf while locked, in units of the id's token.
     mapping(address solver => mapping(uint256 id => uint256)) public totalLocked;
 
     /// @notice Per-id pool of slashed collateral, the only source distributeReward pays from.
     mapping(uint256 id => uint256) public slashedPool;
-
-    // ============ Events ============
-
-    event Deposited(address indexed solver, address indexed token, uint256 amount);
-    event Withdrawn(address indexed solver, address indexed token, uint256 amount);
-    event CollateralSlashed(bytes32 indexed orderId, address indexed solver, address token, uint256 amount);
-    event CollateralBpsUpdated(uint256 oldBps, uint256 newBps);
-    event RewardDistributed(address indexed receiver, address indexed token, uint256 amount);
-
-    // ============ Errors ============
-
-    /// @notice Thrown when deposit or withdrawal amount is zero
-    error InvalidAmount();
-    /// @notice Thrown when caller is not the authorized caller (DestinationSettler)
-    error UnauthorizedCaller();
-    /// @notice Thrown when collateral bps is zero or exceeds 10000
-    error InvalidBps();
-    /// @notice Thrown when solver has not approved escrow as ERC6909 operator
-    error OperatorNotApproved();
-    /// @notice Thrown when native token withdrawal fails
-    error WithdrawalFailed();
-    /// @notice Thrown when authorized caller has already been set
-    error AuthorizedCallerAlreadySet();
-    /// @notice Thrown when a zero address is supplied where one is not allowed
-    error ZeroAddress();
 
     // ============ Modifiers ============
 
@@ -111,6 +87,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
     // ============ Constructor ============
 
     constructor(address _compact, bytes12 _lockTag, uint256 _collateralBps) Ownable(msg.sender) {
+        if (_compact == address(0)) revert ZeroAddress();
         if (_collateralBps == 0 || _collateralBps > BPS_DENOMINATOR) revert InvalidBps();
         COMPACT = ITheCompact(_compact);
         LOCK_TAG = _lockTag;
@@ -125,6 +102,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
         if (AUTHORIZED_CALLER != address(0)) revert AuthorizedCallerAlreadySet();
         if (_caller == address(0)) revert ZeroAddress();
         AUTHORIZED_CALLER = _caller;
+        emit AuthorizedCallerSet(_caller);
     }
 
     /// @notice Update collateral requirement in basis points (e.g. 1000 = 10%)
@@ -141,7 +119,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
     /// @dev Solver must have called COMPACT.setOperator(address(this), true) beforehand.
     /// @param token  ERC20 token address, or address(0) for native ETH
     /// @param amount Amount to deposit (ERC20 only. Ignored for native: use msg.value)
-    function deposit(address token, uint256 amount) external payable {
+    function deposit(address token, uint256 amount) external payable nonReentrant {
         _deposit(msg.sender, token, amount);
     }
 
@@ -151,7 +129,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
     /// @param solver Address credited with the collateral
     /// @param token  ERC20 token address, or address(0) for native ETH
     /// @param amount Amount to deposit (ERC20 only. Ignored for native: use msg.value)
-    function depositFor(address solver, address token, uint256 amount) external payable {
+    function depositFor(address solver, address token, uint256 amount) external payable nonReentrant {
         if (solver == address(0)) revert ZeroAddress();
         _deposit(solver, token, amount);
     }
@@ -172,7 +150,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
     /// @dev Takes ERC6909 from solver via transferFrom, then releases underlying via allocatedTransfer.
     /// @param token  Token address (address(0) for ETH)
     /// @param amount Amount to withdraw, or 0 for max available
-    function withdraw(address token, uint256 amount) external {
+    function withdraw(address token, uint256 amount) external nonReentrant {
         uint256 id = _lockId(token);
         uint256 available = IERC6909(address(COMPACT)).balanceOf(msg.sender, id);
 
@@ -194,7 +172,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
         );
 
         uint256 solverBalAfter = IERC6909(address(COMPACT)).balanceOf(msg.sender, id);
-        if (solverBalAfter > available - withdrawAmount) revert WithdrawalFailed();
+        if (solverBalAfter != available - withdrawAmount) revert WithdrawalFailed();
 
         emit Withdrawn(msg.sender, token, withdrawAmount);
     }
@@ -206,6 +184,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
     function lockCollateral(bytes32 orderId, address solver, address token, uint256 amount)
         external
         onlyAuthorizedCaller
+        nonReentrant
     {
         if (amount == 0) revert InvalidAmount();
         if (solver == address(0)) revert ZeroAddress();
@@ -218,14 +197,18 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
         totalLocked[solver][id] += amount;
 
         IERC6909(address(COMPACT)).transferFrom(solver, address(this), id, amount);
+
+        emit CollateralLocked(orderId, solver, token, amount);
     }
 
     /// @inheritdoc ISolverEscrow
     /// @dev Returns custody of the collateral to the solver.
-    function unlockCollateral(bytes32 orderId) external onlyAuthorizedCaller {
+    function unlockCollateral(bytes32 orderId) external onlyAuthorizedCaller nonReentrant {
         Lock memory lock = _consumeLock(orderId);
 
         IERC6909(address(COMPACT)).transfer(lock.solver, _lockId(lock.token), lock.amount);
+
+        emit CollateralUnlocked(orderId);
     }
 
     /// @inheritdoc ISolverEscrow
@@ -242,12 +225,14 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
     /// @inheritdoc ISolverEscrow
     /// @dev Distributes REWARD_BPS (1.5%) of orderAmountIn from slashed pool as underlying tokens.
     ///      Returns 0 if the reward rounds to zero or the slashed balance is insufficient
-    ///      (all-or-nothing).
+    ///      (all-or-nothing). An insufficient slashed balance emits RewardSkipped.
     function distributeReward(address token, uint256 orderAmountIn, address receiver)
         external
         onlyAuthorizedCaller
+        nonReentrant
         returns (uint256 reward)
     {
+        // Rounds down, in favor of the slashed pool.
         reward = (orderAmountIn * REWARD_BPS) / BPS_DENOMINATOR;
         // A dust order rounds the reward to zero, and The Compact rejects a zero-amount
         // allocatedTransfer. That would revert the whole settle instead of skipping the reward.
@@ -255,7 +240,11 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
         uint256 id = _lockId(token);
 
         // Only slashed collateral is payable. The escrow's balance also holds live locks.
-        if (slashedPool[id] < reward) return 0;
+        uint256 available = slashedPool[id];
+        if (available < reward) {
+            emit RewardSkipped(token, reward, available);
+            return 0;
+        }
         slashedPool[id] -= reward;
 
         // Release underlying tokens to receiver via allocatedTransfer
@@ -275,6 +264,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
 
     /// @inheritdoc ISolverEscrow
     function getCollateralAmount(uint256 outputAmount) public view returns (uint256) {
+        // Rounds down, in favor of the solver.
         return (outputAmount * collateralBps) / BPS_DENOMINATOR;
     }
 

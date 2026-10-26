@@ -1,5 +1,8 @@
 //! Automatic post-finality network bootstrap. Only public contributions leave the node provider.
 mod binding;
+mod contributions;
+mod history;
+mod job;
 mod journal;
 mod review;
 
@@ -94,120 +97,6 @@ enum Job<'a> {
         &'a BlsEnvelope,
     ),
 }
-impl Job<'_> {
-    fn ordinal(&self) -> u8 {
-        match self {
-            Self::Document(_) | Self::Review(_) | Self::Merge(_) => 0,
-            Self::Identity(_) | Self::ReviewRefs(..) | Self::MergeRefs(..) => 1,
-            Self::Refs(_) => 2,
-        }
-    }
-    fn verify(
-        &self,
-        context: SigningContext<'_>,
-        sender: &bls12381::PublicKey,
-        frame: &RepositoryPartial,
-    ) -> Result<()> {
-        match (self, context) {
-            (Self::Document(job), SigningContext::Bootstrap(c)) => c
-                .material
-                .verify_bootstrap_document_partial(job, &c.state, sender, frame)?,
-            (Self::Identity(job), SigningContext::Bootstrap(c)) => c
-                .material
-                .verify_bootstrap_identity_partial(job, &c.state, sender, frame)?,
-            (Self::Refs(job), SigningContext::Bootstrap(c)) => c
-                .material
-                .verify_bootstrap_refs_partial(job, &c.state, sender, frame)?,
-            (Self::Review(job), SigningContext::Review(c)) => c
-                .material
-                .verify_current_review_partial(job, &c.state, sender, frame)?,
-            (Self::ReviewRefs(job, _), SigningContext::Review(c)) => c
-                .material
-                .verify_current_review_refs_partial(job, &c.state, sender, frame)?,
-            (Self::Merge(job), SigningContext::Review(c)) => c
-                .material
-                .verify_current_merge_partial(job, &c.state, sender, frame)?,
-            (Self::MergeRefs(job, _), SigningContext::Review(c)) => c
-                .material
-                .verify_current_merge_refs_partial(job, &c.state, sender, frame)?,
-            _ => return Err("collector job/context mismatch".into()),
-        }
-        Ok(())
-    }
-    fn recover(&self, context: SigningContext<'_>, frames: &Contributions) -> Result<BlsEnvelope> {
-        Ok(match (self, context) {
-            (Self::Document(job), SigningContext::Bootstrap(c)) => c
-                .material
-                .recover_bootstrap_document(job, &c.state, frames)?,
-            (Self::Identity(job), SigningContext::Bootstrap(c)) => c
-                .material
-                .recover_bootstrap_identity(job, &c.state, frames)?,
-            (Self::Refs(job), SigningContext::Bootstrap(c)) => {
-                c.material.recover_bootstrap_refs(job, &c.state, frames)?
-            }
-            (Self::Review(job), SigningContext::Review(c)) => {
-                c.material.recover_current_review(job, &c.state, frames)?
-            }
-            (Self::ReviewRefs(job, _), SigningContext::Review(c)) => c
-                .material
-                .recover_current_review_refs(job, &c.state, frames)?,
-            (Self::Merge(job), SigningContext::Review(c)) => {
-                c.material.recover_current_merge(job, &c.state, frames)?
-            }
-            (Self::MergeRefs(job, _), SigningContext::Review(c)) => c
-                .material
-                .recover_current_merge_refs(job, &c.state, frames)?,
-            _ => return Err("collector job/context mismatch".into()),
-        })
-    }
-    async fn sign(
-        &self,
-        client: &LocalReceiptClient,
-        context: SigningContext<'_>,
-        repo: &Repository,
-        artifact: Option<git::Oid>,
-    ) -> Result<RepositoryPartial> {
-        Ok(match (self, context) {
-            (Self::Document(_), SigningContext::Bootstrap(c)) => {
-                client.sign_bootstrap_document(c).await?
-            }
-            (Self::Identity(job), SigningContext::Bootstrap(c)) => {
-                client
-                    .sign_bootstrap_identity(
-                        c,
-                        job,
-                        repo,
-                        artifact.ok_or("bootstrap artifact missing")?,
-                    )
-                    .await?
-            }
-            (Self::Refs(job), SigningContext::Bootstrap(c)) => {
-                client
-                    .sign_bootstrap_refs(
-                        c,
-                        job,
-                        repo,
-                        artifact.ok_or("bootstrap artifact missing")?,
-                    )
-                    .await?
-            }
-            (Self::Review(job), SigningContext::Review(c)) => {
-                client.sign_review(c, repo, job).await?
-            }
-            (Self::ReviewRefs(job, signature), SigningContext::Review(c)) => {
-                client.sign_review_refs(c, repo, job, signature).await?
-            }
-            (Self::Merge(job), SigningContext::Review(c)) => {
-                client.sign_merge(c, repo, job).await?
-            }
-            (Self::MergeRefs(job, signature), SigningContext::Review(c)) => {
-                client.sign_merge_refs(c, repo, job, signature).await?
-            }
-            _ => return Err("collector job/context mismatch".into()),
-        })
-    }
-}
-
 struct Collector {
     storage: radicle::Storage,
     journal: Journal,
@@ -257,6 +146,10 @@ impl Collector {
                 other => Ok(other),
             };
         }
+        self.bootstrap_step(client).await
+    }
+
+    async fn bootstrap_step(&mut self, client: &LocalReceiptClient) -> Result<Outcome> {
         let context = client.read_bootstrap_signing_context().await?;
         let document =
             bootstrap::prepare_bootstrap_document(context.state.descriptor(), &context.material)?;
@@ -277,20 +170,8 @@ impl Collector {
             self.policy = Some((id, policy));
         }
         let repo = self.repository(id)?;
-        let descriptor = context.state.descriptor();
         let artifact_path = self.journal.root.join("initial-content.manifest");
-        let content = match read(&artifact_path, MAX_MANIFEST_BYTES)? {
-            Some(bytes) => bytes,
-            None if descriptor.initial_content_manifest_sha256.0 == Sha256::hash(&[b"[]"]).0 => {
-                let tree = repo.raw().treebuilder(None)?.write()?;
-                if tree.as_bytes() != descriptor.initial_tree_oid.as_slice() {
-                    return Err("initial content tree is unavailable".into());
-                }
-                put(&artifact_path, b"[]", false)?;
-                b"[]".to_vec()
-            }
-            None => return Err("initial content manifest is unavailable".into()),
-        };
+        let content = initial_content(&repo, &artifact_path, context.state.descriptor())?;
         let artifact = repo.raw().blob(&content)?.into();
         let incoming = client.take_repository_messages(&context.material).await?;
         let n = context.state.authority().committee().committee.len();
@@ -373,9 +254,11 @@ impl Collector {
         )?;
         let package = Arc::new(bootstrap::verify_bootstrap_publication(
             &repo,
-            &context.state,
-            &context.material,
-            &content,
+            bootstrap::BootstrapPublicationInput {
+                state: &context.state,
+                material: &context.material,
+                content_manifest: &content,
+            },
             &body,
             &manifest,
             &witness,
@@ -420,142 +303,6 @@ impl Collector {
                 .await?;
         }
         Ok(Outcome::PublicationPending)
-    }
-
-    async fn collect(
-        &mut self,
-        job: &Job<'_>,
-        inputs: (
-            SigningContext<'_>,
-            &LocalReceiptClient,
-            &Repository,
-            Option<git::Oid>,
-        ),
-        directory: &Path,
-        incoming: &[ReceivedRepositoryMessage],
-    ) -> Result<Contributions> {
-        let (context, client, repo, artifact) = inputs;
-        let ordinal = job.ordinal();
-        let n = context.material().authority().committee().committee.len();
-        let mut frames = BTreeMap::new();
-        for index in 0..n {
-            if let Some(bytes) = read(&directory.join(format!("partial-{ordinal}-{index}")), 268)? {
-                let frame = RepositoryPartial::from_bytes(&bytes)?;
-                if frame.participant_index() as usize != index {
-                    return Err("corrupt collector participant index".into());
-                }
-                let sender = participant(context.material(), index)?;
-                job.verify(context, &sender, &frame)?;
-                frames.insert(index as u32, frame);
-            }
-        }
-        for received in incoming {
-            if let RepositoryGossipMessage::Partial {
-                ordinal: step,
-                frame,
-            } = &received.message
-            {
-                if *step == ordinal && job.verify(context, &received.sender, frame).is_ok() {
-                    put(
-                        &directory.join(format!("partial-{ordinal}-{}", frame.participant_index())),
-                        &frame.to_bytes(),
-                        false,
-                    )?;
-                    frames.insert(frame.participant_index(), frame.clone());
-                }
-            }
-        }
-        if self.own[ordinal as usize].is_none() {
-            if let Ok(frame) = job.sign(client, context, repo, artifact).await {
-                job.verify(
-                    context,
-                    &participant(context.material(), frame.participant_index() as usize)?,
-                    &frame,
-                )?;
-                put(
-                    &directory.join(format!("partial-{ordinal}-{}", frame.participant_index())),
-                    &frame.to_bytes(),
-                    false,
-                )?;
-                self.own[ordinal as usize] = Some(frame);
-            }
-        }
-        if let Some(frame) = &self.own[ordinal as usize] {
-            let _ = client
-                .gossip_repository_message(
-                    context.material(),
-                    &RepositoryGossipMessage::Partial {
-                        ordinal,
-                        frame: frame.clone(),
-                    },
-                )
-                .await;
-            frames.insert(frame.participant_index(), frame.clone());
-        }
-        frames
-            .into_iter()
-            .map(|(index, frame)| Ok((participant(context.material(), index as usize)?, frame)))
-            .collect()
-    }
-
-    fn record_attestation(
-        &self,
-        directory: &Path,
-        body: &PublicationBody,
-        attestation: &PublicationAttestation,
-    ) -> Result<()> {
-        put(
-            &directory.join(format!("attestation-{}", attestation.participant_index)),
-            &PublicationBatch {
-                body: body.clone(),
-                attestations: vec![attestation.clone()],
-            }
-            .to_bytes()?,
-            false,
-        )
-    }
-
-    fn collect_attestations(
-        &self,
-        material: &RepositorySigningMaterial,
-        directory: &Path,
-        body: &PublicationBody,
-        incoming: &[ReceivedRepositoryMessage],
-        own: &PublicationAttestation,
-    ) -> Result<BTreeMap<u32, PublicationAttestation>> {
-        material.verify_publication_attestation(body, own)?;
-        self.record_attestation(directory, body, own)?;
-        let mut attestations = BTreeMap::new();
-        for index in 0..material.authority().committee().committee.len() {
-            if let Some(bytes) = read(&directory.join(format!("attestation-{index}")), 578)? {
-                let batch = PublicationBatch::from_bytes(&bytes)?;
-                if batch.body != *body
-                    || batch.attestations.len() != 1
-                    || batch.attestations[0].participant_index as usize != index
-                {
-                    return Err("corrupt publication attestation".into());
-                }
-                material.verify_publication_attestation(body, &batch.attestations[0])?;
-                attestations.insert(index as u32, batch.attestations[0].clone());
-            }
-        }
-        for message in incoming {
-            if let RepositoryGossipMessage::Attestation {
-                body: candidate,
-                attestation,
-            } = &message.message
-            {
-                if candidate == body
-                    && material
-                        .verify_publication_attestation(body, attestation)
-                        .is_ok()
-                {
-                    self.record_attestation(directory, body, attestation)?;
-                    attestations.insert(attestation.participant_index, attestation.clone());
-                }
-            }
-        }
-        Ok(attestations)
     }
 
     async fn install(
@@ -617,100 +364,24 @@ impl Collector {
         self.announced = Some(receipt.receipt().receipt_hash.0);
         Ok(Outcome::Announced)
     }
+}
 
-    async fn recover_history(
-        &mut self,
-        client: &LocalReceiptClient,
-        needed: &FinalizedPublicationReceipt,
-        repo: &Repository,
-        policy: &Arc<AcceptedRepositoryPolicy>,
-    ) -> Result<()> {
-        use outbe_primitives::radicle_publication::PublicationAction;
-        use outbe_radicle::integration::publication::history::AcceptedHistory;
-        if self.journal.packages.load_accepted(needed, repo)?.is_some() {
-            if needed.receipt().body.action == PublicationAction::Bootstrap {
-                match self.journal.packages.load_accepted_descriptor(needed) {
-                    Ok(_) => (),
-                    Err(outbe_radicle::integration::publication::store::Error::Io(error))
-                        if error.kind() == std::io::ErrorKind::NotFound =>
-                    {
-                        let descriptor = client.read_governments_descriptor().await?;
-                        self.journal
-                            .packages
-                            .persist_accepted_descriptor(needed, &descriptor)?;
-                    }
-                    Err(error) => return Err(error.into()),
-                }
+fn initial_content(
+    repo: &Repository,
+    artifact_path: &Path,
+    descriptor: &GovernmentsDescriptor,
+) -> Result<Vec<u8>> {
+    match read(artifact_path, MAX_MANIFEST_BYTES)? {
+        Some(bytes) => Ok(bytes),
+        None if descriptor.initial_content_manifest_sha256.0 == Sha256::hash(&[b"[]"]).0 => {
+            let tree = repo.raw().treebuilder(None)?.write()?;
+            if tree.as_bytes() != descriptor.initial_tree_oid.as_slice() {
+                return Err("initial content tree is unavailable".into());
             }
-            return Ok(());
+            put(artifact_path, b"[]", false)?;
+            Ok(b"[]".to_vec())
         }
-        let recovered = policy.recovered_manifests()?;
-        if recovered.is_empty() {
-            let descriptor = client.read_governments_descriptor().await?;
-            let mut receipts = Vec::new();
-            let mut approvals = BTreeMap::new();
-            let mut sequence = 1u64;
-            while let Some(receipt) = client.read(sequence).await? {
-                let body = &receipt.receipt().body;
-                if matches!(
-                    body.action,
-                    PublicationAction::Review | PublicationAction::Merge
-                ) && !approvals.contains_key(&body.proposal_id)
-                {
-                    approvals.insert(
-                        body.proposal_id,
-                        client
-                            .read_patch_approval(body.proposal_id)
-                            .await?
-                            .ok_or("accepted patch approval missing")?,
-                    );
-                }
-                receipts.push(receipt);
-                sequence = sequence
-                    .checked_add(1)
-                    .ok_or("publication sequence overflow")?;
-            }
-            policy.prepare_history(AcceptedHistory {
-                descriptor,
-                receipts,
-                approvals,
-            })?;
-            let id = repo.id;
-            self.handle.seed(id, radicle::node::policy::Scope::All)?;
-            let mut handle = self.handle.clone();
-            let needed_owner = needed.receipt().body.owner_bls_public.0;
-            // Seeds already randomizes connected candidates; subsequent ticks retry another peer.
-            tokio::task::spawn_blocking(move || -> Result<()> {
-                let seeds = handle.seeds_for(
-                    id,
-                    [RepositoryKey::from(BlsPublicKey::from_bytes(needed_owner)?)],
-                )?;
-                if let Some(seed) = seeds.connected().next() {
-                    handle.fetch(id, seed.nid, Duration::from_secs(30), None)?;
-                }
-                Ok(())
-            })
-            .await??;
-        }
-        let recovered = policy.recovered_manifests()?;
-        if recovered.is_empty() {
-            return Ok(());
-        }
-        let root = client.read(1).await?.ok_or("bootstrap receipt missing")?;
-        let descriptor = client.read_governments_descriptor().await?;
-        self.journal
-            .packages
-            .persist_accepted_descriptor(&root, &descriptor)?;
-        for (receipt, manifest) in recovered {
-            self.journal
-                .packages
-                .persist_checkpoint_manifest(&receipt, &manifest)?;
-            client
-                .cache_checkpoint_manifest(&receipt, &manifest)
-                .await?;
-        }
-        policy.finish_history()?;
-        Ok(())
+        None => Err("initial content manifest is unavailable".into()),
     }
 }
 

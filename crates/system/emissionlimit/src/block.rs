@@ -68,3 +68,89 @@ pub fn dispatch_late_settlement_residue_at(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::Address;
+    use outbe_primitives::addresses::PROMIS_LIMIT_ADDRESS;
+    use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
+    use outbe_primitives::storage::hashmap::HashMapStorageProvider;
+    use outbe_primitives::storage::MetadosisMutationPurposeTag;
+    use outbe_primitives::time::date_key_to_utc_timestamp;
+
+    const CHAIN_ID: u64 = 1;
+    const CTX_DAY: u32 = 20_260_803;
+    const SINK_DAY: u32 = 20_260_802;
+
+    fn timestamp(day: u32) -> u64 {
+        date_key_to_utc_timestamp(day) + 3_600
+    }
+
+    fn promis_balance(storage: &outbe_primitives::storage::StorageHandle<'_>) -> U256 {
+        storage.sload(PROMIS_LIMIT_ADDRESS, U256::ZERO).unwrap()
+    }
+
+    fn emission_limit(
+        storage: &outbe_primitives::storage::StorageHandle<'_>,
+        day: u32,
+    ) -> Option<U256> {
+        outbe_metadosis::api::emission_day(storage.clone(), day)
+            .unwrap()
+            .map(|day| day.emission_limit_minor)
+    }
+
+    #[test]
+    fn zero_residue_is_a_noop_and_zero_terminal_uses_the_supplied_day() {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        let events_before = provider.events.clone();
+        provider.enter(|storage| {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::new(7, timestamp(CTX_DAY), CHAIN_ID, Address::ZERO, Vec::new()),
+                storage.clone(),
+            );
+            dispatch_late_settlement_residue_at(&ctx, U256::ZERO, timestamp(SINK_DAY)).unwrap();
+            assert!(promis_balance(&storage).is_zero());
+            assert_eq!(emission_limit(&storage, SINK_DAY), None);
+            assert_eq!(emission_limit(&storage, CTX_DAY), None);
+        });
+        assert_eq!(provider.events, events_before);
+
+        provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
+        provider.set_block_number(7);
+        provider.set_timestamp(U256::from(timestamp(SINK_DAY)));
+        provider.enter(|storage| {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::new(7, timestamp(CTX_DAY), CHAIN_ID, Address::ZERO, Vec::new()),
+                storage.clone(),
+            );
+            dispatch_terminal_remainder_at(&ctx, U256::ZERO, timestamp(SINK_DAY)).unwrap();
+            assert_eq!(emission_limit(&storage, SINK_DAY), Some(U256::ZERO));
+            assert_eq!(emission_limit(&storage, CTX_DAY), None);
+            assert!(promis_balance(&storage).is_zero());
+        });
+    }
+
+    #[test]
+    fn terminal_dispatch_without_a_lease_writes_nothing() {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        let events_before = provider.events.clone();
+        provider.enter(|storage| {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::new(7, timestamp(CTX_DAY), CHAIN_ID, Address::ZERO, Vec::new()),
+                storage.clone(),
+            );
+            let error =
+                dispatch_terminal_remainder_at(&ctx, U256::from(10u64), timestamp(SINK_DAY))
+                    .unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                "revert: test provider has no matching Metadosis mutation lease"
+            );
+            assert_eq!(emission_limit(&storage, SINK_DAY), None);
+            assert_eq!(emission_limit(&storage, CTX_DAY), None);
+            assert!(promis_balance(&storage).is_zero());
+        });
+        assert_eq!(provider.events, events_before);
+    }
+}

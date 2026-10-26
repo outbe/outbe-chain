@@ -296,8 +296,7 @@ fn main() -> Result<()> {
                         network,
                         &seeded_genesis,
                         &bundle,
-                        &output,
-                        &evidence_output,
+                        (&output, &evidence_output),
                     )?;
                     println!(
                         "final {network:?} genesis: {} (evidence: {})",
@@ -334,7 +333,7 @@ fn main() -> Result<()> {
                     output,
                     push,
                 } => {
-                    sgx::build_image(&repo_root, network, &bundle, &image, &output, push)?;
+                    sgx::build_image(&repo_root, network, &bundle, (&image, push), &output)?;
                     println!("{network:?} SGX OCI evidence: {}", output.display());
                 }
                 SgxCommand::Manifest {

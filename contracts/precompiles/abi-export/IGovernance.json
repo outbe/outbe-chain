@@ -939,6 +939,11 @@
   },
   {
     "type": "error",
+    "name": "CanonRequiresVote",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "EmptyText",
     "inputs": []
   },

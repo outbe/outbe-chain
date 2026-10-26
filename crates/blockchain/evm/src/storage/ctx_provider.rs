@@ -371,7 +371,7 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
         internals(self.ctx)
             .sload(
                 outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
-                U256::from(45),
+                U256::from(44),
             )
             .map(|value| value.data)
             .map_err(crate::errors::CtxStorageError::storage)

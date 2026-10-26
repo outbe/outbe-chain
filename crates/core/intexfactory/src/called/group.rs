@@ -2,7 +2,7 @@ use alloy_primitives::B256;
 use outbe_intex::precompile::IIntex;
 use outbe_intex::IntexContract;
 
-use crate::errors::IntexFactoryError;
+use crate::errors::{date_step_error, IntexFactoryError};
 use outbe_oracle::call_window::CallWindow;
 use outbe_primitives::{
     call_breach::BreachTerms, error::Result, storage::StorageHandle, time::first_full_day,
@@ -39,7 +39,7 @@ pub(crate) fn call_if_breached(
         call_price: series.call_price_minor,
         window_seconds: intex.call_group_window_seconds.read(&group)?,
         threshold_seconds: intex.call_group_threshold_seconds.read(&group)?,
-        start_day: first_full_day(u64::from(series.issued_at)),
+        start_day: first_full_day(u64::from(series.issued_at)).map_err(date_step_error)?,
     });
     if !breached {
         return Ok(0);

@@ -906,8 +906,27 @@ fn rebalance_rejects_zero_amount() {
     });
 }
 
-#[test]
-fn rebalance_rejects_an_unregistered_source_vault() {
+fn ten_asset_rebalance() -> IVaultRouter::rebalanceCall {
+    IVaultRouter::rebalanceCall {
+        vaultFrom: vault_from(),
+        vaultTo: vault_to(),
+        assetsMinor: U256::from(10),
+        maxAssetsToMinor: U256::MAX,
+    }
+}
+
+fn rebalance_of_ten(
+    storage: &StorageHandle<'_>,
+    source_asset: Address,
+    destination_asset: Address,
+) -> PrecompileError {
+    bond_cca(storage);
+    register_vault(storage, source_asset, vault_from());
+    register_vault(storage, destination_asset, vault_to());
+    runtime::rebalance(storage.clone(), cca(), ten_asset_rebalance()).unwrap_err()
+}
+
+fn unregistered_rebalance_error(register: impl FnOnce(&StorageHandle<'_>)) -> PrecompileError {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.stub_sub_call_at_selector(
         vault_from(),
@@ -921,55 +940,27 @@ fn rebalance_rejects_an_unregistered_source_vault() {
     );
     StorageHandle::enter(&mut storage, |storage| {
         bond_cca(&storage);
-        // Only the destination vault is registered.
-        register_vault(&storage, asset_to(), vault_to());
+        register(&storage);
+        runtime::rebalance(storage.clone(), cca(), ten_asset_rebalance()).unwrap_err()
+    })
+}
 
-        let err = runtime::rebalance(
-            storage.clone(),
-            cca(),
-            IVaultRouter::rebalanceCall {
-                vaultFrom: vault_from(),
-                vaultTo: vault_to(),
-                assetsMinor: U256::from(10),
-                maxAssetsToMinor: U256::MAX,
-            },
-        )
-        .unwrap_err();
-        assert_revert::<IVaultRouter::RebalanceVaultNotRegistered>(&err);
+#[test]
+fn rebalance_rejects_an_unregistered_source_vault() {
+    // Only the destination vault is registered.
+    let err = unregistered_rebalance_error(|storage| {
+        register_vault(storage, asset_to(), vault_to());
     });
+    assert_revert::<IVaultRouter::RebalanceVaultNotRegistered>(&err);
 }
 
 #[test]
 fn rebalance_rejects_an_unregistered_destination_vault() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.stub_sub_call_at_selector(
-        vault_from(),
-        IVaultV2::assetCall::SELECTOR,
-        word_addr(asset_from()),
-    );
-    storage.stub_sub_call_at_selector(
-        vault_to(),
-        IVaultV2::assetCall::SELECTOR,
-        word_addr(asset_to()),
-    );
-    StorageHandle::enter(&mut storage, |storage| {
-        bond_cca(&storage);
-        // Only the source vault is registered.
-        register_vault(&storage, asset_from(), vault_from());
-
-        let err = runtime::rebalance(
-            storage.clone(),
-            cca(),
-            IVaultRouter::rebalanceCall {
-                vaultFrom: vault_from(),
-                vaultTo: vault_to(),
-                assetsMinor: U256::from(10),
-                maxAssetsToMinor: U256::MAX,
-            },
-        )
-        .unwrap_err();
-        assert_revert::<IVaultRouter::RebalanceVaultNotRegistered>(&err);
+    // Only the source vault is registered.
+    let err = unregistered_rebalance_error(|storage| {
+        register_vault(storage, asset_from(), vault_from());
     });
+    assert_revert::<IVaultRouter::RebalanceVaultNotRegistered>(&err);
 }
 
 /// `rebalance` gates registration on `asset_vault_set`, not on
@@ -1056,21 +1047,7 @@ fn rebalance_rejects_insufficient_source_shares() {
     );
 
     StorageHandle::enter(&mut storage, |storage| {
-        bond_cca(&storage);
-        register_vault(&storage, asset_from(), vault_from());
-        register_vault(&storage, asset_from(), vault_to());
-
-        let err = runtime::rebalance(
-            storage.clone(),
-            cca(),
-            IVaultRouter::rebalanceCall {
-                vaultFrom: vault_from(),
-                vaultTo: vault_to(),
-                assetsMinor: U256::from(10),
-                maxAssetsToMinor: U256::MAX,
-            },
-        )
-        .unwrap_err();
+        let err = rebalance_of_ten(&storage, asset_from(), asset_from());
         assert_revert::<IVaultRouter::InsufficientSharesForWithdraw>(&err);
     });
 }
@@ -1452,21 +1429,7 @@ fn rebalance_rejects_assets_with_more_than_eighteen_decimals() {
     );
 
     StorageHandle::enter(&mut storage, |storage| {
-        bond_cca(&storage);
-        register_vault(&storage, asset_from(), vault_from());
-        register_vault(&storage, asset_to(), vault_to());
-
-        let err = runtime::rebalance(
-            storage.clone(),
-            cca(),
-            IVaultRouter::rebalanceCall {
-                vaultFrom: vault_from(),
-                vaultTo: vault_to(),
-                assetsMinor: U256::from(10),
-                maxAssetsToMinor: U256::MAX,
-            },
-        )
-        .unwrap_err();
+        let err = rebalance_of_ten(&storage, asset_from(), asset_to());
         assert_revert::<IVaultRouter::UnsupportedAssetDecimals>(&err);
     });
 }
@@ -1512,21 +1475,7 @@ fn rebalance_reverts_when_the_caller_has_not_approved_the_destination_asset() {
     // the global stub is off. So the pull fails closed.
 
     StorageHandle::enter(&mut storage, |storage| {
-        bond_cca(&storage);
-        register_vault(&storage, asset_from(), vault_from());
-        register_vault(&storage, asset_to(), vault_to());
-
-        runtime::rebalance(
-            storage.clone(),
-            cca(),
-            IVaultRouter::rebalanceCall {
-                vaultFrom: vault_from(),
-                vaultTo: vault_to(),
-                assetsMinor: U256::from(10),
-                maxAssetsToMinor: U256::MAX,
-            },
-        )
-        .unwrap_err();
+        let _ = rebalance_of_ten(&storage, asset_from(), asset_to());
     });
     assert!(storage.get_events(VAULT_ROUTER_ADDRESS).is_empty());
 }
@@ -1551,21 +1500,7 @@ fn rebalance_rolls_back_when_the_destination_deposit_fails() {
     // The test deliberately leaves `vault_to()::depositCall` unstubbed.
 
     StorageHandle::enter(&mut storage, |storage| {
-        bond_cca(&storage);
-        register_vault(&storage, asset_from(), vault_from());
-        register_vault(&storage, asset_from(), vault_to());
-
-        runtime::rebalance(
-            storage.clone(),
-            cca(),
-            IVaultRouter::rebalanceCall {
-                vaultFrom: vault_from(),
-                vaultTo: vault_to(),
-                assetsMinor: U256::from(10),
-                maxAssetsToMinor: U256::MAX,
-            },
-        )
-        .unwrap_err();
+        let _ = rebalance_of_ten(&storage, asset_from(), asset_from());
     });
     assert!(storage.get_events(VAULT_ROUTER_ADDRESS).is_empty());
 }
@@ -1605,21 +1540,7 @@ fn rebalance_rolls_back_when_the_source_withdraw_fails() {
     // The test deliberately leaves `vault_from()::withdrawCall` unstubbed.
 
     StorageHandle::enter(&mut storage, |storage| {
-        bond_cca(&storage);
-        register_vault(&storage, asset_from(), vault_from());
-        register_vault(&storage, asset_from(), vault_to());
-
-        runtime::rebalance(
-            storage.clone(),
-            cca(),
-            IVaultRouter::rebalanceCall {
-                vaultFrom: vault_from(),
-                vaultTo: vault_to(),
-                assetsMinor: U256::from(10),
-                maxAssetsToMinor: U256::MAX,
-            },
-        )
-        .unwrap_err();
+        let _ = rebalance_of_ten(&storage, asset_from(), asset_from());
     });
     assert!(storage.get_events(VAULT_ROUTER_ADDRESS).is_empty());
 }
@@ -1993,7 +1914,8 @@ fn with_reservable_vault_at_block<R>(
             .unwrap();
         let day = outbe_primitives::time::previous_date_key(
             outbe_primitives::time::timestamp_to_date_key(1_700_000_000),
-        );
+        )
+        .expect("date step");
         let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), USD_ISO_CODE)
             .unwrap()
             .unwrap();
@@ -2088,7 +2010,8 @@ fn a_reservation_needs_every_call_term() {
     with_reservable_vault(U256::from(100u64), |storage| {
         let day = outbe_primitives::time::previous_date_key(
             outbe_primitives::time::timestamp_to_date_key(1_700_000_000),
-        );
+        )
+        .expect("date step");
         let oracle = OracleContract::new(storage.clone());
         let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), USD_ISO_CODE)
             .unwrap()
@@ -2149,7 +2072,8 @@ fn a_reservation_quotes_the_call_terms_in_its_reference_currency() {
     with_reservable_vault(U256::from(100u64), |storage| {
         let day = outbe_primitives::time::previous_date_key(
             outbe_primitives::time::timestamp_to_date_key(1_700_000_000),
-        );
+        )
+        .expect("date step");
         outbe_oracle::api::register_pair(storage.clone(), AddressPair::new_coen_to(EUR_ISO_CODE))
             .unwrap();
         let oracle = OracleContract::new(storage.clone());

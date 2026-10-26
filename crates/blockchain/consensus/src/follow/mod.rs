@@ -30,6 +30,7 @@ use commonware_cryptography::bls12381::primitives::variant::MinSig;
 use commonware_parallel::Sequential;
 use commonware_utils::ordered::Set;
 use eyre::Result;
+use tracing::info;
 
 use crate::digest::Digest;
 use crate::errors::FollowError;
@@ -166,35 +167,7 @@ impl CommitteeChain {
             });
         }
 
-        if let Some(highest) = self.highest_registered {
-            let expected = highest.get().saturating_add(1);
-            if epoch.get() != expected {
-                return Err(FollowError::NonSequentialCommitteeEpoch {
-                    epoch: epoch.get(),
-                    highest: highest.get(),
-                }
-                .into());
-            }
-        } else if epoch != self.anchor_epoch {
-            return Err(FollowError::FirstRegisteredEpochNotAnchor {
-                epoch: epoch.get(),
-                anchor: self.anchor_epoch.get(),
-            }
-            .into());
-        }
-
-        // The anchor committee must match the trusted genesis or local finalized
-        // participant set. Consensus finality is a multisig over these MinPk keys,
-        // so matching the participant set (NOT the VRF group key) authenticates
-        // the committee. Compare as ordered sets (both pubkey-sorted).
-        if epoch == self.anchor_epoch && participants != self.anchor_participants {
-            return Err(FollowError::AnchorMismatch {
-                epoch: epoch.get(),
-                committee_len: participants.len(),
-                anchor_len: self.anchor_participants.len(),
-            }
-            .into());
-        }
+        self.validate_committee_registration(epoch, &participants)?;
 
         // Every successful DKG activation increments epoch and material version
         // exactly once, including after a restored local anchor.
@@ -217,6 +190,44 @@ impl CommitteeChain {
         })
     }
 
+    fn validate_committee_registration(
+        &self,
+        epoch: Epoch,
+        participants: &Set<bls12381::PublicKey>,
+    ) -> Result<()> {
+        if let Some(highest) = self.highest_registered {
+            let expected = highest.get().saturating_add(1);
+            if epoch.get() != expected {
+                return Err(FollowError::NonSequentialCommitteeEpoch {
+                    epoch: epoch.get(),
+                    highest: highest.get(),
+                }
+                .into());
+            }
+        } else if epoch != self.anchor_epoch {
+            return Err(FollowError::FirstRegisteredEpochNotAnchor {
+                epoch: epoch.get(),
+                anchor: self.anchor_epoch.get(),
+            }
+            .into());
+        }
+
+        // The anchor committee must match the trusted genesis or local finalized
+        // participant set. Consensus finality is a multisig over these MinPk keys,
+        // so matching the participant set (NOT the VRF group key) authenticates
+        // the committee. Compare as ordered sets (both pubkey-sorted).
+        if epoch == self.anchor_epoch && participants != &self.anchor_participants {
+            return Err(FollowError::AnchorMismatch {
+                epoch: epoch.get(),
+                committee_len: participants.len(),
+                anchor_len: self.anchor_participants.len(),
+            }
+            .into());
+        }
+
+        Ok(())
+    }
+
     fn commit_committee(&mut self, prepared: PreparedCommittee) -> Set<bls12381::PublicKey> {
         let PreparedCommittee {
             epoch,
@@ -224,6 +235,12 @@ impl CommitteeChain {
             install,
         } = prepared;
         if let Some((verifier, outcome_hash)) = install {
+            let fingerprint = crate::proof::participant_set_commitment(&participants);
+            info!(
+                epoch = epoch.get(),
+                committee_fingerprint = %hex::encode(fingerprint),
+                "committed follower committee"
+            );
             self.scheme_provider.register(epoch, verifier);
             self.outcome_hashes.insert(epoch.get(), outcome_hash);
             self.highest_registered = Some(match self.highest_registered {
@@ -245,8 +262,8 @@ impl CommitteeChain {
     ///   authenticated path. The trust chains from genesis through each E-1.
     /// - [`BoundaryOutcome`](outbe_primitives::reshare_artifact::ConsensusHeaderArtifact::BoundaryOutcome)
     ///   the activating boundary at `E*L+1`, finalized by `E` ITSELF. We register
-    ///   from it ONLY for a not-yet-known epoch: the genesis anchor and, until the
-    ///   pre-announce producer is wired, epochs lacking a pre-announce. We must NOT
+    ///   from it ONLY for a not-yet-known epoch: the genesis anchor and an epoch
+    ///   that has no pre-announce. We must NOT
     ///   let it OVERRIDE a committee already registered via its `E-1` pre-announce.
     ///   A self-finalized boundary overriding the chained committee is exactly the
     ///   D1 self-certification bug.

@@ -9,20 +9,137 @@ use super::*;
 #[test]
 fn schedule_math_pinned_values() {
     // Daily, offset = 0 => first slot is `period_seconds`.
-    assert_eq!(next_fire_at(SECONDS_PER_DAY, 0, 0), SECONDS_PER_DAY);
+    assert_eq!(next_fire_at(SECONDS_PER_DAY, 0, 0), Ok(SECONDS_PER_DAY));
     // Hourly @ :30 (offset = 1800), first slot at 1800.
-    assert_eq!(next_fire_at(3_600, 1_800, 0), 1_800);
+    assert_eq!(next_fire_at(3_600, 1_800, 0), Ok(1_800));
     // Hourly @ :30, last fired at 1800 => next at 5400.
-    assert_eq!(next_fire_at(3_600, 1_800, 1_800), 5_400);
+    assert_eq!(next_fire_at(3_600, 1_800, 1_800), Ok(5_400));
     // 5-minute, offset = 0, last fired at 299 => next at 300.
-    assert_eq!(next_fire_at(300, 0, 299), 300);
+    assert_eq!(next_fire_at(300, 0, 299), Ok(300));
     // 5-minute, offset = 0, last fired at 300 => next at 600.
-    assert_eq!(next_fire_at(300, 0, 300), 600);
+    assert_eq!(next_fire_at(300, 0, 300), Ok(600));
     // last well past first slot.
     assert_eq!(
         next_fire_at(SECONDS_PER_DAY, 0, 5 * SECONDS_PER_DAY),
-        6 * SECONDS_PER_DAY
+        Ok(6 * SECONDS_PER_DAY)
     );
+}
+
+#[test]
+fn zero_period_is_rejected_and_an_offset_at_or_above_the_period_stays_valid() {
+    use crate::errors::CycleError;
+    use crate::triggers::{active_triggers, TriggerHandler, TriggerSpec};
+
+    assert!(matches!(
+        TriggerSpec::new(1, "zero", 0, 0, TriggerHandler::IntexCallDaily),
+        Err(CycleError::ZeroTriggerPeriod)
+    ));
+    let wide_offset =
+        TriggerSpec::new(1, "wide-offset", 600, 5_000, TriggerHandler::IntexCallDaily)
+            .expect("offset at or above the period");
+    assert_eq!(wide_offset.period_seconds(), 600);
+    assert_eq!(wide_offset.start_offset_seconds, 5_000);
+    assert!(wide_offset.depends_on.is_empty());
+    assert!(matches!(
+        next_fire_at(0, 0, 0),
+        Err(CycleError::ZeroTriggerPeriod)
+    ));
+    assert!(matches!(
+        last_fire_at(0, 5_000, 4_999),
+        Err(CycleError::ZeroTriggerPeriod)
+    ));
+    assert!(matches!(
+        active_triggers(0),
+        Err(CycleError::ZeroTriggerPeriod)
+    ));
+    // Offset 5000 with period 600 is the first anchor, not an invalid setting.
+    assert_eq!(next_fire_at(600, 5_000, 0), Ok(5_000));
+}
+
+#[test]
+fn next_slot_arithmetic_rejects_a_quotient_increment_a_product_and_a_sum_past_u64() {
+    use crate::errors::CycleError;
+
+    // (u64::MAX / 1) + 1 does not fit.
+    assert!(matches!(
+        next_fire_at(1, 0, u64::MAX),
+        Err(CycleError::ScheduleArithmeticOverflow {
+            period: 1,
+            offset: 0,
+            timestamp: u64::MAX,
+        })
+    ));
+    // k = (u64::MAX / 2) + 1, and k * 2 does not fit.
+    assert!(matches!(
+        next_fire_at(2, 0, u64::MAX),
+        Err(CycleError::ScheduleArithmeticOverflow {
+            period: 2,
+            offset: 0,
+            timestamp: u64::MAX,
+        })
+    ));
+    // k = 1 and k * 100 fits. offset + 100 does not.
+    let offset = u64::MAX - 50;
+    assert!(matches!(
+        next_fire_at(100, offset, offset),
+        Err(CycleError::ScheduleArithmeticOverflow {
+            period: 100,
+            offset: found_offset,
+            timestamp: found_timestamp,
+        }) if found_offset == offset && found_timestamp == offset
+    ));
+}
+
+#[test]
+fn dispatch_propagates_schedule_overflow_instead_of_skipping_the_trigger() {
+    use alloy_sol_types::{SolError, SolEvent};
+    use outbe_primitives::error::PrecompileError;
+
+    let mut storage = cycle_storage();
+    storage.enter(|handle| {
+        let ctx = genesis_block(handle, GENESIS_TS + 60);
+        let cycle: Cycle<'_> = ctx.storage.contract::<Cycle<'_>>();
+        cycle
+            .last_executed_at
+            .write(&EMISSION_LIMIT_1_ID, u64::MAX)
+            .unwrap();
+
+        let err = dispatch_triggers(&ctx).expect_err("schedule overflow must reach the caller");
+        let PrecompileError::RevertBytes(bytes) = err else {
+            panic!("expected typed revert bytes, got {err:?}");
+        };
+        let decoded = crate::ICycle::ScheduleArithmeticOverflow::abi_decode(&bytes)
+            .expect("overflow payload");
+        assert_eq!(
+            decoded.period,
+            outbe_chain_constants::get_metadosis_advance_interval_seconds()
+        );
+        assert_eq!(decoded.offset, 0);
+        assert_eq!(decoded.timestamp, u64::MAX);
+        assert_eq!(
+            cycle.last_executed_at.read(&EMISSION_LIMIT_1_ID).unwrap(),
+            u64::MAX
+        );
+    });
+    assert!(storage
+        .get_events(outbe_primitives::addresses::CYCLE_ADDRESS)
+        .iter()
+        .all(|log| crate::ICycle::CycleTriggerFailed::decode_log_data(log).is_err()));
+}
+
+#[test]
+fn only_the_two_auction_edges_declare_a_dependency() {
+    use crate::triggers::{active_triggers, TriggerId};
+
+    let specs = active_triggers(3_600).expect("nonzero interval");
+    assert!(specs[0].depends_on.is_empty());
+    assert!(specs[1].depends_on.is_empty());
+    assert_eq!(specs[2].depends_on, &[TriggerId::ProtocolCycle]);
+    assert!(specs[3].depends_on.is_empty());
+    assert_eq!(specs[4].depends_on, &[TriggerId::AuctionAdvance]);
+    assert!(specs[5].depends_on.is_empty());
+    assert!(specs[6].depends_on.is_empty());
+    assert!(specs[7].depends_on.is_empty());
 }
 
 #[test]
@@ -31,7 +148,7 @@ fn schedule_math_aligned_property() {
     for &period in &[60u64, 300, 3_600, SECONDS_PER_DAY] {
         for &offset in &[0u64, 1, 7, period - 1] {
             for &last in &[0u64, 1, 100, SECONDS_PER_DAY, 365 * SECONDS_PER_DAY] {
-                let next = next_fire_at(period, offset, last);
+                let next = next_fire_at(period, offset, last).expect("pinned period is nonzero");
                 assert!(next > last, "p={period} o={offset} l={last} n={next}");
                 assert!(next >= offset);
                 assert_eq!((next - offset) % period, 0);

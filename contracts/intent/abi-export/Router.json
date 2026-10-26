@@ -976,6 +976,19 @@
   },
   {
     "type": "event",
+    "name": "RefundSkipped",
+    "inputs": [
+      {
+        "name": "orderId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "Refunded",
     "inputs": [
       {
@@ -1027,6 +1040,19 @@
         "type": "bytes[]",
         "indexed": false,
         "internalType": "bytes[]"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SettleSkipped",
+    "inputs": [
+      {
+        "name": "orderId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
       }
     ],
     "anonymous": false
@@ -1298,6 +1324,16 @@
   {
     "type": "error",
     "name": "UnexpectedNativeValue",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroAmountIn",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroRecipient",
     "inputs": []
   }
 ]

@@ -11,7 +11,7 @@ use outbe_primitives::error::Result;
 use outbe_primitives::expiry_queue;
 use outbe_primitives::storage::indexed_list::IndexedList;
 
-use crate::errors::IntexError;
+use crate::errors::{date_step_error, IntexError};
 use crate::schema::{CallStamp, IntexContract, SeriesId, SeriesRecord};
 
 impl IntexContract<'_> {
@@ -87,7 +87,7 @@ impl IntexContract<'_> {
     /// Enrolls a series in its call group. The first member opens the group in its
     /// call-price bin and seals its call terms.
     pub fn join_call_group(&mut self, record: &SeriesRecord) -> Result<()> {
-        let group = record.group_key();
+        let group = record.group_key().map_err(date_step_error)?;
         if self.call_group_members.list(&group).len()? == 0 {
             let iso = record.reference_currency;
             self.call_group_currency.write(&group, iso)?;
@@ -116,8 +116,8 @@ impl IntexContract<'_> {
     fn close_call_group(&mut self, group: B256) -> Result<()> {
         let iso = self.call_group_currency.read(&group)?;
         call_bins::remove(&CallBins(&*self, iso), group)?;
-        expiry_queue::remove(&ExpiryHours(self), group)?;
-        expiry_queue::remove(&CleanupHours(self), group)?;
+        expiry_queue::remove(&ExpiryDays(self), group)?;
+        expiry_queue::remove(&CleanupDays(self), group)?;
         self.call_group_currency.clear(&group)?;
         self.call_group_window_seconds.clear(&group)?;
         self.call_group_threshold_seconds.clear(&group)?;
@@ -146,7 +146,7 @@ impl IntexContract<'_> {
 
     /// The series' call, read from its group.
     pub fn call_stamp(&self, record: &SeriesRecord) -> Result<CallStamp> {
-        let group = record.group_key();
+        let group = record.group_key().map_err(date_step_error)?;
         self.group_stamp(group, self.call_group_called_at.read(&group)?)
     }
 
@@ -185,15 +185,15 @@ impl IntexContract<'_> {
         let iso = self.call_group_currency.read(&group)?;
         call_bins::remove(&CallBins(&*self, iso), group)?;
         self.call_group_called_at.write(&group, called_at)?;
-        expiry_queue::push(&ExpiryHours(self), group, deadline)
+        expiry_queue::push(&ExpiryDays(self), group, deadline)
     }
 
     /// Moves an expired group from the expiry queue to the cleanup, which deletes its
     /// spent series. Done with the group's credit, so a retry never credits it twice.
     pub fn hand_to_cleanup(&mut self, group: B256) -> Result<()> {
         let deadline = self.called_deadline.read(&group)?;
-        expiry_queue::remove(&ExpiryHours(self), group)?;
-        expiry_queue::push(&CleanupHours(self), group, deadline)
+        expiry_queue::remove(&ExpiryDays(self), group)?;
+        expiry_queue::push(&CleanupDays(self), group, deadline)
     }
 
     /// Widen the currency's stored terms to cover a newly issued series.
@@ -236,69 +236,69 @@ impl IntexContract<'_> {
             .collect()
     }
 
-    /// Hour since the epoch a deadline falls in: plain UTC, not a WorldwideDay.
+    /// This function returns the deadline's UTC day since the epoch, not a WorldwideDay.
     #[cfg(any(test, feature = "test-utils"))]
-    pub const fn deadline_bucket(deadline: u64) -> u32 {
-        expiry_queue::bucket_of(deadline)
+    pub fn deadline_day(deadline: u64) -> u32 {
+        expiry_queue::deadline_day(deadline).unwrap()
     }
 
     #[cfg(any(test, feature = "test-utils"))]
-    pub const fn bucket_end(day: u32) -> u64 {
-        expiry_queue::bucket_end(day)
+    pub const fn day_end(day: u32) -> u64 {
+        expiry_queue::day_end(day)
     }
 
     #[cfg(any(test, feature = "test-utils"))]
-    pub fn bucket_slot_key(day: u32, slot: u32) -> B256 {
+    pub fn day_slot_key(day: u32, slot: u32) -> B256 {
         expiry_queue::slot_key(day, slot)
     }
 
     #[cfg(any(test, feature = "test-utils"))]
     pub fn first_expiry_day(&self) -> Result<Option<u32>> {
-        expiry_queue::first_bucket(&ExpiryHours(self))
+        expiry_queue::first_day(&ExpiryDays(self))
     }
 
     #[cfg(any(test, feature = "test-utils"))]
-    pub fn first_cleanup_hour(&self) -> Result<Option<u32>> {
-        expiry_queue::first_bucket(&CleanupHours(self))
+    pub fn first_cleanup_day(&self) -> Result<Option<u32>> {
+        expiry_queue::first_day(&CleanupDays(self))
     }
 
     /// Moves a called group onto `deadline` in the expiry queue.
     #[cfg(feature = "e2e-test")]
     pub fn requeue_called(&mut self, group: B256, deadline: u64) -> Result<()> {
-        expiry_queue::remove(&ExpiryHours(self), group)?;
-        expiry_queue::push(&ExpiryHours(self), group, deadline)
+        expiry_queue::remove(&ExpiryDays(self), group)?;
+        expiry_queue::push(&ExpiryDays(self), group, deadline)
     }
 }
 
-/// Buckets holding a called group whose settlement window has not closed yet.
-pub struct ExpiryHours<'a, 'b>(pub &'a IntexContract<'b>);
+/// This daily queue stores called groups whose settlement window remains open.
+pub struct ExpiryDays<'a, 'b>(pub &'a IntexContract<'b>);
 
-outbe_primitives::impl_expiry_queue!(ExpiryHours<B256> {
+outbe_primitives::impl_expiry_queue!(ExpiryDays<B256> {
     root: expiry_tree_root,
     mid: expiry_tree_mid,
     leaf: expiry_tree_leaf,
-    len: expiry_bucket_len,
-    live: expiry_bucket_live,
-    at: expiry_bucket_at,
+    len: expiry_day_len,
+    live: expiry_day_live,
+    at: expiry_day_at,
     slot: called_group_slot,
     deadline: called_deadline,
-    sweep_bucket: expiry_sweep_hour,
+    sweep_day: expiry_sweep_day,
     cursor: expiry_cursor,
 });
 
-/// Buckets holding an expired group whose spent series wait to be deleted.
-pub struct CleanupHours<'a, 'b>(pub &'a IntexContract<'b>);
+/// This daily queue stores expired groups whose spent series await deletion.
+pub struct CleanupDays<'a, 'b>(pub &'a IntexContract<'b>);
 
-outbe_primitives::impl_expiry_queue!(CleanupHours<B256> {
+outbe_primitives::impl_expiry_queue!(CleanupDays<B256> {
     root: cleanup_tree_root,
     mid: cleanup_tree_mid,
     leaf: cleanup_tree_leaf,
-    len: cleanup_bucket_len,
-    live: cleanup_bucket_live,
-    at: cleanup_bucket_at,
+    len: cleanup_day_len,
+    live: cleanup_day_live,
+    at: cleanup_day_at,
     slot: cleanup_group_slot,
     deadline: cleanup_deadline,
-    sweep_bucket: cleanup_sweep_hour,
+    sweep_day: cleanup_sweep_day,
     cursor: cleanup_cursor,
 });
 

@@ -22,15 +22,22 @@ fn begin_block_tallies_only_on_a_vote_period_boundary() {
             .submit_vote(v1, &[(COEN, USDT, fixed18(42), SCALE_1E18)])
             .unwrap();
 
+        // 2020-01-02 keeps the 12-second gap. A block on 2020-01-01 makes the
+        // zero watermark step 2019-12-31, and begin_block refuses that step.
+        let day = outbe_primitives::time::date_key_to_utc_timestamp(20_200_102);
         // Block 1: not a vote period boundary (period=2), no tally
-        let runtime_ctx =
-            BlockRuntimeContext::new(BlockContext::empty_for_tests(1, 12, 1), storage.clone());
+        let runtime_ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, day + 12, 1),
+            storage.clone(),
+        );
         <crate::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(&runtime_ctx).unwrap();
         assert!(oracle.vote_exists.read(&v1).unwrap()); // vote still exists
 
         // Block 2: vote period boundary, tally runs
-        let runtime_ctx =
-            BlockRuntimeContext::new(BlockContext::empty_for_tests(2, 24, 1), storage.clone());
+        let runtime_ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(2, day + 24, 1),
+            storage.clone(),
+        );
         <crate::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(&runtime_ctx).unwrap();
         assert!(!oracle.vote_exists.read(&v1).unwrap()); // votes cleared
 
@@ -296,10 +303,12 @@ fn begin_block_scurve_hook_records_the_daily_peak() {
     with_oracle(|storage, oracle| {
         oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
 
-        let day_1 = SECONDS_PER_DAY;
-        let day_2 = 2 * SECONDS_PER_DAY;
-        let day_3 = 3 * SECONDS_PER_DAY;
-        let day_4 = 4 * SECONDS_PER_DAY;
+        // Shift the epoch day grid onto 2020-01-01. Offsets inside each day stay.
+        let origin = outbe_primitives::time::date_key_to_utc_timestamp(20_200_101);
+        let day_1 = origin + SECONDS_PER_DAY;
+        let day_2 = origin + 2 * SECONDS_PER_DAY;
+        let day_3 = origin + 3 * SECONDS_PER_DAY;
+        let day_4 = origin + 4 * SECONDS_PER_DAY;
         // Three fully-closed days forming a peak at day_2: 100 < 150 > 120.
         oracle
             .write_snapshot(
@@ -373,10 +382,12 @@ fn begin_block_scurve_hook_processes_only_registered_reference_pairs() {
         oracle.register_pair(cad_pair).unwrap();
         oracle.register_pair(generic_pair).unwrap();
 
-        let day_1 = SECONDS_PER_DAY;
-        let day_2 = 2 * SECONDS_PER_DAY;
-        let day_3 = 3 * SECONDS_PER_DAY;
-        let day_4 = 4 * SECONDS_PER_DAY;
+        // Shift the epoch day grid onto 2020-01-01. Offsets inside each day stay.
+        let origin = outbe_primitives::time::date_key_to_utc_timestamp(20_200_101);
+        let day_1 = origin + SECONDS_PER_DAY;
+        let day_2 = origin + 2 * SECONDS_PER_DAY;
+        let day_3 = origin + 3 * SECONDS_PER_DAY;
+        let day_4 = origin + 4 * SECONDS_PER_DAY;
         for (timestamp, usd_price, eur_price, cad_price, generic_price) in [
             (
                 day_1 + 60,

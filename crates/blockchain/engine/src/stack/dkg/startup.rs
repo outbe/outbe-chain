@@ -3,6 +3,21 @@ use super::super::*;
 mod genesis;
 mod local;
 mod manual;
+mod offer_key;
+
+pub(in crate::stack) use offer_key::validate_offer_key_before_threshold_work;
+
+pub(in crate::stack) fn required_block_hash(
+    provider: &impl BlockHashReader,
+    height: u64,
+    read_error: impl FnOnce(String) -> eyre::Report,
+    missing_error: eyre::Report,
+) -> Result<B256> {
+    provider
+        .block_hash(height)
+        .map_err(|error| read_error(format!("{error}")))?
+        .ok_or(missing_error)
+}
 
 pub(in crate::stack) fn validate_recovered_vrf_material(
     polynomial: &Sharing<MinSig>,
@@ -169,17 +184,21 @@ fn read_startup_dkg_snapshot(
         }
     })?;
     let last_execution_hash = if last_execution_height > 0 {
-        node.provider
-            .block_hash(last_execution_height)
-            .map_err(|e| crate::errors::StackDkgError::GetBlockHashForHeight {
-                height: last_execution_height,
-                reason: format!("{e}"),
-            })?
-            .ok_or(
-                crate::errors::StackDkgError::MissingBlockHashForExecutionHeight {
+        required_block_hash(
+            &node.provider,
+            last_execution_height,
+            |reason| {
+                crate::errors::StackDkgError::GetBlockHashForHeight {
                     height: last_execution_height,
-                },
-            )?
+                    reason,
+                }
+                .into()
+            },
+            crate::errors::StackDkgError::MissingBlockHashForExecutionHeight {
+                height: last_execution_height,
+            }
+            .into(),
+        )?
     } else {
         genesis_hash
     };
@@ -469,55 +488,6 @@ pub(in crate::stack) fn startup_dkg_mode(
     }
 }
 
-/// Enforce the permanent offer-key invariant before any threshold ceremony,
-/// live join, reshare, or consensus actor can start.
-///
-/// Only proven block-1 founders may be keyless while canonical state is still
-/// zero. An empty-DB verifier join may carry an already-installed key until
-/// certified sync makes the canonical value locally available. Every other
-/// existing identity must match canonical state exactly at this gate.
-pub(in crate::stack) fn validate_offer_key_before_threshold_work(
-    context: StartupDkgContext,
-    local_key_in_current_consensus_set: bool,
-    verifier_join: bool,
-    on_chain_offer: B256,
-    resident_offer: Option<B256>,
-) -> Result<()> {
-    let founding = !verifier_join
-        && startup_dkg_mode(context, local_key_in_current_consensus_set)
-            == StartupDkgMode::InitialGenesisDkg;
-    if founding {
-        if !on_chain_offer.is_zero() {
-            return Err(crate::errors::StackDkgError::FreshGenesisFoundPreexistingOfferKey.into());
-        }
-        return Ok(());
-    }
-
-    let resident_offer = resident_offer
-        .ok_or(crate::errors::StackDkgError::ExistingIdentityMissingResidentOfferKey)?;
-    if resident_offer.is_zero() {
-        return Err(crate::errors::StackDkgError::ExistingIdentityZeroResidentOfferKey.into());
-    }
-
-    let has_existing_local_state = context.last_execution_height > 0
-        || context.last_consensus_finalized_height > 0
-        || context.has_chain_finalized_dkg_boundary();
-    if on_chain_offer.is_zero() {
-        if has_existing_local_state {
-            return Err(crate::errors::StackDkgError::ExistingCanonicalStateMissingOfferKey.into());
-        }
-        if !verifier_join {
-            return Err(crate::errors::StackDkgError::NonVerifierDeferredOfferKeyComparison.into());
-        }
-        return Ok(());
-    }
-
-    if resident_offer != on_chain_offer {
-        return Err(crate::errors::StackDkgError::ResidentOfferKeyMismatch.into());
-    }
-    Ok(())
-}
-
 pub(in crate::stack) fn should_coordinate_genesis_tee_bootstrap(
     context: StartupDkgContext,
     local_key_in_current_consensus_set: bool,
@@ -673,11 +643,17 @@ pub(in crate::stack) fn tee_bootstrap_setup(
     let evm_key_path = args
         .effective_validator_evm_key()?
         .ok_or(crate::errors::StackDkgError::TeeBootstrapRequiresEvmKey)?;
-    let evm_signer = outbe_primitives::signer::load::from_file(&evm_key_path).map_err(|e| {
+    let backend = args.evm_key_backend().map_err(|error| {
         crate::errors::StackDkgError::LoadValidatorEvmSignerForTeeBootstrap {
-            reason: format!("{e}"),
+            reason: format!("{error}"),
         }
     })?;
+    let evm_signer = outbe_consensus::bls::load_validator_evm_signer(&evm_key_path, &backend)
+        .map_err(
+            |error| crate::errors::StackDkgError::LoadValidatorEvmSignerForTeeBootstrap {
+                reason: format!("{error}"),
+            },
+        )?;
     let committee: std::collections::BTreeSet<alloy_primitives::Address> =
         ordered_validator_addresses(participants, validator_set)?
             .into_iter()

@@ -29,8 +29,10 @@ impl Localnet {
                 projection.is_offering_at(timestamp),
                 "native Lysis fixture WorldwideDay must be Offering"
             );
-            let price_day = outbe_nod::openings::entry_price_day(projection.offering_end);
-            let last_closed_day = outbe_nod::openings::entry_price_day(timestamp);
+            let price_day =
+                outbe_nod::openings::entry_price_day(projection.offering_end).expect("date step");
+            let last_closed_day =
+                outbe_nod::openings::entry_price_day(timestamp).expect("date step");
             eyre::ensure!(
                 price_day <= last_closed_day,
                 "native Lysis entry-price day must close before genesis"
@@ -236,6 +238,10 @@ fn schedule_public_measurement_day(
     let mut provider = HashMapStorageProvider::new(chain_id);
     let account_keys = load_measurement_accounts(genesis, &mut provider)?;
     provider.set_block_number(1);
+    provider.enable_metadosis_mutation_frames(
+        outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
+        1,
+    );
     let changed = StorageHandle::enter(&mut provider, |storage| {
         seed_public_measurement_day(storage, &day)
     })?;
@@ -250,6 +256,7 @@ fn measurement_worldwide_day(genesis_timestamp: u64) -> WorldwideDay {
         genesis_timestamp,
     ))
     .previous_date_key()
+    .expect("date step")
 }
 
 /// The public measurement WorldwideDay, offering from genesis until its end.
@@ -343,14 +350,22 @@ fn seed_public_measurement_day(
     let report = FreshDevnetGenesisBuilder::new()
         .seed_active_worldwide_day(GenesisWorldwideDay {
             worldwide_day,
-            day: outbe_primitives::time::first_full_day(day.offering_end),
+            day: outbe_primitives::time::timestamp_to_date_key(day.offering_end),
             forming_start: day.forming_start,
             forming_end: day.genesis_timestamp,
             offerings_start: day.genesis_timestamp,
             offering_end: day.offering_end,
         })
         .apply(storage.clone())?;
-    outbe_tribute::TributeContract::new(storage).unseal_day(worldwide_day)?;
+    let binding = outbe_primitives::storage::metadosis_process_ready_binding(
+        storage.chain_id()?,
+        storage.block_number()?,
+        storage.now_secs()?,
+    );
+    storage.with_metadosis_mutation::<outbe_primitives::storage::MetadosisCycleLifecycle, _>(
+        binding,
+        || outbe_tribute::TributeContract::new(storage.clone()).unseal_day(worldwide_day),
+    )?;
     Ok(report.changed)
 }
 

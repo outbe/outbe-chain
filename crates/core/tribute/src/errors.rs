@@ -101,8 +101,8 @@ pub enum TributeError {
     #[error("Metadosis has not completed for WWD")]
     MetadosisNotCompleted,
 
-    #[error("Nod creation 7-day window has expired")]
-    NodCreationWindowExpired,
+    #[error("Nod creation is before Metadosis completion")]
+    NodCreationBeforeCompletion,
 
     #[error("caller is not Tribute owner")]
     CallerNotTributeOwner,
@@ -121,6 +121,16 @@ pub enum TributeError {
 
     #[error("Tribute day enclave: {0}")]
     DayEnclave(#[source] outbe_tee::TransportError),
+
+    #[error("date step kind {kind} from date key {date_key}")]
+    DateStep { kind: u8, date_key: u32 },
+}
+
+pub(crate) fn date_step_error(err: outbe_primitives::time::TimeError) -> PrecompileError {
+    match err.date_step() {
+        Some((kind, date_key)) => TributeError::DateStep { kind, date_key }.into(),
+        None => PrecompileError::Fatal(err.to_string()),
+    }
 }
 
 impl TributeError {
@@ -191,7 +201,9 @@ impl From<TributeError> for PrecompileError {
             }
             TributeError::InvalidLeague(value) => revert_with(I::InvalidLeague { value }),
             TributeError::MetadosisNotCompleted => revert_with(I::MetadosisNotCompleted {}),
-            TributeError::NodCreationWindowExpired => revert_with(I::NodCreationWindowExpired {}),
+            TributeError::NodCreationBeforeCompletion => {
+                revert_with(I::NodCreationBeforeCompletion {})
+            }
             TributeError::CallerNotTributeOwner => revert_with(I::CallerNotTributeOwner {}),
             TributeError::EntryPriceUnavailable {
                 price_day,
@@ -204,6 +216,10 @@ impl From<TributeError> for PrecompileError {
                 revert_with(I::TributeStateChangedAfterLoading {})
             }
             TributeError::LysisArithmetic(reason) => revert_with(I::LysisArithmetic { reason }),
+            TributeError::DateStep { kind, date_key } => revert_with(I::DateStep {
+                kind,
+                dateKey: date_key,
+            }),
         }
     }
 }

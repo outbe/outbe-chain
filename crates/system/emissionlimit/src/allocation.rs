@@ -184,6 +184,37 @@ mod tests {
             U256::from(8400u64),
             "Metadosis should receive the remaining 84 %"
         );
+
+        // Independent witness. This table is not the active four-percent split.
+        // floor(101 * 10 / 100) = 10. floor(101 * 25 / 100) = 25. The terminal gets 66.
+        let specs = [
+            EmissionSinkSpec {
+                id: EmissionSinkId::Validator,
+                pct: Some(10),
+            },
+            EmissionSinkSpec {
+                id: EmissionSinkId::Waa,
+                pct: Some(25),
+            },
+            EmissionSinkSpec {
+                id: EmissionSinkId::Metadosis,
+                pct: None,
+            },
+        ];
+        let witness = allocate_emission_with_specs(U256::from(101u64), &specs).unwrap();
+        assert_eq!(
+            allocation_for(&witness, EmissionSinkId::Validator),
+            U256::from(10u64)
+        );
+        assert_eq!(
+            allocation_for(&witness, EmissionSinkId::Waa),
+            U256::from(25u64)
+        );
+        assert_eq!(
+            allocation_for(&witness, EmissionSinkId::Metadosis),
+            U256::from(66u64)
+        );
+        assert_eq!(allocation_sum(&witness), U256::from(101u64));
     }
 
     /// Regression: allocation must preserve invariant for values > 2^53

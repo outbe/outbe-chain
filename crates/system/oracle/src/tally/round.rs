@@ -90,9 +90,9 @@ pub(super) fn run_tally_inner(
         blockNumber: block_number,
         pairsUpdated: rates.pairs_updated,
     };
-    let _ = oracle
+    oracle
         .storage
-        .emit_event(ORACLE_ADDRESS, event.encode_log_data());
+        .emit_event(ORACLE_ADDRESS, event.encode_log_data())?;
 
     // Clear all votes
     oracle.clear_votes()?;
@@ -325,9 +325,9 @@ impl PublishedRates {
             rate,
             blockNumber: clock.block_number,
         };
-        let _ = oracle
+        oracle
             .storage
-            .emit_event(ORACLE_ADDRESS, event.encode_log_data());
+            .emit_event(ORACLE_ADDRESS, event.encode_log_data())?;
 
         if oracle.snapshot_can_accept(clock.timestamp, pair, rate, volume)? {
             self.snapshot_entries.push((pair, rate, volume));

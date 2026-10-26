@@ -178,7 +178,7 @@ fn seed_issuance_oracle(storage: StorageHandle<'_>) -> eyre::Result<()> {
     OracleContract::new(storage.clone())
         .policy_rate
         .write(&840, U256::from(43_000))?;
-    let day = previous_date_key(timestamp_to_date_key(NOW));
+    let day = previous_date_key(timestamp_to_date_key(NOW)).expect("date step");
     record_finalized_day_vwap(&storage, 840, day, price)?;
 
     Ok(())

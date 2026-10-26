@@ -21,6 +21,9 @@ pub(crate) enum RpcError {
     /// The transport does not support the `eth_getProof` RPC method.
     #[error("eth_getProof RPC is unsupported")]
     EthGetProofUnsupported,
+    /// The HTTP client builder failed.
+    #[error("build RPC client: {0}")]
+    ClientBuild(#[source] reqwest::Error),
     /// The JSON-RPC server returned a null result.
     #[error("empty RPC result")]
     EmptyResult,

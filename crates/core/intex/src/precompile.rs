@@ -9,7 +9,7 @@ use alloy_sol_types::SolInterface;
 use outbe_primitives::dispatch::{dispatch_call, metadata, view};
 use outbe_primitives::error::Result;
 
-use crate::errors::IntexError;
+use crate::errors::{date_step_error, IntexError};
 use crate::schema::{CallStamp, IntexContract, SeriesId, SeriesRecord};
 
 /// Selectors on this precompile that accept native value. The route table binds
@@ -97,6 +97,6 @@ fn to_abi_data(
         exercisedUnits: exercised,
         gemFactoryUnits: gem_factory,
         settlementDeadline: stamp.deadline,
-        groupKey: r.group_key(),
+        groupKey: r.group_key().map_err(date_step_error)?,
     })
 }

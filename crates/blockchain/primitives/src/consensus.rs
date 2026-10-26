@@ -104,9 +104,10 @@ pub const MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS: u64 = 60 * 60 * 1_000;
 /// path). Thus validators never reject an honest block. The clamp has an
 /// effect only under clock lag. [`MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS`] bounds any
 /// resulting forward inflation, and the inflation self-corrects once real time
-/// reaches chain time. The genesis child (parent block number `0`) is exempt on both
-/// paths. The `finalization_view` is unseeded at genesis, so the check for
-/// block 1 is only for monotonicity.
+/// reaches chain time. The validator skips only this minimum when the parent
+/// block number is 0. The proposer skips both bands only when the parent
+/// timestamp is 0. A parent timestamp of 0, a parent block number of 0, and a
+/// missing parent block are not the same input.
 ///
 /// 1 s is half the 2 s default block-time floor (`DEFAULT_MIN_BLOCK_TIME_MS`).
 /// Honest pacing leaves real intervals `>=` the floor between consecutive block
@@ -116,6 +117,67 @@ pub const MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS: u64 = 60 * 60 * 1_000;
 /// inflation. This is a hard-fork-governed protocol constant. Both paths read
 /// it from here.
 pub const MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS: u64 = 1_000;
+
+/// Numeric relation of a child timestamp to its parent timestamp.
+///
+/// This comparison does not know the parent block number or whether a parent
+/// block was resolved. Callers keep those exemptions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimestampAdvance {
+    /// `timestamp` is not strictly after `parent`.
+    NotAfterParent,
+    /// Positive drift is below `min_advance`.
+    BelowMinAdvance { drift: u64 },
+    /// Positive drift is above `max_drift`.
+    ExceedsMaxDrift { drift: u64 },
+    /// Positive drift is inside both bounds.
+    Inside { drift: u64 },
+}
+
+/// Classify `timestamp_millis` against `parent_timestamp_millis`.
+///
+/// A drift above `max_drift_millis` is reported before a drift below
+/// `min_advance_millis`. The live constants keep the minimum below the maximum.
+#[must_use]
+pub fn classify_timestamp_advance(
+    parent_timestamp_millis: u64,
+    timestamp_millis: u64,
+    max_drift_millis: u64,
+    min_advance_millis: u64,
+) -> TimestampAdvance {
+    let Some(drift) = timestamp_millis.checked_sub(parent_timestamp_millis) else {
+        return TimestampAdvance::NotAfterParent;
+    };
+    if drift == 0 {
+        return TimestampAdvance::NotAfterParent;
+    }
+    if drift > max_drift_millis {
+        return TimestampAdvance::ExceedsMaxDrift { drift };
+    }
+    if drift < min_advance_millis {
+        return TimestampAdvance::BelowMinAdvance { drift };
+    }
+    TimestampAdvance::Inside { drift }
+}
+
+/// Clamp `now_millis` into `[parent + min_advance, parent + max_drift]`.
+///
+/// Addition saturates at `u64::MAX`. A parent with no room for `min_advance`
+/// has no in-range successor. This function does not apply the absent-parent
+/// exception.
+#[must_use]
+pub fn clamp_timestamp_into_band(
+    parent_timestamp_millis: u64,
+    now_millis: u64,
+    max_drift_millis: u64,
+    min_advance_millis: u64,
+) -> u64 {
+    let min_timestamp_millis = parent_timestamp_millis.saturating_add(min_advance_millis);
+    let max_timestamp_millis = parent_timestamp_millis.saturating_add(max_drift_millis);
+    now_millis
+        .max(min_timestamp_millis)
+        .min(max_timestamp_millis)
+}
 
 /// Inclusion-window depth `K` for the late-finalize-credits mechanism.
 ///
@@ -209,11 +271,6 @@ pub struct DkgBoundaryArtifact {
     pub is_full_dkg: bool,
     /// Execution-facing reshared-set activation payload.
     pub reshare: ReshareResult,
-    /// Per-validator TEE recipient X25519 public keys for the activated
-    /// committee. The artifact carries them so the tribute TEE DKG can address
-    /// share-relay to the right enclaves. Empty until the tribute DKG slice
-    /// populates it.
-    pub tee_recipient_pubkeys: Vec<(Address, B256)>,
     /// List, in canonical storage order, of ValidatorSet target members
     /// excluded at the exact DKG freeze block because their DcapRequired lease
     /// was not ready. This is the only authority for the narrow replayable
@@ -256,9 +313,8 @@ pub struct ConsensusData {
     pub finalized_certificate: FinalizedParentCertificateData,
     /// VRF seed derived from the BLS threshold signature (if available).
     pub vrf_seed: Option<B256>,
-    /// Canonical missed proposer events for skipped views before this
-    /// finalization. This is an event list, so a validator may appear multiple
-    /// times when it missed multiple views.
+    /// V2 requires this list to be empty. Proof verification rejects a nonempty
+    /// list. The field stays so the canonical header layout does not change.
     pub missed_proposers: Vec<Address>,
 }
 

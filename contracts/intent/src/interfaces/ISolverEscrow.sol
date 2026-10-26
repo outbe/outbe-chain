@@ -10,10 +10,35 @@ interface ISolverEscrow {
         uint256 available;
     }
 
+    // ============ Events ============
+
+    event Deposited(address indexed solver, address indexed token, uint256 amount);
+    event Withdrawn(address indexed solver, address indexed token, uint256 amount);
+    event AuthorizedCallerSet(address indexed caller);
+    event CollateralLocked(bytes32 indexed orderId, address indexed solver, address token, uint256 amount);
+    event CollateralUnlocked(bytes32 indexed orderId);
+    event CollateralSlashed(bytes32 indexed orderId, address indexed solver, address token, uint256 amount);
+    event CollateralBpsUpdated(uint256 oldBps, uint256 newBps);
+    event RewardDistributed(address indexed receiver, address indexed token, uint256 amount);
+    /// @notice The slashed pool of `token` holds less than the reward, so no reward was paid
+    event RewardSkipped(address indexed token, uint256 reward, uint256 available);
+
     // ============ Errors ============
 
-    /// @notice Thrown when a solver lacks sufficient collateral
-    error InsufficientCollateral();
+    /// @notice Thrown when deposit or withdrawal amount is zero
+    error InvalidAmount();
+    /// @notice Thrown when caller is not the authorized caller (Router)
+    error UnauthorizedCaller();
+    /// @notice Thrown when collateral bps is zero or exceeds 10000
+    error InvalidBps();
+    /// @notice Thrown when solver has not approved escrow as ERC6909 operator
+    error OperatorNotApproved();
+    /// @notice Thrown when the solver balance after a withdrawal is not the expected one
+    error WithdrawalFailed();
+    /// @notice Thrown when authorized caller has already been set
+    error AuthorizedCallerAlreadySet();
+    /// @notice Thrown when a zero address is supplied where one is not allowed
+    error ZeroAddress();
     /// @notice Thrown when available balance is insufficient
     error InsufficientAvailableBalance();
     /// @notice Thrown when a collateral lock already exists for the order

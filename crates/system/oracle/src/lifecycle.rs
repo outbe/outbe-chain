@@ -1,7 +1,7 @@
 use outbe_primitives::{
     block::{BlockLifecycle, BlockRuntimeContext},
     error::Result,
-    time::{previous_date_key, timestamp_to_date_key},
+    time::{previous_date_key, timestamp_to_date_key, TimeError},
 };
 
 use crate::constants::MAX_UTC_DAY_VWAP_BACKFILL_DAYS;
@@ -128,13 +128,14 @@ fn process_scurve_day(oracle: &mut OracleContract, timestamp: u64) -> Result<()>
 /// after a gap.
 fn finalize_closed_utc_days(oracle: &mut OracleContract, timestamp: u64) -> Result<()> {
     let current_utc_day = timestamp_to_date_key(timestamp);
-    let most_recent_closed = previous_date_key(current_utc_day);
+    let most_recent_closed =
+        previous_date_key(current_utc_day).map_err(crate::errors::date_step_error)?;
     let last_finalized = oracle.utc_day_vwap_last_finalized.read()?;
 
     // yyyymmdd keys order chronologically as integers. Only step via the
     // calendar-aware helpers (never `+1` on the key).
     if last_finalized < most_recent_closed {
-        for day in unfinalized_closed_days(last_finalized, most_recent_closed) {
+        for day in unfinalized_closed_days(last_finalized, most_recent_closed)? {
             oracle.finalize_utc_day_vwap(day)?;
         }
 
@@ -148,12 +149,13 @@ fn finalize_closed_utc_days(oracle: &mut OracleContract, timestamp: u64) -> Resu
 /// Returns the closed UTC days after `last_finalized` up to and including
 /// `most_recent_closed`, oldest first, at most
 /// [`MAX_UTC_DAY_VWAP_BACKFILL_DAYS`] of the most recent ones.
-fn unfinalized_closed_days(last_finalized: u32, most_recent_closed: u32) -> Vec<u32> {
+fn unfinalized_closed_days(last_finalized: u32, most_recent_closed: u32) -> Result<Vec<u32>> {
     // On the very first finalization (watermark 0), close only the single
     // most-recent day. Do not sweep backward into pre-genesis history
     // that has no data. Otherwise, resume from the watermark.
+    // This previous sits outside the walk and propagates every time error.
     let lower_bound = if last_finalized == 0 {
-        previous_date_key(most_recent_closed)
+        previous_date_key(most_recent_closed).map_err(crate::errors::date_step_error)?
     } else {
         last_finalized
     };
@@ -167,8 +169,39 @@ fn unfinalized_closed_days(last_finalized: u32, most_recent_closed: u32) -> Vec<
     let mut day = most_recent_closed;
     while day > lower_bound && days.len() < MAX_UTC_DAY_VWAP_BACKFILL_DAYS as usize {
         days.push(day);
-        day = previous_date_key(day);
+        match previous_date_key(day) {
+            Ok(prev) => day = prev,
+            Err(TimeError::DateBeforeMinimum { .. }) => break,
+            Err(err) => return Err(crate::errors::date_step_error(err)),
+        }
     }
     days.reverse();
-    days
+    Ok(days)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unfinalized_closed_days;
+    use crate::precompile::IOracle;
+    use alloy_sol_types::SolError;
+    use outbe_primitives::error::PrecompileError;
+
+    #[test]
+    fn a_backward_walk_stops_before_2020_and_keeps_the_days_already_taken() {
+        assert_eq!(
+            unfinalized_closed_days(20_190_101, 20_200_101).unwrap(),
+            vec![20_191_231, 20_200_101]
+        );
+    }
+
+    #[test]
+    fn a_zero_watermark_step_before_2020_propagates() {
+        let err = unfinalized_closed_days(0, 20_191_231).unwrap_err();
+        let PrecompileError::RevertBytes(bytes) = err else {
+            panic!("expected DateStep revert, got {err:?}");
+        };
+        let decoded = IOracle::DateStep::abi_decode(&bytes).expect("date step");
+        assert_eq!(decoded.kind, 1);
+        assert_eq!(decoded.dateKey, 20_191_231);
+    }
 }

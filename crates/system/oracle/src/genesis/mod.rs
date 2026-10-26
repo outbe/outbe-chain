@@ -87,7 +87,7 @@ pub struct OracleGenesisConfig {
     pub penalty_counters: Vec<(Address, u64, u64, u64)>,
     /// Pending aggregate votes that have not yet been tallied.
     pub aggregate_votes: Vec<GenesisAggregateVote>,
-    /// Price snapshots for the circular buffer.
+    /// Price snapshots for the snapshot log.
     pub snapshots: Vec<GenesisSnapshot>,
     /// Active S-curve entries.
     pub scurve_entries: Vec<GenesisScurveEntry>,

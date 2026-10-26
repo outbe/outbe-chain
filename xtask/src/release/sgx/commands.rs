@@ -197,9 +197,9 @@ pub fn finalize_genesis(
     network: SgxReleaseNetwork,
     seeded_genesis: &Path,
     bundle: &Path,
-    output: &Path,
-    evidence_output: &Path,
+    outputs: (&Path, &Path),
 ) -> Result<()> {
+    let (output, evidence_output) = outputs;
     if output == evidence_output || output.exists() || evidence_output.exists() {
         bail!("final genesis and evidence outputs must be distinct new paths");
     }
@@ -377,10 +377,10 @@ pub fn build_image(
     repo_root: &Path,
     network: SgxReleaseNetwork,
     bundle: &Path,
-    image_reference: &str,
+    image: (&str, bool),
     output: &Path,
-    push: bool,
 ) -> Result<()> {
+    let (image_reference, push) = image;
     if image_reference.is_empty()
         || !image_reference.is_ascii()
         || image_reference.chars().any(char::is_whitespace)

@@ -6,7 +6,7 @@ use outbe_primitives::error::PrecompileError;
 use outbe_validatorset::contract::ValidatorSet;
 
 use crate::errors::GovernanceError;
-use crate::runtime::{MAX_CANON_TEXT_BYTES, MAX_PROPOSAL_TEXT_BYTES};
+use crate::runtime::MAX_TEXT_BYTES;
 use crate::state::author_index_key;
 use crate::status;
 use crate::GovernanceContract;
@@ -65,8 +65,8 @@ fn canon_roundtrip_and_versioning() {
         assert_eq!(hash, keccak256(b"gain takes time"));
         assert_eq!(gov.canon_revision_hash(1).unwrap(), hash);
 
-        // second update -> version 2, revision map keeps both
-        let v = gov.update_canon(AUTH, "gain takes more time").unwrap();
+        // second write (the vote path) -> version 2, revision map keeps both
+        let v = gov.apply_canon_text("gain takes more time").unwrap();
         assert_eq!(v, 2);
         assert_eq!(
             gov.canon_revision_hash(1).unwrap(),
@@ -106,7 +106,7 @@ fn canon_overwrite_shorter_is_clean() {
     with_governance(|gov| {
         let long = "x".repeat(200);
         gov.update_canon(AUTH, &long).unwrap();
-        gov.update_canon(AUTH, "short").unwrap();
+        gov.apply_canon_text("short").unwrap();
         let (text, _, hash) = gov.get_canon().unwrap();
         assert_eq!(text, "short");
         assert_eq!(hash, keccak256(b"short"));
@@ -135,30 +135,95 @@ fn assert_text_too_large<T: std::fmt::Debug>(
 }
 
 #[test]
-fn canon_rejects_empty_and_oversize() {
+fn canon_rejects_empty_text() {
     with_governance(|gov| {
         assert!(gov.update_canon(AUTH, "").is_err());
         assert!(gov.update_meta_canon(AUTH, "").is_err());
     });
 }
 
-#[test]
-fn canon_texts_keep_canon_bound() {
-    let max = MAX_CANON_TEXT_BYTES;
-    assert_eq!(max, 128 * 1024);
-    let at_bound = "a".repeat(max);
-    let too_big = "a".repeat(max + 1);
-    with_governance(|gov| {
-        assert_eq!(gov.update_canon(AUTH, &at_bound).unwrap(), 1);
-        assert_eq!(gov.get_canon().unwrap().0.len(), max);
-        assert_text_too_large(gov.update_canon(AUTH, &too_big), max + 1, max);
-        assert_eq!(gov.get_canon().unwrap().1, 1);
+fn assert_canon_requires_vote<T: std::fmt::Debug>(result: outbe_primitives::error::Result<T>) {
+    let expected = PrecompileError::from(GovernanceError::CanonRequiresVote).to_string();
+    assert!(
+        matches!(&result, Err(err) if err.to_string() == expected),
+        "expected CanonRequiresVote, got {result:?}"
+    );
+}
 
-        assert_eq!(gov.update_meta_canon(AUTH, &at_bound).unwrap(), 1);
-        assert_eq!(gov.get_meta_canon().unwrap().0.len(), max);
-        assert_text_too_large(gov.update_meta_canon(AUTH, &too_big), max + 1, max);
-        assert_eq!(gov.get_meta_canon().unwrap().1, 1);
+#[test]
+fn bootstrap_canon_update_still_works() {
+    with_governance(|gov| {
+        assert_eq!(gov.update_canon(AUTH, "first canon").unwrap(), 1);
+        let (text, ver, hash) = gov.get_canon().unwrap();
+        assert_eq!(text, "first canon");
+        assert_eq!(ver, 1);
+        assert_eq!(hash, keccak256(b"first canon"));
+        assert_eq!(gov.canon_revision_hash(1).unwrap(), hash);
+
+        assert_eq!(gov.update_meta_canon(AUTH, "first meta").unwrap(), 1);
+        let (text, ver, hash) = gov.get_meta_canon().unwrap();
+        assert_eq!(text, "first meta");
+        assert_eq!(ver, 1);
+        assert_eq!(hash, keccak256(b"first meta"));
+        assert_eq!(gov.meta_canon_revision_hash(1).unwrap(), hash);
     });
+}
+
+#[test]
+fn direct_canon_update_refused_after_bootstrap() {
+    with_governance(|gov| {
+        gov.update_canon(AUTH, "canon v1").unwrap();
+        gov.update_meta_canon(AUTH, "meta v1").unwrap();
+
+        assert_canon_requires_vote(gov.update_canon(AUTH, "canon v2"));
+        assert_canon_requires_vote(gov.update_meta_canon(AUTH, "meta v2"));
+
+        // The stored texts, versions and revision maps are unchanged.
+        let (text, ver, hash) = gov.get_canon().unwrap();
+        assert_eq!((text.as_str(), ver), ("canon v1", 1));
+        assert_eq!(hash, keccak256(b"canon v1"));
+        assert!(gov.canon_revision_hash(2).unwrap().is_zero());
+        let (text, ver, hash) = gov.get_meta_canon().unwrap();
+        assert_eq!((text.as_str(), ver), ("meta v1", 1));
+        assert_eq!(hash, keccak256(b"meta v1"));
+        assert!(gov.meta_canon_revision_hash(2).unwrap().is_zero());
+    });
+}
+
+#[test]
+fn non_authority_still_refused_at_bootstrap() {
+    with_governance(|gov| {
+        assert_not_authorized(gov.update_canon(OTHER, "sneaky"));
+        assert_not_authorized(gov.update_meta_canon(OTHER, "sneaky"));
+        // After bootstrap a non-authority still gets NotAuthorized first.
+        gov.update_canon(AUTH, "canon v1").unwrap();
+        assert_not_authorized(gov.update_canon(OTHER, "sneaky"));
+        assert_eq!(gov.get_canon().unwrap().0, "canon v1");
+        assert_eq!(gov.get_meta_canon().unwrap().1, 0);
+    });
+}
+
+#[test]
+fn canon_texts_bound_utf8_bytes_and_preserve_failed_updates() {
+    let max = MAX_TEXT_BYTES;
+    for at_bound in ["a".repeat(max), "é".repeat(max / 2)] {
+        let too_big = format!("{at_bound}a");
+        with_governance(|gov| {
+            assert_text_too_large(gov.update_canon(AUTH, &too_big), max + 1, max);
+            assert_eq!(gov.update_canon(AUTH, &at_bound).unwrap(), 1);
+            let canon = gov.get_canon().unwrap();
+            assert_eq!(canon.0, at_bound);
+            assert_text_too_large(gov.apply_canon_text(&too_big), max + 1, max);
+            assert_eq!(gov.get_canon().unwrap(), canon);
+
+            assert_text_too_large(gov.update_meta_canon(AUTH, &too_big), max + 1, max);
+            assert_eq!(gov.update_meta_canon(AUTH, &at_bound).unwrap(), 1);
+            let meta_canon = gov.get_meta_canon().unwrap();
+            assert_eq!(meta_canon.0, at_bound);
+            assert_text_too_large(gov.apply_meta_canon_text(&too_big), max + 1, max);
+            assert_eq!(gov.get_meta_canon().unwrap(), meta_canon);
+        });
+    }
 }
 
 // ------------------------------------------------------------ proposals ---
@@ -191,6 +256,9 @@ fn submission_counters_are_checked() {
                     let id = gov.submit_gip(AUTHOR, "last proposal").unwrap();
                     (id, gov.get_gip(id).unwrap().unwrap().text)
                 }
+                crate::ProposalKind::CanonText | crate::ProposalKind::MetaCanonText => {
+                    unreachable!("text kinds have no id sequence")
+                }
             };
             assert_eq!(id, U256::from(u64::MAX));
             assert_eq!(text, "last proposal");
@@ -203,6 +271,9 @@ fn submission_counters_are_checked() {
             let error = match kind {
                 crate::ProposalKind::Oip => gov.submit_oip(AUTHOR, "overflow"),
                 crate::ProposalKind::Gip => gov.submit_gip(AUTHOR, "overflow"),
+                crate::ProposalKind::CanonText | crate::ProposalKind::MetaCanonText => {
+                    unreachable!("text kinds have no id sequence")
+                }
             }
             .unwrap_err();
             assert_eq!(
@@ -324,7 +395,7 @@ fn authority_follows_live_validator_set() {
         assert!(!gov.is_authority(LATE).unwrap());
         activate_validator(storage.clone(), LATE, 2);
         assert!(gov.is_authority(LATE).unwrap());
-        gov.update_canon(LATE, "v2").unwrap();
+        gov.update_meta_canon(LATE, "m1").unwrap();
 
         // A validator that leaves ACTIVE loses write rights at once.
         let id = gov.submit_oip(AUTHOR, "body").unwrap();
@@ -335,7 +406,8 @@ fn authority_follows_live_validator_set() {
         assert_not_authorized(gov.update_canon(AUTH, "v3"));
         assert_not_authorized(gov.update_meta_canon(AUTH, "m"));
         assert_not_authorized(gov.set_oip_status(AUTH, id, status::APPROVED));
-        assert_eq!(gov.get_canon().unwrap().1, 2);
+        assert_eq!(gov.get_canon().unwrap().1, 1);
+        assert_eq!(gov.get_meta_canon().unwrap().1, 1);
     });
 }
 
@@ -363,7 +435,7 @@ fn missing_proposal_errors() {
 
 #[test]
 fn proposal_rejects_empty_and_oversize_text() {
-    let max = MAX_PROPOSAL_TEXT_BYTES;
+    let max = MAX_TEXT_BYTES;
     let too_big = "a".repeat(max + 1);
     with_governance(|gov| {
         assert!(gov.submit_oip(AUTHOR, "").is_err());
@@ -376,36 +448,52 @@ fn proposal_rejects_empty_and_oversize_text() {
 }
 
 #[test]
-fn proposal_submit_accepts_text_at_proposal_bound() {
-    let max = MAX_PROPOSAL_TEXT_BYTES;
-    assert_eq!(max, 16 * 1024);
-    let at_bound = "a".repeat(max);
-    with_governance(|gov| {
-        let oip = gov.submit_oip(AUTHOR, &at_bound).unwrap();
-        assert_eq!(gov.get_oip(oip).unwrap().unwrap().text.len(), max);
-        let gip = gov.submit_gip(AUTHOR, &at_bound).unwrap();
-        assert_eq!(gov.get_gip(gip).unwrap().unwrap().text.len(), max);
-    });
+fn proposal_submit_bounds_utf8_bytes() {
+    let max = MAX_TEXT_BYTES;
+    for at_bound in ["a".repeat(max), "é".repeat(max / 2)] {
+        let too_big = format!("{at_bound}a");
+        with_governance(|gov| {
+            let oip = gov.submit_oip(AUTHOR, &at_bound).unwrap();
+            assert_eq!(gov.get_oip(oip).unwrap().unwrap().text, at_bound);
+            let gip = gov.submit_gip(AUTHOR, &at_bound).unwrap();
+            assert_eq!(gov.get_gip(gip).unwrap().unwrap().text, at_bound);
+            assert_text_too_large(gov.submit_oip(AUTHOR, &too_big), max + 1, max);
+            assert_text_too_large(gov.submit_gip(AUTHOR, &too_big), max + 1, max);
+            assert_eq!(gov.oip_count().unwrap(), 1);
+            assert_eq!(gov.gip_count().unwrap(), 1);
+        });
+    }
 }
 
 #[test]
-fn proposal_text_update_keeps_proposal_bound() {
-    let max = MAX_PROPOSAL_TEXT_BYTES;
-    let at_bound = "a".repeat(max);
-    let too_big = "a".repeat(max + 1);
-    with_governance(|gov| {
-        let oip = gov.submit_oip(AUTHOR, "oip draft").unwrap();
-        assert_text_too_large(gov.update_oip_text(AUTHOR, oip, &too_big), max + 1, max);
-        assert_eq!(gov.get_oip(oip).unwrap().unwrap().text, "oip draft");
-        gov.update_oip_text(AUTHOR, oip, &at_bound).unwrap();
-        assert_eq!(gov.get_oip(oip).unwrap().unwrap().text.len(), max);
+fn proposal_text_updates_bound_utf8_bytes_and_preserve_failed_updates() {
+    let max = MAX_TEXT_BYTES;
+    for at_bound in ["a".repeat(max), "é".repeat(max / 2)] {
+        let too_big = format!("{at_bound}a");
+        with_governance(|gov| {
+            let oip = gov.submit_oip(AUTHOR, "oip draft").unwrap();
+            let old_oip = gov.get_oip(oip).unwrap().unwrap();
+            assert_text_too_large(gov.update_oip_text(AUTHOR, oip, &too_big), max + 1, max);
+            let unchanged = gov.get_oip(oip).unwrap().unwrap();
+            assert_eq!(
+                (unchanged.text, unchanged.text_hash, unchanged.updated_block),
+                (old_oip.text, old_oip.text_hash, old_oip.updated_block)
+            );
+            gov.update_oip_text(AUTHOR, oip, &at_bound).unwrap();
+            assert_eq!(gov.get_oip(oip).unwrap().unwrap().text, at_bound);
 
-        let gip = gov.submit_gip(AUTHOR, "gip draft").unwrap();
-        assert_text_too_large(gov.update_gip_text(AUTHOR, gip, &too_big), max + 1, max);
-        assert_eq!(gov.get_gip(gip).unwrap().unwrap().text, "gip draft");
-        gov.update_gip_text(AUTHOR, gip, &at_bound).unwrap();
-        assert_eq!(gov.get_gip(gip).unwrap().unwrap().text.len(), max);
-    });
+            let gip = gov.submit_gip(AUTHOR, "gip draft").unwrap();
+            let old_gip = gov.get_gip(gip).unwrap().unwrap();
+            assert_text_too_large(gov.update_gip_text(AUTHOR, gip, &too_big), max + 1, max);
+            let unchanged = gov.get_gip(gip).unwrap().unwrap();
+            assert_eq!(
+                (unchanged.text, unchanged.text_hash, unchanged.updated_block),
+                (old_gip.text, old_gip.text_hash, old_gip.updated_block)
+            );
+            gov.update_gip_text(AUTHOR, gip, &at_bound).unwrap();
+            assert_eq!(gov.get_gip(gip).unwrap().unwrap().text, at_bound);
+        });
+    }
 }
 
 // ------------------------------------------------------- storage layout ---
