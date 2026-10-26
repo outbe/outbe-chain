@@ -14,6 +14,12 @@ from genesis_seed_codec import (
 )
 from genesis_seed_codec import address_pair, asset_address, is_iso_asset_address
 
+# The reference currencies. The Oracle code defines them as
+# `REFERENCE_CURRENCIES` in crates/system/oracle/src/constants.rs, and genesis
+# does not write them. The seeder uses this copy only to check that each one
+# has a policy rate. A test compares the copy with the Rust constant.
+REFERENCE_CURRENCIES = (156, 344, 392, 826, 840, 978)
+
 # Genesis policy rate of each reference currency at scale 1e6: the overnight
 # rate of that currency. Keep in sync with `DEFAULT_POLICY_RATES` in
 # crates/system/oracle/src/constants.rs.
@@ -42,7 +48,7 @@ def seed_oracle(storage: StorageBuilder, config: dict):
       slot 43: mapping(pair_index => AddressPair), a two-word value and the only
         way to enumerate the registry. Slots 40-42, 44, 45 and 46 are retired
         settlement holes. The settlement pair is address_pair("COEN", "<iso>").
-      slot 55: reference_currencies (StorageVec<u16>)
+      slot 55: retired hole (was reference_currencies)
       slot 60: retired policy-rate mapping
       slots 74-75: policy_rate_currencies / policy_rate
     """
@@ -165,7 +171,7 @@ def _seed_oracle_registry(storage, config, validated_pairs):
     if config.get("settlement_currencies"):
         raise ValueError(
             "oracle.settlement_currencies was removed: register the COEN/<iso> "
-            "pair instead, and list the ISO under oracle.reference_currencies"
+            "pair instead"
         )
 
     return pair_ids
@@ -194,22 +200,12 @@ def _seed_oracle_scurves(storage, config, pair_ids):
 
 
 def _seed_oracle_currencies(storage, config):
-    # Reference currencies and annual policy rates are independent registries.
-    # Both lists are canonical ascending ISO order. Slot 60 is retired.
-    reference_currencies = config.get(
-        "reference_currencies",
-        [156, 344, 392, 826, 840, 978],
-    )
-    reference_currencies = [parse_int(iso_code) for iso_code in reference_currencies]
-    if any(iso_code == 0 for iso_code in reference_currencies):
-        raise ValueError("oracle reference iso_code must be non-zero")
-    if reference_currencies != sorted(set(reference_currencies)):
-        raise ValueError("oracle reference currencies must be sorted and unique")
-    if 840 not in reference_currencies:
-        raise ValueError("oracle reference currencies must include USD 840")
-    storage.set_slot(55, len(reference_currencies))
-    for i, iso_code in enumerate(reference_currencies):
-        storage.set_raw_slot(data_slot(55) + i, iso_code)
+    # Policy rates are in canonical ascending ISO order. Slot 60 is retired.
+    if "reference_currencies" in config:
+        raise ValueError(
+            "oracle.reference_currencies was removed: the Oracle code defines "
+            "the reference currencies"
+        )
 
     policy_rates = config.get("policy_rates", DEFAULT_POLICY_RATES)
     parsed_policy_rates = [
@@ -223,7 +219,7 @@ def _seed_oracle_currencies(storage, config):
     policy_isos = [iso_code for iso_code, _ in parsed_policy_rates]
     if policy_isos != sorted(set(policy_isos)):
         raise ValueError("oracle policy rates must be sorted and unique")
-    missing = [iso_code for iso_code in reference_currencies if iso_code not in policy_isos]
+    missing = [iso_code for iso_code in REFERENCE_CURRENCIES if iso_code not in policy_isos]
     if missing:
         raise ValueError(f"oracle reference currencies have no policy rate: {missing}")
     storage.set_slot(74, len(parsed_policy_rates))

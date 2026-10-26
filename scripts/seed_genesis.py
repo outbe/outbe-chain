@@ -150,6 +150,8 @@ from genesis_seed_economy import (
 )
 from genesis_seed_codec import address_pair, asset_address, is_iso_asset_address
 from genesis_seed_oracle import (
+    DEFAULT_POLICY_RATES,
+    REFERENCE_CURRENCIES,
     _seed_oracle_config,
     _seed_oracle_currencies,
     _seed_oracle_registry,

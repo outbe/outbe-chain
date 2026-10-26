@@ -350,8 +350,8 @@ fn sending_rejects_a_series_whose_reference_currency_is_unregistered() {
                 call_trigger: outbe_intex::IntexCallTrigger::default(),
                 issued_at: T_NOW as u32,
                 issuance_currency: 840,
-                // 978 is never pushed into the reference registry here.
-                reference_currency: 978,
+                // 756 (CHF) is not a reference currency.
+                reference_currency: 756,
             },
         )
         .unwrap();
@@ -360,7 +360,7 @@ fn sending_rejects_a_series_whose_reference_currency_is_unregistered() {
         assert_eq!(
             res.unwrap_err().to_string(),
             outbe_primitives::error::PrecompileError::from(
-                outbe_oracle::errors::OracleError::NotReferenceCurrency { iso_code: 978 }
+                outbe_oracle::errors::OracleError::NotReferenceCurrency { iso_code: 756 }
             )
             .to_string()
         );

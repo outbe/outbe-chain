@@ -1539,17 +1539,6 @@
   },
   {
     "type": "error",
-    "name": "DuplicateReferenceIsoCode",
-    "inputs": [
-      {
-        "name": "iso_code",
-        "type": "uint16",
-        "internalType": "uint16"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "InvalidLookbackSeconds",
     "inputs": []
   },
@@ -1609,11 +1598,6 @@
   {
     "type": "error",
     "name": "MissingTwapData",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "MissingUsdReferenceCurrency",
     "inputs": []
   },
   {
@@ -1790,16 +1774,6 @@
         "internalType": "uint256"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "ReferenceCurrenciesNotSorted",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ReferenceIsoCodeZero",
-    "inputs": []
   },
   {
     "type": "error",

@@ -2457,11 +2457,9 @@ fn clearing_issues_one_series_per_winning_currency_pair() {
 }
 
 #[test]
-fn a_reference_currency_whose_letter_is_taken_is_dropped_from_the_day() {
-    // CHF and CNY both spell their series `C`. The day keeps the lower code, so the
-    // survivor cannot depend on the order the two brief paths collect prices in.
+fn a_day_priced_in_every_reference_currency_starts_with_one_row_each() {
     with_storage(|s| {
-        open_clearing_priced(&s, 4, &[756, 156]);
+        open_clearing_priced(&s, 4, &outbe_oracle::api::REFERENCE_CURRENCIES);
         let config = s
             .contract::<DesisContract>()
             .read_auction_config(WORLDWIDE_DAY)
@@ -2472,9 +2470,8 @@ fn a_reference_currency_whose_letter_is_taken_is_dropped_from_the_day() {
                 .iter()
                 .map(|row| row.iso_code)
                 .collect::<Vec<_>>(),
-            vec![156]
+            outbe_oracle::api::REFERENCE_CURRENCIES.to_vec()
         );
-        assert!(config.price_for(756).is_none());
     });
 }
 

@@ -182,8 +182,8 @@ fn capture_reference(
         .write(&row.iso_code, exponent)
 }
 
-/// Read before `choose_reference_prices` trims the table, so every priced currency is
-/// checked. A currency without a valid capture takes one and sits the day out.
+/// Every priced currency is checked. A currency without a valid capture takes
+/// one and sits the day out.
 pub(crate) fn step_promis_load(
     contract: &mut DesisContract<'_>,
     worldwide_day: WorldwideDay,
@@ -235,34 +235,6 @@ pub(crate) fn step_promis_load(
         capture_reference(contract, row, exponent)?;
     }
     Ok(promis_load_minor(exponent))
-}
-
-/// The currencies a day will actually price: one per series-id letter. Ordered by currency first, so the two brief paths - which
-/// collect prices in different orders - resolve a day to the same table.
-fn choose_reference_prices(
-    contract: &mut DesisContract<'_>,
-    worldwide_day: WorldwideDay,
-    mut rows: Vec<ReferenceCurrencyPrice>,
-) -> Result<Vec<ReferenceCurrencyPrice>> {
-    rows.sort_by_key(|row| row.iso_code);
-
-    let letter_of = |iso_code: u16| SeriesId::currency_code(iso_code).map(|code| code[0]).ok();
-    let mut kept: Vec<ReferenceCurrencyPrice> = Vec::with_capacity(rows.len());
-    for row in rows {
-        let Some(letter) = letter_of(row.iso_code) else {
-            continue;
-        };
-        if let Some(taken) = kept.iter().find(|k| letter_of(k.iso_code) == Some(letter)) {
-            contract.emit(IDesis::ReferenceCurrencyLetterTaken {
-                worldwideDay: worldwide_day.into(),
-                isoCode: row.iso_code,
-                takenBy: taken.iso_code,
-            })?;
-            continue;
-        }
-        kept.push(row);
-    }
-    Ok(kept)
 }
 
 /// Fold the prior-clearing bid floor and the genesis commit bond into the config,

@@ -147,13 +147,7 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
 
         seed_genesis.seed_oracle(storage, {})
 
-        self.assertEqual(storage.entries[seed_genesis.hex32(55)], seed_genesis.hex32(6))
-        for index, iso_code in enumerate((156, 344, 392, 826, 840, 978)):
-            self.assertEqual(
-                storage.entries[seed_genesis.hex32(seed_genesis.data_slot(55) + index)],
-                seed_genesis.hex32(iso_code),
-            )
-
+        self.assertNotIn(seed_genesis.hex32(55), storage.entries)
         self.assertNotIn(
             seed_genesis.mapping_key(seed_genesis.u32_bytes(840), 60), storage.entries
         )
@@ -166,13 +160,28 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
         slot = seed_genesis.mapping_key(seed_genesis.u32_bytes(840), 75)
         self.assertEqual(storage.entries[slot], seed_genesis.hex32(38_800))
 
+    def test_reference_currencies_match_the_oracle_constant(self):
+        constants = (
+            MODULE_PATH.parent.parent / "crates/system/oracle/src/constants.rs"
+        ).read_text()
+        line = next(
+            line
+            for line in constants.splitlines()
+            if line.startswith("pub const REFERENCE_CURRENCIES:")
+        )
+        rust = tuple(int(code) for code in line.split("[")[-1].split("]")[0].split(","))
+        self.assertEqual(seed_genesis.REFERENCE_CURRENCIES, rust)
+
     def test_every_reference_currency_needs_a_policy_rate(self):
         with self.assertRaisesRegex(ValueError, r"no policy rate: \[978\]"):
             seed_genesis.seed_oracle(
                 seed_genesis.StorageBuilder(),
                 {
-                    "reference_currencies": [840, 978],
-                    "policy_rates": [{"iso_code": 840, "annual_rate_1e6": 38_800}],
+                    "policy_rates": [
+                        rate
+                        for rate in seed_genesis.DEFAULT_POLICY_RATES
+                        if rate["iso_code"] != 978
+                    ]
                 },
             )
 
